@@ -290,7 +290,7 @@ The decorator accepts many other options for distributed dispatch, retries, memo
 
 ## Style and conventions
 
-- **No bare emojis in UIs or output.** Use monochrome SVG icons or text glyphs (`⬡ ⧗ ↪ ↳ ▦`).
+<!-- - **No bare emojis in UIs or output.** Use monochrome SVG icons or text glyphs (`⬡ ⧗ ↪ ↳ ▦`). -->
 - **Standalone HTML panels.** Panels live as separate `.html` files served at HTTP routes, mounted via iframes from the harness — never injected as `innerHTML` (scripts wouldn't execute correctly).
 - **Single-decorator architecture.** Don't reach for `@APP.get`/`@APP.post` — use `@capability` with `http_method` and `http_path`. The lifespan auto-mounts everything.
 - **Dense, information-rich UI.** Controls in collapsible panels rather than spread across tabs. Monospace font for IDs and code, sans-serif for content.
