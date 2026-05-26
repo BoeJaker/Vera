@@ -116,6 +116,11 @@ textarea{resize:vertical;min-height:60px;font-family:var(--mono);font-size:10px}
 .wv-train-detail .val{color:var(--text)}
 .wv-epoch-bar{height:3px;border-radius:2px;background:var(--bg2);margin-top:4px;overflow:hidden}
 .wv-epoch-fill{height:100%;border-radius:2px;transition:width .25s;background:var(--acc)}
+
+/* Collapsible config */
+.wv-cfg-body.collapsed{display:none}
+.wv-stream-stat{display:flex;justify-content:space-between;font-family:var(--mono);font-size:9px;padding:1px 0}
+.wv-stream-stat .k{color:var(--dim2)}.wv-stream-stat .v{color:var(--text)}
 </style>
 </head>
 <body>
@@ -221,6 +226,65 @@ textarea{resize:vertical;min-height:60px;font-family:var(--mono);font-size:10px}
         </div>
         <button class="btn sm" onclick="wvLabelConcepts()" style="width:100%">LLM-label concepts</button>
         <div class="status-bar" id="wvLabelStatus"></div>
+      </div>
+
+      <!-- Model config -->
+      <div class="wv-card">
+        <div class="wv-card-hd" style="cursor:pointer" onclick="this.parentElement.querySelector('.wv-cfg-body').classList.toggle('collapsed')">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+          Model Config
+          <span style="margin-left:auto;font-size:8px;color:var(--dim)">click to expand</span>
+        </div>
+        <div class="wv-cfg-body collapsed" id="wvCfgBody">
+          <div class="wv-help" style="margin-bottom:6px">Hyperparameters for the next training run. Architecture changes require a fresh train.</div>
+          <div class="wv-row"><label>Latent dim</label><input id="wvCfgLatent" type="number" value="256" min="32" max="1024" step="32" style="width:70px;font-size:10px"></div>
+          <div class="wv-row"><label>Hidden dim</label><input id="wvCfgHidden" type="number" value="512" min="64" max="2048" step="64" style="width:70px;font-size:10px"></div>
+          <div class="wv-row"><label>GNN layers</label><input id="wvCfgGnnLay" type="number" value="2" min="1" max="6" style="width:50px;font-size:10px"></div>
+          <div class="wv-row"><label>Num concepts</label><input id="wvCfgK" type="number" value="512" min="16" max="4096" step="16" style="width:70px;font-size:10px"></div>
+          <div class="wv-row"><label>VQ decay</label><input id="wvCfgVqD" type="number" value="0.99" min="0.9" max="0.999" step="0.005" style="width:70px;font-size:10px"></div>
+          <div class="wv-row"><label>VQ commit</label><input id="wvCfgVqC" type="number" value="0.25" min="0.01" max="1.0" step="0.05" style="width:70px;font-size:10px"></div>
+          <div class="wv-row"><label>Dynamics dim</label><input id="wvCfgDynD" type="number" value="192" min="32" max="512" step="32" style="width:70px;font-size:10px"></div>
+          <div class="wv-row"><label>Dyn heads</label><input id="wvCfgDynH" type="number" value="4" min="1" max="16" style="width:50px;font-size:10px"></div>
+          <div class="wv-row"><label>Dyn layers</label><input id="wvCfgDynL" type="number" value="3" min="1" max="8" style="width:50px;font-size:10px"></div>
+          <div class="wv-row"><label>Dyn context</label><input id="wvCfgDynCtx" type="number" value="32" min="8" max="128" style="width:60px;font-size:10px"></div>
+          <div class="wv-row"><label>Learning rate</label><input id="wvCfgLr" type="number" value="0.0003" min="0.00001" max="0.01" step="0.0001" style="width:80px;font-size:10px"></div>
+          <div class="wv-row"><label>Batch size</label><input id="wvCfgBatch" type="number" value="128" min="8" max="512" step="8" style="width:70px;font-size:10px"></div>
+          <div class="wv-row"><label>Max nodes</label><input id="wvCfgMaxN" type="number" value="20000" min="100" max="100000" step="1000" style="width:80px;font-size:10px"></div>
+          <div class="wv-row"><label>Max walks</label><input id="wvCfgMaxW" type="number" value="20000" min="100" max="100000" step="1000" style="width:80px;font-size:10px"></div>
+          <div class="wv-row"><label>Walk length</label><input id="wvCfgWalkL" type="number" value="16" min="4" max="64" style="width:60px;font-size:10px"></div>
+          <div style="display:flex;gap:4px;margin-top:4px">
+            <button class="btn sm" onclick="wvLoadConfig()">Load</button>
+            <button class="btn sm" onclick="wvSaveConfig()" style="flex:1">Apply</button>
+          </div>
+          <div class="status-bar" id="wvCfgStatus"></div>
+        </div>
+      </div>
+
+      <!-- Streaming -->
+      <div class="wv-card">
+        <div class="wv-card-hd">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          Live Streaming
+        </div>
+        <div class="wv-help" style="margin-bottom:6px">
+          Subscribe to Redis events and incrementally encode new fabric records into the WorldView. Requires a trained model.
+        </div>
+        <div class="wv-row">
+          <label>Dyn interval</label>
+          <input id="wvStreamDynInt" type="number" value="60" min="10" max="600" step="10" style="width:70px;font-size:10px" title="Seconds between dynamics fine-tune passes">
+          <span style="font-size:9px;color:var(--dim)">s</span>
+        </div>
+        <div class="wv-row">
+          <label>Batch size</label>
+          <input id="wvStreamBatch" type="number" value="64" min="1" max="500" style="width:60px;font-size:10px">
+        </div>
+        <div style="display:flex;gap:4px">
+          <button class="btn sm primary" id="wvStreamStartBtn" onclick="wvStreamStart()">Start</button>
+          <button class="btn sm danger" id="wvStreamStopBtn" onclick="wvStreamStop()" disabled>Stop</button>
+          <button class="btn sm" onclick="wvStreamStatus()">Status</button>
+        </div>
+        <div class="status-bar" id="wvStreamStatus"></div>
+        <div id="wvStreamStats" style="margin-top:4px"></div>
       </div>
 
       <!-- Log -->
@@ -1285,6 +1349,106 @@ async function wvAnomalies(){
 }
 
 // ═══════════════════════════════════════════════════════════════
+// MODEL CONFIG
+// ═══════════════════════════════════════════════════════════════
+
+var _wvCfgFieldMap = {
+  latent_dim:'wvCfgLatent', hidden_dim:'wvCfgHidden', num_gnn_layers:'wvCfgGnnLay',
+  num_concepts:'wvCfgK', vq_decay:'wvCfgVqD', vq_commitment:'wvCfgVqC',
+  dyn_dim:'wvCfgDynD', dyn_heads:'wvCfgDynH', dyn_layers:'wvCfgDynL',
+  dyn_ctx:'wvCfgDynCtx', lr:'wvCfgLr', batch_size:'wvCfgBatch',
+  max_nodes:'wvCfgMaxN', max_walks:'wvCfgMaxW', walk_len:'wvCfgWalkL',
+};
+
+async function wvLoadConfig(){
+  var res = await api('/worldview/config');
+  if (res && !res.error) {
+    for (var k in _wvCfgFieldMap) {
+      var el = document.getElementById(_wvCfgFieldMap[k]);
+      if (el && res[k] !== undefined) el.value = res[k];
+    }
+    setEl('wvCfgStatus', 'Loaded', 'ok');
+  } else {
+    setEl('wvCfgStatus', 'Error: ' + ((res && res.error) || 'unknown'), 'err');
+  }
+}
+
+async function wvSaveConfig(){
+  var body = {};
+  for (var k in _wvCfgFieldMap) {
+    var el = document.getElementById(_wvCfgFieldMap[k]);
+    if (el) body[k] = parseFloat(el.value);
+  }
+  var res = await api('/worldview/config', 'POST', body);
+  if (res && res.updated) {
+    setEl('wvCfgStatus', 'Applied ' + res.updated.length + ' changes', 'ok');
+    wvLog('Config updated: ' + res.updated.map(function(u){ return u.key + '=' + u.new; }).join(', '), 'info');
+  } else {
+    setEl('wvCfgStatus', 'Error: ' + ((res && res.error) || 'unknown'), 'err');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// STREAMING
+// ═══════════════════════════════════════════════════════════════
+
+async function wvStreamStart(){
+  setEl('wvStreamStatus', 'Starting...', 'warn');
+  var res = await api('/worldview/stream/start', 'POST', {
+    dynamics_interval: parseInt(document.getElementById('wvStreamDynInt').value) || 60,
+    batch_size: parseInt(document.getElementById('wvStreamBatch').value) || 64,
+  });
+  if (res && (res.running || res.error === undefined)) {
+    setEl('wvStreamStatus', 'Running', 'ok');
+    wvLog('Streaming worker started', 'ok');
+    document.getElementById('wvStreamStartBtn').disabled = true;
+    document.getElementById('wvStreamStopBtn').disabled = false;
+    wvRenderStreamStats(res.stats || res);
+  } else {
+    setEl('wvStreamStatus', 'Error: ' + ((res && res.error) || 'unknown'), 'err');
+    wvLog('Stream start failed: ' + ((res && res.error) || 'unknown'), 'err');
+  }
+}
+
+async function wvStreamStop(){
+  setEl('wvStreamStatus', 'Stopping...', 'warn');
+  var res = await api('/worldview/stream/stop', 'POST');
+  setEl('wvStreamStatus', 'Stopped', 'ok');
+  wvLog('Streaming worker stopped', 'info');
+  document.getElementById('wvStreamStartBtn').disabled = false;
+  document.getElementById('wvStreamStopBtn').disabled = true;
+  if (res && res.stats) wvRenderStreamStats(res.stats);
+}
+
+async function wvStreamStatus(){
+  var res = await api('/worldview/stream/status');
+  if (res) {
+    var running = res.enabled && res.task_alive;
+    setEl('wvStreamStatus', running ? 'Running' : 'Stopped', running ? 'ok' : '');
+    document.getElementById('wvStreamStartBtn').disabled = !!running;
+    document.getElementById('wvStreamStopBtn').disabled = !running;
+    wvRenderStreamStats(res);
+  }
+}
+
+function wvRenderStreamStats(s){
+  if (!s) return;
+  var el = document.getElementById('wvStreamStats');
+  if (!el) return;
+  var rows = [
+    ['Events seen', s.events_seen || 0],
+    ['Records encoded', s.records_encoded || 0],
+    ['Dynamics updates', s.dynamics_updates || 0],
+    ['Errors', s.errors || 0],
+  ];
+  if (s.last_event_at) rows.push(['Last event', s.last_event_at.slice(11, 19)]);
+  if (s.last_error) rows.push(['Last error', s.last_error.slice(0, 60)]);
+  el.innerHTML = rows.map(function(r){
+    return '<div class="wv-stream-stat"><span class="k">' + r[0] + '</span><span class="v">' + r[1] + '</span></div>';
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════
 // TRAINING PROGRESS  (live updates from SSE events)
 // ═══════════════════════════════════════════════════════════════
 
@@ -1309,13 +1473,15 @@ function wvUpdateTrainBar(pct){
 
 wvLoadStats();
 wvLoadDatasets();
+wvLoadConfig();
+wvStreamStatus();
 
 // Listen for progress events from parent harness
 window.addEventListener('message', function(ev){
   try {
     if (!ev.data || ev.data.type !== 'vera_fabric_event') return;
     var e = ev.data.event;
-    if (!e || e.type !== 'worldview.progress') return;
+    if (!e || (e.type !== 'worldview.progress')) return;
     var stage = e.stage || '';
     var msg = stage;
     if (e.message) msg += ': ' + e.message;
@@ -1329,9 +1495,16 @@ window.addEventListener('message', function(ev){
     if (e.embedded !== undefined) msg += ' embedded=' + e.embedded;
     if (e.upserted !== undefined) msg += ' upserted=' + e.upserted;
     if (e.missing !== undefined) msg += ' missing=' + e.missing;
+    if (e.elapsed_s !== undefined) msg += ' [' + e.elapsed_s + 's]';
+
+    // Streaming-specific events
+    if (stage === 'stream_encoded') msg += ' total=' + (e.total_encoded||0);
+    if (stage === 'stream_dynamics') msg += ' updates=' + (e.updates||0);
+
     var cls = (stage === 'done' || stage === 'reembed_done' || stage === 'embed_missing_done') ? 'ok'
             : stage === 'error' ? 'err'
             : (stage === 'dim_mismatch' || stage === 'embed_missing') ? 'warn'
+            : stage.indexOf('stream_') === 0 ? 'info'
             : 'info';
     wvLog(msg, cls);
 
@@ -1401,6 +1574,35 @@ window.addEventListener('message', function(ev){
       } else if (stage === 'embed_missing_done') {
         wvUpdateTrainStage('Embed done', (e.upserted||0) + ' records upserted');
       }
+    }
+
+    // ── Streaming worker live updates ──
+    if (stage === 'stream_encoded') {
+      wvRenderStreamStats({
+        records_encoded: e.total_encoded || 0,
+        events_seen: 0,
+        dynamics_updates: 0,
+        errors: 0,
+        last_event_at: e.ts || '',
+      });
+      // Auto-refresh stats after a batch of encodes
+      if ((e.total_encoded || 0) % 50 === 0) wvLoadStats();
+    } else if (stage === 'stream_dynamics') {
+      setEl('wvStreamStatus', 'Running · dyn loss=' + Number(e.loss||0).toFixed(4), 'ok');
+      // Refresh the scatter if the map tab is active
+      var mapTab = document.querySelector('[data-tab="map"]');
+      if (mapTab && mapTab.classList.contains('active')) {
+        setTimeout(function(){ wvLoadScatter(); }, 1000);
+      }
+    } else if (stage === 'stream_attached') {
+      setEl('wvStreamStatus', 'Connected', 'ok');
+    } else if (stage === 'stream_stopped') {
+      setEl('wvStreamStatus', 'Stopped', '');
+      document.getElementById('wvStreamStartBtn').disabled = false;
+      document.getElementById('wvStreamStopBtn').disabled = true;
+    } else if (stage === 'config_updated') {
+      wvLog('Config updated remotely', 'info');
+      wvLoadConfig();
     }
 
     if (stage === 'done') {

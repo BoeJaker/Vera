@@ -2151,10 +2151,12 @@ async def cap_worldview_train(
     gnn_epochs:       int = 20,
     codebook_epochs:  int = 8,
     dynamics_epochs:  int = 15,
-    limit:            int = MAX_NODES,
+    limit:            int = 0,
     embed_missing:    bool = False,
     trace_id=None,
 ) -> Dict:
+    if limit <= 0:
+        limit = _WV_CONFIG.get("max_nodes", MAX_NODES)
     if not MODEL.ready:
         return {"error": "PyTorch not available", "hint": "pip install torch"}
 
@@ -2279,7 +2281,8 @@ async def cap_worldview_train(
         gc.collect()
         try:
             walks = generate_walks(graph, MODEL,
-                                    n_walks=min(MAX_WALKS, N * 4), walk_len=WALK_LEN)
+                                    n_walks=min(_WV_CONFIG.get("max_walks", MAX_WALKS), N * 4),
+                                    walk_len=_WV_CONFIG.get("walk_len", WALK_LEN))
         except Exception as e:
             log.error("Walk generation FAILED: %s", e, exc_info=True)
             await _emit("dynamics_error", error=str(e)[:200],
@@ -2290,12 +2293,13 @@ async def cap_worldview_train(
                          elapsed_s=round(time.time() - t0, 1),
                          message=f"{len(walks)} walks generated — training dynamics...")
             t_stage = time.time()
+            dyn_batch = _WV_CONFIG.get("batch_size", BATCH_SIZE)
             for epoch in range(dynamics_epochs):
                 try:
                     random.shuffle(walks)
                     losses = []
-                    for i in range(0, len(walks), BATCH_SIZE):
-                        batch = walks[i:i + BATCH_SIZE]
+                    for i in range(0, len(walks), dyn_batch):
+                        batch = walks[i:i + dyn_batch]
                         if len(batch) < 2:
                             continue
                         l = MODEL.train_dynamics_step(batch)
@@ -3093,6 +3097,504 @@ async def cap_worldview_stats(trace_id=None) -> Dict:
 # UI PANEL  —  iframe-mounted via the standard register_ui() pattern
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# MODEL CONFIG  —  runtime-adjustable hyperparameters for next training run
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Runtime overrides — start from module-level defaults
+_WV_CONFIG: Dict[str, Any] = {
+    "latent_dim":      LATENT_DIM,
+    "hidden_dim":      HIDDEN_DIM,
+    "num_gnn_layers":  NUM_GNN_LAYERS,
+    "num_concepts":    NUM_CONCEPTS,
+    "vq_decay":        VQ_DECAY,
+    "vq_commitment":   VQ_COMMITMENT,
+    "dyn_dim":         DYN_DIM,
+    "dyn_heads":       DYN_HEADS,
+    "dyn_layers":      DYN_LAYERS,
+    "dyn_ctx":         DYN_CTX,
+    "lr":              LR,
+    "batch_size":      BATCH_SIZE,
+    "max_nodes":       MAX_NODES,
+    "max_walks":       MAX_WALKS,
+    "walk_len":        WALK_LEN,
+    "contrastive_margin": 0.2,
+    "uniformity_weight":  0.1,
+}
+
+
+@capability(
+    "worldview.config",
+    http_method="GET", http_path="/worldview/config",
+    http_tags=["worldview"], memory="off",
+    description="Return current WorldView hyperparameters (runtime-adjustable). "
+                "Output: dict of all tunable parameters with current values.",
+)
+async def cap_worldview_config(trace_id=None) -> Dict:
+    return {**_WV_CONFIG, "embed_dim": MODEL.embed_dim if MODEL.ready else EMBED_DIM}
+
+
+@capability(
+    "worldview.config_set",
+    http_method="POST", http_path="/worldview/config",
+    http_tags=["worldview"], memory="off",
+    description="Update WorldView hyperparameters for the next training run. "
+                "Input: any subset of config keys. Changes that affect model "
+                "architecture (latent_dim, num_concepts, etc.) require a fresh "
+                "training run; optimizer params (lr, batch_size) take effect "
+                "immediately on the next epoch. "
+                "Output: {updated, config}.",
+)
+async def cap_worldview_config_set(
+    latent_dim:         int   = None,
+    hidden_dim:         int   = None,
+    num_gnn_layers:     int   = None,
+    num_concepts:       int   = None,
+    vq_decay:           float = None,
+    vq_commitment:      float = None,
+    dyn_dim:            int   = None,
+    dyn_heads:          int   = None,
+    dyn_layers:         int   = None,
+    dyn_ctx:            int   = None,
+    lr:                 float = None,
+    batch_size:         int   = None,
+    max_nodes:          int   = None,
+    max_walks:          int   = None,
+    walk_len:           int   = None,
+    contrastive_margin: float = None,
+    uniformity_weight:  float = None,
+    trace_id=None,
+) -> Dict:
+    updated = []
+    params = {
+        "latent_dim": latent_dim, "hidden_dim": hidden_dim,
+        "num_gnn_layers": num_gnn_layers, "num_concepts": num_concepts,
+        "vq_decay": vq_decay, "vq_commitment": vq_commitment,
+        "dyn_dim": dyn_dim, "dyn_heads": dyn_heads,
+        "dyn_layers": dyn_layers, "dyn_ctx": dyn_ctx,
+        "lr": lr, "batch_size": batch_size,
+        "max_nodes": max_nodes, "max_walks": max_walks, "walk_len": walk_len,
+        "contrastive_margin": contrastive_margin,
+        "uniformity_weight": uniformity_weight,
+    }
+    for key, val in params.items():
+        if val is not None and key in _WV_CONFIG:
+            old = _WV_CONFIG[key]
+            _WV_CONFIG[key] = type(old)(val)
+            updated.append({"key": key, "old": old, "new": _WV_CONFIG[key]})
+
+    # Apply immediately where possible (lr changes the optimizer directly)
+    if lr is not None and MODEL.ready:
+        for pg in MODEL.opt_gnn.param_groups:
+            pg["lr"] = _WV_CONFIG["lr"]
+        for pg in MODEL.opt_dyn.param_groups:
+            pg["lr"] = _WV_CONFIG["lr"]
+
+    await _emit("config_updated", updated=updated,
+                message=f"Updated {len(updated)} config params")
+    return {"updated": updated, "config": {**_WV_CONFIG}}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STREAMING WORKER  —  incremental WorldView updates from Redis events
+# ─────────────────────────────────────────────────────────────────────────────
+# Subscribes to vera:events, watches for fabric.ingested / fabric.pipeline.stage
+# events. When new records land in Chroma, the worker:
+#   1. Fetches the new records' embeddings
+#   2. Encodes them through the GNN (isolated, no graph context)
+#   3. Assigns them to concepts via the codebook
+#   4. Adds them to the FAISS index
+#   5. Periodically fine-tunes the dynamics model on walks that include
+#      the newly-assigned concepts
+#
+# This gives the WorldView a live, continuously-updating picture of the
+# fabric without requiring full retraining.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_STREAM_ENABLED = False
+_STREAM_TASK: Optional[asyncio.Task] = None
+_STREAM_STATS: Dict[str, Any] = {
+    "started_at":        "",
+    "events_seen":       0,
+    "records_encoded":   0,
+    "records_indexed":   0,
+    "dynamics_updates":  0,
+    "errors":            0,
+    "last_event_at":     "",
+    "last_error":        "",
+    "pending_concepts":  [],      # concepts touched since last dynamics update
+    "dynamics_interval": 60,      # seconds between dynamics fine-tune passes
+    "event_filters":     ["fabric.ingested"],
+    "batch_size":        64,      # max records to process per ingestion event
+}
+
+
+async def _stream_encode_new_records(dataset_id: str, limit: int = 64) -> int:
+    """Fetch recently-ingested records from Chroma and add them to the index.
+
+    Returns the number of records successfully encoded and indexed.
+    """
+    if not MODEL.ready or not WV_INDEX.available:
+        return 0
+    if MODEL.train_steps.get("gnn", 0) == 0:
+        return 0  # GNN not trained yet — can't encode
+
+    fab = _get_fabric()
+    if not fab:
+        return 0
+    chroma = getattr(fab, "FABRIC_CHROMA", None)
+    if not chroma or not getattr(chroma, "available", False):
+        return 0
+
+    # Fetch records from Chroma for this dataset
+    loop = asyncio.get_running_loop()
+    def _fetch():
+        col = chroma._col
+        if col is None:
+            return [], None, {}
+        kwargs = {
+            "include": ["embeddings", "documents", "metadatas"],
+            "limit":   min(limit, 500),
+        }
+        if dataset_id:
+            kwargs["where"] = {"dataset_id": {"$eq": dataset_id}}
+        res = col.get(**kwargs)
+        ids   = res.get("ids") or []
+        embs  = res.get("embeddings") or []
+        docs  = res.get("documents") or []
+        metas = res.get("metadatas") or []
+        return ids, embs, docs, metas
+
+    try:
+        ids, embs, docs, metas = await loop.run_in_executor(None, _fetch)
+    except Exception as e:
+        log.debug("stream encode fetch: %s", e)
+        return 0
+
+    if not ids:
+        return 0
+
+    # Filter to records NOT already in the index
+    existing = set(WV_INDEX._ids) if WV_INDEX._ids else set()
+    existing.update(MODEL.record_concepts.keys())
+    new_indices = []
+    for i, rid in enumerate(ids):
+        if rid not in existing and i < len(embs) and embs[i] is not None:
+            try:
+                if len(embs[i]) >= 10:
+                    new_indices.append(i)
+            except Exception:
+                pass
+
+    if not new_indices:
+        return 0
+
+    # Encode each new record through the GNN (isolated — no graph context)
+    encoded = 0
+    new_concepts = []
+    for idx in new_indices:
+        rid = ids[idx]
+        try:
+            emb = embs[idx]
+            if len(emb) != MODEL.embed_dim:
+                continue
+            latent = MODEL.encode_isolated(emb)
+            if latent is None:
+                continue
+            concept = MODEL.assign_concept(latent)
+            MODEL.record_concepts[rid] = concept
+            meta = (metas[idx] if idx < len(metas) else {}) or {}
+            text = (docs[idx] if idx < len(docs) else "") or ""
+            m = {
+                "dataset_id":    meta.get("dataset_id", dataset_id),
+                "text":          text[:200],
+                "created_at":    meta.get("created_at", ""),
+                "concept":       concept,
+                "concept_label": MODEL.concept_labels.get(concept, ""),
+            }
+            MODEL.record_meta[rid] = m
+            WV_INDEX.add_batch([rid], [latent], [m])
+            new_concepts.append(concept)
+            encoded += 1
+        except Exception as e:
+            log.debug("stream encode record %s: %s", rid, e)
+            continue
+
+    if new_concepts:
+        # Track which concepts were touched for dynamics fine-tuning
+        _STREAM_STATS["pending_concepts"].extend(new_concepts)
+
+    return encoded
+
+
+async def _stream_dynamics_update() -> float:
+    """Fine-tune the dynamics transformer on walks involving recently-touched concepts.
+
+    Returns the average loss, or 0 if nothing to train on.
+    """
+    if not MODEL.ready or MODEL.train_steps.get("codebook", 0) == 0:
+        return 0.0
+
+    pending = _STREAM_STATS["pending_concepts"]
+    if not pending:
+        return 0.0
+
+    # Build walks from the known record_concepts
+    # We generate short walks biased towards recently-touched concepts
+    touched_set = set(pending)
+    all_concepts = list(MODEL.record_concepts.values())
+    if len(all_concepts) < 4:
+        return 0.0
+
+    walks = []
+    for _ in range(min(500, len(pending) * 10)):
+        # Start from a touched concept, walk via transition counts
+        start = random.choice(pending)
+        seq = [start]
+        cur = start
+        for _ in range(_WV_CONFIG["walk_len"] - 1):
+            # Find transitions from cur
+            candidates = [(b, n) for (a, b), n in MODEL.transition_counts.items()
+                          if a == cur and n > 0]
+            if not candidates:
+                # Fall back to random concept
+                cur = random.choice(all_concepts)
+            else:
+                # Weighted sample
+                total_w = sum(n for _, n in candidates)
+                r = random.random() * total_w
+                cumulative = 0
+                for b, n in candidates:
+                    cumulative += n
+                    if r <= cumulative:
+                        cur = b
+                        break
+            seq.append(cur)
+        if len(seq) >= 2:
+            walks.append([TOKEN_BOS] + [c + NUM_SPECIAL_TOKENS for c in seq])
+
+    if not walks:
+        return 0.0
+
+    # Train a few mini-batches
+    bs = _WV_CONFIG["batch_size"]
+    random.shuffle(walks)
+    losses = []
+    for i in range(0, min(len(walks), bs * 3), bs):
+        batch = walks[i:i + bs]
+        if len(batch) < 2:
+            continue
+        l = MODEL.train_dynamics_step(batch)
+        losses.append(l)
+
+    # Update transition counts with new walks
+    for w in walks:
+        body = [t - NUM_SPECIAL_TOKENS for t in w if t >= NUM_SPECIAL_TOKENS]
+        for i in range(len(body) - 1):
+            k = (body[i], body[i + 1])
+            MODEL.transition_counts[k] = MODEL.transition_counts.get(k, 0) + 1
+
+    # Clear pending
+    _STREAM_STATS["pending_concepts"] = []
+    avg = sum(losses) / len(losses) if losses else 0.0
+    _STREAM_STATS["dynamics_updates"] += 1
+    return avg
+
+
+async def _wv_stream_worker():
+    """Background worker: subscribe to vera:events, incrementally update WorldView."""
+    backoff = 2.0
+    last_dynamics_update = time.time()
+
+    while _STREAM_ENABLED:
+        redis = _orch.REDIS
+        if redis is None:
+            await asyncio.sleep(5)
+            continue
+        try:
+            stream = "vera:events"
+            group = "worldview_stream"
+            consumer = f"worldview-{os.getpid()}"
+            try:
+                await redis.xgroup_create(stream, group, id="$", mkstream=True)
+            except Exception:
+                pass  # BUSYGROUP — already exists
+            backoff = 2.0
+            log.info("worldview stream worker attached to %s", stream)
+            await _emit("stream_attached", message="Streaming worker connected to Redis")
+
+            while _STREAM_ENABLED:
+                try:
+                    msgs = await redis.xreadgroup(
+                        group, consumer, {stream: ">"}, count=20, block=5000)
+                except Exception as e:
+                    log.warning("worldview stream read: %s", e)
+                    break
+                if not msgs:
+                    # Check if dynamics update is due
+                    now = time.time()
+                    interval = _STREAM_STATS.get("dynamics_interval", 60)
+                    if (now - last_dynamics_update) >= interval and _STREAM_STATS["pending_concepts"]:
+                        try:
+                            avg_loss = await _stream_dynamics_update()
+                            last_dynamics_update = now
+                            if avg_loss > 0:
+                                await _emit("stream_dynamics",
+                                            loss=round(avg_loss, 6),
+                                            updates=_STREAM_STATS["dynamics_updates"],
+                                            message=f"Dynamics fine-tune loss={avg_loss:.4f}")
+                                MODEL.save()
+                        except Exception as e:
+                            log.debug("stream dynamics update: %s", e)
+                    continue
+
+                for _, entries in msgs:
+                    for msg_id, fields in entries:
+                        try:
+                            raw = fields.get(b"data") or fields.get("data") or b"{}"
+                            ev = json.loads(raw)
+                            etype = ev.get("type", "")
+                            _STREAM_STATS["events_seen"] += 1
+                            _STREAM_STATS["last_event_at"] = ev.get("ts", "")
+
+                            filters = _STREAM_STATS.get("event_filters",
+                                                         ["fabric.ingested"])
+                            if any(etype == f or etype.startswith(f + ".")
+                                   for f in filters):
+                                dataset_id = ev.get("dataset_id", "")
+                                ingested = ev.get("ingested", 0)
+                                if ingested > 0 and dataset_id:
+                                    batch_limit = _STREAM_STATS.get("batch_size", 64)
+                                    n = await _stream_encode_new_records(
+                                        dataset_id, limit=batch_limit)
+                                    _STREAM_STATS["records_encoded"] += n
+                                    _STREAM_STATS["records_indexed"] += n
+                                    if n > 0:
+                                        await _emit(
+                                            "stream_encoded",
+                                            dataset_id=dataset_id,
+                                            encoded=n,
+                                            total_encoded=_STREAM_STATS["records_encoded"],
+                                            message=f"Encoded {n} new records from {dataset_id}")
+
+                            await redis.xack(stream, group, msg_id)
+                        except Exception as e:
+                            _STREAM_STATS["errors"] += 1
+                            _STREAM_STATS["last_error"] = str(e)[:200]
+                            log.debug("worldview stream event: %s", e)
+
+                # Periodic dynamics update
+                now = time.time()
+                interval = _STREAM_STATS.get("dynamics_interval", 60)
+                if (now - last_dynamics_update) >= interval and _STREAM_STATS["pending_concepts"]:
+                    try:
+                        avg_loss = await _stream_dynamics_update()
+                        last_dynamics_update = now
+                        if avg_loss > 0:
+                            await _emit("stream_dynamics",
+                                        loss=round(avg_loss, 6),
+                                        updates=_STREAM_STATS["dynamics_updates"],
+                                        message=f"Dynamics fine-tune loss={avg_loss:.4f}")
+                            MODEL.save()
+                    except Exception as e:
+                        log.debug("stream dynamics update: %s", e)
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            log.warning("worldview stream worker: %s", e)
+            _STREAM_STATS["errors"] += 1
+            _STREAM_STATS["last_error"] = str(e)[:200]
+            backoff = min(backoff * 2, 60.0)
+            await asyncio.sleep(backoff)
+
+    log.info("worldview stream worker stopped")
+    await _emit("stream_stopped", message="Streaming worker stopped")
+
+
+@capability(
+    "worldview.stream.start",
+    http_method="POST", http_path="/worldview/stream/start",
+    http_tags=["worldview", "stream"], memory="off",
+    description="Start the WorldView streaming worker. Subscribes to Redis "
+                "events and incrementally encodes new fabric records, assigns "
+                "them to concepts, and fine-tunes the dynamics model. "
+                "Input: event_filters (list[str], default ['fabric.ingested']), "
+                "dynamics_interval (int, seconds between dynamics updates, default 60), "
+                "batch_size (int, max records per event, default 64). "
+                "Output: {running, stats}.",
+)
+async def cap_worldview_stream_start(
+    event_filters:     List[str] = None,
+    dynamics_interval: int = 60,
+    batch_size:        int = 64,
+    trace_id=None,
+) -> Dict:
+    global _STREAM_ENABLED, _STREAM_TASK
+    if not MODEL.ready:
+        return {"error": "WorldView not ready — train first"}
+    if MODEL.train_steps.get("gnn", 0) == 0:
+        return {"error": "GNN has not been trained — run worldview.train first, "
+                         "then start streaming for incremental updates"}
+
+    if event_filters:
+        _STREAM_STATS["event_filters"] = event_filters
+    _STREAM_STATS["dynamics_interval"] = max(10, dynamics_interval)
+    _STREAM_STATS["batch_size"] = max(1, min(500, batch_size))
+
+    if _STREAM_ENABLED and _STREAM_TASK and not _STREAM_TASK.done():
+        return {"running": True, "note": "already running", "stats": _STREAM_STATS}
+
+    _STREAM_ENABLED = True
+    _STREAM_STATS["started_at"] = now_iso()
+    _STREAM_STATS["events_seen"] = 0
+    _STREAM_STATS["records_encoded"] = 0
+    _STREAM_STATS["records_indexed"] = 0
+    _STREAM_STATS["dynamics_updates"] = 0
+    _STREAM_STATS["errors"] = 0
+    _STREAM_STATS["last_error"] = ""
+    _STREAM_STATS["pending_concepts"] = []
+    _STREAM_TASK = asyncio.create_task(_wv_stream_worker())
+    return {"running": True, "stats": _STREAM_STATS}
+
+
+@capability(
+    "worldview.stream.stop",
+    http_method="POST", http_path="/worldview/stream/stop",
+    http_tags=["worldview", "stream"], memory="off",
+    description="Stop the WorldView streaming worker.",
+)
+async def cap_worldview_stream_stop(trace_id=None) -> Dict:
+    global _STREAM_ENABLED, _STREAM_TASK
+    was_running = _STREAM_ENABLED
+    _STREAM_ENABLED = False
+    if _STREAM_TASK and not _STREAM_TASK.done():
+        _STREAM_TASK.cancel()
+    _STREAM_TASK = None
+    # Save model state on stop
+    if MODEL.ready:
+        MODEL.save()
+    return {"stopped": True, "was_running": was_running, "stats": _STREAM_STATS}
+
+
+@capability(
+    "worldview.stream.status",
+    http_method="GET", http_path="/worldview/stream/status",
+    http_tags=["worldview", "stream"], memory="off",
+    description="Status of the WorldView streaming worker.",
+)
+async def cap_worldview_stream_status(trace_id=None) -> Dict:
+    return {
+        "enabled":    _STREAM_ENABLED,
+        "task_alive": _STREAM_TASK is not None and not _STREAM_TASK.done(),
+        **_STREAM_STATS,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UI PANEL  —  iframe-mounted via the standard register_ui() pattern
+# ─────────────────────────────────────────────────────────────────────────────
+
 _WV_MOUNT_JS = r"""
 (function mountWorldViewPanel() {
   var mount = document.getElementById('panel-wv');
@@ -3130,6 +3632,9 @@ try:
             "worldview.concept_neighbors", "worldview.concept_members",
             "worldview.explain_record", "worldview.label_concepts",
             "worldview.stats",
+            "worldview.config", "worldview.config_set",
+            "worldview.stream.start", "worldview.stream.stop",
+            "worldview.stream.status",
         ],
         mode="tab",
         tab_order=55,

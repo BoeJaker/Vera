@@ -53,17 +53,16 @@ Core Mechanisms: Self-Modification Engine, Multi Agent Congnition, Proactive Ref
 
 >[!WARNING]
 >**Vera has high system requirements**  
->The system requirement largely depend on the models you intend to use, the below requirements are based on models the size of qwen3.5 ~11Gb
-
->[!WARNING]
->**The minimum viable setup:** one orchestrator, one ollama worker, (optional 12Gb+ GPU). they can be run one one machine via docker or on independant hosts.
+>The system requirement largely depend on the models you intend to use, the below are based on models the size of qwen3.5 ~11Gb
+>
+>**The minimum viable setup:** one orchestrator, one ollama worker, (optional 12Gb+ GPU). they can be run one one machine via docker or on independent hosts.
 >
 >To run a single orchestrator a minimum of 16Gb idle system RAM, 6 cores (12 hyperthreaded) running at 3Ghz+. 
 >
 >To run a single ollama worker: 16GB of RAM, 6 cores (12 hyperthreaded) running at 3Ghz+.
 >
 >**The reccomended setup:** three Ollama workers, one orchestrator, at least one worker in the pool should have a 16Gb+ GPU. 
-(192gb total RAM) (18 total cores).
+(64gb total RAM) (18 total cores).
 >
 >Please check the **[System Requirements](#system-requirements)** section for more info.
 
@@ -74,6 +73,8 @@ Core Mechanisms: Self-Modification Engine, Multi Agent Congnition, Proactive Ref
 ---
 
 Vera is built on FastAPI, with a single abstraction at its core — the `@capability` decorator — that serves as the sole registration primitive for every function in the system. From that primitive it builds a multi-backend AI platform: a heterogeneous LLM cluster, a DAG execution engine, a polyglot data fabric, a memory graph, and a harness UI that any module can extend.
+
+![Alt text](./images/dashboard.jpg)
 
 ---
 

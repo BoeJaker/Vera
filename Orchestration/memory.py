@@ -1948,6 +1948,28 @@ async def memory_auto_summarise(id: str, trace_id=None):
     return {"id": id, "summary": summary}
 
 
+@APP.get("/galaxy/panel", include_in_schema=False)
+async def _nlp_panel():
+    from fastapi.responses import HTMLResponse
+    p = _HERE / "memory_map.html"
+    return HTMLResponse(p.read_text(encoding="utf-8") if p.exists()
+                        else "<p style='color:red'>memory_map.html not found</p>")
+
+
+register_ui(
+    "memory-galaxy-panel",
+    "Galaxy",
+    "",
+    f"""<div style="height:100%;display:flex;flex-direction:column;">
+  <iframe src="/galaxy/panel" style="{_IFRAME_STYLE}"
+          allow="clipboard-read; clipboard-write"></iframe>
+</div>""",
+    "",
+    # ui_caps=["nlp.modules", "nlp.run", "nlp.health", "nlp.llm"],
+    mode="tab",
+    tab_order=58,
+)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # STARTUP
 # ─────────────────────────────────────────────────────────────────────────────
