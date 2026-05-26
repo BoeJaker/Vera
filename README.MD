@@ -75,7 +75,7 @@ Core Mechanisms: Self-Modification Engine, Multi Agent Congnition, Proactive Ref
 
 Vera is built on FastAPI, with a single abstraction at its core — the `@capability` decorator — that serves as the sole registration primitive for every function in the system. From that primitive it builds a multi-backend AI platform: a heterogeneous LLM cluster, a DAG execution engine, a polyglot data fabric, a memory graph, and a harness UI that any module can extend.
 
-![Alt text](./images/dashboard.jpg)
+![Alt text](https://github.com/BoeJaker/Vera/blob/main/images/dashboard.jpg)
 
 ---
 
@@ -86,7 +86,7 @@ A capability is the unit of work in Vera. The same decorated function is simulta
 - **A unit of distributed compute** — dispatchable across a worker cluster via Redis Streams
 - **A tool for Veras usage** — discoverable and invokable by agentic loops and DAG planners
 - **An MCP endpoint** — callable via JSON-RPC over WebSocket or REST
-- **An HTTP API endpoint** — standard FastAPI route with auto-generated OpenAPI docs
+- **An HTTP API endpoint** — standard FastAPI route with auto-generated OpenAPI documentation
 - **A Python API** — directly callable in-process via the registry
 - **A Redis publisher and consumer** — every call emits structured events; capabilities can subscribe to streams
 - **A UI element** — schema is reflected into the harness so the function is interactively invocable
@@ -259,7 +259,7 @@ async def cap_add(a: float, b: float, trace_id=None):
 
 That one decoration gives you:
 
-- `POST /math/add` — a REST endpoint with OpenAPI docs
+- `POST /math/add` — a REST endpoint with OpenAPI documentation
 - `math.add` listed in `GET /mcp/tools`
 - Invokable via `POST /mcp/call` `{"name":"math.add","arguments":{"a":1,"b":2}}`
 - Invokable over the `/ws/mcp` WebSocket
@@ -267,7 +267,7 @@ That one decoration gives you:
 - Every call emits `cap.call` and `cap.ok` events to the Redis event stream
 - The schema is auto-derived from the function signature
 
-The decorator accepts many other options for distributed dispatch, retries, memory recording behaviour, schema overrides, and silent (event-suppressing) mode. Read the [Capability Framework docs](./docs/01-capability-framework.md) for the full surface.
+The decorator accepts many other options for distributed dispatch, retries, memory recording behaviour, schema overrides, and silent (event-suppressing) mode. Read the [Capability Framework documentation](https://github.com/BoeJaker/Vera/blob/main/documentation/01-capability-framework.md) for the full surface.
 
 ---
 
@@ -275,16 +275,16 @@ The decorator accepts many other options for distributed dispatch, retries, memo
 
 | Document | What it covers |
 |---|---|
-| [Capability Framework](./docs/01-capability-framework.md) | The `@capability` decorator, registry, MCP, REST, retries, distributed dispatch, schema generation |
-| [Harness UI](./docs/02-harness-ui.md) | The single-page harness, panel registration, iframe mounting, themes |
-| [DAG Engine](./docs/03-dag-engine.md) | DAG syntax, run modes, planner, supervised/stepwise execution, HITL streaming |
-| [LLM Cluster](./docs/04-ollama-cluster.md) | Heterogeneous LLM cluster (Ollama / VLLM / APIs), load-aware routing, failover, VRAM tracking |
-| [Memory Graph](./docs/05-memory-graph.md) | MemoryRecord, FOLLOWS_ACTIVITY chains, session graphs, second-order edges |
-| [Data Fabric](./docs/06-data-fabric.md) | Polyglot fabric, ingestion pipeline, query DSL, entity graph, sources |
-| [Research System](./docs/07-research.md) | researcher_api, 11 pipeline caps, notebook, NLP addon, recall |
-| [IDE Module](./docs/08-ide.md) | Workspace, agent presets, tool dispatch, sandbox, capability generation |
-| [Galaxy Graph](./docs/09-galaxy-graph.md) | `vera-graph.js` web component, layouts, action registry, live updates |
-| [Configuration](./docs/10-configuration.md) | Environment variables, `cfg`, networking, backend URLs |
+| [Capability Framework](https://github.com/BoeJaker/Vera/blob/main/documentation/01-capability-framework.md) | The `@capability` decorator, registry, MCP, REST, retries, distributed dispatch, schema generation |
+| [Harness UI](https://github.com/BoeJaker/Vera/blob/main/documentation/02-harness-ui.md) | The single-page harness, panel registration, iframe mounting, themes |
+| [DAG Engine](https://github.com/BoeJaker/Vera/blob/main/documentation/03-dag-engine.md) | DAG syntax, run modes, planner, supervised/stepwise execution, HITL streaming |
+| [LLM Cluster](https://github.com/BoeJaker/Vera/blob/main/documentation/04-ollama-cluster.md) | Heterogeneous LLM cluster (Ollama / VLLM / APIs), load-aware routing, failover, VRAM tracking |
+| [Memory Graph](https://github.com/BoeJaker/Vera/blob/main/documentation/05-memory-graph.md) | MemoryRecord, FOLLOWS_ACTIVITY chains, session graphs, second-order edges |
+| [Data Fabric](https://github.com/BoeJaker/Vera/blob/main/documentation/06-data-fabric.md) | Polyglot fabric, ingestion pipeline, query DSL, entity graph, sources |
+| [Research System](https://github.com/BoeJaker/Vera/blob/main/documentation/07-research.md) | researcher_api, 11 pipeline caps, notebook, NLP addon, recall |
+| [IDE Module](https://github.com/BoeJaker/Vera/blob/main/documentation/08-ide.md) | Workspace, agent presets, tool dispatch, sandbox, capability generation |
+| [Galaxy Graph](https://github.com/BoeJaker/Vera/blob/main/documentation/09-galaxy-graph.md) | `vera-graph.js` web component, layouts, action registry, live updates |
+| [Configuration](https://github.com/BoeJaker/Vera/blob/main/documentation/10-configuration.md) | Environment variables, `cfg`, networking, backend URLs |
 
 ---
 
