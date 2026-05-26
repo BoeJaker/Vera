@@ -27,8 +27,8 @@
 
 <span align="center">
 
-# **Vera:** Yet another agentic harness (Yaass)
-
+# **Vera:** 
+<!-- Yet another agentic harness (Yaass) -->
 ### A Distributed Capability Runtime for Autonomous Systems Orchestration, Semantic Memory, Heterogeneous LLM Execution, and Multi-source Reasoning-Action Loops.
 <!-- A Self-Modifying, Multi-Agent, Orchestratration & Cognitition Architecture with Proactive Background Reflection and  Execution Enigine (SMMAC-PBR-XE)
 
