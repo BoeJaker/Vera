@@ -15,6 +15,12 @@
 
 ---
 
+# **Vera:** 
+<!-- Yet another agentic harness (Yaass) -->
+### A Distributed Capability Runtime for Autonomous Systems Orchestration, Semantic Memory, Heterogeneous LLM Execution, and Multi-source Reasoning-Action Loops.
+
+---
+
 <!-- <p align="center">
 <a href="#Features"><img src="https://img.shields.io/badge/✨-Features-44FFAA?style=for-the-badge"></a>
 <a href="#Installation"><img src="https://img.shields.io/badge/⚡-Installation-44FFAA?style=for-the-badge"></a>
@@ -25,11 +31,6 @@
 <a><img src="https://img.shields.io/badge/days%20in%20development-41-blue?style=for-the-badge&logoColor=white"></a>
 </p> -->
 
-<span align="center">
-
-# **Vera:** 
-<!-- Yet another agentic harness (Yaass) -->
-### A Distributed Capability Runtime for Autonomous Systems Orchestration, Semantic Memory, Heterogeneous LLM Execution, and Multi-source Reasoning-Action Loops.
 <!-- A Self-Modifying, Multi-Agent, Orchestratration & Cognitition Architecture with Proactive Background Reflection and  Execution Enigine (SMMAC-PBR-XE)
 
 Core Mechanisms: Self-Modification Engine, Multi Agent Congnition, Proactive Reflection, and Execution Engine (SMMAC-PBR-XE) -->
