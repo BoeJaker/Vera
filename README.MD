@@ -29,11 +29,11 @@
 
 # **Vera:** Yet another agentic harness (Yaass)
 
-### A Distributed Multi-Agent Harness for Autonomous Orchestration and Complex Execution
+### A Distributed Capability Runtime for Autonomous Systems Orchestration, Semantic Memory, Heterogeneous LLM Execution, and Multi-source Reasoning-Action Loops.
 <!-- A Self-Modifying, Multi-Agent, Orchestratration & Cognitition Architecture with Proactive Background Reflection and  Execution Enigine (SMMAC-PBR-XE)
 
 Core Mechanisms: Self-Modification Engine, Multi Agent Congnition, Proactive Reflection, and Execution Engine (SMMAC-PBR-XE) -->
-
+<!-- 
 
 <p align="center">
   <a href="https://youtu.be/OZ_wl_s68Ho" target="_blank"><img src="https://img.youtube.com/vi/OZ_wl_s68Ho/0.jpg"></a>
@@ -43,19 +43,28 @@ Core Mechanisms: Self-Modification Engine, Multi Agent Congnition, Proactive Ref
 
 📺 Follow the above link for an 8 minute video overview of Vera.  
 
-🎧 [Listen to the Podcast](https://drive.google.com/file/d/1ATDbvlXLcZzK2E6FDir5GP_R54NE07MP/view?usp=sharing) - A 40 minute deep-dive podcast discussing the architecture of Vera.  
+🎧 [Listen to the Podcast](https://drive.google.com/file/d/1ATDbvlXLcZzK2E6FDir5GP_R54NE07MP/view?usp=sharing) - A 40 minute deep-dive podcast discussing the architecture of Vera.   -->
 
-</span>
+<!-- </span>
 
-</span>
+</span> -->
 
 ---
 
 >[!WARNING]
 >**Vera has high system requirements**  
-> To run a single sequential worker a minimum of 16Gb idle system RAM, 6 cores (12 hyperthreaded) running at 3Ghz+. 
-> For optimal personal each worker requires 64GB of RAM, 6 cores (12 hyperthreaded) running at 3Ghz+, and at least one worker in the pool should have a 12Gb+ GPU. 
-A minimum of 3 workers is recommended  (192gb total RAM) (18 total cores).
+>The system requirement largely depend on the models you intend to use, the below requirements are based on models the size of qwen3.5 ~11Gb
+
+>[!WARNING]
+>**The minimum viable setup:** one orchestrator, one ollama worker, (optional 12Gb+ GPU). they can be run one one machine via docker or on independant hosts.
+>
+>To run a single orchestrator a minimum of 16Gb idle system RAM, 6 cores (12 hyperthreaded) running at 3Ghz+. 
+>
+>To run a single ollama worker: 16GB of RAM, 6 cores (12 hyperthreaded) running at 3Ghz+.
+>
+>**The reccomended setup:** three Ollama workers, one orchestrator, at least one worker in the pool should have a 16Gb+ GPU. 
+(192gb total RAM) (18 total cores).
+>
 >Please check the **[System Requirements](#system-requirements)** section for more info.
 
 >[!NOTE]  
@@ -190,12 +199,13 @@ Vera/Orchestration/
 
 ---
 
-# Worker System Requirements
+
+# Orchestrator / Worker System Requirements
 14gb of idle RAM
 3Ghz on 4 idle cores
 20gb Storage (increases over time as data is stored in the fabric)
 
-# Node System Requirements
+# Ollama Node System Requirements
 A GPU node and two CPU nodes
 
 CPU Node:
