@@ -1,0 +1,1468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ML Workshop — Vera</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Syne:wght@400;500;600;700;800&display=swap');
+
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+:root{
+  --void:#050709;
+  --bg1:#080c12;
+  --bg2:#0d1320;
+  --bg3:#111b2e;
+  --bg4:#162238;
+  --border:rgba(56,120,220,0.13);
+  --border2:rgba(56,120,220,0.26);
+  --acc:#3878dc;
+  --acc-glow:rgba(56,120,220,0.3);
+  --teal:#00d4aa;
+  --amber:#f5a623;
+  --rose:#e05a6b;
+  --violet:#8b5cf6;
+  --lime:#84cc16;
+  --text:#c8d8f4;
+  --dim:rgba(140,170,230,0.45);
+  --dim2:rgba(140,170,230,0.28);
+  --mono:'JetBrains Mono',monospace;
+  --head:'Syne',sans-serif;
+
+  --c-fundamental:#3878dc;
+  --c-activation:#f5a623;
+  --c-conv:#00d4aa;
+  --c-recurrent:#8b5cf6;
+  --c-attention:#e05a6b;
+  --c-norm:#84cc16;
+  --c-regularisation:#f97316;
+  --c-embedding:#06b6d4;
+  --c-structural:rgba(140,170,230,0.5);
+  --c-pooling:#a78bfa;
+  --c-exotic:#ff6b6b;
+}
+
+html,body{height:100%;width:100%;background:var(--void);color:var(--text);
+  font-family:var(--mono);font-size:12px;overflow:hidden}
+
+#root{display:grid;grid-template-rows:44px 1fr;grid-template-columns:220px 1fr 260px;height:100vh}
+
+/* ── Topbar ── */
+#topbar{grid-column:1/-1;display:flex;align-items:center;gap:10px;padding:0 14px;
+  background:var(--bg1);border-bottom:1px solid var(--border);position:relative;overflow:hidden}
+#topbar::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--acc) 30%,var(--teal) 65%,transparent)}
+
+.tb-logo{font-family:var(--head);font-size:14px;font-weight:700;
+  background:linear-gradient(135deg,var(--acc),var(--teal));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  background-clip:text;letter-spacing:0.05em;white-space:nowrap}
+.tb-sep{width:1px;height:20px;background:var(--border)}
+.tb-stat{display:flex;flex-direction:column;gap:1px}
+.tb-stat-l{font-size:8px;color:var(--dim2);text-transform:uppercase;letter-spacing:.08em}
+.tb-stat-v{font-size:11px;color:var(--text);font-weight:500}
+.tb-actions{margin-left:auto;display:flex;gap:6px;align-items:center}
+.tb-btn{font-family:var(--mono);font-size:10px;padding:4px 11px;
+  background:var(--bg3);border:1px solid var(--border);color:var(--dim);
+  cursor:pointer;border-radius:2px;letter-spacing:.04em;transition:all .15s}
+.tb-btn:hover{border-color:var(--border2);color:var(--acc)}
+.tb-btn.primary{background:rgba(56,120,220,0.15);border-color:var(--acc);color:var(--acc)}
+.tb-btn.primary:hover{background:rgba(56,120,220,0.25)}
+.tb-btn.teal{background:rgba(0,212,170,0.1);border-color:var(--teal);color:var(--teal)}
+.tb-btn.rose{background:rgba(224,90,107,0.1);border-color:var(--rose);color:var(--rose)}
+.tb-btn.amber{background:rgba(245,166,35,0.1);border-color:var(--amber);color:var(--amber)}
+
+#save-status{font-size:9px;font-family:var(--mono);color:var(--dim2);transition:color .3s}
+#save-status.saving{color:var(--amber)}
+#save-status.saved{color:var(--teal)}
+#save-status.error{color:var(--rose)}
+
+/* ── Left panel ── */
+#left{background:var(--bg1);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;overflow:hidden}
+
+/* ── Right panel ── */
+#right{background:var(--bg1);border-left:1px solid var(--border);
+  display:flex;flex-direction:column;overflow:hidden}
+
+.panel-hdr{padding:10px 12px 8px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:6px;flex-shrink:0}
+.panel-hdr-title{font-family:var(--head);font-size:10px;font-weight:600;
+  color:var(--dim);text-transform:uppercase;letter-spacing:.1em}
+.panel-body{flex:1;overflow-y:auto;padding:8px 10px}
+.panel-body::-webkit-scrollbar{width:3px}
+.panel-body::-webkit-scrollbar-thumb{background:rgba(56,120,220,0.2)}
+
+.stab-bar{display:flex;border-bottom:1px solid var(--border);flex-shrink:0}
+.stab{flex:1;padding:7px 4px;font-size:9.5px;font-family:var(--mono);color:var(--dim2);
+  cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;text-align:center;
+  letter-spacing:.04em}
+.stab:hover{color:var(--text)}
+.stab.active{color:var(--acc);border-bottom-color:var(--acc)}
+
+.mod-card{padding:8px 10px;border:1px solid var(--border);border-radius:3px;
+  margin-bottom:5px;background:var(--bg2);cursor:pointer;transition:all .15s}
+.mod-card:hover{border-color:var(--border2)}
+.mod-card.active{border-color:var(--acc);background:rgba(56,120,220,0.07)}
+.mod-name{font-family:var(--head);font-size:11px;font-weight:600;color:var(--text)}
+.mod-meta{font-size:9px;color:var(--dim2);margin-top:2px}
+.mod-tags{display:flex;gap:3px;flex-wrap:wrap;margin-top:4px}
+.tag-chip{font-size:8px;padding:1px 5px;border-radius:8px;
+  background:rgba(56,120,220,0.1);border:1px solid rgba(56,120,220,0.2);color:var(--dim)}
+
+.family-section{margin-bottom:12px}
+.family-label{font-size:8.5px;text-transform:uppercase;letter-spacing:.1em;
+  color:var(--dim2);margin-bottom:5px;padding-bottom:3px;border-bottom:1px solid var(--border)}
+.layer-pill{display:flex;align-items:center;gap:6px;padding:5px 8px;
+  border:1px solid var(--border);border-radius:3px;margin-bottom:3px;
+  cursor:grab;background:var(--bg2);transition:all .15s;user-select:none}
+.layer-pill:hover{border-color:var(--border2);background:var(--bg3)}
+.layer-pill:active{cursor:grabbing}
+.lp-icon{font-size:13px;width:18px;text-align:center;flex-shrink:0}
+.lp-name{font-family:var(--mono);font-size:10px;font-weight:500;color:var(--text)}
+.lp-desc{font-size:8px;color:var(--dim2);line-height:1.3}
+.lp-fam{font-size:7.5px;padding:1px 4px;border-radius:2px;margin-left:auto;flex-shrink:0}
+
+/* ── Canvas ── */
+#center{display:flex;flex-direction:column;overflow:hidden;background:var(--void)}
+#canvas-wrap{flex:1;position:relative;overflow:hidden}
+#cvs{position:absolute;inset:0;cursor:default}
+#cvs.panning{cursor:grabbing}
+
+#canvas-toolbar{padding:6px 10px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:6px;background:var(--bg1);flex-shrink:0}
+.ct-btn{font-family:var(--mono);font-size:10px;padding:3px 9px;
+  background:var(--bg2);border:1px solid var(--border);color:var(--dim);
+  cursor:pointer;border-radius:2px;transition:all .15s}
+.ct-btn:hover{border-color:var(--border2);color:var(--acc)}
+.ct-btn.active{border-color:var(--acc);color:var(--acc);background:rgba(56,120,220,0.1)}
+.ct-btn.layout{border-color:rgba(0,212,170,0.3);color:var(--teal);background:rgba(0,212,170,0.07)}
+.ct-btn.layout:hover{background:rgba(0,212,170,0.14);border-color:var(--teal)}
+#zoom-label{font-size:9.5px;color:var(--dim2);min-width:36px;text-align:center}
+
+#run-bar{padding:6px 10px;border-top:1px solid var(--border);
+  display:flex;align-items:center;gap:8px;background:var(--bg1);flex-shrink:0;
+  font-size:10.5px}
+#run-status{color:var(--dim2);flex:1;font-family:var(--mono)}
+#run-status.running{color:var(--amber)}
+#run-status.ok{color:var(--teal)}
+#run-status.error{color:var(--rose)}
+
+.section{padding:10px 12px;border-bottom:1px solid var(--border)}
+.section-hdr{font-size:8.5px;text-transform:uppercase;letter-spacing:.1em;
+  color:var(--dim2);margin-bottom:8px;font-weight:600}
+
+.ni-type{font-family:var(--head);font-size:13px;font-weight:700}
+.ni-family{font-size:9px;padding:2px 7px;border-radius:8px;margin-left:6px;vertical-align:middle}
+.param-row{display:flex;align-items:center;gap:6px;margin-bottom:5px}
+.param-row label{font-size:9.5px;color:var(--dim);flex:1;min-width:80px}
+.param-input{background:var(--bg3);border:1px solid var(--border);color:var(--text);
+  font-family:var(--mono);font-size:10px;padding:3px 7px;border-radius:2px;
+  flex:1;outline:none;transition:border-color .15s;width:100%}
+.param-input:focus{border-color:var(--border2)}
+select.param-input option{background:var(--bg2)}
+
+.stat-row{display:flex;justify-content:space-between;align-items:center;
+  margin-bottom:5px;font-size:10px}
+.stat-v{font-family:var(--mono);color:var(--teal);font-weight:600}
+.stat-bar-track{height:3px;background:rgba(255,255,255,0.06);border-radius:2px;
+  margin-top:2px;overflow:hidden}
+.stat-bar-fill{height:100%;border-radius:2px;transition:width .4s}
+
+.run-node-row{padding:4px 7px;border-radius:2px;margin-bottom:2px;
+  border:1px solid var(--border);background:var(--bg2)}
+.run-node-id{font-family:var(--mono);font-size:9.5px;color:var(--acc)}
+.run-node-shape{font-size:9px;color:var(--dim2)}
+.run-node-stats{font-size:9px;color:var(--teal)}
+
+.llm-prompt{width:100%;background:var(--bg2);border:1px solid var(--border);
+  color:var(--text);font-family:var(--mono);font-size:10.5px;padding:7px 9px;
+  border-radius:3px;outline:none;resize:vertical;min-height:60px;line-height:1.6;
+  transition:border-color .15s}
+.llm-prompt:focus{border-color:var(--border2)}
+.llm-response{background:var(--bg2);border:1px solid var(--border);border-radius:3px;
+  padding:8px;font-size:10.5px;color:var(--text);line-height:1.6;
+  white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto;
+  display:none}
+.llm-response::-webkit-scrollbar{width:3px}
+.llm-response::-webkit-scrollbar-thumb{background:rgba(56,120,220,0.2)}
+
+.shape-tag{font-size:8.5px;padding:1px 6px;border-radius:2px;
+  background:rgba(56,120,220,0.1);border:1px solid rgba(56,120,220,0.2);
+  color:var(--dim);font-family:var(--mono)}
+
+.empty{text-align:center;color:var(--dim2);font-size:10.5px;padding:24px 0}
+
+.mini-search{width:100%;background:var(--bg2);border:1px solid var(--border);
+  color:var(--text);font-family:var(--mono);font-size:10px;padding:5px 8px;
+  border-radius:2px;outline:none;margin-bottom:8px;transition:border-color .15s}
+.mini-search:focus{border-color:var(--border2)}
+::placeholder{color:var(--dim2)}
+
+.sug-card{padding:7px 9px;border:1px solid var(--border);border-radius:3px;
+  margin-bottom:5px;background:var(--bg2);cursor:pointer;transition:border-color .15s}
+.sug-card:hover{border-color:var(--teal)}
+.sug-title{font-size:10.5px;font-weight:600;color:var(--teal)}
+.sug-desc{font-size:9.5px;color:var(--dim2);margin-top:2px;line-height:1.4}
+
+@keyframes glow-pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+.pulse{animation:glow-pulse 2s ease-in-out infinite}
+</style>
+</head>
+<body>
+<div id="root">
+
+<!-- ── TOPBAR ── -->
+<div id="topbar">
+  <div class="tb-logo">ML Workshop</div>
+  <div class="tb-sep"></div>
+  <div class="tb-stat">
+    <div class="tb-stat-l">Module</div>
+    <div class="tb-stat-v" id="tb-mod-name">—</div>
+  </div>
+  <div class="tb-stat">
+    <div class="tb-stat-l">Params</div>
+    <div class="tb-stat-v" id="tb-params">—</div>
+  </div>
+  <div class="tb-stat">
+    <div class="tb-stat-l">Nodes</div>
+    <div class="tb-stat-v" id="tb-nodes">—</div>
+  </div>
+  <div class="tb-stat">
+    <div class="tb-stat-l">Backend</div>
+    <div class="tb-stat-v" id="tb-backend">—</div>
+  </div>
+  <div class="tb-actions">
+    <button class="tb-btn" onclick="newModule()">+ New</button>
+    <button class="tb-btn primary" onclick="saveModule()">Save</button>
+    <button class="tb-btn teal" onclick="runForward()">▶ Run</button>
+    <button class="tb-btn amber" onclick="openLLMGenerate()">⬡ Generate</button>
+    <button class="tb-btn" onclick="fitView()">Fit</button>
+    <button class="tb-btn" onclick="clearCanvas()">Clear</button>
+    <span id="save-status">ready</span>
+  </div>
+</div>
+
+<!-- ── LEFT ── -->
+<div id="left">
+  <div class="stab-bar">
+    <div class="stab active" id="stab-modules" onclick="switchLeft('modules')">Modules</div>
+    <div class="stab" id="stab-palette" onclick="switchLeft('palette')">Layers</div>
+    <div class="stab" id="stab-templates" onclick="switchLeft('templates')">Templates</div>
+  </div>
+
+  <div id="lpanel-modules" class="panel-body">
+    <input class="mini-search" placeholder="Search modules…" id="mod-search" oninput="filterMods()">
+    <div id="mod-list"><div class="empty">No modules yet</div></div>
+  </div>
+
+  <div id="lpanel-palette" class="panel-body" style="display:none">
+    <input class="mini-search" placeholder="Filter layers…" id="layer-search" oninput="filterLayers()">
+    <div id="layer-palette"></div>
+  </div>
+
+  <div id="lpanel-templates" class="panel-body" style="display:none">
+    <div id="template-list"></div>
+  </div>
+</div>
+
+<!-- ── CANVAS ── -->
+<div id="center">
+  <div id="canvas-toolbar">
+    <span style="font-size:9px;color:var(--dim2);font-family:var(--mono)">CANVAS</span>
+    <div class="tb-sep"></div>
+    <button class="ct-btn" id="mode-select" onclick="setMode('select')" title="Select (S)">↖ Select</button>
+    <button class="ct-btn" id="mode-connect" onclick="setMode('connect')" title="Connect (C)">⟶ Connect</button>
+    <button class="ct-btn" id="mode-pan" onclick="setMode('pan')" title="Pan">✥ Pan</button>
+    <div class="tb-sep"></div>
+    <button class="ct-btn" onclick="zoomIn()">+</button>
+    <span id="zoom-label">100%</span>
+    <button class="ct-btn" onclick="zoomOut()">−</button>
+    <button class="ct-btn" onclick="fitView()">Fit</button>
+    <div class="tb-sep"></div>
+    <!-- Layout button — prominent, distinct styling -->
+    <button class="ct-btn layout" onclick="autoLayout()" title="Re-layout graph left-to-right with proper spacing">⟳ Layout</button>
+    <div class="tb-sep"></div>
+    <button class="ct-btn" onclick="deleteSelected()" title="Delete (Del)">⌦ Del</button>
+    <button class="ct-btn" onclick="duplicateSelected()" title="Duplicate (⌘D)">⧉ Dup</button>
+    <span id="canvas-hint" style="font-size:9px;color:var(--dim2);margin-left:auto"></span>
+  </div>
+  <div id="canvas-wrap">
+    <canvas id="cvs"></canvas>
+  </div>
+  <div id="run-bar">
+    <button class="tb-btn teal" onclick="runForward()" style="flex-shrink:0">▶ Forward Pass</button>
+    <div id="run-status">Ready — select a module and run</div>
+    <button class="ct-btn layout" onclick="autoLayout()" style="flex-shrink:0;font-size:9px" title="Re-space nodes">⟳ Re-layout</button>
+    <button class="tb-btn" onclick="clearRunOutputs()" style="flex-shrink:0">Clear</button>
+  </div>
+</div>
+
+<!-- ── RIGHT ── -->
+<div id="right">
+  <div class="stab-bar">
+    <div class="stab active" id="rtab-node" onclick="switchRight('node')">Node</div>
+    <div class="stab" id="rtab-graph" onclick="switchRight('graph')">Graph</div>
+    <div class="stab" id="rtab-run" onclick="switchRight('run')">Output</div>
+    <div class="stab" id="rtab-llm" onclick="switchRight('llm')">AI</div>
+  </div>
+
+  <div id="rpanel-node" class="panel-body" style="padding:0">
+    <div id="node-empty" class="empty" style="padding:30px 0">Click a node to inspect</div>
+    <div id="node-inspector" style="display:none">
+      <div class="section">
+        <div style="display:flex;align-items:center;gap:0;flex-wrap:wrap;margin-bottom:8px">
+          <span class="ni-type" id="ni-type">—</span>
+          <span class="ni-family" id="ni-family-badge"></span>
+        </div>
+        <div style="font-size:9px;color:var(--dim2);line-height:1.5;margin-bottom:8px" id="ni-desc"></div>
+        <div class="param-row">
+          <label>Node ID</label>
+          <input class="param-input" id="ni-id" oninput="updateNodeId(this.value)" style="font-size:9.5px">
+        </div>
+        <div id="ni-shape-row" style="display:none;margin-bottom:4px">
+          <div style="font-size:9px;color:var(--dim2)">Output shape</div>
+          <span class="shape-tag" id="ni-shape"></span>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-hdr">Parameters</div>
+        <div id="ni-params"></div>
+      </div>
+      <div class="section" style="border-bottom:none">
+        <div class="section-hdr">Actions</div>
+        <div style="display:flex;gap:5px;flex-wrap:wrap">
+          <button class="tb-btn rose" onclick="deleteSelected()" style="font-size:9px">Delete Node</button>
+          <button class="tb-btn" onclick="duplicateSelected()" style="font-size:9px">Duplicate</button>
+          <button class="tb-btn teal" onclick="askAIAboutNode()" style="font-size:9px">Ask AI</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="rpanel-graph" class="panel-body" style="display:none;padding:0">
+    <div class="section">
+      <div class="section-hdr">Module Stats</div>
+      <div id="graph-stats"><div class="empty">Load a module</div></div>
+    </div>
+    <div class="section" style="border-bottom:none">
+      <div class="section-hdr">Connectivity</div>
+      <div id="graph-connectivity" style="font-size:9.5px;line-height:2"></div>
+    </div>
+  </div>
+
+  <div id="rpanel-run" class="panel-body" style="display:none;padding:0">
+    <div class="section">
+      <div class="section-hdr">Forward Pass Outputs</div>
+      <div id="run-output"><div class="empty">Run a forward pass to see outputs</div></div>
+    </div>
+  </div>
+
+  <div id="rpanel-llm" class="panel-body" style="display:none;padding:0">
+    <div class="section">
+      <div class="section-hdr">Generate Architecture</div>
+      <textarea class="llm-prompt" id="llm-gen-prompt"
+        placeholder="e.g. 'A transformer encoder for text classification with 6 layers and 8 heads, using RoPE positional encoding'"></textarea>
+      <div style="margin-top:5px;display:flex;gap:5px">
+        <button class="tb-btn primary" onclick="generateModule()" style="flex:1">Generate</button>
+        <button class="tb-btn" onclick="loadLLMResponse()" style="flex:1">Load into Canvas</button>
+      </div>
+      <div class="llm-response" id="llm-gen-response"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-hdr">Explain Current Module</div>
+      <div style="display:flex;gap:5px;margin-bottom:6px">
+        <button class="tb-btn" onclick="explainModule('brief')" style="flex:1;font-size:9px">Brief</button>
+        <button class="tb-btn" onclick="explainModule('full')" style="flex:1;font-size:9px">Full</button>
+      </div>
+      <div class="llm-response" id="llm-explain-response"></div>
+    </div>
+
+    <div class="section" style="border-bottom:none">
+      <div class="section-hdr">Suggest Improvements</div>
+      <input class="param-input" id="llm-suggest-goal" placeholder="Goal: e.g. reduce params, add regularisation…" style="width:100%;margin-bottom:5px">
+      <button class="tb-btn teal" onclick="suggestImprovements()" style="width:100%;font-size:9px">Get Suggestions</button>
+      <div id="llm-suggestions" style="margin-top:8px"></div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════════════════════
+const BASE = window.parent?._veraBase || '';
+let _catalogue = {layers:{}, templates:{}, activations:[], backends:{numpy:false,torch:false}};
+let _modules = [];
+let _currentModuleId = null;
+
+let _nodes = [];
+let _edges = [];
+let _selected = new Set();
+let _connectFrom = null;
+let _mode = 'select';
+let _ox = 0, _oy = 0, _scale = 1;
+let _drag = null;
+let _panDrag = null;
+let _runOutputs = {};
+let _lastGenerated = null;
+
+let _cvs, _ctx;
+const NODE_W = 200, NODE_H = 60;
+const GRID = 32;
+
+// ── Layout spacing constants ──────────────────────────────────────────────
+// These are intentionally generous. Edges need breathing room to be readable.
+// X_GAP is the space between the right edge of one node and the left of the next.
+// Y_GAP is the space between nodes on different parallel branches.
+const LAYOUT_X_GAP = 140;   // horizontal gap between node columns
+const LAYOUT_Y_GAP = 80;    // vertical gap between nodes in same column
+const LAYOUT_COL_W = NODE_W + LAYOUT_X_GAP;
+const LAYOUT_ROW_H = NODE_H + LAYOUT_Y_GAP;
+
+// Palette drop placement: 3 columns, generous spacing so nothing overlaps
+const PALETTE_COLS   = 3;
+const PALETTE_COL_W  = NODE_W + 140;  // same as LAYOUT_COL_W
+const PALETTE_ROW_H  = NODE_H + 80;   // same as LAYOUT_ROW_H
+
+// ═══════════════════════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════════════════════
+async function init(){
+  _cvs = document.getElementById('cvs');
+  _ctx = _cvs.getContext('2d');
+  resize();
+  window.addEventListener('resize', resize);
+  bindCanvasEvents();
+  setMode('select');
+  await loadCatalogue();
+  await loadModules();
+  renderPalette();
+  renderTemplates();
+  requestAnimationFrame(drawLoop);
+}
+
+function resize(){
+  const wrap = document.getElementById('canvas-wrap');
+  _cvs.width  = wrap.clientWidth;
+  _cvs.height = wrap.clientHeight;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// API
+// ═══════════════════════════════════════════════════════════════════════════
+async function api(path, method='GET', body=null){
+  try{
+    const opts = {method, headers:{'Content-Type':'application/json'}};
+    if(body) opts.body = JSON.stringify(body);
+    const r = await fetch(BASE+path, opts);
+    const text = await r.text();
+    if(!text.trim()) return null;
+    return JSON.parse(text);
+  }catch(e){
+    console.error(path, e);
+    return null;
+  }
+}
+
+async function callCap(name, args={}){
+  const r = await api('/mcp/call','POST',{name, arguments:args});
+  return r?.content ?? r;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CATALOGUE
+// ═══════════════════════════════════════════════════════════════════════════
+async function loadCatalogue(){
+  const r = await callCap('ml.catalogue');
+  if(r && !r.error){
+    _catalogue = r;
+    document.getElementById('tb-backend').textContent =
+      r.backends?.torch ? 'PyTorch' : r.backends?.numpy ? 'NumPy' : 'None';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MODULE LIST
+// ═══════════════════════════════════════════════════════════════════════════
+async function loadModules(){
+  const r = await callCap('ml.list');
+  if(r && !r.error){
+    _modules = r.modules || [];
+    renderModList();
+  }
+}
+
+function renderModList(filter=''){
+  const el = document.getElementById('mod-list');
+  const f = filter.toLowerCase();
+  const shown = _modules.filter(m=>
+    !f || m.name.toLowerCase().includes(f) || (m.tags||[]).some(t=>t.toLowerCase().includes(f)));
+  if(!shown.length){
+    el.innerHTML = '<div class="empty">No modules found</div>';
+    return;
+  }
+  el.innerHTML = shown.map(m=>`
+    <div class="mod-card ${m.id===_currentModuleId?'active':''}" onclick="loadModule('${m.id}')">
+      <div class="mod-name">${esc(m.name)}</div>
+      <div class="mod-meta">${fmtParams(m.param_count)} params · ${m.nodes} nodes</div>
+      <div class="mod-tags">${(m.tags||[]).map(t=>`<span class="tag-chip">${esc(t)}</span>`).join('')}</div>
+    </div>`).join('');
+}
+
+function filterMods(){ renderModList(document.getElementById('mod-search').value); }
+
+async function loadModule(id){
+  const r = await callCap('ml.get', {id});
+  if(!r || r.error){ return; }
+  const m = r.module;
+  _currentModuleId = id;
+  _nodes = deepCopy(m.nodes || []);
+  _edges = deepCopy(m.edges || []);
+  _runOutputs = {};
+  _selected.clear();
+  // Always run auto-layout on load so nodes are spaced properly
+  // regardless of how they were stored
+  autoLayout(false);  // false = don't fit (we'll fitView ourselves)
+  updateTopbar();
+  renderModList();
+  fitView();
+  switchRight('graph');
+  renderGraphStats(r);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PALETTE
+// ═══════════════════════════════════════════════════════════════════════════
+function renderPalette(filter=''){
+  const f = filter.toLowerCase();
+  const layers = _catalogue.layers || {};
+  const byFamily = {};
+  for(const [k,v] of Object.entries(layers)){
+    if(f && !k.includes(f) && !v.desc.toLowerCase().includes(f)) continue;
+    (byFamily[v.family]||(byFamily[v.family]=[])).push({key:k,...v});
+  }
+  const famOrder = ['fundamental','activation','conv','pooling','recurrent','attention',
+                    'norm','regularisation','embedding','structural','exotic'];
+  const el = document.getElementById('layer-palette');
+  el.innerHTML = famOrder.filter(f2=>byFamily[f2]).map(fam=>`
+    <div class="family-section">
+      <div class="family-label" style="color:${famColor(fam)}">${fam}</div>
+      ${byFamily[fam].map(l=>`
+        <div class="layer-pill" draggable="true"
+             data-layertype="${l.key}"
+             ondragstart="onLayerDragStart(event,'${l.key}')"
+             ondblclick="addLayerFromPalette('${l.key}')">
+          <span class="lp-icon">${esc(l.icon||'●')}</span>
+          <div>
+            <div class="lp-name">${esc(l.key)}</div>
+            <div class="lp-desc">${esc(l.desc.slice(0,55))}</div>
+          </div>
+          <span class="lp-fam" style="background:${famColor(fam)}22;color:${famColor(fam)};border:1px solid ${famColor(fam)}44">${fam.slice(0,4)}</span>
+        </div>`).join('')}
+    </div>`).join('');
+
+  const extra = document.createElement('div');
+  extra.className='family-section';
+  extra.innerHTML=`<div class="family-label" style="color:var(--dim)">i/o</div>
+    <div class="layer-pill" draggable="true" data-layertype="input"
+         ondragstart="onLayerDragStart(event,'input')" ondblclick="addLayerFromPalette('input')">
+      <span class="lp-icon">→</span>
+      <div><div class="lp-name">input</div><div class="lp-desc">Network input tensor</div></div>
+    </div>
+    <div class="layer-pill" draggable="true" data-layertype="output"
+         ondragstart="onLayerDragStart(event,'output')" ondblclick="addLayerFromPalette('output')">
+      <span class="lp-icon">←</span>
+      <div><div class="lp-name">output</div><div class="lp-desc">Network output tensor</div></div>
+    </div>`;
+  el.appendChild(extra);
+}
+
+function filterLayers(){ renderPalette(document.getElementById('layer-search').value); }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TEMPLATES
+// ═══════════════════════════════════════════════════════════════════════════
+function renderTemplates(){
+  const tmpls = _catalogue.templates || {};
+  const el = document.getElementById('template-list');
+  el.innerHTML = Object.entries(tmpls).map(([key,t])=>`
+    <div class="mod-card" onclick="loadTemplate('${key}')">
+      <div class="mod-name">${esc(t.name)}</div>
+      <div class="mod-meta" style="margin-top:3px;line-height:1.4">${esc(t.desc)}</div>
+    </div>`).join('');
+}
+
+async function loadTemplate(key){
+  setSaveStatus('saving','loading…');
+  const r = await callCap('ml.from_template', {template:key, name:''});
+  if(r && !r.error){
+    await loadModules();
+    await loadModule(r.id);
+    setSaveStatus('saved','loaded');
+  } else {
+    setSaveStatus('error', r?.error||'failed');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AUTO LAYOUT — Sugiyama-style left-to-right DAG layout
+// ═══════════════════════════════════════════════════════════════════════════
+// Assigns each node to a column (topological depth) and a row within that
+// column, then spaces them with LAYOUT_COL_W / LAYOUT_ROW_H so edges are
+// always visible.  Skip edges are ignored for layout purposes so residual
+// connections don't distort the column assignment.
+//
+// fitAfter=true  → call fitView() when done (default when user clicks Layout)
+// fitAfter=false → don't fit (used during loadModule so caller can fitView)
+
+function autoLayout(fitAfter=true){
+  if(!_nodes.length) return;
+
+  const normalEdges = _edges.filter(e => !e.skip);
+
+  // ── Step 1: compute topological column (depth) for every node ──────────
+  // inDegree count using only non-skip edges
+  const inDeg = {};
+  const adj = {};
+  _nodes.forEach(n => { inDeg[n.id] = 0; adj[n.id] = []; });
+  normalEdges.forEach(e => {
+    if (adj[e.from] !== undefined) adj[e.from].push(e.to);
+    if (inDeg[e.to]  !== undefined) inDeg[e.to]++;
+  });
+
+  // BFS / longest-path column assignment
+  const col = {};
+  const queue = _nodes.filter(n => inDeg[n.id] === 0).map(n => n.id);
+  queue.forEach(id => col[id] = 0);
+  // Make a working copy of inDeg so we can decrement safely
+  const inDegWork = {...inDeg};
+  const bfsQ = [...queue];
+  while (bfsQ.length) {
+    const id = bfsQ.shift();
+    for (const nxt of (adj[id] || [])) {
+      // Longest-path: child column = max(current, parent+1)
+      col[nxt] = Math.max(col[nxt] ?? 0, (col[id] ?? 0) + 1);
+      inDegWork[nxt]--;
+      if (inDegWork[nxt] <= 0) bfsQ.push(nxt);
+    }
+  }
+  // Any node not reached (cycles or disconnected) gets column 0
+  _nodes.forEach(n => { if (col[n.id] == null) col[n.id] = 0; });
+
+  // ── Step 2: group nodes by column, sort within each column ─────────────
+  const byCol = {};
+  _nodes.forEach(n => {
+    const c = col[n.id];
+    (byCol[c] = byCol[c] || []).push(n);
+  });
+
+  // Within each column, sort nodes by their position among predecessors so
+  // the visual order roughly tracks the logical data-flow order.
+  const predRow = {};   // predecessor average row for each node
+  Object.entries(byCol).forEach(([ci, ns]) => {
+    const c = Number(ci);
+    ns.forEach(n => {
+      const preds = normalEdges
+        .filter(e => e.to === n.id)
+        .map(e => predRow[e.from] ?? 0);
+      predRow[n.id] = preds.length ? preds.reduce((a,b)=>a+b,0)/preds.length : 0;
+    });
+    ns.sort((a, b) => (predRow[a.id] ?? 0) - (predRow[b.id] ?? 0));
+  });
+
+  // ── Step 3: assign pixel positions ─────────────────────────────────────
+  // Centre the whole graph around (0,0) so fitView works naturally
+  const numCols = Math.max(...Object.keys(byCol).map(Number)) + 1;
+  const maxRows = Math.max(...Object.values(byCol).map(g => g.length));
+  const totalW  = (numCols - 1) * LAYOUT_COL_W;
+  const totalH  = (maxRows - 1) * LAYOUT_ROW_H;
+
+  Object.entries(byCol).forEach(([ci, ns]) => {
+    const c = Number(ci);
+    // Centre the column vertically relative to the tallest column
+    const colH = (ns.length - 1) * LAYOUT_ROW_H;
+    const startY = (totalH - colH) / 2;
+    ns.forEach((n, row) => {
+      n.pos = [
+        snapGrid(c * LAYOUT_COL_W - totalW / 2),
+        snapGrid(startY + row * LAYOUT_ROW_H - totalH / 2),
+      ];
+    });
+  });
+
+  if (fitAfter) fitView();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CANVAS ENGINE
+// ═══════════════════════════════════════════════════════════════════════════
+function drawLoop(){
+  draw();
+  requestAnimationFrame(drawLoop);
+}
+
+function draw(){
+  const W = _cvs.width, H = _cvs.height;
+  _ctx.clearRect(0,0,W,H);
+
+  _ctx.save();
+  _ctx.strokeStyle='rgba(56,120,220,0.06)';
+  _ctx.lineWidth=0.5;
+  const gs = GRID*_scale;
+  const gox=((_ox*_scale)%gs+gs)%gs, goy=((_oy*_scale)%gs+gs)%gs;
+  for(let x=gox;x<W;x+=gs){ _ctx.beginPath();_ctx.moveTo(x,0);_ctx.lineTo(x,H);_ctx.stroke(); }
+  for(let y=goy;y<H;y+=gs){ _ctx.beginPath();_ctx.moveTo(0,y);_ctx.lineTo(W,y);_ctx.stroke(); }
+  _ctx.restore();
+
+  _ctx.save();
+  _ctx.translate(W/2+_ox*_scale, H/2+_oy*_scale);
+  _ctx.scale(_scale,_scale);
+
+  for(const e of _edges){
+    const a = nodeById(e.from), b = nodeById(e.to);
+    if(!a||!b) continue;
+    drawEdge(a,b,e);
+  }
+
+  if(_connectFrom && _mousePos){
+    const a = nodeById(_connectFrom);
+    if(a){
+      const ax=a.pos[0]+NODE_W/2, ay=a.pos[1]+NODE_H/2;
+      const mx=(_mousePos.x-(W/2+_ox*_scale))/_scale;
+      const my=(_mousePos.y-(H/2+_oy*_scale))/_scale;
+      _ctx.save();
+      _ctx.strokeStyle='rgba(0,212,170,0.6)';
+      _ctx.lineWidth=1.5/_scale;
+      _ctx.setLineDash([4/_scale,3/_scale]);
+      _ctx.beginPath();_ctx.moveTo(ax,ay);_ctx.lineTo(mx,my);_ctx.stroke();
+      _ctx.restore();
+    }
+  }
+
+  for(const n of _nodes) drawNode(n);
+  _ctx.restore();
+}
+
+function drawEdge(a,b,e){
+  const ax=a.pos[0]+NODE_W, ay=a.pos[1]+NODE_H/2;
+  const bx=b.pos[0],        by=b.pos[1]+NODE_H/2;
+  const skip = e.skip;
+  const col = skip ? 'rgba(139,92,246,0.7)' : 'rgba(56,120,220,0.55)';
+
+  _ctx.save();
+  _ctx.strokeStyle = col;
+  _ctx.lineWidth = (skip?1:1.5)/_scale;
+  if(skip) _ctx.setLineDash([5/_scale,3/_scale]);
+
+  const cx = (ax+bx)/2;
+  _ctx.beginPath();
+  _ctx.moveTo(ax,ay);
+  _ctx.bezierCurveTo(cx,ay,cx,by,bx,by);
+  _ctx.stroke();
+  _ctx.setLineDash([]);
+
+  // Arrowhead
+  const angle = Math.atan2(by-ay,bx-ax);
+  const al=8/_scale, aw=0.38;
+  _ctx.fillStyle=col;
+  _ctx.beginPath();
+  _ctx.moveTo(bx,by);
+  _ctx.lineTo(bx-al*Math.cos(angle-aw),by-al*Math.sin(angle-aw));
+  _ctx.lineTo(bx-al*Math.cos(angle+aw),by-al*Math.sin(angle+aw));
+  _ctx.closePath();_ctx.fill();
+
+  if(skip && _scale>0.5){
+    _ctx.fillStyle='rgba(139,92,246,0.7)';
+    _ctx.font=`${8/_scale}px JetBrains Mono`;
+    _ctx.textAlign='center';
+    _ctx.fillText('skip',(ax+bx)/2,(ay+by)/2-8/_scale);
+  }
+
+  // Shape annotation on edge when run output exists
+  if(_runOutputs[a.id]){
+    const sa = _runOutputs[a.id];
+    const shape = sa?.shape ? `[${sa.shape.join('×')}]` : '';
+    if(shape && _scale>0.45){
+      _ctx.fillStyle='rgba(0,212,170,0.55)';
+      _ctx.font=`${7.5/_scale}px JetBrains Mono`;
+      _ctx.textAlign='center';
+      _ctx.fillText(shape,(ax+bx)/2+4,(ay+by)/2+10/_scale);
+    }
+  }
+  _ctx.restore();
+}
+
+function drawNode(n){
+  const x=n.pos[0], y=n.pos[1];
+  const sel = _selected.has(n.id);
+  const isConnectSrc = n.id===_connectFrom;
+  const family = getFamilyOf(n.type);
+  const col = famColor(family);
+  const hasOutput = !!_runOutputs[n.id];
+  const isIO = n.type==='input'||n.type==='output';
+
+  _ctx.save();
+  _ctx.translate(x,y);
+
+  if(sel||isConnectSrc||hasOutput){
+    _ctx.shadowColor = isConnectSrc?'rgba(0,212,170,0.8)':hasOutput?'rgba(0,212,170,0.4)':col;
+    _ctx.shadowBlur = (sel?14:8)/_scale;
+  }
+
+  const r=5;
+  _ctx.beginPath();
+  roundRect(_ctx,0,0,NODE_W,NODE_H,r);
+
+  if(isIO){
+    _ctx.fillStyle = n.type==='input'?'rgba(0,212,170,0.06)':'rgba(224,90,107,0.06)';
+    _ctx.strokeStyle = n.type==='input'?'rgba(0,212,170,0.5)':'rgba(224,90,107,0.5)';
+  } else {
+    _ctx.fillStyle = `${col}11`;
+    _ctx.strokeStyle = sel ? col : `${col}55`;
+  }
+  _ctx.lineWidth = (sel?2:1)/_scale;
+  _ctx.fill();_ctx.stroke();
+
+  _ctx.fillStyle = isIO?(n.type==='input'?'rgba(0,212,170,0.8)':'rgba(224,90,107,0.8)'):col;
+  _ctx.fillRect(0,0,3,NODE_H);
+
+  const icon = _catalogue.layers[n.type]?.icon || (n.type==='input'?'→':n.type==='output'?'←':'?');
+  _ctx.font=`${14/_scale}px serif`;
+  _ctx.textAlign='left';_ctx.textBaseline='middle';
+  _ctx.fillStyle=isIO?(n.type==='input'?'rgba(0,212,170,0.9)':'rgba(224,90,107,0.9)'):col;
+  _ctx.fillText(icon,11,NODE_H/2);
+
+  _ctx.shadowBlur=0;
+
+  _ctx.font=`500 ${11/_scale}px Syne`;
+  _ctx.textAlign='left';_ctx.textBaseline='top';
+  _ctx.fillStyle='rgba(200,216,244,0.9)';
+  _ctx.fillText(n.type.replace(/_/g,' '),30,11);
+
+  _ctx.font=`${9/_scale}px JetBrains Mono`;
+  _ctx.fillStyle='rgba(140,170,230,0.4)';
+  _ctx.fillText(`#${n.id}`,30,27);
+
+  if(hasOutput && _runOutputs[n.id].shape){
+    const sh = '['+_runOutputs[n.id].shape.join('×')+']';
+    _ctx.font=`${8.5/_scale}px JetBrains Mono`;
+    _ctx.fillStyle='rgba(0,212,170,0.8)';
+    _ctx.textAlign='right';
+    _ctx.fillText(sh, NODE_W-10, NODE_H-16);
+  }
+
+  _ctx.fillStyle = isIO?(n.type==='input'?'rgba(0,212,170,0.6)':'rgba(224,90,107,0.6)') : `${col}99`;
+  if(n.type!=='input'){
+    _ctx.beginPath();_ctx.arc(0,NODE_H/2,4/_scale,0,Math.PI*2);_ctx.fill();
+  }
+  if(n.type!=='output'){
+    _ctx.beginPath();_ctx.arc(NODE_W,NODE_H/2,4/_scale,0,Math.PI*2);_ctx.fill();
+  }
+
+  _ctx.restore();
+}
+
+function roundRect(ctx,x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.arcTo(x+w,y,x+w,y+r,r);
+  ctx.lineTo(x+w,y+h-r);ctx.arcTo(x+w,y+h,x+w-r,y+h,r);
+  ctx.lineTo(x+r,y+h);ctx.arcTo(x,y+h,x,y+h-r,r);
+  ctx.lineTo(x,y+r);ctx.arcTo(x,y,x+r,y,r);ctx.closePath();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CANVAS EVENTS
+// ═══════════════════════════════════════════════════════════════════════════
+let _mousePos = null;
+
+function bindCanvasEvents(){
+  _cvs.addEventListener('mousedown', onMouseDown);
+  _cvs.addEventListener('mousemove', onMouseMove);
+  _cvs.addEventListener('mouseup',   onMouseUp);
+  _cvs.addEventListener('dblclick',  onDblClick);
+  _cvs.addEventListener('wheel',     onWheel, {passive:false});
+  _cvs.addEventListener('dragover',  e=>e.preventDefault());
+  _cvs.addEventListener('drop',      onDrop);
+  window.addEventListener('keydown', onKeyDown);
+}
+
+function worldPos(clientX, clientY){
+  const rect = _cvs.getBoundingClientRect();
+  const cx = clientX - rect.left, cy = clientY - rect.top;
+  const W = _cvs.width, H = _cvs.height;
+  return { x: (cx - W/2)/_scale - _ox, y: (cy - H/2)/_scale - _oy };
+}
+
+function hitNode(wx,wy){
+  for(let i=_nodes.length-1;i>=0;i--){
+    const n=_nodes[i];
+    if(wx>=n.pos[0]&&wx<=n.pos[0]+NODE_W&&wy>=n.pos[1]&&wy<=n.pos[1]+NODE_H)
+      return n;
+  }
+  return null;
+}
+
+function onMouseDown(e){
+  const w = worldPos(e.clientX, e.clientY);
+  const hit = hitNode(w.x,w.y);
+  if(_mode==='pan'||e.button===1||(e.button===0&&!hit&&e.altKey)){
+    _panDrag={sx:e.clientX,sy:e.clientY,ox:_ox,oy:_oy};
+    _cvs.classList.add('panning');
+    return;
+  }
+  if(_mode==='connect'){
+    if(hit){
+      if(_connectFrom===null){ _connectFrom=hit.id; }
+      else if(_connectFrom!==hit.id){ addEdge(_connectFrom,hit.id,false); _connectFrom=null; }
+    } else { _connectFrom=null; }
+    return;
+  }
+  if(hit){
+    if(!e.shiftKey) _selected.clear();
+    _selected.add(hit.id);
+    _drag={node_id:hit.id,sx:e.clientX,sy:e.clientY,nx:hit.pos[0],ny:hit.pos[1]};
+    inspectNode(hit);
+  } else {
+    _selected.clear();
+    _panDrag={sx:e.clientX,sy:e.clientY,ox:_ox,oy:_oy};
+    _cvs.classList.add('panning');
+    showNodeEmpty();
+  }
+}
+
+function onMouseMove(e){
+  const rect = _cvs.getBoundingClientRect();
+  _mousePos = {x:e.clientX-rect.left, y:e.clientY-rect.top};
+  if(_drag){
+    const dx=(e.clientX-_drag.sx)/_scale, dy=(e.clientY-_drag.sy)/_scale;
+    const n=nodeById(_drag.node_id);
+    if(n){ n.pos=[_drag.nx+dx, _drag.ny+dy]; }
+  }
+  if(_panDrag){
+    _ox=_panDrag.ox+(e.clientX-_panDrag.sx)/_scale;
+    _oy=_panDrag.oy+(e.clientY-_panDrag.sy)/_scale;
+  }
+}
+
+function onMouseUp(e){
+  _drag=null; _panDrag=null;
+  _cvs.classList.remove('panning');
+}
+
+function onDblClick(e){
+  if(_mode!=='select') return;
+  const w=worldPos(e.clientX,e.clientY);
+  const hit=hitNode(w.x,w.y);
+  if(hit){ inspectNode(hit); switchRight('node'); }
+}
+
+function onWheel(e){
+  e.preventDefault();
+  const d=e.deltaY>0?0.88:1.12;
+  const W=_cvs.width,H=_cvs.height;
+  const rect=_cvs.getBoundingClientRect();
+  const cx=e.clientX-rect.left-W/2, cy=e.clientY-rect.top-H/2;
+  _ox=((_ox*_scale+cx)*d-cx)/(_scale*d);
+  _oy=((_oy*_scale+cy)*d-cy)/(_scale*d);
+  _scale=Math.max(0.1,Math.min(5,_scale*d));
+  document.getElementById('zoom-label').textContent=Math.round(_scale*100)+'%';
+}
+
+function onKeyDown(e){
+  if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA') return;
+  if(e.key==='Delete'||e.key==='Backspace') deleteSelected();
+  if(e.key==='Escape'){ _selected.clear(); _connectFrom=null; }
+  if(e.key==='d'&&e.metaKey){ e.preventDefault(); duplicateSelected(); }
+  if(e.key==='f') fitView();
+  if(e.key==='l'||e.key==='L') autoLayout();   // L = re-layout shortcut
+  if(e.key==='s') setMode('select');
+  if(e.key==='c') setMode('connect');
+}
+
+let _dragLayerType=null;
+function onLayerDragStart(e,type){ _dragLayerType=type; e.dataTransfer.effectAllowed='copy'; }
+function onDrop(e){
+  e.preventDefault();
+  if(_dragLayerType){
+    const w=worldPos(e.clientX,e.clientY);
+    addNode(_dragLayerType,w.x-NODE_W/2,w.y-NODE_H/2);
+    _dragLayerType=null;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NODE OPERATIONS
+// ═══════════════════════════════════════════════════════════════════════════
+function addNode(type,x,y){
+  const layer = _catalogue.layers[type];
+  const id = type.slice(0,2)+Math.random().toString(36).slice(2,5);
+  const n = { id, type, params: deepCopy(layer?.params || {}), pos: [snapGrid(x), snapGrid(y)] };
+  _nodes.push(n);
+  _selected.clear();
+  _selected.add(id);
+  inspectNode(n);
+  return n;
+}
+
+function addLayerFromPalette(type){
+  // Place in a grid with generous spacing so nothing overlaps.
+  // Use PALETTE_COL_W / PALETTE_ROW_H which match the auto-layout constants.
+  const col = _nodes.length % PALETTE_COLS;
+  const row = Math.floor(_nodes.length / PALETTE_COLS);
+  // Offset from canvas centre so new nodes don't land on top of existing ones
+  const x = col * PALETTE_COL_W - (PALETTE_COLS - 1) * PALETTE_COL_W / 2;
+  const y = row * PALETTE_ROW_H;
+  const n = addNode(type, x - NODE_W/2, y - NODE_H/2);
+  return n;
+}
+
+function addEdge(from,to,skip=false){
+  if(_edges.find(e=>e.from===from&&e.to===to)) return;
+  _edges.push({from,to,skip});
+}
+
+function deleteSelected(){
+  const ids=[..._selected];
+  _nodes=_nodes.filter(n=>!ids.includes(n.id));
+  _edges=_edges.filter(e=>!ids.includes(e.from)&&!ids.includes(e.to));
+  _selected.clear();
+  showNodeEmpty();
+}
+
+function duplicateSelected(){
+  const newSel=new Set();
+  for(const id of _selected){
+    const orig=nodeById(id);
+    if(!orig) continue;
+    const newId=orig.type.slice(0,2)+Math.random().toString(36).slice(2,5);
+    const newNode={...deepCopy(orig),id:newId,pos:[orig.pos[0]+LAYOUT_COL_W/2,orig.pos[1]+LAYOUT_ROW_H/2]};
+    _nodes.push(newNode);
+    newSel.add(newId);
+  }
+  _selected=newSel;
+}
+
+function nodeById(id){ return _nodes.find(n=>n.id===id)||null; }
+function snapGrid(v){ return Math.round(v/GRID)*GRID; }
+
+function updateNodeId(newId){
+  if(!newId.trim()) return;
+  const sel=[..._selected];
+  if(sel.length!==1) return;
+  const old=sel[0];
+  const n=nodeById(old);
+  if(!n) return;
+  _edges.forEach(e=>{ if(e.from===old)e.from=newId; if(e.to===old)e.to=newId; });
+  n.id=newId;
+  _selected.clear();
+  _selected.add(newId);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NODE INSPECTOR
+// ═══════════════════════════════════════════════════════════════════════════
+function inspectNode(n){
+  document.getElementById('node-empty').style.display='none';
+  document.getElementById('node-inspector').style.display='block';
+  const layer=_catalogue.layers[n.type]||{};
+  const family=getFamilyOf(n.type);
+  document.getElementById('ni-type').textContent=n.type;
+  const badge=document.getElementById('ni-family-badge');
+  badge.textContent=family;
+  badge.style.cssText=`background:${famColor(family)}22;color:${famColor(family)};border:1px solid ${famColor(family)}44;font-size:9px;padding:2px 6px;border-radius:8px;margin-left:6px`;
+  document.getElementById('ni-desc').textContent=layer.desc||'';
+  document.getElementById('ni-id').value=n.id;
+
+  const el=document.getElementById('ni-params');
+  const params=n.params||{};
+  el.innerHTML=Object.entries(params).map(([k,v])=>{
+    const fid=`np-${k}`;
+    let input='';
+    if(typeof v==='boolean'){
+      input=`<select class="param-input" id="${fid}" onchange="setParam('${k}',this.value==='true')">
+        <option value="true" ${v?'selected':''}>true</option>
+        <option value="false" ${!v?'selected':''}>false</option></select>`;
+    } else if(k==='activation'||k==='fn'||k==='task'||k==='mode'||k==='solver'){
+      const opts=k==='activation'||k==='fn' ? (_catalogue.activations||[]) :
+                 k==='task'?['classification','regression']:
+                 k==='mode'?['max','avg','global']:
+                 k==='solver'?['euler','rk4','dopri5']:[];
+      input=`<select class="param-input" id="${fid}" onchange="setParam('${k}',this.value)">
+        ${opts.map(a=>`<option value="${a}" ${a===v?'selected':''}>${a}</option>`).join('')}</select>`;
+    } else if(Array.isArray(v)){
+      input=`<input class="param-input" id="${fid}" value="${JSON.stringify(v)}"
+        oninput="try{setParam('${k}',JSON.parse(this.value))}catch(e){}" style="font-size:9.5px">`;
+    } else {
+      const isFloat=typeof v==='number'&&!Number.isInteger(v);
+      input=`<input class="param-input" id="${fid}" type="number" value="${v}"
+        ${isFloat?'step="0.001"':'step="1"'} oninput="setParam('${k}',+this.value)">`;
+    }
+    return `<div class="param-row"><label>${esc(k)}</label>${input}</div>`;
+  }).join('') || '<div style="color:var(--dim2);font-size:9.5px">No configurable params</div>';
+
+  const shapes=computeShapes();
+  if(shapes[n.id]){
+    document.getElementById('ni-shape-row').style.display='block';
+    document.getElementById('ni-shape').textContent='['+shapes[n.id].join('×')+']';
+  } else {
+    document.getElementById('ni-shape-row').style.display='none';
+  }
+}
+
+function showNodeEmpty(){
+  document.getElementById('node-empty').style.display='block';
+  document.getElementById('node-inspector').style.display='none';
+}
+
+function setParam(key,val){
+  const sel=[..._selected];
+  if(!sel.length) return;
+  const n=nodeById(sel[0]);
+  if(!n) return;
+  n.params[key]=val;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GRAPH STATS
+// ═══════════════════════════════════════════════════════════════════════════
+function computeShapes(){
+  const shapes={};
+  const nodes={};
+  _nodes.forEach(n=>nodes[n.id]=n);
+  const edges=_edges.filter(e=>!e.skip);
+  const adj={}, inDeg={};
+  _nodes.forEach(n=>{adj[n.id]=[];inDeg[n.id]=0;});
+  edges.forEach(e=>{ if(adj[e.from])adj[e.from].push(e.to); inDeg[e.to]=(inDeg[e.to]||0)+1; });
+  let q=_nodes.filter(n=>!inDeg[n.id]).map(n=>n.id);
+  while(q.length){
+    const id=q.shift();
+    const n=nodes[id]; if(!n) continue;
+    const p=n.params||{};
+    const inS=edges.filter(e=>e.to===id&&shapes[e.from]).map(e=>shapes[e.from]);
+    const s=inS[0]||p.shape||[64];
+    if(n.type==='input') shapes[id]=p.shape||[4];
+    else if(n.type==='dense'||n.type==='linear_probe') shapes[id]=[...(s.slice(0,-1)),[p.out_features||64]].flat();
+    else if(n.type==='mlp'){const l=p.layers||[64];shapes[id]=[l[l.length-1]];}
+    else if(n.type==='embedding') shapes[id]=[...s,[p.dim||64]].flat();
+    else if(n.type==='rnn'||n.type==='gru'||n.type==='lstm') shapes[id]=[p.hidden_size||128];
+    else if(n.type==='multi_head_attention') shapes[id]=s;
+    else if(n.type==='kan_layer') shapes[id]=[p.out_features||32];
+    else if(n.type==='hopfield') shapes[id]=[p.dim||64];
+    else if(n.type==='reservoir') shapes[id]=[p.reservoir_dim||256];
+    else if(n.type==='moe_router') shapes[id]=[p.dim||64];
+    else if(n.type==='conv1d') shapes[id]=[(s[0]||8),p.out_channels||16];
+    else if(n.type==='conv2d') shapes[id]=[...(s.slice(0,-1)),p.out_channels||32];
+    else if(n.type==='output') shapes[id]=p.shape||s;
+    else shapes[id]=s;
+    (adj[id]||[]).forEach(nxt=>{ inDeg[nxt]--; if(inDeg[nxt]===0)q.push(nxt); });
+  }
+  return shapes;
+}
+
+function renderGraphStats(data){
+  const el=document.getElementById('graph-stats');
+  if(!data){el.innerHTML='<div class="empty">No data</div>';return;}
+  const m=data.module||data;
+  const params=m.param_count||0;
+  const nodes=(_nodes.length||m.nodes?.length||0);
+  const edges=(_edges.length||m.edges?.length||0);
+
+  el.innerHTML=`
+    <div class="stat-row"><span style="color:var(--dim)">Parameters</span><span class="stat-v">${fmtParams(params)}</span></div>
+    <div class="stat-bar-track"><div class="stat-bar-fill" style="width:${Math.min(100,params/1e6*100)}%;background:var(--acc)"></div></div>
+    <div class="stat-row" style="margin-top:8px"><span style="color:var(--dim)">Nodes</span><span class="stat-v">${nodes}</span></div>
+    <div class="stat-row"><span style="color:var(--dim)">Edges</span><span class="stat-v">${edges}</span></div>
+    <div class="stat-row"><span style="color:var(--dim)">Depth (est)</span><span class="stat-v">${estimateDepth()}</span></div>`;
+
+  const families={};
+  _nodes.forEach(n=>{const f=getFamilyOf(n.type);families[f]=(families[f]||0)+1;});
+  const connEl=document.getElementById('graph-connectivity');
+  connEl.innerHTML=Object.entries(families).map(([f,c])=>
+    `<div style="display:flex;justify-content:space-between">
+      <span style="color:${famColor(f)}">${f}</span>
+      <span style="color:var(--dim)">${c} node${c>1?'s':''}</span>
+    </div>`).join('');
+}
+
+function estimateDepth(){
+  if(!_nodes.length) return 0;
+  const adj={};_nodes.forEach(n=>adj[n.id]=[]);
+  _edges.filter(e=>!e.skip).forEach(e=>{if(adj[e.from])adj[e.from].push(e.to);});
+  const depths={};
+  const queue=_nodes.filter(n=>!_edges.filter(e=>!e.skip).some(e=>e.to===n.id)).map(n=>n.id);
+  queue.forEach(id=>depths[id]=0);
+  while(queue.length){
+    const id=queue.shift();
+    (adj[id]||[]).forEach(nxt=>{
+      depths[nxt]=Math.max(depths[nxt]||0,(depths[id]||0)+1);
+      queue.push(nxt);
+    });
+  }
+  return Math.max(0,...Object.values(depths));
+}
+
+function updateTopbar(){
+  const m=_modules.find(x=>x.id===_currentModuleId)||{};
+  const params=m.param_count||0;
+  document.getElementById('tb-mod-name').textContent=m.name||'Untitled';
+  document.getElementById('tb-params').textContent=fmtParams(params);
+  document.getElementById('tb-nodes').textContent=_nodes.length;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TOOLBAR ACTIONS
+// ═══════════════════════════════════════════════════════════════════════════
+function setMode(m){
+  _mode=m; _connectFrom=null;
+  ['select','connect','pan'].forEach(id=>{
+    const el=document.getElementById('mode-'+id);
+    if(el) el.classList.toggle('active',id===m);
+  });
+  _cvs.style.cursor=m==='pan'?'grab':m==='connect'?'crosshair':'default';
+  document.getElementById('canvas-hint').textContent={
+    select:'Click to select · Drag to move · L = re-layout',
+    connect:'Click source then target · Esc to cancel',
+    pan:'Drag to pan the canvas',
+  }[m]||'';
+}
+
+function zoomIn(){ _scale=Math.min(5,_scale*1.15); document.getElementById('zoom-label').textContent=Math.round(_scale*100)+'%'; }
+function zoomOut(){ _scale=Math.max(0.1,_scale/1.15); document.getElementById('zoom-label').textContent=Math.round(_scale*100)+'%'; }
+
+function fitView(){
+  if(!_nodes.length){ _ox=0;_oy=0;_scale=1; return; }
+  let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+  _nodes.forEach(n=>{
+    x0=Math.min(x0,n.pos[0]);y0=Math.min(y0,n.pos[1]);
+    x1=Math.max(x1,n.pos[0]+NODE_W);y1=Math.max(y1,n.pos[1]+NODE_H);
+  });
+  const W=_cvs.width,H=_cvs.height,pw=x1-x0||1,ph=y1-y0||1;
+  _scale=Math.min(0.95,Math.min(W/pw*0.75,H/ph*0.75));
+  _ox=-(x0+pw/2); _oy=-(y0+ph/2);
+  document.getElementById('zoom-label').textContent=Math.round(_scale*100)+'%';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MODULE OPERATIONS
+// ═══════════════════════════════════════════════════════════════════════════
+function newModule(){
+  _nodes=[];_edges=[];_selected.clear();_connectFrom=null;_runOutputs={};
+  _currentModuleId=null;
+  document.getElementById('tb-mod-name').textContent='New Module';
+  document.getElementById('tb-params').textContent='0';
+  document.getElementById('tb-nodes').textContent='0';
+  showNodeEmpty();
+}
+
+function clearCanvas(){ _nodes=[];_edges=[];_selected.clear();_connectFrom=null;_runOutputs={}; }
+
+async function saveModule(){
+  const name=document.getElementById('tb-mod-name').textContent;
+  setSaveStatus('saving','saving…');
+  const r=await callCap('ml.create',{
+    name: name==='—'||name==='New Module'?'Module '+Date.now().toString(36):name,
+    nodes: JSON.stringify(_nodes),
+    edges: JSON.stringify(_edges),
+    module_id: _currentModuleId||'',
+  });
+  if(r&&r.ok){
+    _currentModuleId=r.id;
+    await loadModules();
+    setSaveStatus('saved','saved ✓');
+    updateTopbar();
+    renderGraphStats({module:r.module});
+  } else {
+    setSaveStatus('error',r?.error||'error');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RUN
+// ═══════════════════════════════════════════════════════════════════════════
+async function runForward(){
+  if(!_currentModuleId){ await saveModule(); if(!_currentModuleId) return; }
+  document.getElementById('run-status').textContent='Running…';
+  document.getElementById('run-status').className='running';
+  const r=await callCap('ml.run',{id:_currentModuleId, inputs:'{}', summarise:false});
+  if(r?.error){
+    document.getElementById('run-status').textContent='Error: '+r.error;
+    document.getElementById('run-status').className='error';
+    return;
+  }
+  document.getElementById('run-status').textContent=`✓ ${r?.elapsed_ms}ms — ${Object.keys(r?.summary||{}).length} nodes computed`;
+  document.getElementById('run-status').className='ok';
+  _runOutputs={};
+  const sum=r?.summary||{};
+  for(const [nid,s] of Object.entries(sum)) _runOutputs[nid]=s;
+  renderRunOutput(sum);
+  switchRight('run');
+}
+
+function clearRunOutputs(){
+  _runOutputs={};
+  document.getElementById('run-output').innerHTML='<div class="empty">Run a forward pass to see outputs</div>';
+  document.getElementById('run-status').textContent='Ready';
+  document.getElementById('run-status').className='';
+}
+
+function renderRunOutput(summary){
+  const el=document.getElementById('run-output');
+  if(!Object.keys(summary).length){el.innerHTML='<div class="empty">No outputs</div>';return;}
+  el.innerHTML=_nodes.map(n=>{
+    const s=summary[n.id]; if(!s) return '';
+    const shape=s.shape?`[${s.shape.join('×')}]`:'?';
+    const family=getFamilyOf(n.type);
+    return `<div class="run-node-row">
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <span class="run-node-id">${esc(n.id)}</span>
+        <span style="font-size:8px;color:${famColor(family)}">${esc(n.type)}</span>
+      </div>
+      <div class="run-node-shape">${shape} · ${s.dtype||'f64'}</div>
+      <div class="run-node-stats">μ=${fmtNum(s.mean)} σ=${fmtNum(s.std)} ‖x‖=${fmtNum(s.norm)}</div>
+    </div>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LLM / AI PANEL
+// ═══════════════════════════════════════════════════════════════════════════
+async function generateModule(){
+  const prompt=document.getElementById('llm-gen-prompt').value.trim();
+  if(!prompt) return;
+  const respEl=document.getElementById('llm-gen-response');
+  respEl.style.display='block';
+  respEl.textContent='⟳ Generating architecture…';
+  const r=await callCap('ml.generate',{description:prompt, save:true});
+  if(r?.error){respEl.textContent='Error: '+r.error;return;}
+  _lastGenerated=r;
+  respEl.textContent=`✓ Generated "${r.module?.name}" — ${fmtParams(r.module?.param_count)} params, ${r.module?.nodes?.length} nodes\n\nClick "Load into Canvas" to view.`;
+  await loadModules();
+}
+
+function loadLLMResponse(){
+  if(!_lastGenerated?.module) return;
+  const m=_lastGenerated.module;
+  _currentModuleId=m.id;
+  _nodes=deepCopy(m.nodes||[]);
+  _edges=deepCopy(m.edges||[]);
+  _runOutputs={};
+  _selected.clear();
+  autoLayout(false);
+  updateTopbar();
+  renderModList();
+  fitView();
+  switchRight('graph');
+  renderGraphStats({module:m});
+}
+
+function openLLMGenerate(){
+  switchRight('llm');
+  document.getElementById('llm-gen-prompt').focus();
+}
+
+async function explainModule(detail='medium'){
+  if(!_currentModuleId) return;
+  const respEl=document.getElementById('llm-explain-response');
+  respEl.style.display='block';
+  respEl.textContent='⟳ Analysing architecture…';
+  const r=await callCap('ml.explain',{id:_currentModuleId, detail});
+  respEl.textContent=r?.explanation||r?.error||'No response';
+}
+
+async function suggestImprovements(){
+  if(!_currentModuleId) return;
+  const goal=document.getElementById('llm-suggest-goal').value;
+  const el=document.getElementById('llm-suggestions');
+  el.innerHTML='<div style="color:var(--dim2);font-size:10px">⟳ Thinking…</div>';
+  const r=await callCap('ml.suggest',{id:_currentModuleId, goal});
+  if(r?.error){el.innerHTML=`<div style="color:var(--rose)">${esc(r.error)}</div>`;return;}
+  const sugs=r?.suggestions||[];
+  el.innerHTML=sugs.map(s=>`
+    <div class="sug-card">
+      <div class="sug-title">${esc(s.title||'Suggestion')}</div>
+      <div class="sug-desc">${esc((s.description||'').slice(0,180))}</div>
+    </div>`).join('')||'<div class="empty">No suggestions</div>';
+}
+
+async function askAIAboutNode(){
+  const sel=[..._selected];
+  if(!sel.length) return;
+  const n=nodeById(sel[0]);
+  if(!n) return;
+  const layer=_catalogue.layers[n.type]||{};
+  const msg=`Explain the "${n.type}" layer in a neural network. Family: ${layer.family||'?'}. Current params: ${JSON.stringify(n.params)}. When should I use it and what are the trade-offs?`;
+  switchRight('llm');
+  const respEl=document.getElementById('llm-explain-response');
+  respEl.style.display='block';
+  respEl.textContent='⟳ Asking AI about '+n.type+'…';
+  const r=await api('/mcp/call','POST',{name:'llm.generate',arguments:{prompt:msg,prefer_gpu:true}});
+  respEl.textContent=r?.content?.text||r?.content?.response||'No response';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PANEL SWITCHING
+// ═══════════════════════════════════════════════════════════════════════════
+function switchLeft(tab){
+  ['modules','palette','templates'].forEach(t=>{
+    document.getElementById('lpanel-'+t).style.display=t===tab?'':'none';
+    document.getElementById('stab-'+t).classList.toggle('active',t===tab);
+  });
+}
+
+function switchRight(tab){
+  ['node','graph','run','llm'].forEach(t=>{
+    document.getElementById('rpanel-'+t).style.display=t===tab?'':'none';
+    document.getElementById('rtab-'+t).classList.toggle('active',t===tab);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+function famColor(f){
+  return {
+    fundamental:'#3878dc',activation:'#f5a623',conv:'#00d4aa',
+    recurrent:'#8b5cf6',attention:'#e05a6b',norm:'#84cc16',
+    regularisation:'#f97316',embedding:'#06b6d4',structural:'rgba(140,170,230,0.6)',
+    pooling:'#a78bfa',exotic:'#ff6b6b',unknown:'rgba(140,170,230,0.4)',
+  }[f]||'rgba(140,170,230,0.4)';
+}
+
+function getFamilyOf(type){
+  if(type==='input'||type==='output') return 'unknown';
+  return _catalogue.layers[type]?.family||'unknown';
+}
+
+function fmtParams(n){
+  if(!n) return '0';
+  if(n>=1e9) return (n/1e9).toFixed(1)+'B';
+  if(n>=1e6) return (n/1e6).toFixed(2)+'M';
+  if(n>=1e3) return (n/1e3).toFixed(1)+'K';
+  return ''+n;
+}
+
+function fmtNum(n){ return n==null?'?':(+n).toFixed(3); }
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function deepCopy(x){ return JSON.parse(JSON.stringify(x)); }
+function setSaveStatus(cls,msg){
+  const el=document.getElementById('save-status');
+  el.className=cls;el.textContent=msg;
+  if(cls==='saved') setTimeout(()=>{el.className='';el.textContent='ready';},2500);
+}
+
+window.addEventListener('message',e=>{
+  if(e.data?.type==='vera_fabric_event') return;
+  const ev=e.data?.event;
+  if(!ev) return;
+  if(ev.type==='ml.module_created'||ev.type==='ml.module_generated') loadModules();
+});
+
+init();
+</script>
+<script src="/ui/vera-ui.js"></script>
+</body>
+</html>

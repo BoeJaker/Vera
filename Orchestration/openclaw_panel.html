@@ -1,0 +1,928 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>OpenClaw Bridge</title>
+<style>
+:root{
+  --bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;
+  --border:#3a3530;--border2:#4a4540;
+  --acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;
+  --ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;
+  --text:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;
+  --mono:'JetBrains Mono','Fira Mono',monospace;
+  --sans:'Inter','IBM Plex Sans',system-ui,sans-serif;
+  color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:12px;-webkit-font-smoothing:antialiased}
+input,select,textarea{background:var(--bg1);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:3px;font-family:var(--sans);font-size:11px;outline:none;transition:border-color .14s}
+input:focus,select:focus,textarea:focus{border-color:var(--acc)}
+select option{background:var(--bg2)}
+textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.55}
+.btn{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:3px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);font-size:11px;font-weight:500;cursor:pointer;transition:all .14s;white-space:nowrap;user-select:none}
+.btn:hover{border-color:var(--acc);color:var(--acc)}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+.btn.pri:hover{filter:brightness(1.1)}
+.btn.ok{background:rgba(109,184,122,.12);border-color:var(--ok);color:var(--ok)}
+.btn.ok:hover{background:rgba(109,184,122,.2)}
+.btn.warn{border-color:var(--warn);color:var(--warn)}
+.btn.danger{border-color:var(--err);color:var(--err)}
+.btn.danger:hover{background:rgba(201,107,107,.15)}
+.btn:disabled{opacity:.35;pointer-events:none}
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+
+#app{display:grid;grid-template-columns:250px 1fr;height:100vh;overflow:hidden}
+#sidebar{display:flex;flex-direction:column;border-right:1px solid var(--border);background:var(--bg1);overflow:hidden}
+#main{display:flex;flex-direction:column;overflow:hidden;position:relative}
+
+.sb-header{padding:10px 12px 8px;border-bottom:1px solid var(--border);flex-shrink:0}
+.sb-title{font-family:var(--mono);font-size:10px;font-weight:700;color:var(--acc3);letter-spacing:2px;text-transform:uppercase}
+.sb-sub{font-size:9px;color:var(--dim);margin-top:2px}
+
+.status-block{padding:10px 12px;border-bottom:1px solid var(--border);flex-shrink:0}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:5px;flex-shrink:0}
+.dot.ok{background:var(--ok);box-shadow:0 0 5px var(--ok)}
+.dot.err{background:var(--err)}
+.dot.warn{background:var(--warn);animation:blink 1s ease-in-out infinite}
+.dot.dim{background:var(--border2)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.status-row{display:flex;align-items:center;font-size:10.5px;margin-bottom:4px}
+.meta-kv{display:flex;justify-content:space-between;font-size:9.5px;color:var(--dim);margin-top:2px}
+.meta-kv span:last-child{color:var(--dim2);font-family:var(--mono)}
+.conn-btns{display:flex;gap:5px;margin-top:8px}
+.conn-btns .btn{flex:1;justify-content:center;font-size:10px}
+
+.sb-body{flex:1;overflow-y:auto}
+.sb-section{padding:8px 12px;border-bottom:1px solid var(--border)}
+.sb-label{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);margin-bottom:6px}
+.field{margin-bottom:6px}
+.field label{display:block;font-size:9.5px;color:var(--dim2);margin-bottom:2px}
+.field input,.field select{width:100%}
+
+.profile-row{display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid var(--border);border-radius:3px;margin-bottom:4px;cursor:pointer;transition:all .14s}
+.profile-row:hover{border-color:var(--border2)}
+.profile-row.active{border-color:var(--acc);background:rgba(90,158,143,.08)}
+.profile-name{font-size:10.5px;color:var(--text);font-weight:500;flex:1}
+.profile-url{font-size:9px;color:var(--dim);font-family:var(--mono)}
+.profile-badge{font-size:8px;padding:1px 5px;border-radius:10px;background:var(--bg3);color:var(--dim2)}
+.profile-badge.vera{background:rgba(90,158,143,.15);color:var(--acc);border:1px solid rgba(90,158,143,.3)}
+
+.sess-item{padding:5px 7px;border:1px solid var(--border);border-radius:3px;margin-bottom:4px;cursor:pointer;transition:border-color .14s;display:flex;align-items:center;justify-content:space-between}
+.sess-item:hover{border-color:var(--border2)}
+.sess-item.active{border-color:var(--acc);background:rgba(90,158,143,.08)}
+.sess-key{font-family:var(--mono);font-size:9.5px;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sess-badge{font-size:8.5px;padding:1px 5px;border-radius:10px;background:var(--bg3);color:var(--dim2);margin-left:4px}
+
+#top-bar{padding:8px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-shrink:0;background:var(--bg1)}
+.active-sess-label{font-family:var(--mono);font-size:10px;color:var(--acc);font-weight:600}
+
+#chat-area{flex:1;overflow-y:auto;padding:10px 14px;display:flex;flex-direction:column;gap:6px}
+.msg{max-width:90%;display:flex;flex-direction:column;gap:3px}
+.msg.user{align-self:flex-end}
+.msg.assistant{align-self:flex-start}
+.msg.system{align-self:center;max-width:100%}
+.bubble{padding:7px 10px;border-radius:4px;font-size:11.5px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+.msg.user .bubble{background:rgba(90,158,143,.18);border:1px solid rgba(90,158,143,.3)}
+.msg.assistant .bubble{background:var(--bg2);border:1px solid var(--border)}
+.msg.assistant .bubble.streaming{border-color:var(--acc);animation:stream-glow .8s ease-in-out infinite}
+@keyframes stream-glow{0%,100%{border-color:var(--acc)}50%{border-color:rgba(90,158,143,.4)}}
+.msg.system .bubble{background:var(--bg3);border:1px solid var(--border2);color:var(--dim2);font-size:10px;font-family:var(--mono)}
+.msg-meta{font-size:9px;color:var(--dim);padding:0 2px}
+.msg.user .msg-meta{text-align:right}
+.cursor{display:inline-block;width:7px;height:11px;background:var(--acc);margin-left:2px;vertical-align:text-bottom;animation:cursor-blink .7s step-end infinite}
+@keyframes cursor-blink{0%,100%{opacity:1}50%{opacity:0}}
+
+#input-bar{padding:10px 14px;border-top:1px solid var(--border);background:var(--bg1);flex-shrink:0}
+.input-row{display:flex;gap:6px;align-items:flex-end}
+#prompt-input{flex:1;resize:none;font-family:var(--sans);font-size:11.5px;min-height:38px;max-height:120px;line-height:1.5;padding:7px 10px}
+.input-options{display:flex;gap:10px;margin-top:6px;align-items:center}
+.opt-label{font-size:9.5px;color:var(--dim2)}
+
+#tools-section{padding:8px 14px;border-top:1px solid var(--border);flex-shrink:0}
+.tools-header{display:flex;align-items:center;gap:6px}
+.tools-url{font-family:var(--mono);font-size:9px;color:var(--acc);padding:3px 6px;background:var(--bg3);border:1px solid var(--border);border-radius:3px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.copy-hint{font-size:9px;color:var(--dim);margin-top:3px}
+
+.sec{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.sec::after{content:'';flex:1;height:1px;background:var(--border)}
+
+#right-panel{position:absolute;top:0;right:0;bottom:0;width:340px;background:var(--bg1);border-left:1px solid var(--border);transform:translateX(100%);transition:transform .2s;z-index:100;display:flex;flex-direction:column;overflow:hidden}
+#right-panel.open{transform:translateX(0)}
+.panel-header{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.panel-title{font-family:var(--mono);font-size:10px;font-weight:700;color:var(--acc3);letter-spacing:1.5px;text-transform:uppercase}
+.panel-tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);flex-shrink:0;padding:0 14px}
+.ptab{padding:6px 10px;font-size:10px;color:var(--dim2);cursor:pointer;border-bottom:2px solid transparent;transition:all .14s;margin-bottom:-1px}
+.ptab.active{color:var(--acc);border-bottom-color:var(--acc)}
+.ptab:hover{color:var(--text)}
+.panel-body{flex:1;overflow-y:auto;padding:12px 14px}
+.cfg-field{margin-bottom:10px}
+.cfg-field label{display:block;font-size:9.5px;color:var(--dim2);margin-bottom:3px}
+.cfg-field input,.cfg-field select{width:100%}
+.cfg-hint{font-size:9px;color:var(--dim);margin-top:2px}
+.panel-footer{padding:10px 14px;border-top:1px solid var(--border);display:flex;gap:6px;flex-shrink:0}
+.panel-footer .btn{flex:1;justify-content:center}
+
+.model-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.model-chip{padding:2px 7px;border-radius:3px;font-size:9px;font-family:var(--mono);background:var(--bg3);border:1px solid var(--border);color:var(--dim2);cursor:pointer;transition:all .14s}
+.model-chip:hover{border-color:var(--acc);color:var(--acc)}
+.model-chip.sel{background:rgba(90,158,143,.15);border-color:var(--acc);color:var(--acc)}
+
+.install-step{background:var(--bg2);border:1px solid var(--border);border-radius:3px;padding:8px 10px;margin-bottom:8px}
+.install-step-num{font-family:var(--mono);font-size:9px;color:var(--acc3);font-weight:700;margin-bottom:4px}
+.install-step-title{font-size:10.5px;color:var(--text);font-weight:600;margin-bottom:4px}
+.install-step-body{font-size:9.5px;color:var(--dim2);line-height:1.6}
+.code-block{background:var(--bg0);border:1px solid var(--border);border-radius:3px;padding:6px 8px;font-family:var(--mono);font-size:9px;color:var(--acc2);margin-top:5px;white-space:pre-wrap;word-break:break-all}
+.result-block{background:var(--bg0);border:1px solid var(--border);border-radius:3px;padding:8px;margin-top:6px;font-family:var(--mono);font-size:9px;color:var(--dim2);max-height:140px;overflow-y:auto;display:none}
+.result-block.ok{border-color:rgba(109,184,122,.4);color:var(--ok)}
+.result-block.err{border-color:rgba(201,107,107,.4);color:var(--err)}
+
+#toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--bg3);border:1px solid var(--border2);color:var(--text);padding:6px 14px;border-radius:4px;font-size:11px;font-family:var(--mono);display:none;z-index:200;max-width:400px;text-align:center}
+
+.toggle-row{display:flex;align-items:center;justify-content:space-between;padding:4px 0}
+.toggle-row span{font-size:9.5px;color:var(--dim2)}
+.toggle{position:relative;width:30px;height:16px;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0}
+.toggle-slider{position:absolute;cursor:pointer;inset:0;background:var(--bg3);border:1px solid var(--border);border-radius:8px;transition:.2s}
+.toggle-slider:before{position:absolute;content:'';height:10px;width:10px;left:2px;top:2px;background:var(--dim);border-radius:50%;transition:.2s}
+input:checked+.toggle-slider{background:rgba(90,158,143,.3);border-color:var(--acc)}
+input:checked+.toggle-slider:before{background:var(--acc);transform:translateX(14px)}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="sidebar">
+    <div class="sb-header">
+      <div class="sb-title">OpenClaw</div>
+      <div class="sb-sub">Agentic Loop Bridge &mdash; Vera</div>
+    </div>
+
+    <div class="status-block">
+      <div class="status-row">
+        <span class="dot dim" id="status-dot"></span>
+        <span id="status-text" style="font-size:10.5px;color:var(--dim2)">Disconnected</span>
+      </div>
+      <div id="status-url" style="font-size:9px;color:var(--dim);margin-top:2px;font-family:var(--mono)"></div>
+      <div class="meta-kv" id="gw-version" style="display:none">
+        <span>gateway</span><span id="gw-ver-val"></span>
+      </div>
+      <div class="meta-kv" id="gw-connid" style="display:none">
+        <span>conn</span><span id="gw-connid-val"></span>
+      </div>
+      <div class="conn-btns">
+        <button class="btn ok" id="btn-connect">Connect</button>
+        <button class="btn danger" id="btn-disconnect" disabled>Disconnect</button>
+        <button class="btn" id="btn-settings" title="Settings">&#9881;</button>
+      </div>
+    </div>
+
+    <div class="sb-body">
+
+      <div class="sb-section">
+        <div class="sb-label">Connection Target</div>
+        <div id="profiles-list"></div>
+        <button class="btn" id="btn-custom" style="width:100%;justify-content:center;font-size:10px;margin-top:4px">Custom&#8230;</button>
+      </div>
+
+      <div class="sb-section">
+        <div class="sb-label">LLM Routing</div>
+        <div class="toggle-row" style="margin-bottom:6px">
+          <span>Route through Vera Ollama proxy</span>
+          <label class="toggle">
+            <input type="checkbox" id="use-vera-ollama">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div id="ollama-model-area" style="display:none">
+          <div style="font-size:9.5px;color:var(--dim2);margin-bottom:4px">Available models</div>
+          <div id="model-chips" class="model-chips">
+            <span style="font-size:9px;color:var(--dim)">Loading&#8230;</span>
+          </div>
+        </div>
+        <div id="ollama-model-off" style="font-size:9px;color:var(--dim)">OpenClaw will use its own configured LLM backend.</div>
+      </div>
+
+      <div class="sb-section">
+        <div class="sb-label">Session</div>
+        <div class="field">
+          <label>Session Key</label>
+          <input type="text" id="sess-key-input" value="vera-bridge" placeholder="vera-bridge">
+        </div>
+        <div class="field">
+          <label>Agent ID</label>
+          <input type="text" id="agent-id-input" value="main" placeholder="main">
+        </div>
+        <div style="display:flex;gap:5px;margin-top:4px">
+          <button class="btn" id="btn-refresh-sessions" style="flex:1;justify-content:center;font-size:10px">Refresh</button>
+          <button class="btn warn" id="btn-reset-session" style="flex:1;justify-content:center;font-size:10px">Reset</button>
+        </div>
+      </div>
+
+      <div style="padding:8px 12px">
+        <div class="sb-label">Sessions</div>
+        <div id="sessions-list">
+          <div style="color:var(--dim);font-size:9.5px;text-align:center;padding:16px 0">No sessions loaded</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div id="main">
+    <div id="top-bar">
+      <div>
+        <div style="font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">Active session</div>
+        <div class="active-sess-label" id="active-sess-display">vera-bridge</div>
+      </div>
+      <div style="flex:1"></div>
+      <button class="btn" id="btn-install" style="font-size:10px">&#8595; Install</button>
+      <button class="btn" id="btn-clear" style="font-size:10px">Clear</button>
+    </div>
+
+    <div id="chat-area"></div>
+
+    <div id="tools-section">
+      <div class="tools-header">
+        <span style="font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;flex-shrink:0">Tool Bridge</span>
+        <div class="tools-url" id="tool-url"></div>
+        <button class="btn" id="btn-copy-tools" style="font-size:10px;flex-shrink:0">Copy</button>
+        <button class="btn" id="btn-copy-ollama" style="font-size:10px;flex-shrink:0">Ollama URL</button>
+      </div>
+      <div class="copy-hint">Point OpenClaw skills at this URL &bull; Ollama proxy: <span id="ollama-proxy-url" style="font-family:var(--mono);color:var(--dim2)"></span></div>
+    </div>
+
+    <div id="input-bar">
+      <div class="input-row">
+        <textarea id="prompt-input" placeholder="Send a message to OpenClaw&#8230;" rows="2"></textarea>
+        <button class="btn pri" id="send-btn" style="padding:7px 14px;font-size:11.5px;align-self:flex-end">Send</button>
+      </div>
+      <div class="input-options">
+        <span class="opt-label">Thinking:</span>
+        <select id="thinking-sel" style="padding:3px 6px;font-size:10px">
+          <option value="">Default</option>
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+        </select>
+        <span style="flex:1"></span>
+        <span class="opt-label" id="char-count" style="color:var(--dim)">0 chars</span>
+      </div>
+    </div>
+
+    <div id="right-panel">
+      <div class="panel-header">
+        <div class="panel-title" id="panel-title">Configuration</div>
+        <button class="btn" id="btn-close-panel">&#x2715;</button>
+      </div>
+      <div class="panel-tabs">
+        <div class="ptab active" id="ptab-config" data-tab="config">Connection</div>
+        <div class="ptab" id="ptab-install" data-tab="install">Install</div>
+      </div>
+
+      <div class="panel-body" id="panel-config">
+        <div class="sec">Gateway</div>
+        <div class="cfg-field">
+          <label>Gateway WebSocket URL</label>
+          <input type="text" id="cfg-ws-url" placeholder="ws://localhost:18789">
+          <div class="cfg-hint">ws:// or wss:// address of the OpenClaw gateway</div>
+        </div>
+        <div class="cfg-field">
+          <label>Gateway Token / Password</label>
+          <input type="password" id="cfg-token" placeholder="(leave empty if no auth)">
+        </div>
+        <div class="cfg-field">
+          <label>Default Agent ID</label>
+          <input type="text" id="cfg-agent-id" value="main" placeholder="main">
+        </div>
+        <div class="cfg-field">
+          <label>Default Session Key</label>
+          <input type="text" id="cfg-session-key" value="vera-bridge" placeholder="vera-bridge">
+        </div>
+        <div class="sec" style="margin-top:10px">Vera Bridge</div>
+        <div class="cfg-field">
+          <label>Vera Base URL</label>
+          <input type="text" id="cfg-vera-url" placeholder="http://localhost:8999">
+          <div class="cfg-hint">Vera HTTP URL shared with OpenClaw for tool calls</div>
+        </div>
+        <div class="cfg-field">
+          <label>Auto-reconnect</label>
+          <select id="cfg-auto-reconnect">
+            <option value="true">Enabled</option>
+            <option value="false">Disabled</option>
+          </select>
+        </div>
+        <div class="cfg-field">
+          <label>Reconnect interval (seconds)</label>
+          <input type="number" id="cfg-reconnect-interval" value="10" min="3" max="120">
+        </div>
+        <div class="sec" style="margin-top:10px">Status</div>
+        <div id="config-info" style="font-size:9.5px;color:var(--dim2);line-height:1.7">Open settings to load status.</div>
+      </div>
+
+      <div class="panel-body" id="panel-install" style="display:none">
+        <p style="font-size:10px;color:var(--dim2);line-height:1.6;margin-bottom:10px">Register Vera as an LLM provider and tool source inside OpenClaw's configuration.</p>
+
+        <div class="install-step">
+          <div class="install-step-num">01</div>
+          <div class="install-step-title">Discover install path</div>
+          <div class="install-step-body">Search for openclaw.json via npm global paths and common locations.</div>
+          <button class="btn" id="btn-discover" style="margin-top:8px;font-size:10px">Discover</button>
+          <div class="result-block" id="discover-result"></div>
+        </div>
+
+        <div class="install-step">
+          <div class="install-step-num">02</div>
+          <div class="install-step-title">Ollama proxy endpoint</div>
+          <div class="install-step-body">Vera exposes your Ollama cluster at this address.</div>
+          <div class="code-block" id="install-ollama-url"></div>
+        </div>
+
+        <div class="install-step">
+          <div class="install-step-num">03</div>
+          <div class="install-step-title">Tool bridge endpoint</div>
+          <div class="install-step-body">All Vera capabilities available to OpenClaw agents as HTTP tools.</div>
+          <div class="code-block" id="install-tool-url"></div>
+        </div>
+
+        <div class="install-step">
+          <div class="install-step-num">04</div>
+          <div class="install-step-title">Write config</div>
+          <div class="install-step-body">Writes Vera provider and tool bridge into openclaw.json.</div>
+          <div class="cfg-field" style="margin-top:8px">
+            <label>Config path</label>
+            <input type="text" id="cfg-install-path" placeholder="/home/user/.config/openclaw/openclaw.json">
+          </div>
+          <div class="toggle-row" style="margin-bottom:4px">
+            <span>Set Vera as Ollama provider</span>
+            <label class="toggle"><input type="checkbox" id="install-set-ollama" checked><span class="toggle-slider"></span></label>
+          </div>
+          <div class="toggle-row" style="margin-bottom:8px">
+            <span>Register Vera tool bridge</span>
+            <label class="toggle"><input type="checkbox" id="install-set-tools" checked><span class="toggle-slider"></span></label>
+          </div>
+          <button class="btn pri" id="btn-do-install" style="width:100%;justify-content:center">Write to openclaw.json</button>
+          <div class="result-block" id="install-result"></div>
+        </div>
+
+        <div class="install-step">
+          <div class="install-step-num">05</div>
+          <div class="install-step-title">Config snippet</div>
+          <div class="install-step-body">Copy this manually if automatic write fails.</div>
+          <div class="code-block" id="install-snippet" style="color:var(--dim2)">Run step 04 to generate.</div>
+          <button class="btn" id="btn-copy-snippet" style="font-size:10px;margin-top:6px">Copy snippet</button>
+        </div>
+      </div>
+
+      <div class="panel-footer">
+        <button class="btn" id="btn-reload-config">Reload</button>
+        <button class="btn pri" id="btn-save-config">Save &amp; Apply</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+(function() {
+'use strict';
+
+var S = {
+  connected: false,
+  streaming: false,
+  currentStreamEl: null,
+  veraBase: '',
+  selectedModel: '',
+  currentTab: 'config',
+};
+
+var PROFILES = {};
+
+// ── API ───────────────────────────────────────────────────────────────────────
+function api(path, method, body) {
+  var base = S.veraBase || location.origin;
+  var opts = { method: method || 'GET', headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  return fetch(base + path, opts)
+    .then(function(r) { return r.json(); })
+    .catch(function(e) { return { ok: false, error: e.message }; });
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function() {
+  S.veraBase = location.origin;
+
+  PROFILES['local'] = {
+    id: 'local', name: 'Local OpenClaw',
+    ws_url: 'ws://localhost:18789', hint: 'localhost:18789',
+    badge: null, veraProxy: false,
+  };
+  PROFILES['vera-proxy'] = {
+    id: 'vera-proxy', name: 'Via Vera Proxy',
+    ws_url: S.veraBase.replace(/^https?/, 'ws') + '/openclaw/ws-proxy',
+    hint: S.veraBase.replace(/^https?:\/\//, '') + '/openclaw/ws-proxy',
+    badge: 'vera', veraProxy: true,
+  };
+
+  updateUrls();
+  buildProfiles();
+  wireEvents();
+  refreshStatus();
+  setInterval(refreshStatus, 5000);
+  subscribeEvents();
+
+  document.getElementById('prompt-input').addEventListener('input', function(e) {
+    document.getElementById('char-count').textContent = e.target.value.length + ' chars';
+  });
+});
+
+// ── Wire all listeners (no inline handlers) ───────────────────────────────────
+function wireEvents() {
+  on('btn-connect',          'click', doConnect);
+  on('btn-disconnect',       'click', doDisconnect);
+  on('btn-settings',         'click', function() { openPanel('config'); });
+  on('btn-custom',           'click', function() { openPanel('config'); });
+  on('btn-refresh-sessions', 'click', refreshSessions);
+  on('btn-reset-session',    'click', resetSession);
+  on('use-vera-ollama',      'change', onOllamaToggle);
+  on('btn-install',          'click', function() { openPanel('install'); });
+  on('btn-clear',            'click', clearChat);
+  on('btn-copy-tools',       'click', function() { copyText(ge('tool-url').textContent); });
+  on('btn-copy-ollama',      'click', function() { copyText((S.veraBase || location.origin) + '/ollama'); });
+  on('send-btn',             'click', sendPrompt);
+  on('prompt-input',         'keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendPrompt(); }
+  });
+  on('btn-close-panel',   'click', closePanel);
+  on('btn-reload-config', 'click', loadConfig);
+  on('btn-save-config',   'click', saveConfig);
+  on('btn-discover',      'click', discoverInstall);
+  on('btn-do-install',    'click', doInstall);
+  on('btn-copy-snippet',  'click', function() { copyText(ge('install-snippet').textContent); });
+
+  document.querySelectorAll('.ptab').forEach(function(tab) {
+    tab.addEventListener('click', function() { switchPanelTab(this.dataset.tab); });
+  });
+}
+
+function on(id, evt, fn) {
+  var el = document.getElementById(id);
+  if (el) el.addEventListener(evt, fn);
+}
+function ge(id) { return document.getElementById(id); }
+
+// ── Profiles ──────────────────────────────────────────────────────────────────
+function buildProfiles() {
+  var el = ge('profiles-list');
+  el.innerHTML = '';
+  Object.keys(PROFILES).forEach(function(id) {
+    var p = PROFILES[id];
+    var row = document.createElement('div');
+    row.className = 'profile-row';
+    row.id = 'profile-' + id;
+    var inner = '<div style="flex:1;min-width:0">' +
+      '<div class="profile-name">' + esc(p.name) + '</div>' +
+      '<div class="profile-url">' + esc(p.hint) + '</div>' +
+      '</div>';
+    if (p.badge) inner += '<span class="profile-badge ' + p.badge + '">' + esc(p.badge) + '</span>';
+    row.innerHTML = inner;
+    row.addEventListener('click', (function(pid) {
+      return function() { selectProfile(pid); };
+    })(id));
+    el.appendChild(row);
+  });
+}
+
+function selectProfile(id) {
+  var p = PROFILES[id];
+  if (!p) return;
+  document.querySelectorAll('.profile-row').forEach(function(r) { r.classList.remove('active'); });
+  var el = ge('profile-' + id);
+  if (el) el.classList.add('active');
+  ge('cfg-ws-url').value = p.ws_url;
+  sysMsg('Profile: ' + p.name);
+}
+
+// ── Ollama toggle ─────────────────────────────────────────────────────────────
+function onOllamaToggle() {
+  var on = ge('use-vera-ollama').checked;
+  ge('ollama-model-area').style.display = on ? '' : 'none';
+  ge('ollama-model-off').style.display  = on ? 'none' : '';
+  if (on) loadModels();
+  api('/openclaw/config', 'POST', {
+    use_vera_ollama: on,
+    vera_ollama_base: (S.veraBase || location.origin) + '/ollama',
+  });
+}
+
+function loadModels() {
+  api('/openclaw/ollama-models').then(function(d) {
+    if (d.ok && d.models && d.models.length) { renderModelChips(d.models); return; }
+    return fetch((S.veraBase || location.origin) + '/ollama/api/tags')
+      .then(function(r) { return r.json(); })
+      .then(function(tj) {
+        var models = (tj.models || []).map(function(m) { return m.name; });
+        if (models.length) renderModelChips(models);
+      });
+  }).catch(function() {});
+}
+
+function renderModelChips(models) {
+  var el = ge('model-chips');
+  el.innerHTML = '';
+  models.forEach(function(m) {
+    var chip = document.createElement('div');
+    chip.className = 'model-chip';
+    chip.textContent = m;
+    chip.addEventListener('click', (function(model) {
+      return function() { selectModel(model); };
+    })(m));
+    el.appendChild(chip);
+  });
+}
+
+function selectModel(m) {
+  S.selectedModel = m;
+  document.querySelectorAll('.model-chip').forEach(function(c) {
+    c.classList.toggle('sel', c.textContent === m);
+  });
+  api('/openclaw/config', 'POST', { ollama_model: m });
+}
+
+// ── URLs ──────────────────────────────────────────────────────────────────────
+function updateUrls() {
+  var base      = S.veraBase || location.origin;
+  var toolUrl   = base + '/openclaw/tools';
+  var ollamaUrl = base + '/ollama';
+  ge('tool-url').textContent          = toolUrl;
+  ge('ollama-proxy-url').textContent  = ollamaUrl;
+  ge('install-ollama-url').textContent = ollamaUrl;
+  ge('install-tool-url').textContent  = toolUrl;
+}
+
+function copyText(text) {
+  navigator.clipboard.writeText(text).then(function() { showToast('Copied: ' + text); });
+}
+
+// ── Status ────────────────────────────────────────────────────────────────────
+function refreshStatus() {
+  api('/openclaw/status').then(applyStatus).catch(function() {});
+}
+
+function applyStatus(d) {
+  S.connected = !!d.connected;
+  var dot = ge('status-dot');
+  var txt = ge('status-text');
+  if (d.connecting)      { dot.className = 'dot warn'; txt.textContent = 'Connecting\u2026'; }
+  else if (d.connected)  { dot.className = 'dot ok';   txt.textContent = 'Connected'; }
+  else                   { dot.className = 'dot err';  txt.textContent = 'Disconnected'; }
+
+  ge('status-url').textContent = d.ws_url || '';
+
+  var vv = ge('gw-version'), vc = ge('gw-connid');
+  if (d.gateway_version) { vv.style.display = 'flex'; ge('gw-ver-val').textContent = d.gateway_version; }
+  else vv.style.display = 'none';
+  if (d.gateway_conn_id) { vc.style.display = 'flex'; ge('gw-connid-val').textContent = d.gateway_conn_id.slice(0,12) + '\u2026'; }
+  else vc.style.display = 'none';
+
+  ge('btn-connect').disabled    = !!(d.connected || d.connecting);
+  ge('btn-disconnect').disabled = !(d.connected  || d.connecting);
+
+  if (d.agent_id && !ge('agent-id-input').value)   ge('agent-id-input').value  = d.agent_id;
+  if (d.session_key && !ge('sess-key-input').value) ge('sess-key-input').value = d.session_key;
+  if (d.use_vera_ollama) {
+    ge('use-vera-ollama').checked = true;
+    ge('ollama-model-area').style.display = '';
+    ge('ollama-model-off').style.display  = 'none';
+  }
+}
+
+// ── Connect / Disconnect ──────────────────────────────────────────────────────
+function doConnect() {
+  var wsUrl   = ge('cfg-ws-url').value.trim();
+  var token   = ge('cfg-token').value;
+  var agentId = ge('cfg-agent-id').value.trim() || 'main';
+  var veraUrl = ge('cfg-vera-url').value.trim();
+  var sessKey = ge('cfg-session-key').value.trim() || 'vera-bridge';
+
+  var cfgBody = {};
+  if (wsUrl)   cfgBody.ws_url        = wsUrl;
+  if (token)   cfgBody.token         = token;
+  if (agentId) cfgBody.agent_id      = agentId;
+  if (veraUrl) cfgBody.vera_base_url = veraUrl;
+  if (sessKey) cfgBody.session_key   = sessKey;
+
+  var p = Object.keys(cfgBody).length
+    ? api('/openclaw/config', 'POST', cfgBody)
+    : Promise.resolve();
+
+  p.then(function() {
+    sysMsg('Connecting to OpenClaw gateway\u2026');
+    return api('/openclaw/connect', 'POST');
+  }).then(function(r) {
+    if (r.ok) sysMsg('Handshake initiated \u2014 awaiting hello-ok');
+    else       sysMsg('Connect failed: ' + (r.error || 'unknown'), true);
+    setTimeout(refreshStatus, 1500);
+  });
+}
+
+function doDisconnect() {
+  api('/openclaw/disconnect', 'POST').then(function() {
+    sysMsg('Disconnected');
+    refreshStatus();
+  });
+}
+
+// ── Sessions ──────────────────────────────────────────────────────────────────
+function refreshSessions() {
+  if (!S.connected) { sysMsg('Not connected', true); return; }
+  api('/openclaw/sessions').then(function(r) {
+    if (!r.ok) { sysMsg('Sessions: ' + r.error, true); return; }
+    renderSessions(r.sessions || []);
+  });
+}
+
+function renderSessions(sessions) {
+  var el = ge('sessions-list');
+  if (!sessions.length) {
+    el.innerHTML = '<div style="color:var(--dim);font-size:9.5px;text-align:center;padding:16px 0">No sessions</div>';
+    return;
+  }
+  el.innerHTML = '';
+  sessions.forEach(function(s) {
+    var key = s.key || s.id || '?';
+    var isActive = key === ge('sess-key-input').value;
+    var row = document.createElement('div');
+    row.className = 'sess-item' + (isActive ? ' active' : '');
+    row.innerHTML = '<span class="sess-key">' + esc(key) + '</span><span class="sess-badge">' + (s.messageCount || '') + '</span>';
+    row.addEventListener('click', (function(k) { return function() { selectSession(k); }; })(key));
+    el.appendChild(row);
+  });
+}
+
+function selectSession(key) {
+  ge('sess-key-input').value = key;
+  ge('active-sess-display').textContent = key;
+  refreshSessions();
+}
+
+function resetSession() {
+  var key = ge('sess-key-input').value.trim() || 'vera-bridge';
+  if (!confirm('Reset session "' + key + '"? This clears its history in OpenClaw.')) return;
+  api('/openclaw/sessions/reset', 'POST', { session_key: key }).then(function(r) {
+    sysMsg(r.ok ? 'Session "' + key + '" reset' : 'Reset failed: ' + r.error, !r.ok);
+  });
+}
+
+// ── Send prompt ───────────────────────────────────────────────────────────────
+function sendPrompt() {
+  var msg = ge('prompt-input').value.trim();
+  if (!msg) return;
+
+  var sessKey = ge('sess-key-input').value.trim() || 'vera-bridge';
+  var agentId = ge('agent-id-input').value.trim() || 'main';
+  var thinking = ge('thinking-sel').value;
+
+  ge('active-sess-display').textContent = sessKey;
+  addMsg('user', msg);
+  ge('prompt-input').value = '';
+  ge('char-count').textContent = '0 chars';
+
+  if (!S.connected) {
+    sysMsg('Not connected \u2014 use Connect in the sidebar first.', true);
+    return;
+  }
+
+  var streamBubble = addStreamingMsg();
+  ge('send-btn').disabled = true;
+  S.streaming = true;
+  S.currentStreamEl = streamBubble;
+
+  var body = { message: msg, session_key: sessKey, agent_id: agentId };
+  if (thinking) body.thinking = thinking;
+
+  api('/openclaw/prompt', 'POST', body).then(function(r) {
+    if (!r.ok) finalizeStream(streamBubble, '[Error: ' + (r.error || 'unknown') + ']', true);
+  }).catch(function(e) {
+    finalizeStream(streamBubble, '[Request failed: ' + e.message + ']', true);
+  });
+}
+
+// ── Chat ──────────────────────────────────────────────────────────────────────
+function addMsg(role, text) {
+  var area = ge('chat-area');
+  var div = document.createElement('div');
+  div.className = 'msg ' + role;
+  var ts = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  div.innerHTML = '<div class="bubble">' + esc(text) + '</div>' +
+    '<div class="msg-meta">' + (role === 'user' ? 'You' : 'OpenClaw') + ' \u00b7 ' + ts + '</div>';
+  area.appendChild(div);
+  area.scrollTop = area.scrollHeight;
+  return div;
+}
+
+function addStreamingMsg() {
+  var area = ge('chat-area');
+  var div = document.createElement('div');
+  div.className = 'msg assistant';
+  var ts = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  var bubble = document.createElement('div');
+  bubble.className = 'bubble streaming';
+  var cur = document.createElement('span');
+  cur.className = 'cursor';
+  bubble.appendChild(cur);
+  var meta = document.createElement('div');
+  meta.className = 'msg-meta';
+  meta.textContent = 'OpenClaw \u00b7 ' + ts;
+  div.appendChild(bubble);
+  div.appendChild(meta);
+  area.appendChild(div);
+  area.scrollTop = area.scrollHeight;
+  return bubble;
+}
+
+function appendStream(el, delta) {
+  var cur = el.querySelector('.cursor');
+  if (cur) cur.remove();
+  el.appendChild(document.createTextNode(delta));
+  var c = document.createElement('span');
+  c.className = 'cursor';
+  el.appendChild(c);
+  el.closest('.msg').scrollIntoView({ block: 'end', behavior: 'smooth' });
+}
+
+function finalizeStream(el, fullText, isError) {
+  var cur = el.querySelector('.cursor');
+  if (cur) cur.remove();
+  el.classList.remove('streaming');
+  if (isError) { el.style.color = 'var(--err)'; el.textContent = fullText; }
+  else if (!el.textContent.trim() && fullText) { el.textContent = fullText; }
+  ge('send-btn').disabled = false;
+  S.streaming = false;
+  S.currentStreamEl = null;
+}
+
+function sysMsg(text, isErr) {
+  var area = ge('chat-area');
+  var div = document.createElement('div');
+  div.className = 'msg system';
+  var bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  if (isErr) bubble.style.color = 'var(--err)';
+  bubble.textContent = text;
+  div.appendChild(bubble);
+  area.appendChild(div);
+  area.scrollTop = area.scrollHeight;
+}
+
+function clearChat() { ge('chat-area').innerHTML = ''; }
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── SSE ───────────────────────────────────────────────────────────────────────
+function subscribeEvents() {
+  var es = new EventSource((S.veraBase || location.origin) + '/events');
+  es.onmessage = function(e) {
+    var msg;
+    try { msg = JSON.parse(e.data); } catch(err) { return; }
+    var ev = msg.event || msg.type || '';
+    var expectedKey = ge('sess-key-input').value.trim() || 'vera-bridge';
+
+    if (ev === 'openclaw.stream' && msg.session_key === expectedKey && S.currentStreamEl)
+      appendStream(S.currentStreamEl, msg.delta || '');
+
+    if (ev === 'openclaw.response' && msg.session_key === expectedKey) {
+      if (S.currentStreamEl) finalizeStream(S.currentStreamEl, msg.text || '');
+      else { addMsg('assistant', msg.text || '[No response]'); ge('send-btn').disabled = false; }
+    }
+
+    if (ev === 'openclaw.connected') {
+      sysMsg('Gateway connected \u2014 version ' + (msg.gateway_version || '?'));
+      refreshStatus(); refreshSessions();
+    }
+    if (ev === 'openclaw.disconnected') { sysMsg('Gateway disconnected'); refreshStatus(); }
+    if (ev === 'openclaw.error') {
+      sysMsg('OpenClaw error: ' + (msg.error || '?'), true);
+      if (S.currentStreamEl) finalizeStream(S.currentStreamEl, '[Connection error]', true);
+    }
+  };
+}
+
+// ── Panel ─────────────────────────────────────────────────────────────────────
+function openPanel(tab) {
+  ge('right-panel').classList.add('open');
+  switchPanelTab(tab || S.currentTab);
+  if ((tab || S.currentTab) === 'config') loadConfig();
+  updateUrls();
+}
+
+function closePanel() {
+  ge('right-panel').classList.remove('open');
+}
+
+function switchPanelTab(tab) {
+  S.currentTab = tab;
+  document.querySelectorAll('.ptab').forEach(function(t) { t.classList.remove('active'); });
+  var at = ge('ptab-' + tab);
+  if (at) at.classList.add('active');
+  ge('panel-config').style.display  = tab === 'config'  ? '' : 'none';
+  ge('panel-install').style.display = tab === 'install' ? '' : 'none';
+  ge('panel-title').textContent = tab === 'config' ? 'Configuration' : 'Install into OpenClaw';
+  ge('btn-save-config').style.display = tab === 'config' ? '' : 'none';
+  updateUrls();
+}
+
+function loadConfig() {
+  api('/openclaw/config').then(function(d) {
+    if (d.ws_url)        ge('cfg-ws-url').value              = d.ws_url;
+    if (d.agent_id)      ge('cfg-agent-id').value             = d.agent_id;
+    if (d.vera_base_url) ge('cfg-vera-url').value             = d.vera_base_url;
+    if (d.session_key)   ge('cfg-session-key').value          = d.session_key;
+    ge('cfg-auto-reconnect').value    = String(d.auto_reconnect !== false);
+    ge('cfg-reconnect-interval').value = d.reconnect_interval || 10;
+
+    return api('/openclaw/status');
+  }).then(function(status) {
+    if (!status) return;
+    ge('config-info').innerHTML =
+      '<div>Enabled: <span style="color:var(--acc)">' + status.enabled + '</span></div>' +
+      '<div>Connected: <span style="color:' + (status.connected ? 'var(--ok)' : 'var(--err)') + '">' + status.connected + '</span></div>' +
+      (status.gateway_version ? '<div>Gateway: ' + esc(status.gateway_version) + '</div>' : '') +
+      (status.last_error ? '<div style="color:var(--err);margin-top:4px">Error: ' + esc(status.last_error) + '</div>' : '') +
+      '<div style="margin-top:6px;color:var(--dim)">Tool bridge: <span style="font-family:var(--mono)">' + location.origin + '/openclaw/tools</span></div>' +
+      '<div style="color:var(--dim)">Ollama proxy: <span style="font-family:var(--mono)">' + location.origin + '/ollama</span></div>';
+  }).catch(function(e) {
+    ge('config-info').textContent = 'Could not load config: ' + e.message;
+  });
+}
+
+function saveConfig() {
+  var body = {
+    ws_url:             ge('cfg-ws-url').value.trim(),
+    token:              ge('cfg-token').value,
+    agent_id:           ge('cfg-agent-id').value.trim() || 'main',
+    vera_base_url:      ge('cfg-vera-url').value.trim(),
+    auto_reconnect:     ge('cfg-auto-reconnect').value === 'true',
+    reconnect_interval: parseInt(ge('cfg-reconnect-interval').value) || 10,
+    session_key:        ge('cfg-session-key').value.trim() || 'vera-bridge',
+  };
+  api('/openclaw/config', 'POST', body).then(function(r) {
+    if (r.ok) { sysMsg('Config saved'); closePanel(); }
+    else       sysMsg('Save failed: ' + (r.error || ''), true);
+  });
+}
+
+// ── Install ───────────────────────────────────────────────────────────────────
+function discoverInstall() {
+  var btn = ge('btn-discover');
+  var el  = ge('discover-result');
+  btn.disabled = true; btn.textContent = 'Searching\u2026';
+  el.style.display = 'block'; el.className = 'result-block'; el.textContent = 'Searching npm global paths\u2026';
+  api('/openclaw/install/discover').then(function(r) {
+    if (r.ok && r.path) {
+      el.className = 'result-block ok'; el.textContent = 'Found: ' + r.path;
+      ge('cfg-install-path').value = r.path;
+    } else {
+      el.className = 'result-block err'; el.textContent = r.error || 'Not found. Enter path manually.';
+    }
+  }).catch(function(e) { el.className = 'result-block err'; el.textContent = e.message; })
+    .then(function() { btn.disabled = false; btn.textContent = 'Discover'; });
+}
+
+function doInstall() {
+  var path = ge('cfg-install-path').value.trim();
+  if (!path) { showToast('Enter a config path first'); return; }
+  var el = ge('install-result');
+  el.style.display = 'block'; el.className = 'result-block'; el.textContent = 'Writing\u2026';
+  api('/openclaw/install/write', 'POST', {
+    config_path:         path,
+    vera_base_url:       S.veraBase || location.origin,
+    set_ollama_provider: ge('install-set-ollama').checked,
+    set_tool_bridge:     ge('install-set-tools').checked,
+  }).then(function(r) {
+    if (r.ok) {
+      el.className = 'result-block ok'; el.textContent = r.message || 'Done';
+      if (r.snippet) ge('install-snippet').textContent = JSON.stringify(r.snippet, null, 2);
+    } else {
+      el.className = 'result-block err'; el.textContent = r.error || 'Write failed';
+      if (r.snippet) ge('install-snippet').textContent = JSON.stringify(r.snippet, null, 2);
+    }
+  }).catch(function(e) { el.className = 'result-block err'; el.textContent = e.message; });
+}
+
+function showToast(msg) {
+  var t = ge('toast');
+  t.textContent = msg; t.style.display = 'block';
+  setTimeout(function() { t.style.display = 'none'; }, 2500);
+}
+
+})(); // end IIFE
+</script>
+</body>
+</html>

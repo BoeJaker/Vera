@@ -1,0 +1,25 @@
+# ═══════════════════════════════════════════════════════════
+#  Vera Orchestrator — Python Dependencies
+# ═══════════════════════════════════════════════════════════
+
+# ── Core server ───────────────────────────────────────────
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.29,<1.0
+httpx>=0.27,<1.0
+
+# ── Backing stores ───────────────────────────────────────
+redis[hiredis]>=5.0,<6.0
+asyncpg>=0.29,<1.0
+chromadb-client>=0.5,<1.0
+neo4j>=5.19,<6.0
+
+# ── Utilities ────────────────────────────────────────────
+pydantic>=2.0,<3.0
+python-multipart>=0.0.9
+
+# ── Optional (uncomment as needed) ──────────────────────
+# asyncssh>=2.14          # remote worker SSH provisioning
+# aiomqtt>=2.0            # MQTT IoT collector
+# aiomysql>=0.2           # MySQL data fabric connector
+# beautifulsoup4>=4.12    # web scraping capabilities
+# pyserial>=3.5           # serial/IoT collector

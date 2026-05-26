@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vera · Source Inspection</title>
+<style>
+  :root {
+    --bg0:#0d0f12; --bg1:#141821; --bg2:#1b2131; --bg3:#242b3d;
+    --text0:#e8eaed; --text1:#b8bcc4; --text2:#8b919c; --text3:#5c6270;
+    --border:#2a303d; --border-hi:#3d4a5c;
+    --accent:#00d4ff; --accent2:#7c3aed; --ok:#10b981; --warn:#f59e0b; --err:#ef4444;
+    --radius:4px;
+    --mono:'IBM Plex Mono', ui-monospace, 'JetBrains Mono', monospace;
+    --sans:'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; font-variant-emoji: text; }
+  html, body { height:100%; background:var(--bg0); color:var(--text0);
+               font-family:var(--sans); font-size:13px; line-height:1.45;
+               overflow:auto; }
+  ::-webkit-scrollbar { width:6px; height:6px; }
+  ::-webkit-scrollbar-track { background:transparent; }
+  ::-webkit-scrollbar-thumb { background:var(--bg3); border-radius:3px; }
+  ::-webkit-scrollbar-thumb:hover { background:var(--border-hi); }
+
+  /* Monochrome SVG icons inline with text */
+  .ic { width:14px; height:14px; stroke-width:2; stroke-linecap:round;
+        stroke-linejoin:round; fill:none; stroke:currentColor;
+        flex-shrink:0; vertical-align:-2px; }
+  .ic-lg { width:18px; height:18px; }
+
+  /* Layout ─────────────────────────────────────────────────────── */
+  .wrap    { display:flex; flex-direction:column; height:100%; }
+  header   { padding:10px 14px; border-bottom:1px solid var(--border);
+             display:flex; align-items:center; gap:10px; background:var(--bg1);
+             flex-shrink:0; }
+  header h1 { font-size:13px; font-weight:600; color:var(--text0); }
+  header .sub { font-size:10.5px; color:var(--text2); font-family:var(--mono);
+                overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+                max-width:40ch; }
+  header .grow { flex:1; min-width:0; }
+
+  main     { flex:1; overflow-y:auto; padding:12px 14px;
+             display:flex; flex-direction:column; gap:12px; }
+
+  /* Controls ───────────────────────────────────────────────────── */
+  button   { background:var(--bg2); color:var(--text1);
+             border:1px solid var(--border); border-radius:var(--radius);
+             padding:5px 11px; cursor:pointer; font-size:11.5px;
+             font-family:var(--sans); line-height:1.2;
+             display:inline-flex; align-items:center; gap:6px;
+             transition: border-color .12s, color .12s, background .12s; }
+  button:hover { border-color:var(--accent); color:var(--text0); }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  button.primary { background:var(--accent); color:#0b1018;
+                   border-color:var(--accent); font-weight:500; }
+  button.primary:hover { filter:brightness(1.08); }
+  button.danger  { color:var(--err); }
+  button.danger:hover { border-color:var(--err); color:var(--err); }
+  button.subtle  { background:transparent; }
+
+  input, textarea, select {
+    width:100%;
+    background:var(--bg2); color:var(--text0);
+    border:1px solid var(--border); border-radius:var(--radius);
+    padding:5px 9px; outline:none;
+    font-family:var(--mono); font-size:11.5px;
+    line-height:1.4;
+  }
+  textarea { font-family:var(--sans); resize:vertical; min-height:48px; }
+  input:focus, textarea:focus, select:focus { border-color:var(--accent); }
+  label.field { display:flex; flex-direction:column; gap:3px;
+                font-size:10.5px; color:var(--text2);
+                font-family:var(--sans); text-transform:uppercase;
+                letter-spacing:.04em; }
+
+  /* Cards ──────────────────────────────────────────────────────── */
+  .card      { border:1px solid var(--border); border-radius:6px;
+               background:var(--bg1); min-height: auto;; }
+  .card > .head { padding:8px 12px; border-bottom:1px solid var(--border);
+                  display:flex; align-items:center; gap:10px;
+                  background:var(--bg2); }
+  .card > .head h2 { font-size:12px; font-weight:600; color:var(--text0); }
+  .card > .head .sub { color:var(--text2); font-size:10.5px;
+                       font-family:var(--mono); }
+  .card > .body { padding:10px 12px; display:flex; flex-direction:column; gap:8px; }
+
+  .row     { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .hint    { color:var(--text2); font-size:10.5px; font-family:var(--mono); }
+  .ok      { color:var(--ok);   font-size:10.5px; font-family:var(--mono); }
+  .warn    { color:var(--warn); font-size:10.5px; font-family:var(--mono); }
+  .err     { color:var(--err);  font-size:10.5px; font-family:var(--mono); }
+
+  /* Two-column form grid — collapses to single column under ~520px */
+  .grid    { display:grid; gap:8px; grid-template-columns:1fr 1fr; }
+  @media (max-width: 520px) {
+    .grid { grid-template-columns:1fr; }
+    header { padding:8px 10px; gap:6px; }
+    header .sub { display:none; }
+    main { padding:10px 10px; gap:10px; }
+  }
+  .span-2  { grid-column:1 / -1; }
+
+  /* Snapshot rows */
+  .snap-row {
+    display:grid;
+    grid-template-columns:auto 1fr auto auto;
+    gap:8px; align-items:center;
+    padding:7px 10px;
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    background:var(--bg2);
+  }
+  .snap-row:hover { border-color:var(--border-hi); }
+  .snap-id    { font-family:var(--mono); font-size:11px; color:var(--text0);
+                overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .snap-meta  { font-family:var(--mono); font-size:10px; color:var(--text2);
+                overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .snap-actions { display:flex; gap:4px; }
+
+  .pill       { font-size:9.5px; padding:2px 7px; border-radius:10px;
+                background:var(--bg3); border:1px solid var(--border);
+                color:var(--text2); font-family:var(--mono);
+                white-space:nowrap; }
+  .pill.fresh { background:rgba(16,185,129,.10); color:var(--ok);
+                border-color:rgba(16,185,129,.30); }
+  .pill.stale { background:rgba(245,158,11,.10); color:var(--warn);
+                border-color:rgba(245,158,11,.30); }
+
+  .empty { padding:16px; text-align:center; color:var(--text2);
+           font-size:11px; }
+  .empty .ic-lg { color:var(--text3); margin-bottom:6px; }
+
+  pre  { background:var(--bg0); border:1px solid var(--border);
+         border-radius:var(--radius); padding:8px 10px;
+         overflow:auto; font-size:10.5px; line-height:1.55;
+         max-height:280px; font-family:var(--mono);
+         white-space:pre; color:var(--text1); }
+
+  /* Meta stats strip */
+  .stats { display:flex; gap:14px; flex-wrap:wrap;
+           font-family:var(--mono); font-size:11px; }
+  .stats > span { color:var(--text1); }
+  .stats .k     { color:var(--text3); }
+  .stats .v.accent { color:var(--accent); }
+
+  /* Small busy indicator */
+  .spinner {
+    display:inline-block; width:10px; height:10px; border-radius:50%;
+    border:1.5px solid var(--border-hi); border-top-color:var(--accent);
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <svg class="ic ic-lg" style="color:var(--accent)" viewBox="0 0 24 24">
+    <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>
+  </svg>
+  <h1>Source Inspection</h1>
+  <span class="sub" id="source-root" title="">loading source root…</span>
+  <span class="grow"></span>
+  <button id="btn-refresh" class="subtle" title="Refresh all data">
+    <svg class="ic" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg>
+    Refresh
+  </button>
+</header>
+
+<main>
+
+<!-- STATS CARD ─────────────────────────────────────────────────── -->
+<div class="card">
+  <div class="head">
+    <svg class="ic" viewBox="0 0 24 24" style="color:var(--text2)"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="M3 9h18"/></svg>
+    <h2>Live source tree</h2>
+    <span class="sub">read-only · never modified</span>
+  </div>
+  <div class="body">
+    <div class="stats" id="stats-body">
+      <span><span class="spinner"></span> Loading…</span>
+    </div>
+  </div>
+</div>
+
+<!-- NEW SNAPSHOT ──────────────────────────────────────────────── -->
+<div class="card">
+  <div class="head">
+    <svg class="ic" viewBox="0 0 24 24" style="color:var(--text2)"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 8v8"/><path d="M8 12h8"/></svg>
+    <h2>Create snapshot</h2>
+    <span class="sub">safe editable copy</span>
+  </div>
+  <div class="body">
+    <div class="row">
+      <input id="snap-label" placeholder="Label (optional, e.g. 'refactor-memory')" style="flex:1;min-width:200px;">
+      <button class="primary" id="btn-snap-new">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+        New snapshot
+      </button>
+    </div>
+    <div class="hint" id="snap-status"></div>
+  </div>
+</div>
+
+<!-- SNAPSHOT LIST ─────────────────────────────────────────────── -->
+<div class="card">
+  <div class="head">
+    <svg class="ic" viewBox="0 0 24 24" style="color:var(--text2)"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/></svg>
+    <h2>Snapshots</h2>
+    <span class="sub" id="snap-count"></span>
+  </div>
+  <div class="body" id="snap-list">
+    <div class="empty">
+      <svg class="ic ic-lg" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+      <div>Loading…</div>
+    </div>
+  </div>
+</div>
+
+<!-- SCAFFOLD NEW CAPABILITY ──────────────────────────────────── -->
+<div class="card">
+  <div class="head">
+    <svg class="ic" viewBox="0 0 24 24" style="color:var(--text2)"><polyline points="8 6 2 12 8 18"/><polyline points="16 6 22 12 16 18"/></svg>
+    <h2>Scaffold new capability</h2>
+    <span class="sub">generates a @capability into a snapshot</span>
+  </div>
+  <div class="body">
+    <div class="grid">
+      <label class="field">Snapshot
+        <select id="bc-snap"></select>
+      </label>
+      <label class="field">Capability name
+        <input id="bc-name" placeholder="group.verb_noun">
+      </label>
+      <label class="field span-2">Summary
+        <input id="bc-summary" placeholder="What the capability does in one line">
+      </label>
+      <label class="field">Module file (optional)
+        <input id="bc-module" placeholder="auto">
+      </label>
+      <label class="field">Inputs hint
+        <input id="bc-inputs" placeholder="n:int, mode:str='classic'">
+      </label>
+      <label class="field span-2">Output hint
+        <input id="bc-output" placeholder="{sequence: [str], count: int}">
+      </label>
+    </div>
+    <div class="row">
+      <button class="primary" id="btn-scaffold-cap">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+        Generate
+      </button>
+      <span class="hint" id="bc-status"></span>
+    </div>
+    <pre id="bc-preview" style="display:none;"></pre>
+  </div>
+</div>
+
+<!-- SCAFFOLD NEW UI PANEL ───────────────────────────────────── -->
+<div class="card">
+  <div class="head">
+    <svg class="ic" viewBox="0 0 24 24" style="color:var(--text2)"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+    <h2>Scaffold new UI panel</h2>
+    <span class="sub">HTML + register_ui() stub</span>
+  </div>
+  <div class="body">
+    <div class="grid">
+      <label class="field">Snapshot
+        <select id="bp-snap"></select>
+      </label>
+      <label class="field">Panel id
+        <input id="bp-id" placeholder="my-panel">
+      </label>
+      <label class="field">Label
+        <input id="bp-label" placeholder="My Panel">
+      </label>
+      <label class="field">Icon
+        <input id="bp-icon" placeholder="🔍">
+      </label>
+      <label class="field span-2">What should it do?
+        <textarea id="bp-desc" rows="3" placeholder="Describe the panel's purpose and what API endpoints it calls."></textarea>
+      </label>
+      <label class="field span-2">Uses capabilities (comma-separated)
+        <input id="bp-caps" placeholder="obs.stats, fabric.datasets">
+      </label>
+    </div>
+    <div class="row">
+      <button class="primary" id="btn-scaffold-panel">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+        Generate
+      </button>
+      <span class="hint" id="bp-status"></span>
+    </div>
+    <pre id="bp-preview" style="display:none;"></pre>
+  </div>
+</div>
+
+</main>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────
+// API wiring — auto-detects the route prefix. The module serves the
+// panel at either /ide/inspect/panel or /inspect/panel; the endpoints
+// themselves all live under /ide/inspect/* regardless.
+// ─────────────────────────────────────────────────────────────────
+const API_ROOT = window.location.origin;
+const API = API_ROOT + '/ide/inspect';
+
+async function api(path, opts) {
+  const r = await fetch(API_ROOT + path, opts || {});
+  if (!r.ok) {
+    let msg;
+    try { const j = await r.json(); msg = j.detail || j.error || r.statusText; }
+    catch(e) { msg = r.statusText; }
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+function _parentIDE() {
+  try { return window.parent !== window ? window.parent : null; }
+  catch(e) { return null; }
+}
+
+function fmtBytes(n) {
+  if (n == null) return '';
+  if (n >= 1048576) return (n/1048576).toFixed(1) + 'MB';
+  if (n >= 1024)    return (n/1024).toFixed(0)    + 'KB';
+  return n + 'B';
+}
+
+// ─── Source info ─────────────────────────────────────────────────
+async function loadInfo() {
+  const host = document.getElementById('stats-body');
+  try {
+    const info = await api('/ide/inspect/source_info');
+    const rootEl = document.getElementById('source-root');
+    rootEl.textContent = info.source_root || '';
+    rootEl.title = info.source_root || '';
+    host.innerHTML =
+      `<span><span class="k">Root</span> <span class="v accent">${info.source_root || '?'}</span></span>
+       <span><span class="k">Modules</span> ${info.py_file_count || 0} · ${fmtBytes(info.py_total_bytes)}</span>
+       <span><span class="k">Panels</span> ${(info.panel_files||[]).length}</span>
+       <span><span class="k">Capabilities</span> ${info.capabilities_registered || 0}</span>`;
+  } catch(e) {
+    host.innerHTML = `<span class="err">Error: ${e.message}</span>`;
+  }
+}
+
+// ─── Snapshots ───────────────────────────────────────────────────
+async function loadSnapshots() {
+  const list = document.getElementById('snap-list');
+  const count = document.getElementById('snap-count');
+  try {
+    const r = await api('/ide/inspect/snapshots');
+    count.textContent = (r.snapshots.length + ' total') +
+                        (r.current_source_hash ? ' · hash ' + r.current_source_hash : '');
+    if (!r.snapshots.length) {
+      list.innerHTML = '<div class="empty"><svg class="ic ic-lg" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/></svg><div>No snapshots yet — create one above.</div></div>';
+      _fillSnapPickers([]);
+      return;
+    }
+    list.innerHTML = '';
+    const frag = document.createDocumentFragment();
+    for (const s of r.snapshots) {
+      const el = document.createElement('div');
+      el.className = 'snap-row';
+      const fresh = s.is_fresh
+        ? '<span class="pill fresh">fresh</span>'
+        : '<span class="pill stale">drift</span>';
+      el.innerHTML =
+        `<svg class="ic" style="color:var(--text2)" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/></svg>
+         <div style="min-width:0">
+           <div class="snap-id">${s.id}</div>
+           <div class="snap-meta">${s.label || ''}${s.label ? ' · ' : ''}${s.file_count||0} files · ${fmtBytes(s.bytes)}</div>
+         </div>
+         ${fresh}
+         <div class="snap-actions">
+           <button data-act="open" data-id="${s.id}" data-path="${s.path}" title="Open this snapshot in the IDE">Open</button>
+           <button data-act="diff" data-id="${s.id}" title="Show diff vs live source">Diff</button>
+           <button data-act="del" data-id="${s.id}" class="danger subtle" title="Delete snapshot">
+             <svg class="ic" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+           </button>
+         </div>`;
+      frag.appendChild(el);
+    }
+    list.appendChild(frag);
+    list.querySelectorAll('button').forEach(b => {
+      b.onclick = () => _snapAction(b.dataset.act, b.dataset.id, b.dataset.path);
+    });
+    _fillSnapPickers(r.snapshots);
+  } catch(e) {
+    list.innerHTML = `<div class="err">Error: ${e.message}</div>`;
+  }
+}
+
+function _fillSnapPickers(snaps) {
+  for (const id of ['bc-snap', 'bp-snap']) {
+    const sel = document.getElementById(id);
+    const cur = sel.value;
+    sel.innerHTML = '';
+    if (!snaps.length) {
+      sel.innerHTML = '<option value="">(create a snapshot first)</option>';
+      continue;
+    }
+    for (const s of snaps) {
+      const opt = document.createElement('option');
+      opt.value = s.id;
+      opt.textContent = s.id + (s.label ? ' — ' + s.label : '');
+      sel.appendChild(opt);
+    }
+    if (cur && snaps.find(x => x.id === cur)) sel.value = cur;
+  }
+}
+
+async function _snapAction(act, id, path) {
+  if (act === 'open') {
+    const p = _parentIDE();
+    if (p && typeof p.loadProjectFromPath === 'function') {
+      try {
+        p.loadProjectFromPath(path);
+        // Also ask the parent to dismiss the inspect drawer if it has one
+        if (typeof p.closeInspectDrawer === 'function') p.closeInspectDrawer();
+        return;
+      } catch(e) {}
+    }
+    try {
+      await navigator.clipboard.writeText(path);
+      alert('Snapshot path copied to clipboard:\n\n' + path);
+    } catch(e) { alert('Snapshot path:\n\n' + path); }
+  } else if (act === 'diff') {
+    try {
+      const r = await api('/ide/inspect/diff', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ snapshot_id: id, max_chars_per_file: 4000 }),
+      });
+      _showDiff(r);
+    } catch(e) { alert('Diff failed: ' + e.message); }
+  } else if (act === 'del') {
+    if (!confirm('Delete snapshot ' + id + '?')) return;
+    try {
+      await api('/ide/inspect/delete_snapshot', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ snapshot_id: id }),
+      });
+      await loadSnapshots();
+    } catch(e) { alert('Delete failed: ' + e.message); }
+  }
+}
+
+function _showDiff(r) {
+  if (!(r.total_changes || 0)) {
+    alert('No differences between ' + r.snapshot_id + ' and the live source.');
+    return;
+  }
+  let out = 'Changes in ' + r.snapshot_id + ':\n';
+  if (r.modified.length) out += '  Modified: ' + r.modified.join(', ') + '\n';
+  if (r.added.length)    out += '  Added:    ' + r.added.join(', ')    + '\n';
+  if (r.removed.length)  out += '  Removed:  ' + r.removed.join(', ')  + '\n\n';
+  for (const [path, d] of Object.entries(r.diffs || {})) {
+    out += '\n=== ' + path + ' ===\n' + d + '\n';
+  }
+  const w = window.open('', '_blank');
+  if (w) {
+    const esc = s => s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+    w.document.write(
+      '<title>' + esc(r.snapshot_id) + ' — diff</title>' +
+      '<style>body{margin:0;background:#0d0f12;color:#e8eaed;' +
+      'font-family:ui-monospace,monospace;font-size:12.5px;padding:16px}' +
+      '.add{color:#10b981}.del{color:#ef4444}.hdr{color:#00d4ff}</style>' +
+      '<pre>' + esc(out)
+        .replace(/^(\+[^\n]*)$/gm, '<span class="add">$1</span>')
+        .replace(/^(-[^\n]*)$/gm,  '<span class="del">$1</span>')
+        .replace(/^(@@[^\n]*)$/gm, '<span class="hdr">$1</span>')
+      + '</pre>'
+    );
+  } else {
+    alert(out.slice(0, 4000));
+  }
+}
+
+// ─── New snapshot ────────────────────────────────────────────────
+document.getElementById('btn-snap-new').onclick = async () => {
+  const label = document.getElementById('snap-label').value.trim();
+  const st = document.getElementById('snap-status');
+  const btn = document.getElementById('btn-snap-new');
+  st.innerHTML = '<span class="spinner"></span> Creating snapshot…';
+  st.className = 'hint';
+  btn.disabled = true;
+  try {
+    const r = await api('/ide/inspect/snapshot', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ label }),
+    });
+    if (r.ok) {
+      st.textContent = 'Created ' + r.snapshot_id + ' — ' + r.file_count + ' files (' + fmtBytes(r.bytes) + ')';
+      st.className = 'ok';
+      document.getElementById('snap-label').value = '';
+      await loadSnapshots();
+    } else {
+      st.textContent = 'Error: ' + (r.error || 'unknown');
+      st.className = 'err';
+    }
+  } catch(e) {
+    st.textContent = 'Error: ' + e.message;
+    st.className = 'err';
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+// ─── Scaffold capability ────────────────────────────────────────
+document.getElementById('btn-scaffold-cap').onclick = async () => {
+  const st  = document.getElementById('bc-status');
+  const pre = document.getElementById('bc-preview');
+  const btn = document.getElementById('btn-scaffold-cap');
+  const snap_id = document.getElementById('bc-snap').value;
+  if (!snap_id) {
+    st.textContent = 'Pick a snapshot first.';
+    st.className = 'warn';
+    return;
+  }
+  const body = {
+    snapshot_id: snap_id,
+    cap_name:    document.getElementById('bc-name').value.trim(),
+    summary:     document.getElementById('bc-summary').value.trim(),
+    module_file: document.getElementById('bc-module').value.trim(),
+    inputs_hint: document.getElementById('bc-inputs').value.trim(),
+    output_hint: document.getElementById('bc-output').value.trim(),
+  };
+  if (!body.cap_name || !body.summary) {
+    st.textContent = 'Need a capability name and a summary.';
+    st.className = 'warn';
+    return;
+  }
+  st.innerHTML = '<span class="spinner"></span> Generating (may take ~10-30s)…';
+  st.className = 'hint';
+  btn.disabled = true;
+  pre.style.display = 'none';
+  try {
+    const r = await api('/ide/inspect/scaffold_capability', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (r.ok) {
+      st.textContent = 'Wrote ' + r.module_file + ' (' + r.written + ')';
+      st.className = 'ok';
+      pre.textContent = r.code;
+      pre.style.display = '';
+    } else {
+      st.textContent = 'Error: ' + (r.error || '?');
+      st.className = 'err';
+    }
+  } catch(e) {
+    st.textContent = 'Error: ' + e.message;
+    st.className = 'err';
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+// ─── Scaffold UI panel ──────────────────────────────────────────
+document.getElementById('btn-scaffold-panel').onclick = async () => {
+  const st  = document.getElementById('bp-status');
+  const pre = document.getElementById('bp-preview');
+  const btn = document.getElementById('btn-scaffold-panel');
+  const snap_id = document.getElementById('bp-snap').value;
+  if (!snap_id) {
+    st.textContent = 'Pick a snapshot first.';
+    st.className = 'warn';
+    return;
+  }
+  const caps = document.getElementById('bp-caps').value
+    .split(',').map(s => s.trim()).filter(Boolean);
+  const body = {
+    snapshot_id:       snap_id,
+    panel_id:          document.getElementById('bp-id').value.trim(),
+    label:             document.getElementById('bp-label').value.trim(),
+    icon:              document.getElementById('bp-icon').value.trim(),
+    description:       document.getElementById('bp-desc').value.trim(),
+    capabilities_used: JSON.stringify(caps),
+  };
+  if (!body.panel_id || !body.label) {
+    st.textContent = 'Need a panel id and a label.';
+    st.className = 'warn';
+    return;
+  }
+  st.innerHTML = '<span class="spinner"></span> Generating (may take ~10-30s)…';
+  st.className = 'hint';
+  btn.disabled = true;
+  pre.style.display = 'none';
+  try {
+    const r = await api('/ide/inspect/scaffold_ui_panel', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (r.ok) {
+      st.textContent = 'Wrote ' + r.html_file + ' + ' + r.module_file;
+      st.className = 'ok';
+      pre.textContent = r.preview || '(no preview)';
+      pre.style.display = '';
+    } else {
+      st.textContent = 'Error: ' + (r.error || '?');
+      st.className = 'err';
+    }
+  } catch(e) {
+    st.textContent = 'Error: ' + e.message;
+    st.className = 'err';
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+// ─── Refresh ────────────────────────────────────────────────────
+document.getElementById('btn-refresh').onclick = () => { loadInfo(); loadSnapshots(); };
+
+// ─── Boot ───────────────────────────────────────────────────────
+loadInfo();
+loadSnapshots();
+</script>
+<script src="/ui/vera-ui.js"></script>
+</body>
+</html>

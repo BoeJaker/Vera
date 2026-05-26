@@ -1,0 +1,1365 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="ash">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vera / NLP Addons</title>
+<style>
+/* ── Themes (inherit from research.html) ─────────────────────────────────── */
+[data-theme="ash"]  {--bg:#f0ede8;--s1:#e8e5df;--s2:#dedbd4;--s3:#d4d1c8;--bd:rgba(0,0,0,.08);--bd2:rgba(0,0,0,.15);--t1:#1a1a18;--t2:#6a6860;--t3:#a8a69e;--ac:#2e6da4;--ac2:#228060;--ac3:#c47020;--ac4:#c03030;--ac5:#6040a0}
+[data-theme="dusk"] {--bg:#0e0f12;--s1:#13151a;--s2:#1a1d24;--s3:#222630;--bd:rgba(255,255,255,.07);--bd2:rgba(255,255,255,.14);--t1:#d4dae4;--t2:#6b7585;--t3:#3b4252;--ac:#6ea8d8;--ac2:#5ec9a0;--ac3:#e09a55;--ac4:#e06060;--ac5:#a78bfa}
+[data-theme="void"] {--bg:#000;--s1:#070707;--s2:#0d0d0d;--s3:#141414;--bd:rgba(255,255,255,.05);--bd2:rgba(255,255,255,.1);--t1:#e0e0e0;--t2:#484848;--t3:#282828;--ac:#9b8dfa;--ac2:#5ecab0;--ac3:#dba355;--ac4:#e06060;--ac5:#f472b6}
+[data-theme="chalk"]{--bg:#1c1c1e;--s1:#242428;--s2:#2c2c32;--s3:#34343c;--bd:rgba(255,255,255,.08);--bd2:rgba(255,255,255,.16);--t1:#e8e4d8;--t2:#7a7468;--t3:#3a3830;--ac:#d4a96a;--ac2:#80c090;--ac3:#c08878;--ac4:#e07070;--ac5:#9080c0}
+[data-theme="ice"]  {--bg:#090f18;--s1:#0d1620;--s2:#121e2c;--s3:#182638;--bd:rgba(80,160,255,.1);--bd2:rgba(80,160,255,.2);--t1:#c0d8f0;--t2:#406880;--t3:#1e3850;--ac:#5ab0f0;--ac2:#38d0b0;--ac3:#e0b060;--ac4:#e06868;--ac5:#8070e0}
+
+/* Node type colours */
+:root {
+  --nc-person:  #4a8fc4;
+  --nc-org:     #3a9668;
+  --nc-concept: #7a58b8;
+  --nc-tech:    #c47a28;
+  --nc-place:   #2e8888;
+  --nc-event:   #b87830;
+  --nc-thesis:  #c44040;
+  --nc-evidence:#3a9860;
+  --nc-counter: #c04040;
+  --nc-dataset: #5880c0;
+  --nc-paper:   #8060b0;
+  --nc-finding: #48a068;
+  --nc-method:  #8868a0;
+  --nc-other:   #887870;
+  --edge-col:   rgba(100,100,100,0.35);
+}
+
+/* ── Reset ───────────────────────────────────────────────────────────────── */
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--t1);font:12px/1.5 'ui-monospace','SFMono-Regular','Menlo',monospace;overflow:hidden}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,select,textarea{font:inherit;color:inherit;background:none;border:none;outline:none}
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:2px}
+
+/* ── Shell ───────────────────────────────────────────────────────────────── */
+#shell{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+#topbar{height:40px;background:var(--s1);border-bottom:1px solid var(--bd);display:flex;align-items:center;padding:0 14px;gap:10px;flex-shrink:0}
+.tb-logo{color:var(--ac);font-weight:600;font-size:12px;letter-spacing:.04em}
+.tb-sep{width:1px;height:18px;background:var(--bd)}
+.tbtn{display:flex;align-items:center;gap:5px;padding:3px 9px;border-radius:5px;font-size:11px;color:var(--t2);transition:.12s;border:1px solid transparent;white-space:nowrap;cursor:pointer}
+.tbtn:hover{background:var(--bd);color:var(--t1)}
+.tbtn.accent{background:var(--ac);color:#fff;border-color:var(--ac)}
+.tbtn.accent:hover{opacity:.85}
+.tbtn svg{width:11px;height:11px;flex-shrink:0}
+
+/* ── Body ────────────────────────────────────────────────────────────────── */
+#body{display:grid;grid-template-columns:260px 1fr;flex:1;overflow:hidden;min-height:0}
+
+/* ── Left: Module panel ──────────────────────────────────────────────────── */
+#left{background:var(--s1);border-right:1px solid var(--bd);display:flex;flex-direction:column;overflow:hidden;min-height:0}
+#left-head{padding:10px 12px 8px;border-bottom:1px solid var(--bd);flex-shrink:0}
+#left-head h3{font-size:10px;color:var(--t3);letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px}
+.cat-tabs{display:flex;gap:3px;flex-wrap:wrap}
+.cat-tab{font-size:9px;padding:2px 8px;border-radius:10px;border:1px solid var(--bd);color:var(--t3);cursor:pointer;transition:.1s;white-space:nowrap}
+.cat-tab:hover{border-color:var(--bd2);color:var(--t2)}
+.cat-tab.active{background:var(--ac);color:#fff;border-color:var(--ac)}
+#module-list{flex:1;overflow-y:auto;padding:6px}
+.mod-card{padding:9px 10px;border-radius:6px;margin-bottom:4px;cursor:pointer;border:1px solid transparent;transition:.12s}
+.mod-card:hover{background:var(--s2);border-color:var(--bd)}
+.mod-card.active{background:var(--s2);border-color:var(--ac)}
+.mod-name{font-size:12px;font-weight:500;color:var(--t1);margin-bottom:2px}
+.mod-desc{font-size:10px;color:var(--t3);line-height:1.4}
+.mod-cat{display:inline-flex;font-size:9px;padding:1px 5px;border-radius:3px;margin-top:4px;letter-spacing:.04em;text-transform:uppercase}
+.mod-cat.nlp{background:rgba(46,109,164,.12);color:var(--ac)}
+.mod-cat.fast{background:rgba(34,128,96,.1);color:var(--ac2)}
+.mod-cat.ml{background:rgba(34,128,96,.12);color:var(--ac2)}
+.mod-cat.vision{background:rgba(96,64,160,.12);color:var(--ac5)}
+.mod-cat.custom{background:rgba(196,112,32,.12);color:var(--ac3)}
+
+/* ── Right: Config + Output ──────────────────────────────────────────────── */
+#right{display:flex;flex-direction:column;overflow:hidden;min-height:0}
+#config-bar{border-bottom:1px solid var(--bd);padding:12px 16px;flex-shrink:0;background:var(--s1)}
+#config-bar h3{font-size:11px;font-weight:600;color:var(--t1);margin-bottom:10px;display:flex;align-items:center;gap:8px}
+#config-bar h3 span{font-size:10px;color:var(--t3);font-weight:400}
+#params-form{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end}
+.param-group{display:flex;flex-direction:column;gap:3px;min-width:100px}
+.param-label{font-size:9px;color:var(--t3);letter-spacing:.06em;text-transform:uppercase}
+.param-input{background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:4px 7px;font-size:11px;color:var(--t1);outline:none;transition:.1s;min-width:80px}
+.param-input:focus{border-color:var(--bd2)}
+.param-input[type=checkbox]{width:14px;height:14px;accent-color:var(--ac)}
+select.param-input{min-width:100px}
+.run-btn{padding:5px 16px;border-radius:5px;background:var(--ac);color:#fff;font-size:11px;font-weight:600;border:none;cursor:pointer;transition:.1s;white-space:nowrap;flex-shrink:0}
+.run-btn:hover{opacity:.85}
+.run-btn:disabled{opacity:.35;cursor:not-allowed}
+#source-info{font-size:10px;color:var(--t3);margin-top:6px;display:flex;align-items:center;gap:8px}
+#source-info .si-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:10px;border:1px solid var(--bd);background:var(--s2)}
+
+/* ── Output area ─────────────────────────────────────────────────────────── */
+#output-area{flex:1;overflow-y:auto;padding:0;min-height:0;position:relative}
+#output-placeholder{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:10px;opacity:.2}
+#output-placeholder svg{width:32px;height:32px}
+#output-placeholder p{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--t3)}
+#output-inner{padding:20px 22px;max-width:900px;min-height:100%}
+#output-meta{display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.om-title{font-size:14px;font-weight:600;color:var(--t1);flex:1}
+.om-desc{font-size:10px;color:var(--t3)}
+.om-time{font-size:10px;color:var(--t3);font-family:monospace}
+.insert-btn{font-size:10px;padding:3px 10px;border-radius:4px;background:var(--s2);border:1px solid var(--bd);color:var(--t2);cursor:pointer;transition:.1s;white-space:nowrap}
+.insert-btn:hover{border-color:var(--ac);color:var(--ac)}
+
+/* ── Graph renderer ──────────────────────────────────────────────────────── */
+#graph-container{width:100%;position:relative;border:1px solid var(--bd);border-radius:8px;overflow:hidden;background:var(--bg);margin-bottom:14px}
+#graph-canvas{width:100%;display:block}
+#graph-controls{position:absolute;top:10px;right:10px;display:flex;gap:5px}
+.gc-btn{width:24px;height:24px;border-radius:4px;background:var(--s1);border:1px solid var(--bd);display:flex;align-items:center;justify-content:center;color:var(--t2);cursor:pointer;font-size:12px;transition:.1s}
+.gc-btn:hover{border-color:var(--bd2);color:var(--t1)}
+#graph-legend{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;margin-bottom:14px}
+.gl-item{display:flex;align-items:center;gap:4px;font-size:9px;color:var(--t2)}
+.gl-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+#graph-tooltip{position:fixed;z-index:1000;background:var(--s1);border:1px solid var(--bd2);border-radius:6px;padding:8px 11px;font-size:11px;color:var(--t1);pointer-events:none;display:none;max-width:240px;box-shadow:0 4px 16px rgba(0,0,0,.2)}
+#graph-tooltip .gtt-label{font-weight:600;margin-bottom:3px}
+#graph-tooltip .gtt-type{font-size:9px;color:var(--t3);letter-spacing:.06em;text-transform:uppercase}
+#graph-tooltip .gtt-detail{font-size:10px;color:var(--t2);margin-top:4px}
+
+/* ── Table renderer ──────────────────────────────────────────────────────── */
+.nlp-table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:14px}
+.nlp-table th{background:var(--s2);font-weight:600;font-size:10px;letter-spacing:.05em;text-transform:uppercase;padding:7px 10px;border:1px solid var(--bd);text-align:left;color:var(--t2)}
+.nlp-table td{padding:6px 10px;border:1px solid var(--bd);color:var(--t1);vertical-align:top}
+.nlp-table tr:nth-child(even) td{background:var(--s1)}
+.nlp-table tr:hover td{background:var(--s2)}
+
+/* ── Tag cloud renderer ──────────────────────────────────────────────────── */
+#tag-cloud{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;padding:14px;background:var(--s1);border:1px solid var(--bd);border-radius:8px}
+.tag-item{display:inline-flex;align-items:center;gap:4px;border-radius:4px;padding:3px 9px;cursor:default;transition:.1s;border:1px solid transparent}
+.tag-item:hover{border-color:var(--bd2)}
+
+/* ── Timeline renderer ───────────────────────────────────────────────────── */
+#timeline-wrap{position:relative;padding:0 0 14px;margin-bottom:14px}
+.tl-spine{position:absolute;left:18px;top:10px;bottom:10px;width:1px;background:var(--bd2)}
+.tl-event{display:flex;gap:14px;padding:4px 0 12px;position:relative}
+.tl-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:6px;z-index:1;position:relative}
+.tl-dot::before{content:'';position:absolute;inset:-4px;border-radius:50%;border:1px solid currentColor;opacity:.3}
+.tl-time{font-size:10px;color:var(--t3);font-family:monospace;min-width:70px;flex-shrink:0;padding-top:4px}
+.tl-content{flex:1}
+.tl-label{font-size:12px;font-weight:500;color:var(--t1);margin-bottom:2px}
+.tl-detail{font-size:11px;color:var(--t2);line-height:1.5}
+.tl-cat{font-size:9px;padding:1px 5px;border-radius:3px;margin-left:6px;display:inline;text-transform:uppercase;letter-spacing:.04em}
+
+/* ── Markdown renderer ───────────────────────────────────────────────────── */
+.nlp-md{font-size:13px;line-height:1.8;color:var(--t2);margin-bottom:14px}
+.nlp-md h1,.nlp-md h2,.nlp-md h3{color:var(--t1);margin:1em 0 .4em;font-weight:600}
+.nlp-md h1{font-size:1.4em}.nlp-md h2{font-size:1.2em}.nlp-md h3{font-size:1.05em}
+.nlp-md p{margin:.5em 0}.nlp-md ul,.nlp-md ol{margin:.4em 0;padding-left:1.4em}
+.nlp-md li{margin:.15em 0}.nlp-md strong{color:var(--t1)}
+.nlp-md code{background:var(--s2);border:1px solid var(--bd);border-radius:3px;padding:1px 5px;font-size:11px;color:var(--ac)}
+.nlp-md pre{background:var(--s1);border:1px solid var(--bd);border-radius:5px;padding:11px;overflow-x:auto;font-size:11px;margin:.7em 0}
+.nlp-md pre code{background:none;border:none;padding:0;color:var(--t1)}
+.nlp-md blockquote{border-left:2px solid var(--bd2);padding-left:12px;color:var(--t2);margin:.6em 0;font-style:italic}
+
+/* ── Heatmap renderer ────────────────────────────────────────────────────── */
+.heatmap-wrap{overflow-x:auto;margin-bottom:14px}
+.heatmap-table{border-collapse:collapse;font-size:11px}
+.heatmap-table th{background:var(--s2);padding:5px 8px;border:1px solid var(--bd);font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--t2)}
+.heatmap-table td{width:48px;height:36px;border:1px solid var(--bd);text-align:center;font-size:10px;font-family:monospace;transition:.15s}
+.heatmap-table td:hover{filter:brightness(1.2)}
+
+/* ── Loading spinner ─────────────────────────────────────────────────────── */
+#loading{display:none;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:12px}
+.spin{width:24px;height:24px;border:2px solid var(--bd);border-top-color:var(--ac);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-text{font-size:11px;color:var(--t3)}
+
+/* ── Status bar ──────────────────────────────────────────────────────────── */
+#status-bar{height:26px;border-top:1px solid var(--bd);background:var(--s1);display:flex;align-items:center;padding:0 14px;gap:10px;flex-shrink:0;font-size:10px;color:var(--t3)}
+#status-msg{flex:1}
+.st-badge{display:inline-flex;align-items:center;gap:4px;padding:1px 6px;border-radius:10px;background:var(--s2);border:1px solid var(--bd)}
+
+/* ── Toast ───────────────────────────────────────────────────────────────── */
+.toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--s3);border:1px solid var(--bd2);color:var(--t1);font-size:11px;padding:6px 14px;border-radius:6px;z-index:9999;pointer-events:none;transition:opacity .3s;white-space:nowrap}
+</style>
+<link rel="stylesheet" href="/ui/themes.css">
+</head>
+<body>
+<div id="shell">
+
+<!-- ── Topbar ─────────────────────────────────────────────────────────────── -->
+<div id="topbar">
+  <span class="tb-logo">⬡ Vera · NLP</span>
+  <div class="tb-sep"></div>
+  <button class="tbtn" onclick="refreshModules()" title="Reload module list">
+    <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M10 6A4 4 0 112 6" stroke-linecap="round"/><polyline points="10,3 10,6 7,6"/></svg>Modules
+  </button>
+  <button class="tbtn" onclick="checkHealth()" title="Check NLP engine health">
+    <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1 6h2l2-4 2 8 2-4h2"/></svg>Health
+  </button>
+  <button class="tbtn" onclick="showSettings()" title="Configure API endpoints">
+    <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="6" cy="6" r="2"/><path d="M6 1v1.5M6 9.5V11M1 6h1.5M9.5 6H11M2.6 2.6l1 1M8.4 8.4l1 1M9.4 2.6l-1 1M3.6 8.4l-1 1"/></svg>Settings
+  </button>
+  <button class="tbtn" id="insert-doc-btn" onclick="insertIntoDocument()" style="display:none" title="Insert result into research document">
+    <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M6 1v8M3 6l3 3 3-3"/><line x1="1" y1="11" x2="11" y2="11"/></svg>Insert to Doc
+  </button>
+  <div style="flex:1"></div>
+  <select id="theme-sel" onchange="setTheme(this.value)"
+    style="background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:2px 7px;font-size:10px;color:var(--t2)">
+    <option value="ash">Ash</option>
+    <option value="dusk">Dusk</option>
+    <option value="void">Void</option>
+    <option value="chalk">Chalk</option>
+    <option value="ice">Ice</option>
+  </select>
+</div>
+
+<!-- ── Body ──────────────────────────────────────────────────────────────── -->
+<div id="body">
+
+  <!-- Left: module list -->
+  <div id="left">
+    <div id="left-head">
+      <h3>Analysis Modules</h3>
+      <div class="cat-tabs">
+        <div class="cat-tab active" data-cat="all"    onclick="filterCat('all')">All</div>
+        <div class="cat-tab"        data-cat="fast"   onclick="filterCat('fast')">⚡ Fast</div>
+        <div class="cat-tab"        data-cat="nlp"    onclick="filterCat('nlp')">NLP</div>
+        <div class="cat-tab"        data-cat="ml"     onclick="filterCat('ml')">ML</div>
+        <div class="cat-tab"        data-cat="vision" onclick="filterCat('vision')">Vision</div>
+        <div class="cat-tab"        data-cat="custom" onclick="filterCat('custom')">Custom</div>
+      </div>
+    </div>
+    <div id="module-list">
+      <div style="padding:20px 10px;font-size:11px;color:var(--t3);text-align:center">
+        Loading modules…
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: config + output -->
+  <div id="right">
+    <div id="config-bar">
+      <h3 id="config-title">Select a module <span>← from the list</span></h3>
+      <div id="params-form"></div>
+      <div id="source-info" style="display:none">
+        <span class="si-badge" id="si-chars">0 chars</span>
+        <span class="si-badge" id="si-cits">0 citations</span>
+        <span style="flex:1"></span>
+        <button class="tbtn" onclick="pullFromResearch()" title="Pull current research text + citations from main window">
+          <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 6h8M6 2l4 4-4 4"/></svg>Pull from Research
+        </button>
+      </div>
+    </div>
+
+    <div id="output-area">
+      <div id="output-placeholder">
+        <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1">
+          <circle cx="12" cy="12" r="3"/><circle cx="22" cy="8" r="2"/><circle cx="8" cy="24" r="2"/>
+          <circle cx="24" cy="22" r="3"/>
+          <line x1="12" y1="12" x2="22" y2="8"/><line x1="12" y1="12" x2="8" y2="24"/>
+          <line x1="12" y1="12" x2="24" y2="22"/><line x1="22" y1="8" x2="24" y2="22"/>
+        </svg>
+        <p>Choose a module and run analysis</p>
+      </div>
+      <div id="loading">
+        <div class="spin"></div>
+        <div class="loading-text" id="loading-msg">Running analysis…</div>
+      </div>
+      <div id="output-inner" style="display:none">
+        <div id="output-meta">
+          <div class="om-title" id="output-title">Result</div>
+          <div class="om-desc" id="output-desc"></div>
+          <div class="om-time" id="output-time"></div>
+        </div>
+        <div id="output-content"></div>
+      </div>
+    </div>
+
+    <div id="status-bar">
+      <span id="status-msg">Ready</span>
+      <span class="st-badge" id="nlp-endpoint">nlp: —</span>
+    </div>
+  </div>
+</div><!-- #body -->
+</div><!-- #shell -->
+
+<!-- Graph tooltip -->
+<div id="graph-tooltip">
+  <div class="gtt-label" id="gtt-label"></div>
+  <div class="gtt-type" id="gtt-type"></div>
+  <div class="gtt-detail" id="gtt-detail"></div>
+</div>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════════
+   Config — reads from localStorage keys set by research.html settings
+   Fallback defaults point to llm.int (your local network)
+══════════════════════════════════════════════════════════════════════════ */
+// Read API URLs — user can set via research.html Settings or direct localStorage edit
+// NLP_API and VERA_API — when embedded in Vera harness iframe, resolve from parent.
+// The NLP panel is served at /nlp/panel from the capability backend (:8999),
+// which proxies NLP calls through /nlp/* capabilities to the NLP service (:8766).
+// VERA_API points to researcher_api (:8765) for the ctx.llm() proxy call.
+const _resolveBase = () => {
+  try {
+    if (window.parent !== window && window.parent._veraBase)
+      return window.parent._veraBase;
+  } catch(e) {}
+  return null;
+};
+const _parentBase = _resolveBase();
+// When in harness: route NLP calls through capability backend proxy (/nlp/*)
+// When standalone: talk directly to NLP service (:8766)
+const NLP_API  = (_parentBase
+  ? _parentBase + ''           // /run/{module} calls go to capability /nlp/run via panel's fetch
+  : (localStorage.getItem('vera-nlp-url') || 'http://llm.int:8766')).replace(/\/$/, '');
+// VERA_API = researcher_api server (for ctx.llm() proxy calls from NLP modules).
+// When in harness: stored in parent._veraResearcherUrl or falls back to localStorage.
+// When standalone: from localStorage or hardcoded default.
+const VERA_API = (()=>{
+  try {
+    if (window.parent !== window && window.parent._veraResearcherUrl)
+      return window.parent._veraResearcherUrl.replace(/\/$/, '');
+  } catch(e) {}
+  return (localStorage.getItem('cfg-url') || 'http://llm.int:8765').replace(/\/$/, '');
+})();
+// Capability NLP route prefix — when in harness, NLP endpoints are at /nlp/*
+const _NLP_PREFIX = _parentBase ? '/api/nlp' : '';
+
+// State
+let _modules    = [];
+let _activeMod  = null;
+let _lastResult = null;
+let _srcText    = '';
+let _srcCits    = [];
+let _cat        = 'all';
+let _debugLog   = [];   // capture errors for display
+
+function _dbg(...args) {
+  const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+  _debugLog.push(msg);
+  console.log('[NLP]', ...args);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Init — all cross-origin access is guarded against Chrome extension errors
+══════════════════════════════════════════════════════════════════════════ */
+document.addEventListener('DOMContentLoaded', () => {
+  setTheme(localStorage.getItem('theme') || 'ash', false);
+  document.getElementById('nlp-endpoint').textContent = 'nlp: ' + NLP_API.replace('http://','');
+  refreshModules();
+  // Pull context from parent — deferred and guarded
+  setTimeout(_pullContextSafe, 400);
+});
+
+// Receive context pushed from research.html
+window.addEventListener('message', (e) => {
+  if (!e.data || typeof e.data !== 'object') return;
+  if (e.data.type === 'vera-nlp-context') {
+    _srcText = e.data.text || '';
+    _srcCits = e.data.cits || [];
+    updateSourceInfo();
+    _dbg('Context received: ' + _srcText.length + ' chars, ' + _srcCits.length + ' cits');
+  }
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Theme
+══════════════════════════════════════════════════════════════════════════ */
+function setTheme(t, save = true) {
+  document.documentElement.setAttribute('data-theme', t);
+  const sel = document.getElementById('theme-sel');
+  if (sel) sel.value = t;
+  if (save) localStorage.setItem('theme', t);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Module loading
+══════════════════════════════════════════════════════════════════════════ */
+async function refreshModules() {
+  setStatus('Connecting to NLP engine…');
+  try {
+    const r = await fetch(NLP_API + '/modules', { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    _modules = await r.json();
+    _dbg('Modules loaded:', _modules.length);
+    renderModuleList();
+    setStatus('Ready · ' + _modules.length + ' module(s) loaded');
+  } catch (e) {
+    _dbg('Module load failed:', e.message);
+    document.getElementById('module-list').innerHTML =
+      `<div style="padding:12px 10px;font-size:11px;color:var(--ac4)">
+        <div style="font-weight:600;margin-bottom:6px">Cannot reach NLP engine</div>
+        <div style="color:var(--t2);margin-bottom:8px">${NLP_API}</div>
+        <div style="color:var(--t3);margin-bottom:6px">Start with:</div>
+        <code style="display:block;background:var(--s2);padding:6px 8px;border-radius:4px;font-size:10px;color:var(--ac);line-height:1.6">
+          cd /path/to/vera<br>
+          uvicorn vera_nlp:app --host 0.0.0.0 --port 8766
+        </code>
+        <div style="margin-top:8px;font-size:10px;color:var(--t3)">Or mount in researcher_api.py:<br>
+          <code style="color:var(--ac5)">from vera_nlp import nlp_app<br>app.mount("/api/nlp", nlp_app)</code>
+        </div>
+        <button onclick="refreshModules()" style="margin-top:10px;padding:4px 12px;border-radius:4px;background:var(--s2);border:1px solid var(--bd);color:var(--t2);cursor:pointer;font:inherit;font-size:10px">↺ Retry</button>
+      </div>`;
+    setStatus('NLP engine offline — ' + e.message, true);
+  }
+}
+
+function filterCat(cat) {
+  _cat = cat;
+  document.querySelectorAll('.cat-tab').forEach(t => t.classList.toggle('active', t.dataset.cat === cat));
+  renderModuleList();
+}
+
+function renderModuleList() {
+  const list = document.getElementById('module-list');
+  const filtered = _cat === 'all' ? _modules : _modules.filter(m => m.category === _cat);
+  if (!filtered.length) {
+    list.innerHTML = '<div style="padding:12px 10px;font-size:11px;color:var(--t3)">No modules in this category.</div>';
+    return;
+  }
+  list.innerHTML = filtered.map(m => `
+    <div class="mod-card ${_activeMod && _activeMod.name === m.name ? 'active' : ''}"
+         onclick="selectModule('${esc(m.name)}')">
+      <div class="mod-name">${esc(m.label)}</div>
+      <div class="mod-desc">${esc(m.description)}</div>
+      <span class="mod-cat ${esc(m.category)}">${esc(m.category)}</span>
+    </div>`).join('');
+}
+
+function selectModule(name) {
+  _activeMod = _modules.find(m => m.name === name);
+  if (!_activeMod) return;
+  renderModuleList();
+  renderParamForm();
+  document.getElementById('source-info').style.display = 'flex';
+  updateSourceInfo();
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Param form
+══════════════════════════════════════════════════════════════════════════ */
+function renderParamForm() {
+  if (!_activeMod) return;
+  document.getElementById('config-title').innerHTML =
+    `${esc(_activeMod.label)} <span>${esc(_activeMod.category)}</span>`;
+
+  const form   = document.getElementById('params-form');
+  const params = _activeMod.params || [];
+  let html = '';
+
+  params.forEach(p => {
+    const val = (p.default !== null && p.default !== undefined) ? p.default : '';
+    if (p.type === 'select') {
+      html += `<div class="param-group">
+        <label class="param-label">${esc(p.label || p.name)}</label>
+        <select class="param-input" data-param="${esc(p.name)}" title="${esc(p.help || '')}">
+          ${(p.options || []).map(o => `<option value="${esc(String(o))}" ${String(o) === String(val) ? 'selected' : ''}>${esc(String(o))}</option>`).join('')}
+        </select></div>`;
+    } else if (p.type === 'bool') {
+      html += `<div class="param-group" style="flex-direction:row;align-items:center;gap:6px;padding-bottom:2px">
+        <input type="checkbox" class="param-input" data-param="${esc(p.name)}" ${val ? 'checked' : ''} title="${esc(p.help || '')}">
+        <label class="param-label" style="text-transform:none;letter-spacing:0;font-size:11px;color:var(--t2)">${esc(p.label || p.name)}</label>
+        </div>`;
+    } else {
+      const inputType = (p.type === 'int' || p.type === 'float') ? 'number' : 'text';
+      const step = p.type === 'float' ? '0.1' : '1';
+      html += `<div class="param-group">
+        <label class="param-label">${esc(p.label || p.name)}</label>
+        <input type="${inputType}" class="param-input" data-param="${esc(p.name)}"
+          value="${esc(String(val))}"
+          ${p.min != null ? 'min="' + p.min + '"' : ''}
+          ${p.max != null ? 'max="' + p.max + '"' : ''}
+          ${inputType === 'number' ? 'step="' + step + '"' : ''}
+          style="max-width:${inputType === 'number' ? '80' : '180'}px"
+          title="${esc(p.help || '')}"></div>`;
+    }
+  });
+
+  html += `<button class="run-btn" id="run-btn" onclick="runModule()">▶ Run</button>`;
+  form.innerHTML = html;
+}
+
+function getParamValues() {
+  const vals = {};
+  document.querySelectorAll('[data-param]').forEach(el => {
+    const k = el.dataset.param;
+    if (el.type === 'checkbox') vals[k] = el.checked;
+    else if (el.type === 'number') vals[k] = parseFloat(el.value) || 0;
+    else vals[k] = el.value;
+  });
+  return vals;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Source management — all cross-origin access guarded
+══════════════════════════════════════════════════════════════════════════ */
+function _pullContextSafe() {
+  // Direct property access from same-origin opener
+  try {
+    if (window.opener && !window.opener.closed && window.opener.S) {
+      const S = window.opener.S;
+      _srcText = S.buf || '';
+      _srcCits = Array.isArray(S.cits) ? S.cits : [];
+      updateSourceInfo();
+      _dbg('Context from opener.S:', _srcText.length, 'chars');
+      return;
+    }
+  } catch (e) {
+    // Cross-origin opener — that's fine, will use postMessage instead
+  }
+  // Try parent frame (if embedded as iframe)
+  try {
+    if (window.parent !== window && window.parent.S) {
+      const S = window.parent.S;
+      _srcText = S.buf || '';
+      _srcCits = Array.isArray(S.cits) ? S.cits : [];
+      updateSourceInfo();
+      return;
+    }
+  } catch (e) {}
+  // Fallback: postMessage request — use '*' origin carefully
+  try {
+    const target = window.opener || (window.parent !== window ? window.parent : null);
+    if (target) {
+      target.postMessage({ type: 'vera-nlp-request-context' }, '*');
+    }
+  } catch (e) {}
+}
+
+function pullFromResearch() {
+  _pullContextSafe();
+  toast('Pulling research context…');
+}
+
+function updateSourceInfo() {
+  const charsEl = document.getElementById('si-chars');
+  const citsEl  = document.getElementById('si-cits');
+  if (charsEl) charsEl.textContent = _srcText.length.toLocaleString() + ' chars';
+  if (citsEl)  citsEl.textContent  = _srcCits.length + ' citation' + (_srcCits.length !== 1 ? 's' : '');
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Run module — with full response logging for debugging
+══════════════════════════════════════════════════════════════════════════ */
+async function runModule() {
+  if (!_activeMod) { toast('Select a module first'); return; }
+
+  const params  = getParamValues();
+  const runBtn  = document.getElementById('run-btn');
+  if (runBtn) runBtn.disabled = true;
+  showLoading('Running ' + _activeMod.label + '…');
+  setStatus('Running ' + _activeMod.label + '…');
+  _dbg('run →', _activeMod.name, params);
+
+  const body = JSON.stringify({
+    module:  _activeMod.name,
+    text:    _srcText,
+    cits:    _srcCits,
+    params:  params,
+    api_url: VERA_API,
+  });
+
+  try {
+    const r = await fetch(NLP_API + '/run/' + _activeMod.name, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
+
+    // Read response text first so we can log it if JSON parse fails
+    const rawText = await r.text();
+    _dbg('response status:', r.status, '| length:', rawText.length);
+
+    if (!r.ok) {
+      let errMsg = 'HTTP ' + r.status;
+      try { errMsg = JSON.parse(rawText).detail || errMsg; } catch(_) {}
+      throw new Error(errMsg);
+    }
+
+    if (!rawText || rawText.trim() === '') {
+      throw new Error('Empty response from NLP engine');
+    }
+
+    let result;
+    try {
+      result = JSON.parse(rawText);
+    } catch (parseErr) {
+      _dbg('JSON parse error:', parseErr.message, '| raw:', rawText.slice(0, 200));
+      throw new Error('Invalid JSON response: ' + parseErr.message);
+    }
+
+    _dbg('result type:', result.output_type, '| elapsed:', result.elapsed);
+
+    // Validate result shape
+    if (!result.output_type) {
+      throw new Error('Response missing output_type field — check vera_nlp.py');
+    }
+
+    _lastResult = result;
+    hideLoading();
+    renderResult(result);
+    document.getElementById('insert-doc-btn').style.display = '';
+    setStatus('Done · ' + (result.elapsed || '?') + 's · ' + result.output_type);
+
+  } catch (e) {
+    _dbg('runModule error:', e.message);
+    hideLoading();
+    setStatus('Error: ' + e.message, true);
+    // Show error with debug log
+    const debugLines = _debugLog.slice(-8).join('\n');
+    renderResult({
+      output_type: 'markdown',
+      payload: `**Error running \`${_activeMod.name}\`**\n\n\`\`\`\n${e.message}\n\`\`\`\n\n**Debug log (last 8 lines):**\n\`\`\`\n${debugLines}\n\`\`\`\n\n**Check:**\n- Is \`vera_nlp.py\` running at \`${NLP_API}\`?\n- Does the \`/health\` endpoint respond? (open \`${NLP_API}/health\` in browser)\n- Check the uvicorn console for Python tracebacks`,
+      title: 'Error',
+      elapsed: 0,
+    });
+  } finally {
+    if (runBtn) runBtn.disabled = false;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Result rendering — dispatcher
+══════════════════════════════════════════════════════════════════════════ */
+function renderResult(result) {
+  const area   = document.getElementById('output-area');
+  const ph     = document.getElementById('output-placeholder');
+  const inner  = document.getElementById('output-inner');
+  const content= document.getElementById('output-content');
+
+  ph.style.display    = 'none';
+  inner.style.display = '';
+
+  document.getElementById('output-title').textContent = result.title || _activeMod?.label || 'Result';
+  document.getElementById('output-desc').textContent  = result.description || '';
+  document.getElementById('output-time').textContent  = result.elapsed ? result.elapsed + 's' : '';
+
+  content.innerHTML = '';
+
+  const type = result.output_type;
+  if      (type === 'graph')     renderGraph(result.payload, content);
+  else if (type === 'table')     renderTable(result.payload, content);
+  else if (type === 'tags')      renderTags(result.payload, content);
+  else if (type === 'timeline')  renderTimeline(result.payload, content);
+  else if (type === 'heatmap')   renderHeatmap(result.payload, content);
+  else if (type === 'markdown')  renderMarkdown(result.payload, content);
+  else if (type === 'image_b64') renderImageB64(result.payload, content);
+  else if (type === 'multi') {
+    // Render each sub-result into its own wrapper div — no recursive renderResult calls
+    (result.payload || []).forEach(sub => {
+      if (!sub || !sub.output_type) return;
+      const wrapper = document.createElement('div');
+      wrapper.style.cssText = 'margin-bottom:22px;border-bottom:1px solid var(--bd);padding-bottom:18px';
+      if (sub.title) {
+        const hdr = document.createElement('div');
+        hdr.style.cssText = 'font-size:10px;color:var(--t3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px;display:flex;align-items:center;gap:6px';
+        hdr.innerHTML = `<span style="width:4px;height:4px;border-radius:50%;background:var(--ac);flex-shrink:0;display:inline-block"></span>${esc(sub.title)}`;
+        wrapper.appendChild(hdr);
+      }
+      const subDiv = document.createElement('div');
+      const t = sub.output_type;
+      if      (t === 'graph')     renderGraph(sub.payload, subDiv);
+      else if (t === 'table')     renderTable(sub.payload, subDiv);
+      else if (t === 'tags')      renderTags(sub.payload, subDiv);
+      else if (t === 'timeline')  renderTimeline(sub.payload, subDiv);
+      else if (t === 'heatmap')   renderHeatmap(sub.payload, subDiv);
+      else if (t === 'markdown')  renderMarkdown(sub.payload, subDiv);
+      else if (t === 'image_b64') renderImageB64(sub.payload, subDiv);
+      wrapper.appendChild(subDiv);
+      content.appendChild(wrapper);
+    });
+    document.getElementById('output-title').textContent = result.title || 'Results';
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Graph renderer — minimalist technical drawing style
+   Uses pure SVG + JS force simulation (no external deps)
+══════════════════════════════════════════════════════════════════════════ */
+const NODE_COLOURS = {
+  person:'#4a8fc4',org:'#3a9668',concept:'#7a58b8',tech:'#c47a28',
+  place:'#2e8888',event:'#b87830',thesis:'#c44040',evidence:'#3a9860',
+  counter:'#c04040',dataset:'#5880c0',paper:'#8060b0',finding:'#48a068',
+  method:'#8868a0',other:'#887870',
+};
+
+function nodeColour(type) { return NODE_COLOURS[type] || NODE_COLOURS.other; }
+function nodeRadius(weight) { return 6 + (weight || 0.5) * 12; }
+
+let _graphSim = null;
+
+function renderGraph(payload, container) {
+  if (!payload || !payload.nodes || !payload.nodes.length) {
+    container.innerHTML = '<div style="padding:20px;font-size:11px;color:var(--t3)">No graph data returned.</div>';
+    return;
+  }
+
+  const { nodes, edges, layout } = payload;
+  const W = 800, H = 520;
+
+  // Unique ID per render so multiple graphs can coexist and controls target the right SVG
+  const gid = 'gsvg-' + Date.now();
+
+  // Build legend
+  const typesSeen = [...new Set(nodes.map(n => n.type).filter(Boolean))];
+  const legendHtml = typesSeen.map(t =>
+    `<div class="gl-item"><div class="gl-dot" style="background:${nodeColour(t)}"></div>${esc(t)}</div>`
+  ).join('');
+
+  // ONE innerHTML assignment — never use += (it destroys then recreates the DOM)
+  container.innerHTML =
+    `<div style="position:relative;border:1px solid var(--bd);border-radius:8px;overflow:hidden;background:var(--bg);margin-bottom:8px">
+       <svg id="${gid}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg"
+            style="width:100%;height:${H}px;font-family:ui-monospace,monospace;cursor:grab;display:block"></svg>
+       <div style="position:absolute;top:8px;right:8px;display:flex;gap:4px">
+         <div class="gc-btn" onclick="graphZoomIn('${gid}')" title="Zoom in">+</div>
+         <div class="gc-btn" onclick="graphZoomOut('${gid}')" title="Zoom out">−</div>
+         <div class="gc-btn" onclick="graphFit('${gid}',${W},${H})" title="Fit">⊡</div>
+         <div class="gc-btn" onclick="exportGraphSVG('${gid}')" title="Export SVG">↓</div>
+       </div>
+     </div>
+     <div id="graph-legend" style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px">${legendHtml}</div>`;
+
+  // Query WITHIN container — guaranteed to exist since we just wrote it
+  const svg = container.querySelector('#' + gid);
+  if (!svg) {
+    container.innerHTML = '<div style="color:var(--ac4);padding:12px;font-size:11px">Graph render error: could not find SVG element</div>';
+    return;
+  }
+
+  _drawGraph(svg, nodes, edges, layout || 'force', W, H);
+}
+
+function _drawGraph(svg, nodes, edges, layout, W, H) {
+  // Separate node/edge rendering from layout
+  const isDark = ['dusk','void','chalk','ice'].includes(document.documentElement.dataset.theme);
+  const gridCol  = isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)';
+  const textCol  = isDark ? '#c0c8d8' : '#3a3830';
+  const edgeCol  = isDark ? 'rgba(160,168,180,0.28)' : 'rgba(80,80,80,0.25)';
+  const edgeLCol = isDark ? 'rgba(160,168,180,0.6)' : 'rgba(80,80,80,0.55)';
+  const bgCol    = 'transparent';
+
+  // Assign initial positions
+  const nodePos = {};
+  nodes.forEach((n, i) => {
+    const angle = (i / nodes.length) * 2 * Math.PI;
+    const r = Math.min(W, H) * 0.32;
+    nodePos[n.id] = {
+      x: W / 2 + r * Math.cos(angle),
+      y: H / 2 + r * Math.sin(angle),
+      vx: 0, vy: 0,
+    };
+  });
+
+  // Force simulation
+  function runForce(steps) {
+    const k = Math.sqrt((W * H) / Math.max(nodes.length, 1));
+    for (let step = 0; step < steps; step++) {
+      // Repulsion
+      for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+          const a = nodePos[nodes[i].id], b = nodePos[nodes[j].id];
+          const dx = a.x - b.x, dy = a.y - b.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 0.1;
+          const force = (k * k) / dist * 0.4;
+          const fx = (dx / dist) * force, fy = (dy / dist) * force;
+          a.vx += fx; a.vy += fy;
+          b.vx -= fx; b.vy -= fy;
+        }
+      }
+      // Attraction along edges
+      edges.forEach(e => {
+        const a = nodePos[e.source], b = nodePos[e.target];
+        if (!a || !b) return;
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 0.1;
+        const force = (dist * dist) / k * 0.08;
+        const fx = (dx / dist) * force, fy = (dy / dist) * force;
+        a.vx += fx; a.vy += fy;
+        b.vx -= fx; b.vy -= fy;
+      });
+      // Centre gravity
+      nodes.forEach(n => {
+        const p = nodePos[n.id];
+        p.vx += (W / 2 - p.x) * 0.005;
+        p.vy += (H / 2 - p.y) * 0.005;
+      });
+      // Apply + dampen + clamp
+      const dampen = Math.max(0.6, 1 - step / steps);
+      nodes.forEach(n => {
+        const p = nodePos[n.id];
+        p.x += p.vx * dampen;
+        p.y += p.vy * dampen;
+        p.vx *= 0.7; p.vy *= 0.7;
+        p.x = Math.max(40, Math.min(W - 40, p.x));
+        p.y = Math.max(30, Math.min(H - 30, p.y));
+      });
+    }
+  }
+
+  if (layout === 'radial') {
+    // Radial layout: find most connected node as centre
+    const degree = {};
+    nodes.forEach(n => { degree[n.id] = 0; });
+    edges.forEach(e => {
+      if (degree[e.source] !== undefined) degree[e.source]++;
+      if (degree[e.target] !== undefined) degree[e.target]++;
+    });
+    const sorted = [...nodes].sort((a, b) => (degree[b.id] || 0) - (degree[a.id] || 0));
+    nodePos[sorted[0].id] = { x: W / 2, y: H / 2, vx: 0, vy: 0 };
+    const rest = sorted.slice(1);
+    rest.forEach((n, i) => {
+      const angle = (i / rest.length) * 2 * Math.PI;
+      const r = Math.min(W, H) * 0.36;
+      nodePos[n.id] = { x: W / 2 + r * Math.cos(angle), y: H / 2 + r * Math.sin(angle), vx: 0, vy: 0 };
+    });
+    runForce(60);
+  } else if (layout === 'hierarchy') {
+    // BFS from root node
+    const adjList = {};
+    nodes.forEach(n => { adjList[n.id] = []; });
+    edges.forEach(e => {
+      if (adjList[e.source]) adjList[e.source].push(e.target);
+    });
+    const root = nodes[0];
+    const levels = { [root.id]: 0 };
+    const queue = [root.id];
+    while (queue.length) {
+      const cur = queue.shift();
+      (adjList[cur] || []).forEach(nb => {
+        if (levels[nb] === undefined) {
+          levels[nb] = levels[cur] + 1;
+          queue.push(nb);
+        }
+      });
+    }
+    const maxLevel = Math.max(...Object.values(levels));
+    const levelNodes = {};
+    nodes.forEach(n => {
+      const lv = levels[n.id] || 0;
+      if (!levelNodes[lv]) levelNodes[lv] = [];
+      levelNodes[lv].push(n.id);
+    });
+    Object.entries(levelNodes).forEach(([lv, ids]) => {
+      ids.forEach((id, i) => {
+        nodePos[id] = {
+          x: ((i + 1) / (ids.length + 1)) * W,
+          y: 40 + (parseInt(lv) / Math.max(maxLevel, 1)) * (H - 80),
+          vx: 0, vy: 0,
+        };
+      });
+    });
+    runForce(40);
+  } else {
+    runForce(120);
+  }
+
+  // ── Build SVG ────────────────────────────────────────────────────────────
+  let svgContent = '';
+
+  // Grid background (subtle technical-drawing feel)
+  const gridSize = 40;
+  svgContent += `<defs>
+    <pattern id="tgrid" width="${gridSize}" height="${gridSize}" patternUnits="userSpaceOnUse">
+      <path d="M ${gridSize} 0 L 0 0 0 ${gridSize}" fill="none" stroke="${gridCol}" stroke-width="0.5"/>
+    </pattern>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="${edgeCol}"/>
+    </marker>
+    <marker id="arrow-hi" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="${edgeLCol}"/>
+    </marker>
+    ${Object.entries(NODE_COLOURS).map(([t,c]) =>
+      `<filter id="glow-${t}" x="-50%" y="-50%" width="200%" height="200%">
+        <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="${c}" flood-opacity="0.4"/>
+      </filter>`
+    ).join('')}
+  </defs>
+  <rect width="${W}" height="${H}" fill="url(#tgrid)"/>`;
+
+  // Edges
+  edges.forEach((e, ei) => {
+    const a = nodePos[e.source], b = nodePos[e.target];
+    if (!a || !b) return;
+    const conf  = e.confidence || 0.7;
+    const opacity= Math.max(0.15, conf * 0.8);
+    // Curved edge
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2 - 18;
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    // Shorten endpoints to node edge
+    const rA = nodeRadius((nodes.find(n=>n.id===e.source)||{}).weight);
+    const rB = nodeRadius((nodes.find(n=>n.id===e.target)||{}).weight);
+    const sx = a.x + (dx/dist) * rA;
+    const sy = a.y + (dy/dist) * rA;
+    const tx = b.x - (dx/dist) * (rB+6);
+    const ty = b.y - (dy/dist) * (rB+6);
+
+    svgContent += `
+    <g class="graph-edge" data-edge="${ei}" style="opacity:${opacity}">
+      <path d="M${sx},${sy} Q${mx},${my} ${tx},${ty}"
+        fill="none" stroke="${edgeCol}" stroke-width="1.2"
+        marker-end="url(#arrow)"/>
+      ${(e.label && e.label.trim()) ? `<text x="${mx}" y="${my-4}" text-anchor="middle"
+        font-size="8" fill="${edgeLCol}" font-family="ui-monospace,monospace"
+        letter-spacing="0.04em">${esc(String(e.label).toUpperCase().slice(0,24))}</text>` : ''}
+    </g>`;
+  });
+
+  // Nodes
+  nodes.forEach(n => {
+    const p = nodePos[n.id];
+    if (!p) return;
+    const col = nodeColour(n.type);
+    const r   = nodeRadius(n.weight);
+    const labelLines = splitLabel(n.label, 14);
+
+    svgContent += `
+    <g class="graph-node" data-id="${esc(n.id)}" data-type="${esc(n.type||'other')}"
+       data-label="${esc(n.label)}" data-weight="${n.weight||0.5}"
+       style="cursor:pointer" transform="translate(${p.x},${p.y})">
+      <!-- Outer ring -->
+      <circle r="${r+3}" fill="none" stroke="${col}" stroke-width="0.5" opacity="0.25"/>
+      <!-- Main circle -->
+      <circle r="${r}" fill="${col}" fill-opacity="0.15" stroke="${col}" stroke-width="1.4"/>
+      <!-- Inner dot -->
+      <circle r="2.5" fill="${col}" opacity="0.8"/>
+      <!-- Cross-hair tick marks (technical drawing style) -->
+      <line x1="${-r-4}" y1="0" x2="${-r}" y2="0" stroke="${col}" stroke-width="0.8" opacity="0.5"/>
+      <line x1="${r}" y1="0" x2="${r+4}" y2="0" stroke="${col}" stroke-width="0.8" opacity="0.5"/>
+      <line x1="0" y1="${-r-4}" x2="0" y2="${-r}" stroke="${col}" stroke-width="0.8" opacity="0.5"/>
+      <line x1="0" y1="${r}" x2="0" y2="${r+4}" stroke="${col}" stroke-width="0.8" opacity="0.5"/>
+      <!-- Label -->
+      ${labelLines.map((ln, li) => `
+        <text x="0" y="${r+12+(li*12)}" text-anchor="middle"
+          font-size="9.5" fill="${textCol}" font-family="ui-monospace,monospace"
+          font-weight="500" letter-spacing="0.02em">${esc(ln)}</text>`).join('')}
+    </g>`;
+  });
+
+  svg.innerHTML = svgContent;
+
+  // Re-parse via DOMParser to ensure SVG namespace is correct (fixes marker-end in some browsers)
+  try {
+    const fullSvg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+      viewBox="${svg.getAttribute('viewBox')}" style="${svg.getAttribute('style')||''}"
+      id="${svg.id}">${svgContent}</svg>`;
+    const parsed = new DOMParser().parseFromString(fullSvg, 'image/svg+xml');
+    const err = parsed.querySelector('parsererror');
+    if (!err) {
+      // Clone children from parsed SVG into our existing svg element
+      svg.innerHTML = '';
+      Array.from(parsed.documentElement.childNodes).forEach(n => svg.appendChild(svg.ownerDocument.importNode(n, true)));
+    }
+  } catch(_) {
+    // fallback: innerHTML already set above
+  }
+
+  // Interaction: drag nodes
+  let dragNode = null, dragOffX = 0, dragOffY = 0;
+  let _viewScale = 1, _viewX = 0, _viewY = 0;
+
+  svg.addEventListener('mousedown', e => {
+    const gn = e.target.closest('.graph-node');
+    if (!gn) return;
+    e.preventDefault();
+    dragNode = gn;
+    const nodeId = gn.dataset.id;
+    const np = nodePos[nodeId];
+    const pt = svgPoint(svg, e);
+    dragOffX = pt.x - np.x; dragOffY = pt.y - np.y;
+    svg.style.cursor = 'grabbing';
+  });
+
+  svg.addEventListener('mousemove', e => {
+    const gn = e.target.closest('.graph-node');
+    if (gn && !dragNode) {
+      const tt = document.getElementById('graph-tooltip');
+      if (tt) {
+        tt.style.display = 'block';
+        tt.style.left = (e.clientX + 14) + 'px';
+        tt.style.top  = Math.max(10, e.clientY - 40) + 'px';
+        const lbl = document.getElementById('gtt-label');
+        const typ = document.getElementById('gtt-type');
+        const det = document.getElementById('gtt-detail');
+        if (lbl) lbl.textContent = gn.dataset.label || '';
+        if (typ) typ.textContent = gn.dataset.type  || '';
+        if (det) det.textContent = 'weight: ' + parseFloat(gn.dataset.weight || 0).toFixed(2);
+      }
+    } else if (!gn && !dragNode) {
+      const tt2 = document.getElementById('graph-tooltip');
+      if (tt2) tt2.style.display = 'none';
+    }
+    if (!dragNode) return;
+    e.preventDefault();
+    const pt = svgPoint(svg, e);
+    const nodeId = dragNode.dataset.id;
+    if (!nodePos[nodeId]) return;
+    nodePos[nodeId].x = Math.max(30, Math.min(W-30, pt.x - dragOffX));
+    nodePos[nodeId].y = Math.max(20, Math.min(H-20, pt.y - dragOffY));
+    _redrawEdges(svg, edges, nodePos, nodes, edgeCol, edgeLCol);
+    dragNode.setAttribute('transform', `translate(${nodePos[nodeId].x},${nodePos[nodeId].y})`);
+  });
+
+  svg.addEventListener('mouseleave', () => {
+    const tt = document.getElementById('graph-tooltip');
+    if (tt) tt.style.display = 'none';
+  });
+
+  window.addEventListener('mouseup', () => {
+    dragNode = null;
+    svg.style.cursor = 'grab';
+  });
+
+  // Store for export
+  svg._nodePos  = nodePos;
+  svg._nodes    = nodes;
+  svg._edges    = edges;
+  svg._edgeCol  = edgeCol;
+  svg._edgeLCol = edgeLCol;
+}
+
+function _redrawEdges(svg, edges, nodePos, nodes, edgeCol, edgeLCol) {
+  svg.querySelectorAll('.graph-edge').forEach((g, ei) => {
+    const e  = edges[ei];
+    if (!e) return;
+    const a  = nodePos[e.source], b = nodePos[e.target];
+    if (!a || !b) return;
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const dist = Math.sqrt(dx*dx+dy*dy) || 1;
+    const mx = (a.x+b.x)/2, my = (a.y+b.y)/2-18;
+    const rA = nodeRadius((nodes.find(n=>n.id===e.source)||{}).weight);
+    const rB = nodeRadius((nodes.find(n=>n.id===e.target)||{}).weight);
+    const sx = a.x+(dx/dist)*rA, sy = a.y+(dy/dist)*rA;
+    const tx = b.x-(dx/dist)*(rB+6), ty = b.y-(dy/dist)*(rB+6);
+    const path = g.querySelector('path');
+    if (path) path.setAttribute('d', `M${sx},${sy} Q${mx},${my} ${tx},${ty}`);
+    const txt = g.querySelector('text');
+    if (txt) { txt.setAttribute('x', mx); txt.setAttribute('y', my-4); }
+  });
+}
+
+function svgPoint(svg, e) {
+  try {
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return { x: e.clientX, y: e.clientY };
+    const pt  = svg.createSVGPoint();
+    pt.x = e.clientX; pt.y = e.clientY;
+    return pt.matrixTransform(ctm.inverse());
+  } catch(_) {
+    return { x: e.clientX, y: e.clientY };
+  }
+}
+
+function graphZoomIn(id)   { _scaleGraph(1.2,  id); }
+function graphZoomOut(id)  { _scaleGraph(0.83, id); }
+function graphFit(id, W, H){ const s=id?document.getElementById(id):document.querySelector('[id^="gsvg-"]'); if(s) s.setAttribute('viewBox',`0 0 ${W||800} ${H||520}`); }
+
+let _gScale = 1;
+function _scaleGraph(factor, id) {
+  _gScale *= factor;
+  const s = id ? document.getElementById(id) : document.querySelector('[id^="gsvg-"]');
+  if (!s) return;
+  const vb = s.viewBox.baseVal;
+  const cx = vb.x + vb.width/2, cy = vb.y + vb.height/2;
+  const nw = vb.width / factor, nh = vb.height / factor;
+  s.setAttribute('viewBox', `${cx-nw/2} ${cy-nh/2} ${nw} ${nh}`);
+}
+
+function exportGraphSVG(id) {
+  const s = id ? document.getElementById(id) : document.querySelector('[id^="gsvg-"]');
+  if (!s) return;
+  const blob = new Blob([s.outerHTML], { type: 'image/svg+xml' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = 'vera-graph.svg'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function splitLabel(text, maxLen) {
+  if (!text) return [''];
+  const words = String(text).split(' ');
+  const lines = []; let cur = '';
+  words.forEach(w => {
+    if ((cur + ' ' + w).trim().length > maxLen && cur) {
+      lines.push(cur.trim()); cur = w;
+    } else { cur = (cur + ' ' + w).trim(); }
+  });
+  if (cur) lines.push(cur.trim());
+  return lines.slice(0, 2);  // max 2 lines
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Table renderer
+══════════════════════════════════════════════════════════════════════════ */
+function renderTable(payload, container) {
+  if (!payload || !payload.columns) {
+    container.innerHTML = '<p style="color:var(--t3);font-size:11px">No table data.</p>';
+    return;
+  }
+  const { columns, rows } = payload;
+  let html = '<div style="overflow-x:auto"><table class="nlp-table"><thead><tr>';
+  columns.forEach(c => { html += `<th>${esc(c)}</th>`; });
+  html += '</tr></thead><tbody>';
+  (rows || []).forEach(row => {
+    html += '<tr>' + row.map(cell => `<td>${esc(String(cell ?? '—'))}</td>`).join('') + '</tr>';
+  });
+  html += '</tbody></table></div>';
+  container.innerHTML = html;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Tag cloud renderer
+══════════════════════════════════════════════════════════════════════════ */
+
+function renderTags(payload, container) {
+  if (!payload || !payload.tags) { container.innerHTML = '<p style="color:var(--t3)">No tags.</p>'; return; }
+  const maxW = Math.max(...payload.tags.map(t => t.weight || 0), 1);
+  // Map category to hex colour so we can build rgba backgrounds reliably
+  const CAT_HEX = {
+    theme:'#2e6da4', entity:'#228060', method:'#c47020',
+    finding:'#228060', tool:'#6040a0', place:'#2e8888',
+    person:'#2e6da4', other:'#6a6860',
+  };
+  const items = payload.tags.map(t => {
+    const norm  = (t.weight || 0.5) / maxW;
+    const size  = 10 + norm * 12;
+    const hex   = CAT_HEX[t.category] || CAT_HEX.other;
+    const alpha = Math.round((0.08 + norm * 0.18) * 255).toString(16).padStart(2, '0');
+    return `<span class="tag-item"
+      style="font-size:${size.toFixed(1)}px;color:${hex};background:${hex}${alpha};border-color:${hex}40"
+      title="${esc(t.category || '')}">${esc(t.text)}</span>`;
+  });
+  container.innerHTML = `<div id="tag-cloud">${items.join('')}</div>`;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Timeline renderer
+══════════════════════════════════════════════════════════════════════════ */
+const TL_CAT_COLOURS = {
+  discovery:'var(--ac2)', publication:'var(--ac)', event:'var(--ac3)',
+  founding:'var(--ac5)', release:'var(--ac3)', milestone:'var(--ac2)',
+  other:'var(--t2)',
+};
+
+function renderTimeline(payload, container) {
+  if (!payload || !payload.events || !payload.events.length) {
+    container.innerHTML = '<p style="color:var(--t3);font-size:11px">No events found.</p>'; return;
+  }
+  let html = '<div id="timeline-wrap"><div class="tl-spine"></div>';
+  payload.events.forEach(ev => {
+    const col = TL_CAT_COLOURS[ev.category] || TL_CAT_COLOURS.other;
+    html += `<div class="tl-event">
+      <div style="width:28px;flex-shrink:0"></div>
+      <div class="tl-dot" style="color:${col};background:${col};margin-left:-10px;margin-right:6px"></div>
+      <div class="tl-time">${esc(ev.t || '?')}</div>
+      <div class="tl-content">
+        <div class="tl-label">${esc(ev.label || '')}
+          <span class="tl-cat" style="background:${col}22;color:${col}">${esc(ev.category||'event')}</span>
+        </div>
+        ${ev.detail ? `<div class="tl-detail">${esc(ev.detail)}</div>` : ''}
+      </div>
+    </div>`;
+  });
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Heatmap renderer
+══════════════════════════════════════════════════════════════════════════ */
+function renderHeatmap(payload, container) {
+  if (!payload || !payload.labels || !payload.matrix) {
+    container.innerHTML = '<p style="color:var(--t3)">No heatmap data.</p>'; return;
+  }
+  const { labels, matrix } = payload;
+  let min = Infinity, max = -Infinity;
+  matrix.forEach(row => row.forEach(v => { if(v<min)min=v; if(v>max)max=v; }));
+  const norm = v => max===min ? 0.5 : (v-min)/(max-min);
+
+  let html = '<div class="heatmap-wrap"><table class="heatmap-table"><thead><tr><th></th>';
+  labels.forEach(l => { html += `<th>${esc(l)}</th>`; });
+  html += '</tr></thead><tbody>';
+  matrix.forEach((row, ri) => {
+    html += `<tr><th>${esc(labels[ri] || '')}</th>`;
+    row.forEach(v => {
+      const n   = norm(v);
+      const r   = Math.round(60 + n * 120);
+      const g   = Math.round(60 + (1-Math.abs(n-0.5)*2) * 80);
+      const b   = Math.round(180 - n * 120);
+      const col = `rgba(${r},${g},${b},0.6)`;
+      html += `<td style="background:${col}">${typeof v==='number'?v.toFixed(2):esc(v)}</td>`;
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table></div>';
+  container.innerHTML = html;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Markdown renderer
+══════════════════════════════════════════════════════════════════════════ */
+function renderMarkdown(text, container) {
+  if (!text) { container.innerHTML = ''; return; }
+  const html = String(text)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/```(\w*)\n?([\s\S]*?)```/g,(_,l,c)=>`<pre><code>${c.trim()}</code></pre>`)
+    .replace(/`([^`]+)`/g,'<code>$1</code>')
+    .replace(/^### (.+)$/gm,'<h3>$1</h3>').replace(/^## (.+)$/gm,'<h2>$1</h2>').replace(/^# (.+)$/gm,'<h1>$1</h1>')
+    .replace(/^---+$/gm,'<hr>')
+    .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>').replace(/\*([^*]+)\*/g,'<em>$1</em>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/^[*\-] (.+)$/gm,'<li>$1</li>').replace(/(<li>[\s\S]*?<\/li>\n*)+/g,s=>`<ul>${s}</ul>`)
+    .replace(/^(?!<[hupboa]|<pre|<hr)(.+)$/gm,'<p>$1</p>');
+  container.innerHTML = `<div class="nlp-md">${html}</div>`;
+}
+
+function renderImageB64(payload, container) {
+  if (!payload) return;
+  const { mime, data } = payload;
+  if (mime === 'image/svg+xml') {
+    container.innerHTML = `<div style="border:1px solid var(--bd);border-radius:6px;overflow:hidden">${data}</div>`;
+  } else {
+    container.innerHTML = `<img src="data:${mime};base64,${data}" style="max-width:100%;border-radius:6px;border:1px solid var(--bd)">`;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Insert into document
+══════════════════════════════════════════════════════════════════════════ */
+function insertIntoDocument() {
+  if (!_lastResult) { toast('Run a module first'); return; }
+  const title     = document.getElementById('output-title').textContent || 'NLP Analysis';
+  const svgEl     = document.querySelector('[id^="gsvg-"]');   // dynamic ID
+  const contentEl = document.getElementById('output-content');
+
+  let insertHtml = '';
+  if (_lastResult.output_type === 'graph' && svgEl) {
+    insertHtml = svgEl.outerHTML;
+  } else if (contentEl) {
+    insertHtml = contentEl.innerHTML;
+  }
+  if (!insertHtml) { toast('No content to insert'); return; }
+
+  const payload = {
+    type:   'vera-nlp-insert',
+    title,
+    html:   insertHtml,
+    svg:    (_lastResult.output_type === 'graph' && svgEl) ? svgEl.outerHTML : null,
+    result: { output_type: _lastResult.output_type, payload: _lastResult.payload,
+              title: _lastResult.title, description: _lastResult.description },
+  };
+  const target = (function(){
+    try { if (window.opener && !window.opener.closed) return window.opener; } catch(e){}
+    try { if (window.parent !== window) return window.parent; } catch(e){}
+    return null;
+  })();
+  if (!target) { toast('No parent — use Export SVG instead'); return; }
+  try { target.postMessage(payload, '*'); toast('✓ Inserted into document'); }
+  catch(e) { toast('Insert failed: ' + e.message); }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Utilities
+══════════════════════════════════════════════════════════════════════════ */
+function showLoading(msg) {
+  document.getElementById('output-placeholder').style.display = 'none';
+  document.getElementById('output-inner').style.display = 'none';
+  document.getElementById('loading').style.display = 'flex';
+  document.getElementById('loading-msg').textContent = msg || 'Processing…';
+}
+
+function hideLoading() {
+  document.getElementById('loading').style.display = 'none';
+}
+
+function setStatus(msg, isError = false) {
+  const el = document.getElementById('status-msg');
+  el.textContent = msg;
+  el.style.color = isError ? 'var(--ac4)' : '';
+}
+
+async function checkHealth() {
+  setStatus('Checking NLP engine…');
+  try {
+    // Health check
+    const hr = await fetch(NLP_API + '/health', { signal: AbortSignal.timeout(6000) });
+    const hd = await hr.json();
+
+    // Quick LLM smoke-test
+    setStatus('Testing LLM response (writer)…');
+    let testResult = null;
+    try {
+      const tr = await fetch(NLP_API + '/test?tier=writer', {
+        method: 'POST',
+        signal: AbortSignal.timeout(90000),
+      });
+      testResult = await tr.json();
+    } catch(te) {
+      testResult = { error: te.message };
+    }
+
+    // Show results in output area
+    const modelLine  = `**Model:** \`${hd.model || '?'}\``;
+    const thinkLine  = `**Thinking disabled:** ${hd.disable_think ? '✓ yes (good for JSON)' : '⚠ no — may cause empty output'}`;
+    const thinkerLine= `**Thinker:** \`${hd.thinker || '?'}\` · **Writer:** \`${hd.writer || '?'}\``;
+    const modLine    = `**Modules loaded:** ${hd.modules}`;
+
+    let testLine = '';
+    if (testResult) {
+      if (testResult.error) {
+        testLine = `\n\n**⚠ LLM test failed:** \`${testResult.error}\``;
+      } else if (testResult.parsed_ok) {
+        testLine = `\n\n**✓ LLM test passed** — \`${testResult.raw_chars}\` chars raw, JSON parsed correctly`;
+      } else {
+        testLine = `\n\n**⚠ LLM test: got output but JSON parse failed**\n\nRaw preview:\n\`\`\`\n${testResult.raw_preview || ''}\n\`\`\`\nCleaned:\n\`\`\`\n${testResult.cleaned || ''}\n\`\`\``;
+      }
+    }
+
+    const thinkWarning = (!hd.disable_think)
+      ? '\n\n> **⚠ Thinking mode is ON.** Set `VERA_DISABLE_THINK=1` env var or use a `-nothink` model variant to get reliable JSON output from NLP modules.'
+      : '';
+
+    const md = `## NLP Engine Status\n\n${modelLine}  \n${thinkLine}  \n${thinkerLine}  \n${modLine}${testLine}${thinkWarning}`;
+
+    renderResult({
+      output_type: 'markdown',
+      payload: md,
+      title: 'Engine Health Check',
+      description: hd.modules + ' modules · ' + (hd.model || '?'),
+      elapsed: 0,
+    });
+    document.getElementById('output-placeholder').style.display = 'none';
+    document.getElementById('output-inner').style.display = '';
+    setStatus('NLP engine OK · ' + hd.modules + ' modules · ' + (hd.model || '?'));
+
+    if (_modules.length === 0) refreshModules();
+  } catch (e) {
+    toast('NLP engine unreachable: ' + e.message);
+    setStatus('Engine offline: ' + e.message, true);
+  }
+}
+
+function showSettings() {
+  const currentNlp  = localStorage.getItem('vera-nlp-url')  || 'http://llm.int:8766';
+  const currentVera = localStorage.getItem('cfg-url') || 'http://llm.int:8765';
+  const nlp  = prompt('NLP engine URL:', currentNlp);
+  if (nlp === null) return;
+  const vera = prompt('Vera API URL:', currentVera);
+  if (vera === null) return;
+  localStorage.setItem('vera-nlp-url', nlp.trim().replace(/\/$/, ''));
+  localStorage.setItem('cfg-url',      vera.trim().replace(/\/$/, ''));
+  toast('Settings saved — reloading…');
+  setTimeout(() => location.reload(), 800);
+}
+
+function toast(msg) {
+  const t = document.createElement('div');
+  t.className = 'toast'; t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 2200);
+}
+
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+<script src="/ui/vera-ui.js"></script>
+</body>
+</html>

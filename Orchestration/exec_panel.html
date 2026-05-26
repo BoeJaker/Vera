@@ -1,0 +1,1223 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dusk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vera / Exec</title>
+<style>
+/* ── Themes ─────────────────────────────────────────────────────────────── */
+[data-theme="ash"]  {--bg:#f0ede8;--s1:#e8e5df;--s2:#dedbd4;--s3:#d4d1c8;--bd:rgba(0,0,0,.08);--bd2:rgba(0,0,0,.15);--t1:#1a1a18;--t2:#6a6860;--t3:#a8a69e;--ac:#2e6da4;--ac2:#228060;--ac3:#c47020;--ac4:#c03030;--ac5:#6040a0}
+[data-theme="dusk"] {--bg:#0e0f12;--s1:#13151a;--s2:#1a1d24;--s3:#222630;--bd:rgba(255,255,255,.07);--bd2:rgba(255,255,255,.14);--t1:#d4dae4;--t2:#6b7585;--t3:#3b4252;--ac:#6ea8d8;--ac2:#5ec9a0;--ac3:#e09a55;--ac4:#e06060;--ac5:#a78bfa}
+[data-theme="void"] {--bg:#000;--s1:#070707;--s2:#0d0d0d;--s3:#141414;--bd:rgba(255,255,255,.05);--bd2:rgba(255,255,255,.1);--t1:#e0e0e0;--t2:#484848;--t3:#282828;--ac:#9b8dfa;--ac2:#5ecab0;--ac3:#dba355;--ac4:#e06060;--ac5:#f472b6}
+[data-theme="ice"]  {--bg:#090f18;--s1:#0d1620;--s2:#121e2c;--s3:#182638;--bd:rgba(80,160,255,.1);--bd2:rgba(80,160,255,.2);--t1:#c0d8f0;--t2:#406880;--t3:#1e3850;--ac:#5ab0f0;--ac2:#38d0b0;--ac3:#e0b060;--ac4:#e06868;--ac5:#8070e0}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--t1);font:12px/1.5 'ui-monospace','SFMono-Regular','Menlo',monospace;overflow:hidden}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,select,textarea{font:inherit;color:inherit;background:none;border:none;outline:none}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:3px}
+code{font-family:inherit;background:var(--s2);padding:1px 4px;border-radius:2px;font-size:.95em}
+
+/* ── Shell ─────────────────────────────────────────────────────────────── */
+#shell{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+#topbar{height:40px;background:var(--s1);border-bottom:1px solid var(--bd);display:flex;align-items:center;padding:0 14px;gap:10px;flex-shrink:0}
+.tb-logo{color:var(--ac);font-weight:600;font-size:12px;letter-spacing:.04em}
+.tb-sep{width:1px;height:18px;background:var(--bd)}
+.tbtn{display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:5px;font-size:11px;color:var(--t2);transition:.12s;border:1px solid transparent;white-space:nowrap;cursor:pointer}
+.tbtn:hover{background:var(--bd);color:var(--t1)}
+.tbtn.active{background:var(--s3);color:var(--t1);border-color:var(--bd2)}
+.tbtn.accent{background:var(--ac);color:#fff}
+
+#body{flex:1;overflow:hidden;display:flex;flex-direction:column;min-height:0}
+
+/* Tab content switcher */
+.mode-pane{display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0}
+.mode-pane.active{display:flex}
+
+/* Layout switch (form vs terminal) */
+.layout-switch{display:flex;gap:0;background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:2px;margin-left:auto}
+.layout-switch button{padding:3px 10px;font-size:10px;color:var(--t2);border-radius:3px;letter-spacing:.06em;text-transform:uppercase}
+.layout-switch button.active{background:var(--ac);color:#fff}
+
+/* ── FORM LAYOUT ──────────────────────────────────────────────────────── */
+.form-layout{display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0}
+.form-layout.active{display:flex}
+
+.cbar{background:var(--s1);border-bottom:1px solid var(--bd);padding:10px 14px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;flex-shrink:0}
+.cbar .grp{display:flex;align-items:center;gap:4px}
+.cbar label{font-size:10px;color:var(--t3);letter-spacing:.06em;text-transform:uppercase;margin-right:2px}
+.cbar .ip{background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:5px 8px;font-size:11px;color:var(--t1);min-width:100px;outline:none}
+.cbar .ip:focus{border-color:var(--ac)}
+.cbar select.ip{min-width:140px;cursor:pointer}
+.run-btn{padding:5px 14px;border-radius:4px;background:var(--ac);color:#fff;font-size:11px;font-weight:600;border:none;cursor:pointer;transition:.1s;white-space:nowrap}
+.run-btn:hover{opacity:.9}
+.run-btn:disabled{opacity:.4;cursor:not-allowed}
+.run-btn.danger{background:var(--ac4)}
+.run-btn.ghost{background:var(--s2);color:var(--t1);border:1px solid var(--bd)}
+.run-btn.ghost:hover{border-color:var(--bd2)}
+
+.cmd-wrap{padding:10px 14px;border-bottom:1px solid var(--bd);background:var(--s1);flex-shrink:0}
+.cmd-input{width:100%;min-height:52px;max-height:240px;background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:9px 11px;font:12px/1.5 'ui-monospace','Menlo',monospace;color:var(--t1);outline:none;resize:vertical;white-space:pre}
+.cmd-input:focus{border-color:var(--ac)}
+.cmd-hint{font-size:10px;color:var(--t3);margin-top:4px;display:flex;justify-content:space-between;gap:8px}
+.cmd-hint kbd{background:var(--s3);border:1px solid var(--bd);border-radius:3px;padding:0 4px;font-size:10px;color:var(--t2)}
+
+.console{flex:1;overflow-y:auto;background:var(--bg);padding:10px 14px;min-height:0;font:11.5px/1.55 'ui-monospace','Menlo',monospace}
+.console .ln{white-space:pre-wrap;word-break:break-all}
+.console .ln.stderr{color:var(--ac4)}
+.console .ln.stdout{color:var(--t1)}
+.console .ln.meta{color:var(--t3);font-style:italic}
+.console .ln.done{color:var(--ac2);border-top:1px dashed var(--bd);margin-top:4px;padding-top:4px}
+.console .ln.err{color:var(--ac4);font-weight:600}
+.console .cursor{display:inline-block;width:7px;height:13px;background:var(--ac);margin-left:2px;vertical-align:middle;animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:0}}
+
+.sbar{padding:5px 14px;background:var(--s1);border-top:1px solid var(--bd);color:var(--t3);font-size:10px;display:flex;gap:12px;flex-shrink:0}
+.sbar .s-ok{color:var(--ac2)}
+.sbar .s-err{color:var(--ac4)}
+
+/* ── TERMINAL LAYOUT ───────────────────────────────────────────────────── */
+.term-layout{display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0;background:var(--bg)}
+.term-layout.active{display:flex}
+.term-scroll{flex:1;overflow-y:auto;padding:8px 12px;font:11.5px/1.55 'ui-monospace','Menlo',monospace}
+.term-banner{color:var(--t3);font-size:10px;letter-spacing:.05em;padding:3px 0;border-bottom:1px dashed var(--bd);margin-bottom:4px}
+.term-banner .host-pill{color:var(--ac);font-weight:600}
+.term-entry{margin-bottom:6px}
+.term-promptline{color:var(--ac2);white-space:pre-wrap;word-break:break-all}
+.term-promptline .user{color:var(--ac)}
+.term-promptline .at{color:var(--t3)}
+.term-promptline .host{color:var(--ac5)}
+.term-promptline .cwd{color:var(--ac3)}
+.term-promptline .sigil{color:var(--t2);margin:0 4px}
+.term-promptline .cmd{color:var(--t1)}
+.term-out{white-space:pre-wrap;word-break:break-all;color:var(--t1);padding-left:0}
+.term-out.stderr{color:var(--ac4)}
+.term-out.meta{color:var(--t3);font-style:italic;font-size:10.5px}
+.term-footer{color:var(--t3);font-size:10px;padding-top:2px;display:flex;gap:8px}
+.term-footer .rc-ok{color:var(--ac2)}
+.term-footer .rc-err{color:var(--ac4)}
+
+.term-inputrow{display:flex;align-items:center;background:var(--s1);border-top:1px solid var(--bd);padding:6px 12px;gap:6px;flex-shrink:0}
+.term-prefix{color:var(--ac2);white-space:pre;font:inherit}
+.term-prefix .user{color:var(--ac)}
+.term-prefix .at{color:var(--t3)}
+.term-prefix .host{color:var(--ac5)}
+.term-prefix .cwd{color:var(--ac3)}
+.term-prefix .sigil{color:var(--t2);margin:0 4px}
+.term-input{flex:1;background:none;border:none;outline:none;color:var(--t1);font:inherit;padding:2px 0}
+.term-ctrls{display:flex;gap:4px}
+.term-ctrls .iconbtn{padding:2px 8px;font-size:10px;color:var(--t2);border-radius:3px;border:1px solid var(--bd);background:var(--s2)}
+.term-ctrls .iconbtn:hover{color:var(--t1);border-color:var(--bd2)}
+.term-ctrls .iconbtn.hot{color:var(--ac4);border-color:var(--ac4)}
+
+/* ── HOSTS PANE (shared — form only) ───────────────────────────────────── */
+.hosts-wrap{flex:1;overflow-y:auto;padding:16px 18px}
+.h-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-top:10px}
+.h-card{background:var(--s1);border:1px solid var(--bd);border-radius:6px;padding:10px 12px}
+.h-card .title{color:var(--t1);font-weight:600;font-size:12px;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center;gap:6px}
+.h-card .sub{color:var(--t3);font-size:10px;margin-bottom:6px;letter-spacing:.03em}
+.h-card .row{color:var(--t2);font-size:11px;margin:2px 0;display:flex;gap:6px}
+.h-card .row .k{color:var(--t3);min-width:55px}
+.h-card .row .v{color:var(--t1);word-break:break-all}
+.h-card .tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.h-card .tag{background:var(--s3);color:var(--t2);font-size:9px;padding:1px 6px;border-radius:8px;letter-spacing:.05em;text-transform:uppercase}
+.h-card .actions{display:flex;gap:4px;margin-top:8px;flex-wrap:wrap}
+.h-card .actions button{padding:3px 9px;background:var(--s2);border:1px solid var(--bd);border-radius:3px;font-size:10px;color:var(--t2)}
+.h-card .actions button:hover{color:var(--t1);border-color:var(--bd2)}
+.h-card .actions button.del{color:var(--ac4);border-color:var(--ac4)}
+
+.h-form{background:var(--s1);border:1px solid var(--bd);border-radius:6px;padding:14px 16px;display:none;margin-bottom:12px}
+.h-form.show{display:block}
+.h-form h3{font-size:12px;color:var(--t1);margin-bottom:10px;letter-spacing:.04em;text-transform:uppercase}
+.h-form .fg{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:10px}
+.h-form .fi{display:flex;flex-direction:column;gap:3px}
+.h-form .fi label{font-size:9px;color:var(--t3);letter-spacing:.06em;text-transform:uppercase}
+.h-form .fi .ip{background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:6px 9px;font-size:11px;color:var(--t1);outline:none}
+.h-form .fi .ip:focus{border-color:var(--ac)}
+.h-form .actions{display:flex;gap:6px;justify-content:flex-end}
+
+/* ── LLM Action strip ─────────────────────────────────────────────────── */
+#llm-strip{background:var(--s1);border-top:1px solid var(--bd);flex-shrink:0;display:flex;flex-direction:column}
+#llm-strip .llm-header{display:flex;align-items:center;padding:8px 14px;gap:8px;cursor:pointer;user-select:none}
+#llm-strip .llm-header:hover{background:var(--s2)}
+#llm-strip .llm-header .chev{color:var(--t3);transition:transform .15s}
+#llm-strip.open .llm-header .chev{transform:rotate(90deg)}
+#llm-strip .llm-header .title{color:var(--ac5);font-size:11px;font-weight:600;letter-spacing:.04em}
+#llm-strip .llm-header .sub{color:var(--t3);font-size:10px;margin-left:6px}
+#llm-strip .llm-body{display:none;border-top:1px solid var(--bd)}
+#llm-strip.open .llm-body{display:flex;flex-direction:column;max-height:340px}
+.llm-input-row{display:flex;gap:8px;padding:8px 14px;border-bottom:1px solid var(--bd);align-items:flex-start}
+.llm-input-row textarea{flex:1;background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:7px 10px;font:11.5px/1.45 'ui-monospace','Menlo',monospace;color:var(--t1);outline:none;resize:vertical;min-height:38px;max-height:120px}
+.llm-input-row textarea:focus{border-color:var(--ac5)}
+.llm-opts{display:flex;gap:8px;padding:0 14px 8px;align-items:center;flex-wrap:wrap;font-size:10px;color:var(--t3)}
+.llm-opts label{display:flex;align-items:center;gap:4px;cursor:pointer;color:var(--t2)}
+.llm-opts label:hover{color:var(--t1)}
+.llm-opts input[type=checkbox]{accent-color:var(--ac5)}
+.llm-opts select,.llm-opts input[type=number]{background:var(--s2);border:1px solid var(--bd);border-radius:3px;padding:2px 5px;color:var(--t1);font-size:10px}
+.llm-run{padding:6px 14px;background:var(--ac5);color:#fff;font-size:11px;font-weight:600;border-radius:4px;white-space:nowrap}
+.llm-run:hover{opacity:.9}
+.llm-run.stop{background:var(--ac4)}
+.llm-log{flex:1;overflow-y:auto;padding:8px 14px;min-height:80px;background:var(--bg);font:11px/1.5 'ui-monospace','Menlo',monospace}
+.llm-event{margin-bottom:4px;display:flex;gap:6px;align-items:flex-start}
+.llm-event .tt{color:var(--t3);font-size:9px;min-width:52px;padding-top:2px}
+.llm-event .tg{padding:1px 6px;border-radius:3px;font-size:9px;letter-spacing:.04em;text-transform:uppercase;flex-shrink:0}
+.llm-event.plan .tg{background:var(--ac5);color:#fff}
+.llm-event.step .tg{background:var(--ac);color:#fff}
+.llm-event.done-ev .tg{background:var(--ac2);color:#fff}
+.llm-event.err .tg{background:var(--ac4);color:#fff}
+.llm-event.hitl .tg{background:var(--ac3);color:#000}
+.llm-event .body{flex:1;color:var(--t1);word-break:break-word}
+.llm-event .body .cap{color:var(--ac);font-weight:600}
+.llm-event .body .small{color:var(--t3);font-size:10px}
+.hitl-card{background:var(--s2);border:1px solid var(--ac3);border-radius:5px;padding:8px 10px;margin-top:4px}
+.hitl-card .hhdr{display:flex;gap:6px;align-items:center;font-size:10px;color:var(--ac3);margin-bottom:5px;font-weight:600}
+.hitl-card .hparams{background:var(--bg);border:1px solid var(--bd);border-radius:3px;padding:6px 8px;font:11px/1.4 'ui-monospace','Menlo',monospace;color:var(--t1);margin-bottom:6px;max-height:140px;overflow:auto;resize:vertical;white-space:pre}
+.hitl-card .hacts{display:flex;gap:5px;flex-wrap:wrap}
+.hitl-card button{padding:3px 10px;font-size:10px;border-radius:3px;border:1px solid var(--bd)}
+.hitl-card .btn-ok{background:var(--ac2);color:#fff;border-color:var(--ac2)}
+.hitl-card .btn-ed{background:var(--s3);color:var(--t1)}
+.hitl-card .btn-no{background:var(--ac4);color:#fff;border-color:var(--ac4)}
+.hitl-card .countdown{color:var(--t3);font-size:10px;margin-left:auto}
+
+/* Toast */
+#toast{position:fixed;bottom:18px;right:18px;background:var(--s3);border:1px solid var(--bd2);color:var(--t1);padding:8px 12px;border-radius:4px;font-size:11px;opacity:0;transition:.2s;pointer-events:none;z-index:9999;max-width:320px}
+#toast.show{opacity:1}
+#toast.err{border-color:var(--ac4);color:var(--ac4)}
+#toast.ok{border-color:var(--ac2);color:var(--ac2)}
+
+</style>
+</head>
+<body>
+<div id="shell">
+
+<!-- ── Topbar ──────────────────────────────────────────────────────────── -->
+<div id="topbar">
+  <span class="tb-logo">▷_ Vera · Exec</span>
+  <div class="tb-sep"></div>
+  <button class="tbtn active" data-mode="bash" onclick="setMode('bash')">Bash</button>
+  <button class="tbtn" data-mode="ps" onclick="setMode('ps')">PowerShell</button>
+  <button class="tbtn" data-mode="ssh" onclick="setMode('ssh')">SSH</button>
+  <button class="tbtn" data-mode="hosts" onclick="setMode('hosts')">Hosts</button>
+  <div style="flex:1"></div>
+  <div class="layout-switch" id="layout-switch">
+    <button id="lay-form" class="active" onclick="setLayout('form')">Form</button>
+    <button id="lay-term" onclick="setLayout('term')">Terminal</button>
+  </div>
+  <select id="theme-sel" onchange="setTheme(this.value)" class="tbtn" style="padding:3px 8px">
+    <option value="dusk">dusk</option>
+    <option value="ash">ash</option>
+    <option value="void">void</option>
+    <option value="ice">ice</option>
+  </select>
+  <button class="tbtn" onclick="clearCurrent()" title="Clear console / scrollback">Clear</button>
+</div>
+
+<div id="body">
+
+  <!-- ─── BASH ─────────────────────────────────────────────────────────── -->
+  <div class="mode-pane active" data-pane="bash">
+    <!-- Form layout -->
+    <div class="form-layout active" data-layout="form">
+      <div class="cbar">
+        <div class="grp"><label>CWD</label><input class="ip" id="bash-cwd" placeholder="/home/user" style="min-width:200px"></div>
+        <div class="grp"><label>Timeout</label><input class="ip" id="bash-timeout" type="number" value="300" style="width:70px"></div>
+        <div style="flex:1"></div>
+        <button class="run-btn ghost" onclick="runLocal('bash', false)">Run (capture)</button>
+        <button class="run-btn" onclick="runLocal('bash', true)">▶ Stream</button>
+      </div>
+      <div class="cmd-wrap">
+        <textarea class="cmd-input" id="bash-cmd" spellcheck="false" placeholder="# bash -lc '...'&#10;ls -la">uname -a</textarea>
+        <div class="cmd-hint">
+          <span>Runs <code>bash -lc</code> on the orchestrator host. Override via <code>VERA_BASH_BIN</code>.</span>
+          <span><kbd>Ctrl</kbd>+<kbd>Enter</kbd> to stream</span>
+        </div>
+      </div>
+      <div class="console" id="bash-out"></div>
+      <div class="sbar"><span id="bash-status">idle</span></div>
+    </div>
+    <!-- Terminal layout -->
+    <div class="term-layout" data-layout="term">
+      <div class="term-scroll" id="bash-term-scroll"></div>
+      <div class="term-inputrow">
+        <span class="term-prefix" id="bash-term-prefix"></span>
+        <input class="term-input" id="bash-term-input" spellcheck="false" autocomplete="off" placeholder="type a command…">
+        <div class="term-ctrls">
+          <button class="iconbtn" onclick="termClear('bash')">Clear</button>
+          <button class="iconbtn hot" id="bash-term-stop" style="display:none" onclick="termStop('bash')">Stop</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── PS ───────────────────────────────────────────────────────────── -->
+  <div class="mode-pane" data-pane="ps">
+    <div class="form-layout active" data-layout="form">
+      <div class="cbar">
+        <div class="grp"><label>CWD</label><input class="ip" id="ps-cwd" placeholder="C:\Users\You" style="min-width:200px"></div>
+        <div class="grp"><label>Timeout</label><input class="ip" id="ps-timeout" type="number" value="300" style="width:70px"></div>
+        <div style="flex:1"></div>
+        <button class="run-btn ghost" onclick="runLocal('ps', false)">Run (capture)</button>
+        <button class="run-btn" onclick="runLocal('ps', true)">▶ Stream</button>
+      </div>
+      <div class="cmd-wrap">
+        <textarea class="cmd-input" id="ps-cmd" spellcheck="false" placeholder="Get-Process | Select -First 5">Get-Host</textarea>
+        <div class="cmd-hint">
+          <span>Runs <code>powershell</code> (or <code>pwsh</code>) on the orchestrator host. Override via <code>VERA_PS_BIN</code>.</span>
+          <span><kbd>Ctrl</kbd>+<kbd>Enter</kbd> to stream</span>
+        </div>
+      </div>
+      <div class="console" id="ps-out"></div>
+      <div class="sbar"><span id="ps-status">idle</span></div>
+    </div>
+    <div class="term-layout" data-layout="term">
+      <div class="term-scroll" id="ps-term-scroll"></div>
+      <div class="term-inputrow">
+        <span class="term-prefix" id="ps-term-prefix"></span>
+        <input class="term-input" id="ps-term-input" spellcheck="false" autocomplete="off" placeholder="PS&gt; …">
+        <div class="term-ctrls">
+          <button class="iconbtn" onclick="termClear('ps')">Clear</button>
+          <button class="iconbtn hot" id="ps-term-stop" style="display:none" onclick="termStop('ps')">Stop</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── SSH ──────────────────────────────────────────────────────────── -->
+  <div class="mode-pane" data-pane="ssh">
+    <div class="form-layout active" data-layout="form">
+      <div class="cbar">
+        <div class="grp"><label>Host</label>
+          <select class="ip" id="ssh-host-sel" onchange="sshHostSelChanged()"><option value="">-- inline --</option></select>
+        </div>
+        <div class="grp" data-inline><label>user@host</label><input class="ip" id="ssh-user-at" placeholder="root@host" style="min-width:140px"></div>
+        <div class="grp" data-inline><label>Port</label><input class="ip" id="ssh-port" type="number" value="22" style="width:60px"></div>
+        <div class="grp" data-inline><label>Password</label><input class="ip" id="ssh-pass" type="password" style="width:100px" placeholder="(blank for key)"></div>
+        <div class="grp"><label>Timeout</label><input class="ip" id="ssh-timeout" type="number" value="300" style="width:70px"></div>
+        <div style="flex:1"></div>
+        <button class="run-btn ghost" onclick="sshProbe()">Probe :22</button>
+        <button class="run-btn ghost" onclick="runSsh(false)">Run (capture)</button>
+        <button class="run-btn" onclick="runSsh(true)">▶ Stream</button>
+      </div>
+      <div class="cmd-wrap">
+        <textarea class="cmd-input" id="ssh-cmd" spellcheck="false" placeholder="uname -a; id">uname -a</textarea>
+        <div class="cmd-hint">
+          <span>Pick a saved host or fill the inline fields. Deep-link via <code>#ssh:&lt;id&gt;</code> or <code>#ssh-inline:user@host:port</code>.</span>
+          <span><kbd>Ctrl</kbd>+<kbd>Enter</kbd> to stream</span>
+        </div>
+      </div>
+      <div class="console" id="ssh-out"></div>
+      <div class="sbar"><span id="ssh-status">idle</span></div>
+    </div>
+    <div class="term-layout" data-layout="term">
+      <div class="term-scroll" id="ssh-term-scroll"></div>
+      <div class="term-inputrow">
+        <span class="term-prefix" id="ssh-term-prefix"></span>
+        <input class="term-input" id="ssh-term-input" spellcheck="false" autocomplete="off" placeholder="pick a host in Form tab first, or type a command…">
+        <div class="term-ctrls">
+          <button class="iconbtn" onclick="termClear('ssh')">Clear</button>
+          <button class="iconbtn hot" id="ssh-term-stop" style="display:none" onclick="termStop('ssh')">Stop</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── HOSTS (CRUD) ─────────────────────────────────────────────────── -->
+  <div class="mode-pane" data-pane="hosts">
+    <div class="form-layout active" data-layout="form">
+      <div class="cbar">
+        <div class="grp"><strong style="color:var(--t1);font-size:11px">Saved SSH credentials</strong></div>
+        <div style="flex:1"></div>
+        <button class="run-btn ghost" onclick="hostsRefresh()">Refresh</button>
+        <button class="run-btn" onclick="hostFormShow(null)">+ Add host</button>
+      </div>
+      <div class="hosts-wrap">
+        <div class="h-form" id="host-form">
+          <h3 id="host-form-title">Add host</h3>
+          <div class="fg">
+            <div class="fi"><label>Label</label><input class="ip" id="f-label" placeholder="home-server"></div>
+            <div class="fi"><label>Host / IP</label><input class="ip" id="f-host" placeholder="10.0.0.5"></div>
+            <div class="fi"><label>Port</label><input class="ip" id="f-port" type="number" value="22"></div>
+            <div class="fi"><label>User</label><input class="ip" id="f-user" placeholder="root"></div>
+            <div class="fi"><label>Auth</label>
+              <select class="ip" id="f-auth" onchange="hostFormAuthChanged()">
+                <option value="password">password</option>
+                <option value="key">key (path + passphrase)</option>
+              </select>
+            </div>
+            <div class="fi" data-auth="password"><label>Password</label><input class="ip" id="f-password" type="password" placeholder="(unchanged if empty on edit)"></div>
+            <div class="fi" data-auth="key"><label>Key path</label><input class="ip" id="f-key-path" placeholder="~/.ssh/id_ed25519"></div>
+            <div class="fi" data-auth="key"><label>Passphrase</label><input class="ip" id="f-passphrase" type="password" placeholder="(empty for none)"></div>
+            <div class="fi"><label>Tags (csv)</label><input class="ip" id="f-tags" placeholder="pve, docker"></div>
+          </div>
+          <div class="actions">
+            <button class="run-btn ghost" onclick="hostFormHide()">Cancel</button>
+            <button class="run-btn" id="host-form-save" onclick="hostFormSave()">Save</button>
+          </div>
+        </div>
+        <div class="h-grid" id="hosts-grid"></div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /#body -->
+
+<!-- ── LLM Action strip (collapsible) ────────────────────────────────────── -->
+<div id="llm-strip">
+  <div class="llm-header" onclick="toggleLlmStrip()">
+    <span class="chev">▶</span>
+    <span class="title">✦ Ask Vera</span>
+    <span class="sub">natural-language → plan → execute (HITL optional)</span>
+    <span style="flex:1"></span>
+    <span class="sub" id="llm-plan-status"></span>
+  </div>
+  <div class="llm-body">
+    <div class="llm-input-row">
+      <textarea id="llm-goal" placeholder='e.g. "list all docker containers on my home-server host", "find open ports on 10.0.0.5", "explain the last command output", "what just failed?"'></textarea>
+      <button class="llm-run" id="llm-run-btn" onclick="toggleLlmRun()">Plan &amp; run ▶</button>
+    </div>
+    <div class="llm-opts">
+      <label>Model
+        <select id="llm-model" title="Ollama model (uses routing default when empty)">
+          <option value="">-- auto --</option>
+        </select>
+      </label>
+      <label>Instance
+        <select id="llm-instance" title="Specific Ollama instance">
+          <option value="">-- auto --</option>
+        </select>
+      </label>
+      <label>Scope
+        <select id="llm-scope" onchange="onScopeChange()" title="Which capabilities the planner may use">
+          <option value="tab" selected>this tab only</option>
+          <option value="plus">this tab + extras…</option>
+          <option value="all">unrestricted (all caps)</option>
+        </select>
+      </label>
+      <button class="tbtn" id="llm-extras-btn" style="display:none" onclick="toggleExtrasPicker()">+ Extras (<span id="llm-extras-count">0</span>)</button>
+      <label title="Include a snapshot of the current tab's data (current mode, last command, output tail, saved hosts) in the planner's initial state"><input type="checkbox" id="llm-ctx" checked> include tab context</label>
+      <span style="flex:1"></span>
+      <label>Mode
+        <select id="llm-mode">
+          <option value="oneshot">oneshot</option>
+          <option value="stepwise">stepwise</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="llm-hitl" checked> HITL</label>
+      <label>auto-approve <input type="number" id="llm-auto-secs" value="30" min="0" max="600" style="width:50px">s</label>
+      <label><input type="checkbox" id="llm-execute" checked> execute</label>
+      <button class="tbtn" onclick="llmClear()">Clear log</button>
+    </div>
+    <div id="llm-extras-pop" style="display:none;padding:8px 14px;border-bottom:1px solid var(--bd);background:var(--s2)">
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+        <input id="llm-extras-search" placeholder="filter capability names…" style="flex:1;background:var(--bg);border:1px solid var(--bd);border-radius:3px;padding:4px 7px;color:var(--t1);font-size:11px;outline:none">
+        <span id="llm-extras-hint" style="color:var(--t3);font-size:10px"></span>
+      </div>
+      <div id="llm-extras-list" style="max-height:140px;overflow-y:auto;display:flex;flex-wrap:wrap;gap:4px"></div>
+    </div>
+    <div class="llm-log" id="llm-log">
+      <div style="color:var(--t3);font-size:10.5px;padding:6px 0">
+        Ask Vera to run capabilities or DAGs for you. Scope defaults to this tab's caps — extend or open it up as needed. Include tab context sends your current mode/last-command/saved-hosts so the planner can refer back to what you just did.
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+</div><!-- /#shell -->
+
+<script>
+'use strict';
+
+/* ── Session id (read from parent harness or localStorage) ─────────────── */
+function sessionId(){
+  try{
+    if(window.parent && window.parent !== window){
+      return window.parent._veraSessionId || window.parent._chatSessionId || '';
+    }
+  }catch(_){}
+  try{ return localStorage.getItem('vera_session_id')||''; }catch(_){ return ''; }
+}
+
+/* ── Theme ─────────────────────────────────────────────────────────────── */
+function setTheme(t){document.documentElement.setAttribute('data-theme',t);try{localStorage.setItem('vera_exec_theme',t)}catch{}}
+try{const t=localStorage.getItem('vera_exec_theme');if(t){document.documentElement.setAttribute('data-theme',t);document.getElementById('theme-sel').value=t}}catch{}
+
+/* ── Toast ─────────────────────────────────────────────────────────────── */
+const _toastEl=document.getElementById('toast');
+let _toastT=null;
+function toast(msg,kind){
+  _toastEl.textContent=msg;
+  _toastEl.className='';_toastEl.classList.add('show');
+  if(kind) _toastEl.classList.add(kind);
+  clearTimeout(_toastT);
+  _toastT=setTimeout(()=>{_toastEl.className=''},3000);
+}
+
+/* ── Mode + Layout ─────────────────────────────────────────────────────── */
+let _mode='bash', _layout='form';
+function setMode(m){
+  _mode=m;
+  document.querySelectorAll('.tbtn[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===m));
+  document.querySelectorAll('.mode-pane').forEach(p=>p.classList.toggle('active',p.dataset.pane===m));
+  // Hosts mode has no terminal layout — force form
+  const sw=document.getElementById('layout-switch');
+  sw.style.display = (m==='hosts') ? 'none' : '';
+  if(m==='hosts') applyLayoutAll('form'); else applyLayoutAll(_layout);
+  if(m==='hosts') hostsRefresh();
+  if(m==='ssh'){ updateTermPrefix('ssh'); }
+  if(m==='bash'){ updateTermPrefix('bash'); }
+  if(m==='ps'){ updateTermPrefix('ps'); }
+}
+function setLayout(l){
+  _layout=l;
+  document.getElementById('lay-form').classList.toggle('active',l==='form');
+  document.getElementById('lay-term').classList.toggle('active',l==='term');
+  applyLayoutAll(l);
+}
+function applyLayoutAll(l){
+  document.querySelectorAll('.mode-pane').forEach(p=>{
+    if(p.dataset.pane==='hosts') return;
+    p.querySelectorAll('.form-layout,.term-layout').forEach(x=>x.classList.remove('active'));
+    const sel = l==='form' ? '.form-layout' : '.term-layout';
+    const node = p.querySelector(sel);
+    if(node) node.classList.add('active');
+  });
+}
+function clearCurrent(){
+  if(_mode==='hosts') return;
+  if(_layout==='form'){ document.getElementById(_mode+'-out').innerHTML=''; }
+  else { termClear(_mode); }
+}
+
+/* ── SSE streaming helper ─────────────────────────────────────────────── */
+async function streamSSE(url, body, onEvent){
+  const ctrl = new AbortController();
+  const prom = (async()=>{
+    let resp;
+    try{
+      resp = await fetch(url,{
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(body||{}), signal:ctrl.signal
+      });
+    }catch(e){ onEvent('error',{error:String(e)}); return; }
+    if(!resp.ok){ onEvent('error',{error:'HTTP '+resp.status}); return; }
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf='';
+    while(true){
+      let r;
+      try{ r = await reader.read(); }catch(e){ onEvent('error',{error:String(e)}); return; }
+      if(r.done) break;
+      buf += dec.decode(r.value,{stream:true});
+      while(true){
+        const idx = buf.indexOf('\n\n');
+        if(idx<0) break;
+        const raw = buf.slice(0,idx).trim();
+        buf = buf.slice(idx+2);
+        if(!raw) continue;
+        if(raw==='data: [DONE]'){ onEvent('__done',{}); continue; }
+        let ev='message', data={};
+        for(const line of raw.split('\n')){
+          if(line.startsWith('event: ')) ev = line.slice(7).trim();
+          else if(line.startsWith('data: ')){
+            const d = line.slice(6);
+            try{ data = JSON.parse(d); }catch{ data = {raw:d}; }
+          }
+        }
+        // legacy: our own endpoints shove type in data
+        if(data && data.type && ev==='message') ev = data.type;
+        onEvent(ev,data);
+      }
+    }
+  })();
+  return {abort:()=>ctrl.abort(), promise:prom};
+}
+
+/* ── FORM-LAYOUT RUN (bash/ps/ssh) ────────────────────────────────────── */
+async function runLocal(kind, stream){
+  const cmd  = document.getElementById(kind+'-cmd').value;
+  const cwd  = document.getElementById(kind+'-cwd').value;
+  const to   = Number(document.getElementById(kind+'-timeout').value||300);
+  if(!cmd.trim()){ toast('command empty','err'); return; }
+  const out = document.getElementById(kind+'-out');
+  const st  = document.getElementById(kind+'-status');
+  out.innerHTML='';
+  const t0=Date.now();
+  const addLine=(cls,txt)=>{
+    const d=document.createElement('div'); d.className='ln '+cls; d.textContent=txt;
+    out.appendChild(d); out.scrollTop=out.scrollHeight;
+  };
+  addLine('meta',`$ ${cmd.split('\n')[0]}${cmd.includes('\n')?' …':''}`);
+  if(!stream){
+    st.textContent='running…';
+    try{
+      const ep = kind==='bash'?'/exec/bash/run':'/exec/ps/run';
+      const r = await fetch(ep,{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({command:cmd,cwd,timeout:to,session_id:sessionId()})});
+      const j = await r.json();
+      if(j.stdout) j.stdout.split('\n').forEach(l=>addLine('stdout',l));
+      if(j.stderr) j.stderr.split('\n').forEach(l=>addLine('stderr',l));
+      addLine('done',`[rc=${j.rc??'?'} · ${j.elapsed_ms??((Date.now()-t0))}ms]`);
+      st.innerHTML = j.ok ? `<span class="s-ok">ok</span> · rc=${j.rc}` : `<span class="s-err">rc=${j.rc}</span> · ${j.error||''}`;
+    }catch(e){ addLine('err','✗ '+e); st.innerHTML=`<span class="s-err">error</span>`; }
+    return;
+  }
+  // stream
+  st.textContent='streaming…';
+  const cur=document.createElement('span'); cur.className='cursor';
+  const footer=document.createElement('div'); footer.className='ln meta';
+  footer.appendChild(cur); out.appendChild(footer);
+  const ep = kind==='bash'?'/exec/bash/stream':'/exec/ps/stream';
+  const ctrl = await streamSSE(ep,{command:cmd,cwd,timeout:to,session_id:sessionId()},(ev,d)=>{
+    if(ev==='stdout') addLine('stdout',d.text||'');
+    else if(ev==='stderr') addLine('stderr',d.text||'');
+    else if(ev==='start')  addLine('meta', `→ ${(d.argv||[]).join(' ')||''}`);
+    else if(ev==='heartbeat') { /* tick */ }
+    else if(ev==='done'){ cur.remove(); addLine('done',`[rc=${d.rc??'?'} · ${d.elapsed_ms??((Date.now()-t0))}ms]`); st.innerHTML = d.rc===0?`<span class="s-ok">ok</span>`:`<span class="s-err">rc=${d.rc}</span>`; }
+    else if(ev==='error'){ cur.remove(); addLine('err','✗ '+(d.error||'error')); st.innerHTML=`<span class="s-err">error</span>`; }
+  });
+}
+
+/* ── SSH SPECIFICS ────────────────────────────────────────────────────── */
+let _hosts=[]; // [{id,label,host,port,user,auth,tags[]}]
+async function loadHosts(){
+  try{
+    const r = await fetch('/exec/ssh/hosts/list',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const j = await r.json(); _hosts = j.hosts||[];
+  }catch(e){ _hosts=[]; }
+  const sel = document.getElementById('ssh-host-sel');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">-- inline --</option>';
+  for(const h of _hosts){
+    const o=document.createElement('option'); o.value=h.id;
+    o.textContent = `${h.label||h.host} (${h.user||'?'}@${h.host}:${h.port||22})`;
+    sel.appendChild(o);
+  }
+  sel.value = cur;
+}
+function sshHostSelChanged(){
+  const v = document.getElementById('ssh-host-sel').value;
+  document.querySelectorAll('#body .mode-pane[data-pane="ssh"] [data-inline]').forEach(el=>{
+    el.style.opacity = v ? .4 : 1;
+    el.querySelectorAll('input').forEach(i=>i.disabled=!!v);
+  });
+  updateTermPrefix('ssh');
+}
+function sshParseInline(){
+  const ua = document.getElementById('ssh-user-at').value.trim();
+  const m = ua.match(/^([^@]+)@(.+)$/);
+  if(!m) return {host:ua,user:''};
+  return {host:m[2],user:m[1]};
+}
+async function sshProbe(){
+  const sel = document.getElementById('ssh-host-sel').value;
+  let host,port;
+  if(sel){
+    const h = _hosts.find(x=>x.id===sel); if(!h){ toast('host not found','err'); return; }
+    host=h.host; port=h.port||22;
+  } else {
+    const p = sshParseInline(); host=p.host; port=Number(document.getElementById('ssh-port').value||22);
+  }
+  if(!host){ toast('no host','err'); return; }
+  const r = await fetch('/exec/ssh/probe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host,port,timeout:3})});
+  const j = await r.json();
+  toast(`${host}:${port} → ${j.reachable?'reachable':'unreachable'}${j.rtt_ms!=null?' ('+j.rtt_ms+'ms)':''}`, j.reachable?'ok':'err');
+}
+async function runSsh(stream){
+  const cmd = document.getElementById('ssh-cmd').value;
+  const to  = Number(document.getElementById('ssh-timeout').value||300);
+  if(!cmd.trim()){ toast('command empty','err'); return; }
+  const body={command:cmd,timeout:to,session_id:sessionId()};
+  const sel = document.getElementById('ssh-host-sel').value;
+  if(sel) body.host_id=sel;
+  else {
+    const p = sshParseInline(); if(!p.host){ toast('no host','err'); return; }
+    body.host=p.host; body.user=p.user;
+    body.port=Number(document.getElementById('ssh-port').value||22);
+    body.password=document.getElementById('ssh-pass').value;
+  }
+  const out = document.getElementById('ssh-out');
+  const st  = document.getElementById('ssh-status');
+  out.innerHTML='';
+  const addLine=(cls,txt)=>{const d=document.createElement('div'); d.className='ln '+cls; d.textContent=txt; out.appendChild(d); out.scrollTop=out.scrollHeight;};
+  addLine('meta',`$ ${cmd.split('\n')[0]}${cmd.includes('\n')?' …':''}`);
+  const t0=Date.now();
+  if(!stream){
+    st.textContent='running…';
+    try{
+      const r = await fetch('/exec/ssh/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const j = await r.json();
+      if(j.stdout) j.stdout.split('\n').forEach(l=>addLine('stdout',l));
+      if(j.stderr) j.stderr.split('\n').forEach(l=>addLine('stderr',l));
+      addLine('done',`[rc=${j.rc??'?'} · ${j.elapsed_ms??((Date.now()-t0))}ms]`);
+      st.innerHTML = j.ok?`<span class="s-ok">ok</span>`:`<span class="s-err">rc=${j.rc}</span> · ${j.error||''}`;
+    }catch(e){ addLine('err','✗ '+e); st.innerHTML=`<span class="s-err">error</span>`; }
+    return;
+  }
+  st.textContent='streaming…';
+  const cur=document.createElement('span'); cur.className='cursor';
+  const footer=document.createElement('div'); footer.className='ln meta';
+  footer.appendChild(cur); out.appendChild(footer);
+  await streamSSE('/exec/ssh/stream',body,(ev,d)=>{
+    if(ev==='stdout') addLine('stdout',d.text||'');
+    else if(ev==='stderr') addLine('stderr',d.text||'');
+    else if(ev==='start')  addLine('meta',`→ ${d.user?d.user+'@':''}${d.host||''}`);
+    else if(ev==='done'){ cur.remove(); addLine('done',`[rc=${d.rc??'?'} · ${d.elapsed_ms??((Date.now()-t0))}ms]`); st.innerHTML = d.rc===0?`<span class="s-ok">ok</span>`:`<span class="s-err">rc=${d.rc}</span>`; }
+    else if(ev==='error'){ cur.remove(); addLine('err','✗ '+(d.error||'error')); st.innerHTML=`<span class="s-err">error</span>`; }
+  });
+}
+
+/* ── TERMINAL LAYOUT ───────────────────────────────────────────────────── */
+const _termHist={bash:[],ps:[],ssh:[]};
+const _termHistIdx={bash:-1,ps:-1,ssh:-1};
+const _termCwd={bash:'~',ps:'C:\\',ssh:'~'};
+const _termRunning={bash:null,ps:null,ssh:null};
+
+function _promptHtml(kind){
+  if(kind==='bash'){
+    return `<span class="user">user</span><span class="at">@</span><span class="host">vera</span><span class="sigil">:</span><span class="cwd">${esc(_termCwd.bash)}</span><span class="sigil">$</span>`;
+  }
+  if(kind==='ps'){
+    return `<span class="host">PS</span> <span class="cwd">${esc(_termCwd.ps)}</span><span class="sigil">&gt;</span>`;
+  }
+  // ssh
+  const sel = document.getElementById('ssh-host-sel')?.value;
+  let u='?',h='host';
+  if(sel){ const rec = _hosts.find(x=>x.id===sel); if(rec){ u=rec.user||'?'; h=rec.host; } }
+  else{
+    const p = sshParseInline(); u=p.user||'root'; h=p.host||'?';
+  }
+  return `<span class="user">${esc(u)}</span><span class="at">@</span><span class="host">${esc(h)}</span><span class="sigil">:</span><span class="cwd">${esc(_termCwd.ssh)}</span><span class="sigil">$</span>`;
+}
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function updateTermPrefix(kind){
+  const el=document.getElementById(kind+'-term-prefix');
+  if(el) el.innerHTML = _promptHtml(kind)+' ';
+}
+function termClear(kind){
+  const s=document.getElementById(kind+'-term-scroll'); if(s) s.innerHTML='';
+}
+function termStop(kind){
+  const r=_termRunning[kind]; if(r && r.abort){ try{ r.abort(); }catch{} }
+  _termRunning[kind]=null;
+  document.getElementById(kind+'-term-stop').style.display='none';
+}
+function termAppend(kind, html){
+  const s=document.getElementById(kind+'-term-scroll');
+  if(!s) return;
+  s.insertAdjacentHTML('beforeend',html);
+  s.scrollTop = s.scrollHeight;
+}
+function termBanner(kind, info){
+  termAppend(kind,
+    `<div class="term-banner">--- session · <span class="host-pill">${esc(info)}</span> · ${new Date().toLocaleString()} ---</div>`);
+}
+async function termSubmit(kind){
+  const inp = document.getElementById(kind+'-term-input');
+  const raw = inp.value;
+  if(!raw.trim()) return;
+  if(_termRunning[kind]){ toast('already running — stop first','err'); return; }
+  inp.value='';
+  _termHist[kind].unshift(raw); _termHistIdx[kind]=-1;
+  // Promptline + cmd echo
+  const entry = document.createElement('div'); entry.className='term-entry';
+  entry.innerHTML = `<div class="term-promptline">${_promptHtml(kind)} <span class="cmd">${esc(raw)}</span></div>`;
+  const outBlock = document.createElement('div'); outBlock.className='term-outblock';
+  const footer = document.createElement('div'); footer.className='term-footer'; footer.innerHTML=`<span>running…</span>`;
+  entry.appendChild(outBlock); entry.appendChild(footer);
+  const s=document.getElementById(kind+'-term-scroll'); s.appendChild(entry); s.scrollTop=s.scrollHeight;
+  const appendOut=(cls,text)=>{ const d=document.createElement('div'); d.className='term-out '+cls; d.textContent=text; outBlock.appendChild(d); s.scrollTop=s.scrollHeight; };
+  document.getElementById(kind+'-term-stop').style.display='';
+  const t0=Date.now();
+
+  // Route command by kind
+  if(kind==='bash' || kind==='ps'){
+    const ep = kind==='bash'?'/exec/bash/stream':'/exec/ps/stream';
+    const body = {command:raw,cwd:_termCwd[kind]==='~'?'':_termCwd[kind],timeout:600,session_id:sessionId()};
+    // Emulate `cd X` locally so the prompt updates
+    const cdM = raw.trim().match(/^cd\s+(\S.*)?$/);
+    if(cdM){
+      _termCwd[kind] = cdM[1]?cdM[1].trim():(kind==='bash'?'~':'C:\\');
+      updateTermPrefix(kind);
+      footer.innerHTML = `<span class="rc-ok">[cd · ${Date.now()-t0}ms]</span>`;
+      document.getElementById(kind+'-term-stop').style.display='none';
+      return;
+    }
+    const ctrl = await streamSSE(ep,body,(ev,d)=>{
+      if(ev==='stdout') appendOut('',d.text||'');
+      else if(ev==='stderr') appendOut('stderr',d.text||'');
+      else if(ev==='start') appendOut('meta','→ '+((d.argv||[]).join(' ')||''));
+      else if(ev==='done'){
+        document.getElementById(kind+'-term-stop').style.display='none';
+        footer.innerHTML = `<span class="${d.rc===0?'rc-ok':'rc-err'}">[rc=${d.rc} · ${d.elapsed_ms??(Date.now()-t0)}ms]</span>`;
+        _termRunning[kind]=null;
+      } else if(ev==='error'){
+        document.getElementById(kind+'-term-stop').style.display='none';
+        footer.innerHTML = `<span class="rc-err">✗ ${esc(d.error||'error')}</span>`;
+        _termRunning[kind]=null;
+      }
+    });
+    _termRunning[kind]=ctrl;
+  } else if(kind==='ssh'){
+    // Build body from selected host or inline
+    const body = {command:raw,timeout:600,session_id:sessionId()};
+    const sel = document.getElementById('ssh-host-sel').value;
+    if(sel) body.host_id=sel;
+    else{
+      const p = sshParseInline();
+      if(!p.host){ footer.innerHTML='<span class="rc-err">✗ no host selected — switch to Form, pick or type a host.</span>'; document.getElementById('ssh-term-stop').style.display='none'; return; }
+      body.host=p.host; body.user=p.user;
+      body.port=Number(document.getElementById('ssh-port').value||22);
+      body.password=document.getElementById('ssh-pass').value;
+    }
+    const ctrl = await streamSSE('/exec/ssh/stream',body,(ev,d)=>{
+      if(ev==='stdout') appendOut('',d.text||'');
+      else if(ev==='stderr') appendOut('stderr',d.text||'');
+      else if(ev==='start') appendOut('meta',`→ connected ${d.user?d.user+'@':''}${d.host||''}`);
+      else if(ev==='done'){
+        document.getElementById('ssh-term-stop').style.display='none';
+        footer.innerHTML = `<span class="${d.rc===0?'rc-ok':'rc-err'}">[rc=${d.rc} · ${d.elapsed_ms??(Date.now()-t0)}ms]</span>`;
+        _termRunning['ssh']=null;
+      } else if(ev==='error'){
+        document.getElementById('ssh-term-stop').style.display='none';
+        footer.innerHTML = `<span class="rc-err">✗ ${esc(d.error||'error')}</span>`;
+        _termRunning['ssh']=null;
+      }
+    });
+    _termRunning['ssh']=ctrl;
+  }
+}
+function termKey(e, kind){
+  if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); termSubmit(kind); }
+  else if(e.key==='ArrowUp'){
+    const h = _termHist[kind];
+    if(!h.length) return;
+    _termHistIdx[kind] = Math.min(_termHistIdx[kind]+1, h.length-1);
+    e.target.value = h[_termHistIdx[kind]]||'';
+    e.preventDefault();
+  } else if(e.key==='ArrowDown'){
+    _termHistIdx[kind] = Math.max(_termHistIdx[kind]-1, -1);
+    e.target.value = _termHistIdx[kind]<0 ? '' : (_termHist[kind][_termHistIdx[kind]]||'');
+    e.preventDefault();
+  } else if(e.key==='l' && e.ctrlKey){ e.preventDefault(); termClear(kind); }
+}
+['bash','ps','ssh'].forEach(k=>{
+  const i = document.getElementById(k+'-term-input');
+  if(i) i.addEventListener('keydown', e=>termKey(e,k));
+});
+
+/* ── HOSTS CRUD ───────────────────────────────────────────────────────── */
+let _editingHost=null;
+async function hostsRefresh(){
+  await loadHosts();
+  const grid=document.getElementById('hosts-grid');
+  grid.innerHTML='';
+  if(!_hosts.length){
+    grid.innerHTML='<div style="color:var(--t3);padding:20px;font-size:11px">No saved hosts yet. Click “+ Add host”.</div>';
+    return;
+  }
+  for(const h of _hosts){
+    const d=document.createElement('div'); d.className='h-card';
+    const tags=(h.tags||[]).map(t=>`<span class="tag">${esc(t)}</span>`).join('');
+    d.innerHTML = `
+      <div class="title"><span>${esc(h.label||h.host)}</span><span style="color:var(--t3);font-size:10px">${esc(h.auth||'password')}</span></div>
+      <div class="sub">id: ${esc(h.id)}</div>
+      <div class="row"><span class="k">Host</span><span class="v">${esc(h.user||'')}@${esc(h.host)}:${esc(h.port||22)}</span></div>
+      ${h.key_path?`<div class="row"><span class="k">Key</span><span class="v">${esc(h.key_path)}</span></div>`:''}
+      <div class="tags">${tags}</div>
+      <div class="actions">
+        <button onclick="sshTo('${esc(h.id)}')">Use in SSH</button>
+        <button onclick="hostProbe('${esc(h.id)}')">Probe</button>
+        <button onclick="hostFormShow('${esc(h.id)}')">Edit</button>
+        <button class="del" onclick="hostDelete('${esc(h.id)}')">Delete</button>
+      </div>`;
+    grid.appendChild(d);
+  }
+}
+function hostFormShow(id){
+  _editingHost=id;
+  document.getElementById('host-form-title').textContent = id?'Edit host':'Add host';
+  document.getElementById('host-form-save').textContent = id?'Save changes':'Add';
+  const rec = id?_hosts.find(h=>h.id===id):null;
+  document.getElementById('f-label').value = rec?.label||'';
+  document.getElementById('f-host').value  = rec?.host||'';
+  document.getElementById('f-port').value  = rec?.port||22;
+  document.getElementById('f-user').value  = rec?.user||'';
+  document.getElementById('f-auth').value  = rec?.auth||'password';
+  document.getElementById('f-password').value = '';
+  document.getElementById('f-passphrase').value = '';
+  document.getElementById('f-key-path').value  = rec?.key_path||'';
+  document.getElementById('f-tags').value = (rec?.tags||[]).join(', ');
+  hostFormAuthChanged();
+  document.getElementById('host-form').classList.add('show');
+}
+function hostFormHide(){ document.getElementById('host-form').classList.remove('show'); _editingHost=null; }
+function hostFormAuthChanged(){
+  const a = document.getElementById('f-auth').value;
+  document.querySelectorAll('.h-form [data-auth]').forEach(el=>{ el.style.display = el.dataset.auth===a ? '' : 'none'; });
+}
+async function hostFormSave(){
+  const body={
+    id: _editingHost||undefined,
+    label: document.getElementById('f-label').value.trim(),
+    host:  document.getElementById('f-host').value.trim(),
+    port:  Number(document.getElementById('f-port').value||22),
+    user:  document.getElementById('f-user').value.trim(),
+    auth:  document.getElementById('f-auth').value,
+    password:   document.getElementById('f-password').value,
+    key_path:   document.getElementById('f-key-path').value.trim(),
+    passphrase: document.getElementById('f-passphrase').value,
+    tags: document.getElementById('f-tags').value.split(',').map(s=>s.trim()).filter(Boolean),
+  };
+  if(!body.host){ toast('host required','err'); return; }
+  try{
+    const r = await fetch('/exec/ssh/hosts/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j = await r.json();
+    if(j.error){ toast(j.error,'err'); return; }
+    toast('saved','ok'); hostFormHide(); await hostsRefresh();
+  }catch(e){ toast(String(e),'err'); }
+}
+async function hostDelete(id){
+  if(!confirm(`Delete host "${id}"?`)) return;
+  const r = await fetch('/exec/ssh/hosts/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+  const j = await r.json();
+  if(j.error) toast(j.error,'err'); else { toast('deleted','ok'); await hostsRefresh(); }
+}
+async function hostProbe(id){
+  const h=_hosts.find(x=>x.id===id); if(!h) return;
+  const r = await fetch('/exec/ssh/probe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host:h.host,port:h.port||22})});
+  const j = await r.json();
+  toast(`${h.host}:${h.port||22} → ${j.reachable?'reachable':'unreachable'}`, j.reachable?'ok':'err');
+}
+
+/* ── Public helpers (used by parent harness + netmap panel) ────────────── */
+function sshTo(hostId){
+  setMode('ssh');
+  document.getElementById('ssh-host-sel').value = hostId;
+  sshHostSelChanged();
+  // Focus command input; prefer terminal if already in term mode
+  if(_layout==='term') document.getElementById('ssh-term-input').focus();
+  else document.getElementById('ssh-cmd').focus();
+}
+function sshToInline(host,user,port){
+  setMode('ssh');
+  document.getElementById('ssh-host-sel').value = '';
+  sshHostSelChanged();
+  document.getElementById('ssh-user-at').value = (user?user+'@':'')+host;
+  if(port) document.getElementById('ssh-port').value = port;
+  if(_layout==='term') document.getElementById('ssh-term-input').focus();
+  else document.getElementById('ssh-cmd').focus();
+}
+
+/* ── Deep-link / postMessage protocol ─────────────────────────────────── */
+function applyHash(){
+  const h = (location.hash||'').replace(/^#/,'');
+  if(!h) return;
+  if(h.startsWith('ssh:')){
+    const id = h.slice(4);
+    // wait for hosts to be loaded
+    loadHosts().then(()=>sshTo(id));
+  } else if(h.startsWith('ssh-inline:')){
+    const spec = h.slice('ssh-inline:'.length);
+    const m = spec.match(/^([^@]+)@([^:]+)(?::(\d+))?$/);
+    if(m) sshToInline(m[2],m[1],Number(m[3]||22));
+  } else if(h==='bash'||h==='ps'||h==='ssh'||h==='hosts'){
+    setMode(h);
+  }
+}
+window.addEventListener('hashchange', applyHash);
+window.addEventListener('message', ev=>{
+  const d = ev.data||{};
+  if(!d.action) return;
+  if(d.action==='ssh-to-host-id' && d.id) sshTo(d.id);
+  else if(d.action==='ssh-to-inline' && d.host) sshToInline(d.host,d.user,d.port);
+  else if(d.action==='vera-exec-prefill'){
+    if(d.ssh_host_id){ sshTo(d.ssh_host_id); if(d.command) document.getElementById('ssh-cmd').value=d.command; }
+    else if(d.command){
+      if(_mode==='bash') document.getElementById('bash-cmd').value=d.command;
+      else if(_mode==='ps') document.getElementById('ps-cmd').value=d.command;
+    }
+  }
+});
+
+/* ── LLM strip ─────────────────────────────────────────────────────────── */
+const _strip = document.getElementById('llm-strip');
+function toggleLlmStrip(){ _strip.classList.toggle('open'); }
+let _llmRun=null;
+
+/* Tab's own caps — populated from /ui/panels */
+let _tabCaps = [];
+let _allCaps = [];
+let _extraCaps = new Set();
+
+async function _loadCapRegistry(){
+  try{
+    const r = await fetch('/ui/panels');
+    const panels = await r.json();
+    const self = (panels||[]).find(p=>p.id==='exec-panel' || p.panel_id==='exec-panel');
+    if(self) _tabCaps = Array.from(new Set(self.ui_caps||[]));
+    const all = new Set();
+    for(const p of panels||[]){ (p.ui_caps||[]).forEach(c=>all.add(c)); }
+    ['http.get','llm.generate','llm.route','system.ping','dag.run','dag.plan','dag.plan_and_run'].forEach(c=>all.add(c));
+    _allCaps = [..._tabCaps, ...Array.from(all)].filter((v,i,a)=>a.indexOf(v)===i).sort();
+  }catch(e){ console.warn('cap registry load failed', e); }
+}
+
+async function _loadLlmModels(){
+  try{
+    const r = await fetch('/exec/llm/models');
+    const j = await r.json();
+    const msel = document.getElementById('llm-model');
+    const isel = document.getElementById('llm-instance');
+    msel.innerHTML = '<option value="">-- auto --</option>';
+    for(const m of j.models||[]){
+      const o=document.createElement('option');
+      o.value = m.name;
+      const gpu = m.has_gpu?' · GPU':'';
+      const sz  = m.parameter_size?` (${m.parameter_size})`:'';
+      o.textContent = `${m.name}${sz}${gpu}`;
+      msel.appendChild(o);
+    }
+    isel.innerHTML = '<option value="">-- auto --</option>';
+    for(const inst of j.instances||[]){
+      const o=document.createElement('option');
+      o.value = inst.id;
+      const gpu = inst.has_gpu?' · GPU':'';
+      const st  = inst.status!=='online'?` (${inst.status})`:'';
+      o.textContent = `${inst.label||inst.id}${gpu}${st}`;
+      if(inst.status!=='online') o.disabled=true;
+      isel.appendChild(o);
+    }
+    if(j.default_model) msel.title = `routing default: ${j.default_model}`;
+  }catch(e){ console.warn('llm models load failed', e); }
+}
+
+function onScopeChange(){
+  const v = document.getElementById('llm-scope').value;
+  document.getElementById('llm-extras-btn').style.display = v==='plus' ? '' : 'none';
+  if(v!=='plus') document.getElementById('llm-extras-pop').style.display='none';
+}
+function toggleExtrasPicker(){
+  const pop = document.getElementById('llm-extras-pop');
+  const open = pop.style.display==='none' || !pop.style.display;
+  pop.style.display = open ? 'block' : 'none';
+  if(open) _renderExtrasList();
+}
+function _renderExtrasList(){
+  const q = (document.getElementById('llm-extras-search').value||'').toLowerCase();
+  const list = document.getElementById('llm-extras-list');
+  const hint = document.getElementById('llm-extras-hint');
+  const tabset = new Set(_tabCaps);
+  const filtered = _allCaps.filter(c=>!tabset.has(c) && (!q || c.toLowerCase().includes(q)));
+  list.innerHTML = filtered.slice(0,200).map(c=>{
+    const on = _extraCaps.has(c);
+    const cls = on ? 'active' : '';
+    return `<button class="tbtn ${cls}" onclick="_toggleExtra('${esc(c)}')" style="font-size:10px;padding:3px 8px">${esc(c)}</button>`;
+  }).join('') || '<span style="color:var(--t3);font-size:10px">no caps match</span>';
+  hint.textContent = `${filtered.length} available · ${_extraCaps.size} selected`;
+  document.getElementById('llm-extras-count').textContent = _extraCaps.size;
+}
+function _toggleExtra(c){
+  if(_extraCaps.has(c)) _extraCaps.delete(c); else _extraCaps.add(c);
+  _renderExtrasList();
+}
+document.addEventListener('input', ev=>{
+  if(ev.target && ev.target.id==='llm-extras-search') _renderExtrasList();
+});
+
+/* Read the visible console/terminal of the current mode to build tab context.
+   This works without instrumenting every run path — we just scrape the DOM. */
+function _outputTail(mode, maxChars=1200){
+  // Form layout — the <div class="console" id="{mode}-out">
+  const form = document.getElementById(mode+'-out');
+  if(form && form.textContent && form.textContent.trim()){
+    return form.textContent.slice(-maxChars);
+  }
+  // Terminal layout — scrollback
+  const term = document.getElementById(mode+'-term-scroll');
+  if(term && term.textContent) return term.textContent.slice(-maxChars);
+  return '';
+}
+function _lastCommandIn(mode){
+  // Terminal history takes precedence (most recent at [0])
+  if(_termHist && _termHist[mode] && _termHist[mode].length) return _termHist[mode][0];
+  // Else whatever is currently in the form textarea
+  const el = document.getElementById(mode+'-cmd');
+  return el ? el.value : '';
+}
+
+function collectTabContext(){
+  const ctx = {
+    panel: 'exec',
+    current_mode: _mode,
+    current_layout: _layout,
+    last_command: _lastCommandIn(_mode),
+    last_output_tail: _outputTail(_mode, 1500),
+    saved_hosts_summary: (_hosts||[]).map(h=>({id:h.id, label:h.label, host:h.host, user:h.user, tags:h.tags||[]})),
+  };
+  // SSH-mode specifics
+  if(_mode==='ssh'){
+    const sel = document.getElementById('ssh-host-sel');
+    if(sel && sel.value){
+      const rec = (_hosts||[]).find(h=>h.id===sel.value);
+      if(rec){ ctx.current_ssh_host_id = rec.id; ctx.current_ssh_target = `${rec.user||'?'}@${rec.host}:${rec.port||22}`; }
+    } else {
+      const ua = document.getElementById('ssh-user-at');
+      if(ua && ua.value) ctx.current_ssh_target = ua.value.trim();
+    }
+  }
+  // Bash/PS: current CWD if set
+  if(_mode==='bash'){
+    const cwd = document.getElementById('bash-cwd'); if(cwd && cwd.value) ctx.current_cwd = cwd.value;
+  } else if(_mode==='ps'){
+    const cwd = document.getElementById('ps-cwd');  if(cwd && cwd.value) ctx.current_cwd = cwd.value;
+  }
+  return ctx;
+}
+
+function llmClear(){ document.getElementById('llm-log').innerHTML=''; document.getElementById('llm-plan-status').textContent=''; }
+function llmLog(kind, tagText, bodyHtml){
+  const log = document.getElementById('llm-log');
+  const e = document.createElement('div'); e.className='llm-event '+kind;
+  e.innerHTML = `<span class="tt">${new Date().toLocaleTimeString()}</span><span class="tg">${esc(tagText)}</span><span class="body">${bodyHtml}</span>`;
+  log.appendChild(e); log.scrollTop=log.scrollHeight;
+  return e;
+}
+
+function toggleLlmRun(){
+  if(_llmRun){ try{ _llmRun.abort(); }catch{} _llmRun=null; document.getElementById('llm-run-btn').textContent='Plan & run ▶'; document.getElementById('llm-run-btn').classList.remove('stop'); return; }
+  runLlm();
+}
+
+async function runLlm(){
+  const goal = document.getElementById('llm-goal').value.trim();
+  if(!goal){ toast('goal empty','err'); return; }
+  const hitl = document.getElementById('llm-hitl').checked;
+  const autoSec = Number(document.getElementById('llm-auto-secs').value||30);
+  const mode = document.getElementById('llm-mode').value;
+  const exec = document.getElementById('llm-execute').checked;
+  const model = document.getElementById('llm-model').value || '';
+  const instance_id = document.getElementById('llm-instance').value || '';
+  const scope = document.getElementById('llm-scope').value;
+  const includeCtx = document.getElementById('llm-ctx').checked;
+
+  let allowed_caps = [];
+  let include_extras = [];
+  if(scope==='tab'){ allowed_caps = _tabCaps.slice(); }
+  else if(scope==='plus'){ allowed_caps = _tabCaps.slice(); include_extras = Array.from(_extraCaps); }
+
+  const state = includeCtx ? {tab_context: collectTabContext()} : {};
+
+  _strip.classList.add('open');
+  document.getElementById('llm-run-btn').textContent='Stop ■'; document.getElementById('llm-run-btn').classList.add('stop');
+  document.getElementById('llm-plan-status').textContent='planning…';
+  llmLog('plan','GOAL', esc(goal));
+
+  const body = { goal, mode, execute:exec, hitl, auto_approve_secs:autoSec,
+                 allowed_caps, include_extras, model, instance_id, state };
+  _llmRun = await streamSSE('/dag/plan_stream_scoped', body, handleLlmEvent);
+}
+
+function handleLlmEvent(ev,d){
+  if(ev==='dag.scope'){
+    const parts = [];
+    if(d.unrestricted) parts.push(`<b>unrestricted</b> · ${d.cap_count} caps`);
+    else parts.push(`scoped to <b>${d.cap_count}</b> caps`);
+    if(d.model) parts.push(`model <b>${esc(d.model)}</b>`);
+    if(d.instance_id) parts.push(`on <b>${esc(d.instance_id)}</b>`);
+    llmLog('plan','SCOPE', parts.join(' · '));
+  }
+  else if(ev==='dag.planning'){ llmLog('plan','PLANNING', esc(d.goal||'')); }
+  else if(ev==='dag.plan_ready'){
+    const steps = (d.dag||[]).map(n=>`<span class="cap">${esc(Array.isArray(n)?JSON.stringify(n):n)}</span>`).join(' → ');
+    llmLog('plan','PLAN', `${(d.steps||0)} steps · ${esc(d.rationale||'')}<br><span class="small">${steps}</span>`);
+    document.getElementById('llm-plan-status').textContent = `plan ready · ${d.steps||0} steps`;
+    if(d.warnings && d.warnings.length){ for(const w of d.warnings) llmLog('err','WARN', esc(w)); }
+  }
+  else if(ev==='dag.step_start'){
+    const reason = d.reason ? ` <span class="small">· ${esc(d.reason)}</span>` : '';
+    llmLog('step','STEP '+((d.step||0)+1), `<span class="cap">${esc(d.cap||'')}</span>${d.out_key?` <span class="small">→ ${esc(d.out_key)}</span>`:''}${reason}`);
+  }
+  else if(ev==='dag.hitl_request'){ buildHitlCard(d); }
+  else if(ev==='dag.hitl_rejected'){ llmLog('err','REJECTED', esc(d.cap||'')); }
+  else if(ev==='dag.step_done'){ llmLog('done-ev','OK', `<span class="cap">${esc(d.cap||'[parallel]')}</span>${d.result_preview?` <span class="small">${esc(d.result_preview)}</span>`:''}`); }
+  else if(ev==='dag.step_error'){ llmLog('err','ERR', `<span class="cap">${esc(d.cap||'')}</span> · ${esc(d.error||'')}`); }
+  else if(ev==='dag.complete'){
+    const summary = d.summary ? ` · ${esc(d.summary)}` : '';
+    llmLog('done-ev','COMPLETE', (d.aborted_at!=null?`aborted @ step ${d.aborted_at+1} (${esc(d.reason||'')})`:'done')+summary);
+    document.getElementById('llm-plan-status').textContent='done';
+    document.getElementById('llm-run-btn').textContent='Plan & run ▶'; document.getElementById('llm-run-btn').classList.remove('stop'); _llmRun=null;
+  }
+  else if(ev==='dag.error'){ llmLog('err','ERROR', esc(d.error||'')); document.getElementById('llm-plan-status').textContent='error';
+    document.getElementById('llm-run-btn').textContent='Plan & run ▶'; document.getElementById('llm-run-btn').classList.remove('stop'); _llmRun=null; }
+  else if(ev==='__done'){ if(_llmRun){ _llmRun=null; document.getElementById('llm-run-btn').textContent='Plan & run ▶'; document.getElementById('llm-run-btn').classList.remove('stop'); } }
+  else if(ev==='error'){ llmLog('err','ERROR', esc(d.error||'stream error')); document.getElementById('llm-run-btn').textContent='Plan & run ▶'; document.getElementById('llm-run-btn').classList.remove('stop'); _llmRun=null; }
+}
+
+function buildHitlCard(d){
+  const traceId = d.trace_id;
+  const autoSec = d.auto_approve_secs||30;
+  const paramsJson = JSON.stringify(d.params||{}, null, 2);
+  const capName = d.cap||'';
+  const e = llmLog('hitl','APPROVE?', `
+    <div class="hitl-card">
+      <div class="hhdr"><span>Review &amp; approve step ${(d.step||0)+1}: <span class="cap">${esc(capName)}</span></span><span class="countdown" data-hitl-countdown></span></div>
+      <div class="hparams" contenteditable="true" spellcheck="false">${esc(paramsJson)}</div>
+      <div class="hacts">
+        <button class="btn-ok" data-hitl-approve>Approve</button>
+        <button class="btn-ed" data-hitl-edit>Approve (edited)</button>
+        <button class="btn-no" data-hitl-reject>Reject</button>
+      </div>
+    </div>`);
+  const card=e.querySelector('.hitl-card');
+  const countEl=card.querySelector('[data-hitl-countdown]');
+  let remaining=autoSec;
+  countEl.textContent = `auto-approve in ${remaining}s`;
+  const timer=setInterval(()=>{
+    remaining--;
+    countEl.textContent = remaining>0?`auto-approve in ${remaining}s`:'auto-approving…';
+    if(remaining<=0) clearInterval(timer);
+  },1000);
+  const cleanup=()=>{ clearInterval(timer); card.querySelectorAll('button').forEach(b=>b.disabled=true); countEl.textContent=''; };
+  const respond=async (action,edited)=>{
+    cleanup();
+    const body={trace_id:traceId,action};
+    if(edited) body.edited_params = edited;
+    try{ await fetch('/dag/hitl/respond',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }catch{}
+  };
+  card.querySelector('[data-hitl-approve]').onclick=()=>respond('approve');
+  card.querySelector('[data-hitl-edit]').onclick=()=>{
+    let ep={};
+    try{ ep = JSON.parse(card.querySelector('.hparams').textContent); }catch{ toast('invalid JSON in params','err'); return; }
+    respond('edit', ep);
+  };
+  card.querySelector('[data-hitl-reject]').onclick=()=>respond('reject');
+}
+
+/* ── Expose to parent for cross-panel control ─────────────────────────── */
+window.VeraExec = {setMode,setLayout,sshTo,sshToInline,loadHosts,runLocal,runSsh,clearCurrent};
+
+/* ── Init ─────────────────────────────────────────────────────────────── */
+(async()=>{
+  await loadHosts();
+  sshHostSelChanged();
+  ['bash','ps','ssh'].forEach(updateTermPrefix);
+  applyHash();
+  await _loadCapRegistry();
+  await _loadLlmModels();
+  onScopeChange();
+  // Refresh the model list every 2 minutes in case instances come online
+  setInterval(()=>{ if(document.visibilityState==='visible') _loadLlmModels(); }, 120000);
+  // Ctrl+Enter in textareas triggers stream
+  document.getElementById('bash-cmd').addEventListener('keydown',e=>{if(e.ctrlKey&&e.key==='Enter'){e.preventDefault();runLocal('bash',true);}});
+  document.getElementById('ps-cmd').addEventListener('keydown',e=>{if(e.ctrlKey&&e.key==='Enter'){e.preventDefault();runLocal('ps',true);}});
+  document.getElementById('ssh-cmd').addEventListener('keydown',e=>{if(e.ctrlKey&&e.key==='Enter'){e.preventDefault();runSsh(true);}});
+  document.getElementById('llm-goal').addEventListener('keydown',e=>{if(e.ctrlKey&&e.key==='Enter'){e.preventDefault();toggleLlmRun();}});
+})();
+</script>
+<script src="/ui/vera-ui.js"></script>
+</body>
+</html>

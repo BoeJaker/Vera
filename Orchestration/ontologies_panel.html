@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Vera Ontologies</title>
+<style>
+:root {
+  --bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;
+  --border:#3a3530;--border2:#4a4540;
+  --acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--acc4:#9e8fa0;
+  --ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;
+  --text:#ddd5c8;--fg:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;
+  --mono:'JetBrains Mono','Fira Mono',monospace;
+  --sans:'Inter','IBM Plex Sans',system-ui,sans-serif;
+  color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:12px;-webkit-font-smoothing:antialiased}
+input,select,textarea{background:var(--bg1);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:3px;font-family:var(--sans);font-size:11px;outline:none;transition:border-color .14s}
+input:focus,select:focus,textarea:focus{border-color:var(--acc)}
+textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.55}
+.btn{display:inline-flex;align-items:center;gap:3px;padding:3px 10px;border-radius:3px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);font-size:11px;font-weight:500;cursor:pointer;transition:all .14s;white-space:nowrap}
+.btn:hover{border-color:var(--acc);color:var(--acc)}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+.btn.pri:hover{filter:brightness(1.1)}
+.btn.teal{background:rgba(143,184,122,.1);border-color:var(--acc2);color:var(--acc2)}
+.btn.danger{border-color:var(--err);color:var(--err)}
+.btn.sm{padding:2px 7px;font-size:10px}
+.btn.xs{padding:1px 5px;font-size:9px}
+.btn:disabled{opacity:.35;pointer-events:none}
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+.status{font-size:10px;color:var(--dim2);font-family:var(--mono);min-height:14px;margin-top:4px}
+.status.ok{color:var(--ok)}.status.err{color:var(--err)}.status.warn{color:var(--warn)}
+.section-label{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);margin-bottom:5px}
+.row{display:flex;gap:6px;align-items:center}
+.label{font-size:10.5px;color:var(--dim2);flex-shrink:0;min-width:70px}
+.result-box{background:var(--bg0);border:1px solid var(--border);border-radius:3px;padding:8px;font-family:var(--mono);font-size:10.5px;white-space:pre-wrap;word-break:break-all;max-height:260px;overflow-y:auto;color:var(--acc2);margin-top:6px;line-height:1.6}
+.cur{display:inline-block;width:7px;height:13px;background:var(--acc2);animation:blink .85s step-end infinite;vertical-align:text-bottom}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+#app{display:flex;height:100vh;overflow:hidden}
+#sidebar{width:240px;flex-shrink:0;display:flex;flex-direction:column;border-right:1px solid var(--border);background:var(--bg1)}
+#sidebar-header{padding:8px 10px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px;flex-shrink:0}
+#sidebar-header .logo{font-family:var(--mono);font-size:9px;font-weight:700;color:var(--acc2);letter-spacing:2px}
+#filter-bar{padding:6px 8px;border-bottom:1px solid var(--border);flex-shrink:0}
+#ont-list{flex:1;overflow-y:auto;padding:5px}
+.ont-card{padding:7px 9px;border:1px solid var(--border);border-radius:4px;cursor:pointer;background:var(--bg2);transition:border-color .14s;margin-bottom:4px}
+.ont-card:hover,.ont-card.active{border-color:var(--acc2)}
+.ont-card.active{background:rgba(143,184,122,.06)}
+.ont-card-name{font-size:11px;font-weight:600;font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ont-card-domain{font-size:9px;color:var(--acc2);margin-top:1px}
+.ont-card-meta{font-size:9px;color:var(--dim);margin-top:2px}
+#main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+#main-tabs{display:flex;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg1)}
+.mtab{padding:7px 14px;font-size:10.5px;font-weight:500;cursor:pointer;color:var(--dim2);border-bottom:2px solid transparent;transition:all .15s;user-select:none}
+.mtab.active{color:var(--acc2);border-bottom-color:var(--acc2)}
+#main-content{flex:1;overflow-y:auto;padding:14px}
+.editor-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px}
+.field-group{display:flex;flex-direction:column;gap:4px;margin-bottom:8px}
+.field-label{font-size:10px;color:var(--dim2)}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <span class="logo">ONTOLOGIES</span>
+      <div style="flex:1"></div>
+      <button class="btn xs" onclick="OP.newOnt()">+ New</button>
+      <button class="btn xs" onclick="OP.load()">&#8635;</button>
+    </div>
+    <div id="filter-bar">
+      <input id="domain-filter" placeholder="Filter by domain..." oninput="OP.filterList()" style="width:100%;box-sizing:border-box">
+    </div>
+    <div id="ont-list"><div style="color:var(--dim);font-size:11px;padding:12px">Loading...</div></div>
+  </div>
+  <div id="main">
+    <div id="main-tabs">
+      <div class="mtab active" onclick="OP.tab('edit',this)">Edit</div>
+      <div class="mtab" onclick="OP.tab('graph',this)">Graph</div>
+      <div class="mtab" onclick="OP.tab('apply',this)">Apply</div>
+      <div class="mtab" onclick="OP.tab('infer',this)">Infer</div>
+      <div class="mtab" onclick="OP.tab('build',this)">Build from Fabric</div>
+      <div class="mtab" onclick="OP.tab('owl',this)" title="Import / export the selected ontology as OWL/RDF (Turtle, RDF/XML, JSON-LD, N-Triples)">OWL</div>
+    </div>
+    <div id="main-content">
+      <div id="tab-edit">
+        <div id="editor-empty" style="color:var(--dim);font-size:11px;padding:8px 0">Select an ontology or click + New.</div>
+        <div id="editor-form" style="display:none">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+            <div id="editor-title" style="font-size:13px;font-weight:600;font-family:var(--mono);flex:1">New Ontology</div>
+            <button class="btn pri" onclick="OP.save()">Save</button>
+            <button class="btn danger sm" id="del-btn" style="display:none" onclick="OP.del()">Delete</button>
+            <button class="btn sm" onclick="OP.cancel()">Cancel</button>
+          </div>
+          <input type="hidden" id="f-id">
+          <div class="editor-grid">
+            <div>
+              <div class="field-group"><div class="field-label">Name</div><input id="f-name" placeholder="My Ontology"></div>
+              <div class="field-group"><div class="field-label">Domain</div><input id="f-domain" placeholder="general, medical, legal..."></div>
+              <div class="field-group"><div class="field-label">Description</div><input id="f-desc" placeholder="What this ontology covers..."></div>
+              <div class="field-group"><div class="field-label">Tags</div><input id="f-tags" placeholder="comma, separated"></div>
+              <div class="row" style="gap:8px;margin-top:4px">
+                <label class="label">Enabled</label>
+                <input type="checkbox" id="f-enabled" checked>
+              </div>
+            </div>
+            <div>
+              <div class="field-group">
+                <div class="field-label">Context Hints (free-form, for LLM)</div>
+                <textarea id="f-hints" style="min-height:80px" placeholder="Tell the LLM how to interpret data in this domain..."></textarea>
+              </div>
+            </div>
+          </div>
+          <div class="field-group"><div class="field-label">Entities (JSON array)</div>
+            <textarea id="f-entities" style="min-height:60px;font-size:10px" placeholder='[{"name":"Person","description":"A human","attributes":["name","age"]}]'></textarea></div>
+          <div class="field-group"><div class="field-label">Relationships (JSON array)</div>
+            <textarea id="f-rels" style="min-height:60px;font-size:10px" placeholder='[{"from":"Person","to":"Organisation","label":"WORKS_AT"}]'></textarea></div>
+          <div class="field-group"><div class="field-label">Processing Rules (JSON array)</div>
+            <textarea id="f-rules" style="min-height:50px;font-size:10px" placeholder='[{"trigger":"date mentioned","action":"extract ISO date","priority":1}]'></textarea></div>
+          <div class="field-group"><div class="field-label">Memory Slots (JSON array)</div>
+            <textarea id="f-slots" style="min-height:50px;font-size:10px" placeholder='[{"key":"speaker","type":"string","description":"Current speaker identity"}]'></textarea></div>
+          <div class="status" id="save-status"></div>
+        </div>
+      </div>
+      <div id="tab-apply" style="display:none">
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:12px;margin-bottom:10px">
+          <div class="section-label">Apply ontology to data</div>
+          <div class="field-group"><div class="field-label">Text / data to process</div>
+            <textarea id="apply-text" style="min-height:90px" placeholder="Paste text or data here..."></textarea></div>
+          <div class="editor-grid">
+            <div class="field-group"><div class="field-label">Ontology ID (empty = all enabled)</div>
+              <input id="apply-id" placeholder="ont-id or leave blank"></div>
+            <div class="field-group"><div class="field-label">Task</div>
+              <select id="apply-task">
+                <option value="extract">Extract entities</option>
+                <option value="classify">Classify</option>
+                <option value="tag">Tag</option>
+                <option value="relate">Find relationships</option>
+                <option value="summarize">Summarize</option>
+              </select></div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
+            <button class="btn pri" onclick="OP.apply()">&#9654; Apply</button>
+            <span class="status" id="apply-status" style="margin-top:0"></span>
+          </div>
+          <div class="result-box" id="apply-result" style="display:none"></div>
+        </div>
+      </div>
+      <div id="tab-infer" style="display:none">
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:12px">
+          <div class="section-label">Infer ontology from description or data</div>
+          <div class="field-group"><div class="field-label">Description of the domain</div>
+            <textarea id="infer-desc" style="min-height:70px" placeholder="Describe the domain..."></textarea></div>
+          <div class="field-group"><div class="field-label">Example data (optional)</div>
+            <textarea id="infer-data" style="min-height:60px" placeholder="Paste example records, logs, or text..."></textarea></div>
+          <div class="editor-grid">
+            <div class="field-group"><div class="field-label">Domain</div><input id="infer-domain" value="general"></div>
+            <div class="field-group"><div class="field-label">Name (optional)</div><input id="infer-name" placeholder="auto-generated"></div>
+          </div>
+          <div class="row" style="gap:8px;margin-bottom:8px">
+            <label class="label">Save result</label>
+            <input type="checkbox" id="infer-save" checked>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <button class="btn pri" onclick="OP.infer()">Infer</button>
+            <span class="status" id="infer-status" style="margin-top:0"></span>
+          </div>
+          <div class="result-box" id="infer-result" style="display:none"></div>
+        </div>
+      </div>
+
+      <!-- GRAPH TAB: SVG node-link diagram of the selected ontology. -->
+      <div id="tab-graph" style="display:none">
+        <div id="graph-empty-msg" style="color:var(--dim);font-size:11px;padding:8px 0">
+          Select an ontology in the sidebar to view its entity-relationship graph.
+        </div>
+        <div id="graph-shell" style="display:none">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
+            <span id="g-title" style="font-size:12px;font-weight:600;font-family:var(--mono);color:var(--acc2)">—</span>
+            <span id="g-info" style="font-size:9.5px;color:var(--dim2);font-family:var(--mono)"></span>
+            <span style="flex:1"></span>
+            <button class="btn xs" onclick="OP.graphRecenter()" title="Recenter">&#9678; Center</button>
+            <button class="btn xs" onclick="OP.graphRespin()" title="Re-run physics layout">&#10227; Re-spin</button>
+          </div>
+          <div id="g-wrap" style="position:relative;width:100%;height:calc(100vh - 140px);min-height:360px;background:var(--bg0);border:1px solid var(--border);border-radius:4px;overflow:hidden">
+            <svg id="g-svg" style="width:100%;height:100%;display:block;cursor:grab"></svg>
+            <div id="g-legend" style="position:absolute;top:8px;left:8px;background:rgba(24,22,20,.85);border:1px solid var(--border);border-radius:3px;padding:5px 8px;font-size:9px;color:var(--dim2);font-family:var(--mono);pointer-events:none">
+              <div>Drag &middot; pan</div>
+              <div>Scroll &middot; zoom</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- BUILD TAB: build a new ontology from one or more fabric datasets.
+           Calls /fabric/ontologies/build (the same endpoint the Fabric panel
+           uses), then triggers a list refresh and selects the new ontology. -->
+      <div id="tab-build" style="display:none">
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:12px;margin-bottom:10px">
+          <div class="section-label" style="margin-bottom:8px">Build ontology from fabric datasets</div>
+          <p style="font-size:10.5px;color:var(--dim2);margin-bottom:10px;line-height:1.6">
+            Sample records from one or more data fabric datasets and let the LLM extract
+            an entity/relationship schema. The result is registered as a regular ontology
+            and appears in the sidebar.
+          </p>
+          <div class="editor-grid">
+            <div>
+              <div class="field-group"><div class="field-label">Name</div>
+                <input id="b-name" placeholder="e.g. Threat Intel Schema"></div>
+              <div class="field-group"><div class="field-label">Domain</div>
+                <input id="b-domain" value="general"></div>
+              <div class="field-group"><div class="field-label">Description (optional)</div>
+                <input id="b-desc" placeholder="auto-generated if blank"></div>
+              <div class="field-group"><div class="field-label">Tags</div>
+                <input id="b-tags" placeholder="comma-separated"></div>
+            </div>
+            <div>
+              <div class="field-group"><div class="field-label">Datasets (multi-select)</div>
+                <select id="b-ds" multiple size="6" style="font-family:var(--mono);font-size:10px;min-height:130px"></select>
+                <span style="font-size:9px;color:var(--dim);font-style:italic;margin-top:2px">Ctrl/Cmd-click for multiple</span></div>
+              <div class="field-group"><div class="field-label">Sample size</div>
+                <input id="b-samples" type="number" value="30" min="5" max="200"></div>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;margin-top:6px">
+            <button class="btn pri" onclick="OP.build()">Build Ontology</button>
+            <button class="btn sm" onclick="OP.buildLoadDatasets()">&#8635; Reload datasets</button>
+            <span class="status" id="b-status" style="margin-top:0"></span>
+          </div>
+          <div class="result-box" id="b-result" style="display:none"></div>
+        </div>
+      </div>
+
+      <!-- OWL TAB: import / export the selected ontology in OWL/RDF formats.
+           Honours the OWL+SKOS schema fields (sub_class_of, equivalent_to,
+           disjoint_with, restrictions, characteristics, broader/narrower)
+           added to the back-end skills.py + skills_owl.py. -->
+      <div id="tab-owl" style="display:none">
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:14px;margin-bottom:14px">
+          <div style="font-size:12px;font-weight:600;color:var(--acc2);margin-bottom:6px">Export to OWL / RDF</div>
+          <p style="font-size:10.5px;color:var(--dim2);line-height:1.6;margin-bottom:10px">
+            Render the selected ontology as a W3C-compatible OWL document. Vera entities →
+            <code>owl:Class</code>, relationships → <code>owl:ObjectProperty</code>, attributes →
+            <code>owl:DatatypeProperty</code>. OWL extensions (<code>subClassOf</code>,
+            <code>equivalentClass</code>, <code>disjointWith</code>, <code>Restriction</code>,
+            characteristics) and SKOS extensions (<code>prefLabel</code>, <code>altLabel</code>,
+            <code>broader</code>/<code>narrower</code>) are emitted natively when present.
+          </p>
+          <div class="row" style="margin-bottom:8px">
+            <span class="label">Format</span>
+            <select id="owl-format" style="font-size:11px">
+              <option value="turtle">Turtle (.ttl)</option>
+              <option value="rdfxml">RDF/XML (.owl)</option>
+              <option value="json-ld">JSON-LD</option>
+              <option value="ntriples">N-Triples</option>
+              <option value="n3">Notation3</option>
+            </select>
+            <button class="btn pri" onclick="OP._owlExport()">Export</button>
+            <button class="btn"     onclick="OP._owlDownload()">Download</button>
+            <button class="btn"     onclick="OP._owlValidate()" title="Schema sanity checks against the active ontology">Validate</button>
+            <span class="status" id="owl-export-status" style="margin-left:6px"></span>
+          </div>
+          <textarea id="owl-export-output" rows="14" style="width:100%"></textarea>
+        </div>
+
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:14px;margin-bottom:14px">
+          <div style="font-size:12px;font-weight:600;color:var(--acc2);margin-bottom:6px">Import OWL / RDF</div>
+          <p style="font-size:10.5px;color:var(--dim2);line-height:1.6;margin-bottom:10px">
+            Paste any valid OWL/RDF document. Format is auto-detected if left as <em>auto</em>.
+            Provide an existing ontology id to update in place; leave blank to create a new ontology.
+          </p>
+          <div class="row" style="margin-bottom:6px">
+            <span class="label">Format</span>
+            <select id="owl-import-format" style="font-size:11px">
+              <option value="">Auto-detect</option>
+              <option value="turtle">Turtle</option>
+              <option value="rdfxml">RDF/XML</option>
+              <option value="json-ld">JSON-LD</option>
+              <option value="ntriples">N-Triples</option>
+              <option value="n3">Notation3</option>
+            </select>
+            <span class="label" style="margin-left:8px">Update id</span>
+            <input id="owl-import-id" placeholder="(blank = create new)" style="flex:1;font-size:11px">
+            <span class="label">Name</span>
+            <input id="owl-import-name" placeholder="Fallback name" style="flex:1;font-size:11px">
+          </div>
+          <div class="row" style="margin-bottom:6px">
+            <input type="file" id="owl-import-file" accept=".ttl,.owl,.rdf,.jsonld,.nt,.n3,.xml,application/rdf+xml,text/turtle"
+                   onchange="OP._owlReadFile(this)">
+            <button class="btn pri" onclick="OP._owlImport()">Import</button>
+            <span class="status" id="owl-import-status"></span>
+          </div>
+          <textarea id="owl-import-content" rows="10" placeholder="Paste OWL/RDF here, or pick a file above…" style="width:100%"></textarea>
+        </div>
+
+        <div id="owl-fallback-warning" style="display:none;padding:9px 12px;background:rgba(201,107,107,.08);border:1px solid var(--err);border-radius:4px;font-size:10.5px;color:var(--err)">
+          ⚠ <code>rdflib</code> is not installed on the server — OWL import/export is unavailable.
+          Run <code>pip install rdflib</code> on the server and reload.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+const OP = (() => {
+  let BASE = '', onts = [], activeId = null;
+
+  function base() {
+    if (BASE) return BASE;
+    try { BASE = (window.location.origin && window.location.origin !== 'null') ? window.location.origin : (window.parent?._veraBase || window._veraBase || localStorage.getItem('vera_base') || 'http://llm.int:8999'); } catch(_){}
+    return BASE || 'http://llm.int:8999';
+  }
+
+  async function api(path, method='GET', body=null) {
+    try {
+      const opts = { method, headers: {'Content-Type':'application/json'} };
+      if (body) opts.body = JSON.stringify(body);
+      const r = await fetch(base() + path, opts);
+      return r.ok ? r.json() : null;
+    } catch(e) { return null; }
+  }
+
+  function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  async function load() {
+    const domain = document.getElementById('domain-filter')?.value?.trim() || '';
+    const res = await api('/ontologies' + (domain ? '?domain=' + encodeURIComponent(domain) : ''));
+    onts = res?.ontologies || [];
+    renderList();
+  }
+
+  function filterList() { load(); }
+
+  function renderList() {
+    const el = document.getElementById('ont-list');
+    if (!onts.length) { el.innerHTML = '<div style="color:var(--dim);font-size:11px;padding:12px">No ontologies yet.</div>'; return; }
+    el.innerHTML = onts.map(o => {
+      const ents = o.entities?.length || 0, rels = o.relationships?.length || 0, rules = o.processing_rules?.length || 0;
+      return `<div class="ont-card${o.id === activeId ? ' active' : ''}" onclick="OP.select('${o.id}')">
+        <div class="ont-card-name">${esc(o.name)}</div>
+        <div class="ont-card-domain">${esc(o.domain || 'general')}${o.enabled===false?' · disabled':''}</div>
+        <div class="ont-card-meta">${ents} entities · ${rels} rels · ${rules} rules</div>
+      </div>`;
+    }).join('');
+  }
+
+  function select(id) {
+    const o = onts.find(x => x.id === id); if (!o) return;
+    activeId = id; renderList(); fillEditor(o);
+    // If the graph tab is currently visible, refresh it for the newly
+    // selected ontology — otherwise stay on whatever tab the user was on.
+    const graphTab = document.getElementById('tab-graph');
+    if (graphTab && graphTab.style.display !== 'none') {
+      renderGraph(id);
+    }
+  }
+
+  function fillEditor(o) {
+    document.getElementById('editor-empty').style.display = 'none';
+    document.getElementById('editor-form').style.display = 'block';
+    document.getElementById('editor-title').textContent = o.id ? 'Edit Ontology' : 'New Ontology';
+    document.getElementById('f-id').value = o.id || '';
+    document.getElementById('f-name').value = o.name || '';
+    document.getElementById('f-domain').value = o.domain || 'general';
+    document.getElementById('f-desc').value = o.description || '';
+    document.getElementById('f-tags').value = (o.tags || []).join(', ');
+    document.getElementById('f-hints').value = o.context_hints || '';
+    document.getElementById('f-entities').value = JSON.stringify(o.entities || [], null, 2);
+    document.getElementById('f-rels').value = JSON.stringify(o.relationships || [], null, 2);
+    document.getElementById('f-rules').value = JSON.stringify(o.processing_rules || [], null, 2);
+    document.getElementById('f-slots').value = JSON.stringify(o.memory_slots || [], null, 2);
+    document.getElementById('f-enabled').checked = o.enabled !== false;
+    document.getElementById('del-btn').style.display = o.id ? 'inline-flex' : 'none';
+  }
+
+  function newOnt() {
+    activeId = null; renderList();
+    fillEditor({ name:'', domain:'general', description:'', tags:[], context_hints:'',
+      entities:[], relationships:[], processing_rules:[], memory_slots:[], enabled:true });
+    document.getElementById('del-btn').style.display = 'none';
+    const editTab = document.querySelectorAll('.mtab')[0];
+    if (editTab) tab('edit', editTab);
+  }
+
+  function cancel() {
+    activeId = null; renderList();
+    document.getElementById('editor-empty').style.display = 'block';
+    document.getElementById('editor-form').style.display = 'none';
+  }
+
+  async function save() {
+    const id = document.getElementById('f-id').value;
+    const body = {
+      name: document.getElementById('f-name').value,
+      description: document.getElementById('f-desc').value,
+      domain: document.getElementById('f-domain').value || 'general',
+      context_hints: document.getElementById('f-hints').value,
+      entities: document.getElementById('f-entities').value,
+      relationships: document.getElementById('f-rels').value,
+      processing_rules: document.getElementById('f-rules').value,
+      memory_slots: document.getElementById('f-slots').value,
+      tags: document.getElementById('f-tags').value,
+      enabled: document.getElementById('f-enabled').checked,
+    };
+    const st = document.getElementById('save-status');
+    st.textContent = 'Saving...'; st.className = 'status';
+    const url = id ? '/ontologies/update' : '/ontologies';
+    if (id) body.id = id;
+    const res = await api(url, 'POST', body);
+    if (!res || res.error) { st.textContent = 'Error: ' + (res?.error || 'Failed'); st.className = 'status err'; return; }
+    st.textContent = 'Saved'; st.className = 'status ok';
+    activeId = res.id || id;
+    await load();
+  }
+
+  async function del() {
+    const id = document.getElementById('f-id').value;
+    if (!id || !confirm('Delete this ontology?')) return;
+    await api('/ontologies/delete', 'POST', { id });
+    cancel(); load();
+  }
+
+  async function apply() {
+    const text = document.getElementById('apply-text').value.trim(); if (!text) return;
+    const id = document.getElementById('apply-id').value.trim();
+    const task = document.getElementById('apply-task').value;
+    const st = document.getElementById('apply-status');
+    const resEl = document.getElementById('apply-result');
+    st.textContent = 'Applying...'; st.className = 'status';
+    resEl.style.display = 'none';
+    const body = { text, task };
+    if (id) body.ontology_id = id;
+    const result = await api('/ontologies/apply', 'POST', body);
+    if (!result || result.error) { st.textContent = 'Error: ' + (result?.error || 'Failed'); st.className = 'status err'; return; }
+    st.textContent = 'Applied ' + (result.ontology_count || 0) + ' ontologies'; st.className = 'status ok';
+    resEl.style.display = 'block';
+    resEl.textContent = JSON.stringify(result.result || result, null, 2);
+  }
+
+  async function infer() {
+    const desc = document.getElementById('infer-desc').value.trim(); if (!desc) return;
+    const st = document.getElementById('infer-status');
+    const resEl = document.getElementById('infer-result');
+    st.textContent = 'Inferring...'; st.className = 'status';
+    resEl.style.display = 'block';
+    resEl.innerHTML = '<span class="cur"></span>';
+    const body = {
+      description: desc,
+      example_data: document.getElementById('infer-data').value,
+      domain: document.getElementById('infer-domain').value || 'general',
+      name: document.getElementById('infer-name').value,
+      save: document.getElementById('infer-save').checked,
+    };
+    const result = await api('/ontologies/infer', 'POST', body);
+    if (!result || result.error) {
+      st.textContent = 'Error: ' + (result?.error || 'Failed'); st.className = 'status err';
+      resEl.textContent = JSON.stringify(result, null, 2); return;
+    }
+    st.textContent = 'Inferred' + (result.saved ? ' and saved' : ''); st.className = 'status ok';
+    resEl.textContent = JSON.stringify(result.structure || result, null, 2);
+    if (result.saved) load();
+  }
+
+  /* ─────────────────────────────────────────────────────────────────────
+     GRAPH RENDERING
+     Renders the currently selected ontology's entities + relationships as
+     an SVG node-link diagram with a small force-directed layout. Pan with
+     drag, zoom with scroll, recenter / re-spin via the toolbar buttons.
+     Hand-rolled because the panel is iframe-isolated — no global d3 etc.
+   ───────────────────────────────────────────────────────────────────── */
+  let _gNodes = [], _gEdges = [];
+  let _gPan = { x: 0, y: 0, scale: 1 };
+  let _gAnim = null;
+
+  function _strHue(s) {
+    let h = 0;
+    for (let i = 0; i < (s || '').length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    return Math.abs(h) % 360;
+  }
+
+  function renderGraph(ontId) {
+    if (_gAnim) { cancelAnimationFrame(_gAnim); _gAnim = null; }
+    const ont = onts.find(o => o.id === ontId);
+    const empty = document.getElementById('graph-empty-msg');
+    const shell = document.getElementById('graph-shell');
+    if (!ont) {
+      if (empty) empty.style.display = 'block';
+      if (shell) shell.style.display = 'none';
+      return;
+    }
+    if (empty) empty.style.display = 'none';
+    if (shell) { shell.style.display = 'flex'; shell.style.flexDirection = 'column'; }
+
+    document.getElementById('g-title').textContent = `${ont.name} · ${ont.domain || 'general'}`;
+    const ents = Array.isArray(ont.entities) ? ont.entities : [];
+    const rels = Array.isArray(ont.relationships) ? ont.relationships : [];
+    document.getElementById('g-info').textContent = `${ents.length} entities · ${rels.length} relationships`;
+
+    const svg = document.getElementById('g-svg');
+    if (!svg) return;
+    svg.innerHTML = '';
+    if (!ents.length && !rels.length) {
+      const NS = 'http://www.w3.org/2000/svg';
+      const txt = document.createElementNS(NS, 'text');
+      txt.setAttribute('x', '50%'); txt.setAttribute('y', '50%');
+      txt.setAttribute('text-anchor', 'middle');
+      txt.setAttribute('fill', 'var(--dim2)');
+      txt.setAttribute('font-family', 'var(--mono)');
+      txt.setAttribute('font-size', '12');
+      txt.textContent = 'Ontology has no entities or relationships';
+      svg.appendChild(txt);
+      return;
+    }
+    const w = svg.clientWidth || 600, h = svg.clientHeight || 400;
+
+    // Build the node set: every entity, plus any names referenced ONLY in
+    // relationships (otherwise the edge has nothing to attach to).
+    const byName = {};
+    ents.forEach(e => {
+      const n = e.name || e.id || '';
+      if (!n) return;
+      byName[n] = { name: n, type: e.type || 'entity', description: e.description || '' };
+    });
+    rels.forEach(r => {
+      [r.from, r.to, r.source, r.target].forEach(n => {
+        if (n && !byName[n]) byName[n] = { name: n, type: 'implicit', description: '' };
+      });
+    });
+    const names = Object.keys(byName);
+    const cx = w / 2, cy = h / 2, radius = Math.min(w, h) * 0.35;
+    _gNodes = names.map((n, i) => ({
+      ...byName[n],
+      x: cx + radius * Math.cos(2 * Math.PI * i / names.length),
+      y: cy + radius * Math.sin(2 * Math.PI * i / names.length),
+      vx: 0, vy: 0,
+    }));
+    const idx = {};
+    _gNodes.forEach((n, i) => idx[n.name] = i);
+    _gEdges = rels.map(r => ({
+      from: idx[r.from ?? r.source],
+      to:   idx[r.to   ?? r.target],
+      label: r.label || r.relation || r.type || '',
+    })).filter(e => e.from != null && e.to != null);
+
+    _gPan = { x: 0, y: 0, scale: 1 };
+    _attachGraphInteractions(svg);
+    _drawGraph();
+    let tick = 0;
+    const step = () => {
+      // Repulsion (O(n^2) — fine for ontologies up to ~80 nodes)
+      for (let i = 0; i < _gNodes.length; i++) {
+        for (let j = i + 1; j < _gNodes.length; j++) {
+          const a = _gNodes[i], b = _gNodes[j];
+          let dx = a.x - b.x, dy = a.y - b.y;
+          let d2 = dx * dx + dy * dy; if (d2 < 1) d2 = 1;
+          const f = 4500 / d2; const d = Math.sqrt(d2);
+          a.vx += f * dx / d; a.vy += f * dy / d;
+          b.vx -= f * dx / d; b.vy -= f * dy / d;
+        }
+      }
+      // Spring along edges
+      _gEdges.forEach(e => {
+        const a = _gNodes[e.from], b = _gNodes[e.to];
+        if (!a || !b) return;
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const d = Math.sqrt(dx*dx + dy*dy) || 1;
+        const target = 110;
+        const f = (d - target) * 0.04;
+        a.vx += f * dx / d; a.vy += f * dy / d;
+        b.vx -= f * dx / d; b.vy -= f * dy / d;
+      });
+      // Centre pull + damping + clamp
+      _gNodes.forEach(n => {
+        n.vx += (cx - n.x) * 0.004; n.vy += (cy - n.y) * 0.004;
+        n.vx *= 0.82; n.vy *= 0.82;
+        n.x += n.vx; n.y += n.vy;
+        n.x = Math.max(20, Math.min(w - 20, n.x));
+        n.y = Math.max(20, Math.min(h - 20, n.y));
+      });
+      _drawGraph();
+      tick++;
+      if (tick < 110) _gAnim = requestAnimationFrame(step);
+      else _gAnim = null;
+    };
+    _gAnim = requestAnimationFrame(step);
+  }
+
+  function _drawGraph() {
+    const svg = document.getElementById('g-svg'); if (!svg) return;
+    const NS = 'http://www.w3.org/2000/svg';
+    svg.innerHTML = '';
+    const defs = document.createElementNS(NS, 'defs');
+    defs.innerHTML = '<marker id="og-arr" markerWidth="6" markerHeight="6" refX="9" refY="3" orient="auto">'
+      + '<path d="M0,0 L0,6 L9,3 z" fill="#94a3b8" opacity=".75"/></marker>';
+    svg.appendChild(defs);
+    const root = document.createElementNS(NS, 'g');
+    root.setAttribute('transform', `translate(${_gPan.x},${_gPan.y}) scale(${_gPan.scale})`);
+    svg.appendChild(root);
+    // Edges
+    _gEdges.forEach(e => {
+      const a = _gNodes[e.from], b = _gNodes[e.to];
+      if (!a || !b) return;
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const d = Math.sqrt(dx*dx + dy*dy) || 1;
+      const r = 16;
+      const ux = dx / d, uy = dy / d;
+      const x1 = a.x + ux * r, y1 = a.y + uy * r;
+      const x2 = b.x - ux * r, y2 = b.y - uy * r;
+      const ln = document.createElementNS(NS, 'line');
+      ln.setAttribute('x1', x1); ln.setAttribute('y1', y1);
+      ln.setAttribute('x2', x2); ln.setAttribute('y2', y2);
+      ln.setAttribute('stroke', '#64748b');
+      ln.setAttribute('stroke-width', '1.2');
+      ln.setAttribute('opacity', '.6');
+      ln.setAttribute('marker-end', 'url(#og-arr)');
+      root.appendChild(ln);
+      if (e.label) {
+        const t = document.createElementNS(NS, 'text');
+        t.setAttribute('x', (x1 + x2) / 2);
+        t.setAttribute('y', (y1 + y2) / 2 - 3);
+        t.setAttribute('text-anchor', 'middle');
+        t.setAttribute('font-family', 'var(--mono, monospace)');
+        t.setAttribute('font-size', '9');
+        t.setAttribute('fill', '#94a3b8');
+        t.textContent = e.label.length > 22 ? e.label.slice(0, 20) + '…' : e.label;
+        root.appendChild(t);
+      }
+    });
+    // Nodes
+    _gNodes.forEach(n => {
+      const hue = _strHue(n.type || 'entity');
+      const g = document.createElementNS(NS, 'g');
+      g.setAttribute('transform', `translate(${n.x},${n.y})`);
+      const c = document.createElementNS(NS, 'circle');
+      c.setAttribute('r', '14');
+      c.setAttribute('fill', `hsla(${hue},45%,32%,.7)`);
+      c.setAttribute('stroke', `hsl(${hue},55%,55%)`);
+      c.setAttribute('stroke-width', '1.4');
+      g.appendChild(c);
+      const t = document.createElementNS(NS, 'text');
+      t.setAttribute('y', '28');
+      t.setAttribute('text-anchor', 'middle');
+      t.setAttribute('font-family', 'var(--mono, monospace)');
+      t.setAttribute('font-size', '10');
+      t.setAttribute('fill', '#cbd5e1');
+      const lbl = n.name.length > 18 ? n.name.slice(0, 16) + '…' : n.name;
+      t.textContent = lbl;
+      g.appendChild(t);
+      const title = document.createElementNS(NS, 'title');
+      title.textContent = `${n.name} [${n.type || 'entity'}]${n.description ? '\n' + n.description : ''}`;
+      g.appendChild(title);
+      root.appendChild(g);
+    });
+  }
+
+  function _attachGraphInteractions(svg) {
+    // Idempotent — we wipe stale handlers on each render so the SVG element
+    // doesn't accumulate listeners across renders.
+    if (svg._veraInited) return;
+    svg._veraInited = true;
+    let dragging = null;
+    svg.addEventListener('mousedown', e => {
+      if (e.target.tagName === 'circle' || e.target.tagName === 'text') return;
+      dragging = { x: e.clientX, y: e.clientY, px: _gPan.x, py: _gPan.y };
+      svg.style.cursor = 'grabbing';
+    });
+    window.addEventListener('mouseup', () => { dragging = null; svg.style.cursor = 'grab'; });
+    window.addEventListener('mousemove', e => {
+      if (!dragging) return;
+      _gPan.x = dragging.px + (e.clientX - dragging.x);
+      _gPan.y = dragging.py + (e.clientY - dragging.y);
+      _drawGraph();
+    });
+    svg.addEventListener('wheel', e => {
+      e.preventDefault();
+      const f = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+      _gPan.scale = Math.max(0.3, Math.min(4, _gPan.scale * f));
+      _drawGraph();
+    }, { passive: false });
+  }
+
+  function graphRecenter() { _gPan = { x: 0, y: 0, scale: 1 }; _drawGraph(); }
+  function graphRespin()   { if (activeId) renderGraph(activeId); }
+
+  /* ─────────────────────────────────────────────────────────────────────
+     BUILD FROM FABRIC
+   ───────────────────────────────────────────────────────────────────── */
+  let _bDatasets = [];
+
+  async function buildLoadDatasets() {
+    const sel = document.getElementById('b-ds');
+    if (sel) sel.innerHTML = '<option disabled>Loading…</option>';
+    const r = await api('/fabric/datasets');
+    _bDatasets = (r && r.datasets) ? r.datasets : [];
+    if (!sel) return;
+    sel.innerHTML = _bDatasets.length
+      ? _bDatasets.map(d => `<option value="${esc(d.dataset_id)}">${esc(d.dataset_id)}${d.record_count!=null?' ('+d.record_count+')':''}</option>`).join('')
+      : '<option disabled>No datasets — open Fabric panel to ingest</option>';
+  }
+
+  async function build() {
+    const name = (document.getElementById('b-name').value || '').trim();
+    if (!name) { _bStatus('Enter a name', 'err'); return; }
+    const sel = document.getElementById('b-ds');
+    const ds  = sel ? [...sel.selectedOptions].map(o => o.value).filter(Boolean) : [];
+    if (!ds.length) { _bStatus('Pick at least one dataset', 'err'); return; }
+    _bStatus('Building (this may take a while)...', '');
+    const body = {
+      name,
+      dataset_ids: ds.join(','),
+      domain: (document.getElementById('b-domain').value || '').trim() || 'general',
+      description: (document.getElementById('b-desc').value || '').trim(),
+      sample_size: parseInt(document.getElementById('b-samples').value || '30', 10) || 30,
+      tags: (document.getElementById('b-tags').value || '').trim(),
+    };
+    let res = null;
+    try {
+      const r = await fetch(base() + '/fabric/ontologies/build', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(body),
+      });
+      res = r.ok ? await r.json() : { error: `HTTP ${r.status}` };
+    } catch(e) { res = { error: String(e && e.message || e) }; }
+    if (!res || res.error) { _bStatus('Failed: ' + (res?.error || 'no response'), 'err'); return; }
+    const ents = res.entities || res.ontology?.entities || [];
+    const rels = res.relationships || res.ontology?.relationships || [];
+    _bStatus(`Built ${ents.length} entities · ${rels.length} relationships`, 'ok');
+    const resEl = document.getElementById('b-result');
+    if (resEl) {
+      resEl.style.display = 'block';
+      resEl.textContent = JSON.stringify({
+        ontology_id: res.ontology_id, name: res.name, domain: res.domain,
+        entities: ents, relationships: rels,
+      }, null, 2);
+    }
+    document.getElementById('b-name').value = '';
+    document.getElementById('b-desc').value = '';
+    document.getElementById('b-tags').value = '';
+    await load();
+    if (res.ontology_id && onts.find(o => o.id === res.ontology_id)) {
+      select(res.ontology_id);
+      // Switch to the graph tab so the user immediately sees what was built
+      const tabs = document.querySelectorAll('.mtab');
+      const gIdx = ['edit','graph','apply','infer','build'].indexOf('graph');
+      if (tabs[gIdx]) tab('graph', tabs[gIdx]);
+    }
+  }
+
+  function _bStatus(msg, cls) {
+    const el = document.getElementById('b-status');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.className = 'status' + (cls ? ' ' + cls : '');
+  }
+
+  function tab(name, el) {
+    document.querySelectorAll('.mtab').forEach(t => t.classList.remove('active'));
+    if (el) el.classList.add('active');
+    ['edit','graph','apply','infer','build','owl'].forEach(t => {
+      const e = document.getElementById('tab-' + t);
+      if (e) e.style.display = (t === name) ? 'block' : 'none';
+    });
+    if (name === 'graph') renderGraph(activeId);
+    if (name === 'build' && !_bDatasets.length) buildLoadDatasets();
+    if (name === 'owl')   _owlInit();
+  }
+
+  window.addEventListener('message', e => {
+    if (e.data?.type === 'vera:theme' && e.data.vars) {
+      const root = document.documentElement;
+      const map = {'--bg':'--bg0','--s1':'--bg1','--s2':'--bg2','--s3':'--bg3','--bd':'--border','--bd2':'--border2','--t1':'--text','--t2':'--dim2','--t3':'--dim','--ac':'--acc','--ac2':'--acc2','--ac3':'--acc3','--ac4':'--err','--ac5':'--acc4'};
+      for (const [k,v] of Object.entries(map)) { if (e.data.vars[k]) root.style.setProperty(v, e.data.vars[k]); }
+    }
+    if (e.data?.type === 'vera:base') BASE = e.data.url;
+  });
+
+  window.addEventListener('DOMContentLoaded', () => { load(); });
+  window.addEventListener('load', () => { if (!onts.length) load(); });
+
+  // ── OWL tab implementation ─────────────────────────────────────────
+  let _owlInited = false;
+  async function _owlInit(){
+    if (_owlInited) return;
+    _owlInited = true;
+    try {
+      const r = await fetch(base() + '/ontologies/owl/formats');
+      const j = await r.json();
+      if (j && j.rdflib_available === false) {
+        const w = document.getElementById('owl-fallback-warning');
+        if (w) w.style.display = 'block';
+      }
+    } catch(_) {}
+  }
+  async function _owlExport(){
+    const id  = activeId;
+    const fmt = document.getElementById('owl-format').value;
+    const out = document.getElementById('owl-export-output');
+    const st  = document.getElementById('owl-export-status');
+    if (!id) { st.textContent = 'Select an ontology first'; st.className = 'status err'; return; }
+    st.textContent = 'Exporting…'; st.className = 'status';
+    try {
+      const r = await fetch(base() + '/ontologies/owl/export', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({id, format: fmt}),
+      });
+      const j = await r.json();
+      if (!r.ok || j.error) { st.textContent = 'Failed: ' + (j.error||r.status); st.className = 'status err'; return; }
+      out.value = j.content || '';
+      st.textContent = `${j.triples||0} triples · ${j.length||0} chars`;
+      st.className = 'status ok';
+    } catch(e) {
+      st.textContent = 'Failed: ' + e.message;
+      st.className = 'status err';
+    }
+  }
+  function _owlDownload(){
+    const fmt     = document.getElementById('owl-format').value;
+    const id      = activeId || 'ontology';
+    const content = document.getElementById('owl-export-output').value;
+    if (!content) return;
+    const ext = ({turtle:'ttl', rdfxml:'owl', 'json-ld':'jsonld', ntriples:'nt', n3:'n3'})[fmt] || 'txt';
+    const mime = ({turtle:'text/turtle', rdfxml:'application/rdf+xml',
+                   'json-ld':'application/ld+json', ntriples:'application/n-triples',
+                   n3:'text/n3'})[fmt] || 'text/plain';
+    const blob = new Blob([content], {type: mime});
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = id + '.' + ext;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
+  async function _owlValidate(){
+    const id = activeId;
+    const st = document.getElementById('owl-export-status');
+    if (!id) { st.textContent = 'Select an ontology first'; st.className = 'status err'; return; }
+    try {
+      const r = await fetch(base() + '/ontologies/validate', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({id}),
+      });
+      const j = await r.json();
+      if (j.error) { st.textContent = j.error; st.className = 'status err'; return; }
+      const errs = j.errors||[], warns = j.warnings||[];
+      if (j.ok && !warns.length) {
+        st.textContent = '✓ valid'; st.className = 'status ok';
+      } else if (j.ok) {
+        st.textContent = `✓ valid · ${warns.length} warnings: ${warns.join('; ').slice(0,200)}`;
+        st.className = 'status warn';
+      } else {
+        st.textContent = `✗ ${errs.length} errors: ${errs.join('; ').slice(0,200)}`;
+        st.className = 'status err';
+      }
+    } catch(e) {
+      st.textContent = 'Validate failed: ' + e.message;
+      st.className = 'status err';
+    }
+  }
+  function _owlReadFile(input){
+    const f = input.files && input.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      document.getElementById('owl-import-content').value = e.target.result;
+      const sel = document.getElementById('owl-import-format');
+      if (sel && !sel.value) {
+        const n = f.name.toLowerCase();
+        if (n.endsWith('.ttl'))                                                   sel.value = 'turtle';
+        else if (n.endsWith('.owl') || n.endsWith('.rdf') || n.endsWith('.xml')) sel.value = 'rdfxml';
+        else if (n.endsWith('.jsonld') || n.endsWith('.json'))                  sel.value = 'json-ld';
+        else if (n.endsWith('.nt'))                                              sel.value = 'ntriples';
+        else if (n.endsWith('.n3'))                                              sel.value = 'n3';
+      }
+      const nameEl = document.getElementById('owl-import-name');
+      if (nameEl && !nameEl.value) nameEl.value = f.name.replace(/\.[^.]+$/, '');
+    };
+    reader.readAsText(f);
+  }
+  async function _owlImport(){
+    const content = document.getElementById('owl-import-content').value;
+    const fmt     = document.getElementById('owl-import-format').value;
+    const id      = document.getElementById('owl-import-id').value;
+    const name    = document.getElementById('owl-import-name').value;
+    const st      = document.getElementById('owl-import-status');
+    if (!content.trim()) { st.textContent = 'Paste content or pick a file'; st.className = 'status err'; return; }
+    st.textContent = 'Importing…'; st.className = 'status';
+    try {
+      const r = await fetch(base() + '/ontologies/owl/import', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({content, format: fmt, id, name}),
+      });
+      const j = await r.json();
+      if (!r.ok || j.error) { st.textContent = 'Failed: ' + (j.error||r.status); st.className = 'status err'; return; }
+      st.textContent = '✓ Imported · id=' + (j.id || '?');
+      st.className = 'status ok';
+      load();
+    } catch(e) {
+      st.textContent = 'Failed: ' + e.message;
+      st.className = 'status err';
+    }
+  }
+
+  return { load, filterList, select, newOnt, cancel, save, del, apply, infer, tab,
+           renderGraph, graphRecenter, graphRespin, build, buildLoadDatasets,
+           _owlInit, _owlExport, _owlDownload, _owlValidate, _owlReadFile, _owlImport };
+})();
+</script>
+<script src="/ui/vera-ui.js"></script>
+</body>
+</html>

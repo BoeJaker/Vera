@@ -1,0 +1,900 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>vLLM</title>
+<style>
+:root{
+  --bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;
+  --border:#3a3530;--border2:#4a4540;
+  --acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--acc4:#9e8fa0;
+  --ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;--gpu:#c97a5a;
+  --text:#ddd5c8;--fg:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;
+  --mono:'JetBrains Mono','Fira Mono',monospace;
+  --sans:'Inter','IBM Plex Sans',system-ui,sans-serif;
+  color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:12px;-webkit-font-smoothing:antialiased}
+input,select,textarea{background:var(--bg1);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:3px;font-family:var(--sans);font-size:11px;outline:none;transition:border-color .14s}
+input:focus,select:focus,textarea:focus{border-color:var(--acc)}
+input[type=range]{padding:0;border:none;background:none;accent-color:var(--acc)}
+input[type=number]{width:100%}
+select option{background:var(--bg2)}
+textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.55}
+.btn{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:3px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);font-size:11px;font-weight:500;cursor:pointer;transition:all .14s;white-space:nowrap;user-select:none}
+.btn:hover{border-color:var(--acc);color:var(--acc)}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+.btn.pri:hover{filter:brightness(1.15)}
+.btn.ok{background:rgba(109,184,122,.1);border-color:var(--ok);color:var(--ok)}
+.btn.warn{border-color:var(--warn);color:var(--warn)}
+.btn.danger{border-color:var(--err);color:var(--err)}
+.btn:disabled{opacity:.35;pointer-events:none}
+.btn.sm{padding:2px 7px;font-size:10px}
+.btn.xs{padding:1px 5px;font-size:9px}
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+
+/* layout */
+#app{display:grid;grid-template-columns:260px 1fr;height:100vh;overflow:hidden}
+#sidebar{display:flex;flex-direction:column;border-right:1px solid var(--border);background:var(--bg1);overflow:hidden}
+#main{display:flex;flex-direction:column;overflow:hidden}
+
+/* tabs */
+.tab-bar{display:flex;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg1)}
+.tab{padding:6px 14px;font-size:10.5px;color:var(--dim2);cursor:pointer;border-bottom:2px solid transparent;transition:all .14s;user-select:none}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--acc);border-bottom-color:var(--acc)}
+
+/* sidebar */
+.sb-header{padding:10px 12px 8px;border-bottom:1px solid var(--border);flex-shrink:0}
+.sb-title{font-family:var(--mono);font-size:10px;font-weight:700;color:var(--acc3);letter-spacing:2px;text-transform:uppercase}
+.sb-sub{font-size:9px;color:var(--dim);margin-top:2px}
+.sb-body{flex:1;overflow-y:auto;padding:8px}
+
+/* instance cards */
+.inst-card{border:1px solid var(--border);border-radius:4px;padding:8px 10px;margin-bottom:6px;cursor:pointer;transition:border-color .14s;background:var(--bg2)}
+.inst-card:hover{border-color:var(--border2)}
+.inst-card.selected{border-color:var(--acc);background:rgba(90,158,143,.07)}
+.inst-row{display:flex;align-items:center;gap:6px;margin-bottom:4px}
+.inst-name{font-size:11px;font-weight:600;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.inst-url{font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:2px;word-break:break-all}
+.inst-models{font-size:9px;color:var(--dim2);margin-top:3px}
+.inst-badges{display:flex;gap:4px;flex-wrap:wrap;margin-top:5px}
+.badge{font-size:8.5px;padding:1px 5px;border-radius:10px;white-space:nowrap}
+.badge.gpu{background:rgba(201,122,90,.15);border:1px solid rgba(201,122,90,.3);color:var(--gpu)}
+.badge.cpu{background:rgba(143,184,122,.12);border:1px solid rgba(143,184,122,.3);color:var(--acc2)}
+.badge.lora{background:rgba(158,143,160,.15);border:1px solid rgba(158,143,160,.3);color:var(--acc4)}
+.badge.quant{background:rgba(201,149,90,.15);border:1px solid rgba(201,149,90,.3);color:var(--acc3)}
+
+/* stat row */
+.stat-row{display:flex;gap:0;flex-wrap:wrap;margin-top:5px}
+.stat{flex:1;min-width:60px;text-align:center;padding:3px 0;border-right:1px solid var(--border)}
+.stat:last-child{border-right:none}
+.stat-val{font-family:var(--mono);font-size:10px;color:var(--text);display:block}
+.stat-lbl{font-size:8px;color:var(--dim);display:block;margin-top:1px}
+
+/* bar */
+.bar-wrap{height:4px;background:var(--bg3);border-radius:2px;overflow:hidden;margin-top:4px}
+.bar-fill{height:100%;border-radius:2px;transition:width .4s}
+.bar-fill.gpu{background:var(--gpu)}
+.bar-fill.cpu{background:var(--acc2)}
+.bar-fill.ok{background:var(--ok)}
+.bar-fill.warn{background:var(--warn)}
+.bar-fill.err{background:var(--err)}
+
+/* dot */
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex-shrink:0}
+.dot.ok{background:var(--ok);box-shadow:0 0 4px var(--ok)}
+.dot.err{background:var(--err)}
+.dot.warn{background:var(--warn);animation:blink .9s ease-in-out infinite}
+.dot.dim{background:var(--border2)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* panels */
+.panel{display:none;flex:1;overflow:hidden;flex-direction:column}
+.panel.active{display:flex}
+
+/* playground / chat */
+#pg-body{flex:1;overflow-y:auto;padding:10px 14px;display:flex;flex-direction:column;gap:6px}
+.msg{display:flex;flex-direction:column;gap:2px}
+.msg.user{align-self:flex-end;max-width:85%}
+.msg.assistant{align-self:flex-start;max-width:90%}
+.msg.sys{align-self:center;max-width:100%}
+.bubble{padding:7px 10px;border-radius:4px;font-size:11.5px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+.msg.user .bubble{background:rgba(90,158,143,.18);border:1px solid rgba(90,158,143,.3)}
+.msg.assistant .bubble{background:var(--bg2);border:1px solid var(--border)}
+.msg.assistant .bubble.streaming{border-color:var(--acc)}
+.msg.sys .bubble{background:var(--bg3);border:1px solid var(--border2);color:var(--dim2);font-size:9.5px;font-family:var(--mono)}
+.msg-meta{font-size:9px;color:var(--dim)}
+.msg.user .msg-meta{text-align:right}
+.cursor{display:inline-block;width:7px;height:11px;background:var(--acc);margin-left:1px;vertical-align:text-bottom;animation:cblink .7s step-end infinite}
+@keyframes cblink{0%,100%{opacity:1}50%{opacity:0}}
+
+/* input bar */
+.input-bar{padding:8px 14px;border-top:1px solid var(--border);background:var(--bg1);flex-shrink:0}
+.input-row{display:flex;gap:6px;align-items:flex-end}
+.prompt-ta{flex:1;resize:none;font-family:var(--sans);font-size:11.5px;min-height:38px;max-height:120px;padding:7px 10px;line-height:1.5}
+.send-btn{padding:7px 14px;font-size:11.5px;align-self:flex-end}
+.input-opts{display:flex;gap:10px;margin-top:6px;align-items:center;flex-wrap:wrap}
+.opt-g{display:flex;align-items:center;gap:4px}
+.opt-lbl{font-size:9.5px;color:var(--dim2)}
+.opt-sel{padding:2px 6px;font-size:10px}
+.opt-num{width:60px;font-size:10px;padding:2px 5px}
+
+/* form grid */
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;padding:12px 14px}
+.form-grid.g1{grid-template-columns:1fr}
+.fg-field{display:flex;flex-direction:column;gap:3px}
+.fg-field label{font-size:9.5px;color:var(--dim2)}
+.fg-field input,.fg-field select,.fg-field textarea{width:100%}
+.fg-field .hint{font-size:8.5px;color:var(--dim)}
+.form-actions{padding:0 14px 12px;display:flex;gap:6px}
+
+/* metrics */
+.metrics-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;padding:12px 14px}
+.metric-card{background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:8px 10px}
+.metric-name{font-size:9px;color:var(--dim2);font-family:var(--mono);margin-bottom:3px;word-break:break-all}
+.metric-val{font-family:var(--mono);font-size:13px;color:var(--text)}
+
+/* section label */
+.sec{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);margin:10px 14px 4px;display:flex;align-items:center;gap:8px}
+.sec::after{content:'';flex:1;height:1px;background:var(--border)}
+
+/* launch form */
+.launch-section{overflow-y:auto;flex:1}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ── Sidebar ── -->
+  <div id="sidebar">
+    <div class="sb-header">
+      <div class="sb-title">vLLM</div>
+      <div class="sb-sub">PagedAttention &middot; Continuous Batching &middot; Speculative</div>
+    </div>
+    <div class="sb-body" id="inst-list">
+      <div style="color:var(--dim);font-size:9.5px;text-align:center;padding:20px 0">Loading instances&hellip;</div>
+    </div>
+    <div style="padding:8px;border-top:1px solid var(--border);flex-shrink:0;display:flex;gap:5px">
+      <button class="btn" style="flex:1;justify-content:center;font-size:10px" onclick="refreshStatus()">Refresh</button>
+      <button class="btn ok" style="flex:1;justify-content:center;font-size:10px" onclick="showTab('launch')">Launch</button>
+    </div>
+  </div>
+
+  <!-- ── Main ── -->
+  <div id="main">
+    <div class="tab-bar">
+      <div class="tab active" data-tab="playground" onclick="showTab('playground')">Playground</div>
+      <div class="tab" data-tab="add"        onclick="showTab('add')">Add Instance</div>
+      <div class="tab" data-tab="launch"     onclick="showTab('launch')">Launch Server</div>
+      <div class="tab" data-tab="lora"       onclick="showTab('lora')">LoRA</div>
+      <div class="tab" data-tab="metrics"    onclick="showTab('metrics')">Metrics</div>
+    </div>
+
+    <!-- PLAYGROUND -->
+    <div class="panel active" id="panel-playground" data-panel="playground">
+      <div style="padding:6px 14px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-shrink:0">
+        <span style="font-size:9.5px;color:var(--dim2)">Mode:</span>
+        <select id="pg-mode" style="font-size:10px;padding:2px 6px" onchange="updatePgMode()">
+          <option value="chat">Chat</option>
+          <option value="completion">Completion</option>
+        </select>
+        <button class="btn xs" onclick="clearPg()">Clear</button>
+        <div style="flex:1"></div>
+        <span style="font-size:9.5px;color:var(--dim)">Instance: </span>
+        <select id="pg-instance" style="font-size:10px;padding:2px 6px">
+          <option value="">Auto-route</option>
+        </select>
+      </div>
+
+      <div id="pg-body"></div>
+
+      <div class="input-bar">
+        <div id="system-prompt-row" style="margin-bottom:6px">
+          <textarea id="system-prompt" placeholder="System prompt (optional)&#8230;" rows="2" style="width:100%;font-size:10.5px;padding:5px 8px"></textarea>
+        </div>
+        <div class="input-row">
+          <textarea class="prompt-ta" id="pg-input" placeholder="Enter prompt&#8230;" rows="2"
+            onkeydown="pgKey(event)" oninput="pgCharCount(this)"></textarea>
+          <button class="btn pri send-btn" id="pg-send" onclick="pgSend()">Send</button>
+        </div>
+        <div class="input-opts">
+          <div class="opt-g"><span class="opt-lbl">Model:</span>
+            <select class="opt-sel" id="pg-model"><option value="">Auto</option></select></div>
+          <div class="opt-g"><span class="opt-lbl">Temp:</span>
+            <input type="number" class="opt-num" id="pg-temp" value="0.7" min="0" max="2" step="0.05"></div>
+          <div class="opt-g"><span class="opt-lbl">Max tokens:</span>
+            <input type="number" class="opt-num" id="pg-maxtok" value="512" min="1" max="32768"></div>
+          <div class="opt-g"><span class="opt-lbl">Top-p:</span>
+            <input type="number" class="opt-num" id="pg-topp" value="0.9" min="0" max="1" step="0.05"></div>
+          <div class="opt-g"><span class="opt-lbl">LoRA:</span>
+            <select class="opt-sel" id="pg-lora"><option value="">None</option></select></div>
+          <div style="flex:1"></div>
+          <span style="font-size:9.5px;color:var(--dim)" id="pg-chars">0 chars</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ADD INSTANCE -->
+    <div class="panel" id="panel-add" data-panel="add">
+      <div class="launch-section">
+        <div class="sec">Register Existing vLLM Server</div>
+        <div class="form-grid">
+          <div class="fg-field">
+            <label>Instance ID</label>
+            <input type="text" id="add-id" placeholder="gpu-0">
+          </div>
+          <div class="fg-field">
+            <label>URL</label>
+            <input type="text" id="add-url" placeholder="http://192.168.0.250:8001">
+          </div>
+          <div class="fg-field">
+            <label>Label</label>
+            <input type="text" id="add-label" placeholder="RTX 4090 Node">
+          </div>
+          <div class="fg-field">
+            <label>API Key (optional)</label>
+            <input type="password" id="add-apikey" placeholder="">
+          </div>
+          <div class="fg-field">
+            <label>Has GPU</label>
+            <select id="add-hasgpu">
+              <option value="true">Yes</option>
+              <option value="false">No (CPU / offload only)</option>
+            </select>
+          </div>
+          <div class="fg-field">
+            <label>Priority (lower = preferred)</label>
+            <input type="number" id="add-priority" value="0" min="0">
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn pri" onclick="addInstance()">Register Instance</button>
+        </div>
+        <div id="add-status" class="sec" style="margin-top:2px;font-size:10px;padding:0 14px;display:none"></div>
+
+        <div class="sec">Active Instances</div>
+        <div id="active-instances-table" style="padding:0 14px 12px"></div>
+      </div>
+    </div>
+
+    <!-- LAUNCH SERVER -->
+    <div class="panel" id="panel-launch" data-panel="launch">
+      <div class="launch-section">
+        <div class="sec">Launch vLLM OpenAI Server</div>
+        <div class="form-grid">
+          <div class="fg-field" style="grid-column:1/-1">
+            <label>Model (HuggingFace ID or local path)</label>
+            <input type="text" id="lnch-model" placeholder="mistralai/Mistral-7B-Instruct-v0.3">
+            <div class="hint">e.g. meta-llama/Meta-Llama-3.1-8B-Instruct, /mnt/models/mistral-7b</div>
+          </div>
+          <div class="fg-field">
+            <label>Instance ID</label>
+            <input type="text" id="lnch-id" placeholder="gpu-local">
+          </div>
+          <div class="fg-field">
+            <label>Port</label>
+            <input type="number" id="lnch-port" value="8001">
+          </div>
+          <div class="fg-field">
+            <label>Tensor Parallel Size</label>
+            <input type="number" id="lnch-tp" value="1" min="1" max="8">
+            <div class="hint">Number of GPUs to shard across</div>
+          </div>
+          <div class="fg-field">
+            <label>GPU Memory Utilization</label>
+            <input type="number" id="lnch-gmem" value="0.90" min="0.1" max="1.0" step="0.01">
+            <div class="hint">Fraction of VRAM for KV cache (PagedAttention pool)</div>
+          </div>
+          <div class="fg-field">
+            <label>CPU Offload (GB RAM)</label>
+            <input type="number" id="lnch-cpuoff" value="0" min="0">
+            <div class="hint">Spill KV cache to host RAM. 0 = disabled. Up to 200 on 256 GB host.</div>
+          </div>
+          <div class="fg-field">
+            <label>Quantization</label>
+            <select id="lnch-quant">
+              <option value="">None (full precision)</option>
+              <option value="fp8">FP8 (best perf on Ampere+)</option>
+              <option value="awq">AWQ (4-bit, fast inference)</option>
+              <option value="gptq">GPTQ (4-bit, wide model support)</option>
+              <option value="gguf">GGUF</option>
+              <option value="turbomind">TurboMind / TurboQuant</option>
+              <option value="bitsandbytes">BitsAndBytes (NF4)</option>
+            </select>
+          </div>
+          <div class="fg-field">
+            <label>dtype</label>
+            <select id="lnch-dtype">
+              <option value="auto">auto</option>
+              <option value="bfloat16">bfloat16 (recommended A100/H100)</option>
+              <option value="float16">float16 (RTX / older GPU)</option>
+              <option value="float32">float32</option>
+            </select>
+          </div>
+          <div class="fg-field">
+            <label>Max Model Length (tokens)</label>
+            <input type="number" id="lnch-mml" placeholder="(model default)" min="512">
+            <div class="hint">Override context window. Reduce to fit VRAM on 12 GB GPUs.</div>
+          </div>
+          <div class="fg-field">
+            <label>Speculative Decoding Draft Model</label>
+            <input type="text" id="lnch-spec" placeholder="(none)">
+            <div class="hint">Smaller model that drafts tokens; target model verifies. Cuts latency.</div>
+          </div>
+          <div class="fg-field">
+            <label>Speculative Tokens per Step</label>
+            <input type="number" id="lnch-spec-n" value="5" min="1" max="20">
+          </div>
+          <div class="fg-field">
+            <label>Enable LoRA</label>
+            <select id="lnch-lora">
+              <option value="false">No</option>
+              <option value="true">Yes</option>
+            </select>
+          </div>
+          <div class="fg-field">
+            <label>Max Concurrent LoRAs</label>
+            <input type="number" id="lnch-maxlora" value="4" min="1" max="64">
+          </div>
+          <div class="fg-field">
+            <label>Prefix Caching (APC)</label>
+            <select id="lnch-apc">
+              <option value="true">Enabled (recommended)</option>
+              <option value="false">Disabled</option>
+            </select>
+            <div class="hint">Reuses KV blocks for repeated system prompts / few-shot prefixes</div>
+          </div>
+          <div class="fg-field">
+            <label>Chunked Prefill</label>
+            <select id="lnch-chunked">
+              <option value="true">Enabled (recommended)</option>
+              <option value="false">Disabled</option>
+            </select>
+            <div class="hint">Interleaves prefill and decode to reduce latency on long prompts</div>
+          </div>
+          <div class="fg-field">
+            <label>API Key (optional)</label>
+            <input type="password" id="lnch-apikey" placeholder="">
+          </div>
+          <div class="fg-field">
+            <label>Served Model Name Override</label>
+            <input type="text" id="lnch-served-name" placeholder="(same as model)">
+          </div>
+          <div class="fg-field" style="grid-column:1/-1">
+            <label>Extra CLI Flags (one per line)</label>
+            <textarea id="lnch-extra" rows="3" placeholder="--max-num-seqs 256&#10;--disable-log-requests"></textarea>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn pri" onclick="launchServer()">Launch Server</button>
+          <button class="btn" onclick="generateCmd()">Preview Command</button>
+        </div>
+        <div id="launch-cmd-preview" style="display:none;padding:0 14px 12px">
+          <div class="sec">Generated Command</div>
+          <pre id="launch-cmd-text" style="font-family:var(--mono);font-size:9.5px;color:var(--acc2);background:var(--bg3);border:1px solid var(--border);border-radius:3px;padding:8px 10px;white-space:pre-wrap;word-break:break-all"></pre>
+        </div>
+        <div id="launch-status" style="padding:0 14px;font-size:10px"></div>
+
+        <div class="sec">Running Managed Servers</div>
+        <div id="managed-servers" style="padding:0 14px 12px;font-size:10.5px;color:var(--dim)">None</div>
+      </div>
+    </div>
+
+    <!-- LORA -->
+    <div class="panel" id="panel-lora" data-panel="lora">
+      <div class="launch-section">
+        <div class="sec">Load LoRA Adapter</div>
+        <div class="form-grid">
+          <div class="fg-field">
+            <label>Adapter Name</label>
+            <input type="text" id="lora-name" placeholder="my-lora-v1">
+          </div>
+          <div class="fg-field">
+            <label>Path on Server Host</label>
+            <input type="text" id="lora-path" placeholder="/mnt/models/my-lora">
+          </div>
+          <div class="fg-field">
+            <label>Instance</label>
+            <select id="lora-inst"><option value="">Auto</option></select>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn pri" onclick="loadLora()">Register Adapter</button>
+        </div>
+        <div id="lora-status" style="padding:0 14px;font-size:10px"></div>
+
+        <div class="sec">Loaded Adapters</div>
+        <div id="lora-list" style="padding:0 14px 12px"></div>
+      </div>
+    </div>
+
+    <!-- METRICS -->
+    <div class="panel" id="panel-metrics" data-panel="metrics">
+      <div style="padding:8px 14px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-shrink:0">
+        <select id="metrics-inst" style="font-size:10px;padding:2px 6px">
+          <option value="">First available</option>
+        </select>
+        <button class="btn sm" onclick="loadMetrics()">Refresh</button>
+        <div style="flex:1"></div>
+        <span id="metrics-ts" style="font-size:9px;color:var(--dim)"></span>
+      </div>
+      <div style="overflow-y:auto;flex:1">
+        <div id="metrics-summary" class="metrics-grid"></div>
+        <div id="metrics-raw" style="padding:0 14px 12px;display:none">
+          <div class="sec">Raw Prometheus Metrics <button class="btn xs" onclick="toggleRaw()">Hide</button></div>
+          <pre style="font-family:var(--mono);font-size:8.5px;color:var(--dim2);max-height:300px;overflow-y:auto;background:var(--bg3);border:1px solid var(--border);border-radius:3px;padding:8px;white-space:pre-wrap;word-break:break-all" id="metrics-raw-text"></pre>
+        </div>
+        <div style="padding:6px 14px">
+          <button class="btn xs" onclick="toggleRaw()">Show raw metrics</button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /main -->
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+const S = {
+  instances: {},
+  selectedInst: null,
+  pgMessages: [],   // [{role, content}]
+  streaming: false,
+  streamEl: null,
+};
+
+// ── API ───────────────────────────────────────────────────────────────────────
+async function api(path, method='GET', body=null){
+  const opts = {method, headers:{'Content-Type':'application/json'}};
+  if(body) opts.body = JSON.stringify(body);
+  const r = await fetch(path, opts);
+  return r.json();
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  refreshStatus();
+  setInterval(refreshStatus, 10000);
+  subscribeEvents();
+  updatePgMode();
+});
+
+// ── Status ────────────────────────────────────────────────────────────────────
+async function refreshStatus(){
+  try {
+    const d = await api('/vllm/status');
+    S.instances = d.instances || {};
+    renderSidebar();
+    populateSelects();
+  } catch(e){}
+}
+
+function renderSidebar(){
+  const el = document.getElementById('inst-list');
+  if(!Object.keys(S.instances).length){
+    el.innerHTML = '<div style="color:var(--dim);font-size:9.5px;text-align:center;padding:24px 0">No instances configured.<br>Use "Launch" or "Add Instance".</div>';
+    return;
+  }
+  el.innerHTML = Object.values(S.instances).map(inst => {
+    const statusCls = inst.status==='online'?'ok':inst.status==='degraded'?'warn':'err';
+    const cacheW = Math.round((inst.gpu_cache_usage||0)*100);
+    const cacheClass = cacheW>90?'err':cacheW>70?'warn':'ok';
+    const selected = S.selectedInst === inst.id;
+    return `<div class="inst-card ${selected?'selected':''}" onclick="selectInst('${inst.id}')">
+      <div class="inst-row">
+        <span class="dot ${statusCls}"></span>
+        <span class="inst-name">${inst.label||inst.id}</span>
+        ${inst.pid?`<span class="badge" style="font-size:8px;color:var(--dim)">PID ${inst.pid}</span>`:''}
+      </div>
+      <div class="inst-url">${inst.url}</div>
+      <div class="inst-models">${(inst.models||[]).slice(0,2).join(', ') || '—'}</div>
+      <div class="inst-badges">
+        ${inst.has_gpu?'<span class="badge gpu">GPU</span>':'<span class="badge cpu">CPU</span>'}
+        ${(inst.loaded_loras||[]).length?`<span class="badge lora">${inst.loaded_loras.length} LoRA</span>`:''}
+        ${inst.status==='degraded'?'<span class="badge" style="background:rgba(201,163,90,.15);border:1px solid var(--warn);color:var(--warn)">degraded</span>':''}
+      </div>
+      <div class="stat-row">
+        <div class="stat"><span class="stat-val">${inst.running_requests||0}</span><span class="stat-lbl">running</span></div>
+        <div class="stat"><span class="stat-val">${inst.waiting_requests||0}</span><span class="stat-lbl">waiting</span></div>
+        <div class="stat"><span class="stat-val">${inst.tokens_per_second||0}</span><span class="stat-lbl">tok/s</span></div>
+        <div class="stat"><span class="stat-val">${inst.latency_ms||'—'}</span><span class="stat-lbl">ms</span></div>
+      </div>
+      <div title="GPU KV cache usage: ${cacheW}%">
+        <div class="bar-wrap" style="margin-top:5px">
+          <div class="bar-fill ${cacheClass}" style="width:${cacheW}%"></div>
+        </div>
+        <div style="font-size:8px;color:var(--dim);margin-top:2px">GPU cache ${cacheW}%</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // Active instances table in Add tab
+  renderActiveTable();
+}
+
+function selectInst(id){
+  S.selectedInst = id;
+  renderSidebar();
+}
+
+function populateSelects(){
+  const instOpts = Object.values(S.instances).map(i=>
+    `<option value="${i.id}">${i.label||i.id} (${i.status})</option>`
+  ).join('');
+  const autoOpt = '<option value="">Auto-route</option>';
+
+  for(const selId of ['pg-instance','lora-inst','metrics-inst']){
+    const sel = document.getElementById(selId);
+    const prev = sel.value;
+    sel.innerHTML = autoOpt + instOpts;
+    if(prev) sel.value = prev;
+  }
+
+  // Models across all instances
+  const allModels = [...new Set(Object.values(S.instances).flatMap(i=>i.models||[]))];
+  const modelOpts = '<option value="">Auto</option>' + allModels.map(m=>`<option value="${m}">${m}</option>`).join('');
+  const pgm = document.getElementById('pg-model');
+  const prevM = pgm.value;
+  pgm.innerHTML = modelOpts;
+  if(prevM) pgm.value = prevM;
+
+  // LoRA opts
+  const allLoras = [...new Set(Object.values(S.instances).flatMap(i=>i.loaded_loras||[]))];
+  const loraOpts = '<option value="">None</option>' + allLoras.map(l=>`<option value="${l}">${l}</option>`).join('');
+  document.getElementById('pg-lora').innerHTML = loraOpts;
+
+  renderManagedServers();
+}
+
+function renderActiveTable(){
+  const el = document.getElementById('active-instances-table');
+  if(!el) return;
+  const insts = Object.values(S.instances);
+  if(!insts.length){ el.innerHTML='<div style="color:var(--dim);font-size:9.5px">None registered</div>'; return; }
+  el.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:10px">
+    <tr style="color:var(--dim);font-size:9px">
+      <th style="text-align:left;padding:3px 6px;border-bottom:1px solid var(--border)">ID</th>
+      <th style="text-align:left;padding:3px 6px;border-bottom:1px solid var(--border)">URL</th>
+      <th style="text-align:left;padding:3px 6px;border-bottom:1px solid var(--border)">Status</th>
+      <th style="padding:3px 6px;border-bottom:1px solid var(--border)"></th>
+    </tr>
+    ${insts.map(i=>`<tr>
+      <td style="padding:4px 6px;font-family:var(--mono);font-size:9.5px">${i.id}</td>
+      <td style="padding:4px 6px;color:var(--dim2);font-size:9.5px">${i.url}</td>
+      <td style="padding:4px 6px;color:${i.status==='online'?'var(--ok)':i.status==='degraded'?'var(--warn)':'var(--err)'}">${i.status}</td>
+      <td style="padding:4px 6px;text-align:right">
+        <button class="btn xs danger" onclick="removeInstance('${i.id}')">Remove</button>
+      </td>
+    </tr>`).join('')}
+  </table>`;
+}
+
+function renderManagedServers(){
+  const el = document.getElementById('managed-servers');
+  if(!el) return;
+  const managed = Object.values(S.instances).filter(i=>i.pid);
+  if(!managed.length){ el.textContent='None'; return; }
+  el.innerHTML = managed.map(i=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)">
+      <span class="dot ${i.status==='online'?'ok':i.status==='degraded'?'warn':'err'}"></span>
+      <span style="font-family:var(--mono);font-size:10px;flex:1">${i.id}</span>
+      <span style="font-size:9.5px;color:var(--dim)">PID ${i.pid}</span>
+      <button class="btn xs danger" onclick="stopServer('${i.id}')">Stop</button>
+    </div>`).join('');
+}
+
+// ── Tabs ──────────────────────────────────────────────────────────────────────
+function showTab(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===name));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active', p.dataset.panel===name));
+  if(name==='metrics') loadMetrics();
+  if(name==='lora') loadLoraList();
+}
+
+// ── Playground ────────────────────────────────────────────────────────────────
+function updatePgMode(){
+  const isChat = document.getElementById('pg-mode').value === 'chat';
+  document.getElementById('system-prompt-row').style.display = isChat ? '' : 'none';
+}
+
+function pgKey(e){ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); pgSend(); } }
+function pgCharCount(el){ document.getElementById('pg-chars').textContent = el.value.length + ' chars'; }
+function clearPg(){ document.getElementById('pg-body').innerHTML=''; S.pgMessages=[]; }
+
+async function pgSend(){
+  const prompt = document.getElementById('pg-input').value.trim();
+  if(!prompt || S.streaming) return;
+
+  const mode      = document.getElementById('pg-mode').value;
+  const model     = document.getElementById('pg-model').value || undefined;
+  const instId    = document.getElementById('pg-instance').value || undefined;
+  const temp      = parseFloat(document.getElementById('pg-temp').value)||0.7;
+  const maxTok    = parseInt(document.getElementById('pg-maxtok').value)||512;
+  const topP      = parseFloat(document.getElementById('pg-topp').value)||0.9;
+  const loraName  = document.getElementById('pg-lora').value || undefined;
+  const system    = document.getElementById('system-prompt')?.value.trim();
+
+  document.getElementById('pg-input').value='';
+  document.getElementById('pg-chars').textContent='0 chars';
+  document.getElementById('pg-send').disabled=true;
+  S.streaming=true;
+
+  addPgMsg('user', prompt);
+  const streamBubble = addStreamBubble();
+
+  const body = { max_tokens: maxTok, temperature: temp, top_p: topP };
+  if(model) body.model=model;
+  if(instId) body.instance_id=instId;
+  if(loraName) body.lora_name=loraName;
+
+  let path;
+  if(mode==='chat'){
+    const msgs = [];
+    if(system) msgs.push({role:'system',content:system});
+    msgs.push(...S.pgMessages.map(m=>({role:m.role,content:m.content})));
+    msgs.push({role:'user',content:prompt});
+    body.messages = msgs;
+    path = '/vllm/chat';
+  } else {
+    body.prompt = (system ? system+'\n\n' : '') + prompt;
+    path = '/vllm/generate';
+  }
+
+  try {
+    const r = await api(path, 'POST', body);
+    if(r.error){
+      finalizeStream(streamBubble, '[Error: '+r.error+']', true);
+    } else {
+      const text = r.content || r.text || JSON.stringify(r);
+      finalizeStream(streamBubble, text);
+      S.pgMessages.push({role:'user',content:prompt},{role:'assistant',content:text});
+    }
+  } catch(e){
+    finalizeStream(streamBubble, '[Request failed: '+e.message+']', true);
+  }
+}
+
+function addPgMsg(role, text){
+  const area = document.getElementById('pg-body');
+  const div = document.createElement('div');
+  div.className='msg '+role;
+  const ts = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+  div.innerHTML=`<div class="bubble">${esc(text)}</div><div class="msg-meta">${role==='user'?'You':'vLLM'} &middot; ${ts}</div>`;
+  area.appendChild(div);
+  area.scrollTop=area.scrollHeight;
+}
+
+function addStreamBubble(){
+  const area = document.getElementById('pg-body');
+  const div = document.createElement('div');
+  div.className='msg assistant';
+  const ts = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+  div.innerHTML=`<div class="bubble streaming" id="vllm-stream"><span class="cursor"></span></div><div class="msg-meta">vLLM &middot; ${ts}</div>`;
+  area.appendChild(div);
+  area.scrollTop=area.scrollHeight;
+  return div.querySelector('#vllm-stream');
+}
+
+function finalizeStream(el, text, isErr=false){
+  const cursor = el.querySelector('.cursor');
+  if(cursor) cursor.remove();
+  el.classList.remove('streaming');
+  if(isErr) el.style.color='var(--err)';
+  if(!el.textContent.trim()) el.textContent=text;
+  document.getElementById('pg-send').disabled=false;
+  S.streaming=false; S.streamEl=null;
+}
+
+// ── Add instance ──────────────────────────────────────────────────────────────
+async function addInstance(){
+  const id  = document.getElementById('add-id').value.trim();
+  const url = document.getElementById('add-url').value.trim();
+  if(!id||!url){ alert('Instance ID and URL are required'); return; }
+
+  const r = await api('/vllm/instances', 'POST', {
+    id, url,
+    label:    document.getElementById('add-label').value.trim(),
+    has_gpu:  document.getElementById('add-hasgpu').value==='true',
+    priority: parseInt(document.getElementById('add-priority').value)||0,
+    api_key:  document.getElementById('add-apikey').value,
+  });
+
+  const st = document.getElementById('add-status');
+  st.style.display='block';
+  if(r.ok){
+    st.style.color='var(--ok)';
+    st.textContent=`Registered: ${id} — status: ${r.status}, models: ${(r.models||[]).join(', ')||'none yet'}`;
+    await refreshStatus();
+  } else {
+    st.style.color='var(--err)';
+    st.textContent='Error: ' + (r.error||'unknown');
+  }
+}
+
+async function removeInstance(id){
+  if(!confirm(`Remove instance "${id}"?`)) return;
+  await api(`/vllm/instances/${id}`, 'DELETE');
+  await refreshStatus();
+}
+
+// ── Launch server ─────────────────────────────────────────────────────────────
+function buildLaunchBody(){
+  const extraLines = document.getElementById('lnch-extra').value.trim().split('\n').filter(Boolean);
+  const body = {
+    model:                    document.getElementById('lnch-model').value.trim(),
+    port:                     parseInt(document.getElementById('lnch-port').value)||8001,
+    tensor_parallel_size:     parseInt(document.getElementById('lnch-tp').value)||1,
+    gpu_memory_utilization:   parseFloat(document.getElementById('lnch-gmem').value)||0.9,
+    cpu_offload_gb:           parseFloat(document.getElementById('lnch-cpuoff').value)||0,
+    dtype:                    document.getElementById('lnch-dtype').value,
+    enable_lora:              document.getElementById('lnch-lora').value==='true',
+    max_loras:                parseInt(document.getElementById('lnch-maxlora').value)||4,
+    enable_prefix_caching:    document.getElementById('lnch-apc').value==='true',
+    enable_chunked_prefill:   document.getElementById('lnch-chunked').value==='true',
+    spec_num_speculative_tokens: parseInt(document.getElementById('lnch-spec-n').value)||5,
+  };
+  const id      = document.getElementById('lnch-id').value.trim();
+  const quant   = document.getElementById('lnch-quant').value;
+  const mml     = parseInt(document.getElementById('lnch-mml').value);
+  const spec    = document.getElementById('lnch-spec').value.trim();
+  const apikey  = document.getElementById('lnch-apikey').value;
+  const sname   = document.getElementById('lnch-served-name').value.trim();
+
+  if(id) body.instance_id=id;
+  if(quant) body.quantization=quant;
+  if(mml) body.max_model_len=mml;
+  if(spec) body.spec_model=spec;
+  if(apikey) body.api_key=apikey;
+  if(sname) body.served_model_name=sname;
+  if(extraLines.length) body.extra_args=extraLines;
+  return body;
+}
+
+async function launchServer(){
+  const body = buildLaunchBody();
+  if(!body.model){ alert('Model is required'); return; }
+  const st = document.getElementById('launch-status');
+  st.style.color='var(--dim2)'; st.textContent='Launching…';
+
+  const r = await api('/vllm/server/start', 'POST', body);
+  if(r.ok){
+    st.style.color='var(--ok)';
+    st.textContent=`Launched: PID ${r.pid} — ${r.url}. Health check in ~15s.`;
+    await refreshStatus();
+  } else {
+    st.style.color='var(--err)';
+    st.textContent='Error: ' + (r.error||'unknown');
+  }
+}
+
+function generateCmd(){
+  const body = buildLaunchBody();
+  if(!body.model){ alert('Model is required'); return; }
+
+  let cmd = `python -m vllm.entrypoints.openai.api_server \\\n  --model ${body.model} \\\n  --port ${body.port} \\\n  --tensor-parallel-size ${body.tensor_parallel_size} \\\n  --gpu-memory-utilization ${body.gpu_memory_utilization} \\\n  --dtype ${body.dtype}`;
+
+  if(body.cpu_offload_gb>0) cmd+=` \\\n  --cpu-offload-gb ${body.cpu_offload_gb}`;
+  if(body.quantization) cmd+=` \\\n  --quantization ${body.quantization}`;
+  if(body.max_model_len) cmd+=` \\\n  --max-model-len ${body.max_model_len}`;
+  if(body.spec_model) cmd+=` \\\n  --speculative-model ${body.spec_model} \\\n  --num-speculative-tokens ${body.spec_num_speculative_tokens}`;
+  if(body.enable_lora) cmd+=` \\\n  --enable-lora --max-loras ${body.max_loras}`;
+  if(body.enable_prefix_caching) cmd+=` \\\n  --enable-prefix-caching`;
+  if(body.enable_chunked_prefill) cmd+=` \\\n  --enable-chunked-prefill`;
+  if(body.api_key) cmd+=` \\\n  --api-key ***`;
+  if(body.served_model_name) cmd+=` \\\n  --served-model-name ${body.served_model_name}`;
+  if(body.extra_args) cmd+=` \\\n  ` + body.extra_args.join(' \\\n  ');
+
+  document.getElementById('launch-cmd-preview').style.display='block';
+  document.getElementById('launch-cmd-text').textContent=cmd;
+}
+
+async function stopServer(id){
+  if(!confirm(`Stop managed server "${id}"?`)) return;
+  const r = await api('/vllm/server/stop','POST',{instance_id:id});
+  await refreshStatus();
+}
+
+// ── LoRA ──────────────────────────────────────────────────────────────────────
+async function loadLora(){
+  const name=document.getElementById('lora-name').value.trim();
+  const path=document.getElementById('lora-path').value.trim();
+  const inst=document.getElementById('lora-inst').value||undefined;
+  if(!name||!path){ alert('Name and path required'); return; }
+
+  const r=await api('/vllm/lora/load','POST',{lora_name:name,lora_path:path,instance_id:inst});
+  const st=document.getElementById('lora-status');
+  if(r.ok){
+    st.style.color='var(--ok)';
+    st.textContent=`Loaded: ${name} → int_id ${r.lora_int_id} on ${r.instance}`;
+    await refreshStatus();
+    loadLoraList();
+  } else {
+    st.style.color='var(--err)';
+    st.textContent='Error: '+(r.error||'unknown');
+  }
+}
+
+async function loadLoraList(){
+  const r=await api('/vllm/lora');
+  const el=document.getElementById('lora-list');
+  const all=Object.entries(r.by_instance||{});
+  if(!all.length||all.every(([,v])=>!v.length)){
+    el.innerHTML='<div style="color:var(--dim);font-size:9.5px">No adapters loaded</div>';
+    return;
+  }
+  el.innerHTML=all.flatMap(([inst,adapters])=>adapters.map(a=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)">
+      <span class="badge lora">${a.name}</span>
+      <span style="font-size:9px;color:var(--dim)">int_id ${a.int_id}</span>
+      <span style="font-size:9px;color:var(--dim2);flex:1">${inst}</span>
+    </div>`)).join('');
+}
+
+// ── Metrics ───────────────────────────────────────────────────────────────────
+let _rawMetrics={};
+function toggleRaw(){
+  const el=document.getElementById('metrics-raw');
+  el.style.display=el.style.display==='none'?'':'none';
+}
+
+async function loadMetrics(){
+  const inst=document.getElementById('metrics-inst').value||undefined;
+  const r=await api('/vllm/metrics'+(inst?`?instance_id=${inst}`:''));
+  document.getElementById('metrics-ts').textContent=new Date().toLocaleTimeString();
+
+  if(!r.ok){
+    document.getElementById('metrics-summary').innerHTML=
+      `<div style="color:var(--err);padding:8px 0">${r.error||'unavailable'}</div>`;
+    return;
+  }
+
+  _rawMetrics=r.metrics||{};
+  document.getElementById('metrics-raw-text').textContent=
+    Object.entries(_rawMetrics).map(([k,v])=>`${k} ${v}`).join('\n');
+
+  // Key metrics to feature
+  const KEY_METRICS=[
+    ['vllm:num_requests_running','Running requests',''],
+    ['vllm:num_requests_waiting','Waiting requests',''],
+    ['vllm:gpu_cache_usage_perc','GPU cache used','%'],
+    ['vllm:cpu_cache_usage_perc','CPU cache used','%'],
+    ['vllm:avg_generation_throughput_toks_per_s','Avg throughput','tok/s'],
+    ['vllm:avg_prompt_throughput_toks_per_s','Prompt throughput','tok/s'],
+    ['vllm:time_to_first_token_seconds_mean','TTFT mean','s'],
+    ['vllm:time_per_output_token_seconds_mean','TPOT mean','s'],
+    ['vllm:generation_tokens_total','Total tokens generated',''],
+    ['vllm:num_preemptions_total','Preemptions',''],
+    ['vllm:scheduler_efficiency','Scheduler efficiency',''],
+  ];
+
+  document.getElementById('metrics-summary').innerHTML=KEY_METRICS.map(([key,label,unit])=>{
+    const val=_rawMetrics[key];
+    if(val===undefined) return '';
+    const disp=typeof val==='number'?(Number.isInteger(val)?val:val.toFixed(3)):val;
+    return `<div class="metric-card">
+      <div class="metric-name">${label}</div>
+      <div class="metric-val">${disp}<span style="font-size:9px;color:var(--dim);margin-left:2px">${unit}</span></div>
+    </div>`;
+  }).join('');
+}
+
+// ── SSE events ────────────────────────────────────────────────────────────────
+function subscribeEvents(){
+  const es=new EventSource('/events');
+  es.onmessage=(e)=>{
+    let msg; try{ msg=JSON.parse(e.data); }catch{ return; }
+    if((msg.event||msg.type||'').startsWith('vllm.')){
+      refreshStatus();
+    }
+  };
+}
+
+// ── Util ──────────────────────────────────────────────────────────────────────
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+</script>
+</body>
+</html>

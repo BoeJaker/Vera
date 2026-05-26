@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Vera Skills</title>
+<style>
+:root {
+  --bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;
+  --border:#3a3530;--border2:#4a4540;
+  --acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--acc4:#9e8fa0;
+  --ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;
+  --text:#ddd5c8;--fg:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;
+  --mono:'JetBrains Mono','Fira Mono',monospace;
+  --sans:'Inter','IBM Plex Sans',system-ui,sans-serif;
+  color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:12px;-webkit-font-smoothing:antialiased}
+input,select,textarea{background:var(--bg1);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:3px;font-family:var(--sans);font-size:11px;outline:none;transition:border-color .14s}
+input:focus,select:focus,textarea:focus{border-color:var(--acc)}
+textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.55}
+.btn{display:inline-flex;align-items:center;gap:3px;padding:3px 10px;border-radius:3px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);font-size:11px;font-weight:500;cursor:pointer;transition:all .14s;white-space:nowrap}
+.btn:hover{border-color:var(--acc);color:var(--acc)}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+.btn.pri:hover{filter:brightness(1.1)}
+.btn.teal{background:rgba(143,184,122,.1);border-color:var(--acc2);color:var(--acc2)}
+.btn.danger{border-color:var(--err);color:var(--err)}
+.btn.sm{padding:2px 7px;font-size:10px}
+.btn.xs{padding:1px 5px;font-size:9px}
+.btn:disabled{opacity:.35;pointer-events:none}
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+.status{font-size:10px;color:var(--dim2);font-family:var(--mono);min-height:14px;margin-top:4px}
+.status.ok{color:var(--ok)}.status.err{color:var(--err)}.status.warn{color:var(--warn)}
+.tag{display:inline-block;font-size:8.5px;padding:1px 6px;background:rgba(90,158,143,.12);border:1px solid rgba(90,158,143,.3);border-radius:10px;color:var(--acc);margin:1px;font-family:var(--mono)}
+.tag.type{background:rgba(79,142,247,.1);border-color:rgba(79,142,247,.3);color:#7ba7ef}
+.section-label{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);margin-bottom:5px;margin-top:2px}
+.row{display:flex;gap:6px;align-items:center}
+.label{font-size:10.5px;color:var(--dim2);flex-shrink:0;min-width:70px}
+
+/* Layout */
+#app{display:flex;height:100vh;overflow:hidden}
+#sidebar{width:240px;flex-shrink:0;display:flex;flex-direction:column;border-right:1px solid var(--border);background:var(--bg1)}
+#sidebar-header{padding:8px 10px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px;flex-shrink:0}
+#sidebar-header .logo{font-family:var(--mono);font-size:9px;font-weight:700;color:var(--acc);letter-spacing:2px}
+#filter-bar{padding:6px 8px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:4px;flex-shrink:0}
+#skill-list{flex:1;overflow-y:auto;padding:5px}
+.skill-card{padding:7px 9px;border:1px solid var(--border);border-radius:4px;cursor:pointer;background:var(--bg2);transition:border-color .14s;margin-bottom:4px}
+.skill-card:hover,.skill-card.active{border-color:var(--acc)}
+.skill-card.active{background:rgba(90,158,143,.06)}
+.skill-card-name{font-size:11px;font-weight:600;font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.skill-card-type{font-size:9px;color:var(--dim2);margin-top:1px}
+.skill-card-snippet{font-size:9px;color:var(--dim);margin-top:3px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;font-family:var(--mono)}
+#main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+#main-tabs{display:flex;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg1)}
+.mtab{padding:7px 14px;font-size:10.5px;font-weight:500;cursor:pointer;color:var(--dim2);border-bottom:2px solid transparent;transition:all .15s;user-select:none}
+.mtab.active{color:var(--acc);border-bottom-color:var(--acc)}
+#main-content{flex:1;overflow-y:auto;padding:14px}
+
+/* Editor */
+.editor-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.field-group{display:flex;flex-direction:column;gap:4px;margin-bottom:8px}
+.field-label{font-size:10px;color:var(--dim2);display:flex;justify-content:space-between}
+.field-label span{color:var(--acc);font-family:var(--mono)}
+.vars-preview{display:flex;flex-wrap:wrap;gap:3px;padding:5px 7px;background:var(--bg0);border:1px solid var(--border);border-radius:3px;min-height:24px}
+.vars-preview .chip{font-size:9px;padding:1px 6px;background:rgba(201,149,90,.12);border-radius:10px;border:1px solid rgba(201,149,90,.3);color:var(--acc3);font-family:var(--mono)}
+
+/* Apply panel */
+.apply-panel{background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:12px;margin-bottom:10px}
+.result-box{background:var(--bg0);border:1px solid var(--border);border-radius:3px;padding:8px;font-family:var(--mono);font-size:10.5px;white-space:pre-wrap;word-break:break-all;max-height:240px;overflow-y:auto;color:var(--acc2);margin-top:6px;line-height:1.6}
+
+/* Compose panel */
+.compose-panel{background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:12px;margin-bottom:10px}
+.cur{display:inline-block;width:7px;height:13px;background:var(--acc2);animation:blink .85s step-end infinite;vertical-align:text-bottom}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+.disabled-chip{opacity:.4;pointer-events:none}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- SIDEBAR: skill list -->
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <span class="logo">SKILLS</span>
+      <div style="flex:1"></div>
+      <button class="btn xs" onclick="SP.newSkill()">+ New</button>
+      <button class="btn xs" onclick="SP.load()">↻</button>
+    </div>
+    <div id="filter-bar">
+      <input id="search" placeholder="Search…" oninput="SP.filterList()">
+      <select id="type-filter" onchange="SP.filterList()">
+        <option value="">All types</option>
+        <option value="system_prompt">System Prompt</option>
+        <option value="persona">Persona</option>
+        <option value="few_shot">Few-Shot</option>
+        <option value="chain_of_thought">Chain of Thought</option>
+        <option value="tool_hint">Tool Hint</option>
+        <option value="custom">Custom</option>
+      </select>
+    </div>
+    <div id="skill-list"><div style="color:var(--dim);font-size:11px;padding:12px">Loading…</div></div>
+  </div>
+
+  <!-- MAIN AREA -->
+  <div id="main">
+    <div id="main-tabs">
+      <div class="mtab active" onclick="SP.tab('edit',this)">Edit</div>
+      <div class="mtab" onclick="SP.tab('apply',this)">Apply</div>
+      <div class="mtab" onclick="SP.tab('compose',this)">Compose</div>
+      <div class="mtab" onclick="SP.tab('build',this)">Build from Fabric</div>
+      <div class="mtab" onclick="SP.tab('context',this)">Context</div>
+    </div>
+    <div id="main-content">
+
+      <!-- EDIT TAB -->
+      <div id="tab-edit">
+        <div id="editor-empty" style="color:var(--dim);font-size:11px;padding:8px 0">Select a skill or click + New to create one.</div>
+        <div id="editor-form" style="display:none">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+            <div id="editor-title" style="font-size:13px;font-weight:600;font-family:var(--mono);flex:1">New Skill</div>
+            <button class="btn pri" onclick="SP.save()">Save</button>
+            <button class="btn danger sm" id="del-btn" style="display:none" onclick="SP.del()">Delete</button>
+            <button class="btn sm" onclick="SP.cancel()">Cancel</button>
+          </div>
+          <input type="hidden" id="f-id">
+          <div class="editor-grid">
+            <div>
+              <div class="field-group">
+                <div class="field-label">Name</div>
+                <input id="f-name" placeholder="my-skill">
+              </div>
+              <div class="field-group">
+                <div class="field-label">Type</div>
+                <select id="f-type">
+                  <option value="system_prompt">System Prompt</option>
+                  <option value="persona">Persona</option>
+                  <option value="few_shot">Few-Shot</option>
+                  <option value="chain_of_thought">Chain of Thought</option>
+                  <option value="tool_hint">Tool Hint</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </div>
+              <div class="field-group">
+                <div class="field-label">Description</div>
+                <input id="f-desc" placeholder="What this skill does…">
+              </div>
+              <div class="field-group">
+                <div class="field-label">Tags</div>
+                <input id="f-tags" placeholder="comma, separated">
+              </div>
+              <div class="row" style="gap:8px;margin-top:4px">
+                <label class="label">Enabled</label>
+                <input type="checkbox" id="f-enabled" checked>
+              </div>
+            </div>
+            <div>
+              <div class="field-group" style="height:100%">
+                <div class="field-label">
+                  Content
+                  <span id="var-hint"></span>
+                </div>
+                <textarea id="f-content" style="flex:1;min-height:160px" placeholder="Skill prompt. Use {{variable}} for template slots." oninput="SP.detectVars()"></textarea>
+              </div>
+            </div>
+          </div>
+          <div class="field-group" style="margin-top:8px">
+            <div class="field-label">Detected variables</div>
+            <div class="vars-preview" id="vars-preview"></div>
+          </div>
+          <div class="status" id="save-status"></div>
+        </div>
+      </div>
+
+      <!-- APPLY TAB -->
+      <div id="tab-apply" style="display:none">
+        <div class="apply-panel">
+          <div class="section-label" style="margin-bottom:8px">Apply skills to a prompt</div>
+          <div class="field-group">
+            <div class="field-label">Skill IDs (comma-separated, empty = all enabled)</div>
+            <input id="apply-ids" placeholder="id1,id2 or leave blank for all enabled">
+          </div>
+          <div class="field-group">
+            <div class="field-label">Prompt</div>
+            <textarea id="apply-prompt" style="min-height:80px" placeholder="Your prompt…"></textarea>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;margin-top:6px">
+            <button class="btn pri" onclick="SP.applySkills()">▶ Generate</button>
+            <span class="status" id="apply-status" style="margin-top:0"></span>
+          </div>
+          <div class="result-box" id="apply-result" style="display:none"></div>
+        </div>
+        <div class="apply-panel">
+          <div class="section-label" style="margin-bottom:6px">Active context preview</div>
+          <div class="row" style="gap:6px;margin-bottom:6px">
+            <button class="btn sm" onclick="SP.loadContext()">↻ Refresh</button>
+            <span id="ctx-meta" style="font-size:9.5px;color:var(--dim2)"></span>
+          </div>
+          <div class="result-box" id="ctx-result" style="display:none;color:var(--text)"></div>
+        </div>
+      </div>
+
+      <!-- COMPOSE TAB -->
+      <div id="tab-compose" style="display:none">
+        <div class="compose-panel">
+          <div class="section-label" style="margin-bottom:8px">Compose a skill with the LLM</div>
+          <div class="field-group">
+            <div class="field-label">Description</div>
+            <textarea id="comp-desc" style="min-height:72px" placeholder="Describe what you want the skill to do…"></textarea>
+          </div>
+          <div class="editor-grid">
+            <div class="field-group">
+              <div class="field-label">Type</div>
+              <select id="comp-type">
+                <option value="system_prompt">System Prompt</option>
+                <option value="persona">Persona</option>
+                <option value="few_shot">Few-Shot</option>
+                <option value="chain_of_thought">Chain of Thought</option>
+              </select>
+            </div>
+            <div class="field-group">
+              <div class="field-label">Name (optional)</div>
+              <input id="comp-name" placeholder="auto-generated">
+            </div>
+          </div>
+          <div class="row" style="gap:8px;margin-bottom:8px">
+            <label class="label">Save result</label>
+            <input type="checkbox" id="comp-save" checked>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <button class="btn pri" onclick="SP.compose()">🪄 Compose</button>
+            <span class="status" id="comp-status" style="margin-top:0"></span>
+          </div>
+          <div class="result-box" id="comp-result" style="display:none"></div>
+        </div>
+      </div>
+
+      <!-- BUILD TAB: build a new skill from one or more fabric datasets.
+           Calls /fabric/skills/build (the same endpoint the Fabric panel uses),
+           then refreshes the sidebar and selects the new skill. -->
+      <div id="tab-build" style="display:none">
+        <div class="compose-panel">
+          <div class="section-label" style="margin-bottom:8px">Build skill from fabric datasets</div>
+          <p style="font-size:10.5px;color:var(--dim2);margin-bottom:10px;line-height:1.6">
+            Sample records from one or more data fabric datasets and let the LLM extract
+            concepts and relations. The result is registered as a regular skill — and as
+            a paired ontology — and appears in the sidebar.
+          </p>
+          <div class="editor-grid">
+            <div>
+              <div class="field-group"><div class="field-label">Name</div>
+                <input id="b-name" placeholder="e.g. Threat Intel Knowledge"></div>
+              <div class="field-group"><div class="field-label">Description (optional)</div>
+                <input id="b-desc" placeholder="auto-generated if blank"></div>
+              <div class="field-group"><div class="field-label">Tags</div>
+                <input id="b-tags" placeholder="comma-separated"></div>
+            </div>
+            <div>
+              <div class="field-group"><div class="field-label">Datasets (multi-select)</div>
+                <select id="b-ds" multiple size="6" style="font-family:var(--mono);font-size:10px;min-height:130px"></select>
+                <span style="font-size:9px;color:var(--dim);font-style:italic;margin-top:2px">Ctrl/Cmd-click for multiple</span></div>
+              <div class="field-group"><div class="field-label">Sample size</div>
+                <input id="b-samples" type="number" value="30" min="5" max="200"></div>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;margin-top:6px">
+            <button class="btn pri" onclick="SP.build()">Build Skill</button>
+            <button class="btn sm" onclick="SP.buildLoadDatasets()">&#8635; Reload datasets</button>
+            <span class="status" id="b-status" style="margin-top:0"></span>
+          </div>
+          <div class="result-box" id="b-result" style="display:none"></div>
+        </div>
+      </div>
+
+      <!-- CONTEXT TAB -->
+      <div id="tab-context" style="display:none">
+        <div class="section-label">Combined active context</div>
+        <p style="font-size:10.5px;color:var(--dim2);margin-bottom:8px;line-height:1.6">
+          This is the combined system prompt that all enabled skills and ontologies would inject into an LLM call.
+        </p>
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">
+          <button class="btn pri" onclick="SP.loadContext()">↻ Refresh</button>
+          <span id="ctx2-meta" style="font-size:9.5px;color:var(--dim2)"></span>
+        </div>
+        <div class="result-box" id="ctx2-result" style="display:none;color:var(--text);max-height:460px"></div>
+      </div>
+
+    </div><!-- /main-content -->
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<script>
+const SP = (() => {
+  let BASE = '';
+  let skills = [], activeId = null, currentTab = 'edit';
+
+  function base() {
+    if (BASE) return BASE;
+    try { BASE = (window.location.origin && window.location.origin !== 'null') ? window.location.origin : (window.parent?._veraBase || window._veraBase || localStorage.getItem('vera_base') || 'http://llm.int:8999'); } catch(_){}
+    return BASE || 'http://llm.int:8999';
+  }
+
+  async function api(path, method = 'GET', body = null) {
+    try {
+      const opts = { method, headers: {'Content-Type':'application/json'} };
+      if (body) opts.body = JSON.stringify(body);
+      const r = await fetch(base() + path, opts);
+      return r.ok ? r.json() : null;
+    } catch(e) { return null; }
+  }
+
+  function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  async function load() {
+    const type = document.getElementById('type-filter')?.value || '';
+    const q = document.getElementById('search')?.value?.toLowerCase() || '';
+    const res = await api('/skills' + (type ? '?type='+type : ''));
+    skills = res?.skills || [];
+    if (q) {
+      skills = skills.filter(s =>
+        (s.name||'').toLowerCase().includes(q) ||
+        (s.description||'').toLowerCase().includes(q) ||
+        (s.content||'').toLowerCase().includes(q) ||
+        (s.tags||[]).join(' ').toLowerCase().includes(q)
+      );
+    }
+    renderList();
+  }
+
+  function renderList() {
+    const el = document.getElementById('skill-list');
+    if (!skills.length) { el.innerHTML = '<div style="color:var(--dim);font-size:11px;padding:12px">No skills yet.</div>'; return; }
+    el.innerHTML = skills.map(s => {
+      const snippet = (s.content || '').slice(0, 80).replace(/\n/g, ' ');
+      return `<div class="skill-card${s.id === activeId ? ' active' : ''}" onclick="SP.select('${s.id}')">
+        <div class="skill-card-name">${esc(s.name)}</div>
+        <div class="skill-card-type">${esc(s.type || '—')}${s.enabled===false?' · disabled':''}</div>
+        ${snippet ? `<div class="skill-card-snippet">${esc(snippet)}…</div>` : ''}
+        ${s.variables?.length ? `<div style="margin-top:3px">${s.variables.slice(0,4).map(v=>`<span class="chip" style="font-size:8px;background:rgba(201,149,90,.1);border-radius:9px;padding:0 5px;border:1px solid rgba(201,149,90,.3);color:var(--acc3);font-family:var(--mono)">{{${esc(v)}}}</span>`).join('')}</div>` : ''}
+      </div>`;
+    }).join('');
+  }
+
+  function filterList() { load(); }
+
+  function select(id) {
+    const s = skills.find(x => x.id === id);
+    if (!s) return;
+    activeId = id;
+    renderList();
+    fillEditor(s);
+    if (currentTab !== 'edit') tab('edit', document.querySelector('.mtab'));
+  }
+
+  function fillEditor(s) {
+    document.getElementById('editor-empty').style.display = 'none';
+    document.getElementById('editor-form').style.display = 'block';
+    document.getElementById('editor-title').textContent = s.id ? 'Edit Skill' : 'New Skill';
+    document.getElementById('f-id').value = s.id || '';
+    document.getElementById('f-name').value = s.name || '';
+    document.getElementById('f-type').value = s.type || 'system_prompt';
+    document.getElementById('f-desc').value = s.description || '';
+    document.getElementById('f-tags').value = (s.tags || []).join(', ');
+    document.getElementById('f-content').value = s.content || '';
+    document.getElementById('f-enabled').checked = s.enabled !== false;
+    document.getElementById('del-btn').style.display = s.id ? 'inline-flex' : 'none';
+    detectVars();
+  }
+
+  function newSkill() {
+    activeId = null;
+    renderList();
+    fillEditor({ name:'', type:'system_prompt', description:'', tags:[], content:'', enabled:true });
+    document.getElementById('del-btn').style.display = 'none';
+    if (currentTab !== 'edit') tab('edit', document.querySelector('.mtab'));
+  }
+
+  function cancel() {
+    activeId = null;
+    renderList();
+    document.getElementById('editor-empty').style.display = 'block';
+    document.getElementById('editor-form').style.display = 'none';
+  }
+
+  function detectVars() {
+    const content = document.getElementById('f-content')?.value || '';
+    const vars = [...new Set((content.match(/\{\{(\w+)\}\}/g) || []).map(v => v.slice(2,-2)))];
+    const hint = document.getElementById('var-hint');
+    const preview = document.getElementById('vars-preview');
+    if (hint) hint.textContent = vars.length ? `(${vars.length} vars)` : '';
+    if (preview) preview.innerHTML = vars.length ? vars.map(v => `<span class="chip">{{${esc(v)}}}</span>`).join('') : '<span style="color:var(--dim);font-size:9px">None detected</span>';
+  }
+
+  async function save() {
+    const id = document.getElementById('f-id').value;
+    const body = {
+      name: document.getElementById('f-name').value,
+      content: document.getElementById('f-content').value,
+      description: document.getElementById('f-desc').value,
+      type: document.getElementById('f-type').value,
+      tags: document.getElementById('f-tags').value,
+      enabled: document.getElementById('f-enabled').checked,
+    };
+    const st = document.getElementById('save-status');
+    st.textContent = '⟳ Saving…'; st.className = 'status';
+    const url = id ? '/skills/update' : '/skills';
+    if (id) body.id = id;
+    const res = await api(url, 'POST', body);
+    if (!res || res.error) { st.textContent = '✗ ' + (res?.error || 'Failed'); st.className = 'status err'; return; }
+    st.textContent = '✓ Saved'; st.className = 'status ok';
+    activeId = res.id || id;
+    await load();
+  }
+
+  async function del() {
+    const id = document.getElementById('f-id').value;
+    if (!id || !confirm('Delete this skill?')) return;
+    await api('/skills/delete', 'POST', { id });
+    cancel();
+    load();
+  }
+
+  async function applySkills() {
+    const prompt = document.getElementById('apply-prompt').value.trim();
+    if (!prompt) return;
+    const ids = document.getElementById('apply-ids').value.trim();
+    const st = document.getElementById('apply-status');
+    const res = document.getElementById('apply-result');
+    st.textContent = '⟳ Generating…'; st.className = 'status';
+    res.style.display = 'none';
+    const result = await api('/skills/apply', 'POST', { prompt, skill_ids: ids, prefer_gpu: true });
+    if (!result || result.error) { st.textContent = '✗ ' + (result?.error || 'Failed'); st.className = 'status err'; return; }
+    const txt = result.text || result.content || '';
+    const applied = result.skills_applied || [];
+    st.textContent = `✓ Applied ${applied.length} skill${applied.length !== 1 ? 's' : ''}${applied.length ? ': ' + applied.join(', ') : ''}`;
+    st.className = 'status ok';
+    res.style.display = 'block';
+    res.textContent = txt;
+  }
+
+  async function loadContext() {
+    const res = await api('/skills/context');
+    if (!res) return;
+    const sc = (res.skill_count || 0), oc = (res.ontology_count || 0), cc = (res.char_count || 0);
+    const meta = `${sc} skills · ${oc} ontologies · ${cc.toLocaleString()} chars`;
+    ['ctx-meta','ctx2-meta'].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = meta; });
+    const combined = res.combined || '';
+    ['ctx-result','ctx2-result'].forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.style.display = 'block';
+      el.textContent = combined || '(no active skills or ontologies)';
+    });
+  }
+
+  async function compose() {
+    const desc = document.getElementById('comp-desc').value.trim();
+    if (!desc) return;
+    const type = document.getElementById('comp-type').value;
+    const name = document.getElementById('comp-name').value.trim();
+    const save = document.getElementById('comp-save').checked;
+    const st = document.getElementById('comp-status');
+    const res = document.getElementById('comp-result');
+    st.textContent = '⟳ Composing…'; st.className = 'status';
+    res.style.display = 'none';
+
+    // Stream generation into the result box
+    res.style.display = 'block';
+    res.innerHTML = '<span class="cur"></span>';
+    let full = '';
+    try {
+      const r = await fetch(base() + '/agents/chat/stream', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          agent_name: 'assistant',
+          message: `Write a skill of type "${type}" for the following purpose:\n\n${desc}\n\nReturn ONLY the skill content, no explanations, no markdown code fences.`,
+          history: '[]', session_id: '', prefer_gpu: true,
+        })
+      });
+      const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
+      while (true) {
+        const { done, value } = await reader.read(); if (done) break;
+        buf += dec.decode(value, {stream:true});
+        const parts = buf.split('\n\n'); buf = parts.pop();
+        for (const block of parts) for (const line of block.split('\n')) {
+          if (!line.startsWith('data:')) continue;
+          const raw = line.slice(5).trim(); if (!raw || raw === '[DONE]') continue;
+          try { const ev = JSON.parse(raw); if (ev.type === 'token') { full += ev.text || ''; res.innerHTML = full.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '<span class="cur"></span>'; } } catch(_) {}
+        }
+      }
+    } catch(e) { st.textContent = '✗ ' + e.message; st.className = 'status err'; return; }
+
+    res.textContent = full;
+    st.textContent = '✓ Composed' + (save ? ', saving…' : ''); st.className = 'status ok';
+
+    if (save && full) {
+      const saveRes = await api('/skills', 'POST', {
+        name: name || desc.slice(0, 40),
+        content: full, type, description: desc, enabled: true,
+      });
+      st.textContent = saveRes?.error ? '✗ Save failed: ' + saveRes.error : '✓ Composed & saved';
+      st.className = saveRes?.error ? 'status err' : 'status ok';
+      if (!saveRes?.error) load();
+    }
+  }
+
+  /* ─────────────────────────────────────────────────────────────────────
+     BUILD FROM FABRIC
+     Wraps /fabric/skills/build — the same endpoint the Fabric panel uses
+     for its skills section — so users can build skills directly from
+     this panel without context-switching.
+   ───────────────────────────────────────────────────────────────────── */
+  let _bDatasets = [];
+
+  async function buildLoadDatasets() {
+    const sel = document.getElementById('b-ds');
+    if (sel) sel.innerHTML = '<option disabled>Loading…</option>';
+    const r = await api('/fabric/datasets');
+    _bDatasets = (r && r.datasets) ? r.datasets : [];
+    if (!sel) return;
+    sel.innerHTML = _bDatasets.length
+      ? _bDatasets.map(d => `<option value="${esc(d.dataset_id)}">${esc(d.dataset_id)}${d.record_count!=null?' ('+d.record_count+')':''}</option>`).join('')
+      : '<option disabled>No datasets — open Fabric panel to ingest</option>';
+  }
+
+  function _bStatus(msg, cls) {
+    const el = document.getElementById('b-status');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.className = 'status' + (cls ? ' ' + cls : '');
+  }
+
+  async function build() {
+    const name = (document.getElementById('b-name').value || '').trim();
+    if (!name) { _bStatus('Enter a name', 'err'); return; }
+    const sel = document.getElementById('b-ds');
+    const ds = sel ? [...sel.selectedOptions].map(o => o.value).filter(Boolean) : [];
+    if (!ds.length) { _bStatus('Pick at least one dataset', 'err'); return; }
+    _bStatus('Building (this may take a while)…', '');
+    const body = {
+      name,
+      dataset_ids: ds.join(','),
+      description: (document.getElementById('b-desc').value || '').trim(),
+      sample_size: parseInt(document.getElementById('b-samples').value || '30', 10) || 30,
+      tags: (document.getElementById('b-tags').value || '').trim(),
+    };
+    let res = null;
+    try {
+      const r = await fetch(base() + '/fabric/skills/build', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(body),
+      });
+      res = r.ok ? await r.json() : { error: `HTTP ${r.status}` };
+    } catch(e) { res = { error: String(e && e.message || e) }; }
+    if (!res || res.error) { _bStatus('Failed: ' + (res?.error || 'no response'), 'err'); return; }
+    const ont = res.ontology || {};
+    const counts = `${(ont.concepts||[]).length} concepts · ${(ont.relations||[]).length} relations`;
+    _bStatus('Built ' + counts, 'ok');
+    const resEl = document.getElementById('b-result');
+    if (resEl) {
+      resEl.style.display = 'block';
+      resEl.textContent = JSON.stringify({
+        skill_id: res.skill_external_id || res.skill_id,
+        ontology_id: res.ontology_external_id,
+        name: res.name,
+        ontology: ont,
+      }, null, 2);
+    }
+    document.getElementById('b-name').value = '';
+    document.getElementById('b-desc').value = '';
+    document.getElementById('b-tags').value = '';
+    await load();
+    if (res.skill_external_id) {
+      const fresh = skills.find(s => s.id === res.skill_external_id);
+      if (fresh) {
+        select(res.skill_external_id);
+        const tabs = document.querySelectorAll('.mtab');
+        if (tabs[0]) tab('edit', tabs[0]);
+      }
+    }
+  }
+
+  function tab(name, el) {
+    currentTab = name;
+    document.querySelectorAll('.mtab').forEach(t => t.classList.remove('active'));
+    if (el) el.classList.add('active');
+    else {
+      const all = document.querySelectorAll('.mtab');
+      const map = ['edit','apply','compose','build','context'];
+      const idx = map.indexOf(name);
+      if (idx >= 0 && all[idx]) all[idx].classList.add('active');
+    }
+    ['edit','apply','compose','build','context'].forEach(t => {
+      const el2 = document.getElementById('tab-' + t);
+      if (el2) el2.style.display = t === name ? 'block' : 'none';
+    });
+    if (name === 'apply' || name === 'context') loadContext();
+    if (name === 'build' && !_bDatasets.length) buildLoadDatasets();
+  }
+
+  // Listen for theme messages from parent
+  window.addEventListener('message', e => {
+    if (e.data?.type === 'vera:theme' && e.data.vars) {
+      const root = document.documentElement;
+      const map = {'--bg':'--bg0','--s1':'--bg1','--s2':'--bg2','--s3':'--bg3','--bd':'--border','--bd2':'--border2','--t1':'--text','--t2':'--dim2','--t3':'--dim','--ac':'--acc','--ac2':'--acc2','--ac3':'--acc3','--ac4':'--err','--ac5':'--acc4'};
+      for (const [k,v] of Object.entries(map)) { if (e.data.vars[k]) root.style.setProperty(v, e.data.vars[k]); }
+    }
+    if (e.data?.type === 'vera:base') BASE = e.data.url;
+  });
+
+  // Init
+  window.addEventListener('DOMContentLoaded', () => { load(); });
+  window.addEventListener('load', () => { if (!skills.length) load(); });
+
+  return { load, filterList, select, newSkill, cancel, save, del, detectVars, applySkills, loadContext, compose, tab,
+           build, buildLoadDatasets };
+})();
+</script>
+<script src="/ui/vera-ui.js"></script>
+</body>
+</html>

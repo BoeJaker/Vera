@@ -1,0 +1,1416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Vera — WorldView</title>
+<style>
+:root{
+  --bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;
+  --border:#3a3530;--border2:#4a4540;
+  --acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--acc4:#9e8fa0;
+  --ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;
+  --text:#ddd5c8;--fg:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;
+  --mono:'JetBrains Mono','Fira Mono','Space Mono',monospace;
+  --sans:'Inter','IBM Plex Sans',system-ui,sans-serif;
+  --radius:5px;--radius-sm:3px;color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;background:var(--bg0);color:var(--text);
+  font-family:var(--sans);font-size:13px;-webkit-font-smoothing:antialiased}
+.btn{display:inline-flex;align-items:center;gap:4px;padding:4px 11px;border-radius:var(--radius-sm);
+  border:1px solid var(--border);background:var(--bg2);color:var(--dim2);cursor:pointer;
+  font-family:var(--sans);font-size:11px;font-weight:500;transition:all .14s;white-space:nowrap}
+.btn:hover{border-color:var(--acc);color:var(--acc);background:rgba(90,158,143,.08)}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
+.btn.primary:hover{filter:brightness(1.1)}
+.btn.danger{border-color:var(--err);color:var(--err)}
+.btn.danger:hover{background:rgba(201,107,107,.1)}
+.btn.sm{padding:2px 7px;font-size:10px}
+.btn:disabled{opacity:.35;cursor:not-allowed;pointer-events:none}
+.sec{font-size:9.5px;color:var(--dim);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:8px}
+input,select,textarea{background:var(--bg1);border:1px solid var(--border);color:var(--text);
+  padding:4px 8px;border-radius:var(--radius-sm);font-family:var(--sans);font-size:11px}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}
+textarea{resize:vertical;min-height:60px;font-family:var(--mono);font-size:10px}
+.status-bar{font-size:10px;margin-top:5px;min-height:14px}
+.status-bar.ok{color:var(--ok)}.status-bar.err{color:var(--err)}.status-bar.warn{color:var(--warn)}
+
+#app{display:flex;height:100vh;overflow:hidden}
+
+.wv-sidebar{width:300px;flex-shrink:0;display:flex;flex-direction:column;border-right:1px solid var(--border);background:var(--bg1);overflow:hidden}
+.wv-sidebar-hd{padding:10px 12px;border-bottom:1px solid var(--border);font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;display:flex;align-items:center;gap:6px}
+.wv-sidebar-body{flex:1;overflow-y:auto;padding:10px 12px}
+.wv-sidebar-body::-webkit-scrollbar{width:3px}
+.wv-sidebar-body::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+
+.wv-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:10px;margin-bottom:10px}
+.wv-card-hd{font-size:10px;font-weight:600;color:var(--acc);margin-bottom:8px;display:flex;align-items:center;gap:6px;text-transform:uppercase;letter-spacing:.7px}
+.wv-row{display:flex;align-items:center;gap:6px;margin-bottom:5px}
+.wv-row label{font-size:10px;color:var(--dim2);min-width:80px;flex-shrink:0}
+.wv-stat{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(58,53,48,.5)}
+.wv-stat:last-child{border-bottom:none}
+.wv-stat-k{font-size:9.5px;color:var(--dim2)}
+.wv-stat-v{font-size:9.5px;color:var(--text);font-family:var(--mono)}
+
+.wv-main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.wv-main-hd{padding:8px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-shrink:0}
+.wv-tabs{display:flex;gap:2px}
+.wv-tab{padding:4px 12px;border-radius:var(--radius-sm);cursor:pointer;font-size:10.5px;color:var(--dim2);border:1px solid transparent;transition:.12s}
+.wv-tab:hover{color:var(--text);background:var(--bg2)}
+.wv-tab.active{border-color:var(--acc);color:var(--acc);background:rgba(90,158,143,.08)}
+.wv-canvas{flex:1;position:relative;overflow:hidden}
+.wv-panel{display:none;position:absolute;inset:0;overflow-y:auto;padding:14px}
+.wv-panel.active{display:flex;flex-direction:column}
+
+.wv-tooltip{position:absolute;display:none;background:var(--bg2);border:1px solid var(--border);border-radius:3px;padding:6px 9px;font-size:10px;color:var(--text);pointer-events:none;z-index:5;max-width:260px;line-height:1.45;box-shadow:0 4px 14px rgba(0,0,0,.5)}
+
+/* Result lists */
+.wv-item{border:1px solid var(--border);border-radius:var(--radius);background:var(--bg1);padding:8px 10px;margin-bottom:5px;display:flex;gap:8px;align-items:flex-start;transition:.12s}
+.wv-item:hover{border-color:var(--border2);background:var(--bg2)}
+.wv-item-score{font-family:var(--mono);font-size:10px;color:var(--acc2);min-width:55px;flex-shrink:0}
+.wv-item-body{flex:1;min-width:0}
+.wv-item-text{font-size:10px;color:var(--text);line-height:1.5;word-break:break-word}
+.wv-item-meta{font-size:8.5px;color:var(--dim);font-family:var(--mono);margin-top:3px}
+
+.wv-bar-bg{height:4px;border-radius:2px;background:var(--bg0);margin-top:5px;overflow:hidden}
+.wv-bar-fill{height:100%;border-radius:2px;background:var(--acc2);transition:width .2s}
+
+/* Trajectory steps */
+.wv-traj{display:flex;flex-direction:column;gap:8px}
+.wv-step{display:flex;gap:10px;padding:9px 11px;background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);align-items:center}
+.wv-step-num{font-family:var(--mono);font-size:14px;color:var(--acc);min-width:30px;text-align:center;font-weight:700}
+.wv-step-body{flex:1;min-width:0}
+.wv-step-concept{font-size:11px;color:var(--text);font-weight:500}
+.wv-step-label{font-size:10px;color:var(--acc3);margin-left:6px}
+.wv-step-arrow{color:var(--dim);font-family:var(--mono);font-size:12px;margin:-4px 0;padding-left:14px}
+
+.wv-traj.cf .wv-step.diverged{border-color:var(--warn);background:rgba(201,163,90,.06)}
+.wv-traj.cf .wv-step.diverged .wv-step-num{color:var(--warn)}
+
+/* Concept inspector tiles */
+.wv-concept-tile{display:flex;gap:10px;padding:10px 12px;background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:6px;cursor:pointer;transition:.12s}
+.wv-concept-tile:hover{border-color:var(--acc);background:var(--bg2)}
+.wv-concept-tile.selected{border-color:var(--acc);background:rgba(90,158,143,.08)}
+.wv-concept-idx{font-family:var(--mono);font-size:12px;color:var(--dim2);min-width:40px;text-align:right}
+.wv-concept-label{font-size:11px;color:var(--text);font-weight:500;flex:1}
+.wv-concept-pop{font-family:var(--mono);font-size:10px;color:var(--acc2)}
+
+.wv-log{background:var(--bg0);border:1px solid var(--border);border-radius:var(--radius-sm);padding:6px;font-family:var(--mono);font-size:9px;max-height:200px;overflow-y:auto;line-height:1.6}
+.wv-log .ok{color:var(--ok)}.wv-log .err{color:var(--err)}.wv-log .info{color:var(--acc2)}.wv-log .warn{color:var(--warn)}
+
+.wv-pulse{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--acc2);animation:pulse-dot 1.5s ease-in-out infinite}
+@keyframes pulse-dot{0%,100%{opacity:.4;transform:scale(.8)}50%{opacity:1;transform:scale(1.15)}}
+
+.wv-divider{border:0;height:1px;background:var(--border);margin:10px 0}
+
+/* Help text */
+.wv-help{font-size:9.5px;color:var(--dim);line-height:1.5;margin-top:4px}
+
+/* Training progress overlay */
+.wv-train-progress{display:none;background:var(--bg0);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;margin-top:6px}
+.wv-train-progress.active{display:block}
+.wv-train-stage{font-size:10px;color:var(--acc);font-weight:600;margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.wv-train-stage .wv-pulse{margin:0}
+.wv-train-detail{font-family:var(--mono);font-size:9.5px;color:var(--dim2);line-height:1.6}
+.wv-train-detail .val{color:var(--text)}
+.wv-epoch-bar{height:3px;border-radius:2px;background:var(--bg2);margin-top:4px;overflow:hidden}
+.wv-epoch-fill{height:100%;border-radius:2px;transition:width .25s;background:var(--acc)}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ══ SIDEBAR ══════════════════════════════════════════════════════ -->
+  <div class="wv-sidebar">
+    <div class="wv-sidebar-hd">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>
+      </svg>
+      WorldView (JEPA v2)
+    </div>
+    <div class="wv-sidebar-body">
+
+      <!-- Model stats -->
+      <div class="wv-card">
+        <div class="wv-card-hd">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6v6H9z"/></svg>
+          Model Status
+        </div>
+        <div id="wvStats"><span style="font-size:10px;color:var(--dim)">Loading...</span></div>
+        <div style="margin-top:6px;display:flex;gap:4px">
+          <button class="btn sm" onclick="wvLoadStats()">Refresh</button>
+          <button class="btn sm" onclick="wvRebuildIndex()" title="Re-encode all records into the latent index without retraining">Rebuild index</button>
+        </div>
+        <div class="status-bar" id="wvRebuildStatus"></div>
+      </div>
+
+      <!-- Training -->
+      <div class="wv-card">
+        <div class="wv-card-hd">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20"/></svg>
+          Train (3 stages)
+        </div>
+        <div class="wv-row">
+          <label>Dataset</label>
+          <select id="wvTrainDs" style="flex:1;font-size:10px">
+            <option value="">All datasets</option>
+          </select>
+        </div>
+        <div class="wv-row">
+          <label>GNN epochs</label>
+          <input id="wvGnnEp" type="number" value="20" min="0" max="200" style="width:60px;font-size:10px">
+        </div>
+        <div class="wv-row">
+          <label>Codebook ep</label>
+          <input id="wvCbEp" type="number" value="8" min="0" max="50" style="width:60px;font-size:10px">
+        </div>
+        <div class="wv-row">
+          <label>Dynamics ep</label>
+          <input id="wvDynEp" type="number" value="15" min="0" max="100" style="width:60px;font-size:10px">
+        </div>
+        <div class="wv-row">
+          <label style="font-size:10px;color:var(--dim2);display:flex;align-items:center;gap:5px;min-width:0;flex:1">
+            <input type="checkbox" id="wvEmbedMissing" style="width:auto"> back-fill missing embeddings first
+          </label>
+        </div>
+        <button class="btn primary sm" id="wvTrainBtn" onclick="wvTrain()" style="width:100%">Train WorldView</button>
+        <div class="status-bar" id="wvTrainStatus"></div>
+        <div class="wv-train-progress" id="wvTrainProgress">
+          <div class="wv-train-stage" id="wvTrainStage"><span class="wv-pulse"></span> <span id="wvTrainStageName">Initialising...</span></div>
+          <div class="wv-train-detail" id="wvTrainDetail"></div>
+          <div class="wv-epoch-bar"><div class="wv-epoch-fill" id="wvTrainEpochBar" style="width:0%"></div></div>
+        </div>
+      </div>
+
+      <!-- Back-fill missing embeddings -->
+      <div class="wv-card">
+        <div class="wv-card-hd">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-6.219-8.56"/><polyline points="21 4 21 11 14 11"/></svg>
+          Back-fill embeddings
+        </div>
+        <div class="wv-help" style="margin-bottom:6px">
+          Find records in SQLite that are missing from Chroma and embed them. Useful when the ingest pipeline's embed stage was off.
+        </div>
+        <div class="wv-row">
+          <label>Dataset</label>
+          <select id="wvReembedDs" style="flex:1;font-size:10px">
+            <option value="">All datasets</option>
+          </select>
+        </div>
+        <div class="wv-row">
+          <label>Max records</label>
+          <input id="wvReembedLimit" type="number" value="5000" min="100" max="50000" step="500" style="width:80px;font-size:10px">
+        </div>
+        <div style="display:flex;gap:4px">
+          <button class="btn sm" onclick="wvReembed(true)">Preview</button>
+          <button class="btn sm" onclick="wvReembed(false)" style="flex:1">Run embed</button>
+        </div>
+        <div class="status-bar" id="wvReembedStatus"></div>
+      </div>
+
+      <!-- Concept labelling -->
+      <div class="wv-card">
+        <div class="wv-card-hd">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h18M3 12h18M3 17h12"/></svg>
+          Concept Labels
+        </div>
+        <div class="wv-row">
+          <label>Max</label>
+          <input id="wvLabelN" type="number" value="20" min="1" max="200" style="width:60px;font-size:10px">
+        </div>
+        <button class="btn sm" onclick="wvLabelConcepts()" style="width:100%">LLM-label concepts</button>
+        <div class="status-bar" id="wvLabelStatus"></div>
+      </div>
+
+      <!-- Log -->
+      <div class="wv-card">
+        <div class="wv-card-hd">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 9h8M8 13h8M8 17h4"/></svg>
+          Log
+        </div>
+        <div class="wv-log" id="wvLog"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ══ MAIN AREA ════════════════════════════════════════════════════ -->
+  <div class="wv-main">
+    <div class="wv-main-hd">
+      <div class="wv-tabs">
+        <div class="wv-tab active" data-tab="map"      onclick="wvTab('map')">Latent Map</div>
+        <div class="wv-tab" data-tab="rollout"  onclick="wvTab('rollout')">Rollout</div>
+        <div class="wv-tab" data-tab="cf"       onclick="wvTab('cf')">Counterfactual</div>
+        <div class="wv-tab" data-tab="concepts" onclick="wvTab('concepts')">Concepts</div>
+        <div class="wv-tab" data-tab="query"    onclick="wvTab('query')">Query</div>
+        <div class="wv-tab" data-tab="anomaly"  onclick="wvTab('anomaly')">Anomalies</div>
+      </div>
+      <span style="flex:1"></span>
+      <span id="wvMainStatus" style="font-size:9px;color:var(--dim2);font-family:var(--mono)"></span>
+    </div>
+
+    <div class="wv-canvas">
+
+      <!-- ── LATENT MAP ───────────────────────────────────────────── -->
+      <div class="wv-panel active" id="panel-map">
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-shrink:0">
+          <select id="wvProjMethod" style="font-size:10px">
+            <option value="pca">PCA</option>
+            <option value="umap">UMAP</option>
+          </select>
+          <input id="wvProjLimit" type="number" value="500" min="50" max="5000" style="width:65px;font-size:10px" title="Max points">
+          <label style="font-size:10px;color:var(--dim2);display:flex;align-items:center;gap:4px">
+            <input type="checkbox" id="wvShowConcepts" checked> show concepts
+          </label>
+          <label style="font-size:10px;color:var(--dim2);display:flex;align-items:center;gap:4px">
+            <input type="checkbox" id="wvColorByConcept"> colour by concept
+          </label>
+          <button class="btn sm" onclick="wvLoadScatter()">Render</button>
+          <span style="flex:1"></span>
+          <span id="wvScatterInfo" style="font-size:9px;color:var(--dim2);font-family:var(--mono)"></span>
+        </div>
+        <div id="wvScatterWrap" style="position:relative;flex:1;min-height:0;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;background:var(--bg0)">
+          <canvas id="wvScatter"></canvas>
+          <div class="wv-tooltip" id="wvTip"></div>
+        </div>
+        <div class="wv-help" style="margin-top:6px;flex-shrink:0">
+          Points = records · Diamonds = concept centroids · Hover for details · Click a concept to inspect
+        </div>
+      </div>
+
+      <!-- ── ROLLOUT ──────────────────────────────────────────────── -->
+      <div class="wv-panel" id="panel-rollout">
+        <div style="max-width:780px;width:100%">
+          <div class="sec">Trajectory rollout — generate a sequence of concepts the world model predicts will follow</div>
+
+          <div class="wv-row">
+            <label>Start from</label>
+            <select id="wvRollStartMode" style="font-size:10px;width:120px">
+              <option value="text">Text query</option>
+              <option value="concept">Concept index</option>
+              <option value="record">Record ID</option>
+            </select>
+            <input id="wvRollStartVal" placeholder="..." style="flex:1">
+          </div>
+          <div class="wv-row">
+            <label>Steps</label>
+            <input id="wvRollSteps" type="number" value="8" min="1" max="32" style="width:60px;font-size:10px">
+            <label style="margin-left:14px">Temperature</label>
+            <input id="wvRollTemp" type="number" value="0.8" min="0" max="2" step="0.1" style="width:60px;font-size:10px">
+            <label style="margin-left:14px">Top-K</label>
+            <input id="wvRollTopK" type="number" value="20" min="1" max="100" style="width:60px;font-size:10px">
+          </div>
+          <button class="btn primary sm" onclick="wvRollout()">Run rollout</button>
+          <button class="btn sm" onclick="wvRollout()" title="Resample with same params" style="margin-left:4px">↻ Resample</button>
+          <div class="status-bar" id="wvRollStatus"></div>
+
+          <div id="wvRollResults" class="wv-traj" style="margin-top:14px"></div>
+
+          <div class="wv-help" style="margin-top:14px">
+            Lower temperature → more deterministic (greedy concept). Higher temperature → exploratory trajectories. Resample to see alternative futures from the same starting point.
+          </div>
+        </div>
+      </div>
+
+      <!-- ── COUNTERFACTUAL ───────────────────────────────────────── -->
+      <div class="wv-panel" id="panel-cf">
+        <div style="max-width:780px;width:100%">
+          <div class="sec">Counterfactual — "what if step N had been a different concept?"</div>
+
+          <div class="wv-row">
+            <label>Start concept</label>
+            <input id="wvCfStart" type="number" min="0" style="width:80px;font-size:10px" placeholder="idx">
+            <span id="wvCfStartLabel" style="font-size:10px;color:var(--acc3);margin-left:6px"></span>
+          </div>
+          <div class="wv-row">
+            <label>Swap at step</label>
+            <input id="wvCfSwapAt" type="number" value="2" min="1" max="20" style="width:60px;font-size:10px">
+            <label style="margin-left:14px">Swap to concept</label>
+            <input id="wvCfSwapTo" type="number" min="0" style="width:80px;font-size:10px" placeholder="idx">
+            <span id="wvCfSwapToLabel" style="font-size:10px;color:var(--acc3);margin-left:6px"></span>
+          </div>
+          <div class="wv-row">
+            <label>Steps</label>
+            <input id="wvCfSteps" type="number" value="8" min="2" max="20" style="width:60px;font-size:10px">
+            <label style="margin-left:14px">Temperature</label>
+            <input id="wvCfTemp" type="number" value="0.6" min="0" max="2" step="0.1" style="width:60px;font-size:10px">
+          </div>
+          <button class="btn primary sm" onclick="wvCounterfactual()">Compare timelines</button>
+          <div class="status-bar" id="wvCfStatus"></div>
+
+          <div id="wvCfResults" style="margin-top:14px;display:none">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+              <div>
+                <div class="sec" style="color:var(--acc)">Baseline</div>
+                <div id="wvCfBaseline" class="wv-traj"></div>
+              </div>
+              <div>
+                <div class="sec" style="color:var(--warn)">Counterfactual</div>
+                <div id="wvCfAlt" class="wv-traj cf"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── CONCEPTS INSPECTOR ───────────────────────────────────── -->
+      <div class="wv-panel" id="panel-concepts">
+        <div style="display:flex;gap:14px;flex:1;min-height:0">
+          <!-- Concept list -->
+          <div style="width:280px;flex-shrink:0;display:flex;flex-direction:column;min-height:0">
+            <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">
+              <input id="wvConceptSearch" placeholder="filter concepts..." style="flex:1;font-size:10px" oninput="wvFilterConcepts()">
+              <button class="btn sm" onclick="wvLoadConcepts()">Reload</button>
+            </div>
+            <div id="wvConceptList" style="flex:1;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius);padding:6px"></div>
+          </div>
+          <!-- Concept detail -->
+          <div style="flex:1;overflow-y:auto;min-width:0">
+            <div id="wvConceptDetail" style="font-size:10px;color:var(--dim)">Select a concept on the left.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── QUERY ────────────────────────────────────────────────── -->
+      <div class="wv-panel" id="panel-query">
+        <div style="max-width:780px;width:100%">
+          <div class="sec">Nearest-neighbour query in WorldView latent space (uses graph-aware encoder)</div>
+          <div class="wv-row">
+            <label>Text</label>
+            <input id="wvQueryText" placeholder="Semantic query..." style="flex:1">
+          </div>
+          <div class="wv-row">
+            <label>Top K</label>
+            <input id="wvQueryK" type="number" value="10" min="1" max="100" style="width:60px;font-size:10px">
+          </div>
+          <button class="btn primary sm" onclick="wvQuery()">Search</button>
+          <div class="status-bar" id="wvQueryStatus"></div>
+          <div id="wvQueryResults" style="margin-top:10px"></div>
+        </div>
+      </div>
+
+      <!-- ── ANOMALIES ────────────────────────────────────────────── -->
+      <div class="wv-panel" id="panel-anomaly">
+        <div style="max-width:780px;width:100%">
+          <div class="sec">Anomaly detection — combined codebook distance + dynamics log-likelihood</div>
+          <div class="wv-row">
+            <label>Dataset</label>
+            <select id="wvAnomDs" style="flex:1;font-size:10px">
+              <option value="">All datasets</option>
+            </select>
+          </div>
+          <div class="wv-row">
+            <label>Top K</label>
+            <input id="wvAnomK" type="number" value="20" min="1" max="100" style="width:60px;font-size:10px">
+          </div>
+          <button class="btn primary sm" onclick="wvAnomalies()">Detect anomalies</button>
+          <div class="status-bar" id="wvAnomStatus"></div>
+          <div id="wvAnomResults" style="margin-top:10px"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<script>
+var API = (function(){
+  try { return window.parent.VERA_API || ''; } catch(e){}
+  return window.location.origin;
+})();
+
+// Listen for backend URL updates from parent harness (sent by the mount JS)
+window.addEventListener('message', function(ev){
+  try {
+    if (ev.data && ev.data.type === 'vera:base' && ev.data.url) {
+      API = ev.data.url;
+      wvLog('Backend URL updated: ' + API, 'info');
+    }
+  } catch(_){}
+});
+
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function setEl(id, text, cls){ var e=document.getElementById(id); if(e){e.textContent=text; if(cls!==undefined)e.className='status-bar'+(cls?' '+cls:'');} }
+function fmt(n, d){ if(n===null||n===undefined) return '–'; if(typeof n!=='number') return String(n); return n.toFixed(d||3); }
+
+async function api(path, method, body, timeout){
+  var ms = timeout || 60000;
+  try {
+    var opts = { method: method || 'GET' };
+    if (body) { opts.headers = {'Content-Type':'application/json'}; opts.body = JSON.stringify(body); }
+    var c = new AbortController();
+    var t = setTimeout(function(){ c.abort('timeout after ' + Math.round(ms/1000) + 's'); }, ms);
+    opts.signal = c.signal;
+    var r = await fetch(API + path, opts);
+    clearTimeout(t);
+    return await r.json();
+  } catch(e) {
+    if (e.name === 'AbortError') {
+      return { error: 'Request timed out after ' + Math.round(ms/1000) + 's — the operation may still be running on the server. Check the log for progress events.' };
+    }
+    return { error: String(e.message || e) };
+  }
+}
+
+function wvLog(msg, cls){
+  var el = document.getElementById('wvLog');
+  if (!el) return;
+  var d = document.createElement('div');
+  d.className = cls || '';
+  d.textContent = (new Date()).toLocaleTimeString() + ' ' + msg;
+  el.appendChild(d);
+  while (el.children.length > 200) el.removeChild(el.firstChild);
+  el.scrollTop = el.scrollHeight;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TABS
+// ═══════════════════════════════════════════════════════════════
+
+function wvTab(name){
+  document.querySelectorAll('.wv-tab').forEach(function(t){ t.classList.toggle('active', t.dataset.tab === name); });
+  document.querySelectorAll('.wv-panel').forEach(function(p){ p.classList.toggle('active', p.id === 'panel-' + name); });
+  if (name === 'concepts' && !_wvConceptsLoaded) wvLoadConcepts();
+  if (name === 'map') setTimeout(wvDrawScatter, 50);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// STATS
+// ═══════════════════════════════════════════════════════════════
+
+async function wvLoadStats(){
+  var res = await api('/worldview/stats');
+  var el = document.getElementById('wvStats');
+  if (!el) return;
+  if (res && res.model) {
+    var m = res.model;
+    var ix = res.index || {};
+    var cb = m.codebook || {};
+    var rows = [
+      ['Status',         m.ready ? '<span style="color:var(--ok)">Ready</span>' : '<span style="color:var(--err)">Not ready</span>'],
+      ['Device',         esc(m.device)],
+      ['Embed → Latent', m.embed_dim + ' → ' + m.latent_dim],
+      ['Concepts (K)',   m.num_concepts],
+      ['GNN steps',      (m.train_steps && m.train_steps.gnn||0).toLocaleString()],
+      ['Codebook steps', (m.train_steps && m.train_steps.codebook||0).toLocaleString()],
+      ['Dynamics steps', (m.train_steps && m.train_steps.dynamics||0).toLocaleString()],
+      ['GNN loss',       (m.train_loss && m.train_loss.gnn||0).toFixed(5)],
+      ['Codebook loss',  (m.train_loss && m.train_loss.codebook||0).toFixed(5)],
+      ['Dynamics loss',  (m.train_loss && m.train_loss.dynamics||0).toFixed(5)],
+      ['Active concepts',(cb.active_concepts||0) + ' / ' + m.num_concepts],
+      ['Codebook entropy', (cb.entropy||0).toFixed(3) + ' / ' + (cb.max_entropy||0).toFixed(2)],
+      ['Records indexed',  ix.vectors || 0],
+      ['Labelled concepts',m.labelled_concepts || 0],
+      ['Transitions seen', m.transitions_observed || 0],
+    ];
+    el.innerHTML = rows.map(function(r){
+      return '<div class="wv-stat"><span class="wv-stat-k">' + r[0] + '</span><span class="wv-stat-v">' + r[1] + '</span></div>';
+    }).join('');
+  } else {
+    el.innerHTML = '<span style="font-size:10px;color:var(--err)">' + esc((res && res.error) || 'Failed') + '</span>';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DATASETS
+// ═══════════════════════════════════════════════════════════════
+
+async function wvLoadDatasets(){
+  var res = await api('/fabric/datasets');
+  var ds = (res && res.datasets) || [];
+  ['wvTrainDs', 'wvAnomDs', 'wvReembedDs'].forEach(function(id){
+    var sel = document.getElementById(id);
+    if (!sel) return;
+    sel.innerHTML = '<option value="">All datasets</option>' + ds.map(function(d){
+      return '<option value="' + esc(d.dataset_id) + '">' + esc(d.dataset_id) + ' (' + (d.record_count||0) + ')</option>';
+    }).join('');
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TRAIN
+// ═══════════════════════════════════════════════════════════════
+
+async function wvTrain(){
+  var btn = document.getElementById('wvTrainBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Training...'; }
+  var embedMissing = document.getElementById('wvEmbedMissing').checked;
+  setEl('wvTrainStatus', embedMissing ? 'Back-filling missing embeddings first...' : 'Building graph...', 'warn');
+  wvLog('Training started' + (embedMissing ? ' (with embed back-fill)' : ''), 'info');
+
+  // Show live training progress panel
+  _wvTraining = true;
+  var prog = document.getElementById('wvTrainProgress');
+  if (prog) prog.classList.add('active');
+  var bar = document.getElementById('wvTrainEpochBar');
+  if (bar) bar.style.background = 'var(--acc)';
+  wvUpdateTrainStage('Initialising', 'Fetching records and building graph...');
+  wvUpdateTrainBar(0);
+
+  // Use a generous timeout — training can take 30+ minutes on large datasets
+  var timeoutMs = embedMissing ? 7200000 : 3600000;
+  var res = await api('/worldview/train', 'POST', {
+    dataset_id: document.getElementById('wvTrainDs').value || '',
+    gnn_epochs: parseInt(document.getElementById('wvGnnEp').value)||20,
+    codebook_epochs: parseInt(document.getElementById('wvCbEp').value)||8,
+    dynamics_epochs: parseInt(document.getElementById('wvDynEp').value)||15,
+    embed_missing: embedMissing,
+  }, timeoutMs);
+
+  _wvTraining = false;
+  if (btn) { btn.disabled = false; btn.textContent = 'Train WorldView'; }
+
+  if (res && res.ok) {
+    var st = res.stages || {};
+    var msg = 'Done — gnn:' + (st.gnn && st.gnn.loss) +
+              ' cb:' + (st.codebook && st.codebook.loss) +
+              ' dyn:' + (st.dynamics && st.dynamics.loss) +
+              ' · ' + res.indexed + ' indexed · ' + res.duration_s + 's';
+    setEl('wvTrainStatus', msg, 'ok');
+    wvLog(msg, 'ok');
+    wvUpdateTrainStage('Complete', msg);
+    wvUpdateTrainBar(100);
+    // Hide progress after a delay
+    setTimeout(function(){
+      var p = document.getElementById('wvTrainProgress');
+      if (p && !_wvTraining) p.classList.remove('active');
+    }, 8000);
+    wvLoadStats();
+    _wvConceptsLoaded = false;
+    // Auto-load the latent map with new data
+    wvLoadScatter();
+  } else {
+    var errMsg = (res && res.error) || 'unknown';
+    setEl('wvTrainStatus', 'Error: ' + errMsg, 'err');
+    wvLog('Training failed: ' + errMsg, 'err');
+    wvUpdateTrainStage('Error', errMsg);
+    if (prog) setTimeout(function(){ if (!_wvTraining) prog.classList.remove('active'); }, 15000);
+    if (res && res.diagnostic) {
+      var d = res.diagnostic;
+      wvLog('— Diagnostic —', 'warn');
+
+      // Chroma connection state
+      var chromaLine = 'Chroma: ' + (d.chroma_available ? 'connected' : 'OFFLINE') +
+                       ' · collection="' + (d.chroma_collection_name||'?') + '"' +
+                       ' · total=' + d.chroma_total_count;
+      if (d.chroma_dataset_count !== null && d.chroma_dataset_count !== undefined) {
+        chromaLine += ' · in "' + d.dataset_id + '"=' + d.chroma_dataset_count;
+      }
+      wvLog(chromaLine, d.chroma_available ? 'info' : 'err');
+
+      // Sample fetch — does Chroma actually have embeddings?
+      if (d.chroma_sample_has_emb === true) {
+        wvLog('Sample fetch: embeddings present, dim=' + d.chroma_sample_emb_dim, 'info');
+      } else if (d.chroma_sample_has_emb === false) {
+        wvLog('Sample fetch: NO embeddings returned — Chroma has records but no vectors', 'err');
+      }
+      if (d.chroma_sample_meta) {
+        var keys = Object.keys(d.chroma_sample_meta).slice(0,6).join(', ');
+        wvLog('Sample metadata keys: ' + keys, 'info');
+      }
+
+      // Chroma's actual dataset_id distribution
+      if (d.chroma_datasets_seen && d.chroma_datasets_seen.length) {
+        var summary = d.chroma_datasets_seen.slice(0, 8)
+          .map(function(x){ return x.dataset_id + ':' + x.count; }).join(', ');
+        wvLog('Chroma datasets: ' + summary +
+              (d.chroma_datasets_seen.length > 8 ? ' (+' + (d.chroma_datasets_seen.length - 8) + ' more)' : ''),
+              'info');
+        if (d.chroma_no_dataset_id) {
+          wvLog(d.chroma_no_dataset_id + ' records have NO dataset_id metadata in Chroma', 'warn');
+        }
+      } else if (d.chroma_total_count > 0) {
+        wvLog('Could not scan Chroma dataset_ids (see chroma_dataset_scan_error)', 'warn');
+      }
+
+      // SQLite stats
+      var sqliteLine = 'SQLite: total=' + d.sqlite_total_count;
+      if (d.sqlite_dataset_count !== null && d.sqlite_dataset_count !== undefined) {
+        sqliteLine += ' · in "' + d.dataset_id + '"=' + d.sqlite_dataset_count;
+      }
+      wvLog(sqliteLine, 'info');
+      if (d.sqlite_datasets_seen && d.sqlite_datasets_seen.length) {
+        var sqsum = d.sqlite_datasets_seen.slice(0, 8)
+          .map(function(x){ return x.dataset_id + ':' + x.count; }).join(', ');
+        wvLog('SQLite datasets: ' + sqsum +
+              (d.sqlite_datasets_seen.length > 8 ? ' (+' + (d.sqlite_datasets_seen.length - 8) + ' more)' : ''),
+              'info');
+      }
+
+      if (res.hint || d.hint) {
+        wvLog('Hint: ' + (res.hint || d.hint), 'warn');
+      }
+    }
+  }
+}
+
+async function wvLabelConcepts(){
+  setEl('wvLabelStatus', 'Labelling...', 'warn');
+  var res = await api('/worldview/label_concepts', 'POST', {
+    max_concepts: parseInt(document.getElementById('wvLabelN').value)||20,
+  }, 600000);
+  if (res && res.labelled !== undefined) {
+    setEl('wvLabelStatus', 'Labelled ' + res.labelled.length + ' concepts (' + (res.total_existing||0) + ' total)', 'ok');
+    wvLog('Labelled ' + res.labelled.length + ' concepts', 'ok');
+    wvLoadStats();
+    _wvConceptsLoaded = false;
+  } else {
+    setEl('wvLabelStatus', 'Error: ' + ((res && res.error) || 'unknown'), 'err');
+  }
+}
+
+async function wvRebuildIndex(){
+  setEl('wvRebuildStatus', 'Rebuilding...', 'warn');
+  wvLog('Rebuilding latent index from current Chroma state...', 'info');
+  var res = await api('/worldview/rebuild_index', 'POST', {}, 300000);
+  if (res && res.ok) {
+    setEl('wvRebuildStatus', 'Done: ' + res.indexed + ' indexed (' + res.duration_s + 's)', 'ok');
+    wvLog('Rebuilt index with ' + res.indexed + ' records', 'ok');
+    wvLoadStats();
+    _wvConceptsLoaded = false;
+  } else {
+    setEl('wvRebuildStatus', 'Error: ' + ((res && res.error) || 'unknown'), 'err');
+    wvLog('Rebuild failed: ' + ((res && res.error) || 'unknown'), 'err');
+  }
+}
+
+async function wvReembed(dryRun){
+  setEl('wvReembedStatus', dryRun ? 'Previewing...' : 'Embedding...', 'warn');
+  wvLog(dryRun ? 'Preview: scanning for missing embeddings...'
+              : 'Re-embedding missing records (this can take a while)...', 'info');
+
+  var res = await api('/worldview/reembed_missing', 'POST', {
+    dataset_id: document.getElementById('wvReembedDs').value || '',
+    limit:      parseInt(document.getElementById('wvReembedLimit').value)||5000,
+    batch_size: 32,
+    dry_run:    !!dryRun,
+  }, dryRun ? 60000 : 3600000);
+
+  if (res && res.ok) {
+    if (res.dry_run) {
+      setEl('wvReembedStatus', 'Preview: ' + res.missing_found + ' missing', 'ok');
+      wvLog('Found ' + res.missing_found + ' records missing from Chroma', 'ok');
+      if (res.breakdown) {
+        var summary = res.breakdown.slice(0,10).map(function(x){
+          return x.dataset_id + ':' + x.count;
+        }).join(', ');
+        wvLog('Breakdown: ' + summary +
+              (res.breakdown.length > 10 ? ' (+' + (res.breakdown.length - 10) + ' more)' : ''), 'info');
+      }
+    } else {
+      var statusCls = res.upserted > 0 ? 'ok' : 'warn';
+      setEl('wvReembedStatus',
+            (res.upserted > 0 ? 'Done: ' : 'Finished with no successes: ') +
+            'embedded ' + res.embedded + ', upserted ' + res.upserted + ' / ' + res.missing_found,
+            statusCls);
+      wvLog('Re-embed complete — ' + res.upserted + ' new records in Chroma',
+            res.upserted > 0 ? 'ok' : 'warn');
+      if (res.datasets_processed && res.datasets_processed.length) {
+        wvLog('Datasets: ' + res.datasets_processed.slice(0,10).join(', '), 'info');
+      }
+      // Surface error breakdown if there were any
+      if (res.errors && Object.keys(res.errors).length) {
+        var errPairs = Object.keys(res.errors)
+          .map(function(k){ return [k, res.errors[k]]; })
+          .sort(function(a,b){ return b[1] - a[1]; })
+          .slice(0, 6);
+        wvLog('Errors: ' + errPairs.map(function(p){ return p[0]+'='+p[1]; }).join(', '), 'err');
+      }
+      if (res.instances_used && Object.keys(res.instances_used).length) {
+        var pairs = Object.keys(res.instances_used)
+          .map(function(k){ return k + '=' + res.instances_used[k]; })
+          .join(', ');
+        wvLog('Instances used: ' + pairs, 'info');
+      }
+      if (res.note) wvLog(res.note, res.upserted > 0 ? 'info' : 'warn');
+    }
+  } else {
+    setEl('wvReembedStatus', 'Error: ' + ((res && res.error) || 'unknown'), 'err');
+    wvLog('Re-embed failed: ' + ((res && res.error) || 'unknown'), 'err');
+    if (res && res.probe_error) {
+      wvLog('Probe error: ' + res.probe_error, 'err');
+    }
+    if (res && res.model) {
+      wvLog('Embed model: ' + res.model, 'info');
+    }
+    // Cluster diagnostic — show per-instance status
+    if (res && res.cluster) {
+      Object.keys(res.cluster).forEach(function(iid){
+        var s = res.cluster[iid];
+        var st = s.status === 'online' ? 'online' : 'OFFLINE';
+        var has = s.has_model ? '✓ has model' : '✗ NO model';
+        var line = '· ' + iid + ' [' + st + '] ' + has +
+                   ' (' + (s.models_loaded||0) + ' loaded, ' + (s.in_use||0) + ' busy)' +
+                   ' ' + (s.url || '');
+        wvLog(line, s.status === 'online' && s.has_model ? 'info'
+                  : s.status === 'online' ? 'warn' : 'err');
+      });
+    }
+    if (res && res.online_with_model !== undefined) {
+      wvLog('Online instances with model: ' +
+            (res.online_with_model.length ? res.online_with_model.join(', ') : '(none)'),
+            res.online_with_model.length ? 'info' : 'err');
+    }
+    if (res && res.chroma_dim) {
+      wvLog('Chroma dim=' + res.chroma_dim + ' Ollama dim=' + res.ollama_dim, 'err');
+    }
+    if (res && res.hint) {
+      wvLog('Hint: ' + res.hint, 'warn');
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// LATENT MAP (scatter plot)
+// ═══════════════════════════════════════════════════════════════
+
+var _wvPoints = [];
+var _wvConcepts = [];
+var _wvHoverIdx = -1;
+var _wvHoverConcept = -1;
+var _wvDsColors = {};
+
+async function wvLoadScatter(){
+  setEl('wvScatterInfo', 'Loading...', '');
+  var method = document.getElementById('wvProjMethod').value || 'pca';
+  var limit = parseInt(document.getElementById('wvProjLimit').value)||500;
+  var res = await api('/worldview/snapshot?method=' + method + '&limit=' + limit);
+
+  // Auto-recover: if the FAISS index isn't ready (e.g. interrupted training,
+  // process restart), offer to rebuild from current Chroma state.
+  if (res && res.error && /index not ready|No vectors/i.test(res.error)) {
+    setEl('wvScatterInfo', 'Index empty — rebuilding from fabric...', 'warn');
+    wvLog('Latent index is empty — rebuilding (no retrain needed)', 'warn');
+    var rb = await api('/worldview/rebuild_index', 'POST', {}, 300000);
+    if (rb && rb.ok) {
+      wvLog('Rebuilt index with ' + rb.indexed + ' records in ' + rb.duration_s + 's', 'ok');
+      // Retry the snapshot
+      res = await api('/worldview/snapshot?method=' + method + '&limit=' + limit);
+    } else {
+      var rbErr = (rb && rb.error) || 'unknown';
+      setEl('wvScatterInfo', 'Rebuild failed: ' + rbErr, 'err');
+      wvLog('Rebuild failed: ' + rbErr, 'err');
+      return;
+    }
+  }
+
+  if (!res || res.error) {
+    setEl('wvScatterInfo', 'Error: ' + ((res && res.error) || 'unknown'), 'err');
+    return;
+  }
+  _wvPoints = res.points || [];
+  _wvConcepts = res.concepts || [];
+  setEl('wvScatterInfo', _wvPoints.length + ' records · ' + _wvConcepts.length + ' concepts (' + res.method + ')', '');
+  wvDrawScatter();
+}
+
+function wvColor(key){
+  if (_wvDsColors[key]) return _wvDsColors[key];
+  var palette = ['#5a9e8f','#c9955a','#9e8fa0','#8fb87a','#c97a5a','#6b9bd2','#a78bfa','#38bdf8','#f472b6','#facc15','#10b981','#fb7185','#a3e635','#7dd3fc','#f0abfc'];
+  var n = Object.keys(_wvDsColors).length;
+  _wvDsColors[key] = palette[n % palette.length];
+  return _wvDsColors[key];
+}
+
+function wvDrawScatter(){
+  var canvas = document.getElementById('wvScatter');
+  if (!canvas) return;
+  var wrap = canvas.parentElement;
+  canvas.width = wrap.clientWidth;
+  canvas.height = wrap.clientHeight;
+  var ctx = canvas.getContext('2d');
+  var W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#181614';
+  ctx.fillRect(0, 0, W, H);
+
+  if (!_wvPoints.length) {
+    ctx.fillStyle = '#6a6058';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Train the WorldView model and click Render', W/2, H/2);
+    return;
+  }
+
+  var pad = 40;
+  var sx = W - 2*pad, sy = H - 2*pad;
+  var colorByConcept = document.getElementById('wvColorByConcept').checked;
+  var showConcepts = document.getElementById('wvShowConcepts').checked;
+
+  // Draw records
+  _wvPoints.forEach(function(p, i){
+    var px = pad + p.x * sx;
+    var py = pad + (1 - p.y) * sy;
+    p._px = px; p._py = py;
+    var col = colorByConcept ? wvColor('c' + p.concept) : wvColor(p.dataset_id || 'unknown');
+    ctx.beginPath();
+    ctx.arc(px, py, i === _wvHoverIdx ? 6 : 3, 0, Math.PI * 2);
+    ctx.fillStyle = col;
+    ctx.globalAlpha = i === _wvHoverIdx ? 1.0 : 0.6;
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1.0;
+
+  // Draw concept centroids
+  if (showConcepts) {
+    var maxSize = Math.max.apply(null, _wvConcepts.map(function(c){ return c.size; }).concat([1]));
+    _wvConcepts.forEach(function(c, i){
+      var px = pad + c.x * sx;
+      var py = pad + (1 - c.y) * sy;
+      c._px = px; c._py = py;
+      var size = 5 + Math.sqrt(c.size / maxSize) * 12;
+      if (i === _wvHoverConcept) size += 4;
+      // Diamond shape
+      ctx.beginPath();
+      ctx.moveTo(px, py - size);
+      ctx.lineTo(px + size, py);
+      ctx.lineTo(px, py + size);
+      ctx.lineTo(px - size, py);
+      ctx.closePath();
+      ctx.fillStyle = '#c9955a';
+      ctx.globalAlpha = 0.85;
+      ctx.fill();
+      ctx.strokeStyle = '#181614';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      // Label
+      if (c.label && (c.size > maxSize * 0.05 || i === _wvHoverConcept)) {
+        ctx.fillStyle = '#ddd5c8';
+        ctx.globalAlpha = 1.0;
+        ctx.font = '9.5px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(c.label.slice(0,24), px, py + size + 11);
+      }
+    });
+    ctx.globalAlpha = 1.0;
+  }
+}
+
+(function(){
+  var canvas = document.getElementById('wvScatter');
+  var tip = document.getElementById('wvTip');
+  if (!canvas || !tip) return;
+
+  canvas.addEventListener('mousemove', function(ev){
+    var rect = canvas.getBoundingClientRect();
+    var mx = ev.clientX - rect.left;
+    var my = ev.clientY - rect.top;
+
+    // Check concept hover first (larger targets)
+    var ci = -1, cMinD = 100;
+    if (document.getElementById('wvShowConcepts').checked) {
+      _wvConcepts.forEach(function(c, i){
+        if (c._px === undefined) return;
+        var dx = c._px - mx, dy = c._py - my;
+        var d = Math.sqrt(dx*dx + dy*dy);
+        if (d < cMinD) { cMinD = d; ci = i; }
+      });
+    }
+
+    var ri = -1, rMinD = 100;
+    _wvPoints.forEach(function(p, i){
+      if (p._px === undefined) return;
+      var dx = p._px - mx, dy = p._py - my;
+      var d = Math.sqrt(dx*dx + dy*dy);
+      if (d < rMinD) { rMinD = d; ri = i; }
+    });
+
+    if (ci >= 0 && cMinD < 18 && cMinD < rMinD + 4) {
+      _wvHoverConcept = ci;
+      _wvHoverIdx = -1;
+      var c = _wvConcepts[ci];
+      tip.style.display = 'block';
+      tip.style.left = Math.min(c._px + 10, canvas.width - 260) + 'px';
+      tip.style.top = Math.max(c._py - 50, 5) + 'px';
+      tip.innerHTML = '<div style="font-weight:600;color:var(--acc3);margin-bottom:2px">Concept #' + c.idx + '</div>' +
+        (c.label ? '<div style="color:var(--text)">' + esc(c.label) + '</div>' : '<div style="color:var(--dim)">(unlabelled)</div>') +
+        '<div style="font-size:8.5px;color:var(--dim);margin-top:3px;font-family:var(--mono)">population ≈ ' + c.size.toFixed(1) + ' · click to inspect</div>';
+      wvDrawScatter();
+    } else if (ri >= 0 && rMinD < 12) {
+      _wvHoverIdx = ri;
+      _wvHoverConcept = -1;
+      var p = _wvPoints[ri];
+      tip.style.display = 'block';
+      tip.style.left = Math.min(p._px + 10, canvas.width - 260) + 'px';
+      tip.style.top = Math.max(p._py - 50, 5) + 'px';
+      tip.innerHTML = '<div style="font-weight:600;color:var(--acc);margin-bottom:2px">' + esc(p.dataset_id) +
+        (p.concept >= 0 ? ' · concept #' + p.concept : '') + '</div>' +
+        (p.concept_label ? '<div style="color:var(--acc3);font-size:9px;margin-bottom:2px">' + esc(p.concept_label) + '</div>' : '') +
+        '<div style="color:var(--text)">' + esc(p.text || p.id) + '</div>' +
+        '<div style="font-size:8.5px;color:var(--dim);margin-top:2px;font-family:var(--mono)">' + esc(p.id.slice(0,24)) + '</div>';
+      wvDrawScatter();
+    } else if (_wvHoverIdx >= 0 || _wvHoverConcept >= 0) {
+      _wvHoverIdx = -1;
+      _wvHoverConcept = -1;
+      tip.style.display = 'none';
+      wvDrawScatter();
+    }
+  });
+
+  canvas.addEventListener('click', function(){
+    if (_wvHoverConcept >= 0) {
+      var c = _wvConcepts[_wvHoverConcept];
+      wvTab('concepts');
+      setTimeout(function(){ wvSelectConcept(c.idx); }, 150);
+    }
+  });
+
+  canvas.addEventListener('mouseleave', function(){
+    _wvHoverIdx = -1;
+    _wvHoverConcept = -1;
+    tip.style.display = 'none';
+    wvDrawScatter();
+  });
+})();
+
+window.addEventListener('resize', function(){ if (_wvPoints.length) wvDrawScatter(); });
+
+document.getElementById('wvShowConcepts').addEventListener('change', wvDrawScatter);
+document.getElementById('wvColorByConcept').addEventListener('change', wvDrawScatter);
+
+// ═══════════════════════════════════════════════════════════════
+// ROLLOUT
+// ═══════════════════════════════════════════════════════════════
+
+async function wvRollout(){
+  var mode = document.getElementById('wvRollStartMode').value;
+  var val = document.getElementById('wvRollStartVal').value;
+  if (!val) { setEl('wvRollStatus', 'Enter a starting point', 'warn'); return; }
+
+  setEl('wvRollStatus', 'Generating trajectory...', '');
+
+  var body = {
+    steps: parseInt(document.getElementById('wvRollSteps').value)||8,
+    temperature: parseFloat(document.getElementById('wvRollTemp').value)||0.8,
+    top_k: parseInt(document.getElementById('wvRollTopK').value)||20,
+  };
+  if (mode === 'text') body.text = val;
+  else if (mode === 'concept') body.concept = parseInt(val);
+  else body.record_id = val;
+
+  var res = await api('/worldview/rollout', 'POST', body, 60000);
+
+  if (res && res.trajectory) {
+    setEl('wvRollStatus', 'Start: concept #' + res.start_concept +
+        (res.start_concept_label ? ' (' + res.start_concept_label + ')' : '') +
+        ' · temp=' + res.temperature, 'ok');
+    var el = document.getElementById('wvRollResults');
+    el.innerHTML = wvRenderTrajectory(res.trajectory, res.start_concept, res.start_concept_label);
+  } else {
+    setEl('wvRollStatus', 'Error: ' + ((res && res.error) || 'unknown'), 'err');
+  }
+}
+
+function wvRenderTrajectory(traj, startConcept, startLabel){
+  var html = '';
+  // Start step
+  if (startConcept !== undefined) {
+    html += '<div class="wv-step" style="border-color:var(--acc);background:rgba(90,158,143,.08)">' +
+      '<div class="wv-step-num">●</div>' +
+      '<div class="wv-step-body">' +
+        '<div class="wv-step-concept">Start · concept #' + startConcept +
+        (startLabel ? '<span class="wv-step-label">' + esc(startLabel) + '</span>' : '') +
+        '</div></div></div>';
+    html += '<div class="wv-step-arrow">↓</div>';
+  }
+  traj.forEach(function(step, i){
+    html += '<div class="wv-step">' +
+      '<div class="wv-step-num">' + (i+1) + '</div>' +
+      '<div class="wv-step-body">' +
+        '<div class="wv-step-concept">concept #' + step.concept +
+        (step.label ? '<span class="wv-step-label">' + esc(step.label) + '</span>' : '') +
+        '</div>';
+    if (step.members && step.members.length) {
+      html += '<div class="wv-item-meta">e.g. ' + step.members.map(function(m){ return esc(m.slice(0,12)); }).join(', ') + '</div>';
+    }
+    html += '</div></div>';
+    if (i < traj.length - 1) html += '<div class="wv-step-arrow">↓</div>';
+  });
+  return html;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// COUNTERFACTUAL
+// ═══════════════════════════════════════════════════════════════
+
+async function wvCounterfactual(){
+  var sc = parseInt(document.getElementById('wvCfStart').value);
+  var st = parseInt(document.getElementById('wvCfSwapTo').value);
+  if (isNaN(sc) || isNaN(st)) {
+    setEl('wvCfStatus', 'Provide start concept and swap-to concept', 'warn');
+    return;
+  }
+  setEl('wvCfStatus', 'Comparing timelines...', '');
+
+  var res = await api('/worldview/counterfactual', 'POST', {
+    start_concept: sc,
+    swap_at: parseInt(document.getElementById('wvCfSwapAt').value)||2,
+    swap_to: st,
+    steps: parseInt(document.getElementById('wvCfSteps').value)||8,
+    temperature: parseFloat(document.getElementById('wvCfTemp').value)||0.6,
+  }, 60000);
+
+  if (res && res.baseline) {
+    setEl('wvCfStatus', 'Divergence starts at step ' + res.divergence_step, 'ok');
+    document.getElementById('wvCfResults').style.display = 'block';
+    document.getElementById('wvCfBaseline').innerHTML = wvRenderCfTraj(res.baseline, res.baseline, res.divergence_step, false);
+    document.getElementById('wvCfAlt').innerHTML = wvRenderCfTraj(res.counterfactual, res.baseline, res.divergence_step, true);
+  } else {
+    setEl('wvCfStatus', 'Error: ' + ((res && res.error) || 'unknown'), 'err');
+  }
+}
+
+function wvRenderCfTraj(traj, base, divPoint, isCf){
+  return traj.map(function(step, i){
+    var diverged = isCf && i >= divPoint;
+    return '<div class="wv-step' + (diverged ? ' diverged' : '') + '">' +
+      '<div class="wv-step-num">' + (i+1) + '</div>' +
+      '<div class="wv-step-body">' +
+        '<div class="wv-step-concept">#' + step.concept +
+        (step.label ? '<span class="wv-step-label">' + esc(step.label) + '</span>' : '') +
+        '</div></div></div>';
+  }).join('<div class="wv-step-arrow">↓</div>');
+}
+
+// Live label preview while editing concept indices
+['wvCfStart','wvCfSwapTo'].forEach(function(id){
+  var input = document.getElementById(id);
+  if (!input) return;
+  input.addEventListener('change', async function(){
+    var v = parseInt(input.value);
+    var labelEl = document.getElementById(id + 'Label');
+    if (!labelEl) return;
+    if (isNaN(v) || v < 0) { labelEl.textContent = ''; return; }
+    var concept = _wvAllConcepts.find(function(c){ return c.idx === v; });
+    labelEl.textContent = concept ? '· ' + (concept.label || '(unlabelled)') : '· not found';
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// CONCEPTS INSPECTOR
+// ═══════════════════════════════════════════════════════════════
+
+var _wvAllConcepts = [];
+var _wvConceptsLoaded = false;
+var _wvSelectedConcept = -1;
+
+async function wvLoadConcepts(){
+  document.getElementById('wvConceptList').innerHTML = '<span style="color:var(--dim);font-size:10px;padding:8px;display:block">Loading...</span>';
+  var res = await api('/worldview/concepts');
+  if (!res || !res.concepts) {
+    document.getElementById('wvConceptList').innerHTML = '<span style="color:var(--err);font-size:10px;padding:8px;display:block">' + esc((res&&res.error)||'failed') + '</span>';
+    return;
+  }
+  _wvAllConcepts = res.concepts;
+  _wvConceptsLoaded = true;
+  wvRenderConceptList();
+}
+
+function wvRenderConceptList(filter){
+  var ft = (filter || document.getElementById('wvConceptSearch').value || '').toLowerCase();
+  var items = _wvAllConcepts;
+  if (ft) {
+    items = items.filter(function(c){
+      return (c.label && c.label.toLowerCase().indexOf(ft) >= 0) ||
+             String(c.idx).indexOf(ft) >= 0;
+    });
+  }
+  var list = document.getElementById('wvConceptList');
+  list.innerHTML = items.map(function(c){
+    return '<div class="wv-concept-tile' + (c.idx === _wvSelectedConcept ? ' selected' : '') +
+      '" onclick="wvSelectConcept(' + c.idx + ')">' +
+      '<div class="wv-concept-idx">#' + c.idx + '</div>' +
+      '<div class="wv-concept-label">' + (c.label ? esc(c.label) : '<em style="color:var(--dim)">unlabelled</em>') + '</div>' +
+      '<div class="wv-concept-pop">' + c.population + '</div>' +
+      '</div>';
+  }).join('');
+  if (!items.length) {
+    list.innerHTML = '<span style="color:var(--dim);font-size:10px;padding:8px;display:block">No concepts match.</span>';
+  }
+}
+
+function wvFilterConcepts(){ wvRenderConceptList(); }
+
+async function wvSelectConcept(idx){
+  _wvSelectedConcept = idx;
+  wvRenderConceptList();
+
+  var d = document.getElementById('wvConceptDetail');
+  d.innerHTML = '<span style="color:var(--dim);font-size:10px">Loading concept #' + idx + '...</span>';
+
+  var c = _wvAllConcepts.find(function(c){ return c.idx === idx; });
+  var nRes = await api('/worldview/concept_neighbors?concept=' + idx + '&top_k=10');
+  var mRes = await api('/worldview/concept_members?concept=' + idx + '&limit=30');
+
+  var html = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">' +
+    '<div style="font-family:var(--mono);font-size:20px;color:var(--acc)">#' + idx + '</div>' +
+    '<div><div style="font-size:13px;color:var(--text);font-weight:500">' +
+    (c && c.label ? esc(c.label) : '<em style="color:var(--dim)">unlabelled concept</em>') + '</div>' +
+    '<div style="font-size:10px;color:var(--dim2)">' + (c ? c.population : '?') + ' members</div></div></div>';
+
+  // Predicted transitions
+  if (nRes && nRes.predicted && nRes.predicted.length) {
+    var maxProb = nRes.predicted[0].prob || 0.01;
+    html += '<div class="sec">Predicted next concepts (dynamics model)</div>';
+    html += nRes.predicted.map(function(p){
+      var pct = Math.round((p.prob / maxProb) * 100);
+      return '<div class="wv-item" onclick="wvSelectConcept(' + p.to + ')" style="cursor:pointer">' +
+        '<div class="wv-item-score">' + p.prob.toFixed(4) + '</div>' +
+        '<div class="wv-item-body">' +
+        '<div class="wv-item-text">→ concept #' + p.to + (p.label ? ' · <span style="color:var(--acc3)">' + esc(p.label) + '</span>' : '') + '</div>' +
+        '<div class="wv-bar-bg"><div class="wv-bar-fill" style="width:' + pct + '%;background:var(--acc)"></div></div>' +
+        '</div></div>';
+    }).join('');
+  }
+
+  // Observed transitions
+  if (nRes && nRes.observed && nRes.observed.length) {
+    html += '<div class="sec" style="margin-top:14px">Observed transitions (from training walks)</div>';
+    html += nRes.observed.map(function(p){
+      return '<div class="wv-item" onclick="wvSelectConcept(' + p.to + ')" style="cursor:pointer">' +
+        '<div class="wv-item-score">' + p.prob.toFixed(4) + '</div>' +
+        '<div class="wv-item-body">' +
+        '<div class="wv-item-text">→ concept #' + p.to + (p.label ? ' · <span style="color:var(--acc3)">' + esc(p.label) + '</span>' : '') + '</div>' +
+        '<div class="wv-item-meta">' + p.count + ' transitions observed</div>' +
+        '</div></div>';
+    }).join('');
+  }
+
+  // Members
+  if (mRes && mRes.members && mRes.members.length) {
+    html += '<div class="sec" style="margin-top:14px">Member records (' + mRes.total + ')</div>';
+    html += mRes.members.map(function(m){
+      return '<div class="wv-item">' +
+        '<div class="wv-item-body">' +
+        '<div class="wv-item-text">' + esc(m.text || m.id) + '</div>' +
+        '<div class="wv-item-meta">' + esc(m.dataset_id) + ' · ' + esc(m.id.slice(0,16)) + '</div>' +
+        '</div></div>';
+    }).join('');
+  }
+
+  // Quick actions
+  html += '<div style="margin-top:14px;display:flex;gap:6px">' +
+    '<button class="btn sm" onclick="wvRollFromConcept(' + idx + ')">Rollout from this concept</button>' +
+    '<button class="btn sm" onclick="wvCfFromConcept(' + idx + ')">Start counterfactual</button>' +
+    '<button class="btn sm" onclick="wvLabelOne(' + idx + ')">Re-label</button>' +
+    '</div>';
+
+  d.innerHTML = html;
+}
+
+function wvRollFromConcept(idx){
+  wvTab('rollout');
+  document.getElementById('wvRollStartMode').value = 'concept';
+  document.getElementById('wvRollStartVal').value = String(idx);
+  wvRollout();
+}
+
+function wvCfFromConcept(idx){
+  wvTab('cf');
+  document.getElementById('wvCfStart').value = String(idx);
+  document.getElementById('wvCfStart').dispatchEvent(new Event('change'));
+}
+
+async function wvLabelOne(idx){
+  var res = await api('/worldview/label_concepts', 'POST', { concepts: [idx], max_concepts: 1 }, 60000);
+  if (res && res.labelled) {
+    _wvConceptsLoaded = false;
+    await wvLoadConcepts();
+    wvSelectConcept(idx);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// QUERY
+// ═══════════════════════════════════════════════════════════════
+
+async function wvQuery(){
+  var text = document.getElementById('wvQueryText').value || '';
+  if (!text) { setEl('wvQueryStatus', 'Enter query text', 'warn'); return; }
+  setEl('wvQueryStatus', 'Searching...', '');
+  var res = await api('/worldview/query', 'POST', {
+    text: text,
+    top_k: parseInt(document.getElementById('wvQueryK').value)||10,
+  }, 30000);
+  if (res && res.results) {
+    setEl('wvQueryStatus', res.results.length + ' results', 'ok');
+    var el = document.getElementById('wvQueryResults');
+    el.innerHTML = res.results.map(function(r){
+      return '<div class="wv-item">' +
+        '<div class="wv-item-score">' + r.score.toFixed(4) + '</div>' +
+        '<div class="wv-item-body">' +
+        '<div class="wv-item-text">' + esc(r.text || r.id) + '</div>' +
+        '<div class="wv-item-meta">' + esc(r.dataset_id) + ' · ' + esc(r.id.slice(0,16)) +
+        (r.concept >= 0 ? ' · concept #' + r.concept + (r.concept_label ? ' (' + esc(r.concept_label) + ')' : '') : '') +
+        '</div></div></div>';
+    }).join('');
+  } else {
+    setEl('wvQueryStatus', 'Error: ' + ((res && res.error) || 'unknown'), 'err');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ANOMALIES
+// ═══════════════════════════════════════════════════════════════
+
+async function wvAnomalies(){
+  setEl('wvAnomStatus', 'Detecting...', '');
+  var res = await api('/worldview/anomalies', 'POST', {
+    dataset_id: document.getElementById('wvAnomDs').value || '',
+    top_k: parseInt(document.getElementById('wvAnomK').value)||20,
+  }, 120000);
+  if (res && res.anomalies) {
+    setEl('wvAnomStatus', res.anomalies.length + ' anomalies from ' + res.total + ' scored', 'ok');
+    var maxScore = res.anomalies.length ? res.anomalies[0].anomaly_score : 1;
+    var el = document.getElementById('wvAnomResults');
+    el.innerHTML = res.anomalies.map(function(a){
+      var pct = Math.round((a.anomaly_score / maxScore) * 100);
+      var barColor = a.anomaly_score > 0.6 ? 'var(--err)' : a.anomaly_score > 0.35 ? 'var(--warn)' : 'var(--acc2)';
+      return '<div class="wv-item">' +
+        '<div class="wv-item-score" style="color:' + barColor + '">' + a.anomaly_score.toFixed(4) + '</div>' +
+        '<div class="wv-item-body">' +
+        '<div class="wv-item-text">' + esc(a.text.slice(0,180)) + '</div>' +
+        '<div class="wv-item-meta">' + esc(a.dataset_id) + ' · #' + a.concept +
+        (a.concept_label ? ' (' + esc(a.concept_label) + ')' : '') +
+        ' · recon=' + a.recon_distance.toFixed(3) +
+        (a.log_prob !== null ? ' · logp=' + a.log_prob.toFixed(3) : '') + '</div>' +
+        '<div class="wv-bar-bg"><div class="wv-bar-fill" style="width:' + pct + '%;background:' + barColor + '"></div></div>' +
+        '</div></div>';
+    }).join('');
+  } else {
+    setEl('wvAnomStatus', 'Error: ' + ((res && res.error) || 'unknown'), 'err');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TRAINING PROGRESS  (live updates from SSE events)
+// ═══════════════════════════════════════════════════════════════
+
+var _wvTraining = false;
+var _wvTrainStartTime = 0;
+
+function wvUpdateTrainStage(name, detail){
+  var el = document.getElementById('wvTrainStageName');
+  if (el) el.textContent = name;
+  var d = document.getElementById('wvTrainDetail');
+  if (d && detail) d.textContent = detail;
+}
+
+function wvUpdateTrainBar(pct){
+  var bar = document.getElementById('wvTrainEpochBar');
+  if (bar) bar.style.width = Math.max(0, Math.min(100, pct)) + '%';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════════
+
+wvLoadStats();
+wvLoadDatasets();
+
+// Listen for progress events from parent harness
+window.addEventListener('message', function(ev){
+  try {
+    if (!ev.data || ev.data.type !== 'vera_fabric_event') return;
+    var e = ev.data.event;
+    if (!e || e.type !== 'worldview.progress') return;
+    var stage = e.stage || '';
+    var msg = stage;
+    if (e.message) msg += ': ' + e.message;
+    if (e.loss !== undefined) msg += ' loss=' + e.loss;
+    if (e.epoch) msg += ' ' + e.epoch + '/' + (e.total || '?');
+    if (e.active !== undefined) msg += ' active=' + e.active;
+    if (e.entropy !== undefined) msg += ' H=' + e.entropy;
+    if (e.processed !== undefined && e.total !== undefined) {
+      msg += ' ' + e.processed + '/' + e.total;
+    }
+    if (e.embedded !== undefined) msg += ' embedded=' + e.embedded;
+    if (e.upserted !== undefined) msg += ' upserted=' + e.upserted;
+    if (e.missing !== undefined) msg += ' missing=' + e.missing;
+    var cls = (stage === 'done' || stage === 'reembed_done' || stage === 'embed_missing_done') ? 'ok'
+            : stage === 'error' ? 'err'
+            : (stage === 'dim_mismatch' || stage === 'embed_missing') ? 'warn'
+            : 'info';
+    wvLog(msg, cls);
+
+    // ── Live training progress display ──
+    if (_wvTraining) {
+      // Calculate overall progress across 3 stages
+      var gnnEp  = parseInt(document.getElementById('wvGnnEp').value)||20;
+      var cbEp   = parseInt(document.getElementById('wvCbEp').value)||8;
+      var dynEp  = parseInt(document.getElementById('wvDynEp').value)||15;
+      var totalEp = gnnEp + cbEp + dynEp;
+
+      if (stage === 'building_graph' || stage === 'embed_missing') {
+        wvUpdateTrainStage('Preparing', e.message || 'Building graph...');
+        wvUpdateTrainBar(0);
+      } else if (stage === 'graph_ready') {
+        wvUpdateTrainStage('Graph ready', (e.nodes||0) + ' nodes, ' + (e.edges||0) + ' edges');
+        wvUpdateTrainBar(2);
+      } else if (stage === 'stage_gnn') {
+        wvUpdateTrainStage('Stage 1: GNN', e.message || 'Training graph encoder...');
+        wvUpdateTrainBar(3);
+      } else if (stage === 'gnn_epoch' && e.epoch && e.total) {
+        var loss = e.loss !== undefined ? ' · loss ' + Number(e.loss).toFixed(4) : '';
+        wvUpdateTrainStage('Stage 1: GNN', 'Epoch ' + e.epoch + '/' + e.total + loss);
+        var pct = 3 + (e.epoch / e.total) * (gnnEp / totalEp) * 90;
+        wvUpdateTrainBar(pct);
+        setEl('wvTrainStatus', 'GNN epoch ' + e.epoch + '/' + e.total + loss, 'warn');
+      } else if (stage === 'stage_codebook') {
+        wvUpdateTrainStage('Stage 2: Codebook', e.message || 'Fitting concepts...');
+        var base = 3 + (gnnEp / totalEp) * 90;
+        wvUpdateTrainBar(base);
+      } else if (stage === 'codebook_epoch' && e.epoch && e.total) {
+        var loss = e.loss !== undefined ? ' · loss ' + Number(e.loss).toFixed(4) : '';
+        var extra = e.active !== undefined ? ' · ' + e.active + ' active concepts' : '';
+        wvUpdateTrainStage('Stage 2: Codebook', 'Epoch ' + e.epoch + '/' + e.total + loss + extra);
+        var base = 3 + (gnnEp / totalEp) * 90;
+        var pct = base + (e.epoch / e.total) * (cbEp / totalEp) * 90;
+        wvUpdateTrainBar(pct);
+        setEl('wvTrainStatus', 'Codebook epoch ' + e.epoch + '/' + e.total + loss + extra, 'warn');
+      } else if (stage === 'stage_dynamics') {
+        wvUpdateTrainStage('Stage 3: Dynamics', 'Generating walks...');
+        var base = 3 + ((gnnEp + cbEp) / totalEp) * 90;
+        wvUpdateTrainBar(base);
+      } else if (stage === 'dynamics_walks') {
+        wvUpdateTrainStage('Stage 3: Dynamics', (e.walks||0) + ' walks — training...');
+      } else if (stage === 'dynamics_epoch' && e.epoch && e.total) {
+        var loss = e.loss !== undefined ? ' · loss ' + Number(e.loss).toFixed(4) : '';
+        wvUpdateTrainStage('Stage 3: Dynamics', 'Epoch ' + e.epoch + '/' + e.total + loss);
+        var base = 3 + ((gnnEp + cbEp) / totalEp) * 90;
+        var pct = base + (e.epoch / e.total) * (dynEp / totalEp) * 90;
+        wvUpdateTrainBar(pct);
+        setEl('wvTrainStatus', 'Dynamics epoch ' + e.epoch + '/' + e.total + loss, 'warn');
+      } else if (stage === 'indexing') {
+        wvUpdateTrainStage('Indexing', 'Rebuilding FAISS index...');
+        wvUpdateTrainBar(95);
+      } else if (stage === 'done') {
+        wvUpdateTrainStage('Complete', e.message || 'Training finished');
+        wvUpdateTrainBar(100);
+        var bar = document.getElementById('wvTrainEpochBar');
+        if (bar) bar.style.background = 'var(--ok)';
+      } else if (stage.indexOf('error') >= 0) {
+        wvUpdateTrainStage('Error', e.message || e.error || 'Unknown error');
+        var bar = document.getElementById('wvTrainEpochBar');
+        if (bar) bar.style.background = 'var(--err)';
+      } else if (stage === 'reembed_progress') {
+        wvUpdateTrainStage('Embedding', e.message || ('Embedded ' + (e.embedded||0)));
+        if (e.total) wvUpdateTrainBar((e.processed||0) / e.total * 90);
+      } else if (stage === 'embed_missing_done') {
+        wvUpdateTrainStage('Embed done', (e.upserted||0) + ' records upserted');
+      }
+    }
+
+    if (stage === 'done') {
+      wvLoadStats();
+      _wvConceptsLoaded = false;
+      // Auto-render the latent map after training completes
+      setTimeout(function(){ wvLoadScatter(); }, 500);
+    }
+  } catch(_){}
+});
+</script>
+</body>
+</html>

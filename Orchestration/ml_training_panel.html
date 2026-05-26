@@ -1,0 +1,1515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ML Training — Vera</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Syne:wght@400;500;600;700;800&display=swap');
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --void:#050709;--bg1:#080c12;--bg2:#0d1320;--bg3:#111b2e;--bg4:#162238;
+  --border:rgba(56,120,220,0.13);--border2:rgba(56,120,220,0.26);
+  --acc:#3878dc;--teal:#00d4aa;--amber:#f5a623;--rose:#e05a6b;--violet:#8b5cf6;--lime:#84cc16;
+  --text:#c8d8f4;--dim:rgba(140,170,230,0.45);--dim2:rgba(140,170,230,0.28);
+  --mono:'JetBrains Mono',monospace;--head:'Syne',sans-serif;
+}
+html,body{height:100%;width:100%;background:var(--void);color:var(--text);font-family:var(--mono);font-size:12px;overflow:hidden}
+
+/* ── Root layout ── */
+#root{display:grid;grid-template-rows:44px 1fr;grid-template-columns:230px 1fr 270px;height:100vh}
+
+/* ── Topbar ── */
+#topbar{grid-column:1/-1;display:flex;align-items:center;gap:10px;padding:0 14px;
+  background:var(--bg1);border-bottom:1px solid var(--border);position:relative;overflow:hidden}
+#topbar::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--teal) 30%,var(--amber) 65%,transparent)}
+.tb-logo{font-family:var(--head);font-size:14px;font-weight:700;
+  background:linear-gradient(135deg,var(--teal),var(--amber));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;white-space:nowrap}
+.tb-sep{width:1px;height:20px;background:var(--border)}
+.tb-stat{display:flex;flex-direction:column;gap:1px}
+.tb-stat-l{font-size:8px;color:var(--dim2);text-transform:uppercase;letter-spacing:.08em}
+.tb-stat-v{font-size:11px;color:var(--text);font-weight:500}
+.tb-actions{margin-left:auto;display:flex;gap:6px;align-items:center}
+.btn{font-family:var(--mono);font-size:10px;padding:4px 11px;background:var(--bg3);
+  border:1px solid var(--border);color:var(--dim);cursor:pointer;border-radius:2px;
+  letter-spacing:.04em;transition:all .15s;white-space:nowrap}
+.btn:hover{border-color:var(--border2);color:var(--acc)}
+.btn.primary{background:rgba(56,120,220,0.15);border-color:var(--acc);color:var(--acc)}
+.btn.teal{background:rgba(0,212,170,0.1);border-color:var(--teal);color:var(--teal)}
+.btn.amber{background:rgba(245,166,35,0.1);border-color:var(--amber);color:var(--amber)}
+.btn.rose{background:rgba(224,90,107,0.1);border-color:var(--rose);color:var(--rose)}
+.btn.violet{background:rgba(139,92,246,0.1);border-color:var(--violet);color:var(--violet)}
+.btn:disabled{opacity:.35;cursor:not-allowed;pointer-events:none}
+#tb-status{font-size:9px;font-family:var(--mono);color:var(--dim2);transition:color .3s}
+#tb-status.running{color:var(--amber)}
+#tb-status.ok{color:var(--teal)}
+#tb-status.error{color:var(--rose)}
+
+/* ── Columns ── */
+#left{background:var(--bg1);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+#center{display:flex;flex-direction:column;overflow:hidden}
+#right{background:var(--bg1);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+
+.stab-bar{display:flex;border-bottom:1px solid var(--border);flex-shrink:0}
+.stab{flex:1;padding:7px 4px;font-size:9.5px;color:var(--dim2);cursor:pointer;
+  border-bottom:2px solid transparent;transition:all .15s;text-align:center;letter-spacing:.04em}
+.stab:hover{color:var(--text)}
+.stab.active{color:var(--acc);border-bottom-color:var(--acc)}
+
+.col-body{flex:1;overflow-y:auto;padding:8px 10px}
+.col-body::-webkit-scrollbar{width:3px}
+.col-body::-webkit-scrollbar-thumb{background:rgba(56,120,220,0.2)}
+
+/* ── Cards ── */
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:3px;
+  padding:8px 10px;margin-bottom:6px;transition:border-color .15s}
+.card.active{border-color:var(--acc);background:rgba(56,120,220,0.06)}
+.card.clickable{cursor:pointer}
+.card.clickable:hover{border-color:var(--border2)}
+.card-title{font-family:var(--head);font-size:11px;font-weight:600;color:var(--text);margin-bottom:3px}
+.card-meta{font-size:9px;color:var(--dim2);line-height:1.6}
+.card-tags{display:flex;gap:3px;flex-wrap:wrap;margin-top:4px}
+.tag{font-size:8px;padding:1px 5px;border-radius:8px;background:rgba(56,120,220,0.1);
+  border:1px solid rgba(56,120,220,0.2);color:var(--dim)}
+
+/* ── Section headers ── */
+.sec{font-size:8.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--dim2);
+  margin-bottom:6px;font-weight:600}
+
+/* ── Form controls ── */
+.field{margin-bottom:7px}
+.field label{display:block;font-size:9px;color:var(--dim2);margin-bottom:3px;letter-spacing:.04em}
+.inp{width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);
+  font-family:var(--mono);font-size:10.5px;padding:4px 8px;border-radius:2px;outline:none;
+  transition:border-color .15s}
+.inp:focus{border-color:var(--border2)}
+.inp::placeholder{color:var(--dim2)}
+select.inp option{background:var(--bg2)}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+
+/* ── Progress bar ── */
+.prog-track{height:5px;background:rgba(255,255,255,0.06);border-radius:3px;overflow:hidden;margin:5px 0}
+.prog-fill{height:100%;border-radius:3px;transition:width .4s;background:var(--teal)}
+.prog-fill.running{background:var(--amber);animation:prog-pulse 1.2s ease-in-out infinite}
+@keyframes prog-pulse{0%,100%{opacity:1}50%{opacity:.5}}
+
+/* ── Loss chart ── */
+#chart-canvas{display:block;width:100%;background:var(--void)}
+
+/* ── Metric cards ── */
+.metric-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:8px}
+.metric{background:var(--bg2);border:1px solid var(--border);border-radius:3px;
+  padding:7px 9px;text-align:center}
+.metric-v{font-family:var(--mono);font-size:16px;font-weight:700;color:var(--teal)}
+.metric-v.amber{color:var(--amber)}
+.metric-v.rose{color:var(--rose)}
+.metric-l{font-size:8.5px;color:var(--dim2);margin-top:2px;text-transform:uppercase;letter-spacing:.06em}
+
+/* ── Epoch log ── */
+.epoch-log{font-family:var(--mono);font-size:9px;line-height:1.9;color:var(--dim2);
+  max-height:200px;overflow-y:auto;padding:5px 6px;background:var(--void);
+  border:1px solid var(--border);border-radius:2px}
+.epoch-log::-webkit-scrollbar{width:3px}
+.epoch-log::-webkit-scrollbar-thumb{background:rgba(56,120,220,0.15)}
+.epoch-row{display:flex;gap:10px;border-bottom:1px solid rgba(56,120,220,0.06);padding:1px 0}
+.epoch-row:hover{background:rgba(56,120,220,0.04)}
+.ep-num{color:var(--dim2);min-width:32px}
+.ep-tloss{color:var(--acc)}
+.ep-vloss{color:var(--teal)}
+.ep-acc{color:var(--amber)}
+.ep-lr{color:var(--dim2);font-size:8px}
+.ep-best{color:var(--lime);font-size:8px}
+
+/* ── Dataset table ── */
+.ds-row{display:flex;align-items:center;gap:8px;padding:5px 8px;
+  border:1px solid var(--border);border-radius:2px;margin-bottom:3px;
+  background:var(--bg2);cursor:pointer;transition:border-color .15s}
+.ds-row:hover{border-color:var(--border2)}
+.ds-row.active{border-color:var(--teal)}
+.ds-id{font-family:var(--mono);font-size:10px;flex:1;color:var(--text)}
+.ds-n{font-size:9px;color:var(--teal)}
+.ds-type{font-size:8px;padding:1px 5px;border-radius:8px;background:rgba(0,212,170,0.1);
+  border:1px solid rgba(0,212,170,0.2);color:var(--teal)}
+
+/* ── Prediction table ── */
+.pred-row{display:flex;gap:8px;padding:3px 6px;border-bottom:1px solid rgba(56,120,220,0.06);
+  font-size:9.5px;font-family:var(--mono)}
+.pred-true{color:var(--dim2)}
+.pred-val{color:var(--teal)}
+.pred-err{color:var(--rose);font-size:8.5px}
+
+/* ── Searchable combobox ── */
+.combo-wrap{position:relative;width:100%}
+.combo-input{width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);
+  font-family:var(--mono);font-size:10.5px;padding:4px 28px 4px 8px;border-radius:2px;outline:none;
+  transition:border-color .15s;cursor:text}
+.combo-input:focus{border-color:var(--border2)}
+.combo-input::placeholder{color:var(--dim2)}
+.combo-arrow{position:absolute;right:7px;top:50%;transform:translateY(-50%);
+  color:var(--dim2);font-size:9px;pointer-events:none;line-height:1}
+.combo-dropdown{position:absolute;top:calc(100% + 2px);left:0;right:0;z-index:9999;
+  background:var(--bg2);border:1px solid var(--border2);border-radius:3px;
+  max-height:180px;overflow-y:auto;display:none;box-shadow:0 8px 24px rgba(0,0,0,0.5)}
+.combo-dropdown.open{display:block}
+.combo-dropdown::-webkit-scrollbar{width:3px}
+.combo-dropdown::-webkit-scrollbar-thumb{background:rgba(56,120,220,0.3)}
+.combo-opt{padding:6px 10px;font-size:10px;font-family:var(--mono);cursor:pointer;
+  border-bottom:1px solid rgba(56,120,220,0.07);transition:background .1s;color:var(--text)}
+.combo-opt:hover,.combo-opt.focused{background:rgba(56,120,220,0.12);color:var(--acc)}
+.combo-opt.selected{background:rgba(56,120,220,0.18);color:var(--acc)}
+.combo-opt-meta{font-size:8.5px;color:var(--dim2);margin-top:1px}
+.combo-empty{padding:8px 10px;font-size:10px;color:var(--dim2);text-align:center}
+.combo-clear{position:absolute;right:20px;top:50%;transform:translateY(-50%);
+  color:var(--dim2);font-size:10px;cursor:pointer;line-height:1;display:none}
+.combo-clear.visible{display:block}
+.combo-clear:hover{color:var(--rose)}
+
+/* ── Status dot ── */
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex-shrink:0}
+.dot.running{background:var(--amber);box-shadow:0 0 5px var(--amber);animation:prog-pulse 1s infinite}
+.dot.complete{background:var(--teal)}
+.dot.error{background:var(--rose)}
+.dot.queued{background:var(--dim2)}
+.dot.stopped{background:var(--violet)}
+
+/* ── Log stream ── */
+.log-line{font-size:9px;line-height:1.8;padding:1px 4px;border-radius:2px}
+.log-line.ok{color:var(--teal)}
+.log-line.err{color:var(--rose)}
+.log-line.info{color:var(--dim2)}
+
+/* ── Pill ── */
+.pill{font-size:8.5px;padding:2px 7px;border-radius:10px;border:1px solid var(--border);
+  background:var(--bg3);color:var(--dim);cursor:pointer;transition:all .15s;display:inline-block}
+.pill:hover{border-color:var(--acc);color:var(--acc)}
+.pill.on{background:rgba(56,120,220,0.15);border-color:var(--acc);color:var(--acc)}
+</style>
+</head>
+<body>
+<div id="root">
+
+<!-- ── TOPBAR ── -->
+<div id="topbar">
+  <div class="tb-logo">ML Training</div>
+  <div class="tb-sep"></div>
+  <div class="tb-stat"><div class="tb-stat-l">Module</div><div class="tb-stat-v" id="tb-mod">—</div></div>
+  <div class="tb-stat"><div class="tb-stat-l">Job</div><div class="tb-stat-v" id="tb-job">—</div></div>
+  <div class="tb-stat"><div class="tb-stat-l">Epoch</div><div class="tb-stat-v" id="tb-epoch">—</div></div>
+  <div class="tb-stat"><div class="tb-stat-l">Val Loss</div><div class="tb-stat-v" id="tb-vloss">—</div></div>
+  <div class="tb-stat"><div class="tb-stat-l">Accuracy</div><div class="tb-stat-v" id="tb-acc">—</div></div>
+  <div class="tb-actions">
+    <button class="btn teal" id="btn-train" onclick="startTraining()">▶ Train</button>
+    <button class="btn rose"  id="btn-stop"  onclick="stopTraining()" disabled>■ Stop</button>
+    <button class="btn amber" onclick="loadExamples()">⬡ Load Examples</button>
+    <button class="btn" onclick="runEvaluate()">⊞ Evaluate</button>
+    <button class="btn violet" onclick="loadAllDatasets()">↻ Datasets</button>
+    <span id="tb-status">idle</span>
+  </div>
+</div>
+
+<!-- ── LEFT: config + datasets ── -->
+<div id="left">
+  <div class="stab-bar">
+    <div class="stab active" id="lt-train" onclick="switchLeft('train')">Train</div>
+    <div class="stab" id="lt-data"  onclick="switchLeft('data')">Data</div>
+    <div class="stab" id="lt-jobs"  onclick="switchLeft('jobs')">Jobs</div>
+  </div>
+
+  <!-- Train config -->
+  <div id="lp-train" class="col-body">
+
+    <div class="sec">Module</div>
+    <div class="field">
+      <label>Select Module</label>
+      <div class="combo-wrap" id="combo-module-wrap">
+        <input class="combo-input" id="combo-module-input" placeholder="Search modules…" autocomplete="off"
+          oninput="comboFilter('module')" onfocus="comboOpen('module')" onkeydown="comboKey(event,'module')">
+        <span class="combo-arrow">▾</span>
+        <span class="combo-clear" id="combo-module-clear" onclick="comboClear('module')">✕</span>
+        <div class="combo-dropdown" id="combo-module-drop"></div>
+      </div>
+      <input type="hidden" id="cfg-module-id">
+    </div>
+
+    <div class="sec">Dataset</div>
+    <div class="field">
+      <label>Select Dataset</label>
+      <div class="combo-wrap" id="combo-dataset-wrap">
+        <input class="combo-input" id="combo-dataset-input" placeholder="Search datasets…" autocomplete="off"
+          oninput="comboFilter('dataset')" onfocus="comboOpen('dataset')" onkeydown="comboKey(event,'dataset')">
+        <span class="combo-arrow">▾</span>
+        <span class="combo-clear" id="combo-dataset-clear" onclick="comboClear('dataset')">✕</span>
+        <div class="combo-dropdown" id="combo-dataset-drop"></div>
+      </div>
+      <input type="hidden" id="cfg-dataset-id">
+    </div>
+    <div class="field">
+      <label>Task</label>
+      <div class="combo-wrap" id="combo-task-wrap">
+        <input class="combo-input" id="combo-task-input" placeholder="Select task…" autocomplete="off"
+          oninput="comboFilter('task')" onfocus="comboOpen('task')" onkeydown="comboKey(event,'task')">
+        <span class="combo-arrow">▾</span>
+        <div class="combo-dropdown" id="combo-task-drop"></div>
+      </div>
+      <input type="hidden" id="cfg-task" value="classification">
+    </div>
+
+    <div class="sec">Optimiser</div>
+    <div class="row2" style="margin-bottom:6px">
+      <div class="field" style="margin:0">
+        <label>Optimiser</label>
+        <div class="combo-wrap">
+          <input class="combo-input" id="combo-opt-input" placeholder="adam" autocomplete="off"
+            oninput="comboFilter('opt')" onfocus="comboOpen('opt')" onkeydown="comboKey(event,'opt')">
+          <span class="combo-arrow">▾</span>
+          <div class="combo-dropdown" id="combo-opt-drop"></div>
+        </div>
+        <input type="hidden" id="cfg-opt" value="adam">
+      </div>
+      <div class="field" style="margin:0">
+        <label>Loss</label>
+        <div class="combo-wrap">
+          <input class="combo-input" id="combo-loss-input" placeholder="cross_entropy" autocomplete="off"
+            oninput="comboFilter('loss')" onfocus="comboOpen('loss')" onkeydown="comboKey(event,'loss')">
+          <span class="combo-arrow">▾</span>
+          <div class="combo-dropdown" id="combo-loss-drop"></div>
+        </div>
+        <input type="hidden" id="cfg-loss" value="cross_entropy">
+      </div>
+    </div>
+
+    <div class="sec">Hyperparameters</div>
+    <div class="row3" style="margin-bottom:6px">
+      <div class="field" style="margin:0"><label>LR</label><input class="inp" id="cfg-lr" value="0.001" type="number" step="0.0001"></div>
+      <div class="field" style="margin:0"><label>Epochs</label><input class="inp" id="cfg-epochs" value="30" type="number" min="1"></div>
+      <div class="field" style="margin:0"><label>Batch</label><input class="inp" id="cfg-batch" value="32" type="number" min="1"></div>
+    </div>
+    <div class="row3" style="margin-bottom:6px">
+      <div class="field" style="margin:0">
+        <label>LR Schedule</label>
+        <div class="combo-wrap">
+          <input class="combo-input" id="combo-schedule-input" placeholder="cosine" autocomplete="off"
+            oninput="comboFilter('schedule')" onfocus="comboOpen('schedule')" onkeydown="comboKey(event,'schedule')">
+          <span class="combo-arrow">▾</span>
+          <div class="combo-dropdown" id="combo-schedule-drop"></div>
+        </div>
+        <input type="hidden" id="cfg-schedule" value="cosine">
+      </div>
+      <div class="field" style="margin:0"><label>Weight Decay</label><input class="inp" id="cfg-wd" value="0.0001" type="number" step="0.0001"></div>
+      <div class="field" style="margin:0"><label>Early Stop</label><input class="inp" id="cfg-patience" value="8" type="number" min="1"></div>
+    </div>
+    <div class="row2">
+      <div class="field" style="margin:0"><label>Grad Clip</label><input class="inp" id="cfg-clip" value="5.0" type="number" step="0.1"></div>
+      <div class="field" style="margin:0"><label>Max Rows</label><input class="inp" id="cfg-maxrows" value="2000" type="number" step="100"></div>
+    </div>
+
+    <div style="margin-top:10px;display:flex;gap:6px">
+      <button class="btn teal" onclick="startTraining()" style="flex:1">▶ Start Training</button>
+      <button class="btn rose" onclick="stopTraining()" style="flex:1">■ Stop</button>
+    </div>
+    <div id="train-log" style="margin-top:8px"></div>
+  </div>
+
+  <!-- Datasets panel -->
+  <div id="lp-data" class="col-body" style="display:none">
+    <div class="sec">Fetch Data</div>
+
+    <div class="card" style="margin-bottom:8px">
+      <div class="card-title" style="margin-bottom:6px">Synthetic</div>
+      <div class="row2" style="margin-bottom:5px">
+        <div class="field" style="margin:0">
+          <label>Kind</label>
+          <select class="inp" id="syn-kind">
+            <option value="classification">Classification</option>
+            <option value="regression">Regression</option>
+            <option value="xor">XOR</option>
+            <option value="spiral">Spiral</option>
+            <option value="moons">Moons</option>
+            <option value="timeseries">Time Series</option>
+            <option value="autoencoder">Autoencoder</option>
+            <option value="ohlcv_synthetic">OHLCV Synthetic</option>
+          </select>
+        </div>
+        <div class="field" style="margin:0">
+          <label>N samples</label>
+          <input class="inp" id="syn-n" type="number" value="500">
+        </div>
+      </div>
+      <button class="btn teal" onclick="fetchSynthetic()" style="width:100%;font-size:9.5px">Generate + Store</button>
+    </div>
+
+    <div class="card" style="margin-bottom:8px">
+      <div class="card-title" style="margin-bottom:6px">OHLCV — Stooq (free)</div>
+      <div class="field">
+        <label>Symbol (e.g. AAPL.US, SPY.US, BTC.V, ^SPX)</label>
+        <input class="inp" id="ohlcv-sym" value="AAPL.US">
+      </div>
+      <div class="row2" style="margin-bottom:5px">
+        <div class="field" style="margin:0"><label>Interval</label>
+          <select class="inp" id="ohlcv-int">
+            <option value="d">Daily</option>
+            <option value="w">Weekly</option>
+            <option value="m">Monthly</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn amber" onclick="fetchOHLCV()" style="width:100%;font-size:9.5px">Fetch OHLCV</button>
+    </div>
+
+    <div class="card" style="margin-bottom:8px">
+      <div class="card-title" style="margin-bottom:6px">Crypto — CoinGecko (free)</div>
+      <div class="row2" style="margin-bottom:5px">
+        <div class="field" style="margin:0"><label>Coin ID</label>
+          <input class="inp" id="crypto-coin" value="bitcoin">
+        </div>
+        <div class="field" style="margin:0"><label>Days</label>
+          <input class="inp" id="crypto-days" type="number" value="365">
+        </div>
+      </div>
+      <button class="btn violet" onclick="fetchCrypto()" style="width:100%;font-size:9.5px">Fetch Crypto</button>
+    </div>
+
+    <div class="card" style="margin-bottom:8px">
+      <div class="card-title" style="margin-bottom:6px">Macro — FRED</div>
+      <div class="field">
+        <label>Series IDs (comma-separated)</label>
+        <input class="inp" id="macro-series" value="GDP,CPIAUCSL,FEDFUNDS,UNRATE">
+      </div>
+      <button class="btn" onclick="fetchMacro()" style="width:100%;font-size:9.5px">Fetch FRED</button>
+    </div>
+
+    <div class="sec" style="margin-top:8px">Available ML Datasets</div>
+    <div id="ds-list"><div style="color:var(--dim2);font-size:10px">Loading…</div></div>
+  </div>
+
+  <!-- Jobs panel -->
+  <div id="lp-jobs" class="col-body" style="display:none">
+    <button class="btn" onclick="loadJobs()" style="width:100%;margin-bottom:7px;font-size:9px">↻ Refresh Jobs</button>
+    <div id="job-list"><div style="color:var(--dim2);font-size:10px">No jobs yet</div></div>
+  </div>
+</div>
+
+<!-- ── CENTER: loss chart + epoch log ── -->
+<div id="center">
+  <!-- Chart toolbar -->
+  <div style="padding:6px 10px;border-bottom:1px solid var(--border);display:flex;
+    align-items:center;gap:8px;background:var(--bg1);flex-shrink:0">
+    <span style="font-size:9px;color:var(--dim2);font-family:var(--mono)">LOSS CURVES</span>
+    <div class="tb-sep"></div>
+    <span class="pill on" id="show-train" onclick="toggleSeries('train',this)">Train Loss</span>
+    <span class="pill on" id="show-val"   onclick="toggleSeries('val',this)">Val Loss</span>
+    <span class="pill"    id="show-acc"   onclick="toggleSeries('acc',this)">Accuracy</span>
+    <span class="pill"    id="show-lr"    onclick="toggleSeries('lr',this)">LR</span>
+    <div class="tb-sep"></div>
+    <span style="font-size:9px;color:var(--dim2)" id="chart-job-label">—</span>
+    <div style="margin-left:auto;display:flex;gap:5px">
+      <button class="btn" onclick="clearChart()" style="font-size:9px">Clear</button>
+      <button class="btn" onclick="exportHistory()" style="font-size:9px">Export CSV</button>
+    </div>
+  </div>
+
+  <!-- Chart -->
+  <div style="flex:0 0 320px;position:relative;padding:8px">
+    <canvas id="chart-canvas"></canvas>
+    <div id="chart-empty" style="position:absolute;inset:0;display:flex;align-items:center;
+      justify-content:center;color:var(--dim2);font-size:11px;pointer-events:none">
+      Start training to see loss curves
+    </div>
+  </div>
+
+  <!-- Metric summary -->
+  <div style="padding:6px 10px;border-top:1px solid var(--border);flex-shrink:0">
+    <div class="metric-grid" id="metric-grid">
+      <div class="metric"><div class="metric-v" id="m-tloss">—</div><div class="metric-l">Train Loss</div></div>
+      <div class="metric"><div class="metric-v teal" id="m-vloss">—</div><div class="metric-l">Val Loss</div></div>
+      <div class="metric"><div class="metric-v amber" id="m-acc">—</div><div class="metric-l">Val Acc</div></div>
+      <div class="metric"><div class="metric-v" style="color:var(--dim)" id="m-epoch">0/0</div><div class="metric-l">Epoch</div></div>
+    </div>
+    <!-- Progress -->
+    <div class="prog-track"><div class="prog-fill" id="prog-fill" style="width:0%"></div></div>
+    <div style="display:flex;justify-content:space-between;font-size:8.5px;color:var(--dim2);margin-top:2px">
+      <span id="prog-label">Idle</span>
+      <span id="prog-pct">0%</span>
+    </div>
+  </div>
+
+  <!-- Epoch log -->
+  <div style="flex:1;overflow:hidden;display:flex;flex-direction:column;border-top:1px solid var(--border)">
+    <div style="padding:5px 10px;border-bottom:1px solid var(--border);display:flex;
+      align-items:center;gap:8px;background:var(--bg1);flex-shrink:0">
+      <span style="font-size:9px;color:var(--dim2)">EPOCH LOG</span>
+      <button class="btn" onclick="clearLog()" style="font-size:8.5px;padding:2px 7px;margin-left:auto">Clear</button>
+    </div>
+    <div class="epoch-log" id="epoch-log" style="flex:1;max-height:none;border:none;border-radius:0;padding:5px 8px">
+      <div style="color:var(--dim2);text-align:center;padding:10px">Waiting for training…</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── RIGHT: predictions + eval + weights ── -->
+<div id="right">
+  <div class="stab-bar">
+    <div class="stab active" id="rt-eval"    onclick="switchRight('eval')">Eval</div>
+    <div class="stab" id="rt-predict" onclick="switchRight('predict')">Predict</div>
+    <div class="stab" id="rt-weights" onclick="switchRight('weights')">Weights</div>
+  </div>
+
+  <!-- Eval -->
+  <div id="rp-eval" class="col-body" style="padding:0">
+    <div style="padding:8px 10px;border-bottom:1px solid var(--border)">
+      <div class="sec">Evaluate on Test Set</div>
+      <div class="field">
+        <label>Module</label>
+        <div class="combo-wrap">
+          <input class="combo-input" id="combo-eval-module-input" placeholder="Select module…" autocomplete="off"
+            oninput="comboFilter('eval-module')" onfocus="comboOpen('eval-module')" onkeydown="comboKey(event,'eval-module')">
+          <span class="combo-arrow">▾</span>
+          <div class="combo-dropdown" id="combo-eval-module-drop"></div>
+        </div>
+        <input type="hidden" id="eval-module">
+      </div>
+      <div class="field">
+        <label>Dataset</label>
+        <div class="combo-wrap">
+          <input class="combo-input" id="combo-eval-dataset-input" placeholder="Select dataset…" autocomplete="off"
+            oninput="comboFilter('eval-dataset')" onfocus="comboOpen('eval-dataset')" onkeydown="comboKey(event,'eval-dataset')">
+          <span class="combo-arrow">▾</span>
+          <div class="combo-dropdown" id="combo-eval-dataset-drop"></div>
+        </div>
+        <input type="hidden" id="eval-dataset">
+      </div>
+      <div class="field">
+        <label>Loss Function</label>
+        <div class="combo-wrap">
+          <input class="combo-input" id="combo-eval-loss-input" placeholder="mse" autocomplete="off"
+            oninput="comboFilter('eval-loss')" onfocus="comboOpen('eval-loss')" onkeydown="comboKey(event,'eval-loss')">
+          <span class="combo-arrow">▾</span>
+          <div class="combo-dropdown" id="combo-eval-loss-drop"></div>
+        </div>
+        <input type="hidden" id="eval-loss" value="mse">
+      </div>
+      <button class="btn teal" onclick="runEvaluate()" style="width:100%">⊞ Evaluate</button>
+    </div>
+    <div id="eval-results" style="padding:8px 10px">
+      <div class="empty" style="color:var(--dim2);font-size:10px;text-align:center;padding:20px 0">
+        Run evaluation to see metrics
+      </div>
+    </div>
+  </div>
+
+  <!-- Predict -->
+  <div id="rp-predict" class="col-body" style="display:none;padding:0">
+    <div style="padding:8px 10px;border-bottom:1px solid var(--border)">
+      <div class="sec">Batch Predict</div>
+      <div class="field">
+        <label>Module</label>
+        <div class="combo-wrap">
+          <input class="combo-input" id="combo-pred-module-input" placeholder="Select module…" autocomplete="off"
+            oninput="comboFilter('pred-module')" onfocus="comboOpen('pred-module')" onkeydown="comboKey(event,'pred-module')">
+          <span class="combo-arrow">▾</span>
+          <div class="combo-dropdown" id="combo-pred-module-drop"></div>
+        </div>
+        <input type="hidden" id="pred-module">
+      </div>
+      <div class="field">
+        <label>Input X (JSON array of arrays)</label>
+        <textarea class="inp" id="pred-x" rows="4" style="resize:vertical;font-size:9.5px"
+          placeholder="[[0.1, 0.2, ...], [0.3, 0.4, ...]]"></textarea>
+      </div>
+      <button class="btn teal" onclick="runPredict()" style="width:100%;margin-bottom:5px">▶ Predict</button>
+      <button class="btn" onclick="loadTestSample()" style="width:100%;font-size:9px">Load test sample from dataset</button>
+    </div>
+    <div id="pred-results" style="padding:8px 10px">
+      <div style="color:var(--dim2);font-size:10px;text-align:center;padding:20px 0">No predictions yet</div>
+    </div>
+  </div>
+
+  <!-- Weights -->
+  <div id="rp-weights" class="col-body" style="display:none;padding:0">
+    <div style="padding:8px 10px;border-bottom:1px solid var(--border)">
+      <div class="sec">Trained Weights</div>
+      <div class="field">
+        <label>Module</label>
+        <div class="combo-wrap">
+          <input class="combo-input" id="combo-w-module-input" placeholder="Select module…" autocomplete="off"
+            oninput="comboFilter('w-module')" onfocus="comboOpen('w-module')" onkeydown="comboKey(event,'w-module')">
+          <span class="combo-arrow">▾</span>
+          <div class="combo-dropdown" id="combo-w-module-drop"></div>
+        </div>
+        <input type="hidden" id="w-module">
+      </div>
+      <div style="display:flex;gap:5px;margin-bottom:6px">
+        <button class="btn teal" onclick="loadWeightsView()" style="flex:1;font-size:9px">View Weights</button>
+        <button class="btn" onclick="exportWeights()" style="flex:1;font-size:9px">Export JSON</button>
+      </div>
+      <div class="field">
+        <label>Import Weights JSON</label>
+        <textarea class="inp" id="w-import" rows="3" style="resize:vertical;font-size:9px"
+          placeholder="Paste weights JSON here…"></textarea>
+      </div>
+      <button class="btn amber" onclick="importWeights()" style="width:100%;font-size:9px">Load Weights</button>
+    </div>
+    <div id="w-view" style="padding:8px 10px">
+      <div style="color:var(--dim2);font-size:10px;text-align:center;padding:20px 0">No weights loaded</div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════════════════════
+const BASE = window.parent?._veraBase || '';
+let _activeJobId    = null;
+let _activeModuleId = null;
+let _activeDataset  = null;
+let _modules        = [];
+let _datasets       = [];
+let _jobs           = [];
+let _history        = {train_loss:[], val_loss:[], train_acc:[], val_acc:[], lr:[]};
+let _showSeries     = {train:true, val:true, acc:false, lr:false};
+let _testData       = null;
+
+// Chart
+let _chart_cvs, _chart_ctx;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COMBOBOX ENGINE
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Registry: key → { items:[{value,label,meta}], onSelect, inputId, dropId, hiddenId }
+const _combos = {};
+let _comboFocusIdx = {};
+
+function comboRegister(key, items, onSelect){
+  _combos[key] = {
+    items,
+    filtered: [...items],
+    onSelect,
+    inputId:  `combo-${key}-input`,
+    dropId:   `combo-${key}-drop`,
+    hiddenId: key.includes('-') ? key.replace('combo-','') : `cfg-${key}`,
+  };
+  _comboFocusIdx[key] = -1;
+  renderComboDropdown(key, items);
+}
+
+function comboOpen(key){
+  // Close all other dropdowns first
+  Object.keys(_combos).forEach(k => {
+    if(k !== key) document.getElementById(`combo-${k}-drop`)?.classList.remove('open');
+  });
+  const c = _combos[key]; if(!c) return;
+  const filter = document.getElementById(c.inputId)?.value.toLowerCase() || '';
+  c.filtered = filter
+    ? c.items.filter(i => i.label.toLowerCase().includes(filter) || (i.meta||'').toLowerCase().includes(filter))
+    : [...c.items];
+  renderComboDropdown(key, c.filtered);
+  document.getElementById(c.dropId)?.classList.add('open');
+  _comboFocusIdx[key] = -1;
+}
+
+function comboFilter(key){
+  const c = _combos[key]; if(!c) return;
+  const val = document.getElementById(c.inputId)?.value.toLowerCase() || '';
+  c.filtered = val
+    ? c.items.filter(i => i.label.toLowerCase().includes(val) || (i.meta||'').toLowerCase().includes(val))
+    : [...c.items];
+  renderComboDropdown(key, c.filtered);
+  document.getElementById(c.dropId)?.classList.add('open');
+  _comboFocusIdx[key] = -1;
+  // Clear hidden value since user is typing
+  const hiddenEl = document.getElementById(c.hiddenId);
+  if(hiddenEl) hiddenEl.value = '';
+  // Show/hide clear button
+  const clearEl = document.getElementById(`combo-${key}-clear`);
+  if(clearEl) clearEl.classList.toggle('visible', val.length > 0);
+}
+
+function comboSelect(key, value, label){
+  const c = _combos[key]; if(!c) return;
+  const inputEl  = document.getElementById(c.inputId);
+  const hiddenEl = document.getElementById(c.hiddenId);
+  const dropEl   = document.getElementById(c.dropId);
+  const clearEl  = document.getElementById(`combo-${key}-clear`);
+  if(inputEl)  inputEl.value  = label;
+  if(hiddenEl) hiddenEl.value = value;
+  if(dropEl)   dropEl.classList.remove('open');
+  if(clearEl)  clearEl.classList.add('visible');
+  _comboFocusIdx[key] = -1;
+  if(c.onSelect) c.onSelect(value, label);
+  // Update dropdown to show selected state
+  renderComboDropdown(key, c.filtered, value);
+}
+
+function comboClear(key){
+  const c = _combos[key]; if(!c) return;
+  const inputEl  = document.getElementById(c.inputId);
+  const hiddenEl = document.getElementById(c.hiddenId);
+  const clearEl  = document.getElementById(`combo-${key}-clear`);
+  if(inputEl)  { inputEl.value = ''; inputEl.focus(); }
+  if(hiddenEl) hiddenEl.value = '';
+  if(clearEl)  clearEl.classList.remove('visible');
+  comboFilter(key);
+}
+
+function comboKey(e, key){
+  const c = _combos[key]; if(!c) return;
+  const drop = document.getElementById(c.dropId);
+  const opts = drop?.querySelectorAll('.combo-opt') || [];
+  if(e.key === 'ArrowDown'){
+    e.preventDefault();
+    _comboFocusIdx[key] = Math.min(_comboFocusIdx[key]+1, opts.length-1);
+    opts.forEach((o,i) => o.classList.toggle('focused', i===_comboFocusIdx[key]));
+    opts[_comboFocusIdx[key]]?.scrollIntoView({block:'nearest'});
+  } else if(e.key === 'ArrowUp'){
+    e.preventDefault();
+    _comboFocusIdx[key] = Math.max(_comboFocusIdx[key]-1, 0);
+    opts.forEach((o,i) => o.classList.toggle('focused', i===_comboFocusIdx[key]));
+    opts[_comboFocusIdx[key]]?.scrollIntoView({block:'nearest'});
+  } else if(e.key === 'Enter'){
+    e.preventDefault();
+    const idx = _comboFocusIdx[key];
+    if(idx >= 0 && idx < c.filtered.length){
+      const item = c.filtered[idx];
+      comboSelect(key, item.value, item.label);
+    } else if(c.filtered.length === 1){
+      comboSelect(key, c.filtered[0].value, c.filtered[0].label);
+    }
+  } else if(e.key === 'Escape'){
+    document.getElementById(c.dropId)?.classList.remove('open');
+  }
+}
+
+function renderComboDropdown(key, items, selectedValue=''){
+  const dropEl = document.getElementById(`combo-${key}-drop`);
+  if(!dropEl) return;
+  if(!items.length){
+    dropEl.innerHTML = '<div class="combo-empty">No results</div>';
+    return;
+  }
+  dropEl.innerHTML = items.map(item => `
+    <div class="combo-opt ${item.value===selectedValue?'selected':''}"
+         onclick="comboSelect('${key}','${item.value.replace(/'/g,"\\'")}','${item.label.replace(/'/g,"\\'")}')">
+      <div>${esc(item.label)}</div>
+      ${item.meta ? `<div class="combo-opt-meta">${esc(item.meta)}</div>` : ''}
+    </div>`).join('');
+}
+
+// Close dropdowns when clicking outside
+document.addEventListener('click', e => {
+  if(!e.target.closest('.combo-wrap')){
+    document.querySelectorAll('.combo-dropdown').forEach(d => d.classList.remove('open'));
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STATIC COMBO REGISTRATIONS (done at init)
+// ═══════════════════════════════════════════════════════════════════════════
+function registerStaticCombos(){
+  comboRegister('task', [
+    {value:'classification',        label:'Classification',         meta:'multi-class'},
+    {value:'binary_classification', label:'Binary Classification',  meta:'2-class / sigmoid'},
+    {value:'regression',            label:'Regression',             meta:'continuous output'},
+    {value:'forecasting',           label:'Forecasting',            meta:'time-series prediction'},
+    {value:'ohlcv_direction',       label:'OHLCV Direction',        meta:'finance — up/down signal'},
+    {value:'reconstruction',        label:'Reconstruction',         meta:'autoencoder'},
+  ], v => document.getElementById('cfg-task').value = v);
+  // Set default display
+  document.getElementById('combo-task-input').value = 'Classification';
+  document.getElementById('cfg-task').value = 'classification';
+
+  comboRegister('opt', [
+    {value:'adam',  label:'Adam',  meta:'Adaptive moment estimation — default'},
+    {value:'adamw', label:'AdamW', meta:'Adam with decoupled weight decay'},
+    {value:'sgd',   label:'SGD',   meta:'Stochastic gradient descent + momentum'},
+  ], v => document.getElementById('cfg-opt').value = v);
+  document.getElementById('combo-opt-input').value = 'Adam';
+  document.getElementById('cfg-opt').value = 'adam';
+
+  comboRegister('loss', [
+    {value:'cross_entropy', label:'Cross Entropy',  meta:'classification — softmax output'},
+    {value:'bce',           label:'Binary CE',       meta:'binary classification — sigmoid'},
+    {value:'mse',           label:'MSE',             meta:'regression — mean squared error'},
+    {value:'mae',           label:'MAE',             meta:'regression — mean absolute error'},
+    {value:'huber',         label:'Huber',           meta:'robust regression'},
+  ], v => document.getElementById('cfg-loss').value = v);
+  document.getElementById('combo-loss-input').value = 'Cross Entropy';
+  document.getElementById('cfg-loss').value = 'cross_entropy';
+
+  comboRegister('schedule', [
+    {value:'cosine',   label:'Cosine Annealing', meta:'smooth decay to 0'},
+    {value:'constant', label:'Constant',         meta:'fixed learning rate'},
+    {value:'step',     label:'Step Decay',       meta:'halve every N epochs'},
+    {value:'linear',   label:'Linear',           meta:'linearly decrease to 0'},
+  ], v => document.getElementById('cfg-schedule').value = v);
+  document.getElementById('combo-schedule-input').value = 'Cosine Annealing';
+  document.getElementById('cfg-schedule').value = 'cosine';
+
+  comboRegister('eval-loss', [
+    {value:'mse',           label:'MSE'},
+    {value:'mae',           label:'MAE'},
+    {value:'cross_entropy', label:'Cross Entropy'},
+    {value:'bce',           label:'Binary CE'},
+    {value:'huber',         label:'Huber'},
+  ], v => document.getElementById('eval-loss').value = v);
+  document.getElementById('combo-eval-loss-input').value = 'MSE';
+  document.getElementById('eval-loss').value = 'mse';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DYNAMIC COMBOS — modules & datasets (refreshed when data loads)
+// ═══════════════════════════════════════════════════════════════════════════
+function refreshModuleCombos(){
+  const items = _modules.map(m => ({
+    value: m.id,
+    label: m.name,
+    meta:  `${fmtParams(m.param_count)} params · ${m.nodes} nodes · ${(m.tags||[]).join(', ')}`,
+  }));
+
+  const onModSelect = (id, label) => {
+    _activeModuleId = id;
+    document.getElementById('cfg-module-id').value = id;
+    document.getElementById('tb-mod').textContent = label;
+    log_(`Selected module: ${label} (${id})`, 'info');
+    // Sync all module combos
+    ['eval-module','pred-module','w-module'].forEach(k => {
+      const inputEl = document.getElementById(`combo-${k}-input`);
+      const hiddenEl = document.getElementById(k.replace('combo-',''));
+      if(inputEl)  inputEl.value  = label;
+      if(hiddenEl) hiddenEl.value = id;
+    });
+  };
+
+  ['module','eval-module','pred-module','w-module'].forEach(key => {
+    const existing = _combos[key];
+    const currentVal = document.getElementById(key==='module'?'cfg-module-id':key)?.value || '';
+    const currentLabel = document.getElementById(`combo-${key}-input`)?.value || '';
+    comboRegister(key, items, onModSelect);
+    // Restore previous selection if still valid
+    if(currentVal){
+      const found = items.find(i => i.value === currentVal);
+      if(found){
+        document.getElementById(`combo-${key}-input`).value = found.label;
+        document.getElementById(key==='module'?'cfg-module-id':key).value = currentVal;
+      }
+    }
+  });
+}
+
+function refreshDatasetCombos(){
+  const items = _datasets.map(d => ({
+    value: d.dataset_id,
+    label: d.dataset_id,
+    meta:  `${d.record_count||0} records · ${guessType(d.dataset_id)}`,
+  }));
+
+  const onDsSelect = (id) => {
+    _activeDataset = id;
+    document.getElementById('cfg-dataset-id').value = id;
+    document.getElementById('eval-dataset').value = id;
+    log_(`Selected dataset: ${id}`, 'info');
+    // Sync eval-dataset combo display
+    const evalInput = document.getElementById('combo-eval-dataset-input');
+    if(evalInput) evalInput.value = id;
+    document.getElementById('eval-dataset').value = id;
+  };
+
+  ['dataset','eval-dataset'].forEach(key => {
+    const currentVal = document.getElementById(key==='dataset'?'cfg-dataset-id':'eval-dataset')?.value || '';
+    comboRegister(key, items, onDsSelect);
+    if(currentVal){
+      const found = items.find(i => i.value === currentVal);
+      if(found) document.getElementById(`combo-${key}-input`).value = found.label;
+    }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════════════════════
+async function init(){
+  _chart_cvs = document.getElementById('chart-canvas');
+  _chart_ctx  = _chart_cvs.getContext('2d');
+  resizeChart();
+  window.addEventListener('resize', resizeChart);
+  registerStaticCombos();
+  await loadModules();
+  await loadAllDatasets();
+  connectEvents();
+  setInterval(pollActiveJob, 2000);
+}
+
+function resizeChart(){
+  const wrap = _chart_cvs.parentElement;
+  _chart_cvs.width  = Math.max(1, wrap.clientWidth - 16);
+  _chart_cvs.height = 280;
+  drawChart();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// API
+// ═══════════════════════════════════════════════════════════════════════════
+async function api(path, method='GET', body=null){
+  try{
+    const opts={method,headers:{'Content-Type':'application/json'}};
+    if(body) opts.body=JSON.stringify(body);
+    const r=await fetch(BASE+path,opts);
+    const t=await r.text();
+    return t.trim()?JSON.parse(t):null;
+  }catch(e){ console.error(path,e); return null; }
+}
+async function cap(name,args={}){
+  const r=await api('/mcp/call','POST',{name,arguments:args});
+  return r?.content??r;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MODULES
+// ═══════════════════════════════════════════════════════════════════════════
+async function loadModules(){
+  const r=await cap('ml.list');
+  if(r&&!r.error){
+    _modules=r.modules||[];
+    refreshModuleCombos();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DATASETS
+// ═══════════════════════════════════════════════════════════════════════════
+async function loadAllDatasets(){
+  const r=await cap('ml.data.list');
+  if(r&&!r.error){
+    _datasets=r.datasets||[];
+    renderDsList();
+    refreshDatasetCombos();
+  }
+}
+
+function renderDsList(){
+  const el=document.getElementById('ds-list');
+  if(!_datasets.length){el.innerHTML='<div style="color:var(--dim2);font-size:10px">No ML datasets yet — generate or fetch above</div>';return;}
+  el.innerHTML=_datasets.map(d=>`
+    <div class="ds-row ${d.dataset_id===_activeDataset?'active':''}"
+         onclick="selectDatasetFromList('${d.dataset_id}')">
+      <div>
+        <div class="ds-id">${esc(d.dataset_id)}</div>
+        <div class="card-meta">${d.record_count||0} records · ${(d.updated_at||'').slice(0,10)}</div>
+      </div>
+      <div class="ds-type">${guessType(d.dataset_id)}</div>
+    </div>`).join('');
+}
+
+function guessType(id){
+  if(id.includes('ohlcv')||id.includes('crypto')) return 'finance';
+  if(id.includes('macro')||id.includes('fred'))   return 'macro';
+  if(id.includes('spiral')||id.includes('moon'))  return 'toy';
+  if(id.includes('synthetic'))                    return 'synthetic';
+  return 'dataset';
+}
+
+function selectDatasetFromList(id){
+  _activeDataset=id;
+  document.getElementById('cfg-dataset-id').value=id;
+  document.getElementById('eval-dataset').value=id;
+  // Update both dataset combobox displays
+  document.getElementById('combo-dataset-input').value=id;
+  const evalInput=document.getElementById('combo-eval-dataset-input');
+  if(evalInput) evalInput.value=id;
+  renderDsList();
+  log_(`Selected dataset: ${id}`, 'info');
+}
+
+// ── Fetch actions ──────────────────────────────────────────────────────────
+async function fetchSynthetic(){
+  const kind=document.getElementById('syn-kind').value;
+  const n=parseInt(document.getElementById('syn-n').value)||500;
+  setStatus(`Generating ${kind}…`,'running');
+  const r=await cap('ml.data.fetch_synthetic',{kind,n});
+  if(r?.ok){
+    setStatus(`Generated ${r.n_samples} samples → ${r.dataset_id}`,'ok');
+    log_(`✓ Dataset: ${r.dataset_id} (${r.n_samples} rows)`, 'ok');
+    await loadAllDatasets();
+    selectDatasetFromList(r.dataset_id);
+  } else {
+    setStatus(r?.error||'Failed','error');
+    log_(`✗ ${r?.error}`, 'err');
+  }
+}
+
+async function fetchOHLCV(){
+  const sym=document.getElementById('ohlcv-sym').value;
+  const int_=document.getElementById('ohlcv-int').value;
+  setStatus(`Fetching ${sym}…`,'running');
+  log_(`Fetching OHLCV: ${sym} (${int_})…`, 'info');
+  const r=await cap('ml.data.fetch_ohlcv',{symbol:sym,interval:int_});
+  if(r?.ok){
+    setStatus(`${r.n_samples} bars → ${r.dataset_id}`,'ok');
+    log_(`✓ ${sym}: ${r.n_samples} bars, ${r.date_range||''}`, 'ok');
+    await loadAllDatasets();
+    selectDatasetFromList(r.dataset_id);
+  } else {
+    setStatus(r?.error||'Fetch failed','error');
+    log_(`✗ ${r?.error||'Stooq fetch failed'}`, 'err');
+  }
+}
+
+async function fetchCrypto(){
+  const coin=document.getElementById('crypto-coin').value;
+  const days=parseInt(document.getElementById('crypto-days').value)||365;
+  setStatus(`Fetching ${coin}…`,'running');
+  const r=await cap('ml.data.fetch_crypto',{coin_id:coin,days});
+  if(r?.ok){
+    setStatus(`${r.n_samples} candles → ${r.dataset_id}`,'ok');
+    log_(`✓ ${coin}: ${r.n_samples} candles`, 'ok');
+    await loadAllDatasets();
+    selectDatasetFromList(r.dataset_id);
+  } else {
+    setStatus(r?.error||'Failed','error');
+    log_(`✗ ${r?.error}`, 'err');
+  }
+}
+
+async function fetchMacro(){
+  const series=document.getElementById('macro-series').value;
+  setStatus(`Fetching FRED…`,'running');
+  const r=await cap('ml.data.fetch_macro',{series_ids:series});
+  if(r?.ok){
+    setStatus(`${r.n_samples} records → ${r.dataset_id}`,'ok');
+    log_(`✓ FRED: ${r.n_samples} records (${(r.series||[]).join(', ')})`, 'ok');
+    await loadAllDatasets();
+    selectDatasetFromList(r.dataset_id||'ml.macro.fred');
+  } else {
+    setStatus(r?.error||'Failed','error');
+    log_(`✗ ${r?.error}`, 'err');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TRAINING
+// ═══════════════════════════════════════════════════════════════════════════
+async function startTraining(){
+  const module_id = document.getElementById('cfg-module-id').value.trim();
+  const dataset_id= document.getElementById('cfg-dataset-id').value.trim();
+  const task      = document.getElementById('cfg-task').value;
+  const opt       = document.getElementById('cfg-opt').value;
+  const loss      = document.getElementById('cfg-loss').value;
+  const lr        = parseFloat(document.getElementById('cfg-lr').value)||0.001;
+  const epochs    = parseInt(document.getElementById('cfg-epochs').value)||30;
+  const batch     = parseInt(document.getElementById('cfg-batch').value)||32;
+  const schedule  = document.getElementById('cfg-schedule').value;
+  const wd        = parseFloat(document.getElementById('cfg-wd').value)||0;
+  const patience  = parseInt(document.getElementById('cfg-patience').value)||8;
+  const clip      = parseFloat(document.getElementById('cfg-clip').value)||5.0;
+  const maxrows   = parseInt(document.getElementById('cfg-maxrows').value)||2000;
+
+  if(!module_id){ setStatus('Select a module first','error'); log_('No module selected','err'); return; }
+  if(!dataset_id){ setStatus('Select a dataset first','error'); log_('No dataset selected','err'); return; }
+  if(!task){ setStatus('Select a task','error'); return; }
+
+  _activeModuleId = module_id;
+  setStatus('Preparing data…','running');
+  log_(`Preparing dataset: ${dataset_id} (${task})…`, 'info');
+
+  const config = {
+    epochs, lr, batch_size:batch, optimiser:opt||'adam', loss:loss||'mse',
+    lr_schedule:schedule||'cosine', weight_decay:wd,
+    early_stopping_patience:patience, grad_clip:clip,
+  };
+
+  const r = await cap('ml.train.from_dataset',{
+    module_id, dataset_id, task, max_rows:maxrows,
+    config: JSON.stringify(config),
+  });
+
+  if(r?.ok){
+    _activeJobId = r.job_id;
+    _history = {train_loss:[],val_loss:[],train_acc:[],val_acc:[],lr:[]};
+    clearChart();
+    document.getElementById('epoch-log').innerHTML='';
+    document.getElementById('tb-job').textContent = r.job_id;
+    document.getElementById('chart-job-label').textContent = `Job ${r.job_id}`;
+    document.getElementById('btn-stop').disabled=false;
+    document.getElementById('prog-fill').className='prog-fill running';
+    setStatus(`Training started: ${r.job_id}`,'running');
+    log_(`✓ Job ${r.job_id} started — ${epochs} epochs, lr=${lr}, opt=${opt||'adam'}`, 'ok');
+  } else {
+    setStatus(r?.error||'Failed to start','error');
+    log_(`✗ ${r?.error||'Start failed'}`, 'err');
+  }
+}
+
+async function stopTraining(){
+  if(!_activeJobId) return;
+  await cap('ml.train.stop',{job_id:_activeJobId});
+  setStatus('Stopping…','running');
+  log_(`Stop requested for job ${_activeJobId}`, 'info');
+}
+
+async function pollActiveJob(){
+  if(!_activeJobId) return;
+  const r=await cap('ml.train.history',{job_id:_activeJobId});
+  if(!r||r.error) return;
+
+  const h=r.history||{};
+  if(h.train_loss?.length > _history.train_loss.length){
+    _history=h;
+    updateMetrics();
+    drawChart();
+    updateEpochLog(h);
+  }
+
+  const ep=r.epochs_run||0;
+  const tot=r.config?.epochs||1;
+  const pct=Math.min(100,Math.round(ep/tot*100));
+  document.getElementById('prog-fill').style.width=pct+'%';
+  document.getElementById('prog-pct').textContent=pct+'%';
+  document.getElementById('tb-epoch').textContent=`${ep}/${tot}`;
+  document.getElementById('m-epoch').textContent=`${ep}/${tot}`;
+  document.getElementById('prog-label').textContent=`Epoch ${ep}/${tot}`;
+
+  if(['complete','early_stopped','stopped'].includes(r.status)){
+    setStatus(`${r.status} — best val loss: ${(r.best_val_loss||0).toFixed(5)}`,'ok');
+    document.getElementById('prog-fill').className='prog-fill';
+    document.getElementById('prog-fill').style.width='100%';
+    document.getElementById('btn-stop').disabled=true;
+    log_(`✓ Training ${r.status}. Best val loss: ${(r.best_val_loss||0).toFixed(6)}`, 'ok');
+    _activeJobId=null;
+  } else if(r.status==='error'){
+    setStatus(`Error: ${r.error||'unknown'}`,'error');
+    _activeJobId=null;
+  }
+}
+
+function updateMetrics(){
+  const h=_history;
+  const n=h.train_loss.length;
+  if(!n) return;
+  const tl=h.train_loss[n-1], vl=h.val_loss[n-1], acc=h.val_acc[n-1];
+  document.getElementById('m-tloss').textContent=tl.toFixed(5);
+  document.getElementById('m-vloss').textContent=vl.toFixed(5);
+  document.getElementById('m-acc').textContent=acc>0?(acc*100).toFixed(1)+'%':'—';
+  document.getElementById('tb-vloss').textContent=vl.toFixed(5);
+  document.getElementById('tb-acc').textContent=acc>0?(acc*100).toFixed(1)+'%':'—';
+  document.getElementById('chart-empty').style.display='none';
+}
+
+function updateEpochLog(h){
+  const el=document.getElementById('epoch-log');
+  const n=h.train_loss.length;
+  const existingRows=el.querySelectorAll('.epoch-row').length;
+  if(existingRows===0) el.innerHTML='';
+  for(let i=existingRows;i<n;i++){
+    const isBest = i===0 || h.val_loss[i]<Math.min(...h.val_loss.slice(0,i));
+    const row=document.createElement('div');
+    row.className='epoch-row';
+    row.innerHTML=`<span class="ep-num">${String(i+1).padStart(3,' ')}</span>
+      <span class="ep-tloss">L=${h.train_loss[i].toFixed(5)}</span>
+      <span class="ep-vloss">VL=${h.val_loss[i].toFixed(5)}</span>
+      ${h.val_acc[i]>0?`<span class="ep-acc">acc=${(h.val_acc[i]*100).toFixed(1)}%</span>`:''}
+      <span class="ep-lr">lr=${(h.lr[i]||0).toExponential(2)}</span>
+      ${isBest?'<span class="ep-best">★best</span>':''}`;
+    el.appendChild(row);
+  }
+  el.scrollTop=el.scrollHeight;
+}
+
+function clearLog(){ document.getElementById('epoch-log').innerHTML=''; }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CHART
+// ═══════════════════════════════════════════════════════════════════════════
+function drawChart(){
+  const c=_chart_ctx, W=_chart_cvs.width, H=_chart_cvs.height;
+  if(!W||!H) return;
+  c.clearRect(0,0,W,H);
+
+  const h=_history;
+  const n=Math.max(h.train_loss.length, h.val_loss.length);
+  if(!n){ document.getElementById('chart-empty').style.display='flex'; return; }
+  document.getElementById('chart-empty').style.display='none';
+
+  const PAD={top:14,right:16,bottom:28,left:58};
+  const cW=W-PAD.left-PAD.right, cH=H-PAD.top-PAD.bottom;
+
+  c.save();
+  c.strokeStyle='rgba(56,120,220,0.08)'; c.lineWidth=0.5;
+  for(let i=0;i<=5;i++){
+    const y=PAD.top+cH*(1-i/5);
+    c.beginPath();c.moveTo(PAD.left,y);c.lineTo(PAD.left+cW,y);c.stroke();
+  }
+  for(let i=0;i<=n;i+=Math.max(1,Math.floor(n/8))){
+    const x=PAD.left+i/n*cW;
+    c.beginPath();c.moveTo(x,PAD.top);c.lineTo(x,PAD.top+cH);c.stroke();
+  }
+  c.restore();
+
+  const series=[];
+  if(_showSeries.train && h.train_loss.length) series.push({data:h.train_loss,color:'#3878dc',label:'Train Loss'});
+  if(_showSeries.val   && h.val_loss.length)   series.push({data:h.val_loss,  color:'#00d4aa',label:'Val Loss'});
+  if(_showSeries.acc   && h.val_acc.some(v=>v>0)) series.push({data:h.val_acc,color:'#f5a623',label:'Val Acc',axisRight:true});
+  if(_showSeries.lr    && h.lr.length)         series.push({data:h.lr,        color:'rgba(140,170,230,0.4)',label:'LR',axisRight:true,tiny:true});
+
+  if(!series.length) return;
+
+  const lossData=series.filter(s=>!s.axisRight).flatMap(s=>s.data);
+  const lMin=lossData.length?Math.max(0,Math.min(...lossData)*0.92):0;
+  const lMax=lossData.length?Math.max(...lossData)*1.08+1e-9:1;
+  const rData=series.filter(s=>s.axisRight).flatMap(s=>s.data);
+  const rMin=rData.length?Math.max(0,Math.min(...rData)*0.92):0;
+  const rMax=rData.length?Math.max(...rData)*1.08+1e-9:1;
+
+  c.save();
+  c.fillStyle='rgba(140,170,230,0.4)'; c.font='9px JetBrains Mono'; c.textAlign='right';
+  for(let i=0;i<=4;i++){
+    const y=PAD.top+cH*(1-i/4);
+    const v=lMin+(lMax-lMin)*i/4;
+    c.fillText(v<0.01?v.toExponential(1):v.toFixed(4),PAD.left-4,y+3);
+  }
+  c.textAlign='center';
+  const xStep=Math.max(1,Math.floor(n/6));
+  for(let i=0;i<=n;i+=xStep){ c.fillText(i,PAD.left+i/n*cW,PAD.top+cH+16); }
+  c.fillStyle='rgba(140,170,230,0.25)'; c.fillText('epoch',PAD.left+cW/2,PAD.top+cH+28);
+  c.restore();
+
+  for(const s of series){
+    if(!s.data.length) continue;
+    const mn=s.axisRight?rMin:lMin, mx=s.axisRight?rMax:lMax;
+    c.save();
+    c.strokeStyle=s.color; c.lineWidth=s.tiny?1:1.8; c.lineJoin='round';
+    if(s.tiny) c.setLineDash([3,3]);
+    c.beginPath();
+    for(let i=0;i<s.data.length;i++){
+      const x=PAD.left+(i/Math.max(1,n-1))*cW;
+      const y=PAD.top+cH*(1-(s.data[i]-mn)/(mx-mn+1e-12));
+      i===0?c.moveTo(x,y):c.lineTo(x,y);
+    }
+    c.stroke();
+    if(!s.axisRight&&!s.tiny){
+      c.globalAlpha=0.06; c.fillStyle=s.color;
+      const lx=PAD.left+(( s.data.length-1)/Math.max(1,n-1))*cW;
+      c.lineTo(lx,PAD.top+cH); c.lineTo(PAD.left,PAD.top+cH); c.fill();
+    }
+    c.restore();
+  }
+
+  if(h.val_loss.length){
+    const bestIdx=h.val_loss.indexOf(Math.min(...h.val_loss));
+    const x=PAD.left+(bestIdx/Math.max(1,n-1))*cW;
+    c.save();
+    c.strokeStyle='rgba(0,212,170,0.3)'; c.lineWidth=1; c.setLineDash([4,3]);
+    c.beginPath(); c.moveTo(x,PAD.top); c.lineTo(x,PAD.top+cH); c.stroke();
+    c.fillStyle='rgba(0,212,170,0.6)'; c.font='8px JetBrains Mono'; c.textAlign='center';
+    c.fillText(`★${bestIdx+1}`,x,PAD.top+9);
+    c.restore();
+  }
+
+  c.save();
+  let lx=PAD.left;
+  for(const s of series){
+    c.fillStyle=s.color; c.fillRect(lx,PAD.top-10,12,6);
+    c.fillStyle='rgba(140,170,230,0.5)'; c.font='8px JetBrains Mono'; c.textAlign='left';
+    c.fillText(s.label,lx+15,PAD.top-5);
+    lx+=c.measureText(s.label).width+30;
+  }
+  c.restore();
+}
+
+function clearChart(){
+  _history={train_loss:[],val_loss:[],train_acc:[],val_acc:[],lr:[]};
+  updateMetrics(); drawChart();
+  document.getElementById('chart-empty').style.display='flex';
+}
+
+function toggleSeries(key,el){
+  _showSeries[key]=!_showSeries[key];
+  el.classList.toggle('on',_showSeries[key]);
+  drawChart();
+}
+
+function exportHistory(){
+  const h=_history, n=h.train_loss.length;
+  if(!n){alert('No history to export');return;}
+  const rows=['epoch,train_loss,val_loss,val_acc,lr'];
+  for(let i=0;i<n;i++) rows.push(`${i+1},${h.train_loss[i]},${h.val_loss[i]},${h.val_acc[i]},${h.lr[i]}`);
+  const blob=new Blob([rows.join('\n')],{type:'text/csv'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download=`history_${_activeJobId||'run'}.csv`; a.click();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EVALUATION
+// ═══════════════════════════════════════════════════════════════════════════
+async function runEvaluate(){
+  const module_id=document.getElementById('eval-module').value.trim()||_activeModuleId;
+  const dataset_id=document.getElementById('eval-dataset').value.trim()||_activeDataset;
+  const loss_fn=document.getElementById('eval-loss').value||'mse';
+  const task=document.getElementById('cfg-task').value||'classification';
+
+  if(!module_id){setStatus('No module selected','error');return;}
+  if(!dataset_id){setStatus('No dataset selected','error');return;}
+
+  setStatus('Preparing test data…','running');
+  const prep=await cap('ml.data.prepare',{dataset_id,task,max_rows:1000,val_frac:0.1,test_frac:0.2});
+  if(prep?.error){setStatus(prep.error,'error');log_(prep.error,'err');return;}
+  _testData={X:prep.X_test,y:prep.y_test};
+
+  setStatus('Evaluating…','running');
+  const r=await cap('ml.train.evaluate',{
+    module_id, X_test:JSON.stringify(prep.X_test),
+    y_test:JSON.stringify(prep.y_test), loss_fn,
+  });
+  if(r?.error){setStatus(r.error,'error');log_(r.error,'err');return;}
+
+  setStatus('Evaluation complete','ok');
+  renderEvalResults(r);
+  switchRight('eval');
+}
+
+function renderEvalResults(r){
+  const m=r.metrics||{};
+  document.getElementById('eval-results').innerHTML=`
+    <div class="metric-grid" style="margin-bottom:10px">
+      ${Object.entries(m).map(([k,v])=>`
+        <div class="metric">
+          <div class="metric-v ${k==='accuracy'?'amber':''}">${typeof v==='number'?
+            (k==='accuracy'?(v*100).toFixed(2)+'%':v.toFixed(6)):v}</div>
+          <div class="metric-l">${k.replace(/_/g,' ')}</div>
+        </div>`).join('')}
+    </div>
+    <div style="font-size:9px;color:var(--dim2);margin-bottom:6px">Sample predictions (${r.n_samples} total)</div>
+    <div>
+      <div style="display:flex;gap:8px;padding:3px 6px;font-size:8.5px;color:var(--dim2);border-bottom:1px solid var(--border);margin-bottom:3px">
+        <span style="flex:1">True</span><span style="flex:1">Predicted</span><span>Error</span>
+      </div>
+      ${(r.predictions_sample||[]).map(p=>{
+        const tr=Array.isArray(p.true)?p.true[0]:p.true;
+        const pr=Array.isArray(p.pred)?p.pred[0]:p.pred;
+        const err=Math.abs(parseFloat(tr)-parseFloat(pr));
+        return `<div class="pred-row">
+          <span class="pred-true" style="flex:1">${typeof tr==='number'?tr.toFixed(4):tr}</span>
+          <span class="pred-val" style="flex:1">${typeof pr==='number'?pr.toFixed(4):pr}</span>
+          <span class="pred-err">${isNaN(err)?'—':err.toFixed(4)}</span>
+        </div>`;
+      }).join('')}
+    </div>`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PREDICT
+// ═══════════════════════════════════════════════════════════════════════════
+async function loadTestSample(){
+  const dataset_id=_activeDataset||document.getElementById('cfg-dataset-id').value.trim();
+  if(!dataset_id){log_('No dataset selected','err');return;}
+  const task=document.getElementById('cfg-task').value||'classification';
+  const prep=await cap('ml.data.prepare',{dataset_id,task,max_rows:500,val_frac:0.1,test_frac:0.2});
+  if(prep?.error){log_(prep.error,'err');return;}
+  _testData={X:prep.X_test,y:prep.y_test};
+  const sample=prep.X_test.slice(0,5);
+  document.getElementById('pred-x').value=JSON.stringify(sample,null,2);
+  log_(`Loaded ${sample.length} test samples`, 'info');
+}
+
+async function runPredict(){
+  const module_id=document.getElementById('pred-module').value.trim()||_activeModuleId;
+  const xStr=document.getElementById('pred-x').value.trim();
+  if(!module_id){setStatus('No module','error');return;}
+  if(!xStr){log_('Paste input X first','err');return;}
+  const r=await cap('ml.train.predict',{module_id, X:xStr});
+  if(r?.error){log_(r.error,'err');return;}
+  const preds=r.predictions||[];
+  document.getElementById('pred-results').innerHTML=`
+    <div style="font-size:9px;color:var(--dim2);margin-bottom:6px">
+      ${preds.length} predictions · shape ${JSON.stringify(r.shape)}</div>
+    ${preds.slice(0,20).map((p,i)=>`
+      <div class="pred-row">
+        <span style="color:var(--dim2);min-width:24px">${i}.</span>
+        <span class="pred-val">${JSON.stringify(
+          Array.isArray(p)?p.map(v=>typeof v==='number'?+v.toFixed(4):v):
+          (typeof p==='number'?+p.toFixed(4):p))}</span>
+      </div>`).join('')}`;
+  switchRight('predict');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WEIGHTS
+// ═══════════════════════════════════════════════════════════════════════════
+async function loadWeightsView(){
+  const module_id=document.getElementById('w-module').value.trim()||_activeModuleId;
+  if(!module_id){log_('No module selected','err');return;}
+  const r=await cap('ml.train.weights_get',{module_id});
+  if(r?.error){log_(r.error,'err');return;}
+  const stats=r.stats||{};
+  document.getElementById('w-view').innerHTML=Object.entries(stats).map(([nid,nw])=>`
+    <div class="card" style="margin-bottom:5px">
+      <div class="card-title" style="font-size:10px">${esc(nid)}</div>
+      ${Object.entries(nw).map(([k,v])=>`
+        <div style="display:flex;justify-content:space-between;font-size:9px;line-height:1.8">
+          <span style="color:var(--dim2)">${k}</span>
+          <span style="color:var(--acc)">${JSON.stringify(v.shape)}</span>
+          <span style="color:var(--teal)">‖${v.norm.toFixed(3)}‖</span>
+        </div>`).join('')}
+    </div>`).join('');
+}
+
+async function exportWeights(){
+  const module_id=document.getElementById('w-module').value.trim()||_activeModuleId;
+  if(!module_id){log_('No module','err');return;}
+  const r=await cap('ml.train.weights_get',{module_id});
+  if(r?.error){log_(r.error,'err');return;}
+  const blob=new Blob([JSON.stringify(r.weights,null,2)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download=`weights_${module_id}.json`;a.click();
+  log_('Weights exported','ok');
+}
+
+async function importWeights(){
+  const module_id=document.getElementById('w-module').value.trim()||_activeModuleId;
+  const wStr=document.getElementById('w-import').value.trim();
+  if(!module_id||!wStr){log_('Need module + weights JSON','err');return;}
+  const r=await cap('ml.train.weights_load',{module_id,weights:wStr});
+  if(r?.ok) log_(`Weights loaded for ${module_id}`, 'ok');
+  else log_(r?.error||'Load failed', 'err');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EXAMPLES
+// ═══════════════════════════════════════════════════════════════════════════
+async function loadExamples(){
+  setStatus('Loading examples…','running');
+  log_('Loading all worked examples + synthetic datasets…', 'info');
+  const r=await cap('ml.examples.load_all',{fetch_real_data:false});
+  if(r?.ok){
+    setStatus(`Loaded ${r.total_modules} examples + ${r.datasets?.length||0} datasets`,'ok');
+    log_(`✓ ${r.total_modules} example modules loaded`, 'ok');
+    for(const d of r.datasets||[]) log_(`  + Dataset: ${d.dataset_id} (${d.n} rows)`, 'info');
+    await loadModules();
+    await loadAllDatasets();
+  } else {
+    setStatus(r?.error||'Failed','error');
+    log_(`✗ ${r?.error}`, 'err');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// JOBS
+// ═══════════════════════════════════════════════════════════════════════════
+async function loadJobs(){
+  const r=await cap('ml.train.status');
+  if(!r||r.error) return;
+  _jobs=r.jobs||[];
+  renderJobs();
+}
+
+function renderJobs(){
+  const el=document.getElementById('job-list');
+  if(!_jobs.length){el.innerHTML='<div style="color:var(--dim2);font-size:10px">No jobs yet</div>';return;}
+  el.innerHTML=_jobs.map(j=>`
+    <div class="card clickable ${j.job_id===_activeJobId?'active':''}"
+         onclick="resumeJob('${j.job_id}','${j.module_id}')">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+        <span class="dot ${j.status}"></span>
+        <span class="card-title" style="flex:1;font-size:10px">${j.job_id}</span>
+        <span style="font-size:8.5px;color:var(--dim2)">${j.status}</span>
+      </div>
+      <div class="card-meta">
+        Module: ${j.module_id}<br>
+        Epoch: ${j.epoch||0} · Best VL: ${j.best_val_loss!=null?j.best_val_loss.toFixed(5):'—'}<br>
+        ${(j.created_at||'').slice(11,19)}
+      </div>
+    </div>`).join('');
+}
+
+async function resumeJob(job_id,module_id){
+  _activeJobId=job_id; _activeModuleId=module_id;
+  document.getElementById('tb-job').textContent=job_id;
+  document.getElementById('chart-job-label').textContent=`Job ${job_id}`;
+  document.getElementById('cfg-module-id').value=module_id;
+  const r=await cap('ml.train.history',{job_id});
+  if(r?.history){ _history=r.history; drawChart(); updateEpochLog(_history); updateMetrics(); }
+  log_(`Resumed view of job ${job_id}`, 'info');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EVENTS
+// ═══════════════════════════════════════════════════════════════════════════
+function connectEvents(){
+  window.addEventListener('message', e=>{
+    const ev=e.data?.event; if(!ev) return;
+    if(ev.type==='ml.train_epoch'&&ev.job_id===_activeJobId){
+      _history.train_loss.push(ev.train_loss||0);
+      _history.val_loss.push(ev.val_loss||0);
+      _history.val_acc.push(ev.val_acc||0);
+      _history.lr.push(ev.lr||0);
+      updateMetrics(); drawChart();
+      const ep=ev.epoch,tot=ev.epochs||1,pct=Math.round(ep/tot*100);
+      document.getElementById('prog-fill').style.width=pct+'%';
+      document.getElementById('prog-pct').textContent=pct+'%';
+      document.getElementById('tb-epoch').textContent=`${ep}/${tot}`;
+      document.getElementById('prog-label').textContent=`Epoch ${ep}/${tot}`;
+    }
+    if(ev.type==='ml.train_complete'&&ev.job_id===_activeJobId){
+      setStatus(`${ev.status} — best val loss: ${(ev.best_val_loss||0).toFixed(5)}`,'ok');
+      document.getElementById('prog-fill').className='prog-fill';
+      document.getElementById('btn-stop').disabled=true;
+      _activeJobId=null;
+    }
+    if(ev.type==='ml.data.ready'){ loadAllDatasets(); }
+    if(ev.type==='ml.examples.loaded'){ loadModules(); loadAllDatasets(); }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PANEL SWITCHING
+// ═══════════════════════════════════════════════════════════════════════════
+function switchLeft(tab){
+  ['train','data','jobs'].forEach(t=>{
+    document.getElementById(`lp-${t}`).style.display=t===tab?'':'none';
+    document.getElementById(`lt-${t}`).classList.toggle('active',t===tab);
+  });
+  if(tab==='jobs') loadJobs();
+  if(tab==='data') loadAllDatasets();
+}
+function switchRight(tab){
+  ['eval','predict','weights'].forEach(t=>{
+    document.getElementById(`rp-${t}`).style.display=t===tab?'':'none';
+    document.getElementById(`rt-${t}`).classList.toggle('active',t===tab);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// UTILS
+// ═══════════════════════════════════════════════════════════════════════════
+function setStatus(msg,cls){
+  const el=document.getElementById('tb-status');
+  el.textContent=msg; el.className=cls;
+}
+function log_(msg,cls='info'){
+  const el=document.getElementById('train-log');
+  const div=document.createElement('div');
+  div.className=`log-line ${cls}`;
+  div.textContent=`${new Date().toLocaleTimeString()} ${msg}`;
+  el.insertBefore(div,el.firstChild);
+  while(el.children.length>40) el.removeChild(el.lastChild);
+}
+function fmtParams(n){
+  if(!n) return '0';
+  if(n>=1e6) return (n/1e6).toFixed(1)+'M';
+  if(n>=1e3) return (n/1e3).toFixed(0)+'K';
+  return ''+n;
+}
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BOOT
+// ═══════════════════════════════════════════════════════════════════════════
+init();
+</script>
+<script src="/ui/vera-ui.js"></script>
+</body>
+</html>

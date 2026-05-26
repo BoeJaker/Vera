@@ -1,0 +1,4528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Vera — Cap Ontology</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg0: #181614; --bg1: #1f1d1a; --bg2: #272421; --bg3: #302c29;
+  --border: #3a3530; --border2: #4a4540;
+  --acc: #5a9e8f; --acc2: #8fb87a; --acc3: #c9955a; --acc4: #9e8fa0;
+  --ok: #6db87a; --err: #c96b6b; --warn: #c9a35a;
+  --text: #ddd5c8; --dim: #6a6058; --dim2: #8a7e70;
+  --mono: 'IBM Plex Mono', 'JetBrains Mono', monospace;
+  --sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --radius: 5px; --radius-sm: 3px; --radius-lg: 8px;
+  color-scheme: dark;
+}
+html, body { height: 100%; width: 100%; overflow: hidden; background: var(--bg0); color: var(--text); font-family: var(--sans); font-size: 13px; }
+
+/* ── Top bar ── */
+#topbar {
+  display: flex; align-items: center; gap: 10px; padding: 0 14px;
+  height: 44px; flex-shrink: 0; background: var(--bg1);
+  border-bottom: 1px solid var(--border); position: relative;
+}
+#topbar::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--acc2) 25%, var(--acc4) 60%, transparent 90%);
+  opacity: .35; }
+.tb-title { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--acc2); letter-spacing: 2px; }
+.tb-pill {
+  font-family: var(--mono); font-size: 9px; padding: 2px 8px;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 2px;
+  color: var(--dim2); white-space: nowrap; display: inline-flex; gap: 4px; align-items: center;
+}
+.tb-pill .v { color: var(--text); }
+
+/* ── View toggle ── */
+.view-tabs { display: flex; gap: 1px; background: var(--bg0); border-radius: 3px; overflow: hidden; padding: 1px; }
+.view-tab {
+  padding: 5px 12px; font-size: 10.5px; font-family: var(--mono); font-weight: 500;
+  background: var(--bg2); color: var(--dim2); border: none; cursor: pointer;
+  transition: all .15s; border-radius: 2px;
+}
+.view-tab:hover { color: var(--text); }
+.view-tab.on { background: var(--acc); color: #fff; font-weight: 600; }
+
+/* ── Buttons ── */
+.btn {
+  display: inline-flex; align-items: center; gap: 5px; padding: 4px 11px;
+  border-radius: var(--radius-sm); border: 1px solid var(--border);
+  background: var(--bg2); color: var(--dim2); cursor: pointer;
+  font-family: var(--sans); font-size: 11px; font-weight: 500;
+  transition: all .14s; white-space: nowrap;
+}
+.btn:hover { border-color: var(--acc); color: var(--acc); background: rgba(90,158,143,.1); }
+.btn.primary { background: var(--acc); border-color: var(--acc); color: #fff; font-weight: 600; }
+.btn.primary:hover { filter: brightness(1.1); color: #fff; }
+.btn.teal   { background: rgba(143,184,122,.08); border-color: var(--acc2); color: var(--acc2); }
+.btn.amber  { background: rgba(201,149,90,.08); border-color: var(--acc3); color: var(--acc3); }
+.btn.danger { border-color: var(--err); color: var(--err); }
+.btn.sm { padding: 3px 8px; font-size: 10px; }
+.btn:disabled { opacity: .35; cursor: not-allowed; pointer-events: none; }
+
+input, select, textarea {
+  background: var(--bg0); border: 1px solid var(--border); color: var(--text);
+  padding: 4px 9px; border-radius: var(--radius-sm);
+  font-family: var(--sans); font-size: 11.5px; outline: none; transition: border-color .14s;
+}
+input:focus, select:focus, textarea:focus { border-color: var(--acc); }
+select option { background: var(--bg2); }
+
+/* ── Body layout ── */
+#body { display: flex; height: calc(100vh - 44px); overflow: hidden; }
+#sidebar {
+  width: 260px; flex-shrink: 0; border-right: 1px solid var(--border);
+  background: var(--bg1); display: flex; flex-direction: column; overflow: hidden;
+}
+#main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; background: var(--bg0); }
+
+/* ── Sidebar sections ── */
+.sb-sec { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.sb-sec h4 {
+  font-family: var(--mono); font-size: 9px; text-transform: uppercase;
+  letter-spacing: 1.4px; color: var(--dim2); margin-bottom: 8px; font-weight: 600;
+}
+.sb-sec .row { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+.sb-sec .row label { font-family: var(--mono); font-size: 10px; color: var(--dim); flex: 1; }
+.sb-sec .row input[type=number] { width: 70px; }
+
+/* ── Toolbar ── */
+.toolbar {
+  display: flex; align-items: center; gap: 8px; padding: 8px 14px;
+  background: var(--bg1); border-bottom: 1px solid var(--border); flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+/* ── Matrix view ── */
+#matrix-wrap {
+  flex: 1; overflow: auto; position: relative; background: var(--bg0);
+}
+#matrix-wrap::-webkit-scrollbar { width: 8px; height: 8px; }
+#matrix-wrap::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+
+#matrix-table {
+  border-collapse: separate; border-spacing: 0;
+  font-family: var(--mono); font-size: 9.5px; color: var(--text);
+}
+#matrix-table th, #matrix-table td {
+  border-right: 1px solid rgba(255,255,255,.04);
+  border-bottom: 1px solid rgba(255,255,255,.04);
+  padding: 0; vertical-align: middle;
+  white-space: nowrap;
+}
+/* Top-left corner */
+#matrix-table .corner {
+  position: sticky; top: 0; left: 0; z-index: 5;
+  background: var(--bg1); border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  padding: 6px 9px; min-width: 220px; max-width: 280px;
+  font-size: 10px; color: var(--dim2); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 1.2px;
+}
+/* Column headers (rotated) */
+#matrix-table th.col {
+  position: sticky; top: 0; z-index: 3;
+  background: var(--bg1); border-bottom: 1px solid var(--border);
+  height: 140px; min-width: 24px; max-width: 24px; width: 24px;
+  cursor: pointer;
+  vertical-align: bottom;
+  padding: 0;
+  /* Allow the rotated label to overflow into adjacent columns */
+  overflow: visible;
+}
+/* Wrap the rotated label so its rotation pivot is reliable. The wrapper is
+   24px wide (= column width), placed at the BOTTOM of the cell, and the
+   label rotates around its top-center, so each label's anchor is identical
+   regardless of the cap-name length. */
+#matrix-table th.col .col-inner {
+  position: relative;
+  width: 24px; height: 100%;
+  pointer-events: none;
+}
+#matrix-table th.col span.col-label {
+  position: absolute;
+  /* Anchor: bottom of the column, horizontally centered */
+  left: 50%; bottom: 6px;
+  transform-origin: 0 100%;
+  transform: rotate(-58deg);
+  white-space: nowrap; font-size: 10px;
+  color: var(--text);
+  pointer-events: auto;
+  font-family: var(--mono);
+  letter-spacing: .15px;
+  /* Slight nudge so the text starts cleanly off the cell edge */
+  padding-left: 4px;
+}
+#matrix-table th.col:hover { background: var(--bg2); }
+#matrix-table th.col.hover-col { background: rgba(90,158,143,.12); }
+/* Group divider on column header */
+#matrix-table th.col.grp-start { border-left: 2px solid var(--acc4); }
+
+/* Row headers */
+#matrix-table th.row {
+  position: sticky; left: 0; z-index: 2;
+  background: var(--bg1); border-right: 1px solid var(--border);
+  text-align: left; padding: 4px 10px;
+  font-size: 10px; color: var(--text);
+  min-width: 220px; max-width: 280px;
+  cursor: pointer; height: 22px;
+  overflow: hidden; text-overflow: ellipsis;
+}
+#matrix-table th.row:hover { background: var(--bg2); }
+#matrix-table th.row.hover-row { background: rgba(90,158,143,.12); }
+#matrix-table th.row.grp-start { border-top: 2px solid var(--acc4); }
+#matrix-table th.row .row-grp {
+  font-size: 8px; color: var(--dim2); margin-right: 4px;
+}
+
+/* Cells */
+#matrix-table td.cell {
+  width: 24px; height: 24px; min-width: 24px; max-width: 24px;
+  text-align: center; cursor: pointer; transition: all .12s;
+  position: relative;
+  background: var(--bg0);
+}
+#matrix-table td.cell.diag { background: var(--bg2); cursor: not-allowed; }
+#matrix-table td.cell:hover:not(.diag) {
+  background: rgba(90,158,143,.18) !important;
+  outline: 1px solid var(--acc); outline-offset: -1px;
+  z-index: 1;
+}
+/* Cell strength visualization — fill intensity */
+#matrix-table td.cell.has-rel { background: rgba(143,184,122,.15); }
+#matrix-table td.cell.has-rel.auto { background: rgba(201,149,90,.18); }
+#matrix-table td.cell.has-rel .dot {
+  width: 10px; height: 10px; border-radius: 2px; display: inline-block;
+  background: var(--acc2); margin: auto;
+}
+#matrix-table td.cell.has-rel.auto .dot { background: var(--acc3); }
+#matrix-table td.cell.has-rel.bidir .dot { border-radius: 50%; }
+#matrix-table td.cell.has-rel.weak .dot { opacity: .4; }
+#matrix-table td.cell.has-rel.strong .dot { box-shadow: 0 0 6px currentColor; }
+#matrix-table td.cell.in-search { outline: 1px solid var(--acc3); outline-offset: -1px; }
+#matrix-table td.cell.row-self {
+  background: rgba(255,255,255,.02);
+}
+
+/* ── Cell hover tooltip ── */
+#cell-tip {
+  position: absolute; pointer-events: none; z-index: 50;
+  background: var(--bg2); border: 1px solid var(--border2);
+  color: var(--text); padding: 7px 10px; border-radius: 4px;
+  font-family: var(--mono); font-size: 10.5px; max-width: 320px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.6); display: none;
+  white-space: normal; line-height: 1.55;
+}
+#cell-tip .tip-arrow { color: var(--acc2); font-weight: 600; margin-bottom: 4px; }
+#cell-tip .tip-rel { color: var(--acc4); font-size: 10px; }
+#cell-tip .tip-desc { color: var(--dim2); margin-top: 4px; font-size: 9.5px; line-height: 1.6; }
+#cell-tip .tip-meta { color: var(--dim); font-size: 9px; margin-top: 5px; padding-top: 4px; border-top: 1px solid var(--border); }
+
+/* Status bar */
+#statusbar {
+  flex-shrink: 0; padding: 6px 14px; background: var(--bg1);
+  border-top: 1px solid var(--border); font-family: var(--mono); font-size: 10px;
+  color: var(--dim2); display: flex; gap: 14px; align-items: center;
+}
+#statusbar .sb-spacer { flex: 1; }
+#statusbar .sb-job { color: var(--acc3); font-size: 9.5px; }
+
+/* ── Graph view ── */
+#graph-wrap { flex: 1; position: relative; overflow: hidden; background:
+  radial-gradient(ellipse at center, rgba(90,158,143,.04) 0%, var(--bg0) 70%); }
+#graph-svg { width: 100%; height: 100%; cursor: grab; display: block; }
+#graph-svg:active { cursor: grabbing; }
+.gnode { cursor: pointer; transition: opacity .15s; }
+.gnode:hover .gnode-circle { stroke: var(--acc); stroke-width: 2; }
+.gnode-circle { fill: var(--bg2); stroke: var(--border2); stroke-width: 1; }
+.gnode-text { font-family: var(--mono); font-size: 8px; fill: var(--text); pointer-events: none; text-anchor: middle; }
+/* Pinned nodes: solid white outline so you can spot which nodes you've
+   placed by hand. The pin is removed by alt-clicking the node, or by
+   pressing the Re-layout button. */
+.gnode.pinned .gnode-circle { stroke: var(--acc3); stroke-width: 2; stroke-dasharray: 2 1.5; }
+.gnode.pinned .gnode-text { fill: var(--acc3); }
+.gedge { stroke: var(--dim); stroke-opacity: .4; transition: stroke-opacity .15s; }
+.gedge.auto { stroke: var(--acc3); }
+.gedge:hover, .gedge.hl { stroke-opacity: 1; stroke-width: 2; }
+.gnode.dim { opacity: .15; }
+.gnode.hl .gnode-circle { stroke: var(--acc); stroke-width: 2.5; fill: rgba(90,158,143,.15); }
+.gnode.search-hit .gnode-circle { stroke: var(--acc3); stroke-width: 2.5; }
+.gedge.search-hit { stroke: var(--acc3); stroke-opacity: 1; stroke-width: 2; }
+
+#graph-overlay {
+  position: absolute; top: 12px; left: 12px; right: 12px; pointer-events: none;
+  display: flex; gap: 10px; align-items: flex-start; z-index: 5;
+}
+#graph-overlay > * { pointer-events: auto; }
+.graph-legend {
+  background: rgba(31,29,26,.85); backdrop-filter: blur(6px);
+  border: 1px solid var(--border); border-radius: 4px; padding: 7px 11px;
+  font-family: var(--mono); font-size: 9.5px; color: var(--dim2);
+  display: flex; gap: 14px; align-items: center;
+}
+.graph-legend .lg-item { display: flex; align-items: center; gap: 5px; }
+.graph-legend .lg-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+/* ── Edit modal (same as cap_hub) ── */
+#edit-modal { display: none; position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.78); backdrop-filter: blur(4px); }
+#edit-inner {
+  position: absolute; top: 4vh; left: 50%; transform: translateX(-50%);
+  width: min(720px, 96vw); max-height: 92vh; overflow: hidden;
+  display: flex; flex-direction: column;
+  background: var(--bg1); border: 1px solid var(--border2); border-radius: var(--radius-lg);
+  box-shadow: 0 16px 56px rgba(0,0,0,.7);
+}
+.em-header {
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 10px; font-family: var(--mono);
+  font-size: 11px; color: var(--acc); flex-shrink: 0;
+}
+
+/* Modal sub-tabs */
+.em-tabs {
+  display: flex; gap: 0; padding: 0 12px; flex-shrink: 0;
+  border-bottom: 1px solid var(--border); background: var(--bg0);
+}
+.em-tab {
+  background: transparent; border: none; padding: 9px 14px; cursor: pointer;
+  font-family: var(--sans); font-size: 11px; color: var(--dim2);
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+  transition: color .12s, border-color .12s;
+}
+.em-tab:hover { color: var(--text); }
+.em-tab.active { color: var(--acc); border-bottom-color: var(--acc); }
+
+.em-tab-pane { display: none; }
+.em-tab-pane.on { display: block; }
+
+.em-body {
+  padding: 14px 16px; flex: 1; overflow-y: auto;
+}
+.em-pair { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 8px 10px; background: var(--bg0); border-radius: 4px; border: 1px solid var(--border); }
+.em-pair-cap { font-family: var(--mono); font-size: 11px; color: var(--acc); flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.em-pair-arrow { color: var(--dim2); font-family: var(--mono); }
+
+.em-field { margin-bottom: 11px; }
+.em-field label {
+  display: block; font-family: var(--mono); font-size: 9.5px;
+  text-transform: uppercase; letter-spacing: .8px; color: var(--dim2);
+  margin-bottom: 4px;
+}
+.em-field input[type=text],
+.em-field textarea,
+.em-field select { width: 100%; }
+.em-field textarea { min-height: 64px; font-family: var(--mono); font-size: 10.5px; }
+.em-field-row { display: flex; gap: 8px; }
+.em-field-row > * { flex: 1; }
+.em-strength { display: flex; align-items: center; gap: 8px; }
+.em-strength input[type=range] { flex: 1; accent-color: var(--acc); }
+.em-strength-val { font-family: var(--mono); font-size: 11px; color: var(--acc); min-width: 32px; text-align: right; }
+.em-actions {
+  padding: 10px 16px; border-top: 1px solid var(--border);
+  display: flex; gap: 6px; align-items: center; background: var(--bg0);
+  flex-shrink: 0;
+}
+.em-actions .spacer { flex: 1; }
+.em-suggest-box {
+  margin-top: 6px; padding: 8px 10px; background: rgba(201,149,90,.06);
+  border: 1px solid rgba(201,149,90,.25); border-radius: 4px;
+  font-family: var(--mono); font-size: 10px; color: var(--acc3);
+  display: none;
+}
+.em-suggest-box.on { display: block; }
+.em-suggest-box .em-sg-hdr { font-size: 8.5px; text-transform: uppercase; letter-spacing: 1.2px; margin-bottom: 4px; opacity: .8; }
+
+/* ── Details tab ── */
+.dt-empty {
+  text-align: center; color: var(--dim2); font-family: var(--mono);
+  font-size: 10.5px; padding: 28px 14px; line-height: 1.7;
+}
+.dt-grid {
+  display: grid; grid-template-columns: 110px 1fr; gap: 6px 12px;
+  font-family: var(--mono); font-size: 10.5px; line-height: 1.55;
+  margin-bottom: 14px;
+}
+.dt-grid > .lbl {
+  color: var(--dim2); text-transform: uppercase; letter-spacing: .8px; font-size: 9px;
+  padding-top: 2px;
+}
+.dt-grid > .val {
+  color: var(--text); word-break: break-word;
+}
+.dt-grid > .val.dim { color: var(--dim2); font-style: italic; }
+.dt-pill {
+  display: inline-block; padding: 1px 7px; border-radius: 9px; font-size: 9.5px;
+  font-family: var(--mono); border: 1px solid var(--border2);
+}
+.dt-pill.auto   { background: rgba(201,149,90,.1);  color: var(--acc3); border-color: rgba(201,149,90,.3); }
+.dt-pill.manual { background: rgba(143,184,122,.08); color: var(--acc2); border-color: rgba(143,184,122,.3); }
+.dt-pill.dir    { background: rgba(158,143,160,.1);  color: var(--acc4); border-color: rgba(158,143,160,.3); }
+.dt-strength-bar {
+  display: inline-block; width: 110px; height: 6px; background: rgba(255,255,255,.06);
+  border-radius: 3px; overflow: hidden; vertical-align: middle; margin-right: 7px;
+}
+.dt-strength-bar > div { height: 100%; background: linear-gradient(90deg, var(--acc), var(--acc2)); }
+.dt-section-hdr {
+  font-family: var(--mono); font-size: 9.5px; color: var(--dim2);
+  text-transform: uppercase; letter-spacing: 1.2px;
+  margin: 14px 0 6px;
+  padding-bottom: 4px; border-bottom: 1px solid var(--border);
+}
+.dt-block {
+  background: var(--bg0); border: 1px solid var(--border); border-radius: 4px;
+  padding: 9px 12px; font-family: var(--mono); font-size: 10.5px; line-height: 1.55;
+  color: var(--text); margin-bottom: 8px; white-space: pre-wrap; word-break: break-word;
+}
+.dt-block.code { font-size: 10px; color: var(--acc2); }
+.dt-block.wire { color: var(--acc3); font-weight: 500; }
+.dt-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.dt-tags .dt-tag {
+  font-size: 9.5px; padding: 1px 7px; border-radius: 8px;
+  background: rgba(90,158,143,.1); color: var(--acc); border: 1px solid rgba(90,158,143,.3);
+  font-family: var(--mono);
+}
+
+/* ── Cap detail (FROM/TO tabs) ── */
+.cap-detail .cap-hdr {
+  display: flex; align-items: center; gap: 9px; margin-bottom: 12px;
+  padding: 10px 12px; background: var(--bg0); border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.cap-detail .cap-hdr .cap-name {
+  font-family: var(--mono); font-size: 12px; color: var(--acc); flex: 1;
+}
+.cap-detail .cap-mode-pill {
+  font-size: 9px; padding: 1px 7px; border-radius: 8px; background: var(--bg2);
+  color: var(--dim2); font-family: var(--mono);
+}
+.cd-desc-block {
+  position: relative;
+  background: var(--bg0); border: 1px solid var(--border); border-radius: 4px;
+  padding: 10px 12px; font-size: 11px; line-height: 1.55;
+  color: var(--text); margin-bottom: 10px; min-height: 38px;
+}
+.cd-desc-block.has-override {
+  border-color: var(--acc2);
+  background: linear-gradient(180deg, rgba(143,184,122,.04), transparent 30%);
+}
+.cd-desc-block .cd-orig {
+  font-size: 9.5px; color: var(--dim2); margin-top: 8px; padding-top: 6px;
+  border-top: 1px dashed var(--border); font-style: italic; line-height: 1.5;
+}
+.cd-desc-block .cd-orig b {
+  font-style: normal; color: var(--dim); text-transform: uppercase;
+  letter-spacing: 1px; font-size: 8.5px;
+}
+.cd-desc-actions { display: flex; gap: 5px; margin-top: 7px; }
+.cd-override-edit {
+  display: none;
+  background: var(--bg2); border: 1px solid var(--acc2); border-radius: 4px;
+  padding: 10px 12px; margin-bottom: 10px;
+}
+.cd-override-edit.on { display: block; }
+.cd-override-edit textarea {
+  width: 100%; min-height: 84px; resize: vertical;
+  font-family: var(--mono); font-size: 10.5px;
+}
+.cd-override-edit .cd-actions { display: flex; gap: 5px; margin-top: 7px; align-items: center; }
+.cd-override-edit .cd-actions .ind { font-size: 9.5px; color: var(--dim2); margin-right: auto; }
+
+.cd-params-table {
+  width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 10px;
+  margin-bottom: 10px;
+}
+.cd-params-table th, .cd-params-table td {
+  text-align: left; padding: 6px 9px; border-bottom: 1px solid rgba(255,255,255,.04);
+  vertical-align: top;
+}
+.cd-params-table th {
+  font-size: 9px; color: var(--dim2); text-transform: uppercase; letter-spacing: 1px;
+  font-weight: 500; background: var(--bg0);
+}
+.cd-params-table td .pname { color: var(--acc); font-weight: 500; }
+.cd-params-table td .ptype { color: var(--acc4); }
+.cd-params-table td .preq  { color: var(--err); font-weight: 700; padding-left: 4px; }
+.cd-params-table td .pdesc { color: var(--dim2); font-size: 9.5px; }
+.cd-params-table tr.no-params td {
+  color: var(--dim2); font-style: italic; text-align: center; padding: 14px;
+}
+
+/* Empty state */
+.empty {
+  text-align: center; color: var(--dim2); font-family: var(--mono);
+  font-size: 11px; padding: 60px 20px; line-height: 1.7;
+}
+.empty .empty-title { font-size: 13px; color: var(--text); margin-bottom: 8px; font-weight: 600; }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+/* ── Search help popover ── */
+.search-help {
+  display: none;
+  margin-top: 6px; padding: 8px 10px;
+  background: var(--bg0); border: 1px solid var(--border); border-radius: 4px;
+  font-family: var(--mono); font-size: 9.5px; line-height: 1.7;
+  color: var(--dim2);
+}
+.search-help.on { display: block; }
+.search-help b { color: var(--acc2); font-weight: 500; }
+</style>
+</head>
+<body>
+
+<!-- ════ TOPBAR ═══════════════════════════════════════════════════════ -->
+<div id="topbar">
+  <div class="tb-title">◇ CAP ONTOLOGY</div>
+
+  <div class="view-tabs">
+    <button class="view-tab on" id="vt-matrix" onclick="setView('matrix')">⊞ Matrix</button>
+    <button class="view-tab"    id="vt-graph"  onclick="setView('graph')">◉ Graph</button>
+    <button class="view-tab"    id="vt-list"   onclick="setView('list')">≡ List</button>
+  </div>
+
+  <div class="tb-pill">CAPS <span class="v" id="tp-caps">—</span></div>
+  <div class="tb-pill">RELATIONS <span class="v" id="tp-rels">—</span></div>
+  <div class="tb-pill">COVERED <span class="v" id="tp-cov">—</span></div>
+
+  <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
+    <span id="active-job-pill" class="tb-pill" style="display:none;color:var(--acc3);border-color:var(--acc3)">
+      ⟳ <span id="aj-prog">0/0</span> · <span id="aj-id"></span>
+    </span>
+    <button class="btn sm" onclick="loadAll()">↻ Refresh</button>
+  </div>
+</div>
+
+<div id="body">
+
+  <!-- ════ SIDEBAR ═══════════════════════════════════════════════════ -->
+  <div id="sidebar">
+    <!-- Search & filters -->
+    <div class="sb-sec">
+      <h4>Search</h4>
+      <div class="row">
+        <input id="search-inp" placeholder='caps · prefix:exec. · -skip · /regex/ · ~fuzzy' oninput="onSearchChange(this.value)" style="flex:1">
+        <button class="btn sm" onclick="toggleSearchHelp()" title="Search syntax help" style="padding:3px 7px">?</button>
+      </div>
+      <div id="search-help" class="search-help">
+        <div><b>foo</b> — substring match</div>
+        <div><b>exec.</b> — group prefix (trailing dot)</div>
+        <div><b>.run$</b> — suffix</div>
+        <div><b>-foo</b> — exclude</div>
+        <div><b>/regex/</b> — regex (case-insensitive)</div>
+        <div><b>~tlmgn</b> — fuzzy subsequence</div>
+        <div style="margin-top:5px;color:var(--dim)">terms combine with AND. Use "quotes" for spaces.</div>
+      </div>
+
+      <div class="row" style="margin-top:6px">
+        <label>Group</label>
+        <select id="group-sel" onchange="onGroupChange(this.value)" style="flex:1">
+          <option value="">all</option>
+        </select>
+      </div>
+
+      <div class="row" style="margin-top:6px">
+        <label>Relation</label>
+        <select id="rel-sel" onchange="onRelChange(this.value)" style="flex:1">
+          <option value="">any</option>
+        </select>
+      </div>
+
+      <div class="row" style="margin-top:6px">
+        <label>Min strength</label>
+        <input id="min-vis-str" type="number" min="0" max="1" step="0.05" value="0" oninput="onMinVisStrChange(this.value)" style="flex:1">
+      </div>
+
+      <div class="row" style="margin-top:6px">
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="checkbox" id="hide-isolated-cb" onchange="setHideIsolated(this.checked)" style="margin:0">
+          <span style="font-size:10.5px;color:var(--text)">Hide isolated nodes</span>
+        </label>
+      </div>
+      <div class="row" style="margin-top:3px">
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="checkbox" id="show-only-rels-cb" onchange="setShowOnlyRels(this.checked)" style="margin:0">
+          <span style="font-size:10.5px;color:var(--text)">Show only with relations</span>
+        </label>
+      </div>
+      <div class="row" style="margin-top:3px">
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="checkbox" id="show-auto-cb" checked onchange="setShowAuto(this.checked)" style="margin:0">
+          <span style="font-size:10.5px;color:var(--text)">Show LLM-generated</span>
+        </label>
+      </div>
+      <div class="row" style="margin-top:3px">
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="checkbox" id="show-manual-cb" checked onchange="setShowManual(this.checked)" style="margin:0">
+          <span style="font-size:10.5px;color:var(--text)">Show manual</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Auto-fill controls -->
+    <div class="sb-sec">
+      <h4>LLM auto-fill</h4>
+      <div class="row" style="margin-bottom:7px">
+        <label>Min strength</label>
+        <input id="min-str-inp" type="number" min="0" max="1" step="0.05" value="0.30">
+      </div>
+      <div class="row" style="margin-bottom:7px">
+        <label>Concurrency</label>
+        <input id="concur-inp" type="number" min="1" max="8" value="2">
+      </div>
+      <div class="row" style="margin-bottom:7px">
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="checkbox" id="overwrite-cb" style="margin:0">
+          <span style="font-size:10.5px;color:var(--text)">Overwrite existing</span>
+        </label>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:5px">
+        <button class="btn sm amber" onclick="autoFillCurrentGroup()">⚛ Fill current group</button>
+        <button class="btn sm amber" onclick="autoFillAllGroups()">⚛ Fill all visible</button>
+        <button class="btn sm danger" onclick="autoFillFullGrid()">⚠ Fill full grid (slow)</button>
+      </div>
+      <div style="font-size:9px;color:var(--dim);margin-top:8px;line-height:1.4">
+        LLM analyses each cap pair from name + description + schema and infers their relation.
+        Existing cells are skipped unless "Overwrite" is on.
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="sb-sec">
+      <h4>Coverage by group</h4>
+      <div id="coverage-list" style="font-family:var(--mono);font-size:10px;line-height:1.7">
+        <span style="color:var(--dim2)">loading…</span>
+      </div>
+    </div>
+
+    <!-- Help -->
+    <div class="sb-sec" style="border-bottom:none">
+      <h4>Legend</h4>
+      <div style="font-family:var(--mono);font-size:9.5px;color:var(--dim2);line-height:1.7">
+        <div style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:var(--acc2);display:inline-block"></span> manual relation</div>
+        <div style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:var(--acc3);display:inline-block"></span> LLM-generated</div>
+        <div style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:50%;background:var(--acc2);display:inline-block"></span> bidirectional</div>
+        <div style="margin-top:5px">Cell = (row → column).</div>
+        <div>Click a cell to view/edit.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ MAIN ═══════════════════════════════════════════════════════ -->
+  <div id="main">
+
+    <!-- View: matrix -->
+    <div id="view-matrix" style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+      <div class="toolbar">
+        <span style="font-family:var(--mono);font-size:10px;color:var(--dim2)" id="matrix-info">—</span>
+        <span style="margin-left:auto;font-family:var(--mono);font-size:9.5px;color:var(--dim)">tip: click a cell to edit · hover for details</span>
+      </div>
+      <div id="matrix-wrap">
+        <div class="empty" id="matrix-empty" style="display:none">
+          <div class="empty-title">No capabilities to display</div>
+          <div>Try clearing your filters, or load some capabilities first.</div>
+        </div>
+        <table id="matrix-table"></table>
+      </div>
+    </div>
+
+    <!-- View: graph -->
+    <div id="view-graph" style="flex:1;display:none;flex-direction:column;overflow:hidden">
+      <div class="toolbar">
+        <span style="font-family:var(--mono);font-size:10px;color:var(--dim2)" id="graph-info">—</span>
+        <span style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-left:14px">drag to pin · alt-click toggles pin · scroll to zoom</span>
+        <button class="btn sm" onclick="unpinAllNodes()" style="margin-left:auto" title="Release all manually-placed nodes">Unpin all</button>
+        <button class="btn sm" onclick="restartGraphLayout()">↻ Re-layout</button>
+        <button class="btn sm" onclick="centerGraph()">⊕ Center</button>
+      </div>
+      <div id="graph-wrap">
+        <div id="graph-overlay">
+          <div class="graph-legend">
+            <div class="lg-item"><span class="lg-dot" style="background:var(--acc2)"></span>cap node</div>
+            <div class="lg-item"><span style="display:inline-block;width:18px;height:2px;background:var(--dim)"></span> manual</div>
+            <div class="lg-item"><span style="display:inline-block;width:18px;height:2px;background:var(--acc3)"></span> LLM</div>
+          </div>
+        </div>
+        <svg id="graph-svg"></svg>
+      </div>
+    </div>
+
+    <!-- View: list -->
+    <div id="view-list" style="flex:1;display:none;flex-direction:column;overflow:hidden">
+      <div class="toolbar">
+        <span style="font-family:var(--mono);font-size:10px;color:var(--dim2)" id="list-info">—</span>
+        <select id="list-sort" style="margin-left:auto" onchange="renderList()">
+          <option value="-strength">Strongest first</option>
+          <option value="strength">Weakest first</option>
+          <option value="from">From cap A→Z</option>
+          <option value="to">To cap A→Z</option>
+          <option value="-updated">Recently updated</option>
+        </select>
+      </div>
+      <div id="list-wrap" style="flex:1;overflow:auto"></div>
+    </div>
+
+    <!-- Status bar -->
+    <div id="statusbar">
+      <span id="sb-status">ready</span>
+      <span class="sb-spacer"></span>
+      <span class="sb-job" id="sb-job"></span>
+    </div>
+  </div>
+</div>
+
+<!-- Cell tooltip -->
+<div id="cell-tip"></div>
+
+<!-- ════ EDIT MODAL ═══════════════════════════════════════════════════ -->
+<div id="edit-modal" onclick="if(event.target===this)closeEdit()">
+  <div id="edit-inner">
+    <div class="em-header">
+      <svg style="width:13px;height:13px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/>
+        <line x1="6" y1="9" x2="6" y2="15"/><line x1="9" y1="6" x2="15" y2="6"/><line x1="9" y1="18" x2="15" y2="18"/><line x1="18" y1="9" x2="18" y2="15"/>
+      </svg>
+      <span id="em-title">Edit relation</span>
+      <button class="btn sm" style="margin-left:auto" onclick="closeEdit()">Close ✕</button>
+    </div>
+
+    <!-- Sub-tabs inside the modal: edit form, full details, and per-cap views -->
+    <div class="em-tabs">
+      <button class="em-tab active" data-mt="edit"    onclick="setModalTab('edit')">Edit</button>
+      <button class="em-tab"        data-mt="details" onclick="setModalTab('details')">Details</button>
+      <button class="em-tab"        data-mt="capa"    onclick="setModalTab('capa')">From cap</button>
+      <button class="em-tab"        data-mt="capb"    onclick="setModalTab('capb')">To cap</button>
+    </div>
+
+    <div class="em-body">
+      <!-- Pair display — visible across all tabs -->
+      <div class="em-pair">
+        <div class="em-pair-cap" id="em-from">—</div>
+        <div class="em-pair-arrow" id="em-arrow">→</div>
+        <div class="em-pair-cap" id="em-to">—</div>
+      </div>
+
+      <!-- ════ TAB: EDIT ═══════════════════════════════════════════════════ -->
+      <div id="mt-edit" class="em-tab-pane on">
+        <div class="em-field">
+          <label>Relation label</label>
+          <input id="em-relation" type="text" placeholder="e.g. feeds_into, alternative_to">
+        </div>
+        <div class="em-field">
+          <label>Description</label>
+          <textarea id="em-description" placeholder="One sentence — name both capabilities literally; describe how the FROM cap's output COULD compose into the TO cap's input"></textarea>
+        </div>
+        <div class="em-field">
+          <label>Wire <span style="color:var(--dim2)">(optional — A.field → B.param)</span></label>
+          <input id="em-wire" type="text" placeholder="e.g. dream.caps.search.results -> dream.fabric.browse.items">
+        </div>
+        <div class="em-field-row">
+          <div class="em-field">
+            <label>Direction</label>
+            <select id="em-direction">
+              <option value="forward">Forward (from → to)</option>
+              <option value="backward">Backward (to → from)</option>
+              <option value="bidirectional">Bidirectional ↔</option>
+            </select>
+          </div>
+          <div class="em-field">
+            <label>Tags <span style="color:var(--dim2)">(csv)</span></label>
+            <input id="em-tags" type="text" placeholder="critical">
+          </div>
+        </div>
+        <div class="em-field-row">
+          <div class="em-field">
+            <label>Strength <span style="color:var(--dim2)">(0..1)</span></label>
+            <div class="em-strength">
+              <input id="em-strength" type="range" min="0" max="1" step="0.05" value="0.5"
+                     oninput="document.getElementById('em-strength-val').textContent=(+this.value).toFixed(2)">
+              <span class="em-strength-val" id="em-strength-val">0.50</span>
+            </div>
+          </div>
+          <div class="em-field">
+            <label>Confidence <span style="color:var(--dim2)">(0..1)</span></label>
+            <div class="em-strength">
+              <input id="em-confidence" type="range" min="0" max="1" step="0.05" value="0.5"
+                     oninput="document.getElementById('em-confidence-val').textContent=(+this.value).toFixed(2)">
+              <span class="em-strength-val" id="em-confidence-val">0.50</span>
+            </div>
+          </div>
+        </div>
+        <div class="em-suggest-box" id="em-suggest-box">
+          <div class="em-sg-hdr">⚛ LLM suggestion</div>
+          <div id="em-suggest-text" style="color:var(--text);line-height:1.5"></div>
+          <div style="margin-top:6px;display:flex;gap:5px">
+            <button class="btn sm primary" onclick="applySuggestion()">Apply</button>
+            <button class="btn sm" onclick="document.getElementById('em-suggest-box').classList.remove('on')">Dismiss</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ════ TAB: DETAILS ════════════════════════════════════════════════ -->
+      <div id="mt-details" class="em-tab-pane">
+        <div id="mt-details-body">
+          <div class="dt-empty">No relation saved yet — define one in the Edit tab.</div>
+        </div>
+      </div>
+
+      <!-- ════ TAB: FROM CAP ═══════════════════════════════════════════════ -->
+      <div id="mt-capa" class="em-tab-pane">
+        <div id="mt-capa-body" class="cap-detail">
+          <div class="dt-empty">Pick a relation to see the FROM capability.</div>
+        </div>
+      </div>
+
+      <!-- ════ TAB: TO CAP ═════════════════════════════════════════════════ -->
+      <div id="mt-capb" class="em-tab-pane">
+        <div id="mt-capb-body" class="cap-detail">
+          <div class="dt-empty">Pick a relation to see the TO capability.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="em-actions">
+      <button class="btn sm" onclick="suggestRelation()" id="em-suggest-btn">⚛ Suggest with LLM</button>
+      <div class="spacer"></div>
+      <button class="btn sm danger" id="em-delete-btn" onclick="deleteRelation()" style="display:none">Delete</button>
+      <button class="btn primary sm" id="em-save-btn" onclick="saveRelation()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+// ════════════════════════════════════════════════════════════════════════════
+// STATE
+// ════════════════════════════════════════════════════════════════════════════
+let _allCaps = [];        // all cap names ordered
+let _cells = {};          // "from→to" → relation record
+let _stats = {};
+let _view = 'matrix';
+let _filterGroup = '';
+let _filterSearch = '';
+let _filterRelation = '';     // '' = any
+let _filterMinStrength = 0;   // 0..1
+let _hideIsolated = false;
+let _showOnlyRels = false;
+let _showAuto   = true;
+let _showManual = true;
+let _editState = { from: null, to: null, isNew: false };
+let _suggestion = null;
+let _activeJobs = [];
+const _jobPollers = {};
+
+// ════════════════════════════════════════════════════════════════════════════
+// API / UTIL
+// ════════════════════════════════════════════════════════════════════════════
+function _base() {
+  try {
+    if (window.parent && window.parent !== window && window.parent._veraBase)
+      return window.parent._veraBase.replace(/\/$/, '');
+  } catch(_) {}
+  return location.origin;
+}
+async function api(path, method = 'GET', body = null) {
+  try {
+    const opts = { method, headers: { 'Content-Type': 'application/json' } };
+    if (body) opts.body = JSON.stringify(body);
+    const r = await fetch(_base() + path, opts);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch(e) { return null; }
+}
+function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function setStatus(msg, cls = '') {
+  const el = document.getElementById('sb-status');
+  if (el) { el.textContent = msg; el.style.color = cls === 'err' ? 'var(--err)' : cls === 'ok' ? 'var(--ok)' : 'var(--dim2)'; }
+}
+function strToHue(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360; return h; }
+function key(a, b) { return a + '→' + b; }
+
+// ════════════════════════════════════════════════════════════════════════════
+// LOAD
+// ════════════════════════════════════════════════════════════════════════════
+async function loadAll() {
+  setStatus('⟳ loading…');
+  const [matrix, stats, caps] = await Promise.all([
+    api('/cap_ontology/matrix'),
+    api('/cap_ontology/stats'),
+    api('/mcp/tools'),
+  ]);
+  if (caps && Array.isArray(caps)) {
+    _allCaps = caps.map(c => c.name).sort();
+  } else if (matrix?.caps) {
+    _allCaps = matrix.caps.slice().sort();
+  }
+  _cells = {};
+  if (matrix?.cells) {
+    matrix.cells.forEach(r => { _cells[key(r.from, r.to)] = r; });
+  }
+  _stats = stats || {};
+  populateGroupSelector();
+  populateRelationDropdown();
+  refreshHeaderPills();
+  refreshCoverage();
+  renderCurrentView();
+  setStatus('ready', 'ok');
+}
+
+function populateGroupSelector() {
+  const groups = [...new Set(_allCaps.map(c => c.split('.')[0]))].sort();
+  const sel = document.getElementById('group-sel');
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">all</option>' +
+    groups.map(g => `<option value="${esc(g)}">${esc(g)}</option>`).join('');
+  if (prev && groups.includes(prev)) sel.value = prev;
+}
+
+function refreshHeaderPills() {
+  document.getElementById('tp-caps').textContent = _allCaps.length;
+  document.getElementById('tp-rels').textContent = Object.keys(_cells).length;
+  document.getElementById('tp-cov').textContent =
+    `${_stats.covered_caps || 0}/${_stats.total_caps || _allCaps.length}`;
+}
+
+function refreshCoverage() {
+  const el = document.getElementById('coverage-list');
+  const grpStats = _stats.by_group || {};
+  const groups = Object.entries(grpStats).sort((a,b) => b[1] - a[1]).slice(0, 14);
+  if (!groups.length) { el.innerHTML = '<span style="color:var(--dim)">no relations yet</span>'; return; }
+  el.innerHTML = groups.map(([g, n]) => {
+    const hue = strToHue(g);
+    return `<div style="display:flex;align-items:center;gap:6px;cursor:pointer" onclick="document.getElementById('group-sel').value='${esc(g)}';onGroupChange('${esc(g)}')">
+      <span style="width:6px;height:6px;border-radius:50%;background:hsl(${hue},65%,55%)"></span>
+      <span style="flex:1;color:var(--text)">${esc(g)}</span>
+      <span style="color:var(--acc2)">${n}</span>
+    </div>`;
+  }).join('');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// VIEW SWITCHING
+// ════════════════════════════════════════════════════════════════════════════
+function setView(v) {
+  _view = v;
+  ['matrix','graph','list'].forEach(x => {
+    document.getElementById('vt-' + x).classList.toggle('on', x === v);
+    document.getElementById('view-' + x).style.display = x === v ? 'flex' : 'none';
+  });
+  renderCurrentView();
+}
+function renderCurrentView() {
+  if (_view === 'matrix') renderMatrix();
+  else if (_view === 'graph') renderGraph();
+  else if (_view === 'list')  renderList();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// FILTERS
+// ════════════════════════════════════════════════════════════════════════════
+function onSearchChange(v) {
+  // Note: keep raw casing here; _matchTerm normalises when needed (regex stays
+  // intact, fuzzy lower-cases its operand). Trim only the outer whitespace.
+  _filterSearch = (v || '').trim();
+  renderCurrentView();
+}
+function onGroupChange(v)  { _filterGroup = v || ''; renderCurrentView(); }
+function onRelChange(v)    { _filterRelation = v || ''; renderCurrentView(); }
+function onMinVisStrChange(v) {
+  const f = parseFloat(v) || 0;
+  _filterMinStrength = Math.max(0, Math.min(1, f));
+  renderCurrentView();
+}
+function setHideIsolated(v) { _hideIsolated = !!v; renderCurrentView(); }
+function setShowOnlyRels(v) { _showOnlyRels = !!v; renderCurrentView(); }
+function setShowAuto(v) { _showAuto = !!v; renderCurrentView(); }
+function setShowManual(v) { _showManual = !!v; renderCurrentView(); }
+function toggleSearchHelp() {
+  document.getElementById('search-help')?.classList.toggle('on');
+}
+
+function populateRelationDropdown() {
+  const sel = document.getElementById('rel-sel'); if (!sel) return;
+  const labels = new Set();
+  for (const k in _cells) {
+    const r = _cells[k];
+    if (r.relation) labels.add(r.relation);
+  }
+  const sorted = [...labels].sort();
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">any</option>' +
+    sorted.map(l => `<option value="${esc(l)}">${esc(l)}</option>`).join('');
+  if (cur && sorted.includes(cur)) sel.value = cur;
+}
+
+// ── Smart cap-name matching ──────────────────────────────────────────────────
+// Supports four modes simultaneously, separated by spaces. All terms must match.
+//   plain word        — substring match (case-insensitive)
+//   prefix:           — `exec.` matches caps starting with `exec.`
+//   suffix$           — `.run$` matches caps ending with `.run`
+//   -term             — exclude caps whose name contains `term`
+//   /pattern/         — regex; case-insensitive, anchored as written
+//   ~fuzzy            — `~tlmgn` matches `telegram` (subsequence)
+function _matchTerm(name, term) {
+  const lc = name.toLowerCase();
+  if (!term) return true;
+  // exclude
+  if (term.startsWith('-') && term.length > 1) {
+    return !lc.includes(term.slice(1).toLowerCase());
+  }
+  // regex
+  if (term.startsWith('/') && term.endsWith('/') && term.length > 2) {
+    try { return new RegExp(term.slice(1, -1), 'i').test(name); }
+    catch(_) { return false; }
+  }
+  // suffix
+  if (term.endsWith('$') && term.length > 1) {
+    return lc.endsWith(term.slice(0, -1).toLowerCase());
+  }
+  // prefix (term ends in ".") OR explicit "prefix:"
+  if (term.endsWith('.')) {
+    return lc.startsWith(term.toLowerCase());
+  }
+  // fuzzy subsequence
+  if (term.startsWith('~') && term.length > 1) {
+    const t = term.slice(1).toLowerCase();
+    let i = 0;
+    for (const ch of lc) { if (ch === t[i]) i++; if (i >= t.length) return true; }
+    return i >= t.length;
+  }
+  // default: substring
+  return lc.includes(term.toLowerCase());
+}
+
+function _matchAllTerms(name, terms) {
+  for (const t of terms) {
+    if (!_matchTerm(name, t)) return false;
+  }
+  return true;
+}
+
+function _searchTerms() {
+  // Split on whitespace; preserve quoted phrases as single terms.
+  const raw = (_filterSearch || '').trim();
+  if (!raw) return [];
+  // Simple tokenizer that respects double quotes
+  const out = [];
+  let cur = '', inQ = false;
+  for (const ch of raw) {
+    if (ch === '"') { inQ = !inQ; continue; }
+    if (!inQ && /\s/.test(ch)) {
+      if (cur) { out.push(cur); cur = ''; }
+    } else {
+      cur += ch;
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+function getVisibleCaps() {
+  let caps = _allCaps.slice();
+  if (_filterGroup) caps = caps.filter(c => c.split('.')[0] === _filterGroup);
+
+  // Compute connectivity (respects auto/manual filters)
+  const connected = new Set();
+  for (const k in _cells) {
+    const r = _cells[k];
+    if (!_showAuto && r.auto) continue;
+    if (!_showManual && !r.auto) continue;
+    connected.add(r.from); connected.add(r.to);
+  }
+  if (_hideIsolated || _showOnlyRels) {
+    caps = caps.filter(c => connected.has(c));
+  }
+
+  // Apply smart search to cap names
+  const terms = _searchTerms();
+  if (terms.length) {
+    const byName = caps.filter(c => _matchAllTerms(c, terms));
+    // ALSO surface caps connected to a search-matched cap by relation —
+    // useful when the user searches for a term that names a relation/desc
+    // on a hidden cap. We only do this if the user has at least one
+    // positive (non-exclude) term AND hide-isolated is off, so as not to
+    // surprise users who explicitly hid isolated nodes.
+    if (!(_hideIsolated || _showOnlyRels)) {
+      // Restrict to caps that match
+      caps = byName;
+    } else {
+      // Hide-isolated path: keep matched + their neighbours
+      const hits = new Set(byName);
+      for (const k in _cells) {
+        const r = _cells[k];
+        if (hits.has(r.from)) hits.add(r.to);
+        if (hits.has(r.to))   hits.add(r.from);
+      }
+      caps = caps.filter(c => hits.has(c) || _matchAllTerms(c, terms));
+    }
+  }
+
+  return caps;
+}
+
+function getVisibleCells(caps) {
+  const set = new Set(caps);
+  const out = [];
+  for (const k in _cells) {
+    const r = _cells[k];
+    if (!set.has(r.from) || !set.has(r.to)) continue;
+    if (!_showAuto && r.auto) continue;
+    if (!_showManual && !r.auto) continue;
+    if (_filterRelation && (r.relation || '') !== _filterRelation) continue;
+    if (_filterMinStrength > 0 && (r.strength || 0) < _filterMinStrength) continue;
+    // Also let the search match against the relation label / description
+    // (this surfaces relations the user is looking for even when neither cap
+    //  name matches the search).
+    out.push(r);
+  }
+  return out;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// MATRIX VIEW
+// ════════════════════════════════════════════════════════════════════════════
+function renderMatrix() {
+  const caps = getVisibleCaps();
+  const cells = getVisibleCells(caps);
+  const cellMap = {};
+  cells.forEach(r => { cellMap[key(r.from, r.to)] = r; });
+
+  const tbl = document.getElementById('matrix-table');
+  const empty = document.getElementById('matrix-empty');
+  const info = document.getElementById('matrix-info');
+
+  if (!caps.length) {
+    tbl.innerHTML = ''; empty.style.display = 'block';
+    info.textContent = '0 caps shown';
+    return;
+  }
+  empty.style.display = 'none';
+  info.textContent = `${caps.length} caps · ${cells.length} relations${_filterSearch ? ` · search "${_filterSearch}"` : ''}`;
+
+  const search = _filterSearch;
+
+  // Build header row (top)
+  let html = '<thead><tr>';
+  html += `<th class="corner">FROM ↓ &nbsp; TO →</th>`;
+  let prevGrp = '';
+  caps.forEach((c, i) => {
+    const grp = c.split('.')[0];
+    const isStart = grp !== prevGrp;
+    prevGrp = grp;
+    const hue = strToHue(grp);
+    html += `<th class="col ${isStart ? 'grp-start' : ''}" data-col="${i}" data-cap="${esc(c)}"
+              onclick="filterToCap('${esc(c)}')"
+              onmouseover="hoverHeader(${i}, 'col')" onmouseout="unhoverHeader(${i}, 'col')">
+      <div class="col-inner"><span class="col-label" style="color:hsl(${hue},45%,70%)">${esc(c)}</span></div>
+    </th>`;
+  });
+  html += '</tr></thead><tbody>';
+
+  // Body rows
+  prevGrp = '';
+  caps.forEach((rowCap, ri) => {
+    const grp = rowCap.split('.')[0];
+    const isStart = grp !== prevGrp;
+    prevGrp = grp;
+    const hue = strToHue(grp);
+    const grpShort = grp.length > 9 ? grp.slice(0, 9) : grp;
+    html += `<tr><th class="row ${isStart ? 'grp-start' : ''}" data-row="${ri}" data-cap="${esc(rowCap)}"
+                onclick="filterToCap('${esc(rowCap)}')"
+                onmouseover="hoverHeader(${ri}, 'row')" onmouseout="unhoverHeader(${ri}, 'row')"
+                title="${esc(rowCap)}">
+      <span class="row-grp" style="color:hsl(${hue},40%,55%)">${esc(grpShort)}.</span>${esc(rowCap.slice(grp.length + 1))}
+    </th>`;
+
+    caps.forEach((colCap, ci) => {
+      if (rowCap === colCap) {
+        html += `<td class="cell diag"></td>`;
+        return;
+      }
+      const r = cellMap[key(rowCap, colCap)];
+      let cls = 'cell';
+      let inner = '';
+      if (r) {
+        cls += ' has-rel';
+        if (r.auto) cls += ' auto';
+        if (r.direction === 'bidirectional') cls += ' bidir';
+        const s = r.strength || 0;
+        if (s < 0.35) cls += ' weak';
+        if (s > 0.7)  cls += ' strong';
+        inner = `<span class="dot"></span>`;
+        // Search highlight
+        if (search && (r.relation?.toLowerCase().includes(search) ||
+                       r.description?.toLowerCase().includes(search))) {
+          cls += ' in-search';
+        }
+      } else if (search && (rowCap.toLowerCase().includes(search) || colCap.toLowerCase().includes(search))) {
+        cls += ' in-search';
+      }
+      html += `<td class="${cls}" data-from="${esc(rowCap)}" data-to="${esc(colCap)}"
+                  onclick="openEditFor('${esc(rowCap)}','${esc(colCap)}')"
+                  onmouseover="showCellTip(event, '${esc(rowCap)}','${esc(colCap)}')"
+                  onmouseout="hideCellTip()">${inner}</td>`;
+    });
+    html += '</tr>';
+  });
+  html += '</tbody>';
+  tbl.innerHTML = html;
+}
+
+function hoverHeader(idx, kind) {
+  // Highlight whole row/column
+  const tbl = document.getElementById('matrix-table');
+  if (!tbl) return;
+  if (kind === 'col') {
+    tbl.querySelectorAll('th.col')[idx]?.classList.add('hover-col');
+    tbl.querySelectorAll('tr').forEach(tr => {
+      const cells = tr.querySelectorAll('td.cell');
+      if (cells[idx]) cells[idx].style.background = 'rgba(90,158,143,.08)';
+    });
+  } else {
+    tbl.querySelectorAll('th.row')[idx]?.classList.add('hover-row');
+    const tr = tbl.querySelectorAll('tbody tr')[idx];
+    if (tr) tr.querySelectorAll('td.cell').forEach(td => td.style.background = (td.classList.contains('has-rel') ? '' : 'rgba(90,158,143,.08)'));
+  }
+}
+function unhoverHeader(idx, kind) {
+  const tbl = document.getElementById('matrix-table');
+  if (!tbl) return;
+  if (kind === 'col') {
+    tbl.querySelectorAll('th.col')[idx]?.classList.remove('hover-col');
+    tbl.querySelectorAll('tr').forEach(tr => {
+      const cells = tr.querySelectorAll('td.cell');
+      if (cells[idx]) cells[idx].style.background = '';
+    });
+  } else {
+    tbl.querySelectorAll('th.row')[idx]?.classList.remove('hover-row');
+    const tr = tbl.querySelectorAll('tbody tr')[idx];
+    if (tr) tr.querySelectorAll('td.cell').forEach(td => { if (!td.classList.contains('has-rel')) td.style.background = ''; });
+  }
+}
+
+function filterToCap(cap) {
+  document.getElementById('search-inp').value = cap;
+  onSearchChange(cap);
+}
+
+// Cell tooltip
+function showCellTip(ev, from, to) {
+  const r = _cells[key(from, to)];
+  const rev = _cells[key(to, from)];
+  const tip = document.getElementById('cell-tip');
+  let html = `<div class="tip-arrow">${esc(from)} <span style="color:var(--dim2)">→</span> ${esc(to)}</div>`;
+  if (r) {
+    const arrow = r.direction === 'bidirectional' ? '↔' : '→';
+    html += `<div class="tip-rel">${arrow} ${esc(r.relation || '(no label)')}</div>`;
+    if (r.description) html += `<div class="tip-desc">${esc(r.description)}</div>`;
+    html += `<div class="tip-meta">strength ${(r.strength || 0).toFixed(2)} · ${r.auto ? 'LLM-generated' : 'manual'}${rev ? ' · reverse exists' : ''}</div>`;
+  } else {
+    html += `<div class="tip-desc" style="color:var(--dim)">No relation defined.<br>Click to add.</div>`;
+  }
+  tip.innerHTML = html;
+  tip.style.display = 'block';
+  // Position
+  const wr = document.getElementById('matrix-wrap');
+  const rect = wr.getBoundingClientRect();
+  let x = ev.clientX - rect.left + 14;
+  let y = ev.clientY - rect.top  + 14;
+  // Constrain
+  const tw = 320, th = 120;
+  if (x + tw > rect.width)  x -= tw + 28;
+  if (y + th > rect.height) y -= th + 24;
+  tip.style.left = (x + rect.left) + 'px';
+  tip.style.top  = (y + rect.top)  + 'px';
+}
+function hideCellTip() {
+  const tip = document.getElementById('cell-tip');
+  if (tip) tip.style.display = 'none';
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// GRAPH VIEW (force-directed, custom — no D3)
+// ════════════════════════════════════════════════════════════════════════════
+let _gNodes = [], _gEdges = [], _gAnim = null;
+let _gPan = { x: 0, y: 0, scale: 1 };
+let _gIter = 0;          // simulation tick counter; reset on each renderGraph
+let _gDragNode = null;   // node currently being dragged (pinned)
+
+function renderGraph() {
+  const caps = getVisibleCaps();
+  const cells = getVisibleCells(caps);
+  document.getElementById('graph-info').textContent = `${caps.length} nodes · ${cells.length} edges`;
+  const svg = document.getElementById('graph-svg');
+  svg.innerHTML = '';
+
+  if (!caps.length) {
+    svg.innerHTML = `<text x="50%" y="50%" text-anchor="middle" fill="var(--dim2)" font-family="var(--mono)" font-size="13">No nodes match current filters</text>`;
+    if (_gAnim) { cancelAnimationFrame(_gAnim); _gAnim = null; }
+    return;
+  }
+
+  const w = svg.clientWidth || 800;
+  const h = svg.clientHeight || 600;
+
+  // Init nodes — preserve previous positions where possible
+  const prevPos = {};
+  _gNodes.forEach(n => prevPos[n.name] = { x: n.x, y: n.y, pinned: n.pinned });
+  _gNodes = caps.map((c, i) => ({
+    name: c, group: c.split('.')[0],
+    x: prevPos[c]?.x ?? (w / 2 + 200 * Math.cos(2 * Math.PI * i / caps.length)),
+    y: prevPos[c]?.y ?? (h / 2 + 200 * Math.sin(2 * Math.PI * i / caps.length)),
+    vx: 0, vy: 0,
+    degree: 0,
+    pinned: prevPos[c]?.pinned || false,
+  }));
+  const nodeIdx = {};
+  _gNodes.forEach((n, i) => nodeIdx[n.name] = i);
+
+  _gEdges = cells.map(c => ({
+    from: nodeIdx[c.from], to: nodeIdx[c.to],
+    auto: c.auto, strength: c.strength || 0.5,
+    rel: c.relation, desc: c.description,
+  }));
+
+  // Compute node degrees (used by the physics step for hub-aware damping
+  // and spring-impulse normalisation). Without this, nodes with many
+  // edges accumulate too much spring force per tick and oscillate.
+  _gEdges.forEach(e => {
+    if (_gNodes[e.from]) _gNodes[e.from].degree++;
+    if (_gNodes[e.to])   _gNodes[e.to].degree++;
+  });
+
+  // Build SVG defs (groups + arrowheads)
+  const defs = `<defs>
+    <marker id="arr-m" markerWidth="6" markerHeight="6" refX="9" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="${getCss('--dim')}" opacity=".55"/>
+    </marker>
+    <marker id="arr-a" markerWidth="6" markerHeight="6" refX="9" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="${getCss('--acc3')}" opacity=".7"/>
+    </marker>
+  </defs>`;
+  svg.innerHTML = defs;
+
+  // Pan + zoom group
+  const g = mkSvg('g', { id: 'g-root', transform: `translate(${_gPan.x},${_gPan.y}) scale(${_gPan.scale})` });
+  svg.appendChild(g);
+
+  // Edges
+  _gEdges.forEach((e, i) => {
+    const ln = mkSvg('line', {
+      class: 'gedge' + (e.auto ? ' auto' : ''),
+      'data-eid': i,
+      'marker-end': e.auto ? 'url(#arr-a)' : 'url(#arr-m)',
+      x1: 0, y1: 0, x2: 0, y2: 0,
+    });
+    g.appendChild(ln);
+  });
+
+  // Nodes
+  _gNodes.forEach((n, i) => {
+    const grpHue = strToHue(n.group);
+    const ng = mkSvg('g', { class: 'gnode', 'data-nid': i, 'data-cap': n.name });
+    const c = mkSvg('circle', {
+      class: 'gnode-circle', r: 14, cx: 0, cy: 0,
+      fill: `hsla(${grpHue},45%,32%,.55)`, stroke: `hsl(${grpHue},55%,55%)`,
+    });
+    const t = mkSvg('text', { class: 'gnode-text', y: 4 });
+    t.textContent = n.name.length > 16 ? n.name.slice(0, 14) + '…' : n.name;
+    ng.appendChild(c); ng.appendChild(t);
+    // Click-vs-drag disambiguation: open the editor ONLY when the mouse
+    // didn't travel far between mousedown and mouseup. Without this,
+    // dragging a node would always also open the edit popover on release.
+    let _md = null;
+    ng.addEventListener('mousedown', (ev) => {
+      if (ev.altKey) { _md = null; return; }   // alt-click is handled by pan layer (toggle pin)
+      _md = { x: ev.clientX, y: ev.clientY };
+    });
+    ng.addEventListener('mouseup', (ev) => {
+      if (!_md) return;
+      const dx = ev.clientX - _md.x, dy = ev.clientY - _md.y;
+      _md = null;
+      if (dx*dx + dy*dy <= 16) {  // < 4px movement = click
+        openEditFor(n.name, null);
+      }
+    });
+    ng.addEventListener('mouseenter', () => highlightNode(i));
+    ng.addEventListener('mouseleave', () => clearHighlight());
+    g.appendChild(ng);
+  });
+
+  if (_gAnim) cancelAnimationFrame(_gAnim);
+  _gIter = 0;
+  function tick() {
+    _gIter++;
+    forceStep(w, h);
+    drawPositions();
+    if (_gIter < 320) _gAnim = requestAnimationFrame(tick);
+    else _gAnim = null;
+  }
+  tick();
+  enableGraphPan(svg, g);
+  applyGraphSearchHighlight();
+}
+
+function getCss(varName) {
+  return getComputedStyle(document.documentElement).getPropertyValue(varName).trim() || '#666';
+}
+function mkSvg(name, attrs) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', name);
+  for (const k in attrs) el.setAttribute(k, attrs[k]);
+  return el;
+}
+
+// ── Physics constants — tuned so that low-degree nodes (degree ≤ 3) get
+// EXACTLY the same forces as before, and only highly-connected nodes get
+// the extra stabilisation. This preserves the graph behaviour the user
+// already likes.
+const _G_REPULSE = 4500;
+const _G_SPRING = 0.025;
+const _G_SPRING_LEN = 130;
+const _G_DAMP_BASE = 0.78;       // damping for low-degree nodes
+const _G_CENTER = 0.012;
+const _G_DEGREE_PIVOT = 4;       // nodes with degree > this start getting extra damping
+
+function forceStep(w, h) {
+  const N = _gNodes.length;
+  // Cooling factor: reduces the velocity cap and increases damping over the
+  // course of the simulation, so the layout settles deterministically.
+  // Starts near 1 and approaches 0 as iterations progress.
+  const cool = Math.max(0.05, 1 - (_gIter / 320));
+
+  // ── Degree-aware per-node damping ─────────────────────────────────────
+  // Low-degree (≤ 4) nodes use the original damping (0.78). Higher-degree
+  // nodes get progressively heavier damping, capped at 0.92, so dense
+  // clusters cannot bounce: the more edges tugging on a node, the more
+  // velocity-bleed is applied each step.
+  // The repulsion / spring constants themselves are unchanged for low-
+  // degree nodes — only damping changes — so the visual feel of sparse
+  // graphs is preserved.
+
+  // ── Repulsion (O(n²)) ─────────────────────────────────────────────────
+  for (let i = 0; i < N; i++) {
+    const a = _gNodes[i];
+    const deg = a.degree | 0;
+    // Damping rises with degree above the pivot. log1p keeps it gentle.
+    const damp = (deg <= _G_DEGREE_PIVOT)
+      ? _G_DAMP_BASE
+      : Math.min(0.92, _G_DAMP_BASE + Math.log1p(deg - _G_DEGREE_PIVOT) * 0.04);
+    a.vx *= damp; a.vy *= damp;
+
+    a.vx += (w / 2 - a.x) * _G_CENTER;
+    a.vy += (h / 2 - a.y) * _G_CENTER;
+
+    for (let j = 0; j < N; j++) {
+      if (i === j) continue;
+      const b = _gNodes[j];
+      const dx = a.x - b.x, dy = a.y - b.y;
+      const d2 = dx * dx + dy * dy + 0.1;
+      const f = _G_REPULSE / d2;
+      const d  = Math.sqrt(d2);
+      a.vx += dx / d * f;
+      a.vy += dy / d * f;
+    }
+  }
+
+  // ── Spring on edges ───────────────────────────────────────────────────
+  // Spring force is now divided by the SQRT of each endpoint's degree, so
+  // a hub node with N edges doesn't get N times the pull. This is the
+  // single biggest cause of bouncing in dense clusters: with the previous
+  // formulation, a node with 12 edges got 12× the spring impulse per step
+  // and could not damp out before the next tick. Square-root means a
+  // node with 16 edges gets 4× the impulse instead of 16×.
+  _gEdges.forEach(e => {
+    const a = _gNodes[e.from], b = _gNodes[e.to];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const d = Math.sqrt(dx * dx + dy * dy) + 0.001;
+    const baseF = (d - _G_SPRING_LEN) * _G_SPRING * (0.5 + e.strength);
+    // Sharing factor: degrees of both endpoints. Sqrt keeps low-degree
+    // pairs unchanged (sqrt(1) = 1), only attenuates hub-to-hub edges.
+    const aShare = 1 / Math.sqrt(Math.max(1, a.degree));
+    const bShare = 1 / Math.sqrt(Math.max(1, b.degree));
+    a.vx += dx / d * baseF * aShare; a.vy += dy / d * baseF * aShare;
+    b.vx -= dx / d * baseF * bShare; b.vy -= dy / d * baseF * bShare;
+  });
+
+  // ── Velocity cap & integration ────────────────────────────────────────
+  // Cap velocity per step. The cap drops as the simulation cools so late
+  // iterations cannot disturb settled positions. Drag-pinned nodes are
+  // exempt — their velocity is overridden externally.
+  const vMax = 24 * cool + 2;
+  for (let i = 0; i < N; i++) {
+    const n = _gNodes[i];
+    if (n.pinned) { n.vx = 0; n.vy = 0; continue; }
+    const sp = Math.sqrt(n.vx * n.vx + n.vy * n.vy);
+    if (sp > vMax) {
+      const k = vMax / sp;
+      n.vx *= k; n.vy *= k;
+    }
+    // Stillness threshold: if barely moving, snap to rest. Stops
+    // microscopic oscillation in dense clusters.
+    if (sp < 0.05) { n.vx = 0; n.vy = 0; }
+    n.x += n.vx;
+    n.y += n.vy;
+  }
+}
+
+function drawPositions() {
+  const svg = document.getElementById('graph-svg');
+  if (!svg) return;
+  // Update edges
+  const edges = svg.querySelectorAll('.gedge');
+  edges.forEach((ln, i) => {
+    const e = _gEdges[i]; if (!e) return;
+    const a = _gNodes[e.from], b = _gNodes[e.to];
+    if (!a || !b) return;
+    // Truncate to circle edge so arrow shows
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const d = Math.sqrt(dx*dx + dy*dy) + 0.01;
+    const ux = dx / d, uy = dy / d;
+    ln.setAttribute('x1', a.x + ux * 14);
+    ln.setAttribute('y1', a.y + uy * 14);
+    ln.setAttribute('x2', b.x - ux * 16);
+    ln.setAttribute('y2', b.y - uy * 16);
+    ln.setAttribute('stroke-width', Math.max(1, 1 + e.strength));
+  });
+  // Update nodes
+  const nodes = svg.querySelectorAll('.gnode');
+  nodes.forEach((g, i) => {
+    const n = _gNodes[i]; if (!n) return;
+    g.setAttribute('transform', `translate(${n.x.toFixed(1)},${n.y.toFixed(1)})`);
+    // Reflect the pinned state visually so you can see which nodes you've
+    // placed by hand. Toggling here (rather than at create-time) means the
+    // class stays in sync as the user pins/unpins during simulation.
+    g.classList.toggle('pinned', !!n.pinned);
+  });
+}
+
+function highlightNode(idx) {
+  const svg = document.getElementById('graph-svg');
+  const me = _gNodes[idx];
+  const connected = new Set([idx]);
+  _gEdges.forEach(e => {
+    if (e.from === idx) connected.add(e.to);
+    if (e.to   === idx) connected.add(e.from);
+  });
+  svg.querySelectorAll('.gnode').forEach((g, i) => {
+    g.classList.toggle('dim', !connected.has(i));
+    g.classList.toggle('hl',   i === idx);
+  });
+  svg.querySelectorAll('.gedge').forEach((l, i) => {
+    const e = _gEdges[i];
+    l.classList.toggle('hl', e && (e.from === idx || e.to === idx));
+  });
+}
+function clearHighlight() {
+  const svg = document.getElementById('graph-svg');
+  if (!svg) return;
+  svg.querySelectorAll('.gnode').forEach(g => { g.classList.remove('dim'); g.classList.remove('hl'); });
+  svg.querySelectorAll('.gedge').forEach(l => l.classList.remove('hl'));
+  applyGraphSearchHighlight();
+}
+function applyGraphSearchHighlight() {
+  const svg = document.getElementById('graph-svg');
+  if (!svg) return;
+  const q = _filterSearch;
+  svg.querySelectorAll('.gnode').forEach(g => g.classList.remove('search-hit'));
+  svg.querySelectorAll('.gedge').forEach(l => l.classList.remove('search-hit'));
+  if (!q) return;
+  _gNodes.forEach((n, i) => {
+    if (n.name.toLowerCase().includes(q)) {
+      svg.querySelector(`.gnode[data-nid="${i}"]`)?.classList.add('search-hit');
+    }
+  });
+  _gEdges.forEach((e, i) => {
+    if ((e.rel || '').toLowerCase().includes(q) || (e.desc || '').toLowerCase().includes(q)) {
+      svg.querySelector(`.gedge[data-eid="${i}"]`)?.classList.add('search-hit');
+    }
+  });
+}
+
+function enableGraphPan(svg, g) {
+  // Pan/zoom of the whole graph + drag individual nodes.
+  // - Click+drag on empty space → pan
+  // - Click+drag on a node      → drag that node (auto-pins it during drag,
+  //   and the pin stays after release so dense clusters can be tamed by hand)
+  // - Alt+click a node          → toggle its pin (frees a previously pinned
+  //   node so it can re-settle with the simulation)
+  let mode = null;        // 'pan' | 'node' | null
+  let sx = 0, sy = 0;     // start state
+  let dragNodeIdx = null;
+
+  function nodeIdxFromEvent(ev) {
+    let el = ev.target;
+    while (el && el !== svg) {
+      if (el.classList && el.classList.contains('gnode')) {
+        const id = el.getAttribute('data-nid');
+        return id != null ? parseInt(id, 10) : null;
+      }
+      el = el.parentNode;
+    }
+    return null;
+  }
+
+  // Convert a screen point → graph (pre-transform) coordinates.
+  function screenToGraph(ev) {
+    const rect = svg.getBoundingClientRect();
+    const sxp = ev.clientX - rect.left;
+    const syp = ev.clientY - rect.top;
+    return {
+      x: (sxp - _gPan.x) / _gPan.scale,
+      y: (syp - _gPan.y) / _gPan.scale,
+    };
+  }
+
+  svg.onmousedown = (e) => {
+    const idx = nodeIdxFromEvent(e);
+    if (idx != null) {
+      // Alt-click toggles pin without dragging
+      if (e.altKey) {
+        const n = _gNodes[idx];
+        if (n) n.pinned = !n.pinned;
+        e.preventDefault(); e.stopPropagation();
+        return;
+      }
+      mode = 'node';
+      dragNodeIdx = idx;
+      _gDragNode = idx;
+      const n = _gNodes[idx];
+      if (n) { n.pinned = true; n.vx = 0; n.vy = 0; }
+      e.preventDefault(); e.stopPropagation();
+      // Restart cooling so neighbours can re-settle around the drag
+      _gIter = Math.max(0, _gIter - 80);
+      if (!_gAnim) {
+        const w = svg.clientWidth || 800, h = svg.clientHeight || 600;
+        const tick = () => {
+          _gIter++;
+          forceStep(w, h);
+          drawPositions();
+          if (_gIter < 320) _gAnim = requestAnimationFrame(tick);
+          else _gAnim = null;
+        };
+        tick();
+      }
+    } else {
+      mode = 'pan';
+      sx = e.clientX - _gPan.x;
+      sy = e.clientY - _gPan.y;
+    }
+  };
+
+  svg.onmousemove = (e) => {
+    if (mode === 'pan') {
+      _gPan.x = e.clientX - sx; _gPan.y = e.clientY - sy;
+      g.setAttribute('transform', `translate(${_gPan.x},${_gPan.y}) scale(${_gPan.scale})`);
+    } else if (mode === 'node' && dragNodeIdx != null) {
+      const p = screenToGraph(e);
+      const n = _gNodes[dragNodeIdx];
+      if (n) { n.x = p.x; n.y = p.y; n.vx = 0; n.vy = 0; n.pinned = true; }
+    }
+  };
+
+  svg.onmouseup = svg.onmouseleave = () => {
+    mode = null;
+    dragNodeIdx = null;
+    _gDragNode = null;
+    // Pinned state is left as-is — user explicitly placed the node
+  };
+
+  svg.onwheel = (e) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    _gPan.scale = Math.max(0.2, Math.min(3, _gPan.scale * delta));
+    g.setAttribute('transform', `translate(${_gPan.x},${_gPan.y}) scale(${_gPan.scale})`);
+  };
+}
+
+function restartGraphLayout() {
+  // Reset positions and unpin any drag-pinned nodes
+  _gNodes.forEach((n, i) => {
+    const w = 800, h = 600;
+    n.x = w / 2 + 200 * Math.cos(2 * Math.PI * i / _gNodes.length);
+    n.y = h / 2 + 200 * Math.sin(2 * Math.PI * i / _gNodes.length);
+    n.vx = 0; n.vy = 0; n.pinned = false;
+  });
+  _gPan = { x: 0, y: 0, scale: 1 };
+  renderGraph();
+}
+function centerGraph() { _gPan = { x: 0, y: 0, scale: 1 }; renderGraph(); }
+
+function unpinAllNodes() {
+  // Release all manually-placed nodes so they re-settle with the simulation.
+  // Restarting the iter counter gives them headroom to move significantly.
+  _gNodes.forEach(n => { n.pinned = false; });
+  _gIter = 60;
+  if (!_gAnim) {
+    const svg = document.getElementById('graph-svg');
+    const w = svg.clientWidth || 800, h = svg.clientHeight || 600;
+    const tick = () => {
+      _gIter++;
+      forceStep(w, h);
+      drawPositions();
+      if (_gIter < 320) _gAnim = requestAnimationFrame(tick);
+      else _gAnim = null;
+    };
+    tick();
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// LIST VIEW
+// ════════════════════════════════════════════════════════════════════════════
+function renderList() {
+  const caps = getVisibleCaps();
+  const cells = getVisibleCells(caps);
+  const sort = document.getElementById('list-sort').value;
+
+  const sortFns = {
+    '-strength': (a,b) => (b.strength||0) - (a.strength||0),
+     'strength': (a,b) => (a.strength||0) - (b.strength||0),
+     'from': (a,b) => a.from.localeCompare(b.from),
+     'to':   (a,b) => a.to.localeCompare(b.to),
+    '-updated': (a,b) => (b.updated_at||'').localeCompare(a.updated_at||''),
+  };
+  const sorted = cells.slice().sort(sortFns[sort] || sortFns['-strength']);
+
+  // Search filter
+  const filtered = _filterSearch ? sorted.filter(r =>
+    r.from.toLowerCase().includes(_filterSearch) ||
+    r.to.toLowerCase().includes(_filterSearch)   ||
+    (r.relation || '').toLowerCase().includes(_filterSearch) ||
+    (r.description || '').toLowerCase().includes(_filterSearch)
+  ) : sorted;
+
+  document.getElementById('list-info').textContent = `${filtered.length} relations`;
+  const wrap = document.getElementById('list-wrap');
+  if (!filtered.length) {
+    wrap.innerHTML = `<div class="empty">No relations match.</div>`;
+    return;
+  }
+  let html = '<div style="padding:10px 14px">';
+  filtered.forEach(r => {
+    const arrow = r.direction === 'bidirectional' ? '↔' : '→';
+    const labCls = r.auto ? 'rel-label auto' : 'rel-label';
+    const sPct = Math.round((r.strength || 0) * 100);
+    html += `<div style="padding:11px 13px;background:var(--bg1);border:1px solid var(--border);border-radius:5px;margin-bottom:7px;cursor:pointer;font-family:var(--mono);font-size:11px"
+                onclick="openEditFor('${esc(r.from)}','${esc(r.to)}')">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="color:var(--acc);font-weight:600">${esc(r.from)}</span>
+        <span style="color:var(--dim2)">${arrow}</span>
+        <span style="font-size:10px;padding:2px 7px;background:rgba(158,143,160,.12);border:1px solid rgba(158,143,160,.3);border-radius:8px;color:var(--acc4)">${esc(r.relation || '—')}</span>
+        <span style="color:var(--dim2)">${arrow}</span>
+        <span style="color:var(--acc2);font-weight:600">${esc(r.to)}</span>
+        <span style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;font-size:9.5px;color:var(--dim2)">
+          <span style="display:inline-block;width:38px;height:3px;background:rgba(255,255,255,.08);border-radius:2px;overflow:hidden">
+            <span style="display:block;height:100%;width:${sPct}%;background:linear-gradient(90deg,var(--acc),var(--acc2))"></span>
+          </span>
+          ${(r.strength||0).toFixed(2)} · ${r.auto ? 'auto' : 'manual'}
+        </span>
+      </div>
+      ${r.description ? `<div style="margin-top:5px;color:var(--dim2);font-size:10px;line-height:1.55;padding-left:5px;border-left:1px solid var(--border)">${esc(r.description)}</div>` : ''}
+    </div>`;
+  });
+  html += '</div>';
+  wrap.innerHTML = html;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// EDIT MODAL — tabbed: Edit / Details / FROM cap / TO cap
+// ════════════════════════════════════════════════════════════════════════════
+const _capCache = {};            // cap_name → tools-list record (full schema)
+const _descCache = {};           // cap_name → { original, override, has_override }
+let   _modalTab = 'edit';
+
+function setModalTab(t) {
+  _modalTab = t;
+  document.querySelectorAll('.em-tab').forEach(b => b.classList.toggle('active', b.dataset.mt === t));
+  ['edit','details','capa','capb'].forEach(k => {
+    const el = document.getElementById('mt-' + k);
+    if (el) el.classList.toggle('on', k === t);
+  });
+  // Hide the bottom action bar buttons that don't apply to non-edit tabs
+  const onEdit = (t === 'edit');
+  document.getElementById('em-suggest-btn').style.display = onEdit ? 'inline-flex' : 'none';
+  document.getElementById('em-save-btn').style.display    = onEdit ? 'inline-flex' : 'none';
+  document.getElementById('em-delete-btn').style.display  = (onEdit && !_editState.isNew) ? 'inline-flex' : 'none';
+  // Lazy-render the cap tabs only when entered
+  if (t === 'capa') renderCapTab('capa', _editState.from);
+  if (t === 'capb') renderCapTab('capb', _editState.to);
+  if (t === 'details') renderDetailsTab();
+}
+
+function openEditFor(fromCap, toCap) {
+  _suggestion = null;
+  document.getElementById('em-suggest-box').classList.remove('on');
+  if (!fromCap) return;
+  const isNew = !toCap || !_cells[key(fromCap, toCap)];
+  _editState = { from: fromCap, to: toCap || '', isNew };
+  document.getElementById('em-title').textContent = isNew ? 'Add relation' : 'Edit relation';
+  document.getElementById('em-from').textContent = fromCap;
+  document.getElementById('em-to').textContent   = toCap || '(pick a target — type below)';
+  document.getElementById('em-arrow').textContent = '→';
+
+  // Reset edit form fields
+  document.getElementById('em-relation').value = '';
+  document.getElementById('em-description').value = '';
+  document.getElementById('em-wire').value = '';
+  document.getElementById('em-direction').value = 'forward';
+  document.getElementById('em-tags').value = '';
+  document.getElementById('em-strength').value = '0.5';
+  document.getElementById('em-strength-val').textContent = '0.50';
+  document.getElementById('em-confidence').value = '0.5';
+  document.getElementById('em-confidence-val').textContent = '0.50';
+
+  if (!isNew) {
+    const r = _cells[key(fromCap, toCap)];
+    if (r) {
+      document.getElementById('em-relation').value    = r.relation || '';
+      document.getElementById('em-description').value = r.description || '';
+      document.getElementById('em-wire').value        = r.wire || '';
+      document.getElementById('em-direction').value   = r.direction || 'forward';
+      document.getElementById('em-tags').value        = (r.tags || []).join(', ');
+      document.getElementById('em-strength').value    = r.strength ?? 0.5;
+      document.getElementById('em-strength-val').textContent = (+(r.strength || 0)).toFixed(2);
+      const cv = (r.confidence ?? r.strength ?? 0.5);
+      document.getElementById('em-confidence').value  = cv;
+      document.getElementById('em-confidence-val').textContent = (+cv).toFixed(2);
+    }
+  }
+  // Always start on the Edit tab when reopening
+  setModalTab('edit');
+  document.getElementById('edit-modal').style.display = 'block';
+}
+
+function closeEdit() { document.getElementById('edit-modal').style.display = 'none'; }
+
+// ── DETAILS TAB ──────────────────────────────────────────────────────────────
+function renderDetailsTab() {
+  const body = document.getElementById('mt-details-body');
+  const f = _editState.from, t = _editState.to;
+  if (!f || !t || _editState.isNew) {
+    body.innerHTML = `<div class="dt-empty">No relation saved between these caps yet.<br>Use the <b>Edit</b> tab to define one.</div>`;
+    return;
+  }
+  const r = _cells[key(f, t)];
+  if (!r) {
+    body.innerHTML = `<div class="dt-empty">Relation no longer present (refresh?).</div>`;
+    return;
+  }
+  const sPct = Math.round((r.strength || 0) * 100);
+  const cPct = Math.round((r.confidence || r.strength || 0) * 100);
+  const arrow = r.direction === 'bidirectional' ? '↔' : (r.direction === 'backward' ? '←' : '→');
+  const sibling = _cells[key(t, f)];   // reverse direction, if any
+
+  let html = `
+    <div class="dt-grid">
+      <div class="lbl">Direction</div>
+      <div class="val"><span class="dt-pill dir">${esc(r.direction || 'forward')} ${arrow}</span></div>
+
+      <div class="lbl">Relation</div>
+      <div class="val">${r.relation
+        ? `<span class="dt-pill ${r.auto ? 'auto' : 'manual'}">${esc(r.relation)}</span>`
+        : `<span class="val dim">(unlabelled)</span>`}</div>
+
+      <div class="lbl">Strength</div>
+      <div class="val"><span class="dt-strength-bar"><div style="width:${sPct}%"></div></span> ${(r.strength||0).toFixed(2)}</div>
+
+      <div class="lbl">Confidence</div>
+      <div class="val"><span class="dt-strength-bar"><div style="width:${cPct}%"></div></span> ${(r.confidence ?? r.strength ?? 0).toFixed(2)}</div>
+
+      <div class="lbl">Source</div>
+      <div class="val"><span class="dt-pill ${r.auto ? 'auto' : 'manual'}">${r.auto ? 'LLM-generated' : 'manual'}</span></div>
+
+      <div class="lbl">Updated</div>
+      <div class="val">${esc((r.updated_at || '').replace('T',' ').slice(0,19) || '—')}</div>
+
+      ${(r.tags && r.tags.length) ? `
+        <div class="lbl">Tags</div>
+        <div class="val"><div class="dt-tags">${r.tags.map(t => `<span class="dt-tag">${esc(t)}</span>`).join('')}</div></div>` : ''}
+    </div>
+
+    <div class="dt-section-hdr">Description</div>
+    <div class="dt-block">${r.description ? esc(r.description) : '<span style="color:var(--dim2);font-style:italic">(no description)</span>'}</div>
+  `;
+
+  if (r.wire) {
+    html += `
+      <div class="dt-section-hdr">Wire</div>
+      <div class="dt-block wire">${esc(r.wire)}</div>`;
+  }
+
+  if (sibling) {
+    const sArrow = sibling.direction === 'bidirectional' ? '↔' : '→';
+    html += `
+      <div class="dt-section-hdr">Reverse relation (${esc(t)} ${sArrow} ${esc(f)})</div>
+      <div style="background:var(--bg0);border:1px solid var(--border);border-radius:4px;padding:9px 12px;font-family:var(--mono);font-size:10.5px;cursor:pointer"
+           onclick="openEditFor('${esc(t)}','${esc(f)}')" title="Open the reverse relation">
+        <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">
+          ${sibling.relation ? `<span class="dt-pill ${sibling.auto ? 'auto':'manual'}">${esc(sibling.relation)}</span>` : ''}
+          <span style="color:var(--dim2)">strength ${(sibling.strength||0).toFixed(2)}</span>
+          <span style="margin-left:auto;color:var(--acc2);font-size:9.5px">open ↗</span>
+        </div>
+        ${sibling.description ? `<div style="margin-top:5px;color:var(--text);font-size:10.5px;line-height:1.55">${esc(sibling.description)}</div>` : ''}
+      </div>`;
+  }
+
+  // Other relations involving either cap (a quick neighbourhood view)
+  const others = [];
+  for (const k in _cells) {
+    const x = _cells[k];
+    if ((x.from === f || x.to === f || x.from === t || x.to === t)
+        && !(x.from === f && x.to === t)
+        && !(x.from === t && x.to === f)) {
+      others.push(x);
+    }
+  }
+  others.sort((a, b) => -((a.strength||0) - (b.strength||0)));
+  if (others.length) {
+    html += `<div class="dt-section-hdr">Adjacent relations (${others.length})</div>
+      <div style="max-height:180px;overflow-y:auto">`;
+    for (const x of others.slice(0, 12)) {
+      const xa = x.direction === 'bidirectional' ? '↔' : '→';
+      html += `<div style="padding:5px 9px;font-family:var(--mono);font-size:9.5px;display:flex;gap:6px;align-items:center;border-bottom:1px solid rgba(255,255,255,.04);cursor:pointer"
+                    onclick="openEditFor('${esc(x.from)}','${esc(x.to)}')">
+        <span style="color:var(--acc)">${esc(x.from)}</span>
+        <span style="color:var(--dim2)">${xa}</span>
+        <span style="color:var(--acc2)">${esc(x.to)}</span>
+        ${x.relation ? `<span class="dt-pill ${x.auto?'auto':'manual'}" style="margin-left:auto">${esc(x.relation)}</span>` : '<span style="margin-left:auto"></span>'}
+        <span style="color:var(--dim2);min-width:32px;text-align:right">${(x.strength||0).toFixed(2)}</span>
+      </div>`;
+    }
+    if (others.length > 12) html += `<div style="padding:6px 9px;color:var(--dim2);font-size:9.5px;text-align:center">+ ${others.length - 12} more</div>`;
+    html += `</div>`;
+  }
+
+  body.innerHTML = html;
+}
+
+// ── CAP TAB (FROM / TO) ──────────────────────────────────────────────────────
+async function renderCapTab(which, capName) {
+  const id = which === 'capa' ? 'mt-capa-body' : 'mt-capb-body';
+  const body = document.getElementById(id);
+  if (!capName) {
+    body.innerHTML = `<div class="dt-empty">No cap selected.</div>`;
+    return;
+  }
+  body.innerHTML = `<div class="dt-empty">⟳ loading ${esc(capName)}…</div>`;
+
+  // Fetch full schema (cached) and effective description
+  let cap = _capCache[capName];
+  if (!cap) {
+    const tools = await api('/mcp/tools');
+    if (Array.isArray(tools)) tools.forEach(c => { _capCache[c.name] = c; });
+    cap = _capCache[capName];
+  }
+  let desc = _descCache[capName];
+  if (!desc) {
+    desc = await api('/cap_ontology/description_get?cap_name=' + encodeURIComponent(capName));
+    if (desc && !desc.error) _descCache[capName] = desc;
+  }
+
+  if (!cap) {
+    body.innerHTML = `<div class="dt-empty">Capability <code>${esc(capName)}</code> not found in registry.</div>`;
+    return;
+  }
+
+  const props = cap.schema?.properties || {};
+  const required = new Set(cap.schema?.required || []);
+  const paramRows = [];
+  for (const pname in props) {
+    if (pname === 'trace_id') continue;
+    const p = props[pname] || {};
+    paramRows.push({
+      name: pname, type: p.type || 'any', desc: p.description || '',
+      required: required.has(pname),
+      default: ('default' in p) ? p.default : undefined,
+    });
+  }
+
+  const overrideText = (desc?.override || '').trim();
+  const originalText = (desc?.original || cap.description || '').trim();
+  const hasOverride  = !!overrideText;
+  const effective    = hasOverride ? overrideText : originalText;
+
+  const html = `
+    <div class="cap-hdr">
+      <div class="cap-name" title="${esc(capName)}">${esc(capName)}</div>
+      ${cap.mode && cap.mode !== 'local' ? `<span class="cap-mode-pill">${esc(cap.mode)}</span>` : ''}
+      ${cap.source ? `<span class="cap-mode-pill" title="source: ${esc(cap.source)}">${esc(cap.source.replace('mcp_proxy','mcp'))}</span>` : ''}
+    </div>
+
+    <div class="cd-desc-block ${hasOverride ? 'has-override' : ''}" id="${id}-desc-block">
+      <div style="display:flex;gap:8px;align-items:flex-start">
+        <div style="flex:1;line-height:1.55">
+          ${effective ? esc(effective) : '<span style="color:var(--dim2);font-style:italic">(no description)</span>'}
+        </div>
+        ${hasOverride ? '<span class="dt-pill" style="background:rgba(143,184,122,.1);color:var(--acc2);border-color:rgba(143,184,122,.3);flex-shrink:0">override active</span>' : ''}
+      </div>
+      ${hasOverride && originalText ? `
+        <div class="cd-orig"><b>original (decorator):</b> ${esc(originalText)}</div>` : ''}
+      <div class="cd-desc-actions">
+        <button class="btn sm" onclick="openDescEdit('${esc(which)}','${esc(capName)}')">${hasOverride ? 'Edit override' : 'Override description'}</button>
+        ${hasOverride ? `<button class="btn sm danger" onclick="clearDescOverride('${esc(which)}','${esc(capName)}')">Revert</button>` : ''}
+      </div>
+    </div>
+
+    <div class="cd-override-edit" id="${id}-edit">
+      <label style="display:block;font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.8px;color:var(--dim2);margin-bottom:5px">Override description</label>
+      <textarea id="${id}-edit-text" placeholder="A clearer description that better describes what this cap actually does. This will be used by the LLM auto-generation prompt instead of the decorator's text."></textarea>
+      <div class="cd-actions">
+        <span class="ind" id="${id}-edit-ind"></span>
+        <button class="btn sm" onclick="closeDescEdit('${esc(which)}')">Cancel</button>
+        <button class="btn primary sm" onclick="saveDescOverride('${esc(which)}','${esc(capName)}')">Save</button>
+      </div>
+    </div>
+
+    <div class="dt-section-hdr">Inputs (${paramRows.length})</div>
+    <table class="cd-params-table">
+      <thead><tr><th>name</th><th>type</th><th>req</th><th>default</th><th>description</th></tr></thead>
+      <tbody>
+        ${paramRows.length ? paramRows.map(p => `
+          <tr>
+            <td><span class="pname">${esc(p.name)}</span></td>
+            <td><span class="ptype">${esc(p.type)}</span></td>
+            <td>${p.required ? '<span class="preq">●</span>' : ''}</td>
+            <td style="color:var(--dim2)">${p.default !== undefined ? esc(JSON.stringify(p.default)) : ''}</td>
+            <td><span class="pdesc">${esc(p.desc)}</span></td>
+          </tr>`).join('')
+          : '<tr class="no-params"><td colspan="5">no parameters</td></tr>'}
+      </tbody>
+    </table>
+
+    ${cap.tags && cap.tags.length ? `
+      <div class="dt-section-hdr">Tags</div>
+      <div class="dt-tags" style="margin-bottom:10px">${cap.tags.map(tg => `<span class="dt-tag">${esc(tg)}</span>`).join('')}</div>` : ''}
+  `;
+  body.innerHTML = html;
+}
+
+function openDescEdit(which, capName) {
+  const id = which === 'capa' ? 'mt-capa-body' : 'mt-capb-body';
+  const editor = document.getElementById(id + '-edit');
+  const ta = document.getElementById(id + '-edit-text');
+  const desc = _descCache[capName] || {};
+  ta.value = (desc.override || desc.original || '');
+  editor.classList.add('on');
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+}
+function closeDescEdit(which) {
+  const id = which === 'capa' ? 'mt-capa-body' : 'mt-capb-body';
+  document.getElementById(id + '-edit')?.classList.remove('on');
+}
+
+async function saveDescOverride(which, capName) {
+  const id = which === 'capa' ? 'mt-capa-body' : 'mt-capb-body';
+  const ta = document.getElementById(id + '-edit-text');
+  const ind = document.getElementById(id + '-edit-ind');
+  if (ind) ind.textContent = '⟳ saving…';
+  const text = ta.value.trim();
+  const r = await api('/cap_ontology/description_set', 'POST', {
+    cap_name: capName, description: text,
+  });
+  if (r && !r.error) {
+    // Refresh cache and re-render
+    _descCache[capName] = await api('/cap_ontology/description_get?cap_name=' + encodeURIComponent(capName));
+    renderCapTab(which, capName);
+    setStatus('description override saved', 'ok');
+  } else {
+    if (ind) ind.textContent = 'failed: ' + (r?.error || 'unknown');
+    return;
+  }
+}
+
+async function clearDescOverride(which, capName) {
+  if (!confirm(`Revert ${capName} to its decorator description?`)) return;
+  const r = await api('/cap_ontology/description_delete', 'POST', { cap_name: capName });
+  if (r) {
+    _descCache[capName] = await api('/cap_ontology/description_get?cap_name=' + encodeURIComponent(capName));
+    renderCapTab(which, capName);
+    setStatus('override removed', 'ok');
+  }
+}
+
+async function suggestRelation() {
+  const f = _editState.from, t = _editState.to;
+  if (!f || !t) { alert('Pick a target cap'); return; }
+  const box = document.getElementById('em-suggest-box');
+  const txt = document.getElementById('em-suggest-text');
+  box.classList.add('on');
+  txt.innerHTML = '<span style="color:var(--dim2)">⟳ asking the LLM…</span>';
+  const r = await api('/cap_ontology/suggest', 'POST', { from_cap: f, to_cap: t });
+  if (!r || r.error) { txt.innerHTML = `<span style="color:var(--err)">${esc(r?.error || 'failed')}</span>`; return; }
+  _suggestion = r;
+  // Show wire + confidence in the suggestion box, and highlight when the
+  // LLM declined to propose a relation (low strength → empty relation).
+  const declined = !r.relation || (r.strength || 0) < 0.3;
+  txt.innerHTML = `
+    <div><b>relation:</b> ${r.relation
+      ? `<code style="color:var(--acc2)">${esc(r.relation)}</code>`
+      : `<span style="color:var(--dim2)">(LLM declined — no clear composition)</span>`}</div>
+    <div><b>direction:</b> ${esc(r.direction || 'forward')} &nbsp; <b>strength:</b> ${(r.strength || 0).toFixed(2)} &nbsp; <b>confidence:</b> ${(r.confidence ?? r.strength ?? 0).toFixed(2)}</div>
+    ${r.wire ? `<div style="margin-top:3px"><b>wire:</b> <code style="color:var(--acc3)">${esc(r.wire)}</code></div>` : ''}
+    <div style="margin-top:4px;color:var(--text)">${esc(r.description || '')}</div>
+    ${declined ? `<div style="margin-top:5px;color:var(--dim2);font-size:9px">The LLM didn't find a meaningful composition between these caps. You can still save manually if you disagree.</div>` : ''}`;
+}
+
+function applySuggestion() {
+  if (!_suggestion) return;
+  const r = _suggestion;
+  if (r.relation)    document.getElementById('em-relation').value = r.relation;
+  if (r.description) document.getElementById('em-description').value = r.description;
+  if (r.direction)   document.getElementById('em-direction').value = r.direction;
+  if (r.wire)        document.getElementById('em-wire').value = r.wire;
+  if (typeof r.strength === 'number') {
+    document.getElementById('em-strength').value = r.strength;
+    document.getElementById('em-strength-val').textContent = r.strength.toFixed(2);
+  }
+  if (typeof r.confidence === 'number') {
+    document.getElementById('em-confidence').value = r.confidence;
+    document.getElementById('em-confidence-val').textContent = r.confidence.toFixed(2);
+  }
+  const tagsEl = document.getElementById('em-tags');
+  const cur = tagsEl.value.split(',').map(s => s.trim()).filter(Boolean);
+  if (!cur.includes('llm-generated')) cur.push('llm-generated');
+  tagsEl.value = cur.join(', ');
+  document.getElementById('em-suggest-box').classList.remove('on');
+}
+
+async function saveRelation() {
+  const f = _editState.from, t = _editState.to;
+  if (!f || !t) { alert('Pick a target cap'); return; }
+  if (f === t) { alert('Self-loops are not allowed'); return; }
+  const body = {
+    from_cap: f, to_cap: t,
+    relation:    document.getElementById('em-relation').value.trim(),
+    description: document.getElementById('em-description').value.trim(),
+    wire:        document.getElementById('em-wire').value.trim(),
+    direction:   document.getElementById('em-direction').value,
+    tags:        document.getElementById('em-tags').value.trim(),
+    strength:    parseFloat(document.getElementById('em-strength').value) || 0,
+    confidence:  parseFloat(document.getElementById('em-confidence').value) || 0,
+    auto:        false,
+  };
+  const r = await api('/cap_ontology/set', 'POST', body);
+  if (r && !r.error) {
+    _cells[key(f, t)] = r;
+    if (r.direction === 'bidirectional') _cells[key(t, f)] = { ...r, from: t, to: f };
+    closeEdit(); renderCurrentView();
+    setStatus('saved', 'ok');
+    populateRelationDropdown();
+  } else {
+    alert('Save failed: ' + (r?.error || 'unknown'));
+  }
+}
+
+async function deleteRelation() {
+  const f = _editState.from, t = _editState.to;
+  if (!f || !t) return;
+  if (!confirm(`Delete relation ${f} → ${t}?`)) return;
+  const r = await api('/cap_ontology/delete', 'POST', { from_cap: f, to_cap: t });
+  if (r) {
+    delete _cells[key(f, t)];
+    closeEdit(); renderCurrentView();
+    setStatus('deleted', 'ok');
+    populateRelationDropdown();
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// AUTO-FILL
+// ════════════════════════════════════════════════════════════════════════════
+async function autoFillCurrentGroup() {
+  const g = _filterGroup;
+  if (!g) { alert('Select a group from the sidebar first.'); return; }
+  return _autoGroupCall(g, g);
+}
+
+async function autoFillAllGroups() {
+  const caps = getVisibleCaps();
+  if (!caps.length) { alert('No visible caps'); return; }
+  const groups = [...new Set(caps.map(c => c.split('.')[0]))];
+  if (!confirm(`Run LLM auto-fill across ${groups.length} group(s)?\nGroups: ${groups.join(', ')}\n\nThis will queue ${groups.length} jobs.`)) return;
+  for (const g of groups) {
+    await _autoGroupCall(g, g, true);
+  }
+}
+
+async function _autoGroupCall(a, b, suppressAlert) {
+  const min = parseFloat(document.getElementById('min-str-inp').value) || 0.3;
+  const con = parseInt(document.getElementById('concur-inp').value) || 2;
+  const ow  = document.getElementById('overwrite-cb').checked;
+  const r = await api('/cap_ontology/auto_group', 'POST', {
+    group_a: a, group_b: b, min_strength: min,
+    overwrite: ow, concurrency: con, prefer_gpu: true,
+  });
+  if (r?.job_id) {
+    if (!suppressAlert) setStatus(`job ${r.job_id} started · ${r.total_pairs} pairs`, 'ok');
+    pollJob(r.job_id);
+  } else if (!suppressAlert) {
+    alert('Auto-fill failed: ' + (r?.error || 'unknown'));
+  }
+}
+
+async function autoFillFullGrid() {
+  const min = parseFloat(document.getElementById('min-str-inp').value) || 0.4;
+  const con = parseInt(document.getElementById('concur-inp').value) || 2;
+  const ow  = document.getElementById('overwrite-cb').checked;
+  if (!confirm(`Run LLM across the FULL capability grid?\n\n${_allCaps.length}² ≈ ${_allCaps.length * _allCaps.length} pairs (capped at 1000).\nThis can take a long time.`)) return;
+  const r = await api('/cap_ontology/auto_grid', 'POST', {
+    min_strength: min, overwrite: ow, concurrency: con,
+    prefer_gpu: true, max_pairs: 1000,
+  });
+  if (r?.job_id) {
+    setStatus(`grid job ${r.job_id} started · ${r.total_pairs} pairs`, 'ok');
+    pollJob(r.job_id);
+  } else {
+    alert('Auto-fill failed: ' + (r?.error || 'unknown'));
+  }
+}
+
+function pollJob(jobId) {
+  if (_jobPollers[jobId]) return;
+  _activeJobs.push(jobId);
+  updateActiveJobPill();
+  const step = async () => {
+    const j = await api(`/cap_ontology/job_status?job_id=${jobId}`);
+    if (!j || j.error) { delete _jobPollers[jobId]; _activeJobs = _activeJobs.filter(x => x !== jobId); updateActiveJobPill(); return; }
+    document.getElementById('aj-prog').textContent = `${j.done}/${j.total}`;
+    document.getElementById('aj-id').textContent = jobId.slice(0, 14);
+    document.getElementById('sb-job').textContent = `${jobId.slice(0,14)} · ${j.done}/${j.total} · saved ${j.saved}`;
+    if (j.status === 'complete' || j.status === 'error') {
+      delete _jobPollers[jobId];
+      _activeJobs = _activeJobs.filter(x => x !== jobId);
+      updateActiveJobPill();
+      setStatus(`job ${jobId.slice(0,12)} ${j.status} — saved ${j.saved}`, j.status === 'complete' ? 'ok' : 'err');
+      // Reload data
+      await loadAll();
+      return;
+    }
+    _jobPollers[jobId] = setTimeout(step, 1500);
+  };
+  step();
+}
+function updateActiveJobPill() {
+  const pill = document.getElementById('active-job-pill');
+  if (!pill) return;
+  pill.style.display = _activeJobs.length ? 'inline-flex' : 'none';
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// WS LIVE UPDATES
+// ════════════════════════════════════════════════════════════════════════════
+function connectWS() {
+  const base = _base();
+  const proto = base.startsWith('https') ? 'wss' : 'ws';
+  const wsUrl = base.replace(/^https?/, proto) + '/ws/mcp';
+  let ws;
+  try { ws = new WebSocket(wsUrl); } catch(e) { setTimeout(connectWS, 5000); return; }
+  ws.onopen = () => ws.send(JSON.stringify({ action: 'subscribe_events' }));
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      const ev = msg.type === 'event' ? msg.data : msg;
+      if (!ev?.type) return;
+      if (ev.type.startsWith('cap_ontology.')) {
+        if (ev.type === 'cap_ontology.set' || ev.type === 'cap_ontology.deleted') {
+          // Lightweight: update local state
+          if (ev.type === 'cap_ontology.deleted') delete _cells[key(ev.from, ev.to)];
+          // Defer reload-all to next tick to coalesce
+          if (!window._reloadTimer) window._reloadTimer = setTimeout(() => { window._reloadTimer = null; loadAll(); }, 800);
+        } else if (ev.type === 'cap_ontology.bulk_set' || ev.type === 'cap_ontology.wiped') {
+          loadAll();
+        } else if (ev.type === 'cap_ontology.description_set' || ev.type === 'cap_ontology.description_cleared') {
+          // Invalidate the description cache for the affected cap so any
+          // currently-open cap tab re-fetches the override on next view.
+          if (ev.cap) delete _descCache[ev.cap];
+        }
+      }
+    } catch(_) {}
+  };
+  ws.onclose = () => setTimeout(connectWS, 3000);
+  ws.onerror = () => {};
+}
+
+// Theme override from parent harness
+window.addEventListener('message', (ev) => {
+  if (ev.data?.type === 'vera:base' && ev.data.url) {
+    window._veraBase = ev.data.url;
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// BOOT
+// ════════════════════════════════════════════════════════════════════════════
+loadAll();
+connectWS();
+window.addEventListener('resize', () => { if (_view === 'graph') renderGraph(); });
+</script>
+</body>
+</html><!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Vera — Cap Ontology</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg0: #181614; --bg1: #1f1d1a; --bg2: #272421; --bg3: #302c29;
+  --border: #3a3530; --border2: #4a4540;
+  --acc: #5a9e8f; --acc2: #8fb87a; --acc3: #c9955a; --acc4: #9e8fa0;
+  --ok: #6db87a; --err: #c96b6b; --warn: #c9a35a;
+  --text: #ddd5c8; --dim: #6a6058; --dim2: #8a7e70;
+  --mono: 'IBM Plex Mono', 'JetBrains Mono', monospace;
+  --sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --radius: 5px; --radius-sm: 3px; --radius-lg: 8px;
+  color-scheme: dark;
+}
+html, body { height: 100%; width: 100%; overflow: hidden; background: var(--bg0); color: var(--text); font-family: var(--sans); font-size: 13px; }
+
+/* ── Top bar ── */
+#topbar {
+  display: flex; align-items: center; gap: 10px; padding: 0 14px;
+  height: 44px; flex-shrink: 0; background: var(--bg1);
+  border-bottom: 1px solid var(--border); position: relative;
+}
+#topbar::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--acc2) 25%, var(--acc4) 60%, transparent 90%);
+  opacity: .35; }
+.tb-title { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--acc2); letter-spacing: 2px; }
+.tb-pill {
+  font-family: var(--mono); font-size: 9px; padding: 2px 8px;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 2px;
+  color: var(--dim2); white-space: nowrap; display: inline-flex; gap: 4px; align-items: center;
+}
+.tb-pill .v { color: var(--text); }
+
+/* ── View toggle ── */
+.view-tabs { display: flex; gap: 1px; background: var(--bg0); border-radius: 3px; overflow: hidden; padding: 1px; }
+.view-tab {
+  padding: 5px 12px; font-size: 10.5px; font-family: var(--mono); font-weight: 500;
+  background: var(--bg2); color: var(--dim2); border: none; cursor: pointer;
+  transition: all .15s; border-radius: 2px;
+}
+.view-tab:hover { color: var(--text); }
+.view-tab.on { background: var(--acc); color: #fff; font-weight: 600; }
+
+/* ── Buttons ── */
+.btn {
+  display: inline-flex; align-items: center; gap: 5px; padding: 4px 11px;
+  border-radius: var(--radius-sm); border: 1px solid var(--border);
+  background: var(--bg2); color: var(--dim2); cursor: pointer;
+  font-family: var(--sans); font-size: 11px; font-weight: 500;
+  transition: all .14s; white-space: nowrap;
+}
+.btn:hover { border-color: var(--acc); color: var(--acc); background: rgba(90,158,143,.1); }
+.btn.primary { background: var(--acc); border-color: var(--acc); color: #fff; font-weight: 600; }
+.btn.primary:hover { filter: brightness(1.1); color: #fff; }
+.btn.teal   { background: rgba(143,184,122,.08); border-color: var(--acc2); color: var(--acc2); }
+.btn.amber  { background: rgba(201,149,90,.08); border-color: var(--acc3); color: var(--acc3); }
+.btn.danger { border-color: var(--err); color: var(--err); }
+.btn.sm { padding: 3px 8px; font-size: 10px; }
+.btn:disabled { opacity: .35; cursor: not-allowed; pointer-events: none; }
+
+input, select, textarea {
+  background: var(--bg0); border: 1px solid var(--border); color: var(--text);
+  padding: 4px 9px; border-radius: var(--radius-sm);
+  font-family: var(--sans); font-size: 11.5px; outline: none; transition: border-color .14s;
+}
+input:focus, select:focus, textarea:focus { border-color: var(--acc); }
+select option { background: var(--bg2); }
+
+/* ── Body layout ── */
+#body { display: flex; height: calc(100vh - 44px); overflow: hidden; }
+#sidebar {
+  width: 260px; flex-shrink: 0; border-right: 1px solid var(--border);
+  background: var(--bg1); display: flex; flex-direction: column; overflow: hidden;
+}
+#main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; background: var(--bg0); }
+
+/* ── Sidebar sections ── */
+.sb-sec { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.sb-sec h4 {
+  font-family: var(--mono); font-size: 9px; text-transform: uppercase;
+  letter-spacing: 1.4px; color: var(--dim2); margin-bottom: 8px; font-weight: 600;
+}
+.sb-sec .row { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+.sb-sec .row label { font-family: var(--mono); font-size: 10px; color: var(--dim); flex: 1; }
+.sb-sec .row input[type=number] { width: 70px; }
+
+/* ── Toolbar ── */
+.toolbar {
+  display: flex; align-items: center; gap: 8px; padding: 8px 14px;
+  background: var(--bg1); border-bottom: 1px solid var(--border); flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+/* ── Matrix view ── */
+#matrix-wrap {
+  flex: 1; overflow: auto; position: relative; background: var(--bg0);
+}
+#matrix-wrap::-webkit-scrollbar { width: 8px; height: 8px; }
+#matrix-wrap::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+
+#matrix-table {
+  border-collapse: separate; border-spacing: 0;
+  font-family: var(--mono); font-size: 9.5px; color: var(--text);
+}
+#matrix-table th, #matrix-table td {
+  border-right: 1px solid rgba(255,255,255,.04);
+  border-bottom: 1px solid rgba(255,255,255,.04);
+  padding: 0; vertical-align: middle;
+  white-space: nowrap;
+}
+/* Top-left corner */
+#matrix-table .corner {
+  position: sticky; top: 0; left: 0; z-index: 5;
+  background: var(--bg1); border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  padding: 6px 9px; min-width: 220px; max-width: 280px;
+  font-size: 10px; color: var(--dim2); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 1.2px;
+}
+/* Column headers (rotated) */
+#matrix-table th.col {
+  position: sticky; top: 0; z-index: 3;
+  background: var(--bg1); border-bottom: 1px solid var(--border);
+  height: 140px; min-width: 24px; max-width: 24px; width: 24px;
+  cursor: pointer;
+  vertical-align: bottom;
+  padding: 0;
+  /* Allow the rotated label to overflow into adjacent columns */
+  overflow: visible;
+}
+/* Wrap the rotated label so its rotation pivot is reliable. The wrapper is
+   24px wide (= column width), placed at the BOTTOM of the cell, and the
+   label rotates around its top-center, so each label's anchor is identical
+   regardless of the cap-name length. */
+#matrix-table th.col .col-inner {
+  position: relative;
+  width: 24px; height: 100%;
+  pointer-events: none;
+}
+#matrix-table th.col span.col-label {
+  position: absolute;
+  /* Anchor: bottom of the column, horizontally centered */
+  left: 50%; bottom: 6px;
+  transform-origin: 0 100%;
+  transform: rotate(-58deg);
+  white-space: nowrap; font-size: 10px;
+  color: var(--text);
+  pointer-events: auto;
+  font-family: var(--mono);
+  letter-spacing: .15px;
+  /* Slight nudge so the text starts cleanly off the cell edge */
+  padding-left: 4px;
+}
+#matrix-table th.col:hover { background: var(--bg2); }
+#matrix-table th.col.hover-col { background: rgba(90,158,143,.12); }
+/* Group divider on column header */
+#matrix-table th.col.grp-start { border-left: 2px solid var(--acc4); }
+
+/* Row headers */
+#matrix-table th.row {
+  position: sticky; left: 0; z-index: 2;
+  background: var(--bg1); border-right: 1px solid var(--border);
+  text-align: left; padding: 4px 10px;
+  font-size: 10px; color: var(--text);
+  min-width: 220px; max-width: 280px;
+  cursor: pointer; height: 22px;
+  overflow: hidden; text-overflow: ellipsis;
+}
+#matrix-table th.row:hover { background: var(--bg2); }
+#matrix-table th.row.hover-row { background: rgba(90,158,143,.12); }
+#matrix-table th.row.grp-start { border-top: 2px solid var(--acc4); }
+#matrix-table th.row .row-grp {
+  font-size: 8px; color: var(--dim2); margin-right: 4px;
+}
+
+/* Cells */
+#matrix-table td.cell {
+  width: 24px; height: 24px; min-width: 24px; max-width: 24px;
+  text-align: center; cursor: pointer; transition: all .12s;
+  position: relative;
+  background: var(--bg0);
+}
+#matrix-table td.cell.diag { background: var(--bg2); cursor: not-allowed; }
+#matrix-table td.cell:hover:not(.diag) {
+  background: rgba(90,158,143,.18) !important;
+  outline: 1px solid var(--acc); outline-offset: -1px;
+  z-index: 1;
+}
+/* Cell strength visualization — fill intensity */
+#matrix-table td.cell.has-rel { background: rgba(143,184,122,.15); }
+#matrix-table td.cell.has-rel.auto { background: rgba(201,149,90,.18); }
+#matrix-table td.cell.has-rel .dot {
+  width: 10px; height: 10px; border-radius: 2px; display: inline-block;
+  background: var(--acc2); margin: auto;
+}
+#matrix-table td.cell.has-rel.auto .dot { background: var(--acc3); }
+#matrix-table td.cell.has-rel.bidir .dot { border-radius: 50%; }
+#matrix-table td.cell.has-rel.weak .dot { opacity: .4; }
+#matrix-table td.cell.has-rel.strong .dot { box-shadow: 0 0 6px currentColor; }
+#matrix-table td.cell.in-search { outline: 1px solid var(--acc3); outline-offset: -1px; }
+#matrix-table td.cell.row-self {
+  background: rgba(255,255,255,.02);
+}
+
+/* ── Cell hover tooltip ── */
+#cell-tip {
+  position: absolute; pointer-events: none; z-index: 50;
+  background: var(--bg2); border: 1px solid var(--border2);
+  color: var(--text); padding: 7px 10px; border-radius: 4px;
+  font-family: var(--mono); font-size: 10.5px; max-width: 320px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.6); display: none;
+  white-space: normal; line-height: 1.55;
+}
+#cell-tip .tip-arrow { color: var(--acc2); font-weight: 600; margin-bottom: 4px; }
+#cell-tip .tip-rel { color: var(--acc4); font-size: 10px; }
+#cell-tip .tip-desc { color: var(--dim2); margin-top: 4px; font-size: 9.5px; line-height: 1.6; }
+#cell-tip .tip-meta { color: var(--dim); font-size: 9px; margin-top: 5px; padding-top: 4px; border-top: 1px solid var(--border); }
+
+/* Status bar */
+#statusbar {
+  flex-shrink: 0; padding: 6px 14px; background: var(--bg1);
+  border-top: 1px solid var(--border); font-family: var(--mono); font-size: 10px;
+  color: var(--dim2); display: flex; gap: 14px; align-items: center;
+}
+#statusbar .sb-spacer { flex: 1; }
+#statusbar .sb-job { color: var(--acc3); font-size: 9.5px; }
+
+/* ── Graph view ── */
+#graph-wrap { flex: 1; position: relative; overflow: hidden; background:
+  radial-gradient(ellipse at center, rgba(90,158,143,.04) 0%, var(--bg0) 70%); }
+#graph-svg { width: 100%; height: 100%; cursor: grab; display: block; }
+#graph-svg:active { cursor: grabbing; }
+.gnode { cursor: pointer; transition: opacity .15s; }
+.gnode:hover .gnode-circle { stroke: var(--acc); stroke-width: 2; }
+.gnode-circle { fill: var(--bg2); stroke: var(--border2); stroke-width: 1; }
+.gnode-text { font-family: var(--mono); font-size: 8px; fill: var(--text); pointer-events: none; text-anchor: middle; }
+/* Pinned nodes: solid white outline so you can spot which nodes you've
+   placed by hand. The pin is removed by alt-clicking the node, or by
+   pressing the Re-layout button. */
+.gnode.pinned .gnode-circle { stroke: var(--acc3); stroke-width: 2; stroke-dasharray: 2 1.5; }
+.gnode.pinned .gnode-text { fill: var(--acc3); }
+.gedge { stroke: var(--dim); stroke-opacity: .4; transition: stroke-opacity .15s; }
+.gedge.auto { stroke: var(--acc3); }
+.gedge:hover, .gedge.hl { stroke-opacity: 1; stroke-width: 2; }
+.gnode.dim { opacity: .15; }
+.gnode.hl .gnode-circle { stroke: var(--acc); stroke-width: 2.5; fill: rgba(90,158,143,.15); }
+.gnode.search-hit .gnode-circle { stroke: var(--acc3); stroke-width: 2.5; }
+.gedge.search-hit { stroke: var(--acc3); stroke-opacity: 1; stroke-width: 2; }
+
+#graph-overlay {
+  position: absolute; top: 12px; left: 12px; right: 12px; pointer-events: none;
+  display: flex; gap: 10px; align-items: flex-start; z-index: 5;
+}
+#graph-overlay > * { pointer-events: auto; }
+.graph-legend {
+  background: rgba(31,29,26,.85); backdrop-filter: blur(6px);
+  border: 1px solid var(--border); border-radius: 4px; padding: 7px 11px;
+  font-family: var(--mono); font-size: 9.5px; color: var(--dim2);
+  display: flex; gap: 14px; align-items: center;
+}
+.graph-legend .lg-item { display: flex; align-items: center; gap: 5px; }
+.graph-legend .lg-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+/* ── Edit modal (same as cap_hub) ── */
+#edit-modal { display: none; position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.78); backdrop-filter: blur(4px); }
+#edit-inner {
+  position: absolute; top: 4vh; left: 50%; transform: translateX(-50%);
+  width: min(720px, 96vw); max-height: 92vh; overflow: hidden;
+  display: flex; flex-direction: column;
+  background: var(--bg1); border: 1px solid var(--border2); border-radius: var(--radius-lg);
+  box-shadow: 0 16px 56px rgba(0,0,0,.7);
+}
+.em-header {
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 10px; font-family: var(--mono);
+  font-size: 11px; color: var(--acc); flex-shrink: 0;
+}
+
+/* Modal sub-tabs */
+.em-tabs {
+  display: flex; gap: 0; padding: 0 12px; flex-shrink: 0;
+  border-bottom: 1px solid var(--border); background: var(--bg0);
+}
+.em-tab {
+  background: transparent; border: none; padding: 9px 14px; cursor: pointer;
+  font-family: var(--sans); font-size: 11px; color: var(--dim2);
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+  transition: color .12s, border-color .12s;
+}
+.em-tab:hover { color: var(--text); }
+.em-tab.active { color: var(--acc); border-bottom-color: var(--acc); }
+
+.em-tab-pane { display: none; }
+.em-tab-pane.on { display: block; }
+
+.em-body {
+  padding: 14px 16px; flex: 1; overflow-y: auto;
+}
+.em-pair { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 8px 10px; background: var(--bg0); border-radius: 4px; border: 1px solid var(--border); }
+.em-pair-cap { font-family: var(--mono); font-size: 11px; color: var(--acc); flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.em-pair-arrow { color: var(--dim2); font-family: var(--mono); }
+
+.em-field { margin-bottom: 11px; }
+.em-field label {
+  display: block; font-family: var(--mono); font-size: 9.5px;
+  text-transform: uppercase; letter-spacing: .8px; color: var(--dim2);
+  margin-bottom: 4px;
+}
+.em-field input[type=text],
+.em-field textarea,
+.em-field select { width: 100%; }
+.em-field textarea { min-height: 64px; font-family: var(--mono); font-size: 10.5px; }
+.em-field-row { display: flex; gap: 8px; }
+.em-field-row > * { flex: 1; }
+.em-strength { display: flex; align-items: center; gap: 8px; }
+.em-strength input[type=range] { flex: 1; accent-color: var(--acc); }
+.em-strength-val { font-family: var(--mono); font-size: 11px; color: var(--acc); min-width: 32px; text-align: right; }
+.em-actions {
+  padding: 10px 16px; border-top: 1px solid var(--border);
+  display: flex; gap: 6px; align-items: center; background: var(--bg0);
+  flex-shrink: 0;
+}
+.em-actions .spacer { flex: 1; }
+.em-suggest-box {
+  margin-top: 6px; padding: 8px 10px; background: rgba(201,149,90,.06);
+  border: 1px solid rgba(201,149,90,.25); border-radius: 4px;
+  font-family: var(--mono); font-size: 10px; color: var(--acc3);
+  display: none;
+}
+.em-suggest-box.on { display: block; }
+.em-suggest-box .em-sg-hdr { font-size: 8.5px; text-transform: uppercase; letter-spacing: 1.2px; margin-bottom: 4px; opacity: .8; }
+
+/* ── Details tab ── */
+.dt-empty {
+  text-align: center; color: var(--dim2); font-family: var(--mono);
+  font-size: 10.5px; padding: 28px 14px; line-height: 1.7;
+}
+.dt-grid {
+  display: grid; grid-template-columns: 110px 1fr; gap: 6px 12px;
+  font-family: var(--mono); font-size: 10.5px; line-height: 1.55;
+  margin-bottom: 14px;
+}
+.dt-grid > .lbl {
+  color: var(--dim2); text-transform: uppercase; letter-spacing: .8px; font-size: 9px;
+  padding-top: 2px;
+}
+.dt-grid > .val {
+  color: var(--text); word-break: break-word;
+}
+.dt-grid > .val.dim { color: var(--dim2); font-style: italic; }
+.dt-pill {
+  display: inline-block; padding: 1px 7px; border-radius: 9px; font-size: 9.5px;
+  font-family: var(--mono); border: 1px solid var(--border2);
+}
+.dt-pill.auto   { background: rgba(201,149,90,.1);  color: var(--acc3); border-color: rgba(201,149,90,.3); }
+.dt-pill.manual { background: rgba(143,184,122,.08); color: var(--acc2); border-color: rgba(143,184,122,.3); }
+.dt-pill.dir    { background: rgba(158,143,160,.1);  color: var(--acc4); border-color: rgba(158,143,160,.3); }
+.dt-strength-bar {
+  display: inline-block; width: 110px; height: 6px; background: rgba(255,255,255,.06);
+  border-radius: 3px; overflow: hidden; vertical-align: middle; margin-right: 7px;
+}
+.dt-strength-bar > div { height: 100%; background: linear-gradient(90deg, var(--acc), var(--acc2)); }
+.dt-section-hdr {
+  font-family: var(--mono); font-size: 9.5px; color: var(--dim2);
+  text-transform: uppercase; letter-spacing: 1.2px;
+  margin: 14px 0 6px;
+  padding-bottom: 4px; border-bottom: 1px solid var(--border);
+}
+.dt-block {
+  background: var(--bg0); border: 1px solid var(--border); border-radius: 4px;
+  padding: 9px 12px; font-family: var(--mono); font-size: 10.5px; line-height: 1.55;
+  color: var(--text); margin-bottom: 8px; white-space: pre-wrap; word-break: break-word;
+}
+.dt-block.code { font-size: 10px; color: var(--acc2); }
+.dt-block.wire { color: var(--acc3); font-weight: 500; }
+.dt-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.dt-tags .dt-tag {
+  font-size: 9.5px; padding: 1px 7px; border-radius: 8px;
+  background: rgba(90,158,143,.1); color: var(--acc); border: 1px solid rgba(90,158,143,.3);
+  font-family: var(--mono);
+}
+
+/* ── Cap detail (FROM/TO tabs) ── */
+.cap-detail .cap-hdr {
+  display: flex; align-items: center; gap: 9px; margin-bottom: 12px;
+  padding: 10px 12px; background: var(--bg0); border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.cap-detail .cap-hdr .cap-name {
+  font-family: var(--mono); font-size: 12px; color: var(--acc); flex: 1;
+}
+.cap-detail .cap-mode-pill {
+  font-size: 9px; padding: 1px 7px; border-radius: 8px; background: var(--bg2);
+  color: var(--dim2); font-family: var(--mono);
+}
+.cd-desc-block {
+  position: relative;
+  background: var(--bg0); border: 1px solid var(--border); border-radius: 4px;
+  padding: 10px 12px; font-size: 11px; line-height: 1.55;
+  color: var(--text); margin-bottom: 10px; min-height: 38px;
+}
+.cd-desc-block.has-override {
+  border-color: var(--acc2);
+  background: linear-gradient(180deg, rgba(143,184,122,.04), transparent 30%);
+}
+.cd-desc-block .cd-orig {
+  font-size: 9.5px; color: var(--dim2); margin-top: 8px; padding-top: 6px;
+  border-top: 1px dashed var(--border); font-style: italic; line-height: 1.5;
+}
+.cd-desc-block .cd-orig b {
+  font-style: normal; color: var(--dim); text-transform: uppercase;
+  letter-spacing: 1px; font-size: 8.5px;
+}
+.cd-desc-actions { display: flex; gap: 5px; margin-top: 7px; }
+.cd-override-edit {
+  display: none;
+  background: var(--bg2); border: 1px solid var(--acc2); border-radius: 4px;
+  padding: 10px 12px; margin-bottom: 10px;
+}
+.cd-override-edit.on { display: block; }
+.cd-override-edit textarea {
+  width: 100%; min-height: 84px; resize: vertical;
+  font-family: var(--mono); font-size: 10.5px;
+}
+.cd-override-edit .cd-actions { display: flex; gap: 5px; margin-top: 7px; align-items: center; }
+.cd-override-edit .cd-actions .ind { font-size: 9.5px; color: var(--dim2); margin-right: auto; }
+
+.cd-params-table {
+  width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 10px;
+  margin-bottom: 10px;
+}
+.cd-params-table th, .cd-params-table td {
+  text-align: left; padding: 6px 9px; border-bottom: 1px solid rgba(255,255,255,.04);
+  vertical-align: top;
+}
+.cd-params-table th {
+  font-size: 9px; color: var(--dim2); text-transform: uppercase; letter-spacing: 1px;
+  font-weight: 500; background: var(--bg0);
+}
+.cd-params-table td .pname { color: var(--acc); font-weight: 500; }
+.cd-params-table td .ptype { color: var(--acc4); }
+.cd-params-table td .preq  { color: var(--err); font-weight: 700; padding-left: 4px; }
+.cd-params-table td .pdesc { color: var(--dim2); font-size: 9.5px; }
+.cd-params-table tr.no-params td {
+  color: var(--dim2); font-style: italic; text-align: center; padding: 14px;
+}
+
+/* Empty state */
+.empty {
+  text-align: center; color: var(--dim2); font-family: var(--mono);
+  font-size: 11px; padding: 60px 20px; line-height: 1.7;
+}
+.empty .empty-title { font-size: 13px; color: var(--text); margin-bottom: 8px; font-weight: 600; }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+/* ── Search help popover ── */
+.search-help {
+  display: none;
+  margin-top: 6px; padding: 8px 10px;
+  background: var(--bg0); border: 1px solid var(--border); border-radius: 4px;
+  font-family: var(--mono); font-size: 9.5px; line-height: 1.7;
+  color: var(--dim2);
+}
+.search-help.on { display: block; }
+.search-help b { color: var(--acc2); font-weight: 500; }
+</style>
+</head>
+<body>
+
+<!-- ════ TOPBAR ═══════════════════════════════════════════════════════ -->
+<div id="topbar">
+  <div class="tb-title">◇ CAP ONTOLOGY</div>
+
+  <div class="view-tabs">
+    <button class="view-tab on" id="vt-matrix" onclick="setView('matrix')">⊞ Matrix</button>
+    <button class="view-tab"    id="vt-graph"  onclick="setView('graph')">◉ Graph</button>
+    <button class="view-tab"    id="vt-list"   onclick="setView('list')">≡ List</button>
+  </div>
+
+  <div class="tb-pill">CAPS <span class="v" id="tp-caps">—</span></div>
+  <div class="tb-pill">RELATIONS <span class="v" id="tp-rels">—</span></div>
+  <div class="tb-pill">COVERED <span class="v" id="tp-cov">—</span></div>
+
+  <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
+    <span id="active-job-pill" class="tb-pill" style="display:none;color:var(--acc3);border-color:var(--acc3)">
+      ⟳ <span id="aj-prog">0/0</span> · <span id="aj-id"></span>
+    </span>
+    <button class="btn sm" onclick="loadAll()">↻ Refresh</button>
+  </div>
+</div>
+
+<div id="body">
+
+  <!-- ════ SIDEBAR ═══════════════════════════════════════════════════ -->
+  <div id="sidebar">
+    <!-- Search & filters -->
+    <div class="sb-sec">
+      <h4>Search</h4>
+      <div class="row">
+        <input id="search-inp" placeholder='caps · prefix:exec. · -skip · /regex/ · ~fuzzy' oninput="onSearchChange(this.value)" style="flex:1">
+        <button class="btn sm" onclick="toggleSearchHelp()" title="Search syntax help" style="padding:3px 7px">?</button>
+      </div>
+      <div id="search-help" class="search-help">
+        <div><b>foo</b> — substring match</div>
+        <div><b>exec.</b> — group prefix (trailing dot)</div>
+        <div><b>.run$</b> — suffix</div>
+        <div><b>-foo</b> — exclude</div>
+        <div><b>/regex/</b> — regex (case-insensitive)</div>
+        <div><b>~tlmgn</b> — fuzzy subsequence</div>
+        <div style="margin-top:5px;color:var(--dim)">terms combine with AND. Use "quotes" for spaces.</div>
+      </div>
+
+      <div class="row" style="margin-top:6px">
+        <label>Group</label>
+        <select id="group-sel" onchange="onGroupChange(this.value)" style="flex:1">
+          <option value="">all</option>
+        </select>
+      </div>
+
+      <div class="row" style="margin-top:6px">
+        <label>Relation</label>
+        <select id="rel-sel" onchange="onRelChange(this.value)" style="flex:1">
+          <option value="">any</option>
+        </select>
+      </div>
+
+      <div class="row" style="margin-top:6px">
+        <label>Min strength</label>
+        <input id="min-vis-str" type="number" min="0" max="1" step="0.05" value="0" oninput="onMinVisStrChange(this.value)" style="flex:1">
+      </div>
+
+      <div class="row" style="margin-top:6px">
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="checkbox" id="hide-isolated-cb" onchange="setHideIsolated(this.checked)" style="margin:0">
+          <span style="font-size:10.5px;color:var(--text)">Hide isolated nodes</span>
+        </label>
+      </div>
+      <div class="row" style="margin-top:3px">
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="checkbox" id="show-only-rels-cb" onchange="setShowOnlyRels(this.checked)" style="margin:0">
+          <span style="font-size:10.5px;color:var(--text)">Show only with relations</span>
+        </label>
+      </div>
+      <div class="row" style="margin-top:3px">
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="checkbox" id="show-auto-cb" checked onchange="setShowAuto(this.checked)" style="margin:0">
+          <span style="font-size:10.5px;color:var(--text)">Show LLM-generated</span>
+        </label>
+      </div>
+      <div class="row" style="margin-top:3px">
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="checkbox" id="show-manual-cb" checked onchange="setShowManual(this.checked)" style="margin:0">
+          <span style="font-size:10.5px;color:var(--text)">Show manual</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Auto-fill controls -->
+    <div class="sb-sec">
+      <h4>LLM auto-fill</h4>
+      <div class="row" style="margin-bottom:7px">
+        <label>Min strength</label>
+        <input id="min-str-inp" type="number" min="0" max="1" step="0.05" value="0.30">
+      </div>
+      <div class="row" style="margin-bottom:7px">
+        <label>Concurrency</label>
+        <input id="concur-inp" type="number" min="1" max="8" value="2">
+      </div>
+      <div class="row" style="margin-bottom:7px">
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="checkbox" id="overwrite-cb" style="margin:0">
+          <span style="font-size:10.5px;color:var(--text)">Overwrite existing</span>
+        </label>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:5px">
+        <button class="btn sm amber" onclick="autoFillCurrentGroup()">⚛ Fill current group</button>
+        <button class="btn sm amber" onclick="autoFillAllGroups()">⚛ Fill all visible</button>
+        <button class="btn sm danger" onclick="autoFillFullGrid()">⚠ Fill full grid (slow)</button>
+      </div>
+      <div style="font-size:9px;color:var(--dim);margin-top:8px;line-height:1.4">
+        LLM analyses each cap pair from name + description + schema and infers their relation.
+        Existing cells are skipped unless "Overwrite" is on.
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="sb-sec">
+      <h4>Coverage by group</h4>
+      <div id="coverage-list" style="font-family:var(--mono);font-size:10px;line-height:1.7">
+        <span style="color:var(--dim2)">loading…</span>
+      </div>
+    </div>
+
+    <!-- Help -->
+    <div class="sb-sec" style="border-bottom:none">
+      <h4>Legend</h4>
+      <div style="font-family:var(--mono);font-size:9.5px;color:var(--dim2);line-height:1.7">
+        <div style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:var(--acc2);display:inline-block"></span> manual relation</div>
+        <div style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:var(--acc3);display:inline-block"></span> LLM-generated</div>
+        <div style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:50%;background:var(--acc2);display:inline-block"></span> bidirectional</div>
+        <div style="margin-top:5px">Cell = (row → column).</div>
+        <div>Click a cell to view/edit.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ MAIN ═══════════════════════════════════════════════════════ -->
+  <div id="main">
+
+    <!-- View: matrix -->
+    <div id="view-matrix" style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+      <div class="toolbar">
+        <span style="font-family:var(--mono);font-size:10px;color:var(--dim2)" id="matrix-info">—</span>
+        <span style="margin-left:auto;font-family:var(--mono);font-size:9.5px;color:var(--dim)">tip: click a cell to edit · hover for details</span>
+      </div>
+      <div id="matrix-wrap">
+        <div class="empty" id="matrix-empty" style="display:none">
+          <div class="empty-title">No capabilities to display</div>
+          <div>Try clearing your filters, or load some capabilities first.</div>
+        </div>
+        <table id="matrix-table"></table>
+      </div>
+    </div>
+
+    <!-- View: graph -->
+    <div id="view-graph" style="flex:1;display:none;flex-direction:column;overflow:hidden">
+      <div class="toolbar">
+        <span style="font-family:var(--mono);font-size:10px;color:var(--dim2)" id="graph-info">—</span>
+        <span style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-left:14px">drag to pin · alt-click toggles pin · scroll to zoom</span>
+        <button class="btn sm" onclick="unpinAllNodes()" style="margin-left:auto" title="Release all manually-placed nodes">Unpin all</button>
+        <button class="btn sm" onclick="restartGraphLayout()">↻ Re-layout</button>
+        <button class="btn sm" onclick="centerGraph()">⊕ Center</button>
+      </div>
+      <div id="graph-wrap">
+        <div id="graph-overlay">
+          <div class="graph-legend">
+            <div class="lg-item"><span class="lg-dot" style="background:var(--acc2)"></span>cap node</div>
+            <div class="lg-item"><span style="display:inline-block;width:18px;height:2px;background:var(--dim)"></span> manual</div>
+            <div class="lg-item"><span style="display:inline-block;width:18px;height:2px;background:var(--acc3)"></span> LLM</div>
+          </div>
+        </div>
+        <svg id="graph-svg"></svg>
+      </div>
+    </div>
+
+    <!-- View: list -->
+    <div id="view-list" style="flex:1;display:none;flex-direction:column;overflow:hidden">
+      <div class="toolbar">
+        <span style="font-family:var(--mono);font-size:10px;color:var(--dim2)" id="list-info">—</span>
+        <select id="list-sort" style="margin-left:auto" onchange="renderList()">
+          <option value="-strength">Strongest first</option>
+          <option value="strength">Weakest first</option>
+          <option value="from">From cap A→Z</option>
+          <option value="to">To cap A→Z</option>
+          <option value="-updated">Recently updated</option>
+        </select>
+      </div>
+      <div id="list-wrap" style="flex:1;overflow:auto"></div>
+    </div>
+
+    <!-- Status bar -->
+    <div id="statusbar">
+      <span id="sb-status">ready</span>
+      <span class="sb-spacer"></span>
+      <span class="sb-job" id="sb-job"></span>
+    </div>
+  </div>
+</div>
+
+<!-- Cell tooltip -->
+<div id="cell-tip"></div>
+
+<!-- ════ EDIT MODAL ═══════════════════════════════════════════════════ -->
+<div id="edit-modal" onclick="if(event.target===this)closeEdit()">
+  <div id="edit-inner">
+    <div class="em-header">
+      <svg style="width:13px;height:13px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/>
+        <line x1="6" y1="9" x2="6" y2="15"/><line x1="9" y1="6" x2="15" y2="6"/><line x1="9" y1="18" x2="15" y2="18"/><line x1="18" y1="9" x2="18" y2="15"/>
+      </svg>
+      <span id="em-title">Edit relation</span>
+      <button class="btn sm" style="margin-left:auto" onclick="closeEdit()">Close ✕</button>
+    </div>
+
+    <!-- Sub-tabs inside the modal: edit form, full details, and per-cap views -->
+    <div class="em-tabs">
+      <button class="em-tab active" data-mt="edit"    onclick="setModalTab('edit')">Edit</button>
+      <button class="em-tab"        data-mt="details" onclick="setModalTab('details')">Details</button>
+      <button class="em-tab"        data-mt="capa"    onclick="setModalTab('capa')">From cap</button>
+      <button class="em-tab"        data-mt="capb"    onclick="setModalTab('capb')">To cap</button>
+    </div>
+
+    <div class="em-body">
+      <!-- Pair display — visible across all tabs -->
+      <div class="em-pair">
+        <div class="em-pair-cap" id="em-from">—</div>
+        <div class="em-pair-arrow" id="em-arrow">→</div>
+        <div class="em-pair-cap" id="em-to">—</div>
+      </div>
+
+      <!-- ════ TAB: EDIT ═══════════════════════════════════════════════════ -->
+      <div id="mt-edit" class="em-tab-pane on">
+        <div class="em-field">
+          <label>Relation label</label>
+          <input id="em-relation" type="text" placeholder="e.g. feeds_into, alternative_to">
+        </div>
+        <div class="em-field">
+          <label>Description</label>
+          <textarea id="em-description" placeholder="One sentence — name both capabilities literally; describe how the FROM cap's output COULD compose into the TO cap's input"></textarea>
+        </div>
+        <div class="em-field">
+          <label>Wire <span style="color:var(--dim2)">(optional — A.field → B.param)</span></label>
+          <input id="em-wire" type="text" placeholder="e.g. dream.caps.search.results -> dream.fabric.browse.items">
+        </div>
+        <div class="em-field-row">
+          <div class="em-field">
+            <label>Direction</label>
+            <select id="em-direction">
+              <option value="forward">Forward (from → to)</option>
+              <option value="backward">Backward (to → from)</option>
+              <option value="bidirectional">Bidirectional ↔</option>
+            </select>
+          </div>
+          <div class="em-field">
+            <label>Tags <span style="color:var(--dim2)">(csv)</span></label>
+            <input id="em-tags" type="text" placeholder="critical">
+          </div>
+        </div>
+        <div class="em-field-row">
+          <div class="em-field">
+            <label>Strength <span style="color:var(--dim2)">(0..1)</span></label>
+            <div class="em-strength">
+              <input id="em-strength" type="range" min="0" max="1" step="0.05" value="0.5"
+                     oninput="document.getElementById('em-strength-val').textContent=(+this.value).toFixed(2)">
+              <span class="em-strength-val" id="em-strength-val">0.50</span>
+            </div>
+          </div>
+          <div class="em-field">
+            <label>Confidence <span style="color:var(--dim2)">(0..1)</span></label>
+            <div class="em-strength">
+              <input id="em-confidence" type="range" min="0" max="1" step="0.05" value="0.5"
+                     oninput="document.getElementById('em-confidence-val').textContent=(+this.value).toFixed(2)">
+              <span class="em-strength-val" id="em-confidence-val">0.50</span>
+            </div>
+          </div>
+        </div>
+        <div class="em-suggest-box" id="em-suggest-box">
+          <div class="em-sg-hdr">⚛ LLM suggestion</div>
+          <div id="em-suggest-text" style="color:var(--text);line-height:1.5"></div>
+          <div style="margin-top:6px;display:flex;gap:5px">
+            <button class="btn sm primary" onclick="applySuggestion()">Apply</button>
+            <button class="btn sm" onclick="document.getElementById('em-suggest-box').classList.remove('on')">Dismiss</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ════ TAB: DETAILS ════════════════════════════════════════════════ -->
+      <div id="mt-details" class="em-tab-pane">
+        <div id="mt-details-body">
+          <div class="dt-empty">No relation saved yet — define one in the Edit tab.</div>
+        </div>
+      </div>
+
+      <!-- ════ TAB: FROM CAP ═══════════════════════════════════════════════ -->
+      <div id="mt-capa" class="em-tab-pane">
+        <div id="mt-capa-body" class="cap-detail">
+          <div class="dt-empty">Pick a relation to see the FROM capability.</div>
+        </div>
+      </div>
+
+      <!-- ════ TAB: TO CAP ═════════════════════════════════════════════════ -->
+      <div id="mt-capb" class="em-tab-pane">
+        <div id="mt-capb-body" class="cap-detail">
+          <div class="dt-empty">Pick a relation to see the TO capability.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="em-actions">
+      <button class="btn sm" onclick="suggestRelation()" id="em-suggest-btn">⚛ Suggest with LLM</button>
+      <div class="spacer"></div>
+      <button class="btn sm danger" id="em-delete-btn" onclick="deleteRelation()" style="display:none">Delete</button>
+      <button class="btn primary sm" id="em-save-btn" onclick="saveRelation()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+// ════════════════════════════════════════════════════════════════════════════
+// STATE
+// ════════════════════════════════════════════════════════════════════════════
+let _allCaps = [];        // all cap names ordered
+let _cells = {};          // "from→to" → relation record
+let _stats = {};
+let _view = 'matrix';
+let _filterGroup = '';
+let _filterSearch = '';
+let _filterRelation = '';     // '' = any
+let _filterMinStrength = 0;   // 0..1
+let _hideIsolated = false;
+let _showOnlyRels = false;
+let _showAuto   = true;
+let _showManual = true;
+let _editState = { from: null, to: null, isNew: false };
+let _suggestion = null;
+let _activeJobs = [];
+const _jobPollers = {};
+
+// ════════════════════════════════════════════════════════════════════════════
+// API / UTIL
+// ════════════════════════════════════════════════════════════════════════════
+function _base() {
+  try {
+    if (window.parent && window.parent !== window && window.parent._veraBase)
+      return window.parent._veraBase.replace(/\/$/, '');
+  } catch(_) {}
+  return location.origin;
+}
+async function api(path, method = 'GET', body = null) {
+  try {
+    const opts = { method, headers: { 'Content-Type': 'application/json' } };
+    if (body) opts.body = JSON.stringify(body);
+    const r = await fetch(_base() + path, opts);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch(e) { return null; }
+}
+function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function setStatus(msg, cls = '') {
+  const el = document.getElementById('sb-status');
+  if (el) { el.textContent = msg; el.style.color = cls === 'err' ? 'var(--err)' : cls === 'ok' ? 'var(--ok)' : 'var(--dim2)'; }
+}
+function strToHue(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360; return h; }
+function key(a, b) { return a + '→' + b; }
+
+// ════════════════════════════════════════════════════════════════════════════
+// LOAD
+// ════════════════════════════════════════════════════════════════════════════
+async function loadAll() {
+  setStatus('⟳ loading…');
+  const [matrix, stats, caps] = await Promise.all([
+    api('/cap_ontology/matrix'),
+    api('/cap_ontology/stats'),
+    api('/mcp/tools'),
+  ]);
+  if (caps && Array.isArray(caps)) {
+    _allCaps = caps.map(c => c.name).sort();
+  } else if (matrix?.caps) {
+    _allCaps = matrix.caps.slice().sort();
+  }
+  _cells = {};
+  if (matrix?.cells) {
+    matrix.cells.forEach(r => { _cells[key(r.from, r.to)] = r; });
+  }
+  _stats = stats || {};
+  populateGroupSelector();
+  populateRelationDropdown();
+  refreshHeaderPills();
+  refreshCoverage();
+  renderCurrentView();
+  setStatus('ready', 'ok');
+}
+
+function populateGroupSelector() {
+  const groups = [...new Set(_allCaps.map(c => c.split('.')[0]))].sort();
+  const sel = document.getElementById('group-sel');
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">all</option>' +
+    groups.map(g => `<option value="${esc(g)}">${esc(g)}</option>`).join('');
+  if (prev && groups.includes(prev)) sel.value = prev;
+}
+
+function refreshHeaderPills() {
+  document.getElementById('tp-caps').textContent = _allCaps.length;
+  document.getElementById('tp-rels').textContent = Object.keys(_cells).length;
+  document.getElementById('tp-cov').textContent =
+    `${_stats.covered_caps || 0}/${_stats.total_caps || _allCaps.length}`;
+}
+
+function refreshCoverage() {
+  const el = document.getElementById('coverage-list');
+  const grpStats = _stats.by_group || {};
+  const groups = Object.entries(grpStats).sort((a,b) => b[1] - a[1]).slice(0, 14);
+  if (!groups.length) { el.innerHTML = '<span style="color:var(--dim)">no relations yet</span>'; return; }
+  el.innerHTML = groups.map(([g, n]) => {
+    const hue = strToHue(g);
+    return `<div style="display:flex;align-items:center;gap:6px;cursor:pointer" onclick="document.getElementById('group-sel').value='${esc(g)}';onGroupChange('${esc(g)}')">
+      <span style="width:6px;height:6px;border-radius:50%;background:hsl(${hue},65%,55%)"></span>
+      <span style="flex:1;color:var(--text)">${esc(g)}</span>
+      <span style="color:var(--acc2)">${n}</span>
+    </div>`;
+  }).join('');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// VIEW SWITCHING
+// ════════════════════════════════════════════════════════════════════════════
+function setView(v) {
+  _view = v;
+  ['matrix','graph','list'].forEach(x => {
+    document.getElementById('vt-' + x).classList.toggle('on', x === v);
+    document.getElementById('view-' + x).style.display = x === v ? 'flex' : 'none';
+  });
+  renderCurrentView();
+}
+function renderCurrentView() {
+  if (_view === 'matrix') renderMatrix();
+  else if (_view === 'graph') renderGraph();
+  else if (_view === 'list')  renderList();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// FILTERS
+// ════════════════════════════════════════════════════════════════════════════
+function onSearchChange(v) {
+  // Note: keep raw casing here; _matchTerm normalises when needed (regex stays
+  // intact, fuzzy lower-cases its operand). Trim only the outer whitespace.
+  _filterSearch = (v || '').trim();
+  renderCurrentView();
+}
+function onGroupChange(v)  { _filterGroup = v || ''; renderCurrentView(); }
+function onRelChange(v)    { _filterRelation = v || ''; renderCurrentView(); }
+function onMinVisStrChange(v) {
+  const f = parseFloat(v) || 0;
+  _filterMinStrength = Math.max(0, Math.min(1, f));
+  renderCurrentView();
+}
+function setHideIsolated(v) { _hideIsolated = !!v; renderCurrentView(); }
+function setShowOnlyRels(v) { _showOnlyRels = !!v; renderCurrentView(); }
+function setShowAuto(v) { _showAuto = !!v; renderCurrentView(); }
+function setShowManual(v) { _showManual = !!v; renderCurrentView(); }
+function toggleSearchHelp() {
+  document.getElementById('search-help')?.classList.toggle('on');
+}
+
+function populateRelationDropdown() {
+  const sel = document.getElementById('rel-sel'); if (!sel) return;
+  const labels = new Set();
+  for (const k in _cells) {
+    const r = _cells[k];
+    if (r.relation) labels.add(r.relation);
+  }
+  const sorted = [...labels].sort();
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">any</option>' +
+    sorted.map(l => `<option value="${esc(l)}">${esc(l)}</option>`).join('');
+  if (cur && sorted.includes(cur)) sel.value = cur;
+}
+
+// ── Smart cap-name matching ──────────────────────────────────────────────────
+// Supports four modes simultaneously, separated by spaces. All terms must match.
+//   plain word        — substring match (case-insensitive)
+//   prefix:           — `exec.` matches caps starting with `exec.`
+//   suffix$           — `.run$` matches caps ending with `.run`
+//   -term             — exclude caps whose name contains `term`
+//   /pattern/         — regex; case-insensitive, anchored as written
+//   ~fuzzy            — `~tlmgn` matches `telegram` (subsequence)
+function _matchTerm(name, term) {
+  const lc = name.toLowerCase();
+  if (!term) return true;
+  // exclude
+  if (term.startsWith('-') && term.length > 1) {
+    return !lc.includes(term.slice(1).toLowerCase());
+  }
+  // regex
+  if (term.startsWith('/') && term.endsWith('/') && term.length > 2) {
+    try { return new RegExp(term.slice(1, -1), 'i').test(name); }
+    catch(_) { return false; }
+  }
+  // suffix
+  if (term.endsWith('$') && term.length > 1) {
+    return lc.endsWith(term.slice(0, -1).toLowerCase());
+  }
+  // prefix (term ends in ".") OR explicit "prefix:"
+  if (term.endsWith('.')) {
+    return lc.startsWith(term.toLowerCase());
+  }
+  // fuzzy subsequence
+  if (term.startsWith('~') && term.length > 1) {
+    const t = term.slice(1).toLowerCase();
+    let i = 0;
+    for (const ch of lc) { if (ch === t[i]) i++; if (i >= t.length) return true; }
+    return i >= t.length;
+  }
+  // default: substring
+  return lc.includes(term.toLowerCase());
+}
+
+function _matchAllTerms(name, terms) {
+  for (const t of terms) {
+    if (!_matchTerm(name, t)) return false;
+  }
+  return true;
+}
+
+function _searchTerms() {
+  // Split on whitespace; preserve quoted phrases as single terms.
+  const raw = (_filterSearch || '').trim();
+  if (!raw) return [];
+  // Simple tokenizer that respects double quotes
+  const out = [];
+  let cur = '', inQ = false;
+  for (const ch of raw) {
+    if (ch === '"') { inQ = !inQ; continue; }
+    if (!inQ && /\s/.test(ch)) {
+      if (cur) { out.push(cur); cur = ''; }
+    } else {
+      cur += ch;
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+function getVisibleCaps() {
+  let caps = _allCaps.slice();
+  if (_filterGroup) caps = caps.filter(c => c.split('.')[0] === _filterGroup);
+
+  // Compute connectivity (respects auto/manual filters)
+  const connected = new Set();
+  for (const k in _cells) {
+    const r = _cells[k];
+    if (!_showAuto && r.auto) continue;
+    if (!_showManual && !r.auto) continue;
+    connected.add(r.from); connected.add(r.to);
+  }
+  if (_hideIsolated || _showOnlyRels) {
+    caps = caps.filter(c => connected.has(c));
+  }
+
+  // Apply smart search to cap names
+  const terms = _searchTerms();
+  if (terms.length) {
+    const byName = caps.filter(c => _matchAllTerms(c, terms));
+    // ALSO surface caps connected to a search-matched cap by relation —
+    // useful when the user searches for a term that names a relation/desc
+    // on a hidden cap. We only do this if the user has at least one
+    // positive (non-exclude) term AND hide-isolated is off, so as not to
+    // surprise users who explicitly hid isolated nodes.
+    if (!(_hideIsolated || _showOnlyRels)) {
+      // Restrict to caps that match
+      caps = byName;
+    } else {
+      // Hide-isolated path: keep matched + their neighbours
+      const hits = new Set(byName);
+      for (const k in _cells) {
+        const r = _cells[k];
+        if (hits.has(r.from)) hits.add(r.to);
+        if (hits.has(r.to))   hits.add(r.from);
+      }
+      caps = caps.filter(c => hits.has(c) || _matchAllTerms(c, terms));
+    }
+  }
+
+  return caps;
+}
+
+function getVisibleCells(caps) {
+  const set = new Set(caps);
+  const out = [];
+  for (const k in _cells) {
+    const r = _cells[k];
+    if (!set.has(r.from) || !set.has(r.to)) continue;
+    if (!_showAuto && r.auto) continue;
+    if (!_showManual && !r.auto) continue;
+    if (_filterRelation && (r.relation || '') !== _filterRelation) continue;
+    if (_filterMinStrength > 0 && (r.strength || 0) < _filterMinStrength) continue;
+    // Also let the search match against the relation label / description
+    // (this surfaces relations the user is looking for even when neither cap
+    //  name matches the search).
+    out.push(r);
+  }
+  return out;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// MATRIX VIEW
+// ════════════════════════════════════════════════════════════════════════════
+function renderMatrix() {
+  const caps = getVisibleCaps();
+  const cells = getVisibleCells(caps);
+  const cellMap = {};
+  cells.forEach(r => { cellMap[key(r.from, r.to)] = r; });
+
+  const tbl = document.getElementById('matrix-table');
+  const empty = document.getElementById('matrix-empty');
+  const info = document.getElementById('matrix-info');
+
+  if (!caps.length) {
+    tbl.innerHTML = ''; empty.style.display = 'block';
+    info.textContent = '0 caps shown';
+    return;
+  }
+  empty.style.display = 'none';
+  info.textContent = `${caps.length} caps · ${cells.length} relations${_filterSearch ? ` · search "${_filterSearch}"` : ''}`;
+
+  const search = _filterSearch;
+
+  // Build header row (top)
+  let html = '<thead><tr>';
+  html += `<th class="corner">FROM ↓ &nbsp; TO →</th>`;
+  let prevGrp = '';
+  caps.forEach((c, i) => {
+    const grp = c.split('.')[0];
+    const isStart = grp !== prevGrp;
+    prevGrp = grp;
+    const hue = strToHue(grp);
+    html += `<th class="col ${isStart ? 'grp-start' : ''}" data-col="${i}" data-cap="${esc(c)}"
+              onclick="filterToCap('${esc(c)}')"
+              onmouseover="hoverHeader(${i}, 'col')" onmouseout="unhoverHeader(${i}, 'col')">
+      <div class="col-inner"><span class="col-label" style="color:hsl(${hue},45%,70%)">${esc(c)}</span></div>
+    </th>`;
+  });
+  html += '</tr></thead><tbody>';
+
+  // Body rows
+  prevGrp = '';
+  caps.forEach((rowCap, ri) => {
+    const grp = rowCap.split('.')[0];
+    const isStart = grp !== prevGrp;
+    prevGrp = grp;
+    const hue = strToHue(grp);
+    const grpShort = grp.length > 9 ? grp.slice(0, 9) : grp;
+    html += `<tr><th class="row ${isStart ? 'grp-start' : ''}" data-row="${ri}" data-cap="${esc(rowCap)}"
+                onclick="filterToCap('${esc(rowCap)}')"
+                onmouseover="hoverHeader(${ri}, 'row')" onmouseout="unhoverHeader(${ri}, 'row')"
+                title="${esc(rowCap)}">
+      <span class="row-grp" style="color:hsl(${hue},40%,55%)">${esc(grpShort)}.</span>${esc(rowCap.slice(grp.length + 1))}
+    </th>`;
+
+    caps.forEach((colCap, ci) => {
+      if (rowCap === colCap) {
+        html += `<td class="cell diag"></td>`;
+        return;
+      }
+      const r = cellMap[key(rowCap, colCap)];
+      let cls = 'cell';
+      let inner = '';
+      if (r) {
+        cls += ' has-rel';
+        if (r.auto) cls += ' auto';
+        if (r.direction === 'bidirectional') cls += ' bidir';
+        const s = r.strength || 0;
+        if (s < 0.35) cls += ' weak';
+        if (s > 0.7)  cls += ' strong';
+        inner = `<span class="dot"></span>`;
+        // Search highlight
+        if (search && (r.relation?.toLowerCase().includes(search) ||
+                       r.description?.toLowerCase().includes(search))) {
+          cls += ' in-search';
+        }
+      } else if (search && (rowCap.toLowerCase().includes(search) || colCap.toLowerCase().includes(search))) {
+        cls += ' in-search';
+      }
+      html += `<td class="${cls}" data-from="${esc(rowCap)}" data-to="${esc(colCap)}"
+                  onclick="openEditFor('${esc(rowCap)}','${esc(colCap)}')"
+                  onmouseover="showCellTip(event, '${esc(rowCap)}','${esc(colCap)}')"
+                  onmouseout="hideCellTip()">${inner}</td>`;
+    });
+    html += '</tr>';
+  });
+  html += '</tbody>';
+  tbl.innerHTML = html;
+}
+
+function hoverHeader(idx, kind) {
+  // Highlight whole row/column
+  const tbl = document.getElementById('matrix-table');
+  if (!tbl) return;
+  if (kind === 'col') {
+    tbl.querySelectorAll('th.col')[idx]?.classList.add('hover-col');
+    tbl.querySelectorAll('tr').forEach(tr => {
+      const cells = tr.querySelectorAll('td.cell');
+      if (cells[idx]) cells[idx].style.background = 'rgba(90,158,143,.08)';
+    });
+  } else {
+    tbl.querySelectorAll('th.row')[idx]?.classList.add('hover-row');
+    const tr = tbl.querySelectorAll('tbody tr')[idx];
+    if (tr) tr.querySelectorAll('td.cell').forEach(td => td.style.background = (td.classList.contains('has-rel') ? '' : 'rgba(90,158,143,.08)'));
+  }
+}
+function unhoverHeader(idx, kind) {
+  const tbl = document.getElementById('matrix-table');
+  if (!tbl) return;
+  if (kind === 'col') {
+    tbl.querySelectorAll('th.col')[idx]?.classList.remove('hover-col');
+    tbl.querySelectorAll('tr').forEach(tr => {
+      const cells = tr.querySelectorAll('td.cell');
+      if (cells[idx]) cells[idx].style.background = '';
+    });
+  } else {
+    tbl.querySelectorAll('th.row')[idx]?.classList.remove('hover-row');
+    const tr = tbl.querySelectorAll('tbody tr')[idx];
+    if (tr) tr.querySelectorAll('td.cell').forEach(td => { if (!td.classList.contains('has-rel')) td.style.background = ''; });
+  }
+}
+
+function filterToCap(cap) {
+  document.getElementById('search-inp').value = cap;
+  onSearchChange(cap);
+}
+
+// Cell tooltip
+function showCellTip(ev, from, to) {
+  const r = _cells[key(from, to)];
+  const rev = _cells[key(to, from)];
+  const tip = document.getElementById('cell-tip');
+  let html = `<div class="tip-arrow">${esc(from)} <span style="color:var(--dim2)">→</span> ${esc(to)}</div>`;
+  if (r) {
+    const arrow = r.direction === 'bidirectional' ? '↔' : '→';
+    html += `<div class="tip-rel">${arrow} ${esc(r.relation || '(no label)')}</div>`;
+    if (r.description) html += `<div class="tip-desc">${esc(r.description)}</div>`;
+    html += `<div class="tip-meta">strength ${(r.strength || 0).toFixed(2)} · ${r.auto ? 'LLM-generated' : 'manual'}${rev ? ' · reverse exists' : ''}</div>`;
+  } else {
+    html += `<div class="tip-desc" style="color:var(--dim)">No relation defined.<br>Click to add.</div>`;
+  }
+  tip.innerHTML = html;
+  tip.style.display = 'block';
+  // Position
+  const wr = document.getElementById('matrix-wrap');
+  const rect = wr.getBoundingClientRect();
+  let x = ev.clientX - rect.left + 14;
+  let y = ev.clientY - rect.top  + 14;
+  // Constrain
+  const tw = 320, th = 120;
+  if (x + tw > rect.width)  x -= tw + 28;
+  if (y + th > rect.height) y -= th + 24;
+  tip.style.left = (x + rect.left) + 'px';
+  tip.style.top  = (y + rect.top)  + 'px';
+}
+function hideCellTip() {
+  const tip = document.getElementById('cell-tip');
+  if (tip) tip.style.display = 'none';
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// GRAPH VIEW (force-directed, custom — no D3)
+// ════════════════════════════════════════════════════════════════════════════
+let _gNodes = [], _gEdges = [], _gAnim = null;
+let _gPan = { x: 0, y: 0, scale: 1 };
+let _gIter = 0;          // simulation tick counter; reset on each renderGraph
+let _gDragNode = null;   // node currently being dragged (pinned)
+
+function renderGraph() {
+  const caps = getVisibleCaps();
+  const cells = getVisibleCells(caps);
+  document.getElementById('graph-info').textContent = `${caps.length} nodes · ${cells.length} edges`;
+  const svg = document.getElementById('graph-svg');
+  svg.innerHTML = '';
+
+  if (!caps.length) {
+    svg.innerHTML = `<text x="50%" y="50%" text-anchor="middle" fill="var(--dim2)" font-family="var(--mono)" font-size="13">No nodes match current filters</text>`;
+    if (_gAnim) { cancelAnimationFrame(_gAnim); _gAnim = null; }
+    return;
+  }
+
+  const w = svg.clientWidth || 800;
+  const h = svg.clientHeight || 600;
+
+  // Init nodes — preserve previous positions where possible
+  const prevPos = {};
+  _gNodes.forEach(n => prevPos[n.name] = { x: n.x, y: n.y, pinned: n.pinned });
+  _gNodes = caps.map((c, i) => ({
+    name: c, group: c.split('.')[0],
+    x: prevPos[c]?.x ?? (w / 2 + 200 * Math.cos(2 * Math.PI * i / caps.length)),
+    y: prevPos[c]?.y ?? (h / 2 + 200 * Math.sin(2 * Math.PI * i / caps.length)),
+    vx: 0, vy: 0,
+    degree: 0,
+    pinned: prevPos[c]?.pinned || false,
+  }));
+  const nodeIdx = {};
+  _gNodes.forEach((n, i) => nodeIdx[n.name] = i);
+
+  _gEdges = cells.map(c => ({
+    from: nodeIdx[c.from], to: nodeIdx[c.to],
+    auto: c.auto, strength: c.strength || 0.5,
+    rel: c.relation, desc: c.description,
+  }));
+
+  // Compute node degrees (used by the physics step for hub-aware damping
+  // and spring-impulse normalisation). Without this, nodes with many
+  // edges accumulate too much spring force per tick and oscillate.
+  _gEdges.forEach(e => {
+    if (_gNodes[e.from]) _gNodes[e.from].degree++;
+    if (_gNodes[e.to])   _gNodes[e.to].degree++;
+  });
+
+  // Build SVG defs (groups + arrowheads)
+  const defs = `<defs>
+    <marker id="arr-m" markerWidth="6" markerHeight="6" refX="9" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="${getCss('--dim')}" opacity=".55"/>
+    </marker>
+    <marker id="arr-a" markerWidth="6" markerHeight="6" refX="9" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="${getCss('--acc3')}" opacity=".7"/>
+    </marker>
+  </defs>`;
+  svg.innerHTML = defs;
+
+  // Pan + zoom group
+  const g = mkSvg('g', { id: 'g-root', transform: `translate(${_gPan.x},${_gPan.y}) scale(${_gPan.scale})` });
+  svg.appendChild(g);
+
+  // Edges
+  _gEdges.forEach((e, i) => {
+    const ln = mkSvg('line', {
+      class: 'gedge' + (e.auto ? ' auto' : ''),
+      'data-eid': i,
+      'marker-end': e.auto ? 'url(#arr-a)' : 'url(#arr-m)',
+      x1: 0, y1: 0, x2: 0, y2: 0,
+    });
+    g.appendChild(ln);
+  });
+
+  // Nodes
+  _gNodes.forEach((n, i) => {
+    const grpHue = strToHue(n.group);
+    const ng = mkSvg('g', { class: 'gnode', 'data-nid': i, 'data-cap': n.name });
+    const c = mkSvg('circle', {
+      class: 'gnode-circle', r: 14, cx: 0, cy: 0,
+      fill: `hsla(${grpHue},45%,32%,.55)`, stroke: `hsl(${grpHue},55%,55%)`,
+    });
+    const t = mkSvg('text', { class: 'gnode-text', y: 4 });
+    t.textContent = n.name.length > 16 ? n.name.slice(0, 14) + '…' : n.name;
+    ng.appendChild(c); ng.appendChild(t);
+    // Click-vs-drag disambiguation: open the editor ONLY when the mouse
+    // didn't travel far between mousedown and mouseup. Without this,
+    // dragging a node would always also open the edit popover on release.
+    let _md = null;
+    ng.addEventListener('mousedown', (ev) => {
+      if (ev.altKey) { _md = null; return; }   // alt-click is handled by pan layer (toggle pin)
+      _md = { x: ev.clientX, y: ev.clientY };
+    });
+    ng.addEventListener('mouseup', (ev) => {
+      if (!_md) return;
+      const dx = ev.clientX - _md.x, dy = ev.clientY - _md.y;
+      _md = null;
+      if (dx*dx + dy*dy <= 16) {  // < 4px movement = click
+        openEditFor(n.name, null);
+      }
+    });
+    ng.addEventListener('mouseenter', () => highlightNode(i));
+    ng.addEventListener('mouseleave', () => clearHighlight());
+    g.appendChild(ng);
+  });
+
+  if (_gAnim) cancelAnimationFrame(_gAnim);
+  _gIter = 0;
+  function tick() {
+    _gIter++;
+    forceStep(w, h);
+    drawPositions();
+    if (_gIter < 320) _gAnim = requestAnimationFrame(tick);
+    else _gAnim = null;
+  }
+  tick();
+  enableGraphPan(svg, g);
+  applyGraphSearchHighlight();
+}
+
+function getCss(varName) {
+  return getComputedStyle(document.documentElement).getPropertyValue(varName).trim() || '#666';
+}
+function mkSvg(name, attrs) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', name);
+  for (const k in attrs) el.setAttribute(k, attrs[k]);
+  return el;
+}
+
+// ── Physics constants — tuned so that low-degree nodes (degree ≤ 3) get
+// EXACTLY the same forces as before, and only highly-connected nodes get
+// the extra stabilisation. This preserves the graph behaviour the user
+// already likes.
+const _G_REPULSE = 4500;
+const _G_SPRING = 0.025;
+const _G_SPRING_LEN = 130;
+const _G_DAMP_BASE = 0.78;       // damping for low-degree nodes
+const _G_CENTER = 0.012;
+const _G_DEGREE_PIVOT = 4;       // nodes with degree > this start getting extra damping
+
+function forceStep(w, h) {
+  const N = _gNodes.length;
+  // Cooling factor: reduces the velocity cap and increases damping over the
+  // course of the simulation, so the layout settles deterministically.
+  // Starts near 1 and approaches 0 as iterations progress.
+  const cool = Math.max(0.05, 1 - (_gIter / 320));
+
+  // ── Degree-aware per-node damping ─────────────────────────────────────
+  // Low-degree (≤ 4) nodes use the original damping (0.78). Higher-degree
+  // nodes get progressively heavier damping, capped at 0.92, so dense
+  // clusters cannot bounce: the more edges tugging on a node, the more
+  // velocity-bleed is applied each step.
+  // The repulsion / spring constants themselves are unchanged for low-
+  // degree nodes — only damping changes — so the visual feel of sparse
+  // graphs is preserved.
+
+  // ── Repulsion (O(n²)) ─────────────────────────────────────────────────
+  for (let i = 0; i < N; i++) {
+    const a = _gNodes[i];
+    const deg = a.degree | 0;
+    // Damping rises with degree above the pivot. log1p keeps it gentle.
+    const damp = (deg <= _G_DEGREE_PIVOT)
+      ? _G_DAMP_BASE
+      : Math.min(0.92, _G_DAMP_BASE + Math.log1p(deg - _G_DEGREE_PIVOT) * 0.04);
+    a.vx *= damp; a.vy *= damp;
+
+    a.vx += (w / 2 - a.x) * _G_CENTER;
+    a.vy += (h / 2 - a.y) * _G_CENTER;
+
+    for (let j = 0; j < N; j++) {
+      if (i === j) continue;
+      const b = _gNodes[j];
+      const dx = a.x - b.x, dy = a.y - b.y;
+      const d2 = dx * dx + dy * dy + 0.1;
+      const f = _G_REPULSE / d2;
+      const d  = Math.sqrt(d2);
+      a.vx += dx / d * f;
+      a.vy += dy / d * f;
+    }
+  }
+
+  // ── Spring on edges ───────────────────────────────────────────────────
+  // Spring force is now divided by the SQRT of each endpoint's degree, so
+  // a hub node with N edges doesn't get N times the pull. This is the
+  // single biggest cause of bouncing in dense clusters: with the previous
+  // formulation, a node with 12 edges got 12× the spring impulse per step
+  // and could not damp out before the next tick. Square-root means a
+  // node with 16 edges gets 4× the impulse instead of 16×.
+  _gEdges.forEach(e => {
+    const a = _gNodes[e.from], b = _gNodes[e.to];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const d = Math.sqrt(dx * dx + dy * dy) + 0.001;
+    const baseF = (d - _G_SPRING_LEN) * _G_SPRING * (0.5 + e.strength);
+    // Sharing factor: degrees of both endpoints. Sqrt keeps low-degree
+    // pairs unchanged (sqrt(1) = 1), only attenuates hub-to-hub edges.
+    const aShare = 1 / Math.sqrt(Math.max(1, a.degree));
+    const bShare = 1 / Math.sqrt(Math.max(1, b.degree));
+    a.vx += dx / d * baseF * aShare; a.vy += dy / d * baseF * aShare;
+    b.vx -= dx / d * baseF * bShare; b.vy -= dy / d * baseF * bShare;
+  });
+
+  // ── Velocity cap & integration ────────────────────────────────────────
+  // Cap velocity per step. The cap drops as the simulation cools so late
+  // iterations cannot disturb settled positions. Drag-pinned nodes are
+  // exempt — their velocity is overridden externally.
+  const vMax = 24 * cool + 2;
+  for (let i = 0; i < N; i++) {
+    const n = _gNodes[i];
+    if (n.pinned) { n.vx = 0; n.vy = 0; continue; }
+    const sp = Math.sqrt(n.vx * n.vx + n.vy * n.vy);
+    if (sp > vMax) {
+      const k = vMax / sp;
+      n.vx *= k; n.vy *= k;
+    }
+    // Stillness threshold: if barely moving, snap to rest. Stops
+    // microscopic oscillation in dense clusters.
+    if (sp < 0.05) { n.vx = 0; n.vy = 0; }
+    n.x += n.vx;
+    n.y += n.vy;
+  }
+}
+
+function drawPositions() {
+  const svg = document.getElementById('graph-svg');
+  if (!svg) return;
+  // Update edges
+  const edges = svg.querySelectorAll('.gedge');
+  edges.forEach((ln, i) => {
+    const e = _gEdges[i]; if (!e) return;
+    const a = _gNodes[e.from], b = _gNodes[e.to];
+    if (!a || !b) return;
+    // Truncate to circle edge so arrow shows
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const d = Math.sqrt(dx*dx + dy*dy) + 0.01;
+    const ux = dx / d, uy = dy / d;
+    ln.setAttribute('x1', a.x + ux * 14);
+    ln.setAttribute('y1', a.y + uy * 14);
+    ln.setAttribute('x2', b.x - ux * 16);
+    ln.setAttribute('y2', b.y - uy * 16);
+    ln.setAttribute('stroke-width', Math.max(1, 1 + e.strength));
+  });
+  // Update nodes
+  const nodes = svg.querySelectorAll('.gnode');
+  nodes.forEach((g, i) => {
+    const n = _gNodes[i]; if (!n) return;
+    g.setAttribute('transform', `translate(${n.x.toFixed(1)},${n.y.toFixed(1)})`);
+    // Reflect the pinned state visually so you can see which nodes you've
+    // placed by hand. Toggling here (rather than at create-time) means the
+    // class stays in sync as the user pins/unpins during simulation.
+    g.classList.toggle('pinned', !!n.pinned);
+  });
+}
+
+function highlightNode(idx) {
+  const svg = document.getElementById('graph-svg');
+  const me = _gNodes[idx];
+  const connected = new Set([idx]);
+  _gEdges.forEach(e => {
+    if (e.from === idx) connected.add(e.to);
+    if (e.to   === idx) connected.add(e.from);
+  });
+  svg.querySelectorAll('.gnode').forEach((g, i) => {
+    g.classList.toggle('dim', !connected.has(i));
+    g.classList.toggle('hl',   i === idx);
+  });
+  svg.querySelectorAll('.gedge').forEach((l, i) => {
+    const e = _gEdges[i];
+    l.classList.toggle('hl', e && (e.from === idx || e.to === idx));
+  });
+}
+function clearHighlight() {
+  const svg = document.getElementById('graph-svg');
+  if (!svg) return;
+  svg.querySelectorAll('.gnode').forEach(g => { g.classList.remove('dim'); g.classList.remove('hl'); });
+  svg.querySelectorAll('.gedge').forEach(l => l.classList.remove('hl'));
+  applyGraphSearchHighlight();
+}
+function applyGraphSearchHighlight() {
+  const svg = document.getElementById('graph-svg');
+  if (!svg) return;
+  const q = _filterSearch;
+  svg.querySelectorAll('.gnode').forEach(g => g.classList.remove('search-hit'));
+  svg.querySelectorAll('.gedge').forEach(l => l.classList.remove('search-hit'));
+  if (!q) return;
+  _gNodes.forEach((n, i) => {
+    if (n.name.toLowerCase().includes(q)) {
+      svg.querySelector(`.gnode[data-nid="${i}"]`)?.classList.add('search-hit');
+    }
+  });
+  _gEdges.forEach((e, i) => {
+    if ((e.rel || '').toLowerCase().includes(q) || (e.desc || '').toLowerCase().includes(q)) {
+      svg.querySelector(`.gedge[data-eid="${i}"]`)?.classList.add('search-hit');
+    }
+  });
+}
+
+function enableGraphPan(svg, g) {
+  // Pan/zoom of the whole graph + drag individual nodes.
+  // - Click+drag on empty space → pan
+  // - Click+drag on a node      → drag that node (auto-pins it during drag,
+  //   and the pin stays after release so dense clusters can be tamed by hand)
+  // - Alt+click a node          → toggle its pin (frees a previously pinned
+  //   node so it can re-settle with the simulation)
+  let mode = null;        // 'pan' | 'node' | null
+  let sx = 0, sy = 0;     // start state
+  let dragNodeIdx = null;
+
+  function nodeIdxFromEvent(ev) {
+    let el = ev.target;
+    while (el && el !== svg) {
+      if (el.classList && el.classList.contains('gnode')) {
+        const id = el.getAttribute('data-nid');
+        return id != null ? parseInt(id, 10) : null;
+      }
+      el = el.parentNode;
+    }
+    return null;
+  }
+
+  // Convert a screen point → graph (pre-transform) coordinates.
+  function screenToGraph(ev) {
+    const rect = svg.getBoundingClientRect();
+    const sxp = ev.clientX - rect.left;
+    const syp = ev.clientY - rect.top;
+    return {
+      x: (sxp - _gPan.x) / _gPan.scale,
+      y: (syp - _gPan.y) / _gPan.scale,
+    };
+  }
+
+  svg.onmousedown = (e) => {
+    const idx = nodeIdxFromEvent(e);
+    if (idx != null) {
+      // Alt-click toggles pin without dragging
+      if (e.altKey) {
+        const n = _gNodes[idx];
+        if (n) n.pinned = !n.pinned;
+        e.preventDefault(); e.stopPropagation();
+        return;
+      }
+      mode = 'node';
+      dragNodeIdx = idx;
+      _gDragNode = idx;
+      const n = _gNodes[idx];
+      if (n) { n.pinned = true; n.vx = 0; n.vy = 0; }
+      e.preventDefault(); e.stopPropagation();
+      // Restart cooling so neighbours can re-settle around the drag
+      _gIter = Math.max(0, _gIter - 80);
+      if (!_gAnim) {
+        const w = svg.clientWidth || 800, h = svg.clientHeight || 600;
+        const tick = () => {
+          _gIter++;
+          forceStep(w, h);
+          drawPositions();
+          if (_gIter < 320) _gAnim = requestAnimationFrame(tick);
+          else _gAnim = null;
+        };
+        tick();
+      }
+    } else {
+      mode = 'pan';
+      sx = e.clientX - _gPan.x;
+      sy = e.clientY - _gPan.y;
+    }
+  };
+
+  svg.onmousemove = (e) => {
+    if (mode === 'pan') {
+      _gPan.x = e.clientX - sx; _gPan.y = e.clientY - sy;
+      g.setAttribute('transform', `translate(${_gPan.x},${_gPan.y}) scale(${_gPan.scale})`);
+    } else if (mode === 'node' && dragNodeIdx != null) {
+      const p = screenToGraph(e);
+      const n = _gNodes[dragNodeIdx];
+      if (n) { n.x = p.x; n.y = p.y; n.vx = 0; n.vy = 0; n.pinned = true; }
+    }
+  };
+
+  svg.onmouseup = svg.onmouseleave = () => {
+    mode = null;
+    dragNodeIdx = null;
+    _gDragNode = null;
+    // Pinned state is left as-is — user explicitly placed the node
+  };
+
+  svg.onwheel = (e) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    _gPan.scale = Math.max(0.2, Math.min(3, _gPan.scale * delta));
+    g.setAttribute('transform', `translate(${_gPan.x},${_gPan.y}) scale(${_gPan.scale})`);
+  };
+}
+
+function restartGraphLayout() {
+  // Reset positions and unpin any drag-pinned nodes
+  _gNodes.forEach((n, i) => {
+    const w = 800, h = 600;
+    n.x = w / 2 + 200 * Math.cos(2 * Math.PI * i / _gNodes.length);
+    n.y = h / 2 + 200 * Math.sin(2 * Math.PI * i / _gNodes.length);
+    n.vx = 0; n.vy = 0; n.pinned = false;
+  });
+  _gPan = { x: 0, y: 0, scale: 1 };
+  renderGraph();
+}
+function centerGraph() { _gPan = { x: 0, y: 0, scale: 1 }; renderGraph(); }
+
+function unpinAllNodes() {
+  // Release all manually-placed nodes so they re-settle with the simulation.
+  // Restarting the iter counter gives them headroom to move significantly.
+  _gNodes.forEach(n => { n.pinned = false; });
+  _gIter = 60;
+  if (!_gAnim) {
+    const svg = document.getElementById('graph-svg');
+    const w = svg.clientWidth || 800, h = svg.clientHeight || 600;
+    const tick = () => {
+      _gIter++;
+      forceStep(w, h);
+      drawPositions();
+      if (_gIter < 320) _gAnim = requestAnimationFrame(tick);
+      else _gAnim = null;
+    };
+    tick();
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// LIST VIEW
+// ════════════════════════════════════════════════════════════════════════════
+function renderList() {
+  const caps = getVisibleCaps();
+  const cells = getVisibleCells(caps);
+  const sort = document.getElementById('list-sort').value;
+
+  const sortFns = {
+    '-strength': (a,b) => (b.strength||0) - (a.strength||0),
+     'strength': (a,b) => (a.strength||0) - (b.strength||0),
+     'from': (a,b) => a.from.localeCompare(b.from),
+     'to':   (a,b) => a.to.localeCompare(b.to),
+    '-updated': (a,b) => (b.updated_at||'').localeCompare(a.updated_at||''),
+  };
+  const sorted = cells.slice().sort(sortFns[sort] || sortFns['-strength']);
+
+  // Search filter
+  const filtered = _filterSearch ? sorted.filter(r =>
+    r.from.toLowerCase().includes(_filterSearch) ||
+    r.to.toLowerCase().includes(_filterSearch)   ||
+    (r.relation || '').toLowerCase().includes(_filterSearch) ||
+    (r.description || '').toLowerCase().includes(_filterSearch)
+  ) : sorted;
+
+  document.getElementById('list-info').textContent = `${filtered.length} relations`;
+  const wrap = document.getElementById('list-wrap');
+  if (!filtered.length) {
+    wrap.innerHTML = `<div class="empty">No relations match.</div>`;
+    return;
+  }
+  let html = '<div style="padding:10px 14px">';
+  filtered.forEach(r => {
+    const arrow = r.direction === 'bidirectional' ? '↔' : '→';
+    const labCls = r.auto ? 'rel-label auto' : 'rel-label';
+    const sPct = Math.round((r.strength || 0) * 100);
+    html += `<div style="padding:11px 13px;background:var(--bg1);border:1px solid var(--border);border-radius:5px;margin-bottom:7px;cursor:pointer;font-family:var(--mono);font-size:11px"
+                onclick="openEditFor('${esc(r.from)}','${esc(r.to)}')">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="color:var(--acc);font-weight:600">${esc(r.from)}</span>
+        <span style="color:var(--dim2)">${arrow}</span>
+        <span style="font-size:10px;padding:2px 7px;background:rgba(158,143,160,.12);border:1px solid rgba(158,143,160,.3);border-radius:8px;color:var(--acc4)">${esc(r.relation || '—')}</span>
+        <span style="color:var(--dim2)">${arrow}</span>
+        <span style="color:var(--acc2);font-weight:600">${esc(r.to)}</span>
+        <span style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;font-size:9.5px;color:var(--dim2)">
+          <span style="display:inline-block;width:38px;height:3px;background:rgba(255,255,255,.08);border-radius:2px;overflow:hidden">
+            <span style="display:block;height:100%;width:${sPct}%;background:linear-gradient(90deg,var(--acc),var(--acc2))"></span>
+          </span>
+          ${(r.strength||0).toFixed(2)} · ${r.auto ? 'auto' : 'manual'}
+        </span>
+      </div>
+      ${r.description ? `<div style="margin-top:5px;color:var(--dim2);font-size:10px;line-height:1.55;padding-left:5px;border-left:1px solid var(--border)">${esc(r.description)}</div>` : ''}
+    </div>`;
+  });
+  html += '</div>';
+  wrap.innerHTML = html;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// EDIT MODAL — tabbed: Edit / Details / FROM cap / TO cap
+// ════════════════════════════════════════════════════════════════════════════
+const _capCache = {};            // cap_name → tools-list record (full schema)
+const _descCache = {};           // cap_name → { original, override, has_override }
+let   _modalTab = 'edit';
+
+function setModalTab(t) {
+  _modalTab = t;
+  document.querySelectorAll('.em-tab').forEach(b => b.classList.toggle('active', b.dataset.mt === t));
+  ['edit','details','capa','capb'].forEach(k => {
+    const el = document.getElementById('mt-' + k);
+    if (el) el.classList.toggle('on', k === t);
+  });
+  // Hide the bottom action bar buttons that don't apply to non-edit tabs
+  const onEdit = (t === 'edit');
+  document.getElementById('em-suggest-btn').style.display = onEdit ? 'inline-flex' : 'none';
+  document.getElementById('em-save-btn').style.display    = onEdit ? 'inline-flex' : 'none';
+  document.getElementById('em-delete-btn').style.display  = (onEdit && !_editState.isNew) ? 'inline-flex' : 'none';
+  // Lazy-render the cap tabs only when entered
+  if (t === 'capa') renderCapTab('capa', _editState.from);
+  if (t === 'capb') renderCapTab('capb', _editState.to);
+  if (t === 'details') renderDetailsTab();
+}
+
+function openEditFor(fromCap, toCap) {
+  _suggestion = null;
+  document.getElementById('em-suggest-box').classList.remove('on');
+  if (!fromCap) return;
+  const isNew = !toCap || !_cells[key(fromCap, toCap)];
+  _editState = { from: fromCap, to: toCap || '', isNew };
+  document.getElementById('em-title').textContent = isNew ? 'Add relation' : 'Edit relation';
+  document.getElementById('em-from').textContent = fromCap;
+  document.getElementById('em-to').textContent   = toCap || '(pick a target — type below)';
+  document.getElementById('em-arrow').textContent = '→';
+
+  // Reset edit form fields
+  document.getElementById('em-relation').value = '';
+  document.getElementById('em-description').value = '';
+  document.getElementById('em-wire').value = '';
+  document.getElementById('em-direction').value = 'forward';
+  document.getElementById('em-tags').value = '';
+  document.getElementById('em-strength').value = '0.5';
+  document.getElementById('em-strength-val').textContent = '0.50';
+  document.getElementById('em-confidence').value = '0.5';
+  document.getElementById('em-confidence-val').textContent = '0.50';
+
+  if (!isNew) {
+    const r = _cells[key(fromCap, toCap)];
+    if (r) {
+      document.getElementById('em-relation').value    = r.relation || '';
+      document.getElementById('em-description').value = r.description || '';
+      document.getElementById('em-wire').value        = r.wire || '';
+      document.getElementById('em-direction').value   = r.direction || 'forward';
+      document.getElementById('em-tags').value        = (r.tags || []).join(', ');
+      document.getElementById('em-strength').value    = r.strength ?? 0.5;
+      document.getElementById('em-strength-val').textContent = (+(r.strength || 0)).toFixed(2);
+      const cv = (r.confidence ?? r.strength ?? 0.5);
+      document.getElementById('em-confidence').value  = cv;
+      document.getElementById('em-confidence-val').textContent = (+cv).toFixed(2);
+    }
+  }
+  // Always start on the Edit tab when reopening
+  setModalTab('edit');
+  document.getElementById('edit-modal').style.display = 'block';
+}
+
+function closeEdit() { document.getElementById('edit-modal').style.display = 'none'; }
+
+// ── DETAILS TAB ──────────────────────────────────────────────────────────────
+function renderDetailsTab() {
+  const body = document.getElementById('mt-details-body');
+  const f = _editState.from, t = _editState.to;
+  if (!f || !t || _editState.isNew) {
+    body.innerHTML = `<div class="dt-empty">No relation saved between these caps yet.<br>Use the <b>Edit</b> tab to define one.</div>`;
+    return;
+  }
+  const r = _cells[key(f, t)];
+  if (!r) {
+    body.innerHTML = `<div class="dt-empty">Relation no longer present (refresh?).</div>`;
+    return;
+  }
+  const sPct = Math.round((r.strength || 0) * 100);
+  const cPct = Math.round((r.confidence || r.strength || 0) * 100);
+  const arrow = r.direction === 'bidirectional' ? '↔' : (r.direction === 'backward' ? '←' : '→');
+  const sibling = _cells[key(t, f)];   // reverse direction, if any
+
+  let html = `
+    <div class="dt-grid">
+      <div class="lbl">Direction</div>
+      <div class="val"><span class="dt-pill dir">${esc(r.direction || 'forward')} ${arrow}</span></div>
+
+      <div class="lbl">Relation</div>
+      <div class="val">${r.relation
+        ? `<span class="dt-pill ${r.auto ? 'auto' : 'manual'}">${esc(r.relation)}</span>`
+        : `<span class="val dim">(unlabelled)</span>`}</div>
+
+      <div class="lbl">Strength</div>
+      <div class="val"><span class="dt-strength-bar"><div style="width:${sPct}%"></div></span> ${(r.strength||0).toFixed(2)}</div>
+
+      <div class="lbl">Confidence</div>
+      <div class="val"><span class="dt-strength-bar"><div style="width:${cPct}%"></div></span> ${(r.confidence ?? r.strength ?? 0).toFixed(2)}</div>
+
+      <div class="lbl">Source</div>
+      <div class="val"><span class="dt-pill ${r.auto ? 'auto' : 'manual'}">${r.auto ? 'LLM-generated' : 'manual'}</span></div>
+
+      <div class="lbl">Updated</div>
+      <div class="val">${esc((r.updated_at || '').replace('T',' ').slice(0,19) || '—')}</div>
+
+      ${(r.tags && r.tags.length) ? `
+        <div class="lbl">Tags</div>
+        <div class="val"><div class="dt-tags">${r.tags.map(t => `<span class="dt-tag">${esc(t)}</span>`).join('')}</div></div>` : ''}
+    </div>
+
+    <div class="dt-section-hdr">Description</div>
+    <div class="dt-block">${r.description ? esc(r.description) : '<span style="color:var(--dim2);font-style:italic">(no description)</span>'}</div>
+  `;
+
+  if (r.wire) {
+    html += `
+      <div class="dt-section-hdr">Wire</div>
+      <div class="dt-block wire">${esc(r.wire)}</div>`;
+  }
+
+  if (sibling) {
+    const sArrow = sibling.direction === 'bidirectional' ? '↔' : '→';
+    html += `
+      <div class="dt-section-hdr">Reverse relation (${esc(t)} ${sArrow} ${esc(f)})</div>
+      <div style="background:var(--bg0);border:1px solid var(--border);border-radius:4px;padding:9px 12px;font-family:var(--mono);font-size:10.5px;cursor:pointer"
+           onclick="openEditFor('${esc(t)}','${esc(f)}')" title="Open the reverse relation">
+        <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">
+          ${sibling.relation ? `<span class="dt-pill ${sibling.auto ? 'auto':'manual'}">${esc(sibling.relation)}</span>` : ''}
+          <span style="color:var(--dim2)">strength ${(sibling.strength||0).toFixed(2)}</span>
+          <span style="margin-left:auto;color:var(--acc2);font-size:9.5px">open ↗</span>
+        </div>
+        ${sibling.description ? `<div style="margin-top:5px;color:var(--text);font-size:10.5px;line-height:1.55">${esc(sibling.description)}</div>` : ''}
+      </div>`;
+  }
+
+  // Other relations involving either cap (a quick neighbourhood view)
+  const others = [];
+  for (const k in _cells) {
+    const x = _cells[k];
+    if ((x.from === f || x.to === f || x.from === t || x.to === t)
+        && !(x.from === f && x.to === t)
+        && !(x.from === t && x.to === f)) {
+      others.push(x);
+    }
+  }
+  others.sort((a, b) => -((a.strength||0) - (b.strength||0)));
+  if (others.length) {
+    html += `<div class="dt-section-hdr">Adjacent relations (${others.length})</div>
+      <div style="max-height:180px;overflow-y:auto">`;
+    for (const x of others.slice(0, 12)) {
+      const xa = x.direction === 'bidirectional' ? '↔' : '→';
+      html += `<div style="padding:5px 9px;font-family:var(--mono);font-size:9.5px;display:flex;gap:6px;align-items:center;border-bottom:1px solid rgba(255,255,255,.04);cursor:pointer"
+                    onclick="openEditFor('${esc(x.from)}','${esc(x.to)}')">
+        <span style="color:var(--acc)">${esc(x.from)}</span>
+        <span style="color:var(--dim2)">${xa}</span>
+        <span style="color:var(--acc2)">${esc(x.to)}</span>
+        ${x.relation ? `<span class="dt-pill ${x.auto?'auto':'manual'}" style="margin-left:auto">${esc(x.relation)}</span>` : '<span style="margin-left:auto"></span>'}
+        <span style="color:var(--dim2);min-width:32px;text-align:right">${(x.strength||0).toFixed(2)}</span>
+      </div>`;
+    }
+    if (others.length > 12) html += `<div style="padding:6px 9px;color:var(--dim2);font-size:9.5px;text-align:center">+ ${others.length - 12} more</div>`;
+    html += `</div>`;
+  }
+
+  body.innerHTML = html;
+}
+
+// ── CAP TAB (FROM / TO) ──────────────────────────────────────────────────────
+async function renderCapTab(which, capName) {
+  const id = which === 'capa' ? 'mt-capa-body' : 'mt-capb-body';
+  const body = document.getElementById(id);
+  if (!capName) {
+    body.innerHTML = `<div class="dt-empty">No cap selected.</div>`;
+    return;
+  }
+  body.innerHTML = `<div class="dt-empty">⟳ loading ${esc(capName)}…</div>`;
+
+  // Fetch full schema (cached) and effective description
+  let cap = _capCache[capName];
+  if (!cap) {
+    const tools = await api('/mcp/tools');
+    if (Array.isArray(tools)) tools.forEach(c => { _capCache[c.name] = c; });
+    cap = _capCache[capName];
+  }
+  let desc = _descCache[capName];
+  if (!desc) {
+    desc = await api('/cap_ontology/description_get?cap_name=' + encodeURIComponent(capName));
+    if (desc && !desc.error) _descCache[capName] = desc;
+  }
+
+  if (!cap) {
+    body.innerHTML = `<div class="dt-empty">Capability <code>${esc(capName)}</code> not found in registry.</div>`;
+    return;
+  }
+
+  const props = cap.schema?.properties || {};
+  const required = new Set(cap.schema?.required || []);
+  const paramRows = [];
+  for (const pname in props) {
+    if (pname === 'trace_id') continue;
+    const p = props[pname] || {};
+    paramRows.push({
+      name: pname, type: p.type || 'any', desc: p.description || '',
+      required: required.has(pname),
+      default: ('default' in p) ? p.default : undefined,
+    });
+  }
+
+  const overrideText = (desc?.override || '').trim();
+  const originalText = (desc?.original || cap.description || '').trim();
+  const hasOverride  = !!overrideText;
+  const effective    = hasOverride ? overrideText : originalText;
+
+  const html = `
+    <div class="cap-hdr">
+      <div class="cap-name" title="${esc(capName)}">${esc(capName)}</div>
+      ${cap.mode && cap.mode !== 'local' ? `<span class="cap-mode-pill">${esc(cap.mode)}</span>` : ''}
+      ${cap.source ? `<span class="cap-mode-pill" title="source: ${esc(cap.source)}">${esc(cap.source.replace('mcp_proxy','mcp'))}</span>` : ''}
+    </div>
+
+    <div class="cd-desc-block ${hasOverride ? 'has-override' : ''}" id="${id}-desc-block">
+      <div style="display:flex;gap:8px;align-items:flex-start">
+        <div style="flex:1;line-height:1.55">
+          ${effective ? esc(effective) : '<span style="color:var(--dim2);font-style:italic">(no description)</span>'}
+        </div>
+        ${hasOverride ? '<span class="dt-pill" style="background:rgba(143,184,122,.1);color:var(--acc2);border-color:rgba(143,184,122,.3);flex-shrink:0">override active</span>' : ''}
+      </div>
+      ${hasOverride && originalText ? `
+        <div class="cd-orig"><b>original (decorator):</b> ${esc(originalText)}</div>` : ''}
+      <div class="cd-desc-actions">
+        <button class="btn sm" onclick="openDescEdit('${esc(which)}','${esc(capName)}')">${hasOverride ? 'Edit override' : 'Override description'}</button>
+        ${hasOverride ? `<button class="btn sm danger" onclick="clearDescOverride('${esc(which)}','${esc(capName)}')">Revert</button>` : ''}
+      </div>
+    </div>
+
+    <div class="cd-override-edit" id="${id}-edit">
+      <label style="display:block;font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.8px;color:var(--dim2);margin-bottom:5px">Override description</label>
+      <textarea id="${id}-edit-text" placeholder="A clearer description that better describes what this cap actually does. This will be used by the LLM auto-generation prompt instead of the decorator's text."></textarea>
+      <div class="cd-actions">
+        <span class="ind" id="${id}-edit-ind"></span>
+        <button class="btn sm" onclick="closeDescEdit('${esc(which)}')">Cancel</button>
+        <button class="btn primary sm" onclick="saveDescOverride('${esc(which)}','${esc(capName)}')">Save</button>
+      </div>
+    </div>
+
+    <div class="dt-section-hdr">Inputs (${paramRows.length})</div>
+    <table class="cd-params-table">
+      <thead><tr><th>name</th><th>type</th><th>req</th><th>default</th><th>description</th></tr></thead>
+      <tbody>
+        ${paramRows.length ? paramRows.map(p => `
+          <tr>
+            <td><span class="pname">${esc(p.name)}</span></td>
+            <td><span class="ptype">${esc(p.type)}</span></td>
+            <td>${p.required ? '<span class="preq">●</span>' : ''}</td>
+            <td style="color:var(--dim2)">${p.default !== undefined ? esc(JSON.stringify(p.default)) : ''}</td>
+            <td><span class="pdesc">${esc(p.desc)}</span></td>
+          </tr>`).join('')
+          : '<tr class="no-params"><td colspan="5">no parameters</td></tr>'}
+      </tbody>
+    </table>
+
+    ${cap.tags && cap.tags.length ? `
+      <div class="dt-section-hdr">Tags</div>
+      <div class="dt-tags" style="margin-bottom:10px">${cap.tags.map(tg => `<span class="dt-tag">${esc(tg)}</span>`).join('')}</div>` : ''}
+  `;
+  body.innerHTML = html;
+}
+
+function openDescEdit(which, capName) {
+  const id = which === 'capa' ? 'mt-capa-body' : 'mt-capb-body';
+  const editor = document.getElementById(id + '-edit');
+  const ta = document.getElementById(id + '-edit-text');
+  const desc = _descCache[capName] || {};
+  ta.value = (desc.override || desc.original || '');
+  editor.classList.add('on');
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+}
+function closeDescEdit(which) {
+  const id = which === 'capa' ? 'mt-capa-body' : 'mt-capb-body';
+  document.getElementById(id + '-edit')?.classList.remove('on');
+}
+
+async function saveDescOverride(which, capName) {
+  const id = which === 'capa' ? 'mt-capa-body' : 'mt-capb-body';
+  const ta = document.getElementById(id + '-edit-text');
+  const ind = document.getElementById(id + '-edit-ind');
+  if (ind) ind.textContent = '⟳ saving…';
+  const text = ta.value.trim();
+  const r = await api('/cap_ontology/description_set', 'POST', {
+    cap_name: capName, description: text,
+  });
+  if (r && !r.error) {
+    // Refresh cache and re-render
+    _descCache[capName] = await api('/cap_ontology/description_get?cap_name=' + encodeURIComponent(capName));
+    renderCapTab(which, capName);
+    setStatus('description override saved', 'ok');
+  } else {
+    if (ind) ind.textContent = 'failed: ' + (r?.error || 'unknown');
+    return;
+  }
+}
+
+async function clearDescOverride(which, capName) {
+  if (!confirm(`Revert ${capName} to its decorator description?`)) return;
+  const r = await api('/cap_ontology/description_delete', 'POST', { cap_name: capName });
+  if (r) {
+    _descCache[capName] = await api('/cap_ontology/description_get?cap_name=' + encodeURIComponent(capName));
+    renderCapTab(which, capName);
+    setStatus('override removed', 'ok');
+  }
+}
+
+async function suggestRelation() {
+  const f = _editState.from, t = _editState.to;
+  if (!f || !t) { alert('Pick a target cap'); return; }
+  const box = document.getElementById('em-suggest-box');
+  const txt = document.getElementById('em-suggest-text');
+  box.classList.add('on');
+  txt.innerHTML = '<span style="color:var(--dim2)">⟳ asking the LLM…</span>';
+  const r = await api('/cap_ontology/suggest', 'POST', { from_cap: f, to_cap: t });
+  if (!r || r.error) { txt.innerHTML = `<span style="color:var(--err)">${esc(r?.error || 'failed')}</span>`; return; }
+  _suggestion = r;
+  // Show wire + confidence in the suggestion box, and highlight when the
+  // LLM declined to propose a relation (low strength → empty relation).
+  const declined = !r.relation || (r.strength || 0) < 0.3;
+  txt.innerHTML = `
+    <div><b>relation:</b> ${r.relation
+      ? `<code style="color:var(--acc2)">${esc(r.relation)}</code>`
+      : `<span style="color:var(--dim2)">(LLM declined — no clear composition)</span>`}</div>
+    <div><b>direction:</b> ${esc(r.direction || 'forward')} &nbsp; <b>strength:</b> ${(r.strength || 0).toFixed(2)} &nbsp; <b>confidence:</b> ${(r.confidence ?? r.strength ?? 0).toFixed(2)}</div>
+    ${r.wire ? `<div style="margin-top:3px"><b>wire:</b> <code style="color:var(--acc3)">${esc(r.wire)}</code></div>` : ''}
+    <div style="margin-top:4px;color:var(--text)">${esc(r.description || '')}</div>
+    ${declined ? `<div style="margin-top:5px;color:var(--dim2);font-size:9px">The LLM didn't find a meaningful composition between these caps. You can still save manually if you disagree.</div>` : ''}`;
+}
+
+function applySuggestion() {
+  if (!_suggestion) return;
+  const r = _suggestion;
+  if (r.relation)    document.getElementById('em-relation').value = r.relation;
+  if (r.description) document.getElementById('em-description').value = r.description;
+  if (r.direction)   document.getElementById('em-direction').value = r.direction;
+  if (r.wire)        document.getElementById('em-wire').value = r.wire;
+  if (typeof r.strength === 'number') {
+    document.getElementById('em-strength').value = r.strength;
+    document.getElementById('em-strength-val').textContent = r.strength.toFixed(2);
+  }
+  if (typeof r.confidence === 'number') {
+    document.getElementById('em-confidence').value = r.confidence;
+    document.getElementById('em-confidence-val').textContent = r.confidence.toFixed(2);
+  }
+  const tagsEl = document.getElementById('em-tags');
+  const cur = tagsEl.value.split(',').map(s => s.trim()).filter(Boolean);
+  if (!cur.includes('llm-generated')) cur.push('llm-generated');
+  tagsEl.value = cur.join(', ');
+  document.getElementById('em-suggest-box').classList.remove('on');
+}
+
+async function saveRelation() {
+  const f = _editState.from, t = _editState.to;
+  if (!f || !t) { alert('Pick a target cap'); return; }
+  if (f === t) { alert('Self-loops are not allowed'); return; }
+  const body = {
+    from_cap: f, to_cap: t,
+    relation:    document.getElementById('em-relation').value.trim(),
+    description: document.getElementById('em-description').value.trim(),
+    wire:        document.getElementById('em-wire').value.trim(),
+    direction:   document.getElementById('em-direction').value,
+    tags:        document.getElementById('em-tags').value.trim(),
+    strength:    parseFloat(document.getElementById('em-strength').value) || 0,
+    confidence:  parseFloat(document.getElementById('em-confidence').value) || 0,
+    auto:        false,
+  };
+  const r = await api('/cap_ontology/set', 'POST', body);
+  if (r && !r.error) {
+    _cells[key(f, t)] = r;
+    if (r.direction === 'bidirectional') _cells[key(t, f)] = { ...r, from: t, to: f };
+    closeEdit(); renderCurrentView();
+    setStatus('saved', 'ok');
+    populateRelationDropdown();
+  } else {
+    alert('Save failed: ' + (r?.error || 'unknown'));
+  }
+}
+
+async function deleteRelation() {
+  const f = _editState.from, t = _editState.to;
+  if (!f || !t) return;
+  if (!confirm(`Delete relation ${f} → ${t}?`)) return;
+  const r = await api('/cap_ontology/delete', 'POST', { from_cap: f, to_cap: t });
+  if (r) {
+    delete _cells[key(f, t)];
+    closeEdit(); renderCurrentView();
+    setStatus('deleted', 'ok');
+    populateRelationDropdown();
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// AUTO-FILL
+// ════════════════════════════════════════════════════════════════════════════
+async function autoFillCurrentGroup() {
+  const g = _filterGroup;
+  if (!g) { alert('Select a group from the sidebar first.'); return; }
+  return _autoGroupCall(g, g);
+}
+
+async function autoFillAllGroups() {
+  const caps = getVisibleCaps();
+  if (!caps.length) { alert('No visible caps'); return; }
+  const groups = [...new Set(caps.map(c => c.split('.')[0]))];
+  if (!confirm(`Run LLM auto-fill across ${groups.length} group(s)?\nGroups: ${groups.join(', ')}\n\nThis will queue ${groups.length} jobs.`)) return;
+  for (const g of groups) {
+    await _autoGroupCall(g, g, true);
+  }
+}
+
+async function _autoGroupCall(a, b, suppressAlert) {
+  const min = parseFloat(document.getElementById('min-str-inp').value) || 0.3;
+  const con = parseInt(document.getElementById('concur-inp').value) || 2;
+  const ow  = document.getElementById('overwrite-cb').checked;
+  const r = await api('/cap_ontology/auto_group', 'POST', {
+    group_a: a, group_b: b, min_strength: min,
+    overwrite: ow, concurrency: con, prefer_gpu: true,
+  });
+  if (r?.job_id) {
+    if (!suppressAlert) setStatus(`job ${r.job_id} started · ${r.total_pairs} pairs`, 'ok');
+    pollJob(r.job_id);
+  } else if (!suppressAlert) {
+    alert('Auto-fill failed: ' + (r?.error || 'unknown'));
+  }
+}
+
+async function autoFillFullGrid() {
+  const min = parseFloat(document.getElementById('min-str-inp').value) || 0.4;
+  const con = parseInt(document.getElementById('concur-inp').value) || 2;
+  const ow  = document.getElementById('overwrite-cb').checked;
+  if (!confirm(`Run LLM across the FULL capability grid?\n\n${_allCaps.length}² ≈ ${_allCaps.length * _allCaps.length} pairs (capped at 1000).\nThis can take a long time.`)) return;
+  const r = await api('/cap_ontology/auto_grid', 'POST', {
+    min_strength: min, overwrite: ow, concurrency: con,
+    prefer_gpu: true, max_pairs: 1000,
+  });
+  if (r?.job_id) {
+    setStatus(`grid job ${r.job_id} started · ${r.total_pairs} pairs`, 'ok');
+    pollJob(r.job_id);
+  } else {
+    alert('Auto-fill failed: ' + (r?.error || 'unknown'));
+  }
+}
+
+function pollJob(jobId) {
+  if (_jobPollers[jobId]) return;
+  _activeJobs.push(jobId);
+  updateActiveJobPill();
+  const step = async () => {
+    const j = await api(`/cap_ontology/job_status?job_id=${jobId}`);
+    if (!j || j.error) { delete _jobPollers[jobId]; _activeJobs = _activeJobs.filter(x => x !== jobId); updateActiveJobPill(); return; }
+    document.getElementById('aj-prog').textContent = `${j.done}/${j.total}`;
+    document.getElementById('aj-id').textContent = jobId.slice(0, 14);
+    document.getElementById('sb-job').textContent = `${jobId.slice(0,14)} · ${j.done}/${j.total} · saved ${j.saved}`;
+    if (j.status === 'complete' || j.status === 'error') {
+      delete _jobPollers[jobId];
+      _activeJobs = _activeJobs.filter(x => x !== jobId);
+      updateActiveJobPill();
+      setStatus(`job ${jobId.slice(0,12)} ${j.status} — saved ${j.saved}`, j.status === 'complete' ? 'ok' : 'err');
+      // Reload data
+      await loadAll();
+      return;
+    }
+    _jobPollers[jobId] = setTimeout(step, 1500);
+  };
+  step();
+}
+function updateActiveJobPill() {
+  const pill = document.getElementById('active-job-pill');
+  if (!pill) return;
+  pill.style.display = _activeJobs.length ? 'inline-flex' : 'none';
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// WS LIVE UPDATES
+// ════════════════════════════════════════════════════════════════════════════
+function connectWS() {
+  const base = _base();
+  const proto = base.startsWith('https') ? 'wss' : 'ws';
+  const wsUrl = base.replace(/^https?/, proto) + '/ws/mcp';
+  let ws;
+  try { ws = new WebSocket(wsUrl); } catch(e) { setTimeout(connectWS, 5000); return; }
+  ws.onopen = () => ws.send(JSON.stringify({ action: 'subscribe_events' }));
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      const ev = msg.type === 'event' ? msg.data : msg;
+      if (!ev?.type) return;
+      if (ev.type.startsWith('cap_ontology.')) {
+        if (ev.type === 'cap_ontology.set' || ev.type === 'cap_ontology.deleted') {
+          // Lightweight: update local state
+          if (ev.type === 'cap_ontology.deleted') delete _cells[key(ev.from, ev.to)];
+          // Defer reload-all to next tick to coalesce
+          if (!window._reloadTimer) window._reloadTimer = setTimeout(() => { window._reloadTimer = null; loadAll(); }, 800);
+        } else if (ev.type === 'cap_ontology.bulk_set' || ev.type === 'cap_ontology.wiped') {
+          loadAll();
+        } else if (ev.type === 'cap_ontology.description_set' || ev.type === 'cap_ontology.description_cleared') {
+          // Invalidate the description cache for the affected cap so any
+          // currently-open cap tab re-fetches the override on next view.
+          if (ev.cap) delete _descCache[ev.cap];
+        }
+      }
+    } catch(_) {}
+  };
+  ws.onclose = () => setTimeout(connectWS, 3000);
+  ws.onerror = () => {};
+}
+
+// Theme override from parent harness
+window.addEventListener('message', (ev) => {
+  if (ev.data?.type === 'vera:base' && ev.data.url) {
+    window._veraBase = ev.data.url;
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// BOOT
+// ════════════════════════════════════════════════════════════════════════════
+loadAll();
+connectWS();
+window.addEventListener('resize', () => { if (_view === 'graph') renderGraph(); });
+</script>
+<script src="/ui/vera-ui.js"></script>
+</body>
+</html>

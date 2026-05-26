@@ -1,0 +1,1198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Vera Agents</title>
+<style>
+:root{
+  --bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;
+  --border:#3a3530;--border2:#4a4540;
+  --acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--acc4:#9e8fa0;
+  --ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;--gpu:#c97a5a;
+  --text:#ddd5c8;--fg:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;
+  --mono:'JetBrains Mono','Fira Mono',monospace;
+  --sans:'Inter','IBM Plex Sans',system-ui,sans-serif;
+  color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:12px;-webkit-font-smoothing:antialiased}
+html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
+input,select,textarea{background:var(--bg1);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:3px;font-family:var(--sans);font-size:11px;outline:none;transition:border-color .14s;width:100%}
+input:focus,select:focus,textarea:focus{border-color:var(--acc)}
+textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.55}
+input[type=checkbox],input[type=range]{width:auto}
+select option{background:var(--bg2)}
+.btn{display:inline-flex;align-items:center;gap:3px;padding:3px 10px;border-radius:3px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);font-size:11px;font-weight:500;cursor:pointer;transition:all .14s;white-space:nowrap}
+.btn:hover{border-color:var(--acc);color:var(--acc)}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+.btn.pri:hover{filter:brightness(1.1);color:#fff}
+.btn.teal{background:rgba(143,184,122,.1);border-color:var(--acc2);color:var(--acc2)}
+.btn.amber{background:rgba(201,149,90,.1);border-color:var(--acc3);color:var(--acc3)}
+.btn.danger{border-color:var(--err);color:var(--err)}
+.btn.sm{padding:2px 7px;font-size:10px}
+.btn.xs{padding:1px 5px;font-size:9px}
+.btn:disabled{opacity:.35;pointer-events:none}
+::-webkit-scrollbar{width:4px;height:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+.status{font-size:10px;color:var(--dim2);font-family:var(--mono);min-height:14px}
+.status.ok{color:var(--ok)}.status.err{color:var(--err)}.status.warn{color:var(--warn)}
+.sec{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);margin-bottom:7px;margin-top:2px;display:flex;align-items:center;gap:8px}
+.sec::after{content:'';flex:1;height:1px;background:var(--border)}
+.row{display:flex;gap:6px;align-items:center;margin-bottom:6px}
+.lbl{font-size:10.5px;color:var(--dim2);flex-shrink:0;width:88px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.hint{font-size:8.5px;color:var(--dim);margin-top:2px;line-height:1.4}
+/* Layout */
+#app{display:flex;height:100vh;overflow:hidden}
+#sidebar{width:215px;flex-shrink:0;display:flex;flex-direction:column;border-right:1px solid var(--border);background:var(--bg1)}
+#sbHead{padding:8px 10px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px;flex-shrink:0}
+.logo{font-family:var(--mono);font-size:9px;font-weight:700;color:var(--acc3);letter-spacing:2px;flex:1}
+#agList{flex:1;overflow-y:auto;padding:5px;display:flex;flex-direction:column;gap:3px}
+.ag-card{padding:7px 9px;border:1px solid var(--border);border-radius:4px;cursor:pointer;background:var(--bg2);transition:border-color .14s;display:flex;align-items:flex-start;gap:7px}
+.ag-card:hover,.ag-card.on{border-color:var(--acc3)}
+.ag-card.on{background:rgba(201,149,90,.05)}
+.ag-av{font-size:15px;flex-shrink:0;line-height:1.3}
+.ag-info{flex:1;min-width:0}
+.ag-name{font-size:11px;font-weight:600;font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ag-sub{font-size:9px;color:var(--dim2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px}
+.ag-meta{font-size:8.5px;color:var(--dim);font-family:var(--mono);margin-top:2px}
+.bdg{font-size:8px;padding:1px 5px;border-radius:2px;font-family:var(--mono);font-weight:700;vertical-align:middle;margin-left:3px}
+.bdg-plan{background:rgba(167,139,250,.1);color:#a78bfa;border:1px solid rgba(167,139,250,.25)}
+.bdg-call{background:rgba(56,189,248,.1);color:#38bdf8;border:1px solid rgba(56,189,248,.25)}
+.bdg-sk{background:rgba(90,158,143,.12);color:var(--acc);border:1px solid rgba(90,158,143,.3)}
+/* Main */
+#main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+#tabBar{display:flex;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg1);overflow-x:auto;scrollbar-width:none}
+#tabBar::-webkit-scrollbar{display:none}
+.mtab{padding:7px 13px;font-size:10.5px;font-weight:500;cursor:pointer;color:var(--dim2);border-bottom:2px solid transparent;transition:all .15s;user-select:none;white-space:nowrap;flex-shrink:0}
+.mtab.on{color:var(--acc3);border-bottom-color:var(--acc3)}
+#content{flex:1;overflow-y:auto;padding:14px 16px}
+/* Save bar */
+#saveBar{display:none;flex-shrink:0;padding:8px 14px;border-top:1px solid var(--border);background:var(--bg1);align-items:center;gap:8px}
+/* Params */
+.par{display:flex;flex-direction:column;gap:3px;margin-bottom:6px}
+.par-lbl{font-size:9.5px;color:var(--dim2);display:flex;justify-content:space-between}
+.par-lbl b{color:var(--acc3);font-family:var(--mono);font-weight:600}
+input[type=range]{padding:0;accent-color:var(--acc3);cursor:pointer}
+/* Cap browser */
+#cap-browser{border:1px solid var(--border);border-radius:4px;overflow:hidden;margin-top:4px}
+#cap-toolbar{display:flex;gap:6px;align-items:center;padding:6px 8px;background:var(--bg2);border-bottom:1px solid var(--border);flex-wrap:wrap}
+#cap-groups{display:flex;gap:3px;flex-wrap:wrap;padding:5px 8px;background:var(--bg1);border-bottom:1px solid var(--border);min-height:28px}
+.grp-chip{font-size:8.5px;padding:2px 7px;border-radius:10px;border:1px solid var(--border);color:var(--dim2);cursor:pointer;white-space:nowrap;transition:all .12s;font-family:var(--mono)}
+.grp-chip:hover{border-color:var(--acc2);color:var(--acc2)}
+.grp-chip.on{background:rgba(143,184,122,.12);border-color:var(--acc2);color:var(--acc2)}
+#cap-list{padding:6px;display:flex;flex-wrap:wrap;gap:3px;max-height:240px;overflow-y:auto;background:var(--bg0)}
+.cap-chip{display:inline-flex;align-items:center;padding:2px 8px;border-radius:10px;font-size:9px;background:var(--bg3);border:1px solid var(--border);cursor:pointer;user-select:none;transition:all .1s;font-family:var(--mono)}
+.cap-chip.on{background:rgba(90,158,143,.12);border-color:rgba(90,158,143,.45);color:var(--acc)}
+.cap-chip:hover:not(.on){border-color:var(--border2)}
+#cap-tip-bar{padding:5px 8px;background:var(--bg2);border-top:1px solid var(--border);font-size:9px;color:var(--dim);min-height:24px;font-style:italic}
+/* Skill/ont pickers */
+.picker{border:1px solid var(--border);border-radius:3px;min-height:40px;max-height:120px;overflow-y:auto;padding:5px;display:flex;flex-wrap:wrap;gap:3px;background:var(--bg0)}
+.sk-chip{display:inline-flex;align-items:center;padding:2px 8px;border-radius:10px;font-size:9px;border:1px solid var(--border);cursor:pointer;user-select:none;transition:all .12s;font-family:var(--mono);color:var(--dim2)}
+.sk-chip.on-sk{border-color:rgba(90,158,143,.5);background:rgba(90,158,143,.12);color:var(--acc)}
+.sk-chip.on-ont{border-color:rgba(201,149,90,.5);background:rgba(201,149,90,.1);color:var(--acc3)}
+/* Test */
+#test-wrap{display:flex;flex-direction:column;height:calc(100vh - 130px);gap:8px}
+#test-history{flex:1;overflow-y:auto;background:var(--bg1);border:1px solid var(--border);border-radius:4px;padding:10px;display:flex;flex-direction:column;gap:8px;min-height:80px}
+.msg-u{align-self:flex-end;background:rgba(90,158,143,.12);border:1px solid rgba(90,158,143,.25);border-radius:8px 8px 2px 8px;padding:7px 11px;font-size:11px;max-width:80%;line-height:1.5;word-break:break-word}
+.msg-a{align-self:flex-start;background:var(--bg2);border:1px solid var(--border);border-radius:8px 8px 8px 2px;padding:7px 11px;font-size:11px;max-width:85%;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+#test-in{resize:none;min-height:36px;max-height:100px;font-family:var(--sans);font-size:11px;line-height:1.5;padding:7px 10px;flex:1}
+.cur{display:inline-block;width:6px;height:12px;background:var(--acc2);animation:blink .85s step-end infinite;vertical-align:text-bottom}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="sidebar">
+    <div id="sbHead">
+      <span class="logo">AGENTS</span>
+      <button class="btn xs" onclick="AP.newAgent()">+ New</button>
+      <button class="btn xs" onclick="AP.load()">&#8635;</button>
+    </div>
+    <div id="agList"><div style="color:var(--dim);font-size:11px;padding:12px">Loading&hellip;</div></div>
+  </div>
+  <div id="main">
+    <div id="tabBar">
+      <div class="mtab on" onclick="AP.tab('identity',this)">Identity</div>
+      <div class="mtab"    onclick="AP.tab('model',this)">Model</div>
+      <div class="mtab"    onclick="AP.tab('personality',this)">Personality</div>
+      <div class="mtab"    onclick="AP.tab('tools',this)">Tools &amp; Caps</div>
+      <div class="mtab"    onclick="AP.tab('skills',this)">Skills &amp; Ontologies</div>
+      <div class="mtab"    onclick="AP.tab('context',this)">Context</div>
+      <div class="mtab"    onclick="AP.tab('memory',this)">Memory</div>
+      <div class="mtab"    onclick="AP.tab('test',this)">Test</div>
+    </div>
+    <div id="content">
+      <div id="ed-empty" style="color:var(--dim);font-size:11px;padding:20px 0">Select an agent or click <strong>+ New</strong>.</div>
+      <div id="ed-wrap" style="display:none">
+        <input type="hidden" id="f-id">
+
+        <!-- IDENTITY -->
+        <div id="tab-identity">
+          <div class="sec">Identity</div>
+          <div class="g2" style="margin-bottom:10px">
+            <div>
+              <div class="row"><label class="lbl">Name</label><input id="f-name" placeholder="my-agent" style="font-family:var(--mono)"></div>
+              <div class="row"><label class="lbl">Label</label><input id="f-label" placeholder="My Agent"></div>
+              <div class="row"><label class="lbl">Description</label><input id="f-desc" placeholder="What this agent does&hellip;"></div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <div class="row"><label class="lbl">Avatar</label><input id="f-avatar" placeholder="" style="max-width:90px" oninput="AP.updateAv()"></div>
+              <div id="av-prev" style="display:flex;align-items:center;justify-content:center;width:56px;height:56px;border:1px solid var(--border);border-radius:8px;background:var(--bg2);font-size:28px"></div>
+            </div>
+          </div>
+          <div class="sec" style="margin-top:8px">Greeting</div>
+          <input id="f-greeting" placeholder="Optional opening message&hellip;" style="margin-bottom:4px">
+          <div class="hint">Shown as the first assistant message when a chat session starts.</div>
+        </div>
+
+        <!-- MODEL -->
+        <div id="tab-model" style="display:none">
+          <div class="sec">Routing</div>
+          <div class="g2" style="margin-bottom:12px">
+            <div>
+              <div class="row" style="margin-bottom:6px"><label class="lbl">Model</label>
+                <select id="f-model" style="font-family:var(--mono);flex:1"><option value="">— auto —</option></select>
+                <button class="btn xs" style="margin-left:4px;flex-shrink:0" onclick="AP.loadModels()">&#8635;</button>
+              </div>
+              <div class="row"><label class="lbl">Instance</label>
+                <select id="f-instance" style="flex:1" onchange="AP.onInstChange(this.value)"><option value="">— auto —</option></select>
+              </div>
+              <div style="display:flex;gap:16px;margin-top:8px">
+                <div class="row" style="margin-bottom:0;gap:8px">
+                  <input type="checkbox" id="f-gpu" checked>
+                  <label class="lbl" style="width:auto;font-size:10px">Prefer GPU</label>
+                </div>
+                <div class="row" style="margin-bottom:0;gap:8px">
+                  <input type="checkbox" id="f-think">
+                  <label class="lbl" style="width:auto;font-size:10px">Think mode</label>
+                </div>
+              </div>
+            </div>
+            <div id="inst-info" style="background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:10px;font-size:9.5px;color:var(--dim2);font-family:var(--mono);line-height:1.7">
+              Select an instance to see details
+            </div>
+          </div>
+          <div class="sec">Sampling</div>
+          <div class="g2" style="margin-bottom:12px">
+            <div class="par"><div class="par-lbl">Temperature <b id="temp-v">0.7</b></div>
+              <input type="range" id="f-temperature" min="0" max="2" step="0.05" value="0.7" oninput="document.getElementById('temp-v').textContent=parseFloat(this.value).toFixed(2)" style="width:100%">
+              <div class="hint">0=deterministic &nbsp; 2=chaotic</div></div>
+            <div class="par"><div class="par-lbl">Top P <b id="topp-v">0.9</b></div>
+              <input type="range" id="f-top_p" min="0" max="1" step="0.05" value="0.9" oninput="document.getElementById('topp-v').textContent=parseFloat(this.value).toFixed(2)" style="width:100%">
+              <div class="hint">nucleus sampling cutoff</div></div>
+            <div class="par"><div class="par-lbl">Repeat Penalty <b id="rep-v">1.1</b></div>
+              <input type="range" id="f-repeat_penalty" min="1" max="2" step="0.05" value="1.1" oninput="document.getElementById('rep-v').textContent=parseFloat(this.value).toFixed(2)" style="width:100%">
+              <div class="hint">1=none &nbsp; 2=strong</div></div>
+            <div class="par"><div class="par-lbl">Top K <b id="topk-v">40</b></div>
+              <input type="range" id="f-top_k" min="0" max="200" step="5" value="40" oninput="document.getElementById('topk-v').textContent=this.value" style="width:100%">
+              <div class="hint">0=disabled</div></div>
+          </div>
+          <div class="sec">Limits</div>
+          <div class="g3" style="margin-bottom:10px">
+            <div><div style="font-size:9.5px;color:var(--dim2);margin-bottom:3px">Context window</div>
+              <input id="f-num_ctx" type="number" value="4096" min="512" step="512">
+              <div class="hint">tokens</div></div>
+            <div><div style="font-size:9.5px;color:var(--dim2);margin-bottom:3px">Max output</div>
+              <input id="f-num_predict" type="number" value="-1" min="-1">
+              <div class="hint">-1 = unlimited</div></div>
+            <div><div style="font-size:9.5px;color:var(--dim2);margin-bottom:3px">Seed</div>
+              <div style="display:flex;gap:3px"><input id="f-seed" type="number" value="-1" style="flex:1">
+              <button class="btn xs" onclick="document.getElementById('f-seed').value=Math.floor(Math.random()*99999)">?</button></div>
+              <div class="hint">-1 = random</div></div>
+          </div>
+          <div class="g2">
+            <div><div style="font-size:9.5px;color:var(--dim2);margin-bottom:3px">Mirostat</div>
+              <select id="f-mirostat"><option value="0">Off</option><option value="1">v1</option><option value="2">v2</option></select></div>
+            <div><div style="font-size:9.5px;color:var(--dim2);margin-bottom:3px">Stop sequences</div>
+              <input id="f-stop" placeholder="\n\n, ### (comma-separated)"></div>
+          </div>
+        </div>
+
+        <!-- PERSONALITY -->
+        <div id="tab-personality" style="display:none">
+          <div class="sec">System Prompt</div>
+          <div style="font-size:9.5px;color:var(--dim2);margin-bottom:6px">Skills and ontologies assigned on the Skills tab are appended after this automatically.</div>
+          <textarea id="f-system_prompt" style="width:100%;min-height:260px;box-sizing:border-box;margin-bottom:14px" placeholder="Define the agent's role, personality, knowledge and constraints. This is the system message sent on every call."></textarea>
+          <div class="sec">Voice (TTS)</div>
+          <div class="g2">
+            <div><div style="font-size:9.5px;color:var(--dim2);margin-bottom:3px">Voice</div>
+              <select id="f-voice">
+                <option value="af_heart">af_heart — Female, warm</option>
+                <option value="af_bella">af_bella — Female, soft</option>
+                <option value="af_sarah">af_sarah — Female, clear</option>
+                <option value="am_adam">am_adam — Male, deep</option>
+                <option value="am_michael">am_michael — Male, natural</option>
+                <option value="bf_emma">bf_emma — British Female</option>
+                <option value="bf_isabella">bf_isabella — British Female, warm</option>
+                <option value="bm_george">bm_george — British Male</option>
+                <option value="bm_lewis">bm_lewis — British Male, deep</option>
+              </select></div>
+            <div class="par"><div class="par-lbl">Speed <b id="spd-v">1.0</b></div>
+              <input type="range" id="f-tts_speed" min="0.5" max="2" step="0.1" value="1.0" oninput="document.getElementById('spd-v').textContent=parseFloat(this.value).toFixed(1)" style="width:100%"></div>
+          </div>
+        </div>
+
+        <!-- TOOLS & CAPS -->
+        <div id="tab-tools" style="display:none">
+          <div class="sec">Tool Mode</div>
+          <div class="g2" style="margin-bottom:12px">
+            <div><div style="font-size:9.5px;color:var(--dim2);margin-bottom:3px">Mode</div>
+              <select id="f-tool_mode">
+                <option value="none">None — pure chat</option>
+                <option value="call">Call — invoke listed capabilities</option>
+                <option value="plan">Plan — build and run DAGs</option>
+              </select></div>
+            <div><div style="font-size:9.5px;color:var(--dim2);margin-bottom:3px">Domain description</div>
+              <input id="f-domain_description" placeholder="e.g. system monitoring and alerting"></div>
+          </div>
+
+          <div class="sec">Domain Capabilities
+            <span style="font-size:9px;color:var(--dim);text-transform:none;letter-spacing:0;margin-left:4px">Selected caps are listed in the system prompt as callable tools when mode is Call or Plan</span>
+          </div>
+          <div id="cap-browser">
+            <div id="cap-toolbar">
+              <input id="cap-search" placeholder="Search by name or description&hellip;" style="flex:1;min-width:100px;width:auto" oninput="AP.filterCaps()">
+              <button class="btn xs" onclick="AP.selectAllCaps()">All</button>
+              <button class="btn xs" onclick="AP.clearAllCaps()">None</button>
+              <button class="btn xs teal" onclick="AP.selectGroupCaps()" title="Select the active group filter">Group</button>
+              <button class="btn xs" onclick="AP.loadCaps()">&#8635;</button>
+              <span id="cap-count" style="font-size:9px;color:var(--acc);font-family:var(--mono);white-space:nowrap">0 sel</span>
+            </div>
+            <div id="cap-groups"></div>
+            <div id="cap-list"><span style="font-size:9px;color:var(--dim);padding:4px">Loading&hellip;</span></div>
+            <div id="cap-tip-bar">Hover a capability chip to see its description</div>
+          </div>
+        </div>
+
+        <!-- SKILLS & ONTOLOGIES -->
+        <div id="tab-skills" style="display:none">
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:9px 11px;margin-bottom:14px;font-size:10px;color:var(--dim2);line-height:1.6">
+            Assigned skills and ontologies are injected as additional system prompt context on every request. They are appended after the system prompt and before memory context.
+          </div>
+
+          <div class="sec">Skills</div>
+          <div style="display:flex;gap:5px;margin-bottom:6px;align-items:center;flex-wrap:wrap">
+            <button class="btn xs" onclick="AP.selectAllSkills()">All</button>
+            <button class="btn xs" onclick="AP.clearAllSkills()">None</button>
+            <button class="btn xs" onclick="AP.loadSkills()">&#8635; Reload</button>
+            <span id="sk-count" style="font-size:9px;color:var(--acc);font-family:var(--mono);margin-left:auto">0 assigned</span>
+          </div>
+          <div class="picker" id="skill-picker">
+            <span style="font-size:9px;color:var(--dim2);align-self:center">Loading&hellip;</span>
+          </div>
+          <div id="sk-tip" style="font-size:9px;color:var(--dim);font-style:italic;margin-top:4px;min-height:14px"></div>
+
+          <!-- Skill content preview: hovering or clicking a chip above shows
+               the full skill body here. Was missing before — users had to
+               jump to the Skills panel just to read what was assigned. -->
+          <div style="display:flex;align-items:center;gap:6px;margin-top:6px;margin-bottom:4px">
+            <span style="font-size:9.5px;font-weight:600;color:var(--acc);text-transform:uppercase;letter-spacing:0.5px">Skill Preview</span>
+            <span id="sk-preview-name" style="font-size:9.5px;color:var(--dim2);font-family:var(--mono)">— hover or click a skill chip —</span>
+            <span style="flex:1"></span>
+            <span id="sk-preview-meta" style="font-size:9px;color:var(--dim);font-family:var(--mono)"></span>
+          </div>
+          <div id="sk-preview-box" style="display:none;background:var(--bg0);border:1px solid var(--border);border-radius:3px;padding:8px 10px;font-family:var(--mono);font-size:9.5px;white-space:pre-wrap;max-height:200px;overflow-y:auto;line-height:1.55;color:var(--text)"></div>
+          <div id="sk-preview-empty" style="background:var(--bg0);border:1px dashed var(--border);border-radius:3px;padding:14px;text-align:center;color:var(--dim);font-size:10px;font-style:italic">Skill body will appear here.</div>
+
+          <div class="sec" style="margin-top:14px">Ontologies</div>
+          <div style="display:flex;gap:5px;margin-bottom:6px;align-items:center;flex-wrap:wrap">
+            <button class="btn xs amber" onclick="AP.selectAllOnts()">All</button>
+            <button class="btn xs amber" onclick="AP.clearAllOnts()">None</button>
+            <button class="btn xs" onclick="AP.loadOnts()">&#8635; Reload</button>
+            <span id="ont-count" style="font-size:9px;color:var(--acc3);font-family:var(--mono);margin-left:auto">0 assigned</span>
+          </div>
+          <div class="picker" id="ont-picker">
+            <span style="font-size:9px;color:var(--dim2);align-self:center">Loading&hellip;</span>
+          </div>
+          <div id="ont-tip" style="font-size:9px;color:var(--dim);font-style:italic;margin-top:4px;min-height:14px"></div>
+
+          <!-- Ontology graph viewer: renders entities + relationships of the
+               currently-focused ontology as an SVG force-directed graph.
+               The focus follows ont-picker hover; clicking a chip pins it. -->
+          <div style="display:flex;align-items:center;gap:6px;margin-top:10px;margin-bottom:4px">
+            <span style="font-size:9.5px;font-weight:600;color:var(--acc3);text-transform:uppercase;letter-spacing:0.5px">Ontology Graph</span>
+            <span id="ont-graph-name" style="font-size:9.5px;color:var(--dim2);font-family:var(--mono)">— hover or click an ontology chip —</span>
+            <span style="flex:1"></span>
+            <button class="btn xs" id="ont-graph-pin-btn" onclick="AP.ontGraphTogglePin()" title="Pin focus to this ontology" style="display:none">&#128279; Pin</button>
+            <button class="btn xs" onclick="AP.ontGraphRecenter()" title="Recenter graph">&#9678; Center</button>
+          </div>
+          <div id="ont-graph-wrap" style="position:relative;width:100%;height:240px;background:var(--bg0);border:1px solid var(--border);border-radius:3px;overflow:hidden">
+            <svg id="ont-graph-svg" style="width:100%;height:100%;display:block;cursor:grab"></svg>
+            <div id="ont-graph-info" style="position:absolute;left:6px;bottom:4px;font-size:8.5px;color:var(--dim);font-family:var(--mono);pointer-events:none"></div>
+            <div id="ont-graph-empty" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:10.5px;font-style:italic">No ontology focused</div>
+          </div>
+
+          <div style="margin-top:14px;padding:8px 11px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;font-size:9.5px;color:var(--dim2);line-height:1.6">
+            Skill and ontology <b>builders</b> live in their own panels — open
+            <span style="color:var(--acc);font-family:var(--mono)">Skills</span> or
+            <span style="color:var(--acc3);font-family:var(--mono)">Ontologies</span>
+            from the harness to compose new ones from text or fabric datasets.
+            They will appear in the pickers above as soon as they're saved.
+          </div>
+        </div>
+
+        <!-- CONTEXT PREVIEW (own tab) -->
+        <div id="tab-context" style="display:none">
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:9px 11px;margin-bottom:14px;font-size:10px;color:var(--dim2);line-height:1.6">
+            Exactly the skill + ontology block this agent will receive in its
+            system prompt. Updates whenever you change skill / ontology
+            assignments — only the items selected on the Skills &amp; Ontologies
+            tab are included, never the whole library.
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
+            <button class="btn sm" onclick="AP.previewCtx()">&#9654; Refresh preview</button>
+            <label style="font-size:9.5px;color:var(--dim2);display:flex;align-items:center;gap:4px;cursor:pointer">
+              <input type="checkbox" id="ctx-as-json"> JSON view
+              <span style="color:var(--dim);font-style:italic">(structured ontology payload)</span>
+            </label>
+            <span style="flex:1"></span>
+            <button class="btn xs" onclick="AP.previewCtxCopy()" id="ctx-copy-btn" title="Copy to clipboard" style="display:none">&#128203; Copy</button>
+            <span id="ctx-meta" style="font-size:9.5px;color:var(--dim2);font-family:var(--mono)"></span>
+          </div>
+          <div id="ctx-box" style="display:none;background:var(--bg0);border:1px solid var(--border);border-radius:3px;padding:9px;font-family:var(--mono);font-size:9.5px;white-space:pre-wrap;max-height:60vh;overflow-y:auto;line-height:1.6;color:var(--text)"></div>
+          <div id="ctx-empty" style="color:var(--dim);font-size:10.5px;font-style:italic;padding:20px 4px">Click <b>Refresh preview</b> to see the injected context for the assigned skills and ontologies.</div>
+        </div>
+
+        <!-- MEMORY -->
+        <div id="tab-memory" style="display:none">
+          <div class="sec">Recording &amp; Injection</div>
+          <div class="g2" style="margin-bottom:12px">
+            <div style="background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:10px">
+              <div style="font-size:10px;font-weight:600;margin-bottom:6px">Store conversation turns</div>
+              <div class="row" style="margin-bottom:4px;gap:8px"><input type="checkbox" id="f-memory_enabled" checked>
+                <span style="font-size:10px;color:var(--dim2)">Save each turn to memory graph</span></div>
+              <div class="hint">Recorded as a FOLLOWS_ACTIVITY chain in Neo4j, tagged to this agent and session.</div>
+            </div>
+            <div style="background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:10px">
+              <div style="font-size:10px;font-weight:600;margin-bottom:6px">Inject recalled memories</div>
+              <div class="row" style="margin-bottom:4px;gap:8px"><input type="checkbox" id="f-memory_inject">
+                <span style="font-size:10px;color:var(--dim2)">Prepend relevant past context</span></div>
+              <div class="hint">Semantic search retrieves the most relevant past memories and prepends them to the system prompt.</div>
+            </div>
+          </div>
+          <div class="g2" style="margin-bottom:12px">
+            <div><div style="font-size:9.5px;color:var(--dim2);margin-bottom:3px">Max memories injected</div>
+              <input id="f-memory_inject_limit" type="number" value="5" min="1" max="50">
+              <div class="hint">per request</div></div>
+            <div><div style="font-size:9.5px;color:var(--dim2);margin-bottom:3px">Filter by tags</div>
+              <input id="f-memory_tags" placeholder="tag1, tag2 (blank = all)">
+              <div class="hint">only recall memories with matching tags</div></div>
+          </div>
+          <div class="sec">Session Tools</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+            <button class="btn sm" onclick="AP.memSearch()">Search memories</button>
+            <button class="btn sm teal" onclick="AP.memSession()">Session graph</button>
+            <button class="btn sm danger" onclick="AP.memClear()">Forget session</button>
+          </div>
+          <div id="mem-result" style="display:none;background:var(--bg0);border:1px solid var(--border);border-radius:3px;padding:8px;font-family:var(--mono);font-size:9.5px;white-space:pre-wrap;max-height:200px;overflow-y:auto;color:var(--acc2);line-height:1.6"></div>
+        </div>
+
+        <!-- TEST -->
+        <div id="tab-test" style="display:none">
+          <div id="test-wrap">
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+              <span style="font-size:10px;color:var(--dim2)">Agent:</span>
+              <span id="test-name" style="font-size:10px;font-family:var(--mono);color:var(--acc3)">—</span>
+              <button class="btn xs" style="margin-left:auto" onclick="AP.testClear()">Clear</button>
+            </div>
+            <div id="test-history" style="flex:1;overflow-y:auto;background:var(--bg1);border:1px solid var(--border);border-radius:4px;padding:10px;display:flex;flex-direction:column;gap:8px;min-height:120px;max-height:calc(100vh - 300px)">
+              <div data-ph style="color:var(--dim);font-size:10.5px;align-self:center;margin:auto">Send a message to start testing</div>
+            </div>
+            <div class="status" id="test-status" style="margin-top:4px"></div>
+            <div style="display:flex;gap:6px;align-items:flex-end;margin-top:6px">
+              <textarea id="test-in" placeholder="Message&hellip; (Enter to send, Shift+Enter for newline)" style="resize:none;min-height:38px;max-height:100px;font-family:var(--sans);font-size:11px;line-height:1.5;padding:7px 10px;flex:1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();AP.testSend()}"></textarea>
+              <button class="btn pri" onclick="AP.testSend()" style="align-self:flex-end;flex-shrink:0">Send</button>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /ed-wrap -->
+    </div><!-- /content -->
+
+    <!-- SAVE BAR -->
+    <div id="saveBar">
+      <div id="ed-title" style="font-size:12px;font-weight:600;font-family:var(--mono);flex:1;color:var(--acc3)">New Agent</div>
+      <div class="status" id="save-status" style="margin:0;flex:1"></div>
+      <button class="btn pri" onclick="AP.save()">Save Agent</button>
+      <button class="btn danger sm" id="del-btn" style="display:none" onclick="AP.del()">Delete</button>
+      <button class="btn sm" onclick="AP.cancel()">Cancel</button>
+    </div>
+  </div><!-- /main -->
+</div><!-- /app -->
+<script>
+'use strict';
+const AP = (() => {
+  // URL: always use page origin — correct when served as /ui/panels/agents-panel
+  let BASE = window.location.origin || 'http://llm.int:8999';
+  const base = () => BASE;
+
+  async function api(path, method='GET', body=null) {
+    try {
+      const opts={method,headers:{'Content-Type':'application/json'}};
+      if(body) opts.body=JSON.stringify(body);
+      const r=await fetch(base()+path,opts);
+      return r.ok?r.json():null;
+    } catch(e){return null;}
+  }
+  const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const fv=id=>document.getElementById(id)?.value||'';
+  const fc=id=>document.getElementById(id)?.checked||false;
+  const fn=id=>parseFloat(document.getElementById(id)?.value||'0');
+  const fi=id=>parseInt(document.getElementById(id)?.value||'0',10);
+
+  let agents=[],allCaps={},selCaps=new Set();
+  let selSk=new Set(),selOnt=new Set(),allSk=[],allOnt=[];
+  let activeId=null,instances={},testHist=[],activeGroup='';
+
+  async function load(){
+    const r=await api('/agents/list');
+    agents=r?.agents||[];
+    renderList();
+  }
+
+  function renderList(){
+    const el=document.getElementById('agList');
+    if(!agents.length){el.innerHTML='<div style="color:var(--dim);font-size:11px;padding:12px">No agents.</div>';return;}
+    el.innerHTML=agents.map(a=>{
+      const mode=a.tool_mode||'none';
+      const mb=mode!=='none'?`<span class="bdg bdg-${mode}">${mode}</span>`:'';
+      const sb=(a.skill_ids?.length||0)>0?`<span class="bdg bdg-sk">${a.skill_ids.length}sk</span>`:'';
+      return `<div class="ag-card${a.id===activeId?' on':''}" onclick="AP.select('${a.id}')">
+        <div class="ag-av">${esc(a.avatar||'')}</div>
+        <div class="ag-info">
+          <div class="ag-name">${esc(a.name)}${mb}${sb}</div>
+          <div class="ag-sub">${esc(a.label||a.name)}</div>
+          <div class="ag-meta">${esc(a.model||'auto')} T=${a.temperature??0.7}${a.prefer_gpu?' GPU':''}</div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  function select(id){
+    const a=agents.find(x=>x.id===id);if(!a)return;
+    activeId=id;renderList();fillEditor(a);showEd();
+    tab('identity',document.querySelector('.mtab'));
+    // Eager-load the cap registry, skills, and ontologies so the pickers
+    // are populated even when the user never clicks the Tools or Skills
+    // tabs. Without this, selCaps was set from the agent record but the
+    // chip list it renders against was empty until a tab change.
+    if(!Object.keys(allCaps).length) loadCaps();
+    if(!allSk.length) loadSkills();
+    if(!allOnt.length) loadOnts();
+  }
+
+  function showEd(){
+    document.getElementById('ed-empty').style.display='none';
+    document.getElementById('ed-wrap').style.display='block';
+    document.getElementById('saveBar').style.display='flex';
+  }
+
+  function cancel(){
+    activeId=null;renderList();
+    document.getElementById('ed-empty').style.display='block';
+    document.getElementById('ed-wrap').style.display='none';
+    document.getElementById('saveBar').style.display='none';
+  }
+
+  function fillEditor(a){
+    document.getElementById('ed-title').textContent=a.id?(a.label||a.name||'Agent'):'New Agent';
+    document.getElementById('f-id').value=a.id||'';
+    document.getElementById('f-name').value=a.name||'';
+    document.getElementById('f-label').value=a.label||'';
+    document.getElementById('f-avatar').value=a.avatar||'';
+    updateAv();
+    document.getElementById('f-desc').value=a.description||'';
+    document.getElementById('f-greeting').value=a.greeting||'';
+    seSel('f-model',a.model||'');
+    seSel('f-instance',a.instance_id||'');
+    document.getElementById('f-gpu').checked=a.prefer_gpu!==false;
+    document.getElementById('f-think').checked=!!a.think;
+    seRange('f-temperature','temp-v',a.temperature??0.7);
+    seRange('f-top_p','topp-v',a.top_p??0.9);
+    seRange('f-repeat_penalty','rep-v',a.repeat_penalty??1.1);
+    seRange('f-top_k','topk-v',a.top_k??40);
+    document.getElementById('f-num_ctx').value=a.num_ctx??4096;
+    document.getElementById('f-num_predict').value=a.num_predict??-1;
+    document.getElementById('f-seed').value=a.seed??-1;
+    seSel('f-mirostat',String(a.mirostat??0));
+    document.getElementById('f-stop').value=(a.stop||[]).join(', ');
+    document.getElementById('f-system_prompt').value=a.system_prompt||'';
+    seSel('f-voice',a.voice||'af_heart');
+    seRange('f-tts_speed','spd-v',a.tts_speed??1.0);
+    seSel('f-tool_mode',a.tool_mode||'none');
+    document.getElementById('f-domain_description').value=a.domain_description||'';
+    selCaps=new Set(a.domain_caps||[]);
+    selSk=new Set(a.skill_ids||[]);
+    selOnt=new Set(a.ontology_ids||[]);
+    document.getElementById('f-memory_enabled').checked=a.memory_enabled!==false;
+    document.getElementById('f-memory_inject').checked=!!a.memory_inject;
+    document.getElementById('f-memory_inject_limit').value=a.memory_inject_limit??5;
+    document.getElementById('f-memory_tags').value=a.memory_tags||'';
+    document.getElementById('test-name').textContent=a.name||'assistant';
+    document.getElementById('del-btn').style.display=a.id?'inline-flex':'none';
+    document.getElementById('save-status').textContent='';
+    document.getElementById('mem-result').style.display='none';
+    document.getElementById('ctx-box').style.display='none';
+  }
+
+  function newAgent(){
+    activeId=null;selCaps=new Set();selSk=new Set();selOnt=new Set();testHist=[];
+    renderList();
+    fillEditor({name:'',label:'',description:'',avatar:'',model:'',instance_id:'',prefer_gpu:true,
+      temperature:0.7,top_p:0.9,top_k:40,repeat_penalty:1.1,num_ctx:4096,num_predict:-1,seed:-1,
+      mirostat:0,stop:[],think:false,system_prompt:'',greeting:'',voice:'af_heart',tts_speed:1.0,
+      domain_caps:[],domain_description:'',tool_mode:'none',
+      memory_enabled:true,memory_inject:false,memory_inject_limit:5,memory_tags:'',
+      skill_ids:[],ontology_ids:[]});
+    showEd();tab('identity',document.querySelector('.mtab'));
+  }
+
+  async function save(){
+    const st=document.getElementById('save-status');
+    const name=fv('f-name').trim();
+    if(!name){st.textContent='Name required';st.className='status err';return;}
+    st.textContent='Saving\u2026';st.className='status';
+    const body={
+      agent_id:fv('f-id'),name,label:fv('f-label'),description:fv('f-desc'),avatar:fv('f-avatar'),
+      model:fv('f-model'),instance_id:fv('f-instance'),prefer_gpu:fc('f-gpu'),
+      temperature:fn('f-temperature'),top_p:fn('f-top_p'),top_k:fi('f-top_k'),
+      repeat_penalty:fn('f-repeat_penalty'),num_ctx:fi('f-num_ctx'),num_predict:fi('f-num_predict'),
+      seed:fi('f-seed'),mirostat:fi('f-mirostat'),stop:fv('f-stop'),think:fc('f-think'),
+      system_prompt:fv('f-system_prompt'),greeting:fv('f-greeting'),
+      voice:fv('f-voice'),tts_speed:fn('f-tts_speed'),
+      domain_caps:[...selCaps].join(','),
+      domain_description:fv('f-domain_description'),tool_mode:fv('f-tool_mode'),
+      skill_ids:[...selSk].join(','),ontology_ids:[...selOnt].join(','),
+      memory_enabled:fc('f-memory_enabled'),memory_inject:fc('f-memory_inject'),
+      memory_inject_limit:fi('f-memory_inject_limit'),memory_tags:fv('f-memory_tags'),
+    };
+    const res=await api('/agents/create','POST',body);
+    if(!res||res.error){st.textContent='Error: '+(res?.error||'failed');st.className='status err';return;}
+    activeId=res.id||fv('f-id');
+    document.getElementById('f-id').value=activeId||'';
+    document.getElementById('del-btn').style.display=activeId?'inline-flex':'none';
+    document.getElementById('ed-title').textContent=fv('f-label')||name;
+    st.textContent='Saved: '+(res.name||name);st.className='status ok';
+    await load();
+  }
+
+  async function del(){
+    if(!fv('f-id')||!confirm('Delete this agent?'))return;
+    await api('/agents/delete','POST',{id:fv('f-id')});
+    cancel();load();
+  }
+
+  function seSel(id,val){
+    const el=document.getElementById(id);if(!el)return;
+    el.value=val;
+    if(el.value!==val&&val){const o=document.createElement('option');o.value=val;o.textContent=val;el.appendChild(o);el.value=val;}
+  }
+  function seRange(id,lblId,val){
+    const el=document.getElementById(id);if(el)el.value=val;
+    const lb=document.getElementById(lblId);
+    if(lb)lb.textContent=typeof val==='number'?(val%1?parseFloat(val).toFixed(2):val):val;
+  }
+  function updateAv(){const p=document.getElementById('av-prev');if(p)p.textContent=fv('f-avatar')||'';}
+
+  // MODEL
+  async function loadModels(){
+    const r=await api('/agents/models');if(!r?.instances)return;
+    instances=r.instances;
+    const mSel=document.getElementById('f-model'),iSel=document.getElementById('f-instance');
+    if(!mSel||!iSel)return;
+    const curM=mSel.value,curI=iSel.value,models=new Set();
+    const iOpts=['<option value="">— auto —</option>'];
+    for(const[iid,info] of Object.entries(instances)){
+      iOpts.push(`<option value="${esc(iid)}">${esc(info.label||iid)}${info.gpu?' (GPU)':''}</option>`);
+      (info.models||[]).forEach(m=>models.add(m));
+    }
+    iSel.innerHTML=iOpts.join('');
+    mSel.innerHTML='<option value="">— auto —</option>'+[...models].sort().map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join('');
+    if(curM)mSel.value=curM;if(curI)iSel.value=curI;
+    onInstChange(curI);
+  }
+
+  function onInstChange(iid){
+    const el=document.getElementById('inst-info');if(!el)return;
+    if(!iid||!instances[iid]){el.textContent='Select an instance to see details';return;}
+    const info=instances[iid];
+    el.innerHTML=`<b style="color:var(--text)">${esc(info.label||iid)}</b><br>
+      GPU: <span style="color:${info.gpu?'var(--gpu)':'var(--dim2)'}">${info.gpu?'Yes':'No'}</span><br>
+      Status: <span style="color:${info.status==='ok'?'var(--ok)':'var(--warn)'}">${esc(info.status||'?')}</span><br>
+      ${info.latency_ms!=null?`Latency: <span style="color:var(--acc)">${info.latency_ms}ms</span><br>`:''}
+      ${info.num_ctx?`Max ctx: <span style="color:var(--acc)">${(info.num_ctx).toLocaleString()}</span><br>`:''}
+      ${info.models?.length?`Models: ${info.models.slice(0,4).map(m=>esc(m)).join(', ')}${info.models.length>4?'&hellip;':''}`:''}`; 
+  }
+
+  // CAPS
+  // The capability registry is exposed at /mcp/tools (returns an array of
+  // {name, description, schema, mode, source, streams, tags}). The earlier
+  // version of this panel called /capabilities, which doesn't exist on the
+  // backend — the request 404'd and the picker stayed empty forever, which
+  // is why caps "weren't loading into the agent config UI".
+  async function loadCaps(){
+    const r=await api('/mcp/tools');
+    const list=Array.isArray(r)?r:(r?.tools||r?.capabilities||[]);
+    allCaps={};
+    list.forEach(c=>{
+      if(c&&c.name) allCaps[c.name]=c;
+    });
+    activeGroup='';renderCapGroups();renderCaps();
+  }
+
+  function renderCapGroups(){
+    const el=document.getElementById('cap-groups');if(!el)return;
+    const groups=[...new Set(Object.keys(allCaps).map(n=>n.split('.')[0]))].sort();
+    el.innerHTML=groups.map(g=>`<span class="grp-chip${activeGroup===g?' on':''}" onclick="AP.setGroup('${g}')">${esc(g)}</span>`).join('');
+  }
+
+  function setGroup(g){
+    activeGroup=activeGroup===g?'':g;
+    renderCapGroups();
+    const s=document.getElementById('cap-search');if(s)s.value=activeGroup;
+    renderCaps();
+  }
+
+  function renderCaps(){
+    const el=document.getElementById('cap-list');if(!el)return;
+    const q=(document.getElementById('cap-search')?.value||'').toLowerCase();
+    const names=Object.keys(allCaps).filter(n=>{
+      if(activeGroup&&!n.startsWith(activeGroup+'.')&&n!==activeGroup)return false;
+      if(q&&!n.includes(q)&&!(allCaps[n]?.description||'').toLowerCase().includes(q))return false;
+      return true;
+    });
+    el.innerHTML=names.length
+      ?names.map(n=>`<div class="cap-chip${selCaps.has(n)?' on':''}"
+          onclick="AP.toggleCap('${n.replace(/'/g,"\\'")}',this)"
+          onmouseenter="AP.capTip('${n.replace(/'/g,"\\'")}')"
+          onmouseleave="AP.capTip('')">${esc(n)}</div>`).join('')
+      :`<span style="font-size:9px;color:var(--dim);padding:4px">${Object.keys(allCaps).length?'No matches':'No capabilities loaded'}</span>`;
+    const c=document.getElementById('cap-count');if(c)c.textContent=selCaps.size+' sel';
+  }
+
+  function filterCaps(){activeGroup='';renderCapGroups();renderCaps();}
+
+  function toggleCap(name){
+    if(selCaps.has(name))selCaps.delete(name);else selCaps.add(name);
+    renderCaps();
+  }
+
+  function capTip(name){
+    const el=document.getElementById('cap-tip-bar');if(!el)return;
+    el.textContent=name?(allCaps[name]?.description?`${name}: ${allCaps[name].description}`:name):'Hover a capability chip to see its description';
+    el.style.color=name?'var(--dim2)':'var(--dim)';
+  }
+
+  function selectAllCaps(){
+    const q=(document.getElementById('cap-search')?.value||'').toLowerCase();
+    Object.keys(allCaps).filter(n=>{
+      if(activeGroup&&!n.startsWith(activeGroup+'.')&&n!==activeGroup)return false;
+      if(q&&!n.includes(q))return false;return true;
+    }).forEach(n=>selCaps.add(n));renderCaps();
+  }
+  function clearAllCaps(){
+    const q=(document.getElementById('cap-search')?.value||'').toLowerCase();
+    Object.keys(allCaps).filter(n=>{
+      if(activeGroup&&!n.startsWith(activeGroup+'.')&&n!==activeGroup)return false;
+      if(q&&!n.includes(q))return false;return true;
+    }).forEach(n=>selCaps.delete(n));renderCaps();
+  }
+  function selectGroupCaps(){
+    if(!activeGroup)return;
+    Object.keys(allCaps).filter(n=>n.startsWith(activeGroup+'.')||n===activeGroup).forEach(n=>selCaps.add(n));
+    renderCaps();
+  }
+
+  // SKILLS
+  async function loadSkills(){
+    const r=await api('/skills');allSk=r?.skills||[];renderSkPicker();
+  }
+  function renderSkPicker(){
+    const el=document.getElementById('skill-picker');if(!el)return;
+    if(!allSk.length){el.innerHTML='<span style="font-size:9px;color:var(--dim2);align-self:center">No skills saved</span>';return;}
+    el.innerHTML=allSk.map(s=>`<span class="sk-chip${selSk.has(s.id)?' on-sk':''}" id="sk_${s.id}"
+      onclick="AP.toggleSk('${s.id}')"
+      onmouseenter="AP.skTip('${s.id}',0)"
+      onmouseleave="AP.skTip('',0)"
+      title="${esc(s.type)} ${esc(s.description||'')}">${esc(s.name)}</span>`).join('');
+    const c=document.getElementById('sk-count');if(c)c.textContent=selSk.size+' assigned';
+  }
+  function toggleSk(id){
+    if(selSk.has(id))selSk.delete(id);else selSk.add(id);
+    const el=document.getElementById('sk_'+id);if(el)el.classList.toggle('on-sk',selSk.has(id));
+    const c=document.getElementById('sk-count');if(c)c.textContent=selSk.size+' assigned';
+    // Click also pins the body so users can scroll the preview without it
+    // reverting to "no skill" the moment the cursor leaves the chip.
+    _skPreviewPinned=id;
+    skPreview(id);
+  }
+  let _skPreviewPinned=null;
+  function skTip(id,_){
+    const el=document.getElementById('sk-tip');if(!el)return;
+    if(!id){
+      el.textContent='';
+      // Hover-out: revert to whatever's pinned (if anything).
+      skPreview(_skPreviewPinned);
+      return;
+    }
+    const s=allSk.find(x=>x.id===id);
+    el.textContent=s?`[${s.type}] ${s.description||s.content?.slice(0,100)||''}`.trim():'';
+    // Live-preview the body on hover.
+    skPreview(id);
+  }
+  function skPreview(id){
+    const box=document.getElementById('sk-preview-box');
+    const empty=document.getElementById('sk-preview-empty');
+    const name=document.getElementById('sk-preview-name');
+    const meta=document.getElementById('sk-preview-meta');
+    if(!box||!empty)return;
+    if(!id){
+      box.style.display='none';empty.style.display='block';
+      if(name)name.textContent='— hover or click a skill chip —';
+      if(meta)meta.textContent='';
+      return;
+    }
+    const s=allSk.find(x=>x.id===id);
+    if(!s){
+      box.style.display='none';empty.style.display='block';
+      if(name)name.textContent='(skill not loaded)';
+      if(meta)meta.textContent='';
+      return;
+    }
+    const content=s.content||'';
+    if(name)name.textContent=`${s.name} · ${s.type||'custom'}${_skPreviewPinned===id?' (pinned)':''}`;
+    if(meta){
+      const lines=content.split('\n').length;
+      const vars=(s.variables||[]).length;
+      meta.textContent=`${content.length.toLocaleString()} chars · ${lines} line${lines===1?'':'s'}${vars?' · '+vars+' var'+(vars===1?'':'s'):''}`;
+    }
+    if(content){
+      box.style.display='block';empty.style.display='none';
+      box.textContent=content;
+    } else {
+      box.style.display='none';empty.style.display='block';empty.textContent='(skill has no content)';
+    }
+  }
+  function selectAllSkills(){allSk.forEach(s=>selSk.add(s.id));renderSkPicker();}
+  function clearAllSkills(){selSk.clear();renderSkPicker();}
+
+  // ONTOLOGIES
+  async function loadOnts(){
+    const r=await api('/ontologies');allOnt=r?.ontologies||[];renderOntPicker();
+  }
+  function renderOntPicker(){
+    const el=document.getElementById('ont-picker');if(!el)return;
+    if(!allOnt.length){el.innerHTML='<span style="font-size:9px;color:var(--dim2);align-self:center">No ontologies saved</span>';return;}
+    el.innerHTML=allOnt.map(o=>`<span class="sk-chip${selOnt.has(o.id)?' on-ont':''}" id="ont_${o.id}"
+      onclick="AP.toggleOnt('${o.id}')"
+      onmouseenter="AP.ontTip('${o.id}')"
+      onmouseleave="AP.ontTip('')"
+      title="${esc(o.domain||'general')} ${esc(o.description||'')}">${esc(o.name)}</span>`).join('');
+    const c=document.getElementById('ont-count');if(c)c.textContent=selOnt.size+' assigned';
+  }
+  function toggleOnt(id){
+    if(selOnt.has(id))selOnt.delete(id);else selOnt.add(id);
+    const el=document.getElementById('ont_'+id);if(el)el.classList.toggle('on-ont',selOnt.has(id));
+    const c=document.getElementById('ont-count');if(c)c.textContent=selOnt.size+' assigned';
+    // Click also pins this ontology as the graph focus, so the user can move
+    // away from the chip without the graph reverting to "no focus".
+    _ontGraphPin(id);
+  }
+  function ontTip(id){
+    const el=document.getElementById('ont-tip');if(!el)return;
+    if(!id){
+      el.textContent='';
+      // Hover-out: revert to whatever's pinned (if anything).
+      _ontGraphRender(_ontGraphPinned);
+      return;
+    }
+    const o=allOnt.find(x=>x.id===id);if(!o)return;
+    const ents=(o.entities||[]).map(e=>e.name).join(', ');
+    el.textContent=`[${o.domain||'general'}] ${o.description||''}${ents?' | Entities: '+ents:''}`.trim();
+    // Drive the graph from hover.
+    _ontGraphRender(id);
+  }
+  function selectAllOnts(){allOnt.forEach(o=>selOnt.add(o.id));renderOntPicker();}
+  function clearAllOnts(){selOnt.clear();renderOntPicker();}
+
+  /* ─────────────────────────────────────────────────────────────────────
+     ONTOLOGY GRAPH VIEWER
+     ─────────────────────────────────────────────────────────────────────
+     Renders an ontology's entities + relationships as an SVG node-link
+     diagram with a small force-directed layout. Drives off hover (live)
+     and click-to-pin in the ontology picker above.
+
+     Why a hand-rolled force layout instead of a library:
+       • The agent panel must stay self-contained — it's served as an
+         iframe with no global script bundle and no build step.
+       • The graph is small (entities are usually 5-30) so a simple
+         O(n²) repulsion is plenty fast and runs in ~80 ticks total.
+   ───────────────────────────────────────────────────────────────────── */
+  let _ontGraphPinned=null;        // ontology id, if user clicked-to-pin
+  let _ontGraphCurrentId=null;     // currently rendered ontology id
+  let _ontGraphPan={x:0,y:0,scale:1};
+  let _ontGraphAnim=null;
+  let _ontGraphNodes=[],_ontGraphEdges=[];
+
+  function _ontGraphTogglePin(){
+    if(_ontGraphPinned){_ontGraphPin(null);}
+    else if(_ontGraphCurrentId){_ontGraphPin(_ontGraphCurrentId);}
+  }
+  function _ontGraphPin(id){
+    _ontGraphPinned=id||null;
+    const btn=document.getElementById('ont-graph-pin-btn');
+    if(btn){
+      btn.style.display=_ontGraphCurrentId?'inline-flex':'none';
+      btn.innerHTML=_ontGraphPinned?'&#128279; Pinned':'&#128279; Pin';
+      btn.classList.toggle('teal',!!_ontGraphPinned);
+    }
+  }
+  function ontGraphTogglePin(){_ontGraphTogglePin();}
+  function ontGraphRecenter(){_ontGraphPan={x:0,y:0,scale:1};_ontGraphRedraw();}
+
+  function _strHue(s){
+    let h=0;for(let i=0;i<(s||'').length;i++) h=((h<<5)-h+s.charCodeAt(i))|0;
+    return Math.abs(h)%360;
+  }
+
+  function _ontGraphRender(ontId){
+    if(_ontGraphAnim){cancelAnimationFrame(_ontGraphAnim);_ontGraphAnim=null;}
+    _ontGraphCurrentId=ontId||null;
+    const ont=ontId?allOnt.find(o=>o.id===ontId):null;
+    const nameEl=document.getElementById('ont-graph-name');
+    const emptyEl=document.getElementById('ont-graph-empty');
+    const infoEl=document.getElementById('ont-graph-info');
+    const svg=document.getElementById('ont-graph-svg');
+    const pinBtn=document.getElementById('ont-graph-pin-btn');
+    if(pinBtn) pinBtn.style.display=ont?'inline-flex':'none';
+    if(!svg)return;
+    svg.innerHTML='';
+    if(!ont){
+      if(nameEl)nameEl.textContent='— hover or click an ontology chip —';
+      if(emptyEl)emptyEl.style.display='flex';
+      if(infoEl)infoEl.textContent='';
+      return;
+    }
+    if(nameEl)nameEl.textContent=`${ont.name} · ${ont.domain||'general'}`;
+    const ents=Array.isArray(ont.entities)?ont.entities:[];
+    const rels=Array.isArray(ont.relationships)?ont.relationships:[];
+    if(emptyEl)emptyEl.style.display=(!ents.length&&!rels.length)?'flex':'none';
+    if(emptyEl&&!ents.length&&!rels.length){
+      emptyEl.textContent='Ontology has no entities or relationships';
+    }
+    if(infoEl)infoEl.textContent=`${ents.length} entities · ${rels.length} relationships`;
+    if(!ents.length&&!rels.length)return;
+
+    const w=svg.clientWidth||500,h=svg.clientHeight||240;
+
+    // Build node set: every entity, plus any names referenced only by relationships.
+    const byName={};
+    ents.forEach(e=>{
+      const n=e.name||e.id||'';if(!n)return;
+      byName[n]={name:n,type:e.type||'entity',description:e.description||''};
+    });
+    rels.forEach(r=>{
+      [r.from,r.to,r.source,r.target].forEach(n=>{
+        if(n&&!byName[n]) byName[n]={name:n,type:'implicit',description:''};
+      });
+    });
+    const names=Object.keys(byName);
+    const cx=w/2,cy=h/2,radius=Math.min(w,h)*0.35;
+    _ontGraphNodes=names.map((n,i)=>({
+      ...byName[n],
+      x:cx+radius*Math.cos(2*Math.PI*i/names.length),
+      y:cy+radius*Math.sin(2*Math.PI*i/names.length),
+      vx:0,vy:0,
+    }));
+    const idx={};_ontGraphNodes.forEach((n,i)=>idx[n.name]=i);
+    _ontGraphEdges=rels.map(r=>({
+      from:idx[r.from??r.source],
+      to:idx[r.to??r.target],
+      label:r.label||r.relation||r.type||'',
+    })).filter(e=>e.from!=null&&e.to!=null);
+
+    _ontGraphRedraw();
+    // Run a short physics simulation to spread things out.
+    let tick=0;
+    const step=()=>{
+      // Repulsion
+      for(let i=0;i<_ontGraphNodes.length;i++){
+        for(let j=i+1;j<_ontGraphNodes.length;j++){
+          const a=_ontGraphNodes[i],b=_ontGraphNodes[j];
+          let dx=a.x-b.x,dy=a.y-b.y;
+          let d2=dx*dx+dy*dy;if(d2<1)d2=1;
+          const f=1800/d2;
+          const d=Math.sqrt(d2);
+          a.vx+=f*dx/d;a.vy+=f*dy/d;
+          b.vx-=f*dx/d;b.vy-=f*dy/d;
+        }
+      }
+      // Spring along edges
+      _ontGraphEdges.forEach(e=>{
+        const a=_ontGraphNodes[e.from],b=_ontGraphNodes[e.to];
+        if(!a||!b)return;
+        const dx=b.x-a.x,dy=b.y-a.y;
+        const d=Math.sqrt(dx*dx+dy*dy)||1;
+        const target=80;
+        const f=(d-target)*0.04;
+        a.vx+=f*dx/d;a.vy+=f*dy/d;
+        b.vx-=f*dx/d;b.vy-=f*dy/d;
+      });
+      // Center pull + damping
+      _ontGraphNodes.forEach(n=>{
+        n.vx+=(cx-n.x)*0.005;n.vy+=(cy-n.y)*0.005;
+        n.vx*=0.82;n.vy*=0.82;
+        n.x+=n.vx;n.y+=n.vy;
+        n.x=Math.max(20,Math.min(w-20,n.x));
+        n.y=Math.max(20,Math.min(h-20,n.y));
+      });
+      _ontGraphRedraw();
+      tick++;
+      if(tick<90) _ontGraphAnim=requestAnimationFrame(step);
+      else _ontGraphAnim=null;
+    };
+    _ontGraphAnim=requestAnimationFrame(step);
+  }
+
+  function _ontGraphRedraw(){
+    const svg=document.getElementById('ont-graph-svg');if(!svg)return;
+    const NS='http://www.w3.org/2000/svg';
+    svg.innerHTML='';
+    const defs=document.createElementNS(NS,'defs');
+    defs.innerHTML='<marker id="ontg-arr" markerWidth="6" markerHeight="6" refX="9" refY="3" orient="auto">'
+      +'<path d="M0,0 L0,6 L9,3 z" fill="#64748b" opacity=".7"/></marker>';
+    svg.appendChild(defs);
+    const root=document.createElementNS(NS,'g');
+    root.setAttribute('transform',`translate(${_ontGraphPan.x},${_ontGraphPan.y}) scale(${_ontGraphPan.scale})`);
+    svg.appendChild(root);
+
+    // Edges
+    _ontGraphEdges.forEach(e=>{
+      const a=_ontGraphNodes[e.from],b=_ontGraphNodes[e.to];
+      if(!a||!b)return;
+      // Shorten edge by node radius for a clean arrowhead landing.
+      const dx=b.x-a.x,dy=b.y-a.y;const d=Math.sqrt(dx*dx+dy*dy)||1;
+      const r=14;const ux=dx/d,uy=dy/d;
+      const x1=a.x+ux*r,y1=a.y+uy*r,x2=b.x-ux*r,y2=b.y-uy*r;
+      const ln=document.createElementNS(NS,'line');
+      ln.setAttribute('x1',x1);ln.setAttribute('y1',y1);
+      ln.setAttribute('x2',x2);ln.setAttribute('y2',y2);
+      ln.setAttribute('stroke','#64748b');
+      ln.setAttribute('stroke-width','1');
+      ln.setAttribute('opacity','.55');
+      ln.setAttribute('marker-end','url(#ontg-arr)');
+      root.appendChild(ln);
+      if(e.label){
+        const t=document.createElementNS(NS,'text');
+        t.setAttribute('x',(x1+x2)/2);
+        t.setAttribute('y',(y1+y2)/2-2);
+        t.setAttribute('text-anchor','middle');
+        t.setAttribute('font-family','var(--mono, monospace)');
+        t.setAttribute('font-size','8.5');
+        t.setAttribute('fill','#94a3b8');
+        t.setAttribute('opacity','.85');
+        t.textContent=e.label.length>18?e.label.slice(0,16)+'…':e.label;
+        root.appendChild(t);
+      }
+    });
+    // Nodes
+    _ontGraphNodes.forEach(n=>{
+      const hue=_strHue(n.type||'entity');
+      const g=document.createElementNS(NS,'g');
+      g.setAttribute('transform',`translate(${n.x},${n.y})`);
+      const c=document.createElementNS(NS,'circle');
+      c.setAttribute('r','12');
+      c.setAttribute('fill',`hsla(${hue},45%,32%,.65)`);
+      c.setAttribute('stroke',`hsl(${hue},55%,55%)`);
+      c.setAttribute('stroke-width','1.2');
+      g.appendChild(c);
+      const t=document.createElementNS(NS,'text');
+      t.setAttribute('y','24');
+      t.setAttribute('text-anchor','middle');
+      t.setAttribute('font-family','var(--mono, monospace)');
+      t.setAttribute('font-size','9');
+      t.setAttribute('fill','#cbd5e1');
+      const lbl=n.name.length>16?n.name.slice(0,14)+'…':n.name;
+      t.textContent=lbl;
+      g.appendChild(t);
+      const title=document.createElementNS(NS,'title');
+      title.textContent=`${n.name} [${n.type||'entity'}]${n.description?'\n'+n.description:''}`;
+      g.appendChild(title);
+      root.appendChild(g);
+    });
+  }
+  async function previewCtx(){
+    // Build the query string from the ACTUALLY SELECTED skills/ontologies.
+    // The previous version called /skills/context with no args, which the
+    // backend treated as "everything enabled" — so the preview claimed the
+    // agent was getting the entire library. Sending the selected ids makes
+    // the preview match the agent's real injection (which now uses the
+    // same filter on the backend).
+    const skIds = [...selSk].join(',');
+    const onIds = [...selOnt].join(',');
+    const asJson = document.getElementById('ctx-as-json')?.checked;
+    const qs=[];
+    if(skIds) qs.push('skill_ids='+encodeURIComponent(skIds));
+    if(onIds) qs.push('ontology_ids='+encodeURIComponent(onIds));
+    if(asJson) qs.push('format=json');
+    const url='/skills/context'+(qs.length?'?'+qs.join('&'):'');
+    const r=await api(url);
+    const m=document.getElementById('ctx-meta');
+    const b=document.getElementById('ctx-box');
+    const empty=document.getElementById('ctx-empty');
+    const copyBtn=document.getElementById('ctx-copy-btn');
+    if(!r){
+      if(m)m.textContent='(failed to load)';
+      if(b){b.style.display='none';}
+      if(empty)empty.style.display='block';
+      return;
+    }
+    const sk=r.skill_count||0, on=r.ontology_count||0, ch=r.char_count||0;
+    if(m){
+      const filt=r.filtered?' · filtered':'';
+      m.textContent=`${sk} skill${sk===1?'':'s'} · ${on} ontolog${on===1?'y':'ies'} · ${ch.toLocaleString()} chars${filt}`;
+    }
+    if(empty)empty.style.display='none';
+    if(b){
+      b.style.display='block';
+      if(asJson && r.combined_json){
+        b.textContent=JSON.stringify(r.combined_json,null,2);
+      } else {
+        b.textContent=r.combined||'(no skills or ontologies selected)';
+      }
+    }
+    if(copyBtn)copyBtn.style.display=(r.combined||r.combined_json)?'inline-flex':'none';
+  }
+
+  function previewCtxCopy(){
+    const b=document.getElementById('ctx-box');
+    if(!b)return;
+    try{
+      navigator.clipboard.writeText(b.textContent||'');
+      const btn=document.getElementById('ctx-copy-btn');
+      if(btn){const old=btn.innerHTML;btn.innerHTML='&#10003; Copied';setTimeout(()=>btn.innerHTML=old,1200);}
+    }catch(_){}
+  }
+
+  // MEMORY
+  async function memSearch(){
+    const el=document.getElementById('mem-result');if(!el)return;
+    el.style.display='block';el.textContent='Searching\u2026';
+    const r=await api('/memory/search?q='+encodeURIComponent(fv('f-name')));
+    el.textContent=r?JSON.stringify(r,null,2):'No results';
+  }
+  async function memSession(){
+    const el=document.getElementById('mem-result');if(!el)return;
+    el.style.display='block';el.textContent='Loading\u2026';
+    const r=await api('/memory/session?agent='+encodeURIComponent(fv('f-name')));
+    el.textContent=r?JSON.stringify(r,null,2):'No session data';
+  }
+  async function memClear(){
+    if(!confirm('Clear session memories for this agent?'))return;
+    await api('/memory/clear','POST',{agent_name:fv('f-name')});
+    const el=document.getElementById('mem-result');
+    if(el){el.style.display='block';el.textContent='Cleared.';}
+  }
+
+  // TEST
+  async function testSend(){
+    const msg=document.getElementById('test-in')?.value?.trim();if(!msg)return;
+    const name=fv('f-name')||'assistant';
+    document.getElementById('test-in').value='';
+    const st=document.getElementById('test-status');
+    const hist=document.getElementById('test-history');
+    const ph=hist.querySelector('[data-ph]');if(ph)ph.remove();
+
+    const udiv=document.createElement('div');udiv.className='msg-u';udiv.textContent=msg;
+    hist.appendChild(udiv);hist.scrollTop=hist.scrollHeight;
+
+    const adiv=document.createElement('div');adiv.className='msg-a';adiv.innerHTML='<span class="cur"></span>';
+    hist.appendChild(adiv);hist.scrollTop=hist.scrollHeight;
+
+    st.textContent='Thinking\u2026';st.className='status';
+    testHist.push({role:'user',content:msg});
+    let full='';
+    try{
+      const r=await fetch(base()+'/agents/chat/stream',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({agent_name:name,message:msg,
+          history:JSON.stringify(testHist.slice(-10)),
+          session_id:'agent-panel-test',prefer_gpu:fc('f-gpu'),think:fc('f-think'),tts:false})});
+      if(!r.ok){adiv.textContent='HTTP '+r.status;st.textContent='Error';st.className='status err';return;}
+      const reader=r.body.getReader(),dec=new TextDecoder();let buf='';
+      while(true){
+        const{done,value}=await reader.read();if(done)break;
+        buf+=dec.decode(value,{stream:true});
+        const parts=buf.split('\n\n');buf=parts.pop();
+        for(const bl of parts)for(const ln of bl.split('\n')){
+          if(!ln.startsWith('data:'))continue;
+          const raw=ln.slice(5).trim();if(!raw||raw==='[DONE]')continue;
+          try{const ev=JSON.parse(raw);if(ev.type==='token'){full+=ev.text||'';
+            adiv.innerHTML=full.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>')+'<span class="cur"></span>';
+            hist.scrollTop=hist.scrollHeight;}}catch(_){}
+        }
+      }
+    }catch(e){adiv.textContent='Error: '+e.message;st.textContent='Error';st.className='status err';return;}
+    adiv.innerHTML=full?full.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'):'<span style="color:var(--dim)">(empty response)</span>';
+    testHist.push({role:'assistant',content:full});
+    const turns=Math.floor(testHist.length/2);
+    st.textContent=`Done \u00b7 ${turns} turn${turns!==1?'s':''}`;st.className='status ok';
+    hist.scrollTop=hist.scrollHeight;
+  }
+
+  function testClear(){
+    testHist=[];
+    const h=document.getElementById('test-history');
+    if(h)h.innerHTML='<div data-ph style="color:var(--dim);font-size:10.5px;align-self:center;margin:auto">Send a message to start testing</div>';
+    const s=document.getElementById('test-status');if(s){s.textContent='';s.className='status';}
+  }
+
+  // TABS
+  function tab(name,el){
+    document.querySelectorAll('.mtab').forEach(t=>t.classList.remove('on'));
+    if(el)el.classList.add('on');
+    ['identity','model','personality','tools','skills','context','memory','test'].forEach(t=>{
+      const e=document.getElementById('tab-'+t);if(e)e.style.display=t===name?'block':'none';
+    });
+    if(name==='tools'&&!Object.keys(allCaps).length)loadCaps();
+    if(name==='model'&&!Object.keys(instances).length)loadModels();
+    if(name==='skills'){
+      if(!allSk.length)loadSkills();
+      if(!allOnt.length)loadOnts();
+    }
+    if(name==='context'){
+      // Auto-refresh when entering the tab so it always reflects current
+      // selections — without this users hit a stale view from a prior agent.
+      previewCtx();
+    }
+  }
+
+  window.addEventListener('message',e=>{
+    if(e.data?.type==='vera:theme'&&e.data.vars){
+      const root=document.documentElement;
+      const map={'--bg':'--bg0','--s1':'--bg1','--s2':'--bg2','--s3':'--bg3','--bd':'--border','--bd2':'--border2','--t1':'--text','--t2':'--dim2','--t3':'--dim','--ac':'--acc','--ac2':'--acc2','--ac3':'--acc3','--ac4':'--err','--ac5':'--acc4'};
+      for(const[k,v] of Object.entries(map)){if(e.data.vars[k])root.style.setProperty(v,e.data.vars[k]);}
+    }
+    if(e.data?.type==='vera:base')BASE=e.data.url;
+  });
+
+  window.addEventListener('DOMContentLoaded',()=>{
+    document.getElementById('f-avatar')?.addEventListener('input',updateAv);
+    document.getElementById('ctx-as-json')?.addEventListener('change',previewCtx);
+    load();
+  });
+
+  return{load,select,newAgent,cancel,save,del,updateAv,
+    loadModels,onInstChange,
+    loadCaps,filterCaps,setGroup,toggleCap,capTip,selectAllCaps,clearAllCaps,selectGroupCaps,
+    loadSkills,toggleSk,skTip,selectAllSkills,clearAllSkills,
+    loadOnts,toggleOnt,ontTip,selectAllOnts,clearAllOnts,previewCtx,
+    ontGraphTogglePin,ontGraphRecenter,
+    previewCtxCopy,skPreview,
+    memSearch,memSession,memClear,testSend,testClear,tab};
+})();
+</script>
+<script src="/ui/vera-ui.js"></script>
+</body>
+</html>

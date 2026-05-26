@@ -1,0 +1,3640 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dusk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vera / Network Map</title>
+
+<!-- Cytoscape + cose-bilkent layout -->
+<script src="https://unpkg.com/layout-base/layout-base.js"></script>
+<script src="https://unpkg.com/cose-base/cose-base.js"></script>
+<script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+<script src="https://unpkg.com/cytoscape-cose-bilkent@4.1.0/cytoscape-cose-bilkent.js"></script>
+
+<style>
+/* ── Themes ────────────────────────────────────────────────────────────── */
+[data-theme="ash"]  {--bg:#f0ede8;--s1:#e8e5df;--s2:#dedbd4;--s3:#d4d1c8;--bd:rgba(0,0,0,.08);--bd2:rgba(0,0,0,.15);--t1:#1a1a18;--t2:#6a6860;--t3:#a8a69e;--ac:#2e6da4;--ac2:#228060;--ac3:#c47020;--ac4:#c03030;--ac5:#6040a0}
+[data-theme="dusk"] {--bg:#0e0f12;--s1:#13151a;--s2:#1a1d24;--s3:#222630;--bd:rgba(255,255,255,.07);--bd2:rgba(255,255,255,.14);--t1:#d4dae4;--t2:#6b7585;--t3:#3b4252;--ac:#6ea8d8;--ac2:#5ec9a0;--ac3:#e09a55;--ac4:#e06060;--ac5:#a78bfa}
+[data-theme="void"] {--bg:#000;--s1:#070707;--s2:#0d0d0d;--s3:#141414;--bd:rgba(255,255,255,.05);--bd2:rgba(255,255,255,.1);--t1:#e0e0e0;--t2:#484848;--t3:#282828;--ac:#9b8dfa;--ac2:#5ecab0;--ac3:#dba355;--ac4:#e06060;--ac5:#f472b6}
+[data-theme="ice"]  {--bg:#090f18;--s1:#0d1620;--s2:#121e2c;--s3:#182638;--bd:rgba(80,160,255,.1);--bd2:rgba(80,160,255,.2);--t1:#c0d8f0;--t2:#406880;--t3:#1e3850;--ac:#5ab0f0;--ac2:#38d0b0;--ac3:#e0b060;--ac4:#e06868;--ac5:#8070e0}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--t1);font:12px/1.45 'ui-monospace','SFMono-Regular','Menlo',monospace;overflow:hidden}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,select,textarea{font:inherit;color:inherit;background:none;border:none;outline:none}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:3px}
+code{font-family:inherit;background:var(--s2);padding:1px 4px;border-radius:2px;font-size:.95em}
+
+/* ── Shell ─────────────────────────────────────────────────────────────── */
+#shell{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+
+#topbar{height:40px;background:var(--s1);border-bottom:1px solid var(--bd);display:flex;align-items:center;padding:0 14px;gap:10px;flex-shrink:0}
+.tb-logo{color:var(--ac);font-weight:600;font-size:12px;letter-spacing:.04em}
+.tb-sep{width:1px;height:18px;background:var(--bd)}
+.tbtn{display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:5px;font-size:11px;color:var(--t2);transition:.12s;border:1px solid transparent;white-space:nowrap;cursor:pointer}
+.tbtn:hover{background:var(--bd);color:var(--t1)}
+.tbtn.active{background:var(--s3);color:var(--t1);border-color:var(--bd2)}
+.tbtn.accent{background:var(--ac);color:#fff}
+.tbtn.danger{color:var(--ac4);border-color:var(--ac4)}
+.tbtn.danger:hover{background:var(--ac4);color:#fff}
+.tbtn.primary{background:var(--ac2);color:#fff;border-color:var(--ac2)}
+
+#main{flex:1;display:flex;overflow:hidden;min-height:0}
+
+/* ── LEFT RAIL ─────────────────────────────────────────────────────────── */
+#rail{width:286px;flex-shrink:0;background:var(--s1);border-right:1px solid var(--bd);overflow-y:auto;padding:10px 10px 80px}
+.rail-section{border:1px solid var(--bd);border-radius:5px;background:var(--s2);margin-bottom:8px;overflow:hidden}
+.rail-section .sh{padding:7px 10px;background:var(--s1);border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
+.rail-section .sh:hover{background:var(--s3)}
+.rail-section .sh .chev{color:var(--t3);transition:transform .15s;font-size:9px;width:10px;display:inline-block}
+.rail-section.open .sh .chev{transform:rotate(90deg)}
+.rail-section .sh .lbl{color:var(--t1);font-size:11px;font-weight:600;letter-spacing:.04em}
+.rail-section .sh .icon{color:var(--ac);font-size:11px;width:14px;text-align:center}
+.rail-section .sh .sub{color:var(--t3);font-size:10px;margin-left:auto}
+.rail-section .sb{display:none;padding:9px 10px;flex-direction:column;gap:6px}
+.rail-section.open .sb{display:flex}
+.rail-section .fi{display:flex;flex-direction:column;gap:2px}
+.rail-section .fi label{font-size:9px;color:var(--t3);letter-spacing:.05em;text-transform:uppercase}
+.rail-section .fi .ip{background:var(--bg);border:1px solid var(--bd);border-radius:3px;padding:5px 8px;font-size:11px;color:var(--t1);outline:none;width:100%}
+.rail-section .fi .ip:focus{border-color:var(--ac)}
+.rail-section .fi select.ip{cursor:pointer;min-width:0;max-width:100%}
+.rail-section .row{display:flex;gap:6px;align-items:center}
+.rail-section .row .fi{flex:1;min-width:0}
+.rail-section .btn{padding:5px 10px;border-radius:3px;background:var(--ac);color:#fff;font-size:10.5px;font-weight:600;border:none;cursor:pointer;white-space:nowrap}
+.rail-section .btn:hover{opacity:.9}
+.rail-section .btn.ghost{background:var(--bg);color:var(--t1);border:1px solid var(--bd)}
+.rail-section .btn.ghost:hover{border-color:var(--bd2)}
+.rail-section .btn.danger{background:var(--ac4)}
+.rail-section .btn.osint{background:var(--ac5)}
+.rail-section .btn:disabled{opacity:.4;cursor:wait}
+.rail-section .modeswitch{display:flex;background:var(--bg);border:1px solid var(--bd);border-radius:3px;padding:2px;margin-bottom:4px;width:100%}
+.rail-section .modeswitch button{flex:1 1 0;min-width:0;padding:3px;font-size:9.5px;color:var(--t2);border-radius:2px;letter-spacing:.05em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rail-section .modeswitch button.active{background:var(--ac);color:#fff}
+.rail-section .hint{color:var(--t3);font-size:10px;line-height:1.4}
+.rail-section .checkrow{display:flex;flex-wrap:wrap;gap:6px 10px;font-size:10px;color:var(--t2)}
+.rail-section .checkrow label{display:flex;align-items:center;gap:4px;cursor:pointer}
+.rail-section .scan-progress{display:none;font-size:9.5px;color:var(--t3);background:var(--bg);border:1px solid var(--bd);border-radius:3px;padding:5px 8px;margin-top:2px}
+.rail-section .scan-progress.live{display:block;border-color:var(--ac2);color:var(--ac2)}
+.rail-section .scan-progress .pbar{height:3px;background:var(--s3);margin-top:4px;border-radius:2px;overflow:hidden}
+.rail-section .scan-progress .pbar > div{height:100%;background:var(--ac2);width:0%;transition:width .25s}
+
+#legend{padding:6px 10px;border-top:1px solid var(--bd);background:var(--s1)}
+.legend-row{display:flex;align-items:center;gap:6px;padding:3px 4px;border-radius:3px;cursor:pointer;font-size:10.5px;color:var(--t2)}
+.legend-row:hover{background:var(--s3);color:var(--t1)}
+.legend-row.dim{opacity:.35}
+.legend-sw{width:10px;height:10px;border-radius:2px;flex-shrink:0;border:1px solid var(--bd)}
+.legend-row .count{margin-left:auto;color:var(--t3);font-size:9.5px}
+
+/* ── GRAPH CANVAS ─────────────────────────────────────────────────────── */
+#canvas-wrap{flex:1;position:relative;overflow:hidden;background:var(--bg)}
+#cy{width:100%;height:100%}
+#gc{position:absolute;top:10px;right:10px;display:flex;flex-direction:column;gap:4px;background:var(--s1);border:1px solid var(--bd);border-radius:4px;padding:4px;z-index:10}
+.gc-btn{width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--t2);background:var(--s2);border:1px solid var(--bd);border-radius:3px;cursor:pointer}
+.gc-btn:hover{color:var(--t1);border-color:var(--bd2)}
+#searchbox{position:absolute;top:10px;left:10px;display:flex;gap:4px;z-index:10}
+#searchbox input{background:var(--s1);border:1px solid var(--bd);border-radius:4px;padding:5px 9px;color:var(--t1);font-size:11px;outline:none;width:200px}
+#searchbox input:focus{border-color:var(--ac)}
+
+#stream-banner{position:absolute;top:10px;left:230px;z-index:10;display:none;background:var(--s1);border:1px solid var(--ac2);border-radius:4px;padding:4px 10px;font-size:10.5px;color:var(--ac2)}
+#stream-banner.show{display:flex;align-items:center;gap:8px}
+#stream-banner .pulse{width:7px;height:7px;border-radius:50%;background:var(--ac2);animation:pulse 1s infinite ease-in-out}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+#stream-banner button{color:var(--ac4);font-size:10px;padding:0 4px;cursor:pointer;border:1px solid var(--ac4);border-radius:3px;margin-left:6px}
+
+#loading{position:absolute;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:20;pointer-events:none}
+#loading.show{display:flex}
+#loading .msg{background:var(--s1);border:1px solid var(--bd);border-radius:4px;padding:8px 14px;color:var(--t1);font-size:11px}
+
+/* ── INSPECTOR (right drawer) ─────────────────────────────────────────── */
+#insp{width:360px;flex-shrink:0;background:var(--s1);border-left:1px solid var(--bd);display:none;flex-direction:column;overflow:hidden}
+#insp.show{display:flex}
+#insp .ih{padding:10px 12px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:6px;flex-shrink:0}
+#insp .ih .type{font-size:9px;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:3px;color:#fff}
+#insp .ih .title{color:var(--t1);font-weight:600;font-size:12px;flex:1;word-break:break-all}
+#insp .ih .close{padding:2px 7px;color:var(--t3)}
+#insp .ih .close:hover{color:var(--t1)}
+
+/* Inspector tabs */
+#insp .tabs{display:flex;border-bottom:1px solid var(--bd);background:var(--s1);flex-shrink:0}
+#insp .tabs button{flex:1;padding:7px 5px;font-size:10px;color:var(--t2);text-transform:uppercase;letter-spacing:.05em;border-bottom:2px solid transparent;cursor:pointer;white-space:nowrap}
+#insp .tabs button:hover{color:var(--t1)}
+#insp .tabs button.active{color:var(--ac);border-bottom-color:var(--ac)}
+
+#insp .ib{flex:1;overflow-y:auto;padding:8px 12px}
+#insp .tabpane{display:none}
+#insp .tabpane.active{display:block}
+
+#insp .sec{margin-bottom:10px}
+#insp .sec h4{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--t3);margin-bottom:5px;padding-bottom:3px;border-bottom:1px dashed var(--bd)}
+#insp .props{display:grid;grid-template-columns:90px 1fr;gap:3px 8px;font-size:10.5px}
+#insp .props .k{color:var(--t3)}
+#insp .props .v{color:var(--t1);word-break:break-all}
+#insp .neigh{display:flex;flex-direction:column;gap:3px}
+#insp .neigh a{display:flex;gap:5px;padding:4px 6px;background:var(--s2);border:1px solid var(--bd);border-radius:3px;text-decoration:none;color:var(--t1);font-size:10.5px;cursor:pointer}
+#insp .neigh a:hover{border-color:var(--bd2);background:var(--s3)}
+#insp .neigh a .rel{color:var(--ac);font-size:9px;min-width:60px}
+#insp .act-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+#insp .act-grid button,#insp .act-col button{background:var(--s2);border:1px solid var(--bd);border-radius:3px;padding:5px 8px;font-size:10px;color:var(--t1);cursor:pointer;text-align:left}
+#insp .act-grid button:hover,#insp .act-col button:hover{border-color:var(--ac);color:var(--ac)}
+#insp .act-col{display:flex;flex-direction:column;gap:4px}
+#insp .act-col button.hot{color:var(--ac5);border-color:var(--ac5)}
+#insp .act-col button.danger{color:var(--ac4);border-color:var(--ac4)}
+#insp .result-box{background:var(--bg);border:1px solid var(--bd);border-radius:3px;padding:6px 8px;font:10.5px/1.45 'ui-monospace','Menlo',monospace;color:var(--t1);max-height:200px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+#insp .result-box.err{color:var(--ac4)}
+
+/* Drag-drop property pills (Run-cap pane) */
+.prop-pill{background:var(--s3);border:1px solid var(--bd);border-radius:3px;padding:2px 6px;font-size:9.5px;cursor:grab;color:var(--ac2);white-space:nowrap;max-width:130px;overflow:hidden;text-overflow:ellipsis;display:inline-block}
+.prop-pill:hover{border-color:var(--ac);color:var(--ac)}
+.prop-pill.dragging{opacity:.5}
+.prop-pill .pk{color:var(--t3)}
+
+.cap-input{border:1px dashed var(--bd2)!important;transition:border-color .25s}
+.cap-input.drop-ok{border-color:var(--ac2)!important;background:rgba(94,201,160,.08)}
+.cap-input.drop-hover{border-color:var(--ac3)!important;background:rgba(224,154,85,.08)}
+
+/* ── CONTEXT MENU ─────────────────────────────────────────────────────── */
+#ctx{position:fixed;display:none;background:var(--s1);border:1px solid var(--bd2);border-radius:5px;padding:4px;z-index:9000;min-width:220px;box-shadow:0 6px 24px rgba(0,0,0,.5)}
+#ctx.show{display:block}
+#ctx .ctx-hdr{padding:5px 10px;font-size:9.5px;color:var(--t3);letter-spacing:.05em;text-transform:uppercase;border-bottom:1px dashed var(--bd);margin-bottom:3px}
+#ctx button{display:flex;align-items:center;gap:8px;width:100%;padding:5px 10px;background:none;border:none;color:var(--t1);font-size:11px;text-align:left;cursor:pointer;border-radius:3px}
+#ctx button:hover{background:var(--ac);color:#fff}
+#ctx button.hot{color:var(--ac5)}
+#ctx button.hot:hover{background:var(--ac5);color:#fff}
+#ctx button.danger{color:var(--ac4)}
+#ctx button.danger:hover{background:var(--ac4);color:#fff}
+#ctx .sep{border-bottom:1px dashed var(--bd);margin:3px 0}
+
+/* ── STATUS BAR ───────────────────────────────────────────────────────── */
+#sbar{height:26px;background:var(--s1);border-top:1px solid var(--bd);display:flex;align-items:center;padding:0 14px;gap:14px;flex-shrink:0;font-size:10px;color:var(--t3)}
+#sbar .ok{color:var(--ac2)}
+#sbar .err{color:var(--ac4)}
+#sbar .sp{flex:1}
+
+/* ── FLOATING TERMINAL OVERLAY ────────────────────────────────────────── */
+#ft-shell{position:fixed;z-index:5000;background:var(--s1);border:1px solid var(--bd2);border-radius:6px;box-shadow:0 10px 40px rgba(0,0,0,.55);display:none;flex-direction:column;overflow:hidden;min-width:440px;min-height:260px;width:620px;height:400px}
+#ft-shell.show{display:flex}
+#ft-shell.min{height:32px!important;min-height:32px}
+#ft-shell.min .ft-body{display:none}
+#ft-head{background:var(--s2);border-bottom:1px solid var(--bd);display:flex;align-items:center;padding:4px 8px;gap:8px;flex-shrink:0;cursor:move;user-select:none;height:32px}
+#ft-head .ft-dot{width:9px;height:9px;border-radius:50%;background:var(--ac2);flex-shrink:0}
+#ft-head .ft-dot.off{background:var(--ac4)}
+#ft-head .ft-title{flex:1;font-size:11px;color:var(--t1);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#ft-head .ft-host{color:var(--ac);font-weight:600}
+#ft-head .ft-user{color:var(--ac5)}
+#ft-head button{padding:1px 7px;font-size:10px;color:var(--t2);border-radius:3px;cursor:pointer;height:22px}
+#ft-head button:hover{background:var(--bd);color:var(--t1)}
+#ft-head button.close:hover{background:var(--ac4);color:#fff}
+.ft-body{flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0}
+.ft-scroll{flex:1;overflow-y:auto;background:var(--bg);padding:8px 12px;font:11.5px/1.5 'ui-monospace','Menlo',monospace}
+.ft-entry{margin-bottom:5px}
+.ft-prompt{white-space:pre-wrap;word-break:break-all}
+.ft-prompt .u{color:var(--ac);font-weight:600}
+.ft-prompt .a{color:var(--t3)}
+.ft-prompt .h{color:var(--ac5);font-weight:600}
+.ft-prompt .p{color:var(--t2)}
+.ft-prompt .c{color:var(--ac3)}
+.ft-prompt .s{color:var(--t2);margin:0 4px}
+.ft-prompt .cmd{color:var(--t1)}
+.ft-out{white-space:pre-wrap;word-break:break-all;color:var(--t1)}
+.ft-out.err{color:var(--ac4)}
+.ft-out.meta{color:var(--t3);font-style:italic;font-size:10.5px}
+.ft-foot{color:var(--t3);font-size:10px;padding-top:1px}
+.ft-foot .rc-ok{color:var(--ac2)}
+.ft-foot .rc-err{color:var(--ac4)}
+.ft-input-row{display:flex;align-items:center;background:var(--s1);border-top:1px solid var(--bd);padding:5px 10px;gap:6px;flex-shrink:0}
+.ft-input-row .prefix{color:var(--ac2);font:inherit;white-space:pre}
+.ft-input-row input{flex:1;background:none;border:none;outline:none;color:var(--t1);font:inherit;padding:2px 0}
+.ft-ctrls{display:flex;gap:3px}
+.ft-ctrls button{padding:2px 7px;font-size:10px;color:var(--t2);border-radius:3px;border:1px solid var(--bd);background:var(--s2)}
+.ft-ctrls button.hot{color:var(--ac4);border-color:var(--ac4)}
+.ft-resize{position:absolute;right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize;background:linear-gradient(135deg,transparent 50%,var(--bd2) 50% 60%,transparent 60% 72%,var(--bd2) 72% 82%,transparent 82%)}
+
+/* ── DORK RESULTS OVERLAY ─────────────────────────────────────────────── */
+#dork-overlay{position:fixed;z-index:6000;display:none;background:var(--s1);border:1px solid var(--bd2);border-radius:6px;box-shadow:0 10px 40px rgba(0,0,0,.55);overflow:hidden;flex-direction:column;width:560px;max-width:90vw;height:480px;max-height:80vh;left:50%;top:50%;transform:translate(-50%,-50%)}
+#dork-overlay.show{display:flex}
+#dork-overlay .dh{background:var(--s2);border-bottom:1px solid var(--bd);padding:8px 12px;display:flex;align-items:center;gap:8px;flex-shrink:0}
+#dork-overlay .dh .title{color:var(--ac5);font-weight:600;font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#dork-overlay .dh button{padding:3px 8px;font-size:10px;color:var(--t2);border:1px solid var(--bd);border-radius:3px}
+#dork-overlay .dh button.close{color:var(--ac4);border-color:var(--ac4)}
+#dork-overlay .db{flex:1;overflow-y:auto;padding:8px 12px;display:flex;flex-direction:column;gap:5px}
+#dork-overlay .dr{background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:7px 10px;font-size:10.5px}
+#dork-overlay .dr .t{color:var(--ac);font-weight:600;margin-bottom:2px;word-break:break-word}
+#dork-overlay .dr .u{color:var(--ac2);font-size:10px;margin-bottom:3px;word-break:break-all}
+#dork-overlay .dr .s{color:var(--t2);font-size:10px;line-height:1.4}
+#dork-overlay .dr .meta{color:var(--t3);font-size:9.5px;margin-top:4px;display:flex;flex-wrap:wrap;gap:8px}
+#dork-overlay .dr .meta .tag{background:var(--s3);padding:1px 5px;border-radius:2px;color:var(--ac3)}
+#dork-overlay .dr .acts{display:flex;gap:5px;margin-top:5px;flex-wrap:wrap}
+#dork-overlay .dr .acts button{font-size:9.5px;color:var(--t1);background:var(--bg);border:1px solid var(--bd);border-radius:3px;padding:3px 7px}
+#dork-overlay .dr .acts button:hover{border-color:var(--ac);color:var(--ac)}
+
+/* ── LLM ACTION STRIP (bottom) ────────────────────────────────────────── */
+#llm-strip{background:var(--s1);border-top:1px solid var(--bd);flex-shrink:0;display:flex;flex-direction:column}
+#llm-strip .llm-header{display:flex;align-items:center;padding:7px 14px;gap:8px;cursor:pointer;user-select:none}
+#llm-strip .llm-header:hover{background:var(--s2)}
+#llm-strip .llm-header .chev{color:var(--t3);transition:transform .15s;font-size:9px}
+#llm-strip.open .llm-header .chev{transform:rotate(90deg)}
+#llm-strip .llm-header .title{color:var(--ac5);font-size:11px;font-weight:600;letter-spacing:.04em}
+#llm-strip .llm-header .sub{color:var(--t3);font-size:10px;margin-left:6px}
+#llm-strip .llm-body{display:none;border-top:1px solid var(--bd)}
+#llm-strip.open .llm-body{display:flex;flex-direction:column;max-height:300px}
+.llm-input-row{display:flex;gap:8px;padding:7px 14px;border-bottom:1px solid var(--bd);align-items:flex-start}
+.llm-input-row textarea{flex:1;background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:6px 9px;font:11.5px/1.4 'ui-monospace','Menlo',monospace;color:var(--t1);outline:none;resize:vertical;min-height:36px;max-height:110px}
+.llm-input-row textarea:focus{border-color:var(--ac5)}
+.llm-opts{display:flex;gap:8px;padding:0 14px 6px;align-items:center;flex-wrap:wrap;font-size:10px;color:var(--t3)}
+.llm-opts label{display:flex;align-items:center;gap:4px;cursor:pointer;color:var(--t2)}
+.llm-opts label:hover{color:var(--t1)}
+.llm-opts input[type=checkbox]{accent-color:var(--ac5)}
+.llm-opts select,.llm-opts input[type=number]{background:var(--s2);border:1px solid var(--bd);border-radius:3px;padding:2px 5px;color:var(--t1);font-size:10px}
+.llm-run{padding:5px 13px;background:var(--ac5);color:#fff;font-size:11px;font-weight:600;border-radius:4px;white-space:nowrap}
+.llm-run:hover{opacity:.9}
+.llm-run.stop{background:var(--ac4)}
+.llm-log{flex:1;overflow-y:auto;padding:7px 14px;min-height:70px;background:var(--bg);font:11px/1.5 'ui-monospace','Menlo',monospace}
+.llm-event{margin-bottom:4px;display:flex;gap:6px;align-items:flex-start}
+.llm-event .tt{color:var(--t3);font-size:9px;min-width:52px;padding-top:2px}
+.llm-event .tg{padding:1px 6px;border-radius:3px;font-size:9px;letter-spacing:.04em;text-transform:uppercase;flex-shrink:0}
+.llm-event.plan .tg{background:var(--ac5);color:#fff}
+.llm-event.step .tg{background:var(--ac);color:#fff}
+.llm-event.done-ev .tg{background:var(--ac2);color:#fff}
+.llm-event.err .tg{background:var(--ac4);color:#fff}
+.llm-event.hitl .tg{background:var(--ac3);color:#000}
+.llm-event .body{flex:1;color:var(--t1);word-break:break-word}
+.llm-event .body .cap{color:var(--ac);font-weight:600}
+.llm-event .body .small{color:var(--t3);font-size:10px}
+.hitl-card{background:var(--s2);border:1px solid var(--ac3);border-radius:5px;padding:7px 10px;margin-top:4px}
+.hitl-card .hhdr{display:flex;gap:6px;align-items:center;font-size:10px;color:var(--ac3);margin-bottom:5px;font-weight:600}
+.hitl-card .hparams{background:var(--bg);border:1px solid var(--bd);border-radius:3px;padding:6px 8px;font:11px/1.4 'ui-monospace','Menlo',monospace;color:var(--t1);margin-bottom:6px;max-height:140px;overflow:auto;resize:vertical;white-space:pre}
+.hitl-card .hacts{display:flex;gap:5px;flex-wrap:wrap}
+.hitl-card button{padding:3px 10px;font-size:10px;border-radius:3px;border:1px solid var(--bd)}
+.hitl-card .btn-ok{background:var(--ac2);color:#fff;border-color:var(--ac2)}
+.hitl-card .btn-ed{background:var(--s3);color:var(--t1)}
+.hitl-card .btn-no{background:var(--ac4);color:#fff;border-color:var(--ac4)}
+.hitl-card .countdown{color:var(--t3);font-size:10px;margin-left:auto}
+
+/* Toast */
+#toast{position:fixed;bottom:60px;right:18px;background:var(--s3);border:1px solid var(--bd2);color:var(--t1);padding:8px 12px;border-radius:4px;font-size:11px;opacity:0;transition:.2s;pointer-events:none;z-index:9999;max-width:320px}
+#toast.show{opacity:1}
+#toast.err{border-color:var(--ac4);color:var(--ac4)}
+#toast.ok{border-color:var(--ac2);color:var(--ac2)}
+
+/* New-graph confirm modal */
+#newgraph-modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:7000}
+#newgraph-modal.show{display:flex}
+#newgraph-modal .ng-card{background:var(--s1);border:1px solid var(--ac4);border-radius:6px;padding:18px 22px;max-width:380px;box-shadow:0 10px 40px rgba(0,0,0,.6)}
+#newgraph-modal .ng-card h3{color:var(--ac4);font-size:13px;margin-bottom:8px}
+#newgraph-modal .ng-card p{color:var(--t2);font-size:11px;line-height:1.5;margin-bottom:14px}
+#newgraph-modal .ng-card .acts{display:flex;gap:8px;justify-content:flex-end}
+#newgraph-modal .ng-card button{padding:6px 14px;font-size:11px;border-radius:4px;cursor:pointer}
+#newgraph-modal .ng-card .yes{background:var(--ac4);color:#fff;border:1px solid var(--ac4)}
+#newgraph-modal .ng-card .no{background:var(--bg);color:var(--t1);border:1px solid var(--bd)}
+
+</style>
+</head>
+<body>
+<div id="shell">
+
+<!-- ── Topbar ──────────────────────────────────────────────────────────── -->
+<div id="topbar">
+  <span class="tb-logo">⬢ Vera · Network Map</span>
+  <div class="tb-sep"></div>
+  <button class="tbtn" onclick="refreshGraph({forceLayout:true,force:true})" title="Re-fetch graph from Neo4j">↻ Refresh</button>
+  <button class="tbtn" onclick="runLayoutManual()" title="Re-run layout (resets positions)">⌖ Layout</button>
+  <button class="tbtn" onclick="fitGraph()" title="Fit view (resets zoom)">⤢ Fit</button>
+  <div class="tb-sep"></div>
+  <button class="tbtn primary" onclick="newGraph()" title="Wipe all discovered nodes and start fresh">＋ New graph</button>
+  <button class="tbtn" onclick="loadFabricWeb()" title="Pull crawled :Website / :WebEndpoint nodes from the data fabric into this graph">↧ Load crawled sites</button>
+  <div class="tb-sep"></div>
+  <label class="tbtn" style="gap:5px"><input type="checkbox" id="auto-refresh" checked> auto-refresh 30s</label>
+  <div style="flex:1"></div>
+  <select id="theme-sel" onchange="setTheme(this.value)" class="tbtn" style="padding:3px 8px">
+    <option value="dusk">dusk</option>
+    <option value="ash">ash</option>
+    <option value="void">void</option>
+    <option value="ice">ice</option>
+  </select>
+</div>
+
+<div id="main">
+
+  <!-- ── LEFT RAIL ─────────────────────────────────────────────────────── -->
+  <div id="rail">
+
+    <!-- ── LAN sweep ───────────────────────────────────────────────────── -->
+    <div class="rail-section open" id="sec-lan">
+      <div class="sh" onclick="secToggle('sec-lan')">
+        <span class="chev">▶</span><span class="icon">⬚</span><span class="lbl">LAN sweep</span>
+      </div>
+      <div class="sb">
+        <div class="fi"><label>CIDR</label><input class="ip" id="lan-cidr" placeholder="10.0.0.0/24" value="192.168.1.0/24"></div>
+        <div class="fi"><label>Profile</label>
+          <select class="ip" id="lan-profile" onchange="onLanProfileChange()">
+            <option value="quick">quick (6 ports)</option>
+            <option value="common" selected>common (~35 ports)</option>
+            <option value="web">web (web/proxy ports)</option>
+            <option value="database">database (db ports)</option>
+            <option value="iot">iot (smart-home / cam)</option>
+            <option value="ms">ms (windows / AD)</option>
+            <option value="extended">extended (1-1024)</option>
+            <option value="all" style="color:#e06060">all (1-65535 ⚠ slow)</option>
+            <option value="custom">custom…</option>
+          </select>
+        </div>
+        <div class="fi" id="lan-custom-ports-row" style="display:none">
+          <label>Custom ports</label>
+          <input class="ip" id="lan-ports" placeholder="22,80,1000-1100">
+        </div>
+        <div class="row">
+          <div class="fi"><label>Timeout</label><input class="ip" id="lan-to" type="number" value="1.0" step="0.1" min="0.2"></div>
+          <div class="fi"><label>Concurrency</label><input class="ip" id="lan-conc" type="number" value="64" min="4" max="256"></div>
+        </div>
+        <div class="checkrow">
+          <label><input type="checkbox" id="lan-port-nodes" checked> port nodes</label>
+          <label><input type="checkbox" id="lan-stream" checked> stream live</label>
+          <label><input type="checkbox" id="lan-save-fabric"> → fabric</label>
+        </div>
+        <div class="fi" id="lan-fabric-ds-row" style="display:none"><label>Fabric dataset</label><input class="ip" id="lan-fabric-ds" value="netscan_lan" placeholder="dataset id"></div>
+        <button class="btn" id="lan-scan-btn" onclick="scanLan()">Scan LAN</button>
+        <div class="scan-progress" id="lan-progress"><span id="lan-progress-text">…</span><div class="pbar"><div id="lan-progress-bar"></div></div></div>
+      </div>
+    </div>
+
+    <!-- ── Website crawl ───────────────────────────────────────────────── -->
+    <div class="rail-section" id="sec-web">
+      <div class="sh" onclick="secToggle('sec-web')">
+        <span class="chev">▶</span><span class="icon">▢</span><span class="lbl">Website crawl</span>
+      </div>
+      <div class="sb">
+        <div class="fi"><label>URL</label><input class="ip" id="web-url" placeholder="https://example.com"></div>
+        <div class="row">
+          <div class="fi"><label>Depth</label><input class="ip" id="web-depth" type="number" value="1" min="0" max="5"></div>
+          <div class="fi"><label>Max pages</label><input class="ip" id="web-max" type="number" value="20"></div>
+        </div>
+        <div class="fi"><label>Scope</label>
+          <select class="ip" id="web-scope">
+            <option value="same_origin" selected>same origin</option>
+            <option value="same_registrable">same registrable domain</option>
+            <option value="no_filter">no filter (any domain ⚠)</option>
+          </select>
+        </div>
+        <div class="fi"><label>Path filter regex (optional)</label>
+          <input class="ip" id="web-path-re" placeholder="^/blog/">
+        </div>
+        <div class="fi"><label>Exclude regex (optional)</label>
+          <input class="ip" id="web-excl-re" placeholder="\.(jpg|png|pdf)$">
+        </div>
+        <div class="fi"><label>User-Agent</label>
+          <input class="ip" id="web-ua" value="VeraNetScan/1.0">
+        </div>
+        <div class="row">
+          <div class="fi"><label>Wait ms</label><input class="ip" id="web-wait" type="number" value="0" min="0"></div>
+          <div class="fi"><label>Timeout</label><input class="ip" id="web-to" type="number" value="10" min="2"></div>
+        </div>
+        <div class="checkrow">
+          <label><input type="checkbox" id="web-stream" checked> stream live</label>
+          <label><input type="checkbox" id="web-redir" checked> follow redirects</label>
+        </div>
+        <button class="btn" id="web-scan-btn" onclick="scanWeb()">Crawl &amp; fingerprint</button>
+        <div class="scan-progress" id="web-progress"><span id="web-progress-text">…</span></div>
+      </div>
+    </div>
+
+    <!-- ── Traceroute ──────────────────────────────────────────────────── -->
+    <div class="rail-section" id="sec-trace">
+      <div class="sh" onclick="secToggle('sec-trace')">
+        <span class="chev">▶</span><span class="icon">→</span><span class="lbl">Traceroute</span>
+      </div>
+      <div class="sb">
+        <div class="fi"><label>Target (IP / hostname)</label>
+          <input class="ip" id="trace-target" placeholder="8.8.8.8 or example.com">
+        </div>
+        <div class="row">
+          <div class="fi"><label>Max hops</label><input class="ip" id="trace-hops" type="number" value="20" min="1" max="64"></div>
+          <div class="fi"><label>Timeout</label><input class="ip" id="trace-to" type="number" value="30" min="5"></div>
+        </div>
+        <button class="btn" onclick="runTraceroute()">Trace &amp; map route</button>
+        <div class="hint">Persists each hop as a <code>:NetHop</code> chain in the graph.</div>
+      </div>
+    </div>
+
+    <!-- ── Dork search (OSINT) ─────────────────────────────────────────── -->
+    <div class="rail-section" id="sec-dork">
+      <div class="sh" onclick="secToggle('sec-dork')">
+        <span class="chev">▶</span><span class="icon">⌕</span><span class="lbl">Dork &amp; OSINT</span>
+      </div>
+      <div class="sb">
+        <div class="fi"><label>Preset</label>
+          <select class="ip" id="dork-preset" onchange="onDorkPresetChange()">
+            <option value="">— custom query —</option>
+          </select>
+        </div>
+        <div class="fi"><label>Query</label>
+          <input class="ip" id="dork-query" placeholder='intitle:"index of" .env'>
+        </div>
+        <div class="row">
+          <div class="fi"><label>Site filter (opt.)</label>
+            <input class="ip" id="dork-site" placeholder="example.com">
+          </div>
+          <div class="fi" style="max-width:80px"><label>Max</label>
+            <input class="ip" id="dork-max" type="number" value="30" min="3" max="100">
+          </div>
+        </div>
+        <div class="checkrow">
+          <label><input type="checkbox" id="dork-fingerprint" checked> auto-fingerprint &amp; graph hits</label>
+          <label><input type="checkbox" id="dork-add-graph" checked> → graph nodes</label>
+          <label><input type="checkbox" id="dork-save-fabric"> → fabric</label>
+        </div>
+        <button class="btn osint" onclick="runDork()">Search</button>
+        <div class="hint">Uses DuckDuckGo HTML — no API key required. Graphed hits become <code>:Website</code> nodes with source=<code>dork</code>.</div>
+      </div>
+    </div>
+
+    <!-- ── Agent OSINT (LLM-assisted dork construction) ────────────────── -->
+    <div class="rail-section" id="sec-agent-osint">
+      <div class="sh" onclick="secToggle('sec-agent-osint')">
+        <span class="chev">▶</span><span class="icon">✦</span><span class="lbl">Agent OSINT</span>
+        <span class="sub">LLM-built dorks</span>
+      </div>
+      <div class="sb">
+        <div class="fi"><label>Category</label>
+          <select class="ip" id="osint-category">
+            <option value="general">general recon</option>
+            <option value="exposed_services">exposed services</option>
+            <option value="sensitive_files">sensitive files</option>
+            <option value="login_pages">login / admin pages</option>
+            <option value="api_endpoints">API endpoints</option>
+            <option value="cloud_buckets">cloud storage / buckets</option>
+            <option value="certificates">TLS / certificates</option>
+            <option value="subdomains">subdomain enum</option>
+            <option value="email_harvest">email harvest</option>
+            <option value="custom">custom (describe below)</option>
+          </select>
+        </div>
+        <div class="fi"><label>Prompt / goal</label>
+          <textarea class="ip" id="osint-prompt" rows="2" placeholder='e.g. "find exposed .env files on .co.uk domains" or "look for open Grafana dashboards"' style="resize:vertical;min-height:36px;max-height:100px"></textarea>
+        </div>
+        <div class="fi"><label>Target domain (optional)</label>
+          <input class="ip" id="osint-target-domain" placeholder="example.com">
+        </div>
+        <div class="row">
+          <div class="fi"><label>Max per query</label><input class="ip" id="osint-max" type="number" value="20" min="3" max="100"></div>
+          <div class="fi"><label>Model</label>
+            <select class="ip" id="osint-model">
+              <option value="">-- auto --</option>
+            </select>
+          </div>
+        </div>
+        <div class="checkrow">
+          <label><input type="checkbox" id="osint-fingerprint" checked> fingerprint hits</label>
+          <label><input type="checkbox" id="osint-graph" checked> → graph</label>
+          <label><input type="checkbox" id="osint-fabric" checked> → fabric</label>
+        </div>
+        <button class="btn osint" id="osint-run-btn" onclick="runAgentOsint()">✦ Generate &amp; search</button>
+        <div class="scan-progress" id="osint-progress"><span id="osint-progress-text">…</span></div>
+        <div class="hint">Asks an LLM to craft targeted dork queries based on your category &amp; prompt, then runs them. LLM output and search progress are shown in the log below.</div>
+      </div>
+    </div>
+
+    <!-- ── Docker ──────────────────────────────────────────────────────── -->
+    <div class="rail-section" id="sec-docker">
+      <div class="sh" onclick="secToggle('sec-docker')">
+        <span class="chev">▶</span><span class="icon">◫</span><span class="lbl">Docker</span>
+      </div>
+      <div class="sb">
+        <div class="modeswitch">
+          <button class="active" data-dmode="local" onclick="setDockerMode('local')">Local</button>
+          <button data-dmode="ssh" onclick="setDockerMode('ssh')">Remote (SSH)</button>
+        </div>
+        <div class="fi" data-dmode="ssh" style="display:none"><label>SSH host</label>
+          <select class="ip" id="docker-host-id"><option value="">-- pick --</option></select>
+        </div>
+        <div class="fi" data-dmode="local"><label>Label (optional)</label><input class="ip" id="docker-label" placeholder="local"></div>
+        <div class="fi"><label style="display:flex;align-items:center;gap:4px;text-transform:none;font-size:10px;color:var(--t2)"><input type="checkbox" id="docker-sudo"> run as sudo (use if not in <code>docker</code> group)</label></div>
+        <button class="btn" onclick="scanDocker()">Scan containers</button>
+      </div>
+    </div>
+
+    <!-- ── Proxmox ─────────────────────────────────────────────────────── -->
+    <div class="rail-section" id="sec-pve">
+      <div class="sh" onclick="secToggle('sec-pve')">
+        <span class="chev">▶</span><span class="icon">⬢</span><span class="lbl">Proxmox</span>
+      </div>
+      <div class="sb">
+        <div class="modeswitch">
+          <button class="active" data-pmode="api" onclick="setPveMode('api')">HTTP API</button>
+          <button data-pmode="ssh" onclick="setPveMode('ssh')">pvesh via SSH</button>
+        </div>
+        <div class="fi" data-pmode="api"><label>API URL</label><input class="ip" id="pve-url" placeholder="https://pve.lan:8006/api2/json"></div>
+        <div class="fi" data-pmode="api"><label>Token</label><input class="ip" id="pve-token" type="password" placeholder="USER@REALM!ID=SECRET"></div>
+        <div class="fi" data-pmode="api"><label style="display:flex;align-items:center;gap:4px;text-transform:none;font-size:10px"><input type="checkbox" id="pve-verify"> verify TLS</label></div>
+        <div class="fi" data-pmode="ssh" style="display:none"><label>SSH host (runs pvesh)</label>
+          <select class="ip" id="pve-host-id"><option value="">-- pick --</option></select>
+        </div>
+        <div class="fi"><label>Cluster name (optional)</label><input class="ip" id="pve-cluster"></div>
+        <button class="btn" onclick="scanProxmox()">Scan cluster</button>
+      </div>
+    </div>
+
+    <!-- ── Kubernetes ──────────────────────────────────────────────────── -->
+    <div class="rail-section" id="sec-k8s">
+      <div class="sh" onclick="secToggle('sec-k8s')">
+        <span class="chev">▶</span><span class="icon">☸</span><span class="lbl">Kubernetes</span>
+      </div>
+      <div class="sb">
+        <div class="modeswitch">
+          <button class="active" data-kmode="local" onclick="setK8sMode('local')">Local kubectl</button>
+          <button data-kmode="ssh" onclick="setK8sMode('ssh')">Remote (SSH)</button>
+        </div>
+        <div class="fi" data-kmode="ssh" style="display:none"><label>SSH host</label>
+          <select class="ip" id="k8s-host-id"><option value="">-- pick --</option></select>
+        </div>
+        <div class="row">
+          <div class="fi"><label>Kubeconfig (opt.)</label><input class="ip" id="k8s-kubeconfig" placeholder="~/.kube/config"></div>
+        </div>
+        <div class="fi"><label>Cluster label (opt.)</label><input class="ip" id="k8s-cluster" placeholder="home-cluster"></div>
+        <button class="btn" onclick="scanK8s()">Scan cluster</button>
+      </div>
+    </div>
+
+    <!-- ── MAP SNAPSHOTS ───────────────────────────────────────────────── -->
+    <div class="rail-section" id="sec-maps">
+      <div class="sh" onclick="secToggle('sec-maps')">
+        <span class="chev">▶</span><span class="icon">⊞</span><span class="lbl">Network maps</span>
+        <span class="sub" id="maps-count"></span>
+      </div>
+      <div class="sb">
+        <div class="fi"><label>Map name</label><input class="ip" id="map-save-name" placeholder="Home LAN – 2026-05"></div>
+        <div class="fi"><label>Description</label><input class="ip" id="map-save-desc" placeholder="optional"></div>
+        <button class="btn" onclick="saveMap()">Save current graph</button>
+        <div id="maps-list" style="margin-top:4px;display:flex;flex-direction:column;gap:3px"></div>
+      </div>
+    </div>
+
+    <!-- ── Filter & clear ──────────────────────────────────────────────── -->
+    <div class="rail-section" id="sec-filter">
+      <div class="sh" onclick="secToggle('sec-filter')">
+        <span class="chev">▶</span><span class="icon">▦</span><span class="lbl">Filter &amp; clear</span>
+      </div>
+      <div class="sb">
+        <button class="btn ghost" onclick="showAll()">Show all types</button>
+        <div class="fi"><label>Clear source</label>
+          <select class="ip" id="clear-source">
+            <option value="all">ALL netscan nodes</option>
+            <option value="lan">LAN only</option>
+            <option value="docker">Docker only</option>
+            <option value="proxmox">Proxmox only</option>
+            <option value="k8s">K8s only</option>
+            <option value="web">Web only</option>
+            <option value="dork">Dork hits only</option>
+            <option value="osint">Agent OSINT only</option>
+            <option value="traceroute">Traceroute hops only</option>
+          </select>
+        </div>
+        <button class="btn danger" onclick="clearSource()">Clear selected</button>
+      </div>
+    </div>
+
+    <div id="legend"></div>
+  </div><!-- /#rail -->
+
+  <!-- ── GRAPH CANVAS ───────────────────────────────────────────────────── -->
+  <div id="canvas-wrap">
+    <div id="cy"></div>
+    <div id="searchbox"><input id="search" placeholder="filter by name, IP, tag…" oninput="applyFilter()"></div>
+    <div id="stream-banner">
+      <span class="pulse"></span>
+      <span id="stream-banner-text">streaming…</span>
+      <button onclick="abortAllStreams()">stop</button>
+    </div>
+    <div id="gc">
+      <button class="gc-btn" onclick="fitGraph()" title="Fit">⤢</button>
+      <button class="gc-btn" onclick="zoomBy(1.25)" title="Zoom in">+</button>
+      <button class="gc-btn" onclick="zoomBy(1/1.25)" title="Zoom out">−</button>
+      <button class="gc-btn" onclick="runLayoutManual()" title="Re-layout">⌖</button>
+    </div>
+    <div id="loading"><div class="msg">loading…</div></div>
+  </div>
+
+  <!-- ── INSPECTOR DRAWER (now with tabs + cap runner) ─────────────────── -->
+  <div id="insp">
+    <div class="ih">
+      <span class="type" id="insp-type">—</span>
+      <span class="title" id="insp-title">—</span>
+      <button class="close" onclick="closeInspector()">✕</button>
+    </div>
+    <div class="tabs">
+      <button data-tab="actions" class="active" onclick="inspTab('actions')">Actions</button>
+      <button data-tab="runcap" onclick="inspTab('runcap')">Run cap</button>
+      <button data-tab="props" onclick="inspTab('props')">Properties</button>
+      <button data-tab="neigh" onclick="inspTab('neigh')">Neighbours</button>
+    </div>
+    <div class="ib">
+      <div id="tab-actions" class="tabpane active"></div>
+      <div id="tab-runcap" class="tabpane"></div>
+      <div id="tab-props" class="tabpane"></div>
+      <div id="tab-neigh" class="tabpane"></div>
+      <div class="sec" id="insp-result-sec" style="display:none"><h4>last action</h4><div class="result-box" id="insp-result"></div></div>
+    </div>
+  </div>
+
+</div><!-- /#main -->
+
+<!-- ── LLM action strip ─────────────────────────────────────────────────── -->
+<div id="llm-strip">
+  <div class="llm-header" onclick="toggleLlmStrip()">
+    <span class="chev">▶</span>
+    <span class="title">✦ Ask Vera</span>
+    <span class="sub">plan network scans, triage, or DAGs — HITL optional</span>
+    <span style="flex:1"></span>
+    <span class="sub" id="llm-plan-status"></span>
+  </div>
+  <div class="llm-body">
+    <div class="llm-input-row">
+      <textarea id="llm-goal" placeholder='e.g. "sweep 10.0.0.0/24 then fingerprint any host with port 80 open", "trace route to 8.8.8.8 and graph it", "search for exposed Grafana on .uk domains"'></textarea>
+      <button class="llm-run" id="llm-run-btn" onclick="toggleLlmRun()">Plan &amp; run ▶</button>
+    </div>
+    <div class="llm-opts">
+      <label>Model
+        <select id="llm-model" title="Ollama model (uses routing default when empty)">
+          <option value="">-- auto --</option>
+        </select>
+      </label>
+      <label>Instance
+        <select id="llm-instance" title="Specific Ollama instance">
+          <option value="">-- auto --</option>
+        </select>
+      </label>
+      <label>Scope
+        <select id="llm-scope" onchange="onScopeChange()" title="Which capabilities the planner may use">
+          <option value="tab" selected>this tab only</option>
+          <option value="plus">this tab + extras…</option>
+          <option value="all">unrestricted (all caps)</option>
+        </select>
+      </label>
+      <button class="tbtn" id="llm-extras-btn" style="display:none" onclick="toggleExtrasPicker()">+ Extras (<span id="llm-extras-count">0</span>)</button>
+      <label title="Include a snapshot of the current tab's data (node counts, selected node, filters) in the planner's initial state"><input type="checkbox" id="llm-ctx" checked> include tab context</label>
+      <span style="flex:1"></span>
+      <label>Mode
+        <select id="llm-mode">
+          <option value="oneshot">oneshot</option>
+          <option value="stepwise">stepwise</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="llm-hitl" checked> HITL</label>
+      <label>auto-approve <input type="number" id="llm-auto-secs" value="30" min="0" max="600" style="width:50px">s</label>
+      <label><input type="checkbox" id="llm-execute" checked> execute</label>
+      <button class="tbtn" onclick="llmClear()">Clear log</button>
+    </div>
+    <div id="llm-extras-pop" style="display:none;padding:8px 14px;border-bottom:1px solid var(--bd);background:var(--s2)">
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+        <input id="llm-extras-search" placeholder="filter capability names…" style="flex:1;background:var(--bg);border:1px solid var(--bd);border-radius:3px;padding:4px 7px;color:var(--t1);font-size:11px;outline:none">
+        <span id="llm-extras-hint" style="color:var(--t3);font-size:10px"></span>
+      </div>
+      <div id="llm-extras-list" style="max-height:140px;overflow-y:auto;display:flex;flex-wrap:wrap;gap:4px"></div>
+    </div>
+    <div class="llm-log" id="llm-log">
+      <div style="color:var(--t3);font-size:10.5px;padding:6px 0">
+        Ask Vera to plan network investigations, run dorks, or trace routes. Right-click targets first to give context.
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="sbar">
+  <span id="st-counts">0 nodes · 0 edges</span>
+  <span>·</span>
+  <span id="st-msg">idle</span>
+  <span class="sp"></span>
+  <span id="st-updated"></span>
+</div>
+
+<!-- ── CTX menu ─────────────────────────────────────────────────────────── -->
+<div id="ctx"></div>
+
+<!-- ── Floating terminal (hidden until launched) ────────────────────────── -->
+<div id="ft-shell">
+  <div id="ft-head">
+    <span class="ft-dot" id="ft-dot"></span>
+    <span class="ft-title" id="ft-title">Terminal</span>
+    <button onclick="ftMinToggle()" title="Minimise">—</button>
+    <button class="close" onclick="ftClose()" title="Close">✕</button>
+  </div>
+  <div class="ft-body">
+    <div class="ft-scroll" id="ft-scroll"></div>
+    <div class="ft-input-row" id="ft-pw-row" style="display:none;border-top:1px solid var(--bd);gap:6px;padding:4px 10px">
+      <span style="color:var(--t3);font-size:10px;white-space:nowrap">Password</span>
+      <input id="ft-pw" type="password" autocomplete="current-password" spellcheck="false"
+             placeholder="(leave blank for key auth)"
+             style="flex:1;background:var(--s2);border:1px solid var(--bd);border-radius:3px;padding:2px 6px;color:var(--t1)">
+    </div>
+    <div class="ft-input-row">
+      <span class="prefix" id="ft-prefix"></span>
+      <input id="ft-input" autocomplete="off" spellcheck="false" placeholder="type command, Enter to run, ↑/↓ history">
+      <div class="ft-ctrls">
+        <button onclick="ftClearScroll()" title="Clear scrollback">Clr</button>
+        <button class="hot" id="ft-stop" style="display:none" onclick="ftStop()">Stop</button>
+      </div>
+    </div>
+  </div>
+  <div class="ft-resize" id="ft-resize"></div>
+</div>
+
+<!-- ── Dork results overlay ─────────────────────────────────────────────── -->
+<div id="dork-overlay">
+  <div class="dh">
+    <span class="title" id="dork-overlay-title">Dork results</span>
+    <span style="color:var(--t3);font-size:10px" id="dork-overlay-meta"></span>
+    <button class="close" onclick="closeDorkOverlay()">✕</button>
+  </div>
+  <div class="db" id="dork-overlay-body"></div>
+</div>
+
+<!-- ── New-graph confirm modal ──────────────────────────────────────────── -->
+<div id="newgraph-modal">
+  <div class="ng-card">
+    <h3>Wipe entire network graph?</h3>
+    <p>This will delete every <code>:NetHost</code>, <code>:NetPort</code>, <code>:Subnet</code>, <code>:DockerHost</code>, <code>:Container</code>, <code>:PVENode</code>, <code>:PVEGuest</code>, <code>:K8sNode</code>, <code>:K8sPod</code>, <code>:Website</code>, <code>:WebEndpoint</code> and <code>:NetHop</code> node currently in Vera's network graph. Saved <em>map snapshots</em> are not affected.</p>
+    <div class="acts">
+      <button class="no" onclick="closeNewGraphModal()">Cancel</button>
+      <button class="yes" onclick="confirmNewGraph()">Wipe graph</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+</div><!-- /#shell -->
+
+<script>
+'use strict';
+
+/* ════════════════════════════════════════════════════════════════════════
+   GLOBAL STATE
+   ════════════════════════════════════════════════════════════════════════ */
+let cy = null;
+let _graphRaw   = {nodes:[], edges:[]};
+let _filterText = '';
+let _hiddenTypes= new Set();
+let _hosts      = [];
+let _lastNodeSig= '';
+let _inspectedId= null;
+let _capRegistry= {};      // capName -> {description, http_method, http_path, params:[…]}
+let _dorkPresets= [];
+let _graphFrozenUntil = 0;   // timestamp — refreshGraph skips until this passes
+
+/* Streaming abort controllers (so the topbar / banner can cancel) */
+const _activeStreams = new Set();
+function abortAllStreams(){ for(const a of Array.from(_activeStreams)){ try{ a.abort(); }catch{} } _activeStreams.clear(); _hideStreamBanner(); }
+function _showStreamBanner(t){ const el=document.getElementById('stream-banner'); el.classList.add('show'); document.getElementById('stream-banner-text').textContent=t||'streaming…'; }
+function _hideStreamBanner(){ document.getElementById('stream-banner').classList.remove('show'); }
+
+/* ════════════════════════════════════════════════════════════════════════
+   THEME / TOAST / STATUS
+   ════════════════════════════════════════════════════════════════════════ */
+function setTheme(t){
+  document.documentElement.setAttribute('data-theme',t);
+  try{localStorage.setItem('vera_netmap_theme',t)}catch{}
+  if(window.cy) applyStyles();
+}
+try{const t=localStorage.getItem('vera_netmap_theme');if(t){document.documentElement.setAttribute('data-theme',t);}}catch{}
+
+const _toastEl=document.getElementById('toast');let _toastT=null;
+function toast(msg,kind){
+  _toastEl.textContent=msg; _toastEl.className=''; _toastEl.classList.add('show');
+  if(kind) _toastEl.classList.add(kind);
+  clearTimeout(_toastT); _toastT=setTimeout(()=>{_toastEl.className=''},3000);
+}
+function setStatus(msg, cls){
+  const el=document.getElementById('st-msg');
+  el.textContent=msg; el.className = cls||'';
+}
+function showLoading(msg){
+  const el=document.getElementById('loading');
+  el.querySelector('.msg').textContent = msg||'loading…';
+  el.classList.add('show');
+}
+function hideLoading(){ document.getElementById('loading').classList.remove('show'); }
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function secToggle(id){ document.getElementById(id).classList.toggle('open'); }
+
+/* ════════════════════════════════════════════════════════════════════════
+   CYTOSCAPE THEMING
+   ════════════════════════════════════════════════════════════════════════ */
+const NODE_COLORS = {
+  NetHost:     'var(--ac)',
+  Subnet:      'var(--t3)',
+  DockerHost:  'var(--ac2)',
+  Container:   'var(--ac3)',
+  PVECluster:  'var(--ac5)',
+  PVENode:     'var(--ac5)',
+  PVEGuest:    'var(--ac3)',
+  K8sCluster:  'var(--ac5)',
+  K8sNode:     'var(--ac)',
+  K8sPod:      'var(--ac3)',
+  Website:     'var(--ac5)',
+  WebEndpoint: 'var(--ac)',
+  NetPort:     'var(--ac3)',
+  NetHop:      'var(--ac3)',
+  OsintHit:    'var(--ac5)',
+  Unknown:     'var(--t2)',
+};
+const NODE_SHAPES = {
+  Subnet:'round-diamond', PVECluster:'hexagon', K8sCluster:'hexagon', Website:'round-rectangle',
+  PVENode:'round-rectangle', K8sNode:'round-rectangle', DockerHost:'round-rectangle', NetHost:'round-rectangle',
+  Container:'tag', PVEGuest:'tag', K8sPod:'tag', WebEndpoint:'round-tag',
+  NetPort:'cut-rectangle', NetHop:'pentagon', OsintHit:'round-rectangle',
+};
+const NODE_SIZE = {
+  Subnet:40, PVECluster:55, K8sCluster:55, Website:48,
+  DockerHost:38, PVENode:38, K8sNode:38, NetHost:32,
+  Container:26, PVEGuest:26, K8sPod:26, WebEndpoint:24,
+  NetPort:22, NetHop:24, OsintHit:36,
+};
+
+function buildStyle(){
+  const getVar = (k)=>getComputedStyle(document.documentElement).getPropertyValue(k).trim();
+  const mkColor = (token)=>token.startsWith('var(')?getVar(token.slice(4,-1)):token;
+  const node_bg = (ele)=>mkColor(NODE_COLORS[ele.data('type')]||NODE_COLORS.Unknown);
+  const node_shape = (ele)=>NODE_SHAPES[ele.data('type')]||'round-rectangle';
+  const node_size = (ele)=>NODE_SIZE[ele.data('type')]||32;
+  return [
+    {selector:'node', style:{
+      'background-color': node_bg,
+      'shape': node_shape,
+      'label':'data(label)',
+      'width':node_size, 'height':node_size,
+      'color': getVar('--t1'),
+      'font-size':'9px',
+      'font-family':"ui-monospace, Menlo, monospace",
+      'text-valign':'bottom','text-margin-y':4,
+      'text-outline-color': getVar('--bg'),'text-outline-width':2,
+      'border-color': getVar('--bd2'),'border-width':1,
+      'transition-property':'border-color,border-width,opacity,background-color',
+      'transition-duration':'0.2s',
+    }},
+    {selector:'node.fresh', style:{
+      'border-color': getVar('--ac2'),'border-width':3,
+    }},
+    {selector:'node:selected', style:{
+      'border-color': getVar('--ac'),'border-width':3,
+    }},
+    {selector:'node.highlight', style:{
+      'border-color': getVar('--ac'),'border-width':2.5,
+    }},
+    {selector:'node.faded', style:{'opacity':0.18}},
+    {selector:'node.hidden-type', style:{'display':'none'}},
+    {selector:'edge', style:{
+      'width':1.3,
+      'line-color': getVar('--bd2'),
+      'target-arrow-color': getVar('--bd2'),
+      'target-arrow-shape':'triangle',
+      'curve-style':'bezier',
+      'label':'data(label)',
+      'font-size':'7.5px','color': getVar('--t3'),
+      'text-rotation':'autorotate','text-margin-y':-3,
+      'text-background-color': getVar('--bg'),
+      'text-background-opacity':0.7,'text-background-padding':1,
+      'opacity':0.7,
+      'transition-property':'line-color,opacity',
+      'transition-duration':'0.15s',
+    }},
+    {selector:'edge[label="SAME_IP"]', style:{
+      'line-color': getVar('--ac2'),'target-arrow-color': getVar('--ac2'),
+      'line-style':'dashed','opacity':0.9
+    }},
+    {selector:'edge[label="LINKS_TO"]', style:{
+      'line-color': getVar('--ac3'),'target-arrow-color': getVar('--ac3'),'opacity':0.5
+    }},
+    {selector:'edge[label="ROUTES_TO"]', style:{
+      'line-color': getVar('--ac3'),'target-arrow-color': getVar('--ac3'),
+      'width':2,'line-style':'dashed','opacity':0.9
+    }},
+    {selector:'edge[label="EXPOSES"]', style:{
+      'line-color': getVar('--ac3'),'target-arrow-color': getVar('--ac3'),
+      'opacity':0.5
+    }},
+    {selector:'edge.highlight', style:{
+      'line-color': getVar('--ac'),'target-arrow-color': getVar('--ac'),
+      'opacity':1,'width':2
+    }},
+    {selector:'edge.faded', style:{'opacity':0.08}},
+  ];
+}
+function applyStyles(){ if(cy) cy.style(buildStyle()); }
+
+function initCy(){
+  cy = cytoscape({
+    container: document.getElementById('cy'),
+    elements: [],
+    style: buildStyle(),
+    layout: {name:'preset'},
+    wheelSensitivity: 0.3,
+    minZoom:0.1, maxZoom:3,
+  });
+  bindCyEvents();
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   GRAPH FETCH / RENDER  (preserves pan/zoom)
+   ════════════════════════════════════════════════════════════════════════ */
+async function refreshGraph(opts){
+  opts = opts||{};
+  // If graph was just cleared, skip fetching from server to prevent zombie nodes
+  if(Date.now() < _graphFrozenUntil && !opts.force){
+    return;
+  }
+  // Also skip if _graphFrozenUntil === Infinity (permanent freeze from new graph)
+  if(_graphFrozenUntil === Infinity && !opts.force){
+    return;
+  }
+  const initial = !cy || _graphRaw.nodes.length===0;
+  if(initial) showLoading('fetching graph…');
+  setStatus('loading…');
+  try{
+    const r = await fetch('/netscan/graph');
+    const data = await r.json();
+    if(data.error){
+      // Neo4j unavailable — keep any locally-added nodes instead of wiping
+      if(_graphRaw.nodes.length>0){
+        setStatus('Neo4j unavailable — showing local nodes','err');
+        renderGraph({forceLayout: false});
+        updateCounts(); renderLegend();
+      } else {
+        setStatus('Neo4j unavailable','err');
+      }
+      hideLoading(); return;
+    }
+    // MERGE: keep locally-added nodes (from streams) that the server doesn't know about yet
+    const serverNodes = data.nodes||[];
+    const serverEdges = data.edges||[];
+    const serverNodeIds = new Set(serverNodes.map(n=>n.data.id));
+    const serverEdgeIds = new Set(serverEdges.map(e=>e.data.id));
+    // Preserve local-only nodes (added by _ensureCyNode during streams)
+    const localOnlyNodes = _graphRaw.nodes.filter(n=>!serverNodeIds.has(n.data.id) && n.data._local);
+    const localOnlyEdges = _graphRaw.edges.filter(e=>!serverEdgeIds.has(e.data.id) && e.data._local);
+
+    // If server returned nothing but we have local nodes, don't wipe them
+    if(serverNodes.length===0 && localOnlyNodes.length>0){
+      // Server has nothing — keep local state as-is, just update status
+      setStatus(`server: 0 nodes · showing ${localOnlyNodes.length} local nodes`,'ok');
+      document.getElementById('st-updated').textContent = 'updated '+new Date().toLocaleTimeString();
+      hideLoading();
+      return;
+    }
+
+    _graphRaw = {
+      nodes: [...serverNodes, ...localOnlyNodes],
+      edges: [...serverEdges, ...localOnlyEdges],
+    };
+    renderGraph({forceLayout: initial || opts.forceLayout===true });
+    updateCounts(); renderLegend();
+    setStatus('loaded','ok');
+    document.getElementById('st-updated').textContent = 'updated '+new Date().toLocaleTimeString();
+  }catch(e){
+    // Network error fetching graph — keep local state
+    if(_graphRaw.nodes.length>0){
+      setStatus('fetch failed — showing local nodes','err');
+    } else {
+      setStatus('error','err');
+    }
+  }finally{
+    hideLoading();
+  }
+}
+
+function renderGraph(opts){
+  opts = opts||{};
+  if(!cy) initCy();
+  const newSig = _graphRaw.nodes.map(n=>n.data.id).sort().join('|');
+  const sameStructure = (newSig === _lastNodeSig);
+  _lastNodeSig = newSig;
+  const zoom = cy.zoom();
+  const pan  = {...cy.pan()};
+
+  if(sameStructure && !opts.forceLayout){
+    for(const n of _graphRaw.nodes){
+      const el = cy.getElementById(n.data.id);
+      if(el && el.length) el.data(n.data);
+    }
+    const edgeIds = new Set(_graphRaw.edges.map(e=>e.data.id));
+    cy.edges().forEach(e=>{ if(!edgeIds.has(e.id())) e.remove(); });
+    for(const e of _graphRaw.edges){
+      const ex = cy.getElementById(e.data.id);
+      if(!ex || !ex.length) cy.add(e);
+    }
+    applyFilter();
+    return;
+  }
+
+  const priorPos = {};
+  cy.nodes().forEach(n=>{ priorPos[n.id()] = {...n.position()}; });
+
+  cy.elements().remove();
+  const nodes = _graphRaw.nodes.map(n=>{
+    const copy = {data: n.data};
+    if(priorPos[n.data.id]) copy.position = priorPos[n.data.id];
+    return copy;
+  });
+  cy.add([...nodes, ..._graphRaw.edges]);
+
+  const needsLayout = opts.forceLayout || _graphRaw.nodes.some(n=>!priorPos[n.data.id]);
+  if(opts.forceLayout){
+    runLayoutInternal({fit:true});
+  } else if(needsLayout){
+    const newOnly = cy.nodes().filter(n=>!priorPos[n.id()]);
+    if(newOnly.length){
+      newOnly.layout({name:'cose', animate:false, fit:false, padding:60, randomize:true}).run();
+    }
+    cy.zoom(zoom); cy.pan(pan);
+  } else {
+    cy.zoom(zoom); cy.pan(pan);
+  }
+  applyFilter();
+}
+
+function runLayoutInternal(opts){
+  opts = opts||{};
+  try{
+    cy.layout({
+      name:'cose-bilkent',
+      animate:'end', animationDuration:400,
+      fit: opts.fit!==false, padding:40,
+      nodeRepulsion:9000, idealEdgeLength:95,
+      edgeElasticity:0.45, gravity:0.25,
+      numIter:2000, tile:true, randomize:false,
+    }).run();
+  }catch(e){
+    cy.layout({name:'cose', animate:true, fit:opts.fit!==false, padding:40}).run();
+  }
+}
+function runLayoutManual(){ runLayoutInternal({fit:true}); }
+function fitGraph(){ if(cy) cy.fit(null, 40); }
+function zoomBy(factor){
+  if(!cy) return;
+  const c = {x: cy.width()/2, y: cy.height()/2};
+  cy.zoom({level: cy.zoom()*factor, renderedPosition: c});
+}
+
+function updateCounts(){
+  document.getElementById('st-counts').textContent =
+    _graphRaw.nodes.length+' nodes · '+_graphRaw.edges.length+' edges';
+}
+function renderLegend(){
+  const legend = document.getElementById('legend');
+  const counts = {};
+  for(const n of _graphRaw.nodes){ counts[n.data.type] = (counts[n.data.type]||0)+1; }
+  const types = Object.keys(counts).sort();
+  legend.innerHTML = '<div style="font-size:9px;letter-spacing:.05em;color:var(--t3);text-transform:uppercase;margin-bottom:4px">types</div>' +
+    types.map(t=>{
+      const dim = _hiddenTypes.has(t)?'dim':'';
+      const col = NODE_COLORS[t]||NODE_COLORS.Unknown;
+      return `<div class="legend-row ${dim}" onclick="toggleType('${esc(t)}')" title="Click to toggle"><span class="legend-sw" style="background:${col}"></span><span>${esc(t)}</span><span class="count">${counts[t]}</span></div>`;
+    }).join('');
+}
+function toggleType(t){
+  if(_hiddenTypes.has(t)) _hiddenTypes.delete(t);
+  else _hiddenTypes.add(t);
+  applyFilter(); renderLegend();
+}
+function showAll(){ _hiddenTypes.clear(); applyFilter(); renderLegend(); }
+function applyFilter(){
+  if(!cy) return;
+  const q = _filterText.trim().toLowerCase();
+  cy.nodes().forEach(n=>{
+    const d = n.data();
+    const hideByType = _hiddenTypes.has(d.type);
+    let hideByQ = false;
+    if(q){
+      const hay = Object.values(d).filter(v=>typeof v==='string'||typeof v==='number').join(' ').toLowerCase();
+      hideByQ = !hay.includes(q);
+    }
+    if(hideByType||hideByQ) n.addClass('hidden-type');
+    else n.removeClass('hidden-type');
+  });
+  cy.edges().forEach(e=>{
+    const s = cy.getElementById(e.data('source'));
+    const t = cy.getElementById(e.data('target'));
+    if(!s.length||!t.length||s.hasClass('hidden-type')||t.hasClass('hidden-type')) e.addClass('hidden-type');
+    else e.removeClass('hidden-type');
+  });
+}
+document.getElementById('search').addEventListener('input',e=>{ _filterText=e.target.value; applyFilter(); });
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   SSE STREAMING HELPER
+   ════════════════════════════════════════════════════════════════════════ */
+async function streamSSE(url, body, onEvent){
+  const ctrl = new AbortController();
+  _activeStreams.add(ctrl);
+  let res;
+  try{
+    res = await fetch(url, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: body?JSON.stringify(body):'{}', signal: ctrl.signal,
+    });
+  }catch(e){ _activeStreams.delete(ctrl); onEvent('error',{error:String(e)}); return null; }
+  if(!res.ok || !res.body){
+    _activeStreams.delete(ctrl);
+    onEvent('error',{error:'HTTP '+res.status});
+    return null;
+  }
+  (async()=>{
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf='';
+    try{
+      while(true){
+        let r;
+        try{ r=await reader.read(); }
+        catch(e){ if(e.name!=='AbortError') onEvent('error',{error:String(e)}); break; }
+        if(r.done) break;
+        buf += dec.decode(r.value,{stream:true});
+        while(true){
+          const idx = buf.indexOf('\n\n'); if(idx<0) break;
+          const raw = buf.slice(0,idx).trim(); buf = buf.slice(idx+2);
+          if(!raw) continue;
+          if(raw==='data: [DONE]'){ onEvent('__done',{}); continue; }
+          let ev='message', data={};
+          for(const line of raw.split('\n')){
+            if(line.startsWith('event: ')) ev = line.slice(7).trim();
+            else if(line.startsWith('data: ')){
+              const d = line.slice(6);
+              try{ data = JSON.parse(d); }catch{ data = {raw:d}; }
+            }
+          }
+          if(data && data.type && ev==='message') ev = data.type;
+          onEvent(ev,data);
+        }
+      }
+    } finally {
+      _activeStreams.delete(ctrl);
+      if(_activeStreams.size===0) _hideStreamBanner();
+    }
+  })();
+  return {abort:()=>{ try{ ctrl.abort(); }catch{} _activeStreams.delete(ctrl); if(_activeStreams.size===0) _hideStreamBanner(); }};
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   STREAM-INTO-GRAPH HELPERS  (live nodes appear as SSE events arrive)
+   ════════════════════════════════════════════════════════════════════════ */
+function _ensureCyNode(data, type){
+  if(!cy) return;
+  let n = cy.getElementById(data.id);
+  if(n && n.length){
+    // Refresh existing data
+    n.data({...n.data(), ...data, type});
+    return n;
+  }
+  // Pick a position near an existing connected node, or random spread
+  let pos = _pickInitialPos(data);
+  const node = {data: {...data, type, _local: true}, position: pos};
+  _graphRaw.nodes.push({data: node.data});
+  cy.add(node);
+  const added = cy.getElementById(data.id);
+  added.addClass('fresh');
+  setTimeout(()=>added.removeClass('fresh'), 1500);
+  // Schedule an incremental layout so new nodes spread out properly
+  _scheduleIncrementalLayout();
+  return added;
+}
+
+/* Pick a starting position near a plausible parent, or random offset from centre */
+function _pickInitialPos(data){
+  if(!cy) return {x:0, y:0};
+  const cx = cy.width()/2, cy_ = cy.height()/2;
+  // Try to position near an obvious parent (subnet for hosts, host for ports, site for endpoints)
+  const parentCandidates = [];
+  if(data.subnet) parentCandidates.push(`subnet:${data.subnet}`);
+  if(data.ip)     parentCandidates.push(`net:${data.ip}`);
+  for(const pid of parentCandidates){
+    const p = cy.getElementById(pid);
+    if(p && p.length){
+      const pp = p.position();
+      return {
+        x: pp.x + (Math.random()-0.5)*120,
+        y: pp.y + (Math.random()-0.5)*120,
+      };
+    }
+  }
+  // Fallback: random spread around centre of viewport
+  const vpan = cy.pan(), vzoom = cy.zoom();
+  const vcx = (cx - vpan.x) / vzoom;
+  const vcy = (cy_ - vpan.y) / vzoom;
+  return {
+    x: vcx + (Math.random()-0.5)*300,
+    y: vcy + (Math.random()-0.5)*300,
+  };
+}
+
+/* Debounced incremental layout — runs after a burst of node adds settles */
+let _incrLayoutTimer = null;
+function _scheduleIncrementalLayout(){
+  if(_incrLayoutTimer) clearTimeout(_incrLayoutTimer);
+  _incrLayoutTimer = setTimeout(()=>{
+    _incrLayoutTimer = null;
+    if(!cy) return;
+    const fresh = cy.nodes().filter(n=>n.hasClass('fresh'));
+    if(fresh.length===0) return;
+    try{
+      // Layout only the new nodes + their immediate neighbours for stability
+      const neighbourhood = fresh.union(fresh.neighborhood());
+      neighbourhood.layout({
+        name:'cose', animate:false, fit:false, padding:40,
+        randomize:false, boundingBox: _viewportBBox(),
+      }).run();
+    }catch(e){
+      // Fallback: just fit the view
+      try{ cy.fit(null, 40); }catch{}
+    }
+  }, 400);
+}
+
+function _viewportBBox(){
+  if(!cy) return undefined;
+  const pan = cy.pan(), zoom = cy.zoom();
+  return {
+    x1: (0 - pan.x)/zoom,    y1: (0 - pan.y)/zoom,
+    w:  cy.width()/zoom,      h:  cy.height()/zoom,
+  };
+}
+
+/* Run a full layout on all local (streamed) nodes once a stream finishes */
+function _runFinalStreamLayout(){
+  if(_incrLayoutTimer){ clearTimeout(_incrLayoutTimer); _incrLayoutTimer=null; }
+  if(!cy) return;
+  const local = cy.nodes().filter(n=>n.data('_local'));
+  if(local.length===0) return;
+  try{
+    // If the graph is small enough, do a full layout for best results
+    if(cy.nodes().length <= 200){
+      runLayoutInternal({fit:true});
+    } else {
+      // Otherwise just layout the new nodes and their neighbours
+      const nbhood = local.union(local.neighborhood());
+      nbhood.layout({
+        name:'cose', animate:false, fit:false, padding:40,
+        randomize:false,
+      }).run();
+      cy.fit(null, 40);
+    }
+  }catch(e){
+    try{ cy.fit(null, 40); }catch{}
+  }
+}
+
+function _ensureCyEdge(src, tgt, label){
+  if(!cy) return;
+  const eid = `${src}|${label}|${tgt}`;
+  let e = cy.getElementById(eid);
+  if(e && e.length) return e;
+  const s = cy.getElementById(src), t = cy.getElementById(tgt);
+  if(!s.length || !t.length) return; // either endpoint missing — skip
+  const ed = {data:{id:eid, source:src, target:tgt, label, _local: true}};
+  _graphRaw.edges.push(ed);
+  cy.add(ed);
+  return cy.getElementById(eid);
+}
+function _bumpCounts(){ updateCounts(); renderLegend(); }
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   SCAN ACTIONS  (LAN, web, docker, pve, k8s)  — with streaming variants
+   ════════════════════════════════════════════════════════════════════════ */
+async function loadHosts(){
+  try{
+    const r = await fetch('/exec/ssh/hosts/list',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const j = await r.json(); _hosts = j.hosts||[];
+  }catch{ _hosts=[]; }
+  for(const id of ['docker-host-id','pve-host-id','k8s-host-id']){
+    const sel=document.getElementById(id); if(!sel) continue;
+    const cur=sel.value;
+    sel.innerHTML='<option value="">-- pick --</option>';
+    for(const h of _hosts){
+      const o=document.createElement('option'); o.value=h.id;
+      o.textContent = `${h.label||h.host} (${h.user||'?'}@${h.host})`;
+      sel.appendChild(o);
+    }
+    sel.value=cur;
+  }
+}
+function setDockerMode(m){
+  document.querySelectorAll('#sec-docker .modeswitch button').forEach(b=>b.classList.toggle('active',b.dataset.dmode===m));
+  document.querySelectorAll('#sec-docker [data-dmode]').forEach(el=>{ el.style.display = el.dataset.dmode===m?'':'none'; });
+}
+function setPveMode(m){
+  document.querySelectorAll('#sec-pve .modeswitch button').forEach(b=>b.classList.toggle('active',b.dataset.pmode===m));
+  document.querySelectorAll('#sec-pve [data-pmode]').forEach(el=>{ el.style.display = el.dataset.pmode===m?'':'none'; });
+}
+function setK8sMode(m){
+  document.querySelectorAll('#sec-k8s .modeswitch button').forEach(b=>b.classList.toggle('active',b.dataset.kmode===m));
+  document.querySelectorAll('#sec-k8s [data-kmode]').forEach(el=>{ el.style.display = el.dataset.kmode===m?'':'none'; });
+}
+
+async function _scan(label, url, body, forceLayout){
+  showLoading(label+' …'); setStatus(label+'…');
+  try{
+    const r = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
+    const j = await r.json();
+    if(j.error){ toast(label+' error: '+j.error,'err'); setStatus('error','err'); return null; }
+    toast(label+' done','ok');
+    await refreshGraph({forceLayout:!!forceLayout, force:true});
+    return j;
+  }catch(e){ toast(label+' failed: '+e.message,'err'); setStatus('error','err'); return null; }
+  finally{ hideLoading(); }
+}
+
+/* ── LAN ─────────────────────────────────────────────────────────────── */
+function onLanProfileChange(){
+  const v = document.getElementById('lan-profile').value;
+  document.getElementById('lan-custom-ports-row').style.display = (v==='custom')?'':'none';
+}
+document.getElementById('lan-save-fabric')?.addEventListener('change', e=>{
+  document.getElementById('lan-fabric-ds-row').style.display = e.target.checked?'':'none';
+});
+
+async function scanLan(){
+  const cidr       = document.getElementById('lan-cidr').value.trim();
+  const profile    = document.getElementById('lan-profile').value;
+  const customPorts= document.getElementById('lan-ports').value.trim();
+  const to         = Number(document.getElementById('lan-to').value || 1.0);
+  const conc       = Number(document.getElementById('lan-conc').value || 64);
+  const portNodes  = document.getElementById('lan-port-nodes').checked;
+  const stream     = document.getElementById('lan-stream').checked;
+  const saveToFabric = document.getElementById('lan-save-fabric').checked;
+  const fabricDs   = (document.getElementById('lan-fabric-ds').value||'netscan_lan').trim();
+  if(!cidr){ toast('CIDR required','err'); return; }
+
+  const portsArg = (profile==='custom') ? customPorts : profile;
+  const btn = document.getElementById('lan-scan-btn');
+  const prog = document.getElementById('lan-progress');
+  const progText = document.getElementById('lan-progress-text');
+  const progBar = document.getElementById('lan-progress-bar');
+
+  if(stream){
+    /* Streaming path — hosts appear in the graph live */
+    btn.disabled = true; btn.textContent = 'Streaming…';
+    prog.classList.add('live'); progText.textContent = 'starting…'; progBar.style.width='0%';
+    _showStreamBanner(`LAN sweep · ${cidr}`);
+    setStatus(`LAN stream ${cidr}…`);
+    let liveCount = 0;
+    const ctl = await streamSSE('/netscan/lan/stream', {
+      cidr, ports: portsArg, profile,
+      timeout: to, concurrency: conc, port_nodes: portNodes,
+    }, (ev, d)=>{
+      if(ev==='start'){
+        progText.textContent = `0/${d.host_count||'?'} hosts · ${d.port_count||'?'} ports`;
+      } else if(ev==='host'){
+        liveCount++;
+        // Add NetHost node live
+        const ip = d.ip;
+        const hostId = `net:${ip}`;
+        const lbl = d.hostname || ip;
+        _ensureCyNode({
+          id: hostId, label: String(lbl).slice(0,50),
+          ip, hostname: d.hostname||'', open_ports: d.open_ports||[],
+          subnet: d.subnet||'', source:'lan',
+        }, 'NetHost');
+        // Subnet node
+        if(d.subnet){
+          const sid = `subnet:${d.subnet}`;
+          _ensureCyNode({id:sid, label:d.subnet, cidr:d.subnet, source:'lan'}, 'Subnet');
+          _ensureCyEdge(hostId, sid, 'ON_NETWORK');
+        }
+        // Port nodes
+        if(portNodes){
+          for(const p of d.open_ports||[]){
+            const pid = `port:${ip}:${p}`;
+            _ensureCyNode({id:pid, label:`${p}/tcp`, port:p, ip, name:String(p)}, 'NetPort');
+            _ensureCyEdge(hostId, pid, 'EXPOSES');
+          }
+        }
+        _bumpCounts();
+        progText.textContent = `${liveCount} live · ${d.ip} · ${(d.open_ports||[]).length} open`;
+      } else if(ev==='progress'){
+        const pct = d.total ? Math.round(100*d.done/d.total) : 0;
+        progBar.style.width = pct+'%';
+        progText.textContent = `${d.done}/${d.total} probed · ${d.live||liveCount} live`;
+      } else if(ev==='done'){
+        progText.textContent = `done · ${d.live||liveCount} live · ${d.scanned||'?'} scanned`;
+        progBar.style.width = '100%';
+        toast(`LAN sweep complete · ${d.live||liveCount} live`,'ok');
+        setStatus(`LAN sweep done · ${d.live||liveCount} live`,'ok');
+        btn.disabled=false; btn.textContent='Scan LAN';
+        setTimeout(()=>{ prog.classList.remove('live'); progBar.style.width='0%'; }, 2500);
+        // Final layout for all streamed nodes + refresh from server
+        _runFinalStreamLayout();
+        refreshGraph({forceLayout:false, force:true});
+      } else if(ev==='error'){
+        toast('LAN sweep error: '+(d.error||'unknown'),'err');
+        setStatus('error','err');
+        btn.disabled=false; btn.textContent='Scan LAN';
+        prog.classList.remove('live');
+      } else if(ev==='__done'){
+        btn.disabled=false; btn.textContent='Scan LAN';
+      }
+    });
+    return ctl;
+  }
+
+  /* Non-streaming legacy path */
+  const body = {
+    cidr, ports:portsArg, timeout:to, concurrency:conc,
+    port_nodes:portNodes, save_to_fabric:saveToFabric, fabric_dataset:fabricDs,
+  };
+  if(profile && profile!=='custom') body.profile = profile;
+  await _scan('LAN scan','/netscan/lan/scan', body, true);
+}
+
+/* ── WEB ─────────────────────────────────────────────────────────────── */
+async function scanWeb(){
+  const url    = document.getElementById('web-url').value.trim();
+  const depth  = Number(document.getElementById('web-depth').value||1);
+  const max    = Number(document.getElementById('web-max').value||20);
+  const scope  = document.getElementById('web-scope').value;
+  const pathRe = document.getElementById('web-path-re').value.trim();
+  const exclRe = document.getElementById('web-excl-re').value.trim();
+  const ua     = document.getElementById('web-ua').value.trim() || 'VeraNetScan/1.0';
+  const wait   = Number(document.getElementById('web-wait').value||0);
+  const to     = Number(document.getElementById('web-to').value||10);
+  const stream = document.getElementById('web-stream').checked;
+  const redir  = document.getElementById('web-redir').checked;
+  if(!url){ toast('URL required','err'); return; }
+
+  const btn = document.getElementById('web-scan-btn');
+  const prog = document.getElementById('web-progress');
+  const progText = document.getElementById('web-progress-text');
+
+  const body = {
+    url, max_depth:depth, max_pages:max, follow_redirects:redir,
+    timeout:to, scope, path_filter:pathRe, exclude_filter:exclRe,
+    user_agent:ua, wait_ms:wait,
+  };
+
+  if(stream){
+    btn.disabled=true; btn.textContent='Crawling…';
+    prog.classList.add('live'); progText.textContent='starting…';
+    _showStreamBanner(`Crawl · ${url}`);
+    setStatus(`Crawl ${url}…`);
+    let pages=0;
+    let currentSiteId='';
+    const ctl = await streamSSE('/netscan/web/stream', body, (ev, d)=>{
+      if(ev==='start'){ progText.textContent=`scope=${d.scope}`; }
+      else if(ev==='site'){
+        currentSiteId = d.id || '';
+        _ensureCyNode({id:d.id, label:String(d.title||d.origin).slice(0,60),
+                        origin:d.origin, url:d.origin, source:'web'}, 'Website');
+        _bumpCounts();
+      }
+      else if(ev==='page'){
+        pages++;
+        _ensureCyNode({
+          id:d.id, label:String(d.title||d.url).slice(0,60),
+          url:d.url, status:d.status, title:d.title||'',
+          tech:d.tech||[], source:'web',
+        }, 'WebEndpoint');
+        // Edge from current site to this page (HAS_ENDPOINT)
+        if(currentSiteId) _ensureCyEdge(currentSiteId, d.id, 'HAS_ENDPOINT');
+        _bumpCounts();
+        progText.textContent = `${pages} pages · last ${d.url}`;
+      }
+      else if(ev==='page_err'){
+        progText.textContent = `err ${d.url}: ${d.error}`;
+      }
+      else if(ev==='done'){
+        progText.textContent = `done · ${d.pages||pages} pages · ${(d.tech||[]).length} tech`;
+        toast(`Crawl complete · ${d.pages||pages} pages`,'ok');
+        setStatus('crawl done','ok');
+        btn.disabled=false; btn.textContent='Crawl & fingerprint';
+        setTimeout(()=>prog.classList.remove('live'), 2500);
+        _runFinalStreamLayout();
+        refreshGraph({forceLayout:false, force:true});
+      }
+      else if(ev==='error'){
+        // Handle TaskGroup / backend exceptions gracefully
+        const errMsg = d.error||'unknown';
+        const isTaskGroup = errMsg.includes('TaskGroup') || errMsg.includes('sub-exception');
+        if(isTaskGroup && pages>0){
+          // Partial results — keep what we have
+          progText.textContent = `partial · ${pages} pages scraped before error`;
+          toast(`Crawl partially complete · ${pages} pages (server error on remaining)`,'err');
+          setStatus(`partial crawl · ${pages} pages`,'ok');
+        } else {
+          toast('Crawl error: '+errMsg,'err');
+          setStatus('error','err');
+        }
+        btn.disabled=false; btn.textContent='Crawl & fingerprint';
+        prog.classList.remove('live');
+      }
+      else if(ev==='__done'){
+        btn.disabled=false; btn.textContent='Crawl & fingerprint';
+      }
+    });
+    return ctl;
+  }
+
+  /* Non-streaming legacy path */
+  await _scan('Web crawl','/netscan/web/scan', body, true);
+}
+
+/* ── DOCKER / PVE / K8S ───────────────────────────────────────────────── */
+async function scanDocker(){
+  const mode = document.querySelector('#sec-docker .modeswitch button.active').dataset.dmode;
+  const body = {use_sudo: document.getElementById('docker-sudo').checked};
+  if(mode==='ssh'){
+    body.host_id = document.getElementById('docker-host-id').value;
+    if(!body.host_id){ toast('pick an SSH host','err'); return; }
+  } else {
+    body.label = document.getElementById('docker-label').value.trim();
+  }
+  await _scan('Docker scan','/netscan/docker/scan',body, true);
+}
+async function scanProxmox(){
+  const mode = document.querySelector('#sec-pve .modeswitch button.active').dataset.pmode;
+  const body = {cluster_name: document.getElementById('pve-cluster').value.trim()};
+  if(mode==='api'){
+    body.api_url = document.getElementById('pve-url').value.trim();
+    body.token   = document.getElementById('pve-token').value;
+    body.verify_tls = document.getElementById('pve-verify').checked;
+    if(!body.api_url||!body.token){ toast('URL + token required','err'); return; }
+  } else {
+    body.ssh_host_id = document.getElementById('pve-host-id').value;
+    if(!body.ssh_host_id){ toast('pick an SSH host','err'); return; }
+  }
+  await _scan('Proxmox scan','/netscan/proxmox/scan',body, true);
+}
+async function scanK8s(){
+  const mode = document.querySelector('#sec-k8s .modeswitch button.active').dataset.kmode;
+  const body = {
+    kubeconfig: document.getElementById('k8s-kubeconfig').value.trim(),
+    cluster_label: document.getElementById('k8s-cluster').value.trim(),
+  };
+  if(mode==='ssh'){
+    body.ssh_host_id = document.getElementById('k8s-host-id').value;
+    if(!body.ssh_host_id){ toast('pick an SSH host','err'); return; }
+  }
+  await _scan('K8s scan','/netscan/k8s/scan',body, true);
+}
+async function clearSource(){
+  const s = document.getElementById('clear-source').value;
+  if(!confirm(`Clear netscan nodes (${s})?`)) return;
+  const r = await fetch('/netscan/nodes/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:s})});
+  const j = await r.json();
+  toast(j.error?('error: '+j.error):(`cleared ${j.deleted||0} nodes`), j.error?'err':'ok');
+  await refreshGraph({forceLayout:true});
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   TRACEROUTE
+   ════════════════════════════════════════════════════════════════════════ */
+async function runTraceroute(){
+  const target = document.getElementById('trace-target').value.trim();
+  const hops   = Number(document.getElementById('trace-hops').value||20);
+  const to     = Number(document.getElementById('trace-to').value||30);
+  if(!target){ toast('target required','err'); return; }
+  showLoading(`Tracing route to ${target}…`);
+  setStatus(`traceroute ${target}…`);
+  try{
+    const r = await fetch('/netscan/target/traceroute',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({target, max_hops:hops, timeout:to}),
+    });
+    const j = await r.json();
+    if(j.error){ toast('Traceroute error: '+j.error,'err'); setStatus('error','err'); return; }
+    // Add hops to graph locally so they appear even if Neo4j is down
+    let prevHopId = null;
+    for(const hop of (j.hops||[])){
+      if(!hop.ip || hop.ip==='*') continue;
+      const hopId = `net:${hop.ip}`;
+      _ensureCyNode({
+        id: hopId, label: hop.hostname || hop.ip,
+        ip: hop.ip, hostname: hop.hostname||'',
+        ttl: hop.ttl, rtt_ms: hop.rtt_ms,
+        source: 'traceroute',
+      }, 'NetHop');
+      if(prevHopId){
+        _ensureCyEdge(prevHopId, hopId, 'ROUTES_TO');
+      }
+      prevHopId = hopId;
+    }
+    // Link final target — create/update NetHost with resolved IP + hostname
+    if(j.final_ip){
+      const finalId = `net:${j.final_ip}`;
+      const hn = j.hostname || (j.target !== j.final_ip ? j.target : '');
+      _ensureCyNode({
+        id: finalId, label: hn || j.final_ip,
+        ip: j.final_ip, hostname: hn,
+        source: 'traceroute',
+      }, 'NetHost');
+      if(prevHopId) _ensureCyEdge(prevHopId, finalId, 'ROUTES_TO');
+      // Cross-link to existing Website nodes that match the hostname
+      if(hn){
+        cy.nodes().forEach(n=>{
+          const nd = n.data();
+          if(nd.type==='Website' || nd.type==='WebEndpoint'){
+            try{
+              const nodeHost = new URL(nd.url||nd.origin||'').hostname;
+              if(nodeHost === hn){
+                _ensureCyEdge(nd.id, finalId, 'RESOLVES_TO');
+              }
+            }catch{}
+          }
+        });
+      }
+    }
+    _bumpCounts();
+    toast(`${j.hops?.length||0} hops to ${j.target}`,'ok');
+    setStatus(`${j.hops?.length||0} hops`,'ok');
+    await refreshGraph({forceLayout:false, force:true});
+    // Try to focus the trace chain
+    try{
+      const last = (j.hops||[]).slice(-1)[0];
+      if(last && last.ip){
+        const id = `net:${last.ip}`;
+        const n = cy.getElementById(id);
+        if(n && n.length){
+          highlightNeighborhood(n);
+          openInspector(n);
+        }
+      }
+    }catch{}
+  }catch(e){ toast('Traceroute failed: '+e.message,'err'); setStatus('error','err'); }
+  finally{ hideLoading(); }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   DORK SEARCH (OSINT)
+   ════════════════════════════════════════════════════════════════════════ */
+async function loadDorkPresets(){
+  try{
+    const r = await fetch('/netscan/dork/search',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const j = await r.json();
+    _dorkPresets = j.presets || [];
+    const sel = document.getElementById('dork-preset');
+    if(sel){
+      sel.innerHTML = '<option value="">— custom query —</option>' +
+        _dorkPresets.map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join('');
+    }
+  }catch(e){ console.warn('dork presets load failed', e); }
+}
+function onDorkPresetChange(){
+  const v = document.getElementById('dork-preset').value;
+  if(v) document.getElementById('dork-query').placeholder = `(using preset "${v}")`;
+  else  document.getElementById('dork-query').placeholder = 'intitle:"index of" .env';
+}
+async function runDork(){
+  const preset = document.getElementById('dork-preset').value;
+  const query  = document.getElementById('dork-query').value.trim();
+  const site   = document.getElementById('dork-site').value.trim();
+  const max    = Number(document.getElementById('dork-max').value||15);
+  const fingerprint = document.getElementById('dork-fingerprint').checked;
+  const addToGraph  = document.getElementById('dork-add-graph').checked;
+  const saveToFabric= document.getElementById('dork-save-fabric').checked;
+  if(!preset && !query){ toast('Pick a preset or type a query','err'); return; }
+  showLoading(`Searching${preset?' ('+preset+')':''}…`);
+  setStatus(`dork search…`);
+  try{
+    const url = fingerprint ? '/netscan/dork/targeted' : '/netscan/dork/search';
+    const body = {preset, query, site, max_results:max};
+    if(fingerprint) body.fingerprint = true;
+    const r = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j = await r.json();
+    if(j.error){ toast('Dork error: '+j.error,'err'); setStatus('error','err'); return; }
+    const items = j.sites || j.results || [];
+    // Add results to graph as Website nodes
+    if(addToGraph && items.length){
+      _dorkResultsToGraph(items);
+    }
+    // Save to data fabric
+    if(saveToFabric && items.length){
+      _dorkResultsToFabric(items, j.query||preset||query);
+    }
+    showDorkOverlay(j.query||preset||query, items);
+    setStatus(`${items.length} hits · ${esc(j.query||'')}`,'ok');
+    if(fingerprint) await refreshGraph({forceLayout:false});
+  }catch(e){ toast('Dork search failed: '+e.message,'err'); setStatus('error','err'); }
+  finally{ hideLoading(); }
+}
+
+/* Add dork results as Website nodes to the graph */
+function _dorkResultsToGraph(results){
+  for(const r of results){
+    if(!r.url) continue;
+    let host = r.host || '';
+    if(!host) try{ host = new URL(r.url).hostname; }catch{}
+    const siteId = `dork:${host||r.url}`;
+    _ensureCyNode({
+      id: siteId, label: String(r.title||host||r.url).slice(0,60),
+      url: r.url, host: host, title: r.title||'',
+      snippet: (r.snippet||'').slice(0,200),
+      tech: r.tech||[], status: r.status||'',
+      source: 'dork',
+    }, 'Website');
+    // If we have tech tags, add them as metadata
+    if(r.tech && r.tech.length){
+      _ensureCyNode({...cy.getElementById(siteId).data(), tech: r.tech}, 'Website');
+    }
+  }
+  _bumpCounts();
+  // Run a quick layout for new nodes
+  try{
+    const newNodes = cy.nodes().filter(n=>n.hasClass('fresh'));
+    if(newNodes.length>0){
+      newNodes.layout({name:'cose', animate:false, fit:false, padding:60, randomize:true}).run();
+    }
+  }catch{}
+  toast(`Added ${results.length} dork hits to graph`,'ok');
+}
+
+/* Save dork results to data fabric */
+async function _dorkResultsToFabric(results, queryLabel){
+  const dsId = 'osint_dork';
+  try{
+    const records = results.map(r=>({
+      url: r.url||'', title: r.title||'', host: r.host||'',
+      snippet: (r.snippet||'').slice(0,500),
+      tech: r.tech||[], status: r.status||'',
+      query: queryLabel, discovered_at: new Date().toISOString(),
+    }));
+    const r = await fetch('/fabric/ingest',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        dataset_id: dsId, items: records,
+        source: 'dork_osint', tags: ['osint','dork',queryLabel.slice(0,40)],
+      }),
+    });
+    const j = await r.json();
+    if(j.error){ toast('Fabric save error: '+j.error,'err'); }
+    else { toast(`Saved ${j.ingested||results.length} dork results to fabric (${dsId})`,'ok'); }
+  }catch(e){ toast('Fabric save failed: '+e.message,'err'); }
+}
+function showDorkOverlay(title, results){
+  document.getElementById('dork-overlay-title').textContent = title;
+  document.getElementById('dork-overlay-meta').textContent = `${results.length} results`;
+  const body = document.getElementById('dork-overlay-body');
+  if(!results.length){
+    body.innerHTML = '<div style="color:var(--t3);font-size:11px;padding:18px;text-align:center">No results returned. Try a broader query, drop the site filter, or check connectivity to DuckDuckGo.</div>';
+  } else {
+    // Bulk actions bar
+    let bulkHtml = `<div style="display:flex;gap:5px;padding:4px 0;margin-bottom:4px;border-bottom:1px dashed var(--bd)">
+      <button data-dork-act="add-all" style="font-size:9.5px;color:var(--ac2);background:var(--bg);border:1px solid var(--ac2);border-radius:3px;padding:3px 8px;cursor:pointer">+ Add all to graph</button>
+      <button data-dork-act="save-fabric" style="font-size:9.5px;color:var(--ac5);background:var(--bg);border:1px solid var(--ac5);border-radius:3px;padding:3px 8px;cursor:pointer">↧ Save all to fabric</button>
+      <span style="flex:1"></span>
+      <span style="font-size:9px;color:var(--t3);align-self:center">${results.length} results</span>
+    </div>`;
+    body.innerHTML = bulkHtml + results.map((r,i)=>{
+      const techTags = (r.tech||[]).map(t=>`<span class="tag">${esc(t)}</span>`).join('');
+      return `
+      <div class="dr">
+        <div class="t">${esc(r.title||'(no title)')}</div>
+        <div class="u">${esc(r.url||'')}</div>
+        <div class="s">${esc((r.snippet||'').slice(0,300))}</div>
+        <div class="meta">
+          ${r.host?`<span>${esc(r.host)}</span>`:''}
+          ${r.status?`<span class="tag">HTTP ${esc(r.status)}</span>`:''}
+          ${techTags}
+        </div>
+        <div class="acts">
+          <button data-dork-act="open" data-dork-i="${i}">↗ open</button>
+          <button data-dork-act="scan" data-dork-i="${i}">scan</button>
+          <button data-dork-act="graph-one" data-dork-i="${i}">+ graph</button>
+          <button data-dork-act="copy" data-dork-i="${i}">copy url</button>
+          ${r.host?`<button data-dork-act="trace" data-dork-i="${i}">→ trace</button>`:''}
+        </div>
+      </div>`;
+    }).join('');
+  }
+  // Stash the results on window for the per-item buttons
+  window._dorkResults = results;
+  // Delegated handler — set once per render (overwriting any prior)
+  body.onclick = (ev)=>{
+    const btn = ev.target.closest('[data-dork-act]'); if(!btn) return;
+    const act = btn.getAttribute('data-dork-act');
+    const i   = Number(btn.getAttribute('data-dork-i')||-1);
+    if(act==='add-all'){
+      _dorkResultsToGraph(window._dorkResults||[]);
+      return;
+    }
+    if(act==='save-fabric'){
+      const title = document.getElementById('dork-overlay-title').textContent||'dork';
+      _dorkResultsToFabric(window._dorkResults||[], title);
+      return;
+    }
+    const item = (window._dorkResults||[])[i]; if(!item) return;
+    if(act==='open' && item.url){ window.open(item.url, '_blank'); }
+    else if(act==='scan'){ dorkFingerprintOne(i); }
+    else if(act==='graph-one'){
+      _dorkResultsToGraph([item]);
+    }
+    else if(act==='copy' && item.url){
+      try{ navigator.clipboard.writeText(item.url); toast('url copied','ok'); }
+      catch{ toast('copy failed','err'); }
+    }
+    else if(act==='trace' && item.host){
+      document.getElementById('trace-target').value = item.host;
+      const sec = document.getElementById('sec-trace');
+      if(sec && !sec.classList.contains('open')) secToggle('sec-trace');
+      toast('trace target set: '+item.host, 'ok');
+    }
+  };
+  document.getElementById('dork-overlay').classList.add('show');
+}
+function closeDorkOverlay(){ document.getElementById('dork-overlay').classList.remove('show'); }
+async function dorkFingerprintOne(i){
+  const r = (window._dorkResults||[])[i]; if(!r||!r.url) return;
+  toast(`fingerprinting ${r.host||r.url}…`);
+  try{
+    const res = await fetch('/netscan/target/tech',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:r.url})});
+    const j = await res.json();
+    if(j.error){ toast('error: '+j.error,'err'); return; }
+    toast(`${r.host}: ${(j.tech||[]).join(', ')||'(no tech)'}`,'ok');
+    await refreshGraph({forceLayout:false});
+  }catch(e){ toast('error: '+e.message,'err'); }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   NEW GRAPH (wipe everything)
+   ════════════════════════════════════════════════════════════════════════ */
+function newGraph(){
+  document.getElementById('newgraph-modal').classList.add('show');
+}
+function closeNewGraphModal(){
+  document.getElementById('newgraph-modal').classList.remove('show');
+}
+async function confirmNewGraph(){
+  closeNewGraphModal();
+  abortAllStreams();
+  showLoading('Wiping graph…');
+  setStatus('clearing all…');
+
+  // Immediately wipe the local graph so user sees it vanish
+  closeInspector();
+  _graphRaw = {nodes:[], edges:[]};
+  _lastNodeSig = '';
+  if(cy) cy.elements().remove();
+  updateCounts(); renderLegend();
+
+  // Suppress ALL refreshes (auto + manual) until we re-enable
+  _graphFrozenUntil = Infinity;
+
+  // Tell the server to wipe Neo4j
+  let serverOk = false;
+  try{
+    const r = await fetch('/netscan/graph/clear_all',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true})});
+    if(r.ok){
+      const j = await r.json();
+      if(j.error){
+        toast('Server clear returned error: '+j.error+' — local graph wiped','err');
+      } else {
+        toast(`Wiped ${j.deleted||0} nodes from Neo4j — fresh graph`,'ok');
+        serverOk = true;
+      }
+    } else {
+      toast(`Server returned ${r.status} — local graph wiped, Neo4j may still have nodes`,'err');
+    }
+  }catch(e){
+    toast('Server clear failed: '+e.message+' — local graph wiped','err');
+  }
+
+  // Wait a beat for Neo4j to propagate the delete, then unfreeze
+  const delay = serverOk ? 3000 : 8000;
+  setTimeout(()=>{
+    _graphFrozenUntil = 0;
+    setStatus('new graph — ready','ok');
+  }, delay);
+
+  setStatus(serverOk ? 'graph wiped' : 'local graph wiped (server may lag)','ok');
+  hideLoading();
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   AGENT OSINT  (LLM-assisted dork construction)
+   ════════════════════════════════════════════════════════════════════════ */
+const OSINT_CATEGORY_PROMPTS = {
+  general:          'Generate a set of Google dork queries for general reconnaissance on the target.',
+  exposed_services: 'Generate dork queries to find exposed web services, dashboards, admin panels, and management interfaces.',
+  sensitive_files:  'Generate dork queries to find exposed sensitive files like .env, .git, .sql, config files, backups, and private keys.',
+  login_pages:      'Generate dork queries to find login pages, admin panels, CMS backends, and authentication endpoints.',
+  api_endpoints:    'Generate dork queries to find exposed API documentation, Swagger/OpenAPI endpoints, GraphQL interfaces, and REST APIs.',
+  cloud_buckets:    'Generate dork queries to find exposed cloud storage: S3 buckets, Azure blobs, GCS buckets, and open directories.',
+  certificates:     'Generate dork queries related to TLS certificates, certificate transparency logs, and expired/misconfigured certs.',
+  subdomains:       'Generate dork queries to enumerate subdomains, virtual hosts, and related domains.',
+  email_harvest:    'Generate dork queries to find email addresses, contact pages, and staff directories.',
+  custom:           '',
+};
+
+async function runAgentOsint(){
+  const category = document.getElementById('osint-category').value;
+  const prompt   = document.getElementById('osint-prompt').value.trim();
+  const domain   = document.getElementById('osint-target-domain').value.trim();
+  const maxRes   = Number(document.getElementById('osint-max').value||20);
+  const doFP     = document.getElementById('osint-fingerprint').checked;
+  const doGraph  = document.getElementById('osint-graph').checked;
+  const doFabric = document.getElementById('osint-fabric').checked;
+  const model    = document.getElementById('osint-model').value || '';
+
+  if(!prompt && category==='custom'){ toast('Describe what you want to find','err'); return; }
+
+  const btn = document.getElementById('osint-run-btn');
+  const prog = document.getElementById('osint-progress');
+  const progText = document.getElementById('osint-progress-text');
+  btn.disabled = true; btn.textContent = 'Generating…';
+  prog.classList.add('live'); progText.textContent = 'asking LLM to craft dork queries…';
+
+  // Show the LLM output log panel
+  _openOsintLog();
+  _osintLog('system', 'Generating dork queries…');
+  _osintLog('system', `Category: ${category} | Domain: ${domain||'(any)'} | Prompt: ${prompt||'(category default)'}`);
+
+  // Countdown timer so the user knows it's not frozen
+  let _llmElapsed = 0;
+  const _llmTimer = setInterval(()=>{
+    _llmElapsed++;
+    progText.textContent = `asking LLM to craft dork queries… (${_llmElapsed}s)`;
+    if(_llmElapsed >= 120){
+      progText.textContent = 'LLM is taking a long time — check Ollama is running';
+    }
+  }, 1000);
+  // Step 1: Ask LLM to generate dork queries
+  const categoryHint = OSINT_CATEGORY_PROMPTS[category] || '';
+  const llmPromptParts = [
+    'You are an OSINT and Google dorking expert.',
+    categoryHint,
+    prompt ? 'User goal: ' + prompt : '',
+    domain ? 'Target domain: ' + domain : '',
+    '',
+    'Generate 5-10 effective, diverse Google dork queries that would find different types of results.',
+    'Make them specific and varied — use different operators (intitle, inurl, filetype, site, intext, ext, etc).',
+    'Return ONLY a JSON array of query strings, nothing else.',
+    'Example: ["intitle:\\"index of\\" .env", "site:example.com filetype:sql", "inurl:admin intext:password"]',
+  ].filter(Boolean).join('\n');
+
+  let dorkQueries = [];
+  try{
+    const llmBody = {
+      prompt: llmPromptParts,
+      system: 'Return ONLY a valid JSON array of Google dork query strings. No explanation, no markdown fences, just the JSON array.',
+      max_tokens: 1200,
+    };
+    if(model) llmBody.model = model;
+
+    _osintLog('llm-req', 'Sending prompt to LLM…');
+
+    const _llmAbort = new AbortController();
+    const _llmTimeout = setTimeout(()=>_llmAbort.abort(), 120000);
+    let lr;
+    try{
+      lr = await fetch('/llm/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(llmBody), signal: _llmAbort.signal});
+    }catch(abortErr){
+      clearTimeout(_llmTimeout); clearInterval(_llmTimer);
+      if(abortErr.name==='AbortError'){
+        _osintLog('error', 'LLM request timed out after 120s — is Ollama running?');
+        toast('LLM timed out — check Ollama is online','err');
+      } else {
+        _osintLog('error', 'LLM fetch failed: ' + abortErr.message);
+        toast('LLM call failed: '+abortErr.message,'err');
+      }
+      _resetOsintBtn(btn, prog);
+      return;
+    }
+    clearTimeout(_llmTimeout); clearInterval(_llmTimer);
+
+    const lj = await lr.json();
+    if(lj.error){
+      _osintLog('error', 'LLM error: ' + (lj.error||'unknown'));
+      toast('LLM error: '+lj.error,'err');
+      _resetOsintBtn(btn, prog);
+      return;
+    }
+    const rawText = (lj.text||lj.response||lj.content||'').trim();
+    if(!rawText){
+      _osintLog('error', 'LLM returned empty response — Ollama may be offline or model not loaded');
+      toast('LLM returned empty — check Ollama','err');
+      _resetOsintBtn(btn, prog);
+      return;
+    }
+    _osintLog('llm-raw', rawText);
+
+    // Parse JSON array from response (handle markdown fences)
+    const cleaned = rawText.replace(/```json\n?|```\n?/g,'').trim();
+    try{ dorkQueries = JSON.parse(cleaned); }
+    catch{
+      // Try to extract array from the text
+      const m = cleaned.match(/\[[\s\S]*\]/);
+      if(m) dorkQueries = JSON.parse(m[0]);
+      else {
+        _osintLog('error', 'Could not parse JSON from LLM response. Raw text shown above.');
+        toast('LLM did not return valid JSON — try again','err');
+        _resetOsintBtn(btn, prog);
+        return;
+      }
+    }
+    if(!Array.isArray(dorkQueries) || !dorkQueries.length){
+      _osintLog('error', 'LLM returned an empty array');
+      toast('LLM returned empty queries','err');
+      _resetOsintBtn(btn, prog);
+      return;
+    }
+
+    _osintLog('system', `✓ Generated ${dorkQueries.length} queries:`);
+    dorkQueries.forEach((q,i) => _osintLog('query', `  ${i+1}. ${q}`));
+    progText.textContent = `${dorkQueries.length} queries generated — running searches…`;
+  }catch(e){
+    clearInterval(_llmTimer);
+    _osintLog('error', 'LLM call failed: ' + e.message);
+    toast('LLM call failed: '+e.message,'err');
+    _resetOsintBtn(btn, prog);
+    return;
+  }
+
+  // Step 2: Run each dork query
+  let allResults = [];
+  for(let qi=0; qi<dorkQueries.length; qi++){
+    const q = dorkQueries[qi];
+    _osintLog('search', `[${qi+1}/${dorkQueries.length}] Searching: ${q}`);
+    progText.textContent = `query ${qi+1}/${dorkQueries.length}: ${q.slice(0,50)}…`;
+    try{
+      const dorkUrl = doFP ? '/netscan/dork/targeted' : '/netscan/dork/search';
+      const body = {query: q, max_results: maxRes};
+      if(domain) body.site = domain;
+      if(doFP) body.fingerprint = true;
+      const dr = await fetch(dorkUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const dj = await dr.json();
+      if(dj.error){
+        _osintLog('error', `  ✗ ${dj.error}`);
+        continue;
+      }
+      const items = dj.sites || dj.results || [];
+      _osintLog('result', `  → ${items.length} results`);
+      // Tag each result with the query that found it
+      for(const item of items) item._osint_query = q;
+      allResults = allResults.concat(items);
+    }catch(e){
+      _osintLog('error', `  ✗ ${e.message}`);
+    }
+    // Small delay between queries to be polite
+    if(qi < dorkQueries.length-1) await new Promise(r=>setTimeout(r, 600));
+  }
+
+  // Deduplicate by URL
+  const seen = new Set();
+  allResults = allResults.filter(r=>{ if(!r.url || seen.has(r.url)) return false; seen.add(r.url); return true; });
+
+  _osintLog('system', `─── Done: ${allResults.length} unique results from ${dorkQueries.length} queries ───`);
+
+  // Step 3: Add to graph / fabric
+  if(doGraph && allResults.length) _dorkResultsToGraph(allResults);
+  if(doFabric && allResults.length) _dorkResultsToFabric(allResults, `agent_osint:${category}:${(prompt||domain||'').slice(0,40)}`);
+
+  // Show results
+  showDorkOverlay(`Agent OSINT: ${category}${domain?' · '+domain:''}`, allResults);
+  progText.textContent = `done · ${allResults.length} unique results from ${dorkQueries.length} queries`;
+  toast(`Agent OSINT complete · ${allResults.length} results`,'ok');
+  setStatus(`agent osint · ${allResults.length} results`,'ok');
+  _resetOsintBtn(btn, prog);
+  if(doFP) await refreshGraph({forceLayout:false});
+}
+
+function _resetOsintBtn(btn, prog){
+  btn.disabled = false; btn.textContent = '✦ Generate & search';
+  setTimeout(()=>prog.classList.remove('live'), 3000);
+}
+
+/* ── Agent OSINT log panel (shows LLM output live) ────────────────────── */
+function _openOsintLog(){
+  let el = document.getElementById('osint-log');
+  if(!el){
+    // Create the log container inside the agent OSINT section
+    const sec = document.querySelector('#sec-agent-osint .sb');
+    if(!sec) return;
+    el = document.createElement('div');
+    el.id = 'osint-log';
+    el.style.cssText = 'background:var(--bg);border:1px solid var(--bd);border-radius:3px;max-height:220px;overflow-y:auto;padding:6px 8px;font:10px/1.5 ui-monospace,Menlo,monospace;margin-top:4px;display:flex;flex-direction:column;gap:1px';
+    sec.appendChild(el);
+  }
+  el.innerHTML = '';
+  el.style.display = 'flex';
+}
+function _osintLog(kind, text){
+  const el = document.getElementById('osint-log');
+  if(!el) return;
+  const line = document.createElement('div');
+  line.style.wordBreak = 'break-all';
+  const colors = {
+    system:'var(--t3)', error:'var(--ac4)', 'llm-req':'var(--ac5)',
+    'llm-raw':'var(--ac3)', query:'var(--ac)', search:'var(--ac2)',
+    result:'var(--ac2)',
+  };
+  line.style.color = colors[kind] || 'var(--t1)';
+  if(kind==='llm-raw'){
+    line.style.cssText += ';background:var(--s2);padding:4px 6px;border-radius:2px;white-space:pre-wrap;max-height:120px;overflow-y:auto;border:1px solid var(--bd);margin:2px 0';
+  }
+  line.textContent = text;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   CYTOSCAPE EVENTS
+   ════════════════════════════════════════════════════════════════════════ */
+function bindCyEvents(){
+  cy.on('tap','node', evt=>{
+    if(evt.originalEvent && (evt.originalEvent.ctrlKey||evt.originalEvent.metaKey)) return;
+    const n = evt.target;
+    highlightNeighborhood(n);
+    openInspector(n);
+  });
+  cy.on('tap', evt=>{
+    if(evt.target===cy){ clearHighlight(); hideCtxMenu(); }
+  });
+  cy.on('cxttap','node', evt=>{
+    const n = evt.target;
+    const pos = evt.originalEvent;
+    showCtxMenu(n, pos.clientX, pos.clientY);
+    evt.originalEvent.preventDefault();
+  });
+  cy.on('cxttap', evt=>{ if(evt.target===cy) hideCtxMenu(); });
+  window.addEventListener('scroll', hideCtxMenu, true);
+  window.addEventListener('keydown', e=>{ if(e.key==='Escape'){ hideCtxMenu(); closeInspector(); ftClose(); closeDorkOverlay(); closeNewGraphModal(); }});
+}
+function clearHighlight(){ if(!cy) return; cy.elements().removeClass('faded highlight'); }
+function highlightNeighborhood(n){
+  const hood = n.closedNeighborhood();
+  cy.elements().addClass('faded').removeClass('highlight');
+  hood.removeClass('faded').addClass('highlight');
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   INSPECTOR DRAWER  (tabs: Actions / Run cap / Properties / Neighbours)
+   ════════════════════════════════════════════════════════════════════════ */
+let _currentInspNode = null;     // raw node data for the current selection
+let _currentInspNeighbours = []; // 1-hop neighbours from server
+
+function openInspector(n){
+  const d = n.data();
+  _inspectedId = d.id;
+  _currentInspNode = d;
+  document.getElementById('insp').classList.add('show');
+  const typeEl = document.getElementById('insp-type');
+  typeEl.textContent = d.type||'?';
+  typeEl.style.background = NODE_COLORS[d.type]||NODE_COLORS.Unknown;
+  document.getElementById('insp-title').textContent = d.label||d.id;
+  // Render all panes (cheap — they're tiny)
+  renderInspActions(d);
+  renderInspProps(d);
+  renderInspNeighbours([]);
+  renderInspRunCap(d);
+  // Hide last-action result until something runs
+  const sec = document.getElementById('insp-result-sec');
+  if(sec) sec.style.display = 'none';
+  fetchNodeDetail(d.id);
+}
+function closeInspector(){
+  _inspectedId = null;
+  _currentInspNode = null;
+  document.getElementById('insp').classList.remove('show');
+  clearHighlight();
+}
+function inspTab(name){
+  document.querySelectorAll('#insp .tabs button').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
+  document.querySelectorAll('#insp .tabpane').forEach(p=>p.classList.toggle('active', p.id==='tab-'+name));
+}
+async function fetchNodeDetail(id){
+  try{
+    const r = await fetch('/netscan/node/get',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+    const j = await r.json();
+    if(_inspectedId!==id) return;
+    if(j && !j.error){
+      // Merge server-side props onto the in-memory node
+      _currentInspNode = {...(_currentInspNode||{}), ...(j.node||{})};
+      _currentInspNeighbours = j.neighbours || [];
+      renderInspProps(_currentInspNode);
+      renderInspNeighbours(_currentInspNeighbours);
+      renderInspRunCap(_currentInspNode);   // refresh draggable pills
+    }
+  }catch{}
+}
+
+/* ── Actions pane ─────────────────────────────────────────────────────── */
+function renderInspActions(d){
+  const parts = [];
+  if(canSsh(d.type, d)) parts.push(`<button class="hot" onclick="graphSsh('${esc(d.id)}')">→ SSH here (inline terminal)</button>`);
+  if(canSsh(d.type, d)) parts.push(`<button onclick="sshToExecPanel('${esc(d.id)}')">Open in Exec panel</button>`);
+  parts.push(`<button onclick="actScanPorts('${esc(d.id)}','quick')">Quick port scan (6)</button>`);
+  parts.push(`<button onclick="actScanPorts('${esc(d.id)}','common')">Scan common ports</button>`);
+  parts.push(`<button onclick="actScanPorts('${esc(d.id)}','1-1024')">Scan ports 1–1024</button>`);
+  parts.push(`<button onclick="actScanPortsStream('${esc(d.id)}','common')">▶ Stream port scan</button>`);
+  parts.push(`<button onclick="actFingerprint('${esc(d.id)}')">Full fingerprint (ports+banner+TLS)</button>`);
+  if(d.type==='Website'||d.type==='WebEndpoint'||(d.open_ports&&(d.open_ports.includes?.(80)||d.open_ports.includes?.(443)))){
+    parts.push(`<button onclick="actScanTech('${esc(d.id)}')">HTTP fingerprint</button>`);
+  } else {
+    parts.push(`<button onclick="actScanTech('${esc(d.id)}')">Try HTTP fingerprint</button>`);
+  }
+  parts.push(`<button onclick="actBanner('${esc(d.id)}')">Banner grab (asks port)</button>`);
+  parts.push(`<button onclick="actTls('${esc(d.id)}')">TLS cert inspect (asks port)</button>`);
+  parts.push(`<button onclick="actTraceFromNode('${esc(d.id)}')">Trace route to this</button>`);
+  parts.push(`<button onclick="actTraffic('${esc(d.id)}',5,false)">Monitor traffic (ss)</button>`);
+  parts.push(`<button onclick="actTraffic('${esc(d.id)}',5,true)">Capture (tcpdump 5s)</button>`);
+  if(d.type==='DockerHost') parts.push(`<button onclick="actDockerRescan('${esc(d.id)}')">Rescan containers</button>`);
+  parts.push(`<button onclick="copyNodeId('${esc(d.id)}')">Copy node id</button>`);
+  // ── LLM-powered analysis ──
+  parts.push(`<hr style="border:none;border-top:1px solid var(--b2);margin:6px 0">`);
+  parts.push(`<button class="hot" onclick="actLlmAnalyze('${esc(d.id)}')">✦ LLM: Analyze this node</button>`);
+  parts.push(`<button onclick="actLlmRecon('${esc(d.id)}')">✦ LLM: Suggest recon plan</button>`);
+  parts.push(`<button onclick="actLlmExplain('${esc(d.id)}')">✦ LLM: Explain findings</button>`);
+  document.getElementById('tab-actions').innerHTML = `<div class="sec"><h4>actions</h4><div class="act-col">${parts.join('')}</div></div>`;
+}
+
+/* ── Properties pane ──────────────────────────────────────────────────── */
+function renderInspProps(d){
+  const skip = new Set(['id','label','type']);
+  const propsHtml = Object.entries(d).filter(([k,v])=>!skip.has(k)&&(typeof v==='string'||typeof v==='number'||typeof v==='boolean'||Array.isArray(v)))
+    .map(([k,v])=>`<span class="k">${esc(k)}</span><span class="v">${esc(Array.isArray(v)?v.join(', '):v)}</span>`).join('');
+  document.getElementById('tab-props').innerHTML =
+    `<div class="sec"><h4>properties</h4><div class="props">${propsHtml||'<em style="color:var(--t3)">none</em>'}</div></div>`;
+}
+
+/* ── Neighbours pane ──────────────────────────────────────────────────── */
+function renderInspNeighbours(neighbours){
+  const neighHtml = (neighbours&&neighbours.length)
+    ? `<div class="neigh">${neighbours.map(n=>{
+         const nb  = (n && n.neighbour) || n || {};
+         const nid = nb.id || '';
+         const lbl = nb.label || nb.hostname || nb.name || nb.origin || nid || '(unknown)';
+         const typ = n.neighbour_type || nb.type || '';
+         const rel = n.rel || '';
+         const dir = n.direction==='in' ? '←' : '→';
+         const arrow = `${dir} ${rel}${typ?' · '+typ:''}`;
+         return `<a onclick="focusOn('${esc(nid)}')" title="${esc(nid)}"><span class="rel">${esc(arrow)}</span><span>${esc(lbl)}</span></a>`;
+       }).join('')}</div>`
+    : '<div style="color:var(--t3);font-size:10px;padding:4px 0">no neighbours</div>';
+  document.getElementById('tab-neigh').innerHTML = `<div class="sec"><h4>1-hop neighbours</h4>${neighHtml}</div>`;
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   INSPECTOR — RUN-CAP PANE  (drag node properties into cap inputs)
+   ════════════════════════════════════════════════════════════════════════ */
+let _runCapDef = null;        // currently-loaded cap definition
+let _runCapInputs = {};       // fname -> current value
+
+function _capRunRelevantCaps(d){
+  /* Choose caps that make sense for this node type. We bias the menu so the
+     user sees the right tools first, but anything in _capRegistry is pickable
+     via the "all caps" option. */
+  const out = [];
+  const t = d.type||'';
+  // Type-specific defaults
+  const byType = {
+    NetHost:    ['netscan.target.ports','netscan.target.ports.stream','netscan.target.fingerprint',
+                  'netscan.target.tech','netscan.target.banner','netscan.target.tls',
+                  'netscan.target.traceroute','netscan.target.traffic'],
+    NetPort:    ['netscan.target.banner','netscan.target.tls','netscan.target.tech'],
+    Website:    ['netscan.target.tech','netscan.web.scan','netscan.web.stream','netscan.target.fingerprint'],
+    WebEndpoint:['netscan.target.tech','netscan.web.scan','netscan.web.stream'],
+    DockerHost: ['netscan.docker.scan','netscan.target.ports','netscan.target.fingerprint'],
+    PVENode:    ['netscan.proxmox.scan','netscan.target.ports'],
+    K8sNode:    ['netscan.k8s.scan','netscan.target.ports'],
+    NetHop:     ['netscan.target.traceroute','netscan.target.ports','netscan.target.tech'],
+    Subnet:     ['netscan.lan.scan','netscan.lan.stream'],
+  };
+  (byType[t]||[]).forEach(c=>{ if(_capRegistry[c]) out.push(c); });
+  // Plus any other netscan/exec caps
+  for(const k of Object.keys(_capRegistry).sort()){
+    if(out.includes(k)) continue;
+    if(k.startsWith('netscan.') || k.startsWith('exec.')) out.push(k);
+  }
+  return out;
+}
+
+function renderInspRunCap(d){
+  const pane = document.getElementById('tab-runcap');
+  if(!d){ pane.innerHTML='<em style="color:var(--t3)">no node selected</em>'; return; }
+  const caps = _capRunRelevantCaps(d);
+  const opts = caps.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  // Build draggable property pills
+  const pillEntries = [];
+  for(const [k,v] of Object.entries(d)){
+    if(['id','label','type'].includes(k)) continue;
+    if(v==null) continue;
+    const val = Array.isArray(v)?v.join(','):String(v);
+    if(!val) continue;
+    pillEntries.push({k, v:val});
+  }
+  // Synthesise convenience fields for nodes that have them
+  if(d.type==='NetPort'){
+    if(d.ip && d.port){
+      pillEntries.unshift({k:'host', v:String(d.ip)});
+      pillEntries.unshift({k:'port', v:String(d.port)});
+    }
+  } else if(d.type==='WebEndpoint' || d.type==='Website'){
+    const u = d.url||d.origin;
+    if(u) pillEntries.unshift({k:'url', v:String(u)});
+  } else if(d.type==='NetHost' || d.type==='DockerHost' || d.type==='PVENode' || d.type==='K8sNode' || d.type==='NetHop'){
+    if(d.ip)       pillEntries.unshift({k:'host', v:String(d.ip)});
+    if(d.hostname) pillEntries.unshift({k:'host', v:String(d.hostname)});
+  }
+  // Dedup pills
+  const seen = new Set();
+  const pills = pillEntries.filter(p=>{ const k=p.k+'='+p.v; if(seen.has(k)) return false; seen.add(k); return true; });
+
+  pane.innerHTML = `
+    <div class="sec">
+      <h4>run capability on this node</h4>
+      <div class="hint" style="margin-bottom:6px">
+        Pick a cap, then <b>drag any property below into the input fields</b>. Fields auto-prefill with the most likely value. Click <b>Run</b> to execute via HTTP.
+      </div>
+      <div class="fi">
+        <label>Capability</label>
+        <select class="ip" id="runcap-sel" onchange="onRunCapSelect()">
+          <option value="">— pick a cap —</option>
+          ${opts}
+        </select>
+      </div>
+      <div id="runcap-desc" style="font-size:10px;color:var(--t3);margin:4px 0 6px;line-height:1.4"></div>
+      <div id="runcap-fields" style="display:flex;flex-direction:column;gap:5px;margin-bottom:8px"></div>
+      <button class="btn" id="runcap-go" onclick="runCapNow()" disabled style="margin-bottom:10px">Run</button>
+      <div style="font-size:9px;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">Drag node props ↓ into a field above</div>
+      <div id="runcap-pills" style="display:flex;flex-wrap:wrap;gap:3px">
+        ${pills.map(p=>`<span class="prop-pill" draggable="true" data-pk="${esc(p.k)}" data-pv="${esc(p.v)}" ondragstart="capPillDragStart(event)" title="${esc(p.k)}: ${esc(p.v)}"><span class="pk">${esc(p.k)}=</span>${esc(p.v.slice(0,18))}${p.v.length>18?'…':''}</span>`).join('')}
+      </div>
+    </div>
+  `;
+  // If a cap was already selected for this node type, auto-pick first one
+  const sel = document.getElementById('runcap-sel');
+  if(sel && caps.length){ sel.value = caps[0]; onRunCapSelect(); }
+}
+
+function capPillDragStart(e){
+  const pk = e.target.getAttribute('data-pk')||'';
+  const pv = e.target.getAttribute('data-pv')||'';
+  // Send both the value (text/plain) and a structured payload
+  e.dataTransfer.setData('text/plain', pv);
+  e.dataTransfer.setData('application/x-vera-prop', JSON.stringify({k:pk, v:pv}));
+  e.dataTransfer.effectAllowed = 'copy';
+  e.target.classList.add('dragging');
+  setTimeout(()=>e.target.classList.remove('dragging'), 600);
+  // Highlight ANY field that "wants" this prop name
+  document.querySelectorAll('.cap-input').forEach(el=>{
+    if(el.dataset.fname===pk || _propKeyMatchesField(pk, el.dataset.fname||'')) el.classList.add('drop-ok');
+  });
+  setTimeout(()=>document.querySelectorAll('.cap-input.drop-ok').forEach(el=>el.classList.remove('drop-ok')), 4000);
+}
+
+function _propKeyMatchesField(pk, fname){
+  if(!pk||!fname) return false;
+  if(pk===fname) return true;
+  // Common synonyms
+  const syn = {
+    host: ['target','ip','hostname'],
+    ip:   ['host','target'],
+    hostname: ['host','target'],
+    url:  ['target','origin'],
+    origin: ['url','target'],
+    port: ['port','ports'],
+    cidr: ['cidr','network'],
+    subnet: ['cidr','subnet','network'],
+  };
+  return (syn[pk]||[]).includes(fname) || (syn[fname]||[]).includes(pk);
+}
+
+function onRunCapSelect(){
+  const sel = document.getElementById('runcap-sel');
+  const cap = sel.value;
+  const def = _capRegistry[cap];
+  _runCapDef = def || null;
+  const desc = document.getElementById('runcap-desc');
+  const fields = document.getElementById('runcap-fields');
+  const btn = document.getElementById('runcap-go');
+  if(!def){ desc.textContent=''; fields.innerHTML=''; btn.disabled=true; return; }
+  desc.textContent = def.description || '';
+  // Build inputs from parsed parameters
+  _runCapInputs = {};
+  fields.innerHTML = (def.params||[]).map(p=>{
+    const fname = p.name;
+    if(fname==='trace_id') return '';
+    // Try to prefill from the inspected node
+    const prefill = _runCapPrefillFor(fname, _currentInspNode||{});
+    if(prefill!==undefined && prefill!==null && prefill!=='') _runCapInputs[fname] = String(prefill);
+    const reqMark = p.required?'<span style="color:var(--ac4);margin-left:3px">*</span>':'';
+    return `
+      <div class="fi" style="position:relative">
+        <label style="display:flex;align-items:center;gap:4px">
+          ${esc(fname)}
+          <span style="color:var(--t3);font-size:8.5px">${esc(p.type||'')}</span>
+          ${reqMark}
+        </label>
+        <input class="ip cap-input"
+          data-fname="${esc(fname)}"
+          value="${esc(prefill==null?'':String(prefill))}"
+          placeholder="${esc(p.default!=null?String(p.default):fname)}"
+          ondragover="capInputDragOver(event,this)"
+          ondragleave="capInputDragLeave(event,this)"
+          ondrop="capInputDrop(event,this)"
+          oninput="_runCapInputs['${esc(fname)}'] = this.value">
+      </div>`;
+  }).join('') || '<em style="color:var(--t3);font-size:10px">No documented inputs — runs with no body.</em>';
+  btn.disabled = false;
+}
+
+function _runCapPrefillFor(fname, d){
+  if(!d) return '';
+  if(fname==='host'){ return d.ip || d.hostname || d.host || d.name || d.origin || ''; }
+  if(fname==='target'){ return d.ip || d.hostname || d.host || d.name || d.origin || ''; }
+  if(fname==='ip'){ return d.ip || ''; }
+  if(fname==='url'){ return d.url || d.origin || ''; }
+  if(fname==='origin'){ return d.origin || d.url || ''; }
+  if(fname==='cidr'){ return d.subnet || d.cidr || ''; }
+  if(fname==='port' && d.port!=null) return d.port;
+  if(fname==='host_id' && d.host_id) return d.host_id;
+  return d[fname] || '';
+}
+
+function capInputDragOver(e, el){
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+  el.classList.add('drop-hover');
+}
+function capInputDragLeave(e, el){ el.classList.remove('drop-hover'); }
+function capInputDrop(e, el){
+  e.preventDefault();
+  el.classList.remove('drop-hover','drop-ok');
+  let val = '';
+  try{
+    const j = e.dataTransfer.getData('application/x-vera-prop');
+    if(j){ val = (JSON.parse(j).v)||''; }
+  }catch{}
+  if(!val) val = e.dataTransfer.getData('text/plain') || '';
+  if(val){
+    el.value = val;
+    _runCapInputs[el.dataset.fname] = val;
+    el.classList.add('drop-ok');
+    setTimeout(()=>el.classList.remove('drop-ok'), 900);
+  }
+}
+
+async function runCapNow(){
+  if(!_runCapDef){ toast('Pick a cap','err'); return; }
+  const def = _runCapDef;
+  const btn = document.getElementById('runcap-go');
+  btn.disabled = true; btn.textContent = 'Running…';
+  // Coerce numeric/boolean inputs
+  const body = {};
+  for(const p of (def.params||[])){
+    const v = _runCapInputs[p.name];
+    if(v===undefined || v===null || v==='') continue;
+    if(p.type==='int' || p.type==='integer'){ const n = Number(v); if(!Number.isNaN(n)) body[p.name] = Math.trunc(n); }
+    else if(p.type==='float' || p.type==='number'){ const n = Number(v); if(!Number.isNaN(n)) body[p.name] = n; }
+    else if(p.type==='bool' || p.type==='boolean'){ body[p.name] = (v==='true'||v===true||v==='1'||v==='on'); }
+    else body[p.name] = v;
+  }
+  showInspResult('running '+def.name+'…');
+  setStatus('running '+def.name+'…');
+  try{
+    const method = (def.http_method||'POST').toUpperCase();
+    const path = def.http_path || '/'+def.name.replace(/\./g,'/');
+    let r;
+    if(method==='GET'){
+      const qs = new URLSearchParams(body).toString();
+      r = await fetch(path+(qs?'?'+qs:''));
+    } else {
+      r = await fetch(path,{method, headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    }
+    const j = await r.json();
+    showInspResult(j, !!j.error);
+    if(j.error){ toast('cap error: '+j.error,'err'); setStatus('error','err'); }
+    else { toast('cap done','ok'); setStatus(def.name+' done','ok'); refreshGraph(); }
+  }catch(e){ showInspResult('Error: '+e.message, true); toast('cap failed','err'); }
+  finally{ btn.disabled = false; btn.textContent = 'Run'; }
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   PER-NODE QUICK ACTIONS  (Actions tab buttons)
+   ════════════════════════════════════════════════════════════════════════ */
+function _hostOfNode(d){
+  if(!d) return '';
+  const direct = d.ip || d.hostname || d.host || d.name || d.origin;
+  if(direct) return String(direct);
+  const id = String(d.id||'');
+  const m = id.match(/^(?:net|docker|pve_node|k8s_node|hop):(.+?)(?::\d+)?$/);
+  if(m) return m[1];
+  return id;
+}
+function _urlOfNode(d){
+  if(d.type==='Website') return d.origin||d.url;
+  if(d.type==='WebEndpoint') return d.url||d.origin;
+  return '';
+}
+function canSsh(type, d){
+  return ['NetHost','DockerHost','PVENode','K8sNode','NetHop'].includes(type) || (d&&(d.ip||d.hostname||d.host));
+}
+function focusOn(id){
+  const n = cy.getElementById(id); if(!n||!n.length) return;
+  cy.animate({center:{eles:n}, zoom:Math.max(cy.zoom(),1), duration:300});
+  openInspector(n);
+  highlightNeighborhood(n);
+}
+function copyNodeId(id){
+  try{ navigator.clipboard.writeText(id); toast('copied '+id,'ok'); }catch{ toast(id); }
+}
+function showInspResult(content, isErr){
+  const sec = document.getElementById('insp-result-sec');
+  const box = document.getElementById('insp-result');
+  if(!sec||!box) return;
+  sec.style.display='';
+  box.className = 'result-box'+(isErr?' err':'');
+  box.textContent = typeof content==='string'?content:JSON.stringify(content,null,2);
+}
+
+async function actScanPorts(id, ports){
+  const n = cy.getElementById(id); if(!n||!n.length) return;
+  const d = n.data();
+  const host = _hostOfNode(d);
+  if(!host){ toast('no host/ip on this node','err'); return; }
+  setStatus(`scanning ports on ${host}…`); showInspResult('running…');
+  try{
+    const r = await fetch('/netscan/target/ports',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host, ports, update_graph:true})});
+    const j = await r.json();
+    if(j.error){ showInspResult(j.error, true); setStatus('error','err'); return; }
+    const lines = [`Host: ${j.host}`,`Scanned: ${j.scanned} ports in ${j.elapsed_ms}ms`,`Open: ${(j.open||[]).length}`];
+    for(const o of j.open||[]) lines.push(`  ${o.port}/tcp${o.hint?'  ('+o.hint+')':''}`);
+    showInspResult(lines.join('\n'));
+    setStatus('ok','ok');
+    refreshGraph();
+  }catch(e){ showInspResult(String(e),true); setStatus('error','err'); }
+}
+
+async function actScanPortsStream(id, ports){
+  const n = cy.getElementById(id); if(!n||!n.length) return;
+  const d = n.data();
+  const host = _hostOfNode(d);
+  if(!host){ toast('no host/ip on this node','err'); return; }
+  setStatus(`stream port scan on ${host}…`);
+  showInspResult('streaming…');
+  _showStreamBanner(`Port scan · ${host}`);
+  let opened = [];
+  await streamSSE('/netscan/target/ports/stream', {host, ports}, (ev, dat)=>{
+    if(ev==='start'){ showInspResult(`probing ${dat.ports} ports…`); }
+    else if(ev==='port'){
+      opened.push(`${dat.port}/tcp${dat.hint?'  ('+dat.hint+')':''}`);
+      showInspResult(`open so far (${opened.length}):\n` + opened.join('\n'));
+      // Live: add the port node to the graph
+      const ip = dat.ip;
+      const hostId = `net:${ip}`;
+      const pid = `port:${ip}:${dat.port}`;
+      _ensureCyNode({id:pid, label:`${dat.port}/tcp`, port:dat.port, ip, hint:dat.hint||'', name:String(dat.port)}, 'NetPort');
+      _ensureCyEdge(hostId, pid, 'EXPOSES');
+      _bumpCounts();
+    }
+    else if(ev==='progress'){ setStatus(`${dat.done}/${dat.total} probed`); }
+    else if(ev==='done'){
+      showInspResult(`done · ${dat.scanned} probed · ${(dat.open||[]).length} open\n` + (dat.open||[]).map(p=>`  ${p}/tcp`).join('\n'));
+      setStatus('port scan done','ok');
+    }
+    else if(ev==='error'){ showInspResult(dat.error||'error', true); setStatus('error','err'); }
+  });
+}
+
+async function actScanTech(id){
+  const n = cy.getElementById(id); if(!n||!n.length) return;
+  const d = n.data();
+  const body = {};
+  const url = _urlOfNode(d);
+  if(url) body.url = url;
+  else body.host = _hostOfNode(d);
+  if(!body.url && !body.host){ toast('no url/host on node','err'); return; }
+  setStatus(`fingerprinting ${body.url||body.host}…`); showInspResult('running…');
+  try{
+    const r = await fetch('/netscan/target/tech',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j = await r.json();
+    if(j.error){ showInspResult(j.error, true); setStatus('error','err'); return; }
+    const lines = [
+      `URL   : ${j.final_url||''}`,
+      `Status: ${j.status||'?'}`,
+      `Title : ${j.title||'—'}`,
+      `Tech  : ${(j.tech||[]).join(', ')||'—'}`,
+      ``,`Headers:`,
+    ];
+    for(const [k,v] of Object.entries(j.headers||{})) lines.push(`  ${k}: ${v}`);
+    showInspResult(lines.join('\n'));
+    setStatus('ok','ok');
+  }catch(e){ showInspResult(String(e),true); setStatus('error','err'); }
+}
+
+async function actBanner(id){
+  const n = cy.getElementById(id); if(!n||!n.length) return;
+  const d = n.data();
+  let port = d.port;
+  let host = _hostOfNode(d);
+  if(!port){
+    const ans = prompt(`Banner grab on ${host}: enter port`, '80');
+    if(!ans) return;
+    port = Number(ans);
+  }
+  if(!host || !port){ toast('need host+port','err'); return; }
+  setStatus(`banner ${host}:${port}…`); showInspResult('running…');
+  try{
+    const r = await fetch('/netscan/target/banner',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host, port})});
+    const j = await r.json();
+    if(j.error){ showInspResult(j.error, true); setStatus('error','err'); return; }
+    const lines = [`Host: ${j.host}:${j.port}`, `Connected: ${j.ok}`];
+    if(j.parsed && Object.keys(j.parsed).length){
+      lines.push('','Parsed:');
+      for(const [k,v] of Object.entries(j.parsed)) lines.push(`  ${k}: ${v}`);
+    }
+    if(j.banner){ lines.push('','Banner:', '─'.repeat(40), j.banner.slice(0,800)); }
+    showInspResult(lines.join('\n'));
+    setStatus('ok','ok'); refreshGraph();
+  }catch(e){ showInspResult(String(e),true); setStatus('error','err'); }
+}
+
+async function actTls(id){
+  const n = cy.getElementById(id); if(!n||!n.length) return;
+  const d = n.data();
+  let port = d.port || 443;
+  let host = _hostOfNode(d);
+  if(d.type==='NetHost' || d.type==='WebEndpoint' || d.type==='Website'){
+    if(d.type!=='NetPort'){
+      const ans = prompt(`TLS inspect on ${host}: enter port`, '443');
+      if(!ans) return;
+      port = Number(ans);
+    }
+  }
+  if(!host || !port){ toast('need host+port','err'); return; }
+  setStatus(`TLS ${host}:${port}…`); showInspResult('running…');
+  try{
+    const r = await fetch('/netscan/target/tls',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host, port})});
+    const j = await r.json();
+    if(j.error){ showInspResult(j.error, true); setStatus('error','err'); return; }
+    if(!j.ok){ showInspResult(`TLS handshake failed: ${j.error||''}`, true); return; }
+    const lines = [
+      `Host: ${j.host}:${j.port}`,
+      `TLS:  ${j.version||'?'}  cipher=${(j.cipher||[])[0]||'?'}`,
+      `Subject CN: ${(j.subject||{}).commonName||'—'}`,
+      `Issuer  CN: ${(j.issuer ||{}).commonName||'—'}`,
+      `Valid: ${j.not_before||'?'} → ${j.not_after||'?'}`,
+      `SAN:`,
+    ];
+    for(const s of j.san||[]) lines.push(`  ${s}`);
+    showInspResult(lines.join('\n'));
+    setStatus('ok','ok'); refreshGraph();
+  }catch(e){ showInspResult(String(e),true); setStatus('error','err'); }
+}
+
+async function actFingerprint(id){
+  const n = cy.getElementById(id); if(!n||!n.length) return;
+  const d = n.data();
+  const host = _hostOfNode(d);
+  if(!host){ toast('no host on this node','err'); return; }
+  setStatus(`full fingerprint ${host}…`); showInspResult('running (this can take a minute)…');
+  try{
+    const r = await fetch('/netscan/target/fingerprint',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host, profile:'common'})});
+    const j = await r.json();
+    if(j.error){ showInspResult(j.error, true); setStatus('error','err'); return; }
+    const lines = [`Host: ${j.host} (${j.ip})`, `Open ports: ${j.open_count} of ${j.scanned}`,''];
+    for(const p of j.ports||[]){
+      lines.push(`▸ ${p.port}/tcp${p.hint?'  '+p.hint:''}`);
+      if(p.banner) lines.push('   banner: '+p.banner.split('\n')[0].slice(0,120));
+      if(p.http){
+        lines.push(`   http: ${p.http.status} · ${p.http.title||''}${p.http.server?' · '+p.http.server:''}`);
+        if((p.http.tech||[]).length) lines.push('   tech: '+p.http.tech.join(', '));
+      }
+      if(p.tls){
+        lines.push(`   tls: CN=${p.tls.subject||'?'} · expires ${p.tls.not_after||'?'}`);
+      }
+    }
+    showInspResult(lines.join('\n'));
+    setStatus('ok','ok'); refreshGraph();
+  }catch(e){ showInspResult(String(e),true); setStatus('error','err'); }
+}
+
+async function actTraceFromNode(id){
+  const n = cy.getElementById(id); if(!n||!n.length) return;
+  const d = n.data();
+  const target = _hostOfNode(d);
+  if(!target){ toast('no host on this node','err'); return; }
+  document.getElementById('trace-target').value = target;
+  if(!document.getElementById('sec-trace').classList.contains('open')) secToggle('sec-trace');
+  await runTraceroute();
+}
+
+async function actTraffic(id, duration, useTcpdump){
+  const n = cy.getElementById(id); if(!n||!n.length) return;
+  const d = n.data();
+  const host = _hostOfNode(d);
+  if(!host){ toast('no host on node','err'); return; }
+  let sshId = '';
+  for(const h of _hosts){ if(h.host===host || h.host===d.ip){ sshId = h.id; break; } }
+  setStatus(`monitoring traffic to ${host}…`);
+  showInspResult(`capturing for ${duration}s${useTcpdump?' (tcpdump)':''}…`);
+  try{
+    const body = {host, duration, use_tcpdump:!!useTcpdump};
+    if(sshId) body.ssh_host_id = sshId;
+    const r = await fetch('/netscan/target/traffic',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j = await r.json();
+    if(j.error){ showInspResult(j.error, true); setStatus('error','err'); return; }
+    const lines = [`Host: ${j.host} (${j.ip||'?'})`,`Source: ${j.source}`,`Duration: ${j.duration}s`,``,`Sockets (${(j.sockets||[]).length}):`];
+    for(const s of j.sockets||[]) lines.push(`  ${s.state}  ${s.local}  ←→  ${s.peer}`);
+    if(j.tcpdump){ lines.push('',`tcpdump:`); lines.push(j.tcpdump.slice(0,6000)); }
+    showInspResult(lines.join('\n'));
+    setStatus('ok','ok');
+  }catch(e){ showInspResult(String(e),true); setStatus('error','err'); }
+}
+
+async function actDockerRescan(id){
+  const n = cy.getElementById(id); if(!n||!n.length) return;
+  const d = n.data();
+  const body = {};
+  if(d.host_id) body.host_id = d.host_id;
+  else if(d.host && d.host!==d.id) body.host = d.host;
+  await _scan('Docker rescan','/netscan/docker/scan', body, false);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   LLM-POWERED NODE ANALYSIS
+   ════════════════════════════════════════════════════════════════════════ */
+function _nodeContext(id){
+  const n = cy.getElementById(id);
+  if(!n||!n.length) return null;
+  const d = {...n.data()};
+  // Gather neighbours for context
+  const neighbours = [];
+  n.neighborhood('node').forEach(nb=>{
+    const nd = nb.data();
+    neighbours.push({id:nd.id, type:nd.type, label:nd.label, ip:nd.ip||'', hostname:nd.hostname||''});
+  });
+  // Gather connecting edges
+  const edges = [];
+  n.connectedEdges().forEach(e=>{
+    edges.push({source:e.data('source'), target:e.data('target'), label:e.data('label')});
+  });
+  return {node: d, neighbours, edges};
+}
+
+async function _llmNodeCall(id, systemPrompt, userSuffix){
+  const ctx = _nodeContext(id);
+  if(!ctx){ toast('node not found','err'); return; }
+  showInspResult('asking LLM…');
+  setStatus('LLM thinking…');
+  const prompt = [
+    `Node context (JSON):`,
+    JSON.stringify(ctx, null, 2),
+    '',
+    userSuffix||'',
+  ].join('\n');
+  try{
+    const ctrl = new AbortController();
+    const timer = setTimeout(()=>ctrl.abort(), 120000);
+    const r = await fetch('/llm/generate',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({prompt, system:systemPrompt, max_tokens:2000}),
+      signal:ctrl.signal,
+    });
+    clearTimeout(timer);
+    const j = await r.json();
+    if(j.error){ showInspResult('LLM error: '+j.error, true); setStatus('error','err'); return; }
+    const text = (j.text||j.response||j.content||'').trim();
+    if(!text){ showInspResult('LLM returned empty — check Ollama', true); setStatus('error','err'); return; }
+    showInspResult(text);
+    setStatus('LLM done','ok');
+  }catch(e){
+    if(e.name==='AbortError') showInspResult('LLM timed out after 120s', true);
+    else showInspResult('LLM failed: '+e.message, true);
+    setStatus('error','err');
+  }
+}
+
+async function actLlmAnalyze(id){
+  await _llmNodeCall(id,
+    'You are a network security analyst. Analyse the given network node and its connections. '
+    + 'Identify what this node is, its role in the network, potential security concerns, '
+    + 'and interesting observations. Be concise but thorough.',
+    'Analyse this node. What is it? What are the security implications? What stands out?'
+  );
+}
+
+async function actLlmRecon(id){
+  const ctx = _nodeContext(id);
+  if(!ctx){ toast('node not found','err'); return; }
+  const host = _hostOfNode(ctx.node);
+  const url = _urlOfNode(ctx.node);
+  await _llmNodeCall(id,
+    'You are a penetration testing planner. Given a network node, suggest a structured '
+    + 'reconnaissance plan. List specific Vera capabilities to run (from this list: '
+    + 'netscan.target.ports, netscan.target.tech, netscan.target.banner, netscan.target.tls, '
+    + 'netscan.target.fingerprint, netscan.target.traceroute, netscan.web.scan, netscan.dork.search). '
+    + 'Explain what each step would reveal and in what order to run them. Be specific to this target.',
+    `Target: ${url||host||ctx.node.label||ctx.node.id}\nSuggest a recon plan with specific tools and parameters.`
+  );
+}
+
+async function actLlmExplain(id){
+  await _llmNodeCall(id,
+    'You are a network engineer explaining scan results to a colleague. '
+    + 'Look at all properties, open ports, tech stack, and relationships of this node. '
+    + 'Explain what services are running, what the open ports suggest, and any notable '
+    + 'configurations or potential misconfigurations. Use plain language.',
+    'Explain what we know about this node from the scan data. What services are running? What do the findings mean?'
+  );
+}
+function showCtxMenu(n, x, y){
+  const d = n.data();
+  const ctx = document.getElementById('ctx');
+  const items = [];
+  const host = _hostOfNode(d);
+  items.push(`<div class="ctx-hdr">${esc(d.type||'?')} · ${esc(d.label||d.id)}</div>`);
+  if(canSsh(d.type, d)) items.push(`<button class="hot" data-act="ssh-inline">→ SSH here (inline terminal)</button>`);
+  if(canSsh(d.type, d)) items.push(`<button data-act="ssh-panel">→ SSH in Exec panel</button>`);
+  items.push('<div class="sep"></div>');
+  items.push(`<button data-act="inspect">Inspect</button>`);
+  items.push(`<button data-act="runcap">Run capability…</button>`);
+  items.push(`<button data-act="ports-quick">Quick port scan (6)</button>`);
+  items.push(`<button data-act="ports-common">Scan common ports</button>`);
+  items.push(`<button data-act="ports-stream">▶ Stream port scan</button>`);
+  items.push(`<button data-act="fingerprint">Full fingerprint</button>`);
+  items.push(`<button data-act="tech">HTTP fingerprint</button>`);
+  items.push(`<button data-act="banner">Banner grab</button>`);
+  items.push(`<button data-act="tls">TLS cert</button>`);
+  items.push(`<button data-act="trace">Trace route</button>`);
+  items.push(`<button data-act="traffic-ss">Monitor traffic (ss)</button>`);
+  items.push(`<button data-act="traffic-td">Capture tcpdump 5s</button>`);
+  if(d.type==='DockerHost'){ items.push(`<button data-act="dock-rescan">Rescan containers</button>`); }
+  if(d.type==='PVENode'){ items.push(`<button data-act="pve-shell">Open shell on node</button>`); }
+  if(d.type==='Container'){
+    items.push('<div class="sep"></div>');
+    items.push(`<button data-act="dock-logs">Tail logs</button>`);
+    items.push(`<button data-act="dock-exec">Exec /bin/sh</button>`);
+  }
+  items.push('<div class="sep"></div>');
+  items.push(`<button data-act="copy-id">Copy node id</button>`);
+  if(host) items.push(`<button data-act="copy-host">Copy "${esc(host)}"</button>`);
+  ctx.innerHTML = items.join('');
+  ctx.style.left = Math.min(x, window.innerWidth-260)+'px';
+  ctx.style.top  = Math.min(y, window.innerHeight-Math.min(440, ctx.scrollHeight||440))+'px';
+  ctx.classList.add('show');
+
+  ctx.querySelectorAll('button').forEach(btn=>{
+    btn.onclick = ()=>{
+      const act = btn.dataset.act;
+      hideCtxMenu();
+      switch(act){
+        case 'ssh-inline':   graphSsh(d.id); break;
+        case 'ssh-panel':    sshToExecPanel(d.id); break;
+        case 'inspect':      openInspector(n); highlightNeighborhood(n); break;
+        case 'runcap':       openInspector(n); inspTab('runcap'); break;
+        case 'ports-quick':  actScanPorts(d.id, 'quick'); break;
+        case 'ports-common': actScanPorts(d.id, 'common'); break;
+        case 'ports-stream': openInspector(n); actScanPortsStream(d.id, 'common'); break;
+        case 'fingerprint':  openInspector(n); actFingerprint(d.id); break;
+        case 'tech':         openInspector(n); actScanTech(d.id); break;
+        case 'banner':       openInspector(n); actBanner(d.id); break;
+        case 'tls':          openInspector(n); actTls(d.id); break;
+        case 'trace':        actTraceFromNode(d.id); break;
+        case 'traffic-ss':   openInspector(n); actTraffic(d.id, 5, false); break;
+        case 'traffic-td':   openInspector(n); actTraffic(d.id, 5, true); break;
+        case 'dock-rescan':  actDockerRescan(d.id); break;
+        case 'pve-shell':    graphSsh(d.id); break;
+        case 'dock-logs':    containerAction(d, 'logs'); break;
+        case 'dock-exec':    containerAction(d, 'exec'); break;
+        case 'copy-id':      copyNodeId(d.id); break;
+        case 'copy-host':    try{navigator.clipboard.writeText(host);toast('copied','ok')}catch{} break;
+      }
+    };
+  });
+}
+function hideCtxMenu(){ document.getElementById('ctx').classList.remove('show'); }
+
+async function containerAction(d, kind){
+  let sshId = d.host_id || '';
+  if(!sshId){
+    for(const h of _hosts){ if(h.host===d.host){ sshId=h.id; break; } }
+  }
+  if(kind==='logs'){
+    const cmd = `docker logs --tail 200 ${d.name||d.container_id||d.id.split(':').pop()}`;
+    graphSshRunCmd(sshId, cmd, `logs · ${d.name||d.id}`);
+  } else if(kind==='exec'){
+    const cmd = `docker exec -it ${d.name||d.container_id||d.id.split(':').pop()} /bin/sh`;
+    graphSshRunCmd(sshId, cmd, `exec · ${d.name||d.id}`);
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   SSH RESOLUTION  (graphSsh / sshToExecPanel / floating terminal)
+   ════════════════════════════════════════════════════════════════════════ */
+function _resolveSshHostForNode(d){
+  const host = _hostOfNode(d);
+  if(!host) return {id:'',host:'',user:'',port:22};
+  for(const h of _hosts){ if(h.host===host || h.host===d.ip || h.host===d.hostname || h.host===d.name){ return {id:h.id,host:h.host,user:h.user||'',port:h.port||22}; } }
+  return {id:'', host, user:'', port:22};
+}
+async function graphSsh(id){
+  const n = cy.getElementById(id); if(!n||!n.length){ toast('node not found','err'); return; }
+  const d = n.data();
+  const rec = _resolveSshHostForNode(d);
+  if(!rec.host){ toast('no host/IP on node — add scan data first','err'); return; }
+  if(!rec.id){ toast(`no saved SSH credential for ${rec.host} — type password or add a Host first`,'err'); }
+  ftOpen({hostId: rec.id, host: rec.host, user: rec.user, port: rec.port, node: d});
+}
+async function graphSshRunCmd(hostId, cmd, title){
+  ftOpen({hostId, host:'', user:'', port:22, node:{label:title}});
+  document.getElementById('ft-input').value = cmd;
+  setTimeout(()=>ftSubmit(), 100);
+}
+function sshToExecPanel(id){
+  const n = cy.getElementById(id); if(!n||!n.length) return;
+  const d = n.data();
+  const rec = _resolveSshHostForNode(d);
+  let posted=false;
+  try{
+    if(rec.id){
+      window.parent.postMessage({action:'vera-open-panel', panel_id:'exec-panel', hash:'#ssh:'+rec.id}, '*');
+      window.parent.postMessage({action:'ssh-to-host-id', id:rec.id}, '*');
+      posted=true;
+    } else {
+      window.parent.postMessage({action:'vera-open-panel', panel_id:'exec-panel', hash:'#ssh-inline:'+(rec.user?rec.user+'@':'root@')+rec.host+':'+rec.port}, '*');
+      window.parent.postMessage({action:'ssh-to-inline', host:rec.host, user:rec.user||'root', port:rec.port}, '*');
+      posted=true;
+    }
+  }catch{}
+  if(!posted){
+    const hash = rec.id?'#ssh:'+rec.id:'#ssh-inline:'+(rec.user?rec.user+'@':'root@')+rec.host+':'+rec.port;
+    window.open('/exec/panel'+hash, '_blank');
+  }
+}
+
+/* ────── Floating terminal (inline SSH, in-panel) ────────────────────── */
+const _ft = {hostId:'', host:'', user:'', port:22, cwd:'~', scroll:null, input:null, prefix:null, hist:[], histIdx:-1, running:null};
+function _ftPromptHtml(){
+  const u = esc(_ft.user||'user');
+  const h = esc(_ft.host||'host');
+  const c = esc(_ft.cwd||'~');
+  return `<span class="u">${u}</span><span class="a">@</span><span class="h">${h}</span><span class="s">:</span><span class="c">${c}</span><span class="s">$</span>`;
+}
+function _ftUpdatePrefix(){ document.getElementById('ft-prefix').innerHTML = _ftPromptHtml()+' '; }
+function ftOpen(opts){
+  Object.assign(_ft, {hostId:opts.hostId||'', host:opts.host||'', user:opts.user||'', port:opts.port||22, cwd:'~'});
+  const sh=document.getElementById('ft-shell');
+  const pwRow = document.getElementById('ft-pw-row');
+  if(pwRow){
+    pwRow.style.display = _ft.hostId ? 'none' : '';
+    if(!_ft.hostId) document.getElementById('ft-pw').value = '';
+  }
+  const vw = Math.max(window.innerWidth  || 0, document.documentElement.clientWidth  || 0, 640);
+  const vh = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0, 480);
+  const w  = Math.min(640, Math.max(360, vw - 60));
+  const h  = Math.min(420, Math.max(240, vh - 80));
+  sh.style.width  = w + 'px'; sh.style.height = h + 'px';
+  sh.style.left   = Math.max(20, vw - w - 30) + 'px';
+  sh.style.top    = Math.max(20, vh - h - 60) + 'px';
+  sh.style.right='auto'; sh.style.bottom='auto';
+  sh.classList.add('show'); sh.classList.remove('min');
+  document.getElementById('ft-dot').classList.remove('off');
+  const titleLabel = opts.node && opts.node.label ? ` · ${esc(opts.node.label)}` : '';
+  document.getElementById('ft-title').innerHTML = `<span class="ft-user">${esc(_ft.user||'root')}</span>@<span class="ft-host">${esc(_ft.host||_ft.hostId||'host')}</span>${titleLabel}`;
+  _ftUpdatePrefix();
+  const scroll = document.getElementById('ft-scroll');
+  scroll.innerHTML='';
+  const banner = document.createElement('div');
+  banner.innerHTML = `<div style="color:var(--t3);font-size:10px;padding:4px 0;border-bottom:1px dashed var(--bd);margin-bottom:6px">--- connected · ${esc(_ft.host||_ft.hostId||'(no host)')} · ${new Date().toLocaleString()} ---</div>`;
+  scroll.appendChild(banner);
+  document.getElementById('ft-input').value='';
+  setTimeout(()=>document.getElementById('ft-input').focus(), 0);
+  _ft.hist=[]; _ft.histIdx=-1;
+  if(_ft.host){
+    fetch('/exec/ssh/probe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host:_ft.host,port:_ft.port,timeout:3})})
+      .then(r=>r.json()).then(j=>{ if(!j.reachable) document.getElementById('ft-dot').classList.add('off'); }).catch(()=>{});
+  } else {
+    document.getElementById('ft-dot').classList.add('off');
+  }
+}
+function ftClose(){ ftStop(); document.getElementById('ft-shell').classList.remove('show'); }
+function ftMinToggle(){ document.getElementById('ft-shell').classList.toggle('min'); }
+function ftClearScroll(){ document.getElementById('ft-scroll').innerHTML=''; }
+function ftStop(){
+  if(_ft.running && _ft.running.abort){ try{ _ft.running.abort(); }catch{} }
+  _ft.running=null;
+  document.getElementById('ft-stop').style.display='none';
+}
+async function ftSubmit(){
+  const input = document.getElementById('ft-input');
+  const raw = input.value;
+  if(!raw.trim()) return;
+  if(_ft.running){ toast('already running — stop first','err'); return; }
+  input.value='';
+  _ft.hist.unshift(raw); _ft.histIdx=-1;
+  const scroll = document.getElementById('ft-scroll');
+  const entry = document.createElement('div'); entry.className='ft-entry';
+  entry.innerHTML = `<div class="ft-prompt">${_ftPromptHtml()} <span class="cmd">${esc(raw)}</span></div>`;
+  const outBlock = document.createElement('div');
+  const foot = document.createElement('div'); foot.className='ft-foot'; foot.textContent='running…';
+  entry.appendChild(outBlock); entry.appendChild(foot);
+  scroll.appendChild(entry); scroll.scrollTop=scroll.scrollHeight;
+  const addOut=(cls,text)=>{ const d=document.createElement('div'); d.className='ft-out '+(cls||''); d.textContent=text; outBlock.appendChild(d); scroll.scrollTop=scroll.scrollHeight; };
+  const cdM = raw.trim().match(/^cd\s+(\S.*)?$/);
+  if(cdM){ _ft.cwd = cdM[1]?cdM[1].trim():'~'; _ftUpdatePrefix(); foot.innerHTML='<span class="rc-ok">[cd]</span>'; return; }
+  const body = {command:raw, timeout:600};
+  if(_ft.hostId) body.host_id = _ft.hostId;
+  else {
+    body.host = _ft.host; body.user = _ft.user; body.port = _ft.port;
+    const pw = (document.getElementById('ft-pw')?.value) || '';
+    if(pw) body.password = pw;
+  }
+  document.getElementById('ft-stop').style.display='';
+  const t0 = Date.now();
+  _ft.running = await streamSSE('/exec/ssh/stream', body, (ev,d)=>{
+    if(ev==='stdout') addOut('', d.text||'');
+    else if(ev==='stderr') addOut('err', d.text||'');
+    else if(ev==='start') addOut('meta', `→ connected ${d.user?d.user+'@':''}${d.host||''}`);
+    else if(ev==='done'){
+      document.getElementById('ft-stop').style.display='none';
+      foot.innerHTML = `<span class="${d.rc===0?'rc-ok':'rc-err'}">[rc=${d.rc} · ${d.elapsed_ms??(Date.now()-t0)}ms]</span>`;
+      _ft.running=null;
+    } else if(ev==='error'){
+      document.getElementById('ft-stop').style.display='none';
+      foot.innerHTML = `<span class="rc-err">✗ ${esc(d.error||'error')}</span>`;
+      _ft.running=null;
+      document.getElementById('ft-dot').classList.add('off');
+    }
+  });
+}
+document.getElementById('ft-input').addEventListener('keydown', e=>{
+  if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); ftSubmit(); }
+  else if(e.key==='ArrowUp'){
+    const h=_ft.hist; if(!h.length) return;
+    _ft.histIdx = Math.min(_ft.histIdx+1, h.length-1); e.target.value = h[_ft.histIdx]||''; e.preventDefault();
+  } else if(e.key==='ArrowDown'){
+    _ft.histIdx = Math.max(_ft.histIdx-1,-1); e.target.value = _ft.histIdx<0?'':(_ft.hist[_ft.histIdx]||''); e.preventDefault();
+  } else if(e.ctrlKey && e.key==='l'){ e.preventDefault(); ftClearScroll(); }
+  else if(e.ctrlKey && e.key==='c'){ if(_ft.running){ e.preventDefault(); ftStop(); } }
+});
+(function(){
+  const shell = document.getElementById('ft-shell');
+  const head = document.getElementById('ft-head');
+  const resize = document.getElementById('ft-resize');
+  let drag=null;
+  head.addEventListener('mousedown', e=>{
+    if(e.target.tagName==='BUTTON') return;
+    const r=shell.getBoundingClientRect();
+    drag = {ox:e.clientX-r.left, oy:e.clientY-r.top, kind:'move'};
+    e.preventDefault();
+  });
+  resize.addEventListener('mousedown', e=>{
+    const r=shell.getBoundingClientRect();
+    drag = {sw:r.width, sh:r.height, sx:e.clientX, sy:e.clientY, kind:'resize'};
+    e.preventDefault();
+  });
+  window.addEventListener('mousemove', e=>{
+    if(!drag) return;
+    if(drag.kind==='move'){
+      shell.style.left = Math.max(0, e.clientX-drag.ox)+'px';
+      shell.style.top  = Math.max(0, e.clientY-drag.oy)+'px';
+      shell.style.right='auto'; shell.style.bottom='auto';
+    } else {
+      shell.style.width  = Math.max(360, drag.sw + (e.clientX-drag.sx))+'px';
+      shell.style.height = Math.max(220, drag.sh + (e.clientY-drag.sy))+'px';
+    }
+  });
+  window.addEventListener('mouseup', ()=>drag=null);
+})();
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   CAPABILITY REGISTRY  (parses param schemas from /openapi.json)
+   ════════════════════════════════════════════════════════════════════════ */
+let _tabCaps  = [];
+let _allCaps  = [];
+let _extraCaps= new Set();
+
+/**
+ * Build _capRegistry by mining FastAPI's /openapi.json. We map each operation
+ * to a capability name via `operationId` (which Vera sets to the cap name) or
+ * by parsing the path. The "Input: name (type!)" descriptors are pulled out
+ * of `summary` / `description` so the run-cap pane gets typed input fields
+ * with required-flags. Falls back gracefully if /openapi.json is absent.
+ */
+async function _loadCapRegistry(){
+  /* Step 1 — pull the panel's tab caps + a flat list of all caps that any
+     panel exposes (used by the LLM "extras" picker). */
+  try{
+    const r = await fetch('/ui/panels');
+    const panels = await r.json();
+    const self = (panels||[]).find(p=>p.id==='netmap-panel' || p.panel_id==='netmap-panel');
+    if(self) _tabCaps = Array.from(new Set(self.ui_caps||[]));
+    const all = new Set();
+    for(const p of panels||[]){ (p.ui_caps||[]).forEach(c=>all.add(c)); }
+    ['http.get','llm.generate','llm.route','system.ping','dag.run','dag.plan','dag.plan_and_run'].forEach(c=>all.add(c));
+    _allCaps = [..._tabCaps, ...Array.from(all)].filter((v,i,a)=>a.indexOf(v)===i).sort();
+  }catch(e){ console.warn('panel registry load failed', e); }
+
+  /* Step 2 — pull /openapi.json for full parameter metadata. */
+  try{
+    const r = await fetch('/openapi.json');
+    if(!r.ok) throw new Error('openapi '+r.status);
+    const oas = await r.json();
+    for(const [path, methods] of Object.entries(oas.paths||{})){
+      for(const [method, op] of Object.entries(methods)){
+        if(typeof op!=='object'||!op) continue;
+        const opId = op.operationId||'';
+        const desc = op.description||op.summary||'';
+        // Capability name: prefer Vera's `cap_<name>` operationId, else infer from path
+        let capName = '';
+        if(opId.startsWith('cap_')) capName = opId.slice(4).replace(/_/g,'.');
+        else {
+          // Try matching the path: /netscan/target/ports → netscan.target.ports
+          const segs = path.split('/').filter(Boolean);
+          if(segs.length>=2 && (segs[0]==='netscan' || segs[0]==='exec' || segs[0]==='dag' || segs[0]==='llm')){
+            capName = segs.join('.');
+          }
+        }
+        if(!capName) continue;
+        // Skip if we already have a richer entry (prefer first hit)
+        if(_capRegistry[capName] && (_capRegistry[capName].params||[]).length) continue;
+        // Parse params from request body schema (if JSON)
+        const params = [];
+        const reqBody = op.requestBody;
+        if(reqBody){
+          const schemaRef = reqBody.content?.['application/json']?.schema;
+          const resolved = _resolveOasSchema(schemaRef, oas);
+          if(resolved && resolved.properties){
+            const required = new Set(resolved.required||[]);
+            for(const [pname, pschema] of Object.entries(resolved.properties)){
+              params.push({
+                name: pname,
+                type: _oasTypeOf(pschema),
+                required: required.has(pname),
+                default: pschema.default!=null?pschema.default:null,
+                description: pschema.description||'',
+              });
+            }
+          }
+        }
+        // Also pull query params (rare in Vera but possible)
+        for(const p of op.parameters||[]){
+          if(p.in!=='query') continue;
+          params.push({
+            name: p.name,
+            type: _oasTypeOf(p.schema||{}),
+            required: !!p.required,
+            default: (p.schema||{}).default!=null?(p.schema||{}).default:null,
+            description: p.description||'',
+          });
+        }
+        // If description says "Input: name (type!) ..." use that to fill in any
+        // missing entries (covers caps registered before FastAPI knew the model).
+        const fromDesc = _parseCapDescription(desc);
+        for(const fd of fromDesc){
+          if(!params.find(p=>p.name===fd.name)) params.push(fd);
+        }
+        _capRegistry[capName] = {
+          name: capName,
+          description: desc,
+          http_method: method.toUpperCase(),
+          http_path: path,
+          params,
+        };
+        // Make sure cap shows up in _allCaps too
+        if(!_allCaps.includes(capName)) _allCaps.push(capName);
+      }
+    }
+    _allCaps.sort();
+  }catch(e){
+    console.warn('openapi load failed', e, '— run-cap pane will be limited');
+  }
+}
+
+function _oasTypeOf(s){
+  if(!s) return 'string';
+  if(s.type==='integer') return 'int';
+  if(s.type==='number')  return 'float';
+  if(s.type==='boolean') return 'bool';
+  if(s.type==='array')   return 'list';
+  if(s.type==='object')  return 'object';
+  if(s.anyOf||s.oneOf){
+    // Pull first non-null variant
+    const opts = (s.anyOf||s.oneOf).filter(x=>x.type!=='null');
+    if(opts.length) return _oasTypeOf(opts[0]);
+  }
+  return s.type||'string';
+}
+function _resolveOasSchema(schema, oas){
+  if(!schema) return null;
+  if(schema.$ref){
+    const path = schema.$ref.replace(/^#\//,'').split('/');
+    let node = oas;
+    for(const seg of path){ node = node?.[seg]; if(!node) return null; }
+    return _resolveOasSchema(node, oas);
+  }
+  if(schema.allOf && schema.allOf.length===1) return _resolveOasSchema(schema.allOf[0], oas);
+  return schema;
+}
+function _parseCapDescription(desc){
+  /* Vera capability descriptions look like:
+       "Scan ports on target. Input: host (str!), ports (str). Output: ..."
+     — pull out the Input: section. */
+  const out = [];
+  const m = String(desc).match(/Input:\s*([^.]+(?:\.[^I][^.]*)*?)(?:\s*Output:|$)/i);
+  if(!m) return out;
+  const inputs = m[1];
+  // Split on "), " or ", " but careful with nested parens
+  const re = /(\w+)\s*\(\s*([^)!]*?)(\!?)\s*(?:=\s*([^)]*?))?\s*\)/g;
+  let mm;
+  while((mm=re.exec(inputs))){
+    out.push({
+      name: mm[1],
+      type: (mm[2]||'string').trim(),
+      required: mm[3]==='!',
+      default: mm[4]?mm[4].trim():null,
+      description: '',
+    });
+  }
+  return out;
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   LLM STRIP  (preserved from original)
+   ════════════════════════════════════════════════════════════════════════ */
+const _strip = document.getElementById('llm-strip');
+function toggleLlmStrip(){ _strip.classList.toggle('open'); }
+let _llmRun=null;
+
+async function _loadLlmModels(){
+  try{
+    const r = await fetch('/exec/llm/models');
+    const j = await r.json();
+    const msel = document.getElementById('llm-model');
+    const isel = document.getElementById('llm-instance');
+    msel.innerHTML = '<option value="">-- auto --</option>';
+    for(const m of j.models||[]){
+      const o=document.createElement('option');
+      o.value = m.name;
+      const gpu = m.has_gpu?' · GPU':'';
+      const sz  = m.parameter_size?` (${m.parameter_size})`:'';
+      o.textContent = `${m.name}${sz}${gpu}`;
+      msel.appendChild(o);
+    }
+    isel.innerHTML = '<option value="">-- auto --</option>';
+    for(const inst of j.instances||[]){
+      const o=document.createElement('option');
+      o.value = inst.id;
+      const gpu = inst.has_gpu?' · GPU':'';
+      const st  = inst.status!=='online'?` (${inst.status})`:'';
+      o.textContent = `${inst.label||inst.id}${gpu}${st}`;
+      if(inst.status!=='online') o.disabled=true;
+      isel.appendChild(o);
+    }
+    if(j.default_model) msel.title = `routing default: ${j.default_model}`;
+  }catch(e){ console.warn('llm models load failed', e); }
+}
+
+function onScopeChange(){
+  const v = document.getElementById('llm-scope').value;
+  document.getElementById('llm-extras-btn').style.display = v==='plus' ? '' : 'none';
+  if(v!=='plus'){ document.getElementById('llm-extras-pop').style.display='none'; }
+}
+function toggleExtrasPicker(){
+  const pop = document.getElementById('llm-extras-pop');
+  const open = pop.style.display==='none' || !pop.style.display;
+  pop.style.display = open ? 'block' : 'none';
+  if(open) _renderExtrasList();
+}
+function _renderExtrasList(){
+  const q = (document.getElementById('llm-extras-search').value||'').toLowerCase();
+  const list = document.getElementById('llm-extras-list');
+  const hint = document.getElementById('llm-extras-hint');
+  const tabset = new Set(_tabCaps);
+  const filtered = _allCaps.filter(c=>!tabset.has(c) && (!q || c.toLowerCase().includes(q)));
+  list.innerHTML = filtered.slice(0,200).map(c=>{
+    const on = _extraCaps.has(c);
+    const cls = on ? 'active' : '';
+    return `<button class="tbtn ${cls}" onclick="_toggleExtra('${esc(c)}')" style="font-size:10px;padding:3px 8px">${esc(c)}</button>`;
+  }).join('') || '<span style="color:var(--t3);font-size:10px">no caps match</span>';
+  hint.textContent = `${filtered.length} available · ${_extraCaps.size} selected`;
+  document.getElementById('llm-extras-count').textContent = _extraCaps.size;
+}
+function _toggleExtra(c){
+  if(_extraCaps.has(c)) _extraCaps.delete(c); else _extraCaps.add(c);
+  _renderExtrasList();
+}
+document.addEventListener('input', ev=>{
+  if(ev.target && ev.target.id==='llm-extras-search') _renderExtrasList();
+});
+
+function collectTabContext(){
+  const ctx = {
+    panel: 'netmap',
+    graph_summary: {
+      total_nodes: _graphRaw.nodes.length,
+      total_edges: _graphRaw.edges.length,
+      type_counts: {},
+    },
+    filter_text: _filterText || '',
+    hidden_types: Array.from(_hiddenTypes),
+    inspected_node_id: _inspectedId || '',
+    saved_hosts_summary: _hosts.map(h=>({id:h.id, label:h.label, host:h.host, user:h.user, tags:h.tags||[]})),
+  };
+  for(const n of _graphRaw.nodes){
+    ctx.graph_summary.type_counts[n.data.type] = (ctx.graph_summary.type_counts[n.data.type]||0)+1;
+  }
+  if(_inspectedId){
+    const n = cy.getElementById(_inspectedId);
+    if(n && n.length){
+      const d = n.data();
+      const trim = {};
+      for(const [k,v] of Object.entries(d)){
+        if(typeof v==='string' || typeof v==='number' || typeof v==='boolean') trim[k]=v;
+        else if(Array.isArray(v) && v.length<=20) trim[k]=v;
+      }
+      ctx.inspected_node = trim;
+    }
+  }
+  return ctx;
+}
+
+function llmClear(){ document.getElementById('llm-log').innerHTML=''; document.getElementById('llm-plan-status').textContent=''; }
+function llmLog(kind, tagText, bodyHtml){
+  const log=document.getElementById('llm-log');
+  const e=document.createElement('div'); e.className='llm-event '+kind;
+  e.innerHTML=`<span class="tt">${new Date().toLocaleTimeString()}</span><span class="tg">${esc(tagText)}</span><span class="body">${bodyHtml}</span>`;
+  log.appendChild(e); log.scrollTop=log.scrollHeight;
+  return e;
+}
+
+function toggleLlmRun(){
+  if(_llmRun){ try{ _llmRun.abort(); }catch{} _llmRun=null; document.getElementById('llm-run-btn').textContent='Plan & run ▶'; document.getElementById('llm-run-btn').classList.remove('stop'); return; }
+  runLlm();
+}
+
+async function runLlm(){
+  const goal = document.getElementById('llm-goal').value.trim();
+  if(!goal){ toast('goal empty','err'); return; }
+  const hitl = document.getElementById('llm-hitl').checked;
+  const autoSec = Number(document.getElementById('llm-auto-secs').value||30);
+  const mode = document.getElementById('llm-mode').value;
+  const exec = document.getElementById('llm-execute').checked;
+  const model = document.getElementById('llm-model').value || '';
+  const instance_id = document.getElementById('llm-instance').value || '';
+  const scope = document.getElementById('llm-scope').value;
+  const includeCtx = document.getElementById('llm-ctx').checked;
+
+  let allowed_caps = [];
+  let include_extras = [];
+  if(scope==='tab'){ allowed_caps = _tabCaps.slice(); }
+  else if(scope==='plus'){ allowed_caps = _tabCaps.slice(); include_extras = Array.from(_extraCaps); }
+  const state = includeCtx ? {tab_context: collectTabContext()} : {};
+
+  _strip.classList.add('open');
+  document.getElementById('llm-run-btn').textContent='Stop ■'; document.getElementById('llm-run-btn').classList.add('stop');
+  document.getElementById('llm-plan-status').textContent='planning…';
+  llmLog('plan','GOAL', esc(goal));
+
+  const body = {
+    goal, mode, execute:exec, hitl, auto_approve_secs:autoSec,
+    allowed_caps, include_extras, model, instance_id, state,
+  };
+  _llmRun = await streamSSE('/dag/plan_stream_scoped', body, handleLlmEvent);
+}
+
+function handleLlmEvent(ev,d){
+  if(ev==='dag.scope'){
+    const parts = [];
+    if(d.unrestricted) parts.push(`<b>unrestricted</b> · ${d.cap_count} caps`);
+    else parts.push(`scoped to <b>${d.cap_count}</b> caps`);
+    if(d.model) parts.push(`model <b>${esc(d.model)}</b>`);
+    if(d.instance_id) parts.push(`on <b>${esc(d.instance_id)}</b>`);
+    llmLog('plan','SCOPE', parts.join(' · '));
+  }
+  else if(ev==='dag.planning'){ llmLog('plan','PLANNING', esc(d.goal||'')); }
+  else if(ev==='dag.plan_ready'){
+    const steps=(d.dag||[]).map(n=>`<span class="cap">${esc(Array.isArray(n)?JSON.stringify(n):n)}</span>`).join(' → ');
+    llmLog('plan','PLAN',`${d.steps||0} steps · ${esc(d.rationale||'')}<br><span class="small">${steps}</span>`);
+    document.getElementById('llm-plan-status').textContent=`plan ready · ${d.steps||0} steps`;
+    if(d.warnings && d.warnings.length){ for(const w of d.warnings) llmLog('err','WARN', esc(w)); }
+  }
+  else if(ev==='dag.step_start'){
+    const reason = d.reason ? ` <span class="small">· ${esc(d.reason)}</span>` : '';
+    llmLog('step','STEP '+((d.step||0)+1), `<span class="cap">${esc(d.cap||'')}</span>${d.out_key?` <span class="small">→ ${esc(d.out_key)}</span>`:''}${reason}`);
+  }
+  else if(ev==='dag.hitl_request'){ buildHitlCard(d); }
+  else if(ev==='dag.hitl_rejected'){ llmLog('err','REJECTED', esc(d.cap||'')); }
+  else if(ev==='dag.step_done'){ llmLog('done-ev','OK', `<span class="cap">${esc(d.cap||'[parallel]')}</span>${d.result_preview?` <span class="small">${esc(d.result_preview)}</span>`:''}`); autoRefreshIfScan(d); }
+  else if(ev==='dag.step_error'){ llmLog('err','ERR', `<span class="cap">${esc(d.cap||'')}</span> · ${esc(d.error||'')}`); }
+  else if(ev==='dag.complete'){
+    const summary = d.summary ? ` · ${esc(d.summary)}` : '';
+    llmLog('done-ev','COMPLETE', (d.aborted_at!=null?`aborted @ step ${d.aborted_at+1} (${esc(d.reason||'')})`:'done')+summary);
+    document.getElementById('llm-plan-status').textContent='done';
+    document.getElementById('llm-run-btn').textContent='Plan & run ▶'; document.getElementById('llm-run-btn').classList.remove('stop'); _llmRun=null;
+    refreshGraph();
+  }
+  else if(ev==='dag.error'){ llmLog('err','ERROR', esc(d.error||'')); document.getElementById('llm-plan-status').textContent='error';
+    document.getElementById('llm-run-btn').textContent='Plan & run ▶'; document.getElementById('llm-run-btn').classList.remove('stop'); _llmRun=null; }
+  else if(ev==='__done'){ if(_llmRun){ _llmRun=null; document.getElementById('llm-run-btn').textContent='Plan & run ▶'; document.getElementById('llm-run-btn').classList.remove('stop'); } }
+  else if(ev==='error'){ llmLog('err','ERROR', esc(d.error||'stream error')); document.getElementById('llm-run-btn').textContent='Plan & run ▶'; document.getElementById('llm-run-btn').classList.remove('stop'); _llmRun=null; }
+}
+function autoRefreshIfScan(d){
+  const c=String(d.cap||'');
+  if(c.startsWith('netscan.')) refreshGraph();
+}
+function buildHitlCard(d){
+  const traceId=d.trace_id; const autoSec=d.auto_approve_secs||30;
+  const paramsJson=JSON.stringify(d.params||{},null,2);
+  const capName=d.cap||'';
+  const e = llmLog('hitl','APPROVE?', `
+    <div class="hitl-card">
+      <div class="hhdr"><span>Review &amp; approve step ${(d.step||0)+1}: <span class="cap">${esc(capName)}</span></span><span class="countdown" data-hitl-countdown></span></div>
+      <div class="hparams" contenteditable="true" spellcheck="false">${esc(paramsJson)}</div>
+      <div class="hacts">
+        <button class="btn-ok" data-hitl-approve>Approve</button>
+        <button class="btn-ed" data-hitl-edit>Approve (edited)</button>
+        <button class="btn-no" data-hitl-reject>Reject</button>
+      </div>
+    </div>`);
+  const card=e.querySelector('.hitl-card');
+  const countEl=card.querySelector('[data-hitl-countdown]');
+  let remaining=autoSec;
+  countEl.textContent = `auto-approve in ${remaining}s`;
+  const timer=setInterval(()=>{
+    remaining--;
+    countEl.textContent = remaining>0?`auto-approve in ${remaining}s`:'auto-approving…';
+    if(remaining<=0) clearInterval(timer);
+  },1000);
+  const cleanup=()=>{ clearInterval(timer); card.querySelectorAll('button').forEach(b=>b.disabled=true); countEl.textContent=''; };
+  const respond=async(action,edited)=>{
+    cleanup();
+    const body={trace_id:traceId, action};
+    if(edited) body.edited_params=edited;
+    try{ await fetch('/dag/hitl/respond',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }catch{}
+  };
+  card.querySelector('[data-hitl-approve]').onclick=()=>respond('approve');
+  card.querySelector('[data-hitl-edit]').onclick=()=>{
+    let ep={}; try{ ep=JSON.parse(card.querySelector('.hparams').textContent); }catch{ toast('invalid JSON','err'); return; }
+    respond('edit', ep);
+  };
+  card.querySelector('[data-hitl-reject]').onclick=()=>respond('reject');
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   POSTMESSAGE PROTOCOL  (from harness)
+   ════════════════════════════════════════════════════════════════════════ */
+window.addEventListener('message', ev=>{
+  const d=ev.data||{};
+  if(!d.action) return;
+  if(d.action==='vera-netmap-focus' && d.id) focusOn(d.id);
+  else if(d.action==='vera-netmap-refresh') refreshGraph();
+  else if(d.action==='vera-netmap-new') newGraph();
+});
+window.VeraNet = {refreshGraph, focusOn, openInspector, graphSsh, sshToExecPanel, ftOpen, ftClose, newGraph, abortAllStreams};
+
+/* ════════════════════════════════════════════════════════════════════════
+   FABRIC CRAWLED-WEB IMPORT
+   ════════════════════════════════════════════════════════════════════════ */
+async function loadFabricWeb(){
+  showLoading('loading crawled sites from fabric…');
+  setStatus('loading fabric web…');
+  try{
+    const r = await fetch('/netscan/fabric/web/import',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const j = await r.json();
+    if(j.error){ toast('Fabric import error: '+j.error,'err'); setStatus('error','err'); return; }
+    const sites = j.sites||0, pages = j.pages||0;
+    if(sites+pages===0){
+      toast('No crawled sites found in the fabric — try the Web crawl panel first','err');
+      setStatus('no fabric web data','err');
+      return;
+    }
+    toast(`Loaded ${sites} sites · ${pages} pages from fabric`,'ok');
+    setStatus(`fabric web imported · ${sites}+${pages}`,'ok');
+    await refreshGraph({forceLayout:true});
+  }catch(e){ toast('Fabric import failed: '+e.message,'err'); setStatus('error','err'); }
+  finally{ hideLoading(); }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   NETWORK MAP SNAPSHOTS  (preserved from original)
+   ════════════════════════════════════════════════════════════════════════ */
+async function saveMap(){
+  const name = (document.getElementById('map-save-name').value||'').trim();
+  if(!name){ toast('Map name required','err'); return; }
+  const desc = (document.getElementById('map-save-desc').value||'').trim();
+  showLoading('Saving map…');
+  try{
+    const r = await fetch('/netscan/map/save',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name,description:desc})});
+    const j = await r.json();
+    if(j.error){ toast('Save failed: '+j.error,'err'); return; }
+    toast(`Saved "${name}" (${j.nodes||'?'} nodes)`,'ok');
+    document.getElementById('map-save-name').value='';
+    document.getElementById('map-save-desc').value='';
+    loadMapsList();
+  }finally{ hideLoading(); }
+}
+async function loadMapsList(){
+  const el = document.getElementById('maps-list');
+  const cnt = document.getElementById('maps-count');
+  if(!el) return;
+  try{
+    const r = await fetch('/netscan/map/list');
+    const j = await r.json();
+    const maps = j.maps||[];
+    if(cnt) cnt.textContent = maps.length ? `(${maps.length})` : '';
+    if(!maps.length){
+      el.innerHTML='<div style="font-size:9.5px;color:var(--t3);padding:2px 0">No saved maps.</div>';
+      return;
+    }
+    el.innerHTML = maps.map(m=>`
+      <div style="background:var(--bg);border:1px solid var(--bd);border-radius:3px;padding:6px 8px;display:flex;align-items:center;gap:6px">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:10.5px;color:var(--t1);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.name)}</div>
+          <div style="font-size:9px;color:var(--t3)">${m.node_count||0} nodes · ${m.edge_count||0} edges · ${(m.updated_at||'').slice(0,10)}</div>
+        </div>
+        <button class="btn ghost" style="padding:3px 7px;font-size:9.5px" onclick="loadMap(${JSON.stringify(m.map_id)})">Load</button>
+        <button class="btn danger" style="padding:3px 7px;font-size:9.5px;background:none;color:var(--ac4);border:1px solid var(--ac4)" onclick="deleteMap(${JSON.stringify(m.map_id)})">✕</button>
+      </div>`).join('');
+  }catch(e){ if(el) el.innerHTML='<div style="color:var(--ac4);font-size:9.5px">'+esc(String(e))+'</div>'; }
+}
+async function loadMap(mapId){
+  showLoading('Loading map…');
+  try{
+    const r = await fetch('/netscan/map/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({map_id:mapId})});
+    const j = await r.json();
+    if(j.error){ toast('Load failed: '+j.error,'err'); return; }
+    toast(`Loaded "${j.name||mapId}" (${j.nodes||'?'} nodes)`,'ok');
+    await refreshGraph({forceLayout:true});
+  }finally{ hideLoading(); }
+}
+async function deleteMap(mapId){
+  if(!confirm('Delete this map snapshot?')) return;
+  try{
+    const r = await fetch('/netscan/map/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({map_id:mapId})});
+    const j = await r.json();
+    if(j.error){ toast('Delete failed: '+j.error,'err'); return; }
+    toast('Map deleted','ok');
+    loadMapsList();
+  }catch(e){ toast('Delete failed: '+e.message,'err'); }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   AUTO-REFRESH + INIT
+   ════════════════════════════════════════════════════════════════════════ */
+let _autoTimer = null;
+function _setupAutoRefresh(){
+  const cb = document.getElementById('auto-refresh');
+  const tick = ()=>{
+    if(!cb.checked) return;
+    if(_activeStreams.size>0) return;       // don't disturb a live stream
+    if(_llmRun) return;                     // don't refresh during LLM run
+    if(Date.now() < _graphFrozenUntil) return; // don't refresh right after a clear
+    refreshGraph();
+  };
+  if(_autoTimer){ clearInterval(_autoTimer); }
+  _autoTimer = setInterval(tick, 30000);
+  cb.addEventListener('change', ()=>{ if(cb.checked) tick(); });
+}
+
+/* Theme select sync */
+(()=>{ const sel=document.getElementById('theme-sel'); if(sel){ sel.value = document.documentElement.getAttribute('data-theme')||'dusk'; }})();
+
+/* Bootstrap */
+(async function init(){
+  initCy();
+  setStatus('init…');
+  await loadHosts();
+  await _loadCapRegistry();
+  await _loadLlmModels();
+  await loadDorkPresets();
+  _populateOsintModels();
+  await refreshGraph({forceLayout:true});
+  await loadMapsList();
+  _setupAutoRefresh();
+  // Wire Ctrl+Enter on llm-goal to fire the planner
+  const ta = document.getElementById('llm-goal');
+  if(ta) ta.addEventListener('keydown', e=>{ if(e.key==='Enter' && (e.ctrlKey||e.metaKey)){ e.preventDefault(); toggleLlmRun(); }});
+  // Wire Ctrl+Enter on osint-prompt too
+  const op = document.getElementById('osint-prompt');
+  if(op) op.addEventListener('keydown', e=>{ if(e.key==='Enter' && (e.ctrlKey||e.metaKey)){ e.preventDefault(); runAgentOsint(); }});
+  onScopeChange();
+  setStatus('ready','ok');
+})();
+
+/* Copy LLM model options to the agent OSINT model dropdown */
+function _populateOsintModels(){
+  const src = document.getElementById('llm-model');
+  const dst = document.getElementById('osint-model');
+  if(!src||!dst) return;
+  dst.innerHTML = '<option value="">-- auto --</option>';
+  for(const o of src.options){
+    if(!o.value) continue;
+    const no = document.createElement('option');
+    no.value = o.value; no.textContent = o.textContent;
+    dst.appendChild(no);
+  }
+}
+
+</script>
+<script src="/ui/vera-ui.js"></script>
+</body>
+</html>

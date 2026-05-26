@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Vera — Agents · Skills · Ontologies</title>
+<style>
+:root{
+  --bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;
+  --border:#3a3530;--border2:#4a4540;
+  --acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--acc4:#9e8fa0;
+  --ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;
+  --text:#ddd5c8;--fg:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;
+  --mono:'JetBrains Mono','Fira Mono','Space Mono',monospace;
+  --sans:'Inter','IBM Plex Sans',system-ui,sans-serif;
+  color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:12px;-webkit-font-smoothing:antialiased}
+html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
+#shell{display:flex;height:100vh;overflow:hidden}
+#secNav{
+  width:40px;flex-shrink:0;display:flex;flex-direction:column;
+  align-items:center;padding:8px 0;gap:1px;
+  border-right:1px solid var(--border);background:var(--bg1);
+}
+.snav{
+  writing-mode:vertical-rl;transform:rotate(180deg);
+  font-size:9px;font-weight:700;letter-spacing:1.5px;
+  text-transform:uppercase;font-family:var(--mono);
+  padding:12px 7px;border-radius:3px;cursor:pointer;
+  color:var(--dim2);border:1px solid transparent;
+  transition:all .15s;user-select:none;width:32px;text-align:center;
+}
+.snav:hover{color:var(--text)}
+.snav.on{border-color:var(--border);background:var(--bg2)}
+.snav[data-pane="agents"].on{color:var(--acc3)}
+.snav[data-pane="skills"].on{color:var(--acc)}
+.snav[data-pane="ontologies"].on{color:var(--acc2)}
+.navdiv{width:24px;height:1px;background:var(--border);margin:3px 0;flex-shrink:0}
+#panes{flex:1;overflow:hidden;position:relative}
+.pane{position:absolute;inset:0;display:none}
+.pane.on{display:block}
+.pane iframe{width:100%;height:100%;border:none;display:block;background:var(--bg0)}
+</style>
+</head>
+<body>
+<div id="shell">
+  <div id="secNav">
+    <div class="snav on" data-pane="agents"     onclick="show('agents',this)">Agents</div>
+    <div class="navdiv"></div>
+    <div class="snav"    data-pane="skills"     onclick="show('skills',this)">Skills</div>
+    <div class="navdiv"></div>
+    <div class="snav"    data-pane="ontologies" onclick="show('ontologies',this)">Ontologies</div>
+  </div>
+  <div id="panes">
+    <div class="pane on" id="pane-agents">
+      <iframe id="frame-agents"     src="about:blank" allow="clipboard-read; clipboard-write; microphone"></iframe>
+    </div>
+    <div class="pane" id="pane-skills">
+      <iframe id="frame-skills"     src="about:blank" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
+    <div class="pane" id="pane-ontologies">
+      <iframe id="frame-ontologies" src="about:blank" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
+  </div>
+</div>
+<script>
+'use strict';
+// KEY FIX: base URL is always the origin of THIS page since it's served by the backend
+const BASE = window.location.origin || 'http://llm.int:8999';
+const LOADED = { agents:false, skills:false, ontologies:false };
+let _lastThemeVars = null;
+
+const PATHS = {
+  agents:     '/ui/panels/agents-panel',
+  skills:     '/ui/panels/skills-panel',
+  ontologies: '/ui/panels/ontologies-panel',
+};
+
+function loadFrame(name) {
+  if (LOADED[name]) return;
+  LOADED[name] = true;
+  const frame = document.getElementById('frame-' + name);
+  if (!frame) return;
+  frame.src = BASE + PATHS[name];
+  frame.addEventListener('load', () => {
+    try { frame.contentWindow.postMessage({ type:'vera:base', url:BASE }, '*'); } catch(_){}
+    if (_lastThemeVars) {
+      try { frame.contentWindow.postMessage({ type:'vera:theme', vars:_lastThemeVars }, '*'); } catch(_){}
+    }
+  }, { once:true });
+}
+
+function show(name, el) {
+  document.querySelectorAll('.snav').forEach(n => n.classList.remove('on'));
+  if (el) el.classList.add('on');
+  document.querySelectorAll('.pane').forEach(p => p.classList.remove('on'));
+  const pane = document.getElementById('pane-' + name);
+  if (pane) pane.classList.add('on');
+  loadFrame(name);
+}
+
+function broadcast(msg) {
+  Object.keys(LOADED).forEach(name => {
+    if (!LOADED[name]) return;
+    const f = document.getElementById('frame-' + name);
+    try { f?.contentWindow?.postMessage(msg, '*'); } catch(_){}
+  });
+}
+
+window.addEventListener('message', e => {
+  if (e.data?.type === 'vera:base') broadcast({ type:'vera:base', url: e.data.url||BASE });
+  if (e.data?.type === 'vera:theme') {
+    _lastThemeVars = e.data.vars;
+    if (e.data.vars) {
+      const root = document.documentElement;
+      const map = {'--bg':'--bg0','--s1':'--bg1','--s2':'--bg2','--s3':'--bg3',
+        '--bd':'--border','--bd2':'--border2','--t1':'--text','--t2':'--dim2',
+        '--t3':'--dim','--ac':'--acc','--ac2':'--acc2','--ac3':'--acc3','--ac4':'--err','--ac5':'--acc4'};
+      for (const [k,v] of Object.entries(map)) { if (e.data.vars[k]) root.style.setProperty(v, e.data.vars[k]); }
+    }
+    broadcast(e.data);
+  }
+});
+
+window.addEventListener('DOMContentLoaded', () => { loadFrame('agents'); });
+</script>
+<script src="/ui/vera-ui.js"></script>
+</body>
+</html>

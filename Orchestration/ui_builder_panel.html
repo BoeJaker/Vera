@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Vera UI Builder</title>
+<style>
+:root{--bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;--border:#3a3530;--text:#ddd5c8;--fg:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;--acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--acc4:#9e8fa0;--ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;--mono:'JetBrains Mono','Fira Mono',monospace;--sans:'Inter',system-ui,sans-serif;--r:5px}
+*{box-sizing:border-box;margin:0;padding:0}body{font-family:var(--sans);font-size:12px;color:var(--text);background:var(--bg0);overflow:hidden;height:100vh}
+button{cursor:pointer;font-family:var(--sans)}input,select,textarea{background:var(--bg2);color:var(--fg);border:1px solid var(--border);border-radius:var(--r);padding:4px 8px;font-size:11px;font-family:var(--sans);outline:none}input:focus,select:focus,textarea:focus{border-color:var(--acc)}textarea{font-family:var(--mono);resize:vertical}
+.btn{background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:var(--r);padding:3px 10px;font-size:10.5px;transition:all .15s;white-space:nowrap}.btn:hover{border-color:var(--acc);color:var(--fg)}.btn:disabled{opacity:.35}.btn.p{background:rgba(90,158,143,.1);border-color:rgba(90,158,143,.3);color:var(--acc)}.btn.d{color:var(--err);border-color:rgba(201,107,107,.25)}.btn.t{color:var(--acc2);border-color:rgba(143,184,122,.25)}
+.sec{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--dim);margin-bottom:8px}
+.card{background:var(--bg1);border:1px solid var(--border);border-radius:var(--r);padding:10px;margin-bottom:8px}
+.row{display:flex;align-items:center;gap:8px;margin-bottom:6px}.row>label{font-size:10px;color:var(--dim);min-width:70px;flex-shrink:0}
+.st{font-size:10px;padding:3px 8px;border-radius:3px;margin-top:4px;font-family:var(--mono);min-height:14px}.st.ok{color:var(--ok)}.st.err{color:var(--err)}
+.layout{display:flex;height:100vh;min-height:0}
+.sb{flex:0 0 155px;display:flex;flex-direction:column;gap:2px;border-right:1px solid var(--border);background:var(--bg1);padding:10px;overflow-y:auto}
+.sb .t{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--dim);margin-bottom:8px}
+.nb{display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:var(--r);font-size:11px;color:var(--dim);background:transparent;border:1px solid transparent;text-align:left;width:100%;cursor:pointer}.nb:hover{color:var(--text);background:var(--bg2)}.nb.a{color:var(--acc);border-color:rgba(90,158,143,.25);background:rgba(90,158,143,.06)}
+.main{flex:1;overflow-y:auto;padding:14px 18px}.ps{display:none;flex-direction:column;gap:10px}.ps.a{display:flex}
+#toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--bg3);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:6px 16px;font-size:11px;z-index:999;opacity:0;transition:opacity .25s;pointer-events:none}#toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div class="layout">
+<div class="sb">
+  <div class="t">UI Builder</div>
+  <button class="nb a" data-s="themes" onclick="switchSec(this)">Themes</button>
+  <button class="nb" data-s="builder" onclick="switchSec(this)">Panel Builder</button>
+  <button class="nb" data-s="generate" onclick="switchSec(this)">Generate</button>
+  <button class="nb" data-s="panels" onclick="switchSec(this)">Panels</button>
+  <div style="flex:1"></div>
+  <div id="themePicker" style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px"></div>
+</div>
+<div class="main">
+
+<!-- THEMES -->
+<div class="ps a" id="s-themes">
+  <div class="sec">Theme Editor</div>
+  <div class="card">
+    <div style="font-size:10px;font-weight:600;color:var(--acc);margin-bottom:8px">Active Theme</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap" id="themeButtons"></div>
+    <div class="st" id="themeStatus"></div>
+  </div>
+  <div class="card">
+    <div style="font-size:10px;font-weight:600;color:var(--acc2);margin-bottom:8px">Edit Variables</div>
+    <div class="row"><label>Editing</label><select id="te_which" style="flex:1" onchange="loadThemeVars()"></select></div>
+    <div id="themeVarGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:6px"></div>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <button class="btn p" onclick="saveThemeVars()">Save &amp; Apply</button>
+      <button class="btn" onclick="fabricStoreTheme()">Store in Fabric</button>
+    </div>
+    <div class="st" id="teStatus"></div>
+  </div>
+  <div class="card">
+    <div style="font-size:10px;font-weight:600;color:var(--acc3);margin-bottom:8px">New Theme</div>
+    <div class="row"><label>ID</label><input id="nt_id" placeholder="mytheme" style="flex:1"></div>
+    <div class="row"><label>Label</label><input id="nt_label" placeholder="My Theme" style="flex:1"></div>
+    <div class="row"><label>Base</label><select id="nt_base" style="flex:1"></select></div>
+    <div class="row"><label>Type</label><select id="nt_type" style="flex:1"><option value="dark">Dark</option><option value="light">Light</option></select></div>
+    <button class="btn p" onclick="createTheme()">Create &amp; Apply</button>
+    <div class="st" id="ntStatus"></div>
+  </div>
+  <div class="card">
+    <div style="font-size:10px;font-weight:600;margin-bottom:6px">Full Preview</div>
+    <div id="themePreview"></div>
+  </div>
+</div>
+
+<!-- PANEL BUILDER -->
+<div class="ps" id="s-builder">
+  <div class="sec">Panel Builder</div>
+  <div class="card">
+    <div class="row"><label>ID</label><input id="pb_id" placeholder="my-panel" style="flex:1"></div>
+    <div class="row"><label>Label</label><input id="pb_label" placeholder="My Panel" style="flex:1"></div>
+    <div class="row"><label>Mode</label>
+      <select id="pb_mode" style="flex:1">
+        <option value="tab">Tab (own top-level tab)</option>
+        <option value="inject">Inject (media sub-panel)</option>
+        <option value="mount">Mount (named mount point)</option>
+      </select>
+    </div>
+    <div class="row"><label>Caps</label><input id="pb_caps" placeholder="fabric.stats, memory.search" style="flex:1"></div>
+  </div>
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <span style="font-size:10px;font-weight:600;color:var(--acc2)">HTML</span>
+      <div style="flex:1"></div>
+      <button class="btn" onclick="pbPreview()">Preview</button>
+      <button class="btn p" onclick="pbSave()">Save Panel</button>
+      <button class="btn" onclick="fabricStorePanel()">Store in Fabric</button>
+    </div>
+    <textarea id="pb_html" style="width:100%;height:200px" placeholder="Panel HTML..."></textarea>
+  </div>
+  <div class="card">
+    <span style="font-size:10px;font-weight:600;color:var(--acc2)">JavaScript</span>
+    <textarea id="pb_js" style="width:100%;height:80px;margin-top:4px" placeholder="// Panel JS"></textarea>
+  </div>
+  <div class="card">
+    <span style="font-size:10px;font-weight:600">Preview</span>
+    <div style="border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-top:4px">
+      <iframe id="pbPreviewFrame" sandbox="allow-scripts" style="border:none;width:100%;min-height:250px"></iframe>
+    </div>
+  </div>
+  <div class="st" id="pbStatus"></div>
+</div>
+
+<!-- GENERATE -->
+<div class="ps" id="s-generate">
+  <div class="sec">Agentic Panel Generator</div>
+
+  <!-- Prompt + options -->
+  <div class="card">
+    <div style="font-size:10px;font-weight:600;color:var(--acc);margin-bottom:6px">Describe your panel</div>
+    <textarea id="gen_prompt" style="width:100%;height:56px;font-size:12px;resize:vertical;margin-bottom:8px"
+      placeholder="e.g. A live dashboard showing cluster health with sparklines and colour-coded worker status cards, refreshing every 10s"></textarea>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
+      <div class="row" style="margin-bottom:0"><label>Mode</label>
+        <select id="gen_mode" style="flex:1">
+          <option value="tab">Tab</option>
+          <option value="inject">Media sub-panel</option>
+        </select>
+      </div>
+      <div class="row" style="margin-bottom:0"><label>Max loops</label>
+        <input type="number" id="gen_max_loops" value="3" min="1" max="6" style="width:50px">
+        <span style="font-size:9px;color:var(--dim);margin-left:4px">data-fetch iterations</span>
+      </div>
+      <div class="row" style="margin-bottom:0"><label>Style hint</label>
+        <select id="gen_style" style="flex:1">
+          <option value="dashboard">Dashboard / stats</option>
+          <option value="list">List / browser</option>
+          <option value="graph">Graph / chart</option>
+          <option value="form">Form / tool</option>
+          <option value="creative">Creative / freeform</option>
+        </select>
+      </div>
+      <div class="row" style="margin-bottom:0">
+        <label style="min-width:auto">Store in fabric</label>
+        <input type="checkbox" id="gen_fabric" checked style="margin-left:4px">
+        <label style="min-width:auto;margin-left:8px">Auto-refresh</label>
+        <input type="checkbox" id="gen_autorefresh" checked style="margin-left:4px">
+      </div>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn p" onclick="genRun()" id="genRunBtn">⚡ Generate</button>
+      <button class="btn" onclick="genCancel()" id="genCancelBtn" style="display:none">✕ Cancel</button>
+      <button class="btn t" onclick="genTheme()">Generate Theme</button>
+    </div>
+    <div class="st" id="genStatus"></div>
+  </div>
+
+  <!-- Agent thought log — shows LLM reasoning + data probes -->
+  <div class="card" id="genLogCard" style="display:none">
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+      <span style="font-size:10px;font-weight:600;color:var(--acc2)">Agent log</span>
+      <span id="genLoopBadge" style="font-size:9px;color:var(--dim2)"></span>
+      <div style="flex:1"></div>
+      <button class="btn" style="font-size:9px" onclick="document.getElementById('genLog').innerHTML=''">Clear</button>
+    </div>
+    <div id="genLog" style="max-height:180px;overflow-y:auto;font-size:10px;font-family:var(--mono);line-height:1.7;color:var(--dim2);background:var(--bg0);border:1px solid var(--border);border-radius:3px;padding:6px"></div>
+  </div>
+
+  <!-- Cap picker (collapsible) -->
+  <div class="card" id="genCapCard" style="display:none">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <span style="font-size:10px;font-weight:600;color:var(--acc2)">Capabilities selected by agent</span>
+      <div style="flex:1"></div>
+      <button class="btn" style="font-size:9px" onclick="genSelAll(true)">All</button>
+      <button class="btn" style="font-size:9px" onclick="genSelAll(false)">None</button>
+      <button class="btn" style="font-size:9px" onclick="document.getElementById('genCapCard').style.display='none'">Hide</button>
+    </div>
+    <div id="genCapList" style="max-height:200px;overflow-y:auto"></div>
+  </div>
+
+  <!-- Result -->
+  <div class="card" id="genResultCard" style="display:none">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <span style="font-size:10px;font-weight:600;color:var(--acc2)" id="genResultLabel">Generated</span>
+      <div style="flex:1"></div>
+      <button class="btn t" onclick="genSave()">Register</button>
+      <button class="btn" onclick="genCopy()">Copy HTML</button>
+      <button class="btn" onclick="genEditInBuilder()">Edit</button>
+      <button class="btn" onclick="genRefine()" title="Ask LLM to refine based on feedback">Refine…</button>
+    </div>
+    <!-- Refinement input (hidden until Refine clicked) -->
+    <div id="genRefineRow" style="display:none;gap:6px;margin-bottom:6px;align-items:center">
+      <input id="gen_refine_prompt" placeholder="What to change? e.g. make it dark, add a chart, fix the layout…"
+        style="flex:1;font-size:11px">
+      <button class="btn p" onclick="genDoRefine()">Apply</button>
+      <button class="btn" onclick="document.getElementById('genRefineRow').style.display='none'">✕</button>
+    </div>
+    <div style="border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:6px;position:relative">
+      <iframe id="genPreviewFrame" sandbox="allow-scripts allow-same-origin"
+        style="border:none;width:100%;min-height:340px;display:block"></iframe>
+      <div id="genPreviewOverlay" style="display:none;position:absolute;inset:0;background:rgba(0,0,0,.5);align-items:center;justify-content:center;font-size:12px;color:#fff">Regenerating…</div>
+    </div>
+    <details style="margin-top:4px">
+      <summary style="font-size:10px;color:var(--dim);cursor:pointer;user-select:none">View / edit source HTML</summary>
+      <textarea id="gen_result" style="width:100%;height:220px;font-size:10px;margin-top:6px;font-family:var(--mono)"
+        oninput="genLivePreview()"></textarea>
+    </details>
+  </div>
+</div>
+
+<!-- PANEL BROWSER -->
+<div class="ps" id="s-panels">
+  <div class="sec">Panel Browser</div>
+  <div style="display:flex;gap:6px;margin-bottom:8px">
+    <button class="btn" onclick="loadPanelList()">Refresh</button>
+    <input id="panelFilter" placeholder="Filter..." style="flex:1" oninput="filterPanels()">
+  </div>
+  <div style="display:flex;gap:10px;min-height:0;flex:1">
+    <div id="panelList" style="flex:0 0 240px;display:flex;flex-direction:column;gap:4px;overflow-y:auto;max-height:600px"></div>
+    <div id="panelDetail" style="display:none;flex:1;min-width:0;display:flex;flex-direction:column;gap:8px;max-height:600px;overflow-y:auto">
+      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+        <span id="pdTitle" style="font-weight:600;font-family:var(--mono);font-size:12px;color:var(--acc)"></span>
+        <span id="pdMeta" style="font-size:9px;color:var(--dim2)"></span>
+        <div style="flex:1"></div>
+        <button class="btn" onclick="pdEditInBuilder()">Edit</button>
+        <button class="btn d" onclick="pdDelete()">Delete</button>
+      </div>
+      <!-- Preview iframe -->
+      <div style="border:1px solid var(--border);border-radius:var(--r);overflow:hidden;flex-shrink:0">
+        <iframe id="pdPreviewFrame" sandbox="allow-scripts allow-same-origin" style="border:none;width:100%;min-height:250px"></iframe>
+      </div>
+      <!-- Tabs -->
+      <div style="display:flex;gap:4px;flex-shrink:0">
+        <button class="btn p" onclick="pdTab('html')" id="pdTabHtml">HTML</button>
+        <button class="btn" onclick="pdTab('src')" id="pdTabSrc" style="display:none">Source</button>
+        <button class="btn" onclick="pdTab('caps')" id="pdTabCaps">Caps</button>
+      </div>
+      <div id="pdCHtml"><textarea id="pdHtml" style="width:100%;min-height:150px;font-size:10px" readonly></textarea></div>
+      <div id="pdCSrc" style="display:none"><textarea id="pdSrcHtml" style="width:100%;min-height:150px;font-size:10px" readonly></textarea></div>
+      <div id="pdCCaps" style="display:none"><div id="pdCaps" style="font-size:10px;font-family:var(--mono);color:var(--acc2);line-height:1.8"></div></div>
+    </div>
+  </div>
+</div>
+
+</div></div>
+<div id="toast"></div>
+
+<script>
+(function(){var s=document.createElement('script');s.src=window.location.origin+'/ui/vera-ui.js';s.onload=function(){if(window.veraUI)setTimeout(function(){veraUI.injectPicker('themePicker')},300)};document.head.appendChild(s)})();
+var B=window.location.origin;
+function esc(s){var d=document.createElement('div');d.textContent=String(s);return d.innerHTML}
+function escH(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function toast(m){var t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(function(){t.classList.remove('show')},2500)}
+function stEl(id,m,c){var e=document.getElementById(id);if(e){e.className='st '+(c||'');e.textContent=m}}
+function api(p,m,b){var o={method:m||'GET',headers:{'Content-Type':'application/json'}};if(b)o.body=JSON.stringify(b);return fetch(B+p,o).then(function(r){if(!r.ok)return r.text().then(function(t){try{return JSON.parse(t)}catch(e){return{error:'HTTP '+r.status}}});return r.json()}).catch(function(e){return{error:e.message}})}
+function switchSec(btn){document.querySelectorAll('.nb').forEach(function(b){b.classList.remove('a')});btn.classList.add('a');document.querySelectorAll('.ps').forEach(function(s){s.classList.remove('a')});var el=document.getElementById('s-'+btn.dataset.s);if(el)el.classList.add('a');if(btn.dataset.s==='themes')loadThemes();if(btn.dataset.s==='panels')loadPanelList()}
+
+// ═══ THEMES ═══════════════════════════════════════════════════════════════
+var _themes={},_activeTheme='dusk';
+var THEME_VARS=['--bg','--s1','--s2','--s3','--bd','--bd2','--t1','--t2','--t3','--ac','--ac2','--ac3','--ac4','--ac5'];
+var THEME_LABELS={'--bg':'Background','--s1':'Surface 1','--s2':'Surface 2','--s3':'Surface 3','--bd':'Border','--bd2':'Border 2','--t1':'Text','--t2':'Text 2','--t3':'Text muted','--ac':'Accent','--ac2':'Success','--ac3':'Warning','--ac4':'Error','--ac5':'Decorative'};
+
+function loadThemes(){
+  api('/ui/themes').then(function(r){
+    if(!r||r.error)return;
+    _themes=r.themes||{};_activeTheme=r.active||'dusk';
+    var BUILTIN=new Set(['ash','dusk','void','chalk','ice']);
+    var el=document.getElementById('themeButtons');
+    var h='';for(var id in _themes){var t=_themes[id];var isBuiltin=BUILTIN.has(id);
+      h+='<div style="display:inline-flex;align-items:center;gap:0;border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin:2px">';
+      h+='<button class="btn '+(id===_activeTheme?'p':'')+'" onclick="applyTheme(\''+esc(id)+'\')" style="border:none;border-radius:0;display:flex;align-items:center;gap:5px;padding:3px 8px"><div style="width:10px;height:10px;border-radius:50%;background:'+esc(t.accent||'#888')+';flex-shrink:0"></div>'+esc(t.label)+'</button>';
+      if(!isBuiltin){
+        h+='<button onclick="deleteTheme(\''+esc(id)+'\')" title="Delete theme" style="border:none;background:transparent;color:var(--dim);padding:3px 6px;cursor:pointer;font-size:11px;border-left:1px solid var(--border)" onmouseover="this.style.color=\'var(--err)\'" onmouseout="this.style.color=\'var(--dim)\'">✕</button>';
+      }
+      h+='</div>';
+    }
+    el.innerHTML=h;stEl('themeStatus','Active: '+_activeTheme+' — '+Object.keys(_themes).length+' themes','ok');
+    var opts='';for(var tid in _themes)opts+='<option value="'+tid+'">'+_themes[tid].label+'</option>';
+    document.getElementById('te_which').innerHTML=opts;
+    document.getElementById('nt_base').innerHTML=opts;
+    document.getElementById('te_which').value=_activeTheme;
+    loadThemeVars();
+  });
+}
+function deleteTheme(id){
+  if(!confirm('Delete theme "'+id+'"? This cannot be undone.'))return;
+  api('/ui/theme/delete','POST',{id:id}).then(function(r){
+    if(r&&r.deleted){toast('Theme deleted: '+id);loadThemes();}
+    else{toast((r&&r.error)||'Delete failed');}
+  });
+}
+function applyTheme(id){api('/ui/theme/set','POST',{theme:id}).then(function(r){if(r&&r.theme){_activeTheme=r.theme;if(window.veraUI)veraUI.applyTheme(r.theme,r.vars);toast('Theme: '+r.theme)}loadThemes()})}
+function loadThemeVars(){
+  var id=document.getElementById('te_which').value;var t=_themes[id];if(!t)return;
+  var vars=t.vars||{};var grid=document.getElementById('themeVarGrid');var h='';
+  for(var i=0;i<THEME_VARS.length;i++){
+    var k=THEME_VARS[i];var v=vars[k]||'';var isC=v.charAt(0)==='#';
+    h+='<div style="display:flex;align-items:center;gap:4px">';
+    if(isC)h+='<input type="color" value="'+v+'" data-var="'+esc(k)+'" oninput="teVC(this)">';
+    h+='<input type="text" value="'+esc(v)+'" data-var="'+esc(k)+'" class="tv" oninput="teTC(this)" style="width:90px;font-family:var(--mono);font-size:10px">';
+    h+='<span style="font-size:8px;color:var(--dim);font-family:var(--mono)">'+esc(THEME_LABELS[k]||k)+'</span></div>';
+  }
+  grid.innerHTML=h;renderFullPreview(vars);
+}
+function teVC(el){var t=el.parentElement.querySelector('.tv');if(t)t.value=el.value;updPI()}
+function teTC(el){var c=el.parentElement.querySelector('[type=color]');if(c&&el.value.charAt(0)==='#')c.value=el.value;updPI()}
+function updPI(){var v={};document.querySelectorAll('.tv').forEach(function(el){v[el.dataset.var]=el.value});renderFullPreview(v)}
+
+function renderFullPreview(v){
+  var el=document.getElementById('themePreview');
+  var bg=v['--bg']||'#111';var s1=v['--s1']||'#1a1a1a';var s2=v['--s2']||'#222';var s3=v['--s3']||'#2a2a2a';
+  var bd=v['--bd']||'rgba(255,255,255,.07)';var t1=v['--t1']||'#ddd';var t2=v['--t2']||'#888';var t3=v['--t3']||'#555';
+  var ac=v['--ac']||'#5a9e8f';var ac2=v['--ac2']||'#6db87a';var ac3=v['--ac3']||'#c9955a';var ac4=v['--ac4']||'#c96b6b';var ac5=v['--ac5']||'#9e8fa0';
+  el.innerHTML=
+    '<div style="background:'+bg+';padding:12px;border-radius:6px;border:1px solid '+bd+'">'+
+    '  <div style="color:'+t1+';font-size:13px;font-weight:600;margin-bottom:4px">Heading (t1)</div>'+
+    '  <div style="color:'+t2+';font-size:11px;margin-bottom:4px">Secondary text (t2)</div>'+
+    '  <div style="color:'+t3+';font-size:10px;margin-bottom:8px">Muted text (t3)</div>'+
+    '  <div style="display:flex;gap:4px;margin-bottom:8px">'+
+    '    <div style="flex:1;background:'+s1+';border:1px solid '+bd+';border-radius:4px;padding:6px;font-size:9px;color:'+t2+'">s1</div>'+
+    '    <div style="flex:1;background:'+s2+';border:1px solid '+bd+';border-radius:4px;padding:6px;font-size:9px;color:'+t2+'">s2</div>'+
+    '    <div style="flex:1;background:'+s3+';border:1px solid '+bd+';border-radius:4px;padding:6px;font-size:9px;color:'+t2+'">s3</div>'+
+    '  </div>'+
+    '  <div style="display:flex;gap:4px;flex-wrap:wrap">'+
+    '    <span style="padding:3px 8px;border-radius:3px;font-size:10px;background:'+ac+'22;color:'+ac+';border:1px solid '+ac+'44">Accent</span>'+
+    '    <span style="padding:3px 8px;border-radius:3px;font-size:10px;background:'+ac2+'22;color:'+ac2+';border:1px solid '+ac2+'44">Success</span>'+
+    '    <span style="padding:3px 8px;border-radius:3px;font-size:10px;background:'+ac3+'22;color:'+ac3+';border:1px solid '+ac3+'44">Warning</span>'+
+    '    <span style="padding:3px 8px;border-radius:3px;font-size:10px;background:'+ac4+'22;color:'+ac4+';border:1px solid '+ac4+'44">Error</span>'+
+    '    <span style="padding:3px 8px;border-radius:3px;font-size:10px;background:'+ac5+'22;color:'+ac5+';border:1px solid '+ac5+'44">Decorative</span>'+
+    '  </div>'+
+    '</div>';
+}
+
+function saveThemeVars(){var id=document.getElementById('te_which').value;var vars={};document.querySelectorAll('.tv').forEach(function(el){vars[el.dataset.var]=el.value});var t=_themes[id]||{};api('/ui/theme/create','POST',{id:id,label:t.label||id,type:t.type||'dark',accent:vars['--ac']||'#888',vars:JSON.stringify(vars)}).then(function(r){if(r&&r.created){api('/ui/theme/set','POST',{theme:id}).then(function(r2){if(r2&&r2.theme&&window.veraUI)veraUI.applyTheme(r2.theme,r2.vars);loadThemes()});stEl('teStatus','Saved & applied','ok')}else stEl('teStatus',(r&&r.error)||'Failed','err')})}
+function createTheme(){var id=(document.getElementById('nt_id').value||'').trim();if(!id){stEl('ntStatus','ID required','err');return}var label=(document.getElementById('nt_label').value||'').trim()||id;var baseId=document.getElementById('nt_base').value;var type=document.getElementById('nt_type').value||'dark';var bv=(_themes[baseId]||{}).vars||{};api('/ui/theme/create','POST',{id:id,label:label,type:type,accent:bv['--ac']||'#888',vars:JSON.stringify(bv)}).then(function(r){if(r&&r.created){api('/ui/theme/set','POST',{theme:id}).then(function(r2){if(r2&&r2.theme&&window.veraUI)veraUI.applyTheme(r2.theme,r2.vars);loadThemes()});stEl('ntStatus','Created & applied','ok')}else stEl('ntStatus',(r&&r.error)||'Failed','err')})}
+
+function fabricStoreTheme(){var id=document.getElementById('te_which').value;var vars={};document.querySelectorAll('.tv').forEach(function(el){vars[el.dataset.var]=el.value});api('/mcp/call','POST',{name:'fabric.ingest',arguments:{dataset_id:'ui_themes',data:JSON.stringify([{id:id,vars:vars,type:'theme',text:'Theme: '+id}]),source:'ui_builder',tags:'theme,ui'}}).then(function(r){stEl('teStatus','Stored in fabric: '+(r&&r.content&&r.content.ingested||0)+' records','ok');toast('Theme stored in fabric')})}
+
+// ═══ PANEL BUILDER ════════════════════════════════════════════════════
+function pbPreview(){
+  var html=document.getElementById('pb_html').value||'';
+  var helper='<script>window.__VERA_ORIGIN="'+B+'";window.callCap=function(n,a){return fetch(B+"/mcp/call",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:n,arguments:a||{}})}).then(function(r){return r.json()}).then(function(d){return d&&d.content!==undefined?d.content:d});};<\/script>\n';
+  var patched=html.replace(/window\.location\.origin/g,'window.__VERA_ORIGIN');
+  patched=/<head[^>]*>/i.test(patched)?patched.replace(/(<head[^>]*>)/i,'$1\n'+helper):helper+patched;
+  document.getElementById('pbPreviewFrame').src=URL.createObjectURL(new Blob([patched],{type:'text/html'}));
+}
+function pbSave(){var id=(document.getElementById('pb_id').value||'').trim();if(!id){stEl('pbStatus','ID required','err');return}var mode=document.getElementById('pb_mode').value||'tab';var caps=document.getElementById('pb_caps').value||'';api('/ui/panel/create','POST',{id:id,label:(document.getElementById('pb_label').value||'').trim()||id,html:document.getElementById('pb_html').value||'',js:document.getElementById('pb_js').value||'',mode:mode,ui_caps:caps}).then(function(r){if(r&&r.registered){stEl('pbStatus','Saved: '+id+' ('+mode+')','ok');toast('Panel saved')}else stEl('pbStatus',(r&&r.error)||'Failed','err')})}
+function fabricStorePanel(){var id=(document.getElementById('pb_id').value||'').trim()||'panel-'+Date.now();var html=document.getElementById('pb_html').value||'';api('/mcp/call','POST',{name:'fabric.ingest',arguments:{dataset_id:'ui_panels',data:JSON.stringify([{id:id,html:html,mode:document.getElementById('pb_mode').value,type:'panel',text:'Panel: '+id}]),source:'ui_builder',tags:'panel,ui'}}).then(function(r){stEl('pbStatus','Stored in fabric','ok');toast('Panel stored')})}
+
+// ═══ GENERATE — agentic LLM loop ═════════════════════════════════════
+// Architecture:
+//   1. Load all cap schemas once
+//   2. LLM picks relevant caps + reasons about data shapes (loop up to N times)
+//   3. Each loop: call chosen caps → feed real data samples back to LLM
+//   4. Final pass: LLM writes complete self-contained HTML with real data awareness
+//   5. Optional refine loop: user gives feedback, LLM rewrites
+
+var _genCaps = [];          // all caps from /mcp/tools
+var _genSelectedCaps = [];  // caps chosen for current generation
+var _genAbort = false;
+var _genLastHtml = '';
+
+// ── Helpers ───────────────────────────────────────────────────────────
+function genLog(msg, cls){
+  var el=document.getElementById('genLog'); if(!el)return;
+  var line=document.createElement('div');
+  var icons={probe:'🔍',plan:'📋',build:'🔨',data:'📊',ok:'✓',err:'✗',think:'💭',refine:'✏'};
+  var icon=icons[cls]||'·';
+  line.innerHTML='<span style="color:var(--dim)">'+icon+' </span>'+escH(msg);
+  if(cls==='err')line.style.color='var(--err)';
+  else if(cls==='ok')line.style.color='var(--ok)';
+  else if(cls==='build')line.style.color='var(--acc2)';
+  else if(cls==='data')line.style.color='var(--acc)';
+  el.appendChild(line); el.scrollTop=el.scrollHeight;
+}
+
+function genSetBusy(busy){
+  document.getElementById('genRunBtn').style.display=busy?'none':'inline-flex';
+  document.getElementById('genCancelBtn').style.display=busy?'inline-flex':'none';
+}
+
+function genCancel(){ _genAbort=true; stEl('genStatus','Cancelled',''); genSetBusy(false); }
+
+function genLivePreview(){
+  var html=document.getElementById('gen_result').value;
+  if(html) _setPreview(html);
+}
+
+function _setPreview(html){
+  _genLastHtml = html;
+  document.getElementById('gen_result').value = html;
+
+  // Inject a reliable callCap() helper and __VERA_ORIGIN into the panel before rendering.
+  // Blob URLs inside sandboxed iframes report window.location.origin as "null", so any
+  // fetch() using window.location.origin silently fails. We fix this by:
+  //   1. Injecting __VERA_ORIGIN = the real backend URL as the very first <script>
+  //   2. Injecting a callCap(name, args) helper the LLM should use
+  //   3. Replacing any window.location.origin references in the LLM output as a fallback
+  var origin = B;
+  var helperScript =
+    '<script>\n'+
+    'window.__VERA_ORIGIN="'+origin+'";\n'+
+    '// callCap(capName, args) — call any Vera capability from a generated panel\n'+
+    'window.callCap=function(name,args){\n'+
+    '  return fetch(window.__VERA_ORIGIN+"/mcp/call",{\n'+
+    '    method:"POST",\n'+
+    '    headers:{"Content-Type":"application/json"},\n'+
+    '    body:JSON.stringify({name:name,arguments:args||{}})\n'+
+    '  }).then(function(r){return r.json();})\n'+
+    '    .then(function(d){return d&&d.content!==undefined?d.content:d;});\n'+
+    '};\n'+
+    '<\/script>\n';
+
+  // Also patch any raw window.location.origin references the LLM wrote anyway
+  var patched = html
+    .replace(/window\.location\.origin/g, 'window.__VERA_ORIGIN')
+    .replace(/window\.location\.href\.split.*?(?=\s|;|,|\))/g, 'window.__VERA_ORIGIN');
+
+  // Insert helper right after <head> open tag, or prepend if no <head>
+  if(/<head[^>]*>/i.test(patched)){
+    patched = patched.replace(/(<head[^>]*>)/i, '$1\n'+helperScript);
+  } else {
+    patched = helperScript + patched;
+  }
+
+  var f = document.getElementById('genPreviewFrame');
+  f.src = URL.createObjectURL(new Blob([patched], {type:'text/html'}));
+}
+
+// Call a capability and return a trimmed JSON sample of the response.
+// Builds sensible default args from the schema so required params are filled.
+async function _probeCapability(capName, args){
+  args = args || {};
+  // Find the cap schema
+  var cap = (_genCaps||[]).find(function(c){return c.name===capName;});
+  var props = cap && cap.schema && cap.schema.properties ? cap.schema.properties : {};
+  var required = new Set(cap && cap.schema && cap.schema.required ? cap.schema.required : []);
+
+  // Merge caller args with generated defaults for any remaining required params
+  var callArgs = Object.assign({}, args);
+  Object.keys(props).forEach(function(k){
+    if(k === 'trace_id' || callArgs[k] !== undefined) return;
+    if(!required.has(k)) return; // only fill required ones
+    var t = (props[k]&&props[k].type)||'string';
+    // Generate a sensible placeholder based on param name + type
+    var n = k.toLowerCase();
+    if(n==='url'||n.endsWith('_url'))         callArgs[k]='http://example.com';
+    else if(n==='host'||n.endsWith('_host'))  callArgs[k]='localhost';
+    else if(n==='query'||n==='q')             callArgs[k]='test';
+    else if(n==='limit'||n==='count')         callArgs[k]=5;
+    else if(n==='text'||n==='prompt')         callArgs[k]='hello';
+    else if(n==='name'||n==='id')             callArgs[k]='test';
+    else if(t==='integer'||t==='number')      callArgs[k]=1;
+    else if(t==='boolean')                    callArgs[k]=false;
+    else                                      callArgs[k]='test';
+  });
+
+  try{
+    var r = await api('/mcp/call','POST',{name:capName, arguments:callArgs});
+    var data = r && r.content !== undefined ? r.content : r;
+    if(data && data.error){
+      // Return error info so LLM understands what went wrong and what args are needed
+      return {
+        _probe_error: data.error,
+        _required_args: Object.keys(props).filter(function(k){return required.has(k)&&k!=='trace_id';}),
+        _all_params: Object.keys(props).filter(function(k){return k!=='trace_id';}),
+        _args_used: callArgs,
+      };
+    }
+    if(!data) return {_probe_error: 'empty response', _args_used: callArgs};
+    return _trimSample(data, 0);
+  }catch(e){
+    return {_probe_error: e.message, _args_used: callArgs};
+  }
+}
+
+function _trimSample(obj, depth){
+  if(depth>3)return'…';
+  if(obj===null||obj===undefined)return obj;
+  if(typeof obj==='string')return obj.length>120?obj.slice(0,120)+'…':obj;
+  if(typeof obj==='number'||typeof obj==='boolean')return obj;
+  if(Array.isArray(obj)){
+    var trimmed=obj.slice(0,4).map(function(v){return _trimSample(v,depth+1)});
+    if(obj.length>4)trimmed.push('…('+obj.length+' total)');
+    return trimmed;
+  }
+  if(typeof obj==='object'){
+    var out={};var keys=Object.keys(obj).slice(0,12);
+    keys.forEach(function(k){out[k]=_trimSample(obj[k],depth+1)});
+    if(Object.keys(obj).length>12)out['…']='('+Object.keys(obj).length+' keys)';
+    return out;
+  }
+  return obj;
+}
+
+// Extract cap names the LLM wants to probe from its JSON decision
+function _extractDecision(text){
+  var m=text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  var raw=m?m[1]:text;
+  var om=raw.match(/\{[\s\S]*\}/);
+  if(om)raw=om[0];
+  try{ return JSON.parse(raw.trim()); }catch(e){ return null; }
+}
+
+// ── Cap schema digest for LLM context (concise but complete) ──────────
+function _buildCapDigest(caps){
+  return caps.map(function(c){
+    var props=c.schema&&c.schema.properties||{};
+    var req=new Set(c.schema&&c.schema.required||[]);
+    var params=Object.keys(props).filter(function(k){return k!=='trace_id'}).map(function(k){
+      return k+(req.has(k)?'!':'')+'('+((props[k]&&props[k].type)||'str')+')';
+    }).join(', ');
+    return c.name+'('+params+') — '+(c.description||'').slice(0,90);
+  }).join('\n');
+}
+
+// ── Main generation loop ───────────────────────────────────────────────
+async function genRun(){
+  var prompt=(document.getElementById('gen_prompt').value||'').trim();
+  if(!prompt){stEl('genStatus','Enter a description','err');return;}
+  _genAbort=false;
+  genSetBusy(true);
+  document.getElementById('genLogCard').style.display='block';
+  document.getElementById('genLog').innerHTML='';
+  document.getElementById('genCapCard').style.display='none';
+  document.getElementById('genResultCard').style.display='none';
+  stEl('genStatus','Loading capabilities…','');
+
+  // Load all caps
+  var allCaps=await api('/mcp/tools');
+  if(!allCaps||!Array.isArray(allCaps)||allCaps.error){
+    stEl('genStatus','Failed to load capabilities','err'); genSetBusy(false); return;
+  }
+  _genCaps=allCaps;
+
+  var maxLoops=parseInt(document.getElementById('gen_max_loops').value||'3');
+  var style=document.getElementById('gen_style').value||'dashboard';
+  var autoRefresh=document.getElementById('gen_autorefresh').checked;
+  var capDigest=_buildCapDigest(allCaps);
+
+  // ── Phase 1: LLM picks caps to probe ─────────────────────────────────
+  stEl('genStatus','Agent planning…','');
+  genLog('Planning: what capabilities are relevant?','plan');
+
+  var planSystem=
+    'You are a UI architect planning a web panel.\n'+
+    'You have access to these backend capabilities (name(params) — description):\n'+
+    capDigest+'\n\n'+
+    'Decide which capabilities to call to understand the data shape for building the UI.\n'+
+    'Pick 2-5 most relevant ones. For each, specify call args if needed.\n'+
+    'Respond ONLY with a JSON object:\n'+
+    '{"caps":[{"name":"cap.name","args":{},"reason":"why"}],"plan":"brief UI plan"}';
+
+  var planRaw=await _llmCall(planSystem,'Goal: '+prompt+'\nStyle preference: '+style);
+  if(_genAbort)return;
+
+  var plan=_extractDecision(planRaw||'');
+  var probeCaps=plan&&Array.isArray(plan.caps)?plan.caps:[];
+
+  if(!probeCaps.length){
+    // Fallback: keyword match
+    var words=prompt.toLowerCase().split(/\s+/);
+    probeCaps=allCaps.filter(function(c){
+      return words.some(function(w){return w.length>3&&(c.name.includes(w)||
+        (c.description||'').toLowerCase().includes(w));});
+    }).slice(0,4).map(function(c){return{name:c.name,args:{},reason:'keyword match'};});
+  }
+
+  genLog('Plan: '+(plan&&plan.plan||'collecting data'),'plan');
+  genLog('Will probe '+probeCaps.length+' capabilities','plan');
+
+  // Show cap picker
+  _genSelectedCaps=probeCaps.map(function(p){return p.name;});
+  document.getElementById('genCapCard').style.display='block';
+  document.getElementById('genCapList').innerHTML=probeCaps.map(function(p,i){
+    var cap=allCaps.find(function(c){return c.name===p.name;})||{};
+    return'<label style="display:flex;align-items:flex-start;gap:6px;padding:4px 6px;border-bottom:1px solid rgba(255,255,255,.03);cursor:pointer">'+
+      '<input type="checkbox" checked class="gc" data-name="'+escH(p.name)+'" style="margin-top:2px">'+
+      '<div><div style="font-family:var(--mono);font-size:10px;color:var(--acc)">'+escH(p.name)+'</div>'+
+      '<div style="font-size:9px;color:var(--dim)">'+escH(p.reason||cap.description||'')+'</div></div></label>';
+  }).join('');
+
+  // ── Phase 2: Probe caps + iterate ─────────────────────────────────────
+  var dataSamples={};
+  for(var loop=0;loop<maxLoops&&!_genAbort;loop++){
+    document.getElementById('genLoopBadge').textContent='loop '+(loop+1)+'/'+maxLoops;
+    var toProbe=loop===0?probeCaps:[];
+
+    if(loop>0){
+      // LLM decides if more data is needed
+      var moreSystem=
+        'You are building a UI panel. You have some data samples.\n'+
+        'Decide if you need more data from any capability to build a better UI.\n'+
+        'Respond with JSON: {"probe_more":true/false,"caps":[{"name":"...","args":{},"reason":"..."}]}\n'+
+        'If probe_more is false, the caps array can be empty.';
+      var moreRaw=await _llmCall(moreSystem,
+        'Goal: '+prompt+'\nData so far:\n'+JSON.stringify(dataSamples,null,2).slice(0,3000));
+      if(_genAbort)break;
+      var moreDecision=_extractDecision(moreRaw||'');
+      if(!moreDecision||!moreDecision.probe_more||!moreDecision.caps||!moreDecision.caps.length)break;
+      toProbe=moreDecision.caps;
+    }
+
+    for(var pi=0;pi<toProbe.length&&!_genAbort;pi++){
+      var p=toProbe[pi];
+      genLog('Probing '+p.name+(p.args&&Object.keys(p.args).length?' args='+JSON.stringify(p.args):'')+(p.reason?' — '+p.reason:''),'probe');
+      var sample=await _probeCapability(p.name,p.args||{});
+      // Always store — errors are informative for the LLM
+      dataSamples[p.name]=sample;
+      if(sample && sample._probe_error){
+        genLog('⚠ '+p.name+' errored: '+sample._probe_error+' (required: '+((sample._required_args||[]).join(', ')||'none')+')','err');
+      }else if(sample){
+        genLog('Got data: '+JSON.stringify(sample).slice(0,120)+'…','data');
+      }
+    }
+  }
+  if(_genAbort){genSetBusy(false);stEl('genStatus','Cancelled','');return;}
+
+  // ── Phase 3: Generate full HTML ────────────────────────────────────────
+  stEl('genStatus','Generating UI…','');
+  genLog('Writing full HTML panel…','build');
+
+  var usedCapNames=Object.keys(dataSamples);
+  // Full schema detail — the LLM needs exact param names, types, and required status
+  var usedCapSchemas=usedCapNames.map(function(n){
+    var c=allCaps.find(function(x){return x.name===n;})||{schema:{properties:{}}};
+    var props=c.schema&&c.schema.properties||{};
+    var req=new Set(c.schema&&c.schema.required||[]);
+    var params=Object.keys(props).filter(function(k){return k!=='trace_id';}).map(function(k){
+      return k+(req.has(k)?'*':'')+'('+((props[k]&&props[k].type)||'str')+')';
+    }).join(', ');
+    return '  '+n+'('+params+') — '+(c.description||'').slice(0,100);
+  }).join('\n');
+
+  var buildSystem=
+'You are an expert frontend developer building a self-contained HTML panel for a web dashboard.\n\n'+
+'TASK: "'+prompt+'"\nStyle: '+style+'\n\n'+
+'─── PROBE RESULTS (real backend responses — design your UI around these) ───\n'+
+JSON.stringify(dataSamples,null,2).slice(0,5000)+'\n\n'+
+'If a probe result has "_probe_error": the cap errored with default args.\n'+
+'"_required_args" lists the params you MUST supply. Build form inputs for them.\n'+
+'"_args_used" shows what was tried.\n\n'+
+'─── CAPABILITIES (param* = required) ───\n'+
+usedCapSchemas+'\n\n'+
+'─── HOW TO CALL CAPABILITIES ───\n'+
+'A callCap() helper is already injected into this page. Use it like this:\n'+
+'\n'+
+'callCap("cap.name", {param1: "value", param2: 123})\n'+
+'  .then(function(result) { /* result is the unwrapped response */ })\n'+
+'  .catch(function(err) { /* handle error */ });\n'+
+'\n'+
+'IMPORTANT URL rules:\n'+
+'- Always include protocol: "http://maxhodl.com" not "maxhodl.com"\n'+
+'- NEVER use window.location.origin, window.location.href, or fetch() directly for cap calls\n'+
+'- ALWAYS use callCap() for every capability call — nothing else\n'+
+'- callCap returns the unwrapped result directly (not wrapped in {content:...})\n\n'+
+'─── REQUIREMENTS ───\n'+
+'1. Complete standalone HTML document <!DOCTYPE html> … </html>.\n'+
+'2. Define CSS variables in :root with these dark defaults:\n'+
+'   :root{--bg:#111;--s1:#1a1a1a;--s2:#222;--s3:#2a2a2a;--bd:rgba(255,255,255,.08);\n'+
+'         --t1:#e0e0e0;--t2:#888;--t3:#555;--ac:#6ea8d8;--ac2:#5ec9a0;--ac3:#e09a55;--ac4:#e06060}\n'+
+'3. Define EVERY CSS class you use in your own <style> block.\n'+
+'   NO Bootstrap/Tailwind/utility classes (no d-none, hidden, show, container, row, col-*).\n'+
+'   Show/hide with el.style.display="none"/"block"/"flex" only.\n'+
+'4. All JS in one <script> at end of body. No modules, no imports, no external scripts.\n'+
+'5. Show a visible loading state on startup, clear it when data loads.\n'+
+'6. Error handling: catch errors and display them in a visible error div.\n'+
+(autoRefresh?'7. Auto-refresh every 15s with setInterval — call the same function used on load.\n':'')+
+'8. Choose UI components that match the data:\n'+
+'   status/boolean → big pulsing circle, coloured UP/DOWN badge\n'+
+'   numbers/metrics → large stat tiles with label below\n'+
+'   arrays → card grid or striped table\n'+
+'   latency → colour-coded badge (green<200ms, amber<1s, red>1s)\n'+
+'9. No external dependencies at all.\n'+
+'10. Output ONLY the raw HTML. No explanation, no markdown, no preamble.\n'+
+'\n'+
+'EXAMPLE of a correct capability call:\n'+
+'callCap("obs.health", {})\n'+
+'  .then(function(data) {\n'+
+'    document.getElementById("status").textContent = data.redis ? "Redis OK" : "Redis down";\n'+
+'  });';
+
+
+  var resultHtml='';
+  var resultEl=document.getElementById('gen_result');
+  resultEl.value='';
+  document.getElementById('genResultCard').style.display='block';
+  document.getElementById('genResultLabel').textContent='Generating…';
+  var f=document.getElementById('genPreviewFrame');
+
+  // Stream the HTML generation
+  await _llmStream(buildSystem, 'Build the panel now.', function(token){
+    resultHtml+=token;
+    resultEl.value=resultHtml;
+    resultEl.scrollTop=resultEl.scrollHeight;
+  });
+
+  if(_genAbort){genSetBusy(false);stEl('genStatus','Cancelled','');return;}
+
+  // Clean up: strip markdown fences if LLM added them anyway
+  resultHtml=resultHtml.replace(/^```(?:html)?\s*/i,'').replace(/\s*```\s*$/,'').trim();
+
+  _setPreview(resultHtml);
+  document.getElementById('genResultLabel').textContent='Generated — '+usedCapNames.length+' capabilities';
+  genLog('Done! '+resultHtml.length+' chars of HTML','ok');
+  stEl('genStatus','✓ Panel ready — preview below','ok');
+  genSetBusy(false);
+}
+
+// ── Refine ─────────────────────────────────────────────────────────────
+function genRefine(){
+  var row=document.getElementById('genRefineRow');
+  row.style.display=row.style.display==='none'?'flex':'none';
+  if(row.style.display==='flex')document.getElementById('gen_refine_prompt').focus();
+}
+
+async function genDoRefine(){
+  var feedback=(document.getElementById('gen_refine_prompt').value||'').trim();
+  if(!feedback||!_genLastHtml){return;}
+  document.getElementById('genRefineRow').style.display='none';
+  var overlay=document.getElementById('genPreviewOverlay');
+  overlay.style.display='flex';
+  genLog('Refining: '+feedback,'refine');
+  stEl('genStatus','Refining…','');
+
+  var sys=
+    'You are refining an existing HTML panel based on user feedback.\n'+
+    'A callCap(name, args) helper is already available in the page — use it for ALL capability calls.\n'+
+    'NEVER use window.location.origin or raw fetch() for capability calls.\n'+
+    'Apply the requested changes while keeping the overall structure and functionality.\n'+
+    'Output ONLY the complete updated HTML document. No explanation, no fences, no preamble.';
+  var userMsg='Current HTML:\n'+_genLastHtml.slice(0,8000)+'\n\nFeedback: '+feedback;
+
+  var newHtml='';
+  await _llmStream(sys, userMsg, function(token){ newHtml+=token; });
+
+  newHtml=newHtml.replace(/^```(?:html)?\s*/i,'').replace(/\s*```\s*$/,'').trim();
+  if(newHtml.includes('<!DOCTYPE')||newHtml.includes('<html')){
+    _setPreview(newHtml);
+    genLog('Refined ('+newHtml.length+' chars)','ok');
+    stEl('genStatus','✓ Refined','ok');
+  }else{
+    stEl('genStatus','Refinement produced invalid HTML — kept original','err');
+  }
+  overlay.style.display='none';
+}
+
+// ── LLM helpers ────────────────────────────────────────────────────────
+async function _llmCall(system, prompt){
+  // Non-streaming call — for planning/decision steps
+  try{
+    var r=await fetch(B+'/agents/chat/stream',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({message:prompt,agent_name:'assistant',
+        system_override:system, tts:false})
+    });
+    if(!r.ok)return null;
+    var reader=r.body.getReader(),dec=new TextDecoder(),buf='',full='';
+    while(true){
+      var chunk=await reader.read(); if(chunk.done)break;
+      buf+=dec.decode(chunk.value,{stream:true});
+      var lines=buf.split('\n');buf=lines.pop();
+      for(var i=0;i<lines.length;i++){
+        var ln=lines[i].trim();if(!ln.startsWith('data:'))continue;
+        var raw=ln.slice(5).trim();if(raw==='[DONE]')break;
+        try{var ev=JSON.parse(raw);if(ev.type==='token')full+=ev.text;
+          else if(ev.type==='done'&&ev.text)full=ev.text;}catch(e){}
+      }
+    }
+    return full||null;
+  }catch(e){return null;}
+}
+
+async function _llmStream(system, prompt, onToken){
+  // Streaming call — for HTML generation
+  try{
+    var r=await fetch(B+'/llm/stream',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({prompt:prompt,system:system,prefer_gpu:true,model:''})
+    });
+    if(!r.ok)return;
+    var reader=r.body.getReader(),dec=new TextDecoder(),buf='';
+    while(true){
+      var chunk=await reader.read(); if(chunk.done)break;
+      buf+=dec.decode(chunk.value,{stream:true});
+      var lines=buf.split('\n');buf=lines.pop();
+      for(var i=0;i<lines.length;i++){
+        var ln=lines[i].trim();if(!ln.startsWith('data:'))continue;
+        var raw=ln.slice(5).trim();if(raw==='[DONE]')break;
+        try{var ev=JSON.parse(raw);
+          if(ev.type==='token'&&ev.text)onToken(ev.text);
+          else if(ev.type==='done'&&ev.text){ onToken(''); }
+        }catch(e){}
+      }
+      if(_genAbort)break;
+    }
+  }catch(e){ genLog('Stream error: '+e.message,'err'); }
+}
+
+function genSelAll(v){document.querySelectorAll('.gc').forEach(function(cb){cb.checked=v;})}
+
+function genSave(){
+  var html=document.getElementById('gen_result').value; if(!html)return;
+  var title=(document.getElementById('gen_prompt').value||'').trim()||'panel-'+Date.now().toString(36);
+  var id=title.toLowerCase().replace(/[^a-z0-9]+/g,'-').slice(0,30);
+  var mode=document.getElementById('gen_mode').value||'tab';
+  var storeFabric=document.getElementById('gen_fabric').checked;
+  api('/ui/panel/create','POST',{id:id,label:title,html:html,mode:mode}).then(function(r){
+    if(r&&r.registered){
+      stEl('genStatus','✓ Registered: '+id+' ('+mode+')','ok'); toast('Saved');
+      if(storeFabric){
+        api('/mcp/call','POST',{name:'fabric.ingest',arguments:{
+          dataset_id:'ui_panels',
+          data:JSON.stringify([{id:id,label:title,mode:mode,html_length:html.length,
+            text:'UI Panel: '+title,type:'panel'}]),
+          source:'ui_builder',tags:'ui,panel,generated'
+        }});
+      }
+    }else stEl('genStatus',(r&&r.error)||'Failed','err');
+  });
+}
+function genCopy(){
+  var t=document.getElementById('gen_result').value;
+  if(navigator.clipboard)navigator.clipboard.writeText(t).then(function(){toast('Copied');});
+}
+function genEditInBuilder(){
+  var html=document.getElementById('gen_result').value; if(!html)return;
+  document.getElementById('pb_html').value=html;
+  document.getElementById('pb_id').value=(document.getElementById('gen_prompt').value||'').trim()
+    .toLowerCase().replace(/[^a-z0-9]+/g,'-').slice(0,30)||'gen-panel';
+  document.getElementById('pb_label').value=(document.getElementById('gen_prompt').value||'').trim();
+  switchSec(document.querySelector('[data-s="builder"]')); pbPreview();
+}
+
+// Keep genFindCaps as an alias for backwards compat (now just runs genRun)
+function genFindCaps(){ genRun(); }
+function genBuild(){ genRun(); }
+
+// ═══ THEME GENERATION (LLM) ══════════════════════════════════════════
+function streamLLM(sys,prompt,textarea,onDone,onError){var full=[];fetch(B+'/llm/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:prompt,system:sys,model:'',prefer_gpu:true})}).then(function(r){if(!r.ok){r.text().then(function(t){onError('HTTP '+r.status)});return}var reader=r.body.getReader();var dec=new TextDecoder();var buf='';function pump(){reader.read().then(function(res){if(res.done){onDone(full.join(''));return}buf+=dec.decode(res.value,{stream:true});var lines=buf.split('\n');buf=lines.pop();for(var i=0;i<lines.length;i++){var ln=lines[i].trim();if(!ln||!ln.startsWith('data:'))continue;var raw=ln.substring(5).trim();if(raw==='[DONE]')continue;try{var ev=JSON.parse(raw);if(ev.type==='token'&&ev.text){full.push(ev.text);if(full.length%5===0){textarea.value=full.join('');textarea.scrollTop=textarea.scrollHeight}}else if(ev.type==='done'){textarea.value=ev.text||full.join('');onDone(ev.text||full.join(''));return}else if(ev.type==='error'){onError(ev.text);return}}catch(e){}}pump()}).catch(function(e){if(full.length)onDone(full.join(''));else onError(e.message)})}pump()}).catch(function(e){onError(e.message)})}
+
+function genTheme(){
+  var prompt=(document.getElementById('gen_prompt').value||'').trim();
+  if(!prompt){stEl('genStatus','Describe the theme','err');return}
+  stEl('genStatus','Generating theme...','');
+  var sys='Return ONLY a JSON object. No text outside JSON. Keys: --bg, --s1, --s2, --s3, --bd, --bd2, --t1, --t2, --t3, --ac, --ac2, --ac3, --ac4, --ac5. Values are CSS colors.';
+  var el=document.getElementById('gen_result');el.value='';document.getElementById('genResultCard').style.display='block';
+  streamLLM(sys,'Theme: '+prompt,el,function(full){
+    var raw=full.replace(/^```json?\s*\n?/i,'').replace(/\n?```\s*$/,'').trim();
+    var m=raw.match(/\{[\s\S]*\}/);if(m)raw=m[0];
+    try{var vars=JSON.parse(raw);var id=prompt.toLowerCase().replace(/[^a-z0-9]+/g,'').slice(0,20)||'t'+Date.now();
+      api('/ui/theme/create','POST',{id:id,label:prompt.slice(0,30),type:'dark',accent:vars['--ac']||'#888',vars:JSON.stringify(vars)}).then(function(r){
+        if(r&&r.created){api('/ui/theme/set','POST',{theme:id}).then(function(r2){if(r2&&r2.theme&&window.veraUI)veraUI.applyTheme(r2.theme,r2.vars);loadThemes()});
+          // Store in fabric
+          if(document.getElementById('gen_fabric').checked){
+            api('/mcp/call','POST',{name:'fabric.ingest',arguments:{dataset_id:'ui_themes',data:JSON.stringify([{id:id,vars:vars,text:'Theme: '+id+' - '+prompt.slice(0,50),type:'theme'}]),source:'ui_builder',tags:'theme,ui,generated'}});
+          }
+          stEl('genStatus','Theme: '+id,'ok');toast('Theme applied');renderFullPreview(vars)}
+        else stEl('genStatus',(r&&r.error)||'Failed','err')});
+      el.value=JSON.stringify(vars,null,2);
+    }catch(e){stEl('genStatus','Parse error','err');el.value='RAW:\n'+raw}
+  },function(err){stEl('genStatus','Error: '+err,'err')});
+}
+
+// ═══ PANEL BROWSER ════════════════════════════════════════════════════
+var _panels=[],_selPanel=null;
+function loadPanelList(){api('/ui/panel/list').then(function(r){_panels=(r&&r.panels)||[];renderPanels(_panels)})}
+function filterPanels(){var q=(document.getElementById('panelFilter').value||'').toLowerCase();renderPanels(_panels.filter(function(p){return(p.id+p.label).toLowerCase().indexOf(q)>=0}))}
+function renderPanels(ps){
+  var el=document.getElementById('panelList');
+  if(!ps.length){el.innerHTML='<span style="color:var(--dim)">No panels</span>';return}
+  el.innerHTML=ps.map(function(p){var sel=p.id===_selPanel;
+    return'<div onclick="showPanel(\''+esc(p.id)+'\')" style="cursor:pointer;padding:6px 8px;border-radius:var(--r);border:1px solid '+(sel?'var(--acc)':'var(--border)')+';background:'+(sel?'rgba(90,158,143,.06)':'var(--bg1)')+';display:flex;align-items:center;gap:8px"><div style="flex:1;min-width:0"><div style="font-weight:600;font-size:11px;color:'+(sel?'var(--acc)':'var(--text)')+'">'+esc(p.label)+(p.dynamic?' <span style="font-size:8px;color:var(--acc3)">dyn</span>':'')+'</div><div style="font-size:9px;color:var(--dim2);font-family:var(--mono)">'+esc(p.id)+' '+p.mode+'</div></div></div>';
+  }).join('');
+}
+function showPanel(id){
+  _selPanel=id;renderPanels(_panels);
+  api('/ui/panel/get?id='+encodeURIComponent(id)).then(function(r){
+    if(!r||r.error)return;
+    document.getElementById('panelDetail').style.display='flex';
+    document.getElementById('pdTitle').textContent=r.label;
+    document.getElementById('pdMeta').textContent=r.id+' | '+r.mode+(r.dynamic?' | dynamic':'');
+    document.getElementById('pdHtml').value=r.html||'(none)';
+    document.getElementById('pdCaps').innerHTML=(r.ui_caps||[]).map(function(c){return'<div>'+esc(c)+'</div>'}).join('')||'none';
+
+    // Preview: inject real origin then render
+    var frame=document.getElementById('pdPreviewFrame');
+    var html=r.html||'';
+    function _injectAndPreview(src){
+      var helper='<script>window.__VERA_ORIGIN="'+B+'";window.callCap=function(n,a){return fetch(window.__VERA_ORIGIN+"/mcp/call",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:n,arguments:a||{}})}).then(function(r){return r.json()}).then(function(d){return d&&d.content!==undefined?d.content:d});};<\/script>\n';
+      var patched=src.replace(/window\.location\.origin/g,'window.__VERA_ORIGIN');
+      patched=/<head[^>]*>/i.test(patched)?patched.replace(/(<head[^>]*>)/i,'$1\n'+helper):helper+patched;
+      frame.src=URL.createObjectURL(new Blob([patched],{type:'text/html'}));
+    }
+    // If it contains an iframe with src, load that src directly (no injection needed — real page)
+    var srcMatch=html.match(/src=["']([^"']+)["']/);
+    if(srcMatch&&srcMatch[1]&&srcMatch[1].charAt(0)==='/'){
+      frame.src=B+srcMatch[1];
+      document.getElementById('pdTabSrc').style.display='';
+      fetch(B+srcMatch[1]).then(function(resp){return resp.text()}).then(function(src){document.getElementById('pdSrcHtml').value=src}).catch(function(){document.getElementById('pdSrcHtml').value='Failed to load source'});
+    } else if(html.indexOf('<!DOCTYPE')>=0||html.indexOf('<html')>=0){
+      _injectAndPreview(html);
+      document.getElementById('pdTabSrc').style.display='none';
+    } else {
+      var wrapped='<!DOCTYPE html><html><head><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:sans-serif;font-size:12px;padding:10px;color:#ddd;background:#111}</style></head><body>'+html+'</body></html>';
+      _injectAndPreview(wrapped);
+      document.getElementById('pdTabSrc').style.display='none';
+    }
+    pdTab('html');
+  });
+}
+function pdTab(t){document.getElementById('pdCHtml').style.display=t==='html'?'block':'none';document.getElementById('pdCSrc').style.display=t==='src'?'block':'none';document.getElementById('pdCCaps').style.display=t==='caps'?'block':'none';document.getElementById('pdTabHtml').className='btn'+(t==='html'?' p':'');document.getElementById('pdTabSrc').className='btn'+(t==='src'?' p':'');document.getElementById('pdTabCaps').className='btn'+(t==='caps'?' p':'')}
+function pdEditInBuilder(){if(!_selPanel)return;var p=_panels.find(function(x){return x.id===_selPanel});if(!p)return;api('/ui/panel/get?id='+encodeURIComponent(_selPanel)).then(function(r){if(!r)return;document.getElementById('pb_id').value=r.id;document.getElementById('pb_label').value=r.label;document.getElementById('pb_mode').value=r.mode||'tab';document.getElementById('pb_html').value=r.html||'';document.getElementById('pb_js').value=r.js||'';switchSec(document.querySelector('[data-s="builder"]'));pbPreview()})}
+function pdDelete(){if(!_selPanel||!confirm('Delete "'+_selPanel+'"?'))return;api('/ui/panel/delete','POST',{id:_selPanel}).then(function(r){if(r&&r.deleted){toast('Deleted');document.getElementById('panelDetail').style.display='none';_selPanel=null;loadPanelList()}else toast((r&&r.error)||'Cannot delete')})}
+
+// ═══ INIT ═════════════════════════════════════════════════════════════
+loadThemes();
+</script>
+</body>
+</html>

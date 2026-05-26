@@ -1,0 +1,2638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Memory Graph</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* Fallback values — overridden by theme vars injected by parent */
+  --bg:  #0e0f12; --s1: #13151a; --s2: #1a1d24; --s3: #222630;
+  --bd:  rgba(255,255,255,.07); --bd2: rgba(255,255,255,.14);
+  --t1:  #d4dae4; --t2: #6b7585; --t3: #3b4252;
+  --ac:  #6ea8d8; --ac2: #5ec9a0; --ac3: #e09a55; --ac4: #e06060; --ac5: #a78bfa;
+  --mono: 'IBM Plex Mono', monospace;
+  --sans: 'IBM Plex Sans', sans-serif;
+}
+
+html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--t1); font-family: var(--sans); font-size: 13px; }
+
+#app { display: grid; grid-template-rows: 42px 1fr; grid-template-columns: 230px 1fr 300px; height: 100vh; }
+
+/* ── Topbar ── */
+#topbar {
+  grid-column: 1/-1; display: flex; align-items: center; gap: 8px;
+  padding: 0 14px; background: var(--s1); border-bottom: 1px solid var(--bd2);
+  overflow: hidden;
+}
+.logo { font-family: var(--mono); font-size: 10px; font-weight: 500;
+  letter-spacing: .15em; color: var(--ac2); flex-shrink: 0; }
+.sep { width: 1px; height: 16px; background: var(--bd2); flex-shrink: 0; }
+.tb-btn {
+  font-family: var(--mono); font-size: 10px; padding: 3px 10px;
+  border-radius: 3px; background: var(--s2); border: 1px solid var(--bd);
+  color: var(--t2); cursor: pointer; transition: all .15s; white-space: nowrap; flex-shrink: 0;
+}
+.tb-btn:hover { border-color: var(--ac); color: var(--ac); }
+.tb-btn.on    { border-color: var(--ac2); color: var(--ac2); background: rgba(94,201,160,.1); }
+#stat-bar { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--t2); white-space: nowrap; }
+#status-msg { font-family: var(--mono); font-size: 9.5px; color: var(--t3); }
+#status-msg.ok   { color: var(--ac2); }
+#status-msg.err  { color: var(--ac4); }
+#status-msg.busy { color: var(--ac3); }
+
+/* ── Left ── */
+#left { background: var(--s1); border-right: 1px solid var(--bd); display: flex; flex-direction: column; overflow: hidden; }
+.ph { padding: 8px 12px 6px; border-bottom: 1px solid var(--bd);
+  font-family: var(--mono); font-size: 9px; letter-spacing: .1em; color: var(--t3); text-transform: uppercase; flex-shrink: 0; }
+.pb { flex: 1; overflow-y: auto; padding: 8px 10px; }
+.pb::-webkit-scrollbar { width: 3px; }
+.pb::-webkit-scrollbar-thumb { background: var(--bd2); }
+
+.sl { font-family: var(--mono); font-size: 9px; letter-spacing: .08em; color: var(--t3); text-transform: uppercase; margin: 10px 0 5px; }
+
+/* chips */
+.chips { display: flex; flex-wrap: wrap; gap: 3px; margin-bottom: 6px; }
+.chip {
+  font-family: var(--mono); font-size: 9px; padding: 2px 7px;
+  border-radius: 10px; border: 1px solid var(--bd); background: var(--s2);
+  color: var(--t3); cursor: pointer; user-select: none; transition: all .12s;
+}
+.chip.on { border-color: var(--ac); color: var(--ac); background: rgba(110,168,216,.12); }
+
+/* controls */
+.ctrl { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.ctrl label { font-family: var(--mono); font-size: 9.5px; color: var(--t2); min-width: 48px; flex-shrink: 0; }
+input[type=range] { flex: 1; accent-color: var(--ac); cursor: pointer; }
+select {
+  flex: 1; background: var(--s2); border: 1px solid var(--bd); color: var(--t1);
+  font-family: var(--mono); font-size: 9.5px; padding: 2px 5px; border-radius: 3px; outline: none;
+}
+input[type=text], input[type=search] {
+  width: 100%; background: var(--s2); border: 1px solid var(--bd); color: var(--t1);
+  font-family: var(--mono); font-size: 10px; padding: 4px 8px; border-radius: 3px; outline: none;
+  margin-bottom: 6px;
+}
+input[type=text]:focus, input[type=search]:focus { border-color: var(--ac); }
+.debug { font-family: var(--mono); font-size: 9px; color: var(--t3); line-height: 1.8; }
+
+/* ── Canvas ── */
+#cvwrap { position: relative; overflow: hidden; background: var(--bg); }
+#cv { position: absolute; inset: 0; cursor: grab; display: block; background: var(--bg); }
+#cv:active { cursor: grabbing; }
+#overlay-loading {
+  display: none; position: absolute; inset: 0; background: rgba(0,0,0,.5);
+  align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 11px; color: var(--ac2); letter-spacing: .1em;
+}
+#overlay-loading.show { display: flex; }
+
+/* ── Right panel ── */
+#right { background: var(--s1); border-left: 1px solid var(--bd); display: flex; flex-direction: column; overflow: hidden; }
+#info-scroll { flex: 1; overflow-y: auto; padding: 10px 12px; }
+#info-scroll::-webkit-scrollbar { width: 3px; }
+#info-scroll::-webkit-scrollbar-thumb { background: var(--bd2); }
+
+#placeholder { color: var(--t3); font-size: 11px; text-align: center; padding: 24px 12px; line-height: 2; font-family: var(--mono); }
+
+.node-title { font-family: var(--mono); font-size: 11px; font-weight: 500; color: var(--ac); margin-bottom: 8px; word-break: break-all; line-height: 1.4; }
+.badge {
+  display: inline-block; font-family: var(--mono); font-size: 8.5px;
+  padding: 1px 6px; border-radius: 2px; margin: 0 3px 4px 0;
+}
+.kv { display: flex; gap: 6px; align-items: baseline; margin-bottom: 4px; font-size: 10.5px; }
+.kv-k { font-family: var(--mono); font-size: 9.5px; color: var(--t3); min-width: 62px; flex-shrink: 0; }
+.kv-v { color: var(--t1); word-break: break-all; }
+.node-text {
+  margin: 8px 0; padding: 7px 9px; background: var(--s2);
+  border: 1px solid var(--bd); border-radius: 3px;
+  font-size: 10.5px; line-height: 1.6; color: var(--t2);
+  white-space: pre-wrap; word-break: break-word; max-height: 140px; overflow-y: auto;
+}
+.tags-wrap { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 6px; }
+.tag { font-family: var(--mono); font-size: 8px; padding: 1px 6px; border-radius: 10px; background: var(--s3); border: 1px solid var(--bd); color: var(--t3); }
+
+/* Cap runner */
+#cap-runner { border-top: 1px solid var(--bd); padding: 10px 12px; flex-shrink: 0; }
+#cap-runner-hdr { font-family: var(--mono); font-size: 9px; letter-spacing: .08em; text-transform: uppercase; color: var(--t3); margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
+#cap-run-select { width: 100%; margin-bottom: 6px; font-size: 10px; }
+#cap-run-params { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; max-height: 120px; overflow-y: auto; }
+.param-row { display: flex; gap: 6px; align-items: center; }
+.param-row label { font-family: var(--mono); font-size: 9px; color: var(--t3); min-width: 64px; flex-shrink: 0; }
+.param-row input {
+  flex: 1; background: var(--s2); border: 1px solid var(--bd); color: var(--t1);
+  font-family: var(--mono); font-size: 9.5px; padding: 2px 6px; border-radius: 2px; outline: none;
+}
+.param-row input:focus { border-color: var(--ac); }
+.param-row .from-node {
+  font-size: 8px; padding: 1px 5px; border-radius: 2px;
+  background: rgba(110,168,216,.15); border: 1px solid var(--ac); color: var(--ac);
+  cursor: pointer; flex-shrink: 0; white-space: nowrap;
+}
+.run-btn {
+  width: 100%; font-family: var(--mono); font-size: 10px; padding: 5px;
+  background: rgba(110,168,216,.1); border: 1px solid var(--ac); color: var(--ac);
+  border-radius: 3px; cursor: pointer; transition: all .15s;
+}
+.run-btn:hover { background: rgba(110,168,216,.2); }
+#cap-run-result {
+  margin-top: 6px; font-family: var(--mono); font-size: 9px; color: var(--ac2);
+  background: var(--s2); border: 1px solid var(--bd); border-radius: 3px;
+  padding: 5px 7px; max-height: 80px; overflow-y: auto; white-space: pre-wrap;
+  display: none;
+}
+
+/* node action buttons */
+#node-actions { display: flex; gap: 5px; padding: 8px 12px; border-top: 1px solid var(--bd); flex-shrink: 0; }
+.na-btn {
+  flex: 1; font-family: var(--mono); font-size: 9.5px; padding: 4px 6px;
+  background: var(--s2); border: 1px solid var(--bd); color: var(--t2);
+  border-radius: 3px; cursor: pointer; transition: all .12s; text-align: center;
+}
+.na-btn:hover { border-color: var(--ac); color: var(--ac); }
+
+/* Live log */
+#live-log { border-top: 1px solid var(--bd); max-height: 120px; overflow-y: auto; flex-shrink: 0; }
+#live-log::-webkit-scrollbar { width: 3px; }
+#live-log::-webkit-scrollbar-thumb { background: var(--bd2); }
+.log-row { font-family: var(--mono); font-size: 9px; color: var(--t3); padding: 2px 10px; border-bottom: 1px solid rgba(255,255,255,.03); }
+.log-row .lt { color: var(--t3); }
+.log-row .lk { color: var(--ac2); }
+
+/* drop hint */
+#drop-hint { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+  font-family: var(--mono); font-size: 9px; color: var(--t3); pointer-events: none;
+  background: var(--s1); border: 1px solid var(--bd); padding: 3px 10px; border-radius: 10px;
+  opacity: 0; transition: opacity .3s; }
+#drop-hint.show { opacity: 1; }
+
+/* Draggable field tokens in node info */
+.field-tokens { display: flex; flex-direction: column; gap: 3px; margin: 8px 0; }
+.field-token {
+  display: flex; align-items: flex-start; gap: 5px; padding: 4px 7px;
+  background: var(--s2); border: 1px solid var(--bd); border-radius: 3px;
+  cursor: grab; transition: border-color .12s; user-select: none;
+}
+.field-token:hover { border-color: var(--ac); }
+.field-token:active { cursor: grabbing; }
+.ft-key { font-family: var(--mono); font-size: 8.5px; color: var(--t3); min-width: 58px; flex-shrink: 0; padding-top: 1px; }
+.ft-val { font-family: var(--mono); font-size: 9px; color: var(--t1); word-break: break-all; line-height: 1.4; }
+.ft-val.long { max-height: 48px; overflow: hidden; }
+.ft-expand { font-size: 8px; color: var(--ac); cursor: pointer; flex-shrink: 0; padding-top: 2px; white-space: nowrap; }
+
+/* Full content panel */
+#full-content-box {
+  margin: 8px 0; padding: 7px 9px; background: var(--s2);
+  border: 1px solid var(--bd); border-radius: 3px;
+  font-size: 10px; line-height: 1.6; color: var(--t2);
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 260px; overflow-y: auto; display: none;
+  font-family: var(--mono);
+}
+.load-full-btn {
+  font-family: var(--mono); font-size: 9px; padding: 3px 9px;
+  background: transparent; border: 1px solid var(--bd); color: var(--t3);
+  border-radius: 2px; cursor: pointer; margin-top: 4px; transition: all .12s;
+}
+.load-full-btn:hover { border-color: var(--ac); color: var(--ac); }
+
+/* View mode buttons */
+.view-chips { display: flex; gap: 3px; flex-wrap: wrap; margin-bottom: 6px; }
+.view-chip {
+  font-family: var(--mono); font-size: 9px; padding: 2px 8px;
+  border-radius: 2px; border: 1px solid var(--bd); background: var(--s2);
+  color: var(--t3); cursor: pointer; transition: all .12s;
+}
+.view-chip.on { border-color: var(--ac2); color: var(--ac2); background: rgba(94,201,160,.1); }
+
+/* Unresolved banner */
+#unresolved-banner {
+  display: none; margin: 6px 0; padding: 5px 8px;
+  background: rgba(224,154,85,.08); border: 1px solid rgba(224,154,85,.3);
+  border-radius: 3px; font-family: var(--mono); font-size: 9px; color: var(--ac3);
+}
+#unresolved-banner button {
+  font-family: var(--mono); font-size: 9px; padding: 2px 7px; margin-left: 6px;
+  background: transparent; border: 1px solid var(--ac3); color: var(--ac3);
+  border-radius: 2px; cursor: pointer; transition: all .12s;
+}
+#unresolved-banner button:hover { background: rgba(224,154,85,.15); }
+
+/* Edge type legend */
+.edge-legend { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 4px; }
+.el-item { font-family: var(--mono); font-size: 8.5px; color: var(--t3); display: flex; align-items: center; gap: 3px; }
+.el-dot { width: 8px; height: 3px; border-radius: 1px; flex-shrink: 0; }
+.el-dot.inferred { border-top: 1px dashed; background: transparent; height: 0; }
+
+/* Session picker */
+#session-picker { max-height: 180px; overflow-y: auto; margin-bottom: 6px; }
+#session-picker::-webkit-scrollbar { width: 3px; }
+#session-picker::-webkit-scrollbar-thumb { background: var(--bd2); }
+.sp-item {
+  font-family: var(--mono); font-size: 9px; padding: 4px 7px;
+  border: 1px solid var(--bd); border-radius: 3px; margin-bottom: 3px;
+  background: var(--s2); cursor: pointer; transition: all .12s;
+  display: flex; flex-direction: column; gap: 1px;
+}
+.sp-item:hover { border-color: var(--ac); }
+.sp-item.on { border-color: var(--ac2); background: rgba(94,201,160,.1); }
+.sp-item .sp-name { color: var(--t1); font-size: 9.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sp-item .sp-meta { color: var(--t3); font-size: 8px; }
+.sp-item .sp-prev { color: var(--t3); font-size: 8px; font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 190px; }
+.sp-load-btn {
+  font-family: var(--mono); font-size: 9px; padding: 3px 8px; width: 100%;
+  background: var(--s2); border: 1px solid var(--bd); color: var(--t2);
+  border-radius: 3px; cursor: pointer; transition: all .12s; margin-bottom: 4px;
+}
+.sp-load-btn:hover { border-color: var(--ac); color: var(--ac); }
+.sp-clear-btn {
+  font-family: var(--mono); font-size: 8.5px; padding: 2px 6px;
+  background: transparent; border: 1px solid var(--bd); color: var(--t3);
+  border-radius: 2px; cursor: pointer; transition: all .12s; margin-left: auto;
+}
+.sp-clear-btn:hover { border-color: var(--ac4); color: var(--ac4); }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- TOPBAR -->
+  <div id="topbar">
+    <span class="logo">MEMORY·GRAPH</span>
+    <div class="sep"></div>
+    <button class="tb-btn on"  id="btn-session" onclick="loadGraph('session')">Session</button>
+    <button class="tb-btn"     id="btn-recent"  onclick="loadGraph('recent')" title="Recent activity across all sessions (default 6h)">Recent</button>
+    <button class="tb-btn"     id="btn-all"     onclick="loadGraph('all')" title="All-history pagination — most recent first; use Older to walk back">All</button>
+
+    <!-- Time-window slider: visible only when in 'recent' or 'window' mode.
+         Each click REPLACES the current view with a fixed-window load.
+         Preset buttons map to recent_hours values; 'all' loads everything
+         the limit allows (no time bound). -->
+    <span id="time-window-bar" style="display:none;align-items:center;gap:2px;margin-left:4px">
+      <span style="font-size:9px;color:var(--t3);margin-right:3px">window:</span>
+      <button class="tb-btn win-preset" data-h="1"   onclick="setWindow(1)">1h</button>
+      <button class="tb-btn win-preset" data-h="6"   onclick="setWindow(6)">6h</button>
+      <button class="tb-btn win-preset on" data-h="24"  onclick="setWindow(24)">24h</button>
+      <button class="tb-btn win-preset" data-h="72"  onclick="setWindow(72)">3d</button>
+      <button class="tb-btn win-preset" data-h="168" onclick="setWindow(168)">7d</button>
+      <button class="tb-btn win-preset" data-h="720" onclick="setWindow(720)">30d</button>
+    </span>
+
+    <button class="tb-btn"     id="btn-older"   onclick="loadOlder()" title="Append the next page of older records (All mode only)" style="display:none">⟵ Older</button>
+
+    <!-- Append-vs-replace toggle for Older. Default = replace, since that
+         was the user's request: a fixed window that REPLACES nodes when
+         walking back. Toggle off (the eye icon dims) to make Older
+         additive instead. -->
+    <label id="append-toggle" style="display:none;align-items:center;gap:3px;font-size:9px;color:var(--t3);margin-left:2px;cursor:pointer" title="When ON, ‘Older’ APPENDS new nodes; when OFF (default), it REPLACES the current view">
+      <input type="checkbox" id="cb-append" style="margin:0;width:11px;height:11px"> append
+    </label>
+
+    <div class="sep"></div>
+    <button class="tb-btn"                      onclick="refreshGraph()">↻</button>
+    <button class="tb-btn"                      onclick="fitAll()">Fit</button>
+    <button class="tb-btn"                      onclick="resetLayout()">Reset</button>
+    <button class="tb-btn"                      onclick="labelSession()">Label</button>
+
+    <!-- Cleanup menu — graph stats + destructive operations behind a
+         disclosure. Each destructive action confirms before firing. -->
+    <span id="cleanup-wrap" style="position:relative">
+      <button class="tb-btn" onclick="toggleCleanupMenu()" title="Graph stats and cleanup tools">⚙ Cleanup ▾</button>
+      <div id="cleanup-menu" style="display:none;position:absolute;top:100%;right:0;background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:4px;min-width:200px;z-index:1000;font-size:10px">
+        <button class="cleanup-item"  onclick="cleanupStats()">📊 Show stats</button>
+        <button class="cleanup-item"  onclick="cleanupNormalize()">🧹 Normalize (merge duplicates)</button>
+        <hr style="border:none;border-top:1px solid var(--border);margin:3px 0">
+        <button class="cleanup-item warn" onclick="cleanupDeleteCurrentSession()">🗑 Delete current session</button>
+        <button class="cleanup-item warn" onclick="cleanupDeleteByPrefix()">🗑 Delete by prefix…</button>
+        <button class="cleanup-item err"  onclick="cleanupClearAll()">⚠ Clear ENTIRE graph</button>
+      </div>
+    </span>
+
+    <span id="stat-bar">—</span>
+    <span id="status-msg"></span>
+  </div>
+
+  <!-- Cleanup-menu styles + status overlay for stats display -->
+  <style>
+    .cleanup-item{display:block;width:100%;text-align:left;padding:5px 7px;background:transparent;border:none;color:var(--fg);cursor:pointer;border-radius:3px;font-size:10px;font-family:inherit}
+    .cleanup-item:hover{background:var(--bg3,#222)}
+    .cleanup-item.warn{color:#e08e3e}
+    .cleanup-item.warn:hover{background:rgba(224,142,62,.12)}
+    .cleanup-item.err{color:#c96b6b}
+    .cleanup-item.err:hover{background:rgba(201,107,107,.12)}
+    .win-preset{padding:1px 5px;font-size:9px;min-width:auto}
+    .win-preset.on{background:var(--acc,#5a9e8f);color:#fff}
+
+    /* Stats modal — appears centred over the graph */
+    #stats-modal{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:14px;min-width:420px;max-width:600px;max-height:80vh;overflow-y:auto;z-index:2000;box-shadow:0 8px 24px rgba(0,0,0,.5);font-size:10px}
+    #stats-modal h3{margin:0 0 8px 0;font-size:12px;color:var(--acc,#5a9e8f)}
+    #stats-modal table{width:100%;border-collapse:collapse;margin-bottom:8px;font-size:9.5px}
+    #stats-modal th,#stats-modal td{padding:2px 6px;border-bottom:1px solid var(--border);text-align:left}
+    #stats-modal th{color:var(--t3);font-weight:normal;font-size:8.5px;text-transform:uppercase}
+    #stats-modal .close-x{position:absolute;top:6px;right:8px;background:transparent;border:none;color:var(--t3);font-size:14px;cursor:pointer}
+    #stats-modal .badge{display:inline-block;padding:1px 5px;border-radius:7px;font-size:8.5px;background:var(--bg3,#222);color:var(--t2)}
+    #stats-modal .badge.dup{background:rgba(224,142,62,.18);color:#e08e3e}
+    #stats-modal .row-action{padding:1px 5px;font-size:8.5px;background:transparent;border:1px solid var(--border);color:var(--t2);border-radius:3px;cursor:pointer;margin-left:4px}
+    #stats-modal .row-action:hover{background:rgba(201,107,107,.12);color:#c96b6b;border-color:#c96b6b}
+    #stats-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1999}
+  </style>
+
+  <!-- Stats / cleanup modal (populated on demand by cleanupStats()) -->
+  <div id="stats-overlay" onclick="hideCleanupModal()"></div>
+  <div id="stats-modal">
+    <button class="close-x" onclick="hideCleanupModal()">×</button>
+    <div id="stats-modal-body">…</div>
+  </div>
+
+  <!-- LEFT -->
+  <div id="left">
+    <div class="ph">Filters &amp; Layout</div>
+    <div class="pb">
+
+      <div class="sl">Node Types <span id="type-count" style="color:var(--t3);font-size:8.5px"></span></div>
+      <div class="chips" id="type-chips">
+        <span style="color:var(--t3);font-size:9px">(load a graph)</span>
+      </div>
+
+      <div class="sl">Edge Types <span id="edge-count" style="color:var(--t3);font-size:8.5px"></span></div>
+      <div class="chips" id="edge-chips">
+        <span style="color:var(--t3);font-size:9px">(load a graph)</span>
+      </div>
+
+      <div class="sl">Source Types <span id="source-count" style="color:var(--t3);font-size:8.5px"></span></div>
+      <div class="chips" id="source-chips">
+        <span style="color:var(--t3);font-size:9px">(load a graph)</span>
+      </div>
+
+      <div class="sl" style="display:flex;align-items:center;gap:4px">Sessions
+        <button class="sp-clear-btn" id="sp-clear" onclick="clearSessionFilter()" style="display:none">clear filter</button>
+      </div>
+      <button class="sp-load-btn" onclick="loadSessionList()">Load session list</button>
+      <input type="search" id="sp-search" placeholder="Filter sessions…" oninput="filterSessionList()" style="display:none">
+      <div id="session-picker"></div>
+
+      <div class="sl">View Mode</div>
+      <div class="view-chips">
+        <span class="view-chip on" id="vchip-force"     onclick="setViewMode('force')">Force</span>
+        <span class="view-chip"    id="vchip-timeline"  onclick="setViewMode('timeline')">Timeline</span>
+        <span class="view-chip"    id="vchip-hierarchy" onclick="setViewMode('hierarchy')">Hierarchy</span>
+        <span class="view-chip"    id="vchip-radial"    onclick="setViewMode('radial')">Radial</span>
+      </div>
+
+      <div id="unresolved-banner">
+        <span id="unresolved-count"></span> unresolved nodes hidden
+        <button onclick="resolveUnresolved()">Resolve</button>
+        <button onclick="showUnresolved()">Show all</button>
+      </div>
+
+      <div class="sl">Layout</div>
+      <div id="force-controls">
+        <div class="ctrl">
+          <label>X axis</label>
+          <select id="ax-x" onchange="scheduleRelayout()">
+            <option value="time">Time</option>
+            <option value="importance">Importance</option>
+            <option value="source">Source</option>
+            <option value="category">Category</option>
+          </select>
+        </div>
+        <div class="ctrl">
+          <label>Y axis</label>
+          <select id="ax-y" onchange="scheduleRelayout()">
+            <option value="type">Node type</option>
+            <option value="importance">Importance</option>
+            <option value="session">Session</option>
+          </select>
+        </div>
+        <div class="ctrl"><label>Spread</label><input type="range" id="spread" min="60" max="600" value="200" oninput="scheduleRelayout()"></div>
+        <div class="ctrl"><label>Gravity</label><input type="range" id="gravity" min="0" max="30" value="3" step="1"></div>
+        <div class="ctrl"><label>Repel</label><input type="range"  id="repel-r" min="200" max="6000" value="2400" step="100"></div>
+        <div class="ctrl"><label>Damping</label><input type="range" id="damp-r" min="50" max="99" value="85" step="1"></div>
+        <div class="sl" style="margin-top:8px">Edge Display</div>
+        <div style="margin-bottom:4px">
+          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-family:var(--mono);font-size:9.5px;color:var(--t2)">
+            <input type="checkbox" id="cb-hide-structural" onchange="rebuildEdgeMode()" checked>
+            Hide hub edges (CONTAINS / TRIGGERED_BY)
+          </label>
+          <label style="display:flex;align-items:center;gap:5px;margin-top:4px;cursor:pointer;font-family:var(--mono);font-size:9.5px;color:var(--t2)">
+            <input type="checkbox" id="cb-inferred-physics">
+            Inferred edges pull nodes
+          </label>
+        </div>
+      </div>
+      <div id="timeline-controls" style="display:none">
+        <div class="ctrl"><label>Lane ht</label><input type="range" id="tl-lane" min="40" max="200" value="80" oninput="applyView()"></div>
+        <div class="ctrl"><label>Time px/hr</label><input type="range" id="tl-scale" min="10" max="300" value="60" oninput="applyView()"></div>
+      </div>
+      <div id="hierarchy-controls" style="display:none">
+        <div class="ctrl"><label>Level gap</label><input type="range" id="hr-gap" min="60" max="300" value="130" oninput="applyView()"></div>
+        <div class="ctrl"><label>Node gap</label><input type="range" id="hr-node" min="30" max="150" value="60" oninput="applyView()"></div>
+        <div class="ctrl"><label>Root</label>
+          <select id="hr-root" onchange="applyView()">
+            <option value="session">session</option>
+            <option value="message">message</option>
+            <option value="dag">dag</option>
+          </select>
+        </div>
+      </div>
+      <div id="radial-controls" style="display:none">
+        <div class="ctrl"><label>Radius</label><input type="range" id="rd-radius" min="80" max="500" value="200" oninput="applyView()"></div>
+        <div class="ctrl"><label>Centre</label>
+          <select id="rd-centre" onchange="applyView()">
+            <option value="selected">Selected node</option>
+            <option value="session">Session node</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="sl">Search</div>
+      <input type="search" id="search" placeholder="Filter nodes…" oninput="onSearch()">
+
+      <div class="sl">Debug</div>
+      <div class="debug" id="dbg">nodes: —<br>edges: —<br>vis: —</div>
+    </div>
+  </div>
+
+  <!-- CANVAS -->
+  <div id="cvwrap">
+    <canvas id="cv"></canvas>
+    <div id="overlay-loading">⟳ loading…</div>
+    <div id="drop-hint">Drag node → cap input to fill</div>
+  </div>
+
+  <!-- RIGHT -->
+  <div id="right">
+    <div class="ph">Node Info</div>
+    <div id="info-scroll">
+      <div id="placeholder">Click a node<br>to inspect it</div>
+      <div id="node-detail" style="display:none"></div>
+    </div>
+    <div id="node-actions" style="display:none">
+      <span class="na-btn" onclick="expandSel()">Expand</span>
+      <span class="na-btn" onclick="focusSel()">Focus</span>
+      <span class="na-btn" onclick="labelSel()">Label</span>
+    </div>
+
+    <!-- Cap runner -->
+    <div id="cap-runner">
+      <div id="cap-runner-hdr">
+        Run capability
+        <span style="font-size:9px;color:var(--t3)">drag node prop → input</span>
+      </div>
+      <select id="cap-run-select" onchange="buildCapParams()">
+        <option value="">— choose capability —</option>
+      </select>
+      <div id="cap-run-params"></div>
+      <button class="run-btn" onclick="runCap()">▶ Run</button>
+      <div id="cap-run-result"></div>
+    </div>
+
+    <!-- Live log -->
+    <div class="ph" style="border-top:1px solid var(--bd)">Live</div>
+    <div id="live-log"></div>
+  </div>
+
+</div>
+
+<script>
+'use strict';
+
+// ─── Backend base URL ────────────────────────────────────────────────────────
+function base() {
+  try {
+    if (window.parent && window.parent !== window && window.parent._veraBase)
+      return window.parent._veraBase.replace(/\/$/, '');
+  } catch(_) {}
+  return location.origin;
+}
+function sessionId() {
+  try {
+    if (window.parent && window.parent !== window) {
+      // Prefer the canonical name; fall back to the legacy alias so panels
+      // loaded before the Option-A refactor completed keep working.
+      return window.parent._veraSessionId || window.parent._chatSessionId || '';
+    }
+  } catch(_) {}
+  try { return localStorage.getItem('vera_session_id') || ''; } catch(_) { return ''; }
+}
+async function api(path, method='GET', body=null) {
+  const opts = { method, headers: {'Content-Type':'application/json'} };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(base() + path, opts);
+  if (!r.ok) throw new Error(`HTTP ${r.status} ${path}`);
+  return r.json();
+}
+function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ─── Theme sync ──────────────────────────────────────────────────────────────
+// Read CSS vars from parent frame so our canvas colours match the active theme
+function themeColor(v, fallback) {
+  try {
+    const s = getComputedStyle(window.parent.document.documentElement)
+                .getPropertyValue(v).trim();
+    if (s) return s;
+  } catch(_) {}
+  return getComputedStyle(document.documentElement).getPropertyValue(v).trim() || fallback;
+}
+function applyParentTheme() {
+  try {
+    const vars = ['--bg','--s1','--s2','--s3','--bd','--bd2','--t1','--t2','--t3',
+                  '--ac','--ac2','--ac3','--ac4','--ac5'];
+    const pStyle = window.parent.document.documentElement.style;
+    const pComp  = getComputedStyle(window.parent.document.documentElement);
+    vars.forEach(v => {
+      const val = pStyle.getPropertyValue(v) || pComp.getPropertyValue(v);
+      if (val.trim()) document.documentElement.style.setProperty(v, val.trim());
+    });
+  } catch(_) {}
+}
+applyParentTheme();
+
+// ─── Graph state ─────────────────────────────────────────────────────────────
+let nodes   = {};       // id → node object
+let edges   = [];       // [{from, to, label}]
+let edgeSet = new Set();
+
+// Filter sets — start empty. They're populated by rebuildFilters() after
+// every load. `null` means "no filter applied (show all)". An empty Set
+// means "user has explicitly hidden everything in this dimension".
+let visTypes   = null;   // Set of record_types to show, or null = show all
+let visEdges   = null;   // Set of relation types to show, or null = show all
+let visSources = null;   // Set of source_types to show, or null = show all
+
+// Remember user chip preferences across reloads so that deselecting a chip
+// doesn't get undone when new data arrives.
+const _userOffTypes   = new Set();   // types the user has explicitly turned off
+const _userOffEdges   = new Set();
+const _userOffSources = new Set();
+
+// ─── Edge classification ────────────────────────────────────────────────────
+// "Structural" edges define the primary graph topology and participate in
+// physics springs. "Inferred" edges are semantic relationships (co-occurrence,
+// similarity, etc.) that shouldn't distort layout but are useful to see.
+// "Hub" edges connect everything to the session node — hiding them
+// dramatically untangles the graph.
+const STRUCTURAL_EDGES = new Set([
+  'FOLLOWS_ACTIVITY','FOLLOWED_BY','RESPONDS_TO','NEXT_IN_SESSION',
+  'THEN','CAUSES','CAUSED_BY','DERIVED_FROM'
+]);
+const HUB_EDGES = new Set([
+  'SESSION_CONTENT','CONTAINS','TRIGGERED_BY_MSG','TRIGGERED_BY',
+  'STARTS','CAP_RESULT'
+]);
+function _isInferredEdge(label) {
+  return !STRUCTURAL_EDGES.has(label) && !HUB_EDGES.has(label);
+}
+function _isHubEdge(label) { return HUB_EDGES.has(label); }
+
+// ─── Unresolved node tracking ────────────────────────────────────────────────
+let _showUnresolved = false;  // default: hide placeholder/unresolved nodes
+
+function _isUnresolved(n) {
+  return n._synthetic && n.rec?.summary === '(unresolved)';
+}
+
+function _updateUnresolvedBanner() {
+  const count = Object.values(nodes).filter(_isUnresolved).length;
+  const banner = document.getElementById('unresolved-banner');
+  const cntEl  = document.getElementById('unresolved-count');
+  if (!banner || !cntEl) return;
+  if (count > 0 && !_showUnresolved) {
+    cntEl.textContent = count;
+    banner.style.display = 'block';
+  } else {
+    banner.style.display = 'none';
+  }
+}
+
+function showUnresolved() {
+  _showUnresolved = true;
+  document.getElementById('unresolved-banner').style.display = 'none';
+  updateStat();
+}
+
+async function resolveUnresolved() {
+  const ids = Object.values(nodes).filter(_isUnresolved).map(n => n.id);
+  if (!ids.length) return;
+  setStatus(`resolving ${ids.length} nodes…`, 'busy');
+  let resolved = 0;
+  // Attempt to fetch each missing node in small batches
+  const batchSize = 20;
+  for (let i = 0; i < ids.length; i += batchSize) {
+    const batch = ids.slice(i, i + batchSize);
+    await Promise.all(batch.map(async id => {
+      try {
+        const data = await api(`/memory/record/${encodeURIComponent(id)}`);
+        const rec = data?.record || data;
+        if (rec?.id && nodes[rec.id]) {
+          const n = nodes[rec.id];
+          n._synthetic = false;
+          n.type = rec.record_type || n.type;
+          n.label = (rec.summary || rec.text || rec.capability || rec.id).slice(0, 60);
+          n.rec = { ...n.rec, ...rec };
+          resolved++;
+        }
+      } catch(_) {}
+    }));
+  }
+  _showUnresolved = false;
+  _updateUnresolvedBanner();
+  rebuildFilters();
+  updateStat();
+  setStatus(`resolved ${resolved}/${ids.length}`, resolved > 0 ? 'ok' : 'err');
+}
+
+function rebuildEdgeMode() {
+  // Called when the edge display checkboxes change — just need a redraw + stat update
+  updateStat();
+}
+
+// ─── View mode system ────────────────────────────────────────────────────────
+// 'force'     — physics-based force-directed (default)
+// 'timeline'  — fixed X=time, Y=type lane, no physics
+// 'hierarchy' — tree layout rooted at session/message nodes
+// 'radial'    — circular layout centred on selected/session node
+let _viewMode = 'force';
+let _viewFrozen = false;  // when true, physics tick is suppressed (static views)
+
+function setViewMode(mode) {
+  _viewMode = mode;
+  _viewFrozen = (mode !== 'force');
+  ['force','timeline','hierarchy','radial'].forEach(m => {
+    const chip = document.getElementById(`vchip-${m}`);
+    if (chip) chip.classList.toggle('on', m === mode);
+    const ctrl = document.getElementById(`${m==='force'?'force':m}-controls`);
+    if (ctrl) ctrl.style.display = m === mode ? '' : 'none';
+  });
+  applyView();
+}
+
+function applyView() {
+  if (_viewMode === 'force') {
+    // Re-enable physics — just run warmup + fit
+    _viewFrozen = false;
+    warmupPhysics(120);
+    fitAll();
+    return;
+  }
+  _viewFrozen = true;
+
+  if (_viewMode === 'timeline') {
+    _applyTimelineLayout();
+  } else if (_viewMode === 'hierarchy') {
+    _applyHierarchyLayout();
+  } else if (_viewMode === 'radial') {
+    _applyRadialLayout();
+  }
+  fitAll();
+}
+
+function _applyTimelineLayout() {
+  const laneH  = parseFloat(document.getElementById('tl-lane')?.value  || 80);
+  const pxPerH = parseFloat(document.getElementById('tl-scale')?.value || 60);
+  // Lane assignment: by node type
+  const typeOrder = ['session','message','event','observation','dag','fact','summary','entity'];
+  const getLane = t => { const i = typeOrder.indexOf(t); return i >= 0 ? i : typeOrder.length; };
+  calibrateTime();
+  Object.values(nodes).forEach(n => {
+    if (!_nodeVisible(n)) return;
+    const ts = n.rec?.created_at ? new Date(n.rec.created_at).getTime() : 0;
+    const xHr = (ts - _timeMin) / 3600000;
+    n.x = xHr * pxPerH;
+    n.y = getLane(n.type) * laneH;
+    n.vx = 0; n.vy = 0;
+  });
+}
+
+function _applyHierarchyLayout() {
+  const levelGap = parseFloat(document.getElementById('hr-gap')?.value  || 130);
+  const nodeGap  = parseFloat(document.getElementById('hr-node')?.value || 60);
+  const rootType = document.getElementById('hr-root')?.value || 'session';
+  // BFS tree layout
+  const roots = Object.values(nodes).filter(n => _nodeVisible(n) && n.type === rootType);
+  if (!roots.length) return;
+  const visited = new Set();
+  const adjOut = {};
+  edges.forEach(e => {
+    if (!adjOut[e.from]) adjOut[e.from] = [];
+    adjOut[e.from].push(e.to);
+  });
+  let xCursor = 0;
+  function placeSubtree(id, depth) {
+    if (visited.has(id)) return;
+    visited.add(id);
+    const n = nodes[id];
+    const children = (adjOut[id] || []).filter(cid => nodes[cid] && _nodeVisible(nodes[cid]) && !visited.has(cid));
+    if (!children.length) {
+      if (n) { n.x = xCursor; n.y = depth * levelGap; n.vx = 0; n.vy = 0; }
+      xCursor += nodeGap;
+    } else {
+      const start = xCursor;
+      children.forEach(cid => placeSubtree(cid, depth + 1));
+      const end = xCursor;
+      if (n) { n.x = (start + end) / 2 - nodeGap / 2; n.y = depth * levelGap; n.vx = 0; n.vy = 0; }
+    }
+  }
+  roots.forEach(r => placeSubtree(r.id, 0));
+}
+
+function _applyRadialLayout() {
+  const radius  = parseFloat(document.getElementById('rd-radius')?.value || 200);
+  const centreMode = document.getElementById('rd-centre')?.value || 'selected';
+  let centreId = selectedId;
+  if (centreMode === 'session' || !centreId) {
+    centreId = Object.keys(nodes).find(id => nodes[id].type === 'session');
+  }
+  if (!centreId) return;
+  const adjAll = {};
+  edges.forEach(e => {
+    if (!adjAll[e.from]) adjAll[e.from] = [];
+    if (!adjAll[e.to])   adjAll[e.to]   = [];
+    adjAll[e.from].push(e.to);
+    adjAll[e.to].push(e.from);
+  });
+  const visited = new Set([centreId]);
+  const queue = [{id: centreId, level: 0, angle: 0, span: Math.PI * 2}];
+  if (nodes[centreId]) { nodes[centreId].x = 0; nodes[centreId].y = 0; nodes[centreId].vx = 0; nodes[centreId].vy = 0; }
+  while (queue.length) {
+    const {id, level, angle, span} = queue.shift();
+    const neighbours = (adjAll[id] || []).filter(nid => !visited.has(nid) && nodes[nid] && _nodeVisible(nodes[nid]));
+    if (!neighbours.length) continue;
+    const r = radius * (level + 1);
+    const step = span / neighbours.length;
+    neighbours.forEach((nid, i) => {
+      visited.add(nid);
+      const a = angle - span/2 + step*(i + 0.5);
+      const n = nodes[nid];
+      if (n) { n.x = Math.cos(a)*r; n.y = Math.sin(a)*r; n.vx = 0; n.vy = 0; }
+      queue.push({id: nid, level: level+1, angle: a, span: step});
+    });
+  }
+}
+
+// Index: session_id + '|' + capability → Set of node ids. Used by the
+// cap.ok WS pulse logic to avoid a full Object.values scan per event.
+const _capIndex = new Map();
+function _capIndexKey(sid, cap) { return (sid || '') + '|' + (cap || ''); }
+function _indexNodeForCap(n) {
+  if (!n?.rec) return;
+  const k = _capIndexKey(n.rec.session_id, n.rec.capability);
+  if (!k.trim() || k === '|') return;  // skip fully-empty key
+  let bucket = _capIndex.get(k);
+  if (!bucket) { bucket = new Set(); _capIndex.set(k, bucket); }
+  bucket.add(n.id);
+}
+
+let ox = 0, oy = 0, scale = 1;
+let isDragging = false, dragStartX = 0, dragStartY = 0, dragOX = 0, dragOY = 0;
+let hoverId = null, selectedId = null;
+let searchQ = '';
+let _loading = false, _mode = 'session';
+
+// Treat "no filter set for a dimension" as "show everything".
+function _passTypes(t)    { return visTypes   === null || visTypes.has(t); }
+function _passEdges(r)    { return visEdges   === null || visEdges.has(r); }
+function _passSources(s)  { return visSources === null || visSources.has(s || ''); }
+
+// ─── Node colours (using CSS vars so they theme-adapt) ───────────────────────
+// We resolve at draw time via getComputedStyle so theme changes are live.
+// Unknown types get a stable colour derived from a hash so distinct
+// record_types look distinct in dynamic graphs.
+function _hashHue(s) {
+  let h = 0;
+  const str = String(s || '');
+  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) & 0xffff;
+  return h % 360;
+}
+function nodeCol(type) {
+  const map = {
+    message:     themeColor('--ac',  '#6ea8d8'),
+    event:       themeColor('--ac3', '#e09a55'),
+    observation: themeColor('--ac2', '#5ec9a0'),
+    dag:         themeColor('--ac5', '#a78bfa'),
+    session:     themeColor('--ac4', '#e06060'),
+    fact:        '#5ec8f5',
+    summary:     '#8df070',
+    entity:      '#f0d060',
+    _unknown:    themeColor('--t3',  '#3b4252'),
+  };
+  if (map[type]) return map[type];
+  // Unknown record_type — give it a stable hash colour so it's distinct.
+  return `hsl(${_hashHue(type)}, 55%, 62%)`;
+}
+function edgeCol(label) {
+  const ac  = themeColor('--ac',  '#6ea8d8');
+  const ac2 = themeColor('--ac2', '#5ec9a0');
+  const ac3 = themeColor('--ac3', '#e09a55');
+  const ac4 = themeColor('--ac4', '#e06060');
+  const ac5 = themeColor('--ac5', '#a78bfa');
+  // Use full-opacity base colours — actual opacity is handled at draw time
+  // via ctx.globalAlpha, so the colours read well in all themes.
+  const map = {
+    SESSION_CONTENT: ac2, CONTAINS: ac2,
+    RESPONDS_TO:     ac,  FOLLOWS_ACTIVITY: ac,
+    FOLLOWED_BY:     ac3, NEXT_IN_SESSION:  ac3,
+    CAUSED_BY:       ac4, CAUSES: ac4,
+    TRIGGERED_BY:    ac2, DERIVED_FROM: themeColor('--t2', '#6b7585'),
+    THEN:            ac5, STARTS: ac5,
+  };
+  if (map[label]) return map[label];
+  // Unknown relation — hash-derived colour
+  return `hsl(${_hashHue(label)}, 50%, 58%)`;
+}
+
+// ─── Canvas ───────────────────────────────────────────────────────────────────
+const canvas = document.getElementById('cv');
+const ctx    = canvas.getContext('2d');
+function resize() {
+  const p = canvas.parentElement;
+  canvas.width = p.clientWidth; canvas.height = p.clientHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// Observe the canvas container so we react immediately when the parent panel
+// goes from hidden → shown (e.g. user clicks the Memory Graph tab). Without
+// this the canvas retains the 0×0 size it had at load time and nothing ever
+// draws. The RAF loop self-polices on width/height, so just calling resize()
+// here is enough to wake it up.
+try {
+  const ro = new ResizeObserver(() => { resize(); });
+  ro.observe(canvas.parentElement);
+} catch(_) { /* not critical — window resize listener still covers manual resizes */ }
+
+// ─── Physics params (live from sliders) ─────────────────────────────────────
+function P() {
+  return {
+    repel:   parseFloat(document.getElementById('repel-r').value),
+    damp:    parseFloat(document.getElementById('damp-r').value) / 100,
+    gravity: parseFloat(document.getElementById('gravity').value) / 1000,
+    spring:  0.010,   // softer spring so axis gravity wins
+    rest:    200,     // longer base rest length for wider spacing
+    maxV:    12,      // higher cap so graph settles faster from far positions
+    repelDist: 300,   // wider repulsion range for better separation
+  };
+}
+
+// True iff a node satisfies BOTH the type filter AND the source filter.
+// Used by physics, draw, mouse hover, and visibility stats.
+function _nodeVisible(n) {
+  if (!_showUnresolved && _isUnresolved(n)) return false;
+  return _passTypes(n.type) && _passSources(n.rec?.source_type);
+}
+
+// Physics budget per frame — see tick() comments for rationale.
+// These are SOFT caps: all visible nodes get axis attraction / integration
+// on every frame (cheap, O(n)), but the pairwise repulsion loop is bounded.
+const MG_REPEL_BUDGET_PAIRS = 25000;   // ≈ √50k → safe for nodes up to ~225
+const MG_GRID_CELL          = 320;     // px — slightly larger than repelDist
+
+function tick() {
+  // In static view modes (timeline, hierarchy, radial), skip all physics.
+  if (_viewFrozen) return;
+
+  const p   = P();
+
+  // Build the "visible" node list ONCE per frame. Keep a stable array in
+  // insertion order so the grid buckets are reproducible.
+  const vis = [];
+  for (const id in nodes) {
+    const n = nodes[id];
+    if (!_nodeVisible(n)) continue;
+    if (n.vx == null) { n.vx = 0; n.vy = 0; }
+    vis.push(n);
+  }
+  if (!vis.length) return;
+
+  // ── REPULSION ────────────────────────────────────────────────────────────
+  // O(n²) naïve repulsion is fine up to a few hundred nodes. Beyond that, bin
+  // nodes into a spatial grid of cell size `MG_GRID_CELL` and only compare
+  // each node to its 3x3 neighbourhood. This caps the compute per frame at
+  // approximately O(n) for uniform distributions.
+  if (vis.length * (vis.length - 1) / 2 <= MG_REPEL_BUDGET_PAIRS) {
+    // Naïve O(n²) with the existing distance cutoff
+    for (let i = 0; i < vis.length; i++) {
+      const a = vis[i];
+      for (let j = i + 1; j < vis.length; j++) {
+        const b = vis[j];
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const d2 = dx*dx + dy*dy;
+        if (d2 > p.repelDist * p.repelDist) continue;
+        const d    = Math.sqrt(d2) || 0.001;
+        const frac = 1 - d / p.repelDist;
+        const f    = (p.repel * frac * frac) / d;
+        const fx   = f * dx / d, fy = f * dy / d;
+        a.vx -= fx; a.vy -= fy;
+        b.vx += fx; b.vy += fy;
+      }
+    }
+  } else {
+    // Spatial hash — bucket into fixed-size cells
+    const grid = new Map();
+    const cs = MG_GRID_CELL;
+    for (const n of vis) {
+      const key = (Math.floor(n.x / cs) << 16) ^ (Math.floor(n.y / cs) & 0xffff);
+      let bucket = grid.get(key);
+      if (!bucket) { bucket = []; grid.set(key, bucket); }
+      bucket.push(n);
+    }
+    // For each node, consult its 3x3 neighbourhood only
+    for (const n of vis) {
+      const cx = Math.floor(n.x / cs), cy = Math.floor(n.y / cs);
+      for (let ix = -1; ix <= 1; ix++) {
+        for (let iy = -1; iy <= 1; iy++) {
+          const key = ((cx + ix) << 16) ^ ((cy + iy) & 0xffff);
+          const bucket = grid.get(key);
+          if (!bucket) continue;
+          for (const m of bucket) {
+            if (m === n) continue;
+            const dx = m.x - n.x, dy = m.y - n.y;
+            const d2 = dx*dx + dy*dy;
+            if (d2 > p.repelDist * p.repelDist || d2 < 0.01) continue;
+            const d    = Math.sqrt(d2);
+            const frac = 1 - d / p.repelDist;
+            // Half-strength because each pair is visited twice (n→m and m→n)
+            const f    = (p.repel * frac * frac * 0.5) / d;
+            n.vx -= f * dx / d;
+            n.vy -= f * dy / d;
+          }
+        }
+      }
+    }
+  }
+
+  // ── SPRINGS ──────────────────────────────────────────────────────────────
+  // Edge is only relevant if both endpoints exist as nodes AND are visible.
+  // Hub edges (SESSION_CONTENT, CONTAINS, etc.) are always excluded from springs —
+  // they cause the "everything pulls to session" hubbing problem.
+  // Inferred edges participate in springs only when the user enables it.
+  const inferredPhysics = document.getElementById('cb-inferred-physics')?.checked;
+  for (const e of edges) {
+    const a = nodes[e.from], b = nodes[e.to];
+    if (!a || !b) continue;
+    if (!_nodeVisible(a) || !_nodeVisible(b)) continue;
+    // Skip hub edges unconditionally from springs
+    if (_isHubEdge(e.label)) continue;
+    // Skip inferred edges unless the checkbox says to include them
+    if (_isInferredEdge(e.label) && !inferredPhysics) continue;
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const d  = Math.sqrt(dx*dx + dy*dy) || 0.001;
+    // Scale rest length by temporal distance: more time between nodes = longer min edge
+    let restLen = p.rest;
+    if (a.rec?.created_at && b.rec?.created_at) {
+      const ta = new Date(a.rec.created_at).getTime();
+      const tb = new Date(b.rec.created_at).getTime();
+      const dtMs = Math.abs(tb - ta);
+      // Each hour of separation adds up to 60px of rest length (capped at 300)
+      restLen = p.rest + Math.min(300, (dtMs / 3600000) * 60);
+    }
+    const s  = (d - restLen) * p.spring;
+    const fx = s * dx / d, fy = s * dy / d;
+    a.vx += fx; a.vy += fy;
+    b.vx -= fx; b.vy -= fy;
+  }
+
+  // ── AXIS ATTRACTION ─────────────────────────────────────────────────────
+  // Read axis selection + spread once per tick, not per node.
+  // Axis force is intentionally stronger than springs so layout wins.
+  const axX = document.getElementById('ax-x').value;
+  const axY = document.getElementById('ax-y').value;
+  const sp  = parseFloat(document.getElementById('spread').value);
+  for (const n of vis) {
+    const tx = axVal(n.rec, axX) * sp;
+    const ty = axVal(n.rec, axY) * sp * 0.65;
+    // Use a stronger axis pull (3× gravity) so axis placement wins over springs
+    // and nodes cluster by time on the x-axis.
+    n.vx += (tx - n.x) * p.gravity * 3.0;
+    n.vy += (ty - n.y) * p.gravity * 3.0;
+  }
+
+  // ── CENTRE GRAVITY ──────────────────────────────────────────────────────
+  // Very weak pull toward origin — just enough to prevent complete drift.
+  // Reduced from 0.0006 to 0.0002 so it doesn't fight axis placement.
+  for (const n of vis) {
+    n.vx -= n.x * 0.0002;
+    n.vy -= n.y * 0.0002;
+  }
+
+  // ── DAMP + CLAMP + INTEGRATE ────────────────────────────────────────────
+  for (const n of vis) {
+    n.vx *= p.damp; n.vy *= p.damp;
+    const spd = Math.sqrt(n.vx*n.vx + n.vy*n.vy);
+    if (spd > p.maxV) { n.vx = n.vx/spd*p.maxV; n.vy = n.vy/spd*p.maxV; }
+    n.x += n.vx; n.y += n.vy;
+  }
+}
+
+// ─── Axis value functions ─────────────────────────────────────────────────────
+// All axVal outputs are in the range [0, 12] so that when multiplied
+// by spread (60-600) the axis targets stay within ±3600px — reachable
+// by physics without blowing up. Time is normalised against the loaded
+// node set so the oldest node sits at 0 and newest at 12.
+//
+// Stack-safety note: Math.min/max(...arr) spreads the array onto the call
+// stack and throws RangeError when arr.length exceeds roughly 10 000.
+// We iterate instead. This matters in All-mode where the graph can hold
+// thousands of nodes and every ingest re-calibrates.
+let _timeMin = 0, _timeRange = 1;
+function calibrateTime() {
+  let mn = Infinity, mx = -Infinity, count = 0;
+  for (const id in nodes) {
+    const v = nodes[id].rec?.created_at;
+    if (!v) continue;
+    const t = new Date(v).getTime();
+    if (!t || !Number.isFinite(t)) continue;
+    if (t < mn) mn = t;
+    if (t > mx) mx = t;
+    count++;
+  }
+  if (count < 2) { _timeMin = 0; _timeRange = 1; return; }
+  _timeMin = mn;
+  _timeRange = Math.max(mx - mn, 1);
+}
+function axVal(rec, ax) {
+  if (!rec) return 0;
+  if (ax === 'time') {
+    const ts = rec.created_at || '';
+    if (!ts) return 6;   // centre
+    const t = new Date(ts).getTime();
+    // Non-linear time mapping: use sqrt of elapsed fraction so recent nodes
+    // spread out more while old nodes cluster together. This gives much
+    // better visual separation by timeframe.
+    const frac = (t - _timeMin) / _timeRange;   // 0..1
+    // Apply square-root compression so recent events get more space
+    const mapped = Math.sqrt(Math.max(0, frac)) * 14;  // 0..14
+    return mapped;
+  }
+  if (ax === 'importance') return parseFloat(rec.importance ?? 0.5) * 12;
+  if (ax === 'source') return ({human:0,ai:2,tool:4,system:6,sensor:8,document:10}[rec.source_type] ?? 5);
+  if (ax === 'category') { let h=0; for (const c of (rec.category||'')) h=(h*31+c.charCodeAt(0))&0xffff; return (h%13); }
+  if (ax === 'type') return ({session:0,message:2,event:3,observation:5,dag:7,fact:9,summary:11,entity:13}[rec.record_type] ?? 6);
+  if (ax === 'session') { let h=0; for (const c of (rec.session_id||'')) h=(h*31+c.charCodeAt(0))&0xffff; return (h%13); }
+  return 0;
+}
+
+// ─── Draw ─────────────────────────────────────────────────────────────────────
+function draw() {
+  tick();
+  const W = canvas.width, H = canvas.height, now = Date.now();
+  // Fill with bg colour before clearing — prevents white flash on resize/tab-switch
+  ctx.fillStyle = themeColor('--bg', '#0e0f12');
+  ctx.fillRect(0, 0, W, H);
+  ctx.clearRect(0, 0, W, H);
+
+  // Subtle grid
+  ctx.save();
+  ctx.strokeStyle = themeColor('--bd', 'rgba(255,255,255,.05)');
+  ctx.lineWidth = 0.5;
+  const gs  = 40 * scale;
+  const gox = (ox*scale + W/2) % gs, goy = (oy*scale + H/2) % gs;
+  for (let x = gox; x < W; x += gs) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+  for (let y = goy; y < H; y += gs) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+  ctx.restore();
+
+  ctx.save();
+  ctx.translate(W/2 + ox*scale, H/2 + oy*scale);
+  ctx.scale(scale, scale);
+
+  // ── Draw edges ──────────────────────────────────────────────────────────────
+  // An edge is drawn iff BOTH endpoints exist as nodes AND both pass the
+  // current node filters AND the edge's relation passes the edge filter.
+  // Previously there was a "_any" catch-all chip that papered over missing
+  // relation types — now that chips are built dynamically from the data,
+  // every relation present in the loaded set has its own chip and that
+  // hack is no longer needed.
+  for (const e of edges) {
+    const a = nodes[e.from], b = nodes[e.to];
+    if (!a || !b) continue;                       // endpoint node not loaded
+    if (!_nodeVisible(a) || !_nodeVisible(b)) continue;
+    const eLabel = e.label || 'RELATED';
+    if (!_passEdges(eLabel)) continue;
+    if (searchQ && a._dim && b._dim) continue;    // both endpoints dimmed
+
+    const isHub = _isHubEdge(eLabel);
+    const isInf = _isInferredEdge(eLabel);
+    // Hide hub edges when the checkbox is checked
+    const hideHub = document.getElementById('cb-hide-structural')?.checked;
+    if (isHub && hideHub) continue;
+
+    const dx = b.x-a.x, dy = b.y-a.y, d = Math.sqrt(dx*dx+dy*dy) || 1;
+    const sx = a.x + dx/d*a.r, sy = a.y + dy/d*a.r;
+    const tx = b.x - dx/d*b.r, ty = b.y - dy/d*b.r;
+    const col = edgeCol(eLabel);
+
+    ctx.save();
+    // Hub edges: faint; Inferred edges: visible dashed; Structural: solid
+    if (isHub) {
+      ctx.globalAlpha = 0.2;
+      ctx.strokeStyle = col;
+      ctx.lineWidth   = 0.8 / scale;
+      ctx.setLineDash([4/scale, 6/scale]);
+    } else if (isInf) {
+      ctx.globalAlpha = 0.82;
+      ctx.strokeStyle = col;
+      ctx.lineWidth   = 1.2 / scale;
+      ctx.setLineDash([5/scale, 3/scale]);
+    } else {
+      ctx.globalAlpha = 0.85;
+      ctx.strokeStyle = col;
+      ctx.lineWidth   = 1.3 / scale;
+      ctx.setLineDash([]);
+    }
+    ctx.beginPath(); ctx.moveTo(sx,sy); ctx.lineTo(tx,ty); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Arrow (only for structural edges or zoomed-in view)
+    if (!isHub && (scale > 0.15 || !isInf)) {
+      const ang = Math.atan2(dy,dx), al = 6/scale, aw = 0.38;
+      ctx.fillStyle = col;
+      ctx.globalAlpha = isInf ? 0.75 : 0.85;
+      ctx.beginPath();
+      ctx.moveTo(tx, ty);
+      ctx.lineTo(tx - al*Math.cos(ang-aw), ty - al*Math.sin(ang-aw));
+      ctx.lineTo(tx - al*Math.cos(ang+aw), ty - al*Math.sin(ang+aw));
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+
+    // Label when zoomed in
+    if (scale > 0.55 && eLabel && !isHub) {
+      ctx.fillStyle = isInf ? themeColor('--ac5', '#a78bfa') : themeColor('--t2', '#6b7585');
+      ctx.globalAlpha = isInf ? 0.9 : 0.7;
+      ctx.font = `${(isInf ? 8 : 8)/scale}px IBM Plex Mono, monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillText(eLabel.slice(0,18), (sx+tx)/2, (sy+ty)/2 - 5/scale);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // ── Draw nodes ──────────────────────────────────────────────────────────────
+  for (const nd of Object.values(nodes)) {
+    if (!_nodeVisible(nd)) continue;
+    const col = nodeCol(nd.type);
+    const sel = nd.id === selectedId;
+    const hov = nd.id === hoverId;
+    const dim = searchQ && nd._dim;
+
+    // Pulse ring
+    if (nd.pulse > 0) {
+      const t = (now - nd.pulseT) / 1000;
+      nd.pulse = Math.max(0, 1 - t * 1.4);
+      ctx.save();
+      ctx.globalAlpha = nd.pulse * 0.35;
+      ctx.strokeStyle = col; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(nd.x, nd.y, nd.r + 5 + nd.pulse*10, 0, Math.PI*2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    const isUnres = _isUnresolved(nd);
+    ctx.save();
+    ctx.globalAlpha = dim ? 0.08 : (isUnres ? 0.45 : 1);
+    if (sel || hov) { ctx.shadowColor = col; ctx.shadowBlur = sel ? 16 : 7; }
+
+    // Shape: session=diamond, dag=hexagon, else circle
+    ctx.globalAlpha = dim ? 0.08 : (isUnres ? 0.45 : 1);
+    // Use solid fill color with alpha for proper theme rendering
+    const fillAlpha = sel ? 0.85 : hov ? 0.65 : isUnres ? 0.15 : 0.35;
+    ctx.fillStyle   = col;
+    ctx.strokeStyle = sel ? themeColor('--t1','#d4dae4') : col;
+    ctx.lineWidth   = (sel ? 2.5 : 1.5) / Math.max(scale, 0.3);
+    if (isUnres) ctx.setLineDash([3/scale, 3/scale]);
+    ctx.beginPath();
+    if (nd.type === 'session') {
+      ctx.moveTo(nd.x, nd.y - nd.r);
+      ctx.lineTo(nd.x + nd.r, nd.y);
+      ctx.lineTo(nd.x, nd.y + nd.r);
+      ctx.lineTo(nd.x - nd.r, nd.y);
+      ctx.closePath();
+    } else if (nd.type === 'dag') {
+      for (let i=0; i<6; i++) {
+        const a = Math.PI/3*i - Math.PI/6;
+        i === 0 ? ctx.moveTo(nd.x+nd.r*Math.cos(a), nd.y+nd.r*Math.sin(a))
+                : ctx.lineTo(nd.x+nd.r*Math.cos(a), nd.y+nd.r*Math.sin(a));
+      }
+      ctx.closePath();
+    } else {
+      ctx.arc(nd.x, nd.y, nd.r, 0, Math.PI*2);
+    }
+    const savedAlpha = ctx.globalAlpha;
+    ctx.globalAlpha = savedAlpha * fillAlpha;
+    ctx.fill();
+    ctx.globalAlpha = savedAlpha;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.shadowBlur = 0;
+
+    // Label
+    if (scale > 0.2) {
+      ctx.fillStyle = dim ? 'rgba(255,255,255,.1)' : themeColor('--t1','#d4dae4');
+      const fs = Math.max(7, Math.min(10, nd.r * 0.7));
+      ctx.font = `${fs}px IBM Plex Sans, sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      const lbl = nd.label.length > 22 ? nd.label.slice(0,20)+'…' : nd.label;
+      ctx.fillText(lbl, nd.x, nd.y + nd.r + 2, nd.r * 5);
+    }
+    ctx.restore();
+  }
+
+  ctx.restore();
+}
+
+let _raf;
+// The RAF loop self-polices: when the document is hidden OR the canvas has
+// been collapsed to 0px (e.g. its containing panel was hidden by the parent
+// tab switcher), skip the draw. We still schedule the next frame so the loop
+// resumes automatically once the panel is shown again.
+function loop() {
+  if (!document.hidden && canvas.width > 0 && canvas.height > 0) {
+    // Sanity-check scale — if it got zeroed (e.g. fitAll ran on a 0-size canvas)
+    // reset to a safe default so the graph is visible.
+    if (!Number.isFinite(scale) || scale < 0.01) scale = 0.5;
+    draw();
+  }
+  _raf = requestAnimationFrame(loop);
+}
+
+// ─── Data loading ─────────────────────────────────────────────────────────────
+function setStatus(msg, cls='') {
+  const el = document.getElementById('status-msg');
+  el.textContent = msg; el.className = cls;
+}
+
+// Default window for recent-mode. Configurable via the `data-hours` attribute
+// on #btn-recent, falling back to this constant.
+// Default Recent window — used when no .win-preset is active. Matches the
+// initially-on 24h preset in the topbar so first-load behaviour is
+// consistent. The user can change it any time via the preset bar.
+const MG_RECENT_HOURS_DEFAULT = 24;
+
+// Pagination state for All-mode. Each call to loadOlder() walks backwards
+// using `_pageOldest` as the next `before` cursor. Reset whenever loadGraph
+// is called with reset=true (i.e. from button click rather than from
+// loadOlder itself).
+let _pageOldest = '';     // oldest created_at currently shown
+let _pageEnd    = false;  // true once the server returns < pageSize rows
+
+async function loadGraph(mode) {
+  if (_loading) return;
+  _mode = mode;
+  document.getElementById('btn-session').classList.toggle('on', mode==='session');
+  document.getElementById('btn-recent' ).classList.toggle('on', mode==='recent');
+  document.getElementById('btn-all'    ).classList.toggle('on', mode==='all');
+
+  // Older button + Append toggle: only meaningful in All mode, and Older
+  // is hidden until the first page reports more rows are available.
+  const olderBtn   = document.getElementById('btn-older');
+  const appendLbl  = document.getElementById('append-toggle');
+  if (olderBtn)  olderBtn.style.display  = 'none';
+  if (appendLbl) appendLbl.style.display = (mode === 'all') ? 'inline-flex' : 'none';
+
+  // Time-window slider: visible only in Recent mode (it picks the recent_hours
+  // value used by the load). All-mode pagination uses Older/Append instead.
+  const winBar = document.getElementById('time-window-bar');
+  if (winBar) winBar.style.display = (mode === 'recent') ? 'inline-flex' : 'none';
+
+  // Reset pagination cursor (a fresh loadGraph call always starts at "now").
+  _pageOldest = '';
+  _pageEnd    = false;
+
+  _loading = true;
+  setStatus('loading…','busy');
+  document.getElementById('overlay-loading').classList.add('show');
+
+  try {
+    const sid = (mode === 'session') ? sessionId() : '';
+    const nLimit = 500;
+    const eLimit = 3000;
+    // Recent-mode hours come from whichever .win-preset is currently active.
+    // Falls back to the named default. Used only when mode === 'recent'.
+    const activePreset = document.querySelector('.win-preset.on');
+    const recentHours  = activePreset
+      ? parseFloat(activePreset.dataset.h)
+      : MG_RECENT_HOURS_DEFAULT;
+
+    let data;
+    // Try the combined endpoint first — it supports all three modes.
+    try {
+      const params = new URLSearchParams();
+      params.set('mode', mode);
+      params.set('limit_nodes', String(nLimit));
+      params.set('limit_edges', String(eLimit));
+      if (sid)            params.set('session_id',   sid);
+      if (mode==='recent') params.set('recent_hours', String(recentHours));
+      data = await api('/memory/graph/full?' + params.toString());
+      if (data.error) throw new Error(data.error);
+    } catch(e1) {
+      // Fallback — only really useful for session/all. Recent-mode has no
+      // single-endpoint equivalent, so if the combined call fails we fall
+      // back to all-mode for recent too.
+      const fallbackSid = (mode === 'session') ? sid : '';
+      const [nr, er] = await Promise.all([
+        api(fallbackSid ? `/memory/session/nodes?session_id=${encodeURIComponent(fallbackSid)}&limit=${nLimit}`
+                        : `/memory/all/nodes?limit=${nLimit}`),
+        api(fallbackSid ? `/memory/session/edges?session_id=${encodeURIComponent(fallbackSid)}&limit=${eLimit}`
+                        : `/memory/all/edges?limit=${eLimit}`),
+      ]);
+      data = { nodes: nr?.nodes||[], edges: er?.edges||[] };
+    }
+
+    ingest(data.nodes||[], data.edges||[], true);
+    rebuildFilters();   // regenerate chip bar from the actual data shape
+    updateStat();
+    // Run physics warmup synchronously so graph is near-settled before first paint.
+    // Use a heavier burst for large graphs; lighter for small ones.
+    const nodeCount = Object.keys(nodes).length;
+    const warmupTicks = nodeCount > 500 ? 80 : nodeCount > 100 ? 150 : 200;
+    warmupPhysics(warmupTicks);
+    fitAll();
+    // Second fit after a short delay to catch any residual drift
+    setTimeout(() => { warmupPhysics(60); fitAll(); }, 300);
+
+    // Pagination state — only meaningful in All mode
+    _pageOldest = data.oldest_ts || '';
+    _pageEnd    = !!data.page_complete;
+    if (mode === 'all' && olderBtn) {
+      olderBtn.style.display = _pageEnd ? 'none' : '';
+    }
+
+    const nn = Object.keys(nodes).length, en = edges.length;
+    const warn = nn >= MG_MAX_NODES ? ' ⚠ at ceiling' : '';
+    const modeLabel = (mode === 'recent') ? `recent ${recentHours}h`
+                    : (mode === 'all'    ? `all (page 1)` : mode);
+    setStatus(`${modeLabel} · ${nn}n · ${en}e${warn}`,
+              nn >= MG_MAX_NODES ? 'busy' : 'ok');
+  } catch(e) {
+    setStatus(e.message.slice(0,60), 'err');
+    addLog('err', e.message.slice(0,80));
+  } finally {
+    _loading = false;
+    document.getElementById('overlay-loading').classList.remove('show');
+  }
+}
+
+async function refreshGraph() { await loadGraph(_mode); }
+
+// All-mode pagination: fetch the next page of nodes older than _pageOldest.
+// By default REPLACES the current view with the older window — sliding
+// backwards in time without accumulating nodes. Toggle "append" in the
+// topbar to instead ADD older nodes to the existing view.
+async function loadOlder() {
+  if (_loading) return;
+  if (_mode !== 'all') return;       // only meaningful in All mode
+  if (_pageEnd) return;
+  if (!_pageOldest) {                // shouldn't happen — first page exhausted
+    document.getElementById('btn-older').style.display = 'none';
+    return;
+  }
+  // Read append-mode preference. Default = false (replace). Stored as a
+  // simple checkbox state in the topbar.
+  const append = !!document.getElementById('cb-append')?.checked;
+
+  _loading = true;
+  setStatus(append ? 'loading older (append)…' : 'sliding window back…', 'busy');
+  document.getElementById('overlay-loading').classList.add('show');
+
+  try {
+    const params = new URLSearchParams();
+    params.set('mode', 'all');
+    params.set('limit_nodes', '500');
+    params.set('limit_edges', '3000');
+    params.set('before', _pageOldest);
+    const data = await api('/memory/graph/full?' + params.toString());
+    if (data.error) throw new Error(data.error);
+
+    // ingest(reset=true) replaces; ingest(reset=false) appends
+    ingest(data.nodes || [], data.edges || [], !append);
+    rebuildFilters();
+    updateStat();
+    if (!append) {
+      warmupPhysics(120);
+      fitAll();
+      setTimeout(() => { warmupPhysics(60); fitAll(); }, 300);
+    }
+
+    // Advance the cursor; hide button when we've reached history's start
+    if (data.oldest_ts && data.oldest_ts < _pageOldest) {
+      _pageOldest = data.oldest_ts;
+    } else {
+      _pageEnd = true;
+    }
+    if (data.page_complete || (data.nodes||[]).length === 0) {
+      _pageEnd = true;
+    }
+    const olderBtn = document.getElementById('btn-older');
+    if (olderBtn) olderBtn.style.display = _pageEnd ? 'none' : '';
+
+    const nn = Object.keys(nodes).length, en = edges.length;
+    const label = append ? 'all (appended)' : 'all (older window)';
+    setStatus(`${label} · ${nn}n · ${en}e`,
+              nn >= MG_MAX_NODES ? 'busy' : 'ok');
+  } catch (e) {
+    setStatus(e.message.slice(0, 60), 'err');
+    addLog('err', e.message.slice(0, 80));
+  } finally {
+    _loading = false;
+    document.getElementById('overlay-loading').classList.remove('show');
+  }
+}
+
+// Time-window preset selector. Used by the Recent-mode preset bar.
+// Calls loadGraph('recent') which reads the recent_hours from the active
+// .win-preset element. Each preset click REPLACES the current view with
+// nodes from that time window.
+function setWindow(hours) {
+  document.querySelectorAll('.win-preset').forEach(el => {
+    el.classList.toggle('on', parseFloat(el.dataset.h) === hours);
+  });
+  loadGraph('recent');
+}
+
+// ─── CLEANUP MENU ─────────────────────────────────────────────────────────
+// Wraps the memory.graph_stats / graph_clear / session_delete /
+// session_delete_bulk / graph_normalize capabilities. Renders a stats
+// modal centred over the canvas so the user can see what they have
+// before deleting anything.
+
+function toggleCleanupMenu() {
+  const m = document.getElementById('cleanup-menu');
+  if (!m) return;
+  m.style.display = m.style.display === 'none' ? 'block' : 'none';
+}
+// Click-outside to close
+document.addEventListener('click', e => {
+  const wrap = document.getElementById('cleanup-wrap');
+  if (!wrap) return;
+  if (!wrap.contains(e.target)) {
+    const m = document.getElementById('cleanup-menu');
+    if (m) m.style.display = 'none';
+  }
+});
+
+function showCleanupModal(html) {
+  const body = document.getElementById('stats-modal-body');
+  const m    = document.getElementById('stats-modal');
+  const ov   = document.getElementById('stats-overlay');
+  if (!body || !m || !ov) return;
+  body.innerHTML = html;
+  m.style.display  = 'block';
+  ov.style.display = 'block';
+}
+function hideCleanupModal() {
+  const m  = document.getElementById('stats-modal');
+  const ov = document.getElementById('stats-overlay');
+  if (m)  m.style.display  = 'none';
+  if (ov) ov.style.display = 'none';
+}
+
+async function cleanupStats() {
+  toggleCleanupMenu();
+  showCleanupModal('<div style="padding:20px;text-align:center;color:var(--t3)">Loading stats…</div>');
+  try {
+    const data = await api('/memory/graph/stats');
+    if (data?.error) {
+      showCleanupModal(`<h3>Graph stats</h3><div style="color:#c96b6b">${esc(data.error)}</div>`);
+      return;
+    }
+    const dupCount = data.duplicate_count || 0;
+    const dupRows  = (data.duplicates || []).map(d =>
+      `<tr><td><code style="font-size:9px">${esc(d.sid)}</code></td>
+           <td><span class="badge dup">${d.dup_count}</span></td></tr>`).join('');
+    const sessRows = (data.sessions || []).slice(0, 25).map(s => `
+      <tr>
+        <td><code style="font-size:9px">${esc(s.session_id || '')}</code></td>
+        <td>${esc(s.agent_name || '—')}</td>
+        <td><span class="badge">${s.records || 0}</span></td>
+        <td>${esc((s.created_at || '').slice(0, 19))}</td>
+        <td><button class="row-action"
+              onclick="cleanupDeleteSession(${JSON.stringify(s.session_id || '').replace(/"/g, '&quot;')})">delete</button></td>
+      </tr>`).join('');
+    const catRows  = (data.categories || []).slice(0, 12).map(c =>
+      `<tr><td>${esc(c.cat || '(none)')}</td><td>${c.n}</td></tr>`).join('');
+    const edgeRows = (data.edge_types || []).map(e =>
+      `<tr><td>${esc(e.rel || '?')}</td><td>${e.n}</td></tr>`).join('');
+
+    showCleanupModal(`
+      <h3>Memory graph statistics</h3>
+      <div style="display:flex;gap:14px;margin-bottom:10px">
+        <div><div style="font-size:18px;color:var(--acc,#5a9e8f)">${data.memory_count || 0}</div>
+             <div style="font-size:8.5px;color:var(--t3)">Memory nodes</div></div>
+        <div><div style="font-size:18px;color:var(--acc,#5a9e8f)">${data.session_count || 0}</div>
+             <div style="font-size:8.5px;color:var(--t3)">Session nodes</div></div>
+        ${dupCount > 0 ? `<div><div style="font-size:18px;color:#e08e3e">${dupCount}</div>
+             <div style="font-size:8.5px;color:var(--t3)">Duplicate sessions</div></div>` : ''}
+      </div>
+
+      ${(data.duplicates || []).length ? `
+        <div style="margin-bottom:10px;padding:6px;border:1px solid #e08e3e44;border-radius:4px;background:rgba(224,142,62,.06)">
+          <div style="color:#e08e3e;margin-bottom:4px;font-weight:600">⚠ Duplicate Session nodes</div>
+          <div style="font-size:9px;color:var(--t3);margin-bottom:4px">Multiple :Session nodes share the same session_id. Click "Normalize" to merge them.</div>
+          <table><thead><tr><th>session_id</th><th>copies</th></tr></thead><tbody>${dupRows}</tbody></table>
+        </div>` : ''}
+
+      <div style="font-weight:600;margin-bottom:3px">Sessions (most recent 25)</div>
+      <table><thead><tr><th>id</th><th>agent</th><th>records</th><th>created</th><th></th></tr></thead><tbody>${sessRows || '<tr><td colspan="5" style="color:var(--t3)">No sessions</td></tr>'}</tbody></table>
+
+      <div style="display:flex;gap:14px">
+        <div style="flex:1">
+          <div style="font-weight:600;margin-bottom:3px">Top categories</div>
+          <table><thead><tr><th>category</th><th>count</th></tr></thead><tbody>${catRows || '<tr><td colspan="2" style="color:var(--t3)">—</td></tr>'}</tbody></table>
+        </div>
+        <div style="flex:1">
+          <div style="font-weight:600;margin-bottom:3px">Edge types</div>
+          <table><thead><tr><th>relation</th><th>count</th></tr></thead><tbody>${edgeRows || '<tr><td colspan="2" style="color:var(--t3)">—</td></tr>'}</tbody></table>
+        </div>
+      </div>
+    `);
+  } catch (e) {
+    showCleanupModal(`<h3>Graph stats</h3><div style="color:#c96b6b">${esc(e.message)}</div>`);
+  }
+}
+
+async function cleanupDeleteSession(sid) {
+  if (!sid) return;
+  if (!confirm(`Delete session "${sid}"? This removes the :Session node and every Memory record tagged with this session_id.`)) return;
+  try {
+    const data = await api('/memory/session/delete', 'POST', { session_id: sid });
+    if (data?.error) {
+      addLog('err', 'delete: ' + data.error);
+      return;
+    }
+    addLog('ok', `deleted ${data.deleted_memory} records, ${data.deleted_sessions} session nodes`);
+    hideCleanupModal();
+    refreshGraph();
+  } catch (e) {
+    addLog('err', 'delete: ' + e.message);
+  }
+}
+
+async function cleanupDeleteCurrentSession() {
+  toggleCleanupMenu();
+  const sid = sessionId();
+  if (!sid) {
+    alert('No current session id. Open a chat first.');
+    return;
+  }
+  await cleanupDeleteSession(sid);
+}
+
+async function cleanupDeleteByPrefix() {
+  toggleCleanupMenu();
+  const prefix = prompt(
+    'Delete every session whose session_id starts with this prefix.\n' +
+    'Examples:  "chat-"  to remove all chat sessions\n' +
+    '          "dream:"  to remove all dream sessions\n\n' +
+    'Prefix:'
+  );
+  if (!prefix) return;
+  if (!confirm(`Really delete every session matching "${prefix}*"? This is irreversible.`)) return;
+  try {
+    const data = await api('/memory/session/delete_bulk', 'POST',
+                            { prefix, confirm: true });
+    if (data?.error) { addLog('err', 'bulk: ' + data.error); return; }
+    addLog('ok', `bulk delete "${prefix}*": ${data.deleted_memory} records, ${data.deleted_sessions} sessions`);
+    refreshGraph();
+  } catch (e) {
+    addLog('err', 'bulk: ' + e.message);
+  }
+}
+
+async function cleanupNormalize() {
+  toggleCleanupMenu();
+  try {
+    const data = await api('/memory/graph/normalize', 'POST', {});
+    if (data?.error) {
+      addLog('err', 'normalize: ' + data.error);
+      return;
+    }
+    const m = `merged ${data.merged_duplicate_sessions || 0} duplicate sessions, `
+            + `${data.orphan_memory_count || 0} orphan Memory nodes detected`;
+    addLog('ok', m);
+    setStatus(m, 'ok');
+    refreshGraph();
+  } catch (e) {
+    addLog('err', 'normalize: ' + e.message);
+  }
+}
+
+async function cleanupClearAll() {
+  toggleCleanupMenu();
+  if (!confirm('⚠ DELETE EVERY :Memory and :Session node from Neo4j?\n\n'
+             + 'This cannot be undone. All chat history, IDE activity, '
+             + 'DAG runs, and dream reports stored in the graph will be lost.\n\n'
+             + 'Type "wipe" to continue.')) return;
+  // Double-confirm with a literal-string prompt
+  const ack = prompt('Type "wipe" exactly to confirm:');
+  if (ack !== 'wipe') { addLog('err', 'aborted'); return; }
+  try {
+    const data = await api('/memory/graph/clear', 'POST', { confirm: true });
+    if (data?.error) {
+      addLog('err', 'clear: ' + data.error);
+      return;
+    }
+    addLog('ok', `cleared ${data.deleted_memory} Memory + ${data.deleted_sessions} Session nodes`);
+    setStatus(`graph cleared (${data.deleted_memory + data.deleted_sessions} nodes)`, 'ok');
+    refreshGraph();
+  } catch (e) {
+    addLog('err', 'clear: ' + e.message);
+  }
+}
+
+// Soft cap on nodes retained in memory. When exceeded, the oldest-INSERTED
+// nodes are evicted. Sized so multiple pages of All-mode pagination
+// (~500 each) can coexist before hitting the ceiling.
+const MG_MAX_NODES = 4000;
+const MG_MAX_EDGES = 6000;
+
+// Stable initial position for a node given an index. Pulled out so that
+// synthetic placeholder nodes (session stubs referenced by edges only) get
+// seeded positions in the same scheme as real nodes.
+function _initPos(rec, idx) {
+  const axX = document.getElementById('ax-x').value;
+  const axY = document.getElementById('ax-y').value;
+  const sp  = parseFloat(document.getElementById('spread').value);
+  const tx = axVal(rec, axX) * sp;
+  const ty = axVal(rec, axY) * sp * 0.65;
+  // Seed very close to the axis target — physics warmup converges much faster
+  // from a tight cluster than from a grid that spans the full spread distance.
+  // Use a small jitter only (±12px) so repulsion quickly separates them.
+  return {
+    x: tx + (Math.random() - 0.5) * 24,
+    y: ty + (Math.random() - 0.5) * 24,
+  };
+}
+
+// Normalise a backend record into the shape this module expects. Preserves
+// the real record_type string as the node.type — unknown types are still
+// valid and get hash-derived colours via nodeCol().
+function _nodeFromRec(rec, idx) {
+  const pos = _initPos(rec, idx);
+  const type = (rec.record_type || '').trim() || '_unknown';
+  return {
+    id: rec.id, x: pos.x, y: pos.y, vx: 0, vy: 0,
+    r: 8 + parseFloat(rec.importance ?? 0.5) * 8,
+    type,
+    label: (rec.summary || rec.text || rec.capability || rec.id).slice(0, 60),
+    pulse: 0, pulseT: 0, _dim: false,
+    _createdAt: Date.now(),   // for eviction — tracks INSERTION time in this tab
+    rec: {
+      id: rec.id,
+      text:        rec.text || '',            // NOT truncated — full content available for info panel
+      summary:     rec.summary || '',
+      capability:  rec.capability || '',
+      record_type: rec.record_type || '',
+      source_type: rec.source_type || '',
+      session_id:  rec.session_id || '',
+      created_at:  rec.created_at || '',
+      importance:  rec.importance ?? null,
+      category:    rec.category || '',
+      model:       rec.model || '',
+      tags:        rec.tags || [],
+    },
+  };
+}
+
+function ingest(rawNodes, rawEdges, reset) {
+  if (reset) {
+    nodes = {};
+    edges = [];
+    edgeSet = new Set();
+    _capIndex.clear();
+  }
+
+  let idx = Object.keys(nodes).length;
+
+  // ── Nodes ────────────────────────────────────────────────────────────────
+  for (const rec of rawNodes) {
+    if (!rec?.id) continue;
+    if (nodes[rec.id]) {
+      // Enrich existing with any newly-available fields
+      const better = rec.summary || rec.text || rec.capability;
+      if (better) {
+        nodes[rec.id].label = better.slice(0, 60);
+        nodes[rec.id].rec   = { ...nodes[rec.id].rec, ...rec };
+      }
+      // If the real record_type wasn't known when we first saw this node
+      // (e.g. it came in as a synthetic placeholder), lock it in now.
+      if (rec.record_type && nodes[rec.id].type === '_unknown') {
+        nodes[rec.id].type         = rec.record_type;
+        nodes[rec.id].rec.record_type = rec.record_type;
+      }
+      continue;
+    }
+    nodes[rec.id] = _nodeFromRec(rec, idx);
+    _indexNodeForCap(nodes[rec.id]);
+    idx++;
+  }
+
+  // ── Edges ────────────────────────────────────────────────────────────────
+  // Important: when an edge refers to an id we haven't loaded yet, synthesise
+  // a placeholder node for it. Without this, Session nodes referenced by
+  // SESSION_CONTENT edges stay invisible and the edge is dropped at draw
+  // time because one endpoint is missing. The backend used to return only
+  // :Memory nodes even when edges referenced :Session endpoints — this
+  // defends against that shape.
+  for (const e of rawEdges) {
+    const fid = e.from_id || e.from;
+    const tid = e.to_id   || e.to;
+    if (!fid || !tid) continue;
+
+    for (const oid of [fid, tid]) {
+      if (!nodes[oid]) {
+        // Best-effort guess at what this placeholder represents:
+        // session IDs look like "chat-1713..." or similar.
+        const looksSession = /^(chat|session|sess|sid)[-_]/i.test(oid);
+        const synthetic = {
+          id: oid,
+          record_type: looksSession ? 'session' : '_unknown',
+          session_id:  looksSession ? oid : '',
+          text: '',
+          summary: looksSession ? '(session)' : '(unresolved)',
+          created_at: '',
+          importance: 0.3,
+        };
+        nodes[oid] = _nodeFromRec(synthetic, idx);
+        nodes[oid]._synthetic = true;
+        _indexNodeForCap(nodes[oid]);
+        idx++;
+      }
+    }
+
+    const k = fid + '→' + tid;
+    if (edgeSet.has(k)) continue;
+    edgeSet.add(k);
+    edges.push({ from: fid, to: tid, label: e.relation || e.label || 'RELATED' });
+  }
+
+  // ── Eviction ─────────────────────────────────────────────────────────────
+  // Keep memory bounded under WS stream load. Evict the oldest-inserted
+  // nodes first (their associated edges are cleaned up with them).
+  if (Object.keys(nodes).length > MG_MAX_NODES) {
+    const all = Object.values(nodes).sort((a, b) => a._createdAt - b._createdAt);
+    const drop = all.slice(0, all.length - MG_MAX_NODES);
+    const dropIds = new Set(drop.map(n => n.id));
+    drop.forEach(n => { delete nodes[n.id]; });
+    // Remove edges that touched evicted nodes
+    const kept = [];
+    for (const e of edges) {
+      if (dropIds.has(e.from) || dropIds.has(e.to)) {
+        edgeSet.delete(e.from + '→' + e.to);
+      } else {
+        kept.push(e);
+      }
+    }
+    edges = kept;
+  }
+  if (edges.length > MG_MAX_EDGES) {
+    const rm = edges.splice(0, edges.length - MG_MAX_EDGES);
+    rm.forEach(e => edgeSet.delete(e.from + '→' + e.to));
+  }
+
+  calibrateTime();
+  _updateUnresolvedBanner();
+}
+
+function updateStat() {
+  let nCount = 0, visN = 0;
+  for (const id in nodes) {
+    nCount++;
+    if (_nodeVisible(nodes[id])) visN++;
+  }
+  let visE = 0;
+  for (const e of edges) {
+    const a = nodes[e.from], b = nodes[e.to];
+    if (!a || !b) continue;
+    if (!_nodeVisible(a) || !_nodeVisible(b)) continue;
+    if (_passEdges(e.label)) visE++;
+  }
+  document.getElementById('dbg').innerHTML =
+    `nodes: ${nCount}<br>edges: ${edges.length}<br>visible: ${visN}n ${visE}e`;
+  document.getElementById('stat-bar').textContent =
+    `${nCount} nodes · ${edges.length} edges`;
+}
+
+// ─── Layout ───────────────────────────────────────────────────────────────────
+let _relayoutTimer = null;
+function scheduleRelayout() {
+  clearTimeout(_relayoutTimer);
+  _relayoutTimer = setTimeout(resetLayout, 150);
+}
+function resetLayout() {
+  const axX = document.getElementById('ax-x').value;
+  const axY = document.getElementById('ax-y').value;
+  const sp  = parseFloat(document.getElementById('spread').value);
+  let   idx = 0;
+  Object.values(nodes).forEach(n => {
+    const tx = axVal(n.rec, axX) * sp;
+    const ty = axVal(n.rec, axY) * sp * 0.65;
+    const c  = idx % 7, r = Math.floor(idx / 7);
+    n.x  = tx + (c-3)*45 + (Math.random()-0.5)*15;
+    n.y  = ty + (r%5-2)*45 + (Math.random()-0.5)*15;
+    n.vx = 0; n.vy = 0;
+    idx++;
+  });
+  warmupPhysics(150);
+  fitAll();
+  setTimeout(() => { warmupPhysics(60); fitAll(); }, 300);
+}
+function fitAll() {
+  // Guard: don't fit if canvas isn't visible yet (would produce scale=0 or Infinity)
+  if (canvas.width < 10 || canvas.height < 10) {
+    setTimeout(fitAll, 100);
+    return;
+  }
+  const ns = Object.values(nodes).filter(n => _nodeVisible(n));
+  if (!ns.length) return;
+  let x0=Infinity, y0=Infinity, x1=-Infinity, y1=-Infinity;
+  ns.forEach(n => { x0=Math.min(x0,n.x); y0=Math.min(y0,n.y); x1=Math.max(x1,n.x); y1=Math.max(y1,n.y); });
+  const W=canvas.width, H=canvas.height, pw=Math.max(x1-x0,1), ph=Math.max(y1-y0,1);
+  scale = Math.max(0.05, Math.min(0.95, Math.min(W/pw*0.65, H/ph*0.65)));
+  ox = -(x0+pw/2); oy = -(y0+ph/2);
+}
+function focusSel() {
+  const n = nodes[selectedId]; if (!n) return;
+  ox=-n.x; oy=-n.y; scale = Math.max(scale, 1.0);
+}
+
+// Run physics offline for N ticks so the graph arrives in a near-settled
+// state before the user sees it. Called after each load. Skipped when there
+// are no visible nodes (e.g. panel not yet painted).
+// For very large graphs we cap the sync burst and do the rest async via
+// idle callbacks so we don't block the browser for >100ms.
+function warmupPhysics(ticks) {
+  const nodeCount = Object.keys(nodes).length;
+  // Each tick is ~O(n) for axis/integration + O(n log n) for repulsion.
+  // Rough safe threshold: ~50 sync ticks per 100 nodes, min 30, max 200.
+  const syncMax = Math.max(30, Math.min(200, Math.floor(8000 / Math.max(nodeCount, 1))));
+  const syncTicks = Math.min(ticks, syncMax);
+  for (let i = 0; i < syncTicks; i++) tick();
+  // Remaining ticks deferred to idle time so we don't block the thread
+  const remaining = ticks - syncTicks;
+  if (remaining > 0) {
+    const doIdle = () => {
+      for (let i = 0; i < Math.min(30, remaining); i++) tick();
+    };
+    if (typeof requestIdleCallback !== 'undefined') {
+      requestIdleCallback(doIdle, { timeout: 500 });
+    } else {
+      setTimeout(doIdle, 16);
+    }
+  }
+}
+
+// ─── Search ───────────────────────────────────────────────────────────────────
+function onSearch() {
+  searchQ = (document.getElementById('search').value||'').toLowerCase().trim();
+  Object.values(nodes).forEach(n => {
+    if (!searchQ) { n._dim = false; return; }
+    const txt = (n.label+(n.rec?.text||'')+(n.rec?.capability||'')+(n.rec?.category||'')).toLowerCase();
+    n._dim = !txt.includes(searchQ);
+  });
+}
+
+// ─── Filter chips ────────────────────────────────────────────────────────────
+// Chips are rebuilt on every load by rebuildFilters() below. Each chip writes
+// the canonical user preference into _userOff{Types,Edges,Sources} when
+// toggled off, and removes the entry when toggled on. The vis{Types,Edges,
+// Sources} Sets used by draw/physics are then rebuilt from (all present
+// values) minus (user-off values) so reloads preserve user preferences.
+//
+// An empty selector (no chips rendered yet) means "show everything" so the
+// filter dimension is no-op. This is represented by the `null` sentinel.
+function _rebuildVisSet(allValues, userOff) {
+  // If user hasn't hidden anything, return null ("show all") so the filter
+  // is cheap. Also return null if the user's off-set doesn't intersect the
+  // currently-present values — that's logically equivalent to "show all".
+  if (userOff.size === 0) return null;
+  const s = new Set();
+  let anyOff = false;
+  for (const v of allValues) {
+    if (userOff.has(v)) { anyOff = true; continue; }
+    s.add(v);
+  }
+  return anyOff ? s : null;
+}
+
+function _applyChipClick(chipEl, userOff, attr) {
+  const v = chipEl.dataset[attr];
+  if (chipEl.classList.contains('on')) userOff.delete(v);
+  else                                  userOff.add(v);
+}
+
+document.getElementById('type-chips').addEventListener('click', e => {
+  const c = e.target.closest('.chip'); if (!c) return;
+  c.classList.toggle('on');
+  _applyChipClick(c, _userOffTypes, 't');
+  // Rebuild from the full set of types currently present in the chip bar.
+  const all = [...document.querySelectorAll('#type-chips .chip')].map(x => x.dataset.t);
+  visTypes = _rebuildVisSet(all, _userOffTypes);
+  updateStat();
+});
+
+document.getElementById('edge-chips').addEventListener('click', e => {
+  const c = e.target.closest('.chip'); if (!c) return;
+  c.classList.toggle('on');
+  _applyChipClick(c, _userOffEdges, 'e');
+  const all = [...document.querySelectorAll('#edge-chips .chip')].map(x => x.dataset.e);
+  visEdges = _rebuildVisSet(all, _userOffEdges);
+  updateStat();
+});
+
+document.getElementById('source-chips').addEventListener('click', e => {
+  const c = e.target.closest('.chip'); if (!c) return;
+  c.classList.toggle('on');
+  _applyChipClick(c, _userOffSources, 's');
+  const all = [...document.querySelectorAll('#source-chips .chip')].map(x => x.dataset.s);
+  visSources = _rebuildVisSet(all, _userOffSources);
+  updateStat();
+});
+
+// ─── Dynamic filter rebuild ─────────────────────────────────────────────────
+// Scans the currently-loaded nodes/edges and emits one chip per distinct
+// record_type, relation type, and source_type present. Values the user has
+// previously turned off stay off. Values we've never seen before default to
+// on. This keeps the chip bar in sync with whatever shape the data has.
+function _distinctNodeValues(accessor) {
+  const counts = new Map();
+  for (const id in nodes) {
+    const v = accessor(nodes[id]);
+    if (v == null || v === '') continue;
+    counts.set(v, (counts.get(v) || 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]);   // desc by count
+}
+function _distinctEdgeLabels() {
+  const counts = new Map();
+  for (const e of edges) {
+    const v = e.label || 'RELATED';
+    counts.set(v, (counts.get(v) || 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+}
+
+function rebuildFilters() {
+  // Types
+  {
+    const items = _distinctNodeValues(n => n.type);
+    const host  = document.getElementById('type-chips');
+    if (items.length === 0) {
+      host.innerHTML = '<span style="color:var(--t3);font-size:9px">(no nodes)</span>';
+    } else {
+      host.innerHTML = items.map(([v, c]) => {
+        const on = !_userOffTypes.has(v);
+        return `<span class="chip${on ? ' on' : ''}" data-t="${esc(v)}" title="${c} node${c===1?'':'s'}">${esc(v)}<span style="opacity:.55;margin-left:4px">${c}</span></span>`;
+      }).join('');
+    }
+    visTypes = _rebuildVisSet(items.map(x => x[0]), _userOffTypes);
+    document.getElementById('type-count').textContent = items.length ? `(${items.length})` : '';
+  }
+  // Edges
+  {
+    const items = _distinctEdgeLabels();
+    const host  = document.getElementById('edge-chips');
+    if (items.length === 0) {
+      host.innerHTML = '<span style="color:var(--t3);font-size:9px">(no edges)</span>';
+    } else {
+      host.innerHTML = items.map(([v, c]) => {
+        const on = !_userOffEdges.has(v);
+        return `<span class="chip${on ? ' on' : ''}" data-e="${esc(v)}" title="${c} edge${c===1?'':'s'}">${esc(v)}<span style="opacity:.55;margin-left:4px">${c}</span></span>`;
+      }).join('');
+    }
+    visEdges = _rebuildVisSet(items.map(x => x[0]), _userOffEdges);
+    document.getElementById('edge-count').textContent = items.length ? `(${items.length})` : '';
+  }
+  // Sources
+  {
+    const items = _distinctNodeValues(n => n.rec?.source_type);
+    const host  = document.getElementById('source-chips');
+    if (items.length === 0) {
+      host.innerHTML = '<span style="color:var(--t3);font-size:9px">(none)</span>';
+    } else {
+      host.innerHTML = items.map(([v, c]) => {
+        const on = !_userOffSources.has(v);
+        return `<span class="chip${on ? ' on' : ''}" data-s="${esc(v)}" title="${c} node${c===1?'':'s'}">${esc(v)}<span style="opacity:.55;margin-left:4px">${c}</span></span>`;
+      }).join('');
+    }
+    visSources = _rebuildVisSet(items.map(x => x[0]), _userOffSources);
+    document.getElementById('source-count').textContent = items.length ? `(${items.length})` : '';
+  }
+}
+
+// ─── Node info panel ─────────────────────────────────────────────────────────
+function _makeToken(key, val, mono=false) {
+  const vStr = String(val ?? '');
+  const isLong = vStr.length > 80;
+  const dispVal = isLong ? vStr.slice(0, 80) : vStr;
+  const monoStyle = mono ? 'font-family:var(--mono);' : '';
+  return `<div class="field-token" draggable="true" data-val="${esc(vStr)}"
+    ondragstart="event.dataTransfer.setData('text/plain', this.dataset.val)">
+    <span class="ft-key">${esc(key)}</span>
+    <span class="ft-val${isLong ? ' long' : ''}" style="${monoStyle}">${esc(dispVal)}</span>
+    ${isLong ? `<span class="ft-expand" onclick="this.previousElementSibling.style.maxHeight='none';this.remove()">+more</span>` : ''}
+  </div>`;
+}
+
+function selectNode(id) {
+  selectedId = id;
+  const nd = nodes[id]; if (!nd) return;
+  const r  = nd.rec || {};
+  const col = nodeCol(nd.type);
+  const edgesOut = edges.filter(e => e.from===id).length;
+  const edgesIn  = edges.filter(e => e.to===id).length;
+
+  document.getElementById('placeholder').style.display = 'none';
+  document.getElementById('node-actions').style.display = 'flex';
+
+  // Build draggable field tokens for all interesting fields
+  const tokens = [];
+  if (r.id)          tokens.push(_makeToken('id',         r.id,         true));
+  if (r.capability)  tokens.push(_makeToken('capability', r.capability, true));
+  if (r.record_type) tokens.push(_makeToken('type',       r.record_type));
+  if (r.source_type) tokens.push(_makeToken('source',     r.source_type));
+  if (r.category)    tokens.push(_makeToken('category',   r.category));
+  if (r.model)       tokens.push(_makeToken('model',      r.model,      true));
+  if (r.session_id)  tokens.push(_makeToken('session_id', r.session_id, true));
+  if (r.created_at)  tokens.push(_makeToken('created_at', r.created_at.slice(0,19).replace('T',' ')));
+  if (r.importance != null) tokens.push(_makeToken('importance', parseFloat(r.importance).toFixed(2)));
+  tokens.push(_makeToken('edges', `${edgesIn} in · ${edgesOut} out`));
+  if (r.summary && r.summary !== r.text) tokens.push(_makeToken('summary', r.summary));
+  if (r.text)        tokens.push(_makeToken('text',       r.text));
+
+  const tagsHtml = (r.tags||[]).length
+    ? `<div class="tags-wrap">${(r.tags||[]).slice(0,12).map(t=>`<span class="tag">${esc(t)}</span>`).join('')}</div>` : '';
+
+  const isSynthetic = nd._synthetic;
+
+  document.getElementById('node-detail').style.display = 'block';
+  document.getElementById('node-detail').innerHTML = `
+    <div class="node-title">${esc(r.summary || r.text || r.capability || id).slice(0,100)}</div>
+    <span class="badge" style="background:${col}22;border:1px solid ${col}55;color:${col}">${esc(nd.type)}</span>
+    ${r.source_type ? `<span class="badge" style="background:var(--s3);border:1px solid var(--bd);color:var(--t2)">${esc(r.source_type)}</span>` : ''}
+    ${isSynthetic ? `<span class="badge" style="background:rgba(224,154,85,.15);border:1px solid rgba(224,154,85,.4);color:var(--ac3)">unresolved</span>` : ''}
+    <div class="field-tokens" style="margin-top:8px">${tokens.join('')}</div>
+    ${tagsHtml}
+    <button class="load-full-btn" id="load-full-btn" onclick="loadFullNode('${esc(id)}')">Load full record</button>
+    <div id="full-content-box"></div>
+    <div id="node-edges-list" style="margin-top:8px;font-family:var(--mono);font-size:9px;color:var(--t3)"></div>
+  `;
+
+  // List connected edges
+  const connEdges = edges.filter(e => e.from===id || e.to===id).slice(0,15);
+  document.getElementById('node-edges-list').innerHTML = connEdges.length ? `
+    <div style="color:var(--t3);margin-bottom:3px;font-size:8.5px;letter-spacing:.06em">CONNECTIONS</div>
+    ${connEdges.map(e => {
+      const other = e.from===id ? e.to : e.from;
+      const dir   = e.from===id ? '→' : '←';
+      const oNode = nodes[other];
+      const isInf = _isInferredEdge(e.label);
+      return `<div style="padding:2px 0;display:flex;align-items:center;gap:4px">
+        <span style="color:var(--t3)">${dir}</span>
+        <span style="color:${isInf ? 'var(--ac5)' : 'var(--ac3)'}${isInf ? ';font-style:italic' : ''}">${esc(e.label)}</span>
+        <span style="color:var(--t2);cursor:pointer" onclick="selectNode('${esc(other)}')">${esc((oNode?.label||other).slice(0,28))}</span>
+      </div>`;
+    }).join('')}
+  ` : '';
+
+  // Pre-fill cap runner params from this node
+  populateCapParamsFromNode(nd);
+}
+
+async function loadFullNode(id) {
+  const btn = document.getElementById('load-full-btn');
+  const box = document.getElementById('full-content-box');
+  if (!btn || !box) return;
+  btn.textContent = 'Loading…';
+  btn.disabled = true;
+  try {
+    // Try fetching the full record from the memory retrieve endpoint
+    const data = await api(`/memory/record/${encodeURIComponent(id)}`);
+    const rec = data?.record || data;
+    if (!rec) throw new Error('No record returned');
+    // Update node's cached rec with richer data
+    if (nodes[id]) {
+      nodes[id].rec = { ...nodes[id].rec, ...rec };
+      if (rec.text) nodes[id].rec.text = rec.text;  // full text, no truncation
+    }
+    box.style.display = 'block';
+    box.textContent = rec.text || rec.summary || rec.content || JSON.stringify(rec, null, 2);
+    btn.textContent = 'Reload full record';
+    btn.disabled = false;
+    // Re-render the tokens now we have full data
+    selectNode(id);
+  } catch(e) {
+    box.style.display = 'block';
+    box.textContent = '✗ ' + e.message;
+    btn.textContent = 'Load full record';
+    btn.disabled = false;
+  }
+}
+
+// ─── Node actions ────────────────────────────────────────────────────────────
+async function expandSel() {
+  if (!selectedId) return;
+  setStatus('expanding…','busy');
+  try {
+    const res = await api('/memory/traverse','POST',{start_id:selectedId,relation_types:'',depth:1,limit:25});
+    const recs = (res.results||[]).map(r=>r.node||r.record||r).filter(r=>r?.id);
+    ingest(recs, [], false);
+    const newEdges = (res.results||[]).map(r => ({
+      from_id: selectedId, to_id: (r.node||r.record||{}).id, relation: r.relation||'RELATED'
+    })).filter(e => e.to_id);
+    ingest([], newEdges, false);
+    rebuildFilters();
+    updateStat();
+    setStatus('expanded','ok');
+  } catch(e) { setStatus(e.message.slice(0,50),'err'); }
+}
+async function labelSel() {
+  if (!selectedId) return;
+  setStatus('labelling…','busy');
+  try {
+    const r = await api('/memory/label','POST',{record_id:selectedId});
+    if (r?.label && nodes[selectedId]) {
+      nodes[selectedId].label = r.label;
+      nodes[selectedId].rec.summary = r.label;
+      selectNode(selectedId);
+    }
+    setStatus('labelled','ok');
+  } catch(e) { setStatus('label failed','err'); }
+}
+async function labelSession() {
+  const sid = sessionId(); if (!sid) { setStatus('no session','err'); return; }
+  setStatus('labelling…','busy');
+  try {
+    const r = await api('/memory/label/session','POST',{session_id:sid,limit:40});
+    setStatus(`labelled ${r?.labelled??0}`,'ok');
+    await refreshGraph();
+  } catch(e) { setStatus('failed','err'); }
+}
+
+// ─── Cap runner ───────────────────────────────────────────────────────────────
+let _caps = {};  // name → cap object
+let _capRunParams = {};  // param name → current value
+
+async function loadCaps() {
+  try {
+    const list = await api('/mcp/tools');
+    _caps = {};
+    (list||[]).forEach(c => { _caps[c.name] = c; });
+    const sel = document.getElementById('cap-run-select');
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">— choose capability —</option>' +
+      Object.keys(_caps).sort().map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+    if (prev && _caps[prev]) sel.value = prev;
+  } catch(_) {}
+}
+
+function buildCapParams(capName) {
+  capName = capName || document.getElementById('cap-run-select').value;
+  const cap = _caps[capName]; if (!cap) return;
+  const props = cap.schema?.properties || {};
+  const req   = new Set(cap.schema?.required || []);
+  _capRunParams = {};
+
+  const container = document.getElementById('cap-run-params');
+  container.innerHTML = Object.entries(props)
+    .filter(([k]) => k !== 'trace_id')
+    .map(([k, v]) => {
+      _capRunParams[k] = '';
+      const isReq = req.has(k);
+      return `<div class="param-row" data-param="${esc(k)}">
+        <label>${esc(k)}${isReq?'<span style="color:var(--ac4)">*</span>':''}</label>
+        <input id="cparam-${esc(k)}" placeholder="${esc(v.type||k)}" value=""
+          oninput="_capRunParams['${esc(k)}']=this.value"
+          ondragover="event.preventDefault()"
+          ondrop="dropIntoParam(event,'${esc(k)}')">
+        <span class="from-node" onclick="fillFromNode('${esc(k)}')">from node</span>
+      </div>`;
+    }).join('');
+
+  document.getElementById('cap-run-result').style.display = 'none';
+}
+
+function fillFromNode(paramName) {
+  if (!selectedId) return;
+  const nd = nodes[selectedId]; if (!nd) return;
+  // Try to pick the most relevant field from the selected node
+  const r = nd.rec;
+  const val = r.text || r.summary || r.capability || r.category || nd.id;
+  const el = document.getElementById(`cparam-${paramName}`);
+  if (el) { el.value = val.slice(0,500); _capRunParams[paramName] = el.value; }
+}
+
+function populateCapParamsFromNode(nd) {
+  // When a node is selected, pre-fill any visible param inputs with matching fields
+  const capName = document.getElementById('cap-run-select').value;
+  if (!capName || !_caps[capName]) return;
+  const r = nd.rec || {};
+  const props = _caps[capName].schema?.properties || {};
+  Object.keys(props).forEach(k => {
+    const el = document.getElementById(`cparam-${k}`);
+    if (!el || el.value) return; // don't overwrite existing
+    const val = r[k] || '';
+    if (val) { el.value = String(val).slice(0,300); _capRunParams[k] = el.value; }
+  });
+}
+
+function dropIntoParam(event, paramName) {
+  event.preventDefault();
+  const val = event.dataTransfer.getData('text/plain');
+  if (!val) return;
+  const el = document.getElementById(`cparam-${paramName}`);
+  if (el) { el.value = val.slice(0,500); _capRunParams[paramName] = el.value; }
+}
+
+async function runCap() {
+  const capName = document.getElementById('cap-run-select').value;
+  if (!capName) return;
+  const resultEl = document.getElementById('cap-run-result');
+  resultEl.style.display = 'block';
+  resultEl.textContent = '⟳ running…';
+  resultEl.style.color = 'var(--t3)';
+
+  // Build args from current param inputs
+  const args = {};
+  Object.keys(_capRunParams).forEach(k => {
+    const el = document.getElementById(`cparam-${k}`);
+    if (el?.value) args[k] = el.value;
+  });
+  // Inject session_id if there's a param for it
+  if ('session_id' in (_caps[capName]?.schema?.properties||{}) && !args.session_id) {
+    args.session_id = sessionId();
+  }
+
+  try {
+    const r = await api('/mcp/call','POST',{name: capName, arguments: args});
+    const content = r?.content ?? r;
+    const text = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+    resultEl.textContent = text.slice(0,600);
+    resultEl.style.color = 'var(--ac2)';
+    addLog('cap.ok', `${capName} → ok`);
+
+    // If result has node_id / id, pulse that node and add a "ran on" edge
+    const nodeId = content?.node_id || content?.id;
+    if (nodeId && nodes[nodeId]) {
+      nodes[nodeId].pulse = 1; nodes[nodeId].pulseT = Date.now();
+    }
+    // Link result to currently selected node
+    if (selectedId && nodeId && nodeId !== selectedId) {
+      ingest([], [{ from_id: selectedId, to_id: nodeId, relation: 'CAP_RESULT' }], false);
+    }
+    // If result contains memory records, ingest them
+    if (content?.records) ingest(content.records, [], false);
+    if (content?.nodes)   ingest(content.nodes,   [], false);
+    updateStat();
+  } catch(e) {
+    resultEl.textContent = '✗ ' + e.message;
+    resultEl.style.color = 'var(--ac4)';
+    addLog('err', e.message.slice(0,80));
+  }
+}
+
+// Dragging from node text
+document.addEventListener('dragstart', e => {
+  const src = e.target.closest('[data-val]');
+  if (src) e.dataTransfer.setData('text/plain', src.dataset.val);
+});
+
+// ─── Session Picker ──────────────────────────────────────────────────────────
+// Loads the list of sessions from memory and lets the user pick one or more
+// to filter the graph view — showing only nodes from selected sessions.
+let _spSessions = [];          // loaded session objects
+let _spSelectedIds = new Set(); // currently-selected session IDs for filtering
+
+async function loadSessionList() {
+  const picker = document.getElementById('session-picker');
+  const searchEl = document.getElementById('sp-search');
+  if (!picker) return;
+  picker.innerHTML = '<span style="font-size:9px;color:var(--t3)">Loading…</span>';
+
+  try {
+    // Use the same endpoints the chat panel uses: search for events + messages
+    const [sessRes, msgRes] = await Promise.all([
+      api('/memory/search','POST',{query:'',limit:60,record_type:'event'}),
+      api('/memory/search','POST',{query:'',limit:80,record_type:'message',category:'chat'}),
+    ]);
+
+    const map = {};
+    (sessRes?.results || []).forEach(r => {
+      const rec = r.record || r; const sid = rec.session_id; if (!sid) return;
+      if (!map[sid]) map[sid] = { session_id: sid, first_ts: rec.created_at || '', agent: '', preview: '', count: 0, name: '' };
+      const tags = Array.isArray(rec.tags) ? rec.tags : [];
+      if (tags.includes('name') && tags.includes('session') && rec.text && !map[sid].name)
+        map[sid].name = rec.text.trim().slice(0, 60);
+      const ag = tags.find(t => t && !['session','start','event','system','unknown','name','agent_turn','human','ai','message','chat'].includes(t));
+      if (ag && !map[sid].agent) map[sid].agent = ag;
+    });
+    (msgRes?.results || []).forEach(r => {
+      const rec = r.record || r; const sid = rec.session_id; if (!sid) return;
+      if (!map[sid]) map[sid] = { session_id: sid, first_ts: rec.created_at || '', agent: '', preview: '', count: 0, name: '' };
+      map[sid].count++;
+      if (!map[sid].preview && rec.text) map[sid].preview = rec.text.slice(0, 60);
+    });
+
+    _spSessions = Object.values(map)
+      .filter(s => s.session_id)
+      .sort((a, b) => b.first_ts.localeCompare(a.first_ts));
+
+    if (searchEl) searchEl.style.display = _spSessions.length > 3 ? '' : 'none';
+    renderSessionPicker(_spSessions);
+    addLog('sessions', `loaded ${_spSessions.length} sessions`);
+  } catch (e) {
+    picker.innerHTML = `<span style="font-size:9px;color:var(--ac4)">${esc(e.message.slice(0, 50))}</span>`;
+  }
+}
+
+function renderSessionPicker(items) {
+  const picker = document.getElementById('session-picker');
+  if (!picker) return;
+  const curSid = sessionId();
+  if (!items.length) {
+    picker.innerHTML = '<span style="font-size:9px;color:var(--t3)">No sessions found</span>';
+    return;
+  }
+  picker.innerHTML = items.map(s => {
+    const isOn = _spSelectedIds.has(s.session_id);
+    const isCurrent = s.session_id === curSid;
+    const displayName = s.name || s.session_id.slice(-12);
+    return `<div class="sp-item${isOn ? ' on' : ''}" data-sid="${esc(s.session_id)}" onclick="toggleSessionPick(this)" title="${esc(s.session_id)}">
+      <div class="sp-name">${isCurrent ? '&#9654; ' : ''}${esc(displayName)}</div>
+      <div class="sp-meta">${esc(s.agent || '?')} &#183; ${s.count} msgs &#183; ${(s.first_ts || '').slice(0, 10)}</div>
+      ${s.preview ? `<div class="sp-prev">${esc(s.preview)}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function filterSessionList() {
+  const q = (document.getElementById('sp-search')?.value || '').toLowerCase().trim();
+  if (!q) { renderSessionPicker(_spSessions); return; }
+  const filtered = _spSessions.filter(s =>
+    (s.name || s.session_id).toLowerCase().includes(q) ||
+    (s.agent || '').toLowerCase().includes(q) ||
+    (s.preview || '').toLowerCase().includes(q)
+  );
+  renderSessionPicker(filtered);
+}
+
+function toggleSessionPick(el) {
+  const sid = el?.dataset?.sid;
+  if (!sid) return;
+  if (_spSelectedIds.has(sid)) _spSelectedIds.delete(sid);
+  else _spSelectedIds.add(sid);
+  el.classList.toggle('on', _spSelectedIds.has(sid));
+  document.getElementById('sp-clear').style.display = _spSelectedIds.size > 0 ? '' : 'none';
+  // Load nodes for selected sessions
+  loadSelectedSessions();
+}
+
+function clearSessionFilter() {
+  _spSelectedIds.clear();
+  document.querySelectorAll('.sp-item.on').forEach(el => el.classList.remove('on'));
+  document.getElementById('sp-clear').style.display = 'none';
+  // Reload current mode
+  loadGraph(_mode);
+}
+
+async function loadSelectedSessions() {
+  if (_spSelectedIds.size === 0) { loadGraph(_mode); return; }
+  if (_loading) return;
+  _loading = true;
+  setStatus('loading sessions…', 'busy');
+  document.getElementById('overlay-loading').classList.add('show');
+
+  try {
+    // Fetch nodes and edges for each selected session
+    const allNodes = [], allEdges = [];
+    const sids = [..._spSelectedIds];
+    for (const sid of sids) {
+      try {
+        const params = new URLSearchParams();
+        params.set('mode', 'session');
+        params.set('session_id', sid);
+        params.set('limit_nodes', '300');
+        params.set('limit_edges', '1500');
+        const data = await api('/memory/graph/full?' + params.toString());
+        if (data.nodes) allNodes.push(...data.nodes);
+        if (data.edges) allEdges.push(...data.edges);
+      } catch (e1) {
+        // Fallback to separate endpoints
+        try {
+          const [nr, er] = await Promise.all([
+            api(`/memory/session/nodes?session_id=${encodeURIComponent(sid)}&limit=300`),
+            api(`/memory/session/edges?session_id=${encodeURIComponent(sid)}&limit=1500`),
+          ]);
+          allNodes.push(...(nr?.nodes || []));
+          allEdges.push(...(er?.edges || []));
+        } catch(_) {}
+      }
+    }
+
+    ingest(allNodes, allEdges, true);
+    rebuildFilters();
+    updateStat();
+    warmupPhysics(180);
+    fitAll();
+    setTimeout(() => { warmupPhysics(60); fitAll(); }, 300);
+
+    const nn = Object.keys(nodes).length, en = edges.length;
+    setStatus(`${sids.length} session${sids.length > 1 ? 's' : ''} · ${nn}n · ${en}e`, 'ok');
+  } catch(e) {
+    setStatus(e.message.slice(0, 60), 'err');
+  } finally {
+    _loading = false;
+    document.getElementById('overlay-loading').classList.remove('show');
+  }
+}
+
+// ─── WebSocket ────────────────────────────────────────────────────────────────
+let _ws = null;
+function connectWS() {
+  const b = base();
+  const proto = b.startsWith('https') ? 'wss' : 'ws';
+  try { _ws = new WebSocket(b.replace(/^https?/,proto)+'/ws/mcp'); } catch(_) { setTimeout(connectWS,5000); return; }
+  _ws.onopen = () => {
+    _ws.send(JSON.stringify({action:'subscribe_events'}));
+    addLog('ws','connected');
+  };
+  _ws.onmessage = e => {
+    try {
+      const msg = JSON.parse(e.data);
+      const ev  = msg.type==='event' ? msg.data : msg;
+      if (!ev?.type) return;
+      onWsEvent(ev);
+    } catch(_) {}
+  };
+  _ws.onclose = () => { setTimeout(connectWS,3000); };
+  _ws.onerror = () => {};
+}
+
+// Debounced filter rebuild — WS ingestion can bring in new types/edges, but
+// we don't want to rebuild the chip bar on every single event.
+let _rebuildFiltersTimer = null;
+function _scheduleFilterRebuild() {
+  clearTimeout(_rebuildFiltersTimer);
+  _rebuildFiltersTimer = setTimeout(() => {
+    rebuildFilters();
+    updateStat();
+  }, 600);
+}
+
+function onWsEvent(ev) {
+  const t = ev.type;
+  if (t === 'memory.stored' && ev.record?.id) {
+    const rec = ev.record;
+    const sid = sessionId();
+    // Mode-aware ingest filter:
+    //   session → only records belonging to our own session
+    //   recent  → all incoming records (they are fresh by definition)
+    //   all     → everything
+    // Extra guard: if we have no session id at all, accept everything.
+    let accept = false;
+    if      (_mode === 'all' || _mode === 'recent') accept = true;
+    else if (!sid)                                  accept = true;
+    else                                             accept = (rec.session_id === sid);
+    if (accept) {
+      ingest([rec], [], false);
+      if (nodes[rec.id]) { nodes[rec.id].pulse=1; nodes[rec.id].pulseT=Date.now(); }
+      updateStat();
+      _scheduleFilterRebuild();
+      addLog('memory.stored', (rec.summary||rec.text||rec.capability||'').slice(0,50));
+    }
+  }
+  if (t === 'memory.edge' && ev.from_id && ev.to_id) {
+    ingest([], [{from_id:ev.from_id, to_id:ev.to_id, relation:ev.relation||'RELATED'}], false);
+    updateStat();
+    _scheduleFilterRebuild();
+  }
+  if (t === 'cap.ok') {
+    addLog('cap', `${ev.name||''} ${ev.elapsed_ms||''}ms`);
+    // Fast-path pulse via the session+capability index — no O(n) scan.
+    if (ev.session_id && ev.name) {
+      const bucket = _capIndex.get(_capIndexKey(ev.session_id, ev.name));
+      if (bucket) {
+        const now = Date.now();
+        for (const id of bucket) {
+          const n = nodes[id];
+          if (n) { n.pulse = 1; n.pulseT = now; }
+        }
+      }
+    }
+  }
+}
+
+// ─── Mouse / touch ────────────────────────────────────────────────────────────
+function worldPt(cx, cy) {
+  return { x: (cx-canvas.width/2)/scale - ox, y: (cy-canvas.height/2)/scale - oy };
+}
+
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const d = e.deltaY>0 ? 0.87 : 1.15;
+  const rect = canvas.getBoundingClientRect();
+  const cx = e.clientX-rect.left, cy = e.clientY-rect.top;
+  const W=canvas.width, H=canvas.height;
+  const wx=(cx-W/2)/scale-ox, wy=(cy-H/2)/scale-oy;
+  scale = Math.max(0.02, Math.min(10, scale*d));
+  ox=(cx-W/2)/scale-wx; oy=(cy-H/2)/scale-wy;
+}, {passive:false});
+
+canvas.addEventListener('mousedown', e => {
+  isDragging=true; dragStartX=e.clientX; dragStartY=e.clientY; dragOX=ox; dragOY=oy;
+  canvas.style.cursor='grabbing';
+});
+window.addEventListener('mousemove', e => {
+  if (isDragging) { ox=dragOX+(e.clientX-dragStartX)/scale; oy=dragOY+(e.clientY-dragStartY)/scale; return; }
+  const rect=canvas.getBoundingClientRect();
+  const w=worldPt(e.clientX-rect.left, e.clientY-rect.top);
+  let cl=null, cd=Infinity;
+  // Iterate via for-in to avoid allocating a new Object.values array on every
+  // mousemove; with large graphs this was a meaningful GC source.
+  for (const id in nodes) {
+    const n = nodes[id];
+    if (!_nodeVisible(n)) continue;
+    const d=Math.hypot(n.x-w.x,n.y-w.y);
+    if (d<n.r+8 && d<cd) { cd=d; cl=n; }
+  }
+  hoverId = cl?.id||null;
+  canvas.style.cursor = hoverId ? 'pointer' : 'grab';
+  // Show/hide drop hint
+  document.getElementById('drop-hint').classList.toggle('show', !!hoverId && !!document.getElementById('cap-run-select').value);
+});
+window.addEventListener('mouseup', () => { isDragging=false; canvas.style.cursor='grab'; });
+canvas.addEventListener('click', e => {
+  if (Math.hypot(e.clientX-dragStartX,e.clientY-dragStartY)>6) return;
+  if (hoverId) selectNode(hoverId);
+  else {
+    selectedId=null;
+    document.getElementById('placeholder').style.display='block';
+    document.getElementById('node-detail').style.display='none';
+    document.getElementById('node-actions').style.display='none';
+  }
+});
+canvas.addEventListener('dblclick', () => { if (hoverId) expandSel(); });
+
+// Touch
+let _ltd=0;
+canvas.addEventListener('touchstart',e=>{
+  if(e.touches.length===1){isDragging=true;dragStartX=e.touches[0].clientX;dragStartY=e.touches[0].clientY;dragOX=ox;dragOY=oy;}
+  else if(e.touches.length===2)_ltd=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+  e.preventDefault();
+},{passive:false});
+canvas.addEventListener('touchmove',e=>{
+  if(e.touches.length===1&&isDragging){ox=dragOX+(e.touches[0].clientX-dragStartX)/scale;oy=dragOY+(e.touches[0].clientY-dragStartY)/scale;}
+  else if(e.touches.length===2){const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);scale=Math.max(0.02,Math.min(10,scale*(d/_ltd)));_ltd=d;}
+  e.preventDefault();
+},{passive:false});
+canvas.addEventListener('touchend',()=>{isDragging=false;});
+
+// ─── Live log ─────────────────────────────────────────────────────────────────
+function addLog(type, msg) {
+  const log = document.getElementById('live-log');
+  const div = document.createElement('div');
+  div.className = 'log-row';
+  div.innerHTML = `<span class="lt">${new Date().toISOString().slice(11,19)}</span> <span class="lk">[${esc(type)}]</span> ${esc(msg)}`;
+  log.insertBefore(div, log.firstChild);
+  while (log.children.length > 40) log.removeChild(log.lastChild);
+}
+
+// ─── Boot ─────────────────────────────────────────────────────────────────────
+loop();
+loadCaps();
+connectWS();
+// Slight delay so parent sets _veraSessionId before we read it.
+// The graph data structures (nodes/edges) are already initialised as empty
+// objects above so clicking Recent/All before the session load fires is safe.
+setTimeout(async () => {
+  applyParentTheme();
+  const sid = sessionId();
+  if (sid) {
+    // Register current session with the backend so recording works
+    try { await api('/cap_tracking/session','POST',{session_id: sid}); } catch(_) {}
+  }
+  await loadGraph('session');
+  // Auto-retry: if graph came back empty (common on first load when backend
+  // connections are still initialising), retry after a short delay. This
+  // addresses the "must reload" issue.
+  const nodeCount = Object.keys(nodes).length;
+  if (nodeCount === 0) {
+    addLog('sys', 'graph empty — retrying in 2s…');
+    setTimeout(async () => {
+      await loadGraph('session');
+      // If still empty after second try, try once more
+      if (Object.keys(nodes).length === 0) {
+        setTimeout(() => loadGraph('session'), 4000);
+      }
+    }, 2000);
+  }
+}, 400);
+// Re-apply theme if parent theme changes
+window.addEventListener('message', e => {
+  if (e.data?.type === 'vera_theme_change') applyParentTheme();
+});
+</script>
+<script src="/ui/vera-ui.js"></script>
+</body>
+</html>

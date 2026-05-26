@@ -1,0 +1,2584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Capability Hub</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg0: #181614; --bg1: #1f1d1a; --bg2: #272421; --bg3: #302c29;
+  --border: #3a3530; --border2: #4a4540;
+  --acc: #5a9e8f; --acc2: #8fb87a; --acc3: #c9955a; --acc4: #9e8fa0;
+  --ok: #6db87a; --err: #c96b6b; --warn: #c9a35a; --gpu: #c97a5a;
+  --text: #ddd5c8; --fg: #ddd5c8; --dim: #6a6058; --dim2: #8a7e70;
+  --mono: 'IBM Plex Mono', 'JetBrains Mono', monospace;
+  --sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --radius: 5px; --radius-sm: 3px; --radius-lg: 8px;
+  --shadow: 0 1px 4px rgba(0,0,0,.35);
+  color-scheme: dark;
+}
+
+html, body { height: 100%; width: 100%; overflow: hidden; background: var(--bg0); color: var(--text); font-family: var(--sans); font-size: 13px; }
+
+/* ── Topbar ── */
+#hub-topbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 14px; height: 40px; flex-shrink: 0;
+  background: var(--bg1); border-bottom: 1px solid var(--border);
+  position: relative;
+}
+#hub-topbar::after { content:''; position:absolute; bottom:0; left:0; right:0; height:1px; background:linear-gradient(90deg,transparent,var(--acc) 20%,var(--acc2) 55%,transparent 90%); opacity:.35; }
+.hub-logo { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--acc); letter-spacing: 2px; flex-shrink: 0; }
+
+/* ── Main layout ── */
+#hub-root { display: flex; flex-direction: column; height: 100vh; }
+#hub-body  { display: flex; flex: 1; overflow: hidden; }
+
+/* ── Left sidebar: groups + MCP servers ── */
+#hub-left {
+  width: 224px; flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; background: var(--bg1);
+  overflow: hidden;
+}
+/* ── Center: cap list ── */
+#hub-center { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+/* ── Right: call + tracking stats ── */
+#hub-right {
+  /* width is set via JS based on viewport; default 28vw clamped */
+  width: clamp(320px, 28vw, 640px);
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; background: var(--bg1);
+  overflow: hidden; position: relative;
+}
+/* Splitter handle for resizing the right panel */
+#right-splitter {
+  width: 5px; flex-shrink: 0; cursor: col-resize;
+  background: var(--bg1); border-left: 1px solid var(--border); border-right: 1px solid var(--border);
+  position: relative; transition: background .15s;
+}
+#right-splitter::after {
+  content: ''; position: absolute; left: 1px; top: 50%;
+  transform: translateY(-50%); width: 1px; height: 30px;
+  background: var(--border2); border-radius: 1px;
+}
+#right-splitter:hover, #right-splitter.dragging { background: rgba(90,158,143,.18); }
+#right-splitter:hover::after, #right-splitter.dragging::after { background: var(--acc); }
+body.col-resizing { cursor: col-resize !important; user-select: none; }
+body.col-resizing iframe { pointer-events: none; }
+
+/* ── Section header ── */
+.sh {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 12px 6px;
+  font-size: 9px; font-family: var(--mono); font-weight: 700;
+  text-transform: uppercase; letter-spacing: 1px; color: var(--dim2);
+  border-bottom: 1px solid var(--border); flex-shrink: 0;
+  background: var(--bg1);
+}
+.sh .sh-right { margin-left: auto; display: flex; gap: 4px; align-items: center; }
+.sh-badge { font-size: 8px; padding: 1px 5px; border-radius: 8px; background: var(--bg3); border: 1px solid var(--border); color: var(--dim2); font-family: var(--mono); }
+
+/* ── Sub-tabs ── */
+.sub-tabs { display: flex; border-bottom: 1px solid var(--border); flex-shrink: 0; background: var(--bg0); }
+.sub-tab { flex: 1; padding: 6px 4px; font-size: 10.5px; font-weight: 500; color: var(--dim2); cursor: pointer; border-bottom: 2px solid transparent; transition: all .15s; text-align: center; background: none; border-top: none; border-left: none; border-right: none; font-family: var(--sans); }
+.sub-tab:hover { color: var(--text); }
+.sub-tab.active { color: var(--acc); border-bottom-color: var(--acc); }
+
+/* ── Scrollable body ── */
+.scroll { flex: 1; overflow-y: auto; }
+.scroll::-webkit-scrollbar { width: 3px; }
+.scroll::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+/* ── Toolbar ── */
+.toolbar { display: flex; align-items: center; gap: 6px; padding: 7px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap; background: var(--bg1); }
+.toolbar-row { display: flex; gap: 6px; align-items: center; padding: 5px 10px; flex-wrap: wrap; flex-shrink: 0; border-bottom: 1px solid var(--border); background: var(--bg0); }
+
+/* ── Inputs / buttons ── */
+input, textarea, select { background: var(--bg0); border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: var(--radius-sm); font-family: var(--sans); font-size: 11px; outline: none; transition: border-color .14s; }
+input:focus, textarea:focus, select:focus { border-color: var(--acc); }
+textarea { resize: vertical; min-height: 48px; font-family: var(--mono); font-size: 10.5px; line-height: 1.6; }
+select option { background: var(--bg2); }
+
+.btn { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg2); color: var(--dim2); cursor: pointer; font-family: var(--sans); font-size: 10.5px; font-weight: 500; transition: all .14s; white-space: nowrap; }
+.btn:hover { border-color: var(--acc); color: var(--acc); background: rgba(90,158,143,.1); }
+.btn.primary { background: var(--acc); border-color: var(--acc); color: #fff; font-weight: 600; }
+.btn.primary:hover { filter: brightness(1.1); color: #fff; }
+.btn.teal { background: rgba(143,184,122,.08); border-color: var(--acc2); color: var(--acc2); }
+.btn.amber { background: rgba(201,149,90,.08); border-color: var(--acc3); color: var(--acc3); }
+.btn.danger { border-color: var(--err); color: var(--err); }
+.btn.sm { padding: 2px 7px; font-size: 9.5px; }
+.btn:disabled { opacity: .35; cursor: not-allowed; pointer-events: none; }
+
+/* ── Filter chips ── */
+.fchip { display: inline-block; font-size: 9px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--border); color: var(--dim2); cursor: pointer; transition: all .12s; background: var(--bg2); font-family: var(--mono); white-space: nowrap; }
+.fchip.active { border-color: var(--acc); color: var(--acc); background: rgba(90,158,143,.12); }
+.fchip.err { border-color: var(--err); color: var(--err); }
+
+/* ── Group search bar ── */
+.grp-search-wrap {
+  padding: 7px 8px; border-bottom: 1px solid var(--border);
+  background: var(--bg0); flex-shrink: 0; position: relative;
+}
+.grp-search-wrap input {
+  width: 100%; background: var(--bg2); border: 1px solid var(--border);
+  color: var(--text); padding: 5px 8px 5px 24px; border-radius: 3px;
+  font-family: var(--mono); font-size: 10.5px; outline: none;
+}
+.grp-search-wrap input:focus { border-color: var(--acc); background: var(--bg1); }
+.grp-search-wrap .grp-search-icon {
+  position: absolute; left: 16px; top: 50%; transform: translateY(-50%);
+  width: 11px; height: 11px; pointer-events: none; opacity: .55;
+  color: var(--dim2);
+}
+.grp-search-wrap .grp-search-clear {
+  position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
+  width: 14px; height: 14px; cursor: pointer; opacity: 0; transition: opacity .15s;
+  color: var(--dim2); background: none; border: none; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.grp-search-wrap .grp-search-clear.on { opacity: .8; }
+.grp-search-wrap .grp-search-clear:hover { opacity: 1; color: var(--err); }
+
+/* ── Group rows (refined) ── */
+.group-row {
+  display: flex; align-items: center; gap: 8px; padding: 7px 11px;
+  border: 1px solid transparent; border-radius: 4px; margin-bottom: 2px;
+  background: transparent; cursor: pointer; transition: all .12s;
+  user-select: none; position: relative;
+}
+.group-row:hover { background: var(--bg2); border-color: var(--border); }
+.group-row.active {
+  border-color: var(--acc) !important;
+  background: rgba(90,158,143,.10);
+  box-shadow: inset 2px 0 0 var(--acc);
+  padding-left: 12px;
+}
+.group-row.trk-on  { background: linear-gradient(90deg, rgba(143,184,122,.05), transparent 70%); }
+.group-row.trk-off { opacity: .82; }
+.group-row.trk-hard { opacity: .42; cursor: not-allowed; }
+.group-row.hidden { display: none; }
+.group-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
+.group-name {
+  font-family: var(--mono); font-size: 11px; flex: 1; color: var(--text);
+  font-weight: 500; letter-spacing: .2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.group-cnt { font-family: var(--mono); font-size: 9px; color: var(--dim2); min-width: 20px; text-align: right; }
+.group-bud { font-family: var(--mono); font-size: 9px; color: var(--acc3); padding: 1px 5px; background: rgba(201,149,90,.06); border-radius: 8px; }
+
+/* Highlighted match in group name */
+.grp-mark { color: var(--acc); font-weight: 700; background: rgba(90,158,143,.12); padding: 0 1px; border-radius: 2px; }
+
+/* Group section divider (collapsible category) */
+.grp-divider {
+  font-family: var(--mono); font-size: 8.5px; text-transform: uppercase;
+  letter-spacing: 1.2px; color: var(--dim); padding: 10px 11px 5px;
+  border-top: 1px solid var(--border); margin-top: 4px; user-select: none;
+}
+.grp-divider:first-child { border-top: none; margin-top: 0; padding-top: 6px; }
+
+.group-empty {
+  text-align: center; color: var(--dim2); font-family: var(--mono);
+  font-size: 10px; padding: 20px 8px; line-height: 1.6;
+}
+
+/* ── Toggle switch ── */
+.tog { position: relative; width: 28px; height: 15px; flex-shrink: 0; }
+.tog input { opacity: 0; width: 0; height: 0; }
+.tog-track { position: absolute; inset: 0; background: rgba(255,255,255,.08); border-radius: 8px; border: 1px solid rgba(255,255,255,.12); transition: all .2s; cursor: pointer; }
+.tog input:checked + .tog-track { background: rgba(143,184,122,.22); border-color: var(--acc2); }
+.tog-track::after { content: ''; position: absolute; top: 2px; left: 2px; width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,.4); transition: transform .18s; }
+.tog input:checked + .tog-track::after { transform: translateX(13px); background: var(--acc2); }
+
+/* ── Budget row ── */
+.budget-row { display: flex; align-items: center; gap: 6px; padding: 3px 10px 3px 24px; font-size: 10px; font-family: var(--mono); color: var(--dim); border-bottom: 1px solid rgba(90,158,143,.08); background: var(--bg0); }
+.budget-input { width: 58px; text-align: right; background: var(--bg2); border: 1px solid var(--border); color: var(--text); font-family: var(--mono); font-size: 10px; padding: 2px 5px; border-radius: 2px; outline: none; }
+.budget-input:focus { border-color: var(--acc); }
+
+/* ── Cap rows ── */
+.cap-row { display: flex; align-items: center; gap: 7px; padding: 5px 10px; border: 1px solid transparent; border-radius: 2px; margin-bottom: 2px; cursor: pointer; transition: all .1s; }
+.cap-row:hover { border-color: var(--border); background: var(--bg2); }
+.cap-row.ov-on  { background: rgba(143,184,122,.08); border-color: rgba(143,184,122,.3) !important; }
+.cap-row.ov-off { background: rgba(201,90,90,.06); border-color: rgba(201,90,90,.2) !important; }
+.cap-row.hard   { opacity: .35; cursor: not-allowed; }
+.cap-row.selected { border-color: var(--acc) !important; background: rgba(90,158,143,.1); }
+.cap-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+.cap-name-el { font-family: var(--mono); font-size: 10.5px; flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cap-prefix { color: var(--dim2); }
+.cap-gbadge { font-family: var(--mono); font-size: 8px; padding: 1px 5px; border-radius: 8px; background: var(--bg3); border: 1px solid var(--border); color: var(--dim2); flex-shrink: 0; }
+.cap-ovbadge { font-family: var(--mono); font-size: 8px; padding: 1px 5px; border-radius: 8px; background: rgba(201,149,90,.12); border: 1px solid rgba(201,149,90,.3); color: var(--acc3); flex-shrink: 0; }
+.cap-src-badge { font-size: 8px; padding: 1px 5px; border-radius: 2px; font-family: var(--mono); font-weight: 700; letter-spacing: .2px; }
+.badge-local { background: rgba(90,158,143,.1); color: var(--acc); border: 1px solid rgba(90,158,143,.25); }
+.badge-proxy { background: rgba(143,184,122,.1); color: var(--acc2); border: 1px solid rgba(143,184,122,.25); }
+.badge-dist  { background: rgba(201,149,90,.1); color: var(--acc3); border: 1px solid rgba(201,149,90,.25); }
+.badge-media { background: rgba(158,143,160,.1); color: var(--acc4); border: 1px solid rgba(158,143,160,.25); }
+.badge-mcp   { background: rgba(74,142,247,.1); color: #7baff7; border: 1px solid rgba(74,142,247,.25); }
+
+/* ── Cap call card (right panel) ── */
+.call-card { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.call-cap-name { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--acc); margin-bottom: 4px; word-break: break-all; }
+.call-desc { font-size: 10px; color: var(--dim2); line-height: 1.5; margin-bottom: 8px; }
+.call-field { display: flex; align-items: flex-start; gap: 5px; margin-bottom: 4px; }
+.call-field label { font-size: 9.5px; color: var(--dim2); min-width: 78px; flex-shrink: 0; padding-top: 4px; font-family: var(--mono); }
+.call-field label.req { color: var(--warn); }
+.call-field input, .call-field select, .call-field textarea { flex: 1; font-size: 10.5px; }
+.call-actions { display: flex; gap: 5px; margin-top: 7px; flex-wrap: wrap; align-items: center; }
+
+/* ── Result box ── */
+.result-box {
+  background: var(--bg0); border: 1px solid var(--border); border-radius: 4px;
+  padding: 10px 12px; font-family: var(--mono); font-size: 11px;
+  white-space: pre-wrap; word-break: break-word; overflow: auto;
+  color: var(--acc2); min-height: 220px; max-height: 65vh;
+  line-height: 1.65; margin-top: 8px;
+  resize: vertical;       /* user can drag-resize vertically */
+}
+.result-box.job-stream { max-height: 65vh; font-size: 10.5px; }
+/* Result toolbar */
+.result-toolbar {
+  display: flex; gap: 5px; padding: 5px 0 4px; align-items: center;
+  font-family: var(--mono); font-size: 9.5px; color: var(--dim2);
+}
+.result-toolbar .rt-spacer { flex: 1; }
+
+/* ── Job stream output ── */
+.job-line { padding: 1px 0; border-bottom: 1px solid rgba(255,255,255,.02); line-height: 1.55; }
+.job-ts { color: var(--dim); font-size: 9px; }
+.job-out { color: var(--text); }
+.job-err { color: var(--err); }
+.job-done { color: var(--ok); }
+.stream-cursor { display: inline-block; width: 7px; height: 13px; background: var(--acc); margin-left: 1px; vertical-align: text-bottom; animation: blink .7s steps(1) infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+/* ── Status bar ── */
+.status { font-size: 9.5px; color: var(--dim2); font-family: var(--mono); margin-top: 4px; min-height: 14px; }
+.status.ok   { color: var(--ok); }
+.status.err  { color: var(--err); }
+.status.warn { color: var(--warn); }
+
+/* ── Stats / meter ── */
+.meter-row { margin-bottom: 9px; }
+.meter-lbl { display: flex; justify-content: space-between; font-size: 9.5px; font-family: var(--mono); color: var(--dim); margin-bottom: 3px; }
+.meter-v { color: var(--text); }
+.meter-track { height: 3px; background: rgba(255,255,255,.06); border-radius: 2px; overflow: hidden; }
+.meter-fill { height: 100%; border-radius: 2px; transition: width .4s; }
+
+/* ── Section divider ── */
+.sdiv { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.sdiv-hdr { font-family: var(--mono); font-size: 8.5px; font-weight: 600; letter-spacing: .1em; color: var(--dim2); text-transform: uppercase; margin-bottom: 8px; }
+
+/* ── Chain table ── */
+.chain-table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 9px; }
+.chain-table th { text-align: left; color: var(--dim2); padding: 2px 5px; font-weight: 400; border-bottom: 1px solid var(--border); }
+.chain-table td { padding: 3px 5px; color: var(--text); border-bottom: 1px solid rgba(90,158,143,.06); }
+.chain-table tr:hover td { background: var(--bg2); }
+
+/* ── Limit input ── */
+.limit-row { display: flex; align-items: center; gap: 7px; margin-bottom: 7px; }
+.limit-lbl { font-family: var(--mono); font-size: 9.5px; color: var(--dim); flex: 1; }
+.limit-inp { background: var(--bg2); border: 1px solid var(--border); color: var(--text); font-family: var(--mono); font-size: 10.5px; padding: 3px 7px; border-radius: 2px; width: 68px; text-align: right; outline: none; }
+.limit-inp:focus { border-color: var(--acc); }
+
+/* ── MCP server row ── */
+.srv-row { display: flex; align-items: center; gap: 7px; padding: 6px 10px; background: var(--bg2); border: 1px solid var(--border); border-radius: 4px; margin-bottom: 4px; font-family: var(--mono); font-size: 10px; }
+.srv-dot { color: var(--acc2); }
+.srv-name { font-weight: 600; color: var(--acc2); flex-shrink: 0; }
+.srv-url  { color: var(--dim2); font-size: 9.5px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srv-caps-badge { font-size: 8.5px; color: var(--acc3); white-space: nowrap; }
+
+/* ── Code viewer ── */
+#code-viewer { display: none; position: fixed; inset: 0; z-index: 999; background: rgba(0,0,0,.78); backdrop-filter: blur(4px); }
+#code-viewer-inner {
+  position: absolute; top: 32px; left: 50%; transform: translateX(-50%);
+  width: min(1080px, 95vw); max-height: calc(100vh - 64px);
+  background: var(--bg1); border: 1px solid var(--border2); border-radius: var(--radius-lg);
+  display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 16px 56px rgba(0,0,0,.7);
+}
+#code-viewer-title {
+  padding: 11px 16px; border-bottom: 1px solid var(--border); font-family: var(--mono);
+  font-size: 11.5px; font-weight: 600; color: var(--acc); display: flex; align-items: center;
+  gap: 10px; flex-shrink: 0;
+}
+#code-viewer-title .cv-meta { font-size: 9.5px; color: var(--dim2); font-weight: 400; }
+#code-viewer-body { flex: 1; overflow: auto; background: #1a1a1a; }
+#code-viewer-body pre {
+  margin: 0; padding: 16px 20px; font-family: var(--mono); font-size: 11.5px;
+  color: var(--text); line-height: 1.6; min-height: 100%;
+  white-space: pre; word-break: normal; overflow-wrap: normal;
+  background: transparent !important;
+}
+#code-viewer-body pre code.language-python,
+#code-viewer-body pre code.language-json {
+  background: transparent !important; padding: 0 !important; font-size: inherit !important;
+}
+.cv-actions { display: flex; gap: 5px; margin-left: auto; }
+.cv-language-pill {
+  font-size: 9px; padding: 2px 8px; background: rgba(143,184,122,.1);
+  border: 1px solid rgba(143,184,122,.3); color: var(--acc2);
+  border-radius: 10px; font-family: var(--mono); text-transform: uppercase; letter-spacing: 1px;
+}
+
+/* ── Cap drawer (bottom) — width follows JS-set right-panel width ── */
+#cap-drawer {
+  position: fixed; bottom: 0; left: 224px; right: var(--right-pane-width, 420px);
+  height: 0; overflow: hidden; background: var(--bg1);
+  border-top: 1px solid var(--border); transition: height .2s; z-index: 50;
+  display: flex; align-items: flex-start; gap: 0;
+}
+#cap-drawer.open { height: 86px; }
+.drawer-inner { flex: 1; padding: 10px 14px; display: flex; align-items: center; gap: 16px; overflow-x: auto; }
+.drawer-cap-name { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--acc); min-width: 180px; }
+.drawer-state { font-family: var(--mono); font-size: 10px; color: var(--dim2); white-space: nowrap; }
+.drawer-state span { color: var(--text); }
+.drawer-acts { display: flex; gap: 5px; flex-wrap: wrap; }
+.dbtn { font-family: var(--mono); font-size: 10px; padding: 3px 11px; background: var(--bg3); border: 1px solid var(--border); color: var(--text); cursor: pointer; border-radius: 2px; transition: all .14s; }
+.dbtn.on    { background: rgba(143,184,122,.1); border-color: rgba(143,184,122,.4); color: var(--acc2); }
+.dbtn.off   { background: rgba(201,90,90,.08); border-color: rgba(201,90,90,.35); color: var(--err); }
+.dbtn.clear { border-color: var(--acc3); color: var(--acc3); }
+#drawer-close { align-self: stretch; padding: 0 13px; background: none; border: none; border-left: 1px solid var(--border); color: var(--dim2); cursor: pointer; font-size: 14px; }
+#drawer-close:hover { color: var(--text); }
+
+/* ── Topbar pills ── */
+.tb-pill { font-family: var(--mono); font-size: 9px; padding: 2px 8px; background: var(--bg2); border: 1px solid var(--border); border-radius: 2px; color: var(--dim2); white-space: nowrap; display: flex; gap: 4px; align-items: center; }
+.tb-pill .tbv { color: var(--text); }
+.pulse-on { animation: pulseOn 2s infinite; }
+@keyframes pulseOn { 0%,100%{opacity:1} 50%{opacity:.45} }
+
+/* ── Empty / loading ── */
+.empty { text-align: center; color: var(--dim2); font-family: var(--mono); font-size: 10px; padding: 24px 0; }
+
+::-webkit-scrollbar { width: 3px; height: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+/* ── Ontology relations (right panel sub-tab) ── */
+.onto-empty {
+  text-align: center; color: var(--dim2); padding: 18px 12px;
+  font-family: var(--mono); font-size: 10px; line-height: 1.7;
+}
+.onto-section-hdr {
+  display: flex; align-items: center; gap: 6px; padding: 7px 12px;
+  font-family: var(--mono); font-size: 9px; text-transform: uppercase;
+  letter-spacing: 1.2px; color: var(--dim2); background: var(--bg0);
+  border-bottom: 1px solid var(--border);
+}
+.onto-section-hdr .onto-cnt { color: var(--acc2); }
+.rel-row {
+  padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,.04);
+  font-family: var(--mono); font-size: 10.5px; cursor: pointer;
+  transition: background .12s;
+}
+.rel-row:hover { background: rgba(255,255,255,.03); }
+.rel-arrow {
+  display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-bottom: 3px;
+}
+.rel-cap {
+  color: var(--acc); font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis;
+  max-width: 180px; display: inline-block; vertical-align: middle;
+}
+.rel-cap.other { color: var(--acc2); }
+.rel-arrow-icon {
+  color: var(--dim2); font-size: 11px; padding: 0 2px;
+}
+.rel-label {
+  font-size: 9px; padding: 1px 7px; background: rgba(158,143,160,.12);
+  border: 1px solid rgba(158,143,160,.3); color: var(--acc4);
+  border-radius: 8px; font-weight: 500;
+}
+.rel-label.auto { background: rgba(201,149,90,.1); border-color: rgba(201,149,90,.3); color: var(--acc3); }
+.rel-strength-bar {
+  display: inline-block; width: 28px; height: 3px; background: rgba(255,255,255,.08);
+  border-radius: 2px; overflow: hidden; vertical-align: middle; margin-left: 4px;
+}
+.rel-strength-bar > div {
+  height: 100%; background: linear-gradient(90deg, var(--acc), var(--acc2));
+}
+.rel-desc {
+  color: var(--dim2); font-size: 9.5px; line-height: 1.55; margin-top: 3px;
+  padding-left: 6px; border-left: 1px solid var(--border);
+}
+.rel-actions { display: flex; gap: 4px; margin-top: 5px; }
+.rel-actions .btn { padding: 1px 7px; font-size: 9px; }
+
+/* Inline ontology edit modal */
+#onto-edit-modal { display: none; position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.78); backdrop-filter: blur(4px); }
+#onto-edit-inner {
+  position: absolute; top: 6vh; left: 50%; transform: translateX(-50%);
+  width: min(560px, 94vw); max-height: 88vh; overflow: auto;
+  background: var(--bg1); border: 1px solid var(--border2); border-radius: var(--radius-lg);
+  box-shadow: 0 16px 56px rgba(0,0,0,.7);
+}
+#onto-edit-inner .oe-header {
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 10px; font-family: var(--mono);
+  font-size: 11px; color: var(--acc);
+}
+#onto-edit-inner .oe-body { padding: 14px 16px; }
+.oe-pair { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 8px 10px; background: var(--bg0); border-radius: 4px; border: 1px solid var(--border); }
+.oe-pair-cap { font-family: var(--mono); font-size: 11px; color: var(--acc); flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.oe-pair-arrow { color: var(--dim2); font-family: var(--mono); }
+
+.oe-field { margin-bottom: 11px; }
+.oe-field label {
+  display: block; font-family: var(--mono); font-size: 9.5px;
+  text-transform: uppercase; letter-spacing: .8px; color: var(--dim2);
+  margin-bottom: 4px;
+}
+.oe-field input[type=text],
+.oe-field textarea,
+.oe-field select { width: 100%; }
+.oe-field textarea { min-height: 64px; font-family: var(--mono); font-size: 10.5px; }
+.oe-field-row { display: flex; gap: 8px; }
+.oe-field-row > * { flex: 1; }
+
+.oe-strength {
+  display: flex; align-items: center; gap: 8px;
+}
+.oe-strength input[type=range] {
+  flex: 1; accent-color: var(--acc);
+}
+.oe-strength-val {
+  font-family: var(--mono); font-size: 11px; color: var(--acc); min-width: 32px; text-align: right;
+}
+
+.oe-actions {
+  padding: 10px 16px; border-top: 1px solid var(--border);
+  display: flex; gap: 6px; align-items: center;
+  background: var(--bg0);
+}
+.oe-actions .spacer { flex: 1; }
+
+.oe-suggest-box {
+  margin-top: 6px; padding: 8px 10px; background: rgba(201,149,90,.06);
+  border: 1px solid rgba(201,149,90,.25); border-radius: 4px;
+  font-family: var(--mono); font-size: 10px; color: var(--acc3);
+  display: none;
+}
+.oe-suggest-box.on { display: block; }
+.oe-suggest-box .oe-sg-hdr { font-size: 8.5px; text-transform: uppercase; letter-spacing: 1.2px; margin-bottom: 4px; opacity: .8; }
+
+/* Inline icon helpers — monocolor SVG buttons */
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 3px; border: 1px solid var(--border);
+  background: var(--bg2); color: var(--dim2); cursor: pointer; transition: all .14s;
+  padding: 0;
+}
+.icon-btn:hover { color: var(--acc); border-color: var(--acc); background: rgba(90,158,143,.08); }
+.icon-btn svg { width: 13px; height: 13px; }
+.icon-inline { width: 11px; height: 11px; vertical-align: middle; opacity: .7; }
+</style>
+</head>
+<body>
+
+<div id="hub-root">
+
+  <!-- ═══ TOPBAR ═══════════════════════════════════════════════════ -->
+  <div id="hub-topbar">
+    <div class="hub-logo">⬡ CAP HUB</div>
+    <div class="tb-pill">CAPS <span class="tbv" id="tp-caps">—</span></div>
+    <div class="tb-pill">TRACKING <span class="tbv" id="tp-trk">—</span></div>
+    <div class="tb-pill">MCP <span class="tbv" id="tp-mcp">—</span></div>
+    <div class="tb-pill">QUEUE <span class="tbv" id="tp-queue">—</span></div>
+    <div class="tb-pill">SESSIONS <span class="tbv" id="tp-sessions">—</span></div>
+    <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
+      <div id="master-toggle" style="display:flex;align-items:center;gap:6px;font-size:10px;font-family:var(--mono);color:var(--dim2)">
+        <label class="tog"><input type="checkbox" id="master-switch" onchange="setMaster(this.checked)"><div class="tog-track"></div></label>
+        <span id="master-lbl" style="color:var(--dim2)">—</span>
+      </div>
+      <span id="tp-save" class="pulse-on" style="font-size:9px;font-family:var(--mono);color:var(--dim2);transition:color .3s"></span>
+      <button class="btn sm" onclick="refreshAll()">↻ Refresh</button>
+      <button class="btn sm danger" onclick="confirmReset()">Reset</button>
+    </div>
+  </div>
+
+  <div id="hub-body">
+
+    <!-- ═══ LEFT: Groups + MCP sub-tabs ══════════════════════════ -->
+    <div id="hub-left">
+      <div class="sub-tabs">
+        <button class="sub-tab active" id="lt-groups" onclick="leftTab('groups')">Groups</button>
+        <button class="sub-tab" id="lt-mcp" onclick="leftTab('mcp')">MCP</button>
+        <button class="sub-tab" id="lt-modules" onclick="leftTab('modules')">Modules</button>
+      </div>
+
+      <!-- GROUPS sub-panel -->
+      <div id="lp-groups" style="display:flex;flex-direction:column;overflow:hidden;flex:1">
+        <!-- Group search -->
+        <div class="grp-search-wrap">
+          <svg class="grp-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="7"/><line x1="20" y1="20" x2="16.65" y2="16.65"/>
+          </svg>
+          <input id="grp-search-inp" placeholder="Search groups…" oninput="filterGroups(this.value)">
+          <button class="grp-search-clear" id="grp-search-clear" onclick="clearGroupSearch()" title="Clear">
+            <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round">
+              <line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <!-- Toolbar: hide-isolated toggle -->
+        <div style="padding:5px 10px;border-bottom:1px solid var(--border);background:var(--bg0);display:flex;align-items:center;gap:7px;flex-shrink:0;font-family:var(--mono);font-size:9.5px;color:var(--dim2)">
+          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;user-select:none">
+            <input type="checkbox" id="hide-isolated-cb" style="margin:0" onchange="toggleHideIsolated(this.checked)">
+            <span>Hide isolated</span>
+          </label>
+          <span style="margin-left:auto;font-size:9px" id="grp-visible-cnt"></span>
+        </div>
+        <!-- Scrollable group list -->
+        <div class="scroll" id="lp-groups-list" style="padding:6px 6px 12px">
+          <div class="empty">loading…</div>
+        </div>
+      </div>
+
+      <!-- MCP sub-panel -->
+      <div id="lp-mcp" style="display:none;flex-direction:column;overflow:hidden;flex:1">
+        <div class="sdiv" style="padding:8px 10px">
+          <div class="sdiv-hdr">Register MCP Server</div>
+          <input id="mcp-url"  placeholder="http://agent-b.int:8000" style="width:100%;margin-bottom:4px">
+          <input id="mcp-name" placeholder="server name (optional)" style="width:100%;margin-bottom:6px">
+          <button class="btn primary sm" style="width:100%" onclick="registerMCPServer()">Register</button>
+          <div class="status" id="mcp-reg-status"></div>
+        </div>
+        <div class="sh">Registered Servers</div>
+        <div class="scroll" style="padding:8px" id="mcp-srv-list">
+          <div class="empty">none</div>
+        </div>
+      </div>
+
+      <!-- MODULES sub-panel -->
+      <div id="lp-modules" style="display:none;flex-direction:column;overflow:hidden;flex:1">
+        <div class="sh">Loaded Modules <span class="sh-right"><span class="sh-badge" id="mod-count">0</span></span></div>
+        <div class="scroll" style="padding:8px" id="mods-list">
+          <div class="empty">loading…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ CENTER: Capability list ══════════════════════════════ -->
+    <div id="hub-center">
+      <!-- Toolbar -->
+      <div class="toolbar">
+        <input id="cap-search" placeholder="Search capabilities…" style="flex:1;min-width:120px" oninput="renderCapList()">
+        <select id="cap-group-sel" style="font-size:10.5px;max-width:110px" onchange="renderCapList()">
+          <option value="">All groups</option>
+        </select>
+        <select id="cap-src-sel" style="font-size:10.5px;max-width:90px" onchange="renderCapList()">
+          <option value="">Any source</option>
+          <option value="local">local</option>
+          <option value="mcp_proxy">mcp proxy</option>
+          <option value="distributed">distributed</option>
+        </select>
+      </div>
+      <!-- Tracking filter chips -->
+      <div class="toolbar-row" id="trk-filter-bar" style="gap:4px">
+        <span style="font-size:9px;color:var(--dim2);font-family:var(--mono)">Track filter:</span>
+        <span class="fchip active" id="tf-all"    onclick="setTrkFilter('all')">All</span>
+        <span class="fchip" id="tf-on"     onclick="setTrkFilter('on')">Tracked</span>
+        <span class="fchip" id="tf-off"    onclick="setTrkFilter('off')">Skipped</span>
+        <span class="fchip" id="tf-manual" onclick="setTrkFilter('manual')">Overrides</span>
+        <span class="fchip" id="tf-mcp"    onclick="setTrkFilter('mcp')">MCP only</span>
+      </div>
+      <!-- Group chips -->
+      <div id="grp-chip-bar" style="display:flex;flex-wrap:wrap;gap:3px;padding:5px 10px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg0)"></div>
+      <!-- Cap list -->
+      <div class="scroll" id="cap-list-wrap">
+        <div id="cap-list" style="padding:6px 10px">
+          <div class="empty">loading…</div>
+        </div>
+      </div>
+      <div id="cap-count-bar" style="padding:3px 10px;font-size:9px;color:var(--dim2);font-family:var(--mono);border-top:1px solid var(--border);flex-shrink:0;background:var(--bg0)"></div>
+    </div>
+
+    <!-- ═══ SPLITTER (drag to resize right panel) ═══════════════════ -->
+    <div id="right-splitter" title="Drag to resize"></div>
+
+    <!-- ═══ RIGHT: Call + Tracking + Ontology + Job Stream ═══════════ -->
+    <div id="hub-right">
+      <div class="sub-tabs">
+        <button class="sub-tab active" id="rt-call"     onclick="rightTab('call')">Call</button>
+        <button class="sub-tab" id="rt-ontology" onclick="rightTab('ontology')">Ontology</button>
+        <button class="sub-tab" id="rt-tracking" onclick="rightTab('tracking')">Tracking</button>
+        <button class="sub-tab" id="rt-stream"   onclick="rightTab('stream')">Stream</button>
+      </div>
+
+      <!-- CALL sub-panel -->
+      <div id="rp-call" class="scroll">
+        <div id="call-placeholder" style="padding:20px;text-align:center;color:var(--dim2);font-size:10.5px;font-family:var(--mono)">
+          Select a capability from the list to call it
+        </div>
+        <div id="call-card-wrap" style="display:none"></div>
+      </div>
+
+      <!-- TRACKING sub-panel -->
+      <div id="rp-tracking" style="display:none;flex-direction:column;overflow:hidden;flex:1">
+        <div class="scroll">
+          <div class="sdiv">
+            <div class="sdiv-hdr">Queue &amp; Chain</div>
+            <div class="meter-row">
+              <div class="meter-lbl"><span>Queue depth</span><span class="meter-v" id="m-queue">—</span></div>
+              <div class="meter-track"><div class="meter-fill" id="m-queue-bar" style="width:0%;background:var(--acc)"></div></div>
+            </div>
+            <div class="meter-row">
+              <div class="meter-lbl"><span>Max chain / session</span><span class="meter-v" id="m-chain-max">—</span></div>
+            </div>
+            <div style="font-size:8.5px;color:var(--dim2);font-family:var(--mono);margin-bottom:5px;letter-spacing:.06em">SESSION CHAINS</div>
+            <table class="chain-table">
+              <thead><tr><th>Session</th><th>Links</th><th>Rate/min</th></tr></thead>
+              <tbody id="chain-tbody"><tr><td colspan="3" style="color:var(--dim2);text-align:center;padding:7px">no active sessions</td></tr></tbody>
+            </table>
+          </div>
+
+          <div class="sdiv">
+            <div class="sdiv-hdr">Limits</div>
+            <div class="limit-row"><span class="limit-lbl">Max chain / session</span><input class="limit-inp" id="lim-chain" type="number" min="0" max="10000" placeholder="200"></div>
+            <div class="limit-row"><span class="limit-lbl">Max queue size</span><input class="limit-inp" id="lim-queue" type="number" min="100" max="50000" placeholder="2000"></div>
+            <div class="limit-row"><span class="limit-lbl">Max events / session / min</span><input class="limit-inp" id="lim-rate" type="number" min="0" max="1000" placeholder="60"></div>
+            <button class="btn primary sm" style="width:100%;margin-top:4px" onclick="applyLimits()">Apply Limits</button>
+          </div>
+
+          <div class="sdiv" style="border-bottom:none">
+            <div class="sdiv-hdr">Hard-locked (loop safety)</div>
+            <div id="hard-skip-list" style="font-family:var(--mono);font-size:9px;color:var(--dim2);line-height:1.8"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ONTOLOGY sub-panel -->
+      <div id="rp-ontology" style="display:none;flex-direction:column;overflow:hidden;flex:1">
+        <div class="scroll" id="rp-ontology-body">
+          <div class="onto-empty">
+            Select a capability to see how it relates to other caps in the system.<br>
+            <span style="opacity:.7">Relations describe what feeds into what, alternatives, dependencies, etc.</span>
+          </div>
+        </div>
+        <div style="padding:7px 10px;border-top:1px solid var(--border);display:flex;gap:5px;flex-shrink:0;background:var(--bg0)">
+          <button class="btn sm teal" id="onto-add-btn" onclick="openOntoEditFor(null,null)" disabled>＋ Add relation</button>
+          <button class="btn sm" id="onto-suggest-grp-btn" onclick="autoGroupForSelected()" disabled>⚛ LLM-fill group</button>
+          <button class="btn sm" style="margin-left:auto" onclick="openCapOntologyTab()">Open Matrix</button>
+        </div>
+      </div>
+
+      <!-- JOB STREAM sub-panel -->
+      <div id="rp-stream" style="display:none;flex-direction:column;overflow:hidden;flex:1">
+        <div class="sdiv" style="padding:8px 10px">
+          <div class="sdiv-hdr" style="margin-bottom:5px">Job / Task ID</div>
+          <div style="display:flex;gap:5px;margin-bottom:5px">
+            <input id="stream-job-id" placeholder="task_id or trace_id…" style="flex:1;font-size:10.5px">
+            <button class="btn sm teal" onclick="streamJobById()">Stream</button>
+          </div>
+          <div class="status" id="stream-status"></div>
+        </div>
+        <div class="sh">Live Output</div>
+        <div class="scroll" style="padding:6px" id="job-stream-out">
+          <div class="empty">No job running — call a cap or paste a job ID above</div>
+        </div>
+        <div style="padding:5px 10px;border-top:1px solid var(--border);display:flex;gap:5px;flex-shrink:0">
+          <button class="btn sm danger" onclick="clearJobStream()">Clear</button>
+          <button class="btn sm" onclick="copyJobStream()">Copy output</button>
+          <span id="stream-job-badge" style="font-size:9px;color:var(--dim2);font-family:var(--mono);margin-left:auto"></span>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /hub-body -->
+</div><!-- /hub-root -->
+
+<!-- ═══ CAP DETAIL DRAWER (bottom) ══════════════════════════════ -->
+<div id="cap-drawer">
+  <div class="drawer-inner">
+    <div class="drawer-cap-name" id="drawer-name">—</div>
+    <div class="drawer-state">Group: <span id="drawer-group">—</span> &nbsp; State: <span id="drawer-state-txt">—</span></div>
+    <div class="drawer-acts">
+      <button class="dbtn on"    onclick="setCapOverride(true)">Track</button>
+      <button class="dbtn off"   onclick="setCapOverride(false)">Skip</button>
+      <button class="dbtn clear" onclick="setCapOverride(null)">Inherit group</button>
+      <button class="dbtn" onclick="callSelectedCap()">Call ▶</button>
+      <button class="dbtn" style="border-color:var(--acc4);color:var(--acc4)" onclick="viewCapCode()">{ } Source</button>
+      <button class="dbtn" style="border-color:var(--acc2);color:var(--acc2)" onclick="rightTab('ontology');renderOntologyForSelected()">◇ Ontology</button>
+    </div>
+  </div>
+  <button id="drawer-close" onclick="closeDrawer()">&#10005;</button>
+</div>
+
+<!-- ═══ ONTOLOGY EDIT MODAL ═════════════════════════════════════ -->
+<div id="onto-edit-modal" onclick="if(event.target===this)closeOntoEdit()">
+  <div id="onto-edit-inner">
+    <div class="oe-header">
+      <svg class="icon-inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:1;color:var(--acc2)">
+        <circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/>
+        <line x1="6" y1="9" x2="6" y2="15"/><line x1="9" y1="6" x2="15" y2="6"/><line x1="9" y1="18" x2="15" y2="18"/><line x1="18" y1="9" x2="18" y2="15"/>
+      </svg>
+      <span id="oe-title">Edit relation</span>
+      <button class="btn sm" style="margin-left:auto" onclick="closeOntoEdit()">Close ✕</button>
+    </div>
+    <div class="oe-body">
+      <div class="oe-pair">
+        <div class="oe-pair-cap" id="oe-from">—</div>
+        <div class="oe-pair-arrow" id="oe-arrow">→</div>
+        <div class="oe-pair-cap" id="oe-to">—</div>
+        <button class="icon-btn" id="oe-swap" onclick="swapOntoPair()" title="Swap from/to">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+            <polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="oe-field">
+        <label>To <span style="color:var(--dim2)">(target capability)</span></label>
+        <vera-cap-search id="oe-to-search" placeholder="Search capability…"></vera-cap-search>
+      </div>
+
+      <div class="oe-field">
+        <label>Relation label</label>
+        <input id="oe-relation" type="text" placeholder="e.g. feeds_into, alternative_to, summarises_output_of">
+      </div>
+
+      <div class="oe-field">
+        <label>Description</label>
+        <textarea id="oe-description" placeholder="One sentence: how does the FROM cap relate to the TO cap in practice?"></textarea>
+      </div>
+
+      <div class="oe-field-row">
+        <div class="oe-field">
+          <label>Direction</label>
+          <select id="oe-direction">
+            <option value="forward">Forward (from → to)</option>
+            <option value="backward">Backward (to → from)</option>
+            <option value="bidirectional">Bidirectional ↔</option>
+          </select>
+        </div>
+        <div class="oe-field">
+          <label>Tags <span style="color:var(--dim2)">(csv)</span></label>
+          <input id="oe-tags" type="text" placeholder="critical, llm-generated">
+        </div>
+      </div>
+
+      <div class="oe-field">
+        <label>Wire <span style="color:var(--dim2)">(optional — A.field → B.param)</span></label>
+        <input id="oe-wire" type="text" placeholder="e.g. dream.caps.search.results -> dream.fabric.browse.items">
+      </div>
+
+      <div class="oe-field-row">
+        <div class="oe-field">
+          <label>Strength <span style="color:var(--dim2)">(0..1)</span></label>
+          <div class="oe-strength">
+            <input id="oe-strength" type="range" min="0" max="1" step="0.05" value="0.5" oninput="document.getElementById('oe-strength-val').textContent=(+this.value).toFixed(2)">
+            <span class="oe-strength-val" id="oe-strength-val">0.50</span>
+          </div>
+        </div>
+        <div class="oe-field">
+          <label>Confidence <span style="color:var(--dim2)">(0..1)</span></label>
+          <div class="oe-strength">
+            <input id="oe-confidence" type="range" min="0" max="1" step="0.05" value="0.5" oninput="document.getElementById('oe-confidence-val').textContent=(+this.value).toFixed(2)">
+            <span class="oe-strength-val" id="oe-confidence-val">0.50</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="oe-suggest-box" id="oe-suggest-box">
+        <div class="oe-sg-hdr">⚛ LLM suggestion</div>
+        <div id="oe-suggest-text" style="color:var(--text);line-height:1.5"></div>
+        <div style="margin-top:6px;display:flex;gap:5px">
+          <button class="btn sm primary" onclick="applyOntoSuggest()">Apply suggestion</button>
+          <button class="btn sm" onclick="document.getElementById('oe-suggest-box').classList.remove('on')">Dismiss</button>
+        </div>
+      </div>
+    </div>
+    <div class="oe-actions">
+      <button class="btn sm" onclick="suggestOntoRelation()">⚛ Suggest with LLM</button>
+      <div class="spacer"></div>
+      <button class="btn sm danger" id="oe-delete-btn" onclick="deleteOntoRelation()" style="display:none">Delete</button>
+      <button class="btn primary sm" onclick="saveOntoRelation()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ CODE VIEWER OVERLAY ══════════════════════════════════════ -->
+<div id="code-viewer" onclick="if(event.target===this)closeCodeViewer()">
+  <div id="code-viewer-inner">
+    <div id="code-viewer-title">
+      <svg class="icon-inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:1">
+        <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+      </svg>
+      <span id="cv-cap-name" style="flex:1">—</span>
+      <span id="cv-meta-info" class="cv-meta"></span>
+      <div class="cv-actions">
+        <span id="cv-language-pill" class="cv-language-pill">PYTHON</span>
+        <button class="btn sm" onclick="copyCapCode()" title="Copy source">⧉ Copy</button>
+        <button class="btn sm" onclick="closeCodeViewer()">Close ✕</button>
+      </div>
+    </div>
+    <div id="code-viewer-body">
+      <pre><code id="cv-code" class="language-python">loading…</code></pre>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════════════════════
+let _caps         = {};   // {name: cap}
+let _trkConfig    = {};   // cap_tracking config
+let _trkAllGroups = {};   // {group: cap_count}
+let _trkAllCaps   = {};   // {cap_name: group}
+let _trkHardGroups= [];
+let _trkHardCaps  = [];
+let _trkStats     = {};
+let _mcpServers   = {};   // {name: url}
+let _modules      = [];
+let _selectedCap  = null;
+let _trkFilter    = 'all';
+let _grpFilter    = '';
+let _saveTimer    = null;
+let _streamWs     = null;
+let _streamJobId  = null;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BASE URL — works inside iframe (parent._veraBase) or standalone
+// ═══════════════════════════════════════════════════════════════════════════
+function _base() {
+  try {
+    if (window.parent && window.parent !== window && window.parent._veraBase)
+      return window.parent._veraBase.replace(/\/$/, '');
+  } catch(_) {}
+  return location.origin;
+}
+
+async function api(path, method = 'GET', body = null) {
+  try {
+    const opts = { method, headers: { 'Content-Type': 'application/json' } };
+    if (body) opts.body = JSON.stringify(body);
+    const r = await fetch(_base() + path, opts);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch(e) { return null; }
+}
+
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LOAD ALL
+// ═══════════════════════════════════════════════════════════════════════════
+async function refreshAll() {
+  await Promise.all([loadCaps(), loadTracking(), loadMCP(), loadModules(), loadOntoConnected()]);
+}
+
+async function loadCaps() {
+  const list = await api('/mcp/tools');
+  if (!list) return;
+  _caps = {};
+  list.forEach(c => _caps[c.name] = c);
+  // Populate group dropdown
+  const groups = [...new Set(list.map(c => c.name.split('.')[0]))].sort();
+  const gsel = document.getElementById('cap-group-sel');
+  const prev = gsel.value;
+  gsel.innerHTML = '<option value="">All groups</option>' +
+    groups.map(g => `<option value="${g}">${g}</option>`).join('');
+  if (prev && groups.includes(prev)) gsel.value = prev;
+  document.getElementById('tp-caps').textContent = list.length;
+  renderCapList();
+  // Update group chips for tracking filter
+  renderGrpChips();
+}
+
+async function loadTracking() {
+  const [cfg, stats] = await Promise.all([
+    api('/cap_tracking/config'),
+    api('/cap_tracking/stats'),
+  ]);
+  if (cfg) {
+    _trkConfig     = cfg.config || {};
+    _trkAllGroups  = cfg.all_groups || {};
+    _trkAllCaps    = cfg.all_caps || {};
+    _trkHardGroups = cfg.hard_skip_groups || [];
+    _trkHardCaps   = cfg.always_skip_caps || [];
+  }
+  if (stats) _trkStats = stats;
+  renderTopbar();
+  renderLeftGroups();
+  renderTrackingStats();
+  renderLimits();
+}
+
+async function loadMCP() {
+  const [sd, cd] = await Promise.all([api('/mcp/servers'), api('/mcp/tools')]);
+  if (sd?.servers) {
+    _mcpServers = sd.servers;
+    document.getElementById('tp-mcp').textContent = Object.keys(_mcpServers).length;
+  }
+  renderMCPServers(cd);
+}
+
+async function loadModules() {
+  const mods = await api('/modules');
+  _modules = mods?.modules || [];
+  document.getElementById('mod-count').textContent = _modules.length;
+  const el = document.getElementById('mods-list');
+  if (!_modules.length) { el.innerHTML = '<div class="empty">no modules</div>'; return; }
+  el.innerHTML = _modules.map(m => {
+    const ok = m.status === 'ok';
+    const col = ok ? 'var(--ok)' : 'var(--err)';
+    return `<div style="display:flex;align-items:center;gap:6px;padding:5px 8px;border:1px solid ${col};border-radius:3px;margin-bottom:4px;background:rgba(0,0,0,.12)">
+      <span style="color:${col};font-size:11px">${ok ? '✓' : '✗'}</span>
+      <span style="font-family:var(--mono);font-size:10px;flex:1;color:var(--text)">${esc(m.name)}</span>
+      <span style="font-size:8.5px;color:${ok?'var(--dim2)':'var(--err)'}">${ok ? `+${m.caps_added} caps` : esc(m.status||'err')}</span>
+    </div>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TOPBAR
+// ═══════════════════════════════════════════════════════════════════════════
+function renderTopbar() {
+  const enabled = _trkConfig.enabled ?? true;
+  const sw = document.getElementById('master-switch');
+  sw.checked = enabled;
+  document.getElementById('master-lbl').textContent = enabled ? '● TRACKING ON' : '○ TRACKING OFF';
+  document.getElementById('master-lbl').style.color = enabled ? 'var(--ok)' : 'var(--dim2)';
+
+  const groups = _trkConfig.groups || {};
+  const activeCount = Object.values(groups).filter(g => g.track).length;
+  const overrideCount = Object.keys(_trkConfig.caps || {}).length;
+  const sessionCount = Object.keys(_trkStats.chain_lengths || {}).length;
+
+  document.getElementById('tp-trk').textContent = activeCount + ' grps';
+  document.getElementById('tp-queue').textContent = _trkStats.queue_depth ?? '—';
+  document.getElementById('tp-sessions').textContent = sessionCount;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LEFT: GROUPS
+// ═══════════════════════════════════════════════════════════════════════════
+function leftTab(id) {
+  ['groups','mcp','modules'].forEach(t => {
+    document.getElementById('lt-' + t).classList.toggle('active', t === id);
+    const el = document.getElementById('lp-' + t);
+    if (el) el.style.display = t === id ? 'flex' : 'none';
+  });
+  if (id === 'groups') renderLeftGroups();
+  if (id === 'mcp') loadMCP();
+  if (id === 'modules') loadModules();
+}
+
+function strToHue(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
+  return h;
+}
+
+// Group rendering state
+let _grpSearch = '';
+let _hideIsolated = false;
+
+function escRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+function highlightMatch(text, query) {
+  if (!query) return esc(text);
+  const r = new RegExp('(' + escRe(query) + ')', 'gi');
+  return esc(text).replace(r, '<span class="grp-mark">$1</span>');
+}
+
+function filterGroups(q) {
+  _grpSearch = (q || '').toLowerCase().trim();
+  document.getElementById('grp-search-clear')?.classList.toggle('on', !!_grpSearch);
+  renderLeftGroups();
+}
+function clearGroupSearch() {
+  const inp = document.getElementById('grp-search-inp');
+  if (inp) inp.value = '';
+  filterGroups('');
+}
+function toggleHideIsolated(v) {
+  _hideIsolated = !!v;
+  renderLeftGroups();
+  renderCapList();
+}
+
+function renderLeftGroups() {
+  const groups = { ...(_trkConfig.groups || {}) };
+  for (const g of Object.keys(_trkAllGroups)) {
+    if (!groups[g]) groups[g] = { track: false, budget: 100, note: '' };
+  }
+  const sorted = Object.entries(groups).sort((a, b) => {
+    const aH = _trkHardGroups.includes(a[0]) ? 1 : 0;
+    const bH = _trkHardGroups.includes(b[0]) ? 1 : 0;
+    if (aH !== bH) return aH - bH;
+    return (b[1].track ? 1 : 0) - (a[1].track ? 1 : 0) || a[0].localeCompare(b[0]);
+  });
+
+  const el = document.getElementById('lp-groups-list');
+  if (!el) return;
+  el.innerHTML = '';
+
+  // Bucket into sections: ON / OFF / HARD
+  const buckets = { on: [], off: [], hard: [] };
+  let visibleCount = 0;
+  for (const [gName, gCfg] of sorted) {
+    const isHard = _trkHardGroups.includes(gName);
+    const isOn   = !isHard && gCfg.track;
+    if (_grpSearch && !gName.toLowerCase().includes(_grpSearch)) continue;
+    // "isolated" group = group whose all caps are hard-locked or 0 caps
+    const cnt = _trkAllGroups[gName] ?? 0;
+    if (_hideIsolated && cnt === 0) continue;
+    visibleCount++;
+    if (isHard) buckets.hard.push([gName, gCfg, cnt]);
+    else if (isOn) buckets.on.push([gName, gCfg, cnt]);
+    else buckets.off.push([gName, gCfg, cnt]);
+  }
+
+  const cntEl = document.getElementById('grp-visible-cnt');
+  if (cntEl) cntEl.textContent = `${visibleCount}/${sorted.length} groups`;
+
+  if (visibleCount === 0) {
+    el.innerHTML = `<div class="group-empty">${_grpSearch ? `No groups matching "${esc(_grpSearch)}"` : 'no groups'}</div>`;
+    return;
+  }
+
+  const renderSection = (label, items) => {
+    if (!items.length) return;
+    const div = document.createElement('div');
+    div.className = 'grp-divider';
+    div.textContent = label + ' · ' + items.length;
+    el.appendChild(div);
+    for (const [gName, gCfg, cnt] of items) {
+      const isHard = _trkHardGroups.includes(gName);
+      const isOn   = !isHard && gCfg.track;
+      const hue    = strToHue(gName);
+      const rowCls = isHard ? 'group-row trk-hard' : isOn ? 'group-row trk-on' : 'group-row trk-off';
+      const row = document.createElement('div');
+      row.className = rowCls + (_grpFilter === gName ? ' active' : '');
+      row.dataset.group = gName;
+      row.innerHTML = `
+        <div class="group-dot" style="background:hsl(${hue},65%,55%)"></div>
+        <div class="group-name" title="${esc(gName)}">${highlightMatch(gName, _grpSearch)}</div>
+        <div class="group-cnt">${cnt}</div>
+        <div class="group-bud" title="budget per session">${gCfg.budget ?? '—'}</div>
+        <label class="tog" onclick="event.stopPropagation()" title="${isHard ? 'Hard-locked' : ''}">
+          <input type="checkbox" ${isOn ? 'checked' : ''} ${isHard ? 'disabled' : ''}
+            onchange="toggleGroup('${gName.replace(/'/g,"\\'")}', this.checked)">
+          <div class="tog-track"></div>
+        </label>`;
+      row.addEventListener('click', () => filterByGroup(gName));
+      el.appendChild(row);
+
+      if (!isHard) {
+        const br = document.createElement('div');
+        br.className = 'budget-row';
+        br.id = 'budrow-' + gName;
+        br.innerHTML = `<span>budget / session:</span>
+          <input class="budget-input" type="number" min="0" max="10000" value="${gCfg.budget ?? 100}"
+            onchange="setBudget('${gName.replace(/'/g,"\\'")}', +this.value)" onclick="event.stopPropagation()">
+          <span>calls</span>`;
+        el.appendChild(br);
+      }
+    }
+  };
+
+  renderSection('Tracked', buckets.on);
+  renderSection('Skipped', buckets.off);
+  renderSection('Hard-locked', buckets.hard);
+}
+
+function renderGrpChips() {
+  const allGrps = [...new Set(Object.values(_trkAllCaps))].sort();
+  const el = document.getElementById('grp-chip-bar');
+  el.innerHTML = allGrps.map(g =>
+    `<span class="fchip ${g === _grpFilter ? 'active' : ''}" onclick="filterByGroup('${g}')">${g}</span>`
+  ).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CENTER: CAPABILITY LIST
+// ═══════════════════════════════════════════════════════════════════════════
+function getCapTrkState(capName) {
+  const group = _trkAllCaps[capName] || capName.split('.')[0];
+  if (_trkHardCaps.includes(capName) || _trkHardGroups.includes(group)) return 'hard-off';
+  const ov = (_trkConfig.caps || {})[capName];
+  if (ov !== undefined) return ov.track ? 'ov-on' : 'ov-off';
+  const gCfg = (_trkConfig.groups || {})[group];
+  return (gCfg && gCfg.track) ? 'on' : 'off';
+}
+
+function renderCapList() {
+  const q      = (document.getElementById('cap-search')?.value || '').toLowerCase();
+  const grp    = document.getElementById('cap-group-sel')?.value || '';
+  const srcF   = document.getElementById('cap-src-sel')?.value || '';
+  const el     = document.getElementById('cap-list');
+
+  const allCaps = Object.values(_caps);
+  let shown = 0;
+  let html = '';
+
+  for (const c of allCaps.sort((a,b) => a.name.localeCompare(b.name))) {
+    const capGrp = c.name.split('.')[0];
+    const src    = c.source || 'local';
+    const trkSt  = getCapTrkState(c.name);
+    const ov     = (_trkConfig.caps || {})[c.name];
+
+    // Filters
+    if (q && !c.name.toLowerCase().includes(q) && !(c.description||'').toLowerCase().includes(q)) continue;
+    if (grp && !c.name.startsWith(grp + '.') && c.name !== grp) continue;
+    if (srcF && src !== srcF) continue;
+    if (_grpFilter && capGrp !== _grpFilter) continue;
+    if (_trkFilter === 'on'     && trkSt !== 'on'  && trkSt !== 'ov-on')  continue;
+    if (_trkFilter === 'off'    && trkSt !== 'off' && trkSt !== 'ov-off' && trkSt !== 'hard-off') continue;
+    if (_trkFilter === 'manual' && !ov) continue;
+    if (_trkFilter === 'mcp'    && src !== 'mcp_proxy') continue;
+    // Hide-isolated: hide caps that have no ontology connections AND don't match search.
+    // Search/filter results are always shown so the user can find isolated caps when looking.
+    if (_hideIsolated && !q && !grp && !_grpFilter && _ontoConnectedCaps && !_ontoConnectedCaps.has(c.name)) continue;
+
+    const hue  = strToHue(capGrp);
+    const dotC = trkSt === 'on' || trkSt === 'ov-on' ? 'var(--ok)' : trkSt === 'hard-off' ? '#444' : 'var(--err)';
+    const rowCls = 'cap-row' +
+      (trkSt === 'ov-on'   ? ' ov-on'  : '') +
+      (trkSt === 'ov-off'  ? ' ov-off' : '') +
+      (trkSt === 'hard-off'? ' hard'   : '') +
+      (_selectedCap === c.name ? ' selected' : '');
+
+    const srcCls = src === 'mcp_proxy' ? 'badge-proxy' : src === 'distributed' ? 'badge-dist' : 'badge-local';
+
+    const [prefix, ...rest] = c.name.split('.');
+    const dispName = `<span class="cap-prefix">${esc(prefix)}.</span>${esc(rest.join('.'))}`;
+
+    // Add small ontology dot if cap has relations
+    const hasRels = _ontoConnectedCaps && _ontoConnectedCaps.has(c.name);
+    const ontoDot = hasRels ? `<span title="has ontology relations" style="width:5px;height:5px;border-radius:50%;background:var(--acc4);display:inline-block;flex-shrink:0;margin-right:1px"></span>` : '';
+
+    html += `<div class="${rowCls}" data-cap="${esc(c.name)}" onclick="selectCap('${esc(c.name)}')" style="color:hsl(${hue},45%,65%)">
+      <div class="cap-dot" style="background:${dotC}"></div>
+      <div class="cap-name-el">${dispName}</div>
+      ${ontoDot}
+      <span class="cap-src-badge ${srcCls}">${esc(src.replace('mcp_proxy','mcp'))}</span>
+      ${ov ? `<span class="cap-ovbadge">${ov.track ? '▲on' : '▼off'}</span>` : ''}
+    </div>`;
+    shown++;
+  }
+
+  el.innerHTML = html || '<div class="empty">no capabilities match</div>';
+  document.getElementById('cap-count-bar').textContent = `${shown} / ${Object.keys(_caps).length} capabilities`;
+}
+
+// Cache of caps known to have at least one ontology relation
+let _ontoConnectedCaps = null;
+async function loadOntoConnected() {
+  try {
+    const r = await api('/cap_ontology/list');
+    if (!r) return;
+    const set = new Set();
+    (r.relations || []).forEach(rel => { set.add(rel.from); set.add(rel.to); });
+    _ontoConnectedCaps = set;
+    renderCapList();
+  } catch(_) {}
+}
+
+function selectCap(name) {
+  _selectedCap = name;
+  // Re-render to show selected state
+  renderCapList();
+  openDrawer(name);
+  // If right panel is on 'call', load the call card; if on 'ontology', refresh
+  const callPaneVisible = document.getElementById('rp-call')?.style.display !== 'none';
+  const ontoPaneVisible = document.getElementById('rp-ontology')?.style.display !== 'none';
+  if (callPaneVisible) {
+    loadCallCard(name);
+  }
+  if (ontoPaneVisible) {
+    renderOntologyForSelected();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DRAWER
+// ═══════════════════════════════════════════════════════════════════════════
+function openDrawer(capName) {
+  _selectedCap = capName;
+  const group = _trkAllCaps[capName] || capName.split('.')[0];
+  const trkSt = getCapTrkState(capName);
+  const ov    = (_trkConfig.caps || {})[capName];
+  document.getElementById('drawer-name').textContent = capName;
+  document.getElementById('drawer-group').textContent = group;
+  let stateTxt = trkSt;
+  if (ov) stateTxt = ov.track ? 'force TRACKED' : 'force SKIPPED';
+  else if (trkSt === 'on')  stateTxt = 'tracked (group)';
+  else if (trkSt === 'off') stateTxt = 'skipped (group)';
+  document.getElementById('drawer-state-txt').textContent = stateTxt;
+  document.getElementById('cap-drawer').classList.add('open');
+}
+
+function closeDrawer() {
+  _selectedCap = null;
+  document.getElementById('cap-drawer').classList.remove('open');
+  renderCapList();
+}
+
+function callSelectedCap() {
+  if (!_selectedCap) return;
+  rightTab('call');
+  loadCallCard(_selectedCap);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RIGHT: CALL CARD
+// ═══════════════════════════════════════════════════════════════════════════
+function rightTab(id) {
+  ['call','ontology','tracking','stream'].forEach(t => {
+    document.getElementById('rt-' + t)?.classList.toggle('active', t === id);
+    const el = document.getElementById('rp-' + t);
+    if (el) el.style.display = t === id ? (t === 'call' ? 'block' : 'flex') : 'none';
+  });
+  if (id === 'ontology' && _selectedCap) renderOntologyForSelected();
+}
+
+function _sid(name) { return name.replace(/[^a-zA-Z0-9]/g, '_'); }
+
+function loadCallCard(name) {
+  const c = _caps[name];
+  const ph = document.getElementById('call-placeholder');
+  const cw = document.getElementById('call-card-wrap');
+  if (!c) { ph.style.display = 'block'; cw.style.display = 'none'; return; }
+  ph.style.display = 'none';
+  cw.style.display = 'block';
+
+  const props = c.schema?.properties || {};
+  const reqSet = new Set(c.schema?.required || []);
+
+  const fields = Object.entries(props).filter(([k]) => k !== 'trace_id').map(([k, v]) => {
+    const fid = `cf_${_sid(name)}_${k}`;
+    const isReq = reqSet.has(k);
+    let input;
+    if (v.type === 'boolean') {
+      input = `<select id="${fid}" style="flex:1"><option value="false">false</option><option value="true">true</option></select>`;
+    } else if (v.type === 'integer' || v.type === 'number') {
+      input = `<input id="${fid}" type="number" placeholder="${v.type}" style="flex:1">`;
+    } else if (['text','code','prompt','message','content','full_text'].includes(k)) {
+      input = `<textarea id="${fid}" placeholder="${v.description || k}" style="flex:1;height:52px"></textarea>`;
+    } else {
+      input = `<input id="${fid}" placeholder="${v.description || k}" style="flex:1">`;
+    }
+    return `<div class="call-field">
+      <label class="${isReq ? 'req' : ''}">${esc(k)}${isReq ? '*' : ''}<span style="font-size:8.5px;color:var(--dim2);display:block;margin-top:1px">${v.type || 'str'}</span></label>
+      ${input}
+    </div>`;
+  }).join('');
+
+  const src = c.source || 'local';
+  const srcCls = src === 'mcp_proxy' ? 'badge-proxy' : src === 'distributed' ? 'badge-dist' : 'badge-local';
+
+  cw.innerHTML = `<div class="call-card">
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+      <div class="call-cap-name">${esc(name)}</div>
+      <span class="cap-src-badge ${srcCls}">${esc(src.replace('mcp_proxy','mcp'))}</span>
+    </div>
+    <div class="call-desc">${esc(c.description || '—')}</div>
+    ${fields ? `<div style="margin-bottom:6px">${fields}</div>` : '<div style="color:var(--dim2);font-size:10px;margin-bottom:8px">No parameters</div>'}
+    <div class="call-actions">
+      <button class="btn primary sm" onclick="callCapFromCard('${esc(name)}')">▶ Call</button>
+      <button class="btn sm teal" onclick="callAndStream('${esc(name)}')">⟳ Call + Stream</button>
+      <button class="btn sm" style="border-color:var(--acc4);color:var(--acc4)" onclick="viewCapCode()">{ } Source</button>
+      <button class="btn sm" style="border-color:var(--acc2);color:var(--acc2)" onclick="rightTab('ontology');renderOntologyForSelected()">◇ Ontology</button>
+    </div>
+    <div class="status" id="call-status-${_sid(name)}"></div>
+    <div class="result-toolbar" id="result-toolbar-${_sid(name)}" style="display:none">
+      <span>Result</span>
+      <span style="color:var(--dim);margin-left:4px" id="result-meta-${_sid(name)}"></span>
+      <span class="rt-spacer"></span>
+      <button class="btn sm" onclick="copyResultText('${_sid(name)}')">⧉ Copy</button>
+      <button class="btn sm" onclick="downloadResult('${_sid(name)}', '${esc(name)}')">↓ Save</button>
+      <button class="btn sm" onclick="clearResult('${_sid(name)}')">Clear</button>
+    </div>
+    <div class="result-box" id="call-result-${_sid(name)}" style="display:none"></div>
+  </div>`;
+}
+
+async function callCapFromCard(name) {
+  const c = _caps[name]; if (!c) return;
+  const props = c.schema?.properties || {};
+  const args = {};
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'trace_id') continue;
+    const el = document.getElementById(`cf_${_sid(name)}_${k}`);
+    if (!el) continue;
+    let val = el.value;
+    if (v.type === 'boolean')  val = val === 'true';
+    else if (v.type === 'integer') val = val === '' ? undefined : parseInt(val, 10);
+    else if (v.type === 'number')  val = val === '' ? undefined : parseFloat(val);
+    if (val !== '' && val !== undefined) args[k] = val;
+  }
+
+  const stEl = document.getElementById(`call-status-${_sid(name)}`);
+  const rsEl = document.getElementById(`call-result-${_sid(name)}`);
+  const tbEl = document.getElementById(`result-toolbar-${_sid(name)}`);
+  const mtEl = document.getElementById(`result-meta-${_sid(name)}`);
+  if (stEl) { stEl.textContent = '⟳ calling…'; stEl.className = 'status'; }
+  if (rsEl) { rsEl.style.display = 'block'; rsEl.innerHTML = '<span style="color:var(--dim2)">⟳ calling…</span>'; }
+  if (tbEl) { tbEl.style.display = 'flex'; }
+  if (mtEl) { mtEl.textContent = ''; }
+
+  const t0 = performance.now();
+  try {
+    const res = await fetch(_base() + '/mcp/call', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, arguments: args }),
+    });
+    const data = await res.json();
+    const elapsed = Math.round(performance.now() - t0);
+    if (stEl) { stEl.textContent = '✓ ok'; stEl.className = 'status ok'; }
+    if (rsEl) renderCallResult(rsEl, data);
+    if (mtEl) {
+      const sizeKb = ((JSON.stringify(data || '').length) / 1024).toFixed(1);
+      mtEl.textContent = `· ${elapsed}ms · ${sizeKb}KB`;
+    }
+
+    // Auto-detect job_id / trace_id for streaming
+    const jobId = data?.job_id || data?.task_id || data?.trace_id;
+    if (jobId) {
+      document.getElementById('stream-job-id').value = jobId;
+      document.getElementById('stream-job-badge').textContent = 'job: ' + jobId.slice(0, 16) + '…';
+    }
+  } catch(e) {
+    if (stEl) { stEl.textContent = '✗ ' + e.message; stEl.className = 'status err'; }
+    if (rsEl) rsEl.innerHTML = `<span style="color:var(--err)">Error: ${esc(e.message)}</span>`;
+  }
+}
+
+function copyResultText(sid) {
+  const el = document.getElementById(`call-result-${sid}`);
+  if (!el) return;
+  navigator.clipboard?.writeText(el.textContent || '').catch(() => {});
+}
+function downloadResult(sid, name) {
+  const el = document.getElementById(`call-result-${sid}`);
+  if (!el) return;
+  const blob = new Blob([el.textContent || ''], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${name}_${Date.now()}.txt`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+function clearResult(sid) {
+  const el = document.getElementById(`call-result-${sid}`);
+  const tb = document.getElementById(`result-toolbar-${sid}`);
+  if (el) { el.style.display = 'none'; el.innerHTML = ''; }
+  if (tb) { tb.style.display = 'none'; }
+}
+
+async function callAndStream(name) {
+  await callCapFromCard(name);
+  const jobId = document.getElementById('stream-job-id').value;
+  if (jobId) { rightTab('stream'); await streamJobById(); }
+}
+
+function renderCallResult(el, result) {
+  if (!result) { el.textContent = '(empty)'; return; }
+  if (result.image_b64) {
+    const mime = result.mime_type || 'image/png';
+    el.innerHTML = `<img src="data:${mime};base64,${result.image_b64}" style="max-width:100%;max-height:280px;object-fit:contain;border-radius:4px;display:block">`;
+    return;
+  }
+  if (result.audio_b64) {
+    try {
+      const bytes = Uint8Array.from(atob(result.audio_b64), c => c.charCodeAt(0));
+      const blob = new Blob([bytes], { type: result.mime_type || 'audio/wav' });
+      el.innerHTML = `<audio controls src="${URL.createObjectURL(blob)}" style="width:100%;margin:4px 0"></audio>`;
+    } catch(e) { el.textContent = JSON.stringify(result, null, 2); }
+    return;
+  }
+  if (typeof result === 'object' && result.text && typeof result.text === 'string' && result.text.length > 80) {
+    el.innerHTML = `<div style="white-space:pre-wrap;line-height:1.5;color:var(--fg)">${esc(result.text)}</div>`;
+    return;
+  }
+  el.style.color = 'var(--acc2)';
+  el.textContent = JSON.stringify(result, null, 2);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// JOB STREAM
+// ═══════════════════════════════════════════════════════════════════════════
+async function streamJobById() {
+  const jobId = document.getElementById('stream-job-id').value.trim();
+  if (!jobId) return;
+  _streamJobId = jobId;
+  const outEl = document.getElementById('job-stream-out');
+  const stEl  = document.getElementById('stream-status');
+
+  outEl.innerHTML = '';
+  stEl.textContent = '⟳ Connecting to job stream…';
+  stEl.className = 'status';
+  document.getElementById('stream-job-badge').textContent = 'job: ' + jobId.slice(0, 16) + '…';
+
+  // Strategy 1: SSE stream at /jobs/{id}/stream or /tasks/{id}/stream
+  const endpoints = [
+    `/jobs/${jobId}/stream`,
+    `/tasks/${jobId}/stream`,
+    `/dag/run/stream?job_id=${jobId}`,
+    `/exec/stream/${jobId}`,
+  ];
+
+  let connected = false;
+  for (const ep of endpoints) {
+    try {
+      const r = await fetch(_base() + ep);
+      if (r.ok && r.headers.get('content-type')?.includes('text/event-stream')) {
+        connected = true;
+        stEl.textContent = `✓ streaming ${ep}`; stEl.className = 'status ok';
+        await _readSSEStream(r, outEl);
+        break;
+      }
+    } catch(_) {}
+  }
+
+  if (!connected) {
+    // Strategy 2: Poll via WS events (subscribe and filter by job_id)
+    stEl.textContent = 'No SSE stream — watching WS events for job ' + jobId.slice(0, 12) + '…';
+    stEl.className = 'status warn';
+    _watchJobViaWs(jobId, outEl);
+  }
+}
+
+async function _readSSEStream(response, outEl) {
+  const rdr = response.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+
+  const appendLine = (content, cls = 'job-out') => {
+    const ts = new Date().toISOString().slice(11, 19);
+    const div = document.createElement('div');
+    div.className = 'job-line';
+    div.innerHTML = `<span class="job-ts">${ts}</span> <span class="${cls}">${esc(content)}</span>`;
+    outEl.appendChild(div);
+    outEl.scrollTop = outEl.scrollHeight;
+  };
+
+  try {
+    while (true) {
+      const { value, done } = await rdr.read();
+      if (done) { appendLine('── stream complete ──', 'job-done'); break; }
+      buf += dec.decode(value, { stream: true });
+      const parts = buf.split('\n\n'); buf = parts.pop();
+      for (const block of parts) {
+        for (const line of block.split('\n')) {
+          if (!line.startsWith('data:')) continue;
+          const raw = line.slice(5).trim();
+          try {
+            const ev = JSON.parse(raw);
+            const t = ev.type || '';
+            const msg = ev.output || ev.text || ev.result || ev.error || ev.message || JSON.stringify(ev);
+            const cls = t.includes('error') || ev.error ? 'job-err' : t.includes('done') || t.includes('complete') ? 'job-done' : 'job-out';
+            appendLine(typeof msg === 'string' ? msg : JSON.stringify(msg), cls);
+          } catch(_) {
+            if (raw) appendLine(raw);
+          }
+        }
+      }
+    }
+  } catch(e) { appendLine('Stream error: ' + e.message, 'job-err'); }
+  document.getElementById('stream-status').textContent = '✓ done';
+  document.getElementById('stream-status').className = 'status ok';
+}
+
+function _watchJobViaWs(jobId, outEl) {
+  // Reuse parent WS if available, else open own
+  let ws;
+  try {
+    if (window.parent?.ws?.readyState === WebSocket.OPEN) {
+      ws = window.parent.ws;
+      // Patch parent's handler to forward matching events
+      const _orig = window.parent.handleLiveEvent || (() => {});
+      window.parent.handleLiveEvent = (ev) => {
+        _orig(ev);
+        if (ev?.job_id === jobId || ev?.task_id === jobId || ev?.trace_id === jobId) {
+          _appendJobEvent(outEl, ev);
+        }
+      };
+      return;
+    }
+  } catch(_) {}
+
+  const base = _base();
+  const wsUrl = base.replace(/^http/, 'ws') + '/ws/mcp';
+  try { ws = new WebSocket(wsUrl); } catch(e) { return; }
+  ws.onopen = () => ws.send(JSON.stringify({ action: 'subscribe_events' }));
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      const ev = msg.type === 'event' ? msg.data : msg;
+      if (ev?.job_id === jobId || ev?.task_id === jobId || ev?.trace_id === jobId) {
+        _appendJobEvent(outEl, ev);
+      }
+    } catch(_) {}
+  };
+  ws.onclose = () => {};
+  _streamWs = ws;
+}
+
+function _appendJobEvent(outEl, ev) {
+  const ts = new Date().toISOString().slice(11, 19);
+  const t  = ev.type || 'event';
+  const msg = ev.output || ev.text || ev.result || ev.error || ev.message || ev.preview || '';
+  const cls = t.includes('error') || ev.error ? 'job-err' : t.includes('done') || t.includes('complete') ? 'job-done' : 'job-out';
+  const div = document.createElement('div');
+  div.className = 'job-line';
+  div.innerHTML = `<span class="job-ts">${ts}</span> <span style="color:var(--dim2);font-size:9px">[${esc(t)}]</span> <span class="${cls}">${esc(String(msg).slice(0, 300))}</span>`;
+  outEl.appendChild(div);
+  outEl.scrollTop = outEl.scrollHeight;
+}
+
+function clearJobStream() {
+  document.getElementById('job-stream-out').innerHTML = '<div class="empty">cleared</div>';
+  document.getElementById('stream-job-id').value = '';
+  document.getElementById('stream-status').textContent = '';
+  document.getElementById('stream-job-badge').textContent = '';
+  if (_streamWs) { try { _streamWs.close(); } catch(_) {} _streamWs = null; }
+}
+
+function copyJobStream() {
+  const out = document.getElementById('job-stream-out');
+  const text = [...out.querySelectorAll('.job-out,.job-err,.job-done')].map(el => el.textContent).join('\n');
+  navigator.clipboard?.writeText(text).catch(() => {});
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CODE / SOURCE VIEWER
+// ═══════════════════════════════════════════════════════════════════════════
+async function viewCapCode() {
+  const name = _selectedCap;
+  if (!name) return;
+  document.getElementById('code-viewer').style.display = 'block';
+  document.getElementById('cv-cap-name').textContent = name;
+  const codeEl = document.getElementById('cv-code');
+  // Reset Prism state — clear inner + class
+  codeEl.className = 'language-python';
+  codeEl.textContent = 'Loading source…';
+  document.getElementById('cv-meta-info').textContent = '';
+  document.getElementById('cv-language-pill').textContent = 'PYTHON';
+
+  // Try fetching source from /caps/source or /capability/source
+  const endpoints = [
+    `/caps/source?name=${encodeURIComponent(name)}`,
+    `/capability/source?name=${encodeURIComponent(name)}`,
+    `/mcp/source?name=${encodeURIComponent(name)}`,
+  ];
+
+  let got = false;
+  for (const ep of endpoints) {
+    try {
+      const r = await fetch(_base() + ep);
+      if (r.ok) {
+        const d = await r.json();
+        const src = d.source || d.code || d.python || d.body;
+        if (src) {
+          codeEl.textContent = src;
+          // Update meta info
+          const file = d.file || '';
+          const line = d.line || '';
+          const meta = file ? `${file.split('/').pop()}${line ? ':' + line : ''}` : '';
+          document.getElementById('cv-meta-info').textContent = meta;
+          got = true;
+          break;
+        }
+      }
+    } catch(_) {}
+  }
+
+  if (!got) {
+    // Fallback: show schema + metadata as JSON (highlight as JSON)
+    const c = _caps[name];
+    codeEl.className = 'language-json';
+    document.getElementById('cv-language-pill').textContent = 'JSON';
+    if (c) {
+      const meta = {
+        name: c.name, description: c.description, source: c.source,
+        mode: c.mode, schema: c.schema, streams: c.streams, tags: c.tags,
+      };
+      codeEl.textContent = JSON.stringify(meta, null, 2);
+    } else {
+      codeEl.textContent = '// Source not available';
+    }
+  }
+
+  // Trigger Prism highlighting
+  if (window.Prism) {
+    try { Prism.highlightElement(codeEl); } catch(e) { /* ignore */ }
+  }
+}
+
+function closeCodeViewer() {
+  document.getElementById('code-viewer').style.display = 'none';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TRACKING ACTIONS
+// ═══════════════════════════════════════════════════════════════════════════
+function setSaveStatus(cls, msg) {
+  const el = document.getElementById('tp-save');
+  el.className = cls === 'saving' ? 'pulse-on' : '';
+  el.textContent = cls === 'saved' ? '✓ saved' : cls === 'error' ? '✗ error' : '⟳ saving…';
+  el.style.color = cls === 'saved' ? 'var(--ok)' : cls === 'error' ? 'var(--err)' : 'var(--warn)';
+  clearTimeout(_saveTimer);
+  if (cls === 'saved') {
+    _saveTimer = setTimeout(() => { el.textContent = ''; el.className = ''; }, 2500);
+  }
+}
+
+async function setMaster(val) {
+  setSaveStatus('saving');
+  const r = await api('/cap_tracking/limits', 'POST', { enabled: val });
+  if (r?.ok) { _trkConfig = r.config || _trkConfig; renderTopbar(); setSaveStatus('saved'); }
+  else setSaveStatus('error');
+}
+
+async function toggleGroup(group, track) {
+  setSaveStatus('saving');
+  const budget = (_trkConfig.groups?.[group]?.budget) ?? 100;
+  const r = await api('/cap_tracking/group', 'POST', { group, track, budget });
+  if (r?.ok) {
+    _trkConfig.groups = _trkConfig.groups || {};
+    _trkConfig.groups[group] = { ...(_trkConfig.groups[group] || {}), track, budget: r.budget };
+    renderTopbar(); renderLeftGroups(); renderCapList(); setSaveStatus('saved');
+  } else setSaveStatus('error');
+}
+
+async function setBudget(group, budget) {
+  const track = _trkConfig.groups?.[group]?.track ?? false;
+  const r = await api('/cap_tracking/group', 'POST', { group, track, budget });
+  if (r?.ok) { _trkConfig.groups = _trkConfig.groups || {}; _trkConfig.groups[group] = { ...(_trkConfig.groups[group] || {}), budget }; }
+}
+
+async function setCapOverride(track) {
+  if (!_selectedCap) return;
+  setSaveStatus('saving');
+  const body = { cap_name: _selectedCap };
+  if (track !== null) body.track = track;
+  const r = await api('/cap_tracking/cap', 'POST', body);
+  if (r?.ok) {
+    if (track === null) delete (_trkConfig.caps || {})[_selectedCap];
+    else { _trkConfig.caps = _trkConfig.caps || {}; _trkConfig.caps[_selectedCap] = { track, note: '' }; }
+    renderCapList(); renderTopbar(); openDrawer(_selectedCap); setSaveStatus('saved');
+  } else setSaveStatus('error');
+}
+
+async function applyLimits() {
+  const chain = parseInt(document.getElementById('lim-chain').value) || 200;
+  const queue = parseInt(document.getElementById('lim-queue').value) || 2000;
+  const rate  = parseInt(document.getElementById('lim-rate').value)  || 60;
+  setSaveStatus('saving');
+  const r = await api('/cap_tracking/limits', 'POST', { max_chain_length: chain, max_queue_size: queue, max_per_session_per_min: rate });
+  if (r?.ok) { _trkConfig = r.config || _trkConfig; renderLimits(); renderTrackingStats(); setSaveStatus('saved'); }
+  else setSaveStatus('error');
+}
+
+async function confirmReset() {
+  if (!confirm('Reset all capability tracking config to factory defaults?')) return;
+  setSaveStatus('saving');
+  const r = await api('/cap_tracking/reset', 'POST');
+  if (r?.ok) { _trkConfig = r.config || {}; await loadTracking(); setSaveStatus('saved'); }
+  else setSaveStatus('error');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TRACKING STATS
+// ═══════════════════════════════════════════════════════════════════════════
+function renderTrackingStats() {
+  const qd = _trkStats.queue_depth ?? 0;
+  const qm = _trkStats.queue_max   ?? 2000;
+  const cl = _trkStats.chain_lengths ?? {};
+  const rr = _trkStats.rate_per_min  ?? {};
+  const rm = _trkStats.max_chain_length ?? 200;
+
+  document.getElementById('m-queue').textContent   = `${qd} / ${qm}`;
+  document.getElementById('m-queue-bar').style.width = `${Math.min(100, qd / qm * 100).toFixed(1)}%`;
+  document.getElementById('m-queue-bar').style.background = qd / qm > .8 ? 'var(--err)' : qd / qm > .5 ? 'var(--warn)' : 'var(--acc)';
+  document.getElementById('m-chain-max').textContent = rm === 0 ? 'unlimited' : rm + ' links';
+
+  const tbody = document.getElementById('chain-tbody');
+  const sessions = Object.entries(cl);
+  if (!sessions.length) {
+    tbody.innerHTML = '<tr><td colspan="3" style="color:var(--dim2);text-align:center;padding:7px">no active sessions</td></tr>';
+  } else {
+    tbody.innerHTML = sessions.map(([sid, len]) => {
+      const rate = rr[sid] ?? 0;
+      const pct  = rm > 0 ? Math.round(len / rm * 100) : 0;
+      const col  = pct > 80 ? 'var(--err)' : pct > 50 ? 'var(--warn)' : 'var(--acc2)';
+      return `<tr>
+        <td style="color:var(--dim2);font-size:8.5px">${sid.slice(0, 10)}…</td>
+        <td style="color:${col}">${len}${rm > 0 ? '/' + rm : ''}</td>
+        <td>${rate}/min</td>
+      </tr>`;
+    }).join('');
+  }
+}
+
+function renderLimits() {
+  document.getElementById('lim-chain').value = _trkConfig.max_chain_length ?? 200;
+  document.getElementById('lim-queue').value = _trkConfig.max_queue_size   ?? 2000;
+  document.getElementById('lim-rate').value  = _trkConfig.max_per_session_per_min ?? 60;
+  document.getElementById('hard-skip-list').textContent = [..._trkHardGroups, ..._trkHardCaps].join('\n');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MCP SERVERS
+// ═══════════════════════════════════════════════════════════════════════════
+function renderMCPServers(capsList) {
+  const el = document.getElementById('mcp-srv-list');
+  const entries = Object.entries(_mcpServers);
+  if (!entries.length) { el.innerHTML = '<div class="empty">none registered</div>'; return; }
+  const proxied = (capsList || []).filter(c => c.source === 'mcp_proxy');
+  const capsByServer = {};
+  proxied.forEach(c => {
+    const prefix = c.name.split('.')[0];
+    capsByServer[prefix] = (capsByServer[prefix] || 0) + 1;
+  });
+
+  el.innerHTML = entries.map(([name, url]) => {
+    const cnt = capsByServer[name] ?? '?';
+    return `<div class="srv-row">
+      <span class="srv-dot">⬡</span>
+      <span class="srv-name">${esc(name)}</span>
+      <span class="srv-url">${esc(url)}</span>
+      <span class="srv-caps-badge">${cnt} caps</span>
+    </div>`;
+  }).join('');
+}
+
+async function registerMCPServer() {
+  const url  = document.getElementById('mcp-url').value.trim();
+  const name = document.getElementById('mcp-name').value.trim() || url;
+  if (!url) return;
+  const stEl = document.getElementById('mcp-reg-status');
+  stEl.textContent = '⟳ registering…'; stEl.className = 'status';
+  const r = await api('/mcp/servers/register', 'POST', { url, name });
+  if (r?.count != null) {
+    stEl.textContent = `✓ ${r.count} caps proxied`; stEl.className = 'status ok';
+    await loadMCP(); await loadCaps();
+  } else {
+    stEl.textContent = '✗ failed'; stEl.className = 'status err';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FILTERS
+// ═══════════════════════════════════════════════════════════════════════════
+function setTrkFilter(f) {
+  _trkFilter = f;
+  ['all','on','off','manual','mcp'].forEach(x =>
+    document.getElementById('tf-' + x)?.classList.toggle('active', x === f));
+  renderCapList();
+}
+
+function filterByGroup(g) {
+  _grpFilter = _grpFilter === g ? '' : g;
+  document.querySelectorAll('.gf-chip, #grp-chip-bar .fchip').forEach(c => {
+    c.classList.toggle('active', c.textContent.trim() === _grpFilter);
+  });
+  document.querySelectorAll('.group-row').forEach(r => {
+    r.classList.toggle('active', r.dataset.group === _grpFilter);
+  });
+  // Sync group dropdown
+  const gsel = document.getElementById('cap-group-sel');
+  if (gsel) gsel.value = '';
+  renderCapList();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WS LIVE UPDATES
+// ═══════════════════════════════════════════════════════════════════════════
+function connectWS() {
+  function getBase() {
+    try {
+      if (window.parent && window.parent !== window && window.parent._veraBase)
+        return window.parent._veraBase;
+    } catch(_) {}
+    return location.origin;
+  }
+  const base  = getBase();
+  const proto = base.startsWith('https') ? 'wss' : 'ws';
+  const wsUrl = base.replace(/^https?/, proto) + '/ws/mcp';
+  let ws;
+  try { ws = new WebSocket(wsUrl); } catch(e) { setTimeout(connectWS, 5000); return; }
+  ws.onopen = () => ws.send(JSON.stringify({ action: 'subscribe_events' }));
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      const ev = msg.type === 'event' ? msg.data : msg;
+      if (!ev?.type) return;
+      if (ev.type.startsWith('cap_tracking.')) {
+        loadTracking();
+      }
+      if (ev.type && ev.type.startsWith('cap_ontology.')) {
+        // Debounce-load the connected-caps cache + selected-cap relations panel
+        clearTimeout(window.__ontoReloadTimer);
+        window.__ontoReloadTimer = setTimeout(() => {
+          loadOntoConnected();
+          if (_selectedCap && document.getElementById('rp-ontology')?.style.display !== 'none') {
+            renderOntologyForSelected();
+          }
+        }, 350);
+      }
+      // Refresh ontology subpanel on cap_ontology updates if currently visible
+      if (ev.type.startsWith('cap_ontology.')) {
+        const tab = document.getElementById('rp-ontology');
+        if (tab && tab.style.display !== 'none' && _selectedCap) {
+          // Only refresh if event involves the selected cap, or is a bulk one
+          if (ev.from === _selectedCap || ev.to === _selectedCap ||
+              ev.type === 'cap_ontology.bulk_set' || ev.type === 'cap_ontology.wiped') {
+            renderOntologyForSelected();
+          }
+        }
+      }
+      // Forward job events to stream panel if watching
+      if (_streamJobId && (ev.job_id === _streamJobId || ev.task_id === _streamJobId || ev.trace_id === _streamJobId)) {
+        const outEl = document.getElementById('job-stream-out');
+        if (outEl) _appendJobEvent(outEl, ev);
+      }
+    } catch(_) {}
+  };
+  ws.onclose = () => setTimeout(connectWS, 3000);
+  ws.onerror = () => {};
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COPY CODE
+// ═══════════════════════════════════════════════════════════════════════════
+function copyCapCode() {
+  const el = document.getElementById('cv-code');
+  if (!el) return;
+  const text = el.textContent || '';
+  navigator.clipboard?.writeText(text).then(() => {
+    const pill = document.getElementById('cv-language-pill');
+    const orig = pill.textContent;
+    pill.textContent = '✓ COPIED';
+    setTimeout(() => { pill.textContent = orig; }, 1100);
+  }).catch(() => {});
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RIGHT-PANEL SPLITTER (drag to resize)
+// ═══════════════════════════════════════════════════════════════════════════
+(function setupSplitter() {
+  const RIGHT_KEY = 'vera_caphub_right_w';
+  const stored = parseInt(localStorage.getItem(RIGHT_KEY) || '0', 10);
+  const minW = 280, maxW = Math.min(900, window.innerWidth - 480);
+
+  function applyWidth(w) {
+    const clamped = Math.max(minW, Math.min(maxW, w));
+    const right = document.getElementById('hub-right');
+    if (right) right.style.width = clamped + 'px';
+    document.documentElement.style.setProperty('--right-pane-width', (clamped + 5) + 'px');
+  }
+  if (stored >= minW) applyWidth(stored);
+
+  function bind() {
+    const sp = document.getElementById('right-splitter');
+    if (!sp) return;
+    let dragging = false;
+    let startX = 0, startW = 0;
+    sp.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      dragging = true;
+      sp.classList.add('dragging');
+      document.body.classList.add('col-resizing');
+      startX = e.clientX;
+      const right = document.getElementById('hub-right');
+      startW = right ? right.getBoundingClientRect().width : 320;
+    });
+    document.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const dx = startX - e.clientX;   // moving left increases width
+      applyWidth(startW + dx);
+    });
+    document.addEventListener('mouseup', () => {
+      if (!dragging) return;
+      dragging = false;
+      sp.classList.remove('dragging');
+      document.body.classList.remove('col-resizing');
+      const right = document.getElementById('hub-right');
+      if (right) localStorage.setItem(RIGHT_KEY, Math.round(right.getBoundingClientRect().width));
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
+  else bind();
+
+  window.addEventListener('resize', () => {
+    const right = document.getElementById('hub-right');
+    if (right) {
+      const w = right.getBoundingClientRect().width;
+      const newMaxW = Math.min(900, window.innerWidth - 480);
+      if (w > newMaxW) applyWidth(newMaxW);
+    }
+  });
+})();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ONTOLOGY: relations for the selected cap (right panel sub-tab)
+// ═══════════════════════════════════════════════════════════════════════════
+let _ontoEditState = { from: null, to: null, isNew: false };
+let _ontoSuggestion = null;
+
+async function renderOntologyForSelected() {
+  const body = document.getElementById('rp-ontology-body');
+  if (!body) return;
+  if (!_selectedCap) {
+    body.innerHTML = `<div class="onto-empty">
+      Select a capability to see how it relates to other caps in the system.<br>
+      <span style="opacity:.7">Relations describe what feeds into what, alternatives, dependencies, etc.</span>
+    </div>`;
+    document.getElementById('onto-add-btn').disabled = true;
+    document.getElementById('onto-suggest-grp-btn').disabled = true;
+    return;
+  }
+  document.getElementById('onto-add-btn').disabled = false;
+  document.getElementById('onto-suggest-grp-btn').disabled = false;
+
+  body.innerHTML = `<div style="padding:14px;text-align:center;color:var(--dim2);font-family:var(--mono);font-size:10px">⟳ loading relations…</div>`;
+  const data = await api(`/cap_ontology/neighbours?cap=${encodeURIComponent(_selectedCap)}&direction=both`);
+  if (!data) {
+    body.innerHTML = `<div class="onto-empty" style="color:var(--err)">Failed to load relations.</div>`;
+    return;
+  }
+  const out = data.outgoing || [];
+  const inc = data.incoming || [];
+
+  let html = '';
+
+  // Outgoing
+  html += `<div class="onto-section-hdr">Outgoing — what this cap feeds <span class="onto-cnt">(${out.length})</span></div>`;
+  if (!out.length) {
+    html += `<div class="onto-empty">No outgoing relations.<br><span style="opacity:.7">Add one with the button below or run LLM auto-fill.</span></div>`;
+  } else {
+    out.forEach(r => html += renderRelRow(r, 'out'));
+  }
+  // Incoming
+  html += `<div class="onto-section-hdr">Incoming — what feeds this cap <span class="onto-cnt">(${inc.length})</span></div>`;
+  if (!inc.length) {
+    html += `<div class="onto-empty">No incoming relations.</div>`;
+  } else {
+    inc.forEach(r => html += renderRelRow(r, 'in'));
+  }
+  body.innerHTML = html;
+}
+
+function renderRelRow(r, dir) {
+  const arrow = r.direction === 'bidirectional' ? '↔' : '→';
+  const me   = (dir === 'out') ? r.from : r.to;
+  const them = (dir === 'out') ? r.to   : r.from;
+  const labelCls = r.auto ? 'rel-label auto' : 'rel-label';
+  const strengthPct = Math.round((r.strength || 0) * 100);
+  const safeFrom = esc(r.from), safeTo = esc(r.to);
+  return `<div class="rel-row" onclick="openOntoEditFor('${esc(r.from).replace(/'/g,"\\'")}','${esc(r.to).replace(/'/g,"\\'")}')">
+    <div class="rel-arrow">
+      <span class="rel-cap" title="${safeFrom}">${safeFrom}</span>
+      <span class="rel-arrow-icon">${arrow}</span>
+      <span class="rel-label ${r.auto ? 'auto' : ''}" title="${r.auto ? 'LLM-generated' : 'manual'}">${esc(r.relation || '—')}</span>
+      <span class="rel-arrow-icon">${arrow}</span>
+      <span class="rel-cap other" title="${safeTo}">${safeTo}</span>
+      <span class="rel-strength-bar" title="strength ${(r.strength||0).toFixed(2)}"><div style="width:${strengthPct}%"></div></span>
+    </div>
+    ${r.description ? `<div class="rel-desc">${esc(r.description)}</div>` : ''}
+  </div>`;
+}
+
+function openCapOntologyTab() {
+  // Try to swap the iframe's tab. If running inside the harness, a parent
+  // function handles this; else, navigate within the same window.
+  const url = '/cap_ontology/panel';
+  try {
+    if (window.parent && window.parent !== window && window.parent.openHarnessTab) {
+      window.parent.openHarnessTab('cap-ontology'); return;
+    }
+  } catch(_) {}
+  window.open(_base() + url, '_blank');
+}
+
+// ─── Edit modal logic ───────────────────────────────────────────────────────
+function openOntoEditFor(fromCap, toCap) {
+  _ontoSuggestion = null;
+  document.getElementById('oe-suggest-box').classList.remove('on');
+  // If neither given, treat as "new from selected cap"
+  if (!fromCap && !toCap && _selectedCap) {
+    fromCap = _selectedCap; toCap = '';
+  }
+  if (!fromCap) fromCap = _selectedCap || '';
+
+  const isNew = !toCap;
+  _ontoEditState = { from: fromCap, to: toCap || '', isNew };
+  document.getElementById('oe-title').textContent = isNew ? 'Add relation' : 'Edit relation';
+  document.getElementById('oe-from').textContent = fromCap || '—';
+  document.getElementById('oe-to').textContent   = toCap   || '(pick a target)';
+  document.getElementById('oe-arrow').textContent = '→';
+
+  // Reset inputs
+  document.getElementById('oe-relation').value    = '';
+  document.getElementById('oe-description').value = '';
+  document.getElementById('oe-wire').value        = '';
+  document.getElementById('oe-direction').value   = 'forward';
+  document.getElementById('oe-tags').value        = '';
+  document.getElementById('oe-strength').value    = '0.5';
+  document.getElementById('oe-strength-val').textContent = '0.50';
+  document.getElementById('oe-confidence').value  = '0.5';
+  document.getElementById('oe-confidence-val').textContent = '0.50';
+  document.getElementById('oe-delete-btn').style.display = isNew ? 'none' : 'inline-flex';
+
+  // Configure the cap-search element to update _ontoEditState.to on change
+  const caps = document.getElementById('oe-to-search');
+  if (caps) {
+    caps.value = toCap || '';
+    caps.onchange = (e) => {
+      _ontoEditState.to = (e.detail || '').toString();
+      document.getElementById('oe-to').textContent = _ontoEditState.to || '(pick a target)';
+    };
+  }
+
+  // If editing an existing relation, fetch and pre-fill all fields
+  if (!isNew) {
+    api(`/cap_ontology/get?from_cap=${encodeURIComponent(fromCap)}&to_cap=${encodeURIComponent(toCap)}`)
+      .then(d => {
+        if (d && !d.error) {
+          document.getElementById('oe-relation').value    = d.relation || '';
+          document.getElementById('oe-description').value = d.description || '';
+          document.getElementById('oe-wire').value        = d.wire || '';
+          document.getElementById('oe-direction').value   = d.direction || 'forward';
+          document.getElementById('oe-tags').value        = (d.tags || []).join(', ');
+          document.getElementById('oe-strength').value    = d.strength ?? 0.5;
+          document.getElementById('oe-strength-val').textContent = (+(d.strength || 0)).toFixed(2);
+          const cv = d.confidence ?? d.strength ?? 0.5;
+          document.getElementById('oe-confidence').value  = cv;
+          document.getElementById('oe-confidence-val').textContent = (+cv).toFixed(2);
+        }
+      });
+  }
+  document.getElementById('onto-edit-modal').style.display = 'block';
+}
+
+function closeOntoEdit() {
+  document.getElementById('onto-edit-modal').style.display = 'none';
+}
+
+function swapOntoPair() {
+  const f = _ontoEditState.from, t = _ontoEditState.to;
+  if (!t) return;
+  _ontoEditState.from = t; _ontoEditState.to = f;
+  document.getElementById('oe-from').textContent = t;
+  document.getElementById('oe-to').textContent   = f;
+}
+
+async function suggestOntoRelation() {
+  const f = _ontoEditState.from, t = _ontoEditState.to;
+  if (!f || !t) { alert('Pick a target cap first'); return; }
+  const box = document.getElementById('oe-suggest-box');
+  const txt = document.getElementById('oe-suggest-text');
+  box.classList.add('on');
+  txt.innerHTML = '<span style="color:var(--dim2)">⟳ asking the LLM…</span>';
+  const r = await api('/cap_ontology/suggest', 'POST', { from_cap: f, to_cap: t });
+  if (!r || r.error) {
+    txt.innerHTML = `<span style="color:var(--err)">Error: ${esc(r?.error || 'unknown')}</span>`;
+    return;
+  }
+  _ontoSuggestion = r;
+  const declined = !r.relation || (r.strength || 0) < 0.3;
+  txt.innerHTML = `
+    <div><b>relation:</b> ${r.relation
+      ? `<code style="color:var(--acc2)">${esc(r.relation)}</code>`
+      : `<span style="color:var(--dim2)">(LLM declined — no clear composition)</span>`}</div>
+    <div><b>direction:</b> ${esc(r.direction || 'forward')} &nbsp; <b>strength:</b> ${(r.strength || 0).toFixed(2)} &nbsp; <b>confidence:</b> ${(r.confidence ?? r.strength ?? 0).toFixed(2)}</div>
+    ${r.wire ? `<div style="margin-top:3px"><b>wire:</b> <code style="color:var(--acc3)">${esc(r.wire)}</code></div>` : ''}
+    <div style="margin-top:4px;color:var(--text)">${esc(r.description || '')}</div>
+    ${declined ? `<div style="margin-top:5px;color:var(--dim2);font-size:9px">The LLM didn't find a clear composition. You can still save manually if you disagree.</div>` : ''}`;
+}
+
+function applyOntoSuggest() {
+  if (!_ontoSuggestion) return;
+  const r = _ontoSuggestion;
+  if (r.relation)    document.getElementById('oe-relation').value    = r.relation;
+  if (r.description) document.getElementById('oe-description').value = r.description;
+  if (r.direction)   document.getElementById('oe-direction').value   = r.direction;
+  if (r.wire)        document.getElementById('oe-wire').value        = r.wire;
+  if (typeof r.strength === 'number') {
+    document.getElementById('oe-strength').value    = r.strength;
+    document.getElementById('oe-strength-val').textContent = r.strength.toFixed(2);
+  }
+  if (typeof r.confidence === 'number') {
+    document.getElementById('oe-confidence').value    = r.confidence;
+    document.getElementById('oe-confidence-val').textContent = r.confidence.toFixed(2);
+  }
+  // Add 'llm-generated' tag if not present
+  const tagsEl = document.getElementById('oe-tags');
+  const cur = tagsEl.value.split(',').map(s => s.trim()).filter(Boolean);
+  if (!cur.includes('llm-generated')) cur.push('llm-generated');
+  tagsEl.value = cur.join(', ');
+  document.getElementById('oe-suggest-box').classList.remove('on');
+}
+
+async function saveOntoRelation() {
+  const f = _ontoEditState.from, t = _ontoEditState.to;
+  if (!f || !t) { alert('Pick a target cap first'); return; }
+  if (f === t)  { alert('Self-loops are not allowed'); return; }
+  const body = {
+    from_cap:    f,
+    to_cap:      t,
+    relation:    document.getElementById('oe-relation').value.trim(),
+    description: document.getElementById('oe-description').value.trim(),
+    wire:        document.getElementById('oe-wire').value.trim(),
+    direction:   document.getElementById('oe-direction').value,
+    tags:        document.getElementById('oe-tags').value.trim(),
+    strength:    parseFloat(document.getElementById('oe-strength').value) || 0,
+    confidence:  parseFloat(document.getElementById('oe-confidence').value) || 0,
+    auto:        false,
+  };
+  const r = await api('/cap_ontology/set', 'POST', body);
+  if (r && !r.error) {
+    closeOntoEdit();
+    if (_selectedCap === f || _selectedCap === t) renderOntologyForSelected();
+  } else {
+    alert('Save failed: ' + (r?.error || 'unknown'));
+  }
+}
+
+async function deleteOntoRelation() {
+  const f = _ontoEditState.from, t = _ontoEditState.to;
+  if (!f || !t) return;
+  if (!confirm(`Delete relation ${f} → ${t}?`)) return;
+  const r = await api('/cap_ontology/delete', 'POST', { from_cap: f, to_cap: t });
+  if (r) {
+    closeOntoEdit();
+    if (_selectedCap === f || _selectedCap === t) renderOntologyForSelected();
+  }
+}
+
+async function autoGroupForSelected() {
+  if (!_selectedCap) return;
+  const grp = _selectedCap.split('.')[0];
+  if (!confirm(`Run LLM to infer all relations within group "${grp}"?\n\nThis will skip cells that already have manual relations.`)) return;
+  const btn = document.getElementById('onto-suggest-grp-btn');
+  const orig = btn.textContent;
+  btn.textContent = '⟳ submitting…'; btn.disabled = true;
+  const r = await api('/cap_ontology/auto_group', 'POST', {
+    group_a: grp, min_strength: 0.3, overwrite: false,
+    concurrency: 2, prefer_gpu: true,
+  });
+  btn.textContent = orig; btn.disabled = false;
+  if (r?.job_id) {
+    alert(`Job started: ${r.job_id}\n${r.total_pairs} pairs to process.\nResults will appear progressively. Refresh in a minute.`);
+    // Switch right tab to job stream and watch
+    document.getElementById('stream-job-id').value = r.job_id;
+    setTimeout(() => renderOntologyForSelected(), 5000);
+  } else {
+    alert('Auto-fill failed: ' + (r?.error || 'unknown'));
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BOOT
+// ═══════════════════════════════════════════════════════════════════════════
+refreshAll();
+setInterval(() => api('/cap_tracking/stats').then(r => { if (r) { _trkStats = r; renderTrackingStats(); renderTopbar(); } }), 4000);
+connectWS();
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+  INJECT ELEMENTS — web components reusable across the system
+  Each is registered as a custom element and can be included anywhere with:
+
+  <vera-cap-list></vera-cap-list>
+  <vera-cap-search></vera-cap-search>
+  <vera-activity-track></vera-activity-track>
+  <vera-mcp-servers></vera-mcp-servers>
+  <vera-job-stream job-id="xxx"></vera-job-stream>
+  ═══════════════════════════════════════════════════════════════════════ -->
+<script>
+// ─── Helper: resolve backend base ────────────────────────────────────────────
+function _veraApiBase() {
+  try { if (window.parent?._veraBase) return window.parent._veraBase.replace(/\/$/, ''); } catch(_) {}
+  return location.origin;
+}
+async function _veraApiFetch(path, method='GET', body=null) {
+  const opts = { method, headers: {'Content-Type':'application/json'} };
+  if (body) opts.body = JSON.stringify(body);
+  try { const r = await fetch(_veraApiBase() + path, opts); return r.ok ? await r.json() : null; } catch(_) { return null; }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// <vera-cap-list> — filterable capability list, embeddable anywhere
+// Attributes:
+//   filter-group="llm"   — pre-filter to a group
+//   show-tracking="true" — show tracking state dots
+//   on-select="myFn"     — global callback name when cap clicked
+// ════════════════════════════════════════════════════════════════════════════
+customElements.define('vera-cap-list', class extends HTMLElement {
+  connectedCallback() {
+    this._caps = {}; this._trkCaps = {}; this._trkCfg = {};
+    this.innerHTML = `<style>
+      .vcl-wrap{font-family:'IBM Plex Mono',monospace;font-size:11px;--bg:var(--bg0,#181614);--bd:var(--border,#3a3530);--t:var(--text,#ddd5c8);--d:var(--dim2,#8a7e70);--acc:var(--acc,#5a9e8f)}
+      .vcl-toolbar{display:flex;gap:5px;padding:5px 0;align-items:center}
+      .vcl-search{background:var(--bg);border:1px solid var(--bd);color:var(--t);padding:4px 8px;border-radius:3px;font-family:inherit;font-size:10.5px;flex:1;outline:none}
+      .vcl-row{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:2px;cursor:pointer;border:1px solid transparent;margin-bottom:2px;transition:all .1s}
+      .vcl-row:hover{border-color:var(--bd);background:rgba(255,255,255,.03)}
+      .vcl-row.selected{border-color:var(--acc);background:rgba(90,158,143,.09)}
+      .vcl-dot{width:5px;height:5px;border-radius:50%}
+      .vcl-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t)}
+      .vcl-grp{font-size:8px;padding:1px 5px;border-radius:8px;background:rgba(255,255,255,.06);border:1px solid var(--bd);color:var(--d);flex-shrink:0}
+      .vcl-count{font-size:9px;color:var(--d);padding:2px 4px}
+      .vcl-list{max-height:320px;overflow-y:auto}
+      .vcl-list::-webkit-scrollbar{width:3px}.vcl-list::-webkit-scrollbar-thumb{background:var(--bd)}
+    </style>
+    <div class="vcl-wrap">
+      <div class="vcl-toolbar">
+        <input class="vcl-search" placeholder="Search caps…" oninput="this.getRootNode().host._render()">
+        <span class="vcl-count" id="vcl-cnt"></span>
+      </div>
+      <div class="vcl-list" id="vcl-list"></div>
+    </div>`;
+    this._load();
+  }
+  async _load() {
+    const [caps, cfg] = await Promise.all([
+      _veraApiFetch('/mcp/tools'),
+      _veraApiFetch('/cap_tracking/config'),
+    ]);
+    if (caps) caps.forEach(c => this._caps[c.name] = c);
+    if (cfg) {
+      this._trkCaps = cfg.all_caps || {};
+      this._trkCfg  = cfg.config   || {};
+      this._hardGrps= cfg.hard_skip_groups || [];
+    }
+    this._render();
+  }
+  _render() {
+    const q = this.querySelector('.vcl-search')?.value?.toLowerCase() || '';
+    const fg = this.getAttribute('filter-group') || '';
+    const showTrk = this.getAttribute('show-tracking') !== 'false';
+    const onSel = this.getAttribute('on-select');
+    const list = this.querySelector('#vcl-list');
+    const cnt  = this.querySelector('#vcl-cnt');
+    let shown = 0, html = '';
+    for (const [name, c] of Object.entries(this._caps).sort((a,b) => a[0].localeCompare(b[0]))) {
+      const grp = name.split('.')[0];
+      if (fg && grp !== fg) continue;
+      if (q && !name.includes(q)) continue;
+      const trkGrp = this._trkCaps[name] || grp;
+      const isHard = this._hardGrps.includes(trkGrp);
+      const ov  = (this._trkCfg.caps || {})[name];
+      const gCfg= (this._trkCfg.groups || {})[trkGrp];
+      const tracked = !isHard && (ov ? ov.track : gCfg?.track ?? false);
+      const dotC = isHard ? '#444' : tracked ? 'var(--ok,#6db87a)' : 'var(--err,#c96b6b)';
+      const hue = [...name].reduce((h,c,i) => (h*31 + c.charCodeAt(0)) % 360, 0);
+      html += `<div class="vcl-row" data-cap="${name}" onclick="${onSel ? `window['${onSel}']('${name}')` : `this.getRootNode().host.dispatchEvent(new CustomEvent('cap-select',{detail:'${name}',bubbles:true}))`}">
+        ${showTrk ? `<div class="vcl-dot" style="background:${dotC}"></div>` : ''}
+        <div class="vcl-name" style="color:hsl(${hue},40%,65%)">${name}</div>
+        <div class="vcl-grp">${grp}</div>
+      </div>`;
+      shown++;
+    }
+    list.innerHTML = html || '<div style="color:var(--d);text-align:center;padding:16px;font-size:10px">no caps</div>';
+    if (cnt) cnt.textContent = shown + ' caps';
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// <vera-cap-search> — searchable dropdown for cap selection
+// Attributes: value="cap.name", placeholder="...", on-change="myFn"
+// ════════════════════════════════════════════════════════════════════════════
+customElements.define('vera-cap-search', class extends HTMLElement {
+  connectedCallback() {
+    this._caps = []; this._open = false; this._val = this.getAttribute('value') || '';
+    this.innerHTML = `<style>
+      .vcs{position:relative;font-family:'IBM Plex Mono',monospace;display:inline-block}
+      .vcs-input{background:var(--bg0,#181614);border:1px solid var(--border,#3a3530);color:var(--text,#ddd5c8);padding:4px 8px;border-radius:3px;font-family:inherit;font-size:11px;width:100%;box-sizing:border-box;outline:none}
+      .vcs-input:focus{border-color:var(--acc,#5a9e8f)}
+      .vcs-drop{position:absolute;top:100%;left:0;right:0;z-index:999;background:var(--bg1,#1f1d1a);border:1px solid var(--border,#3a3530);border-radius:3px;max-height:200px;overflow-y:auto;box-shadow:0 4px 16px rgba(0,0,0,.5)}
+      .vcs-opt{padding:5px 9px;cursor:pointer;font-size:10.5px;color:var(--text,#ddd5c8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .vcs-opt:hover,.vcs-opt.active{background:rgba(90,158,143,.12);color:var(--acc,#5a9e8f)}
+      .vcs-drop::-webkit-scrollbar{width:3px}.vcs-drop::-webkit-scrollbar-thumb{background:var(--border,#3a3530)}
+    </style>
+    <div class="vcs">
+      <input class="vcs-input" id="vcs-in" placeholder="${this.getAttribute('placeholder') || 'Search capability…'}"
+        value="${this._val}"
+        oninput="this.getRootNode().host._filter(this.value)"
+        onfocus="this.getRootNode().host._open=true;this.getRootNode().host._filter(this.value)"
+        onblur="setTimeout(()=>this.getRootNode().host._close(),150)">
+      <div class="vcs-drop" id="vcs-drop" style="display:none"></div>
+    </div>`;
+    this._loadCaps();
+  }
+  async _loadCaps() {
+    const list = await _veraApiFetch('/mcp/tools');
+    this._caps = (list || []).map(c => c.name).sort();
+    this._filter('');
+  }
+  _filter(q) {
+    const drop = this.querySelector('#vcs-drop');
+    const matches = q ? this._caps.filter(n => n.includes(q.toLowerCase())).slice(0, 60) : this._caps.slice(0, 60);
+    drop.style.display = this._open && matches.length ? 'block' : 'none';
+    const onCh = this.getAttribute('on-change');
+    drop.innerHTML = matches.map(n =>
+      `<div class="vcs-opt" onclick="this.getRootNode().host._pick('${n}')">${n}</div>`
+    ).join('');
+  }
+  _pick(name) {
+    this._val = name; this._open = false;
+    const inp = this.querySelector('#vcs-in');
+    if (inp) inp.value = name;
+    const drop = this.querySelector('#vcs-drop'); if (drop) drop.style.display = 'none';
+    const onCh = this.getAttribute('on-change');
+    if (onCh && window[onCh]) window[onCh](name);
+    this.dispatchEvent(new CustomEvent('change', { detail: name, bubbles: true }));
+    this.value = name;
+  }
+  _close() { this._open = false; const d = this.querySelector('#vcs-drop'); if (d) d.style.display = 'none'; }
+  get value() { return this._val; }
+  set value(v) { this._val = v; const i = this.querySelector('#vcs-in'); if(i) i.value = v; }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// <vera-activity-track> — compact tracking status widget for embedding
+// Shows: master toggle, queue depth, active sessions, quick group overrides
+// Attributes: groups="llm,exec,dag" — comma-sep groups to show
+// ════════════════════════════════════════════════════════════════════════════
+customElements.define('vera-activity-track', class extends HTMLElement {
+  connectedCallback() {
+    this._cfg = {}; this._stats = {};
+    this.innerHTML = `<style>
+      .vat{font-family:'IBM Plex Mono',monospace;font-size:11px;background:var(--bg1,#1f1d1a);border:1px solid var(--border,#3a3530);border-radius:5px;padding:10px 12px}
+      .vat-hdr{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+      .vat-title{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--dim2,#8a7e70)}
+      .vat-tog{position:relative;width:28px;height:15px}
+      .vat-tog input{opacity:0;width:0;height:0}
+      .vat-track{position:absolute;inset:0;background:rgba(255,255,255,.08);border-radius:8px;border:1px solid rgba(255,255,255,.12);cursor:pointer;transition:all .2s}
+      .vat-tog input:checked+.vat-track{background:rgba(143,184,122,.22);border-color:var(--ok,#6db87a)}
+      .vat-track::after{content:'';position:absolute;top:2px;left:2px;width:9px;height:9px;border-radius:50%;background:rgba(255,255,255,.4);transition:transform .18s}
+      .vat-tog input:checked+.vat-track::after{transform:translateX(13px);background:var(--ok,#6db87a)}
+      .vat-stats{display:flex;gap:10px;margin-bottom:8px}
+      .vat-stat{flex:1;text-align:center}
+      .vat-stat-v{font-size:14px;font-weight:700;color:var(--acc,#5a9e8f)}
+      .vat-stat-l{font-size:8.5px;color:var(--dim2,#8a7e70);margin-top:1px}
+      .vat-grps{display:flex;flex-wrap:wrap;gap:4px}
+      .vat-grp{display:flex;align-items:center;gap:5px;padding:3px 8px;border-radius:2px;border:1px solid var(--border,#3a3530);background:rgba(255,255,255,.03);cursor:pointer;user-select:none}
+      .vat-grp.on{background:rgba(143,184,122,.08);border-color:rgba(143,184,122,.3)}
+      .vat-grp.off{opacity:.6}
+      .vat-grp-n{font-size:10px;color:var(--text,#ddd5c8)}
+    </style>
+    <div class="vat">
+      <div class="vat-hdr">
+        <span class="vat-title">Activity Tracking</span>
+        <label class="vat-tog">
+          <input type="checkbox" id="vat-sw" onchange="this.getRootNode().host._setMaster(this.checked)">
+          <div class="vat-track"></div>
+        </label>
+        <span id="vat-lbl" style="font-size:9.5px;color:var(--dim2,#8a7e70)">—</span>
+      </div>
+      <div class="vat-stats">
+        <div class="vat-stat"><div class="vat-stat-v" id="vat-q">—</div><div class="vat-stat-l">queue</div></div>
+        <div class="vat-stat"><div class="vat-stat-v" id="vat-s">—</div><div class="vat-stat-l">sessions</div></div>
+        <div class="vat-stat"><div class="vat-stat-v" id="vat-g">—</div><div class="vat-stat-l">active grps</div></div>
+      </div>
+      <div class="vat-grps" id="vat-grps"></div>
+    </div>`;
+    this._load();
+    setInterval(() => this._loadStats(), 5000);
+  }
+  async _load() {
+    const [cfg, stats] = await Promise.all([
+      _veraApiFetch('/cap_tracking/config'),
+      _veraApiFetch('/cap_tracking/stats'),
+    ]);
+    if (cfg) { this._cfg = cfg.config || {}; this._allGroups = cfg.all_groups || {}; }
+    if (stats) this._stats = stats;
+    this._render();
+  }
+  async _loadStats() {
+    const stats = await _veraApiFetch('/cap_tracking/stats');
+    if (stats) { this._stats = stats; this._renderStats(); }
+  }
+  _render() {
+    const sw = this.querySelector('#vat-sw');
+    if (sw) sw.checked = this._cfg.enabled ?? true;
+    const lbl = this.querySelector('#vat-lbl');
+    if (lbl) lbl.textContent = (this._cfg.enabled ?? true) ? '● ON' : '○ OFF';
+    this._renderStats();
+    this._renderGroups();
+  }
+  _renderStats() {
+    const q = this._stats.queue_depth ?? '—';
+    const s = Object.keys(this._stats.chain_lengths || {}).length;
+    const g = Object.values(this._cfg.groups || {}).filter(g => g.track).length;
+    const qEl = this.querySelector('#vat-q'); if (qEl) qEl.textContent = q;
+    const sEl = this.querySelector('#vat-s'); if (sEl) sEl.textContent = s;
+    const gEl = this.querySelector('#vat-g'); if (gEl) gEl.textContent = g;
+  }
+  _renderGroups() {
+    const filter = this.getAttribute('groups') || '';
+    const showGrps = filter ? filter.split(',').map(s => s.trim()) : Object.keys(this._cfg.groups || {}).slice(0, 8);
+    const el = this.querySelector('#vat-grps');
+    if (!el) return;
+    el.innerHTML = showGrps.map(g => {
+      const gCfg = (this._cfg.groups || {})[g] || {};
+      const on = gCfg.track ?? false;
+      return `<div class="vat-grp ${on ? 'on' : 'off'}" onclick="this.getRootNode().host._toggleGroup('${g}')">
+        <div style="width:5px;height:5px;border-radius:50%;background:${on ? 'var(--ok,#6db87a)' : 'var(--err,#c96b6b)'}"></div>
+        <span class="vat-grp-n">${g}</span>
+      </div>`;
+    }).join('');
+  }
+  async _setMaster(val) {
+    await _veraApiFetch('/cap_tracking/limits', 'POST', { enabled: val });
+    this._cfg.enabled = val;
+    const lbl = this.querySelector('#vat-lbl');
+    if (lbl) lbl.textContent = val ? '● ON' : '○ OFF';
+  }
+  async _toggleGroup(g) {
+    const cur = (this._cfg.groups || {})[g] || {};
+    const track = !(cur.track ?? false);
+    const budget = cur.budget ?? 100;
+    const r = await _veraApiFetch('/cap_tracking/group', 'POST', { group: g, track, budget });
+    if (r?.ok) { this._cfg.groups = this._cfg.groups || {}; this._cfg.groups[g] = { ...cur, track }; this._renderGroups(); }
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// <vera-mcp-servers> — MCP server list + register form
+// ════════════════════════════════════════════════════════════════════════════
+customElements.define('vera-mcp-servers', class extends HTMLElement {
+  connectedCallback() {
+    this._servers = {};
+    this.innerHTML = `<style>
+      .vmcp{font-family:'IBM Plex Mono',monospace;font-size:11px}
+      .vmcp-row{display:flex;align-items:center;gap:6px;padding:5px 8px;background:var(--bg2,#272421);border:1px solid var(--border,#3a3530);border-radius:4px;margin-bottom:3px}
+      .vmcp-form{display:flex;gap:5px;margin-bottom:6px}
+      .vmcp-input{background:var(--bg0,#181614);border:1px solid var(--border,#3a3530);color:var(--text,#ddd5c8);padding:4px 8px;border-radius:3px;font-family:inherit;font-size:10px;flex:1;outline:none}
+      .vmcp-btn{padding:4px 10px;background:var(--acc,#5a9e8f);border:none;color:#fff;border-radius:3px;cursor:pointer;font-family:inherit;font-size:10px;white-space:nowrap}
+      .vmcp-name{font-weight:600;color:var(--acc2,#8fb87a);flex-shrink:0}
+      .vmcp-url{color:var(--dim2,#8a7e70);font-size:9.5px;flex:1;overflow:hidden;text-overflow:ellipsis}
+    </style>
+    <div class="vmcp">
+      <div class="vmcp-form">
+        <input class="vmcp-input" id="vmcp-url"  placeholder="http://server:8000">
+        <input class="vmcp-input" id="vmcp-name" placeholder="name">
+        <button class="vmcp-btn" onclick="this.getRootNode().host._register()">Register</button>
+      </div>
+      <div id="vmcp-list"><div style="color:var(--dim2,#8a7e70);font-size:10px;padding:8px 0">loading…</div></div>
+    </div>`;
+    this._load();
+  }
+  async _load() {
+    const sd = await _veraApiFetch('/mcp/servers');
+    if (sd?.servers) this._servers = sd.servers;
+    this._render();
+  }
+  _render() {
+    const el = this.querySelector('#vmcp-list');
+    const entries = Object.entries(this._servers);
+    if (!entries.length) { el.innerHTML = '<div style="color:var(--dim2,#8a7e70);font-size:10px">none registered</div>'; return; }
+    el.innerHTML = entries.map(([n, u]) =>
+      `<div class="vmcp-row"><span class="vmcp-name">${n}</span><span class="vmcp-url">${u}</span></div>`
+    ).join('');
+  }
+  async _register() {
+    const url  = this.querySelector('#vmcp-url').value.trim();
+    const name = this.querySelector('#vmcp-name').value.trim() || url;
+    if (!url) return;
+    const r = await _veraApiFetch('/mcp/servers/register', 'POST', { url, name });
+    if (r) { await this._load(); }
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// <vera-job-stream> — live job/task output stream, embeddable anywhere
+// Attributes: job-id="xxx"   — auto-connect on mount
+//             height="240"   — stream box height px
+// Methods:    .connect(jobId) — connect to a job
+// ════════════════════════════════════════════════════════════════════════════
+customElements.define('vera-job-stream', class extends HTMLElement {
+  connectedCallback() {
+    const h = this.getAttribute('height') || '220';
+    this.innerHTML = `<style>
+      .vjs{font-family:'IBM Plex Mono',monospace;font-size:10px}
+      .vjs-bar{display:flex;gap:5px;margin-bottom:5px;align-items:center}
+      .vjs-input{background:var(--bg0,#181614);border:1px solid var(--border,#3a3530);color:var(--text,#ddd5c8);padding:3px 8px;border-radius:3px;font-family:inherit;font-size:10px;flex:1;outline:none}
+      .vjs-btn{padding:3px 9px;background:var(--bg2,#272421);border:1px solid var(--border,#3a3530);color:var(--acc2,#8fb87a);border-radius:3px;cursor:pointer;font-family:inherit;font-size:10px}
+      .vjs-out{height:${h}px;overflow-y:auto;background:var(--bg0,#181614);border:1px solid var(--border,#3a3530);border-radius:3px;padding:5px 7px}
+      .vjs-out::-webkit-scrollbar{width:3px}.vjs-out::-webkit-scrollbar-thumb{background:var(--border,#3a3530)}
+      .vjs-line{padding:1px 0;font-size:9.5px;line-height:1.5}
+      .vjs-ts{color:var(--dim,#6a6058)}
+      .vjs-err{color:var(--err,#c96b6b)}
+      .vjs-done{color:var(--ok,#6db87a)}
+      .vjs-status{font-size:9px;color:var(--dim2,#8a7e70);margin-top:3px}
+    </style>
+    <div class="vjs">
+      <div class="vjs-bar">
+        <input class="vjs-input" id="vjs-in" placeholder="job / task / trace ID…">
+        <button class="vjs-btn" onclick="this.getRootNode().host.connect()">Stream</button>
+        <button class="vjs-btn" onclick="this.getRootNode().host.clear()">Clear</button>
+      </div>
+      <div class="vjs-out" id="vjs-out"><div style="color:var(--dim,#6a6058);padding:8px 0">No job running</div></div>
+      <div class="vjs-status" id="vjs-st"></div>
+    </div>`;
+
+    const initJob = this.getAttribute('job-id');
+    if (initJob) { this.querySelector('#vjs-in').value = initJob; this.connect(initJob); }
+  }
+  async connect(jobId) {
+    const inp = this.querySelector('#vjs-in');
+    jobId = jobId || inp?.value?.trim();
+    if (!jobId) return;
+    const outEl = this.querySelector('#vjs-out');
+    const stEl  = this.querySelector('#vjs-st');
+    outEl.innerHTML = '';
+    stEl.textContent = '⟳ connecting…';
+
+    const append = (text, cls='') => {
+      const ts = new Date().toISOString().slice(11, 19);
+      const d = document.createElement('div');
+      d.className = 'vjs-line';
+      d.innerHTML = `<span class="vjs-ts">${ts}</span> <span class="${cls}">${text.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</span>`;
+      outEl.appendChild(d); outEl.scrollTop = outEl.scrollHeight;
+    };
+
+    const eps = [`/jobs/${jobId}/stream`, `/tasks/${jobId}/stream`, `/dag/run/stream?job_id=${jobId}`];
+    for (const ep of eps) {
+      try {
+        const r = await fetch(_veraApiBase() + ep);
+        if (r.ok && r.headers.get('content-type')?.includes('event-stream')) {
+          stEl.textContent = '● streaming';
+          const rdr = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
+          while (true) {
+            const { value, done } = await rdr.read(); if (done) { append('── done ──', 'vjs-done'); break; }
+            buf += dec.decode(value, { stream: true });
+            const parts = buf.split('\n\n'); buf = parts.pop();
+            for (const block of parts)
+              for (const line of block.split('\n'))
+                if (line.startsWith('data:')) {
+                  const raw = line.slice(5).trim();
+                  try { const ev = JSON.parse(raw); append(ev.output || ev.text || ev.error || JSON.stringify(ev), ev.error ? 'vjs-err' : ''); }
+                  catch(_) { if (raw) append(raw); }
+                }
+          }
+          stEl.textContent = '✓ done'; return;
+        }
+      } catch(_) {}
+    }
+    stEl.textContent = 'No SSE stream — connect WS to watch events';
+  }
+  clear() { const o = this.querySelector('#vjs-out'); if (o) o.innerHTML = ''; }
+  setAttribute(k, v) { super.setAttribute(k, v); if (k === 'job-id' && this.isConnected) this.connect(v); }
+});
+</script>
+<script src="/ui/vera-ui.js"></script>
+</body>
+</html>

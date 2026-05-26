@@ -1,0 +1,2124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Vera — Workers · Ollama · Jobs</title>
+<style>
+:root{
+  --bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;
+  --border:#3a3530;--border2:#4a4540;
+  --acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--acc4:#9e8fa0;
+  --ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;--gpu:#c97a5a;
+  --text:#ddd5c8;--fg:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;
+  --mono:'JetBrains Mono','Fira Mono','Space Mono',monospace;
+  --sans:'Inter','IBM Plex Sans',system-ui,sans-serif;
+  --radius:5px;--radius-sm:3px;--radius-lg:8px;
+  --shadow:0 1px 4px rgba(0,0,0,.35);
+  color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:12px;-webkit-font-smoothing:antialiased}
+html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
+
+/* ── Shell layout ── */
+#shell{display:flex;height:100vh;overflow:hidden}
+#secNav{
+  width:42px;flex-shrink:0;display:flex;flex-direction:column;
+  align-items:center;padding:8px 0;gap:1px;
+  border-right:1px solid var(--border);background:var(--bg1);
+}
+.snav{
+  writing-mode:vertical-rl;transform:rotate(180deg);
+  font-size:9px;font-weight:700;letter-spacing:1.5px;
+  text-transform:uppercase;font-family:var(--mono);
+  padding:12px 7px;border-radius:3px;cursor:pointer;
+  color:var(--dim2);border:1px solid transparent;
+  transition:all .15s;user-select:none;width:34px;text-align:center;
+}
+.snav:hover{color:var(--text)}
+.snav.on{border-color:var(--border);background:var(--bg2)}
+.snav[data-pane="workers"].on{color:var(--acc)}
+.snav[data-pane="ollama"].on{color:var(--gpu)}
+.snav[data-pane="jobs"].on{color:var(--acc3)}
+.snav[data-pane="observe"].on{color:var(--acc4)}
+.navdiv{width:24px;height:1px;background:var(--border);margin:3px 0;flex-shrink:0}
+#panes{flex:1;overflow:hidden;position:relative}
+.pane{position:absolute;inset:0;display:none;overflow-y:auto;padding:12px}
+.pane.on{display:block}
+
+/* ── Buttons ── */
+.btn{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg2);color:var(--dim2);cursor:pointer;font-family:var(--sans);font-size:10.5px;font-weight:500;transition:all .14s;white-space:nowrap}
+.btn:hover{border-color:var(--acc);color:var(--acc)}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
+.btn.primary:hover{filter:brightness(1.1);color:#fff}
+.btn.sm{padding:2px 7px;font-size:9.5px}
+.btn.gpu-btn{background:rgba(201,122,90,.1);border-color:var(--gpu);color:var(--gpu)}
+.btn.warn-btn{background:rgba(201,163,90,.1);border-color:var(--warn);color:var(--warn)}
+.btn.err-btn{border-color:var(--err);color:var(--err)}
+.btn:disabled{opacity:.35;cursor:not-allowed;pointer-events:none}
+
+/* ── Configurable widget grid (mirrors dashboard) ── */
+.dash-grid{display:grid;grid-template-columns:repeat(12,1fr);grid-auto-rows:minmax(54px,auto);gap:9px}
+.dash-grid.editing{outline:1px dashed var(--border2);outline-offset:5px;border-radius:6px;background:repeating-linear-gradient(45deg,transparent 0 11px,rgba(255,255,255,.012) 11px 22px)}
+.widget{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow);display:flex;flex-direction:column;min-width:0;overflow:hidden;position:relative;transition:border-color .15s,transform .15s}
+.widget:hover{border-color:var(--border2)}
+.widget.dragging{opacity:.45;transform:scale(.985)}
+.widget.drag-over{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc),var(--shadow)}
+.widget.hidden{display:none}
+
+.w-head{display:flex;align-items:center;gap:6px;padding:6px 10px 5px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,rgba(255,255,255,.014),transparent);flex-shrink:0}
+.w-head .w-dot{width:6px;height:6px;border-radius:50%;background:var(--dim);flex-shrink:0;transition:background .25s,box-shadow .25s}
+.w-head .w-dot.ok{background:var(--ok);box-shadow:0 0 6px rgba(109,184,122,.5)}
+.w-head .w-dot.warn{background:var(--warn);box-shadow:0 0 6px rgba(201,163,90,.5)}
+.w-head .w-dot.err{background:var(--err);box-shadow:0 0 6px rgba(201,107,107,.5)}
+.w-title{font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:1.1px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.w-actions{display:flex;gap:2px;align-items:center;opacity:0;transition:opacity .15s}
+.widget:hover .w-actions,.dash-grid.editing .w-actions{opacity:1}
+.w-iconbtn{width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;border:none;background:transparent;color:var(--dim2);cursor:pointer;border-radius:3px;font-size:11px;line-height:1;font-family:var(--mono)}
+.w-iconbtn:hover{background:var(--bg3);color:var(--text)}
+.w-grip{cursor:grab;user-select:none;color:var(--dim);font-size:11px;padding:0 2px;letter-spacing:-1px;display:none}
+.dash-grid.editing .w-grip{display:inline-block}
+.dash-grid.editing .widget{cursor:move}
+.w-body{padding:9px 11px;display:flex;flex-direction:column;flex:1;min-height:0;overflow:auto}
+.w-body.flush{padding:0}
+.w-resize{position:absolute;right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize;display:none}
+.dash-grid.editing .w-resize{display:flex}
+.w-resize::before{content:'';width:8px;height:8px;border-right:2px solid var(--border2);border-bottom:2px solid var(--border2);border-bottom-right-radius:2px;display:inline-block}
+
+/* Sizes */
+.w-w2{grid-column:span 2}.w-w3{grid-column:span 3}.w-w4{grid-column:span 4}.w-w6{grid-column:span 6}.w-w8{grid-column:span 8}.w-w12{grid-column:span 12}
+.w-h1{grid-row:span 1}.w-h2{grid-row:span 2}.w-h3{grid-row:span 3}.w-h4{grid-row:span 4}.w-h5{grid-row:span 5}.w-h6{grid-row:span 6}
+@media(max-width:1100px){
+  .dash-grid{grid-template-columns:repeat(6,1fr)}
+  .w-w8,.w-w12{grid-column:span 6}
+}
+@media(max-width:680px){
+  .dash-grid{grid-template-columns:repeat(2,1fr)}
+  .w-w2,.w-w3,.w-w4,.w-w6,.w-w8,.w-w12{grid-column:span 2}
+}
+
+/* Hidden-widgets picker */
+.dash-picker{display:none;gap:5px;flex-wrap:wrap;padding:7px 10px;background:var(--bg1);border:1px dashed var(--border2);border-radius:6px;margin-bottom:9px}
+.dash-picker .pick-chip{font-size:9.5px;padding:3px 8px;border-radius:11px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);cursor:pointer;user-select:none;font-family:var(--mono)}
+.dash-picker .pick-chip:hover{border-color:var(--acc);color:var(--acc)}
+
+/* ── KPI ── */
+.kpi{display:flex;flex-direction:column;justify-content:center;align-items:flex-start;flex:1;gap:2px}
+.kpi-val{font-family:var(--mono);font-size:20px;font-weight:700;line-height:1;color:var(--acc)}
+.kpi-val.tv-ok{color:var(--ok)}.kpi-val.tv-err{color:var(--err)}.kpi-val.tv-warn{color:var(--warn)}.kpi-val.tv-gpu{color:var(--gpu)}
+.kpi-sub{font-size:9px;color:var(--dim2);font-family:var(--mono)}
+
+/* ── Pane toolbar ── */
+.pane-tb{display:flex;align-items:center;gap:7px;margin-bottom:10px;flex-wrap:wrap}
+.pane-tb-title{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:2px}
+.tb-sep{width:1px;height:15px;background:var(--border2);flex-shrink:0}
+.pane-tb .status-hint{font-size:9px;color:var(--dim2);font-family:var(--mono);margin-left:auto}
+
+/* ── Resource bar ── */
+.res-bar{height:4px;background:var(--bg0);border-radius:2px;overflow:hidden;margin-top:3px}
+.res-fill{height:100%;border-radius:2px;transition:width .4s}
+.res-fill.f-ok{background:var(--ok)}.res-fill.f-warn{background:var(--warn)}.res-fill.f-err{background:var(--err)}
+
+/* ── Worker card ── */
+.wk-card{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;cursor:pointer;transition:border-color .15s}
+.wk-card:hover{border-color:var(--border2)}
+.wk-card.sel{border-color:var(--acc)}
+.wk-card[data-cls="GPU"]{border-left:3px solid var(--gpu)}
+.wk-card[data-cls="CPU"]{border-left:3px solid var(--acc)}
+.wk-card[data-cls="LIGHT"]{border-left:3px solid var(--acc2)}
+.wk-ch{display:flex;align-items:center;gap:6px;padding:7px 10px;border-bottom:1px solid var(--border)}
+.wk-cls{font-size:7.5px;font-family:var(--mono);font-weight:700;padding:2px 5px;border-radius:3px;flex-shrink:0;letter-spacing:.7px}
+.wk-card[data-cls="GPU"] .wk-cls{background:rgba(201,122,90,.15);color:var(--gpu);border:1px solid rgba(201,122,90,.3)}
+.wk-card[data-cls="CPU"] .wk-cls{background:rgba(90,158,143,.15);color:var(--acc);border:1px solid rgba(90,158,143,.3)}
+.wk-card[data-cls="LIGHT"] .wk-cls{background:rgba(143,184,122,.15);color:var(--acc2);border:1px solid rgba(143,184,122,.3)}
+.wk-name{font-family:var(--mono);font-size:10.5px;font-weight:700;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wk-spill{font-size:7.5px;font-family:var(--mono);padding:2px 6px;border-radius:7px;flex-shrink:0}
+.sp-idle,.sp-online{background:rgba(109,184,122,.1);color:var(--ok);border:1px solid rgba(109,184,122,.22)}
+.sp-busy,.sp-running{background:rgba(201,165,90,.1);color:var(--warn);border:1px solid rgba(201,165,90,.25)}
+.sp-offline,.sp-unknown{background:rgba(201,107,107,.08);color:var(--err);border:1px solid rgba(201,107,107,.2)}
+.sp-starting,.sp-draining{background:rgba(90,158,143,.1);color:var(--acc);border:1px solid rgba(90,158,143,.22)}
+.wk-stat-row{display:flex;gap:0;border-bottom:1px solid var(--border)}
+.wk-stat{flex:1;padding:5px 9px;border-right:1px solid var(--border);font-family:var(--mono)}
+.wk-stat:last-child{border-right:none}
+.wk-stat-lbl{font-size:7px;text-transform:uppercase;letter-spacing:.7px;color:var(--dim);margin-bottom:1px}
+.wk-stat-val{font-size:11px;font-weight:700;color:var(--text)}
+.wk-task{padding:5px 10px;border-bottom:1px solid var(--border)}
+.wk-task-lbl{font-size:7px;color:var(--dim);font-family:var(--mono);text-transform:uppercase;letter-spacing:.7px;margin-bottom:1px}
+.wk-task-val{font-family:var(--mono);font-size:9.5px;color:var(--acc3);display:flex;align-items:baseline;gap:5px}
+.wk-task-idle{font-size:9px;color:var(--dim2)}
+.wk-task-dur{font-size:8px;color:var(--dim2)}
+.wk-caps{padding:4px 10px;display:flex;gap:3px;flex-wrap:wrap;border-bottom:1px solid var(--border)}
+.wk-chip{font-size:7px;font-family:var(--mono);padding:2px 4px;border-radius:3px;background:var(--bg2);border:1px solid var(--border);color:var(--acc2)}
+.wk-chip-m{font-size:7px;font-family:var(--mono);padding:2px 4px;border-radius:3px;background:var(--bg2);border:1px solid var(--border);color:var(--dim2)}
+.wk-cf{padding:4px 10px;display:flex;gap:5px;align-items:center}
+.wk-host{font-size:8px;font-family:var(--mono);color:var(--dim2);margin-left:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wk-res{padding:4px 10px;border-bottom:1px solid var(--border)}
+.wk-res-row{display:flex;align-items:center;gap:6px;margin-bottom:3px}
+.wk-res-lbl{font-size:7px;color:var(--dim);font-family:var(--mono);text-transform:uppercase;width:32px;flex-shrink:0}
+.wk-res-bar{flex:1;height:4px;background:var(--bg0);border-radius:2px;overflow:hidden}
+.wk-res-fill{height:100%;border-radius:2px;transition:width .4s}
+.wk-res-fill.f-ok{background:var(--ok)}.wk-res-fill.f-warn{background:var(--warn)}.wk-res-fill.f-err{background:var(--err)}
+.wk-res-pct{font-size:8px;font-family:var(--mono);color:var(--dim2);width:30px;text-align:right}
+.wk-oll-badge{font-size:7px;font-family:var(--mono);padding:1px 4px;border-radius:3px;background:rgba(143,184,122,.1);color:var(--acc2);border:1px solid rgba(143,184,122,.22);flex-shrink:0}
+.wk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px}
+
+/* ── Ollama node card ── */
+.ol-card{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius-lg);padding:10px 12px;transition:border-color .15s}
+.ol-card:hover{border-color:var(--border2)}
+.ol-card.online{border-left:3px solid var(--ok)}
+.ol-card.offline{border-left:3px solid var(--err)}
+.ol-head{display:flex;align-items:center;gap:6px;margin-bottom:6px}
+.ol-label{font-family:var(--mono);font-size:11px;font-weight:700;flex:1}
+.ol-badge{font-size:7.5px;font-family:var(--mono);font-weight:700;padding:2px 6px;border-radius:3px;flex-shrink:0}
+.ol-badge.gpu{background:rgba(201,122,90,.15);color:var(--gpu);border:1px solid rgba(201,122,90,.3)}
+.ol-badge.cpu{background:rgba(90,158,143,.1);color:var(--acc);border:1px solid rgba(90,158,143,.22)}
+.ol-badge.pin{background:rgba(109,184,122,.1);color:var(--ok);border:1px solid rgba(109,184,122,.22)}
+.ol-meta{display:flex;gap:10px;font-size:9px;color:var(--dim2);margin-bottom:5px;flex-wrap:wrap;font-family:var(--mono)}
+.ol-stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:6px}
+.ol-stat{background:var(--bg0);border-radius:var(--radius-sm);padding:5px 7px;text-align:center}
+.ol-stat-lbl{font-size:7px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim);font-family:var(--mono)}
+.ol-stat-val{font-size:12px;font-family:var(--mono);font-weight:700;color:var(--text)}
+.ol-models{display:flex;flex-wrap:wrap;gap:3px;margin-top:4px}
+.ol-model{font-size:8px;font-family:var(--mono);padding:2px 6px;border-radius:3px;background:var(--bg0);border:1px solid var(--border);color:var(--dim2);cursor:pointer;transition:.13s}
+.ol-model:hover{border-color:var(--acc);color:var(--acc)}
+.ol-model.running{border-color:var(--warn);color:var(--warn);background:rgba(201,163,90,.08)}
+.ol-actions{display:flex;gap:5px;margin-top:7px;padding-top:6px;border-top:1px solid var(--border)}
+
+/* ── Routing box ── */
+.route-box{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius-lg);padding:10px 12px;margin-bottom:8px}
+.strats{display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap}
+.strat{padding:4px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);font-size:9.5px;font-family:var(--mono);color:var(--dim2);cursor:pointer;transition:.13s}
+.strat.active{border-color:var(--gpu);color:var(--gpu);background:rgba(201,122,90,.08)}
+.strat:hover{border-color:var(--gpu);color:var(--gpu)}
+
+/* ── Jobs table ── */
+.job-tbl{width:100%;border-collapse:collapse;font-size:10px}
+.job-tbl th{font-family:var(--mono);font-size:7.5px;text-transform:uppercase;letter-spacing:.7px;color:var(--dim);padding:5px 8px;text-align:left;border-bottom:1px solid var(--border);font-weight:600;position:sticky;top:0;background:var(--bg2);z-index:1}
+.job-tbl td{padding:5px 8px;border-bottom:1px solid rgba(58,53,48,.25);font-family:var(--mono);color:var(--text)}
+.job-tbl tr:hover td{background:rgba(90,158,143,.04)}
+.j-badge{font-size:7.5px;padding:2px 6px;border-radius:7px;font-family:var(--mono);font-weight:600}
+.j-pending{background:rgba(90,158,143,.1);color:var(--acc);border:1px solid rgba(90,158,143,.2)}
+.j-running{background:rgba(201,163,90,.1);color:var(--warn);border:1px solid rgba(201,163,90,.2)}
+.j-done{background:rgba(109,184,122,.1);color:var(--ok);border:1px solid rgba(109,184,122,.22)}
+.j-failed{background:rgba(201,107,107,.08);color:var(--err);border:1px solid rgba(201,107,107,.2)}
+.j-tabs{display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:7px}
+.j-tab{padding:6px 14px;font-size:10px;font-family:var(--mono);color:var(--dim2);cursor:pointer;border-bottom:2px solid transparent;transition:.13s}
+.j-tab.active{color:var(--acc);border-bottom-color:var(--acc)}
+.j-cnt{font-size:8px;margin-left:4px;padding:0 5px;border-radius:7px;background:var(--bg2);color:var(--dim)}
+.j-empty{padding:20px;text-align:center;color:var(--dim);font-size:11px}
+
+/* ── Detail side panel ── */
+.det-panel{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius-lg);padding:10px 12px}
+.det-ttl{font-family:var(--mono);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--dim2);margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid var(--border)}
+.det-row{display:flex;gap:6px;padding:3px 0;border-bottom:1px solid rgba(58,53,48,.3);font-family:var(--mono);font-size:9px}
+.det-row:last-child{border-bottom:none}
+.det-k{color:var(--dim2);flex:1}.det-v{color:var(--text);text-align:right;max-width:160px;overflow:hidden;text-overflow:ellipsis}
+
+/* ── Test area ── */
+.test-area textarea{width:100%;background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:var(--radius-sm);font-family:var(--mono);font-size:10px;resize:vertical;min-height:48px}
+.test-area textarea:focus{outline:none;border-color:var(--acc)}
+.test-result{background:var(--bg0);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px;font-family:var(--mono);font-size:10px;white-space:pre-wrap;min-height:40px;max-height:200px;overflow-y:auto;color:var(--dim2);margin-top:6px}
+
+/* ── Modals ── */
+.modal-bd{position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:500;backdrop-filter:blur(2px)}
+.modal-bd.hidden{display:none}
+.modal{background:var(--bg1);border:1px solid var(--border2);border-radius:var(--radius-lg);width:480px;max-width:96%;max-height:88%;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.5)}
+.modal-h{display:flex;align-items:center;gap:7px;padding:10px 13px;border-bottom:1px solid var(--border);flex-shrink:0}
+.modal-t{font-family:var(--mono);font-size:10px;font-weight:700;color:var(--acc);letter-spacing:1px;flex:1}
+.modal-b{padding:12px;overflow-y:auto;flex:1}
+.modal-f{padding:8px 12px;border-top:1px solid var(--border);display:flex;gap:6px;justify-content:flex-end;flex-shrink:0}
+.fld{display:flex;flex-direction:column;gap:2px;margin-bottom:8px}
+.fld label{font-size:8px;font-family:var(--mono);color:var(--dim2);text-transform:uppercase;letter-spacing:.7px}
+.fld input,.fld select{background:var(--bg0);border:1px solid var(--border2);color:var(--text);padding:5px 8px;border-radius:var(--radius-sm);font-family:var(--mono);font-size:10px;width:100%}
+.fld input:focus,.fld select:focus{outline:none;border-color:var(--acc)}
+.fld-row{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.log-box{background:var(--bg0);border:1px solid var(--border);border-radius:3px;padding:5px;font-family:var(--mono);font-size:9px;color:var(--dim2);height:90px;overflow-y:auto;line-height:1.6}
+.log-box .ll-ok{color:var(--ok)}.log-box .ll-err{color:var(--err)}.log-box .ll-info{color:var(--acc)}
+
+/* ── Observe event stream ── */
+.obs-row{padding:3px 7px;border-radius:3px;font-size:10px;font-family:var(--mono);margin-bottom:1px;cursor:pointer;border-left:3px solid transparent;line-height:1.5}
+.obs-row:hover{background:var(--bg2)}
+.obs-row.cat-err{border-left-color:var(--err);background:rgba(201,107,107,.04)}
+.obs-row.cat-ok{border-left-color:var(--ok)}
+.obs-row.cat-cap{border-left-color:var(--acc2)}
+.obs-row.cat-agent{border-left-color:#f472b6}
+.obs-row.cat-memory{border-left-color:#38bdf8}
+.obs-row.cat-fabric{border-left-color:#fb923c}
+.obs-row.cat-system{border-left-color:var(--dim)}
+.obs-row.cat-other{border-left-color:var(--acc4)}
+.obs-detail{font-size:9px;color:var(--dim2);margin-top:2px;white-space:pre-wrap;word-break:break-all;display:none}
+.obs-row.expanded .obs-detail{display:block}
+
+/* ── System Log entries ── */
+.sl-entry{padding:5px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:3px;cursor:pointer;transition:border-color .12s}
+.sl-entry:hover{border-color:var(--acc)}
+.obs-chip{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:10px;font-size:9px;cursor:pointer;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);transition:.15s;user-select:none}
+.obs-chip.on{background:var(--acc);border-color:var(--acc);color:#fff}
+
+/* ── Widget Loader modal ── */
+.wl-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:600;backdrop-filter:blur(2px)}
+.wl-overlay.hidden{display:none}
+.wl-box{background:var(--bg1);border:1px solid var(--border2);border-radius:var(--radius-lg);width:520px;max-width:96%;max-height:80%;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.5)}
+.wl-header{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border)}
+.wl-header input{flex:1;background:var(--bg0);border:1px solid var(--border2);color:var(--text);padding:5px 9px;border-radius:var(--radius-sm);font-family:var(--mono);font-size:11px}
+.wl-header input:focus{outline:none;border-color:var(--acc)}
+.wl-list{flex:1;overflow-y:auto;padding:6px}
+.wl-item{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:var(--radius-sm);cursor:pointer;transition:.12s;border:1px solid transparent}
+.wl-item:hover{background:var(--bg2);border-color:var(--border)}
+.wl-item-icon{font-size:14px;width:22px;text-align:center;flex-shrink:0}
+.wl-item-label{font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--text);flex:1}
+.wl-item-id{font-size:8.5px;color:var(--dim2);font-family:var(--mono)}
+.wl-item-mode{font-size:7.5px;padding:1px 5px;border-radius:3px;background:var(--bg0);border:1px solid var(--border);color:var(--dim2);font-family:var(--mono)}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--border2)}
+</style>
+</head>
+<body>
+<div id="shell">
+  <!-- Side navigation -->
+  <div id="secNav">
+    <div class="snav on" data-pane="workers" onclick="P.show('workers',this)">Workers</div>
+    <div class="navdiv"></div>
+    <div class="snav" data-pane="ollama" onclick="P.show('ollama',this)">Ollama</div>
+    <div class="navdiv"></div>
+    <div class="snav" data-pane="jobs" onclick="P.show('jobs',this)">Jobs</div>
+    <div class="navdiv"></div>
+    <div class="snav" data-pane="observe" onclick="P.show('observe',this)">Observe</div>
+  </div>
+
+  <div id="panes">
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         WORKERS PANE
+         ════════════════════════════════════════════════════════════════════ -->
+    <div class="pane on" id="pane-workers">
+      <div class="pane-tb">
+        <span class="pane-tb-title" style="color:var(--acc)">WORKERS</span>
+        <span class="tb-sep"></span>
+        <button class="btn sm" onclick="P.refresh()">↻ Refresh</button>
+        <button class="btn sm" onclick="P.autoToggle()"><span id="w-auto-lbl">Auto 5s</span></button>
+        <span class="tb-sep"></span>
+        <button class="btn sm" id="w-edit-btn" onclick="P.gridToggleEdit('workers')">⚙ Configure</button>
+        <button class="btn sm" onclick="P.gridReset('workers')">Reset</button>
+        <span class="tb-sep"></span>
+        <!-- filters -->
+        <button class="btn sm" id="wf-all" onclick="P.wkFilter('all')" style="border-color:var(--acc);color:var(--acc)">All <span id="wf-all-n"></span></button>
+        <button class="btn sm gpu-btn" id="wf-GPU" onclick="P.wkFilter('GPU')">GPU</button>
+        <button class="btn sm" id="wf-CPU" onclick="P.wkFilter('CPU')">CPU</button>
+        <button class="btn sm" id="wf-LIGHT" onclick="P.wkFilter('LIGHT')">Light</button>
+        <span class="tb-sep"></span>
+        <button class="btn sm err-btn" onclick="P.wkRemoveStale()" title="Remove workers offline >5min">Remove Stale</button>
+        <button class="btn sm" onclick="P.openWidgetLoader('workers')" title="Add a registered panel/element as a widget">+ Add Widget</button>
+        <span class="status-hint" id="w-ts"></span>
+      </div>
+
+      <div class="dash-picker" id="w-hidden-picker"><span style="font-size:9px;color:var(--dim);margin-right:4px">Hidden:</span><span id="w-hidden-chips"></span></div>
+
+      <div class="dash-grid" id="w-grid">
+        <!-- KPI widgets -->
+        <div class="widget w-w2 w-h1" data-wid="w-total">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Workers</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('workers','w-total')">×</button></span></div>
+          <div class="w-body" style="padding:8px 10px"><div class="kpi"><div class="kpi-val" id="k-w-total">—</div><div class="kpi-sub" id="k-w-total-sub">loading</div></div></div>
+          <span class="w-resize" data-resize></span>
+        </div>
+        <div class="widget w-w2 w-h1" data-wid="w-busy">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Busy</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('workers','w-busy')">×</button></span></div>
+          <div class="w-body" style="padding:8px 10px"><div class="kpi"><div class="kpi-val tv-warn" id="k-w-busy">—</div><div class="kpi-sub" id="k-w-busy-sub">active</div></div></div>
+          <span class="w-resize" data-resize></span>
+        </div>
+        <div class="widget w-w2 w-h1" data-wid="w-caps">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Capabilities</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('workers','w-caps')">×</button></span></div>
+          <div class="w-body" style="padding:8px 10px"><div class="kpi"><div class="kpi-val" id="k-w-caps">—</div><div class="kpi-sub">unique caps</div></div></div>
+          <span class="w-resize" data-resize></span>
+        </div>
+        <div class="widget w-w2 w-h1" data-wid="w-tasks">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Tasks Done</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('workers','w-tasks')">×</button></span></div>
+          <div class="w-body" style="padding:8px 10px"><div class="kpi"><div class="kpi-val tv-ok" id="k-w-done">—</div><div class="kpi-sub" id="k-w-done-sub">completed</div></div></div>
+          <span class="w-resize" data-resize></span>
+        </div>
+        <div class="widget w-w2 w-h1" data-wid="w-queue">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Queue</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('workers','w-queue')">×</button></span></div>
+          <div class="w-body" style="padding:8px 10px"><div class="kpi"><div class="kpi-val tv-warn" id="k-w-queue">—</div><div class="kpi-sub" id="k-w-queue-sub">pending</div></div></div>
+          <span class="w-resize" data-resize></span>
+        </div>
+        <div class="widget w-w2 w-h1" data-wid="w-ollama">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Ollama Nodes</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('workers','w-ollama')">×</button></span></div>
+          <div class="w-body" style="padding:8px 10px"><div class="kpi"><div class="kpi-val tv-gpu" id="k-w-oll">—</div><div class="kpi-sub" id="k-w-oll-sub">nodes</div></div></div>
+          <span class="w-resize" data-resize></span>
+        </div>
+
+        <!-- Resource totals -->
+        <div class="widget w-w6 w-h2" data-wid="w-resources">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot ok"></span><span class="w-title">Cluster Resources</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('workers','w-resources')">×</button></span></div>
+          <div class="w-body" id="w-res-body"><span style="color:var(--dim);font-size:10px">Waiting for data…</span></div>
+          <span class="w-resize" data-resize></span>
+        </div>
+
+        <!-- Worker detail (selected) -->
+        <div class="widget w-w6 w-h2" data-wid="w-detail">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Worker Detail</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('workers','w-detail')">×</button></span></div>
+          <div class="w-body" id="w-det-body"><span style="color:var(--dim);font-size:10px">Click a worker card below</span></div>
+          <span class="w-resize" data-resize></span>
+        </div>
+
+        <!-- Worker cards grid -->
+        <div class="widget w-w12 w-h4" data-wid="w-cards">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot ok"></span><span class="w-title">Worker Nodes <span id="w-card-cnt" style="color:var(--dim2);font-weight:400;text-transform:none;letter-spacing:0"></span></span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('workers','w-cards')">×</button></span></div>
+          <div class="w-body flush" style="padding:8px"><div class="wk-grid" id="w-card-grid"><span style="color:var(--dim);font-size:10px;padding:10px">Loading…</span></div></div>
+          <span class="w-resize" data-resize></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         OLLAMA PANE
+         ════════════════════════════════════════════════════════════════════ -->
+    <div class="pane" id="pane-ollama">
+      <div class="pane-tb">
+        <span class="pane-tb-title" style="color:var(--gpu)">OLLAMA CLUSTER</span>
+        <span class="tb-sep"></span>
+        <button class="btn sm" onclick="P.refresh()">↻ Refresh</button>
+        <button class="btn sm gpu-btn" onclick="P.olPingAll()">Ping All</button>
+        <button class="btn sm gpu-btn" onclick="P.openPullModal()">⬇ Pull Model</button>
+        <span class="tb-sep"></span>
+        <button class="btn sm" id="ol-edit-btn" onclick="P.gridToggleEdit('ollama')">⚙ Configure</button>
+        <button class="btn sm" onclick="P.gridReset('ollama')">Reset</button>
+        <button class="btn sm" onclick="P.openWidgetLoader('ollama')">+ Add Widget</button>
+        <span class="status-hint" id="ol-ts"></span>
+      </div>
+
+      <div class="dash-picker" id="ol-hidden-picker"><span style="font-size:9px;color:var(--dim);margin-right:4px">Hidden:</span><span id="ol-hidden-chips"></span></div>
+
+      <div class="dash-grid" id="ol-grid">
+        <!-- Routing config -->
+        <div class="widget w-w6 w-h3" data-wid="ol-routing">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot ok"></span><span class="w-title">Cluster Routing</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('ollama','ol-routing')">×</button></span></div>
+          <div class="w-body">
+            <div style="font-size:10px;font-weight:600;color:var(--gpu);margin-bottom:6px">⚡ Strategy</div>
+            <div class="strats" id="ol-strats">
+              <div class="strat active" data-s="gpu_first" onclick="P.setStrat(this)">GPU First</div>
+              <div class="strat" data-s="least_busy" onclick="P.setStrat(this)">Least Busy</div>
+              <div class="strat" data-s="round_robin" onclick="P.setStrat(this)">Round Robin</div>
+              <div class="strat" data-s="fastest" onclick="P.setStrat(this)">Fastest</div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px">
+              <div class="fld"><label>Default Model</label><input id="ol-def-model" value="mistral" style="font-size:9.5px"></div>
+              <div class="fld"><label>Pin Instance</label><select id="ol-pin" style="font-size:9.5px"><option value="">None (strategy)</option></select></div>
+            </div>
+            <div style="font-size:9px;color:var(--dim2);line-height:1.7;margin-top:6px">
+              <b style="color:var(--text)">GPU First</b> → prefer GPU node, fallback to CPU<br>
+              <b style="color:var(--text)">Least Busy</b> → fewest active requests<br>
+              <b style="color:var(--text)">Round Robin</b> → cycle online nodes<br>
+              <b style="color:var(--text)">Fastest</b> → lowest measured latency
+            </div>
+          </div>
+          <span class="w-resize" data-resize></span>
+        </div>
+
+        <!-- Ollama KPIs -->
+        <div class="widget w-w2 w-h1" data-wid="ol-online">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Online</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('ollama','ol-online')">×</button></span></div>
+          <div class="w-body" style="padding:8px 10px"><div class="kpi"><div class="kpi-val tv-ok" id="k-ol-on">—</div><div class="kpi-sub" id="k-ol-on-sub">nodes</div></div></div>
+          <span class="w-resize" data-resize></span>
+        </div>
+        <div class="widget w-w2 w-h1" data-wid="ol-models">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Models</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('ollama','ol-models')">×</button></span></div>
+          <div class="w-body" style="padding:8px 10px"><div class="kpi"><div class="kpi-val" id="k-ol-mod">—</div><div class="kpi-sub">loaded across cluster</div></div></div>
+          <span class="w-resize" data-resize></span>
+        </div>
+        <div class="widget w-w2 w-h1" data-wid="ol-active">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Active Requests</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('ollama','ol-active')">×</button></span></div>
+          <div class="w-body" style="padding:8px 10px"><div class="kpi"><div class="kpi-val tv-warn" id="k-ol-active">—</div><div class="kpi-sub">in-flight</div></div></div>
+          <span class="w-resize" data-resize></span>
+        </div>
+
+        <!-- Node cards -->
+        <div class="widget w-w12 w-h4" data-wid="ol-nodes">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot ok"></span><span class="w-title">Nodes <span id="ol-node-cnt" style="color:var(--dim2);font-weight:400;text-transform:none;letter-spacing:0"></span></span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('ollama','ol-nodes')">×</button></span></div>
+          <div class="w-body" id="ol-nodes-body"><span style="color:var(--dim);font-size:10px">Loading…</span></div>
+          <span class="w-resize" data-resize></span>
+        </div>
+
+        <!-- Embedding Configuration -->
+        <div class="widget w-w6 w-h3" data-wid="ol-embed-cfg">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Embedding Config</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('ollama','ol-embed-cfg')">×</button></span></div>
+          <div class="w-body">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              <div class="fld"><label>Embed Model</label><input id="emb-model" style="font-size:9.5px" placeholder="nomic-embed-text"></div>
+              <div class="fld"><label>Pin to Instance</label><select id="emb-pin" style="font-size:9.5px"><option value="">Auto (strategy)</option></select></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
+              <label style="font-size:9px;display:flex;align-items:center;gap:4px;cursor:pointer;color:var(--dim2)">
+                <input type="checkbox" id="emb-gpu" style="margin:0"> <span>Prefer GPU for embeddings</span>
+              </label>
+              <span style="flex:1"></span>
+              <button class="btn sm primary" onclick="P.saveEmbedCfg()">Apply</button>
+            </div>
+            <div id="emb-status" style="font-size:8.5px;color:var(--dim2);font-family:var(--mono);margin-top:4px"></div>
+            <div style="font-size:9px;color:var(--dim2);line-height:1.7;margin-top:6px;border-top:1px solid var(--border);padding-top:6px">
+              <b style="color:var(--text)">Embed Model</b> — the Ollama model used for all embedding calls across Fabric, Memory, DAGs, and Worldview<br>
+              <b style="color:var(--text)">Pin to Instance</b> — force all embeds to a specific node (leave on Auto for load-balanced routing)<br>
+              <b style="color:var(--text)">Prefer GPU</b> — route embeds to GPU nodes when available (faster for large batches)
+            </div>
+          </div>
+          <span class="w-resize" data-resize></span>
+        </div>
+
+        <!-- Node Test -->
+        <div class="widget w-w6 w-h3" data-wid="ol-test">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Node Test</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('ollama','ol-test')">×</button></span></div>
+          <div class="w-body">
+            <div class="test-area">
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-bottom:6px">
+                <div class="fld"><label>Instance</label><select id="ol-test-inst" style="font-size:9px"></select></div>
+                <div class="fld"><label>Model</label><select id="ol-test-model" style="font-size:9px"><option value="">Default</option></select></div>
+                <div class="fld"><label>Temp</label><input id="ol-test-temp" value="0.7" type="number" step="0.1" min="0" max="2" style="font-size:9px"></div>
+                <div class="fld"><label>Max Tokens</label><input id="ol-test-maxtok" value="256" type="number" style="font-size:9px"></div>
+              </div>
+              <textarea id="ol-test-prompt" placeholder="Enter a test prompt…" rows="2"></textarea>
+              <div style="display:flex;gap:6px;margin-top:6px;align-items:center">
+                <button class="btn primary sm" onclick="P.olTestGenerate()">Generate on Node</button>
+                <span id="ol-test-status" style="font-size:9px;color:var(--dim2);font-family:var(--mono)"></span>
+              </div>
+              <div class="test-result" id="ol-test-result" style="display:none"></div>
+            </div>
+          </div>
+          <span class="w-resize" data-resize></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         JOBS PANE
+         ════════════════════════════════════════════════════════════════════ -->
+    <div class="pane" id="pane-jobs">
+      <div class="pane-tb">
+        <span class="pane-tb-title" style="color:var(--acc3)">LIVE JOBS</span>
+        <span class="tb-sep"></span>
+        <button class="btn sm" onclick="P.refresh()">↻ Refresh</button>
+        <button class="btn sm" onclick="P.autoToggle()"><span id="j-auto-lbl">Auto 5s</span></button>
+        <span class="tb-sep"></span>
+        <button class="btn sm" id="j-edit-btn" onclick="P.gridToggleEdit('jobs')">⚙ Configure</button>
+        <button class="btn sm" onclick="P.gridReset('jobs')">Reset</button>
+        <button class="btn sm" onclick="P.openWidgetLoader('jobs')">+ Add Widget</button>
+        <span class="status-hint" id="j-ts"></span>
+      </div>
+
+      <div class="dash-picker" id="j-hidden-picker"><span style="font-size:9px;color:var(--dim);margin-right:4px">Hidden:</span><span id="j-hidden-chips"></span></div>
+
+      <div class="dash-grid" id="j-grid">
+        <!-- Job KPIs -->
+        <div class="widget w-w3 w-h1" data-wid="j-pending">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Pending</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('jobs','j-pending')">×</button></span></div>
+          <div class="w-body" style="padding:8px 10px"><div class="kpi"><div class="kpi-val" id="k-j-pend">0</div><div class="kpi-sub">in queue</div></div></div>
+          <span class="w-resize" data-resize></span>
+        </div>
+        <div class="widget w-w3 w-h1" data-wid="j-running">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Running</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('jobs','j-running')">×</button></span></div>
+          <div class="w-body" style="padding:8px 10px"><div class="kpi"><div class="kpi-val tv-warn" id="k-j-run">0</div><div class="kpi-sub">active</div></div></div>
+          <span class="w-resize" data-resize></span>
+        </div>
+        <div class="widget w-w3 w-h1" data-wid="j-done-kpi">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Completed</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('jobs','j-done-kpi')">×</button></span></div>
+          <div class="w-body" style="padding:8px 10px"><div class="kpi"><div class="kpi-val tv-ok" id="k-j-done">0</div><div class="kpi-sub" id="k-j-done-sub">last 500</div></div></div>
+          <span class="w-resize" data-resize></span>
+        </div>
+        <div class="widget w-w3 w-h1" data-wid="j-failed-kpi">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Failed</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('jobs','j-failed-kpi')">×</button></span></div>
+          <div class="w-body" style="padding:8px 10px"><div class="kpi"><div class="kpi-val tv-err" id="k-j-fail">0</div><div class="kpi-sub">errors</div></div></div>
+          <span class="w-resize" data-resize></span>
+        </div>
+
+        <!-- Job list -->
+        <div class="widget w-w12 w-h5" data-wid="j-list">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot ok"></span><span class="w-title">Job Queue</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('jobs','j-list')">×</button></span></div>
+          <div class="w-body flush" style="padding:6px 8px">
+            <div class="j-tabs">
+              <div class="j-tab active" id="jt-pending" onclick="P.jTab('pending')">Pending <span class="j-cnt" id="jc-pending">0</span></div>
+              <div class="j-tab" id="jt-running" onclick="P.jTab('running')">Running <span class="j-cnt" id="jc-running">0</span></div>
+              <div class="j-tab" id="jt-done" onclick="P.jTab('done')">Completed <span class="j-cnt" id="jc-done">0</span></div>
+            </div>
+            <div id="j-empty" class="j-empty">No jobs</div>
+            <div style="overflow-y:auto;max-height:400px">
+              <table class="job-tbl" id="j-table" style="display:none">
+                <thead><tr><th>Task ID</th><th>Capability</th><th>Worker</th><th>Caller</th><th>Age</th><th>State</th></tr></thead>
+                <tbody id="j-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+          <span class="w-resize" data-resize></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         OBSERVE PANE
+         ══════════════════════════════════════════════════════════════════════ -->
+    <div class="pane" id="pane-observe">
+      <div class="pane-tb">
+        <span class="pane-tb-title" style="color:var(--acc4)">OBSERVE</span>
+        <span class="tb-sep"></span>
+        <button class="btn sm" onclick="P.obsClear()">Clear</button>
+        <button class="btn sm" id="obs-pause-btn" onclick="P.obsTogglePause()">Pause</button>
+        <span class="tb-sep"></span>
+        <span style="display:flex;gap:3px;flex-wrap:wrap" id="obs-chips"></span>
+        <span class="tb-sep"></span>
+        <button class="btn sm" onclick="P.gridToggleEdit('observe')">⚙ Configure</button>
+        <button class="btn sm" onclick="P.gridReset('observe')">Reset</button>
+        <button class="btn sm" onclick="P.openWidgetLoader('observe')">+ Add Widget</button>
+        <span class="status-hint" id="obs-count">0 events</span>
+      </div>
+      <div class="dash-picker" id="obs-hidden-picker" style="display:none">
+        <span style="font-size:9.5px;color:var(--dim2);margin-right:4px;letter-spacing:.5px;text-transform:uppercase">Hidden:</span>
+        <span id="obs-hidden-chips"></span>
+      </div>
+      <div class="dash-grid" id="obs-grid">
+
+        <!-- Live Event Stream widget -->
+        <div class="widget w-w6 w-h6" data-wid="obs-stream">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot ok"></span><span class="w-title">Live Event Stream</span>
+            <span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('observe','obs-stream')">×</button></span>
+          </div>
+          <div class="w-body flush" style="padding:0">
+            <div id="obs-feed" style="flex:1;overflow-y:auto;padding:4px 6px;display:flex;flex-direction:column;gap:1px;font-size:10px"></div>
+          </div>
+          <span class="w-resize" data-resize></span>
+        </div>
+
+        <!-- System Log widget -->
+        <div class="widget w-w6 w-h6" data-wid="obs-syslog">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">System Log</span>
+            <span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('observe','obs-syslog')">×</button></span>
+          </div>
+          <div class="w-body flush" style="padding:0">
+            <div style="display:flex;flex-direction:column;height:100%;min-height:0">
+              <!-- Syslog toolbar -->
+              <div style="padding:4px 6px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:4px;flex-wrap:wrap;background:var(--bg1);flex-shrink:0">
+                <button class="btn sm" onclick="P.syslogLoad()">↻</button>
+                <button class="btn sm" id="sl-auto-btn" onclick="P.syslogToggleAuto()">Auto</button>
+                <select id="sl-level" onchange="P.syslogLoad()" style="font-size:9px;padding:1px 3px">
+                  <option value="">All levels</option><option value="ERROR">ERROR</option>
+                  <option value="WARNING">WARNING</option><option value="INFO">INFO</option>
+                  <option value="DEBUG">DEBUG</option>
+                </select>
+                <select id="sl-cat" onchange="P.syslogLoad()" style="font-size:9px;padding:1px 3px">
+                  <option value="">All cats</option><option value="cap">cap</option>
+                  <option value="chat">chat</option>
+                  <option value="ollama">ollama</option>
+                  <option value="worker">worker</option><option value="dag">dag</option>
+                  <option value="system">system</option><option value="agent">agent</option>
+                </select>
+                <input id="sl-keyword" placeholder="keyword…" style="font-size:9px;width:70px;padding:1px 4px" oninput="P.syslogLoad()">
+                <input id="sl-limit" type="number" value="50" min="5" max="500" style="font-size:9px;width:40px;padding:1px 3px" onchange="P.syslogLoad()">
+                <button class="btn sm" style="border-color:var(--err);color:var(--err)" onclick="P.syslogClear()" title="Trim log">✂</button>
+                <span class="status-hint" id="sl-count" style="margin-left:auto"></span>
+              </div>
+              <!-- WS errors box -->
+              <div id="sl-ws-box" style="display:none;flex-direction:column;gap:2px;padding:4px 6px;border-bottom:1px solid var(--border);max-height:80px;overflow-y:auto"></div>
+              <!-- Monitor bar — pinned at top, always visible -->
+              <div id="sl-monitor-bar" style="padding:4px 6px;border-bottom:1px solid var(--border);background:var(--bg2);display:flex;align-items:center;gap:5px;flex-wrap:wrap;flex-shrink:0">
+                <span style="font-size:7.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.8px;font-weight:700;font-family:var(--mono)">LLM Monitor</span>
+                <span id="sl-mon-dot" style="width:7px;height:7px;border-radius:50%;background:var(--dim);flex-shrink:0" title="Monitor status"></span>
+                <span id="sl-mon-label" style="font-size:8px;color:var(--dim2);font-family:var(--mono)">OFF</span>
+                <button class="btn sm" id="sl-mon-toggle" style="font-size:8px;min-width:40px" onclick="P.syslogMonToggle()">Start</button>
+                <button class="btn sm" style="font-size:8px;border-color:var(--acc);color:var(--acc)" onclick="P.syslogMonRun()">Run once</button>
+                <span id="sl-status" style="font-size:8px;color:var(--dim2);margin-left:auto">—</span>
+              </div>
+              <div id="sl-mon-report" style="font-size:9px;line-height:1.5;color:var(--text);background:var(--bg0);border-bottom:1px solid var(--border);padding:4px 6px;display:none;white-space:pre-wrap;max-height:80px;overflow-y:auto;flex-shrink:0"></div>
+              <!-- Syslog entries -->
+              <div id="sl-entries" style="flex:1;overflow-y:auto;padding:4px 6px;display:flex;flex-direction:column;gap:2px">
+                <span style="color:var(--dim);font-size:10px">Loading…</span>
+              </div>
+              <!-- Footer: ask agent -->
+              <div style="border-top:1px solid var(--border);padding:4px 6px;background:var(--bg1);display:flex;flex-direction:column;gap:4px;flex-shrink:0">
+                <div style="display:flex;gap:4px;align-items:center">
+                  <textarea id="sl-ask-q" style="flex:1;height:30px;font-size:9px;resize:none;background:var(--bg0);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:3px 5px" placeholder="Ask agent about error…"></textarea>
+                  <button class="btn sm" style="font-size:8px;border-color:var(--acc);color:var(--acc)" onclick="P.syslogAsk()">Ask</button>
+                </div>
+                <div id="sl-ask-result" style="font-size:9px;line-height:1.5;background:var(--bg0);border:1px solid var(--border);border-radius:3px;padding:4px;display:none;white-space:pre-wrap;max-height:80px;overflow-y:auto"></div>
+              </div>
+            </div>
+          </div>
+          <span class="w-resize" data-resize></span>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Pull Model Modal -->
+<div class="modal-bd hidden" id="pull-modal-bd" onclick="if(event.target===this)P.closePullModal()">
+  <div class="modal" style="width:440px">
+    <div class="modal-h">
+      <span class="modal-t" style="color:var(--gpu)">⬇ PULL MODEL</span>
+      <button class="btn sm" onclick="P.closePullModal()">✕</button>
+    </div>
+    <div class="modal-b">
+      <div class="fld">
+        <label>Model Name</label>
+        <input id="pull-model-name" placeholder="e.g. llama3.2, mistral, codellama:7b" style="font-size:11px">
+      </div>
+      <div class="fld">
+        <label>Target Instance</label>
+        <select id="pull-target-inst" style="font-size:11px"></select>
+      </div>
+      <div style="font-size:9px;color:var(--dim2);margin-top:4px;line-height:1.6">
+        Pulls the model from the Ollama library onto the selected instance.
+        Large models may take several minutes to download.
+      </div>
+      <div class="log-box" id="pull-log" style="margin-top:8px;display:none;height:70px"></div>
+    </div>
+    <div class="modal-f">
+      <span id="pull-status" style="font-size:9px;color:var(--dim2);font-family:var(--mono);flex:1"></span>
+      <button class="btn" onclick="P.closePullModal()">Cancel</button>
+      <button class="btn primary" id="pull-go-btn" onclick="P.pullModelGo()">Pull</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete Model Confirmation -->
+<div class="modal-bd hidden" id="delete-model-bd" onclick="if(event.target===this)P.closeDeleteModel()">
+  <div class="modal" style="width:380px">
+    <div class="modal-h">
+      <span class="modal-t" style="color:var(--err)">🗑 DELETE MODEL</span>
+      <button class="btn sm" onclick="P.closeDeleteModel()">✕</button>
+    </div>
+    <div class="modal-b">
+      <div style="font-size:11px;color:var(--text);margin-bottom:8px">
+        Delete model <b id="del-model-name" style="color:var(--err)"></b> from instance <b id="del-inst-name" style="color:var(--gpu)"></b>?
+      </div>
+      <div style="font-size:9px;color:var(--dim2)">This will free disk/VRAM on the instance. The model can be re-pulled later.</div>
+    </div>
+    <div class="modal-f">
+      <span id="del-status" style="font-size:9px;color:var(--dim2);font-family:var(--mono);flex:1"></span>
+      <button class="btn" onclick="P.closeDeleteModel()">Cancel</button>
+      <button class="btn err-btn" id="del-go-btn" onclick="P.deleteModelGo()">Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- Widget Loader Overlay -->
+<div class="wl-overlay hidden" id="wl-overlay" onclick="if(event.target===this)P.closeWidgetLoader()">
+  <div class="wl-box">
+    <div class="wl-header">
+      <span style="font-family:var(--mono);font-size:10px;font-weight:700;color:var(--acc);letter-spacing:1px">ADD WIDGET</span>
+      <input id="wl-search" placeholder="Search panels & elements…" oninput="P.wlFilter()">
+      <button class="btn sm" onclick="P.closeWidgetLoader()">✕</button>
+    </div>
+    <div class="wl-list" id="wl-list"><span style="font-size:10px;color:var(--dim);padding:10px">Loading…</span></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* ═══════════════════════════════════════════════════════════════════════════
+   Workers & Ollama Combined Panel — P namespace
+   ═══════════════════════════════════════════════════════════════════════════ */
+const P = (function(){
+
+// ── State ────────────────────────────────────────────────────────────────────
+const BASE = window.location.origin || 'http://llm.int:8999';
+let _cluster = null;
+let _jobs = {pending:[],running:[],done:[]};
+let _selWorker = null;
+let _wkFilter = 'all';
+let _jTab = 'pending';
+let _autoTimer = null;
+let _autoOn = false;
+const _routing = {strategy:'gpu_first', defaultModel:'mistral', pinned:''};
+// Client-side job tracker — remembers jobs across refresh cycles so they
+// transition through pending→running→done instead of vanishing when the
+// backend stream entry is consumed.
+let _jobTracker = {}; // id → {id, capability, state, worker_id, ts, first_seen, ...}
+
+// Track capability events (cap.call / cap.ok / cap.error) as jobs.
+// This catches LLM calls (llm.generate, vllm.generate, vllm.chat, etc.)
+// that never touch the Redis TASK_STREAM because they're direct HTTP calls.
+const _CAP_JOB_PREFIXES = ['llm.','vllm.','ollama.generate','pipeline.','agent.','chat.','dag.'];
+function _ingestCapEventAsJob(ev){
+  if(!ev||!ev.type) return;
+  const t=ev.type;
+
+  // ── Track raw ollama.request / ollama.request_done / ollama.request_error ──
+  // These come from the patched ollama_generate() and show ALL Ollama traffic
+  // regardless of which capability (or non-capability) triggered it.
+  if(t==='ollama.request'||t==='ollama.request_done'||t==='ollama.request_error'){
+    const id = ev.req_id||('ollama-'+Date.now());
+    const now=Date.now();
+    if(!_jobTracker[id]) _jobTracker[id]={first_seen:now,id};
+    const j=_jobTracker[id];
+    j.capability='ollama.generate';
+    j.cap_name='ollama.generate';
+    j.last_update=now;
+    j.ts=ev.ts||new Date().toISOString();
+    j.model=ev.model||j.model||'';
+    j.instance_id=ev.instance_id||j.instance_id||'';
+    j.caller_file=ev.caller_file||j.caller_file||'';
+    j.caller_func=ev.caller_func||j.caller_func||'';
+    j.prompt_preview=ev.prompt_preview||j.prompt_preview||'';
+    if(t==='ollama.request'){
+      j.state='running';
+      if(ev.instance_id) j.worker_id=ev.instance_id;
+    } else if(t==='ollama.request_done'){
+      j.state='done';
+      if(ev.elapsed_s) j.elapsed_ms=Math.round(ev.elapsed_s*1000);
+    } else if(t==='ollama.request_error'){
+      j.state='failed';
+      j.error=ev.error||'unknown';
+    }
+    _rebuildJobsFromTracker();
+    return;
+  }
+
+  const capName=ev.name||ev.cap_name||'';
+  // Only track capability calls that match our prefixes
+  const isCapCall = t==='cap.call'||t==='cap.ok'||t==='cap.error';
+  if(!isCapCall) return;
+  const isLlm = _CAP_JOB_PREFIXES.some(p=>capName.startsWith(p));
+  if(!isLlm) return;
+  const id = ev.trace_id||ev.id||capName+':'+Date.now();
+  const now=Date.now();
+  if(!_jobTracker[id]) _jobTracker[id]={first_seen:now,id};
+  const j=_jobTracker[id];
+  j.capability=capName;
+  j.last_update=now;
+  j.ts=ev.ts||new Date().toISOString();
+  if(t==='cap.call'){
+    j.state='running';
+    if(ev.instance) j.worker_id=ev.instance;
+    if(ev.session_id) j.session_id=ev.session_id;
+  } else if(t==='cap.ok'){
+    j.state='done';
+    if(ev.elapsed_ms) j.elapsed_ms=ev.elapsed_ms;
+    if(ev.elapsed) j.elapsed_ms=Math.round(parseFloat(ev.elapsed)*1000);
+  } else if(t==='cap.error'){
+    j.state='failed';
+    j.error=ev.error||'unknown';
+  }
+  // Rebuild job lists from tracker on next render
+  _rebuildJobsFromTracker();
+}
+
+function _rebuildJobsFromTracker(){
+  const now=Date.now();
+  const cutoff=now-1800000;
+  const pending=[],running=[],done=[];
+  for(const [id,t] of Object.entries(_jobTracker)){
+    if((t.last_update||t.first_seen||0)<cutoff){delete _jobTracker[id];continue;}
+    const j={...t,id};
+    if(t.state==='pending') pending.push(j);
+    else if(t.state==='running') running.push(j);
+    else if(t.state==='done'||t.state==='failed') done.push(j);
+  }
+  _jobs={pending,running,done};
+  renderJobs();
+}
+
+// Layout state per pane
+const _layouts = {};
+const STORAGE_KEY = 'vera:wol-layout:';
+function _lay(pane){
+  if(!_layouts[pane]) _layouts[pane] = {order:[],hidden:new Set(),sizes:{},editing:false};
+  return _layouts[pane];
+}
+
+// ── API ──────────────────────────────────────────────────────────────────────
+function api(path, method, body){
+  const opts = {method: method||'GET', headers:{'Content-Type':'application/json'}};
+  if(body) opts.body = JSON.stringify(body);
+  return fetch(BASE + path, opts).then(r=>r.json()).catch(()=>null);
+}
+function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function sq(v){return "'"+String(v??'').replace(/'/g,"\\'")+"'";}
+function $(id){return document.getElementById(id);}
+function txt(id,v){const el=$(id);if(el) el.textContent=v;}
+function age(ts){if(!ts)return '—';try{const d=typeof ts==='number'?new Date(ts*1000):new Date(ts);const s=Math.floor((Date.now()-d)/1000);return s<60?s+'s':s<3600?Math.floor(s/60)+'m':Math.floor(s/3600)+'h';}catch(e){return '—';}}
+
+// ── Refresh ──────────────────────────────────────────────────────────────────
+async function refresh(){
+  const [cluster, jobs] = await Promise.all([api('/cluster'), api('/cluster/jobs')]);
+  if(cluster && !cluster.error) _cluster = cluster;
+  if(jobs && !jobs.error){
+    const now = Date.now();
+    // Index current backend state
+    const runningIds = new Set();
+    const doneIds = new Set();
+    (jobs.running||[]).forEach(j=>{ const id=j.id||j.task_id; if(id) runningIds.add(id); });
+    (jobs.done||[]).forEach(j=>{ const id=j.id||j.task_id; if(id) doneIds.add(id); });
+    // Also check workers' current tasks
+    if(cluster && cluster.workers){
+      Object.values(cluster.workers).forEach(w=>{
+        if(w.current_task_id) runningIds.add(w.current_task_id);
+      });
+    }
+
+    // Track ALL jobs we've ever seen, updating their state
+    (jobs.pending||[]).forEach(j=>{
+      const id=j.id||j.task_id||''; if(!id) return;
+      if(!_jobTracker[id]) _jobTracker[id] = {first_seen:now};
+      Object.assign(_jobTracker[id], j, {state:'pending', last_update:now});
+    });
+    (jobs.running||[]).forEach(j=>{
+      const id=j.id||j.task_id||''; if(!id) return;
+      if(!_jobTracker[id]) _jobTracker[id] = {first_seen:now};
+      Object.assign(_jobTracker[id], j, {state:'running', last_update:now});
+    });
+    (jobs.done||[]).forEach(j=>{
+      const id=j.id||j.task_id||''; if(!id) return;
+      if(!_jobTracker[id]) _jobTracker[id] = {first_seen:now};
+      const state = (j.success===false||j.error)?'failed':'done';
+      Object.assign(_jobTracker[id], j, {state, last_update:now});
+    });
+
+    // Promote tracked jobs: if a pending job's ID now appears in running/done, update its state
+    for(const [id, t] of Object.entries(_jobTracker)){
+      if(t.state==='pending' && runningIds.has(id)) t.state='running';
+      if((t.state==='pending'||t.state==='running') && doneIds.has(id)) t.state='done';
+    }
+
+    // Build the three lists from tracker (only recent — within last 30min)
+    const cutoff = now - 1800000;
+    const pending=[], running=[], done=[];
+    for(const [id, t] of Object.entries(_jobTracker)){
+      if((t.last_update||t.first_seen||0) < cutoff){ delete _jobTracker[id]; continue; }
+      const j = {...t, id};
+      if(t.state==='pending' && !runningIds.has(id) && !doneIds.has(id)) pending.push(j);
+      else if(t.state==='running') running.push(j);
+      else if(t.state==='done'||t.state==='failed') done.push(j);
+    }
+    _jobs = {pending, running, done};
+  }
+  render();
+}
+
+function render(){
+  if(!_cluster) return;
+  renderWorkers();
+  renderOllama();
+  renderJobs();
+  const now = new Date().toLocaleTimeString();
+  txt('w-ts','updated '+now);
+  txt('ol-ts','updated '+now);
+  txt('j-ts','updated '+now);
+}
+
+function autoToggle(){
+  _autoOn = !_autoOn;
+  if(_autoTimer){clearInterval(_autoTimer);_autoTimer=null;}
+  if(_autoOn){
+    _autoTimer = setInterval(refresh, 5000);
+    refresh();
+  }
+  const lbl = _autoOn ? '● Auto 5s' : 'Auto 5s';
+  txt('w-auto-lbl',lbl);
+  txt('j-auto-lbl',lbl);
+}
+
+// ── Worker pane ──────────────────────────────────────────────────────────────
+function inferClass(w){
+  const oi = w.ollama_instance||'';
+  if(oi.includes('gpu')||(w.id||'').toLowerCase().includes('gpu')||(w.host||'').toLowerCase().includes('gpu')) return 'GPU';
+  if((w.id||'').toLowerCase().includes('pi')||(w.host||'').toLowerCase().includes('pi')) return 'LIGHT';
+  return w.worker_class||w.class||'CPU';
+}
+function fillCls(p){return p>=90?'f-err':p>=70?'f-warn':'f-ok';}
+
+function wkFilter(f){
+  _wkFilter=f;
+  ['all','GPU','CPU','LIGHT'].forEach(k=>{
+    const el=$('wf-'+k);
+    if(el){el.style.borderColor=k===f?'var(--acc)':'';el.style.color=k===f?'var(--acc)':'';}
+  });
+  renderWorkerCards();
+}
+
+function renderWorkers(){
+  const ws = Object.values(_cluster.workers||{});
+  const online = ws.filter(w=>w.status!=='offline'&&w.status!=='unknown').length;
+  const busy = ws.filter(w=>{const s=w.status||'';return s.startsWith('running')||s==='busy';}).length;
+  const allCaps = new Set();
+  ws.forEach(w=>(w.capabilities||[]).forEach(c=>allCaps.add(c)));
+  const done = ws.reduce((a,w)=>a+(parseInt(w.tasks_done)||0),0);
+  const fail = ws.reduce((a,w)=>a+(parseInt(w.tasks_failed)||0),0);
+  const q = _cluster.queues||{};
+  const oll = Object.values(_cluster.ollama||{});
+  const olOn = oll.filter(o=>o.status==='ok'||o.status==='online').length;
+
+  txt('k-w-total',ws.length); txt('k-w-total-sub',online+' online');
+  txt('k-w-busy',busy); txt('k-w-busy-sub','of '+ws.length);
+  txt('k-w-caps',allCaps.size);
+  txt('k-w-done',done); txt('k-w-done-sub',fail+' failed');
+  txt('k-w-queue',(q.task_queue_len||0)+(q.pending_tasks||0));
+  txt('k-w-queue-sub',(q.task_queue_len||0)+' queued · '+(q.pending_tasks||0)+' unacked');
+  txt('k-w-oll',olOn+'/'+oll.length); txt('k-w-oll-sub','nodes');
+  txt('wf-all-n','('+ws.length+')');
+
+  // Dot status on KPI widgets
+  setDot('w-total', ws.length>0?'ok':'err');
+  setDot('w-busy', busy>0?'warn':'ok');
+  setDot('w-queue', (q.task_queue_len||0)>0?'warn':'ok');
+  setDot('w-ollama', olOn===oll.length&&oll.length>0?'ok':olOn>0?'warn':'err');
+
+  renderResources(ws);
+  renderWorkerCards();
+}
+
+function setDot(wid, cls){
+  const w = document.querySelector(`[data-wid="${wid}"] .w-dot`);
+  if(w){w.className='w-dot '+cls;}
+}
+
+function renderResources(ws){
+  const el=$('w-res-body');if(!el) return;
+  // Aggregate resources
+  let cpuSum=0,cpuN=0,ramUsed=0,ramTotal=0,diskUsed=0,diskTotal=0;
+  ws.forEach(w=>{
+    if(w.cpu_pct!=null){cpuSum+=parseFloat(w.cpu_pct);cpuN++;}
+    if(w.ram_used_gb!=null){ramUsed+=parseFloat(w.ram_used_gb);}
+    if(w.ram_total_gb!=null){ramTotal+=parseFloat(w.ram_total_gb);}
+    if(w.disk_used_gb!=null){diskUsed+=parseFloat(w.disk_used_gb);}
+    if(w.disk_total_gb!=null){diskTotal+=parseFloat(w.disk_total_gb);}
+  });
+  const cpuPct = cpuN>0?Math.round(cpuSum/cpuN):0;
+  const ramPct = ramTotal>0?Math.round(ramUsed/ramTotal*100):0;
+  const diskPct = diskTotal>0?Math.round(diskUsed/diskTotal*100):0;
+
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:8px;font-family:var(--mono);color:var(--dim);text-transform:uppercase;margin-bottom:3px">
+          <span>CPU</span><span style="color:var(--text)">${cpuPct}%</span>
+        </div>
+        <div class="res-bar"><div class="res-fill ${fillCls(cpuPct)}" style="width:${cpuPct}%"></div></div>
+        <div style="font-size:8px;color:var(--dim2);margin-top:2px">${cpuN} nodes reporting</div>
+      </div>
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:8px;font-family:var(--mono);color:var(--dim);text-transform:uppercase;margin-bottom:3px">
+          <span>RAM</span><span style="color:var(--text)">${ramUsed.toFixed(1)} / ${ramTotal.toFixed(1)} GB</span>
+        </div>
+        <div class="res-bar"><div class="res-fill ${fillCls(ramPct)}" style="width:${ramPct}%"></div></div>
+        <div style="font-size:8px;color:var(--dim2);margin-top:2px">${ramPct}% utilised</div>
+      </div>
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:8px;font-family:var(--mono);color:var(--dim);text-transform:uppercase;margin-bottom:3px">
+          <span>Disk</span><span style="color:var(--text)">${diskUsed.toFixed(1)} / ${diskTotal.toFixed(1)} GB</span>
+        </div>
+        <div class="res-bar"><div class="res-fill ${fillCls(diskPct)}" style="width:${diskPct}%"></div></div>
+        <div style="font-size:8px;color:var(--dim2);margin-top:2px">${diskPct}% used</div>
+      </div>
+    </div>`;
+}
+
+function renderWorkerCards(){
+  if(!_cluster) return;
+  const ws = Object.values(_cluster.workers||{});
+  const filt = _wkFilter==='all'?ws:ws.filter(w=>inferClass(w)===_wkFilter);
+  txt('w-card-cnt','('+filt.length+')');
+  const g=$('w-card-grid');
+  if(!g) return;
+  if(!filt.length){g.innerHTML='<div style="color:var(--dim);font-size:10px;padding:10px">No workers'+ (_wkFilter!=='all'?' in class '+_wkFilter:'')+'</div>';return;}
+  g.innerHTML = filt.map(wkCard).join('');
+}
+
+function wkCard(w){
+  const id = w.id||w.worker_id||w.host||'?';
+  const cls = inferClass(w);
+  const stat = w.status||'unknown';
+  const caps = w.capabilities||[];
+  const olInst = w.ollama_instance||'';
+  const hasOll = !!olInst;
+  const taskHTML = (w.current_task&&w.current_task!=='')
+    ? '<div class="wk-task-val">'+esc(w.current_task)+(w.task_duration_s!=null?'<span class="wk-task-dur">'+w.task_duration_s+'s</span>':'')+'</div>'
+    : '<div class="wk-task-idle">idle</div>';
+  const chips = caps.slice(0,8).map(c=>'<span class="wk-chip" title="'+esc(c)+'">'+esc(c.split('.').pop())+'</span>').join('');
+  const chipMore = caps.length>8?'<span class="wk-chip-m">+'+(caps.length-8)+'</span>':'';
+  const eid = esc(id);
+  const spCls = 'sp-'+stat.replace(/^running:.*/,'running');
+
+  // Resource bars
+  const cpuPct = w.cpu_pct!=null?Math.round(parseFloat(w.cpu_pct)):null;
+  const ramPct = (w.ram_used_gb!=null&&w.ram_total_gb>0)?Math.round(parseFloat(w.ram_used_gb)/parseFloat(w.ram_total_gb)*100):null;
+  let resHTML='';
+  if(cpuPct!=null||ramPct!=null){
+    resHTML='<div class="wk-res">';
+    if(cpuPct!=null) resHTML+='<div class="wk-res-row"><span class="wk-res-lbl">CPU</span><div class="wk-res-bar"><div class="wk-res-fill '+fillCls(cpuPct)+'" style="width:'+cpuPct+'%"></div></div><span class="wk-res-pct">'+cpuPct+'%</span></div>';
+    if(ramPct!=null) resHTML+='<div class="wk-res-row"><span class="wk-res-lbl">RAM</span><div class="wk-res-bar"><div class="wk-res-fill '+fillCls(ramPct)+'" style="width:'+ramPct+'%"></div></div><span class="wk-res-pct">'+ramPct+'%</span></div>';
+    resHTML+='</div>';
+  }
+
+  return '<div class="wk-card'+(_selWorker===id?' sel':'')+'" data-cls="'+cls+'" onclick="P.wkSel('+sq(eid)+')">'
+    +'<div class="wk-ch"><span class="wk-cls">'+cls+'</span><span class="wk-name">'+esc(w.label||id)+'</span>'
+    +(hasOll?'<span class="wk-oll-badge">⚡ OLLAMA</span>':'')
+    +'<span class="wk-spill '+spCls+'">'+stat+'</span></div>'
+    +'<div class="wk-stat-row">'
+    +'<div class="wk-stat"><div class="wk-stat-lbl">Done</div><div class="wk-stat-val">'+(parseInt(w.tasks_done)||0)+'</div></div>'
+    +'<div class="wk-stat"><div class="wk-stat-lbl">Failed</div><div class="wk-stat-val" style="color:'+(parseInt(w.tasks_failed)?'var(--err)':'var(--text)')+'">'+(parseInt(w.tasks_failed)||0)+'</div></div>'
+    +'<div class="wk-stat"><div class="wk-stat-lbl">Caps</div><div class="wk-stat-val">'+caps.length+'</div></div>'
+    +'<div class="wk-stat"><div class="wk-stat-lbl">PID</div><div class="wk-stat-val" style="color:var(--dim2);font-size:9px">'+(w.pid||'—')+'</div></div>'
+    +'</div>'
+    +resHTML
+    +'<div class="wk-task"><div class="wk-task-lbl">Current Task</div>'+taskHTML+'</div>'
+    +'<div class="wk-caps">'+(chips+chipMore||'<span style="font-size:8px;color:var(--dim)">No capabilities</span>')+'</div>'
+    +'<div class="wk-cf"><button class="btn sm" onclick="event.stopPropagation();P.wkSel('+sq(eid)+')">Detail</button>'
+    +'<button class="btn sm warn-btn" onclick="event.stopPropagation();P.wkDrain('+sq(eid)+')">Drain</button>'
+    +'<span class="wk-host">'+esc(w.host||'')+'</span></div>'
+    +'</div>';
+}
+
+function wkSel(id){
+  _selWorker = id;
+  document.querySelectorAll('.wk-card').forEach(el=>el.classList.remove('sel'));
+  const el = document.querySelector('[onclick*="'+id+'"]');
+  if(el&&el.classList.contains('wk-card')) el.classList.add('sel');
+  renderWorkerDetail();
+}
+
+function renderWorkerDetail(){
+  const el=$('w-det-body');if(!el||!_cluster) return;
+  if(!_selWorker){el.innerHTML='<span style="color:var(--dim);font-size:10px">Click a worker card</span>';return;}
+  const w=(_cluster.workers||{})[_selWorker];
+  if(!w){el.innerHTML='<span style="color:var(--dim);font-size:10px">Worker not found</span>';return;}
+  const olInst=w.ollama_instance||'';
+  const olNode=olInst?(_cluster.ollama||{})[olInst]:null;
+  const rows=[
+    ['ID',w.id||w.worker_id],['Host',w.host||'—'],['PID',w.pid||'—'],
+    ['Status',w.status||'—'],['Class',inferClass(w)],
+    ['Tasks Done',parseInt(w.tasks_done)||0],['Tasks Failed',parseInt(w.tasks_failed)||0],
+    ['Caps',(w.capabilities||[]).length],
+    null,
+    ['Ollama Node',olInst||'none'],
+    ['Ollama Status',olNode?(olNode.status||'—'):'—'],
+    ['VRAM',olNode&&olNode.vram_used_gb!=null?olNode.vram_used_gb+' GB':'—'],
+  ];
+  let html='<div class="det-ttl">'+esc(w.label||w.id||'?')+'</div>';
+  rows.forEach(r=>{
+    if(!r){html+='<div style="height:4px"></div>';return;}
+    html+='<div class="det-row"><span class="det-k">'+esc(r[0])+'</span><span class="det-v">'+esc(String(r[1]!=null?r[1]:'—'))+'</span></div>';
+  });
+  // Show all caps
+  if((w.capabilities||[]).length){
+    html+='<div style="margin-top:8px"><div class="det-ttl">Capabilities ('+w.capabilities.length+')</div>';
+    html+=w.capabilities.sort().map(c=>'<div class="det-row"><span class="det-k" style="color:var(--acc2)">✓ '+esc(c)+'</span></div>').join('');
+    html+='</div>';
+  }
+  el.innerHTML=html;
+  setDot('w-detail','ok');
+}
+
+async function wkDrain(id){
+  if(!confirm('Drain worker '+id+'?')) return;
+  await api('/cluster/workers/'+encodeURIComponent(id)+'/drain','POST');
+  setTimeout(refresh,800);
+}
+
+async function wkRemoveStale(){
+  if(!_cluster) return;
+  const ws = Object.entries(_cluster.workers||{});
+  const stale = ws.filter(([,w])=>{
+    const s = w.status||'';
+    // Catch offline, unknown, AND starting workers that have been starting for >5min
+    const isStaleStatus = (s==='offline'||s==='unknown'||s==='starting');
+    if(!isStaleStatus) return false;
+    const hb = w.last_heartbeat||w.started||'';
+    if(!hb) return true; // no timestamp at all = definitely stale
+    try{ const d=new Date(hb); return (Date.now()-d.getTime())>300000; }catch(e){ return true; }
+  });
+  if(!stale.length){ alert('No stale workers found'); return; }
+  if(!confirm('Remove '+stale.length+' stale worker(s)?\n\n'+stale.map(([id,w])=>id+' ('+w.status+')').join('\n'))) return;
+  await Promise.all(stale.map(([id])=>
+    api('/cluster/workers/'+encodeURIComponent(id)+'/remove','DELETE')
+      .then(r=>r)
+      .catch(()=>api('/cluster/workers/'+encodeURIComponent(id)+'/drain','POST'))
+  ));
+  setTimeout(refresh,1000);
+}
+
+// ── Ollama pane ──────────────────────────────────────────────────────────────
+function renderOllama(){
+  if(!_cluster) return;
+  const nodes = Object.entries(_cluster.ollama||{});
+  const online = nodes.filter(([,n])=>n.status==='online').length;
+  const allModels = new Set();
+  let totalActive = 0;
+  nodes.forEach(([,n])=>{(n.models||[]).forEach(m=>allModels.add(m));totalActive+=(n.in_use||0);});
+
+  txt('k-ol-on',online+'/'+nodes.length);
+  txt('k-ol-on-sub',nodes.length+' total');
+  txt('k-ol-mod',allModels.size);
+  txt('k-ol-active',totalActive);
+  txt('ol-node-cnt','('+nodes.length+')');
+  setDot('ol-online',online===nodes.length&&nodes.length>0?'ok':online>0?'warn':'err');
+  setDot('ol-nodes',online>0?'ok':'err');
+
+  // Populate selects
+  const ids = nodes.map(([id])=>id);
+  ['ol-pin','ol-test-inst','emb-pin'].forEach(sid=>{
+    const el=$(sid);if(!el) return;
+    const prev=el.value;
+    const blank=sid==='ol-pin'?'<option value="">None (strategy)</option>'
+      :sid==='emb-pin'?'<option value="">Auto (strategy)</option>'
+      :'<option value="">Auto</option>';
+    el.innerHTML=blank+ids.map(id=>{
+      const n=(_cluster.ollama||{})[id]||{};
+      return '<option value="'+id+'">'+esc(n.label||id)+(n.has_gpu?' ⚡':'')+(n.status!=='online'?' ✗':'')+'</option>';
+    }).join('');
+    if(prev&&ids.includes(prev)) el.value=prev;
+  });
+  // Models select for test
+  const tmEl=$('ol-test-model');
+  if(tmEl){
+    const prev=tmEl.value;
+    tmEl.innerHTML='<option value="">Default</option>'+Array.from(allModels).map(m=>'<option value="'+esc(m)+'">'+esc(m)+'</option>').join('');
+    if(prev&&allModels.has(prev)) tmEl.value=prev;
+  }
+
+  renderOllamaNodes(nodes);
+}
+
+function renderOllamaNodes(nodes){
+  const el=$('ol-nodes-body');if(!el) return;
+  if(!nodes.length){el.innerHTML='<span style="color:var(--dim);font-size:10px">No Ollama instances configured</span>';return;}
+
+  el.innerHTML='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:8px">'+nodes.map(([id,n])=>{
+    const online = n.status==='online';
+    const statusCol = online?'var(--ok)':'var(--err)';
+    const latCol = online?(n.latency_ms<100?'var(--ok)':n.latency_ms<500?'var(--warn)':'var(--err)'):'var(--dim)';
+    const pinned = _routing.pinned===id;
+
+    // VRAM bar
+    const vramBar = n.vram_used_gb>0
+      ?`<div style="display:flex;align-items:center;gap:5px;margin-top:5px">
+          <div style="flex:1;height:4px;background:var(--bg0);border-radius:2px;overflow:hidden">
+            <div style="height:100%;background:var(--gpu);border-radius:2px;width:${Math.min(100,n.vram_used_gb*10)}%"></div>
+          </div>
+          <span style="font-size:8px;color:var(--gpu)">${n.vram_used_gb}GB VRAM</span>
+        </div>`:''
+
+    // Running models
+    const running = (n.running||[]).length
+      ?`<div style="margin-top:4px"><span style="font-size:8px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px">Running:</span><div class="ol-models" style="margin-top:3px">${(n.running||[]).map(m=>'<span class="ol-model running">'+esc(m.split(':')[0])+'</span>').join('')}</div></div>`:'';
+
+    // Available models
+    const models = (n.models||[]).slice(0,12).map(m=>'<span class="ol-model" title="Click to delete" onclick="event.stopPropagation();P.openDeleteModel('+sq(id)+','+sq(m)+')">'+esc(m.split(':')[0])+'<span style="font-size:6px;margin-left:2px;color:var(--err);opacity:.5">×</span></span>').join('');
+
+    return `<div class="ol-card ${online?'online':'offline'}">
+      <div class="ol-head">
+        <div style="width:7px;height:7px;border-radius:50%;background:${statusCol};flex-shrink:0"></div>
+        <span class="ol-label">${esc(n.label||id)}</span>
+        ${n.has_gpu?'<span class="ol-badge gpu">⚡ GPU</span>':'<span class="ol-badge cpu">CPU</span>'}
+        ${pinned?'<span class="ol-badge pin">PINNED</span>':''}
+      </div>
+      <div class="ol-meta">
+        <span>${esc(n.url||'')}</span>
+        ${n.version?'<span>v'+esc(n.version)+'</span>':''}
+      </div>
+      <div class="ol-stat-grid">
+        <div class="ol-stat"><div class="ol-stat-lbl">Status</div><div class="ol-stat-val" style="color:${statusCol}">${online?'ONLINE':'OFFLINE'}</div></div>
+        <div class="ol-stat"><div class="ol-stat-lbl">Latency</div><div class="ol-stat-val" style="color:${latCol}">${n.latency_ms!=null?n.latency_ms+'ms':'—'}</div></div>
+        <div class="ol-stat"><div class="ol-stat-lbl">Active</div><div class="ol-stat-val" style="color:${(n.in_use||0)>0?'var(--warn)':'var(--ok)'}">${n.in_use||0}</div></div>
+      </div>
+      ${vramBar}
+      ${running}
+      ${models?'<div style="margin-top:5px"><span style="font-size:8px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px">Models:</span><div class="ol-models" style="margin-top:3px">'+models+'</div></div>':''}
+      <div class="ol-actions">
+        <button class="btn sm" onclick="P.olPing(${sq(id)})">Ping</button>
+        <button class="btn sm ${pinned?'primary':''}" onclick="P.olTogglePin(${sq(id)})">${pinned?'Unpin':'Pin'}</button>
+        <button class="btn sm gpu-btn" onclick="P.openPullModal(${sq(id)})">⬇ Pull</button>
+        <span style="flex:1"></span>
+        <span style="font-size:8px;color:var(--dim2);font-family:var(--mono)">${n.errors?'errors:'+n.errors:''}</span>
+        <span style="font-size:8px;color:var(--dim2);font-family:var(--mono)">${(n.last_check||'').slice(11,19)||''}</span>
+      </div>
+    </div>`;
+  }).join('')+'</div>';
+}
+
+function setStrat(el){
+  document.querySelectorAll('#ol-strats .strat').forEach(s=>s.classList.remove('active'));
+  el.classList.add('active');
+  _routing.strategy = el.dataset.s;
+}
+
+async function olPing(id){
+  await api('/ollama/ping','POST',{instance_id:id});
+  setTimeout(refresh,600);
+}
+
+async function olPingAll(){
+  const nodes = Object.keys((_cluster||{}).ollama||{});
+  await Promise.all(nodes.map(id=>api('/ollama/ping','POST',{instance_id:id})));
+  setTimeout(refresh,1000);
+}
+
+function olTogglePin(id){
+  _routing.pinned = _routing.pinned===id?'':id;
+  renderOllama();
+}
+
+async function olTestGenerate(){
+  const inst = $('ol-test-inst').value;
+  const model = $('ol-test-model').value;
+  const temp = parseFloat($('ol-test-temp').value)||0.7;
+  const maxTok = parseInt($('ol-test-maxtok').value)||256;
+  const prompt = $('ol-test-prompt').value.trim();
+  if(!prompt){$('ol-test-status').textContent='Enter a prompt';return;}
+  $('ol-test-status').textContent='Generating…';
+  $('ol-test-result').style.display='block';
+  $('ol-test-result').textContent='…';
+  const payload = {prompt, model:model||undefined, instance_id:inst||undefined, temperature:temp, num_predict:maxTok};
+  const res = await api('/llm/generate','POST',payload);
+  if(res&&!res.error){
+    $('ol-test-result').textContent = res.text||res.response||JSON.stringify(res,null,2);
+    $('ol-test-status').textContent = '✓ '+(res.model||'')+(res.instance_id?' on '+res.instance_id:'');
+  } else {
+    $('ol-test-result').textContent = 'Error: '+(res?.error||'Unknown');
+    $('ol-test-status').textContent = '✗ Failed';
+  }
+}
+
+// ── Embed config ────────────────────────────────────────────────────────────
+let _embedCfgLoaded = false;
+
+async function loadEmbedCfg(){
+  const res = await api('/ollama/embed_config');
+  if(!res||res.error) return;
+  const m=$('emb-model'); if(m) m.value = res.embed_model||'';
+  const g=$('emb-gpu');   if(g) g.checked = !!res.prefer_gpu;
+  const p=$('emb-pin');
+  if(p && res.pinned_instance){
+    // ensure option exists then select
+    let found=false;
+    for(const o of p.options){if(o.value===res.pinned_instance){found=true;break;}}
+    if(found) p.value=res.pinned_instance;
+  }
+  _embedCfgLoaded = true;
+}
+
+async function saveEmbedCfg(){
+  const model = ($('emb-model')||{}).value||'';
+  const gpu   = ($('emb-gpu')||{}).checked||false;
+  const pin   = ($('emb-pin')||{}).value||'';
+  const st    = $('emb-status');
+  if(st) st.textContent = 'Saving…';
+  const payload = {};
+  if(model) payload.embed_model = model;
+  payload.prefer_gpu = gpu;
+  payload.pinned_instance = pin||'__clear__';
+  const res = await api('/ollama/embed_config','POST',payload);
+  if(res&&!res.error){
+    if(st) st.textContent = '✓ Saved: model='+res.embed_model+
+      (res.prefer_gpu?' gpu=on':' gpu=off')+
+      (res.pinned_instance?' pin='+res.pinned_instance:'');
+    setTimeout(()=>{if(st) st.textContent='';},4000);
+  } else {
+    if(st) st.textContent = '✗ '+(res?.error||'Failed');
+  }
+}
+
+// ── Jobs pane ────────────────────────────────────────────────────────────────
+function jTab(t){
+  _jTab=t;
+  ['pending','running','done'].forEach(k=>{
+    const el=$('jt-'+k);if(el) el.classList.toggle('active',k===t);
+  });
+  renderJobList();
+}
+
+function renderJobs(){
+  ['pending','running','done'].forEach(k=>{
+    txt('jc-'+k,(_jobs[k]||[]).length);
+  });
+  txt('k-j-pend',(_jobs.pending||[]).length);
+  txt('k-j-run',(_jobs.running||[]).length);
+  txt('k-j-done',(_jobs.done||[]).length);
+  const failCount = (_jobs.done||[]).filter(j=>j.success===false||j.error).length;
+  txt('k-j-fail',failCount);
+  setDot('j-pending',(_jobs.pending||[]).length>0?'warn':'ok');
+  setDot('j-running',(_jobs.running||[]).length>0?'warn':'ok');
+  setDot('j-done-kpi',(_jobs.done||[]).length>0?'ok':'');
+  setDot('j-failed-kpi',failCount>0?'err':'ok');
+  renderJobList();
+}
+
+function renderJobList(){
+  const jobs = _jobs[_jTab]||[];
+  const tbody=$('j-tbody');
+  const empty=$('j-empty');
+  const tbl=$('j-table');
+  if(!tbody) return;
+  if(!jobs.length){
+    tbody.innerHTML='';
+    if(empty) empty.style.display='block';
+    if(tbl) tbl.style.display='none';
+    return;
+  }
+  if(empty) empty.style.display='none';
+  if(tbl) tbl.style.display='';
+  const badgeCls = {pending:'j-pending',running:'j-running',done:'j-done'};
+  tbody.innerHTML = jobs.slice(0,100).map(j=>{
+    const state = j.success===false||j.error?'failed':_jTab;
+    const bc = state==='failed'?'j-failed':(badgeCls[_jTab]||'j-pending');
+    const callerInfo = j.caller_file ? esc(j.caller_file)+':'+esc(j.caller_func||'?') : '';
+    return '<tr>'
+      +'<td style="font-size:9px;color:var(--dim2)">'+esc((j.task_id||j.id||'').slice(-10))+'</td>'
+      +'<td>'+esc(j.cap_name||j.capability||'?')+'</td>'
+      +'<td>'+esc(j.worker_id||j.worker||'—')+'</td>'
+      +(callerInfo?'<td style="font-size:9px;color:var(--acc2)">'+callerInfo+'</td>':'<td>—</td>')
+      +'<td>'+age(j.created_at||j.queued_at||j.ts)+'</td>'
+      +'<td><span class="j-badge '+bc+'">'+state+'</span></td>'
+      +'</tr>';
+  }).join('');
+}
+
+// ── Grid layout management (shared across panes) ────────────────────────────
+function gridId(pane){
+  return pane==='workers'?'w-grid':pane==='ollama'?'ol-grid':pane==='observe'?'obs-grid':'j-grid';
+}
+
+function gridToggleEdit(pane){
+  const lay=_lay(pane);
+  lay.editing=!lay.editing;
+  const grid=$(gridId(pane));
+  if(grid) grid.classList.toggle('editing',lay.editing);
+  const btn=$(pane==='workers'?'w-edit-btn':pane==='ollama'?'ol-edit-btn':'j-edit-btn');
+  if(btn){btn.textContent=lay.editing?'✓ Done':'⚙ Configure';btn.classList.toggle('primary',lay.editing);}
+  gridRenderHidden(pane);
+}
+
+function gridHide(pane, wid){
+  _lay(pane).hidden.add(wid);
+  gridSave(pane);gridApply(pane);
+}
+
+function gridShow(pane, wid){
+  _lay(pane).hidden.delete(wid);
+  gridSave(pane);gridApply(pane);
+}
+
+function gridSave(pane){
+  try{
+    const lay=_lay(pane);
+    localStorage.setItem(STORAGE_KEY+pane,JSON.stringify({order:lay.order,hidden:Array.from(lay.hidden),sizes:lay.sizes}));
+  }catch(e){}
+}
+
+function gridLoad(pane){
+  try{
+    const raw=localStorage.getItem(STORAGE_KEY+pane);
+    if(!raw) return;
+    const j=JSON.parse(raw);
+    const lay=_lay(pane);
+    lay.order=Array.isArray(j.order)?j.order:[];
+    lay.hidden=new Set(Array.isArray(j.hidden)?j.hidden:[]);
+    lay.sizes=(j.sizes&&typeof j.sizes==='object')?j.sizes:{};
+  }catch(e){}
+}
+
+function gridApply(pane){
+  const grid=$(gridId(pane));if(!grid) return;
+  const lay=_lay(pane);
+  const widgets=Array.from(grid.querySelectorAll('.widget'));
+  // Apply hidden
+  widgets.forEach(w=>{
+    if(lay.hidden.has(w.dataset.wid)) w.classList.add('hidden');
+    else w.classList.remove('hidden');
+  });
+  // Apply sizes
+  for(const [wid,sz] of Object.entries(lay.sizes)){
+    const w=widgets.find(x=>x.dataset.wid===wid);if(!w) continue;
+    if(sz.w){[2,3,4,6,8,12].forEach(n=>w.classList.remove('w-w'+n));w.classList.add('w-w'+sz.w);}
+    if(sz.h){[1,2,3,4,5,6].forEach(n=>w.classList.remove('w-h'+n));w.classList.add('w-h'+sz.h);}
+  }
+  gridRenderHidden(pane);
+}
+
+function gridRenderHidden(pane){
+  const lay=_lay(pane);
+  const prefix=pane==='workers'?'w':pane==='ollama'?'ol':pane==='observe'?'obs':'j';
+  const picker=$(prefix+'-hidden-picker');
+  const host=$(prefix+'-hidden-chips');
+  if(!picker||!host) return;
+  if(!lay.hidden.size||!lay.editing){picker.style.display='none';return;}
+  picker.style.display='flex';
+  const grid=$(gridId(pane));
+  const widgets=grid?Array.from(grid.querySelectorAll('.widget')):[];
+  host.innerHTML=Array.from(lay.hidden).map(wid=>{
+    const w=widgets.find(x=>x.dataset.wid===wid);
+    const label=w?(w.querySelector('.w-title')?.textContent||wid):wid;
+    return '<span class="pick-chip" onclick="P.gridShow(\''+pane+'\',\''+wid+'\')">+ '+esc(label)+'</span>';
+  }).join('');
+}
+
+function gridReset(pane){
+  if(!confirm('Reset '+pane+' layout to defaults?')) return;
+  try{localStorage.removeItem(STORAGE_KEY+pane);}catch(e){}
+  const lay=_lay(pane);
+  lay.order=[];lay.hidden=new Set();lay.sizes={};
+  gridApply(pane);
+}
+
+// ── Drag & drop reordering ───────────────────────────────────────────────────
+let _dragSrc=null;
+function _onDragStart(e){
+  const pane=_activePaneForGrid(e.target);
+  if(!pane||!_lay(pane).editing) return;
+  const w=e.target.closest('.widget');
+  if(!w) return;
+  _dragSrc=w;
+  w.classList.add('dragging');
+  try{e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',w.dataset.wid);}catch(_e){}
+}
+function _onDragOver(e){
+  const pane=_activePaneForGrid(e.target);
+  if(!pane||!_lay(pane).editing||!_dragSrc) return;
+  const w=e.target.closest('.widget');
+  if(!w||w===_dragSrc) return;
+  e.preventDefault();
+  w.closest('.dash-grid').querySelectorAll('.widget.drag-over').forEach(x=>x.classList.remove('drag-over'));
+  w.classList.add('drag-over');
+}
+function _onDragLeave(e){
+  const w=e.target.closest('.widget');
+  if(w) w.classList.remove('drag-over');
+}
+function _onDrop(e){
+  const pane=_activePaneForGrid(e.target);
+  if(!pane||!_lay(pane).editing||!_dragSrc) return;
+  const target=e.target.closest('.widget');
+  if(!target||target===_dragSrc) return;
+  e.preventDefault();
+  const grid=target.closest('.dash-grid');
+  const rect=target.getBoundingClientRect();
+  const before=(e.clientX<rect.left+rect.width/2);
+  grid.insertBefore(_dragSrc,before?target:target.nextSibling);
+  grid.querySelectorAll('.widget.drag-over').forEach(x=>x.classList.remove('drag-over'));
+  _lay(pane).order=Array.from(grid.querySelectorAll('.widget')).map(w=>w.dataset.wid);
+  gridSave(pane);
+}
+function _onDragEnd(){
+  if(_dragSrc) _dragSrc.classList.remove('dragging');
+  document.querySelectorAll('.widget.drag-over').forEach(x=>x.classList.remove('drag-over'));
+  _dragSrc=null;
+}
+
+function _onResizeMouseDown(e){
+  const pane=_activePaneForGrid(e.target);
+  if(!pane||!_lay(pane).editing) return;
+  const handle=e.target.closest('.w-resize');if(!handle) return;
+  e.preventDefault();e.stopPropagation();
+  const widget=handle.closest('.widget');if(!widget) return;
+  const startX=e.clientX,startY=e.clientY;
+  const curW=parseInt((widget.className.match(/w-w(\d+)/)||[])[1]||'4',10);
+  const curH=parseInt((widget.className.match(/w-h(\d+)/)||[])[1]||'1',10);
+  const STEP_X=80,STEP_Y=70;
+  const onMove=(ev)=>{
+    const dx=ev.clientX-startX,dy=ev.clientY-startY;
+    let newW=Math.max(2,Math.min(12,curW+Math.round(dx/STEP_X)));
+    let newH=Math.max(1,Math.min(6,curH+Math.round(dy/STEP_Y)));
+    const allowed=[2,3,4,6,8,12];
+    let nearest=allowed[0],best=Infinity;
+    for(const a of allowed){const d=Math.abs(a-newW);if(d<best){best=d;nearest=a;}}
+    newW=nearest;
+    [2,3,4,6,8,12].forEach(n=>widget.classList.remove('w-w'+n));
+    [1,2,3,4,5,6].forEach(n=>widget.classList.remove('w-h'+n));
+    widget.classList.add('w-w'+newW);widget.classList.add('w-h'+newH);
+    _lay(pane).sizes[widget.dataset.wid]={w:newW,h:newH};
+  };
+  const onUp=()=>{
+    document.removeEventListener('mousemove',onMove);
+    document.removeEventListener('mouseup',onUp);
+    gridSave(pane);
+  };
+  document.addEventListener('mousemove',onMove);
+  document.addEventListener('mouseup',onUp);
+}
+
+function _activePaneForGrid(el){
+  const grid=el.closest('.dash-grid');
+  if(!grid) return null;
+  if(grid.id==='w-grid') return 'workers';
+  if(grid.id==='ol-grid') return 'ollama';
+  if(grid.id==='j-grid') return 'jobs';
+  if(grid.id==='obs-grid') return 'observe';
+  return null;
+}
+
+function _initGridDrag(gridEl){
+  if(!gridEl||gridEl._dragInit) return;
+  gridEl._dragInit=true;
+  gridEl.querySelectorAll('.widget').forEach(w=>{
+    w.setAttribute('draggable','true');
+    w.addEventListener('dragstart',_onDragStart);
+    w.addEventListener('dragover',_onDragOver);
+    w.addEventListener('dragleave',_onDragLeave);
+    w.addEventListener('drop',_onDrop);
+    w.addEventListener('dragend',_onDragEnd);
+  });
+  gridEl.addEventListener('mousedown',_onResizeMouseDown);
+}
+
+// ── Observe pane ────────────────────────────────────────────────────────────
+const OBS_MAX=500;
+let _obsEvents=[];
+let _obsPaused=false;
+let _obsFilters={cap:true,ok:true,err:true,agent:true,memory:true,fabric:true,system:true,other:true};
+let _obsWs=null;
+
+function obsCategory(ev){
+  const t=ev.type||'';
+  if(t.startsWith('cap.error')||t.startsWith('syslog.error')) return 'err';
+  if(t.startsWith('cap.ok')) return 'ok';
+  if(t.startsWith('cap.')) return 'cap';
+  if(t.startsWith('agent.')) return 'agent';
+  if(t.startsWith('memory.')) return 'memory';
+  if(t.startsWith('fabric.')||t.startsWith('data.')) return 'fabric';
+  if(t.startsWith('heartbeat')||t.startsWith('backend.')||t.startsWith('server.')) return 'system';
+  return 'other';
+}
+
+function obsIngest(ev){
+  if(_obsPaused) return;
+  ev._cat=obsCategory(ev);
+  _obsEvents.push(ev);
+  if(_obsEvents.length>OBS_MAX) _obsEvents.shift();
+  obsRenderRow(ev);
+  txt('obs-count',_obsEvents.length+' events');
+}
+
+function obsRenderRow(ev){
+  const feed=$('obs-feed');if(!feed) return;
+  if(!_obsFilters[ev._cat]) return;
+  const row=document.createElement('div');
+  row.className='obs-row cat-'+ev._cat;
+  const ts=new Date().toLocaleTimeString();
+  const summary=esc((ev.type||'?')+' '+(ev.msg||ev.text||JSON.stringify(ev).slice(0,120)));
+  row.innerHTML='<span style="color:var(--dim);font-size:8px;margin-right:5px">'+ts+'</span>'+summary
+    +'<div class="obs-detail">'+esc(JSON.stringify(ev,null,2).slice(0,800))+'</div>';
+  row.onclick=function(){this.classList.toggle('expanded');};
+  feed.appendChild(row);
+  if(feed.children.length>OBS_MAX) feed.removeChild(feed.firstChild);
+  feed.scrollTop=feed.scrollHeight;
+}
+
+function obsRenderChips(){
+  const host=$('obs-chips');if(!host) return;
+  host.innerHTML=Object.keys(_obsFilters).map(k=>{
+    return '<span class="obs-chip'+((_obsFilters[k])?' on':'')+'" onclick="P.obsToggleChip(\''+k+'\')">'+k+'</span>';
+  }).join('');
+}
+
+function obsToggleChip(k){
+  _obsFilters[k]=!_obsFilters[k];
+  obsRenderChips();
+  obsRefilter();
+}
+
+function obsRefilter(){
+  const feed=$('obs-feed');if(!feed) return;
+  feed.innerHTML='';
+  _obsEvents.forEach(ev=>{if(_obsFilters[ev._cat]) obsRenderRow(ev);});
+}
+
+function obsClear(){
+  _obsEvents=[];
+  const feed=$('obs-feed');if(feed) feed.innerHTML='';
+  txt('obs-count','0 events');
+}
+
+function obsTogglePause(){
+  _obsPaused=!_obsPaused;
+  txt('obs-pause-btn',_obsPaused?'Resume':'Pause');
+}
+
+function obsConnectWs(){
+  try{
+    // Use the canonical /ws/mcp endpoint and subscribe to the event stream.
+    // (Bare /ws is not a defined route — Starlette rejects it with 403.)
+    const wsUrl=BASE.replace(/^http/,'ws')+'/ws/mcp';
+    _obsWs=new WebSocket(wsUrl);
+    _obsWs.onopen=function(){
+      try{ _obsWs.send(JSON.stringify({action:'subscribe_events'})); }catch(_e){}
+    };
+    _obsWs.onmessage=function(e){
+      try{
+        const msg=JSON.parse(e.data);
+        // /ws/mcp wraps events as {type:'event', data:{...}} — unwrap.
+        const ev=(msg && msg.type==='event' && msg.data) ? msg.data : msg;
+        if(!ev || !ev.type) return;
+        obsIngest(ev);
+        // Route syslog errors to the system log widget
+        if(ev.type==='syslog.error') syslogIngestWsError(ev);
+        if(ev.type==='syslog.monitor_report') syslogHandleMonReport(ev);
+        // Track LLM capability calls as jobs so they appear in the Jobs pane
+        _ingestCapEventAsJob(ev);
+      }catch(_e){}
+    };
+    _obsWs.onclose=function(){setTimeout(obsConnectWs,3000);};
+    _obsWs.onerror=function(){try{_obsWs.close();}catch(_e){}};
+  }catch(_e){
+    setTimeout(obsConnectWs,5000);
+  }
+}
+
+// ── System Log ──────────────────────────────────────────────────────────────
+let _slEntries=[];
+let _slAutoTimer=null;
+let _slSelected=null;
+
+async function syslogLoad(){
+  const level=($('sl-level')||{}).value||'';
+  const cat=($('sl-cat')||{}).value||'';
+  const keyword=($('sl-keyword')||{}).value||'';
+  const limit=parseInt(($('sl-limit')||{}).value)||50;
+  txt('sl-status','Loading…');
+  const data=await api('/syslog/query','POST',{limit,level,category:cat,keyword});
+  if(!data||data.error){txt('sl-status',data?.error||'Failed');return;}
+  _slEntries=data.entries||[];
+  txt('sl-count',_slEntries.length+' entries');
+  txt('sl-status','Loaded '+_slEntries.length);
+  syslogRender();
+}
+
+function syslogRender(){
+  const host=$('sl-entries');if(!host) return;
+  if(!_slEntries.length){host.innerHTML='<span style="color:var(--dim);font-size:9px">No entries</span>';return;}
+  const levelCol={ERROR:'var(--err)',WARNING:'var(--warn,#c9a35a)',INFO:'var(--acc2)',DEBUG:'var(--dim2)'};
+  host.innerHTML=_slEntries.map((e,i)=>{
+    const lvl=e.level||'INFO';
+    const cap=e.cap_name||e.name||'';
+    const ts=(e.ts||'').slice(11,19);
+    const msg=esc((e.message||e.msg||'').slice(0,200));
+    const detail=e.detail||e.traceback||'';
+    return '<div class="sl-entry" data-idx="'+i+'" onclick="P.syslogToggleEntry(this)">'
+      +'<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">'
+      +'<span style="font-size:8.5px;font-weight:700;font-family:var(--mono);text-transform:uppercase;letter-spacing:.5px;color:'+(levelCol[lvl]||'var(--dim2)')+'">'+esc(lvl)+'</span>'
+      +(cap?'<span style="font-size:9px;font-family:var(--mono);color:var(--acc2);font-weight:600">'+esc(cap)+'</span>':'')
+      +'<span style="font-size:7.5px;color:var(--dim2);margin-left:auto;font-family:var(--mono)">'+esc(ts)+'</span>'
+      +'</div>'
+      +'<div style="font-size:9px;color:var(--text);margin-top:2px;line-height:1.4;word-break:break-word">'+msg+'</div>'
+      +(detail?'<div class="sl-detail" style="display:none;font-size:8px;color:var(--dim2);margin-top:3px;white-space:pre-wrap;word-break:break-all;background:var(--bg0);padding:4px;border-radius:2px;border:1px solid var(--border);max-height:140px;overflow-y:auto">'+esc(detail.slice(0,1500))+'</div>':'')
+      +'</div>';
+  }).join('');
+}
+
+function syslogToggleEntry(el){
+  const detail=el.querySelector('.sl-detail');
+  if(detail) detail.style.display=detail.style.display==='none'?'block':'none';
+  // Track selection for ask
+  const idx=parseInt(el.dataset.idx);
+  if(!isNaN(idx)&&_slEntries[idx]) _slSelected=_slEntries[idx];
+}
+
+function syslogIngestWsError(ev){
+  const box=$('sl-ws-box');if(!box) return;
+  box.style.display='flex';
+  const div=document.createElement('div');
+  div.style.cssText='padding:3px 5px;font-size:8.5px;font-family:var(--mono);border-left:3px solid var(--err);color:var(--err);background:rgba(201,107,107,.04);border-radius:2px;line-height:1.3;cursor:pointer;word-break:break-all';
+  const lvl=ev.level||'ERROR';const logger=ev.logger||ev.cap_name||'';const msg=ev.message||ev.msg||ev.error||'';
+  div.textContent='['+lvl+'] '+logger+': '+msg.slice(0,160);
+  div.title='Click to use in ask-agent';
+  div.addEventListener('click',function(){
+    const ta=$('sl-ask-q');
+    if(ta) ta.value='Diagnose this error from '+logger+': '+msg.slice(0,250);
+    _slSelected=ev;
+  });
+  box.insertBefore(div,box.firstChild);
+  while(box.children.length>15) box.removeChild(box.lastChild);
+}
+
+function syslogHandleMonReport(ev){
+  const report=$('sl-mon-report');if(!report) return;
+  report.style.display='block';
+  report.textContent=ev.analysis||ev.report||ev.message||JSON.stringify(ev,null,2).slice(0,1200);
+}
+
+function syslogToggleAuto(){
+  if(_slAutoTimer){clearInterval(_slAutoTimer);_slAutoTimer=null;txt('sl-auto-btn','Auto');return;}
+  _slAutoTimer=setInterval(syslogLoad,10000);
+  txt('sl-auto-btn','Auto ■');
+}
+
+async function syslogClear(){
+  if(!confirm('Trim system log to last 500 entries?')) return;
+  await api('/syslog/clear','POST',{keep:500});
+  syslogLoad();
+}
+
+async function syslogMonRun(){
+  txt('sl-status','Running monitor…');
+  const res=await api('/syslog/monitor/run','POST');
+  if(res) syslogHandleMonReport(res);
+  else txt('sl-status','Monitor failed');
+}
+
+// Unified toggle: reads current state from the indicator dot
+let _monitorOn=false;
+async function syslogMonToggle(){
+  if(_monitorOn){
+    const res=await api('/syslog/monitor/stop','POST');
+    txt('sl-status',res?.status||'Stopped');
+  } else {
+    const res=await api('/syslog/monitor/start','POST',{interval_s:300});
+    txt('sl-status',res?.status||'Started');
+  }
+  // Re-check status after a beat
+  setTimeout(syslogMonStatus,500);
+}
+
+async function syslogMonStatus(){
+  // Fetch monitor state and update the bar indicator
+  const data=await api('/syslog/status');
+  if(!data) return;
+  _monitorOn=!!data.monitor_enabled;
+  const dot=$('sl-mon-dot');
+  const lbl=$('sl-mon-label');
+  const btn=$('sl-mon-toggle');
+  if(dot) dot.style.background=_monitorOn?'var(--ok)':'var(--dim)';
+  if(lbl) lbl.textContent=_monitorOn
+    ?'ON · every '+(data.monitor_interval_s||300)+'s'
+    :'OFF';
+  if(lbl) lbl.style.color=_monitorOn?'var(--ok)':'var(--dim2)';
+  if(btn){
+    btn.textContent=_monitorOn?'Stop':'Start';
+    btn.style.borderColor=_monitorOn?'var(--err)':'';
+    btn.style.color=_monitorOn?'var(--err)':'';
+  }
+}
+
+async function syslogAsk(){
+  const q=($('sl-ask-q')||{}).value?.trim();
+  if(!q){txt('sl-status','Enter a question');return;}
+  txt('sl-status','Asking…');
+  const body={question:q};
+  if(_slSelected){
+    if(_slSelected._redis_id) body.log_id=_slSelected._redis_id;
+    if(_slSelected.cap_name) body.cap_name=_slSelected.cap_name;
+  }
+  const res=await api('/syslog/ask','POST',body);
+  const el=$('sl-ask-result');
+  if(res&&!res.error){
+    el.style.display='block';
+    el.textContent=res.answer||JSON.stringify(res,null,2);
+    txt('sl-status','✓ Response');
+  }else{
+    el.style.display='block';
+    el.textContent=res?.error||'Failed';
+    txt('sl-status','✗ Failed');
+  }
+}
+
+// ── Widget Loader ───────────────────────────────────────────────────────────
+let _wlPanels=[];
+let _wlTargetPane=null;
+let _wlDynamic={}; // loaded dynamic widgets keyed by pane:wid
+
+async function openWidgetLoader(pane){
+  _wlTargetPane=pane;
+  $('wl-overlay').classList.remove('hidden');
+  $('wl-search').value='';
+  $('wl-search').focus();
+  // Fetch panel registry — endpoint returns {panels:[...], count:N}
+  try{
+    const data=await api('/ui/panel/list');
+    if(data && Array.isArray(data.panels)) _wlPanels=data.panels;
+    else if(Array.isArray(data)) _wlPanels=data;
+  }catch(_e){}
+  wlRender();
+}
+
+function closeWidgetLoader(){
+  $('wl-overlay').classList.add('hidden');
+}
+
+function wlFilter(){
+  wlRender();
+}
+
+function wlRender(){
+  const list=$('wl-list');if(!list) return;
+  const q=($('wl-search')||{}).value?.toLowerCase()||'';
+  const filtered=_wlPanels.filter(p=>{
+    // Exclude tab-mode panels — only injectable elements belong in the widget loader
+    if((p.mode||'')=='tab') return false;
+    if(q&&!(p.id||'').toLowerCase().includes(q)&&!(p.label||'').toLowerCase().includes(q)) return false;
+    return true;
+  }).sort((a,b)=>(a.tab_order||100)-(b.tab_order||100));
+  if(!filtered.length){
+    list.innerHTML='<div style="font-size:10px;color:var(--dim);padding:10px">'+(q?'No panels match "'+esc(q)+'"':'No panels registered')+'</div>';
+    return;
+  }
+  list.innerHTML=filtered.map(p=>{
+    return '<div class="wl-item" onclick="P.wlAdd(\''+esc(p.id)+'\')">'
+      +'<span class="wl-item-icon">'+(p.icon||'▣')+'</span>'
+      +'<span class="wl-item-label">'+esc(p.label||p.id)+'</span>'
+      +'<span class="wl-item-id">'+esc(p.id)+'</span>'
+      +'<span class="wl-item-mode">'+esc(p.mode||'tab')+'</span>'
+      +'</div>';
+  }).join('');
+}
+
+async function wlAdd(panelId){
+  if(!_wlTargetPane) return;
+  closeWidgetLoader();
+  // Fetch the panel's HTML
+  const p=_wlPanels.find(x=>x.id===panelId);
+  if(!p) return;
+  // Get full panel definition with HTML
+  const full=await api('/ui/panel/get?id='+encodeURIComponent(panelId));
+  if(!full||full.error) return;
+
+  const pane=_wlTargetPane;
+  const grid=$(gridId(pane));
+  if(!grid) return;
+
+  // Create a new widget
+  const wid='dyn-'+panelId.replace(/[^a-zA-Z0-9_-]/g,'');
+  const widget=document.createElement('div');
+  widget.className='widget w-w6 w-h3';
+  widget.dataset.wid=wid;
+  widget.innerHTML='<div class="w-head">'
+    +'<span class="w-grip">⠿</span><span class="w-dot ok"></span>'
+    +'<span class="w-title">'+(p.icon||'')+ ' '+esc(p.label||p.id)+'</span>'
+    +'<span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide(\''+pane+'\',\''+wid+'\')">×</button>'
+    +'<button class="w-iconbtn" onclick="P.wlRemoveDyn(\''+pane+'\',\''+wid+'\')" title="Remove widget entirely">🗑</button></span>'
+    +'</div><div class="w-body flush" style="padding:0;position:relative"><iframe style="width:100%;height:100%;border:none;background:transparent" srcdoc="'+
+    esc((full.html||'<div style=&quot;padding:10px;color:#888&quot;>No content</div>').replace(/"/g,'&quot;'))
+    +'"></iframe></div><span class="w-resize" data-resize></span>';
+  grid.appendChild(widget);
+
+  // Register drag on the new widget
+  widget.setAttribute('draggable','true');
+  widget.addEventListener('dragstart',_onDragStart);
+  widget.addEventListener('dragover',_onDragOver);
+  widget.addEventListener('dragleave',_onDragLeave);
+  widget.addEventListener('drop',_onDrop);
+  widget.addEventListener('dragend',_onDragEnd);
+
+  // Inject the panel JS if present
+  if(full.js){
+    try{
+      const iframe=widget.querySelector('iframe');
+      iframe.addEventListener('load',function(){
+        try{iframe.contentWindow.eval(full.js);}catch(_e){}
+      });
+    }catch(_e){}
+  }
+
+  // Track for persistence
+  _wlDynamic[pane+':'+wid]={panelId,wid,pane};
+  try{localStorage.setItem(STORAGE_KEY+'dyn',JSON.stringify(_wlDynamic));}catch(_e){}
+}
+
+function wlRemoveDyn(pane,wid){
+  const grid=$(gridId(pane));if(!grid) return;
+  const w=grid.querySelector('[data-wid="'+wid+'"]');
+  if(w) w.remove();
+  delete _wlDynamic[pane+':'+wid];
+  _lay(pane).hidden.delete(wid);
+  gridSave(pane);
+  try{localStorage.setItem(STORAGE_KEY+'dyn',JSON.stringify(_wlDynamic));}catch(_e){}
+}
+
+function wlRestoreDynamic(){
+  try{
+    const raw=localStorage.getItem(STORAGE_KEY+'dyn');
+    if(raw) _wlDynamic=JSON.parse(raw)||{};
+  }catch(_e){}
+  // Re-add dynamic widgets on load
+  for(const [key,info] of Object.entries(_wlDynamic)){
+    const grid=$(gridId(info.pane));
+    if(!grid||grid.querySelector('[data-wid="'+info.wid+'"]')) continue;
+    // Lazy: just add a placeholder — full content loads on next openWidgetLoader or refresh
+    wlAdd(info.panelId).catch(()=>{});
+  }
+}
+
+// ── Pull Model modal ─────────────────────────────────────────────────────────
+let _pullTargetInst = '';
+
+function openPullModal(instanceId){
+  _pullTargetInst = instanceId || '';
+  const modal = $('pull-modal-bd');
+  if(modal) modal.classList.remove('hidden');
+  // Populate instance select
+  const sel = $('pull-target-inst');
+  if(sel && _cluster){
+    const nodes = Object.entries(_cluster.ollama||{});
+    sel.innerHTML = nodes.map(([id,n])=>{
+      const selected = id===_pullTargetInst ? ' selected' : '';
+      return '<option value="'+id+'"'+selected+'>'+esc(n.label||id)+(n.has_gpu?' ⚡':'')+(n.status!=='online'?' ✗':'')+'</option>';
+    }).join('');
+    if(!_pullTargetInst && nodes.length) sel.value = nodes[0][0];
+  }
+  $('pull-model-name').value = '';
+  $('pull-model-name').focus();
+  txt('pull-status','');
+  const logEl = $('pull-log');
+  if(logEl){logEl.style.display='none';logEl.innerHTML='';}
+  const btn = $('pull-go-btn');
+  if(btn){btn.disabled=false;btn.textContent='Pull';}
+}
+
+function closePullModal(){
+  const modal = $('pull-modal-bd');
+  if(modal) modal.classList.add('hidden');
+}
+
+async function pullModelGo(){
+  const model = ($('pull-model-name')||{}).value?.trim();
+  const inst  = ($('pull-target-inst')||{}).value;
+  if(!model){txt('pull-status','Enter a model name');return;}
+  if(!inst){txt('pull-status','Select an instance');return;}
+  const btn = $('pull-go-btn');
+  if(btn){btn.disabled=true;btn.textContent='Pulling…';}
+  txt('pull-status','Pulling '+model+' to '+inst+'…');
+  const logEl = $('pull-log');
+  if(logEl){logEl.style.display='block';logEl.innerHTML='<span class="ll-info">Starting pull…</span>\n';}
+  try{
+    const res = await api('/ollama/pull','POST',{model,instance_id:inst});
+    if(res && !res.error){
+      txt('pull-status','✓ Pulled '+model);
+      if(logEl) logEl.innerHTML+='<span class="ll-ok">✓ '+esc(model)+' pulled successfully</span>\n'
+        +(res.status?'<span class="ll-info">Status: '+esc(res.status)+'</span>\n':'');
+      if(btn){btn.textContent='Done';btn.disabled=false;}
+      // Refresh to pick up the new model
+      setTimeout(refresh,1000);
+    } else {
+      const err = res?.error||'Unknown error';
+      txt('pull-status','✗ Failed');
+      if(logEl) logEl.innerHTML+='<span class="ll-err">✗ '+esc(err)+'</span>\n';
+      if(btn){btn.textContent='Retry';btn.disabled=false;}
+    }
+  }catch(e){
+    txt('pull-status','✗ Network error');
+    if(logEl) logEl.innerHTML+='<span class="ll-err">✗ '+esc(String(e))+'</span>\n';
+    if(btn){btn.textContent='Retry';btn.disabled=false;}
+  }
+}
+
+// ── Delete Model modal ──────────────────────────────────────────────────────
+let _delModel = '';
+let _delInst  = '';
+
+function openDeleteModel(instanceId, modelName){
+  _delModel = modelName;
+  _delInst  = instanceId;
+  txt('del-model-name', modelName);
+  txt('del-inst-name', instanceId);
+  txt('del-status','');
+  const modal = $('delete-model-bd');
+  if(modal) modal.classList.remove('hidden');
+  const btn = $('del-go-btn');
+  if(btn){btn.disabled=false;btn.textContent='Delete';}
+}
+
+function closeDeleteModel(){
+  const modal = $('delete-model-bd');
+  if(modal) modal.classList.add('hidden');
+}
+
+async function deleteModelGo(){
+  if(!_delModel || !_delInst) return;
+  const btn = $('del-go-btn');
+  if(btn){btn.disabled=true;btn.textContent='Deleting…';}
+  txt('del-status','Deleting '+_delModel+'…');
+  try{
+    // Ollama delete API — directly call the instance
+    const inst = (_cluster?.ollama||{})[_delInst];
+    if(!inst){txt('del-status','Instance not found');if(btn){btn.disabled=false;btn.textContent='Delete';}return;}
+    // Use a custom fetch since there may not be a /ollama/delete cap
+    const res = await fetch(inst.url+'/api/delete',{
+      method:'DELETE',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:_delModel}),
+    }).then(r=>r.ok?{ok:true}:r.json().catch(()=>({error:'HTTP '+r.status}))).catch(e=>({error:String(e)}));
+    if(res && !res.error){
+      txt('del-status','✓ Deleted');
+      if(btn){btn.textContent='Done';}
+      closeDeleteModel();
+      setTimeout(refresh,800);
+    } else {
+      txt('del-status','✗ '+(res?.error||'Failed'));
+      if(btn){btn.disabled=false;btn.textContent='Delete';}
+    }
+  }catch(e){
+    txt('del-status','✗ '+String(e));
+    if(btn){btn.disabled=false;btn.textContent='Delete';}
+  }
+}
+
+// ── Pane switching ───────────────────────────────────────────────────────────
+function showPane(name, el){
+  document.querySelectorAll('.snav').forEach(n=>n.classList.remove('on'));
+  if(el) el.classList.add('on');
+  document.querySelectorAll('.pane').forEach(p=>p.classList.remove('on'));
+  const pane=$('pane-'+name);
+  if(pane) pane.classList.add('on');
+}
+
+// ── Theme relay ──────────────────────────────────────────────────────────────
+window.addEventListener('message', e=>{
+  if(e.data?.type==='vera:base'){/* could update BASE */}
+  if(e.data?.type==='vera:theme'&&e.data.vars){
+    const root=document.documentElement;
+    const map={'--bg':'--bg0','--s1':'--bg1','--s2':'--bg2','--s3':'--bg3',
+      '--bd':'--border','--bd2':'--border2','--t1':'--text','--t2':'--dim2',
+      '--t3':'--dim','--ac':'--acc','--ac2':'--acc2','--ac3':'--acc3','--ac4':'--err','--ac5':'--acc4'};
+    for(const [k,v] of Object.entries(map)){if(e.data.vars[k]) root.style.setProperty(v,e.data.vars[k]);}
+  }
+  // Forward observe events from parent harness
+  if(e.data?.type==='vera:event'){
+    obsIngest(e.data.event||e.data);
+  }
+});
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+['workers','ollama','jobs','observe'].forEach(p=>{gridLoad(p);gridApply(p);});
+
+// Init drag on all grids
+['w-grid','ol-grid','j-grid','obs-grid'].forEach(id=>{_initGridDrag($(id));});
+
+// Render observe chips
+obsRenderChips();
+
+// Connect observe WebSocket
+setTimeout(obsConnectWs,500);
+
+// Load system log
+setTimeout(syslogLoad,800);
+setTimeout(syslogMonStatus,1000);
+
+// Restore dynamic widgets
+wlRestoreDynamic();
+
+// Start data refresh
+setTimeout(()=>{refresh();autoToggle();},120);
+
+// Load embed config once (after first refresh populates selects)
+setTimeout(loadEmbedCfg, 600);
+
+// ── Public API ───────────────────────────────────────────────────────────────
+return {
+  show: showPane, refresh, autoToggle,
+  wkFilter, wkSel, wkDrain, wkRemoveStale,
+  setStrat, olPing, olPingAll, olTogglePin, olTestGenerate,
+  openPullModal, closePullModal, pullModelGo,
+  openDeleteModel, closeDeleteModel, deleteModelGo,
+  saveEmbedCfg, loadEmbedCfg,
+  jTab,
+  gridToggleEdit, gridHide, gridShow, gridReset,
+  obsClear, obsTogglePause, obsToggleChip,
+  syslogLoad, syslogToggleAuto, syslogClear, syslogToggleEntry,
+  syslogMonRun, syslogMonToggle, syslogMonStatus, syslogAsk,
+  openWidgetLoader, closeWidgetLoader, wlFilter, wlAdd, wlRemoveDyn,
+};
+})();
+</script>
+<script src="/ui/vera-ui.js"></script>
+</body>
+</html>

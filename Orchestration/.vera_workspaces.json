@@ -1,0 +1,30 @@
+[
+  {
+    "name": "command and control POC",
+    "path": "/home/boejaker/vera_projects/command and control POC",
+    "created_at": "2026-04-17T19:06:07.259329Z",
+    "template": "blank",
+    "opened": false
+  },
+  {
+    "name": "wifi positioning system",
+    "path": "/home/boejaker/vera_projects/wifi positioning system",
+    "created_at": "2026-04-19T07:14:22.595980Z",
+    "template": "python",
+    "opened": false
+  },
+  {
+    "name": "Perceptron_Project",
+    "path": "~/Perceptron_Project",
+    "created_at": "2026-04-27T21:01:15.140517Z",
+    "template": "python",
+    "opened": false
+  },
+  {
+    "name": "network scanner",
+    "path": "/home/boejaker/vera_projects/network scanner",
+    "created_at": "2026-05-20T21:46:16.505527Z",
+    "template": "python",
+    "opened": false
+  }
+]
