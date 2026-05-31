@@ -52,7 +52,7 @@ class VeraConfig:
     OLLAMA_CPU_B_URL  : str = os.getenv("OLLAMA_CPU_B_URL","http://192.168.0.247:11435")
     OLLAMA_MODEL      : str = os.getenv("OLLAMA_MODEL",    "mistral")
     OLLAMA_EMBED_URL  : str = os.getenv("OLLAMA_EMBED_URL","http://192.168.0.246:11435")
-    OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL","nomic-embed-text")
+    OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL","all-minilm:l6-v2")
 
     # ── GPU inference server (Whisper / TTS / SD) ─────────────────────────────
     GPU_INFER_URL     : str = os.getenv("GPU_INFER_URL", "http://192.168.0.250:8765")

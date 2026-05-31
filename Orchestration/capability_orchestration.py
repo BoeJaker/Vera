@@ -1399,7 +1399,7 @@ def _act_enqueue(cap_name: str, group: str, session_id: str,
         return  # genuinely orphaned call — drop
     if group in _ACT_SKIP_GROUPS:
         return
-    if not sys.modules.get("memory") and not sys.modules.get("data_fabric"):
+    if not sys.modules.get("Vera.Orchestration.fabric.memory") and not sys.modules.get("Vera.Orchestration.fabric.data_fabric"):
         return  # backends not loaded yet
     try:
         if _ACT_QUEUE is None:
@@ -1626,7 +1626,7 @@ async def _activity_worker():
         try:
             await _act_asyncio.sleep(2.0)
             # Only process if memory system is loaded (avoids hammering during startup)
-            if not sys.modules.get("memory") and not sys.modules.get("data_fabric"):
+            if not sys.modules.get("Vera.Orchestration.fabric.memory") and not sys.modules.get("Vera.Orchestration.fabric.data_fabric"):
                 continue
             batch = []
             while not _ACT_QUEUE.empty() and len(batch) < 50:
@@ -1637,9 +1637,9 @@ async def _activity_worker():
             if not batch:
                 continue
 
-            mem_mod = sys.modules.get("memory")
-            hooks   = sys.modules.get("memory_hooks")
-            fabric  = sys.modules.get("data_fabric")
+            mem_mod = sys.modules.get("Vera.Orchestration.fabric.memory")
+            hooks   = sys.modules.get("Vera.Orchestration.fabric.memory_hooks")
+            fabric  = sys.modules.get("Vera.Orchestration.fabric.data_fabric")
 
             for item in batch:
                 sid          = item["session_id"]
@@ -2927,50 +2927,52 @@ async def lifespan(app: FastAPI):
 
     # Extra module paths: env var VERA_MODULES="path1.py,path2.py" adds more
     _module_files = [
-        os.path.join(_here, "capabilities.py"),
-        os.path.join(_here, "skills.py"),
-        os.path.join(_here, "memory.py"),
-        os.path.join(_here, "dag_store.py"),
-        os.path.join(_here, "agents.py"),
-        os.path.join(_here, "cluster.py"),
+        os.path.join(_here, "capabilities/capabilities.py"),
+        os.path.join(_here, "capabilities/cap_hub_capabilities.py"),
+        os.path.join(_here, "capabilities/cap_tracking.py"),
+        os.path.join(_here, "skills/skills.py"),
+        os.path.join(_here, "skills/skills_owl.py"),
+        os.path.join(_here, "dag/dag_store.py"),
+        os.path.join(_here, "dag/dag_workshop_capabilities.py"),
+        os.path.join(_here, "agents/agents.py"),
+        os.path.join(_here, "workers/cluster.py"),
         os.path.join(_here, "syslog.py"),
-        os.path.join(_here, "memory_hooks.py"),
-        os.path.join(_here, "data_fabric.py"),
-        os.path.join(_here, "research_fabric.py"),
-        os.path.join(_here, "ui_capabilities.py"),
-        os.path.join(_here, "ide_capabilities.py"),
-        os.path.join(_here, "ide_code_capabilities.py"),
-        os.path.join(_here, "ide_inspect_capabilities.py"),
+        os.path.join(_here, "ui builder/ui_capabilities.py"),
+        os.path.join(_here, "ide/ide_capabilities.py"),
+        os.path.join(_here, "ide/ide_code_capabilities.py"),
+        os.path.join(_here, "ide/ide_inspect_capabilities.py"),
+        os.path.join(_here, "research/research_fabric.py"),        
         # os.path.join(_here, "research_capabilities.py"),
         # os.path.join(_here, "research_recall_capabilities.py"),
         # os.path.join(_here, "research_activity_capabilities.py"),
-        os.path.join(_here, "web_capabilities.py"),
-        os.path.join(_here, "telegram_capabilities.py"),
-        os.path.join(_here, "dream_capabilities.py"),
-        os.path.join(_here, "exec_capabilities.py"),
-        os.path.join(_here, "workers.py"),
-        os.path.join(_here, "cap_tracking.py"),
-        os.path.join(_here, "browser_capabilities.py"),
-        os.path.join(_here, "data_fabric_collectors.py"),
-        os.path.join(_here, "project_capabilities.py"),
-        os.path.join(_here, "dag_workshop_capabilities.py"),
-        os.path.join(_here, "context.py"),
-        # os.path.join(_here, "vllm_capabilities.py"),
-        os.path.join(_here, "ml_workshop.py"),
-        os.path.join(_here, "ml_training.py"),
-        # os.path.join(_here, "openclaw_capabilities.py"),
-        os.path.join(_here, "dream_research_integration.py"),
-        os.path.join(_here, "project_research_extension.py"),
-        os.path.join(_here, "cap_hub_capabilities.py"),
-        os.path.join(_here, "cap_ontology.py"),
-        os.path.join(_here, "fabric_web_acquisition.py"),
-        os.path.join(_here, "chat_panels_capabilities.py"),
+        os.path.join(_here, "web/web_capabilities.py"),
+        os.path.join(_here, "telegram/telegram_capabilities.py"),
+        os.path.join(_here, "dream/dream_capabilities.py"),
+        os.path.join(_here, "dream/project_capabilities.py"),
+        os.path.join(_here, "execution/exec_capabilities.py"),
+        os.path.join(_here, "workers/workers.py"),
+        os.path.join(_here, "web/browser_capabilities.py"),
+        os.path.join(_here, "fabric/memory.py"),
+        os.path.join(_here, "fabric/memory_hooks.py"),
+        os.path.join(_here, "fabric/data_fabric_collectors.py"),
+        os.path.join(_here, "fabric/data_fabric.py"),
+        os.path.join(_here, "fabric/fabric_web_acquisition.py"),
+        os.path.join(_here, "fabric/memory_second_order.py"),
+        os.path.join(_here, "fabric/context.py"),
+        os.path.join(_here, "fabric/discovery.py"),
+        # os.path.join(_here, "vllm/vllm_capabilities.py"),
+        os.path.join(_here, "machine learning/ml_workshop.py"),
+        os.path.join(_here, "machine learning/ml_training.py"),
+        # os.path.join(_here, "openclaw/openclaw_capabilities.py"),
+        # os.path.join(_here, "dream/dream_research_integration.py"),
+        # os.path.join(_here, "project_research_extension.py"),
+        os.path.join(_here, "ontologies/cap_ontology.py"),
+        os.path.join(_here, "chat/chat_panels_capabilities.py"),
         os.path.join(_here, "agent_loop_output_capabilities.py"),
-        os.path.join(_here, "skills_owl.py"),
-        os.path.join(_here, "memory_second_order.py"),
-        os.path.join(_here, "worldview_jepa.py"),
-        os.path.join(_here, "researcher_api.py"),
-        os.path.join(_here, "vector_browser_capabilites.py")
+        os.path.join(_here, "worldview/worldview_jepa.py"),
+        os.path.join(_here, "research/researcher_api.py"),
+        os.path.join(_here, "vector browser/vector_browser_capabilites.py"),
+        os.path.join(_here, "workers/job_persistance.py")
         
     ]
     _extra = os.getenv("VERA_MODULES", "")
@@ -3010,9 +3012,9 @@ async def lifespan(app: FastAPI):
     # import Vera.Orchestration.cap_tracking as cap_tracking
     # cap_tracking.install(sys.modules[__name__])
     
-    import Vera.Orchestration.agents_context_patch
+    import Vera.Orchestration.agents.agents_context_patch
 
-    _ct = sys.modules.get("cap_tracking")
+    _ct = sys.modules.get("Vera.Orchestration.capabilities.cap_tracking")
     if _ct:
         _ct.install(sys.modules[__name__])
         asyncio.create_task(_activity_worker())
@@ -3221,7 +3223,7 @@ APP.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 async def _memgraph_panel_route():
     from fastapi.responses import HTMLResponse
     from pathlib import Path as _P
-    p = _P(__file__).parent / "memory_graph_panel.html"
+    p = _P(__file__).parent / "fabric/memory_graph_panel.html"
     return HTMLResponse(
         p.read_text(encoding="utf-8") if p.exists()
         else "<p style='color:red'>memory_graph_panel.html not found</p>"
@@ -3737,7 +3739,7 @@ async def _aso_panel():
 async def _workers_ollama_panel():
     """Combined workers / ollama / jobs panel with configurable dashboard."""
     from fastapi.responses import HTMLResponse
-    p = _HERE / "workers_ollama_panel.html"
+    p = _HERE / "workers/workers_ollama_panel.html"
     return HTMLResponse(p.read_text(encoding="utf-8") if p.exists()
                         else "<p style='color:red'>workers_ollama_panel.html not found</p>")
 
@@ -3765,7 +3767,7 @@ async def _serve_panel_file(panel_filename: str):
 async def _agents_panel():
     """Standalone agents editor panel."""
     from fastapi.responses import HTMLResponse
-    p = _HERE / "agent_panel.html"
+    p = _HERE / "agents/agent_panel.html"
     return HTMLResponse(p.read_text(encoding="utf-8") if p.exists()
                         else "<p style='color:red'>agent_panel.html not found</p>")
 
@@ -3774,7 +3776,7 @@ async def _agents_panel():
 async def _skills_panel():
     """Standalone skills editor panel."""
     from fastapi.responses import HTMLResponse
-    p = _HERE / "skills_panel.html"
+    p = _HERE / "skills/skills_panel.html"
     return HTMLResponse(p.read_text(encoding="utf-8") if p.exists()
                         else "<p style='color:red'>skills_panel.html not found</p>")
 
@@ -3783,7 +3785,7 @@ async def _skills_panel():
 async def _ontologies_panel():
     """Standalone ontologies browser panel."""
     from fastapi.responses import HTMLResponse
-    p = _HERE / "ontologies_panel.html"
+    p = _HERE / "ontologies/ontologies_panel.html"
     return HTMLResponse(p.read_text(encoding="utf-8") if p.exists()
                         else "<p style='color:red'>ontologies_panel.html not found</p>")
 

@@ -1,0 +1,221 @@
+<!-- fabric_discovery_panel.html — Vera "Discover+" tab markup.
+     Injected by fabric_discovery.py via register_ui(mode="tab").
+     Logic lives in fabric_discovery_panel.js (passed as register_ui js=). -->
+<div id="fdsc-root" style="display:flex;gap:0;height:calc(100vh - 80px);min-height:520px;
+     background:var(--bg0,#181614);color:var(--text,#ddd5c8);
+     font-family:var(--sans,system-ui,sans-serif);font-size:12px">
+
+  <style>
+    #fdsc-root .fdsc-col-l{width:340px;min-width:300px;display:flex;flex-direction:column;
+        border-right:1px solid var(--border,#3a3530);overflow:hidden}
+    #fdsc-root .fdsc-col-r{flex:1;display:flex;flex-direction:column;position:relative;min-width:0}
+    #fdsc-root .fdsc-tabs{display:flex;gap:3px;padding:8px 8px 0;border-bottom:1px solid var(--border,#3a3530)}
+    #fdsc-root .fdsc-tab{flex:1;padding:6px 4px;text-align:center;cursor:pointer;font-size:11px;
+        border:1px solid var(--border,#3a3530);border-bottom:none;border-radius:4px 4px 0 0;
+        background:var(--bg1,#201d1a);color:var(--dim,#8a8278);user-select:none}
+    #fdsc-root .fdsc-tab.active{background:var(--bg2,#262320);color:var(--acc,#5a9e8f);
+        border-color:var(--acc,#5a9e8f)}
+    #fdsc-root .fdsc-body{flex:1;overflow-y:auto;padding:10px 8px}
+    #fdsc-root .fdsc-pane{display:none;flex-direction:column;gap:7px}
+    #fdsc-root .fdsc-pane.active{display:flex}
+    #fdsc-root .fdsc-row{display:flex;align-items:center;gap:6px}
+    #fdsc-root .fdsc-row label{width:88px;color:var(--dim,#8a8278);font-size:10.5px;flex:none}
+    #fdsc-root input[type=text],#fdsc-root input:not([type]),#fdsc-root select,#fdsc-root input[type=number]{
+        flex:1;background:var(--bg1,#201d1a);border:1px solid var(--border,#3a3530);
+        color:var(--text,#ddd5c8);border-radius:3px;padding:4px 6px;font-size:11px;font-family:inherit;min-width:0}
+    #fdsc-root .fdsc-btn{background:var(--bg2,#262320);border:1px solid var(--border,#3a3530);
+        color:var(--text,#ddd5c8);border-radius:4px;padding:5px 10px;font-size:11px;cursor:pointer;
+        display:inline-flex;align-items:center;gap:5px;user-select:none}
+    #fdsc-root .fdsc-btn:hover{border-color:var(--acc,#5a9e8f);color:var(--acc,#5a9e8f)}
+    #fdsc-root .fdsc-btn.primary{background:var(--acc,#5a9e8f);border-color:var(--acc,#5a9e8f);color:#10100e}
+    #fdsc-root .fdsc-btn.primary:hover{filter:brightness(1.08);color:#10100e}
+    #fdsc-root .fdsc-btn.teal{border-color:var(--acc2,#8fb87a);color:var(--acc2,#8fb87a)}
+    #fdsc-root .fdsc-btn.sm{padding:2px 7px;font-size:10px}
+    #fdsc-root .fdsc-btn:disabled{opacity:.5;cursor:default}
+    #fdsc-root .fdsc-status{font-size:10.5px;min-height:14px;color:var(--dim,#8a8278)}
+    #fdsc-root .fdsc-status.ok{color:var(--ok,#6db87a)}
+    #fdsc-root .fdsc-status.err{color:var(--err,#c96b6b)}
+    #fdsc-root .fdsc-sec{margin-top:10px;border-top:1px solid var(--border,#3a3530);padding-top:8px}
+    #fdsc-root .fdsc-sec-h{display:flex;align-items:center;gap:6px;font-size:10.5px;font-weight:600;
+        color:var(--acc,#5a9e8f);cursor:pointer;user-select:none;margin-bottom:5px}
+    #fdsc-root .fdsc-sec-h .ct{margin-left:auto;color:var(--dim,#8a8278);font-weight:400}
+    #fdsc-root .fdsc-list{display:flex;flex-direction:column;gap:3px}
+    #fdsc-root .fdsc-item{background:var(--bg1,#201d1a);border:1px solid var(--border,#3a3530);
+        border-radius:3px;padding:5px 7px;display:flex;align-items:center;gap:6px}
+    #fdsc-root .fdsc-item .gl{flex:none;width:16px;text-align:center;color:var(--acc3,#c9955a)}
+    #fdsc-root .fdsc-item .mid{flex:1;min-width:0}
+    #fdsc-root .fdsc-item .t1{font-size:10.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    #fdsc-root .fdsc-item .t2{font-size:9px;color:var(--dim,#8a8278);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    #fdsc-root .fdsc-item.crawl{cursor:pointer}
+    #fdsc-root .fdsc-item.crawl:hover{border-color:var(--acc,#5a9e8f)}
+    #fdsc-root .fdsc-item.sel{border-color:var(--acc,#5a9e8f);background:var(--bg2,#262320)}
+    #fdsc-root .fdsc-dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--dim,#8a8278)}
+    #fdsc-root .fdsc-dot.running{background:var(--acc2,#8fb87a);box-shadow:0 0 5px var(--acc2,#8fb87a)}
+    #fdsc-root .fdsc-dot.paused{background:var(--acc3,#c9955a)}
+    #fdsc-root .fdsc-dot.done{background:var(--ok,#6db87a)}
+    #fdsc-root .fdsc-pill{font-size:8.5px;padding:1px 5px;border-radius:8px;border:1px solid var(--border,#3a3530);
+        color:var(--dim,#8a8278);white-space:nowrap}
+    #fdsc-root .fdsc-graph-host{flex:1;min-height:0;position:relative;background:var(--bg0,#181614)}
+    #fdsc-root .fdsc-legend{display:flex;flex-wrap:wrap;align-items:center;gap:4px 11px;
+        padding:6px 10px;border-bottom:1px solid var(--border,#3a3530);background:var(--bg1,#201d1a);
+        font-size:9.5px;color:var(--dim,#8a8278)}
+    #fdsc-root .fdsc-legend .lg{display:inline-flex;align-items:center;gap:4px}
+    #fdsc-root .fdsc-legend .lg i{width:9px;height:9px;border-radius:50%;display:inline-block}
+    #fdsc-root .fdsc-legend .hint{margin-left:auto;font-style:italic;opacity:.8}
+    #fdsc-root .fdsc-overlay{position:absolute;top:10px;left:10px;z-index:6;max-width:60%;
+        background:rgba(24,22,20,.86);border:1px solid var(--border,#3a3530);border-radius:6px;
+        padding:7px 10px;font-size:10px;display:none}
+    #fdsc-root .fdsc-overlay .l1{display:flex;align-items:center;gap:6px;font-weight:600;color:var(--text,#ddd5c8)}
+    #fdsc-root .fdsc-overlay .l2{color:var(--acc2,#8fb87a);font-family:var(--mono,monospace);margin-top:2px}
+    #fdsc-root .fdsc-log{height:118px;overflow-y:auto;border-top:1px solid var(--border,#3a3530);
+        background:var(--bg1,#201d1a);padding:6px 8px;font-family:var(--mono,ui-monospace,monospace);
+        font-size:9.5px;line-height:1.5}
+    #fdsc-root .fdsc-chk{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--dim,#8a8278)}
+    #fdsc-root .fdsc-hint{font-size:9.5px;color:var(--dim,#8a8278);line-height:1.5;
+        background:var(--bg1,#201d1a);border:1px solid var(--border,#3a3530);border-left:2px solid var(--acc3,#c9955a);
+        border-radius:3px;padding:6px 8px}
+  </style>
+
+  <!-- ── LEFT: controls + lists ───────────────────────────────────────────── -->
+  <div class="fdsc-col-l">
+    <div class="fdsc-tabs">
+      <div class="fdsc-tab active" data-pane="topic">Topic</div>
+      <div class="fdsc-tab" data-pane="crawl">Crawl URL</div>
+      <div class="fdsc-tab" data-pane="history">History</div>
+    </div>
+    <div class="fdsc-body">
+
+      <!-- TOPIC -->
+      <div class="fdsc-pane active" data-pane="topic">
+        <div class="fdsc-row"><label>Topic</label>
+          <input id="fdsc-topic" placeholder="e.g. zelda lore, LLM inference"></div>
+        <div class="fdsc-row"><label>Seed URLs</label>
+          <input id="fdsc-topic-seeds" placeholder="optional — comma-sep, skips search"></div>
+        <div class="fdsc-row"><label>Max sources</label>
+          <input id="fdsc-topic-max" type="number" value="5" min="1" max="15" style="width:64px;flex:none">
+          <label style="width:auto">Type</label>
+          <select id="fdsc-topic-type">
+            <option value="all">all</option><option value="rss">rss</option>
+            <option value="api">api</option><option value="web">web</option>
+            <option value="scrape">scrape</option>
+          </select></div>
+        <div class="fdsc-row"><label>Pages</label>
+          <input id="fdsc-topic-pages" type="number" value="120" min="1" max="2000" style="width:64px;flex:none">
+          <label style="width:auto">Dropoff</label>
+          <input id="fdsc-topic-drop" type="number" value="3" min="0" max="20" style="width:54px;flex:none"></div>
+        <div class="fdsc-row"><label>Search angles</label>
+          <input id="fdsc-topic-angles" type="number" value="6" min="1" max="10" style="width:64px;flex:none">
+          <label style="width:auto">Expand rounds</label>
+          <input id="fdsc-topic-rounds" type="number" value="2" min="0" max="6" style="width:54px;flex:none"></div>
+        <div class="fdsc-row" style="gap:12px;flex-wrap:wrap">
+          <span class="fdsc-chk"><input type="checkbox" id="fdsc-topic-promote" checked> auto-promote sources</span>
+          <span class="fdsc-chk"><input type="checkbox" id="fdsc-topic-same"> same domain only</span>
+          <span class="fdsc-chk"><input type="checkbox" id="fdsc-topic-noent"> skip entities</span>
+          <span class="fdsc-chk"><input type="checkbox" id="fdsc-topic-noloom"> skip loom</span>
+          <span class="fdsc-chk"><input type="checkbox" id="fdsc-topic-nocross"> loom this dataset only</span>
+        </div>
+        <div class="fdsc-row"><label>Exclude words</label>
+          <input id="fdsc-topic-neg" placeholder="comma-sep — drop pages containing these"></div>
+        <div class="fdsc-row"><label>Exclude URLs</label>
+          <input id="fdsc-topic-negurl" placeholder="comma-sep url substrings to skip"></div>
+        <div class="fdsc-row" style="gap:6px;margin-top:2px">
+          <button class="fdsc-btn primary" id="fdsc-topic-go"><span>&#x2295;</span> Discover</button>
+          <button class="fdsc-btn teal" id="fdsc-topic-cont"><span>&#x21bb;</span> Continue</button>
+        </div>
+        <div class="fdsc-status" id="fdsc-topic-status"></div>
+        <div class="fdsc-hint"><b>Topic discovery</b> runs several web searches across query
+          angles, crawls all results, then lets the strongest discovered concepts trigger
+          further searches &mdash; extracting entities &amp; relationships, detecting surfaces,
+          pulling embedded tables in as sub-tables, and finally using the Loom to tie results
+          together and to records in other datasets. Continue resumes the saved frontier.</div>
+      </div>
+
+      <!-- CRAWL URL -->
+      <div class="fdsc-pane" data-pane="crawl">
+        <div class="fdsc-row"><label>Seed URL</label>
+          <input id="fdsc-url" placeholder="https://example.com/docs"></div>
+        <div class="fdsc-row"><label>Dataset</label>
+          <input id="fdsc-url-ds" placeholder="auto from host"></div>
+        <div class="fdsc-row"><label>Topic focus</label>
+          <input id="fdsc-url-topic" placeholder="optional keyword"></div>
+        <div class="fdsc-row"><label>Pages</label>
+          <input id="fdsc-url-pages" type="number" value="60" min="1" max="2000" style="width:64px;flex:none">
+          <label style="width:auto">Depth</label>
+          <input id="fdsc-url-depth" type="number" value="4" min="1" max="20" style="width:54px;flex:none"></div>
+        <div class="fdsc-row" style="gap:12px;flex-wrap:wrap">
+          <span class="fdsc-chk"><input type="checkbox" id="fdsc-url-surf" checked> surfaces</span>
+          <span class="fdsc-chk"><input type="checkbox" id="fdsc-url-sub" checked> sub-tables</span>
+          <span class="fdsc-chk"><input type="checkbox" id="fdsc-url-same" checked> same domain</span>
+          <span class="fdsc-chk"><input type="checkbox" id="fdsc-url-promote"> auto-promote</span>
+          <span class="fdsc-chk"><input type="checkbox" id="fdsc-url-noent"> skip entities</span>
+        </div>
+        <div class="fdsc-row"><label>Exclude words</label>
+          <input id="fdsc-url-neg" placeholder="comma-sep — drop pages containing these"></div>
+        <div class="fdsc-row"><label>Exclude URLs</label>
+          <input id="fdsc-url-negurl" placeholder="comma-sep url substrings to skip"></div>
+        <div class="fdsc-row" style="gap:6px;margin-top:2px">
+          <button class="fdsc-btn primary" id="fdsc-url-go"><span>&#x2295;</span> Crawl</button>
+          <button class="fdsc-btn teal" id="fdsc-url-cont"><span>&#x21bb;</span> Continue</button>
+        </div>
+        <div class="fdsc-status" id="fdsc-url-status"></div>
+      </div>
+
+      <!-- HISTORY -->
+      <div class="fdsc-pane" data-pane="history">
+        <div class="fdsc-row" style="gap:6px">
+          <button class="fdsc-btn sm" id="fdsc-hist-refresh"><span>&#x21bb;</span> Refresh</button>
+          <span class="fdsc-status" id="fdsc-hist-status" style="flex:1"></span>
+        </div>
+        <div class="fdsc-list" id="fdsc-hist-list" style="margin-top:6px">
+          <span style="color:var(--dim,#8a8278);font-size:10px">Loading&hellip;</span>
+        </div>
+      </div>
+
+      <!-- SURFACES -->
+      <div class="fdsc-sec">
+        <div class="fdsc-sec-h" id="fdsc-surf-h"><span>&#x2b21;</span> Detected surfaces
+          <span class="ct" id="fdsc-surf-ct"></span></div>
+        <div class="fdsc-list" id="fdsc-surf-list">
+          <span style="color:var(--dim,#8a8278);font-size:10px">Run a crawl to detect surfaces.</span>
+        </div>
+      </div>
+
+      <!-- SUB-TABLES -->
+      <div class="fdsc-sec">
+        <div class="fdsc-sec-h" id="fdsc-sub-h"><span>&#x25a4;</span> Sub-tables
+          <span class="ct" id="fdsc-sub-ct"></span></div>
+        <div class="fdsc-list" id="fdsc-sub-list">
+          <span style="color:var(--dim,#8a8278);font-size:10px">Embedded tables / endpoints / flags appear here.</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── RIGHT: live map + log ────────────────────────────────────────────── -->
+  <div class="fdsc-col-r">
+    <div class="fdsc-legend" id="fdsc-legend">
+      <span class="lg"><i style="background:#5a9e8f"></i>dataset</span>
+      <span class="lg"><i style="background:#6b9bd2"></i>page</span>
+      <span class="lg"><i style="background:#c9955a"></i>surface</span>
+      <span class="lg"><i style="background:#5ec9a0"></i>sub-table</span>
+      <span class="lg"><i style="background:#8fb87a"></i>person</span>
+      <span class="lg"><i style="background:#c9955a"></i>org</span>
+      <span class="lg"><i style="background:#38bdf8"></i>date / time</span>
+      <span class="lg"><i style="background:#facc15"></i>code (fn / class)</span>
+      <span class="lg"><i style="background:#5a9e8f"></i>technology</span>
+      <span class="lg"><i style="background:#a78bfa"></i>domain</span>
+      <span class="lg"><i style="background:#f472b6"></i>named entity</span>
+      <span class="lg hint">click a node for actions \u00b7 surfaces can be added as sources or pulled in</span>
+    </div>
+    <div class="fdsc-graph-host" id="fdsc-graph-host">
+      <div class="fdsc-overlay" id="fdsc-overlay">
+        <div class="l1"><span class="fdsc-dot running" id="fdsc-ov-dot"></span>
+          <span id="fdsc-ov-line">Idle</span></div>
+        <div class="l2" id="fdsc-ov-counts"></div>
+      </div>
+    </div>
+    <div class="fdsc-log" id="fdsc-log"></div>
+  </div>
+
+</div>

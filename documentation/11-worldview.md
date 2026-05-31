@@ -777,8 +777,8 @@ if HAS_TORCH:
 
 def _get_fabric():
     import sys
-    return (sys.modules.get("Vera.Orchestration.data_fabric") or
-            sys.modules.get("data_fabric"))
+    return (sys.modules.get("Vera.Orchestration.fabric.data_fabric") or
+            sys.modules.get("Vera.Orchestration.fabric.data_fabric"))
 
 
 async def _fetch_records_with_embeddings(dataset_id: str = "",
