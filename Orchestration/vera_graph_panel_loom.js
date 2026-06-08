@@ -381,10 +381,32 @@
       async function populateDatasets(){
         var res = await api('/fabric/datasets');
         st.datasets = (res && res.datasets) || [];
+        // Also pull discovery history datasets
+        var dres = await api('/fabric/discover/history');
+        var discCrawls = (dres && dres.crawls) || [];
+        var discDs = {}; // dedup by dataset_id
+        discCrawls.forEach(function(c){
+          if (c.dataset_id && !discDs[c.dataset_id])
+            discDs[c.dataset_id] = {dataset_id: c.dataset_id,
+              record_count: c.pages_fetched || '?',
+              topic: c.topic || '', _discovery: true};
+        });
+        // Merge: fabric_datasets take priority, add discovery-only ones
+        var allDs = st.datasets.slice();
+        Object.keys(discDs).forEach(function(did){
+          if (!allDs.some(function(d){ return d.dataset_id === did; }))
+            allDs.push(discDs[did]);
+        });
         var opts = '<option value="">(all datasets)</option>';
         var cfgOpts = '<option value="">Select dataset...</option>';
-        st.datasets.forEach(function(d){
-          var lbl = esc(d.dataset_id) + ' (' + (d.record_count || '?') + ')';
+        var discSep = false;
+        allDs.forEach(function(d){
+          var lbl = esc(d.dataset_id) + (d.topic ? ' ['+esc(d.topic.slice(0,30))+']' : '') +
+                    ' (' + (d.record_count || '?') + ')';
+          if (d._discovery && !discSep) {
+            opts += '<option disabled>― Discovery datasets ―</option>';
+            discSep = true;
+          }
           opts    += '<option value="' + esc(d.dataset_id) + '">' + lbl + '</option>';
           cfgOpts += '<option value="' + esc(d.dataset_id) + '">' + lbl + '</option>';
         });
@@ -822,13 +844,14 @@
         if (ck('.lm-extract')) {
           setStatus(elCfgStat, 'Stage 1/4: Entity extraction...', '');
           pipeLog('Stage 1: Entity extraction');
-          var eres = await api('/fabric/entity_graph/extract', 'POST', {
-            dataset_id: dsId, limit: iv('.lm-extractLimit','500'),
-            content_type: vv('.lm-contentType','text'),
-            persist: vv('.lm-extractPersist','true') !== 'false',
+          var eres = await api('/fabric/discover/entity_extract', 'POST', {
+            dataset_id: dsId,
+            max_records: iv('.lm-extractLimit', '500'),
+            use_llm: true,
+            worker_batch: 8,
           }, 300000);
-          done.push('entities: ' + ((eres && eres.entity_count) || 0));
-          pipeLog('Extracted ' + ((eres&&eres.entity_count)||0) + ' entities, ' + ((eres&&eres.relation_count)||0) + ' relations', 'ok');
+          done.push('entities: ' + ((eres && (eres.entities || eres.entity_count)) || 0));
+          pipeLog('Extracted ' + ((eres && (eres.entities || eres.entity_count))||0) + ' entities, ' + ((eres&&eres.relation_count)||0) + ' relations', 'ok');
         }
         if (ck('.lm-loom')) {
           setStatus(elCfgStat, 'Stage 2/4: Loom stitching...', '');

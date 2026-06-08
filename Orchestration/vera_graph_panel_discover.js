@@ -160,8 +160,8 @@ window.veraUI.Graph.registerPanel({
         '<div class="r" title="Concurrent fetches and background entity workers"><label>Concurrency</label><input type="number" class="dc-conc" value="4" min="1" max="16">'+
           '<span class="lbl">Ent workers</span><input type="number" class="dc-workers" value="3" min="1" max="8"></div>'+
         '<div class="r" title="0 = unlimited. Page text cap limits text extracted per page (chars); record cap limits stored text."><label>Text cap</label><input type="number" class="dc-textcap" value="0" min="0" max="200000" title="Max chars extracted per page (0=unlimited)"><span class="lbl" style="white-space:nowrap">Record cap</span><input type="number" class="dc-reccap" value="0" min="0" max="200000" title="Max chars stored per record (0=unlimited)"></div>'+
-        '<div class="r"><label>Angles</label><input type="number" class="dc-angles" value="6" min="1" max="10">'+
-          '<span class="lbl">Expand rounds</span><input type="number" class="dc-rounds" value="2" min="0" max="6"></div>'+
+        '<div class="r"><label>Angles</label><input type="number" class="dc-angles" value="6" min="1" max="50">'+
+          '<span class="lbl">Expand rounds</span><input type="number" class="dc-rounds" value="2" min="0" max="30"></div>'+
         '<div class="r"><label>Min relevance</label><input type="number" class="dc-minrel" value="6" min="0" max="90">'+
           '<span style="font-size:8.5px;color:var(--dim2)">% — drop off-topic pages</span></div>'+
         '<div class="r"><label>Neighbor depth</label><input type="number" class="dc-ndepth" value="1" min="0" max="3"></div>'+
@@ -346,6 +346,19 @@ window.veraUI.Graph.registerPanel({
         '</div></details>'+
         '<div class="status dc-ner-st" style="font-size:8px"></div>'+
         '<div class="dc-ner-info" style="margin-top:5px;font-size:8.5px;color:var(--dim2);line-height:1.5;display:none"></div>'+
+      '</div></details>'+
+
+      // ── ENTITY EXTRACTION ─────────────────────────────────────────────
+      '<details class="sec dc-extract-sec"><summary class="sec-hd"><span>⧙ Extract entities</span><span class="dc-extract-active" style="font-size:8px;color:var(--dim);margin-left:4px"></span></summary><div class="sec-body">'+
+        '<div style="font-size:8.5px;color:var(--dim2);margin-bottom:5px">Run entity and relationship extraction on the active dataset.</div>'+
+        '<div class="btn-row" style="gap:4px;margin-bottom:4px;flex-wrap:wrap">'+
+          '<input type="number" class="dc-extract-maxrec" value="500" min="10" max="5000" style="width:60px;font-size:8.5px;padding:2px 4px;background:var(--bg0);border:1px solid var(--border2);color:var(--text);border-radius:3px" title="Max records to process">'+
+          '<span style="font-size:8px;color:var(--dim2);align-self:center">max recs</span>'+
+          '<label style="display:flex;align-items:center;gap:3px;font-size:8.5px;color:var(--dim2)">'+
+            '<input type="checkbox" class="dc-extract-llm" checked style="width:12px;height:12px">LLM</label>'+
+          '<button class="btn dc-extract-run" style="font-size:8.5px;padding:2px 8px">Extract</button>'+
+        '</div>'+
+        '<div class="status dc-extract-st" style="font-size:8px"></div>'+
       '</div></details>'+
 
       // ── ASK / QUERY ──────────────────────────────────────────────────
@@ -587,8 +600,8 @@ window.veraUI.Graph.registerPanel({
         dropoff:intv('.dc-drop',3,0,20),
         max_concurrency:intv('.dc-conc',4,1,16),
         entity_workers:intv('.dc-workers',3,1,8),
-        search_angles:intv('.dc-angles',6,1,10),
-        expansion_rounds:intv('.dc-rounds',2,0,6),
+        search_angles:intv('.dc-angles',6,1,50),
+        expansion_rounds:intv('.dc-rounds',2,0,30),
         min_relevance:intv('.dc-minrel',6,0,90)/100,
         synth_neighbor_depth:intv('.dc-ndepth',1,0,3),
         page_text_cap:intv('.dc-textcap',0,0,200000),
@@ -624,8 +637,23 @@ window.veraUI.Graph.registerPanel({
         mode:modeOverride||'new',
         detect_surfaces:true,extract_subtables:true,
       };
+      var overwriteGraph = overwrite;
+      if (cont && active.crawlId && !overwrite) {
+        // Continue: resume the saved frontier without re-searching
+        var contPayload = {
+          crawl_id: active.crawlId,
+          additional_pages: intv('.dc-pages',60,1,2000),
+          page_text_cap: intv('.dc-textcap',0,0,200000),
+          max_record_chars: intv('.dc-reccap',0,0,200000),
+        };
+        await runCrawl(api('/fabric/discover/continue','POST',contPayload,600000),
+          active.crawlId, 'Continuing "'+topic+'"', false, '.dc-topic-status');
+        return;
+      }
+      // Expand (cont=true, no active crawl) or fresh: merge into existing dataset
+      if (cont && active.datasetId) payload.dataset_id = active.datasetId;
       await runCrawl(api('/fabric/discover/topic','POST',payload,600000),cid,
-        (overwrite?'Overwriting':cont?'Continuing':'Discovering')+' "'+topic+'"',overwrite,'.dc-topic-status');
+        (overwrite?'Overwriting':cont?'Expanding':'Discovering')+' "'+topic+'"',overwriteGraph,'.dc-topic-status');
     }
 
     // ── 3-way action modal ────────────────────────────────────────────────
@@ -759,8 +787,18 @@ window.veraUI.Graph.registerPanel({
         max_record_chars:intv('.dc-reccap',0,0,200000),
         continue_existing:cont||false,
       };
+      if (cont && active.crawlId) {
+        var contP = { crawl_id: active.crawlId,
+          additional_pages: intv('.dc-curlpages',60,1,2000),
+          page_text_cap: intv('.dc-textcap',0,0,200000),
+          max_record_chars: intv('.dc-reccap',0,0,200000),
+        };
+        await runCrawl(api('/fabric/discover/continue','POST',contP,300000),
+          active.crawlId,'Continuing: '+url,false,'.dc-curl-status');
+        return;
+      }
       await runCrawl(api('/fabric/discover/crawl','POST',payload,300000),cid,
-        (cont?'Continuing crawl: ':'Crawling: ')+url,false,'.dc-curl-status');
+        'Crawling: '+url,false,'.dc-curl-status');
     }
 
     // ── History ──────────────────────────────────────────────────────────
@@ -794,13 +832,36 @@ window.veraUI.Graph.registerPanel({
             '<span class="dot '+(c.status||'done')+'"></span>'+
             '<span style="flex:1;color:var(--dim2)">'+esc(ts||c.crawl_id.slice(-8))+'</span>'+
             '<span style="color:var(--dim)">'+(c.pages_fetched||0)+'p</span>'+
+            '<button class="btn ri-del" data-cid="'+esc(c.crawl_id)+'" data-ds="'+esc(c.dataset_id||'')+'" '+
+              'style="font-size:7.5px;padding:1px 5px;background:transparent;border:1px solid var(--border);color:var(--dim);margin-left:3px" '+
+              'title="Delete this scan (and optionally its dataset)">\u2715</button>'+
           '</div>';
         });
         html+='</div></div>';
       });
       el.innerHTML=html;
       el.querySelectorAll('.run-item').forEach(function(r){
-        r.onclick=function(ev){ev.stopPropagation();selectCrawl(r.getAttribute('data-cid'),r.getAttribute('data-ds'));};
+        r.onclick=function(ev){
+          if(ev.target.classList.contains('ri-del'))return;
+          ev.stopPropagation();selectCrawl(r.getAttribute('data-cid'),r.getAttribute('data-ds'));
+        };
+      });
+      el.querySelectorAll('.ri-del').forEach(function(btn){
+        btn.onclick=function(ev){
+          ev.stopPropagation();
+          var cid=btn.getAttribute('data-cid'),ds=btn.getAttribute('data-ds')||'';
+          var msg='Delete scan '+cid+'?'+(ds?'\n\nAlso delete the full dataset (all pages/entities)?\n[OK = delete dataset too, Cancel = scan only]':'');
+          var delDs = ds && confirm(msg);
+          if (!confirm(delDs?'Confirm: delete scan + full dataset '+ds+'?':'Confirm: delete scan '+cid+' only?')) return;
+          api('/fabric/discover/delete_scan','POST',{crawl_id:cid,delete_dataset:!!delDs},30000)
+            .then(function(r){
+              if(r&&r.ok){
+                log('\u2715 deleted: '+cid+(delDs?' + dataset':''),'warn');
+                if(active.crawlId===cid){active.crawlId='';active.datasetId='';_saveActive();graph.clear();seenNodes={};seenEdges={};lastGraph={nodes:[],edges:[]};nodeById={};degree={};}
+                loadHistory(false);
+              } else log('Delete failed: '+((r&&r.error)||'?'),'err');
+            });
+        };
       });
       if(!silent)log('History: '+lastCrawls.length+' runs','info');
     }
@@ -1235,8 +1296,71 @@ window.veraUI.Graph.registerPanel({
         if (!node) return;
         var p = node.props || {};
         var text = p.text || p.content || p.body || '';
+        var ntype = node.type || '';
 
-        // Links table (outbound links from page node, or _links from table rows)
+        // Dataset node: show page list in content panel + surfaces in table
+        if (ntype === 'Dataset') {
+            var dsId = node.id || p.id || '';
+            if (dsId && graph && graph.bottomDrawer) {
+                // Fetch pages for this dataset and show as page-list
+                api('/fabric/discover/graph?dataset_id=' + encodeURIComponent(dsId) + '&include_entities=false', 'GET')
+                    .then(function(g) {
+                        if (!g || g.error) return;
+                        var pages = (g.nodes || []).filter(function(n){ return n.type === 'Page'; })
+                            .map(function(n){ return n.props || {}; })
+                            .sort(function(a,b){ return (b.relevance||0)-(a.relevance||0); });
+                        if (pages.length && graph.bottomDrawer.showContent) {
+                            graph.bottomDrawer.showContent(
+                                (node.label || dsId) + ' \u2014 ' + pages.length + ' pages',
+                                null,
+                                { pages: pages }
+                            );
+                        }
+                        // Also show surfaces in table if any
+                        var surfaces = (g.nodes||[]).filter(function(n){ return n.type==='Surface'||n.type==='Subtable'; });
+                        if (surfaces.length) {
+                            var cols = ['label','kind','source_type','relevance'];
+                            var rows = surfaces.map(function(s){
+                                var sp=s.props||{};
+                                return [s.label||sp.label||s.id, sp.kind||'', sp.source_type||'', sp.relevance!=null?Math.round((sp.relevance||0)*100)+'%':''];
+                            });
+                            graph.bottomDrawer.showTable(cols, rows, (node.label||dsId)+' surfaces ('+surfaces.length+')');
+                        }
+                    });
+            }
+            return;
+        }
+
+        // Subtable/Surface node: show records in table panel
+        if (ntype === 'Subtable' || ntype === 'Surface') {
+            var subId = node.id || p.id || '';
+            try {
+                if (graph && graph.bottomDrawer) {
+                    var records = p.records || p.rows || p.data_rows;
+                    if (Array.isArray(records) && records.length) {
+                        var cols2 = Object.keys(records[0] || {}).filter(function(k){ return k !== 'text' && k[0] !== '_'; }).slice(0, 12);
+                        var rows2 = records.slice(0, 500).map(function(r){ return cols2.map(function(c){ return r[c] == null ? '' : String(r[c]); }); });
+                        graph.bottomDrawer.showTable(cols2, rows2, (node.label || node.id) + ' (' + records.length + ' rows)');
+                        return;
+                    }
+                    // Fetch from server if no cached records
+                    if (subId) {
+                        api('/fabric/surfaces/records?sub_dataset=' + encodeURIComponent(subId) + '&limit=300', 'GET')
+                            .then(function(r) {
+                                if (!r || r.error || !r.records) return;
+                                var recs = r.records;
+                                if (!recs.length) return;
+                                var cols3 = Object.keys(recs[0]).filter(function(k){ return k[0]!=='_'&&k!=='text'; }).slice(0,12);
+                                var rows3 = recs.map(function(rec){ return cols3.map(function(c){ return rec[c]==null?'':String(rec[c]); }); });
+                                graph.bottomDrawer.showTable(cols3, rows3, (node.label||subId)+' ('+recs.length+' rows)');
+                            });
+                    }
+                }
+            } catch(e3) {}
+            return;
+        }
+
+        // Links table (outbound links from page node)
         try {
             if (graph && graph.bottomDrawer && graph.bottomDrawer.showTable) {
                 var links = p.links || p._links;
@@ -1245,31 +1369,24 @@ window.veraUI.Graph.registerPanel({
                         return [l.url || '', l.anchor || ''];
                     });
                     graph.bottomDrawer.showTable(['url','anchor'], lRows,
-                        (p.title || node.label || node.id || 'Page') + ' — links (' + links.length + ')');
-                    // showTable internally opens the drawer; no second open() call needed
-                    // Also open the sidebar reader with page text if available
+                        (p.title || node.label || node.id || 'Page') + ' \u2014 links (' + links.length + ')');
                     if (text && text.length > 80) _openReader(node);
-                    return;
-                }
-                // Row-level records (subtable nodes etc.)
-                var records = p.records || p.rows || p.data_rows;
-                if (Array.isArray(records) && records.length) {
-                    var cols2 = Object.keys(records[0] || {}).filter(function(k){ return k !== 'text' && k[0] !== '_'; }).slice(0, 12);
-                    var rows2 = records.slice(0, 200).map(function(r){ return cols2.map(function(c){ return r[c] == null ? '' : String(r[c]); }); });
-                    graph.bottomDrawer.showTable(cols2, rows2, (node.label || node.id) + ' (' + records.length + ' rows)');
-                    // showTable internally opens the drawer
+                    // Also populate content panel with full text
+                    if (text && text.length > 80 && graph.bottomDrawer.showContent) {
+                        graph.bottomDrawer.showContent(
+                            (p.title || node.label || node.id) + ' \u2014 content', text);
+                    }
                     return;
                 }
             }
         } catch(e3) {}
 
-        // Page content — show in sidebar reader + bottom drawer content
+        // Page content — show in sidebar reader + content panel
         if (text && text.length > 80) {
             _openReader(node);
             try {
                 if (graph && graph.bottomDrawer && graph.bottomDrawer.showContent) {
-                    // showContent internally calls _setActive('content'); no second open() needed
-                    graph.bottomDrawer.showContent((p.title || node.label || node.id) + ' — content', text);
+                    graph.bottomDrawer.showContent((p.title || node.label || node.id) + ' \u2014 content', text);
                 }
             } catch(e2) {}
         }
@@ -1288,6 +1405,35 @@ window.veraUI.Graph.registerPanel({
 
     var _togDrawer = q('.dc-autodrawer');
     if (_togDrawer) { _togDrawer.onchange = function(){ _autoDrawer = _togDrawer.checked; }; }
+
+    // ── Entity extraction ────────────────────────────────────────────────
+    if (q('.dc-extract-run')) {
+        q('.dc-extract-run').onclick = async function() {
+            var dsId = active.datasetId || '';
+            if (!dsId) { setStatus('.dc-extract-st', 'No active dataset \u2014 run a crawl first', 'err'); return; }
+            var maxRec = parseInt((q('.dc-extract-maxrec') && q('.dc-extract-maxrec').value) || '500', 10);
+            var useLlm = !!(q('.dc-extract-llm') && q('.dc-extract-llm').checked);
+            setStatus('.dc-extract-st', 'Extracting\u2026 (may take a while)', '');
+            q('.dc-extract-run').disabled = true;
+            log('\u29d9 Extracting entities from ' + dsId + ' (max ' + maxRec + ' recs' + (useLlm ? ', LLM' : '') + ')\u2026', 'info');
+            var r = await api('/fabric/discover/entity_extract', 'POST', {
+                dataset_id: dsId, max_records: maxRec, use_llm: useLlm
+            }, 300000);
+            q('.dc-extract-run').disabled = false;
+            if (!r || r.error) {
+                setStatus('.dc-extract-st', (r && r.error) || 'Failed', 'err');
+                log('Entity extract failed: ' + ((r && r.error) || '?'), 'err');
+            } else {
+                var msg = (r.entities || 0) + ' entities, ' + (r.relations || 0) + ' relations' +
+                    (r.backend ? ' [' + r.backend + ']' : '');
+                setStatus('.dc-extract-st', msg, 'ok');
+                log('\u2713 Entities: ' + msg, 'ok');
+                var actEl = q('.dc-extract-active');
+                if (actEl) actEl.textContent = r.entities || '';
+                setTimeout(pollOnce, 500); // refresh graph with new entity nodes
+            }
+        };
+    }
 
     // ── NER backend ──────────────────────────────────────────────────────
     async function loadNerStatus(silent) {

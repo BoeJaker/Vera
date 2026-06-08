@@ -3800,12 +3800,31 @@
         document.addEventListener('mouseup', onUp);
       });
 
+      var _lastActiveBd = null;
       // Collapse/expand
       _collapseEl.addEventListener('click', function(){
-        _collapsed = !_collapsed;
-        bdPanelsEl.classList.toggle('collapsed', _collapsed);
-        if (!_collapsed) bdPanelsEl.style.height = _bdH + 'px';
-        _collapseEl.textContent = _collapsed ? '\u25b2' : '\u25bc';
+        if (_collapsed) {
+          // Expanding: restore last panel or first registered
+          var target = _lastActiveBd || _activeBd || Object.keys(_panels)[0];
+          if (target) {
+            _activeBd = target;
+            _collapsed = false;
+            bdPanelsEl.classList.remove('collapsed');
+            bdPanelsEl.style.height = _bdH + 'px';
+            _collapseEl.textContent = '\u25bc';
+            Object.keys(_panels).forEach(function(k){
+              _panels[k].tabEl.classList.toggle('on', k === target);
+              _panels[k].panelEl.classList.toggle('on', k === target);
+            });
+            try { resize(); } catch(e){}
+          }
+        } else {
+          _collapsed = true;
+          bdPanelsEl.classList.add('collapsed');
+          _collapseEl.textContent = '\u25b2';
+          Object.keys(_panels).forEach(function(k){ _panels[k].tabEl.classList.remove('on'); });
+          _activeBd = null;
+        }
       });
 
       function _setActive(id){
@@ -3818,6 +3837,7 @@
           Object.keys(_panels).forEach(function(k){ _panels[k].tabEl.classList.remove('on'); });
           return;
         }
+        _lastActiveBd = id;
         _activeBd = id;
         _collapsed = false;
         bdPanelsEl.classList.remove('collapsed');
@@ -3988,15 +4008,44 @@
           var ch = _contentPanelEl.querySelector('.vg-bd-content-chars');
           var body = _contentPanelEl.querySelector('.vg-bd-content');
           if (ct) ct.textContent = title || 'Content';
-          if (ch) ch.textContent = text ? text.length + ' chars' : '';
-          if (body){
-            var html = esc(text || '');
-            // Linkify URLs
-            html = html.replace(/(https?:\/\/[^\s<"]+)/g, function(m){ return '<a href="' + esc(m) + '" target="_blank" rel="noopener" style="color:var(--acc,#5a9e8f)">' + esc(m) + '</a>'; });
-            body.innerHTML = html;
+          // opts2.pages = [{title,url,text,word_count,...}] for page-list mode
+          var pages = opts2 && opts2.pages;
+          if (pages && pages.length && body) {
+            if (ch) ch.textContent = pages.length + ' pages';
+            body.innerHTML = pages.map(function(p, i){
+              var ptitle = p.title || p.url || ('Page ' + (i+1));
+              var purl   = p.url || '';
+              var ptext  = (p.text || p.full_text || p.content || '').trim();
+              var pwc    = p.word_count || (ptext ? ptext.split(/\s+/).length : 0);
+              var ptags  = Array.isArray(p.tags) ? p.tags.slice(0,6).join(', ') : (p.tags||'');
+              var prel   = p.relevance != null ? Math.round(p.relevance * 100) : null;
+              return (
+                '<details class="vg-bd-page-entry">' +
+                '<summary style="display:flex;align-items:baseline;gap:6px;padding:4px 6px;cursor:pointer;border-bottom:1px solid var(--border,#3a3530)">' +
+                  '<span style="flex:1;font-size:9.5px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(ptitle)+'">' + esc(ptitle) + '</span>' +
+                  (prel!=null?'<span style="font-size:8px;color:var(--dim);flex-shrink:0">'+prel+'%</span>':'')+
+                  '<span style="font-size:8px;color:var(--dim);flex-shrink:0">' + pwc + ' w</span>' +
+                  (purl?'<a href="'+esc(purl)+'" target="_blank" rel="noopener" style="font-size:8px;color:var(--acc);flex-shrink:0" onclick="event.stopPropagation()">\u2197</a>':'')+
+                '</summary>' +
+                '<div style="padding:5px 8px">' +
+                  (ptags?'<div style="font-size:8px;color:var(--dim2);margin-bottom:3px">'+esc(ptags)+'</div>':'')+
+                  '<div style="font-size:9px;color:var(--text);line-height:1.6;white-space:pre-wrap;max-height:180px;overflow-y:auto">' +
+                    esc(ptext.slice(0,1200)) + (ptext.length>1200?'\u2026':'') +
+                  '</div>' +
+                '</div>' +
+                '</details>'
+              );
+            }).join('');
+          } else {
+            if (ch) ch.textContent = text ? text.length + ' chars' : '';
+            if (body){
+              var html = esc(text || '');
+              html = html.replace(/(https?:\/\/[^\s<"]+)/g, function(m){ return '<a href="' + esc(m) + '" target="_blank" rel="noopener" style="color:var(--acc,#5a9e8f)">' + esc(m) + '</a>'; });
+              body.innerHTML = html;
+            }
           }
           var badge = _panels['content'] && _panels['content'].tabEl.querySelector('.vg-bd-badge');
-          if (badge){ badge.textContent = text ? '\u2713' : ''; _panels['content'].tabEl.classList.toggle('has-content', !!text); }
+          if (badge){ badge.textContent = text||(pages&&pages.length) ? '\u2713' : ''; _panels['content'].tabEl.classList.toggle('has-content', !!(text||(pages&&pages.length))); }
           _setActive('content');
         },
         open: function(id){ _setActive(id || 'terminal'); },

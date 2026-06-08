@@ -2733,6 +2733,21 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
         await _mirror_crawl_to_fabric(crawl_id, ds_id, config.get("topic", ""))
     except Exception as e:
         log.debug("fabric mirror call: %s", e)
+    # Register discovery dataset in fabric_datasets so Loom can see it
+    try:
+        _ensure_tables()
+        _sqlite_conn().execute(
+            "INSERT OR REPLACE INTO fabric_datasets "
+            "(dataset_id, record_count, created_at, updated_at) "
+            "VALUES (?, "
+            " (SELECT COUNT(*) FROM fabric_records WHERE dataset_id=?), "
+            " COALESCE((SELECT created_at FROM fabric_datasets WHERE dataset_id=?), datetime('now')), "
+            " datetime('now'))",
+            (ds_id, ds_id, ds_id)
+        )
+        _sqlite_conn().commit()
+    except Exception as e:
+        log.debug("register fabric_datasets: %s", e)
     await _emit("done", pages=pages_fetched, surfaces=surfaces_found,
                 subtables=subtables_found, entities=entities_found, promoted=promoted,
                 queue_remaining=len(queue))
@@ -4475,6 +4490,8 @@ async def cap_discover_topic(
     loom: bool = True, loom_cross: bool = True, loom_max_datasets: int = 8,
     loom_min_score: float = 0.45,
     tags: str = "", crawl_id: str = "",
+    overwrite: bool = False,
+    page_text_cap: int = 0, page_link_cap: int = 0, max_record_chars: int = 0,
     trace_id=None,
 ) -> Dict:
     if not topic or not topic.strip():
@@ -4493,6 +4510,27 @@ async def cap_discover_topic(
     ds_id = (re.sub(r"[^a-zA-Z0-9_.]", "_", dataset_id.strip())[:80]
              if dataset_id.strip()
              else "topic." + re.sub(r"[^a-z0-9]+", "_", topic.lower()).strip("_")[:40])
+
+    # If overwriting, wipe the existing dataset so the graph starts clean
+    if overwrite and ds_id:
+        try:
+            _sqlite_conn().execute(
+                "DELETE FROM fabric_records WHERE dataset_id=?", (ds_id,))
+            _sqlite_conn().execute(
+                "DELETE FROM fabric_discovery_edges WHERE parent_dataset=?", (ds_id,))
+            _sqlite_conn().execute(
+                "DELETE FROM fabric_surfaces WHERE parent_dataset=?", (ds_id,))
+            _sqlite_conn().execute(
+                "DELETE FROM fabric_entity_mentions WHERE dataset_id=?", (ds_id,))
+            _sqlite_conn().execute(
+                "DELETE FROM fabric_entities WHERE id IN "
+                "(SELECT entity_id FROM fabric_entity_mentions WHERE dataset_id=?)", (ds_id,))
+            _sqlite_conn().execute(
+                "DELETE FROM fabric_discovery_frontier WHERE dataset_id=?", (ds_id,))
+            _sqlite_conn().commit()
+            log.info("topic overwrite: cleared dataset %s", ds_id)
+        except Exception as e:
+            log.warning("overwrite clear %s: %s", ds_id, e)
 
     # ── 1) Seed: explicit URLs win, else multi-angle web search + feed probe ─
     explicit = [_normalize_url(u) for u in seed_urls.split(",")
@@ -4566,6 +4604,8 @@ async def cap_discover_topic(
         "llm_tagging": llm_tagging, "min_relevance": min_relevance,
         "auto_promote": auto_promote, "auto_pull": auto_pull,
         "tags": (tags + ",topic" if tags else "topic"),
+        "page_text_cap": page_text_cap, "page_link_cap": page_link_cap,
+        "max_record_chars": max_record_chars,
     }
 
     # ── 2) Initial crawl segment ────────────────────────────────────────────
@@ -5563,6 +5603,27 @@ log.info("fabric_discovery: history/graph/topic caps loaded "
 # INTERACTIVE GRAPH EXPANSION
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _topic_for_dataset(ds_id: str) -> str:
+    """Retrieve the topic a dataset was crawled for (from frontier config)."""
+    if not ds_id:
+        return ""
+    try:
+        row = _sqlite_conn().execute(
+            "SELECT config FROM fabric_discovery_frontier WHERE dataset_id=? "
+            "ORDER BY rowid DESC LIMIT 1", (ds_id,)).fetchone()
+        if row:
+            cfg = json.loads(row["config"] or "{}")
+            topic = cfg.get("topic") or ""
+            if topic:
+                return topic
+    except Exception:
+        pass
+    # Fallback: derive from dataset ID (e.g. "topic.wind_waker" → "wind waker")
+    if ds_id.startswith("topic."):
+        return ds_id[6:].replace("_", " ")
+    return ds_id.replace("_", " ")
+
+
 def _dataset_for_url(url: str) -> str:
     """Find which discovery dataset a page URL belongs to (via fabric_records)."""
     try:
@@ -5679,17 +5740,23 @@ async def cap_discover_expand(
         ds = (dataset_id or "").strip() or _dataset_for_url(url) or _auto_ds(url)
         if not ds:
             return {"error": "cannot determine dataset for this page"}
-        synth_cap = CAPABILITY_REGISTRY.get("fabric.synthesize.topic")
-        if not synth_cap:
-            return {"error": "fabric.synthesize.topic not registered"}
-        fn = synth_cap.get("func") or synth_cap.get("raw")
-        if not fn:
-            return {"error": "fabric.synthesize.topic has no callable"}
+        # Derive the topic from the frontier config for this dataset
+        topic_for_synth = _topic_for_dataset(ds)
+        if not topic_for_synth:
+            return {"error": f"could not determine topic for dataset {ds}. "
+                             f"Pass topic explicitly via the action options."}
         try:
-            r = await fn(dataset_id=ds, max_records=max_links or 50, trace_id=trace_id)
+            r = await _call_cap(
+                "fabric.synthesize.topic",
+                topic=topic_for_synth,
+                dataset_id=ds,
+                max_entries=max_links or 150,
+                allow_discovery=False,   # don't trigger additional crawls from node action
+                trace_id=trace_id,
+            ) or {}
             return {"ok": True, "nodes": [], "edges": [],
                     "added": 0,
-                    "topic": r.get("topic", ""),
+                    "topic": r.get("topic", topic_for_synth),
                     "entries": r.get("entries", 0),
                     "note": f"3rd-order model built for {ds} ({r.get('entries', 0)} entries)."}
         except Exception as e:
@@ -6357,6 +6424,70 @@ async def cap_discover_compile(
         "dataset_id": ds_id,
         "stored_id": stored_id,
         "style": style,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Entity extraction for a discovery dataset (callable from both Discover and Loom)
+# ---------------------------------------------------------------------------
+@capability(
+    "fabric.discover.entity_extract",
+    http_method="POST", http_path="/fabric/discover/entity_extract",
+    http_tags=["fabric", "discover", "entity"], memory="on",
+    streams=["fabric.entity_graph.progress"],
+    description=(
+        "Run entity and relationship extraction on all records in a discovery dataset. "
+        "Uses the active NER backend (GLiNER / spaCy / heuristic). Results are written "
+        "to fabric_entities and fabric_entity_mentions. Callable from both the Discover "
+        "panel and the Loom pipeline — both UIs share the same underlying extraction. "
+        "Input: dataset_id (str!), use_llm (bool=True), backend_override (str=''), "
+        "max_records (int=500), worker_batch (int=8), trace_id. "
+        "Output: {ok, dataset_id, entities, relations, persisted, backend}."
+    ),
+)
+async def cap_discover_entity_extract(
+    dataset_id: str = "",
+    use_llm: bool = True,
+    backend_override: str = "",
+    max_records: int = 500,
+    worker_batch: int = 8,
+    trace_id=None,
+) -> Dict:
+    ds_id = (dataset_id or "").strip()
+    if not ds_id:
+        return {"error": "dataset_id required"}
+    _ensure_tables()
+
+    # Override NER backend if requested
+    if backend_override:
+        try:
+            await _call_cap("fabric.entity_graph.ner",
+                            backend=backend_override, trace_id=None)
+        except Exception:
+            pass
+
+    # Use the shared entity extraction capability
+    r = await _call_cap(
+        "fabric.entity_graph.extract",
+        dataset_id=ds_id,
+        use_llm=use_llm,
+        limit=max_records,
+        batch_size=worker_batch,
+        persist=True,
+        trace_id=trace_id,
+    ) or {}
+
+    if not r:
+        return {"error": "entity_graph.extract not available"}
+
+    return {
+        "ok": True,
+        "dataset_id": ds_id,
+        "entities": r.get("entities", r.get("total", 0)),
+        "relations": r.get("relations", r.get("relationships", 0)),
+        "persisted": r.get("persisted", r.get("new_entities", 0)),
+        "backend": r.get("backend", ""),
+        "note": r.get("note", ""),
     }
 
 
