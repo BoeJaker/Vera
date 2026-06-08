@@ -85,11 +85,11 @@ log = logging.getLogger("vera.context")
 
 # Lazy module accessors — these modules may not yet be loaded at import time.
 def _redis():     return _orch.REDIS
-def _skills():    return sys.modules.get("Vera.Orchestration.skills.skills")
-def _dag_store(): return sys.modules.get("Vera.Orchestration.dag.dag_store")
-def _fabric():    return sys.modules.get("Vera.Orchestration.fabric.data_fabric")
-def _memory():    return sys.modules.get("Vera.Orchestration.fabric.memory")
-def _hooks():     return sys.modules.get("Vera.Orchestration.fabric.memory_hooks")
+def _skills():    return sys.modules.get("skills")
+def _dag_store(): return sys.modules.get("dag_store")
+def _fabric():    return sys.modules.get("data_fabric")
+def _memory():    return sys.modules.get("memory")
+def _hooks():     return sys.modules.get("memory_hooks")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

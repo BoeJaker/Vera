@@ -43,6 +43,8 @@ import json
 import logging
 import os
 import re
+import subprocess
+import sys
 import time
 import uuid
 from datetime import datetime, timezone
@@ -383,40 +385,79 @@ async def _ingest_data_payload(
 # PAGE CONTENT EXTRACTION
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _extract_page_structure(html: str, url: str) -> Dict:
-    """Extract structured content from HTML: headings, sections, links,
-    code blocks, lists, metadata. Returns a rich record."""
+_BOILERPLATE_RE = re.compile(
+    r"(?:^|[\s_-])(?:ad|ads|advert|advertis|sponsor|promo|banner|cookie|consent|"
+    r"newsletter|subscrib|signup|sign-up|sidebar|widget|related|recirc|recommend|"
+    r"share|social|comment|disqus|nav|menu|breadcrumb|pagination|pager|footer|"
+    r"header|masthead|popup|modal|overlay|paywall|toolbar|skip|hidden|"
+    r"cta|donate|cookiebar|gdpr)", re.I)
+_ROLE_BOILERPLATE_RE = re.compile(
+    r"(navigation|banner|complementary|contentinfo|search|dialog|alert)", re.I)
+
+
+def _normalise_ws(s: str) -> str:
+    return " ".join((s or "").split())
+
+
+def _densest_block(soup):
+    """Pick the container holding the most paragraph text — a cheap readability
+    heuristic for pages without a <main>/<article>."""
+    best, best_len = None, 0
+    for el in soup.find_all(["article", "main", "section", "div"]):
+        ps = el.find_all("p", recursive=True)
+        if len(ps) < 2:
+            continue
+        L = sum(len(p.get_text(strip=True)) for p in ps)
+        if L > best_len:
+            best_len, best = L, el
+    return best
+
+
+def _strip_boilerplate(soup):
+    """Remove scripts, chrome and ad/nav/cookie/comment boilerplate in place."""
+    for tag in soup(["script", "style", "noscript", "nav", "footer", "header",
+                     "aside", "form", "button", "svg", "iframe", "template"]):
+        tag.decompose()
+    for attr in ("class", "id"):
+        for el in soup.find_all(attrs={attr: _BOILERPLATE_RE}):
+            el.decompose()
+    for el in soup.find_all(attrs={"role": _ROLE_BOILERPLATE_RE}):
+        el.decompose()
+    for el in soup.find_all(attrs={"aria-hidden": "true"}):
+        el.decompose()
+
+
+def _extract_page_structure(html: str, url: str, max_links: int = 0,
+                            max_text: int = 0, max_html: int = 3_000_000) -> Dict:
+    """Extract structured content from HTML: headings, sections, links, tables,
+    code blocks, lists, metadata. Returns a rich record.
+
+    Caps are configurable; 0 means UNLIMITED (exhaustive capture). Defaults are
+    unlimited so crawling grabs all content / links / paths from a page."""
     try:
         from bs4 import BeautifulSoup
     except ImportError:
-        # Fallback: regex-based extraction
         return _extract_page_structure_regex(html, url)
 
-    soup = BeautifulSoup(html[:200000], "html.parser")
+    soup = BeautifulSoup((html[:max_html] if max_html else html), "html.parser")
 
-    # Title
     title = ""
     if soup.title and soup.title.string:
         title = soup.title.string.strip()
 
-    # Meta description
     desc = ""
     meta_desc = (soup.find("meta", attrs={"name": "description"}) or
                  soup.find("meta", attrs={"property": "og:description"}))
     if meta_desc:
         desc = (meta_desc.get("content", "") or "")[:500]
 
-    # Headings hierarchy
     headings = []
     for tag in soup.find_all(re.compile(r"^h[1-6]$")):
         text = tag.get_text(strip=True)
         if text and len(text) < 200:
-            headings.append({
-                "level": int(tag.name[1]),
-                "text": text[:120],
-            })
+            headings.append({"level": int(tag.name[1]), "text": text[:120]})
 
-    # Extract links with anchor text and context
+    # Extract ALL links with anchor text + context (no cap unless max_links set)
     links = []
     seen_hrefs = set()
     for a in soup.find_all("a", href=True):
@@ -427,64 +468,63 @@ def _extract_page_structure(html: str, url: str) -> Dict:
         if not full.startswith(("http://", "https://")) or full in seen_hrefs:
             continue
         seen_hrefs.add(full)
-        anchor = a.get_text(strip=True)[:80]
-        # Get surrounding context (parent paragraph text)
+        anchor = a.get_text(strip=True)[:120]
         parent = a.find_parent(["p", "li", "td", "div", "section"])
-        context = ""
-        if parent:
-            context = parent.get_text(strip=True)[:200]
-        links.append({
-            "url": full,
-            "anchor": anchor,
-            "context": context,
-        })
+        context = parent.get_text(strip=True)[:200] if parent else ""
+        links.append({"url": full, "anchor": anchor, "context": context,
+                      "rel": (a.get("rel") or [""])[0] if a.get("rel") else ""})
+        if max_links and len(links) >= max_links:
+            break
 
-    # Code blocks
     code_blocks = []
     for code in soup.find_all(["code", "pre"]):
         text = code.get_text(strip=True)
         if len(text) > 20:
             lang = ""
-            classes = code.get("class", [])
-            for c in classes:
+            for c in code.get("class", []):
                 if c.startswith(("language-", "lang-", "highlight-")):
                     lang = c.split("-", 1)[1]
                     break
-            code_blocks.append({
-                "language": lang,
-                "text": text[:2000],
-            })
+            code_blocks.append({"language": lang, "text": text[:2000]})
 
-    # Main content text
-    main_el = (soup.find("main") or soup.find("article") or
-               soup.find(id=re.compile(r"^(content|main|mw-content-text)", re.I)) or
-               soup.find(class_=re.compile(r"(content|article|post|entry)", re.I)))
-    text_root = main_el if main_el else soup.body or soup
-    for tag in text_root(["script", "style", "noscript", "nav", "footer", "header"]):
-        tag.decompose()
-    full_text = " ".join(text_root.get_text(separator=" ").split())[:20000]
+    # Tables (count + light sample) — used for source-type / quality signals
+    tables = []
+    for tb in soup.find_all("table"):
+        rows = tb.find_all("tr")
+        if len(rows) >= 2:
+            tables.append({"rows": len(rows)})
 
-    # Lists (ordered and unordered)
+    _strip_boilerplate(soup)
+    main_el = (soup.find("main") or soup.find("article")
+               or soup.find(attrs={"role": "main"})
+               or soup.find(id=re.compile(
+                   r"^(content|main|mw-content-text|article|post|story)", re.I))
+               or soup.find(class_=re.compile(
+                   r"(article-body|post-content|entry-content|story-body|"
+                   r"articlebody|content__article|content|article|post|entry)", re.I)))
+    if not main_el:
+        main_el = _densest_block(soup)
+    text_root = main_el if main_el else (soup.body or soup)
+    full_text = _normalise_ws(text_root.get_text(separator=" "))
+    if max_text:
+        full_text = full_text[:max_text]
+
     lists = []
     for ol_ul in soup.find_all(["ul", "ol"]):
-        items = []
-        for li in ol_ul.find_all("li", recursive=False):
-            t = li.get_text(strip=True)[:200]
-            if t:
-                items.append(t)
-        if items and len(items) >= 2:
-            lists.append({
-                "type": ol_ul.name,
-                "items": items[:30],
-            })
+        items = [li.get_text(strip=True)[:200]
+                 for li in ol_ul.find_all("li", recursive=False)
+                 if li.get_text(strip=True)]
+        if len(items) >= 2:
+            lists.append({"type": ol_ul.name, "items": items[:60]})
 
     return {
         "title": title,
         "description": desc,
-        "headings": headings[:50],
-        "links": links[:200],
-        "code_blocks": code_blocks[:20],
-        "lists": lists[:20],
+        "headings": headings[:120],
+        "links": (links[:max_links] if max_links else links),
+        "code_blocks": code_blocks[:60],
+        "lists": lists[:60],
+        "tables": tables,
         "full_text": full_text,
         "word_count": len(full_text.split()),
     }
@@ -538,160 +578,717 @@ _PAT_DATE = re.compile(
     re.I
 )
 _PAT_YEAR = re.compile(r"\b(1[89]\d{2}|20[0-3]\d)\b")
+
+# Titles that precede a person's name. Used both to type people and, in the
+# relationship pass, to detect "X, <title> of Y" role patterns.
+_TITLE_WORDS = (
+    "CEO|CTO|CFO|COO|CIO|CMO|CISO|President|Vice President|VP|SVP|EVP|"
+    "Managing Director|Director|Chairman|Chairwoman|Chairperson|Chair|"
+    "Founder|Co-Founder|Cofounder|Co-founder|Owner|Partner|"
+    "Professor|Prof|Dr|Mr|Mrs|Ms|Mx|Sir|Dame|Lord|Lady|Rev|"
+    "Senator|Governor|Mayor|Minister|Secretary|Ambassador|Representative|"
+    "General|Colonel|Major|Captain|Lieutenant|Sergeant|Admiral|"
+    "Head|Chief|Lead|Principal|Engineer|Scientist|Researcher|Analyst|Manager"
+)
 _PAT_PERSON_TITLE = re.compile(
-    r"\b(CEO|CTO|CFO|COO|President|Director|Chairman|Chairwoman|VP|Professor|"
-    r"Dr\.|Mr\.|Mrs\.|Ms\.)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})\b"
+    r"\b(?:" + _TITLE_WORDS + r")\.?\s+([A-Z][a-z]+(?:\s+[A-Z][a-z'\u2019.-]+){0,3})\b"
 )
+
+# Organisation suffixes — a capitalised run ending in one of these is an org.
+_ORG_SUFFIX_WORDS = {
+    "inc", "incorporated", "corp", "corporation", "ltd", "limited", "llc", "llp",
+    "plc", "gmbh", "ag", "sa", "nv", "bv", "co", "company", "foundation",
+    "institute", "institution", "university", "college", "academy", "school",
+    "association", "group", "holdings", "partners", "labs", "laboratory",
+    "laboratories", "technologies", "technology", "systems", "solutions",
+    "software", "ventures", "capital", "bank", "trust", "society", "committee",
+    "agency", "authority", "department", "ministry", "bureau", "consortium",
+    "alliance", "network", "council", "federation", "union", "organisation",
+    "organization", "studios", "studio", "media", "press", "industries",
+    "enterprises", "international", "global", "worldwide", "services",
+}
 _PAT_ORG = re.compile(
-    r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,4})\s+(?:Inc|Corp|Ltd|LLC|GmbH|Co|"
-    r"Foundation|Institute|University|Association|Group|Holdings)\b"
+    r"\b([A-Z][A-Za-z0-9'\u2019-]*(?:\s+(?:&|and)?\s*[A-Z][A-Za-z0-9'\u2019-]*){0,3})\s+"
+    r"(?:Inc|Incorporated|Corp|Corporation|Ltd|Limited|LLC|LLP|PLC|GmbH|AG|SA|"
+    r"Co|Company|Foundation|Institute|University|College|Academy|Association|"
+    r"Group|Holdings|Partners|Labs|Laboratories|Technologies|Systems|Solutions|"
+    r"Ventures|Capital|Bank|Trust|Consortium|Alliance|Federation|Studios|"
+    r"Industries|Enterprises|Services)\b\.?"
 )
+
+# Technologies — extend the known set; case-sensitive where it matters.
 _PAT_TECH = re.compile(
-    r"\b(Python|JavaScript|TypeScript|Rust|Go|Java|C\+\+|Ruby|Swift|Kotlin|"
-    r"React|Vue|Angular|Django|Flask|FastAPI|Node\.js|Docker|Kubernetes|"
-    r"PostgreSQL|MySQL|MongoDB|Redis|Neo4j|TensorFlow|PyTorch|CUDA|"
-    r"GPT-\d|BERT|Transformer|LLM|API|REST|GraphQL|WebSocket|OAuth|"
-    r"FAISS|Chroma|Ollama|ONNX|WASM|gRPC)\b"
+    r"\b(Python|JavaScript|TypeScript|Rust|Golang|Java|C\+\+|C#|Ruby|Swift|"
+    r"Kotlin|Scala|Elixir|Haskell|Perl|PHP|R|Julia|Dart|Lua|"
+    r"React|Vue|Angular|Svelte|Next\.js|Nuxt|Django|Flask|FastAPI|Rails|"
+    r"Spring|Express|Node\.js|Deno|Bun|"
+    r"Docker|Kubernetes|Podman|Terraform|Ansible|Helm|Nomad|"
+    r"PostgreSQL|MySQL|MariaDB|SQLite|MongoDB|Redis|Cassandra|Neo4j|"
+    r"Elasticsearch|ClickHouse|DuckDB|Kafka|RabbitMQ|"
+    r"TensorFlow|PyTorch|JAX|Keras|scikit-learn|Pandas|NumPy|CUDA|"
+    r"GPT-\d(?:\.\d)?|GPT|Claude|Llama|Mistral|Gemini|BERT|Transformer|"
+    r"LLM|RAG|API|REST|GraphQL|gRPC|WebSocket|OAuth|JWT|SAML|"
+    r"FAISS|Chroma|Ollama|ONNX|WASM|WebAssembly|LangChain|Hugging Face)\b"
 )
-_PAT_CAMEL = re.compile(r"\b([A-Z][a-z]+(?:[A-Z][a-z]+){1,})\b")
-_PAT_SNAKE = re.compile(r"\b([a-z]+(?:_[a-z]+){1,})\b")
+_PAT_CAMEL = re.compile(r"\b([A-Z][a-z]+(?:[A-Z][a-z0-9]+){1,})\b")
 _PAT_FUNC_DEF = re.compile(r"\bdef\s+(\w+)\b|\bfunction\s+(\w+)\b")
 _PAT_CLASS_DEF = re.compile(r"\bclass\s+(\w+)\b")
 _PAT_IMPORT = re.compile(r"(?:import|from)\s+([\w.]+)")
 _PAT_URL_DOMAIN = re.compile(r"https?://([\w.-]+)/?")
-_PAT_CAPS_PHRASE = re.compile(
-    r"\b([A-Z][a-z]+(?:\s+(?:of|the|and|for|in|on|at|to|by|with)\s+)?"
-    r"[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})\b"
+_PAT_ACRONYM = re.compile(r"\b([A-Z]{2,6})\b")
+_PAT_MONEY = re.compile(
+    r"(\$\s?\d[\d,]*(?:\.\d+)?(?:\s?(?:million|billion|trillion|bn|m|k))?|"
+    r"\b\d[\d,]*(?:\.\d+)?\s?(?:million|billion|trillion)?\s?"
+    r"(?:dollars|euros|pounds|USD|EUR|GBP))\b", re.I
 )
+# A capitalised run: Titlecase words joined by spaces or small connectors.
+_PAT_CAPS_PHRASE = re.compile(
+    r"\b([A-Z][A-Za-z0-9'\u2019-]+"
+    r"(?:\s+(?:of|the|and|for|de|von|van)\s+[A-Z][A-Za-z0-9'\u2019-]+"
+    r"|\s+[A-Z][A-Za-z0-9'\u2019-]+){1,4})\b"
+)
+# Single proper noun (one capitalised word) — gated hard in the extractor.
+_PAT_PROPER1 = re.compile(r"\b([A-Z][a-z]{2,}(?:[A-Z][a-z]+)?)\b")
+
+# Conservative location gazetteer + suffix words for typing places.
+_LOC_SUFFIX_WORDS = {
+    "city", "county", "province", "state", "republic", "kingdom", "island",
+    "islands", "bay", "river", "lake", "mountain", "mountains", "valley",
+    "peninsula", "desert", "ocean", "sea", "gulf", "strait", "district",
+    "region", "territory", "country", "nation", "town", "village", "borough",
+    "tower", "building", "bridge", "hall", "house", "centre", "center", "palace",
+    "castle", "cathedral", "church", "temple", "mosque", "stadium", "arena",
+    "airport", "station", "terminal", "port", "harbour", "harbor", "square",
+    "park", "gardens", "street", "road", "avenue", "lane", "plaza", "court",
+    "campus", "university", "college", "school", "hospital", "library",
+    "museum", "gallery", "market", "mall", "estate", "manor", "abbey", "pier",
+}
+_COUNTRIES = {
+    "united states", "usa", "america", "united kingdom", "uk", "britain",
+    "england", "scotland", "wales", "ireland", "france", "germany", "spain",
+    "italy", "portugal", "netherlands", "belgium", "switzerland", "austria",
+    "sweden", "norway", "denmark", "finland", "poland", "russia", "ukraine",
+    "china", "japan", "korea", "south korea", "north korea", "india", "pakistan",
+    "bangladesh", "indonesia", "vietnam", "thailand", "singapore", "malaysia",
+    "philippines", "australia", "new zealand", "canada", "mexico", "brazil",
+    "argentina", "chile", "colombia", "peru", "egypt", "nigeria", "kenya",
+    "south africa", "morocco", "israel", "saudi arabia", "turkey", "iran",
+    "iraq", "greece", "czech republic", "hungary", "romania", "taiwan",
+}
+# Common words that should never become standalone single-word entities.
+_ENTITY_STOPWORDS = {
+    "the", "this", "that", "these", "those", "some", "many", "much", "more",
+    "most", "such", "what", "when", "where", "which", "while", "who", "whom",
+    "whose", "why", "how", "here", "there", "then", "than", "thus", "hence",
+    "also", "however", "therefore", "moreover", "meanwhile", "nevertheless",
+    "although", "because", "since", "unless", "until", "whereas", "whether",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
+    "sunday", "january", "february", "march", "april", "june", "july",
+    "august", "september", "october", "november", "december",
+    "introduction", "conclusion", "summary", "overview", "abstract", "contents",
+    "note", "notes", "example", "examples", "figure", "table", "section",
+    "chapter", "page", "home", "about", "contact", "search", "menu", "login",
+    "register", "subscribe", "share", "tweet", "email", "click", "read", "more",
+}
+# Acronyms to ignore (too generic to be useful entities).
+_ACRONYM_STOP = {
+    "THE", "AND", "FOR", "BUT", "NOT", "ALL", "ANY", "CAN", "HAS", "HAD", "WAS",
+    "ARE", "YOU", "OUR", "OUT", "NEW", "NOW", "WHO", "WHY", "HOW", "ITS", "HIS",
+    "HER", "ONE", "TWO", "USA", "UK", "US",
+    # role/title acronyms — captured as relation cues, not standalone entities
+    "CEO", "CTO", "CFO", "COO", "CIO", "CMO", "CISO", "VP", "SVP", "EVP",
+}
+_TECH_ACRONYMS = {"API", "SDK", "CLI", "GUI", "URL", "URI", "HTTP", "HTTPS",
+                  "JSON", "XML", "YAML", "SQL", "CSS", "HTML", "CPU", "GPU",
+                  "RAM", "SSD", "ML", "AI", "NLP", "LLM", "RAG", "OS", "VM",
+                  "CDN", "DNS", "TLS", "SSL", "JWT", "RPC", "ORM"}
+
+
+# Descriptor prefixes ("the city of X", "republic of X", "mount X") and the
+# generic geo/structure type words that should not, on their own, distinguish
+# two names referring to the same place ("Cherry Grove City" == "Cherry Grove").
+_DESCRIPTOR_PREFIX = re.compile(
+    r"^(?:the\s+)?(?:city|town|township|village|municipality|borough|county|"
+    r"province|state|republic|kingdom|district|region|prefecture|port|lake|"
+    r"mount|mt|river|gulf|bay|isle|island|cape|fort|university|college|"
+    r"institute|department|ministry|office|bank|company|corporation)\s+of\s+",
+    re.I)
+_STRIP_TYPEWORDS = {
+    "city", "town", "township", "village", "municipality", "borough", "county",
+    "province", "district", "region", "area", "metro", "metropolitan",
+    "inc", "incorporated", "llc", "ltd", "limited", "corp", "corporation",
+    "co", "company", "plc", "gmbh", "sa", "ag",
+}
 
 
 def _normalise_entity(name: str) -> str:
-    """Normalise an entity name for deduplication."""
-    n = name.strip()
+    """Normalise an entity name for deduplication. Strips articles, possessives,
+    surrounding punctuation, leading descriptors ("the city of ..."), and
+    redundant leading/trailing type words ("... City", "Acme Inc") so that
+    surface variants of the same entity collapse to one key. Spaces are
+    preserved (token-aware checks rely on them); use _canonical_key() for the
+    space-insensitive identity key."""
+    n = (name or "").strip()
     n = re.sub(r"\s+", " ", n)
-    n = n.lower()
-    # Remove trailing punctuation
-    n = n.rstrip(".,;:!?")
-    return n
+    n = n.strip("\"'\u2018\u2019()[]{}")
+    n = re.sub(r"['\u2019]s\b", "", n)                    # possessive
+    n = n.lower().strip()
+    n = re.sub(r"^(?:the|a|an)\s+", "", n)                # leading article
+    n = _DESCRIPTOR_PREFIX.sub("", n)                     # "the city of x" -> "x"
+    n = n.rstrip(".,;:!?").strip()
+    toks = n.split()
+    while len(toks) > 1 and toks[-1].strip(".") in _STRIP_TYPEWORDS:
+        toks.pop()
+    while len(toks) > 1 and toks[0] in _STRIP_TYPEWORDS:
+        toks.pop(0)
+    return " ".join(toks).strip() or n
+
+
+def _canonical_key(name: str) -> str:
+    """Space/punctuation-insensitive identity key used to generate the entity id,
+    so "Cherrygrove", "Cherry Grove" and "the City of Cherrygrove" all collapse
+    to a single node. Falls back to the spaced normal form when the alnum key
+    would be too short to be safe."""
+    norm = _normalise_entity(name)
+    key = re.sub(r"[^a-z0-9]+", "", norm)
+    return key if len(key) >= 3 else norm
+
+
+def _looks_org(name: str) -> bool:
+    toks = re.sub(r"[.,]", "", (name or "").lower()).split()
+    return bool(toks) and toks[-1] in _ORG_SUFFIX_WORDS
+
+
+def _looks_location(name: str) -> bool:
+    low = _normalise_entity(name)
+    if low in _COUNTRIES:
+        return True
+    toks = [w for w in low.split() if w not in ("of", "the", "and")]
+    return any(tok in _LOC_SUFFIX_WORDS for tok in toks)
+
+
+def _split_sentences(text: str):
+    """Segment text into (start, end, sentence) spans, preserving offsets so
+    entity positions can be mapped back to the sentence that contains them."""
+    spans = []
+    start = 0
+    for m in re.finditer(r"[.!?]+(?:\s+|$)|\n{2,}", text):
+        end = m.end()
+        if text[start:end].strip():
+            spans.append((start, end, text[start:end]))
+        start = end
+    if start < len(text) and text[start:].strip():
+        spans.append((start, len(text), text[start:]))
+    return spans
+
+
+# Salient entity types — used to gate weak (cue-less) relations so the graph
+# isn't flooded with meaningless CO_OCCURS edges between vague phrases.
+_SALIENT_TYPES = {"person", "organisation", "location", "technology",
+                  "product", "event", "work"}
+
+# Ordered relation cues. First match in the between-span wins. The boolean is
+# "reverse" — when True the relation direction is flipped (B rel A).
+_REL_CUE_SPECS = [
+    # passive forms first — "X founded by Y" means Y FOUNDED X (reverse)
+    (r"co-?founded by|founded by|established by", "FOUNDED", True),
+    (r"acquired by|bought by|purchased by", "ACQUIRED", True),
+    (r"developed by|built by|designed by|made by|created by", "DEVELOPED", True),
+    (r"written by|authored by", "AUTHORED", True),
+    (r"owned by", "OWNS", True),
+    (r"led by|headed by|run by|managed by", "LEADS", True),
+    (r"published by|released by", "RELEASED", True),
+    (r"co-?founded|founded|establish(?:ed)?|set up", "FOUNDED", False),
+    (r"acquired|bought|purchased|took over", "ACQUIRED", False),
+    (r"merged with", "MERGED_WITH", False),
+    (r"invested in|funded|backed|financed", "INVESTED_IN", False),
+    (r"subsidiary of|division of|unit of|owned by", "PART_OF", False),
+    (r"owns|parent (?:company )?of", "OWNS", False),
+    (r"part of|belongs to|within|component of|member of", "PART_OF", False),
+    (r"(?:ceo|cto|cfo|coo|president|director|head|vp|chair(?:man|woman)?)\s+of|"
+     r"leads|heads|runs|manages|oversees|chairs|in charge of", "LEADS", False),
+    (r"works for|works at|employed by|joined|hired by", "WORKS_FOR", False),
+    (r"reports to", "REPORTS_TO", False),
+    (r"appointed|named|serves as|appointed as|elected", "HAS_ROLE", False),
+    (r"based in|headquartered in|located in|situated in", "LOCATED_IN", False),
+    (r"born in", "BORN_IN", False),
+    (r"died in|passed away in", "DIED_IN", False),
+    (r"released|launched|unveiled|announced|shipped|introduced|published",
+     "RELEASED", False),
+    (r"developed|built|designed|engineered|invented", "DEVELOPED", False),
+    (r"uses|built with|powered by|based on|leverages|runs on|written in|"
+     r"implemented in", "USES", False),
+    (r"partnered with|collaborated with|teamed up with|allied with",
+     "PARTNERED_WITH", False),
+    (r"competes with|rival of|competitor of", "COMPETES_WITH", False),
+    (r"wrote|authored|co-authored", "AUTHORED", False),
+    (r"regulated by|governed by", "REGULATED_BY", False),
+    (r"succeeded|replaced|took over from", "SUCCEEDED", False),
+    (r"acquired by", "ACQUIRED", True),
+]
+_REL_CUES = [(re.compile(r"\b(?:" + pat + r")\b", re.I), rel, rev)
+             for pat, rel, rev in _REL_CUE_SPECS]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PLUGGABLE NER BACKEND  — statistical/zero-shot model when available.
+# Far better person/org/place typing and compound-name recall ("Seacourt Tower
+# of Oxford") than capitalisation heuristics. Priority: GLiNER (zero-shot, 2024
+# SOTA) > spaCy > heuristic fallback. Enable on the host:
+#   pip install gliner                                  (FABRIC_GLINER_MODEL)
+#   pip install spacy && python -m spacy download en_core_web_sm   (or _trf)
+# Control: FABRIC_NER_BACKEND=auto|gliner|spacy|heuristic
+# ═══════════════════════════════════════════════════════════════════════════
+
+_SPACY_TYPE = {
+    "PERSON": "person", "ORG": "organisation", "GPE": "location",
+    "LOC": "location", "FAC": "location", "PRODUCT": "product",
+    "EVENT": "event", "WORK_OF_ART": "work", "LAW": "concept",
+    "LANGUAGE": "concept", "NORP": "concept", "DATE": "date",
+    "TIME": "date", "MONEY": "money",
+}
+# A SMALL set of aliases that fold obvious synonyms onto a shared type; every
+# OTHER label GLiNER (or the LLM) emits is kept VERBATIM (slugified) so the type
+# vocabulary is open/flexible rather than prescriptive.
+_TYPE_ALIASES = {
+    "organization": "organisation", "company": "organisation",
+    "corporation": "organisation", "place": "location", "building": "location",
+    "facility": "location", "landmark": "location", "geographic location": "location",
+    "geopolitical entity": "location", "creative work": "work",
+    "work of art": "work", "datetime": "date", "time": "date",
+    "monetary value": "money", "currency": "money", "human": "person",
+    "people": "person", "tool": "technology", "software": "technology",
+}
+
+
+def _slug_type(label: str) -> str:
+    """Slugify an arbitrary entity-type label into a clean, open-vocabulary type
+    (e.g. 'Video Game Character' -> 'video_game_character')."""
+    s = re.sub(r"[^a-z0-9]+", "_", (label or "").strip().lower()).strip("_")
+    return s or "named_entity"
+
+
+def _map_gliner_type(label: str) -> str:
+    low = (label or "").strip().lower()
+    if low in _TYPE_ALIASES:
+        return _TYPE_ALIASES[low]
+    if low in ("person", "organisation", "location", "product", "technology",
+               "event", "work", "date", "money", "concept", "role"):
+        return low
+    return _slug_type(label)  # keep ANY other label as its own type
+
+
+# A broad DEFAULT label menu spanning many domains. Fully overridable with
+# FABRIC_GLINER_LABELS (comma-separated) — GLiNER is zero-shot, so any labels
+# work. Kept wide so the graph is not boxed into a handful of categories.
+_GLINER_LABELS_DEFAULT = [
+    "person", "organization", "company", "government agency", "location",
+    "city", "country", "building", "landmark", "geographic feature",
+    "product", "technology", "software", "programming language", "device",
+    "vehicle", "creative work", "book", "film", "game", "song", "character",
+    "event", "date", "money", "law", "field of study", "scientific concept",
+    "biological species", "chemical", "medical condition", "job title",
+    "nationality", "language", "award", "currency", "unit",
+]
+
+
+def _gliner_labels() -> List[str]:
+    env = os.getenv("FABRIC_GLINER_LABELS", "").strip()
+    if env:
+        labs = [x.strip() for x in env.split(",") if x.strip()]
+        if labs:
+            return labs
+    return _GLINER_LABELS_DEFAULT
+
+
+def _gliner_threshold() -> float:
+    try:
+        return float(os.getenv("FABRIC_GLINER_THRESHOLD", "0.4"))
+    except Exception:
+        return 0.4
+
+_NER_STATE = {"init": False, "kind": "heuristic", "obj": None}
+
+
+def _ner_backend() -> Dict:
+    """Lazily detect and cache the best available NER backend."""
+    if _NER_STATE["init"]:
+        return _NER_STATE
+    _NER_STATE["init"] = True
+    pref = os.getenv("FABRIC_NER_BACKEND", "auto").lower()
+
+    if pref in ("auto", "gliner"):
+        try:
+            from gliner import GLiNER  # type: ignore
+            model = os.getenv("FABRIC_GLINER_MODEL", "urchade/gliner_medium-v2.1")
+            _NER_STATE.update(kind="gliner", obj=GLiNER.from_pretrained(model))
+            log.info("entity NER backend: GLiNER (%s)", model)
+            return _NER_STATE
+        except Exception as e:
+            log.debug("GLiNER unavailable: %s", e)
+
+    if pref in ("auto", "spacy"):
+        try:
+            import spacy  # type: ignore
+            model = os.getenv("FABRIC_NER_MODEL", "en_core_web_sm")
+            nlp = spacy.load(model, disable=["lemmatizer", "tagger", "parser",
+                                             "attribute_ruler"])
+            _NER_STATE.update(kind="spacy", obj=nlp)
+            log.info("entity NER backend: spaCy (%s)", model)
+            return _NER_STATE
+        except Exception as e:
+            log.debug("spaCy unavailable: %s", e)
+
+    _NER_STATE.update(kind="heuristic")
+    log.info("entity NER backend: heuristic (install spaCy or GLiNER for better NER)")
+    return _NER_STATE
+
+
+def _resolve_overlaps(entities: List[Dict]) -> List[Dict]:
+    """Keep the strongest (confidence, then length) entity per character region;
+    drop anything whose span overlaps an already-accepted one."""
+    ordered = sorted(entities,
+                     key=lambda e: (-e.get("confidence", 0.5), -len(e["name"])))
+    accepted: List[Dict] = []
+    taken: List[tuple] = []
+    for e in ordered:
+        s = e.get("position", 0)
+        en = s + len(e["name"])
+        if any(not (en <= ts or s >= te) for ts, te in taken):
+            continue
+        accepted.append(e)
+        taken.append((s, en))
+    accepted.sort(key=lambda e: e.get("position", 0))
+    return accepted
+
+
+def _supplement_entities(text: str, content_type: str,
+                         exclude: Optional[set] = None) -> List[Dict]:
+    """High-precision patterns a statistical model tends to miss: the curated
+    technology list, code symbols, domains and tech acronyms."""
+    seen = set(exclude or set())
+    out: List[Dict] = []
+
+    def _add(name, etype, pos, conf):
+        norm = _normalise_entity(name)
+        if not norm or len(norm) < 2 or norm in seen:
+            return
+        if " " not in norm and norm in _ENTITY_STOPWORDS:
+            return
+        seen.add(norm)
+        out.append({"name": name.strip().strip(".,;:"), "type": etype,
+                    "normalised": norm, "position": pos,
+                    "context": "", "confidence": conf, "description": ""})
+
+    for m in _PAT_TECH.finditer(text):
+        _add(m.group(1), "technology", m.start(), 0.8)
+    if content_type in ("code", "web"):
+        for m in _PAT_CLASS_DEF.finditer(text):
+            _add(m.group(1), "class", m.start(), 0.8)
+        for m in _PAT_FUNC_DEF.finditer(text):
+            nm = m.group(1) or m.group(2)
+            if nm:
+                _add(nm, "function", m.start(), 0.75)
+        for m in _PAT_IMPORT.finditer(text):
+            _add(m.group(1), "module", m.start(), 0.7)
+        for m in _PAT_CAMEL.finditer(text):
+            _add(m.group(1), "type_name", m.start(), 0.55)
+    for m in _PAT_URL_DOMAIN.finditer(text):
+        d = m.group(1)
+        if d and len(d) > 4 and "." in d:
+            _add(d, "domain", m.start(), 0.6)
+    for m in _PAT_ACRONYM.finditer(text):
+        if m.group(1) in _TECH_ACRONYMS:
+            _add(m.group(1), "technology", m.start(), 0.6)
+    return out
+
+
+def _model_entities(text: str, content_type: str) -> List[Dict]:
+    """Run the active statistical NER backend over the text."""
+    st = _ner_backend()
+    kind = st["kind"]
+    out: List[Dict] = []
+    seen = set()
+
+    def _add(name, etype, pos, conf):
+        name = (name or "").strip().strip(".,;:")
+        norm = _normalise_entity(name)
+        if not norm or len(norm) < 2 or len(norm) > 120 or norm in seen:
+            return
+        if " " not in norm and norm in _ENTITY_STOPWORDS:
+            return
+        seen.add(norm)
+        out.append({"name": name, "type": etype, "normalised": norm,
+                    "position": pos,
+                    "context": text[max(0, pos - 30):pos + len(name) + 30][:200],
+                    "confidence": round(conf, 2), "description": ""})
+
+    try:
+        if kind == "spacy":
+            doc = st["obj"](text[:100000])
+            _spacy_drop = {"CARDINAL", "ORDINAL", "PERCENT", "QUANTITY"}
+            for e in doc.ents:
+                if e.label_ in _spacy_drop:
+                    continue
+                ty = _SPACY_TYPE.get(e.label_) or _slug_type(e.label_)
+                _add(e.text, ty, e.start_char, 0.85)
+        elif kind == "gliner":
+            g = st["obj"]
+            step = 1400
+            for cs in range(0, min(len(text), 24000), step):
+                seg = text[cs:cs + step]
+                try:
+                    preds = g.predict_entities(seg, _gliner_labels(), threshold=_gliner_threshold())
+                except Exception as ie:
+                    log.debug("gliner predict: %s", ie)
+                    continue
+                for e in preds:
+                    ty = _map_gliner_type(str(e.get("label", "")))
+                    _add(e.get("text", ""), ty, cs + int(e.get("start", 0)),
+                         float(e.get("score", 0.8)))
+    except Exception as ex:
+        log.debug("model NER (%s): %s", kind, ex)
+    return out
 
 
 def _extract_entities_from_text(text: str, content_type: str = "text") -> List[Dict]:
-    """Extract entities from text using regex patterns.
-    Returns list of {name, type, position, context}."""
-    entities = []
+    """Extract typed entities. Uses the statistical NER backend (spaCy/GLiNER)
+    when available — far better person/org/place typing and compound-name
+    recall — supplemented by high-precision tech/code patterns. Falls back to
+    the heuristic engine when no model is installed."""
+    if not text or not text.strip():
+        return []
+    st = _ner_backend()
+    if st["kind"] in ("spacy", "gliner"):
+        ents = _model_entities(text, content_type)
+        ents += _supplement_entities(text, content_type,
+                                     exclude={e["normalised"] for e in ents})
+        return _resolve_overlaps(ents)
+    return _heuristic_entities(text, content_type)
+
+
+def _heuristic_entities(text: str, content_type: str = "text") -> List[Dict]:
+    """Extract typed entities from text.
+
+    Returns a list of {name, type, normalised, position, context, confidence,
+    description}. The engine layers specific patterns (dates, titled people,
+    org-suffix names, technologies, code symbols, acronyms, money) over a
+    general capitalised-phrase detector, retyping generic phrases into
+    person/organisation/location where signals allow, and filters out
+    sentence-initial stopwords and other common false positives.
+    """
+    entities: List[Dict] = []
     seen = set()
+    # sentence-start offsets, to suppress capitalised stopwords at the start of
+    # a sentence (e.g. "However", "These") being mistaken for entities.
+    sent_starts = {s for s, _e, _t in _split_sentences(text)}
 
-    def _add(name, etype, pos=0, ctx=""):
+    def _add(name, etype, pos=0, ctx="", conf=0.5):
         norm = _normalise_entity(name)
-        if norm and len(norm) >= 2 and len(norm) < 120 and norm not in seen:
-            seen.add(norm)
-            entities.append({
-                "name": name.strip(),
-                "type": etype,
-                "normalised": norm,
-                "position": pos,
-                "context": ctx[:200],
-            })
+        if not norm or len(norm) < 2 or len(norm) > 120:
+            return
+        if norm in seen:
+            return
+        # single-word stopword guard
+        if " " not in norm and norm in _ENTITY_STOPWORDS:
+            return
+        seen.add(norm)
+        entities.append({
+            "name": name.strip().strip(".,;:"),
+            "type": etype, "normalised": norm,
+            "position": pos, "context": ctx[:200],
+            "confidence": round(conf, 2), "description": "",
+        })
 
-    # Dates
+    # Dates / years
     for m in _PAT_DATE.finditer(text):
-        _add(m.group(1), "date", m.start())
+        _add(m.group(1), "date", m.start(), conf=0.9)
+    for m in _PAT_YEAR.finditer(text):
+        ctx = text[max(0, m.start()-40):m.end()+40].lower()
+        if any(w in ctx for w in ("founded", "created", "established", "released",
+                                  "launched", "born", "died", "started",
+                                  "invented", "acquired", "merged", "since")):
+            _add(m.group(1), "year", m.start(), ctx, conf=0.7)
 
-    # People with titles
+    # People with explicit titles (high confidence)
     for m in _PAT_PERSON_TITLE.finditer(text):
-        _add(m.group(0), "person", m.start(),
-             text[max(0, m.start()-40):m.end()+40])
+        _add(m.group(1), "person", m.start(1),
+             text[max(0, m.start()-40):m.end()+40], conf=0.85)
 
-    # Organisations
+    # Organisations by suffix (high confidence)
     for m in _PAT_ORG.finditer(text):
-        _add(m.group(0), "organisation", m.start())
+        _add(m.group(0), "organisation", m.start(), conf=0.85)
 
     # Technologies
     for m in _PAT_TECH.finditer(text):
-        _add(m.group(1), "technology", m.start())
+        _add(m.group(1), "technology", m.start(), conf=0.8)
+
+    # Money / financial amounts
+    for m in _PAT_MONEY.finditer(text):
+        _add(m.group(1), "money", m.start(), conf=0.7)
 
     # Code-specific entities
     if content_type in ("code", "web"):
         for m in _PAT_CLASS_DEF.finditer(text):
-            _add(m.group(1), "class", m.start())
+            _add(m.group(1), "class", m.start(), conf=0.8)
         for m in _PAT_FUNC_DEF.finditer(text):
             name = m.group(1) or m.group(2)
             if name:
-                _add(name, "function", m.start())
+                _add(name, "function", m.start(), conf=0.75)
         for m in _PAT_IMPORT.finditer(text):
-            _add(m.group(1), "module", m.start())
+            _add(m.group(1), "module", m.start(), conf=0.7)
         for m in _PAT_CAMEL.finditer(text):
-            _add(m.group(1), "type_name", m.start())
+            _add(m.group(1), "type_name", m.start(), conf=0.6)
 
-    # Domain names from URLs
+    # Domains from URLs
     for m in _PAT_URL_DOMAIN.finditer(text):
         domain = m.group(1)
         if domain and len(domain) > 4 and "." in domain:
-            _add(domain, "domain", m.start())
+            _add(domain, "domain", m.start(), conf=0.6)
 
-    # Capitalised phrases (likely proper nouns / named entities)
+    # Acronyms (known tech ones typed as technology; others as acronym)
+    for m in _PAT_ACRONYM.finditer(text):
+        ac = m.group(1)
+        if ac in _ACRONYM_STOP:
+            continue
+        if ac in _TECH_ACRONYMS:
+            _add(ac, "technology", m.start(), conf=0.6)
+        else:
+            _add(ac, "acronym", m.start(), conf=0.45)
+
+    # Capitalised phrases — general proper-noun detector with retyping.
     for m in _PAT_CAPS_PHRASE.finditer(text):
-        phrase = m.group(1)
-        # Filter out common false positives
-        if len(phrase) >= 4 and not re.match(r"^(The|This|That|These|Those|Some|What|When|Where|How|Why)\b", phrase):
-            _add(phrase, "named_entity", m.start(),
-                 text[max(0, m.start()-30):m.end()+30])
+        phrase = m.group(1).strip()
+        if len(phrase) < 3:
+            continue
+        # Drop sentence-initial single common words masquerading as entities.
+        first_word = phrase.split()[0]
+        if (m.start() in sent_starts and " " not in phrase
+                and first_word.lower() in _ENTITY_STOPWORDS):
+            continue
+        if re.match(r"^(The|This|That|These|Those|Some|What|When|Where|How|Why|"
+                    r"There|Here|It|We|They|You|If|But|And|Or|So|Then)\b", phrase):
+            # allow if it's a longer multiword proper phrase after the lead word
+            rest = phrase.split(None, 1)
+            if len(rest) < 2:
+                continue
+            phrase = rest[1]
+        ctx = text[max(0, m.start()-30):m.end()+30]
+        if _looks_org(phrase):
+            _add(phrase, "organisation", m.start(), ctx, conf=0.7)
+        elif _looks_location(phrase):
+            _add(phrase, "location", m.start(), ctx, conf=0.65)
+        else:
+            # Without a statistical NER model or an explicit title we do NOT
+            # guess "person" from capitalisation alone (the main cause of people
+            # being over-represented). Default to the neutral "named_entity";
+            # spaCy/GLiNER or the LLM layer assign person/org/location properly.
+            _add(phrase, "named_entity", m.start(), ctx, conf=0.45)
 
-    # Years of significance
-    for m in _PAT_YEAR.finditer(text):
-        yr = m.group(1)
-        # Only include if near a meaningful word
-        ctx = text[max(0, m.start()-40):m.end()+40].lower()
-        if any(w in ctx for w in ["founded", "created", "established", "released",
-                                   "launched", "born", "died", "started", "invented"]):
-            _add(yr, "year", m.start(), ctx)
+    # Single proper nouns (one capitalised word) — only when NOT sentence-initial
+    # and not a stopword. Lower confidence; retyped to location where known.
+    for m in _PAT_PROPER1.finditer(text):
+        word = m.group(1)
+        low = word.lower()
+        if m.start() in sent_starts:
+            continue
+        if low in _ENTITY_STOPWORDS or len(low) < 3:
+            continue
+        # skip if it's clearly the lead-in of an already-captured phrase
+        if _normalise_entity(word) in seen:
+            continue
+        ctx = text[max(0, m.start()-25):m.end()+25]
+        if _looks_location(word):
+            _add(word, "location", m.start(), ctx, conf=0.5)
+        else:
+            _add(word, "named_entity", m.start(), ctx, conf=0.4)
 
-    return entities
+    return _resolve_overlaps(entities)
 
 
 def _extract_relationships_from_entities(entities: List[Dict], text: str) -> List[Dict]:
-    """Infer relationships between co-occurring entities."""
-    relations = []
+    """Infer typed relationships between entities.
 
-    # Position-based co-occurrence: entities within 200 chars of each other
-    for i, a in enumerate(entities):
-        for j, b in enumerate(entities):
-            if i >= j:
-                continue
-            dist = abs(a["position"] - b["position"])
-            if dist < 200:
-                # Determine relationship type from context
-                between = text[min(a["position"], b["position"]):
-                              max(a["position"], b["position"]) + len(b["name"])]
-                rel = "CO_OCCURS"
-                between_lc = between.lower()
-                if any(w in between_lc for w in ["founded", "created", "started"]):
-                    rel = "FOUNDED"
-                elif any(w in between_lc for w in ["ceo of", "president of", "director of",
-                                                     "leads", "manages"]):
-                    rel = "LEADS"
-                elif any(w in between_lc for w in ["uses", "built with", "powered by",
-                                                     "based on", "leverages"]):
-                    rel = "USES"
-                elif any(w in between_lc for w in ["part of", "belongs to", "within",
-                                                     "inside", "component of"]):
-                    rel = "PART_OF"
-                elif any(w in between_lc for w in ["in ", "at ", "located"]):
-                    if a["type"] in ("person", "organisation") and b["type"] == "named_entity":
-                        rel = "LOCATED_AT"
-                elif a["type"] == "date" or b["type"] == "date" or a["type"] == "year" or b["type"] == "year":
-                    rel = "DATED"
+    Sentence-scoped: only entities co-occurring in the same sentence are
+    candidates. For each candidate pair the span between them is scanned for a
+    relation cue (founded, acquired, leads, based in, uses, ...). A cue yields a
+    typed, directed, high-confidence relation. Without a cue, a weak RELATED_TO
+    edge is emitted ONLY between two salient entities that are close together —
+    everything else is dropped, which keeps the graph meaningful instead of a
+    hairball of CO_OCCURS edges.
+    """
+    if not entities:
+        return []
+    sents = _split_sentences(text)
+    # Map each entity to the sentence index containing its position.
+    ents_by_sent: Dict[int, List[Dict]] = {}
+    for ent in entities:
+        pos = ent.get("position", 0)
+        for si, (s, e, _seg) in enumerate(sents):
+            if s <= pos < e:
+                ents_by_sent.setdefault(si, []).append(ent)
+                break
 
-                relations.append({
-                    "from_name": a["name"],
-                    "from_type": a["type"],
-                    "to_name": b["name"],
-                    "to_type": b["type"],
-                    "rel": rel,
-                    "distance": dist,
-                })
+    best: Dict[tuple, Dict] = {}
 
-    return relations[:200]
+    def _consider(a, b, rel, score, cue, ctx):
+        if a["normalised"] == b["normalised"]:
+            return
+        key = (a["normalised"], b["normalised"])
+        rkey = (b["normalised"], a["normalised"])
+        # keep the single best-scoring relation per unordered pair
+        prev = best.get(key) or best.get(rkey)
+        if prev and prev["score"] >= score:
+            return
+        best.pop(rkey, None)
+        best[key] = {
+            "from_name": a["name"], "from_type": a["type"],
+            "to_name": b["name"], "to_type": b["type"],
+            "rel": rel, "score": round(score, 3),
+            "distance": abs(a.get("position", 0) - b.get("position", 0)),
+            "cue": cue, "context": ctx[:160],
+        }
+
+    for si, ents in ents_by_sent.items():
+        if len(ents) < 2:
+            continue
+        ents = sorted(ents, key=lambda x: x.get("position", 0))
+        # Relate only ADJACENT entities (consecutive by position). Reaching
+        # across an intervening entity is what produced spurious long-range
+        # links (e.g. a verb belonging to a different pair). Adjacency keeps the
+        # cue text small and attributable.
+        for i in range(len(ents) - 1):
+            a, b = ents[i], ents[i + 1]
+            a_end = a.get("position", 0) + len(a["name"])
+            b_start = b.get("position", 0)
+            between = text[a_end:b_start]
+            if len(between) > 160:
+                continue  # too far apart to be reliably related
+            matched = None
+            # locative override: "... in/at/near <Place>" — covers proper-noun
+            # places not in the gazetteer (typed named_entity) as well.
+            if (b["type"] in ("location", "named_entity")
+                    and re.search(r"\b(?:in|at|near|from)\s*$", between, re.I)):
+                matched = ("LOCATED_IN", False)
+            if matched is None:
+                for rx, rel, rev in _REL_CUES:
+                    if rx.search(between):
+                        matched = (rel, rev)
+                        break
+            if matched:
+                rel, rev = matched
+                frm, to = (b, a) if rev else (a, b)
+                _consider(frm, to, rel, 0.85, rel, between)
+            elif a["type"] in ("date", "year") or b["type"] in ("date", "year"):
+                other = b if a["type"] in ("date", "year") else a
+                if other["type"] in _SALIENT_TYPES:
+                    _consider(a, b, "DATED", 0.4, "", between)
+            elif (a["type"] in _SALIENT_TYPES and b["type"] in _SALIENT_TYPES
+                  and len(between) < 60):
+                _consider(a, b, "RELATED_TO", 0.3, "", between)
+
+    rels = sorted(best.values(), key=lambda r: -r["score"])
+    return rels[:200]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1283,7 +1880,8 @@ async def _persist_entity_graph(
     try:
         conn = _sqlite_conn()
         for norm, ent in entities.items():
-            eid = f"{ent['type']}:{hashlib.sha1(norm.encode()).hexdigest()[:12]}"
+            ckey = _canonical_key(ent.get("name") or norm)
+            eid = f"{ent['type']}:{hashlib.sha1(ckey.encode()).hexdigest()[:12]}"
             record_ids = list(ent.get("record_ids", set()))
             ds_list = list(ent.get("datasets", {dataset_id}))
 
@@ -1310,12 +1908,16 @@ async def _persist_entity_graph(
                 "datasets = ?, "
                 "last_seen = excluded.last_seen, "
                 "props = excluded.props",
-                (eid, ent["name"], ent["type"], norm,
+                (eid, ent["name"], ent["type"], ent.get("normalised", norm),
                  ent.get("mention_count", 1),
                  json.dumps(ds_list),
                  ts, ts,
                  json.dumps({
                      "record_ids": record_ids[:50],
+                     "description": ent.get("description", ""),
+                     "aliases": sorted(ent.get("aliases", []))[:25],
+                     "attributes": ent.get("attributes", {}),
+                     "facts": ent.get("facts", [])[:20],
                  }),
                  json.dumps(merged_ds))
             )
@@ -1333,10 +1935,10 @@ async def _persist_entity_graph(
 
         # Persist entity-entity relations to SQLite
         for rel in relations[:300]:
-            from_norm = _normalise_entity(rel["from_name"])
-            to_norm = _normalise_entity(rel["to_name"])
-            from_eid = f"{rel['from_type']}:{hashlib.sha1(from_norm.encode()).hexdigest()[:12]}"
-            to_eid = f"{rel['to_type']}:{hashlib.sha1(to_norm.encode()).hexdigest()[:12]}"
+            from_ck = _canonical_key(rel["from_name"])
+            to_ck = _canonical_key(rel["to_name"])
+            from_eid = f"{rel['from_type']}:{hashlib.sha1(from_ck.encode()).hexdigest()[:12]}"
+            to_eid = f"{rel['to_type']}:{hashlib.sha1(to_ck.encode()).hexdigest()[:12]}"
             conn.execute(
                 "INSERT OR REPLACE INTO fabric_entity_relations "
                 "(from_id, to_id, rel, props, dataset_id, created_at) "
@@ -1344,7 +1946,9 @@ async def _persist_entity_graph(
                 (from_eid, to_eid, rel["rel"],
                  json.dumps({"distance": rel.get("distance", 0),
                              "from_name": rel["from_name"],
-                             "to_name": rel["to_name"]}),
+                             "to_name": rel["to_name"],
+                             "context": rel.get("context", ""),
+                             "score": rel.get("score", 0)}),
                  dataset_id, ts)
             )
 
@@ -1364,13 +1968,18 @@ async def _persist_entity_graph(
 
             # Upsert entity nodes
             for norm, ent in entities.items():
-                eid = f"{ent['type']}:{hashlib.sha1(norm.encode()).hexdigest()[:12]}"
+                ckey = _canonical_key(ent.get("name") or norm)
+                eid = f"{ent['type']}:{hashlib.sha1(ckey.encode()).hexdigest()[:12]}"
                 await graph.upsert_node("Entity", eid, {
                     "name": ent["name"],
                     "type": ent["type"],
                     "normalised": norm,
+                    "canonical": ckey,
                     "mention_count": ent.get("mention_count", 1),
                     "dataset_id": dataset_id,
+                    "description": ent.get("description", ""),
+                    "aliases": sorted(ent.get("aliases", []))[:25],
+                    "facts": ent.get("facts", [])[:20],
                 })
 
                 # Link to mentioning records — Entity→FabricRecord per actual record
@@ -1400,15 +2009,17 @@ async def _persist_entity_graph(
             # Create entity-entity relationship edges
             edges = []
             for rel in relations[:300]:
-                from_norm = _normalise_entity(rel["from_name"])
-                to_norm = _normalise_entity(rel["to_name"])
-                from_eid = f"{rel['from_type']}:{hashlib.sha1(from_norm.encode()).hexdigest()[:12]}"
-                to_eid = f"{rel['to_type']}:{hashlib.sha1(to_norm.encode()).hexdigest()[:12]}"
+                from_ck = _canonical_key(rel["from_name"])
+                to_ck = _canonical_key(rel["to_name"])
+                from_eid = f"{rel['from_type']}:{hashlib.sha1(from_ck.encode()).hexdigest()[:12]}"
+                to_eid = f"{rel['to_type']}:{hashlib.sha1(to_ck.encode()).hexdigest()[:12]}"
                 edges.append({
                     "from_label": "Entity", "from_id": from_eid,
                     "to_label": "Entity", "to_id": to_eid,
                     "rel": rel["rel"],
-                    "props": {"distance": rel.get("distance", 0)},
+                    "props": {"distance": rel.get("distance", 0),
+                              "context": rel.get("context", ""),
+                              "score": rel.get("score", 0)},
                 })
             if edges:
                 await graph.link_many(edges)
@@ -1422,25 +2033,716 @@ async def _persist_entity_graph(
 # CAPABILITY: ENTITY GRAPH QUERY
 # ═══════════════════════════════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════════════════════════════
+# LLM-ASSISTED EXTRACTION + AGENTIC STEERING  (optional augmentation)
+# When enabled, an LLM extracts typed triples (with entity descriptions and
+# relation context) which are MERGED with the heuristic output. "Agentic
+# steering" then runs one or more critique/refine passes over the merged graph
+# — merging duplicate entities, correcting types, adding missed high-value
+# relations and pruning spurious ones — guided by an optional `focus` directive.
+# ═══════════════════════════════════════════════════════════════════════════
+
+_ENTITY_LLM_SYS = (
+    "You are a precise knowledge-graph extraction engine. Read the TEXT and "
+    "identify ONLY entities explicitly named or clearly implied, and ONLY "
+    "relationships directly stated or unambiguously implied. Use the most "
+    "specific UPPER_SNAKE relation verb (FOUNDED, LEADS, WORKS_FOR, REPORTS_TO, "
+    "ACQUIRED, SUBSIDIARY_OF, PART_OF, OWNS, LOCATED_IN, HEADQUARTERED_IN, "
+    "BORN_IN, RELEASED, DEVELOPED, USES, BUILT_WITH, AUTHORED, PUBLISHED_BY, "
+    "PARTNERED_WITH, INVESTED_IN, COMPETES_WITH, REGULATED_BY, MEMBER_OF, "
+    "HAS_ROLE) - never default to CO_OCCURS or RELATED_TO. Give each entity a "
+    "concise one-sentence description grounded in the text, and each relation a "
+    "short context phrase from the text. Never invent facts. Output strict JSON "
+    "only - no prose, no markdown fences."
+)
+
+_STEER_SYS = (
+    "You are a knowledge-graph editor. You are given a draft graph (entities and "
+    "relations) extracted from a document. Improve its QUALITY: merge duplicate "
+    "or alias entities, correct wrong entity types, add high-value relations that "
+    "are clearly implied but missing, and remove spurious or vague relations. Be "
+    "conservative - act only on clear improvements. Output strict JSON only."
+)
+
+
+def _llm_json(raw: str):
+    """Best-effort parse of an LLM JSON response."""
+    if not raw:
+        return None
+    s = raw.strip()
+    if s.startswith("```"):
+        s = re.sub(r"^```(?:json)?\s*|\s*```$", "", s).strip()
+    a, b = s.find("{"), s.rfind("}")
+    if a != -1 and b != -1 and b > a:
+        s = s[a:b + 1]
+    s = re.sub(r",\s*([}\]])", r"\1", s)  # tolerate trailing commas
+    try:
+        return json.loads(s)
+    except Exception:
+        return None
+
+
+async def _llm_call(prompt: str, system: str, timeout: int = 90) -> str:
+    """Call the local LLM. Prefers ollama_generate (json mode); falls back to
+    the llm.generate capability. Returns '' on any failure."""
+    try:
+        from Vera.Orchestration.capability_orchestration import ollama_generate
+        out = await asyncio.wait_for(
+            ollama_generate(prompt, system=system, json_mode=True), timeout=timeout)
+        if out:
+            return out
+    except Exception as e:
+        log.debug("ollama_generate unavailable: %s", e)
+    try:
+        from Vera.Orchestration.capability_orchestration import CAPABILITY_REGISTRY
+        fn = (CAPABILITY_REGISTRY.get("llm.generate") or {}).get("func")
+        if fn:
+            r = await asyncio.wait_for(
+                fn(prompt=prompt, system=system, trace_id=None), timeout=timeout)
+            if isinstance(r, dict):
+                return r.get("text") or r.get("response") or ""
+            return str(r or "")
+    except Exception as e:
+        log.debug("llm.generate fallback failed: %s", e)
+    return ""
+
+
+def _map_llm_type(t: str) -> str:
+    t = (t or "").strip().lower()
+    return {
+        "org": "organisation", "organization": "organisation",
+        "company": "organisation", "people": "person", "person": "person",
+        "tech": "technology", "technology": "technology", "tool": "technology",
+        "software": "technology", "product": "product", "place": "location",
+        "location": "location", "geo": "location", "event": "event",
+        "date": "date", "time": "date", "concept": "concept",
+        "work": "work", "role": "role",
+    }.get(t, t or "named_entity")
+
+
+def _dedup_relations(relations: List[Dict]) -> List[Dict]:
+    """Keep the best-scoring relation per (from, to, rel)."""
+    best: Dict[tuple, Dict] = {}
+    for r in relations:
+        f = _normalise_entity(r.get("from_name", ""))
+        to = _normalise_entity(r.get("to_name", ""))
+        if not f or not to:
+            continue
+        key = (f, to, r.get("rel"))
+        if key not in best or r.get("score", 0) > best[key].get("score", 0):
+            best[key] = r
+    return sorted(best.values(), key=lambda r: -r.get("score", 0))
+
+
+async def _llm_extract(text: str, focus: str = "") -> Tuple[List[Dict], List[Dict]]:
+    """LLM typed-triple extraction. Returns (entities, relations) in the SAME
+    shape the heuristic engine produces, so they merge uniformly."""
+    text = (text or "")[:3500]
+    if not text.strip():
+        return [], []
+    focus_line = (f"\nFOCUS: prioritise {focus.strip()}.\n" if focus.strip() else "")
+    prompt = (
+        "Extract entities and their relationships from the TEXT below."
+        + focus_line +
+        '\nReturn ONLY this JSON (no other text):\n'
+        '{"entities":[{"name":"exact name","type":"person|organisation|'
+        'technology|product|location|event|concept|date|work|role",'
+        '"description":"one sentence from the text"}],'
+        '"relations":[{"from":"entity name","to":"entity name",'
+        '"rel":"UPPER_SNAKE_VERB","context":"short phrase from text"}]}\n'
+        'Every name in relations must appear in entities.\n\n'
+        'TEXT:\n"""' + text + '"""'
+    )
+    raw = await _llm_call(prompt, _ENTITY_LLM_SYS)
+    data = _llm_json(raw)
+    if not isinstance(data, dict):
+        return [], []
+    ents: List[Dict] = []
+    name_type: Dict[str, tuple] = {}
+    for e in (data.get("entities") or [])[:60]:
+        if not isinstance(e, dict):
+            continue
+        nm = str(e.get("name") or "").strip()
+        if not nm or len(nm) > 90:
+            continue
+        ty = _map_llm_type(e.get("type"))
+        if ty == "named_entity" and _looks_org(nm):
+            ty = "organisation"
+        norm = _normalise_entity(nm)
+        if not norm:
+            continue
+        pos = text.find(nm)
+        ents.append({"name": nm, "type": ty, "normalised": norm,
+                     "position": pos if pos >= 0 else 0, "context": "",
+                     "confidence": 0.8,
+                     "description": str(e.get("description") or "").strip()[:300],
+                     "source": "llm"})
+        name_type[nm.lower()] = (nm, ty)
+    rels: List[Dict] = []
+    for r in (data.get("relations") or [])[:120]:
+        if not isinstance(r, dict):
+            continue
+        a = str(r.get("from") or "").strip()
+        b = str(r.get("to") or "").strip()
+        if not a or not b or a.lower() == b.lower():
+            continue
+        rel = re.sub(r"[^A-Z_]", "", str(r.get("rel") or "RELATED_TO")
+                     .upper().replace(" ", "_").replace("-", "_")) or "RELATED_TO"
+        an, at = name_type.get(a.lower(), (a, "named_entity"))
+        bn, bt = name_type.get(b.lower(), (b, "named_entity"))
+        rels.append({"from_name": an, "from_type": at, "to_name": bn,
+                     "to_type": bt, "rel": rel, "score": 0.8, "distance": 0,
+                     "cue": "llm",
+                     "context": str(r.get("context") or "").strip()[:160]})
+    return ents, rels
+
+
+def _graph_summary(entities: Dict[str, Dict], relations: List[Dict],
+                   max_e: int = 60, max_r: int = 80) -> str:
+    """Compact textual rendering of the current graph for a steering prompt."""
+    es = sorted(entities.values(), key=lambda e: -e.get("mention_count", 1))[:max_e]
+    elines = [f"- {e['name']} [{e['type']}]"
+              + (f": {e['description']}" if e.get("description") else "")
+              for e in es]
+    rlines = [f"- {r['from_name']} --{r['rel']}--> {r['to_name']}"
+              for r in relations[:max_r]]
+    return ("ENTITIES:\n" + "\n".join(elines)
+            + "\n\nRELATIONS:\n" + "\n".join(rlines))
+
+
+async def _llm_steer(entities: Dict[str, Dict], relations: List[Dict],
+                     focus: str = "", records: List[Dict] = None) -> Dict:
+    """One agentic refine pass over the aggregate graph, grounded in source
+    excerpts. Returns a corrections dict {merge, retype, rename, add_relations,
+    drop_relations, set_description, add_attributes}."""
+    if not entities:
+        return {}
+    focus_line = (f"\nFOCUS DIRECTIVE: {focus.strip()}. Bias every decision "
+                  f"toward this focus; drop anything irrelevant to it.\n"
+                  if focus.strip() else "")
+    snips = ""
+    if records:
+        parts = []
+        for r in records[:8]:
+            txt = (r.get("text") or "")
+            if txt:
+                parts.append(((r.get("title") or "") + ": " + txt[:280]).strip())
+        if parts:
+            snips = ("\n\nSOURCE EXCERPTS (ground every correction in these — do "
+                     "not invent):\n- " + "\n- ".join(parts))
+    prompt = (
+        "Here is a draft knowledge graph extracted from sources." + focus_line +
+        "\n\n" + _graph_summary(entities, relations) + snips +
+        "\n\nImprove it. Priorities: (1) merge genuine duplicates/aliases; "
+        "(2) fix wrong types; (3) REPLACE vague RELATED_TO/CO_OCCURS with a "
+        "specific directed relationship when the excerpts justify one; "
+        "(4) add well-supported missing relationships; (5) drop spurious ones; "
+        "(6) give each important entity a one-line factual description and key "
+        "attributes from the excerpts.\n"
+        "Return ONLY this JSON:\n"
+        '{"merge":[{"from":"duplicate name","into":"canonical name"}],'
+        '"retype":[{"entity":"name","type":"correct type"}],'
+        '"rename":[{"entity":"name","name":"canonical name"}],'
+        '"add_relations":[{"from":"name","to":"name","rel":"UPPER_SNAKE",'
+        '"context":"why"}],'
+        '"drop_relations":[{"from":"name","to":"name"}],'
+        '"set_description":[{"entity":"name","description":"1-2 factual sentences"}],'
+        '"add_attributes":[{"entity":"name","attributes":{"key":"value"}}]}\n'
+        "Use names exactly as they appear above. Empty arrays are fine."
+    )
+    raw = await _llm_call(prompt, _STEER_SYS, timeout=120)
+    data = _llm_json(raw)
+    return data if isinstance(data, dict) else {}
+
+
+def _apply_steer(entities: Dict[str, Dict], relations: List[Dict],
+                 corrections: Dict, dataset_id: str):
+    """Apply steering corrections to the aggregate collections.
+    Returns (entities, relations, stats)."""
+    stats = {"merged": 0, "retyped": 0, "renamed": 0, "added": 0, "dropped": 0,
+             "described": 0, "attributed": 0}
+    by_name = {e["name"].lower(): norm for norm, e in entities.items()}
+    by_name.update({norm: norm for norm in entities})
+
+    def _resolve(name):
+        if not name:
+            return None
+        n = str(name).lower()
+        if n in by_name:
+            return by_name[n]
+        nn = _normalise_entity(name)
+        return nn if nn in entities else None
+
+    for m in (corrections.get("merge") or [])[:40]:
+        if not isinstance(m, dict):
+            continue
+        src = _resolve(m.get("from")); dst = _resolve(m.get("into"))
+        if not src or not dst or src == dst:
+            continue
+        se, de = entities.get(src), entities.get(dst)
+        if not se or not de:
+            continue
+        de["mention_count"] = de.get("mention_count", 1) + se.get("mention_count", 1)
+        de.setdefault("record_ids", set()).update(se.get("record_ids", set()))
+        de.setdefault("datasets", set()).update(se.get("datasets", set()))
+        if not de.get("description") and se.get("description"):
+            de["description"] = se["description"]
+        for r in relations:
+            if _normalise_entity(r["from_name"]) == src:
+                r["from_name"] = de["name"]; r["from_type"] = de["type"]
+            if _normalise_entity(r["to_name"]) == src:
+                r["to_name"] = de["name"]; r["to_type"] = de["type"]
+        entities.pop(src, None)
+        by_name[str(m.get("from") or "").lower()] = dst
+        stats["merged"] += 1
+
+    for rt in (corrections.get("retype") or [])[:60]:
+        if not isinstance(rt, dict):
+            continue
+        tgt = _resolve(rt.get("entity")); nt = _map_llm_type(rt.get("type"))
+        if tgt and nt and entities.get(tgt):
+            entities[tgt]["type"] = nt
+            stats["retyped"] += 1
+
+    for rn in (corrections.get("rename") or [])[:40]:
+        if not isinstance(rn, dict):
+            continue
+        tgt = _resolve(rn.get("entity")); newname = str(rn.get("name") or "").strip()
+        if tgt and newname and entities.get(tgt):
+            entities[tgt]["name"] = newname[:120]
+            stats["renamed"] += 1
+
+    drop_keys = set()
+    for d in (corrections.get("drop_relations") or [])[:80]:
+        if not isinstance(d, dict):
+            continue
+        f = _normalise_entity(d.get("from") or ""); tt = _normalise_entity(d.get("to") or "")
+        if f and tt:
+            drop_keys.add((f, tt)); drop_keys.add((tt, f))
+    if drop_keys:
+        before = len(relations)
+        relations[:] = [r for r in relations
+                        if (_normalise_entity(r["from_name"]),
+                            _normalise_entity(r["to_name"])) not in drop_keys]
+        stats["dropped"] = before - len(relations)
+
+    for a in (corrections.get("add_relations") or [])[:80]:
+        if not isinstance(a, dict):
+            continue
+        fsrc = _resolve(a.get("from")); tsrc = _resolve(a.get("to"))
+        if not fsrc or not tsrc or fsrc == tsrc:
+            continue
+        fe, te = entities.get(fsrc), entities.get(tsrc)
+        if not fe or not te:
+            continue
+        rel = re.sub(r"[^A-Z_]", "", str(a.get("rel") or "RELATED_TO")
+                     .upper().replace(" ", "_").replace("-", "_")) or "RELATED_TO"
+        relations.append({"from_name": fe["name"], "from_type": fe["type"],
+                          "to_name": te["name"], "to_type": te["type"],
+                          "rel": rel, "score": 0.75, "distance": 0,
+                          "cue": "llm_steer",
+                          "context": str(a.get("context") or "").strip()[:160]})
+        stats["added"] += 1
+
+    for sd in (corrections.get("set_description") or [])[:80]:
+        if not isinstance(sd, dict):
+            continue
+        tgt = _resolve(sd.get("entity"))
+        desc = str(sd.get("description") or "").strip()
+        if tgt and desc and entities.get(tgt):
+            entities[tgt]["description"] = desc[:600]
+            stats["described"] += 1
+
+    for aa in (corrections.get("add_attributes") or [])[:80]:
+        if not isinstance(aa, dict):
+            continue
+        tgt = _resolve(aa.get("entity"))
+        attrs = aa.get("attributes")
+        if tgt and isinstance(attrs, dict) and entities.get(tgt):
+            entities[tgt].setdefault("attributes", {}).update(
+                {str(k)[:40]: str(v)[:160] for k, v in attrs.items()})
+            stats["attributed"] += 1
+
+    return entities, relations, stats
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ALIAS RESOLUTION + ENTITY PROFILES + SECONDARY RELATIONSHIP INFERENCE
+# ═══════════════════════════════════════════════════════════════════════════
+
+_LOCATION_TYPES = {"location", "city", "country", "place", "building",
+                   "landmark", "geographic_feature", "geographic_location",
+                   "gpe", "facility", "region", "state", "county"}
+
+
+_EXCLUSIVE_FAMILIES = {"person", "location", "organisation", "event",
+                       "date", "money"}
+
+
+def _type_family(t: str) -> str:
+    """Group near-equivalent types so alias clustering only merges compatible
+    entities (all place-like types -> 'location'; everything else by itself)."""
+    t = (t or "").lower()
+    if t in _LOCATION_TYPES or t.endswith("_location") or t.endswith("_city"):
+        return "location"
+    if t in ("organisation", "organization", "company", "corporation",
+             "government_agency"):
+        return "organisation"
+    return t or "named_entity"
+
+
+def _resolve_aliases(entities: Dict[str, Dict], relations: List[Dict]):
+    """Cluster surface variants of the same entity (by canonical key + type
+    family), merge their mentions/records/descriptions, collect aliases, pick a
+    canonical display name, and repoint + dedup relations. Returns
+    (entities_by_canonical_key, relations)."""
+    from collections import Counter
+    _GENERIC = ("named_entity", "concept", "acronym", "")
+    # 1) group by canonical key
+    by_ck: Dict[str, List[Dict]] = {}
+    for norm, e in entities.items():
+        by_ck.setdefault(_canonical_key(e.get("name") or norm), []).append(e)
+    # 2) within each key, merge across types EXCEPT where two mutually-exclusive
+    #    real-world families collide. Only person/location/organisation/event/
+    #    date/money are "exclusive" (a person and a place sharing a name must
+    #    stay apart). Everything else — character, pokemon, product, work,
+    #    technology, generic named_entity … — is freely merged onto one node so
+    #    "Pikachu" [character] / [pokemon] / [named_entity] become ONE entity.
+    clusters: Dict[str, List[Dict]] = {}
+    for ck, group in by_ck.items():
+        excl: Dict[str, List[Dict]] = {}
+        rest: List[Dict] = []
+        for e in group:
+            t_ = e.get("type", "")
+            fam = _type_family(t_)
+            if t_ not in _GENERIC and fam in _EXCLUSIVE_FAMILIES:
+                excl.setdefault(fam, []).append(e)
+            else:
+                rest.append(e)
+        if len(excl) <= 1:
+            fam = next(iter(excl)) if excl else "open"
+            members = (excl[fam] if excl else []) + rest
+            clusters[ck + "|" + fam] = members
+        else:
+            biggest = max(excl, key=lambda f: sum(m.get("mention_count", 1)
+                                                  for m in excl[f]))
+            for f, mem in excl.items():
+                clusters[ck + "|" + f] = mem + (rest if f == biggest else [])
+
+    new_entities: Dict[str, Dict] = {}
+    rename: Dict[str, str] = {}
+    for _ckfam, members in clusters.items():
+        if not members:
+            continue
+        members.sort(key=lambda m: (-m.get("mention_count", 1),
+                                    -len(m.get("name", ""))))
+        head = members[0]
+        aliases: set = set()
+        rids: set = set()
+        dss: set = set()
+        facts: list = []
+        attrs: dict = {}
+        desc = ""
+        mention = 0
+        conf = 0.0
+        type_counts: Counter = Counter()
+        for m in members:
+            mention += m.get("mention_count", 1)
+            rids |= set(m.get("record_ids", set()))
+            dss |= set(m.get("datasets", set()))
+            conf = max(conf, m.get("confidence", 0.5))
+            if m.get("name"):
+                aliases.add(m["name"])
+            for a in (m.get("aliases") or []):
+                aliases.add(a)
+            if not desc and m.get("description"):
+                desc = m["description"]
+            for f in (m.get("facts") or []):
+                if f not in facts:
+                    facts.append(f)
+            attrs.update(m.get("attributes") or {})
+            mt = m.get("type", "")
+            if mt and mt not in ("named_entity", "concept", "acronym"):
+                type_counts[mt] += m.get("mention_count", 1)
+        best_type = (type_counts.most_common(1)[0][0]
+                     if type_counts else head.get("type", "named_entity"))
+        disp = head["name"]
+        aliases.discard(disp)
+        ckey = _canonical_key(disp)
+        ekey = _normalise_entity(disp) + "|" + _type_family(best_type)
+        new_entities[ekey] = {
+            "name": disp, "type": best_type,
+            "normalised": _normalise_entity(disp), "canonical": ckey,
+            "mention_count": mention, "record_ids": rids, "datasets": dss,
+            "confidence": conf, "description": desc,
+            "aliases": sorted(aliases)[:30], "facts": facts[:30],
+            "attributes": attrs,
+        }
+        for m in members:
+            rename[(m.get("name") or "").lower()] = disp
+            rename[_normalise_entity(m.get("name") or "")] = disp
+
+    # ── Coreference: fold a SHORT name (e.g. "Ash" [character]) into a unique
+    #    longer entity that contains it (e.g. "Ash Ketchum" [named_entity]),
+    #    across compatible type families. Guarded against ambiguity. ──────────
+    _PERSON_FAM = {"person", "character"}
+
+    def _fam_compat(fa, fb):
+        if fa == fb:
+            return True
+        if "named_entity" in (fa, fb):
+            return True
+        return fa in _PERSON_FAM and fb in _PERSON_FAM
+
+    items = [e for e in new_entities.values()]
+    # process shortest names first so they fold into longer ones
+    for short in sorted(items, key=lambda e: len(e["normalised"].split())):
+        if short.get("_merged"):
+            continue
+        st = short["normalised"].split()
+        if not st or len(st) > 2 or len(st[0]) < 3:
+            continue
+        sfam = _type_family(short["type"])
+        cands = []
+        for lng in items:
+            if lng is short or lng.get("_merged"):
+                continue
+            lt = lng["normalised"].split()
+            if len(lt) <= len(st):
+                continue
+            if (st == lt[:len(st)] or set(st).issubset(set(lt))) and \
+                    _fam_compat(sfam, _type_family(lng["type"])):
+                cands.append(lng)
+        if len(cands) != 1:
+            continue  # ambiguous (or none) — do not merge
+        lng = cands[0]
+        lng["mention_count"] = lng.get("mention_count", 1) + short.get("mention_count", 1)
+        lng.setdefault("record_ids", set()).update(short.get("record_ids", set()))
+        lng.setdefault("datasets", set()).update(short.get("datasets", set()))
+        al = set(lng.get("aliases", []))
+        al.add(short["name"]); al.update(short.get("aliases", []))
+        al.discard(lng["name"])
+        lng["aliases"] = sorted(al)[:30]
+        if not lng.get("description") and short.get("description"):
+            lng["description"] = short["description"]
+        # prefer the more specific type (character/person beats named_entity)
+        if lng["type"] in ("named_entity", "concept", "acronym") and \
+                short["type"] not in ("named_entity", "concept", "acronym"):
+            lng["type"] = short["type"]
+        fl = lng.setdefault("facts", [])
+        for f in short.get("facts", []):
+            if f not in fl:
+                fl.append(f)
+        lng.setdefault("attributes", {}).update(short.get("attributes", {}))
+        short["_merged"] = True
+        rename[(short.get("name") or "").lower()] = lng["name"]
+        rename[short["normalised"]] = lng["name"]
+    # drop merged entries
+    new_entities = {k: v for k, v in new_entities.items() if not v.get("_merged")}
+
+    def _disp(name):
+        return (rename.get((name or "").lower())
+                or rename.get(_normalise_entity(name or "")) or name)
+
+    ck_index: Dict[str, Dict] = {}
+    for e in new_entities.values():
+        ck_index[e["canonical"]] = e
+    for r in relations:
+        r["from_name"] = _disp(r.get("from_name", ""))
+        r["to_name"] = _disp(r.get("to_name", ""))
+        fe = ck_index.get(_canonical_key(r["from_name"]))
+        te = ck_index.get(_canonical_key(r["to_name"]))
+        if fe:
+            r["from_type"] = fe["type"]
+        if te:
+            r["to_type"] = te["type"]
+    relations = [r for r in relations
+                 if _canonical_key(r["from_name"]) != _canonical_key(r["to_name"])]
+    return new_entities, _dedup_relations(relations)
+
+
+async def _llm_profile(name: str, etype: str, contexts: List[str],
+                       focus: str = "") -> Dict:
+    """Build a rich factual profile of one entity from excerpts that mention it."""
+    ctx = "\n---\n".join((c or "")[:500] for c in contexts[:6])[:3200]
+    if not ctx.strip():
+        return {}
+    sys = ("You build a concise, factual profile of a single entity using ONLY "
+           "the supplied excerpts. Never invent facts. Output strict JSON only.")
+    prompt = (
+        f'ENTITY: "{name}" (current type: {etype})\n'
+        + (f"FOCUS: {focus}\n" if focus else "")
+        + 'From the EXCERPTS, return ONLY this JSON:\n'
+        '{"type":"most precise type, free-form lowercase",'
+        '"description":"2-3 sentence factual summary",'
+        '"aliases":["other names or spellings used for this entity"],'
+        '"attributes":{"key":"value"},'
+        '"facts":["short standalone factual statements"]}\n'
+        "Include only facts grounded in the excerpts.\n\n"
+        f"EXCERPTS:\n{ctx}"
+    )
+    data = _llm_json(await _llm_call(prompt, sys, timeout=90))
+    if not isinstance(data, dict):
+        return {}
+    out: Dict = {}
+    if data.get("type"):
+        out["type"] = _map_gliner_type(str(data["type"]))
+    if data.get("description"):
+        out["description"] = str(data["description"])[:600]
+    al = data.get("aliases")
+    if isinstance(al, list):
+        out["aliases"] = [str(a)[:80] for a in al if a][:20]
+    at = data.get("attributes")
+    if isinstance(at, dict):
+        out["attributes"] = {str(k)[:40]: str(v)[:160] for k, v in at.items()}
+    fa = data.get("facts")
+    if isinstance(fa, list):
+        out["facts"] = [str(f)[:220] for f in fa if f][:20]
+    return out
+
+
+async def _llm_relate_entities(entities: Dict[str, Dict],
+                               existing: List[Dict], focus: str = "") -> List[Dict]:
+    """Secondary pass: infer relationships ACROSS the whole entity roster (not
+    just adjacent mentions), grounded in the entity types + profiles."""
+    ents = sorted(entities.values(), key=lambda e: -e.get("mention_count", 1))[:60]
+    if len(ents) < 2:
+        return []
+    roster = "\n".join(
+        f'- {e["name"]} [{e["type"]}]'
+        + (f': {e["description"]}' if e.get("description") else "")
+        for e in ents)
+    have = {(_canonical_key(r.get("from_name", "")),
+             _canonical_key(r.get("to_name", ""))) for r in existing}
+    sys = ("You map relationships BETWEEN the listed entities. Assert only "
+           "well-supported relationships. Use specific UPPER_SNAKE verbs "
+           "(LEADS, FOUNDED, LOCATED_IN, PART_OF, OWNS, WORKS_FOR, CREATED, "
+           "USES, ALLIED_WITH, RIVAL_OF, MEMBER_OF, ...). Output strict JSON only.")
+    prompt = ("ENTITIES:\n" + roster
+              + (f"\n\nFOCUS: {focus}" if focus else "")
+              + '\n\nReturn ONLY: {"relations":[{"from":"name","to":"name",'
+              '"rel":"UPPER_SNAKE","context":"brief justification"}]}\n'
+              "Use entity names exactly as listed. Do not relate an entity to itself.")
+    data = _llm_json(await _llm_call(prompt, sys, timeout=120))
+    name_idx = {e["name"].lower(): e for e in ents}
+    out: List[Dict] = []
+    for r in (data or {}).get("relations", [])[:150]:
+        if not isinstance(r, dict):
+            continue
+        a = str(r.get("from") or "").strip()
+        b = str(r.get("to") or "").strip()
+        if not a or not b or a.lower() == b.lower():
+            continue
+        ea = name_idx.get(a.lower()); eb = name_idx.get(b.lower())
+        if not ea or not eb:
+            continue
+        if (_canonical_key(a), _canonical_key(b)) in have:
+            continue
+        rel = re.sub(r"[^A-Z_]", "", str(r.get("rel") or "RELATED_TO")
+                     .upper().replace(" ", "_").replace("-", "_")) or "RELATED_TO"
+        out.append({"from_name": ea["name"], "from_type": ea["type"],
+                    "to_name": eb["name"], "to_type": eb["type"], "rel": rel,
+                    "score": 0.7, "distance": 0, "cue": "llm_relate",
+                    "context": str(r.get("context") or "")[:160]})
+    return out
+
+
+async def _llm_describe_relations(relations: List[Dict], focus: str = "") -> int:
+    """Upgrade weak/generic edges (RELATED_TO, CO_OCCURS, ASSOCIATED_WITH) into
+    SPECIFIC, explained relationships using each edge's saved context. Mutates
+    relations in place; returns the number upgraded."""
+    weak = [r for r in relations
+            if r.get("rel") in ("RELATED_TO", "RELATED", "CO_OCCURS",
+                                "ASSOCIATED_WITH")]
+    if not weak:
+        return 0
+    changed = 0
+    for i in range(0, len(weak), 25):
+        batch = weak[i:i + 25]
+        lines = [
+            f'{j}. "{r.get("from_name","")}" -> "{r.get("to_name","")}"'
+            f' | context: {(r.get("context") or "")[:160]}'
+            for j, r in enumerate(batch)]
+        sys = ("You assign a SPECIFIC directed relationship type and a one-line "
+               "reason for each entity pair, grounded in the given context. "
+               "Output strict JSON only.")
+        prompt = (
+            "For each numbered pair, give the precise relationship FROM the first "
+            "entity TO the second as an UPPER_SNAKE verb (e.g. FOUNDED, LOCATED_IN, "
+            "WORKS_FOR, PART_OF, OWNS, CREATED, USES, MEMBER_OF, ALLIED_WITH, "
+            "PARENT_OF, PRODUCES, SUCCEEDED_BY, DEFEATED). Only keep RELATED_TO if "
+            "the context shows nothing more specific. "
+            + (f"FOCUS: {focus}. " if focus else "")
+            + 'Return ONLY {"items":[{"i":0,"rel":"UPPER_SNAKE","why":"short reason"}]}'
+            + "\n\n" + "\n".join(lines))
+        data = _llm_json(await _llm_call(prompt, sys, timeout=90))
+        for it in (data or {}).get("items", []):
+            if not isinstance(it, dict):
+                continue
+            try:
+                idx = int(it.get("i"))
+            except Exception:
+                continue
+            if not (0 <= idx < len(batch)):
+                continue
+            rel = re.sub(r"[^A-Z_]", "", str(it.get("rel") or "")
+                         .upper().replace(" ", "_").replace("-", "_"))
+            why = str(it.get("why") or "").strip()
+            if rel and rel != "RELATED_TO":
+                batch[idx]["rel"] = rel
+                batch[idx]["cue"] = "llm_describe"
+                changed += 1
+            if why:
+                batch[idx]["context"] = why[:200]
+    return changed
+
+
+
+
 @capability(
     "fabric.entity_graph.extract",
     http_method="POST", http_path="/fabric/entity_graph/extract",
     http_tags=["fabric", "graph", "entity"],
     memory="on",
     description="Extract a second-order entity graph from a dataset's records. "
-                "Identifies people, organisations, dates, technologies, code symbols, "
-                "and their relationships. Entities are normalised and cross-linked "
-                "across records. "
+                "The heuristic engine identifies people, organisations, locations, "
+                "dates, technologies, products and code symbols and infers typed, "
+                "directed relations (FOUNDED, LEADS, LOCATED_IN, USES, ...) from the "
+                "verb/preposition cues between adjacent mentions. "
+                "Optional LLM augmentation (use_llm) extracts typed triples with "
+                "entity descriptions + relation context and merges them in. "
+                "Optional agentic steering (llm_steering) runs critique/refine passes "
+                "that merge duplicate entities, fix types, add missed relations and "
+                "prune spurious ones, guided by an optional `focus` directive. "
+                "Alias resolution (alias_resolution, default ON) structurally collapses "
+                "surface variants ('the City of Cherrygrove' / 'Cherry Grove City' / "
+                "'Cherrygrove') into one node with aliases. Entity types are OPEN "
+                "vocabulary (whatever the NER/LLM emits). llm_profiles builds a rich "
+                "per-entity profile (description, aliases, attributes, facts); "
+                "llm_relationships runs a secondary whole-roster pass inferring "
+                "relationships between extracted entities. "
                 "Input: dataset_id (str!), limit (int default 100), "
-                "content_type (text|code|web default text), "
-                "persist (bool default True). "
-                "Output: {entities, relations, persisted, dataset_id}.",
+                "content_type (text|code|web default text), persist (bool default True), "
+                "use_llm (bool default False), llm_steering (bool default False), "
+                "steering_rounds (int 1-3 default 1), focus (str — domain/goal to bias "
+                "extraction & steering), llm_max_records (int default 40 — cap on per-record "
+                "LLM calls). "
+                "Output: {entities, relations, persisted, dataset_id, steering}.",
 )
 async def cap_entity_graph_extract(
-    dataset_id:   str,
-    limit:        int  = 100,
-    content_type: str  = "text",
-    persist:      bool = True,
+    dataset_id:      str,
+    limit:           int  = 100,
+    content_type:    str  = "text",
+    persist:         bool = True,
+    use_llm:         bool = False,
+    llm_steering:    bool = False,
+    steering_rounds: int  = 1,
+    focus:           str  = "",
+    llm_max_records: int  = 40,
+    alias_resolution: bool = True,
+    llm_profiles:    bool = False,
+    llm_relationships: bool = False,
+    describe_relations: bool = True,
+    profile_top:     int  = 25,
     trace_id=None,
 ) -> Dict:
     if not dataset_id:
@@ -1473,35 +2775,160 @@ async def cap_entity_graph_extract(
     if not records:
         return {"error": f"No records in {dataset_id}"}
 
-    await _emit("extracting", count=len(records))
+    await _emit("extracting", count=len(records), use_llm=bool(use_llm))
 
     all_entities: Dict[str, Dict] = {}
     all_relations: List[Dict] = []
 
-    for rec in records:
-        text = (rec.get("text") or "")[:8000]
-        rid = rec["id"]
-
-        entities = _extract_entities_from_text(text, content_type)
-        relations = _extract_relationships_from_entities(entities, text)
-
+    def _absorb(entities, relations, rid):
+        """Merge one record's extraction into the aggregate, preferring more
+        specific types and the first non-empty description per entity."""
+        _generic = ("named_entity", "concept", "acronym")
         for ent in entities:
             norm = ent["normalised"]
             if norm in all_entities:
-                all_entities[norm]["mention_count"] += 1
-                all_entities[norm]["record_ids"].add(rid)
+                cur = all_entities[norm]
+                cur["mention_count"] += 1
+                cur["record_ids"].add(rid)
+                if cur["type"] in _generic and ent["type"] not in _generic:
+                    cur["type"] = ent["type"]
+                if not cur.get("description") and ent.get("description"):
+                    cur["description"] = ent["description"]
+                cur["confidence"] = max(cur.get("confidence", 0.5),
+                                        ent.get("confidence", 0.5))
             else:
                 all_entities[norm] = {
                     **ent,
                     "mention_count": 1,
                     "record_ids": {rid},
                     "datasets": {dataset_id},
+                    "description": ent.get("description", ""),
                 }
-
         all_relations.extend(relations)
 
-    await _emit("scored",
-                entities=len(all_entities), relations=len(all_relations))
+    llm_used = 0
+    for rec in records:
+        text = (rec.get("text") or "")[:8000]
+        rid = rec["id"]
+
+        # heuristic engine — always runs, on every record
+        h_ents = _extract_entities_from_text(text, content_type)
+        h_rels = _extract_relationships_from_entities(h_ents, text)
+        _absorb(h_ents, h_rels, rid)
+
+        # optional LLM augmentation — capped to bound cost/latency
+        if use_llm and llm_used < max(1, llm_max_records):
+            try:
+                l_ents, l_rels = await _llm_extract(text, focus)
+                if l_ents or l_rels:
+                    _absorb(l_ents, l_rels, rid)
+                    llm_used += 1
+            except Exception as e:
+                log.debug("llm extract %s: %s", rid, e)
+
+    all_relations = _dedup_relations(all_relations)
+
+    # ── Alias resolution: collapse surface variants of the same entity ─────
+    if alias_resolution and all_entities:
+        before = len(all_entities)
+        all_entities, all_relations = _resolve_aliases(all_entities, all_relations)
+        await _emit("aliased", before=before, after=len(all_entities),
+                    merged=before - len(all_entities))
+
+    await _emit("scored", entities=len(all_entities),
+                relations=len(all_relations), llm_records=llm_used)
+
+    # ── Agentic steering: critique/refine the aggregate graph ──────────────
+    steering = []
+    if use_llm and llm_steering and all_entities:
+        rounds = max(1, min(3, int(steering_rounds or 1)))
+        for rnd in range(rounds):
+            await _emit("steering", round=rnd + 1, message="LLM refining graph")
+            corr = await _llm_steer(all_entities, all_relations, focus, records)
+            if not corr:
+                break
+            all_entities, all_relations, st = _apply_steer(
+                all_entities, all_relations, corr, dataset_id)
+            steering.append(st)
+            await _emit("steered", round=rnd + 1, **st)
+            if not any(st.values()):
+                break  # converged — nothing more to change
+        all_relations = _dedup_relations(all_relations)
+
+    # ── LLM entity profiles: rich per-entity description/attributes/facts ──
+    profiled = 0
+    if llm_profiles and all_entities:
+        await _emit("profiling", message="building entity profiles")
+        rid_text = {r["id"]: (r.get("text") or "") for r in records}
+        top = sorted(all_entities.values(), key=lambda e: -e.get("mention_count", 1))
+        for e in top[:max(1, min(80, int(profile_top or 25)))]:
+            ctxs = []
+            for rid in list(e.get("record_ids", []))[:8]:
+                txt = rid_text.get(rid, "")
+                if not txt:
+                    continue
+                pos = txt.lower().find(e["name"].lower())
+                if pos < 0:
+                    for al in e.get("aliases", []):
+                        pos = txt.lower().find(al.lower())
+                        if pos >= 0:
+                            break
+                if pos < 0:
+                    pos = 0
+                ctxs.append(txt[max(0, pos - 200):pos + 400])
+            if not ctxs:
+                continue
+            try:
+                prof = await _llm_profile(e["name"], e["type"], ctxs, focus)
+            except Exception as ex:
+                log.debug("profile %s: %s", e.get("name"), ex)
+                continue
+            if not prof:
+                continue
+            if prof.get("type") and e.get("type") in ("named_entity", "concept", ""):
+                e["type"] = prof["type"]
+            if prof.get("description"):
+                e["description"] = prof["description"]
+            if prof.get("aliases"):
+                al = set(e.get("aliases", [])); al.update(prof["aliases"])
+                al.discard(e["name"]); e["aliases"] = sorted(al)[:30]
+            if prof.get("attributes"):
+                e.setdefault("attributes", {}).update(prof["attributes"])
+            if prof.get("facts"):
+                fs = list(e.get("facts", []))
+                for f in prof["facts"]:
+                    if f not in fs:
+                        fs.append(f)
+                e["facts"] = fs[:30]
+            profiled += 1
+        await _emit("profiled", count=profiled)
+
+    # ── Secondary inter-entity relationship inference (whole-roster) ───────
+    secondary_added = 0
+    if llm_relationships and len(all_entities) >= 2:
+        await _emit("relating", message="inferring inter-entity relationships")
+        try:
+            secondary = await _llm_relate_entities(all_entities, all_relations, focus)
+        except Exception as ex:
+            secondary = []
+            log.debug("relate: %s", ex)
+        if secondary:
+            all_relations.extend(secondary)
+            all_relations = _dedup_relations(all_relations)
+            secondary_added = len(secondary)
+        await _emit("related", added=secondary_added)
+
+    # ── Describe weak RELATED_TO/CO_OCCURS edges with a specific type + reason ─
+    described = 0
+    if use_llm and describe_relations and all_relations:
+        await _emit("describing", message="describing weak relationships")
+        try:
+            described = await _llm_describe_relations(all_relations, focus)
+        except Exception as ex:
+            log.debug("describe relations: %s", ex)
+        if described:
+            all_relations = _dedup_relations(all_relations)
+        await _emit("described", count=described)
 
     persisted = 0
     if persist and all_entities:
@@ -1515,15 +2942,20 @@ async def cap_entity_graph_extract(
         entity_list.append({
             "name": ent["name"],
             "type": ent["type"],
-            "normalised": norm,
+            "normalised": ent.get("normalised", norm),
+            "canonical": ent.get("canonical", ""),
+            "description": ent.get("description", ""),
+            "aliases": ent.get("aliases", []),
+            "attributes": ent.get("attributes", {}),
+            "facts": ent.get("facts", []),
+            "confidence": ent.get("confidence", 0.5),
             "mention_count": ent["mention_count"],
             "record_ids": list(ent["record_ids"])[:20],
         })
     entity_list.sort(key=lambda e: -e["mention_count"])
 
-    await _emit("done",
-                entities=len(entity_list), relations=len(all_relations),
-                persisted=persisted)
+    await _emit("done", entities=len(entity_list),
+                relations=len(all_relations), persisted=persisted)
 
     return {
         "ok": True,
@@ -1533,7 +2965,432 @@ async def cap_entity_graph_extract(
         "entity_count": len(entity_list),
         "relation_count": len(all_relations),
         "persisted": persisted,
+        "llm": {"used": bool(use_llm), "records": llm_used,
+                "steering": steering, "profiled": profiled,
+                "secondary_relations": secondary_added,
+                "relations_described": described},
+        "alias_resolution": bool(alias_resolution),
     }
+
+
+def _ner_available() -> Dict:
+    """Cheap importability probe (does NOT load models)."""
+    avail = {"spacy": False, "gliner": False}
+    try:
+        import spacy  # type: ignore  # noqa
+        avail["spacy"] = True
+    except Exception:
+        pass
+    try:
+        import gliner  # type: ignore  # noqa
+        avail["gliner"] = True
+    except Exception:
+        pass
+    return avail
+
+
+@capability(
+    "fabric.entity_graph.ner",
+    http_method="POST", http_path="/fabric/entity_graph/ner",
+    http_tags=["fabric", "graph", "entity", "nlp"],
+    memory="off",
+    description="Inspect and control the entity NER/NLP backend, and self-test it. "
+                "GET/empty: report the ACTIVE backend (gliner|spacy|heuristic), which "
+                "libraries are importable, the configured model names, and run a "
+                "self-test extraction on a sample so you can SEE what it produces. "
+                "Set backend (auto|gliner|spacy|heuristic) to switch at runtime "
+                "(re-detects on next use). Optionally pass spacy_model / gliner_model "
+                "to change the model, and sample to test your own text. "
+                "NER is independent of and composes with the LLM augmentation in "
+                "fabric.entity_graph.extract (use_llm / llm_steering). "
+                "Output: {active_backend, configured, available, models, self_test}.",
+)
+async def cap_entity_graph_ner(
+    backend: str = "", spacy_model: str = "", gliner_model: str = "",
+    sample: str = "", trace_id=None,
+) -> Dict:
+    changed = False
+    if spacy_model.strip():
+        os.environ["FABRIC_NER_MODEL"] = spacy_model.strip(); changed = True
+    if gliner_model.strip():
+        os.environ["FABRIC_GLINER_MODEL"] = gliner_model.strip(); changed = True
+    if backend.strip():
+        b = backend.strip().lower()
+        if b not in ("auto", "gliner", "spacy", "heuristic"):
+            return {"error": "backend must be auto|gliner|spacy|heuristic"}
+        os.environ["FABRIC_NER_BACKEND"] = b
+        changed = True
+    if changed:
+        # force re-detection on next use
+        _NER_STATE.update(init=False, kind="heuristic", obj=None)
+
+    st = _ner_backend()  # triggers (re)detection + model load
+    avail = _ner_available()
+    test_text = (sample.strip() or
+                 "Tim Cook, the CEO of Apple Inc, met Angela Merkel in Berlin to "
+                 "discuss the Seacourt Tower of Oxford, a project built with Python "
+                 "and funded by SoftBank in 2023.")
+    try:
+        ents = _extract_entities_from_text(test_text, "text")
+    except Exception as e:
+        ents = []
+        log.debug("ner self-test: %s", e)
+    # type histogram so the over/under-representation is obvious at a glance
+    hist: Dict[str, int] = {}
+    for e in ents:
+        hist[e["type"]] = hist.get(e["type"], 0) + 1
+    return {
+        "active_backend": st["kind"],
+        "configured": os.getenv("FABRIC_NER_BACKEND", "auto"),
+        "available": avail,
+        "models": {
+            "spacy": os.getenv("FABRIC_NER_MODEL", "en_core_web_sm"),
+            "gliner": os.getenv("FABRIC_GLINER_MODEL", "urchade/gliner_medium-v2.1"),
+        },
+        "gliner_labels": _gliner_labels(),
+        "gliner_threshold": _gliner_threshold(),
+        "self_test": {
+            "text": test_text,
+            "type_histogram": hist,
+            "entities": [{"name": e["name"], "type": e["type"],
+                          "confidence": e.get("confidence")} for e in ents],
+        },
+        "note": ("If active_backend is 'heuristic', install a model on the host: "
+                 "`pip install gliner` (zero-shot, best) or "
+                 "`pip install spacy && python -m spacy download en_core_web_sm`, "
+                 "then set backend=auto. NER composes with LLM augmentation."),
+    }
+
+
+
+@capability(
+    "fabric.entity_graph.consolidate",
+    http_method="POST", http_path="/fabric/entity_graph/consolidate",
+    http_tags=["fabric", "graph", "entity"], memory="off",
+    streams=["fabric.entity_graph.progress"],
+    description="In-tandem consolidation of a dataset's entity graph: surgically "
+                "MERGES cross-type / alias duplicate nodes (e.g. 'Pikachu' as "
+                "character + pokemon + named_entity -> one node) without a full "
+                "rebuild, so it is safe to run repeatedly mid-crawl. Optionally "
+                "(link=True) runs an LLM pass that ties related entities together "
+                "with typed relations. "
+                "Input: dataset_id (str!), link (bool), trace_id. "
+                "Output: {ok, merged, clusters, linked}.",
+)
+async def cap_entity_graph_consolidate(dataset_id: str = "", link: bool = False,
+                                       trace_id=None) -> Dict:
+    if not dataset_id:
+        return {"error": "dataset_id required"}
+    from collections import Counter
+    _GEN = {"named_entity", "concept", "acronym", ""}
+    conn = _sqlite_conn()
+    try:
+        mids = {m[0] for m in conn.execute(
+            "SELECT DISTINCT entity_id FROM fabric_entity_mentions WHERE dataset_id=?",
+            (dataset_id,)).fetchall()}
+    except Exception:
+        mids = set()
+    try:
+        rows = conn.execute(
+            "SELECT id,name,type,normalised,mention_count,datasets,props "
+            "FROM fabric_entities").fetchall()
+    except Exception as e:
+        return {"error": str(e)}
+    relevant = []
+    for r in rows:
+        r = dict(r)
+        try:
+            dss = set(json.loads(r.get("datasets") or "[]"))
+        except Exception:
+            dss = set()
+        if dataset_id in dss or r["id"] in mids:
+            r["_dss"] = dss
+            relevant.append(r)
+
+    # group by canonical key, then split only on exclusive-family conflict
+    by_ck: Dict[str, list] = {}
+    for e in relevant:
+        by_ck.setdefault(_canonical_key(e["name"] or e.get("normalised") or ""),
+                         []).append(e)
+    clusters = []
+    for ck, group in by_ck.items():
+        if len(group) < 2:
+            continue
+        excl: Dict[str, list] = {}
+        rest = []
+        for e in group:
+            fam = _type_family(e["type"])
+            if e["type"] not in _GEN and fam in _EXCLUSIVE_FAMILIES:
+                excl.setdefault(fam, []).append(e)
+            else:
+                rest.append(e)
+        if len(excl) <= 1:
+            clusters.append((list(excl.values())[0] if excl else []) + rest)
+        else:
+            biggest = max(excl, key=lambda f: sum(m["mention_count"] or 0
+                                                  for m in excl[f]))
+            for f, mem in excl.items():
+                clusters.append(mem + (rest if f == biggest else []))
+
+    graph = _get_graph()
+    merged = 0
+    ts = now_iso()
+    for cluster in clusters:
+        if len(cluster) < 2:
+            continue
+        cluster.sort(key=lambda e: (-(e["mention_count"] or 0),
+                                    e["type"] in _GEN, -len(e["name"] or "")))
+        survivor, losers = cluster[0], cluster[1:]
+        tc: Counter = Counter()
+        for e in cluster:
+            if e["type"] not in _GEN:
+                tc[e["type"]] += (e["mention_count"] or 1)
+        best_type = tc.most_common(1)[0][0] if tc else survivor["type"]
+        try:
+            sp = json.loads(survivor.get("props") or "{}")
+        except Exception:
+            sp = {}
+        aliases = set(sp.get("aliases", []))
+        facts = list(sp.get("facts", []))
+        attrs = dict(sp.get("attributes", {}))
+        total = survivor["mention_count"] or 0
+        sdss = set(survivor.get("_dss") or set())
+        for L in losers:
+            try:
+                lp = json.loads(L.get("props") or "{}")
+            except Exception:
+                lp = {}
+            aliases.add(L["name"]); aliases.update(lp.get("aliases", []))
+            for f in lp.get("facts", []):
+                if f not in facts:
+                    facts.append(f)
+            attrs.update(lp.get("attributes", {}))
+            total += (L["mention_count"] or 0)
+            sdss |= set(L.get("_dss") or set())
+            sid, lid = survivor["id"], L["id"]
+            try:
+                conn.execute("UPDATE OR IGNORE fabric_entity_mentions "
+                             "SET entity_id=? WHERE entity_id=?", (sid, lid))
+                conn.execute("DELETE FROM fabric_entity_mentions WHERE entity_id=?", (lid,))
+                conn.execute("UPDATE OR IGNORE fabric_entity_relations "
+                             "SET from_id=? WHERE from_id=?", (sid, lid))
+                conn.execute("UPDATE OR IGNORE fabric_entity_relations "
+                             "SET to_id=? WHERE to_id=?", (sid, lid))
+                conn.execute("DELETE FROM fabric_entity_relations "
+                             "WHERE from_id=? OR to_id=?", (lid, lid))
+                conn.execute("DELETE FROM fabric_entities WHERE id=?", (lid,))
+            except Exception as e:
+                log.debug("consolidate merge %s->%s: %s", lid, sid, e)
+            if graph and getattr(graph, "available", False):
+                try:
+                    await graph.query("MATCH (l:Entity {id:$l}) DETACH DELETE l",
+                                      {"l": lid})
+                except Exception:
+                    pass
+            merged += 1
+        aliases.discard(survivor["name"])
+        sp["aliases"] = sorted(aliases)[:40]
+        sp["facts"] = facts[:40]
+        sp["attributes"] = attrs
+        try:
+            conn.execute(
+                "UPDATE fabric_entities SET type=?, mention_count=?, datasets=?, "
+                "props=?, last_seen=? WHERE id=?",
+                (best_type, total, json.dumps(sorted(sdss)), json.dumps(sp), ts,
+                 survivor["id"]))
+        except Exception as e:
+            log.debug("consolidate survivor update: %s", e)
+        if graph and getattr(graph, "available", False):
+            try:
+                await graph.upsert_node("Entity", survivor["id"], {
+                    "name": survivor["name"], "type": best_type,
+                    "mention_count": total})
+            except Exception:
+                pass
+    try:
+        conn.execute("DELETE FROM fabric_entity_relations WHERE from_id=to_id")
+        conn.commit()
+    except Exception:
+        pass
+
+    # Optional: tie related entities together with an LLM relation pass.
+    linked = 0
+    if link:
+        try:
+            q = await cap_entity_graph_query(search="", dataset_id=dataset_id, limit=120)
+            ents = {e["name"]: {"name": e["name"], "type": e.get("type", ""),
+                                "mention_count": e.get("mention_count", 1),
+                                "description": (e.get("props") or {}).get("description", "")}
+                    for e in (q.get("entities") or [])}
+            existing = q.get("relationships", q.get("relations", [])) or []
+            new_rels = await _llm_relate_entities(ents, existing, focus="")
+            if new_rels:
+                name2 = {}
+                for e in conn.execute(
+                        "SELECT id,name,type FROM fabric_entities").fetchall():
+                    name2[(e["name"] or "").lower()] = (e["id"], e["type"])
+                for r in new_rels:
+                    fa = name2.get(r["from_name"].lower())
+                    tb = name2.get(r["to_name"].lower())
+                    if not fa or not tb or fa[0] == tb[0]:
+                        continue
+                    try:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO fabric_entity_relations "
+                            "(from_id,to_id,rel,props,dataset_id,created_at) "
+                            "VALUES (?,?,?,?,?,?)",
+                            (fa[0], tb[0], r["rel"],
+                             json.dumps({"from_name": r["from_name"],
+                                         "to_name": r["to_name"],
+                                         "context": r.get("context", ""),
+                                         "cue": "consolidate_link"}),
+                             dataset_id, ts))
+                        linked += 1
+                    except Exception:
+                        pass
+                conn.commit()
+        except Exception as e:
+            log.debug("consolidate link: %s", e)
+
+    try:
+        await emit_event({"type": "fabric.entity_graph.progress",
+                          "stage": "consolidated", "dataset_id": dataset_id,
+                          "merged": merged, "linked": linked,
+                          "message": f"consolidated {merged} duplicate entities"
+                                     + (f", +{linked} relations" if linked else "")})
+    except Exception:
+        pass
+    return {"ok": True, "dataset_id": dataset_id, "merged": merged,
+            "clusters": len([c for c in clusters if len(c) > 1]), "linked": linked}
+
+
+@capability(
+    "fabric.entity_graph.dedup",
+    http_method="POST", http_path="/fabric/entity_graph/dedup",
+    http_tags=["fabric", "graph", "entity"],
+    memory="on",
+    description="Rebuild a dataset's entity graph cleanly with the current "
+                "normalization + alias resolution (fixes pre-existing duplicate "
+                "entities like 'Cherrygrove' / 'Cherry Grove City'). Purges the "
+                "dataset's existing entity graph then re-extracts it. "
+                "Input: dataset_id (str!), limit (int default 500), use_llm (bool), "
+                "llm_profiles (bool), llm_relationships (bool), focus (str). "
+                "Output: extract result (entities/relations/persisted).",
+)
+async def cap_entity_graph_dedup(
+    dataset_id: str, limit: int = 500, use_llm: bool = False,
+    llm_profiles: bool = False, llm_relationships: bool = False,
+    focus: str = "", trace_id=None,
+) -> Dict:
+    if not dataset_id:
+        return {"error": "dataset_id required"}
+    try:
+        await cap_entity_graph_purge(dataset_id=dataset_id)
+    except Exception as e:
+        log.warning("dedup purge %s: %s", dataset_id, e)
+    return await cap_entity_graph_extract(
+        dataset_id=dataset_id, limit=limit, persist=True,
+        alias_resolution=True, use_llm=use_llm, llm_profiles=llm_profiles,
+        llm_relationships=llm_relationships, focus=focus,
+    )
+
+
+@capability(
+    "fabric.entity_graph.profile",
+    http_method="POST", http_path="/fabric/entity_graph/profile",
+    http_tags=["fabric", "graph", "entity", "nlp"],
+    memory="on",
+    description="Build (and persist) a rich LLM profile for ONE entity from its "
+                "mentions in a dataset: precise type, description, aliases, "
+                "attributes and facts. "
+                "Input: dataset_id (str!), name (str! — entity name), limit (int "
+                "default 300 records to scan), focus (str), persist (bool default "
+                "True). Output: {name, profile, updated}.",
+)
+async def cap_entity_graph_profile(
+    dataset_id: str, name: str, limit: int = 300, focus: str = "",
+    persist: bool = True, trace_id=None,
+) -> Dict:
+    if not dataset_id or not name:
+        return {"error": "dataset_id and name required"}
+    from Vera.Orchestration.fabric.data_fabric import _sqlite_query
+    records = []
+    offset = 0
+    while len(records) < limit:
+        batch = await _sqlite_query(dataset_id=dataset_id,
+                                    limit=min(100, limit - len(records)), offset=offset)
+        if not batch:
+            break
+        records.extend(batch)
+        if len(batch) < 100:
+            break
+        offset += 100
+    nl = name.lower()
+    ctxs = []
+    for r in records:
+        txt = r.get("text") or ""
+        pos = txt.lower().find(nl)
+        if pos >= 0:
+            ctxs.append(txt[max(0, pos - 200):pos + 400])
+        if len(ctxs) >= 8:
+            break
+    if not ctxs:
+        return {"error": f"no mentions of '{name}' found in {dataset_id}",
+                "name": name}
+    prof = await _llm_profile(name, "", ctxs, focus)
+    if not prof:
+        return {"name": name, "profile": {}, "updated": False,
+                "note": "LLM unavailable or no profile produced"}
+
+    updated = False
+    if persist:
+        try:
+            conn = _sqlite_conn()
+            ck = _canonical_key(name)
+            # match by canonical key on normalised/name
+            for row in conn.execute(
+                    "SELECT id, name, type, normalised, props FROM fabric_entities"
+            ).fetchall():
+                if _canonical_key(row["name"] or row["normalised"] or "") != ck:
+                    continue
+                try:
+                    props = json.loads(row["props"] or "{}")
+                except Exception:
+                    props = {}
+                if prof.get("description"):
+                    props["description"] = prof["description"]
+                if prof.get("aliases"):
+                    al = set(props.get("aliases", [])); al.update(prof["aliases"])
+                    props["aliases"] = sorted(al)[:30]
+                if prof.get("attributes"):
+                    props.setdefault("attributes", {}).update(prof["attributes"])
+                if prof.get("facts"):
+                    fs = list(props.get("facts", []))
+                    for f in prof["facts"]:
+                        if f not in fs:
+                            fs.append(f)
+                    props["facts"] = fs[:30]
+                new_type = prof.get("type") if row["type"] in (
+                    "named_entity", "concept", "") else row["type"]
+                conn.execute("UPDATE fabric_entities SET props=?, type=? WHERE id=?",
+                             (json.dumps(props), new_type or row["type"], row["id"]))
+                updated = True
+            conn.commit()
+        except Exception as e:
+            log.warning("profile persist %s: %s", name, e)
+        graph = _get_graph()
+        if graph and graph.available and prof:
+            try:
+                eid = f"{prof.get('type') or 'named_entity'}:{hashlib.sha1(_canonical_key(name).encode()).hexdigest()[:12]}"
+                await graph.upsert_node("Entity", eid, {
+                    "name": name, "description": prof.get("description", ""),
+                    "aliases": prof.get("aliases", [])[:25],
+                    "facts": prof.get("facts", [])[:20]})
+            except Exception as e:
+                log.debug("profile neo4j %s: %s", name, e)
+
+    return {"name": name, "profile": prof, "updated": updated,
+            "contexts_used": len(ctxs)}
 
 
 @capability(
@@ -2467,5 +4324,169 @@ async def cap_entity_graph_bulk_load(
         "persisted": persisted,
     }
 
+
+
+
+# ---------------------------------------------------------------------------
+# NER model installation (pip + spaCy download)
+# ---------------------------------------------------------------------------
+@capability(
+    "fabric.entity_graph.ner_install",
+    http_method="POST", http_path="/fabric/entity_graph/ner_install",
+    http_tags=["fabric", "entity", "nlp"], memory="off",
+    streams=["fabric.ner.install.progress"],
+    description=(
+        "Install or update NER/NLP model packages at runtime. "
+        "Runs pip install for gliner or spacy, optionally also runs "
+        "'python -m spacy download <model>' for spaCy language models. "
+        "Returns live stdout/stderr via stream events. "
+        "Input: package ('gliner' | 'spacy' | 'spacy_model' | custom pip spec), "
+        "model_name (str, spaCy model to download e.g. en_core_web_trf), "
+        "force_reinstall (bool=False). "
+        "Output: {ok, returncode, stdout, stderr, package, model_name}."
+    ),
+)
+async def cap_ner_install_model(
+    package: str = "",
+    model_name: str = "",
+    force_reinstall: bool = False,
+    trace_id=None,
+) -> Dict:
+    pkg = (package or "").strip()
+    model = (model_name or "").strip()
+    if not pkg and not model:
+        return {"error": "package or model_name required"}
+
+    async def _emit(stage: str, **kw):
+        try:
+            await emit_event({"type": "fabric.ner.install.progress",
+                              "stage": stage, **kw})
+        except Exception:
+            pass
+
+    results = []
+
+    # --- pip install ---
+    if pkg:
+        # Map shorthand names to pip specs
+        pip_spec = {
+            "gliner": "gliner",
+            "spacy": "spacy[transformers]",
+        }.get(pkg.lower(), pkg)
+
+        cmd = [sys.executable, "-m", "pip", "install", pip_spec]
+        if force_reinstall:
+            cmd.append("--force-reinstall")
+        cmd.append("--break-system-packages")
+
+        await _emit("pip_start", message=f"pip install {pip_spec}",
+                    cmd=" ".join(cmd))
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            stdout_lines = []
+            async for line in proc.stdout:
+                text = line.decode("utf-8", errors="replace").rstrip()
+                stdout_lines.append(text)
+                await _emit("pip_output", line=text)
+            await proc.wait()
+            rc = proc.returncode
+            await _emit("pip_done", returncode=rc,
+                        message=f"pip exit {rc}")
+            results.append({"step": "pip", "spec": pip_spec,
+                            "returncode": rc, "stdout": "\n".join(stdout_lines[-40:])})
+            if rc != 0:
+                return {"ok": False, "returncode": rc,
+                        "package": pkg, "model_name": model,
+                        "stdout": "\n".join(stdout_lines[-40:]),
+                        "error": f"pip install failed (exit {rc})"}
+        except Exception as e:
+            return {"ok": False, "error": f"pip install error: {e}",
+                    "package": pkg, "model_name": model}
+
+    # --- spaCy model download ---
+    if model:
+        cmd2 = [sys.executable, "-m", "spacy", "download", model]
+        await _emit("spacy_download_start", message=f"spacy download {model}",
+                    cmd=" ".join(cmd2))
+        try:
+            proc2 = await asyncio.create_subprocess_exec(
+                *cmd2,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            stdout2 = []
+            async for line in proc2.stdout:
+                text = line.decode("utf-8", errors="replace").rstrip()
+                stdout2.append(text)
+                await _emit("spacy_output", line=text)
+            await proc2.wait()
+            rc2 = proc2.returncode
+            await _emit("spacy_download_done", returncode=rc2,
+                        message=f"spacy download exit {rc2}")
+            results.append({"step": "spacy_download", "model": model,
+                            "returncode": rc2, "stdout": "\n".join(stdout2[-40:])})
+            if rc2 != 0:
+                return {"ok": False, "returncode": rc2,
+                        "package": pkg, "model_name": model,
+                        "stdout": "\n".join(stdout2[-40:]),
+                        "error": f"spacy download failed (exit {rc2})"}
+        except Exception as e:
+            return {"ok": False, "error": f"spacy download error: {e}",
+                    "package": pkg, "model_name": model}
+
+    # Force NER state to re-detect on next use
+    _NER_STATE.update(init=False, kind="heuristic", obj=None)
+
+    return {
+        "ok": True,
+        "package": pkg,
+        "model_name": model,
+        "steps": results,
+        "note": "NER backend will re-detect on next use. "
+                "Call fabric.entity_graph.ner to confirm active backend.",
+    }
+
+
+# ---------------------------------------------------------------------------
+# NER GLiNER label and threshold runtime control
+# ---------------------------------------------------------------------------
+@capability(
+    "fabric.entity_graph.ner_labels",
+    http_method="POST", http_path="/fabric/entity_graph/ner_labels",
+    http_tags=["fabric", "entity", "nlp"], memory="off",
+    description=(
+        "Get or set the GLiNER entity label set and confidence threshold at runtime. "
+        "GET (no args): return current labels and threshold. "
+        "POST with labels (comma-separated str) and/or threshold (float): update them. "
+        "Labels control what entity types GLiNER extracts; threshold filters low-confidence spans. "
+        "Changes take effect immediately for the next extraction. "
+        "Input: labels (str, comma-separated, e.g. 'person,organisation,location,technology'), "
+        "threshold (float, 0.1-0.95). "
+        "Output: {labels, threshold, changed}."
+    ),
+)
+async def cap_ner_set_labels(
+    labels: str = "",
+    threshold: float = -1.0,
+    trace_id=None,
+) -> Dict:
+    changed = False
+    if labels.strip():
+        os.environ["FABRIC_GLINER_LABELS"] = labels.strip()
+        changed = True
+    if threshold >= 0.0:
+        os.environ["FABRIC_GLINER_THRESHOLD"] = str(min(0.99, max(0.01, threshold)))
+        changed = True
+    return {
+        "ok": True,
+        "labels": _gliner_labels(),
+        "threshold": _gliner_threshold(),
+        "changed": changed,
+        "note": "Changes apply to the next GLiNER extraction call.",
+    }
 
 log.info("data_fabric_web_acquisition: capabilities registered")

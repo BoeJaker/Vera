@@ -363,6 +363,9 @@ async def vllm_generate(
     stream_cb: Optional[Callable] = None,
     # Extra passthrough
     extra: Optional[dict] = None,
+    # Caller passthrough — lets llm.generate (and other intermediaries) log
+    # the true upstream caller rather than vllm_generate itself.
+    caller_override: Optional[dict] = None,
 ) -> str:
     """
     Call /v1/completions on the best available vLLM instance.
@@ -378,6 +381,53 @@ async def vllm_generate(
     if not mdl:
         log.error("vllm_generate: no model specified and none detected on instance %s", inst.id)
         return ""
+
+    # ── Caller identification ─────────────────────────────────────────────────
+    import traceback as _tb, os as _os
+    if caller_override:
+        _caller_file = caller_override.get("caller_file", "vllm_capabilities.py")
+        _caller_func = caller_override.get("caller_func", "vllm_generate")
+        _cap_name    = caller_override.get("cap_name", "vllm.generate")
+    else:
+        _caller_file = "vllm_capabilities.py"
+        _caller_func = "vllm_generate"
+        _cap_name    = "vllm.generate"
+        try:
+            _stack = _tb.extract_stack(limit=8)
+            _this  = _os.path.basename(__file__)
+            for _fr in reversed(_stack[:-1]):
+                _fn = _os.path.basename(_fr.filename)
+                if _fn != _this and not _fn.startswith("<"):
+                    _caller_file = _fn
+                    _caller_func = _fr.name
+                    break
+        except Exception:
+            pass
+
+    _req_id = str(uuid.uuid4())[:12]
+    _t0     = time.time()
+    _prompt_preview = (prompt or "")[:120].replace("\n", " ")
+
+    log.info("vllm_req [%s] model=%s inst=%s caller=%s:%s prompt=%s",
+             _req_id, mdl, inst.id, _caller_file, _caller_func, _prompt_preview)
+    try:
+        await emit_event({
+            "type":           "ollama.request",  # reuse same event type for Workers panel
+            "req_id":         _req_id,
+            "model":          mdl,
+            "instance_id":    inst.id,
+            "instance_url":   inst.url,
+            "caller_file":    _caller_file,
+            "caller_func":    _caller_func,
+            "caller_module":  _caller_file.replace(".py", ""),
+            "cap_name":       _cap_name,
+            "prompt_preview": _prompt_preview,
+            "backend":        "vllm",
+            "prefer_gpu":     prefer_gpu,
+            "streaming":      stream_cb is not None,
+        })
+    except Exception:
+        pass
 
     body: dict = {
         "model": mdl,
@@ -424,15 +474,51 @@ async def vllm_generate(
                                     await stream_cb(tok)
                             except Exception:
                                 pass
+                    _elapsed = round(time.time() - _t0, 2)
+                    log.info("vllm_done [%s] %.2fs tokens=%d caller=%s:%s",
+                             _req_id, _elapsed, len(buf), _caller_file, _caller_func)
+                    try:
+                        await emit_event({
+                            "type": "ollama.request_done", "req_id": _req_id,
+                            "model": mdl, "instance_id": inst.id,
+                            "caller_file": _caller_file, "caller_func": _caller_func,
+                            "elapsed_s": _elapsed, "token_count": len(buf), "backend": "vllm",
+                        })
+                    except Exception:
+                        pass
                     return "".join(buf)
             else:
                 r = await c.post(f"{inst.url}/v1/completions", json=body)
                 r.raise_for_status()
-                return r.json()["choices"][0]["text"]
+                _text = r.json()["choices"][0]["text"]
+                _elapsed = round(time.time() - _t0, 2)
+                log.info("vllm_done [%s] %.2fs caller=%s:%s",
+                         _req_id, _elapsed, _caller_file, _caller_func)
+                try:
+                    await emit_event({
+                        "type": "ollama.request_done", "req_id": _req_id,
+                        "model": mdl, "instance_id": inst.id,
+                        "caller_file": _caller_file, "caller_func": _caller_func,
+                        "elapsed_s": _elapsed, "backend": "vllm",
+                    })
+                except Exception:
+                    pass
+                return _text
 
     except Exception as exc:
-        log.error("vllm_generate [%s]: %s", inst.id, exc)
+        _elapsed = round(time.time() - _t0, 2)
+        log.error("vllm_generate [%s] FAILED %.2fs inst=%s caller=%s:%s err=%s",
+                  _req_id, _elapsed, inst.id, _caller_file, _caller_func, exc)
         inst.errors += 1
+        try:
+            await emit_event({
+                "type": "ollama.request_error", "req_id": _req_id,
+                "model": mdl, "instance_id": inst.id,
+                "caller_file": _caller_file, "caller_func": _caller_func,
+                "elapsed_s": _elapsed, "error": str(exc)[:200], "backend": "vllm",
+            })
+        except Exception:
+            pass
         # Failover to next best
         fallback = pick_vllm_instance(prefer_gpu=prefer_gpu, model=mdl)
         if fallback and fallback.id != inst.id:

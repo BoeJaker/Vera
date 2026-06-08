@@ -646,6 +646,8 @@ async def _run_monitor_check():
         prompt,
         system="You are a system reliability engineer analysing Vera AI platform errors. Be concise and specific.",
         prefer_gpu=True,
+        caller_override={"caller_file": "syslog.py", "caller_func": "_monitor_loop",
+                         "caller_module": "syslog", "cap_name": "syslog.monitor"},
     )
 
     report = {
@@ -805,7 +807,11 @@ async def syslog_ask(
         "Be concise and technical. If you can see the source code, reference specific lines."
     )
 
-    answer = await ollama_generate(prompt, system=system, prefer_gpu=True)
+    answer = await ollama_generate(
+        prompt, system=system, prefer_gpu=True,
+        caller_override={"caller_file": "syslog.py", "caller_func": "syslog_ask",
+                         "caller_module": "syslog", "cap_name": "syslog.ask"},
+    )
 
     return {
         "question":  question,

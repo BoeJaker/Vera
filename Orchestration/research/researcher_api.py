@@ -51,7 +51,7 @@ from pydantic import BaseModel, Field
 
 # Persistence through the data fabric (replaces research_db.py)
 try:
-    from Vera.Orchestration.research_fabric import DB
+    from Vera.Orchestration.research.research_fabric import DB
 except ImportError:
     from research_fabric import DB
 
@@ -3288,7 +3288,7 @@ async def smart_gather(
 async def gather_fabric(query: str, top_k: int = 30) -> list[Citation]:
     """Query the data fabric via fabric.query and convert results to Citations."""
     try:
-        fabric = sys.modules.get("Vera.Orchestration.fabric.data_fabric")
+        fabric = sys.modules.get("data_fabric")
         if not fabric or not hasattr(fabric, "execute_query"):
             log.debug("gather_fabric: data_fabric module not loaded")
             return []
@@ -3336,7 +3336,7 @@ async def gather_fabric(query: str, top_k: int = 30) -> list[Citation]:
 async def gather_memory(query: str, top_k: int = 20) -> list[Citation]:
     """Query the memory graph via memory.search and convert results to Citations."""
     try:
-        memory = sys.modules.get("Vera.Orchestration.fabric.memory")
+        memory = sys.modules.get("memory")
         if not memory:
             log.debug("gather_memory: memory module not loaded")
             return []
@@ -7060,7 +7060,7 @@ async def test_source(req: SourceTestRequest):
 
     elif src.type==SourceType.FABRIC:
         try:
-            fab = sys.modules.get("Vera.Orchestration.fabric.data_fabric") or sys.modules.get("Vera.Orchestration.fabric.data_fabric")
+            fab = sys.modules.get("data_fabric")
             if not fab:
                 detail="data_fabric module not loaded in sys.modules"
             elif not hasattr(fab, "_sqlite_query"):
@@ -7074,9 +7074,8 @@ async def test_source(req: SourceTestRequest):
 
     elif src.type==SourceType.MEMORY:
         try:
-            mem = (sys.modules.get("Vera.Orchestration.fabric.memory")
-                   or sys.modules.get("Vera.Orchestration.memory")
-                   or sys.modules.get("Vera.ChatUI.memory"))
+            mem = (sys.modules.get("memory")
+                   or sys.modules.get("memory"))
             if not mem:
                 mem_mods=[k for k in sys.modules if k.split('.')[-1]=='memory']
                 detail=f"memory module not loaded (candidates: {mem_mods})"
@@ -7247,8 +7246,8 @@ async def debug_history():
     diag = {}
 
     # 1. Resolve the fabric module and SQLite path
-    fab = (sys.modules.get("Vera.Orchestration.fabric.data_fabric")
-           or sys.modules.get("Vera.Orchestration.fabric.data_fabric"))
+    fab = (sys.modules.get("data_fabric")
+           or sys.modules.get("data_fabric"))
     diag["fabric_module"] = str(fab) if fab else None
     sqlite_path = getattr(fab, "SQLITE_PATH", None) if fab else None
     diag["sqlite_path"] = sqlite_path
@@ -7322,8 +7321,8 @@ async def debug_dedup():
     before the upsert fix was deployed.
     """
     import sqlite3 as _sq
-    fab = (sys.modules.get("Vera.Orchestration.fabric.data_fabric")
-           or sys.modules.get("Vera.Orchestration.fabric.data_fabric"))
+    fab = (sys.modules.get("data_fabric")
+           or sys.modules.get("data_fabric"))
     if not fab or not hasattr(fab, "SQLITE_PATH"):
         raise HTTPException(503, "data_fabric not available")
 

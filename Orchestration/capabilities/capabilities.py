@@ -722,11 +722,16 @@ register_ui(
 @capability(
     "llm.generate",
     http_method="POST", http_path="/llm/generate", http_tags=["llm", "generate"],
-    mode="distributed", streams=["tokens"],
+    # mode="distributed" caused stuck-pending jobs when the result-loop
+    # was on the same process that dispatched — run locally instead.
+    # The underlying ollama_generate / vllm_generate already handle their
+    # own concurrency queuing via per-instance semaphores.
+    streams=["tokens"],
     memory="on",
-    description="Generate text via Ollama with cluster routing and token streaming. "
-                "Input: prompt (str!), model (str), system (str), instance_id (str), prefer_gpu (bool). "
-                "Output: {text, model, instance, has_gpu, tokens}. Streams: tokens stream.",
+    description="Generate text via Ollama or vLLM with cluster routing and token streaming. "
+                "Input: prompt (str!), model (str), system (str), instance_id (str), "
+                "prefer_gpu (bool), backend (ollama|vllm|auto), caller (str). "
+                "Output: {text, model, instance, backend, has_gpu, tokens}. Streams: tokens stream.",
 )
 async def llm_generate(
     prompt:      str,
@@ -734,20 +739,74 @@ async def llm_generate(
     system:      str   = "",
     instance_id: str   = None,
     prefer_gpu:  bool  = False,
+    backend:     str   = "auto",   # "ollama" | "vllm" | "auto"
+    caller:      str   = "",       # true caller label for logging (e.g. "dream_research")
     trace_id=None,
 ):
-    tokens_collected = []
-    async def _tok(t):
+    from Vera.Orchestration.capability_orchestration import (
+        CAPABILITY_REGISTRY as _REG,
+        _ollama_caller_info,
+    )
+
+    # Build a caller_override so the real upstream caller is logged rather
+    # than llm_generate itself appearing as the caller in every log entry.
+    _caller_info = _ollama_caller_info()
+    if caller:
+        _caller_info["caller_func"] = caller
+        _caller_info["cap_name"]    = caller
+
+    tokens_collected: list = []
+    async def _tok(t: str):
         tokens_collected.append(t)
         await emit_stream("tokens", trace_id, {"token": t}, "llm.generate")
 
-    text   = await ollama_generate(prompt, system=system, model=model,
-                                   instance_id=instance_id or None,
-                                   prefer_gpu=prefer_gpu, stream_cb=_tok)
+    # ── Backend routing ────────────────────────────────────────────────────────
+    # Prefer vLLM when: backend="vllm" OR (backend="auto" AND vLLM has online instances)
+    _use_vllm = False
+    if backend in ("vllm", "auto"):
+        try:
+            from Vera.Orchestration.vllm_capabilities import VLLM_INSTANCES as _VI, vllm_generate as _vg
+            _online_vllm = [i for i in _VI.values() if i.status == "online"]
+            if _online_vllm and (backend == "vllm" or prefer_gpu):
+                _use_vllm = True
+        except ImportError:
+            pass
+
+    if _use_vllm:
+        # Route through vllm.generate cap so its own event pipeline fires
+        _cap = _REG.get("vllm.generate")
+        if _cap:
+            kw = dict(prompt=prompt, model=model, prefer_gpu=prefer_gpu,
+                      instance_id=instance_id or None,
+                      _caller_label=caller or _caller_info["caller_func"])
+            if system:
+                # vLLM /v1/completions doesn't have a system field — prepend it
+                kw["prompt"] = f"{system}\n\n{prompt}"
+            try:
+                result = await _cap["raw"](**{k:v for k,v in kw.items()
+                                              if k in _cap["raw"].__code__.co_varnames},
+                                          trace_id=trace_id)
+                text = result.get("text", "") if isinstance(result, dict) else str(result)
+                used_model = result.get("model", model or "") if isinstance(result, dict) else (model or "")
+                used_inst  = result.get("instance_id", "") if isinstance(result, dict) else ""
+                return {"text": text, "model": used_model, "instance": used_inst,
+                        "backend": "vllm", "has_gpu": True, "tokens": len(tokens_collected)}
+            except Exception as _e:
+                log.warning("llm.generate vllm route failed (%s), falling back to ollama", _e)
+
+    # ── Ollama path ─────────────────────────────────────────────────────────────
+    # Call ollama_generate with the true caller so logs/events show the real source.
+    text = await ollama_generate(
+        prompt, system=system, model=model,
+        instance_id=instance_id or None,
+        prefer_gpu=prefer_gpu, stream_cb=_tok,
+        caller_override=_caller_info,
+    )
     chosen = pick_instance(prefer_gpu=prefer_gpu, instance_id=instance_id or None, model=model)
     inst   = OLLAMA_INSTANCES.get(chosen or "", {})
     return {"text": text, "model": model or OLLAMA_MODEL,
             "instance": chosen, "instance_url": inst.get("url"),
+            "backend": "ollama",
             "has_gpu": inst.get("has_gpu", False), "tokens": len(tokens_collected)}
 
 
@@ -764,7 +823,8 @@ async def llm_summarize(
     if prefer_gpu is None: prefer_gpu = len(text) > 1000
     styles = {"concise":"Write a concise summary.","bullet":"Bullet-point summary (max 7).","executive":"One-paragraph executive summary."}
     system = f"You are a summarisation assistant. {styles.get(style,styles['concise'])} Target ≤{max_words} words. Reply with only the summary."
-    out = await ollama_generate(f"Summarise:\n\n{text}", system=system, instance_id=instance_id or None, prefer_gpu=prefer_gpu)
+    out = await ollama_generate(f"Summarise:\n\n{text}", system=system, instance_id=instance_id or None, prefer_gpu=prefer_gpu,
+                                caller_override={"caller_file":"capabilities.py","caller_func":"llm_summarize","cap_name":"llm.summarize"})
     return {"summary": out.strip(), "style": style, "src_chars": len(text)}
 
 
@@ -782,7 +842,8 @@ async def llm_analyze(
               '{"sentiment":"positive|negative|neutral|mixed","sentiment_score":0.0,'
               '"topics":["..."],"entities":[{"text":"...","type":"person|org|place|date"}],'
               '"readability":"simple|intermediate|advanced","key_phrases":["..."]}')
-    raw = await ollama_generate(text, system=system, json_mode=True, instance_id=instance_id or None, prefer_gpu=prefer_gpu)
+    raw = await ollama_generate(text, system=system, json_mode=True, instance_id=instance_id or None, prefer_gpu=prefer_gpu,
+                                caller_override={"caller_file":"capabilities.py","caller_func":"llm_analyze","cap_name":"llm.analyze"})
     try: result = json.loads(raw)
     except: result = {"raw": raw, "parse_error": True}
     result.update(char_count=len(text), word_count=len(text.split()))
@@ -819,7 +880,8 @@ async def llm_translate(
 ):
     src = f" from {source_lang}" if source_lang != "auto" else ""
     system = f"Translate the text{src} to {target_lang}. Reply with only the translated text."
-    out = await ollama_generate(text, system=system, instance_id=instance_id or None, prefer_gpu=prefer_gpu)
+    out = await ollama_generate(text, system=system, instance_id=instance_id or None, prefer_gpu=prefer_gpu,
+                                 caller_override={"caller_file":"capabilities.py","caller_func":"llm_translate","cap_name":"llm.translate"})
     return {"translated": out.strip(), "source_lang": source_lang, "target_lang": target_lang}
 
 
@@ -835,7 +897,8 @@ async def llm_classify(
 ):
     cats = [c.strip() for c in categories.split(",")]
     system = f'Classify into {"one or more" if multi_label else "exactly one"} of {cats}. Return ONLY JSON: {{"label":"..."}} or {{"labels":[...]}}'
-    raw = await ollama_generate(text, system=system, json_mode=True, instance_id=instance_id or None, prefer_gpu=prefer_gpu)
+    raw = await ollama_generate(text, system=system, json_mode=True, instance_id=instance_id or None, prefer_gpu=prefer_gpu,
+                                caller_override={"caller_file":"capabilities.py","caller_func":"llm_classify","cap_name":"llm.classify"})
     try: return {**json.loads(raw), "categories": cats}
     except: return {"raw": raw, "parse_error": True}
 
@@ -852,7 +915,8 @@ async def llm_explain(
 ):
     fmts = {"prose":"Clear prose.","bullet":"Bullet points.","eli5":"Explain simply to a beginner."}
     system = f"You are a patient expert teacher. Target: {level}. {fmts.get(format,'Clear prose.')} Be accurate."
-    out = await ollama_generate(f"Explain:\n\n{content}", system=system, instance_id=instance_id or None, prefer_gpu=prefer_gpu)
+    out = await ollama_generate(f"Explain:\n\n{content}", system=system, instance_id=instance_id or None, prefer_gpu=prefer_gpu,
+                                caller_override={"caller_file":"capabilities.py","caller_func":"llm_explain","cap_name":"llm.explain"})
     return {"explanation": out.strip(), "level": level, "format": format}
 
 

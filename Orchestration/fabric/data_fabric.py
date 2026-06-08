@@ -1833,6 +1833,13 @@ async def fabric_graphs_snapshot(graph: str = "fabric", limit: int = 200,
         labels = list(NetGraphAdapter.NET_LABELS)
     elif graph == "memory":
         labels = ["Memory", "Session", "Activity"]
+    elif graph == "fabric":
+        # Restrict to fabric-owned node types so that Memory/Session nodes
+        # stored in the same database are not returned by the fabric snapshot.
+        labels = ["Dataset", "Source", "FabricRecord", "Category",
+                  "Skill", "Ontology", "Agent", "DAG", "Entity",
+                  "NetHost", "SshHost", "Subnet", "NetService",
+                  "Container", "DockerHost"]
     # else: no filter — show whatever is in the graph
 
     # Build queries — use query_graph which preserves labels and rel types
@@ -2128,6 +2135,7 @@ async def _post_ingest_pipeline(
                         "dataset_id":   dataset_id,
                         "limit":        min(record_count, cfg.get("extract_limit", 500)),
                         "content_type": cfg.get("content_type", "text"),
+                        "use_llm":      cfg.get("use_llm", True),
                         "persist":      True,
                     }
                     await extract_cap["func"](**ext_args, trace_id=new_id())
@@ -2198,6 +2206,7 @@ async def _get_dataset_processing_config(dataset_id: str) -> Dict:
         "auto_loom":            False,      # off by default — can be heavy
         "extract_limit":        500,
         "content_type":         "text",
+        "use_llm":              True,       # LLM typed-triple extraction per record
         "loom_scope":           "internal", # internal = within dataset, cross = all datasets
         "loom_mode":            "hybrid",
         "loom_min_score":       0.4,
@@ -5777,8 +5786,8 @@ async def cap_dataset_config(dataset_id: str = "", config: dict = None,
     if config and isinstance(config, dict):
         # Validate and merge
         valid_keys = {"auto_extract_entities", "auto_loom", "extract_limit",
-                      "content_type", "loom_scope", "loom_mode", "loom_min_score",
-                      "loom_max_matches", "entity_scope"}
+                      "content_type", "use_llm", "loom_scope", "loom_mode",
+                      "loom_min_score", "loom_max_matches", "entity_scope"}
         merged = {k: v for k, v in current.items()}
         for k, v in config.items():
             if k in valid_keys:
@@ -7773,7 +7782,58 @@ _NODE_ACTION_REGISTRY: Dict[str, list] = {
              {"name": "limit", "type": "int", "default": 1000, "label": "Max records"},
              {"name": "content_type", "type": "select", "default": "text",
               "options": ["text", "code", "web"], "label": "Content type"},
+             {"name": "use_llm", "type": "bool", "default": False,
+              "label": "LLM augmentation"},
+             {"name": "llm_steering", "type": "bool", "default": False,
+              "label": "Agentic steering (refine)"},
+             {"name": "steering_rounds", "type": "int", "default": 1,
+              "label": "Steering rounds (1-3)"},
+             {"name": "llm_profiles", "type": "bool", "default": False,
+              "label": "LLM entity profiles (desc/attrs/facts)"},
+             {"name": "llm_relationships", "type": "bool", "default": False,
+              "label": "Secondary inter-entity relations"},
+             {"name": "describe_relations", "type": "bool", "default": True,
+              "label": "Describe weak RELATED_TO edges (LLM)"},
+             {"name": "alias_resolution", "type": "bool", "default": True,
+              "label": "Merge alias/duplicate entities"},
+             {"name": "focus", "type": "string", "default": "",
+              "label": "Focus directive (optional)"},
              {"name": "persist", "type": "bool", "default": True, "label": "Persist to graph"},
+         ]},
+        {"id": "dedup_entities", "label": "Rebuild + dedup entities", "icon": "\u2b1a",
+         "capability": "fabric.entity_graph.dedup",
+         "args": {"dataset_id": "$id"}, "stream": "fabric.entity_graph.progress",
+         "options": [
+             {"name": "limit", "type": "int", "default": 500, "label": "Max records"},
+             {"name": "use_llm", "type": "bool", "default": False, "label": "LLM augmentation"},
+             {"name": "llm_profiles", "type": "bool", "default": False,
+              "label": "LLM entity profiles"},
+             {"name": "llm_relationships", "type": "bool", "default": False,
+              "label": "Secondary inter-entity relations"},
+             {"name": "focus", "type": "string", "default": "", "label": "Focus (optional)"},
+         ]},
+        {"id": "synthesize", "label": "Synthesize topic (3rd-order)", "icon": "\u25c8",
+         "capability": "fabric.synthesize.topic",
+         "args": {"dataset_id": "$id"}, "stream": "fabric.synthesize.progress",
+         "options": [
+             {"name": "topic", "type": "string", "default": "",
+              "label": "Topic (blank = use dataset name)"},
+             {"name": "allow_discovery", "type": "bool", "default": True,
+              "label": "Allow gap-filling discovery"},
+             {"name": "discovery_depth", "type": "select", "default": "standard",
+              "options": ["quick", "standard", "deep"], "label": "Discovery depth"},
+             {"name": "max_discovery_rounds", "type": "int", "default": 2,
+              "label": "Max discovery rounds"},
+             {"name": "max_entries", "type": "int", "default": 150, "label": "Max entries"},
+             {"name": "neighbor_depth", "type": "int", "default": 1,
+              "label": "Neighbour hops in context (0-3)"},
+             {"name": "infer_edges", "type": "bool", "default": True,
+              "label": "Infer complex/distant edges"},
+             {"name": "full_source", "type": "bool", "default": True,
+              "label": "Feed full source content"},
+             {"name": "max_source_chars", "type": "int", "default": 4000,
+              "label": "Max source chars per entity"},
+             {"name": "focus", "type": "string", "default": "", "label": "Focus (optional)"},
          ]},
         {"id": "run_loom",         "label": "Run Loom",              "icon": "\u29d6",
          "capability": "fabric.loom.run",
@@ -7839,6 +7899,16 @@ _NODE_ACTION_REGISTRY: Dict[str, list] = {
          "capability": "fabric.entity_graph.merge", "args": {"entity_id": "$id"},
          "options": [{"name": "target_id", "type": "string", "label": "Target entity ID"}],
          "confirm": "Merge this entity into the target?"},
+        {"id": "crawl_subtopic", "label": "Crawl sub-topic", "icon": "\u2295",
+         "capability": "fabric.discover.subtopic", "args": {"entity": "$id"},
+         "stream": "fabric.discover.progress",
+         "options": [
+             {"name": "depth", "type": "select", "default": "standard",
+              "options": ["quick", "standard", "deep", "exhaustive"], "label": "Depth"},
+             {"name": "parent_dataset_id", "type": "string", "default": "",
+              "label": "Link to parent dataset (optional)"},
+             {"name": "focus", "type": "string", "default": "", "label": "Focus (optional)"},
+         ]},
     ],
     "Ontology": [
         {"id": "view_ontology", "label": "View in Ontology Browser", "icon": "\u25e6",
@@ -7974,10 +8044,44 @@ from pathlib import Path as _FabPath
 _FABRIC_PANEL_PATH = _FabPath(__file__).parent / "fabric_panel.html"
 
 
+# Companion sidebar-panel scripts to ensure are present in the served panel.
+# Injected server-side (right after the vera-graph.js include) so the panels
+# load regardless of whether the on-disk HTML was updated. Idempotent.
+_FABRIC_PANEL_COMPANION_SCRIPTS = (
+    '<script src="/ui/vera-graph-panel-loom.js"></script>\n'
+    '<script src="/ui/vera-graph-panel-worldview.js"></script>\n'
+    '<script src="/ui/vera-graph-panel-discover.js"></script>'
+)
+
+
+def _inject_graph_panel_scripts(html: str) -> str:
+    """Ensure the vera-graph companion panel <script> tags follow vera-graph.js.
+
+    Safe to call repeatedly: each script src is added only if not already
+    present anywhere in the document.
+    """
+    anchor = '<script src="/ui/vera-graph.js"></script>'
+    if anchor not in html:
+        return html  # graph script not loaded here; nothing to attach to
+    to_add = []
+    for tag in _FABRIC_PANEL_COMPANION_SCRIPTS.split("\n"):
+        tag = tag.strip()
+        if not tag:
+            continue
+        src = tag.split('src="', 1)[1].split('"', 1)[0] if 'src="' in tag else tag
+        if src and src in html:
+            continue  # already present
+        to_add.append(tag)
+    if not to_add:
+        return html
+    return html.replace(anchor, anchor + "\n" + "\n".join(to_add), 1)
+
+
 @APP.get("/fabric/panel", include_in_schema=False)
 async def fabric_panel_html(trace_id=None):
     try:
         html = _FABRIC_PANEL_PATH.read_text(encoding="utf-8")
+        html = _inject_graph_panel_scripts(html)
     except FileNotFoundError:
         html = (
             "<!DOCTYPE html><html><body style='background:#181614;color:#c96b6b;"

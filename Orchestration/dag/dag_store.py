@@ -82,12 +82,17 @@ from Vera.Orchestration.capability_orchestration import (
 )
 
 log = logging.getLogger("vera.dag_store")
+import hashlib as _hashlib
+
 
 # ── Config ────────────────────────────────────────────────────────────────────
 OLLAMA_EMBED_URL   = cfg.OLLAMA_EMBED_URL
 OLLAMA_EMBED_MODEL = cfg.OLLAMA_EMBED_MODEL
 MAX_CAPS_IN_PROMPT = int(os.getenv("MAX_CAPS_IN_PROMPT", "25"))
-EMBED_CAPS_ON_START= os.getenv("EMBED_CAPS_ON_START", "1") == "1"
+# Default OFF — set EMBED_CAPS_ON_START=1 to enable cap embedding on startup.
+# When enabled, only new/changed caps are embedded (hash-gated) so restarts
+# with a warm Redis cache are instant and produce zero Ollama calls.
+EMBED_CAPS_ON_START= os.getenv("EMBED_CAPS_ON_START", "0") == "1"
 
 def _redis(): return _orch.REDIS
 def _pg():    return _orch.PG_POOL
@@ -210,72 +215,122 @@ class CapabilityIndex:
             "description":desc,
         }
 
-    async def start_embedding(self):
-        """Background task: compute embeddings for all caps without one.
+    @staticmethod
+    def _embed_text_hash(text: str) -> str:
+        """Short MD5 of the embed text — used to detect cap description changes."""
+        return _hashlib.md5(text.encode(), usedforsecurity=False).hexdigest()[:16]
 
-        Loads cached embeddings from Redis first (vera:cap_embeddings hash)
-        so we only call Ollama for genuinely new/changed caps.
+    async def start_embedding(self):
+        """Background task: embed only new or changed caps.
+
+        Cache layout in Redis hash vera:cap_embeddings:
+          key   = cap_name
+          value = JSON {"vec": [...], "hash": "<md5-of-embed-text>"}
+
+        A cap is re-embedded only when:
+          • It has never been embedded before, OR
+          • Its embed_text hash differs from the cached hash
+            (i.e. its description / params / tags changed).
+
+        This means a warm restart with no cap changes produces ZERO Ollama calls.
         """
         if not EMBED_CAPS_ON_START:
+            log.debug("CapabilityIndex: EMBED_CAPS_ON_START=0, skipping startup embedding")
             return
 
-        # ── Load cached embeddings from Redis ──
+        # ── Load cache from Redis ────────────────────────────────────────
         r = _redis()
-        cached: Dict[str, List[float]] = {}
+        # cached maps name -> {"vec": [...], "hash": "..."}
+        cached: Dict[str, dict] = {}
         if r:
             try:
                 raw = await r.hgetall("vera:cap_embeddings")
                 for k, v in (raw or {}).items():
                     name_key = k if isinstance(k, str) else k.decode()
                     try:
-                        vec = json.loads(v if isinstance(v, str) else v.decode())
-                        if isinstance(vec, list) and len(vec) > 10:
-                            cached[name_key] = vec
+                        entry = json.loads(v if isinstance(v, str) else v.decode())
+                        # Support old format (bare list) and new format (dict with vec+hash)
+                        if isinstance(entry, list) and len(entry) > 10:
+                            cached[name_key] = {"vec": entry, "hash": ""}
+                        elif isinstance(entry, dict) and isinstance(entry.get("vec"), list):
+                            cached[name_key] = entry
                     except Exception:
                         pass
                 if cached:
-                    log.info("CapabilityIndex: loaded %d cached embeddings from Redis", len(cached))
+                    log.info("CapabilityIndex: loaded %d cached embedding entries from Redis", len(cached))
             except Exception as e:
                 log.debug("cap embed cache load: %s", e)
 
-        # Apply cached vectors and identify what still needs embedding
-        need_embed = []
+        # ── Determine which caps need (re-)embedding ─────────────────────────
+        need_embed: List[tuple] = []
+        hits = skipped_unchanged = 0
         for name, entry in self._index.items():
-            if name in cached:
-                entry["embedding"] = cached[name]
-            elif not entry["embedding"]:
-                need_embed.append((name, entry))
+            current_hash = self._embed_text_hash(entry["embed_text"])
+            cached_entry = cached.get(name)
+            if cached_entry:
+                if cached_entry.get("hash") == current_hash:
+                    # Unchanged — reuse cached vector
+                    entry["embedding"] = cached_entry["vec"]
+                    skipped_unchanged += 1
+                    continue
+                else:
+                    # Description/params changed — must re-embed
+                    hits += 1
+            # No cache hit at all
+            need_embed.append((name, entry, current_hash))
 
+        total = len(self._index)
         if not need_embed:
-            log.info("CapabilityIndex: all %d caps have cached embeddings — no Ollama calls needed",
-                     len(self._index))
+            log.info(
+                "CapabilityIndex: all %d caps up-to-date in Redis cache — 0 Ollama calls",
+                total,
+            )
             return
 
-        log.info("CapabilityIndex: %d/%d caps need embedding", len(need_embed), len(self._index))
+        log.info(
+            "CapabilityIndex: embedding %d/%d caps (%d unchanged, %d changed/new)",
+            len(need_embed), total, skipped_unchanged, len(need_embed),
+        )
         self._embed_running = True
-        for name, entry in need_embed:
-            await self._embed_one(name, entry)
-            await asyncio.sleep(0.05)   # rate-limit
+        embedded_ok = 0
+        for name, entry, current_hash in need_embed:
+            ok = await self._embed_one(name, entry, current_hash)
+            if ok:
+                embedded_ok += 1
+            # Small sleep to avoid saturating the embed model while the server
+            # is still finishing its own startup tasks.
+            await asyncio.sleep(0.1)
         self._embed_running = False
-        log.info("CapabilityIndex: all embeddings computed")
+        log.info("CapabilityIndex: embedding complete — %d/%d succeeded", embedded_ok, len(need_embed))
 
-    async def _embed_one(self, name: str, entry: dict):
+    async def _embed_one(self, name: str, entry: dict, text_hash: str = "") -> bool:
+        """Embed one cap and update both the in-memory entry and the Redis cache.
+        Returns True on success."""
         try:
             from Vera.Orchestration.capability_orchestration import ollama_embed
             vec = await ollama_embed(
                 entry["embed_text"][:512], model=OLLAMA_EMBED_MODEL, timeout=15,
             )
-            if vec:
-                entry["embedding"] = vec
-                # Cache to Redis so we don't re-embed on next restart
-                r = _redis()
-                if r:
-                    try:
-                        await r.hset("vera:cap_embeddings", name, json.dumps(vec))
-                    except Exception:
-                        pass
+            if not vec:
+                return False
+            entry["embedding"] = vec
+            if not text_hash:
+                text_hash = self._embed_text_hash(entry["embed_text"])
+            # Store new-format entry: {vec, hash} so next restart is hash-gated
+            r = _redis()
+            if r:
+                try:
+                    await r.hset(
+                        "vera:cap_embeddings",
+                        name,
+                        json.dumps({"vec": vec, "hash": text_hash}),
+                    )
+                except Exception:
+                    pass
+            return True
         except Exception as e:
             log.debug("embed %s: %s", name, e)
+            return False
 
     def _cosine(self, a: List[float], b: List[float]) -> float:
         if not a or not b or len(a) != len(b):
@@ -1053,6 +1108,87 @@ async def _register_dag_as_cap(rec) -> str:
     log.info("dag.register: %s → capability %s", rec.name, cap_name)
     return cap_name
 # ─────────────────────────────────────────────────────────────────────────────
+
+@capability(
+    "caps.embed_status", memory="off",
+    http_method="GET", http_path="/caps/embed/status", http_tags=["caps"],
+    description="Return the current state of the capability embedding index: "
+                "how many caps have embeddings, how many are stale, and whether "
+                "a background embed pass is running.",
+)
+async def caps_embed_status(trace_id=None):
+    total   = len(CAP_INDEX._index)
+    with_vec = sum(1 for e in CAP_INDEX._index.values() if e.get("embedding"))
+    r = _redis()
+    cached_count = 0
+    if r:
+        try:
+            cached_count = await r.hlen("vera:cap_embeddings")
+        except Exception:
+            pass
+    return {
+        "embed_caps_on_start": EMBED_CAPS_ON_START,
+        "total_caps":          total,
+        "embedded":            with_vec,
+        "redis_cached":        cached_count,
+        "embed_running":       getattr(CAP_INDEX, "_embed_running", False),
+        "embed_model":         OLLAMA_EMBED_MODEL,
+    }
+
+
+@capability(
+    "caps.embed_run", memory="on",
+    http_method="POST", http_path="/caps/embed/run", http_tags=["caps"],
+    description="Manually trigger a cap-embedding pass. Only new or changed caps "
+                "are embedded (hash-gated). Pass force=true to re-embed all caps "
+                "regardless of cache. Returns immediately; embedding runs in background.",
+)
+async def caps_embed_run(force: bool = False, trace_id=None):
+    if getattr(CAP_INDEX, "_embed_running", False):
+        return {"status": "already_running", "note": "An embed pass is already in progress."}
+    if force:
+        # Wipe hash cache so every cap is treated as new
+        r = _redis()
+        if r:
+            try:
+                await r.delete("vera:cap_embeddings")
+                log.info("caps.embed_run: cleared vera:cap_embeddings for full re-embed")
+            except Exception:
+                pass
+        # Also wipe in-memory vectors so start_embedding re-queues all caps
+        for entry in CAP_INDEX._index.values():
+            entry["embedding"] = []
+    # Re-build index to pick up any new caps registered since startup
+    CAP_INDEX.build()
+    import asyncio as _asyncio
+    _asyncio.create_task(CAP_INDEX.start_embedding())
+    return {
+        "status":  "started",
+        "force":   force,
+        "caps":    len(CAP_INDEX._index),
+        "note":    "Embedding running in background — poll caps.embed_status for progress.",
+    }
+
+
+@capability(
+    "caps.embed_clear_cache", memory="off",
+    http_method="POST", http_path="/caps/embed/clear_cache", http_tags=["caps"],
+    description="Clear the Redis embedding cache (vera:cap_embeddings). "
+                "Next embed pass will re-embed all caps. Useful after changing the embed model.",
+)
+async def caps_embed_clear_cache(trace_id=None):
+    r = _redis()
+    if not r:
+        return {"error": "Redis not available"}
+    try:
+        deleted = await r.delete("vera:cap_embeddings")
+        # Also wipe in-memory vectors
+        for entry in CAP_INDEX._index.values():
+            entry["embedding"] = []
+        return {"cleared": bool(deleted), "note": "Cache wiped. Run caps.embed_run to re-embed."}
+    except Exception as e:
+        return {"error": str(e)}
+
 
 @capability(
     "caps.search", memory="off",

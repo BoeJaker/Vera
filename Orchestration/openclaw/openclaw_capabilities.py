@@ -877,7 +877,7 @@ def _build_vera_snippet(vera_base: str, ollama: bool, tools: bool, model: str) -
         # Vera's /ollama proxy is fully Ollama-API-compatible.
         snippet["ollama"] = {
             "baseUrl": f"{vera_base}/ollama",
-            "model": model or "mistral",
+            "model": model or "jaahas/qwen3.5-uncensored",
             "_vera": "Vera Ollama cluster proxy — managed by Vera",
         }
 
@@ -946,7 +946,7 @@ async def openclaw_install_write(
     path = Path(config_path)
     vera_base = (vera_base_url or _CONFIG.vera_base_url or
                  f"http://localhost:{cfg.ORCHESTRATOR_PORT}").rstrip("/")
-    model = ollama_model or getattr(_CONFIG, "ollama_model", cfg.OLLAMA_MODEL) or "mistral"
+    model = ollama_model or getattr(_CONFIG, "ollama_model", cfg.OLLAMA_MODEL) or "jaahas/qwen3.5-uncensored"
 
     # Read existing config
     existing: dict = {}

@@ -67,7 +67,9 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 
 /* LAYOUT */
 .body-wrap{display:flex;flex:1;overflow:hidden}
-.sidebar{width:240px;border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;background:var(--bg1)}
+.sidebar{width:240px;border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;background:var(--bg1);transition:width .15s}
+/* In LHM mode the event sidebar hides — its content is accessible via the Observe tab */
+.body-wrap.lhm .sidebar{display:none}
 .sb-head{padding:7px 10px;border-bottom:1px solid var(--border);font-size:9.5px;color:var(--dim);text-transform:uppercase;letter-spacing:1.2px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
 .event-feed{flex:1;overflow-y:auto;padding:3px}
 /* Observe panel */
@@ -104,10 +106,10 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .tabs.autohide{position:absolute;top:0;left:0;right:0;transform:translateY(-100%);opacity:0;pointer-events:none;transition:transform .12s ease,opacity .1s ease}
 .tabs.autohide.show{transform:translateY(0);opacity:1;pointer-events:auto}
 /* Hover zone: sits at the top of .main, tall enough to be easy to hit */
-.tab-hover-zone{position:absolute;top:0;left:0;right:0;height:28px;z-index:19;display:none}
+.tab-hover-zone{position:absolute;top:0;left:0;right:0;height:42px;z-index:19;display:none}
 .tab-hover-zone.active{display:block}
 
-.tab{padding:9px 14px;cursor:pointer;font-size:10.5px;font-weight:500;color:var(--dim2);border-bottom:2px solid transparent;transition:all .16s;white-space:nowrap;user-select:none;letter-spacing:.01em;position:relative}
+.tab{padding:9px 14px;cursor:pointer;font-size:9.5px;font-weight:700;font-family:var(--mono);text-transform:uppercase;letter-spacing:1.4px;color:var(--dim2);border-bottom:2px solid transparent;transition:all .16s;white-space:nowrap;user-select:none;position:relative}
 .tab:hover{color:var(--text)}
 .tab.active{color:var(--acc);border-bottom-color:var(--acc)}
 /* Multi-open indicator dot */
@@ -122,24 +124,37 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 
 /* ── Tab bar: LHM (left-hand menu) mode ── */
 .body-wrap.lhm .main{flex-direction:row}
-.body-wrap.lhm .tabs{flex-direction:column;border-bottom:none;border-right:1px solid var(--border);overflow-x:visible;overflow-y:auto;width:140px;min-width:100px;flex-shrink:0}
-.body-wrap.lhm .tabs .tab{border-bottom:none;border-right:2px solid transparent;padding:8px 10px;font-size:10px;text-align:left}
-.body-wrap.lhm .tabs .tab.active{border-right-color:var(--acc);border-bottom-color:transparent}
-.body-wrap.lhm .tabs .tab.open{border-right-color:var(--acc2);border-bottom-color:transparent}
-.body-wrap.lhm .tabs .tab.open::after{top:50%;right:4px;transform:translateY(-50%)}
-.body-wrap.lhm .tab-controls{flex-direction:row;border-right:none;border-bottom:1px solid var(--border);margin-right:0;margin-bottom:2px;padding:4px 6px;justify-content:center;order:-1}
-/* LHM auto-hide */
+/* In LHM mode the horizontal tab bar is hidden; navigation lives in .lhm-nav */
+.body-wrap.lhm .tabs{display:none !important}
+/* LHM nav panel — hidden by default, shown when lhm class present */
+.lhm-nav{display:none;flex-direction:column;width:160px;min-width:120px;flex-shrink:0;background:var(--bg1);border-right:1px solid var(--border);transition:width .15s}
+.body-wrap.lhm .lhm-nav{display:flex}
+.body-wrap.lhm .lhm-nav.events-open{width:260px}
+.lhm-nav-foot{padding:4px 6px;border-top:1px solid var(--border);flex-shrink:0;display:flex;gap:2px;align-items:center;justify-content:flex-end}
+.lhm-nav .tab{display:flex;align-items:center;border-bottom:none;border-right:2px solid transparent;padding:8px 10px 8px 10px;font-family:var(--mono);font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:1.1px;color:var(--dim2);white-space:normal;word-break:break-word;user-select:none;cursor:pointer;position:relative;transition:all .14s;text-align:left;line-height:1.3}
+.lhm-nav .tab:hover{color:var(--text);background:rgba(255,255,255,.025)}
+.lhm-nav .tab.active{color:var(--acc);border-right-color:var(--acc);background:rgba(90,158,143,.06)}
+.lhm-nav .tab.open{color:var(--acc2);border-right-color:var(--acc2)}
+.lhm-nav .tab.open::after{content:'';position:absolute;top:50%;right:5px;transform:translateY(-50%);width:5px;height:5px;border-radius:50%;background:var(--acc2);opacity:.7}
+.lhm-nav .tab-close{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;margin-left:4px;border-radius:2px;font-size:12px;line-height:1;color:var(--dim);cursor:pointer;transition:all .1s;vertical-align:middle}
+.lhm-nav .tab-close:hover{color:var(--err)}
+/* LHM auto-hide (keep for compat) */
 .body-wrap.lhm .tabs.autohide{position:absolute;top:0;left:0;bottom:0;right:auto;transform:translateX(-100%)}
 .body-wrap.lhm .tabs.autohide.show{transform:translateX(0)}
 .body-wrap.lhm .tab-hover-zone{top:0;left:0;bottom:0;right:auto;width:28px;height:auto}
 
 /* ── Panels area: multi-tab split ── */
-.panels{flex:1;overflow:hidden;position:relative;display:flex}
+.panels{flex:1;overflow:hidden;position:relative;display:flex;flex-direction:row}
 .panel{flex:1;overflow-y:auto;padding:0;display:none;min-width:0;position:relative}
 .panel.active{display:flex;flex-direction:column}
-/* Multi-panel split divider */
-.panel-divider{width:3px;background:var(--border);cursor:col-resize;flex-shrink:0;transition:background .15s}
-.panel-divider:hover{background:var(--acc)}
+/* Multi-panel split divider — always col-resize since panels are always row-flex */
+.panel-divider{width:5px;background:var(--border);cursor:col-resize;flex-shrink:0;transition:background .15s;position:relative;z-index:10}
+.panel-divider:hover,.panel-divider.dragging{background:var(--acc)}
+.panel-divider::after{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:2px;height:40px;border-radius:2px;background:var(--border2);transition:background .15s}
+.panel-divider:hover::after,.panel-divider.dragging::after{background:var(--acc)}
+/* Tab close button */
+.tab-close{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;margin-left:5px;border-radius:2px;font-size:11px;line-height:1;color:var(--dim);cursor:pointer;transition:all .1s;vertical-align:middle}
+.tab-close:hover{background:var(--bg3);color:var(--err)}
 
 /* TYPOGRAPHY */
 .sec{font-size:9.5px;color:var(--dim);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:8px;display:flex;align-items:center;gap:7px}
@@ -427,10 +442,28 @@ select option{background:var(--bg2)}
       <div class="tab-controls">
         <button class="tab-ctrl-btn" onclick="tabToggleLhm()" title="Toggle left-hand menu" id="tabLhmBtn">☰</button>
         <button class="tab-ctrl-btn" onclick="tabToggleAutohide()" title="Auto-hide tabs" id="tabAutohideBtn">⇕</button>
-        <button class="tab-ctrl-btn" onclick="tabCloseAllSplits()" title="Close split tabs">▣</button>
+        <button class="tab-ctrl-btn" onclick="tabAddPane()" title="Open additional panel alongside">+</button>
       </div>
     </div>
 
+    <!-- LHM nav: shown when LHM mode is active -->
+    <nav class="lhm-nav" id="lhmNav">
+      <div id="lhmNavTabs" style="flex:1;overflow-y:auto;min-height:0"></div>
+      <div id="lhmEventsFeed" style="display:none;flex-direction:column;flex:1;min-height:0;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:4px;padding:4px 8px;background:var(--bg1);border-bottom:1px solid var(--border);flex-shrink:0">
+          <span style="font-family:var(--mono);font-size:8px;font-weight:700;color:var(--acc);text-transform:uppercase;letter-spacing:1.2px;flex:1">Live Events</span>
+          <button class="btn sm" style="font-size:9px;padding:1px 5px" onclick="clearEv()">Clear</button>
+          <button class="btn sm" style="font-size:9px;padding:1px 5px" onclick="togglePause()">Pause</button>
+        </div>
+        <div class="event-feed" id="lhmEvFeedMirror" style="flex:1;overflow-y:auto;padding:3px;font-size:9px"></div>
+      </div>
+      <div class="lhm-nav-foot">
+        <button class="tab-ctrl-btn" onclick="tabToggleLhm()" title="Switch to horizontal tabs">☰</button>
+        <button class="tab-ctrl-btn" onclick="tabAddPane()" title="Open additional panel">+</button>
+        <button class="tab-ctrl-btn" id="lhmEventsBtn" onclick="_lhmToggleEvents()" title="Toggle live events">◎</button>
+      </div>
+    </nav>
+    <!-- /lhm-nav -->
     <div class="panels">
 
       <!-- ═══ DASHBOARD ═══════════════════════════════════ -->
@@ -1061,6 +1094,7 @@ let _openTabs = new Set(['dashboard']);   // panel IDs currently visible (withou
 let _lhmMode  = false;
 let _autohide = false;
 let _autohideTimer = null;
+let _evSidebarCollapsed = false;
 
 // ── Helpers: resolve tab element ↔ panel ID ──
 function _tabToPanelId(tabEl){
@@ -1084,6 +1118,8 @@ function _tabLoadPrefs(){
   }catch(_){}
   _tabApplyLhm();
   _tabApplyAutohide();
+  // Sync LHM nav after DOM settles (auto-tabs may not exist yet)
+  setTimeout(_lhmNavSync, 500);
 }
 function _tabSavePrefs(){
   try{localStorage.setItem('vera_tab_prefs',JSON.stringify({lhm:_lhmMode,autohide:_autohide}));}catch(_){}
@@ -1114,19 +1150,85 @@ function tabCloseAllSplits(){
   _tabRender();
 }
 
+// Add a new pane (opens a mini picker overlay)
+function tabAddPane(){
+  const overlay = document.getElementById('tabAddPaneOverlay');
+  if(overlay){ overlay.style.display = overlay.style.display==='flex' ? 'none' : 'flex'; return; }
+  // Build overlay
+  const o = document.createElement('div');
+  o.id = 'tabAddPaneOverlay';
+  o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.55);align-items:flex-start;justify-content:center;z-index:800;padding-top:80px;display:flex';
+  o.innerHTML=`<div style="background:var(--bg1);border:1px solid var(--border2);border-radius:var(--radius-lg);min-width:320px;max-width:500px;width:90%;max-height:70vh;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.55)">
+    <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border)">
+      <span style="font-family:var(--mono);font-size:9px;font-weight:700;color:var(--acc);letter-spacing:1.5px;text-transform:uppercase">Add Pane</span>
+      <input id="tabAddPaneSearch" placeholder="Filter tabs…" style="flex:1;background:var(--bg0);border:1px solid var(--border2);color:var(--text);padding:4px 8px;border-radius:3px;font-family:var(--mono);font-size:10.5px" oninput="_tabPaneFilter()">
+      <button style="background:none;border:none;color:var(--dim2);cursor:pointer;font-size:14px;padding:0 4px" onclick="document.getElementById('tabAddPaneOverlay').style.display='none'">×</button>
+    </div>
+    <div id="tabAddPaneList" style="flex:1;overflow-y:auto;padding:6px"></div>
+  </div>`;
+  o.addEventListener('click',e=>{if(e.target===o)o.style.display='none';});
+  document.body.appendChild(o);
+  _tabPaneFilter();
+  setTimeout(()=>document.getElementById('tabAddPaneSearch')?.focus(),50);
+}
+
+function _tabPaneFilter(){
+  const list = document.getElementById('tabAddPaneList'); if(!list) return;
+  const q = (document.getElementById('tabAddPaneSearch')?.value||'').toLowerCase();
+  const tabs = Array.from(document.querySelectorAll('#tabBar .tab'));
+  const items = tabs.map(t=>{
+    const id = t.dataset.tab||'';
+    const label = (t.textContent||id).trim();
+    return {id,label};
+  }).filter(x=>x.id && (!q || x.label.toLowerCase().includes(q) || x.id.toLowerCase().includes(q)));
+
+  list.innerHTML = items.map(x=>`
+    <div onclick="_tabPaneOpen('${esc(x.id)}')" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:3px;cursor:pointer;transition:.1s;border:1px solid transparent" onmouseover="this.style.background='var(--bg2)';this.style.borderColor='var(--border)'" onmouseout="this.style.background='';this.style.borderColor='transparent'">
+      <span style="font-family:var(--mono);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:${_openTabs.has(x.id)?'var(--acc)':'var(--text)'}">${esc(x.label)}</span>
+      ${_openTabs.has(x.id)?'<span style="font-size:8px;color:var(--acc);margin-left:auto;font-family:var(--mono)">OPEN</span>':''}
+    </div>`).join('');
+  if(!items.length) list.innerHTML='<div style="padding:10px;font-size:10px;color:var(--dim)">No tabs match</div>';
+}
+
+function _tabPaneOpen(id){
+  const overlay = document.getElementById('tabAddPaneOverlay');
+  if(overlay) overlay.style.display='none';
+  splitTab(id);
+  _tabFireLoader(id);
+}
+
 function _tabRender(){
   const panelsEl = document.querySelector('.panels');
+  const multi = _openTabs.size > 1;
 
-  // 1) Update tab button states
+  // 1) Update tab button states + add/remove close buttons
   document.querySelectorAll('#tabBar .tab').forEach(t=>{
     const pid = _tabToPanelId(t);
     t.classList.remove('active','open');
+
+    // Manage inline close button
+    let closeBtn = t.querySelector('.tab-close');
+    if(multi && pid && _openTabs.has(pid)){
+      if(!closeBtn){
+        closeBtn = document.createElement('span');
+        closeBtn.className = 'tab-close';
+        closeBtn.textContent = '×';
+        closeBtn.title = 'Close this pane';
+        closeBtn.addEventListener('click', ev=>{
+          ev.stopPropagation();
+          splitTab(pid); // toggles it off
+        });
+        t.appendChild(closeBtn);
+      }
+    } else if(closeBtn){
+      closeBtn.remove();
+    }
+
     if(pid && _openTabs.has(pid)){
       if(_openTabs.size===1){
         t.classList.add('active');
       } else {
         t.classList.add('open');
-        // First open gets active too for primary accent
         if([..._openTabs][0]===pid) t.classList.add('active');
       }
     }
@@ -1147,15 +1249,60 @@ function _tabRender(){
     }
   });
 
-  // 4) Insert dividers between visible panels
+  // 4) Insert resizable dividers between visible panels
   if(visibleCount>1){
     const visible = [...panelsEl.querySelectorAll('.panel.active')];
     for(let i=0;i<visible.length-1;i++){
       const div = document.createElement('div');
       div.className='panel-divider';
+      _attachDividerDrag(div);
       visible[i].after(div);
     }
   }
+
+  // 5) Keep LHM nav in sync
+  _lhmNavSync();
+}
+
+// ── Panel divider drag resize — panels are always row-flex, so always col-resize ──
+function _attachDividerDrag(divider){
+  divider.addEventListener('mousedown', e=>{
+    e.preventDefault();
+    const prev = divider.previousElementSibling;
+    const next = divider.nextElementSibling;
+    if(!prev||!next) return;
+
+    const startX = e.clientX;
+    const prevRect = prev.getBoundingClientRect();
+    const nextRect = next.getBoundingClientRect();
+    const prevStart = prevRect.width;
+    const nextStart = nextRect.width;
+
+    // Fix sizes so flex doesn't interfere
+    prev.style.flex = 'none';
+    next.style.flex = 'none';
+    prev.style.width = prevStart + 'px';
+    next.style.width = nextStart + 'px';
+
+    divider.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const onMove = ev=>{
+      const delta = ev.clientX - startX;
+      prev.style.width = Math.max(120, prevStart + delta) + 'px';
+      next.style.width = Math.max(120, nextStart - delta) + 'px';
+    };
+    const onUp = ()=>{
+      divider.classList.remove('dragging');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
 }
 
 // ── LHM toggle ──
@@ -1173,6 +1320,87 @@ function _tabApplyLhm(){
   } else {
     wrap.classList.remove('lhm');
     if(btn) btn.classList.remove('active');
+    _lhmEventsOpen = false;
+    document.getElementById('lhmNav')?.classList.remove('events-open');
+    const tabList = document.getElementById('lhmNavTabs');
+    const feed    = document.getElementById('lhmEventsFeed');
+    const evBtn   = document.getElementById('lhmEventsBtn');
+    if(tabList) tabList.style.display = '';
+    if(feed)    feed.style.display    = 'none';
+    if(evBtn)   evBtn.classList.remove('active');
+    // Restore sidebar if it wasn't user-collapsed
+    if(!_evSidebarCollapsed){
+      const sb = document.getElementById('evSidebar');
+      const expandBtn = document.getElementById('evExpandBtn');
+      if(sb) sb.style.display = '';
+      if(expandBtn) expandBtn.style.display = 'none';
+    }
+  }
+  _tabRender();
+}
+
+// Sync the LHM nav tab list from the top tabBar
+function _lhmNavSync(){
+  const host = document.getElementById('lhmNavTabs'); if(!host) return;
+  host.innerHTML = '';
+  if(_lhmEventsOpen) return;
+
+  document.querySelectorAll('#tabBar .tab').forEach(t=>{
+    const pid = _tabToPanelId(t);
+    if(!pid) return;
+    const label = Array.from(t.childNodes)
+      .filter(n=>n.nodeType===3)
+      .map(n=>n.textContent.trim())
+      .join('') || pid;
+    const isOpen = _openTabs.has(pid);
+    const isFirst = isOpen && [..._openTabs][0]===pid;
+    const cls = 'tab' + (isOpen ? (isFirst||_openTabs.size===1 ? ' active' : ' open') : '');
+    const div = document.createElement('div');
+    div.className = cls;
+    div.appendChild(document.createTextNode(label));
+    div.addEventListener('click', e=>{
+      if(e.target.classList.contains('tab-close')) return;
+      if(e.ctrlKey||e.metaKey){ splitTab(pid); }
+      else { switchTab(pid); }
+      _tabFireLoader(pid);
+      _lhmNavSync();
+    });
+    if(_openTabs.size > 1 && isOpen){
+      const cb = document.createElement('span');
+      cb.className = 'tab-close';
+      cb.textContent = '×';
+      cb.addEventListener('click', ev=>{ ev.stopPropagation(); splitTab(pid); _lhmNavSync(); });
+      div.appendChild(cb);
+    }
+    host.appendChild(div);
+  });
+}
+
+// ── LHM inline live-events panel ──
+let _lhmEventsOpen = false;
+
+function _lhmToggleEvents(){
+  _lhmEventsOpen = !_lhmEventsOpen;
+  const nav     = document.getElementById('lhmNav');
+  const tabList = document.getElementById('lhmNavTabs');
+  const feed    = document.getElementById('lhmEventsFeed');
+  const evBtn   = document.getElementById('lhmEventsBtn');
+  if(_lhmEventsOpen){
+    nav?.classList.add('events-open');
+    if(tabList) tabList.style.display = 'none';
+    if(feed)    feed.style.display    = 'flex';
+    if(evBtn)   evBtn.classList.add('active');
+    // Backfill from main feed on first open
+    const lhmFeed  = document.getElementById('lhmEvFeedMirror');
+    const mainFeed = document.getElementById('evFeed');
+    if(lhmFeed && mainFeed && !lhmFeed.children.length){
+      Array.from(mainFeed.children).forEach(c => lhmFeed.appendChild(c.cloneNode(true)));
+    }
+  } else {
+    nav?.classList.remove('events-open');
+    if(tabList) tabList.style.display = '';
+    if(feed)    feed.style.display    = 'none';
+    if(evBtn)   evBtn.classList.remove('active');
   }
 }
 
@@ -1495,11 +1723,21 @@ function addEv(cls,text,_evObj){
   if(typeof _feedShouldShow==='function' && !_feedShouldShow({..._fo,_cls:cls})) return;
   // Always write to live events feed (unless paused)
   if(!paused){
+    const entryHtml=`<span class="ev-time">${new Date().toISOString().slice(11,19)}</span> ${esc(text)}`;
     const feed=document.getElementById('evFeed'),div=document.createElement('div');
     div.className=`ev ${cls}`;
-    div.innerHTML=`<span class="ev-time">${new Date().toISOString().slice(11,19)}</span> ${esc(text)}`;
+    div.innerHTML=entryHtml;
     feed.insertBefore(div,feed.firstChild);
     while(feed.children.length>300) feed.removeChild(feed.lastChild);
+    // Mirror into LHM inline feed if open
+    const lhmFeed=document.getElementById('lhmEvFeedMirror');
+    if(lhmFeed && _lhmEventsOpen){
+      const d2=document.createElement('div');
+      d2.className=`ev ${cls}`;
+      d2.innerHTML=entryHtml;
+      lhmFeed.insertBefore(d2,lhmFeed.firstChild);
+      while(lhmFeed.children.length>200) lhmFeed.removeChild(lhmFeed.lastChild);
+    }
   }
   // Also route errors and warnings to the syslog tab panel
   if(cls==='err'||cls==='warn'){
@@ -1514,9 +1752,12 @@ function addEv(cls,text,_evObj){
     }
   }
 }
-function clearEv(){document.getElementById('evFeed').innerHTML='';}
+function clearEv(){
+  document.getElementById('evFeed').innerHTML='';
+  const lhmFeed=document.getElementById('lhmEvFeedMirror');
+  if(lhmFeed) lhmFeed.innerHTML='';
+}
 
-let _evSidebarCollapsed = false;
 function toggleEvSidebar(){
   _evSidebarCollapsed = !_evSidebarCollapsed;
   const sb  = document.getElementById('evSidebar');
@@ -1570,14 +1811,14 @@ document.getElementById('tabBar').addEventListener('auxclick',e=>{
 
 // Fire data-load function for a tab name
 function _tabFireLoader(n){
-  if(n==='ollama')     loadInstances();
-  if(n==='caps')       loadCaps();
-  if(n==='redis')      loadRedis();
-  if(n==='servers')    loadServers();
-  if(n==='dashboard'){loadHealth();loadCluster();loadMemoryStats();dashTouch();}
-  if(n==='media')      loadAllPanels();
+  if(n==='ollama')      loadInstances();
+  if(n==='caps')        loadCaps();
+  if(n==='redis')       loadRedis();
+  if(n==='servers')     loadServers();
+  if(n==='dashboard')  {loadHealth();loadCluster();loadMemoryStats();dashTouch();}
+  if(n==='media')       loadAllPanels();
   if(n==='dagworkshop') dagStoreLoad();
-  if(n==='syslog')      syslogLoad();
+  if(n==='syslog'||n==='streams') syslogLoad();
   if(n==='fabric')      fabricInit();
 }
 
@@ -1979,7 +2220,7 @@ function selectModel(iid,model){
   document.getElementById('testModel').value=model;
   // Fetch model info to show context limit
   const instData = instances[iid]||{};
-  const instUrl  = instData.url||'http://localhost:11434';
+  const instUrl  = instData.url||'http://localhost:11435';
   fetch(instUrl+'/api/show', {method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({name:model})})
     .then(r=>r.json())
@@ -2259,6 +2500,8 @@ function _createAutoTab(p) {
 
   _autoTabsCreated.add(p.id);
   addEv('ok', `Auto-tab created: ${p.label || p.id}`);
+  // Keep LHM nav in sync
+  setTimeout(_lhmNavSync, 50);
 }
 
 // ─── classify a panel by mode (with legacy fallback) ─────────────────────────

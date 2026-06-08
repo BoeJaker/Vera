@@ -149,7 +149,7 @@ async def _record(
     # 1. Memory graph
     graph_ok = False
     try:
-        mem_mod = sys.modules.get("Vera.Orchestration.fabric.memory")
+        mem_mod = sys.modules.get("memory")
         if mem_mod:
             MEMORY, MemRecord = mem_mod.MEMORY, mem_mod.MemoryRecord
             rec = MemRecord(
@@ -171,7 +171,7 @@ async def _record(
     #    that previously caused duplicate parent-of edges in the graph.)
     if graph_ok and session_id:
         try:
-            hooks = sys.modules.get("Vera.Orchestration.fabric.memory_hooks")
+            hooks = sys.modules.get("memory_hooks")
             if hooks:
                 # Ensure :Session node exists. Returns the session_id; the
                 # actual edge to this record is created by the Neo4j store.
@@ -209,7 +209,7 @@ async def _record(
     dk = dedup_key or (session_id + ":" + ds + ":" + node_id)
     if dk not in _FABRIC_DEDUP:
         try:
-            fabric = sys.modules.get("Vera.Orchestration.fabric.data_fabric")
+            fabric = sys.modules.get("data_fabric")
             if fabric:
                 fdata = {"node_id": node_id, "session_id": session_id,
                          "category": category, "tags": tags, "ts": ts,
@@ -1639,16 +1639,16 @@ async def ide_git_diff(path: str, staged: bool = False, trace_id=None):
 
 def _mem():
     import sys as _sys
-    m = _sys.modules.get("Vera.Orchestration.fabric.memory")
+    m = _sys.modules.get("memory")
     return (m.MEMORY, m.MemoryRecord) if m else (None, None)
 
 def _hooks():
     import sys as _sys
-    return _sys.modules.get("Vera.Orchestration.fabric.memory_hooks")
+    return _sys.modules.get("memory_hooks")
 
 def _fabric():
     import sys as _sys
-    return _sys.modules.get("Vera.Orchestration.fabric.data_fabric")
+    return _sys.modules.get("data_fabric")
 
 async def _get_session_root(session_id: str) -> str:
     hooks = _hooks()

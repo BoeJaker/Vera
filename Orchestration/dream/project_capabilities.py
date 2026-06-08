@@ -583,20 +583,34 @@ async def project_context_regenerate(slug: str, trace_id=None):
     http_method="POST", http_path="/dream/projects/dream", http_tags=["project"],
     description="Fire a dream cycle scoped to a project. Assembles project context as the "
                 "seed, then invokes the project's first attached dream trigger (or one named "
-                "explicitly). Inputs: slug (str!), trigger_name (str, optional), "
-                "goal (str, optional — overrides project description as focus).",
+                "explicitly). Default mode is the automated, productive COMPOSITE pipeline "
+                "(deep context -> execute -> synthesise -> journal -> pivot). "
+                "mode='action' runs the single-step action variant; mode='reflect' runs "
+                "read-only reflection. Inputs: slug (str!), trigger_name (str, optional), "
+                "goal (str, optional — overrides project description as focus), "
+                "mode (compose|action|reflect, default compose), "
+                "action (bool, legacy alias for mode='action').",
 )
 async def project_dream_run(slug: str, trigger_name: str = "",
-                             goal: str = "", trace_id=None):
+                             goal: str = "", mode: str = "",
+                             action: bool = False, trace_id=None):
     proj = await _get_project(slug)
     if not proj:
         return {"ok": False, "error": f"project not found: {slug}"}
 
+    # Resolve mode (legacy: action=True -> mode='action')
+    mode = (mode or ("action" if action else "compose")).lower()
+    _MODE_TRIGGER = {
+        "compose": "project_compose",
+        "action":  "project_action",
+        "reflect": "project_reflect",
+    }
+
     # Determine which trigger to fire
     tname = trigger_name or (proj.get("dream_trigger_names", [""])[0] if proj.get("dream_trigger_names") else "")
     if not tname:
-        # Fallback: any project-aware trigger
-        tname = "project_reflect"
+        # Default to the composite productive pipeline
+        tname = _MODE_TRIGGER.get(mode, "project_compose")
     cycle_run = CAPABILITY_REGISTRY.get("dream.cycle.run")
     if not cycle_run:
         return {"ok": False, "error": "dream.cycle.run not available"}
@@ -1207,6 +1221,113 @@ PROJECT_TRIGGER_DEFAULTS = {
 }
 
 
+# Action variant: same project awareness, but EXECUTES the next step (writes)
+# instead of only investigating + reporting. Used by project.dream.run(action=True).
+PROJECT_ACTION_TRIGGER_DEFAULTS = {
+    "name":        "project_action",
+    "label":       "Project Action",
+    "description": "Autonomous project execution — refine the next concrete step "
+                   "and CARRY IT OUT (writes to memory/fabric/notebook/context), "
+                   "then synthesise what was done.",
+    "enabled":     True,
+    "sensors":     ["dream.sensor.project_context",
+                    "dream.sensor.memory_recent",
+                    "dream.sensor.notebook_recent"],
+    "pipeline":    ["dream.stage.gather", "dream.stage.themes",
+                    "dream.stage.goal_refine",
+                    "dream.stage.project_action",
+                    "dream.stage.synthesize", "dream.stage.deliver"],
+    "mode":        "agent_loop",
+    "depth":       "standard",
+    "hitl":        False,             # autonomous by default — see project.dream.run
+    "hours_start": 0,
+    "hours_end":   24,
+    "min_idle_minutes":     20,
+    "min_interval_minutes": 240,
+    "require_signal":       0.0,       # always fire when invoked from a project
+    "max_steps":            8,
+    "deliver_to":  ["notebook", "memory"],
+    "sensor_params": {
+        "memory_recent": {"limit": 40},
+    },
+    # Read caps inherited from reflect + the write caps the action stage uses
+    "no_hitl_caps": list(set(PROJECT_TRIGGER_DEFAULTS["no_hitl_caps"] + [
+        "memory.create", "memory.update",
+        "fabric.ingest", "fabric.entity_graph.extract",
+        "nlp.run", "notebook.write", "notebook.append",
+        "project.context.update",
+    ])),
+    "prompt": (
+        "Work autonomously on this project and EXECUTE the single most valuable "
+        "next step — do not merely propose or describe it. Use the write "
+        "capabilities to make real changes: create memory records, ingest data, "
+        "run entity extraction, write to notebooks, update the project context. "
+        "If you need information you don't have, look it up first, then act. "
+        "Ground every change in the actual project context — never invent scope, "
+        "activity, or files that weren't mentioned."
+    ),
+}
+
+
+# Composite: groups deep-context gathering + execution + journalling + pivoting
+# into one automated, productive pipeline. This is the DEFAULT for project
+# dreams (project.dream.run with no explicit trigger/mode).
+PROJECT_COMPOSITE_TRIGGER_DEFAULTS = {
+    "name":        "project_compose",
+    "label":       "Project (Composite)",
+    "description": "Automated, productive project dream: assemble deep project "
+                   "context (memory graph + fabric), refine the next goal, EXECUTE "
+                   "it, then synthesise, journal, and decide whether to pivot into "
+                   "a follow-up dream — iterating until it converges.",
+    "enabled":     True,
+    "journal":     True,
+    "sensors":     ["dream.sensor.project_context",
+                    "dream.sensor.memory_recent",
+                    "dream.sensor.notebook_recent"],
+    "pipeline":    ["dream.stage.gather",
+                    "dream.stage.load_workspace",
+                    "dream.stage.memory_deep_traverse",
+                    "dream.stage.fabric_explore",
+                    "dream.stage.enrich_context",
+                    "dream.stage.themes",
+                    "dream.stage.goal_refine",
+                    "dream.stage.project_action",
+                    "dream.stage.synthesize",
+                    "dream.stage.deliver",
+                    "dream.stage.pivot"],
+    "mode":        "agent_loop",
+    "depth":       "deep",
+    "hitl":        False,
+    "hours_start": 0,
+    "hours_end":   24,
+    "min_idle_minutes":     20,
+    "min_interval_minutes": 240,
+    "require_signal":       0.0,
+    "max_steps":            8,
+    "deliver_to":  ["notebook", "memory"],
+    "sensor_params": {"memory_recent": {"limit": 40}},
+    "iterate": {
+        "enabled": True, "max_iterations": 3, "min_iterations": 1,
+        "iterate_stages": ["dream.stage.project_action"],
+        "convergence_min_new_findings": 1,
+    },
+    "pivot": {
+        "enabled": True, "min_confidence": 0.6, "max_pivots": 2,
+        "candidates": ["project_reflect", "source_review"],
+    },
+    "no_hitl_caps": list(set(PROJECT_ACTION_TRIGGER_DEFAULTS["no_hitl_caps"] + [
+        "dream.journal.append",
+    ])),
+    "prompt": (
+        "Drive this project forward. You have deep context (project, memory graph, "
+        "fabric). Refine the single most valuable next goal and EXECUTE it with the "
+        "write capabilities — make real, grounded changes. Journal your reasoning "
+        "as you go. After acting, decide whether the work opens a worthwhile "
+        "follow-up dream. Never invent project scope, activity, or files."
+    ),
+}
+
+
 async def _safe_trigger_upsert(upsert_func, params: dict):
     """Call dream.trigger.upsert, filtering params to only those the function
     actually accepts.  Any extra keys (like 'iterate', 'no_hitl_caps',
@@ -1281,6 +1402,25 @@ async def _ensure_project_trigger():
         upsert_t = CAPABILITY_REGISTRY.get("dream.trigger.upsert")
         if not (get_t and upsert_t):
             return
+
+        # Ensure the action-variant trigger exists (idempotent — create if absent).
+        try:
+            act = await get_t["func"](name="project_action")
+            if not (act and act.get("trigger")):
+                await _safe_trigger_upsert(upsert_t["func"], PROJECT_ACTION_TRIGGER_DEFAULTS)
+                log.info("project: created default project_action trigger")
+        except Exception as e:
+            log.debug("ensure project_action trigger: %s", e)
+
+        # Ensure the composite (default) trigger exists.
+        try:
+            comp = await get_t["func"](name="project_compose")
+            if not (comp and comp.get("trigger")):
+                await _safe_trigger_upsert(upsert_t["func"], PROJECT_COMPOSITE_TRIGGER_DEFAULTS)
+                log.info("project: created default project_compose trigger")
+        except Exception as e:
+            log.debug("ensure project_compose trigger: %s", e)
+
         existing = await get_t["func"](name="project_reflect")
         existing_trig = existing.get("trigger") if existing else None
         if existing_trig:

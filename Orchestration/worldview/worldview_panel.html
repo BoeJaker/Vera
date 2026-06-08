@@ -62,6 +62,41 @@ textarea{resize:vertical;min-height:60px;font-family:var(--mono);font-size:10px}
 .wv-tabdesc{padding:5px 14px;border-bottom:1px solid var(--border);font-size:10px;color:var(--dim2);background:var(--bg1);line-height:1.45;flex-shrink:0}
 .wv-tabdesc b{color:var(--text);font-weight:600}
 .wv-canvas{flex:1;position:relative;overflow:hidden}
+
+/* Agent query drawer */
+.wv-agent-drawer{border-top:1px solid var(--border);background:var(--bg1);flex-shrink:0;display:flex;flex-direction:column;max-height:50vh;transition:max-height .2s ease}
+
+/* Concept detail overlay */
+.wv-detail-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:9000;display:none;align-items:center;justify-content:center}
+.wv-detail-overlay.open{display:flex}
+.wv-detail-panel{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius-lg,8px);box-shadow:0 8px 32px rgba(0,0,0,.4);width:min(540px,92vw);max-height:80vh;overflow-y:auto;padding:0}
+.wv-detail-hd{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg1);z-index:1}
+.wv-detail-hd .cidx{font-family:var(--mono);font-size:18px;color:var(--acc);font-weight:700}
+.wv-detail-hd .clabel{font-size:13px;color:var(--text);font-weight:600;flex:1}
+.wv-detail-hd .close-x{cursor:pointer;font-size:16px;color:var(--dim);padding:4px 8px;border-radius:4px}
+.wv-detail-hd .close-x:hover{background:var(--bg3);color:var(--text)}
+.wv-detail-body{padding:14px 16px}
+.wv-detail-sec{font-size:9px;font-weight:700;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin:12px 0 6px;padding-bottom:3px;border-bottom:1px solid var(--bg3)}
+.wv-detail-sec:first-child{margin-top:0}
+.wv-detail-kv{display:flex;justify-content:space-between;padding:2px 0;font-size:10px}
+.wv-detail-kv .k{color:var(--dim2)}.wv-detail-kv .v{color:var(--text);font-family:var(--mono)}
+.wv-detail-member{padding:4px 0;border-bottom:1px solid var(--bg0);font-size:10px;cursor:pointer}
+.wv-detail-member:hover{background:var(--bg2)}
+.wv-detail-trans{display:inline-flex;align-items:center;gap:4px;padding:2px 6px;margin:2px;border-radius:3px;font-size:9.5px;background:var(--bg0);cursor:pointer}
+.wv-detail-trans:hover{background:var(--bg3)}
+.wv-detail-trans .prob{font-family:var(--mono);color:var(--acc2);font-size:8.5px}
+.wv-agent-drawer.collapsed{max-height:28px;overflow:hidden}
+.wv-agent-handle{padding:4px 14px;cursor:pointer;display:flex;align-items:center;gap:8px;background:var(--bg2);border-bottom:1px solid var(--border);user-select:none;min-height:28px}
+.wv-agent-handle:hover{background:var(--bg3)}
+.wv-agent-body{flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0}
+.wv-agent-chat{flex:1;overflow-y:auto;padding:8px 14px;min-height:80px;max-height:40vh}
+.wv-agent-chat::-webkit-scrollbar{width:3px}
+.wv-agent-chat::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+.wv-agent-input-row{display:flex;gap:4px;padding:6px 14px;border-top:1px solid var(--border);background:var(--bg2)}
+.wv-agent-msg{margin-bottom:8px;padding:6px 10px;border-radius:var(--radius);font-size:11px;line-height:1.5;max-width:85%}
+.wv-agent-msg.user{background:rgba(90,158,143,.12);color:var(--text);margin-left:auto;text-align:right}
+.wv-agent-msg.agent{background:var(--bg3);color:var(--text)}
+.wv-agent-msg.agent .wv-agent-src{font-size:9px;color:var(--dim);margin-top:4px;font-family:var(--mono)}
 .wv-panel{display:none;position:absolute;inset:0;overflow-y:auto;padding:14px}
 .wv-panel.active{display:flex;flex-direction:column}
 
@@ -188,19 +223,19 @@ textarea{resize:vertical;min-height:60px;font-family:var(--mono);font-size:10px}
         </div>
         <div class="wv-row">
           <label>GNN epochs</label>
-          <input id="wvGnnEp" type="number" value="20" min="0" max="500" style="width:60px;font-size:10px">
+          <input id="wvGnnEp" type="number" value="30" min="0" max="500" style="width:60px;font-size:10px">
           <label style="font-size:9px;color:var(--dim);margin-left:4px" title="Warmup epochs at reduced LR">Warmup</label>
           <input id="wvGnnWarmup" type="number" value="3" min="0" max="20" style="width:44px;font-size:10px">
         </div>
         <div class="wv-row">
           <label>Codebook ep</label>
-          <input id="wvCbEp" type="number" value="12" min="0" max="100" style="width:60px;font-size:10px">
+          <input id="wvCbEp" type="number" value="50" min="0" max="200" style="width:60px;font-size:10px">
           <label style="font-size:9px;color:var(--dim);margin-left:4px" title="Revive dead codes every N epochs">Revive ↻</label>
           <input id="wvCbReviveEvery" type="number" value="2" min="1" max="20" style="width:44px;font-size:10px">
         </div>
         <div class="wv-row">
           <label>Dynamics ep</label>
-          <input id="wvDynEp" type="number" value="20" min="0" max="200" style="width:60px;font-size:10px">
+          <input id="wvDynEp" type="number" value="30" min="0" max="200" style="width:60px;font-size:10px">
           <label style="font-size:9px;color:var(--dim);margin-left:4px">Walks</label>
           <input id="wvDynWalks" type="number" value="0" min="0" max="200000" step="1000" style="width:60px;font-size:10px" title="Override max walks (0=auto)">
         </div>
@@ -289,9 +324,27 @@ textarea{resize:vertical;min-height:60px;font-family:var(--mono);font-size:10px}
             </label>
           </div>
           <div class="wv-row"><label>Revive threshold</label><input id="wvCfgReviveThresh" type="number" value="0.001" min="0.0001" max="0.1" step="0.0001" style="width:80px;font-size:10px" title="EMA size below which a code is considered dead"></div>
+          <div class="wv-row"><label>Entropy weight</label><input id="wvCfgEntropyW" type="number" value="5.0" min="0.0" max="20.0" step="0.5" style="width:70px;font-size:10px" title="Higher = more concept diversity. 5.0 recommended"></div>
+          <div class="wv-row"><label>VQ temp start</label><input id="wvCfgTempStart" type="number" value="2.0" min="0.0" max="10.0" step="0.5" style="width:70px;font-size:10px" title="Gumbel temperature at codebook epoch 0 (higher = more exploratory assignment)"></div>
+          <div class="wv-row"><label>VQ temp end</label><input id="wvCfgTempEnd" type="number" value="0.0" min="0.0" max="5.0" step="0.1" style="width:70px;font-size:10px" title="Anneal to this (0 = hard assignment)"></div>
+          <div class="wv-row"><label>Temp anneal steps</label><input id="wvCfgTempAnneal" type="number" value="40" min="5" max="200" style="width:60px;font-size:10px"></div>
+          <div class="wv-row"><label>K-means reinit every</label><input id="wvCfgKmeansEvery" type="number" value="0" min="0" max="100" style="width:60px;font-size:10px" title="0=disabled. E.g. 25 = full k-means reinit every 25 codebook steps"></div>
+          <div class="wv-row">
+            <label style="display:flex;align-items:center;gap:5px;min-width:80px">
+              <input type="checkbox" id="wvCfgAutoLabel" checked style="width:auto"> Auto-label after train
+            </label>
+            <input id="wvCfgAutoLabelK" type="number" value="50" min="5" max="500" style="width:55px;font-size:10px" title="Max concepts to auto-label">
+          </div>
           <div class="sec" style="margin:8px 0 4px">GNN Loss</div>
           <div class="wv-row"><label>Contrast margin</label><input id="wvCfgContrastM" type="number" value="0.2" min="0.0" max="2.0" step="0.05" style="width:70px;font-size:10px"></div>
           <div class="wv-row"><label>Uniformity weight</label><input id="wvCfgUniformW" type="number" value="0.1" min="0.0" max="1.0" step="0.05" style="width:70px;font-size:10px"></div>
+          <div class="sec" style="margin:8px 0 4px">JEPA (Joint-Embedding Predictive Architecture)</div>
+          <div class="wv-row"><label>JEPA weight</label><input id="wvCfgJepaW" type="number" value="1.0" min="0.0" max="10.0" step="0.1" style="width:70px;font-size:10px" title="Weight for JEPA latent prediction loss"></div>
+          <div class="wv-row"><label>VICReg weight</label><input id="wvCfgVicW" type="number" value="0.5" min="0.0" max="5.0" step="0.1" style="width:70px;font-size:10px" title="Weight for variance-invariance-covariance regularization"></div>
+          <div class="wv-row"><label>Target EMA decay</label><input id="wvCfgTargetEMA" type="number" value="0.996" min="0.9" max="0.9999" step="0.001" style="width:80px;font-size:10px" title="EMA decay for the JEPA target encoder"></div>
+          <div class="wv-row"><label>Entropy weight</label><input id="wvCfgEntropyW" type="number" value="2.0" min="0.0" max="10.0" step="0.1" style="width:70px;font-size:10px" title="Penalise codebook usage collapse — higher = more diverse concepts"></div>
+          <div class="wv-row"><label>VQ jitter</label><input id="wvCfgVqJitter" type="number" value="0.05" min="0.0" max="0.5" step="0.01" style="width:70px;font-size:10px" title="Noise added to latents during early codebook fitting"></div>
+          <div class="wv-row"><label>Revive jitter</label><input id="wvCfgReviveJitter" type="number" value="0.03" min="0.0" max="0.2" step="0.005" style="width:70px;font-size:10px" title="Noise added to revived codes to prevent re-collapse"></div>
           <div class="sec" style="margin:8px 0 4px">Dynamics Model</div>
           <div class="wv-row"><label>Dynamics dim</label><input id="wvCfgDynD" type="number" value="192" min="32" max="1024" step="32" style="width:70px;font-size:10px"></div>
           <div class="wv-row"><label>Dyn heads</label><input id="wvCfgDynH" type="number" value="4" min="1" max="16" style="width:50px;font-size:10px"></div>
@@ -353,6 +406,23 @@ textarea{resize:vertical;min-height:60px;font-family:var(--mono);font-size:10px}
         <div class="status-bar" id="wvPersistStatus"></div>
       </div>
 
+      <!-- Sub-WorldViews -->
+      <div class="wv-card">
+        <div class="wv-card-hd">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 010 20"/><path d="M2 12h20"/></svg>
+          Sub-WorldViews
+        </div>
+        <div class="wv-help" style="margin-bottom:4px">Targeted models trained on specific datasets. Train a sub-view for focused concept discovery.</div>
+        <div id="wvSubviewBadge" style="font-size:9.5px;margin-bottom:4px;color:var(--acc)"></div>
+        <div id="wvSubviewList" style="max-height:120px;overflow-y:auto;margin-bottom:4px"></div>
+        <div style="display:flex;gap:3px;margin-bottom:4px">
+          <input id="wvSubviewName" placeholder="Name..." style="flex:1;font-size:9.5px;padding:2px 6px">
+          <button class="btn sm" onclick="wvSubviewCreate()">Create</button>
+        </div>
+        <div class="wv-help" style="font-size:9px;color:var(--dim)">Select datasets in the training card, then create + train a sub-worldview.</div>
+        <div class="status-bar" id="wvSubviewStatus"></div>
+      </div>
+
       <!-- Log -->
       <div class="wv-card">
         <div class="wv-card-hd">
@@ -386,6 +456,15 @@ textarea{resize:vertical;min-height:60px;font-family:var(--mono);font-size:10px}
     </div>
 
     <div class="wv-tabdesc"><span id="wvTabDescText"></span></div>
+
+    <!-- Sub-worldview scope banner (hidden when global) -->
+    <div id="wvScopeBanner" style="display:none;padding:4px 14px;background:rgba(90,158,143,.08);border-bottom:1px solid var(--border);font-size:10px;color:var(--acc);flex-shrink:0;display:none;align-items:center;gap:8px">
+      <span style="font-weight:700">◈</span>
+      <span id="wvScopeName"></span>
+      <span id="wvScopeDatasets" style="font-size:9px;color:var(--dim2)"></span>
+      <span style="flex:1"></span>
+      <button class="btn sm" onclick="wvSubviewActivate('')" style="font-size:8px;padding:1px 6px">Switch to global</button>
+    </div>
 
     <div class="wv-canvas">
 
@@ -501,18 +580,31 @@ textarea{resize:vertical;min-height:60px;font-family:var(--mono);font-size:10px}
       <div class="wv-panel" id="panel-cf">
         <div style="max-width:780px;width:100%">
           <div class="sec">Counterfactual — "what if step N had been a different concept?"</div>
+          <div class="wv-help" style="margin-bottom:8px">Pick a starting concept, choose where to insert a swap, and see how the predicted future diverges from the baseline trajectory.</div>
 
           <div class="wv-row">
             <label>Start concept</label>
-            <input id="wvCfStart" type="number" min="0" style="width:80px;font-size:10px" placeholder="idx">
-            <span id="wvCfStartLabel" style="font-size:10px;color:var(--acc3);margin-left:6px"></span>
+            <select id="wvCfStartSel" style="flex:1;font-size:10px" onchange="var v=this.value;document.getElementById('wvCfStart').value=v;var l=this.options[this.selectedIndex].text;document.getElementById('wvCfStartLabel').textContent=l">
+              <option value="">— or type index below —</option>
+            </select>
+          </div>
+          <div class="wv-row">
+            <label></label>
+            <input id="wvCfStart" type="number" min="0" style="width:80px;font-size:10px" placeholder="concept idx">
+            <span id="wvCfStartLabel" style="font-size:10px;color:var(--acc3);margin-left:6px;flex:1"></span>
           </div>
           <div class="wv-row">
             <label>Swap at step</label>
             <input id="wvCfSwapAt" type="number" value="2" min="1" max="20" style="width:60px;font-size:10px">
             <label style="margin-left:14px">Swap to concept</label>
-            <input id="wvCfSwapTo" type="number" min="0" style="width:80px;font-size:10px" placeholder="idx">
-            <span id="wvCfSwapToLabel" style="font-size:10px;color:var(--acc3);margin-left:6px"></span>
+            <select id="wvCfSwapToSel" style="flex:1;font-size:10px" onchange="document.getElementById('wvCfSwapTo').value=this.value">
+              <option value="">— or type index —</option>
+            </select>
+          </div>
+          <div class="wv-row">
+            <label></label>
+            <input id="wvCfSwapTo" type="number" min="0" style="width:80px;font-size:10px" placeholder="concept idx">
+            <span id="wvCfSwapToLabel" style="font-size:10px;color:var(--acc3);margin-left:6px;flex:1"></span>
           </div>
           <div class="wv-row">
             <label>Steps</label>
@@ -524,6 +616,7 @@ textarea{resize:vertical;min-height:60px;font-family:var(--mono);font-size:10px}
           <div class="status-bar" id="wvCfStatus"></div>
 
           <div id="wvCfResults" style="margin-top:14px;display:none">
+            <div id="wvCfDivergence" style="font-size:10px;color:var(--warn);margin-bottom:8px;font-weight:600"></div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
               <div>
                 <div class="sec" style="color:var(--acc)">Baseline</div>
@@ -559,17 +652,23 @@ textarea{resize:vertical;min-height:60px;font-family:var(--mono);font-size:10px}
       <!-- ── QUERY ────────────────────────────────────────────────── -->
       <div class="wv-panel" id="panel-query">
         <div style="max-width:780px;width:100%">
-          <div class="sec">Nearest-neighbour query in WorldView latent space (uses graph-aware encoder)</div>
+          <div class="sec">Graph-aware semantic search — ranked in GNN latent space</div>
           <div class="wv-row">
-            <label>Text</label>
-            <input id="wvQueryText" placeholder="Semantic query..." style="flex:1">
+            <label>Query</label>
+            <input id="wvQueryText" placeholder="Search your knowledge graph..." style="flex:1"
+                   onkeydown="if(event.key==='Enter')wvQuery()">
           </div>
           <div class="wv-row">
-            <label>Top K</label>
-            <input id="wvQueryK" type="number" value="10" min="1" max="100" style="width:60px;font-size:10px">
+            <label>Dataset</label>
+            <select id="wvQueryDs" style="flex:1;font-size:10px">
+              <option value="">All datasets</option>
+            </select>
+            <label style="margin-left:8px">Top K</label>
+            <input id="wvQueryK" type="number" value="15" min="1" max="100" style="width:55px;font-size:10px">
           </div>
           <button class="btn primary sm" onclick="wvQuery()">Search</button>
           <div class="status-bar" id="wvQueryStatus"></div>
+          <div id="wvQueryConceptInfo" style="margin-top:6px;font-size:10px"></div>
           <div id="wvQueryResults" style="margin-top:10px"></div>
         </div>
       </div>
@@ -671,7 +770,44 @@ textarea{resize:vertical;min-height:60px;font-family:var(--mono);font-size:10px}
       </div>
 
     </div>
+
+    <!-- Agent query drawer — collapsible bottom panel -->
+    <div class="wv-agent-drawer" id="wvAgentDrawer">
+      <div class="wv-agent-handle" onclick="wvToggleAgent()">
+        <span id="wvAgentToggleIcon">▲</span>
+        <span style="font-size:10px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;color:var(--acc)">Agent · WorldView Query</span>
+        <span style="flex:1"></span>
+        <span id="wvAgentStatusBadge" style="font-size:9px;color:var(--dim)">collapsed</span>
+      </div>
+      <div class="wv-agent-body" id="wvAgentBody">
+        <div class="wv-agent-chat" id="wvAgentChat">
+          <div style="font-size:10px;color:var(--dim);padding:12px;text-align:center">
+            Ask the WorldView agent about your data — it uses encode, query, rollout, landscape, and concept inspection to answer.
+          </div>
+        </div>
+        <div class="wv-agent-input-row">
+          <input id="wvAgentInput" placeholder="Ask the WorldView agent..." 
+                 onkeydown="if(event.key==='Enter')wvAgentSend()"
+                 style="flex:1;background:var(--bg0);border:1px solid var(--border);border-radius:var(--radius-sm);padding:6px 10px;color:var(--text);font-size:11px">
+          <button class="btn primary sm" onclick="wvAgentSend()">Send</button>
+          <button class="btn sm" onclick="wvAgentClear()" title="Clear chat">Clear</button>
+        </div>
+      </div>
+    </div>
+
   </div>
+
+<!-- Concept detail overlay — triggered from anywhere via wvShowConcept(idx) -->
+<div class="wv-detail-overlay" id="wvDetailOverlay" onclick="if(event.target===this)wvCloseDetail()">
+  <div class="wv-detail-panel">
+    <div class="wv-detail-hd">
+      <span class="cidx" id="wvDetailIdx"></span>
+      <span class="clabel" id="wvDetailLabel"></span>
+      <span class="close-x" onclick="wvCloseDetail()">✕</span>
+    </div>
+    <div class="wv-detail-body" id="wvDetailBody">Loading...</div>
+  </div>
+</div>
 
 </div>
 
@@ -753,8 +889,8 @@ function wvTab(name){
   if (dt) dt.innerHTML = WV_TAB_DESC[name] || '';
   if (name === 'concepts' && !_wvConceptsLoaded) wvLoadConcepts();
   if (name === 'map') setTimeout(wvDrawScatter, 50);
-  // Training chart was drawn while hidden (canvas size = 0) — redraw now visible
   if (name === 'training') { setTimeout(wvToDrawLoss, 30); }
+  if (name === 'cf' || name === 'rollout') { wvPopulateConceptSelectors(); }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -788,6 +924,9 @@ async function wvLoadStats(){
       ['Labelled concepts',m.labelled_concepts || 0],
       ['Transitions seen', m.transitions_observed || 0],
     ];
+    if (m.active_subview) rows.push(['Active sub-view', '<span style="color:var(--acc);font-weight:600">' + esc(m.active_subview) + '</span>']);
+    // Update scope banner
+    wvUpdateScopeBanner(m.active_subview || '', m.active_subview_datasets || []);
     el.innerHTML = rows.map(function(r){
       return '<div class="wv-stat"><span class="wv-stat-k">' + r[0] + '</span><span class="wv-stat-v">' + r[1] + '</span></div>';
     }).join('');
@@ -816,7 +955,7 @@ async function wvLoadStats(){
 async function wvLoadDatasets(){
   var res = await api('/fabric/datasets');
   var ds = (res && res.datasets) || [];
-  ['wvTrainDs','wvAnomDs','wvReembedDs','wvLsDs','wvSumDs'].forEach(function(id){
+  ['wvTrainDs','wvAnomDs','wvReembedDs','wvLsDs','wvSumDs','wvQueryDs'].forEach(function(id){
     var sel = document.getElementById(id);
     if (!sel) return;
     sel.innerHTML = '<option value="">All datasets</option>' + ds.map(function(d){
@@ -855,7 +994,7 @@ async function wvTrain(){
   var res = await api('/worldview/train', 'POST', {
     dataset_id: document.getElementById('wvTrainDs').value || '',
     gnn_epochs: parseInt(document.getElementById('wvGnnEp').value)||20,
-    codebook_epochs: parseInt(document.getElementById('wvCbEp').value)||8,
+    codebook_epochs: parseInt(document.getElementById('wvCbEp').value)||50,
     dynamics_epochs: parseInt(document.getElementById('wvDynEp').value)||15,
     embed_missing: embedMissing,
   }, timeoutMs);
@@ -876,6 +1015,8 @@ async function wvTrain(){
 
     // Feed the training output tab from the API response (fallback if SSE didn't arrive)
     wvToFeedFromResponse(res);
+    // Load full per-epoch loss history from server (SSE may not reach iframe)
+    await wvRestoreLossHistory();
 
     // Hide progress after a delay
     setTimeout(function(){
@@ -996,6 +1137,7 @@ async function wvTrainStage(stage){
     wvLog(msg, 'ok');
     wvUpdateTrainStage('Done', msg);
     wvLoadStats(); _wvConceptsLoaded = false;
+    await wvRestoreLossHistory();
   } else {
     var errMsg = (res && res.error) || 'unknown';
     setEl('wvTrainStatus', 'Error: ' + errMsg, 'err');
@@ -1044,6 +1186,105 @@ async function wvLoadFromFabric(){
   } else {
     setEl('wvPersistStatus', 'Error: ' + ((res && res.error) || 'not restored'), 'err');
     wvLog('Restore failed: ' + ((res && res.error) || 'no checkpoint found'), 'err');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SUB-WORLDVIEWS
+// ═══════════════════════════════════════════════════════════════
+
+async function wvSubviewLoad(){
+  var res = await api('/worldview/subviews');
+  var list = document.getElementById('wvSubviewList');
+  var badge = document.getElementById('wvSubviewBadge');
+  if (!list) return;
+  var subs = (res && res.subviews) || [];
+  var active = (res && res.active) || '';
+  if (badge) badge.innerHTML = active
+    ? 'Active: <b>' + esc(active) + '</b> <span style="cursor:pointer;color:var(--dim)" onclick="wvSubviewActivate(\'\')" title="Switch to global">[× global]</span>'
+    : '<span style="color:var(--dim)">Global (all datasets)</span>';
+  if (!subs.length) {
+    list.innerHTML = '<span style="font-size:9px;color:var(--dim)">No sub-worldviews yet</span>';
+    return;
+  }
+  list.innerHTML = subs.map(function(s){
+    var isActive = s.name === active;
+    var ds = (s.datasets||[]).join(', ');
+    var meta = s.meta || {};
+    return '<div style="display:flex;align-items:center;gap:4px;padding:3px 0;border-bottom:1px solid var(--bg0);font-size:9.5px' +
+      (isActive ? ';background:rgba(90,158,143,.08)' : '') + '">' +
+      '<span style="flex:1;font-weight:' + (isActive?'600':'400') + ';color:' + (isActive?'var(--acc)':'var(--text)') + '" title="' + esc(ds) + '">' +
+        esc(s.name) + '</span>' +
+      '<span style="font-size:8px;color:var(--dim)">' + (s.datasets||[]).length + ' ds</span>' +
+      (isActive ? '<span style="font-size:8px;color:var(--ok)">●</span>'
+        : '<button class="btn sm" style="font-size:8px;padding:1px 5px" onclick="wvSubviewActivate(\'' + esc(s.name) + '\')">Activate</button>') +
+      '<button class="btn sm" style="font-size:8px;padding:1px 4px;color:var(--err)" onclick="wvSubviewDelete(\'' + esc(s.name) + '\')" title="Delete">×</button>' +
+      '</div>';
+  }).join('');
+}
+
+async function wvSubviewCreate(){
+  var name = (document.getElementById('wvSubviewName')||{}).value||'';
+  if (!name.trim()) { setEl('wvSubviewStatus','Enter a name','warn'); return; }
+  // Get selected dataset from the training dropdown
+  var dsEl = document.getElementById('wvTrainDs');
+  var dsVal = dsEl ? dsEl.value : '';
+  var datasets = dsVal ? [dsVal] : [];
+  if (!datasets.length) {
+    setEl('wvSubviewStatus','Select a dataset in Training card first','warn');
+    return;
+  }
+  setEl('wvSubviewStatus','Creating...','warn');
+  var res = await api('/worldview/subviews/create','POST',{name:name.trim(),datasets:datasets},30000);
+  if (res && res.ok) {
+    setEl('wvSubviewStatus','Created "'+name.trim()+'" → activate and train it','ok');
+    wvLog('Sub-worldview "'+name.trim()+'" created for '+datasets.join(', '),'ok');
+    wvSubviewLoad();
+    document.getElementById('wvSubviewName').value = '';
+  } else {
+    setEl('wvSubviewStatus','Error: '+((res&&res.error)||'unknown'),'err');
+  }
+}
+
+async function wvSubviewActivate(name){
+  setEl('wvSubviewStatus','Activating ' + (name||'global') + '...','warn');
+  var res = await api('/worldview/subviews/activate','POST',{name: name || ''},60000);
+  if (res && res.ok) {
+    var which = (res.active || 'global');
+    setEl('wvSubviewStatus','Active: ' + which,'ok');
+    wvLog('Switched to ' + which + ' worldview','ok');
+    // Refresh everything for the new scope
+    wvSubviewLoad();
+    wvLoadStats();
+    _wvConceptsLoaded = false;
+    _wvAllConcepts = [];
+    wvLoadSnapshot();
+    wvUpdateScopeBanner(res.active || '', res.datasets || []);
+  } else {
+    setEl('wvSubviewStatus','Error: '+((res&&res.error)||'unknown'),'err');
+  }
+}
+
+async function wvSubviewDelete(name){
+  if (!confirm('Delete sub-worldview "'+name+'"?')) return;
+  var res = await api('/worldview/subviews/delete','POST',{name:name},30000);
+  if (res && res.ok) {
+    setEl('wvSubviewStatus','Deleted "'+name+'"','ok');
+    wvLog('Deleted sub-worldview "'+name+'"','ok');
+    wvSubviewLoad(); wvLoadStats();
+  } else {
+    setEl('wvSubviewStatus','Error: '+((res&&res.error)||'unknown'),'err');
+  }
+}
+
+async function wvSubviewSave(){
+  setEl('wvSubviewStatus','Saving...','warn');
+  var res = await api('/worldview/subviews/save','POST',{},120000);
+  if (res && res.ok) {
+    setEl('wvSubviewStatus','Saved "'+res.name+'" ('+Math.round((res.bytes||0)/1024)+' KB)','ok');
+    wvLog('Sub-worldview "'+res.name+'" saved','ok');
+  } else {
+    setEl('wvSubviewStatus','Error: '+((res&&res.error)||'unknown'),'err');
   }
 }
 
@@ -1150,6 +1391,8 @@ var _wvDragging = false, _wvDragStartX = 0, _wvDragStartY = 0;
 var _wvPanStartX = 0, _wvPanStartY = 0;
 
 function wvResetView(){ _wvZoom = 1.0; _wvPanX = 0; _wvPanY = 0; wvDrawScatter(); }
+
+var wvLoadSnapshot = function(){ wvLoadScatter(); };
 
 async function wvLoadScatter(){
   setEl('wvScatterInfo', 'Loading...', '');
@@ -1394,8 +1637,7 @@ function wvDrawScatter(){
     if (_wvDragging) return;
     if (_wvHoverConcept >= 0) {
       var c = _wvConcepts[_wvHoverConcept];
-      wvTab('concepts');
-      setTimeout(function(){ wvSelectConcept(c.idx); }, 150);
+      wvShowConcept(c.idx);
     }
   });
 
@@ -1481,6 +1723,21 @@ function wvRenderTrajectory(traj, startConcept, startLabel){
 // COUNTERFACTUAL
 // ═══════════════════════════════════════════════════════════════
 
+async function wvPopulateConceptSelectors(){
+  // Populate concept <select> dropdowns for CF and rollout
+  if (!_wvAllConcepts.length) {
+    var res = await api('/worldview/concepts', 'GET', null, 30000, 'top_k=200');
+    if (res && res.concepts) _wvAllConcepts = res.concepts;
+  }
+  var opts = _wvAllConcepts.filter(function(c){ return c.population > 0 || c.label; }).map(function(c){
+    return '<option value="' + c.idx + '">#' + c.idx + (c.label ? ' — ' + esc(c.label.slice(0,40)) : '') + ' (' + (c.population||0) + ')</option>';
+  }).join('');
+  ['wvCfStartSel','wvCfSwapToSel'].forEach(function(id){
+    var sel = document.getElementById(id);
+    if (sel) sel.innerHTML = '<option value="">— select concept —</option>' + opts;
+  });
+}
+
 async function wvCounterfactual(){
   var sc = parseInt(document.getElementById('wvCfStart').value);
   var st = parseInt(document.getElementById('wvCfSwapTo').value);
@@ -1499,8 +1756,13 @@ async function wvCounterfactual(){
   }, 60000);
 
   if (res && res.baseline) {
-    setEl('wvCfStatus', 'Divergence starts at step ' + res.divergence_step, 'ok');
+    var divMsg = res.divergence_step < res.baseline.length
+      ? 'Timelines diverge at step ' + (res.divergence_step + 1)
+      : 'Timelines do not diverge within ' + res.baseline.length + ' steps';
+    setEl('wvCfStatus', divMsg, 'ok');
     document.getElementById('wvCfResults').style.display = 'block';
+    var divEl = document.getElementById('wvCfDivergence');
+    if (divEl) divEl.textContent = divMsg;
     document.getElementById('wvCfBaseline').innerHTML = wvRenderCfTraj(res.baseline, res.baseline, res.divergence_step, false);
     document.getElementById('wvCfAlt').innerHTML = wvRenderCfTraj(res.counterfactual, res.baseline, res.divergence_step, true);
   } else {
@@ -1511,12 +1773,15 @@ async function wvCounterfactual(){
 function wvRenderCfTraj(traj, base, divPoint, isCf){
   return traj.map(function(step, i){
     var diverged = isCf && i >= divPoint;
+    var sampled = (step.members||[]).slice(0,2).map(function(m){ return esc(String(m).slice(0,24)); }).join(', ');
     return '<div class="wv-step' + (diverged ? ' diverged' : '') + '">' +
       '<div class="wv-step-num">' + (i+1) + '</div>' +
       '<div class="wv-step-body">' +
         '<div class="wv-step-concept">#' + step.concept +
         (step.label ? '<span class="wv-step-label">' + esc(step.label) + '</span>' : '') +
-        '</div></div></div>';
+        '</div>' +
+        (sampled ? '<div style="font-size:8.5px;color:var(--dim)">' + sampled + '</div>' : '') +
+      '</div></div>';
   }).join('<div class="wv-step-arrow">↓</div>');
 }
 
@@ -1591,10 +1856,11 @@ async function wvSelectConcept(idx){
   var mRes = await api('/worldview/concept_members?concept=' + idx + '&limit=30');
 
   var html = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">' +
-    '<div style="font-family:var(--mono);font-size:20px;color:var(--acc)">#' + idx + '</div>' +
-    '<div><div style="font-size:13px;color:var(--text);font-weight:500">' +
+    '<div style="font-family:var(--mono);font-size:20px;color:var(--acc);cursor:pointer" onclick="wvShowConcept(' + idx + ')">#' + idx + '</div>' +
+    '<div style="flex:1"><div style="font-size:13px;color:var(--text);font-weight:500">' +
     (c && c.label ? esc(c.label) : '<em style="color:var(--dim)">unlabelled concept</em>') + '</div>' +
-    '<div style="font-size:10px;color:var(--dim2)">' + (c ? c.population : '?') + ' members</div></div></div>';
+    '<div style="font-size:10px;color:var(--dim2)">' + (c ? c.population : '?') + ' members</div></div>' +
+    '<button class="btn sm" onclick="wvShowConcept(' + idx + ')" style="font-size:9px">Full detail ↗</button></div>';
 
   // Predicted transitions
   if (nRes && nRes.predicted && nRes.predicted.length) {
@@ -1676,12 +1942,20 @@ async function wvQuery(){
   var text = document.getElementById('wvQueryText').value || '';
   if (!text) { setEl('wvQueryStatus', 'Enter query text', 'warn'); return; }
   setEl('wvQueryStatus', 'Searching...', '');
+  var dsEl = document.getElementById('wvQueryDs');
   var res = await api('/worldview/query', 'POST', {
     text: text,
-    top_k: parseInt(document.getElementById('wvQueryK').value)||10,
+    top_k: parseInt(document.getElementById('wvQueryK').value)||15,
+    dataset_id: dsEl ? dsEl.value : '',
   }, 30000);
   if (res && res.results) {
     setEl('wvQueryStatus', res.results.length + ' results', 'ok');
+    // Show query concept info
+    var ci = document.getElementById('wvQueryConceptInfo');
+    if (ci && res.query_concept !== undefined) {
+      ci.innerHTML = 'Query mapped to concept <span style="color:var(--acc);font-weight:600">#' + res.query_concept + '</span>' +
+        (res.query_concept_label ? ' — <span style="color:var(--acc3)">' + esc(res.query_concept_label) + '</span>' : '');
+    }
     var el = document.getElementById('wvQueryResults');
     el.innerHTML = res.results.map(function(r){
       return '<div class="wv-item">' +
@@ -1689,7 +1963,7 @@ async function wvQuery(){
         '<div class="wv-item-body">' +
         '<div class="wv-item-text">' + esc(r.text || r.id) + '</div>' +
         '<div class="wv-item-meta">' + esc(r.dataset_id) + ' · ' + esc(r.id.slice(0,16)) +
-        (r.concept >= 0 ? ' · concept #' + r.concept + (r.concept_label ? ' (' + esc(r.concept_label) + ')' : '') : '') +
+        (r.concept >= 0 ? ' · <span style="cursor:pointer;text-decoration:underline dotted" onclick="wvShowConcept('+r.concept+')">concept #' + r.concept + (r.concept_label ? ' (' + esc(r.concept_label) + ')' : '') + '</span>' : '') +
         '</div></div></div>';
     }).join('');
   } else {
@@ -1752,7 +2026,7 @@ async function wvLandscape(){
     }).join('');
     return '<div class="wv-card" style="margin-bottom:8px;padding:8px 10px">' +
       '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">' +
-        '<span style="font-family:var(--mono);font-size:11px;color:var(--acc);min-width:30px">#'+c.idx+'</span>' +
+        '<span style="font-family:var(--mono);font-size:11px;cursor:pointer;color:var(--acc);min-width:30px" onclick="wvShowConcept('+c.idx+')">#'+c.idx+'</span>' +
         '<span style="font-size:11px;color:var(--text);font-weight:600;flex:1">' + esc(c.label||'(unlabelled)') + '</span>' +
         '<span style="font-family:var(--mono);font-size:10px;color:var(--acc2)">' + c.population + ' records</span>' +
       '</div>' +
@@ -1893,6 +2167,15 @@ var _wvCfgFieldMap = {
   max_nodes:'wvCfgMaxN', max_walks:'wvCfgMaxW', walk_len:'wvCfgWalkL',
   contrastive_margin:'wvCfgContrastM', uniformity_weight:'wvCfgUniformW',
   revive_threshold:'wvCfgReviveThresh',
+  entropy_weight:'wvCfgEntropyW',
+  vq_temp_start:'wvCfgTempStart', vq_temp_end:'wvCfgTempEnd',
+  vq_temp_anneal_steps:'wvCfgTempAnneal',
+  kmeans_reinit_every:'wvCfgKmeansEvery',
+  auto_label_k:'wvCfgAutoLabelK',
+};
+var _wvCfgCheckboxes = {
+  revive_dead:'wvCfgRevive',
+  auto_label:'wvCfgAutoLabel',
 };
 
 async function wvLoadConfig(){
@@ -1902,8 +2185,10 @@ async function wvLoadConfig(){
       var el = document.getElementById(_wvCfgFieldMap[k]);
       if (el && res[k] !== undefined) el.value = res[k];
     }
-    var revEl = document.getElementById('wvCfgRevive');
-    if (revEl && res.revive_dead !== undefined) revEl.checked = !!res.revive_dead;
+    for (var k in _wvCfgCheckboxes) {
+      var el = document.getElementById(_wvCfgCheckboxes[k]);
+      if (el && res[k] !== undefined) el.checked = !!res[k];
+    }
     setEl('wvCfgStatus', 'Loaded', 'ok');
   } else {
     setEl('wvCfgStatus', 'Error: ' + ((res && res.error) || 'unknown'), 'err');
@@ -1916,8 +2201,10 @@ async function wvSaveConfig(){
     var el = document.getElementById(_wvCfgFieldMap[k]);
     if (el) body[k] = parseFloat(el.value);
   }
-  var revEl = document.getElementById('wvCfgRevive');
-  if (revEl) body.revive_dead = revEl.checked;
+  for (var k in _wvCfgCheckboxes) {
+    var el = document.getElementById(_wvCfgCheckboxes[k]);
+    if (el) body[k] = el.checked;
+  }
   var res = await api('/worldview/config', 'POST', body);
   if (res && res.updated) {
     setEl('wvCfgStatus', 'Applied ' + res.updated.length + ' changes', 'ok');
@@ -2213,6 +2500,9 @@ function wvToFeedEvent(stage, e){
     wvToSetKV('Nodes', e.nodes || '?');
     wvToSetKV('Edges', e.edges || '?');
     wvToMilestone('Graph: ' + (e.nodes||0) + ' nodes, ' + (e.edges||0) + ' edges', 'ok');
+  } else if (stage === 'train_plan') {
+    wvToMilestone(e.message || 'Training plan loaded', '');
+    if (e.gnn_epochs) wvToSetKV('Plan', e.gnn_epochs + '→' + (e.codebook_epochs||0) + '→' + (e.dynamics_epochs||0) + ' ep');
   } else if (stage === 'stage_gnn') {
     _wvCurrentStage = 'gnn';
     var el = document.getElementById('wvToS1');
@@ -2247,17 +2537,19 @@ function wvToFeedEvent(stage, e){
   } else if (stage === 'codebook_epoch') {
     _wvLossData.codebook.push({ epoch: e.epoch, loss: e.loss || 0 });
     var detail = 'Epoch ' + e.epoch + '/' + (e.total||'?') + ' · loss ' + Number(e.loss||0).toFixed(4);
-    if (e.active !== undefined) detail += ' · ' + e.active + ' concepts';
+    if (e.active !== undefined) detail += ' · ' + e.active + ' active';
+    if (e.perplexity) detail += ' · perplexity ' + Math.round(e.perplexity);
+    if (e.revived) detail += ' · revived ' + e.revived;
     if (e.epoch_rate) detail += ' · ' + e.epoch_rate + ' ep/s';
     var d = document.getElementById('wvToS2d');
     if (d) d.textContent = detail;
-    if (e.active !== undefined) wvToSetKV('Concepts', e.active, 'acc');
+    if (e.active !== undefined) wvToSetKV('Concepts', e.active + (e.perplexity ? ' (pplx ' + Math.round(e.perplexity) + ')' : ''), 'acc');
     if (e.epoch === e.total) {
       var el = document.getElementById('wvToS2');
       if (el) el.className = 'wv-to-stage done';
       var l = document.getElementById('wvToS2l');
-      if (l) l.textContent = 'loss ' + Number(e.loss||0).toFixed(4) + ' · ' + (e.active||'?') + ' concepts';
-      wvToMilestone('Codebook done — ' + (e.active||'?') + ' active concepts, loss ' + Number(e.loss||0).toFixed(4), 'ok');
+      if (l) l.textContent = 'loss ' + Number(e.loss||0).toFixed(4) + ' · ' + (e.active||'?') + ' concepts · pplx ' + Math.round(e.perplexity||0);
+      wvToMilestone('Codebook done — ' + (e.active||'?') + ' active concepts, perplexity ' + Math.round(e.perplexity||0) + ', loss ' + Number(e.loss||0).toFixed(4), 'ok');
     }
     if (e.elapsed_s) wvToSetKV('Elapsed', e.elapsed_s + 's');
     wvToDrawLoss();
@@ -2302,8 +2594,29 @@ function wvToFeedEvent(stage, e){
     wvToSetKV('Status', 'Embedding', 'acc');
   } else if (stage === 'embed_missing_done') {
     wvToMilestone('Embedded ' + (e.upserted||0) + ' records', 'ok');
+  } else if (stage === 'auto_label') {
+    wvToMilestone('Auto-labelling top concepts...', '');
+    wvToSetKV('Status', 'Labelling', 'acc');
+  } else if (stage === 'auto_label_done') {
+    wvToMilestone('Auto-labelled ' + (e.labelled||0) + ' concepts', 'ok');
+    wvLoadStats(); _wvConceptsLoaded = false;
   } else if (stage === 'dim_mismatch') {
     wvToMilestone('Dimension mismatch — reinitialising GNN for dim=' + (e.actual||'?'), 'warn');
+  } else if (stage === 'stream_encoded') {
+    wvLog('Stream: encoded ' + (e.encoded||0) + ' from ' + (e.dataset_id||'?') + ' (total: ' + (e.total_encoded||0) + ')', 'ok');
+    wvStreamStatus();
+  } else if (stage === 'stream_dynamics') {
+    wvLog('Stream: dynamics update loss=' + Number(e.loss||0).toFixed(4), 'ok');
+    wvStreamStatus();
+  } else if (stage === 'stream_attached') {
+    wvLog('Stream: connected to Redis', 'ok');
+    wvStreamStatus();
+  } else if (stage === 'stream_stopped') {
+    wvLog('Stream: stopped', 'warn');
+    wvStreamStatus();
+  } else if (stage === 'stream_autostart') {
+    wvLog('Stream: auto-started after training', 'ok');
+    wvStreamStatus();
   } else if (stage.indexOf('error') >= 0) {
     wvToSetKV('Status', 'Error', 'err');
     wvToMilestone(e.message || e.error || 'Unknown error', 'err');
@@ -2410,7 +2723,235 @@ wvLoadStats();
 wvLoadDatasets();
 wvLoadConfig();
 wvStreamStatus();
+wvSubviewLoad();
 wvTab('map');
+
+function wvUpdateScopeBanner(name, datasets){
+  var el = document.getElementById('wvScopeBanner');
+  if (!el) return;
+  if (!name) {
+    el.style.display = 'none';
+    return;
+  }
+  el.style.display = 'flex';
+  var nameEl = document.getElementById('wvScopeName');
+  var dsEl = document.getElementById('wvScopeDatasets');
+  if (nameEl) nameEl.textContent = 'Sub-WorldView: ' + name;
+  if (dsEl) dsEl.textContent = (datasets||[]).length ? '(' + datasets.join(', ') + ')' : '';
+}
+
+// Start agent drawer collapsed
+(function(){ var d=document.getElementById('wvAgentDrawer'); if(d) d.classList.add('collapsed'); })();
+
+function wvToggleAgent(){
+  var d = document.getElementById('wvAgentDrawer');
+  if (!d) return;
+  d.classList.toggle('collapsed');
+  var icon = document.getElementById('wvAgentToggleIcon');
+  var badge = document.getElementById('wvAgentStatusBadge');
+  if (d.classList.contains('collapsed')) {
+    if (icon) icon.textContent = '▲';
+    if (badge) badge.textContent = 'collapsed';
+  } else {
+    if (icon) icon.textContent = '▼';
+    if (badge) badge.textContent = 'ready';
+    var inp = document.getElementById('wvAgentInput');
+    if (inp) setTimeout(function(){ inp.focus(); }, 100);
+  }
+}
+
+var _wvAgentHistory = [];
+
+function _wvAgentAddMsg(role, html){
+  var chat = document.getElementById('wvAgentChat');
+  if (!chat) return;
+  var div = document.createElement('div');
+  div.className = 'wv-agent-msg ' + role;
+  div.innerHTML = html;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+async function wvAgentSend(){
+  var inp = document.getElementById('wvAgentInput');
+  if (!inp) return;
+  var text = inp.value.trim();
+  if (!text) return;
+  inp.value = '';
+  _wvAgentAddMsg('user', esc(text));
+
+  // Determine which WorldView cap to use based on the query
+  var lower = text.toLowerCase();
+  var result = null;
+
+  // Route to the best cap based on keywords
+  if (/\b(roll|predict|future|next|trajectory|what happens)\b/.test(lower)) {
+    _wvAgentAddMsg('agent', '<em style="color:var(--dim)">Running rollout...</em>');
+    result = await api('/worldview/rollout', 'POST', {text: text, steps: 6, temperature: 0.7}, 60000);
+    if (result && result.trajectory) {
+      var traj = result.trajectory.map(function(t){
+        return '<span style="color:var(--acc)">#' + t.concept + '</span>' +
+          (t.label ? ' <span style="color:var(--dim2)">' + esc(t.label) + '</span>' : '');
+      }).join(' → ');
+      _wvAgentAddMsg('agent', '<div>Predicted trajectory:</div><div style="margin-top:4px">' + traj + '</div>' +
+        '<div class="wv-agent-src">via worldview.rollout</div>');
+    }
+  } else if (/\b(anomal|unusual|outlier|weird|strange)\b/.test(lower)) {
+    _wvAgentAddMsg('agent', '<em style="color:var(--dim)">Detecting anomalies...</em>');
+    result = await api('/worldview/anomalies', 'POST', {top_k: 5}, 120000);
+    if (result && result.anomalies) {
+      var aHtml = result.anomalies.slice(0,5).map(function(a){
+        return '<div style="margin-bottom:3px"><span style="color:var(--err)">' + Number(a.score||0).toFixed(3) + '</span> ' +
+          esc((a.text||'').slice(0,80)) + '</div>';
+      }).join('');
+      _wvAgentAddMsg('agent', '<div>Top anomalies:</div>' + aHtml +
+        '<div class="wv-agent-src">via worldview.anomalies</div>');
+    }
+  } else if (/\b(concept|topic|what are|label|categor|cluster)\b/.test(lower)) {
+    _wvAgentAddMsg('agent', '<em style="color:var(--dim)">Loading landscape...</em>');
+    result = await api('/worldview/landscape', 'GET', null, 60000, 'top_k=10');
+    if (result && result.concepts) {
+      var cHtml = result.concepts.slice(0,10).map(function(c){
+        return '<div style="margin-bottom:2px"><span style="color:var(--acc)">#' + c.idx + '</span> ' +
+          esc(c.label||'(unlabelled)') + ' <span style="color:var(--dim)">' + c.population + ' records</span></div>';
+      }).join('');
+      _wvAgentAddMsg('agent', '<div>Top concepts:</div>' + cHtml +
+        '<div class="wv-agent-src">via worldview.landscape</div>');
+    }
+  } else if (/\b(summary|overview|status|health|stats)\b/.test(lower)) {
+    _wvAgentAddMsg('agent', '<em style="color:var(--dim)">Generating summary...</em>');
+    result = await api('/worldview/summarise', 'POST', {}, 60000);
+    if (result && !result.error) {
+      _wvAgentAddMsg('agent', '<div>' + (result.total_records||0).toLocaleString() + ' records · ' +
+        (result.total_concepts||0) + ' concepts · ' + (result.labelled||0) + ' labelled · ' +
+        (result.index_vectors||0) + ' indexed</div>' +
+        '<div class="wv-agent-src">via worldview.summarise</div>');
+    }
+  } else if (/\b(encode|embed|classify|which concept)\b/.test(lower)) {
+    _wvAgentAddMsg('agent', '<em style="color:var(--dim)">Encoding...</em>');
+    result = await api('/worldview/encode', 'POST', {text: text}, 60000);
+    if (result && result.concept !== undefined) {
+      _wvAgentAddMsg('agent', '<div>Concept <span style="color:var(--acc)">#' + result.concept + '</span>' +
+        (result.concept_label ? ' — ' + esc(result.concept_label) : '') + '</div>' +
+        '<div class="wv-agent-src">via worldview.encode</div>');
+    }
+  } else {
+    // Default: semantic query
+    _wvAgentAddMsg('agent', '<em style="color:var(--dim)">Searching...</em>');
+    result = await api('/worldview/query', 'POST', {text: text, top_k: 5}, 60000);
+    if (result && result.results) {
+      var qHtml = result.results.slice(0,5).map(function(r){
+        return '<div style="margin-bottom:3px">' +
+          '<span style="font-family:var(--mono);font-size:9px;color:var(--acc2)">' + r.score.toFixed(4) + '</span> ' +
+          esc((r.text||'').slice(0,100)) +
+          (r.concept_label ? ' <span style="color:var(--dim)">(' + esc(r.concept_label) + ')</span>' : '') +
+          '</div>';
+      }).join('');
+      var conceptNote = result.query_concept !== undefined
+        ? '<div style="margin-bottom:4px;font-size:10px">Query mapped to concept <span style="color:var(--acc)">#' +
+          result.query_concept + '</span>' + (result.query_concept_label ? ' — ' + esc(result.query_concept_label) : '') + '</div>'
+        : '';
+      _wvAgentAddMsg('agent', conceptNote + '<div>Results:</div>' + (qHtml || '<span style="color:var(--dim)">No results</span>') +
+        '<div class="wv-agent-src">via worldview.query</div>');
+    }
+  }
+
+  if (result && result.error) {
+    _wvAgentAddMsg('agent', '<span style="color:var(--err)">' + esc(result.error) + '</span>');
+  }
+}
+
+function wvAgentClear(){
+  var chat = document.getElementById('wvAgentChat');
+  if (chat) chat.innerHTML = '<div style="font-size:10px;color:var(--dim);padding:12px;text-align:center">Chat cleared</div>';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CONCEPT DETAIL OVERLAY — click any concept # anywhere to see detail
+// ═══════════════════════════════════════════════════════════════
+
+function wvCloseDetail(){
+  var ov = document.getElementById('wvDetailOverlay');
+  if (ov) ov.classList.remove('open');
+}
+
+async function wvShowConcept(idx){
+  idx = parseInt(idx);
+  if (isNaN(idx) || idx < 0) return;
+  var ov = document.getElementById('wvDetailOverlay');
+  var body = document.getElementById('wvDetailBody');
+  var idxEl = document.getElementById('wvDetailIdx');
+  var labEl = document.getElementById('wvDetailLabel');
+  if (!ov || !body) return;
+  idxEl.textContent = '#' + idx;
+  labEl.textContent = '...';
+  body.innerHTML = '<div style="color:var(--dim);padding:20px;text-align:center">Loading concept detail...</div>';
+  ov.classList.add('open');
+
+  var res = await api('/worldview/concept_detail', 'GET', null, 30000, 'concept=' + idx + '&member_limit=15');
+  if (!res || res.error) {
+    body.innerHTML = '<div style="color:var(--err);padding:12px">' + esc((res&&res.error)||'Failed') + '</div>';
+    return;
+  }
+  labEl.textContent = res.label || '(unlabelled)';
+
+  var html = '';
+  // Stats
+  html += '<div class="wv-detail-sec">Overview</div>';
+  html += '<div class="wv-detail-kv"><span class="k">Population</span><span class="v">' + (res.population||0) + ' records</span></div>';
+  html += '<div class="wv-detail-kv"><span class="k">Label</span><span class="v">' + esc(res.label||'—') + '</span></div>';
+
+  // Dataset breakdown
+  if (res.datasets && res.datasets.length) {
+    html += '<div class="wv-detail-sec">Datasets</div>';
+    res.datasets.forEach(function(d){
+      html += '<div class="wv-detail-kv"><span class="k">' + esc(d.id) + '</span><span class="v">' + d.count + '</span></div>';
+    });
+  }
+
+  // Predicted next
+  if (res.predicted_next && res.predicted_next.length) {
+    html += '<div class="wv-detail-sec">Predicted next concepts</div><div>';
+    res.predicted_next.forEach(function(t){
+      html += '<span class="wv-detail-trans" onclick="wvShowConcept(' + t.to + ')">' +
+        '<span style="color:var(--acc)">#' + t.to + '</span>' +
+        (t.label ? ' ' + esc(t.label.slice(0,20)) : '') +
+        ' <span class="prob">' + (t.prob * 100).toFixed(1) + '%</span></span>';
+    });
+    html += '</div>';
+  }
+
+  // Observed transitions
+  if (res.observed_transitions && res.observed_transitions.length) {
+    html += '<div class="wv-detail-sec">Observed transitions</div><div>';
+    res.observed_transitions.slice(0,10).forEach(function(t){
+      html += '<span class="wv-detail-trans" onclick="wvShowConcept(' + t.to + ')">' +
+        '<span style="color:var(--acc)">#' + t.to + '</span>' +
+        (t.label ? ' ' + esc(t.label.slice(0,20)) : '') +
+        ' <span class="prob">' + t.count + '× (' + (t.prob * 100).toFixed(1) + '%)</span></span>';
+    });
+    html += '</div>';
+  }
+
+  // Members
+  if (res.members && res.members.length) {
+    html += '<div class="wv-detail-sec">Member records (' + Math.min(res.members.length, 15) + ' shown)</div>';
+    res.members.forEach(function(m){
+      html += '<div class="wv-detail-member" title="' + esc(m.id) + '">' +
+        '<span style="color:var(--dim2);font-size:9px">' + esc(m.dataset_id||'') + '</span> ' +
+        esc(m.text || m.id) + '</div>';
+    });
+  }
+
+  body.innerHTML = html;
+}
+
+// Global helper: make concept references clickable everywhere
+// Usage: wvConceptLink(idx, label) → returns clickable HTML
+function wvConceptLink(idx, label){
+  return '<span style="cursor:pointer;color:var(--acc);text-decoration:underline dotted" onclick="wvShowConcept(' + idx + ')">#' + idx +
+    (label ? ' <span style="color:var(--acc3);text-decoration:none">' + esc(label.slice(0,25)) + '</span>' : '') + '</span>';
+}
 
 // Listen for progress events from parent harness
 // The harness forwards events in two ways:
@@ -2463,6 +3004,9 @@ window.addEventListener('message', function(ev){
       if (stage === 'building_graph' || stage === 'embed_missing') {
         wvUpdateTrainStage('Preparing', e.message || 'Building graph...');
         wvUpdateTrainBar(0);
+      } else if (stage === 'train_plan') {
+        wvUpdateTrainStage('Plan', e.message || 'Training plan ready');
+        wvUpdateTrainBar(2);
       } else if (stage === 'graph_ready') {
         wvUpdateTrainStage('Graph ready', (e.nodes||0) + ' nodes, ' + (e.edges||0) + ' edges');
         wvUpdateTrainBar(2);
@@ -2508,6 +3052,12 @@ window.addEventListener('message', function(ev){
         wvUpdateTrainBar(100);
         var bar = document.getElementById('wvTrainEpochBar');
         if (bar) bar.style.background = 'var(--ok)';
+      } else if (stage === 'auto_label') {
+        wvUpdateTrainStage('Labelling', 'Auto-labelling top concepts...');
+        wvUpdateTrainBar(97);
+      } else if (stage === 'auto_label_done') {
+        wvUpdateTrainStage('Labelled', (e.labelled||0) + ' concepts labelled');
+        wvUpdateTrainBar(100);
       } else if (stage.indexOf('error') >= 0) {
         wvUpdateTrainStage('Error', e.message || e.error || 'Unknown error');
         var bar = document.getElementById('wvTrainEpochBar');
@@ -2558,5 +3108,6 @@ window.addEventListener('message', function(ev){
   } catch(_){}
 });
 </script>
+<script src="/ui/vera-ui.js"></script>
 </body>
 </html>

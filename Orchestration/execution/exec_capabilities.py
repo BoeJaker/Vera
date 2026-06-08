@@ -132,7 +132,7 @@ except Exception:
 # ─────────────────────────────────────────────────────────────────────────────
 def _fabric_neo():
     """Return the FABRIC_NEO instance from data_fabric if loaded, else None."""
-    mod = sys.modules.get("Vera.Orchestration.fabric.data_fabric")
+    mod = sys.modules.get("data_fabric")
     if not mod:
         return None
     return getattr(mod, "FABRIC_NEO", None)
@@ -1221,7 +1221,7 @@ async def _aux_upsert_ports(host_id: str, ip: str, open_ports: List[int]) -> Non
 
 async def _save_scan_to_fabric(dataset_id: str, records: List[Dict]) -> None:
     """Push scan result records into a fabric dataset for Loom processing."""
-    mod = sys.modules.get("Vera.Orchestration.fabric.data_fabric")
+    mod = sys.modules.get("data_fabric")
     if not mod:
         return
     upsert = getattr(mod, "fabric_record_upsert", None)
@@ -2428,7 +2428,7 @@ async def cap_netscan_clear(source: str = "all", trace_id=None) -> Dict:
 
 def _netmap_db():
     """Return the shared SQLite connection from data_fabric, or open a local one."""
-    mod = sys.modules.get("Vera.Orchestration.fabric.data_fabric")
+    mod = sys.modules.get("data_fabric")
     if mod:
         fn = getattr(mod, "_sqlite_conn", None)
         if fn:

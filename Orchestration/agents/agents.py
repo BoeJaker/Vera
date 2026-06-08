@@ -316,7 +316,7 @@ class AgentRegistry:
             the data column cleanly (the column is JSON text in SQLite).
         """
         try:
-            fabric = sys.modules.get("Vera.Orchestration.fabric.data_fabric")
+            fabric = sys.modules.get("data_fabric")
             if not fabric:
                 return
 
@@ -425,7 +425,7 @@ class AgentRegistry:
         in from the old append-on-save behaviour.
         """
         try:
-            fabric = sys.modules.get("Vera.Orchestration.fabric.data_fabric")
+            fabric = sys.modules.get("data_fabric")
             if not fabric:
                 return []
             results = await fabric.query_dataset(
@@ -516,7 +516,7 @@ class AgentRegistry:
         to keep an archive of changes alongside the live record.
         """
         try:
-            fabric = sys.modules.get("Vera.Orchestration.fabric.data_fabric")
+            fabric = sys.modules.get("data_fabric")
             if not fabric:
                 return []
             results = await fabric.query_dataset(
@@ -900,7 +900,7 @@ async def agent_chat_stream_endpoint(request: Request):
 
     # Ensure session node exists in memory graph
     try:
-        mem_hooks = sys.modules.get("Vera.Orchestration.fabric.memory_hooks")
+        mem_hooks = sys.modules.get("memory_hooks")
         if mem_hooks and session_id:
             await mem_hooks.get_or_create_session(session_id, agent.name)
     except Exception:
@@ -1135,7 +1135,7 @@ class AgentRunner:
         # Memory injection — retrieve relevant past context
         if getattr(agent, 'memory_inject', False) and session_id:
             try:
-                mem_hooks = sys.modules.get("Vera.Orchestration.fabric.memory_hooks")
+                mem_hooks = sys.modules.get("memory_hooks")
                 if mem_hooks:
                     mem_context = await mem_hooks.get_agent_memory_context(
                         session_id  = session_id,
@@ -1223,7 +1223,7 @@ class AgentRunner:
         # Record turn in memory (fire-and-forget)
         if getattr(agent, 'memory_enabled', True) and session_id and raw_text:
             try:
-                mem_hooks = sys.modules.get("Vera.Orchestration.fabric.memory_hooks")
+                mem_hooks = sys.modules.get("memory_hooks")
                 if mem_hooks:
                     asyncio.create_task(mem_hooks.record_agent_turn(
                         session_id  = session_id,
@@ -1273,7 +1273,7 @@ class AgentRunner:
         # Memory injection
         if getattr(agent, 'memory_inject', False) and session_id:
             try:
-                _mh = sys.modules.get("Vera.Orchestration.fabric.memory_hooks")
+                _mh = sys.modules.get("memory_hooks")
                 if _mh:
                     _ctx = await _mh.get_agent_memory_context(
                         session_id=session_id, query=message, agent_name=agent.name,
@@ -1562,7 +1562,7 @@ class AgentRunner:
                         # record_dag_execution can store the triggering human message
                         # as a graph node even before record_agent_turn runs.
                         try:
-                            _mh = sys.modules.get('memory_hooks')
+                            _mh = sys.modules.get('Vera.Orchestration.fabric.memory_hooks')
                             if _mh and hasattr(_mh, 'record_dag_execution'):
                                 asyncio.create_task(_mh.record_dag_execution(
                                     session_id=session_id, dag=_dag_steps,
@@ -1582,7 +1582,7 @@ class AgentRunner:
         # the conversation turn must be persisted.
         if getattr(agent, 'memory_enabled', True) and session_id and final_text:
             try:
-                mem_hooks = sys.modules.get("Vera.Orchestration.fabric.memory_hooks")
+                mem_hooks = sys.modules.get("memory_hooks")
                 if mem_hooks:
                     # Use create_task so memory write doesn't block generator cleanup
                     asyncio.create_task(mem_hooks.record_agent_turn(
@@ -2156,7 +2156,7 @@ async def _migrate_fabric_to_deterministic() -> Dict[str, int]:
 
     Returns {scanned, consolidated, skipped, errors}.
     """
-    fabric = sys.modules.get("Vera.Orchestration.fabric.data_fabric")
+    fabric = sys.modules.get("data_fabric")
     if not fabric:
         return {"scanned": 0, "consolidated": 0, "skipped": 0, "errors": 0}
     try:
@@ -2274,7 +2274,7 @@ async def agent_history(id: str = "", name: str = "", limit: int = 50, trace_id=
                 "the current config. Use agent.history first to find archive_ids.",
 )
 async def agent_restore_version(archive_id: str, trace_id=None):
-    fabric = sys.modules.get("Vera.Orchestration.fabric.data_fabric")
+    fabric = sys.modules.get("data_fabric")
     if not fabric:
         return {"error": "fabric module not loaded"}
     try:
@@ -2331,7 +2331,7 @@ async def agent_restore_version(archive_id: str, trace_id=None):
                 "restore from history before calling agent.restore_from_fabric.",
 )
 async def agent_list_fabric(trace_id=None):
-    fabric = sys.modules.get("Vera.Orchestration.fabric.data_fabric")
+    fabric = sys.modules.get("data_fabric")
     if not fabric:
         return {"error": "fabric module not loaded", "rows": []}
     try:
@@ -2392,7 +2392,7 @@ async def agent_restore_from_fabric(
     from Fabric" actually replace stale Redis data rather than just appending
     on top of it.
     """
-    fabric = sys.modules.get("Vera.Orchestration.fabric.data_fabric")
+    fabric = sys.modules.get("data_fabric")
     if not fabric:
         return {"error": "fabric module not loaded"}
 
@@ -2529,7 +2529,7 @@ async def agent_restore_from_fabric(
 )
 async def agent_purge_fabric_duplicates(dry_run: bool = True, trace_id=None):
     """Delete duplicate fabric rows. Keeps the newest record per agent name."""
-    fabric = sys.modules.get("Vera.Orchestration.fabric.data_fabric")
+    fabric = sys.modules.get("data_fabric")
     if not fabric:
         return {"error": "fabric module not loaded"}
     try:

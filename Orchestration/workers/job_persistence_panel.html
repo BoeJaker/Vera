@@ -120,7 +120,7 @@
     grid-template-columns: 18px 1fr auto auto;
     align-items: center; gap: 8px;
     padding: 5px 12px; border-bottom: 1px solid var(--border);
-    transition: background 0.1s;
+    transition: background 0.1s; cursor: pointer;
   }
   .job-row:hover { background: var(--bg2); }
   .job-dot {
@@ -151,7 +151,7 @@
   /* ── Ollama log ── */
   .ollama-row {
     display: grid;
-    grid-template-columns: auto 1fr auto auto;
+    grid-template-columns: auto 1fr auto auto auto;
     align-items: center; gap: 8px;
     padding: 4px 12px; border-bottom: 1px solid var(--border);
     font-size: 10px;
@@ -346,6 +346,34 @@ function fmtElapsed(s) {
   return Math.floor(n/60) + 'm ' + Math.round(n%60) + 's';
 }
 
+function fmtDateTime(ts) {
+  if (!ts) return '—';
+  try {
+    const d = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts);
+    if (isNaN(d)) return '—';
+    const pad = (n) => String(n).padStart(2, '0');
+    return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());
+  } catch (_) { return '—'; }
+}
+
+function copyEntry(obj) {
+  try {
+    const text = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
+    navigator.clipboard.writeText(text).catch(() => {
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta);
+    });
+  } catch(_) {}
+}
+
+// Global arrays for copy-by-index
+let _renderedJobs = [];
+let _renderedOllama = [];
+
+function copyJobByIdx(idx) { if(_renderedJobs[idx]) copyEntry(_renderedJobs[idx]); }
+function copyOllamaByIdx(idx) { if(_renderedOllama[idx]) copyEntry(_renderedOllama[idx]); }
+
 async function api(path) {
   try {
     const r = await fetch(BASE + path);
@@ -369,6 +397,13 @@ function renderJobs() {
     ? _jobs.filter(j => j.status === _statusFilter)
     : _jobs;
 
+  // Sort newest first
+  filtered.sort((a, b) => {
+    const ta = a.updated_at || a.created_at || '';
+    const tb = b.updated_at || b.created_at || '';
+    return ta > tb ? -1 : ta < tb ? 1 : 0;
+  });
+
   $('job-count').textContent = filtered.length;
 
   if (!filtered.length) {
@@ -377,19 +412,37 @@ function renderJobs() {
   }
 
   let html = '';
+  _renderedJobs = [];
   for (const j of filtered) {
     const st = j.status || 'pending';
     const capShort = (j.capability || '?').split('.').pop();
     const ts = j.updated_at || j.created_at || '';
     const elapsed = fmtElapsed(j.elapsed_s);
+    const model = j.model || '';
+    const instId = j.instance_id || '';
+    const isGpu = instId.includes('gpu') || instId.includes('250');
 
-    html += '<div class="job-row">';
+    html += '<div class="job-row" onclick="this.querySelector(\'.job-detail\')&&(this.querySelector(\'.job-detail\').style.display=this.querySelector(\'.job-detail\').style.display===\'none\'?\'block\':\'none\')" style="cursor:pointer">';
     html += '  <div class="job-dot ' + esc(st) + '" title="' + esc(st) + '"></div>';
-    html += '  <div class="job-cap"><span class="cap-name">' + esc(j.capability || '?') + '</span></div>';
+    html += '  <div class="job-cap"><span class="cap-name">' + esc(j.capability || '?') + '</span>';
+    if (model) html += ' <span style="color:var(--dim);font-size:8.5px">' + esc(model) + '</span>';
+    if (instId) html += ' <span class="inst-tag ' + (isGpu?'gpu':'cpu') + '">' + (isGpu?'GPU':'CPU') + '</span>';
+    html += '</div>';
     html += '  <div class="job-meta">' + (elapsed ? elapsed + ' ' : '') + (j.worker_id ? esc(j.worker_id.slice(0,12)) : '') + '</div>';
-    html += '  <div class="job-time">' + age(ts) + '</div>';
+    html += '  <div class="job-time" style="display:flex;align-items:center;gap:4px"><span>' + fmtDateTime(ts) + '</span><button class="btn" style="font-size:7px;padding:1px 4px" onclick="event.stopPropagation();copyJobByIdx('+_renderedJobs.length+')" title="Copy">copy</button></div>';
+    _renderedJobs.push(j);
 
-    if (j.error) {
+    // Expandable detail row
+    const detailParts = [];
+    if (j.error) detailParts.push('<span style="color:var(--red);font-weight:600">Error: ' + esc(j.error) + '</span>');
+    if (j.caller_file) detailParts.push('Caller: ' + esc(j.caller_file) + ':' + esc(j.caller_func || '?'));
+    if (j.token_count) detailParts.push('Tokens: ' + j.token_count);
+    if (j.prompt_preview) detailParts.push('Prompt: ' + esc(j.prompt_preview.slice(0,100)));
+    if (detailParts.length) {
+      html += '  <div class="job-detail" style="display:none;grid-column:2/-1;font-size:9px;color:var(--fg2);padding:3px 0;border-left:3px solid '+(st==='failed'?'var(--red)':'var(--border2)')+';padding-left:8px;margin-top:2px;word-break:break-word">' + detailParts.join('<br>') + '</div>';
+    }
+
+    if (j.error && !detailParts.length) {
       html += '  <div class="job-error">' + esc(j.error) + '</div>';
     }
     if (st === 'orphan_reclaimed' && j.original_consumer) {
@@ -404,15 +457,29 @@ function renderJobs() {
 
 function renderOllama() {
   const wrap = $('ollama-list');
-  $('ollama-count').textContent = _ollama.length;
 
-  if (!_ollama.length) {
+  // Filter out llm.generate entries — only show ollama.generate
+  const filtered = _ollama.filter(r => {
+    const cf = (r.caller_func || '').toLowerCase();
+    return cf !== 'llm_generate' && cf !== 'llm.generate';
+  });
+
+  // Sort newest first
+  filtered.sort((a, b) => {
+    const ta = a.ts || '', tb = b.ts || '';
+    return ta > tb ? -1 : ta < tb ? 1 : 0;
+  });
+
+  $('ollama-count').textContent = filtered.length;
+
+  if (!filtered.length) {
     wrap.innerHTML = '<div class="empty">No Ollama requests logged yet</div>';
     return;
   }
 
   let html = '';
-  for (const r of _ollama) {
+  _renderedOllama = [];
+  for (const r of filtered) {
     const isGpu = (r.instance_id || '').includes('gpu') || (r.instance_id || '').includes('250');
     const tag = isGpu ? 'gpu' : 'cpu';
     const label = isGpu ? 'GPU' : 'CPU';
@@ -424,7 +491,9 @@ function renderOllama() {
     if (r.cap_name) html += ' <span style="color:var(--accent-dim)">(' + esc(r.cap_name) + ')</span>';
     html += '  </span>';
     html += '  <span style="color:var(--dim)">' + esc(r.model || '') + '</span>';
-    html += '  <span style="color:var(--dim2)">' + age(r.ts) + '</span>';
+    html += '  <span style="color:var(--dim2);font-size:8px;white-space:nowrap">' + fmtDateTime(r.ts) + '</span>';
+    html += '  <button class="btn" style="font-size:7px;padding:1px 4px" onclick="copyOllamaByIdx('+_renderedOllama.length+')" title="Copy">copy</button>';
+    _renderedOllama.push(r);
     html += '</div>';
   }
   wrap.innerHTML = html;

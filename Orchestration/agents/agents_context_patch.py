@@ -53,11 +53,11 @@ _PATCHED_FLAG = "_vera_context_patched"
 
 
 def _ctx():
-    return sys.modules.get("Vera.Orchestration.fabric.context")
+    return sys.modules.get("context")
 
 
 def _agents_module():
-    return sys.modules.get("Vera.Orchestration.agents.agents") or sys.modules.get("vera_agents")
+    return sys.modules.get("vera_agents")
 
 
 def _build_attach_specs(agent) -> Dict[str, str]:
@@ -133,7 +133,7 @@ async def build_agent_system_prompt(agent, message: str, session_id: str = "") -
     # Memory injection — preserved from original
     if getattr(agent, "memory_inject", False) and session_id:
         try:
-            mh = sys.modules.get("Vera.Orchestration.fabric.memory_hooks")
+            mh = sys.modules.get("memory_hooks")
             if mh:
                 mem_ctx = await mh.get_agent_memory_context(
                     session_id  = session_id,

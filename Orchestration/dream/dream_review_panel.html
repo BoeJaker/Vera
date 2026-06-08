@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dream Review</title>
+<style>
+  :root{--bg0:#0d0f12;--bg1:#14171c;--bg2:#1b1f26;--bg3:#232832;
+    --fg1:#e6e9ef;--fg2:#aab2c0;--fg3:#6b7585;--border:#2a2f3a;
+    --acc:#6ea8fe;--grn:#5dd39e;--red:#ef6f6f;--amber:#e6b450;--hi:#33405e;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;}
+  *{box-sizing:border-box}html,body{height:100%}
+  body{margin:0;background:var(--bg0);color:var(--fg1);font:13px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;display:flex;flex-direction:column}
+  .topbar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--bg1)}
+  .topbar h1{font-size:14px;margin:0 6px 0 0;font-weight:600}.spacer{flex:1}
+  .btn{background:var(--bg2);color:var(--fg1);border:1px solid var(--border);border-radius:7px;padding:6px 11px;font-size:12px;cursor:pointer}
+  .btn:hover{background:var(--bg3);border-color:var(--acc)}.btn.pri{background:var(--acc);color:#08121f;border-color:var(--acc);font-weight:600}
+  .btn.sm{padding:3px 8px;font-size:11px}.btn.on{background:var(--acc);color:#08121f;border-color:var(--acc)}
+  .prog{font-size:11px;color:var(--amber);min-width:140px;text-align:right}
+  .bar{height:3px;background:var(--bg3);border-radius:2px;overflow:hidden;width:130px;display:none}.bar.show{display:block}.bar>i{display:block;height:100%;width:0;background:var(--acc);transition:width .25s}
+  .body{flex:1;display:flex;min-height:0}
+  /* combined left nav */
+  .leftnav{width:250px;flex:none;border-right:1px solid var(--border);background:var(--bg1);display:flex;flex-direction:column;min-height:0}
+  .views{display:flex;flex-direction:column;padding:8px;gap:3px;border-bottom:1px solid var(--border)}
+  .vbtn{font-size:12.5px;padding:7px 10px;border-radius:7px;cursor:pointer;color:var(--fg2);display:flex;align-items:center;gap:8px}
+  .vbtn:hover{background:var(--bg2)}.vbtn.on{background:var(--acc);color:#08121f;font-weight:600}
+  .navctx{flex:1;overflow:auto;min-height:0}
+  .colhdr{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--fg3);padding:9px 12px 5px}
+  .node{cursor:pointer;font-size:12.5px;display:flex;justify-content:space-between;gap:6px;align-items:center;padding:5px 10px;border-left:2px solid transparent}
+  .node:hover{background:var(--bg2)}.node.sel{background:var(--bg2);border-left-color:var(--acc)}
+  .node .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .node.area{font-weight:600}.node.file{padding-left:24px;font-family:var(--mono);font-size:11.5px}
+  .node.style{padding-left:42px;color:var(--fg2);font-size:11.5px}.node.style.on{color:var(--acc)}
+  .node .tw{color:var(--fg3);width:12px;flex:none}
+  .count{font-size:10px;color:var(--fg3);background:var(--bg3);border-radius:9px;padding:1px 7px}
+  .main{flex:1;display:flex;min-width:0;min-height:0}
+  .view{flex:1;min-width:0;min-height:0;display:none}.view.on{display:flex}
+  .right{flex:1;display:flex;min-width:0}
+  .pane{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}
+  .pane.src{border-left:1px solid var(--border);display:none}.pane.src.show{display:flex}
+  .phdr{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--fg3);padding:8px 12px 4px;display:flex;justify-content:space-between;align-items:center;flex:none}
+  .pbody{flex:1;overflow:auto;padding:16px 22px;min-width:0}
+  .meta{color:var(--fg3);font-size:11px;margin-bottom:10px;display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+  .placeholder{color:var(--fg3);text-align:center;padding:40px}
+  .md{min-width:0;word-wrap:break-word;overflow-wrap:anywhere}
+  .md h1{font-size:20px;margin:.3em 0 .3em;border-bottom:1px solid var(--border);padding-bottom:6px}
+  .md h2{font-size:16px;margin:1em 0 .3em}.md h3{font-size:13.5px;margin:.9em 0 .3em;color:var(--acc)}
+  .md p{margin:.5em 0}.md ul,.md ol{margin:.4em 0 .6em 1.2em}.md li{margin:.2em 0}
+  .md code{font-family:var(--mono);font-size:12px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:1px 5px;word-break:break-word}
+  .md pre{background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:12px;overflow:auto;max-width:100%}.md pre code{background:none;border:none;padding:0}
+  .md hr{border:none;border-top:1px solid var(--border);margin:1.1em 0}
+  .md blockquote{border-left:3px solid var(--border);margin:.5em 0;padding:.2em 12px;color:var(--fg2)}
+  .lref{color:var(--acc);cursor:pointer;border-bottom:1px dashed var(--acc)}.lref:hover{background:var(--hi)}
+  /* source pane — contained, scrolls internally only */
+  .srcwrap{flex:1;overflow:auto;min-width:0;min-height:0}
+  .srccode{font-family:var(--mono);font-size:11.5px;width:max-content;min-width:100%;padding:8px 0}
+  .ln{display:flex;white-space:pre;padding:0 12px 0 0}
+  .ln .g{width:48px;flex:none;text-align:right;color:var(--fg3);padding-right:10px;user-select:none;border-right:1px solid var(--border);margin-right:10px;position:sticky;left:0;background:var(--bg0)}
+  .ln.hl{background:var(--hi)}.ln.lint-high .g{color:var(--red);font-weight:700}.ln.lint-medium .g{color:var(--amber)}
+  .ln .lintmsg{color:var(--fg3);font-style:italic;margin-left:14px;opacity:.8}
+  /* log feed */
+  .feed{flex:1;overflow:auto;padding:14px 20px;min-width:0}
+  .logcard{border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:14px;background:var(--bg1)}
+  .logcard h2:first-child{margin-top:0}
+  .loghd{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;margin-bottom:6px}
+  .loghd b{font-size:13.5px}.dim{color:var(--fg3);font-size:11px}
+  .tag{font-size:10px;color:var(--acc);border:1px solid var(--border);border-radius:5px;padding:1px 6px;background:var(--bg2)}
+  /* modal */
+  .ov{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:50;padding:24px}.ov.on{display:flex}
+  .modal{background:var(--bg1);border:1px solid var(--border);border-radius:12px;width:min(560px,100%);padding:18px;max-height:90vh;overflow:auto}
+  .modal h2{margin:0 0 12px;font-size:15px}.fld{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--fg3);margin:12px 0 4px}
+  select,input[type=number]{width:100%;background:var(--bg0);color:var(--fg1);border:1px solid var(--border);border-radius:7px;padding:8px;font-size:12px}
+  .stylegrid{display:flex;flex-wrap:wrap;gap:8px}.schk{display:flex;align-items:center;gap:6px;font-size:12px;border:1px solid var(--border);border-radius:7px;padding:6px 10px;cursor:pointer}.schk input{margin:0}
+  .chk{display:flex;align-items:center;gap:7px;margin-top:12px;font-size:12px}.chk input{margin:0}
+  .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+  .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:9px 14px;font-size:12px;z-index:80;opacity:0;transition:.2s;pointer-events:none}.toast.on{opacity:1}.toast.err{border-color:var(--red);color:var(--red)}.toast.ok{border-color:var(--grn);color:var(--grn)}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>Dream Review</h1>
+  <div class="spacer"></div>
+  <div class="bar" id="bar"><i></i></div><div class="prog" id="prog"></div>
+  <button class="btn sm" id="split-btn" onclick="toggleSplit()">Split source</button>
+  <button class="btn pri" onclick="openRun()">Run</button>
+</div>
+
+<div class="body">
+  <div class="leftnav">
+    <div class="views">
+      <div class="vbtn on" data-view="reports" onclick="setView('reports')">&#9776; Reports</div>
+      <div class="vbtn" data-view="current" onclick="setView('current')">&#9210; Current</div>
+      <div class="vbtn" data-view="log" onclick="setView('log')">&#9776; Dream Log</div>
+      <div class="vbtn" data-view="projects" onclick="setView('projects')">&#9783; Projects</div>
+    </div>
+    <div class="navctx" id="navctx"></div>
+  </div>
+
+  <div class="main">
+    <div class="view on" id="view-reports">
+      <div class="right">
+        <div class="pane">
+          <div class="pbody"><div id="report-head"></div><div class="md" id="report-body"><div class="placeholder">Pick a file &amp; style from the left, or an area summary.</div></div></div>
+        </div>
+        <div class="pane src" id="src-pane">
+          <div class="phdr">Source <span id="src-name" style="color:var(--fg2);font-family:var(--mono)"></span></div>
+          <div class="srcwrap"><div class="srccode" id="src-code"><div class="placeholder">Source appears here.</div></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="view" id="view-current"><div class="pbody" id="current-body"><div class="placeholder">Loading…</div></div></div>
+    <div class="view" id="view-log"><div class="feed" id="log-feed"></div></div>
+    <div class="view" id="view-projects"><div class="pbody md" id="proj-body"><div class="placeholder">Pick a project from the left.</div></div></div>
+  </div>
+</div>
+
+<div class="ov" id="ov"><div class="modal">
+  <h2>Run a dream</h2>
+  <label class="fld">What to run</label>
+  <select id="run-what" onchange="onWhatChange()"></select>
+  <div id="review-opts">
+    <label class="fld">Styles</label><div class="stylegrid" id="style-grid"></div>
+    <label class="fld">Scope</label><select id="run-area"><option value="">Whole project</option></select>
+    <label class="fld">Target</label>
+    <select id="run-type" onchange="onTypeChange()"><option value="all">Whole project</option><option value="between">Changes between snapshots</option></select>
+    <div id="baseline-wrap" style="display:none"><label class="fld">Baseline snapshot</label><select id="run-baseline"></select></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div><label class="fld">Max files (0=all)</label><input type="number" id="run-maxfiles" value="0"></div>
+      <div><label class="fld">Chunk size (chars)</label><input type="number" id="run-maxchars" value="16000"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div><label class="fld">Max runtime sec (0=none)</label><input type="number" id="run-maxruntime" value="0"></div>
+      <div style="display:flex;align-items:flex-end"><label class="chk"><input type="checkbox" id="run-pauseact" checked> Yield when I'm active</label></div>
+    </div>
+    <label class="chk"><input type="checkbox" id="run-resume" checked> Resume — start from the first file with no output (across snapshots)</label>
+  </div>
+  <div class="actions"><button class="btn" onclick="closeRun()">Cancel</button><button class="btn pri" onclick="runIt()">Start</button></div>
+</div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const API=window.location.origin||"";const $=id=>document.getElementById(id);
+const esc=s=>(s==null?"":String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function api(p,o={}){try{const r=await fetch(API+p,{...o,headers:{'Content-Type':'application/json',...(o.headers||{})}});if(!r.ok)throw new Error('HTTP '+r.status);return await r.json();}catch(e){return null;}}
+const post=(p,b)=>api(p,{method:'POST',body:JSON.stringify(b)});
+function toast(k,m){const t=$('toast');t.className='toast on '+k;t.textContent=m;clearTimeout(t._t);t._t=setTimeout(()=>t.className='toast',2800);}
+let STYLES=[],STYLE_LABEL={},curFile=null,curStyle=null,splitOn=false,polling=null,curView='reports';
+let RUNNABLES=[],logOffset=0,logBusy=false,logDone=false,expanded={};
+
+// ── markdown + line refs ──
+function mdToHtml(md){
+  if(!md)return '<div class="placeholder">(empty)</div>';
+  const L=md.replace(/\r/g,'').split('\n');let h=[],i=0;
+  function refs(t){
+    t=t.replace(/\[\[\s*L?(\d+)\s*(?:[-\u2013]\s*L?(\d+))?\s*\]\]/g,(m,a,b)=>'<span class="lref" data-l1="'+a+'" data-l2="'+(b||a)+'">L'+a+(b?'\u2013'+b:'')+'</span>');
+    t=t.replace(/\bL(\d+)(?:\s*[-\u2013]\s*L?(\d+))?\b/g,(m,a,b)=>'<span class="lref" data-l1="'+a+'" data-l2="'+(b||a)+'">'+esc(m)+'</span>');
+    t=t.replace(/\blines?\s+(\d+)(?:\s*[-\u2013]\s*(\d+))?/gi,(m,a,b)=>'<span class="lref" data-l1="'+a+'" data-l2="'+(b||a)+'">'+esc(m)+'</span>');
+    return t;}
+  function inl(t){return refs(esc(t).replace(/`([^`]+)`/g,'<code>$1</code>').replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>').replace(/(^|[^*])\*([^*]+)\*/g,'$1<em>$2</em>'));}
+  while(i<L.length){let l=L[i];
+    if(/^```/.test(l)){let b=[];i++;while(i<L.length&&!/^```/.test(L[i])){b.push(L[i]);i++;}i++;h.push('<pre><code>'+esc(b.join('\n'))+'</code></pre>');continue;}
+    if(/^#{1,6}\s/.test(l)){const n=l.match(/^#+/)[0].length;h.push('<h'+n+'>'+inl(l.replace(/^#+\s/,''))+'</h'+n+'>');i++;continue;}
+    if(/^---+\s*$/.test(l)){h.push('<hr>');i++;continue;}
+    if(/^>\s?/.test(l)){let b=[];while(i<L.length&&/^>\s?/.test(L[i])){b.push(L[i].replace(/^>\s?/,''));i++;}h.push('<blockquote>'+inl(b.join(' '))+'</blockquote>');continue;}
+    if(/^\s*[-*+]\s/.test(l)){let b=[];while(i<L.length&&/^\s*[-*+]\s/.test(L[i])){b.push('<li>'+inl(L[i].replace(/^\s*[-*+]\s/,''))+'</li>');i++;}h.push('<ul>'+b.join('')+'</ul>');continue;}
+    if(/^\s*\d+\.\s/.test(l)){let b=[];while(i<L.length&&/^\s*\d+\.\s/.test(L[i])){b.push('<li>'+inl(L[i].replace(/^\s*\d+\.\s/,''))+'</li>');i++;}h.push('<ol>'+b.join('')+'</ol>');continue;}
+    if(/^\s*$/.test(l)){i++;continue;}
+    let b=[l];i++;while(i<L.length&&!/^\s*$/.test(L[i])&&!/^(#{1,6}\s|```|>|\s*[-*+]\s|\s*\d+\.\s|---+\s*$)/.test(L[i])){b.push(L[i]);i++;}
+    h.push('<p>'+inl(b.join(' '))+'</p>');}
+  return h.join('\n');
+}
+function wireLrefs(scope){(scope||$('report-body')).querySelectorAll('.lref').forEach(el=>{
+  el.onmouseenter=()=>{if(splitOn)highlightLines(+el.dataset.l1,+el.dataset.l2);};
+  el.onclick=()=>{if(!splitOn){splitOn=true;applySplit();}loadSource(curFile,()=>highlightLines(+el.dataset.l1,+el.dataset.l2,true));};});}
+function highlightLines(a,b,scroll){const code=$('src-code');code.querySelectorAll('.ln.hl').forEach(e=>e.classList.remove('hl'));
+  let first=null;for(let n=a;n<=b;n++){const el=code.querySelector('.ln[data-line="'+n+'"]');if(el){el.classList.add('hl');if(!first)first=el;}}
+  if(scroll&&first)first.scrollIntoView({block:'center',inline:'nearest',behavior:'smooth'});}
+function toggleSplit(){splitOn=!splitOn;applySplit();if(splitOn&&curFile)loadSource(curFile);}
+function applySplit(){$('src-pane').classList.toggle('show',splitOn);$('split-btn').classList.toggle('on',splitOn);}
+async function loadSource(file,cb){if(!file)return;$('src-name').textContent=file;$('src-code').innerHTML='<div class="placeholder">Loading…</div>';
+  const r=await api('/dream/review/source?file='+encodeURIComponent(file));
+  if(!(r&&r.ok)){$('src-code').innerHTML='<div class="placeholder">Source unavailable.</div>';return;}
+  const ann={};(r.annotations||[]).forEach(a=>{(ann[a.line]=ann[a.line]||[]).push(a);});
+  const lines=(r.content||'').split('\n');let html='';
+  lines.forEach((ln,idx)=>{const n=idx+1;const a=ann[n];let cls='ln';let msg='';
+    if(a){const sev=a.some(x=>x.severity==='high')?'high':(a.some(x=>x.severity==='medium')?'medium':'info');cls+=' lint-'+sev;msg='<span class="lintmsg">'+esc(a.map(x=>x.msg).join('; ').slice(0,140))+'</span>';}
+    html+='<div class="'+cls+'" data-line="'+n+'"><span class="g">'+n+'</span>'+esc(ln)+msg+'</div>';});
+  $('src-code').innerHTML=html;if(cb)cb();}
+
+// ── views ──
+function setView(v){curView=v;document.querySelectorAll('.vbtn').forEach(t=>t.classList.toggle('on',t.dataset.view===v));
+  document.querySelectorAll('.view').forEach(el=>el.classList.toggle('on',el.id==='view-'+v));
+  renderNavCtx();
+  if(v==='log'){if(!$('log-feed').children.length)resetLog();}
+  if(v==='projects')loadProjects();
+  if(v==='current')loadCurrent();}
+function renderNavCtx(){const c=$('navctx');
+  if(curView==='reports'){c.innerHTML='<div class="colhdr">Reports tree</div><div id="tree"></div>';buildTree();}
+  else if(curView==='projects'){c.innerHTML='<div class="colhdr">Projects</div><div id="proj-list"><div class="placeholder">…</div></div>';loadProjectList();}
+  else c.innerHTML='<div class="colhdr">'+(curView==='log'?'All dream output':'Current run')+'</div>';
+}
+
+// ── reports tree (area -> file -> styles), combined ──
+async function buildTree(){
+  const r=await api('/dream/review/list')||{};const reps=r.reports||[];
+  const byArea={};reps.forEach(rep=>{const a=rep.area||'core';(byArea[a]=byArea[a]||{})[rep.file]=byArea[a][rep.file]||new Set();byArea[a][rep.file].add(rep.style);});
+  const areas=Object.keys(byArea).sort();
+  let html='';
+  if(!areas.length)html='<div class="placeholder">No reports yet — Run a review.</div>';
+  for(const a of areas){const open=expanded['a:'+a];
+    html+='<div class="node area" onclick="tog(\'a:'+esc(a)+'\')"><span class="nm"><span class="tw">'+(open?'\u25be':'\u25b8')+'</span>'+esc(a)+'</span><span class="count">'+Object.keys(byArea[a]).length+'</span></div>';
+    if(open){for(const f of Object.keys(byArea[a]).sort()){const fk='f:'+a+':'+f;const fo=expanded[fk];
+      html+='<div class="node file" onclick="tog(\''+esc(fk)+'\')"><span class="nm"><span class="tw">'+(fo?'\u25be':'\u25b8')+'</span>'+esc(f)+'</span></div>';
+      if(fo){[...byArea[a][f]].sort().forEach(st=>{
+        html+='<div class="node style'+(curFile===f&&curStyle===st?' on':'')+'" data-f="'+esc(f)+'" data-s="'+esc(st)+'" onclick="openReport(\''+esc(f)+'\',\''+esc(st)+'\')">'+esc(STYLE_LABEL[st]||st)+'</div>';});
+        html+='<div class="node style" style="color:var(--fg3)" onclick="openAreaForFile(\''+esc(f)+'\')">— all styles (file)</div>';}
+    }}
+  }
+  $('tree').innerHTML=html;
+}
+
+function tog(k){expanded[k]=!expanded[k];buildTree();}
+async function openReport(file,style){curFile=file;curStyle=style;buildTree();
+  if(splitOn)loadSource(file);
+  $('report-body').innerHTML='<div class="placeholder">Loading…</div>';
+  const r=await api('/dream/review/get?file='+encodeURIComponent(file)+'&style='+encodeURIComponent(style));
+  if(r&&r.ok){const rep=r.report;
+    $('report-head').innerHTML='<div class="meta"><b style="font-family:var(--mono)">'+esc(file)+'</b><span>'+esc(rep.label||style)+'</span><span>'+(rep.chars||0)+' chars</span>'+(rep.chunks>1?'<span>'+rep.chunks+' chunks</span>':'')+'<span>'+esc((rep.ts||'').slice(0,19).replace('T',' '))+'</span></div>';
+    $('report-body').innerHTML=mdToHtml(rep.markdown);wireLrefs();
+  }else $('report-body').innerHTML='<div class="placeholder">Not found.</div>';}
+async function openAreaForFile(file){curFile=file;if(splitOn)loadSource(file);
+  $('report-body').innerHTML='<div class="placeholder">Building…</div>';
+  // aggregate all styles for this one file
+  const r=await api('/dream/review/list')||{};const reps=(r.reports||[]).filter(x=>x.file===file);
+  let md='# '+file+'\n';for(const rep of reps){const g=await api('/dream/review/get?file='+encodeURIComponent(file)+'&style='+encodeURIComponent(rep.style));if(g&&g.ok)md+='\n\n## '+(g.report.label||rep.style)+'\n\n'+(g.report.markdown||'');}
+  $('report-head').innerHTML='<div class="meta"><b style="font-family:var(--mono)">'+esc(file)+'</b><span>all styles</span></div>';
+  $('report-body').innerHTML=mdToHtml(md);wireLrefs();}
+
+// ── dream log (infinite scroll of ALL dream output) ──
+function resetLog(){logOffset=0;logDone=false;$('log-feed').innerHTML='';loadMoreLog();
+  $('log-feed').onscroll=()=>{const e=$('log-feed');if(!logBusy&&!logDone&&e.scrollTop+e.clientHeight>=e.scrollHeight-300)loadMoreLog();};}
+async function loadMoreLog(){if(logBusy||logDone)return;logBusy=true;
+  const r=await api('/dream/history?limit=10&offset='+logOffset);
+  const rows=(r&&r.history)||[];
+  if(!rows.length&&logOffset===0)$('log-feed').innerHTML='<div class="placeholder">No dream output yet.</div>';
+  rows.forEach(rec=>{const card=document.createElement('div');card.className='logcard';
+    const rep=rec.report||rec.synthesis||rec.summary||'';
+    card.innerHTML='<div class="loghd"><b>'+esc(rec.title||rec.label||rec.trigger||'dream')+'</b>'+
+      (rec.trigger?'<span class="tag">'+esc(rec.trigger)+'</span>':'')+
+      '<span class="dim">'+esc((rec.ts||rec.ended_at||rec.started_at||'').toString().slice(0,19).replace('T',' '))+'</span></div>'+
+      '<div class="md">'+mdToHtml(typeof rep==='string'?rep:JSON.stringify(rep))+'</div>';
+    $('log-feed').appendChild(card);wireLrefs(card);});
+  logOffset+=rows.length;if(!rows.length||(r&&r.has_more===false))logDone=true;logBusy=false;}
+
+// ── current ──
+async function loadCurrent(){const s=await api('/dream/review/status')||{};const lr=((await api('/dream/review/runs?limit=1'))||{}).runs||[];
+  let h='<h2 style="margin:.2em 0">Current</h2>';
+  const paused=s.phase==='paused';
+  if(s.running){
+    h+='<div class="logcard"><b>'+(paused?'Paused':'Running')+'</b> &middot; '+(s.done||0)+'/'+(s.total||0)+' &middot; '+esc(s.current||'')
+       +(s.remaining!=null?' &middot; '+s.remaining+' remaining':'')
+       +'<div class="dim">snapshot '+esc(s.snapshot_id||'')+'</div>'
+       +'<div style="margin-top:6px">'
+       +(paused?'<button class="btn sm" onclick="resumeReview()">Resume</button>'
+                :'<button class="btn sm" onclick="pauseReview()">Pause</button>')
+       +'</div></div>';
+  } else {
+    h+='<div class="logcard"><div class="dim">No review running.'+(s.reason?' Last: '+esc(s.reason):'')+'</div>'
+       +(s.incomplete&&s.remaining?'<div style="margin-top:6px"><button class="btn sm" onclick="resumeReview()">Resume ('+s.remaining+' left)</button></div>':'')
+       +'</div>';
+  }
+  const last=lr[0];if(last)h+='<div class="logcard"><b>Last run</b> &middot; '+(last.reports_generated||0)+' reports'+(last.incomplete?' <span class="dim">(yielded: '+esc(last.stopped_reason||'')+')</span>':'')+'<div class="dim">'+esc((last.ts||'').slice(0,19).replace('T',' '))+' &middot; styles: '+(last.styles||[]).join(', ')+'</div><div class="dim">by area: '+Object.entries(last.by_area||{}).map(([a,n])=>a+' '+n).join(', ')+'</div></div>';
+  $('current-body').innerHTML=h;}
+async function pauseReview(){const r=await post('/dream/review/pause',{});toast(r&&r.ok?'ok':'err',r&&r.ok?'Pausing after current file…':'pause failed');setTimeout(loadCurrent,400);}
+async function resumeReview(){const r=await post('/dream/review/resume',{start:true});toast(r&&r.ok?'ok':'err',r&&r.ok?'Resuming…':'resume failed');startPolling();setTimeout(loadCurrent,400);}
+
+// ── projects ──
+async function loadProjectList(){const r=await api('/dream/projects/list')||{};const ps=r.projects||[];
+  $('proj-list').innerHTML=ps.length?ps.map(p=>'<div class="node file" data-slug="'+esc(p.slug)+'" onclick="openProject(\''+esc(p.slug)+'\')"><span class="nm">'+esc(p.name||p.slug)+'</span></div>').join(''):'<div class="placeholder">No projects.</div>';}
+function loadProjects(){if($('proj-body').dataset.loaded)return;$('proj-body').dataset.loaded='1';}
+async function openProject(slug){document.querySelectorAll('#proj-list .node').forEach(el=>el.classList.toggle('sel',el.dataset.slug===slug));
+  $('proj-body').innerHTML='<div class="placeholder">Loading journal…</div>';
+  const r=await api('/dream/journal/read?journal_id='+encodeURIComponent('project:'+slug)+'&as_markdown=true&limit=200');
+  $('proj-body').innerHTML=(r&&r.ok&&r.markdown)?('<h2>'+esc(slug)+' — dream journal</h2>'+mdToHtml(r.markdown)):'<div class="placeholder">No dream journal yet for this project.</div>';}
+
+// ── run (any trigger / composite) ──
+async function loadRunnables(){
+  const [tg,pl]=await Promise.all([api('/dream/triggers'),api('/dream/pipelines')]);
+  RUNNABLES=[{kind:'pipeline',name:'source_review_deep',label:'Deep Source Review (configure below)'}];
+  (pl&&pl.pipelines||[]).forEach(p=>{if(p.name!=='source_review_deep')RUNNABLES.push({kind:'pipeline',name:p.name,label:'Pipeline · '+(p.label||p.name)});});
+  (tg&&tg.triggers||[]).forEach(t=>RUNNABLES.push({kind:'trigger',name:t.name,label:'Trigger · '+(t.label||t.name)}));
+  $('run-what').innerHTML=RUNNABLES.map((r,i)=>'<option value="'+i+'">'+esc(r.label)+'</option>').join('');
+  onWhatChange();
+}
+function onWhatChange(){const r=RUNNABLES[+$('run-what').value]||{};
+  const isReview=r.name==='source_review_deep'||/review/.test(r.name);
+  $('review-opts').style.display=isReview?'block':'none';}
+function onTypeChange(){const b=$('run-type').value==='between';$('baseline-wrap').style.display=b?'block':'none';if(b)loadSnapshots();}
+async function loadSnapshots(){const r=await api('/dream/review/snapshots')||{};const snaps=r.snapshots||[];
+  $('run-baseline').innerHTML=snaps.map((s,i)=>'<option value="'+esc(s.id)+'"'+(i===1?' selected':'')+'>'+esc(s.id)+' ('+(s.file_count||'?')+')</option>').join('')||'<option value="">none</option>';}
+function openRun(){$('ov').classList.add('on');if(!RUNNABLES.length)loadRunnables();}
+function closeRun(){$('ov').classList.remove('on');}
+async function runIt(){
+  const r=RUNNABLES[+$('run-what').value]||{};
+  const isReview=r.name==='source_review_deep'||/review/.test(r.name);
+  let body,path;
+  if(isReview&&r.name==='source_review_deep'){
+    const styles=[...document.querySelectorAll('#style-grid input:checked')].map(c=>c.value);
+    if(!styles.length){toast('err','Pick a style');return;}
+    path='/dream/cycle/run';body={trigger_name:'source_review_deep',seed:{
+      review_styles:styles,review_area:$('run-area').value,
+      review_max_files:parseInt($('run-maxfiles').value)||0,
+      review_max_chars:parseInt($('run-maxchars').value)||16000,
+      review_max_runtime_s:parseInt($('run-maxruntime').value)||0,
+      review_pause_on_activity:$('run-pauseact').checked,
+      review_resume:$('run-resume').checked,review_mode:$('run-type').value,
+      review_baseline:$('run-baseline').value||''}};
+  }else if(r.kind==='pipeline'){path='/dream/pipeline/run';body={name:r.name,force:true};}
+  else{path='/dream/cycle/run';body={trigger_name:r.name};}
+  closeRun();toast('ok','Starting '+(r.label||r.name)+'…');startPolling();setView('current');
+  const res=await post(path,body);
+  if(res&&res.ok===false)toast('err',res.error||'run failed');else toast('ok','Started — see Dream Log / dashboard');
+}
+function setProg(done,total,label,running){const p=$('prog'),b=$('bar');
+  if(running===false||(total&&done>=total)){b.classList.remove('show');b.querySelector('i').style.width='100%';p.textContent=label||'';if(curView==='reports')buildTree();if(curView==='current')loadCurrent();setTimeout(()=>{p.textContent='';},3000);return;}
+  b.classList.add('show');if(total)b.querySelector('i').style.width=Math.round(100*done/total)+'%';
+  p.textContent=(label||'')+(total?' '+done+'/'+total:'');}
+function startPolling(){if(polling)return;polling=setInterval(async()=>{const s=await api('/dream/review/status');if(!s)return;
+  if(s.running){setProg(s.done||0,s.total||0,s.current||'reviewing',true);if(curView==='current')loadCurrent();}
+  else{setProg(s.done||0,s.total||0,s.reason?('Nothing: '+s.reason):'done',false);clearInterval(polling);polling=null;if(s.reason&&!s.generated)toast('err','Nothing to review: '+s.reason);}},2000);}
+function connectWS(){try{const u=(API?API.replace(/^http/,'ws'):(location.protocol==='https:'?'wss:':'ws:')+'//'+location.host)+'/ws/mcp';const ws=new WebSocket(u);
+  ws.onopen=()=>{try{ws.send(JSON.stringify({action:'subscribe',stream:'__events__'}))}catch(_){}};
+  ws.onmessage=ev=>{try{const m=JSON.parse(ev.data),d=m.data||m;
+    if(d&&d.type==='dream.review.progress')setProg(d.done,d.total,(d.file||'')+' \u00b7 '+(d.style||''),true);
+    else if(d&&d.type==='dream.review.run.done'){setProg(d.total||1,d.total||1,d.empty?'Nothing to review':'done',false);if(d.empty&&d.reason)toast('err','Nothing to review: '+d.reason);}
+  }catch(_){}};
+  ws.onclose=()=>setTimeout(connectWS,5000);}catch(e){}}
+
+// init
+(async()=>{const r=await api('/dream/review/styles');STYLES=(r&&r.styles)||[];STYLES.forEach(s=>STYLE_LABEL[s.id]=s.label);
+  $('style-grid').innerHTML=STYLES.map(s=>'<label class="schk"><input type="checkbox" value="'+esc(s.id)+'" checked> '+esc(s.label)+'</label>').join('');
+  const a=await api('/dream/review/areas');$('run-area').innerHTML='<option value="">Whole project</option>'+((a&&a.areas)||[]).map(x=>'<option value="'+esc(x.area)+'">'+esc(x.area)+' ('+x.modules+')</option>').join('');
+  renderNavCtx();connectWS();
+  const s=await api('/dream/review/status');if(s&&s.running)startPolling();})();
+</script>
+</body>
+</html>

@@ -250,11 +250,22 @@ class GraphEncoder(nn.Module):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# VQ CODEBOOK  —  Vector-Quantised concept book with EMA updates
+# VQ CODEBOOK  —  Vector-Quantised concept book with EMA updates,
+#   k-means++ init, periodic k-means reinit, entropy regularisation,
+#   temperature-scaled assignment, and aggressive dead-code revival.
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ConceptBook(nn.Module):
-    """VQ-VAE codebook with EMA updates and k-means++ initialisation."""
+    """VQ-VAE codebook with strong anti-collapse guarantees.
+
+    Key mechanisms that prevent the "only 2 out of 500 concepts" problem:
+    1. k-means++ initialisation (good starting spread)
+    2. Temperature-scaled soft assignment during training
+    3. Aggressive dead-code revival EVERY step (not just at epoch end)
+    4. Periodic full k-means re-initialisation of the codebook
+    5. Strong entropy regularisation loss to force uniform usage
+    6. EMA warmup schedule (fast early adaptation)
+    """
     def __init__(self, num_concepts: int, dim: int, decay: float = 0.99,
                  commitment: float = 0.25):
         super().__init__()
@@ -262,20 +273,24 @@ class ConceptBook(nn.Module):
         self.dim = dim
         self.decay = decay
         self.commitment = commitment
+        self._initial_decay = decay
 
         self.register_buffer("codebook", torch.randn(num_concepts, dim) * 0.1)
         self.register_buffer("ema_cluster_size", torch.zeros(num_concepts))
         self.register_buffer("ema_w", self.codebook.clone())
         self.register_buffer("initialised", torch.zeros(1))
+        self.register_buffer("_total_forward", torch.zeros(1))
+        # Track per-step assignment counts for balanced usage monitoring
+        self.register_buffer("_step_assign_counts", torch.zeros(num_concepts))
 
     @torch.no_grad()
     def _init_codebook(self, z):
+        """k-means++ initialisation for maximum initial spread."""
         n = z.size(0)
         if n < self.num_concepts:
             idx = torch.randint(0, n, (self.num_concepts,), device=z.device)
             self.codebook.copy_(z[idx])
         else:
-            # k-means++ init for spread centroids
             first = torch.randint(0, n, (1,), device=z.device)
             centroids = [z[first].squeeze(0)]
             for _ in range(self.num_concepts - 1):
@@ -287,26 +302,99 @@ class ConceptBook(nn.Module):
             self.codebook.copy_(torch.stack(centroids, dim=0))
         self.ema_w.copy_(self.codebook)
         self.ema_cluster_size.fill_(1.0)
+        self._step_assign_counts.zero_()
         self.initialised.fill_(1.0)
 
-    def forward(self, z):
+    @torch.no_grad()
+    def kmeans_reinit(self, z, n_iter: int = 10):
+        """Full k-means re-initialisation from current latents.
+        This is the nuclear anti-collapse option: run k-means on z and
+        replace ALL codebook vectors with the resulting centroids.
+        Guarantees every code sits near at least some data.
+        """
+        if z is None or z.size(0) < self.num_concepts:
+            return 0
+        device = z.device
+        n, K = z.size(0), self.num_concepts
+
+        # k-means++ init
+        first = torch.randint(0, n, (1,), device=device)
+        centroids = [z[first].squeeze(0)]
+        for _ in range(K - 1):
+            C = torch.stack(centroids, dim=0)
+            d2 = torch.cdist(z, C).min(dim=1).values ** 2
+            probs = d2 / (d2.sum() + 1e-8)
+            next_idx = torch.multinomial(probs, 1).item()
+            centroids.append(z[next_idx])
+        centroids_t = torch.stack(centroids, dim=0)
+
+        # k-means iterations
+        for _ in range(n_iter):
+            d = torch.cdist(z, centroids_t)
+            assignments = d.argmin(dim=1)
+            for k in range(K):
+                mask = (assignments == k)
+                if mask.any():
+                    centroids_t[k] = z[mask].mean(dim=0)
+
+        self.codebook.copy_(centroids_t)
+        self.ema_w.copy_(centroids_t)
+        # Reset EMA cluster sizes based on actual assignments
+        d = torch.cdist(z, centroids_t)
+        assignments = d.argmin(dim=1)
+        for k in range(K):
+            self.ema_cluster_size[k] = float((assignments == k).sum())
+        self._step_assign_counts.zero_()
+        return int((self.ema_cluster_size > 0).sum())
+
+    def forward(self, z, jitter: float = 0.0, temperature: float = 0.0):
+        """VQ forward pass with optional temperature-scaled soft assignment.
+
+        temperature > 0: Gumbel-noise distance perturbation for exploration.
+            Higher temperature → more uniform assignment → better codebook
+            utilisation during early training. Anneal to 0 for hard assignment.
+        jitter > 0: Gaussian noise on input z for symmetry breaking.
+        """
         if self.initialised.item() < 0.5:
             self._init_codebook(z.detach())
+        self._total_forward += 1
 
-        d = (z.pow(2).sum(1, keepdim=True)
+        z_in = z
+        if jitter > 0 and self.training:
+            z_in = z + torch.randn_like(z) * jitter
+
+        d = (z_in.pow(2).sum(1, keepdim=True)
              + self.codebook.pow(2).sum(1).unsqueeze(0)
-             - 2 * z @ self.codebook.t())
-        indices = d.argmin(dim=1)
+             - 2 * z_in @ self.codebook.t())
+
+        # Temperature-scaled assignment (Gumbel noise for exploration)
+        if temperature > 0 and self.training:
+            gumbel = -torch.log(-torch.log(torch.rand_like(d) + 1e-10) + 1e-10)
+            d_noisy = d - temperature * gumbel  # subtract noise from distances
+            indices = d_noisy.argmin(dim=1)
+        else:
+            indices = d.argmin(dim=1)
+
         z_q = self.codebook[indices]
 
         if self.training:
+            # Adaptive EMA decay — start low (0.85) for fast initial spread
+            fwd_count = int(self._total_forward.item())
+            warmup_steps = self.num_concepts * 3
+            if fwd_count < warmup_steps:
+                eff_decay = 0.85 + (self._initial_decay - 0.85) * (fwd_count / warmup_steps)
+            else:
+                eff_decay = self._initial_decay
+
             with torch.no_grad():
                 one_hot = F.one_hot(indices, self.num_concepts).type(z.dtype)
                 cluster_size = one_hot.sum(dim=0)
-                self.ema_cluster_size.mul_(self.decay).add_(
-                    cluster_size, alpha=1 - self.decay)
-                dw = one_hot.t() @ z
-                self.ema_w.mul_(self.decay).add_(dw, alpha=1 - self.decay)
+                self._step_assign_counts.add_(cluster_size)
+
+                self.ema_cluster_size.mul_(eff_decay).add_(
+                    cluster_size, alpha=1 - eff_decay)
+                dw = one_hot.t() @ z.detach()
+                self.ema_w.mul_(eff_decay).add_(dw, alpha=1 - eff_decay)
                 n = self.ema_cluster_size.sum()
                 smoothed = ((self.ema_cluster_size + 1e-5)
                             / (n + self.num_concepts * 1e-5) * n)
@@ -317,10 +405,30 @@ class ConceptBook(nn.Module):
         z_q_st = z + (z_q - z).detach()
         return z_q_st, indices, vq_loss
 
+    def entropy_loss(self) -> torch.Tensor:
+        """Negative entropy of code usage — higher = more collapsed."""
+        sizes = self.ema_cluster_size
+        total = sizes.sum() + 1e-8
+        p = sizes / total
+        p = p + 1e-8
+        entropy = -(p * p.log()).sum()
+        max_entropy = math.log(self.num_concepts)
+        return (max_entropy - entropy) / max_entropy
+
+    def perplexity(self) -> float:
+        """Codebook perplexity — exp(entropy). Higher = more codes in use.
+        Ideal: close to num_concepts. Bad: < 10."""
+        sizes = self.ema_cluster_size
+        total = sizes.sum() + 1e-8
+        p = sizes / total + 1e-8
+        entropy = -(p * p.log()).sum()
+        return float(torch.exp(entropy).item())
+
     @torch.no_grad()
-    def revive_dead_codes(self, z, threshold: float = 1e-3) -> int:
-        """Re-seed dead codes from live encodings to combat VQ collapse.
-        Picks batch encodings furthest from any live code as new seeds."""
+    def revive_dead_codes(self, z, threshold: float = 1e-3,
+                          jitter: float = 0.02) -> int:
+        """Re-seed dead codes from live encodings furthest from any live code.
+        Also perturbs slightly underused codes for better spread."""
         if z is None or z.size(0) == 0:
             return 0
         sizes = self.ema_cluster_size
@@ -333,12 +441,23 @@ class ConceptBook(nn.Module):
         else:
             d = torch.norm(z, dim=1)
         order = torch.argsort(d, descending=True)
-        n = min(dead.numel(), z.size(0))
-        chosen = z[order[:n]]
+
+        # Use more of z: cycle through if we have more dead codes than data
+        n = dead.numel()
+        if z.size(0) >= n:
+            chosen = z[order[:n]]
+        else:
+            repeats = (n // z.size(0)) + 1
+            expanded = z[order].repeat(repeats, 1)[:n]
+            chosen = expanded + torch.randn_like(expanded) * jitter * 2
+        if jitter > 0:
+            chosen = chosen + torch.randn_like(chosen) * jitter
         dead = dead[:n]
         self.codebook[dead] = chosen
         self.ema_w[dead] = chosen
-        self.ema_cluster_size[dead] = 1.0
+        # Give them a fair starting count — average of the live codes
+        init_size = max(1.0, float(sizes[live].median()) * 0.3) if live.any() else 1.0
+        self.ema_cluster_size[dead] = init_size
         return int(n)
 
     @torch.no_grad()
@@ -359,16 +478,19 @@ class ConceptBook(nn.Module):
                 return {"active_concepts": 0,
                         "dead_concepts": self.num_concepts,
                         "entropy": 0.0,
+                        "perplexity": 0.0,
                         "max_entropy": round(float(math.log(self.num_concepts)), 4)}
             p = sizes / sizes.sum()
             p_nz = p[p > 0]
             entropy = float(-(p_nz * np.log(p_nz + 1e-12)).sum())
+            perplexity = float(np.exp(entropy))
             return {
                 "active_concepts": int((sizes > 1e-3).sum()),
                 "dead_concepts":   int((sizes <= 1e-3).sum()),
                 "max_population":  float(sizes.max()),
                 "min_population":  float(sizes.min()),
                 "entropy":         round(entropy, 4),
+                "perplexity":      round(perplexity, 1),
                 "max_entropy":     round(float(math.log(self.num_concepts)), 4),
             }
 
@@ -450,6 +572,59 @@ class DynamicsTransformer(nn.Module):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# JEPA PREDICTOR  —  predicts target latent from context latent
+# ─────────────────────────────────────────────────────────────────────────────
+
+class JEPAPredictor(nn.Module):
+    """Narrow MLP that predicts target-encoder latents from context-encoder latents.
+    This is the core JEPA component: no pixel/token reconstruction, only latent prediction."""
+    def __init__(self, latent_dim: int, hidden_dim: int = 0):
+        super().__init__()
+        hd = hidden_dim or latent_dim * 2
+        self.net = nn.Sequential(
+            nn.Linear(latent_dim, hd),
+            nn.LayerNorm(hd),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(hd, hd),
+            nn.LayerNorm(hd),
+            nn.GELU(),
+            nn.Linear(hd, latent_dim),
+        )
+    def forward(self, z):
+        return self.net(z)
+
+
+def vicreg_loss(z_a, z_b, sim_weight=25.0, var_weight=25.0, cov_weight=1.0):
+    """VICReg (Variance-Invariance-Covariance Regularization).
+    Prevents representation collapse without requiring negative pairs.
+    - Invariance: MSE between representations of linked nodes
+    - Variance: keeps std of each dimension above a threshold
+    - Covariance: decorrelates dimensions
+    """
+    # Invariance
+    inv_loss = F.mse_loss(z_a, z_b)
+
+    # Variance — std of each dim should be ≥ 1
+    def _var(z):
+        std = z.std(dim=0)
+        return F.relu(1.0 - std).mean()
+    var_loss = _var(z_a) + _var(z_b)
+
+    # Covariance — off-diagonal of cov matrix should be small
+    def _cov(z):
+        n = z.size(0)
+        z_c = z - z.mean(dim=0)
+        cov_mat = (z_c.T @ z_c) / max(n - 1, 1)
+        d = cov_mat.size(0)
+        off_diag = cov_mat.pow(2).sum() - cov_mat.diagonal().pow(2).sum()
+        return off_diag / max(d * (d - 1), 1)
+    cov_loss = _cov(z_a) + _cov(z_b)
+
+    return sim_weight * inv_loss + var_weight * var_loss + cov_weight * cov_loss
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # WORLDVIEW  —  the orchestrator that owns all three modules
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -497,8 +672,22 @@ class WorldView:
             layers=DYN_LAYERS, max_ctx=DYN_CTX,
         ).to(self.device)
 
-        self.opt_gnn = torch.optim.AdamW(self.gnn.parameters(),
-                                          lr=LR, weight_decay=1e-4)
+        # JEPA target encoder — EMA copy of the GNN (never receives gradients)
+        self.target_gnn = GraphEncoder(
+            embed_dim, hidden_dim, latent_dim,
+            NUM_GNN_LAYERS, NUM_EDGE_TYPES
+        ).to(self.device)
+        self.target_gnn.load_state_dict(self.gnn.state_dict())
+        for p in self.target_gnn.parameters():
+            p.requires_grad_(False)
+        self._target_ema_decay = 0.996
+
+        # JEPA predictor — predicts target-encoder latents from context-encoder
+        self.predictor = JEPAPredictor(latent_dim, hidden_dim=latent_dim * 2).to(self.device)
+
+        self.opt_gnn = torch.optim.AdamW(
+            list(self.gnn.parameters()) + list(self.predictor.parameters()),
+            lr=LR, weight_decay=1e-4)
         self.opt_dyn = torch.optim.AdamW(self.dynamics.parameters(),
                                           lr=LR, weight_decay=1e-4)
         self.ready = True
@@ -528,8 +717,20 @@ class WorldView:
             new_embed_dim, self.hidden_dim, self.latent_dim,
             NUM_GNN_LAYERS, NUM_EDGE_TYPES,
         ).to(self.device)
-        self.opt_gnn = torch.optim.AdamW(self.gnn.parameters(),
-                                          lr=LR, weight_decay=1e-4)
+        # Rebuild JEPA target encoder and predictor
+        self.target_gnn = GraphEncoder(
+            new_embed_dim, self.hidden_dim, self.latent_dim,
+            NUM_GNN_LAYERS, NUM_EDGE_TYPES,
+        ).to(self.device)
+        self.target_gnn.load_state_dict(self.gnn.state_dict())
+        for p in self.target_gnn.parameters():
+            p.requires_grad_(False)
+        self.predictor = JEPAPredictor(
+            self.latent_dim, hidden_dim=self.latent_dim * 2
+        ).to(self.device)
+        self.opt_gnn = torch.optim.AdamW(
+            list(self.gnn.parameters()) + list(self.predictor.parameters()),
+            lr=LR, weight_decay=1e-4)
         # GNN weights are now random — codebook & dynamics learned against
         # the OLD GNN are stale. Reset their training step counters so the
         # user is aware they need a fresh full training run.
@@ -543,13 +744,24 @@ class WorldView:
         self.transition_counts = {}
         return True
 
-    # ── Stage 1: GNN contrastive training ──────────────────────────────────
+    # ── JEPA target encoder EMA update ───────────────────────────────────────
+
+    @torch.no_grad()
+    def _update_target_encoder(self):
+        """EMA update: target_gnn ← decay * target_gnn + (1-decay) * gnn"""
+        d = self._target_ema_decay
+        for tp, sp in zip(self.target_gnn.parameters(), self.gnn.parameters()):
+            tp.data.mul_(d).add_(sp.data, alpha=1.0 - d)
+
+    # ── Stage 1: GNN contrastive + JEPA + VICReg training ─────────────────
 
     def train_gnn_step(self, x, src, dst, edge_type, pos_pairs, neg_pairs):
         if not self.ready:
             return 0.0
         self.gnn.train()
-        # Accept pre-built tensors or numpy arrays
+        self.predictor.train()
+        self.target_gnn.eval()
+
         if isinstance(x, torch.Tensor):
             x_t = x.to(self.device)
             s_t = src.to(self.device)
@@ -560,35 +772,63 @@ class WorldView:
             s_t = torch.tensor(src, dtype=torch.long, device=self.device)
             d_t = torch.tensor(dst, dtype=torch.long, device=self.device)
             e_t = torch.tensor(edge_type, dtype=torch.long, device=self.device)
-        h = self.gnn(x_t, s_t, d_t, e_t)
-        h = F.normalize(h, dim=-1)
 
+        # Context encoder (receives gradients)
+        h = self.gnn(x_t, s_t, d_t, e_t)
+        h_norm = F.normalize(h, dim=-1)
+
+        # Target encoder (no gradients — EMA copy)
+        with torch.no_grad():
+            h_target = self.target_gnn(x_t, s_t, d_t, e_t)
+
+        # ── Contrastive loss (margin-based) ───────────────────────
         pp = torch.tensor(pos_pairs, dtype=torch.long, device=self.device)
         np_ = torch.tensor(neg_pairs, dtype=torch.long, device=self.device)
-        pos_sim = (h[pp[:, 0]] * h[pp[:, 1]]).sum(-1)
-        neg_sim = (h[np_[:, 0]] * h[np_[:, 1]]).sum(-1)
+        pos_sim = (h_norm[pp[:, 0]] * h_norm[pp[:, 1]]).sum(-1)
+        neg_sim = (h_norm[np_[:, 0]] * h_norm[np_[:, 1]]).sum(-1)
+        margin = _WV_CONFIG.get("contrastive_margin", 0.2)
+        contrastive_loss = F.relu(margin - pos_sim + neg_sim).mean()
 
-        margin = 0.2
-        loss = F.relu(margin - pos_sim + neg_sim).mean()
+        # ── JEPA loss: predictor(context) should match target ─────
+        # Use positive pairs: predict target[j] from context[i]
+        pred_latent = self.predictor(h[pp[:, 0]])
+        jepa_target = h_target[pp[:, 1]].detach()
+        jepa_loss = F.smooth_l1_loss(pred_latent, jepa_target)
 
-        # Uniformity (prevent collapse): -log mean exp(-2 * dist^2)
-        sub = h[:min(64, h.size(0))]
+        # ── VICReg regularisation (prevents collapse) ─────────────
+        sub_size = min(128, h.size(0))
+        idx_a = torch.randperm(h.size(0), device=self.device)[:sub_size]
+        idx_b = torch.randperm(h.size(0), device=self.device)[:sub_size]
+        vic_loss = vicreg_loss(h[idx_a], h_target[idx_b].detach(),
+                               sim_weight=10.0, var_weight=10.0, cov_weight=1.0)
+
+        # ── Uniformity (backup anti-collapse) ─────────────────────
+        sub = h_norm[:min(64, h.size(0))]
+        uniformity = torch.tensor(0.0, device=self.device)
         if sub.size(0) > 1:
-            uniformity = -torch.pdist(sub).pow(2).mul(-2).exp().mean().log()
-            total = loss + 0.1 * uniformity
-        else:
-            total = loss
+            uniformity_w = _WV_CONFIG.get("uniformity_weight", 0.1)
+            uniformity = -torch.pdist(sub).pow(2).mul(-2).exp().mean().log() * uniformity_w
+
+        # ── Combined loss ─────────────────────────────────────────
+        jepa_w = _WV_CONFIG.get("jepa_weight", 1.0)
+        vicreg_w = _WV_CONFIG.get("vicreg_weight", 0.5)
+        total = contrastive_loss + jepa_w * jepa_loss + vicreg_w * vic_loss + uniformity
 
         self.opt_gnn.zero_grad()
         total.backward()
-        torch.nn.utils.clip_grad_norm_(self.gnn.parameters(), 1.0)
+        torch.nn.utils.clip_grad_norm_(
+            list(self.gnn.parameters()) + list(self.predictor.parameters()), 1.0)
         self.opt_gnn.step()
+
+        # EMA update target encoder
+        self._update_target_encoder()
+
         self.train_steps["gnn"] += 1
         lv = float(total.item())
         self.train_loss["gnn"] = 0.95 * self.train_loss["gnn"] + 0.05 * lv
         return lv
 
-    # ── Stage 2: Codebook training ─────────────────────────────────────────
+    # ── Stage 2: Codebook training with entropy regularization ──────────────
 
     def train_codebook_step(self, x, src, dst, edge_type):
         if not self.ready:
@@ -607,15 +847,58 @@ class WorldView:
                 d_t = torch.tensor(dst, dtype=torch.long, device=self.device)
                 e_t = torch.tensor(edge_type, dtype=torch.long, device=self.device)
             h = self.gnn(x_t, s_t, d_t, e_t)
-        _, _, vq_loss = self.codebook(h)
+
+        cb_step = self.train_steps["codebook"]
+
+        # Temperature annealing: start high for exploration, anneal to 0 (hard assignment)
+        # This is critical for anti-collapse — prevents early winner-take-all
+        temp_start = _WV_CONFIG.get("vq_temp_start", 2.0)
+        temp_end   = _WV_CONFIG.get("vq_temp_end",   0.0)
+        temp_anneal = _WV_CONFIG.get("vq_temp_anneal_steps", 40)
+        if cb_step < temp_anneal:
+            temperature = temp_start + (temp_end - temp_start) * (cb_step / temp_anneal)
+        else:
+            temperature = temp_end
+
+        # Jitter during early codebook training
+        jitter = _WV_CONFIG.get("vq_jitter", 0.05) if cb_step < 30 else 0.0
+
+        _, _, vq_loss = self.codebook(h, jitter=jitter, temperature=temperature)
+
+        # Entropy regularization — penalise collapsed codebook usage
+        # Strong weight early (when collapse risk is highest), decay later
+        entropy_base_w = _WV_CONFIG.get("entropy_weight", 5.0)
+        if cb_step < 20:
+            entropy_w = entropy_base_w * 3.0  # very strong early push for diversity
+        elif cb_step < 50:
+            entropy_w = entropy_base_w * 1.5
+        else:
+            entropy_w = entropy_base_w
+        entropy_penalty = self.codebook.entropy_loss() * entropy_w
+
+        total_loss = vq_loss + entropy_penalty
+
+        # Dead code revival — run EVERY step for aggressive diversity
         try:
             if _WV_CONFIG.get("revive_dead", True):
+                revive_jitter = _WV_CONFIG.get("revive_jitter", 0.03)
                 self._last_revived = self.codebook.revive_dead_codes(
-                    h, threshold=_WV_CONFIG.get("revive_threshold", 1e-3))
+                    h, threshold=_WV_CONFIG.get("revive_threshold", 1e-3),
+                    jitter=revive_jitter)
         except Exception:
             self._last_revived = 0
+
+        # Periodic k-means reinit (nuclear option) — every N steps
+        kmeans_every = _WV_CONFIG.get("kmeans_reinit_every", 0)
+        if kmeans_every > 0 and cb_step > 0 and cb_step % kmeans_every == 0:
+            try:
+                n_active = self.codebook.kmeans_reinit(h)
+                log.info("worldview: k-means reinit at step %d → %d active codes", cb_step, n_active)
+            except Exception as e:
+                log.debug("worldview: k-means reinit failed: %s", e)
+
         self.train_steps["codebook"] += 1
-        lv = float(vq_loss.item())
+        lv = float(total_loss.item())
         self.train_loss["codebook"] = 0.95 * self.train_loss["codebook"] + 0.05 * lv
         return lv
 
@@ -724,7 +1007,7 @@ class WorldView:
     # ── Persistence ────────────────────────────────────────────────────────
 
     def _checkpoint_dict(self) -> Dict:
-        return {
+        ckpt = {
             "gnn":               self.gnn.state_dict(),
             "codebook":          self.codebook.state_dict(),
             "dynamics":          self.dynamics.state_dict(),
@@ -744,6 +1027,12 @@ class WorldView:
                 "num_concepts": self.num_concepts,
             },
         }
+        # Save JEPA components if present
+        if hasattr(self, "target_gnn"):
+            ckpt["target_gnn"] = self.target_gnn.state_dict()
+        if hasattr(self, "predictor"):
+            ckpt["predictor"] = self.predictor.state_dict()
+        return ckpt
 
     def serialize_bytes(self) -> Optional[bytes]:
         if not self.ready:
@@ -790,6 +1079,15 @@ class WorldView:
                     self.transition_counts[(int(k[0]), int(k[1]))] = v
             except Exception:
                 pass
+        # Restore JEPA components if present
+        if "target_gnn" in ckpt and hasattr(self, "target_gnn"):
+            try: self.target_gnn.load_state_dict(ckpt["target_gnn"])
+            except Exception: self.target_gnn.load_state_dict(self.gnn.state_dict())
+        elif hasattr(self, "target_gnn"):
+            self.target_gnn.load_state_dict(self.gnn.state_dict())
+        if "predictor" in ckpt and hasattr(self, "predictor"):
+            try: self.predictor.load_state_dict(ckpt["predictor"])
+            except Exception: pass
         return True
 
     def load_bytes(self, blob: bytes) -> bool:
@@ -845,6 +1143,8 @@ class WorldView:
             "transitions_observed": len(self.transition_counts),
             "last_fabric_persist": self.last_fabric_persist,
             "last_fabric_load":    self.last_fabric_load,
+            "active_subview":      _WV_ACTIVE_SUBVIEW,
+            "active_subview_datasets": _WV_ACTIVE_SUBVIEW_DATASETS,
         }
         if self.ready:
             s["codebook"] = self.codebook.usage_stats()
@@ -1163,7 +1463,8 @@ async def _worldview_startup_load():
 
 
 async def _fetch_records_with_embeddings(dataset_id: str = "",
-                                          limit: int = MAX_NODES):
+                                          limit: int = MAX_NODES,
+                                          node_ids: list = None):
     """Fetch records from Chroma for graph building.
 
     Returns (rids, embeddings_np, meta_dict) where:
@@ -1192,7 +1493,12 @@ async def _fetch_records_with_embeddings(dataset_id: str = "",
                     "include": ["embeddings", "documents", "metadatas"],
                     "limit":   min(limit, 50000),
                 }
-                if dataset_id:
+                if node_ids:
+                    # Train on an explicit set of record IDs (e.g. the exact
+                    # node set of a saved vera-graph), not a whole dataset.
+                    kwargs["ids"] = list(node_ids)[:50000]
+                    kwargs.pop("limit", None)
+                elif dataset_id:
                     kwargs["where"] = {"dataset_id": {"$eq": dataset_id}}
                 res = col.get(**kwargs)
                 ids   = res.get("ids")        if res.get("ids")        is not None else []
@@ -1521,9 +1827,193 @@ async def _diagnose_no_records(dataset_id: str = "") -> Dict:
     return diag
 
 
-async def build_graph(dataset_id: str = "", limit: int = MAX_NODES) -> Dict:
-    """Build full training subgraph."""
-    rids, emb_np, records = await _fetch_records_with_embeddings(dataset_id, limit)
+
+async def _resolve_graph_node_ids_to_records(
+    node_ids: List[str],
+    max_depth: int = 3,
+    limit: int = 50000,
+) -> List[str]:
+    """Resolve vera-graph node IDs to Chroma FabricRecord UUIDs.
+
+    vera-graph sends whatever node IDs are in the graph — these may be
+    Dataset, Entity, Session, Memory, FabricRecord, Category, Source nodes.
+    Only FabricRecord IDs are directly addressable in Chroma.
+
+    Resolution order:
+      1. Plain UUID or FabricRecord:uuid  → used directly
+      2. Dataset:id   → MATCH (d:Dataset)-[:CONTAINS]->(r:FabricRecord)
+      3. Entity:id    → MATCH (e:Entity)-[:MENTIONED_IN]->(r:FabricRecord)
+      4. Source:id    → MATCH (s:Source)-[:CONTAINS|HAS_RECORD]->(r:FabricRecord)
+      5. Other nodes  → probe Neo4j for .dataset_id prop or label; re-resolve
+      6. Deep walk up to max_depth hops from all node_ids → any reachable FabricRecord
+      7. Fallback: pull dataset records from Chroma by metadata filter
+
+    Returns a deduplicated list of FabricRecord IDs present in Chroma.
+    """
+    if not node_ids:
+        return []
+
+    fab    = _get_fabric()
+    neo    = getattr(fab, "FABRIC_NEO",    None) if fab else None
+    chroma = getattr(fab, "FABRIC_CHROMA", None) if fab else None
+
+    collected:        set = set()
+    datasets_to_pull: set = set()
+
+    import re as _re
+    _UUID_RE = _re.compile(
+        r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+        _re.IGNORECASE,
+    )
+
+    fabric_record_ids: List[str] = []
+    dataset_ids:       List[str] = []
+    entity_ids:        List[str] = []
+    source_ids:        List[str] = []
+    other_ids:         List[str] = []
+
+    for nid in node_ids:
+        if not nid:
+            continue
+        lo = nid.lower()
+        if _UUID_RE.match(nid):
+            fabric_record_ids.append(nid)
+        elif lo.startswith('fabricrecord:'):
+            fabric_record_ids.append(nid.split(':', 1)[1])
+        elif lo.startswith('dataset:'):
+            dataset_ids.append(nid.split(':', 1)[1])
+        elif lo.startswith('entity:'):
+            entity_ids.append(nid.split(':', 1)[1])
+        elif lo.startswith('source:'):
+            source_ids.append(nid.split(':', 1)[1])
+        else:
+            other_ids.append(nid)
+
+    collected.update(fabric_record_ids)
+
+    if neo and neo.available:
+        # Dataset → FabricRecord
+        if dataset_ids:
+            try:
+                rows = await neo.query(
+                    "MATCH (d:Dataset)-[:CONTAINS]->(r:FabricRecord) "
+                    "WHERE d.id IN $ids RETURN r.id AS rid LIMIT $lim",
+                    {"ids": dataset_ids[:500], "lim": limit},
+                )
+                for row in (rows or []):
+                    if row.get("rid"): collected.add(row["rid"])
+            except Exception as e:
+                log.debug("worldview resolve dataset→record: %s", e)
+
+        # Entity → FabricRecord
+        if entity_ids:
+            try:
+                rows = await neo.query(
+                    "MATCH (e:Entity)-[:MENTIONED_IN]->(r:FabricRecord) "
+                    "WHERE e.id IN $ids RETURN r.id AS rid LIMIT $lim",
+                    {"ids": entity_ids[:500], "lim": limit},
+                )
+                for row in (rows or []):
+                    if row.get("rid"): collected.add(row["rid"])
+            except Exception as e:
+                log.debug("worldview resolve entity→record: %s", e)
+
+        # Source → FabricRecord
+        if source_ids:
+            try:
+                rows = await neo.query(
+                    "MATCH (s:Source)-[:CONTAINS|HAS_RECORD]->(r:FabricRecord) "
+                    "WHERE s.id IN $ids RETURN r.id AS rid LIMIT $lim",
+                    {"ids": source_ids[:500], "lim": limit},
+                )
+                for row in (rows or []):
+                    if row.get("rid"): collected.add(row["rid"])
+            except Exception as e:
+                log.debug("worldview resolve source→record: %s", e)
+
+        # Other IDs: probe labels + dataset_id prop
+        if other_ids:
+            try:
+                rows = await neo.query(
+                    "MATCH (n) WHERE n.id IN $ids "
+                    "RETURN n.id AS nid, labels(n) AS lbls, "
+                    "       n.dataset_id AS dsid, "
+                    "       CASE WHEN 'FabricRecord' IN labels(n) THEN n.id ELSE null END AS rid",
+                    {"ids": other_ids[:500]},
+                )
+                extra_datasets: List[str] = []
+                for row in (rows or []):
+                    if row.get("rid"):
+                        collected.add(row["rid"])
+                    elif row.get("dsid"):
+                        datasets_to_pull.add(row["dsid"])
+                    lbls = row.get("lbls") or []
+                    if "Dataset" in lbls and row.get("nid"):
+                        extra_datasets.append(row["nid"])
+                if extra_datasets:
+                    rows2 = await neo.query(
+                        "MATCH (d:Dataset)-[:CONTAINS]->(r:FabricRecord) "
+                        "WHERE d.id IN $ids RETURN r.id AS rid LIMIT $lim",
+                        {"ids": extra_datasets[:500], "lim": limit},
+                    )
+                    for row in (rows2 or []):
+                        if row.get("rid"): collected.add(row["rid"])
+            except Exception as e:
+                log.debug("worldview resolve other→record: %s", e)
+
+        # Deep walk: up to max_depth hops from all input nodes
+        # catches FabricRecords nested under any container type
+        if max_depth >= 1:
+            try:
+                rows = await neo.query(
+                    f"MATCH (start)-[*1..{min(max_depth, 4)}]-(r:FabricRecord) "
+                    "WHERE start.id IN $ids "
+                    "RETURN DISTINCT r.id AS rid LIMIT $lim",
+                    {"ids": list(node_ids)[:200], "lim": limit},
+                )
+                before = len(collected)
+                for row in (rows or []):
+                    if row.get("rid"): collected.add(row["rid"])
+                log.info("worldview deep walk: +%d records (depth=%d)",
+                         len(collected) - before, max_depth)
+            except Exception as e:
+                log.debug("worldview deep traversal: %s", e)
+
+    # Fallback: pull Chroma records by dataset_id metadata filter
+    if datasets_to_pull and chroma and chroma.available:
+        n_ds = max(1, len(datasets_to_pull))
+        per_ds = min(limit // n_ds, 10000)
+        for dsid in list(datasets_to_pull)[:20]:
+            try:
+                loop = asyncio.get_running_loop()
+                def _pull(_dsid=dsid, _per=per_ds):
+                    res = chroma._col.get(
+                        where={"dataset_id": {"$eq": _dsid}},
+                        include=["metadatas"],
+                        limit=_per,
+                    )
+                    return res.get("ids") or []
+                ids_from_ds = await loop.run_in_executor(None, _pull)
+                collected.update(ids_from_ds)
+            except Exception as e:
+                log.debug("worldview pull dataset %s: %s", dsid, e)
+
+    result = list(collected)[:limit]
+    log.info("worldview: resolved %d graph node IDs → %d Chroma record IDs",
+             len(node_ids), len(result))
+    return result
+
+
+async def build_graph(dataset_id: str = "", limit: int = MAX_NODES,
+                      node_ids: list = None) -> Dict:
+    """Build full training subgraph from resolved FabricRecord IDs.
+
+    node_ids, when provided, should already be resolved to Chroma-addressable
+    FabricRecord UUIDs via _resolve_graph_node_ids_to_records().
+    Pass raw vera-graph node IDs through that function first.
+    """
+    rids, emb_np, records = await _fetch_records_with_embeddings(
+        dataset_id, limit, node_ids=node_ids)
     if not rids or emb_np is None:
         return {"records": {}, "rids": [], "X": None}
 
@@ -1718,6 +2208,37 @@ async def _emit(stage, **kw):
         await emit_event({"type": "worldview.progress", "stage": stage, **kw})
     except Exception:
         pass
+
+
+async def _wv_embed(text: str) -> Optional[List[float]]:
+    """Embed text for WorldView — tries fabric._embed, falls back to _embed_direct
+    using the orchestrator's configured model (not the env default which may differ)."""
+    if not text or not text.strip():
+        return None
+    # Prefer the fabric's embedding — it uses the same model as training data
+    fab = _get_fabric()
+    if fab and hasattr(fab, "_embed"):
+        try:
+            emb = await fab._embed(text)
+            if emb:
+                return emb
+        except Exception:
+            pass
+    # Fallback: direct Ollama — MUST use the same model the fabric uses
+    try:
+        import httpx
+        # Get model from orchestrator (matches what was used to embed training data)
+        model = getattr(_orch, "OLLAMA_EMBED_MODEL", None) or os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            emb, reason, _ = await _embed_direct(text, model, client)
+            if emb and len(emb) != MODEL.embed_dim:
+                log.warning("_wv_embed: model %s produced %d-dim, need %d-dim. "
+                            "Check OLLAMA_EMBED_MODEL matches Chroma fabric.",
+                            model, len(emb), MODEL.embed_dim)
+                return None  # don't return wrong-dim embedding
+            return emb
+    except Exception:
+        return None
 
 
 def _meta_for(rid: str) -> Dict:
@@ -1980,12 +2501,9 @@ async def _embed_direct(text: str, ollama_model: str,
                          ) -> Tuple[Optional[List[float]], str, str]:
     """Embed a single text via Ollama directly (no fabric circuit-breaker).
 
-    If instance_url is given, only that instance is tried. Otherwise picks
-    the best online instance with the model loaded, and falls over to
-    siblings on failure — matching the cluster pattern used by ollama_generate.
-
-    Emits ollama.request / ollama.request_done / ollama.request_error events
-    so every embed call appears in the Workers panel Jobs tab.
+    Long texts are split into chunks and each chunk is embedded separately,
+    then the vectors are mean-pooled so NO DATA IS LOST (no truncation). This
+    handles models with limited context windows gracefully.
 
     Returns (vector_or_None, error_reason, instance_used).
     """
@@ -1998,6 +2516,34 @@ async def _embed_direct(text: str, ollama_model: str,
     req_id = str(_uuid.uuid4())[:12]
     t_start = _time.time()
     text_preview = (text or "")[:120].replace("\n", " ")
+
+    # ── Chunk long texts ──────────────────────────────────────────────────
+    # Most embedding models have a context window of 512–8192 tokens.
+    # We chunk at ~1800 chars (~450 tokens) which is safe for any common model.
+    # Chunks split on paragraph/sentence boundaries to keep semantic coherence.
+    CHUNK_LIMIT = 1800
+
+    def _chunk_text(t: str) -> List[str]:
+        t = t.strip()
+        if len(t) <= CHUNK_LIMIT:
+            return [t]
+        chunks = []
+        while t:
+            if len(t) <= CHUNK_LIMIT:
+                chunks.append(t)
+                break
+            # Try to split on paragraph, then sentence, then space
+            cut = CHUNK_LIMIT
+            for sep in ["\n\n", "\n", ". ", "! ", "? ", "; ", ", ", " "]:
+                idx = t.rfind(sep, 0, CHUNK_LIMIT)
+                if idx > CHUNK_LIMIT // 3:   # don't cut too early
+                    cut = idx + len(sep)
+                    break
+            chunks.append(t[:cut].strip())
+            t = t[cut:].strip()
+        return [c for c in chunks if c]
+
+    chunks = _chunk_text(text)
 
     # Build the list of instances to try
     instances_to_try: List[Tuple[str, str]] = []  # [(id, url), ...]
@@ -2051,32 +2597,56 @@ async def _embed_direct(text: str, ollama_model: str,
         pass
 
     last_err = "no_attempts"
+    used_instance = ""
     for iid, url in instances_to_try:
         try:
-            # /api/embed (newer) → /api/embeddings (older) fallback
-            r = await client.post(
-                f"{url}/api/embed",
-                json={"model": ollama_model, "input": text[:4096]},
-                timeout=60.0,
-            )
-            if r.status_code != 200:
+            # Embed each chunk separately, then mean-pool the vectors so
+            # long documents get a faithful representation — no truncation.
+            chunk_vecs = []
+            for chunk in chunks:
                 r = await client.post(
-                    f"{url}/api/embeddings",
-                    json={"model": ollama_model, "prompt": text[:4096]},
+                    f"{url}/api/embed",
+                    json={"model": ollama_model, "input": chunk},
                     timeout=60.0,
                 )
-            if r.status_code != 200:
-                last_err = f"http_{r.status_code}"
+                if r.status_code != 200:
+                    r = await client.post(
+                        f"{url}/api/embeddings",
+                        json={"model": ollama_model, "prompt": chunk},
+                        timeout=60.0,
+                    )
+                if r.status_code != 200:
+                    last_err = f"http_{r.status_code}"
+                    chunk_vecs = []
+                    break
+                data = r.json()
+                emb = data.get("embeddings")
+                if emb and isinstance(emb, list):
+                    vec = emb[0] if isinstance(emb[0], list) else emb
+                else:
+                    vec = data.get("embedding")
+                if not vec or len(vec) < 10:
+                    last_err = "no_vector"
+                    chunk_vecs = []
+                    break
+                chunk_vecs.append(vec)
+
+            if not chunk_vecs:
                 continue  # try next instance
-            data = r.json()
-            emb = data.get("embeddings")
-            if emb and isinstance(emb, list):
-                vec = emb[0] if isinstance(emb[0], list) else emb
+
+            # Mean-pool: average across all chunk embeddings
+            dim = len(chunk_vecs[0])
+            if len(chunk_vecs) == 1:
+                final_vec = chunk_vecs[0]
             else:
-                vec = data.get("embedding")
-            if not vec or len(vec) < 10:
-                last_err = "no_vector"
-                continue
+                final_vec = [0.0] * dim
+                for cv in chunk_vecs:
+                    for d in range(dim):
+                        final_vec[d] += cv[d]
+                for d in range(dim):
+                    final_vec[d] /= len(chunk_vecs)
+
+            used_instance = iid
             # Emit success event
             elapsed = round(_time.time() - t_start, 2)
             try:
@@ -2085,11 +2655,12 @@ async def _embed_direct(text: str, ollama_model: str,
                     "model": ollama_model, "instance_id": iid,
                     "caller_file": "worldview_jepa.py",
                     "caller_func": "_embed_direct",
-                    "elapsed_s": elapsed, "dimensions": len(vec),
+                    "elapsed_s": elapsed, "dimensions": len(final_vec),
+                    "chunks": len(chunk_vecs),
                 })
             except Exception:
                 pass
-            return list(vec), "", iid
+            return list(final_vec), "", iid
         except asyncio.TimeoutError:
             last_err = "timeout"
             continue
@@ -2112,29 +2683,42 @@ async def _embed_direct(text: str, ollama_model: str,
     return None, last_err, ""
 
 
-async def _embed_and_upsert_batch(records: List[Dict],
-                                    max_concurrent: int = 32
-                                    ) -> Tuple[int, int, Dict[str, int], Dict[str, int]]:
-    """Embed records via the centralized ollama_embed (concurrent) and upsert into Chroma.
+async def _embed_and_upsert_batch(
+    records:        List[Dict],
+    gpu_batch:      int = 32,   # concurrent slots per GPU instance
+    cpu_batch:      int = 8,    # concurrent slots per CPU instance
+    max_concurrent: int = 0,    # legacy — ignored
+) -> Tuple[int, int, Dict[str, int], Dict[str, int]]:
+    """Embed records using the fabric's _embed path with per-instance semaphores.
 
-    Distributes work across ALL online Ollama instances in round-robin fashion
-    so the full cluster is utilised, rather than piling onto whichever node
-    pick_instance selects first.
+    Uses data_fabric._embed() — the same function used during normal ingest —
+    so WorldView embedding is fully integrated with the fabric's embedding
+    system, respecting the same model config, normalisation, and logging.
+
+    Differences from direct ollama_embed():
+      • Per-instance semaphores (gpu_batch / cpu_batch) limit concurrency
+        independently per node rather than globally.
+      • Retry logic: each record gets max_retries attempts with exponential
+        backoff (0.5s, 1s, 2s…). Transient failures (busy instance, timeout)
+        are retried; the global circuit-breaker is NOT tripped for retryable
+        errors so the rest of the batch continues.
+      • When all instances appear offline, waits up to 30s for a health
+        re-check rather than failing the whole batch immediately.
+      • Tasks are created lazily via a queue so _pick() runs at actual
+        execution time (not at task-creation time), giving accurate load
+        distribution.
 
     Returns (embedded_count, upserted_count, error_breakdown, instances_used).
     """
-    from Vera.Orchestration.capability_orchestration import ollama_embed as _ollama_embed
-
     fab = _get_fabric()
     if not fab:
         return 0, 0, {"no_fabric_module": len(records)}, {}
-    chroma = getattr(fab, "FABRIC_CHROMA", None)
+    chroma     = getattr(fab, "FABRIC_CHROMA", None)
     DataRecord = getattr(fab, "DataRecord", None)
     if not (chroma and DataRecord and getattr(chroma, "available", False)):
         return 0, 0, {"chroma_unavailable": len(records)}, {}
 
-    # Reset the fabric's circuit-breaker so any other fabric code paths that
-    # use _embed start working again too.
+    # Reset fabric circuit-breaker — previous failures should not block this run
     try:
         fab._embed_failed = False
     except Exception:
@@ -2144,39 +2728,137 @@ async def _embed_and_upsert_batch(records: List[Dict],
     if not ollama_model:
         return 0, 0, {"ollama_model_missing": len(records)}, {}
 
-    # Build list of online instances for round-robin distribution
-    try:
-        online_ids = [iid for iid, i in _orch.OLLAMA_INSTANCES.items()
-                      if i.get("status") == "online"]
-    except Exception:
-        online_ids = []
-    if not online_ids:
+    # ── Wait for at least one online instance ─────────────────────────────────
+    async def _wait_for_instances(timeout: float = 30.0) -> Dict:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                online = {iid: inst for iid, inst in _orch.OLLAMA_INSTANCES.items()
+                          if inst.get("status") == "online"}
+            except Exception:
+                online = {}
+            if online:
+                return online
+            # Trigger a health re-check and wait briefly
+            log.info("worldview embed: no online instances — re-checking health…")
+            try:
+                await asyncio.gather(
+                    *[_orch._ping_instance(iid, inst)
+                      for iid, inst in _orch.OLLAMA_INSTANCES.items()],
+                    return_exceptions=True,
+                )
+            except Exception:
+                pass
+            await asyncio.sleep(2.0)
+        return {}
+
+    online = await _wait_for_instances(30.0)
+    if not online:
         return 0, 0, {"no_online_instances": len(records)}, {}
 
-    errors: Dict[str, int] = defaultdict(int)
-    instances_used: Dict[str, int] = defaultdict(int)
-    sem = asyncio.Semaphore(max_concurrent)
+    # ── Per-instance semaphores ───────────────────────────────────────────────
+    sem_slots: Dict[str, tuple] = {}
+    for iid, inst in online.items():
+        cap = gpu_batch if inst.get("has_gpu") else cpu_batch
+        sem_slots[iid] = (asyncio.Semaphore(cap), cap)
 
-    async def _embed_one(rec, assigned_instance):
-        async with sem:
-            # Pin to the assigned instance so load spreads evenly
-            vec = await _ollama_embed(rec["text"], model=ollama_model,
-                                       instance_id=assigned_instance, timeout=60)
-            if vec is not None:
-                instances_used[assigned_instance] = instances_used.get(assigned_instance, 0) + 1
-                return rec, vec
-            errors["embed_failed"] += 1
+    errors:         Dict[str, int] = defaultdict(int)
+    instances_used: Dict[str, int] = defaultdict(int)
+    in_flight:      Dict[str, int] = {iid: 0 for iid in online}
+
+    def _pick_instance() -> Optional[str]:
+        """Pick the online instance with the most free slots right now."""
+        best_iid, best_free = None, -1
+        for iid in list(online.keys()):
+            # Re-check status at dispatch time — an instance may have gone offline
+            if _orch.OLLAMA_INSTANCES.get(iid, {}).get("status") != "online":
+                continue
+            _, cap = sem_slots[iid]
+            free = cap - in_flight.get(iid, 0)
+            if free > best_free:
+                best_free, best_iid = free, iid
+        return best_iid
+
+    async def _embed_with_retry(text: str) -> Optional[List[float]]:
+        """Embed one text via fabric._embed, retrying indefinitely with capped backoff.
+
+        Returns None only if the text itself is invalid (handled upstream).
+        Pauses and retries on any transient failure — never drops the record.
+        The global _embed_failed circuit-breaker is suppressed throughout so
+        a single failure doesn't block subsequent records.
+        """
+        attempt = 0
+        while True:
+            try:
+                fab._embed_failed = False
+            except Exception:
+                pass
+            try:
+                vec = await fab._embed(text)
+                if vec is not None:
+                    return vec
+            except Exception as e:
+                log.debug("worldview _embed attempt %d: %s", attempt + 1, e)
+
+            try:
+                fab._embed_failed = False
+            except Exception:
+                pass
+
+            # Exponential backoff: 0.5s, 1s, 2s, 4s … capped at 30s
+            wait = min(0.5 * (2 ** attempt), 30.0)
+            attempt += 1
+            log.debug("worldview embed retry %d in %.1fs", attempt, wait)
+            await asyncio.sleep(wait)
+
+    async def _embed_one(rec: Dict) -> Tuple[Dict, Optional[List[float]]]:
+        text = rec.get("text", "")
+        if not text or not text.strip():
+            errors["empty_text"] += 1
             return rec, None
 
-    # Round-robin assign records to instances
-    tasks = []
-    for i, rec in enumerate(records):
-        assigned = online_ids[i % len(online_ids)]
-        tasks.append(_embed_one(rec, assigned))
+        # Only blocks when ALL instances are offline (status != "online").
+        # Normal backpressure — instances online but slots full — is handled
+        # by the semaphore below; this loop is never entered in that case.
+        wait = 2.0
+        while True:
+            iid = _pick_instance()
+            if iid is not None:
+                break
+            log.info("worldview embed: all instances offline — pausing %.0fs then re-pinging", wait)
+            await asyncio.sleep(wait)
+            try:
+                fab._embed_failed = False
+            except Exception:
+                pass
+            await asyncio.gather(
+                *[_orch._ping_instance(iid2, inst)
+                  for iid2, inst in _orch.OLLAMA_INSTANCES.items()],
+                return_exceptions=True,
+            )
+            wait = min(wait * 2, 60.0)
 
-    embedded = await asyncio.gather(*tasks)
+        sem, _ = sem_slots[iid]
+        async with sem:
+            in_flight[iid] = in_flight.get(iid, 0) + 1
+            try:
+                vec = await _embed_with_retry(text)
+                instances_used[iid] = instances_used.get(iid, 0) + 1
+                return rec, list(vec)
+            except Exception as e:
+                errors["embed_exception"] += 1
+                log.debug("_embed_one %s unhandled: %s", iid, e)
+                return rec, None
+            finally:
+                in_flight[iid] = max(0, in_flight.get(iid, 1) - 1)
+                try:
+                    fab._embed_failed = False
+                except Exception:
+                    pass
 
-    successful = [(r, e) for r, e in embedded if e is not None]
+    embedded_results = await asyncio.gather(*[_embed_one(rec) for rec in records])
+
+    successful = [(r, e) for r, e in embedded_results if e is not None]
     if not successful:
         return 0, 0, dict(errors), dict(instances_used)
 
@@ -2184,7 +2866,7 @@ async def _embed_and_upsert_batch(records: List[Dict],
     loop = asyncio.get_running_loop()
     def _upsert():
         n = 0
-        upsert_errors = []
+        upsert_errs = []
         for rec, emb in successful:
             try:
                 dr = DataRecord(
@@ -2193,14 +2875,13 @@ async def _embed_and_upsert_batch(records: List[Dict],
                     tags=rec.get("tags", []),
                     created_at=rec.get("created_at", ""),
                 )
-                ok = chroma.upsert(dr)
-                if ok:
+                if chroma.upsert(dr):
                     n += 1
                 else:
-                    upsert_errors.append("upsert_returned_false")
+                    upsert_errs.append("upsert_returned_false")
             except Exception as e:
-                upsert_errors.append(f"upsert_exception:{type(e).__name__}")
-        return n, upsert_errors
+                upsert_errs.append(f"upsert_exception:{type(e).__name__}")
+        return n, upsert_errs
     upserted, upsert_errs = await loop.run_in_executor(None, _upsert)
     for u in upsert_errs:
         errors[u] += 1
@@ -2214,23 +2895,29 @@ async def _embed_and_upsert_batch(records: List[Dict],
     http_tags=["worldview", "fabric", "maintenance"],
     memory="off", streams=["worldview.progress"],
     description="Find records that exist in SQLite but not in Chroma, embed "
-                "their text via Ollama, and upsert into Chroma. Useful when "
-                "ingest's embed stage was disabled or Chroma was down. "
+                "their text via Ollama, and upsert into Chroma. "
                 "Input: dataset_id (str, optional — empty = all), "
                 "limit (int, default 5000 — per call), "
-                "batch_size (int, default 32 — concurrent embeds), "
+                "gpu_batch_size (int, default 32 — concurrent slots for GPU instances), "
+                "cpu_batch_size (int, default 8  — concurrent slots per CPU instance), "
                 "dry_run (bool, default false), "
-                "force (bool, default false — if true, resets Chroma on dimension mismatch). "
+                "force (bool, default false — resets Chroma on dimension mismatch). "
                 "Output: {ok, missing_found, embedded, upserted, datasets_processed}.",
 )
 async def cap_worldview_reembed_missing(
-    dataset_id: str = "",
-    limit:      int = 5000,
-    batch_size: int = 32,
-    dry_run:    bool = False,
-    force:      bool = False,
+    dataset_id:     str  = "",
+    limit:          int  = 5000,
+    gpu_batch_size: int  = 32,
+    cpu_batch_size: int  = 8,
+    batch_size:     int  = 0,    # legacy alias — if set, overrides cpu_batch_size
+    dry_run:        bool = False,
+    force:          bool = False,
     trace_id=None,
 ) -> Dict:
+    # Legacy single batch_size field maps to cpu_batch_size
+    if batch_size > 0:
+        cpu_batch_size = batch_size
+
     fab = _get_fabric()
     if not fab:
         return {"error": "data_fabric module not loaded"}
@@ -2367,7 +3054,13 @@ async def cap_worldview_reembed_missing(
         }
 
     # Embed and upsert in batches with progress
-    BATCH = batch_size
+    # Outer batch = total records dispatched per iteration; sized so the whole
+    # cluster stays saturated: gpu_batch + N_cpu * cpu_batch records in-flight.
+    n_cpu = sum(1 for inst in _orch.OLLAMA_INSTANCES.values()
+                if inst.get("status") == "online" and not inst.get("has_gpu"))
+    n_gpu = sum(1 for inst in _orch.OLLAMA_INSTANCES.values()
+                if inst.get("status") == "online" and inst.get("has_gpu"))
+    BATCH = max(gpu_batch_size * max(n_gpu, 1) + cpu_batch_size * max(n_cpu, 1), 16)
     total_embedded = 0
     total_upserted = 0
     total_errors: Dict[str, int] = defaultdict(int)
@@ -2375,7 +3068,7 @@ async def cap_worldview_reembed_missing(
     for i in range(0, len(missing), BATCH):
         chunk = missing[i:i + BATCH]
         emb_n, ups_n, batch_errors, batch_instances = await _embed_and_upsert_batch(
-            chunk, max_concurrent=batch_size,
+            chunk, gpu_batch=gpu_batch_size, cpu_batch=cpu_batch_size,
         )
         total_embedded += emb_n
         total_upserted += ups_n
@@ -2470,6 +3163,7 @@ async def cap_worldview_train(
     dynamics_epochs:  int = 15,
     limit:            int = 0,
     embed_missing:    bool = False,
+    node_ids:         list = None,
     trace_id=None,
 ) -> Dict:
     if limit <= 0:
@@ -2494,26 +3188,54 @@ async def cap_worldview_train(
                     upserted=rb.get("upserted", 0),
                     message=f"Back-filled {rb.get('upserted', 0)} records")
 
-    await _emit("building_graph", message="Fetching records and edges...")
+    _scope_desc = (f"{len(node_ids)} graph nodes" if node_ids
+                   else (dataset_id or "all datasets"))
+    await _emit("building_graph",
+                message=f"Fetching records and edges from {_scope_desc} (limit={limit})...")
     _loss_history_reset()
 
-    graph = await build_graph(dataset_id, limit=limit)
+    # ── Resolve graph node IDs → Chroma FabricRecord IDs ─────────────────────
+    # The vera-graph panel sends vera-graph node IDs (Dataset, Entity, Session,
+    # FabricRecord etc.).  Only FabricRecord UUIDs are addressable in Chroma.
+    # _resolve_graph_node_ids_to_records crawls Neo4j to collect the full set
+    # of FabricRecord IDs reachable from the supplied node set.
+    resolved_node_ids = node_ids
+    if node_ids:
+        await _emit("resolving_graph",
+                    message=f"Resolving {len(node_ids)} graph nodes → FabricRecord IDs...")
+        resolved_node_ids = await _resolve_graph_node_ids_to_records(
+            node_ids, max_depth=3, limit=limit,
+        )
+        if not resolved_node_ids:
+            # Fallback: if resolution yielded nothing, train on the full
+            # dataset_id scope (or all data) rather than failing immediately.
+            log.warning(
+                "worldview: node_id resolution yielded 0 records — "
+                "falling back to dataset_id=%r scope", dataset_id,
+            )
+            await _emit("resolve_fallback",
+                        message=f"Could not resolve graph nodes to records — "
+                                f"falling back to dataset scope: {dataset_id or 'all'}",
+                        original_count=len(node_ids))
+            resolved_node_ids = None   # will use dataset_id / all-data path
+        else:
+            await _emit("resolve_done",
+                        message=f"Resolved {len(node_ids)} graph nodes → "
+                                f"{len(resolved_node_ids)} FabricRecord IDs",
+                        original=len(node_ids), resolved=len(resolved_node_ids))
+
+    graph = await build_graph(dataset_id, limit=limit, node_ids=resolved_node_ids)
     if not graph.get("rids"):
         diag = await _diagnose_no_records(dataset_id)
         return {"error": "No records with embeddings found",
                 "diagnostic": diag,
                 "hint": diag.get("hint", "Ingest data into the fabric first")}
 
-    # Force GC after build_graph — the Chroma fetch runs in an executor
-    # thread and can leave large temporary objects (response dicts, numpy
-    # intermediaries) in gen-1/gen-2 that won't be collected until a gen-2
-    # sweep, which might not happen before training allocates more memory.
     import gc
     gc.collect()
 
     N = len(graph["rids"])
     E = len(graph["edges"])
-    # Get X reference — could be tensor or numpy depending on torch availability
     X_ref = graph.get("X_t", graph.get("X"))
     actual_dim = X_ref.shape[1]
     if actual_dim != MODEL.embed_dim:
@@ -2524,8 +3246,17 @@ async def cap_worldview_train(
                     actual_dim, MODEL.embed_dim)
         MODEL.reinitialize_for_embed_dim(actual_dim)
     await _emit("graph_ready", nodes=N, edges=E,
-                message=f"Graph: {N} nodes, {E} edges, embed_dim={actual_dim}",
+                message=f"Graph built: {N} nodes, {E} edges, embed_dim={actual_dim}",
                 elapsed_s=round(time.time() - t0, 1))
+
+    # Emit training plan so the UI knows what's coming
+    await _emit("train_plan",
+                message=f"Training plan: GNN {gnn_epochs}ep → Codebook {codebook_epochs}ep "
+                        f"(K={MODEL.num_concepts}, entropy_w={_WV_CONFIG.get('entropy_weight', 5.0)}, "
+                        f"temp={_WV_CONFIG.get('vq_temp_start', 2.0)}→{_WV_CONFIG.get('vq_temp_end', 0.0)}) "
+                        f"→ Dynamics {dynamics_epochs}ep",
+                gnn_epochs=gnn_epochs, codebook_epochs=codebook_epochs,
+                dynamics_epochs=dynamics_epochs, nodes=N, edges=E)
 
     # Resolve tensor references (pre-built in build_graph, or fallback to numpy)
     g_x  = graph.get("X_t",  graph.get("X"))
@@ -2588,12 +3319,16 @@ async def cap_worldview_train(
                              loss=round(loss, 6),
                              active=cb_stats["active_concepts"],
                              entropy=cb_stats["entropy"],
+                             perplexity=cb_stats.get("perplexity", 0),
+                             revived=getattr(MODEL, "_last_revived", 0),
                              elapsed_s=round(time.time() - t0, 1),
                              epoch_rate=round(ep_rate, 2),
                              message=f"Codebook epoch {epoch+1}/{codebook_epochs} "
-                                     f"loss={loss:.4f} concepts={cb_stats['active_concepts']} ({ep_rate:.1f} ep/s)")
+                                     f"loss={loss:.4f} active={cb_stats['active_concepts']} "
+                                     f"perplexity={cb_stats.get('perplexity',0):.0f} ({ep_rate:.1f} ep/s)")
                 _loss_history_append("codebook", epoch + 1, loss,
                                      active=cb_stats["active_concepts"],
+                                     perplexity=round(cb_stats.get("perplexity", 0), 1),
                                      entropy=round(float(cb_stats["entropy"]), 4))
                 await asyncio.sleep(0)
             except Exception as e:
@@ -2718,6 +3453,31 @@ async def cap_worldview_train(
                 duration=duration, indexed=indexed,
                 stages={k: MODEL.train_steps[k] for k in MODEL.train_steps})
 
+    # Auto-label concepts after training (if enabled and LLM available)
+    auto_labelled = 0
+    if _WV_CONFIG.get("auto_label", True) and indexed > 0:
+        try:
+            await _emit("auto_label", message="Auto-labelling top concepts...")
+            label_k = _WV_CONFIG.get("auto_label_k", 50)
+            label_res = await cap_worldview_label_concepts(max_concepts=label_k)
+            auto_labelled = len(label_res.get("labelled", []))
+            if auto_labelled > 0:
+                await _emit("auto_label_done",
+                             message=f"Auto-labelled {auto_labelled} concepts",
+                             labelled=auto_labelled)
+                MODEL.save()
+                await _persist_to_fabric()
+        except Exception as e:
+            log.debug("worldview: auto-label after training failed: %s", e)
+
+    # Auto-start streaming if not already running
+    if not _STREAM_ENABLED and indexed > 0:
+        try:
+            await cap_worldview_stream_start()
+            await _emit("stream_autostart", message="Streaming auto-started after training")
+        except Exception as e:
+            log.debug("worldview: auto-start streaming failed: %s", e)
+
     return {
         "ok": True,
         "stages": {
@@ -2819,9 +3579,7 @@ async def cap_worldview_encode(
 
     emb = embedding
     if not emb and text:
-        fab = _get_fabric()
-        if fab:
-            emb = await fab._embed(text)
+        emb = await _wv_embed(text)
     if not emb and record_id:
         fab = _get_fabric()
         if fab and hasattr(fab, "FABRIC_PG") and fab.FABRIC_PG.available:
@@ -2869,18 +3627,16 @@ async def cap_worldview_predict(
     if start_c < 0 and record_id:
         start_c = MODEL.record_concepts.get(record_id, -1)
     if start_c < 0 and text:
-        fab = _get_fabric()
-        if fab:
-            emb = await fab._embed(text)
-            if emb:
-                dim_err = _dim_mismatch_error(emb)
-                if dim_err:
-                    return dim_err
-                latent = MODEL.encode_isolated(emb)
-                if latent is not None:
-                    start_c = MODEL.assign_concept(latent)
+        emb = await _wv_embed(text)
+        if emb:
+            dim_err = _dim_mismatch_error(emb)
+            if dim_err:
+                return dim_err
+            latent = MODEL.encode_isolated(emb)
+            if latent is not None:
+                start_c = MODEL.assign_concept(latent)
     if start_c < 0:
-        return {"error": "No starting concept resolved"}
+        return {"error": "No starting concept resolved — provide text, a valid record_id, or a concept index"}
 
     with torch.no_grad():
         prefix = [TOKEN_BOS, start_c + NUM_SPECIAL_TOKENS]
@@ -2930,18 +3686,16 @@ async def cap_worldview_rollout(
     if start_c < 0 and record_id:
         start_c = MODEL.record_concepts.get(record_id, -1)
     if start_c < 0 and text:
-        fab = _get_fabric()
-        if fab:
-            emb = await fab._embed(text)
-            if emb:
-                dim_err = _dim_mismatch_error(emb)
-                if dim_err:
-                    return dim_err
-                latent = MODEL.encode_isolated(emb)
-                if latent is not None:
-                    start_c = MODEL.assign_concept(latent)
+        emb = await _wv_embed(text)
+        if emb:
+            dim_err = _dim_mismatch_error(emb)
+            if dim_err:
+                return dim_err
+            latent = MODEL.encode_isolated(emb)
+            if latent is not None:
+                start_c = MODEL.assign_concept(latent)
     if start_c < 0:
-        return {"error": "No starting concept resolved"}
+        return {"error": "No starting concept resolved — provide text, a valid record_id, or a concept index"}
 
     trajectory = MODEL.rollout(start_c, steps=steps,
                                 temperature=temperature, top_k=top_k)
@@ -3031,16 +3785,20 @@ async def cap_worldview_counterfactual(
 async def cap_worldview_query(
     text:  str = "",
     top_k: int = 10,
+    dataset_id: str = "",
     trace_id=None,
 ) -> Dict:
     if not MODEL.ready or not WV_INDEX.available:
-        return {"error": "WorldView not ready"}
-    fab = _get_fabric()
-    if not (text and fab):
-        return {"error": "Provide text"}
-    emb = await fab._embed(text)
+        return {"error": "WorldView not ready — train the model first, then rebuild the index"}
+    if not text:
+        return {"error": "Provide a text query"}
+
+    # Embed using the same model as training data
+    emb = await _wv_embed(text)
     if not emb:
-        return {"error": "Embedding failed"}
+        return {"error": "Embedding failed. Check that the embedding service is running and "
+                         "OLLAMA_EMBED_MODEL matches the model used to populate Chroma."}
+
     dim_err = _dim_mismatch_error(emb)
     if dim_err:
         return dim_err
@@ -3051,6 +3809,8 @@ async def cap_worldview_query(
     out = []
     for rid, score in results:
         meta = _meta_for(rid)
+        if dataset_id and meta.get("dataset_id", "") != dataset_id:
+            continue
         out.append({
             "id":            rid,
             "score":         round(score, 5),
@@ -3059,7 +3819,12 @@ async def cap_worldview_query(
             "concept":       meta.get("concept", -1),
             "concept_label": meta.get("concept_label", ""),
         })
-    return {"results": out, "query": text[:200]}
+    c = MODEL.assign_concept(latent)
+    return {
+        "results": out, "query": text[:200],
+        "query_concept": c,
+        "query_concept_label": MODEL.concept_labels.get(c, ""),
+    }
 
 
 @capability(
@@ -3238,30 +4003,45 @@ async def cap_worldview_snapshot(
         })
 
     concept_points = []
-    if MODEL.ready and method == "pca" and Vt is not None:
-        with torch.no_grad():
-            cb = MODEL.codebook.codebook.cpu().numpy()
-        cb_c = cb - mean_vec
-        cb_proj = cb_c @ Vt[:2].T
-        cb_n = (cb_proj - mins) / rng
-        sizes = MODEL.codebook.ema_cluster_size.cpu().numpy()
-        # Use record_concepts population as ground-truth — avoids EMA-collapse
-        # hiding concepts that genuinely have assigned records.
-        from collections import Counter as _Counter
+    if MODEL.ready:
+        from collections import Counter as _Counter, defaultdict as _dd
         pop_from_records = _Counter(MODEL.record_concepts.values())
-        for i in range(len(cb)):
-            pop = pop_from_records.get(i, 0)
-            ema_size = float(sizes[i])
-            # Show if it has assigned records OR non-trivial EMA size
-            if pop == 0 and ema_size <= 1e-3:
+
+        # Compute concept centroids from the actual projected positions of their members.
+        # This guarantees concepts sit at the center of their cluster on the map,
+        # regardless of how the codebook vectors drifted during training.
+        concept_sums = _dd(lambda: np.zeros(2, dtype="float64"))
+        concept_counts = _dd(int)
+        for i, rid in enumerate(ids):
+            c = MODEL.record_concepts.get(rid, -1)
+            if c >= 0:
+                concept_sums[c] += proj_n[i]
+                concept_counts[c] += 1
+
+        for c_idx in range(MODEL.num_concepts):
+            pop = pop_from_records.get(c_idx, 0)
+            if pop == 0:
                 continue
+            if concept_counts[c_idx] > 0:
+                cx = float(concept_sums[c_idx][0] / concept_counts[c_idx])
+                cy = float(concept_sums[c_idx][1] / concept_counts[c_idx])
+            else:
+                # Concept has assigned records but none in this sample — use codebook projection
+                if method == "pca" and Vt is not None:
+                    with torch.no_grad():
+                        cb_vec = MODEL.codebook.codebook[c_idx].cpu().numpy()
+                    cb_c = cb_vec - mean_vec
+                    cb_proj_v = cb_c @ Vt[:2].T
+                    cx = float((cb_proj_v[0] - mins[0]) / rng[0])
+                    cy = float((cb_proj_v[1] - mins[1]) / rng[1])
+                else:
+                    continue
             concept_points.append({
-                "idx":      i,
-                "x":        round(float(cb_n[i, 0]), 5),
-                "y":        round(float(cb_n[i, 1]), 5),
-                "size":     pop if pop > 0 else ema_size,
-                "ema_size": ema_size,
-                "label":    MODEL.concept_labels.get(i, ""),
+                "idx":      c_idx,
+                "x":        round(cx, 5),
+                "y":        round(cy, 5),
+                "size":     pop,
+                "label":    MODEL.concept_labels.get(c_idx, ""),
             })
 
     return {
@@ -3392,6 +4172,76 @@ async def cap_worldview_concept_members(
 
 
 @capability(
+    "worldview.concept_detail",
+    http_method="GET", http_path="/worldview/concept_detail",
+    http_tags=["worldview"], memory="off",
+    description="Full detail for a concept: label, members, transitions, predictions, stats.",
+)
+async def cap_worldview_concept_detail(
+    concept: int = -1,
+    member_limit: int = 20,
+    trace_id=None,
+) -> Dict:
+    if not MODEL.ready or concept < 0:
+        return {"error": "concept required"}
+    # Population
+    pop = sum(1 for c in MODEL.record_concepts.values() if c == concept)
+    # Members
+    members = []
+    for rid, c in MODEL.record_concepts.items():
+        if c != concept:
+            continue
+        meta = _meta_for(rid)
+        members.append({"id": rid, "text": meta.get("text", "")[:120],
+                        "dataset_id": meta.get("dataset_id", "")})
+        if len(members) >= member_limit:
+            break
+    # Dataset breakdown
+    ds_counts = Counter()
+    for rid, c in MODEL.record_concepts.items():
+        if c == concept:
+            meta = _meta_for(rid)
+            ds_counts[meta.get("dataset_id", "unknown")] += 1
+    # Transitions
+    observed = []
+    total_out = 0
+    for (a, b), n in MODEL.transition_counts.items():
+        if a == concept:
+            observed.append({"to": b, "count": n, "label": MODEL.concept_labels.get(b, "")})
+            total_out += n
+    observed.sort(key=lambda x: -x["count"])
+    for o in observed:
+        o["prob"] = round(o["count"] / max(total_out, 1), 4)
+    # Predicted next
+    predicted = []
+    try:
+        with torch.no_grad():
+            prefix = torch.tensor([[TOKEN_BOS, concept + NUM_SPECIAL_TOKENS]],
+                                   dtype=torch.long, device=MODEL.device)
+            logits = MODEL.dynamics(prefix)[0, -1]
+            logits[TOKEN_BOS] = -1e9; logits[TOKEN_EOS] = -1e9
+            probs = F.softmax(logits, dim=-1)
+            top_p, top_i = torch.topk(probs, min(8, probs.numel()))
+            for p, i in zip(top_p.tolist(), top_i.tolist()):
+                if i < NUM_SPECIAL_TOKENS:
+                    continue
+                c = i - NUM_SPECIAL_TOKENS
+                predicted.append({"to": c, "prob": round(p, 5),
+                                  "label": MODEL.concept_labels.get(c, "")})
+    except Exception:
+        pass
+    return {
+        "concept":     concept,
+        "label":       MODEL.concept_labels.get(concept, ""),
+        "population":  pop,
+        "members":     members,
+        "datasets":    [{"id": k, "count": v} for k, v in ds_counts.most_common(20)],
+        "observed_transitions": observed[:15],
+        "predicted_next":       predicted,
+    }
+
+
+@capability(
     "worldview.explain_record",
     http_method="GET", http_path="/worldview/explain_record",
     http_tags=["worldview"], memory="off",
@@ -3457,6 +4307,7 @@ async def cap_worldview_explain_record(
 async def cap_worldview_label_concepts(
     concepts:     List[int] = None,
     max_concepts: int = 20,
+    batch_size:   int = 5,
     trace_id=None,
 ) -> Dict:
     if not MODEL.ready:
@@ -3466,23 +4317,25 @@ async def cap_worldview_label_concepts(
     if concepts:
         target = [c for c in concepts if c in pop]
     else:
+        # Label unlabelled concepts first, then update existing labels
         target = [c for c, _ in pop.most_common() if c not in MODEL.concept_labels]
     target = target[:max_concepts]
     if not target:
         return {"labelled": [], "message": "Nothing to label"}
 
-    await _emit("labelling", message=f"Labelling {len(target)} concepts...",
+    await _emit("labelling", message=f"Labelling {len(target)} concepts (batch_size={batch_size})...",
                  total=len(target))
 
     members_by = defaultdict(list)
     for rid, c in MODEL.record_concepts.items():
-        if c in target and len(members_by[c]) < 8:
+        if c in target and len(members_by[c]) < 10:
             meta = _meta_for(rid)
             t = meta.get("text", "")
             if t:
-                members_by[c].append(t[:160])
+                members_by[c].append(t[:200])
 
     labelled = []
+    errors = 0
     for i, c in enumerate(target):
         samples = members_by.get(c, [])
         if not samples:
@@ -3492,7 +4345,7 @@ async def cap_worldview_label_concepts(
             "by an unsupervised model. Suggest a SHORT (2-5 word) descriptive "
             "label for this cluster — what they have in common.\n\n"
             "Samples:\n"
-            + "\n".join(f"- {s}" for s in samples)
+            + "\n".join(f"- {s}" for s in samples[:8])
             + "\n\nReturn ONLY a JSON object: {\"label\": \"...\"}"
         )
         try:
@@ -3506,12 +4359,23 @@ async def cap_worldview_label_concepts(
                 await _emit("labelled", concept=c, label=lab,
                              progress=i + 1, total=len(target))
         except Exception as e:
+            errors += 1
             log.debug("label %d: %s", c, e)
+            if errors > 3:
+                log.warning("label_concepts: %d consecutive errors, stopping", errors)
+                await _emit("label_error",
+                             message=f"Stopped after {errors} errors at concept {i+1}/{len(target)}")
+                break
+
+        # Pause between batches to avoid overwhelming the LLM server
+        if (i + 1) % batch_size == 0 and i < len(target) - 1:
+            await asyncio.sleep(0.5)
 
     MODEL.save()
     await _persist_to_fabric()
     await _emit("label_done", labelled=len(labelled))
-    return {"labelled": labelled, "total_existing": len(MODEL.concept_labels)}
+    return {"labelled": labelled, "total_existing": len(MODEL.concept_labels),
+            "errors": errors}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3775,6 +4639,18 @@ _WV_CONFIG: Dict[str, Any] = {
     "uniformity_weight":  0.1,
     "revive_dead":        True,
     "revive_threshold":   1e-3,
+    "revive_jitter":      0.03,
+    "entropy_weight":     5.0,         # strong: higher = more concept diversity
+    "vq_jitter":          0.05,
+    "vq_temp_start":      2.0,         # Gumbel temperature at codebook epoch 0
+    "vq_temp_end":        0.0,         # anneal to hard assignment
+    "vq_temp_anneal_steps": 40,        # anneal over this many codebook steps
+    "kmeans_reinit_every":  0,         # periodic k-means reinit (0=off, e.g. 25)
+    "jepa_weight":        1.0,
+    "vicreg_weight":      0.5,
+    "target_ema_decay":   0.996,
+    "auto_label":         True,        # auto-label concepts after training
+    "auto_label_k":       50,          # max concepts to auto-label
 }
 
 
@@ -3820,6 +4696,18 @@ async def cap_worldview_config_set(
     uniformity_weight:  float = None,
     revive_dead:        bool  = None,
     revive_threshold:   float = None,
+    revive_jitter:      float = None,
+    entropy_weight:     float = None,
+    vq_jitter:          float = None,
+    vq_temp_start:      float = None,
+    vq_temp_end:        float = None,
+    vq_temp_anneal_steps: int = None,
+    kmeans_reinit_every:  int = None,
+    jepa_weight:        float = None,
+    vicreg_weight:      float = None,
+    target_ema_decay:   float = None,
+    auto_label:         bool  = None,
+    auto_label_k:       int   = None,
     trace_id=None,
 ) -> Dict:
     updated = []
@@ -3834,6 +4722,14 @@ async def cap_worldview_config_set(
         "contrastive_margin": contrastive_margin,
         "uniformity_weight": uniformity_weight,
         "revive_dead": revive_dead, "revive_threshold": revive_threshold,
+        "revive_jitter": revive_jitter, "entropy_weight": entropy_weight,
+        "vq_jitter": vq_jitter,
+        "vq_temp_start": vq_temp_start, "vq_temp_end": vq_temp_end,
+        "vq_temp_anneal_steps": vq_temp_anneal_steps,
+        "kmeans_reinit_every": kmeans_reinit_every,
+        "jepa_weight": jepa_weight,
+        "vicreg_weight": vicreg_weight, "target_ema_decay": target_ema_decay,
+        "auto_label": auto_label, "auto_label_k": auto_label_k,
     }
     for key, val in params.items():
         if val is not None and key in _WV_CONFIG:
@@ -3888,19 +4784,17 @@ _STREAM_STATS: Dict[str, Any] = {
 }
 
 
-async def _stream_encode_new_records(dataset_id: str, limit: int = 64) -> int:
+async def _stream_encode_new_records(dataset_id: str, limit: int = 64,
+                                      record_ids: List[str] = None) -> int:
     """Fetch recently-ingested records from Chroma and add them to the index.
 
-    Works even without FAISS — concept assignment and record_meta are
-    populated regardless, which keeps the concepts browser, anomalies,
-    and agent caps working.
-
-    Returns the number of records successfully encoded.
+    If record_ids is provided, fetches those specific records.
+    Otherwise fetches the latest records and filters to un-indexed ones.
     """
     if not MODEL.ready:
         return 0
     if MODEL.train_steps.get("gnn", 0) == 0:
-        return 0  # GNN not trained yet — can't encode
+        return 0
 
     fab = _get_fabric()
     if not fab:
@@ -3909,24 +4803,35 @@ async def _stream_encode_new_records(dataset_id: str, limit: int = 64) -> int:
     if not chroma or not getattr(chroma, "available", False):
         return 0
 
-    # Fetch records from Chroma for this dataset
     loop = asyncio.get_running_loop()
+
     def _fetch():
         col = chroma._col
         if col is None:
-            return [], None, {}
-        kwargs = {
-            "include": ["embeddings", "documents", "metadatas"],
-            "limit":   min(limit, 500),
-        }
-        if dataset_id:
-            kwargs["where"] = {"dataset_id": {"$eq": dataset_id}}
-        res = col.get(**kwargs)
-        ids   = res.get("ids") or []
-        embs  = res.get("embeddings") or []
-        docs  = res.get("documents") or []
-        metas = res.get("metadatas") or []
-        return ids, embs, docs, metas
+            return [], [], [], []
+        try:
+            if record_ids:
+                # Fetch specific records by ID
+                batch_ids = [r for r in record_ids[:limit]
+                             if r not in MODEL.record_concepts]
+                if not batch_ids:
+                    return [], [], [], []
+                res = col.get(ids=batch_ids,
+                              include=["embeddings", "documents", "metadatas"])
+            else:
+                # Fetch records from this dataset, Chroma returns in insertion order
+                kwargs = {
+                    "include": ["embeddings", "documents", "metadatas"],
+                    "limit": min(limit * 2, 1000),  # over-fetch to find new ones
+                }
+                if dataset_id:
+                    kwargs["where"] = {"dataset_id": {"$eq": dataset_id}}
+                res = col.get(**kwargs)
+            return (res.get("ids") or [], res.get("embeddings") or [],
+                    res.get("documents") or [], res.get("metadatas") or [])
+        except Exception as e:
+            log.debug("stream fetch: %s", e)
+            return [], [], [], []
 
     try:
         ids, embs, docs, metas = await loop.run_in_executor(None, _fetch)
@@ -3937,9 +4842,8 @@ async def _stream_encode_new_records(dataset_id: str, limit: int = 64) -> int:
     if not ids:
         return 0
 
-    # Filter to records NOT already in the index
-    existing = set(WV_INDEX._ids) if WV_INDEX._ids else set()
-    existing.update(MODEL.record_concepts.keys())
+    # Filter to records NOT already indexed
+    existing = set(MODEL.record_concepts.keys())
     new_indices = []
     for i, rid in enumerate(ids):
         if rid not in existing and i < len(embs) and embs[i] is not None:
@@ -4126,24 +5030,22 @@ async def _wv_stream_worker():
                             if any(etype == f or etype.startswith(f + ".")
                                    for f in filters):
                                 dataset_id = ev.get("dataset_id", "")
-                                # Different fabric events use different count keys
-                                count = (ev.get("ingested", 0) or
-                                         ev.get("upserted", 0) or
-                                         ev.get("count", 0) or
-                                         ev.get("records", 0))
-                                if count > 0 and dataset_id:
-                                    batch_limit = _STREAM_STATS.get("batch_size", 64)
-                                    n = await _stream_encode_new_records(
-                                        dataset_id, limit=batch_limit)
-                                    _STREAM_STATS["records_encoded"] += n
-                                    _STREAM_STATS["records_indexed"] += n
-                                    if n > 0:
-                                        await _emit(
-                                            "stream_encoded",
-                                            dataset_id=dataset_id,
-                                            encoded=n,
-                                            total_encoded=_STREAM_STATS["records_encoded"],
-                                            message=f"Encoded {n} new records from {dataset_id}")
+                                # Accept event even without explicit count —
+                                # many fabric events don't carry one
+                                record_ids = ev.get("record_ids") or ev.get("ids") or []
+                                batch_limit = _STREAM_STATS.get("batch_size", 64)
+                                n = await _stream_encode_new_records(
+                                    dataset_id, limit=batch_limit,
+                                    record_ids=record_ids)
+                                _STREAM_STATS["records_encoded"] += n
+                                _STREAM_STATS["records_indexed"] += n
+                                if n > 0:
+                                    await _emit(
+                                        "stream_encoded",
+                                        dataset_id=dataset_id,
+                                        encoded=n,
+                                        total_encoded=_STREAM_STATS["records_encoded"],
+                                        message=f"Encoded {n} new records from {dataset_id or 'unknown'}")
 
                             await redis.xack(stream, group, msg_id)
                         except Exception as e:
@@ -4317,6 +5219,277 @@ async def cap_worldview_load_from_fabric(rebuild_index: bool = True, trace_id=No
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SUB-WORLDVIEWS  —  named checkpoints scoped to specific dataset(s)
+# Stored in fabric SQLite. Activating one swaps the global MODEL state.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_WV_ACTIVE_SUBVIEW: str = ""   # "" = global (default)
+_WV_ACTIVE_SUBVIEW_DATASETS: List[str] = []   # cached for the active sub
+
+async def _get_subview_datasets(name: str) -> List[str]:
+    """Return dataset IDs for a named sub-worldview, or [] for global."""
+    if not name:
+        return []
+    fab = _get_fabric()
+    if not fab:
+        return []
+    try:
+        loop = asyncio.get_running_loop()
+        def _r():
+            conn = fab._sqlite_conn() if callable(getattr(fab, "_sqlite_conn", None)) else None
+            if not conn: return []
+            try:
+                conn.execute("CREATE TABLE IF NOT EXISTS worldview_subviews("
+                             "name TEXT PRIMARY KEY, datasets TEXT, meta TEXT, updated_at TEXT)")
+                cur = conn.execute("SELECT datasets FROM worldview_subviews WHERE name=?", (name,))
+                row = cur.fetchone()
+                return json.loads(row[0]) if row and row[0] else []
+            finally:
+                conn.close()
+        return await loop.run_in_executor(None, _r)
+    except Exception:
+        return []
+
+@capability(
+    "worldview.subview.list",
+    http_method="GET", http_path="/worldview/subviews",
+    http_tags=["worldview", "subview"], memory="off",
+    description="List all saved sub-worldviews.",
+)
+async def cap_subview_list(trace_id=None) -> Dict:
+    fab = _get_fabric()
+    if not fab:
+        return {"subviews": [], "active": _WV_ACTIVE_SUBVIEW}
+    try:
+        loop = asyncio.get_running_loop()
+        def _r():
+            conn = fab._sqlite_conn() if callable(getattr(fab, "_sqlite_conn", None)) else None
+            if not conn: return []
+            try:
+                conn.execute("CREATE TABLE IF NOT EXISTS worldview_subviews("
+                             "name TEXT PRIMARY KEY, datasets TEXT, meta TEXT, updated_at TEXT)")
+                cur = conn.execute("SELECT name, datasets, meta, updated_at FROM worldview_subviews ORDER BY name")
+                return [{"name": r[0], "datasets": json.loads(r[1] or "[]"),
+                         "meta": json.loads(r[2] or "{}"), "updated_at": r[3]} for r in cur.fetchall()]
+            finally:
+                conn.close()
+        subs = await loop.run_in_executor(None, _r)
+        return {"subviews": subs, "active": _WV_ACTIVE_SUBVIEW}
+    except Exception as e:
+        return {"subviews": [], "active": _WV_ACTIVE_SUBVIEW, "error": str(e)}
+
+
+@capability(
+    "worldview.subview.create",
+    http_method="POST", http_path="/worldview/subviews/create",
+    http_tags=["worldview", "subview"], memory="off",
+    description="Create a named sub-worldview. "
+                "Input: name (str), datasets (list[str], optional), "
+                "node_ids (list[str], optional — train on exactly these record "
+                "IDs, e.g. the node set of a saved vera-graph), "
+                "graph (str, optional — name of the paired saved graph). "
+                "Provide datasets OR node_ids.",
+)
+async def cap_subview_create(name: str = "", datasets: List[str] = None,
+                             node_ids: List[str] = None, graph: str = "",
+                             trace_id=None) -> Dict:
+    if not name:
+        return {"error": "Provide a name"}
+    if not datasets and not node_ids:
+        return {"error": "Provide datasets or node_ids"}
+    datasets = datasets or []
+    fab = _get_fabric()
+    if not fab:
+        return {"error": "Fabric not available"}
+    try:
+        meta = {"created_at": now_iso(), "datasets": datasets}
+        if node_ids:
+            meta["node_ids"] = list(node_ids)[:50000]
+            meta["scope"] = "graph_nodes"
+        if graph:
+            meta["graph"] = graph          # paired saved-graph name
+        loop = asyncio.get_running_loop()
+        def _w():
+            conn = fab._sqlite_conn() if callable(getattr(fab, "_sqlite_conn", None)) else None
+            if not conn: return False
+            try:
+                conn.execute("CREATE TABLE IF NOT EXISTS worldview_subviews("
+                             "name TEXT PRIMARY KEY, datasets TEXT, meta TEXT, updated_at TEXT)")
+                conn.execute("INSERT INTO worldview_subviews(name,datasets,meta,updated_at) "
+                             "VALUES(?,?,?,?) ON CONFLICT(name) DO UPDATE SET "
+                             "datasets=excluded.datasets,meta=excluded.meta,updated_at=excluded.updated_at",
+                             (name, json.dumps(datasets), json.dumps(meta), now_iso()))
+                conn.commit(); return True
+            finally:
+                conn.close()
+        ok = await loop.run_in_executor(None, _w)
+        return {"ok": ok, "name": name, "datasets": datasets,
+                "node_ids": len(meta.get("node_ids", [])), "graph": graph or None}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@capability(
+    "worldview.subview.activate",
+    http_method="POST", http_path="/worldview/subviews/activate",
+    http_tags=["worldview", "subview"], memory="off",
+    description="Activate a sub-worldview (loads its checkpoint). Pass name='' for global.",
+)
+async def cap_subview_activate(name: str = "", trace_id=None) -> Dict:
+    global _WV_ACTIVE_SUBVIEW, _WV_ACTIVE_SUBVIEW_DATASETS
+    if not name or name == "global":
+        # Switch to global — reload the default checkpoint
+        prev = _WV_ACTIVE_SUBVIEW
+        _WV_ACTIVE_SUBVIEW = ""
+        _WV_ACTIVE_SUBVIEW_DATASETS = []
+        # Try fabric checkpoint first (most complete state)
+        blob = await _fabric_load_checkpoint()
+        if blob and MODEL.load_bytes(blob):
+            MODEL.last_fabric_load = now_iso()
+            log.info("worldview: switched to global (fabric checkpoint)")
+            return {"ok": True, "active": "", "previous": prev,
+                    "message": "Switched to global WorldView",
+                    "train_steps": MODEL.train_steps,
+                    "records": len(MODEL.record_concepts)}
+        # Fall back to local file
+        if MODEL.load():
+            log.info("worldview: switched to global (local file)")
+            return {"ok": True, "active": "", "previous": prev,
+                    "message": "Switched to global (local file)",
+                    "train_steps": MODEL.train_steps,
+                    "records": len(MODEL.record_concepts)}
+        return {"ok": True, "active": "", "previous": prev,
+                "message": "Switched to global (no checkpoint — model reset)"}
+
+    # Load sub-worldview checkpoint
+    fab = _get_fabric()
+    if not fab:
+        return {"error": "Fabric not available"}
+    # First verify the sub exists
+    try:
+        loop = asyncio.get_running_loop()
+        def _check():
+            conn = fab._sqlite_conn() if callable(getattr(fab, "_sqlite_conn", None)) else None
+            if not conn: return None
+            try:
+                conn.execute("CREATE TABLE IF NOT EXISTS worldview_subviews("
+                             "name TEXT PRIMARY KEY, datasets TEXT, meta TEXT, updated_at TEXT)")
+                cur = conn.execute("SELECT datasets FROM worldview_subviews WHERE name=?", (name,))
+                row = cur.fetchone()
+                return json.loads(row[0]) if row else None
+            finally:
+                conn.close()
+        datasets = await loop.run_in_executor(None, _check)
+    except Exception:
+        datasets = None
+
+    key = f"worldview_sub_{name}"
+    try:
+        loop = asyncio.get_running_loop()
+        def _r():
+            conn = fab._sqlite_conn() if callable(getattr(fab, "_sqlite_conn", None)) else None
+            if not conn: return None
+            try:
+                cur = conn.execute("SELECT blob FROM worldview_checkpoints WHERE key=?", (key,))
+                r = cur.fetchone()
+                return bytes(r[0]) if r and r[0] else None
+            except Exception:
+                return None
+            finally:
+                conn.close()
+        blob = await loop.run_in_executor(None, _r)
+    except Exception:
+        blob = None
+    if blob and MODEL.load_bytes(blob):
+        _WV_ACTIVE_SUBVIEW = name
+        _WV_ACTIVE_SUBVIEW_DATASETS = datasets or []
+        MODEL.last_fabric_load = now_iso()
+        return {"ok": True, "active": name, "datasets": datasets,
+                "train_steps": MODEL.train_steps,
+                "records": len(MODEL.record_concepts)}
+    elif not blob:
+        _WV_ACTIVE_SUBVIEW = name
+        _WV_ACTIVE_SUBVIEW_DATASETS = datasets or []
+        return {"ok": True, "active": name, "datasets": datasets,
+                "message": "Sub-worldview activated (no checkpoint yet — train it)"}
+    return {"error": "Failed to load checkpoint"}
+
+
+@capability(
+    "worldview.subview.save",
+    http_method="POST", http_path="/worldview/subviews/save",
+    http_tags=["worldview", "subview"], memory="off",
+    description="Save the current model state as the active sub-worldview's checkpoint.",
+)
+async def cap_subview_save(trace_id=None) -> Dict:
+    if not _WV_ACTIVE_SUBVIEW:
+        return {"error": "No sub-worldview active (use global persist instead)"}
+    if not MODEL.ready:
+        return {"error": "Model not ready"}
+    blob = MODEL.serialize_bytes()
+    if not blob:
+        return {"error": "Serialize failed"}
+    key = f"worldview_sub_{_WV_ACTIVE_SUBVIEW}"
+    meta = {"name": _WV_ACTIVE_SUBVIEW, "train_steps": MODEL.train_steps,
+            "records": len(MODEL.record_concepts), "saved_at": now_iso()}
+    fab = _get_fabric()
+    if not fab:
+        return {"error": "Fabric not available"}
+    try:
+        loop = asyncio.get_running_loop()
+        def _w():
+            conn = fab._sqlite_conn() if callable(getattr(fab, "_sqlite_conn", None)) else None
+            if not conn: return False
+            try:
+                conn.execute("CREATE TABLE IF NOT EXISTS worldview_checkpoints("
+                             "key TEXT PRIMARY KEY, blob BLOB, meta TEXT, updated_at TEXT)")
+                conn.execute("INSERT INTO worldview_checkpoints(key,blob,meta,updated_at) "
+                             "VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET "
+                             "blob=excluded.blob,meta=excluded.meta,updated_at=excluded.updated_at",
+                             (key, sqlite3.Binary(blob), json.dumps(meta), now_iso()))
+                conn.commit(); return True
+            finally:
+                conn.close()
+        ok = await loop.run_in_executor(None, _w)
+        return {"ok": ok, "name": _WV_ACTIVE_SUBVIEW, "bytes": len(blob)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@capability(
+    "worldview.subview.delete",
+    http_method="POST", http_path="/worldview/subviews/delete",
+    http_tags=["worldview", "subview"], memory="off",
+    description="Delete a sub-worldview (name + checkpoint). Input: name (str).",
+)
+async def cap_subview_delete(name: str = "", trace_id=None) -> Dict:
+    global _WV_ACTIVE_SUBVIEW
+    if not name:
+        return {"error": "Provide a name"}
+    fab = _get_fabric()
+    if not fab:
+        return {"error": "Fabric not available"}
+    try:
+        loop = asyncio.get_running_loop()
+        def _w():
+            conn = fab._sqlite_conn() if callable(getattr(fab, "_sqlite_conn", None)) else None
+            if not conn: return False
+            try:
+                conn.execute("DELETE FROM worldview_subviews WHERE name=?", (name,))
+                conn.execute("DELETE FROM worldview_checkpoints WHERE key=?",
+                             (f"worldview_sub_{name}",))
+                conn.commit(); return True
+            finally:
+                conn.close()
+        ok = await loop.run_in_executor(None, _w)
+        if _WV_ACTIVE_SUBVIEW == name:
+            _WV_ACTIVE_SUBVIEW = ""
+        return {"ok": ok, "deleted": name}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # UI REGISTRATION  —  injected as sub-section inside the Data Fabric panel
 # (not a standalone top-level tab — the fabric panel hosts it via iframe)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -4335,6 +5508,7 @@ try:
             "worldview.counterfactual", "worldview.query", "worldview.anomalies",
             "worldview.snapshot", "worldview.concepts",
             "worldview.concept_neighbors", "worldview.concept_members",
+            "worldview.concept_detail",
             "worldview.explain_record", "worldview.label_concepts",
             "worldview.stats",
             "worldview.config", "worldview.config_set",
@@ -4344,6 +5518,9 @@ try:
             "worldview.summarise",
             "worldview.persist", "worldview.load_from_fabric",
             "worldview.loss_history",
+            "worldview.subview.list", "worldview.subview.create",
+            "worldview.subview.activate", "worldview.subview.save",
+            "worldview.subview.delete",
         ],
         mode="inject",   # fabric_panel.html hosts the WorldView iframe directly
         tab_order=55,

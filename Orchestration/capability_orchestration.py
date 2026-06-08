@@ -130,6 +130,21 @@ OLLAMA_INSTANCES: Dict[str, dict] = {
                 "priority":2,"status":"unknown","latency_ms":None,"models":[],"in_use":0,"last_check":None,"errors":0},
 }
 
+# Per-instance concurrency semaphores for Ollama — limits simultaneous
+# in-flight requests per node to 1 (Ollama queues internally but multiple
+# concurrent httpx connections cause request pile-ups and timeouts).
+# Callers that want parallelism across *different* nodes are unaffected.
+# Use acquire/release via `async with _ollama_sem(iid):` pattern.
+_OLLAMA_SEMAPHORES: Dict[str, asyncio.Semaphore] = {}
+_OLLAMA_SEM_LIMIT = int(os.environ.get("OLLAMA_CONCURRENCY", "1"))
+
+def _ollama_sem(iid: str) -> asyncio.Semaphore:
+    """Return (creating if needed) the per-instance Semaphore."""
+    if iid not in _OLLAMA_SEMAPHORES:
+        _OLLAMA_SEMAPHORES[iid] = asyncio.Semaphore(_OLLAMA_SEM_LIMIT)
+    return _OLLAMA_SEMAPHORES[iid]
+
+
 def add_ollama_instance(iid: str, url: str, has_gpu: bool = False, label: str = ""):
     OLLAMA_INSTANCES[iid] = {"url":url,"label":label or iid,"has_gpu":has_gpu,
                               "priority":len(OLLAMA_INSTANCES),"status":"unknown",
@@ -157,13 +172,40 @@ def pick_instance(prefer_gpu: bool = False, instance_id: Optional[str] = None, m
     online = {iid:i for iid,i in OLLAMA_INSTANCES.items() if i["status"]=="online"}
     if not online: return None
     if instance_id and instance_id in online: return instance_id
+
+    def _has_model(inst, mdl):
+        """Check if an instance has a model — flexible name matching."""
+        if not mdl: return True
+        models = inst.get("models", [])
+        mdl_base = mdl.split(":")[0]
+        for m in models:
+            if m == mdl or m.startswith(mdl + ":") or m.split(":")[0] == mdl_base:
+                return True
+        return False
+
+    def _pick_best(candidates):
+        return min(candidates, key=lambda k: (candidates[k]["in_use"], candidates[k]["priority"]))
+
+    # Build model-aware candidate sets
+    has_model = {iid:i for iid,i in online.items() if _has_model(i, model)} if model else online
+
     if prefer_gpu:
-        gpu = {iid:i for iid,i in online.items() if i["has_gpu"]}
-        if gpu: return min(gpu,key=lambda k:(gpu[k]["in_use"],gpu[k]["priority"]))
+        # Best: GPU node that has the model
+        gpu_with_model = {iid:i for iid,i in has_model.items() if i["has_gpu"]}
+        if gpu_with_model: return _pick_best(gpu_with_model)
+        # Next: any node that has the model
+        if has_model: return _pick_best(has_model)
+        # Last resort: any GPU node (will likely 404 but may auto-pull)
+        gpu_any = {iid:i for iid,i in online.items() if i["has_gpu"]}
+        if gpu_any: return _pick_best(gpu_any)
+
+    # Non-GPU preference: prefer nodes with the model
+    if has_model: return _pick_best(has_model)
+
+    # No node has the model — pick least busy, log a warning
     if model:
-        has = {iid:i for iid,i in online.items() if model in i["models"]}
-        if has: return min(has,key=lambda k:(has[k]["in_use"],has[k]["priority"]))
-    return min(online,key=lambda k:(online[k]["in_use"],online[k]["priority"]))
+        log.warning("pick_instance: model '%s' not found on any online node — routing to least busy", model)
+    return _pick_best(online)
 
 def _ollama_caller_info(depth: int = 3) -> dict:
     """Walk the call stack to identify who triggered this Ollama request.
@@ -198,7 +240,8 @@ _OLLAMA_REQUEST_LOG_MAX = 500
 
 async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False,
                            model: Optional[str] = None, instance_id: Optional[str] = None,
-                           prefer_gpu: bool = False, stream_cb: Optional[Callable] = None) -> str:
+                           prefer_gpu: bool = False, stream_cb: Optional[Callable] = None,
+                           caller_override: Optional[dict] = None) -> str:
     chosen = pick_instance(prefer_gpu=prefer_gpu,instance_id=instance_id,model=model) or "cpu-246"
     inst   = OLLAMA_INSTANCES[chosen]
     mdl    = model or OLLAMA_MODEL
@@ -207,7 +250,9 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     if json_mode: body["format"]  = "json"
 
     # ── Identify caller and log the request ──────────────────────────────────
-    caller   = _ollama_caller_info()
+    # caller_override lets an intermediary cap (e.g. llm.generate) pass
+    # through the true upstream caller rather than appearing as the caller.
+    caller   = caller_override if caller_override else _ollama_caller_info()
     req_id   = str(uuid.uuid4())[:12]
     t_start  = time.time()
     prompt_preview = (prompt or "")[:120].replace("\n", " ")
@@ -247,24 +292,60 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     }
 
     inst["in_use"] += 1
+    # Acquire per-instance semaphore — prevents concurrent request pile-ups on
+    # the same Ollama node. OLLAMA_CONCURRENCY env var sets the limit (default 1).
     try:
-        async with httpx.AsyncClient(timeout=120) as c:
-            if stream_cb:
-                async with c.stream("POST",f"{inst['url']}/api/generate",json=body) as resp:
-                    resp.raise_for_status(); buf=[]
-                    async for line in resp.aiter_lines():
-                        if not line: continue
+        async with _ollama_sem(chosen):
+            async with httpx.AsyncClient(timeout=120) as c:
+                if stream_cb:
+                    async with c.stream("POST",f"{inst['url']}/api/generate",json=body) as resp:
+                        if resp.status_code != 200:
+                            err_body = ""
+                            async for chunk in resp.aiter_bytes():
+                                err_body += chunk.decode("utf-8", errors="replace")
+                            raise Exception(f"ollama returned {resp.status_code}: {err_body[:500]}")
+                        buf=[]
+                        async for line in resp.aiter_lines():
+                            if not line: continue
+                            try:
+                                tok=json.loads(line).get("response","")
+                                if tok: buf.append(tok); await stream_cb(tok)
+                            except: pass
+                        result = "".join(buf)
+                        elapsed = round(time.time() - t_start, 2)
+                        log.info("ollama_done [%s] %.2fs tokens=%d caller=%s:%s",
+                                 req_id, elapsed, len(buf),
+                                 caller["caller_file"], caller["caller_func"])
+                        req_entry.update({"status": "done", "elapsed_s": elapsed,
+                                          "tokens": len(buf)})
+                        _ollama_log_append(req_entry)
                         try:
-                            tok=json.loads(line).get("response","")
-                            if tok: buf.append(tok); await stream_cb(tok)
-                        except: pass
-                    result = "".join(buf)
+                            await emit_event({
+                                "type": "ollama.request_done", "req_id": req_id,
+                                "model": mdl, "instance_id": chosen,
+                                "caller_file": caller["caller_file"],
+                                "caller_func": caller["caller_func"],
+                                "elapsed_s": elapsed, "token_count": len(buf),
+                            })
+                        except Exception:
+                            pass
+                        return result
+                else:
+                    r=await c.post(f"{inst['url']}/api/generate",json=body)
+                    if r.status_code != 200:
+                        err_detail = r.text[:500] if r.text else f"HTTP {r.status_code}"
+                        log.error("ollama_generate [%s] HTTP %d from %s: %s",
+                                  req_id, r.status_code, chosen, err_detail)
+                        raise Exception(f"ollama {r.status_code} on {chosen}: {err_detail}")
+                    d = r.json()
+                    result = d.get("response","")
                     elapsed = round(time.time() - t_start, 2)
-                    log.info("ollama_done [%s] %.2fs tokens=%d caller=%s:%s",
-                             req_id, elapsed, len(buf),
+                    eval_count = d.get("eval_count", 0)
+                    log.info("ollama_done [%s] %.2fs eval_count=%s caller=%s:%s",
+                             req_id, elapsed, eval_count,
                              caller["caller_file"], caller["caller_func"])
                     req_entry.update({"status": "done", "elapsed_s": elapsed,
-                                      "tokens": len(buf)})
+                                      "eval_count": eval_count})
                     _ollama_log_append(req_entry)
                     try:
                         await emit_event({
@@ -272,34 +353,11 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                             "model": mdl, "instance_id": chosen,
                             "caller_file": caller["caller_file"],
                             "caller_func": caller["caller_func"],
-                            "elapsed_s": elapsed, "token_count": len(buf),
+                            "elapsed_s": elapsed, "eval_count": eval_count,
                         })
                     except Exception:
                         pass
                     return result
-            else:
-                r=await c.post(f"{inst['url']}/api/generate",json=body); r.raise_for_status()
-                d = r.json()
-                result = d.get("response","")
-                elapsed = round(time.time() - t_start, 2)
-                eval_count = d.get("eval_count", 0)
-                log.info("ollama_done [%s] %.2fs eval_count=%s caller=%s:%s",
-                         req_id, elapsed, eval_count,
-                         caller["caller_file"], caller["caller_func"])
-                req_entry.update({"status": "done", "elapsed_s": elapsed,
-                                  "eval_count": eval_count})
-                _ollama_log_append(req_entry)
-                try:
-                    await emit_event({
-                        "type": "ollama.request_done", "req_id": req_id,
-                        "model": mdl, "instance_id": chosen,
-                        "caller_file": caller["caller_file"],
-                        "caller_func": caller["caller_func"],
-                        "elapsed_s": elapsed, "eval_count": eval_count,
-                    })
-                except Exception:
-                    pass
-                return result
     except Exception as e:
         elapsed = round(time.time() - t_start, 2)
         log.error("ollama_generate [%s] FAILED after %.2fs inst=%s caller=%s:%s err=%s",
@@ -321,10 +379,20 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
             pass
         for fb_id,fb_inst in OLLAMA_INSTANCES.items():
             if fb_id==chosen or fb_inst["status"]!="online": continue
+            # Skip nodes that don't have the model
+            fb_models = fb_inst.get("models", [])
+            mdl_base = mdl.split(":")[0]
+            if fb_models and not any(m == mdl or m.startswith(mdl+":") or m.split(":")[0] == mdl_base for m in fb_models):
+                log.debug("ollama_fallback [%s] skipping %s — model '%s' not available", req_id, fb_id, mdl)
+                continue
             try:
                 log.info("ollama_fallback [%s] trying %s", req_id, fb_id)
                 async with httpx.AsyncClient(timeout=120) as c:
-                    r=await c.post(f"{fb_inst['url']}/api/generate",json={**body,"stream":False}); r.raise_for_status()
+                    r=await c.post(f"{fb_inst['url']}/api/generate",json={**body,"stream":False})
+                    if r.status_code != 200:
+                        err_detail = r.text[:300] if r.text else f"HTTP {r.status_code}"
+                        log.warning("ollama_fallback [%s] %s returned %d: %s", req_id, fb_id, r.status_code, err_detail)
+                        continue
                     fb_elapsed = round(time.time() - t_start, 2)
                     log.info("ollama_fallback [%s] OK on %s after %.2fs",
                              req_id, fb_id, fb_elapsed)
@@ -1399,7 +1467,7 @@ def _act_enqueue(cap_name: str, group: str, session_id: str,
         return  # genuinely orphaned call — drop
     if group in _ACT_SKIP_GROUPS:
         return
-    if not sys.modules.get("Vera.Orchestration.fabric.memory") and not sys.modules.get("Vera.Orchestration.fabric.data_fabric"):
+    if not sys.modules.get("data_fabric"):
         return  # backends not loaded yet
     try:
         if _ACT_QUEUE is None:
@@ -1626,7 +1694,7 @@ async def _activity_worker():
         try:
             await _act_asyncio.sleep(2.0)
             # Only process if memory system is loaded (avoids hammering during startup)
-            if not sys.modules.get("Vera.Orchestration.fabric.memory") and not sys.modules.get("Vera.Orchestration.fabric.data_fabric"):
+            if not sys.modules.get("data_fabric"):
                 continue
             batch = []
             while not _ACT_QUEUE.empty() and len(batch) < 50:
@@ -1637,9 +1705,9 @@ async def _activity_worker():
             if not batch:
                 continue
 
-            mem_mod = sys.modules.get("Vera.Orchestration.fabric.memory")
-            hooks   = sys.modules.get("Vera.Orchestration.fabric.memory_hooks")
-            fabric  = sys.modules.get("Vera.Orchestration.fabric.data_fabric")
+            mem_mod = sys.modules.get("memory")
+            hooks   = sys.modules.get("memory_hooks")
+            fabric  = sys.modules.get("data_fabric")
 
             for item in batch:
                 sid          = item["session_id"]
@@ -2930,13 +2998,21 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "capabilities/capabilities.py"),
         os.path.join(_here, "capabilities/cap_hub_capabilities.py"),
         os.path.join(_here, "capabilities/cap_tracking.py"),
+        os.path.join(_here, "fabric/memory.py"),
+        os.path.join(_here, "fabric/memory_hooks.py"),
+        os.path.join(_here, "fabric/data_fabric_collectors.py"),
+        os.path.join(_here, "fabric/data_fabric.py"),
+        os.path.join(_here, "fabric/fabric_web_acquisition.py"),
+        os.path.join(_here, "fabric/memory_second_order.py"),
+        os.path.join(_here, "fabric/context.py"),
+        os.path.join(_here, "fabric/discovery.py"),
         os.path.join(_here, "skills/skills.py"),
         os.path.join(_here, "skills/skills_owl.py"),
         os.path.join(_here, "dag/dag_store.py"),
         os.path.join(_here, "dag/dag_workshop_capabilities.py"),
         os.path.join(_here, "agents/agents.py"),
         os.path.join(_here, "workers/cluster.py"),
-        os.path.join(_here, "syslog.py"),
+        os.path.join(_here, "workers/syslog.py"),
         os.path.join(_here, "ui builder/ui_capabilities.py"),
         os.path.join(_here, "ide/ide_capabilities.py"),
         os.path.join(_here, "ide/ide_code_capabilities.py"),
@@ -2952,14 +3028,6 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "execution/exec_capabilities.py"),
         os.path.join(_here, "workers/workers.py"),
         os.path.join(_here, "web/browser_capabilities.py"),
-        os.path.join(_here, "fabric/memory.py"),
-        os.path.join(_here, "fabric/memory_hooks.py"),
-        os.path.join(_here, "fabric/data_fabric_collectors.py"),
-        os.path.join(_here, "fabric/data_fabric.py"),
-        os.path.join(_here, "fabric/fabric_web_acquisition.py"),
-        os.path.join(_here, "fabric/memory_second_order.py"),
-        os.path.join(_here, "fabric/context.py"),
-        os.path.join(_here, "fabric/discovery.py"),
         # os.path.join(_here, "vllm/vllm_capabilities.py"),
         os.path.join(_here, "machine learning/ml_workshop.py"),
         os.path.join(_here, "machine learning/ml_training.py"),
@@ -2972,7 +3040,8 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "worldview/worldview_jepa.py"),
         os.path.join(_here, "research/researcher_api.py"),
         os.path.join(_here, "vector browser/vector_browser_capabilites.py"),
-        os.path.join(_here, "workers/job_persistance.py")
+        os.path.join(_here, "workers/job_persistance.py"),
+        os.path.join(_here, "vera_graph_panels.py")
         
     ]
     _extra = os.getenv("VERA_MODULES", "")
@@ -3014,7 +3083,7 @@ async def lifespan(app: FastAPI):
     
     import Vera.Orchestration.agents.agents_context_patch
 
-    _ct = sys.modules.get("Vera.Orchestration.capabilities.cap_tracking")
+    _ct = sys.modules.get("cap_tracking")
     if _ct:
         _ct.install(sys.modules[__name__])
         asyncio.create_task(_activity_worker())

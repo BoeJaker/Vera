@@ -247,8 +247,8 @@ async def _record_to_graph(item: dict, category: str, cap_name: str,
     if not session_id:
         return
     try:
-        hooks   = sys.modules.get("Vera.Orchestration.fabric.memory_hooks")
-        mem_mod = sys.modules.get("Vera.Orchestration.fabric.memory")
+        hooks   = sys.modules.get("memory_hooks")
+        mem_mod = sys.modules.get("memory")
         if not hooks or not mem_mod:
             return
         MEMORY, MemoryRecord = mem_mod.MEMORY, mem_mod.MemoryRecord
@@ -275,7 +275,7 @@ async def _record_to_graph(item: dict, category: str, cap_name: str,
 async def _record_to_fabric(item: dict, dataset_id: str, tags: list):
     """Store a skill/ontology in the data fabric (primary persistent store)."""
     try:
-        fabric = sys.modules.get("Vera.Orchestration.fabric.data_fabric")
+        fabric = sys.modules.get("data_fabric")
         if not fabric:
             return
         text = "\n".join(filter(None, [
@@ -297,7 +297,7 @@ async def _record_to_fabric(item: dict, dataset_id: str, tags: list):
 async def _load_from_fabric(dataset_id: str, store: dict):
     """Pull all records from a fabric dataset into the in-memory store."""
     try:
-        fabric = sys.modules.get("Vera.Orchestration.fabric.data_fabric")
+        fabric = sys.modules.get("data_fabric")
         if not fabric:
             return 0
         results = await fabric.query_dataset(

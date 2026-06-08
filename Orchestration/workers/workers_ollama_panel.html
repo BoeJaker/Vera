@@ -79,7 +79,9 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
 .w-grip{cursor:grab;user-select:none;color:var(--dim);font-size:11px;padding:0 2px;letter-spacing:-1px;display:none}
 .dash-grid.editing .w-grip{display:inline-block}
 .dash-grid.editing .widget{cursor:move}
-.w-body{padding:9px 11px;display:flex;flex-direction:column;flex:1;min-height:0;overflow:auto}
+.w-body{padding:9px 11px;display:flex;flex-direction:column;flex:1;min-height:0;overflow:auto;user-select:text;-webkit-user-select:text}
+.dash-grid.editing .w-body{user-select:none;-webkit-user-select:none}
+.ol-sub.active{background:var(--gpu) !important;color:var(--bg0) !important;border-color:var(--gpu) !important}
 .w-body.flush{padding:0}
 .w-resize{position:absolute;right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize;display:none}
 .dash-grid.editing .w-resize{display:flex}
@@ -268,7 +270,7 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
 .obs-row.cat-fabric{border-left-color:#fb923c}
 .obs-row.cat-system{border-left-color:var(--dim)}
 .obs-row.cat-other{border-left-color:var(--acc4)}
-.obs-detail{font-size:9px;color:var(--dim2);margin-top:2px;white-space:pre-wrap;word-break:break-all;display:none}
+.obs-detail{font-size:9px;color:var(--dim2);margin-top:2px;white-space:pre-wrap;word-break:break-all;display:none;user-select:text;-webkit-user-select:text;cursor:text}
 .obs-row.expanded .obs-detail{display:block}
 
 /* ── System Log entries ── */
@@ -306,8 +308,6 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
     <div class="snav on" data-pane="workers" onclick="P.show('workers',this)">Workers</div>
     <div class="navdiv"></div>
     <div class="snav" data-pane="ollama" onclick="P.show('ollama',this)">Ollama</div>
-    <div class="navdiv"></div>
-    <div class="snav" data-pane="jobs" onclick="P.show('jobs',this)">Jobs</div>
     <div class="navdiv"></div>
     <div class="snav" data-pane="observe" onclick="P.show('observe',this)">Observe</div>
   </div>
@@ -403,9 +403,16 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
       <div class="pane-tb">
         <span class="pane-tb-title" style="color:var(--gpu)">OLLAMA CLUSTER</span>
         <span class="tb-sep"></span>
+        <!-- Sub-tabs: Nodes / Jobs / Wrapper -->
+        <div style="display:flex;gap:1px;margin-right:8px">
+          <button class="btn sm ol-sub active" data-olsub="nodes" onclick="P.olSubTab('nodes',this)" style="border-radius:3px 0 0 3px">Nodes</button>
+          <button class="btn sm ol-sub" data-olsub="jobs" onclick="P.olSubTab('jobs',this)" style="border-radius:0">Jobs</button>
+          <button class="btn sm ol-sub" data-olsub="wrapper" onclick="P.olSubTab('wrapper',this)" style="border-radius:0 3px 3px 0">Wrapper</button>
+        </div>
+        <span class="tb-sep"></span>
         <button class="btn sm" onclick="P.refresh()">↻ Refresh</button>
         <button class="btn sm gpu-btn" onclick="P.olPingAll()">Ping All</button>
-        <button class="btn sm gpu-btn" onclick="P.openPullModal()">⬇ Pull Model</button>
+        <button class="btn sm gpu-btn" onclick="P.openPullModal()">Pull Model</button>
         <span class="tb-sep"></span>
         <button class="btn sm" id="ol-edit-btn" onclick="P.gridToggleEdit('ollama')">⚙ Configure</button>
         <button class="btn sm" onclick="P.gridReset('ollama')">Reset</button>
@@ -414,6 +421,9 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
       </div>
 
       <div class="dash-picker" id="ol-hidden-picker"><span style="font-size:9px;color:var(--dim);margin-right:4px">Hidden:</span><span id="ol-hidden-chips"></span></div>
+
+      <!-- Sub-pane: Nodes (existing ollama grid) -->
+      <div id="ol-sub-nodes">
 
       <div class="dash-grid" id="ol-grid">
         <!-- Routing config -->
@@ -428,7 +438,7 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
               <div class="strat" data-s="fastest" onclick="P.setStrat(this)">Fastest</div>
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px">
-              <div class="fld"><label>Default Model</label><input id="ol-def-model" value="mistral" style="font-size:9.5px"></div>
+              <div class="fld"><label>Default Model</label><input id="ol-def-model" value="jaahas/qwen3.5-uncensored" style="font-size:9.5px"></div>
               <div class="fld"><label>Pin Instance</label><select id="ol-pin" style="font-size:9.5px"><option value="">None (strategy)</option></select></div>
             </div>
             <div style="font-size:9px;color:var(--dim2);line-height:1.7;margin-top:6px">
@@ -512,24 +522,10 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
           <span class="w-resize" data-resize></span>
         </div>
       </div>
-    </div>
+      </div><!-- /ol-sub-nodes -->
 
-    <!-- ════════════════════════════════════════════════════════════════════
-         JOBS PANE
-         ════════════════════════════════════════════════════════════════════ -->
-    <div class="pane" id="pane-jobs">
-      <div class="pane-tb">
-        <span class="pane-tb-title" style="color:var(--acc3)">LIVE JOBS</span>
-        <span class="tb-sep"></span>
-        <button class="btn sm" onclick="P.refresh()">↻ Refresh</button>
-        <button class="btn sm" onclick="P.autoToggle()"><span id="j-auto-lbl">Auto 5s</span></button>
-        <span class="tb-sep"></span>
-        <button class="btn sm" id="j-edit-btn" onclick="P.gridToggleEdit('jobs')">⚙ Configure</button>
-        <button class="btn sm" onclick="P.gridReset('jobs')">Reset</button>
-        <button class="btn sm" onclick="P.openWidgetLoader('jobs')">+ Add Widget</button>
-        <span class="status-hint" id="j-ts"></span>
-      </div>
-
+      <!-- Sub-pane: Jobs (moved from standalone Jobs pane) -->
+      <div id="ol-sub-jobs" style="display:none">
       <div class="dash-picker" id="j-hidden-picker"><span style="font-size:9px;color:var(--dim);margin-right:4px">Hidden:</span><span id="j-hidden-chips"></span></div>
 
       <div class="dash-grid" id="j-grid">
@@ -573,6 +569,7 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
               <div class="j-tab active" id="jt-pending" onclick="P.jTab('pending')">Pending <span class="j-cnt" id="jc-pending">0</span></div>
               <div class="j-tab" id="jt-running" onclick="P.jTab('running')">Running <span class="j-cnt" id="jc-running">0</span></div>
               <div class="j-tab" id="jt-done" onclick="P.jTab('done')">Completed <span class="j-cnt" id="jc-done">0</span></div>
+              <div class="j-tab" id="jt-failed" onclick="P.jTab('failed')" style="color:var(--err)">Failed <span class="j-cnt" id="jc-failed">0</span></div>
               <div class="j-tab" id="jt-history" onclick="P.jTab('history')">History <span class="j-cnt" id="jc-history">0</span></div>
               <div class="j-tab" id="jt-ollama" onclick="P.jTab('ollama')" style="color:var(--gpu)">Ollama Log <span class="j-cnt" id="jc-ollama">0</span></div>
               <div class="j-tab" id="jt-stream" onclick="P.jTab('stream')">Stream</div>
@@ -583,7 +580,7 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
             <div id="j-empty" class="j-empty">No jobs</div>
             <div id="j-live-wrap" style="overflow-y:auto;max-height:400px">
               <table class="job-tbl" id="j-table" style="display:none">
-                <thead><tr><th>Task ID</th><th>Capability</th><th>Worker</th><th>Caller</th><th>Age</th><th>State</th></tr></thead>
+                <thead><tr><th>ID</th><th>Capability</th><th>Model</th><th>Instance</th><th>Caller</th><th>Elapsed</th><th>Tokens</th><th>Timestamp</th><th>State</th><th></th></tr></thead>
                 <tbody id="j-tbody"></tbody>
               </table>
             </div>
@@ -592,7 +589,7 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
             <!-- History tab (persisted across reboots) -->
             <div id="j-history-wrap" style="display:none;overflow-y:auto;max-height:400px">
               <table class="job-tbl" id="jh-table" style="display:none">
-                <thead><tr><th>ID</th><th>Capability</th><th>Instance</th><th>Caller</th><th>Elapsed</th><th>Age</th><th>State</th><th>Boot</th></tr></thead>
+                <thead><tr><th>ID</th><th>Capability</th><th>Instance</th><th>Caller</th><th>Elapsed</th><th>Timestamp</th><th>State</th><th>Boot</th></tr></thead>
                 <tbody id="jh-tbody"></tbody>
               </table>
               <div id="jh-empty" class="j-empty">No persisted history yet</div>
@@ -604,7 +601,7 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
               <div id="j-ollama-summary" class="j-summary-grid"></div>
               <div style="overflow-y:auto;max-height:300px">
                 <table class="job-tbl" id="jo-table" style="display:none">
-                  <thead><tr><th>Instance</th><th>Model</th><th>Caller</th><th>Cap</th><th>Prompt</th><th>Status</th><th>Age</th></tr></thead>
+                  <thead><tr><th>Instance</th><th>Model</th><th>Caller</th><th>Cap</th><th>Prompt</th><th>Status</th><th>Timestamp</th></tr></thead>
                   <tbody id="jo-tbody"></tbody>
                 </table>
                 <div id="jo-empty" class="j-empty">No Ollama requests logged</div>
@@ -625,7 +622,25 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
           <span class="w-resize" data-resize></span>
         </div>
       </div>
-    </div>
+      </div><!-- /ol-sub-jobs -->
+
+      <!-- Sub-pane: Wrapper -->
+      <div id="ol-sub-wrapper" style="display:none;flex:1;flex-direction:column;min-height:0">
+        <div style="display:flex;gap:1px;background:var(--border);border-bottom:1px solid var(--border);flex-shrink:0">
+          <div style="flex:1;background:var(--bg1);padding:5px 8px"><div style="font-size:7px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">Active</div><div id="owb-active" style="font-size:14px;font-weight:700;color:var(--warn)">—</div></div>
+          <div style="flex:1;background:var(--bg1);padding:5px 8px"><div style="font-size:7px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">Total</div><div id="owb-total" style="font-size:14px;font-weight:700;color:var(--acc)">—</div></div>
+          <div style="flex:1;background:var(--bg1);padding:5px 8px"><div style="font-size:7px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">Kills</div><div id="owb-kills" style="font-size:14px;font-weight:700;color:var(--err)">—</div></div>
+          <div style="flex:1;background:var(--bg1);padding:5px 8px"><div style="font-size:7px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">Watchdog</div><div id="owb-wd" style="font-size:10px;font-weight:600;color:var(--dim2)">—</div></div>
+          <div style="flex:1;background:var(--bg1);padding:5px 8px;display:flex;align-items:center;gap:4px">
+            <select id="obs-wrapper-sel" style="font-size:8px;padding:2px 4px;background:var(--bg0);border:1px solid var(--border);color:var(--text);border-radius:3px;flex:1" onchange="P.wrapperSwitchNode(this.value)"></select>
+            <button class="btn sm" onclick="P.wrapperRefresh()" style="font-size:8px;padding:2px 6px">↻</button>
+          </div>
+        </div>
+        <div id="obs-wrapper-kills" style="flex-shrink:0;max-height:120px;overflow-y:auto;border-bottom:1px solid var(--border);display:none"></div>
+        <iframe id="obs-wrapper-iframe" style="flex:1;border:none;min-height:0;background:var(--bg0)" src="about:blank"></iframe>
+      </div><!-- /ol-sub-wrapper -->
+
+    </div><!-- /pane-ollama -->
 
     <!-- ══════════════════════════════════════════════════════════════════════
          OBSERVE PANE
@@ -701,17 +716,17 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
                 <span id="sl-status" style="font-size:8px;color:var(--dim2);margin-left:auto">—</span>
               </div>
               <div id="sl-mon-report" style="font-size:9px;line-height:1.5;color:var(--text);background:var(--bg0);border-bottom:1px solid var(--border);padding:4px 6px;display:none;white-space:pre-wrap;max-height:80px;overflow-y:auto;flex-shrink:0"></div>
-              <!-- Syslog entries -->
-              <div id="sl-entries" style="flex:1;overflow-y:auto;padding:4px 6px;display:flex;flex-direction:column;gap:2px">
-                <span style="color:var(--dim);font-size:10px">Loading…</span>
-              </div>
-              <!-- Footer: ask agent -->
-              <div style="border-top:1px solid var(--border);padding:4px 6px;background:var(--bg1);display:flex;flex-direction:column;gap:4px;flex-shrink:0">
+              <!-- Ask agent — pinned above entries -->
+              <div style="border-bottom:1px solid var(--border);padding:4px 6px;background:var(--bg1);display:flex;flex-direction:column;gap:4px;flex-shrink:0">
                 <div style="display:flex;gap:4px;align-items:center">
                   <textarea id="sl-ask-q" style="flex:1;height:30px;font-size:9px;resize:none;background:var(--bg0);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:3px 5px" placeholder="Ask agent about error…"></textarea>
                   <button class="btn sm" style="font-size:8px;border-color:var(--acc);color:var(--acc)" onclick="P.syslogAsk()">Ask</button>
                 </div>
                 <div id="sl-ask-result" style="font-size:9px;line-height:1.5;background:var(--bg0);border:1px solid var(--border);border-radius:3px;padding:4px;display:none;white-space:pre-wrap;max-height:80px;overflow-y:auto"></div>
+              </div>
+              <!-- Syslog entries -->
+              <div id="sl-entries" style="flex:1;overflow-y:auto;padding:4px 6px;display:flex;flex-direction:column;gap:2px">
+                <span style="color:var(--dim);font-size:10px">Loading…</span>
               </div>
             </div>
           </div>
@@ -803,7 +818,7 @@ let _wkFilter = 'all';
 let _jTab = 'pending';
 let _autoTimer = null;
 let _autoOn = false;
-const _routing = {strategy:'gpu_first', defaultModel:'mistral', pinned:''};
+const _routing = {strategy:'gpu_first', defaultModel:'jaahas/qwen3.5-uncensored', pinned:''};
 // Client-side job tracker — remembers jobs across refresh cycles so they
 // transition through pending→running→done instead of vanishing when the
 // backend stream entry is consumed.
@@ -816,7 +831,7 @@ let _jobStats = {};       // from /jobs/stats
 // Track capability events (cap.call / cap.ok / cap.error) as jobs.
 // This catches LLM calls (llm.generate, vllm.generate, vllm.chat, etc.)
 // that never touch the Redis TASK_STREAM because they're direct HTTP calls.
-const _CAP_JOB_PREFIXES = ['llm.','vllm.','ollama.generate','pipeline.','agent.','chat.','dag.'];
+const _CAP_JOB_PREFIXES = ['vllm.','ollama.generate','pipeline.','agent.','chat.','dag.'];
 function _ingestCapEventAsJob(ev){
   if(!ev||!ev.type) return;
   const t=ev.type;
@@ -844,6 +859,8 @@ function _ingestCapEventAsJob(ev){
     } else if(t==='ollama.request_done'){
       j.state='done';
       if(ev.elapsed_s) j.elapsed_ms=Math.round(ev.elapsed_s*1000);
+      if(ev.token_count) j.token_count=ev.token_count;
+      if(ev.req_id) j.req_id=ev.req_id;
     } else if(t==='ollama.request_error'){
       j.state='failed';
       j.error=ev.error||'unknown';
@@ -863,8 +880,17 @@ function _ingestCapEventAsJob(ev){
   if(!_jobTracker[id]) _jobTracker[id]={first_seen:now,id};
   const j=_jobTracker[id];
   j.capability=capName;
+  j.cap_name=capName;
   j.last_update=now;
   j.ts=ev.ts||new Date().toISOString();
+  // Always capture available fields from every event
+  if(ev.model) j.model=ev.model;
+  if(ev.instance_id) j.instance_id=ev.instance_id;
+  if(ev.instance) j.instance_id=ev.instance;
+  if(ev.caller_file) j.caller_file=ev.caller_file;
+  if(ev.caller_func) j.caller_func=ev.caller_func;
+  if(ev.prompt_preview) j.prompt_preview=ev.prompt_preview;
+  if(ev.token_count) j.token_count=ev.token_count;
   if(t==='cap.call'){
     j.state='running';
     if(ev.instance) j.worker_id=ev.instance;
@@ -873,6 +899,9 @@ function _ingestCapEventAsJob(ev){
     j.state='done';
     if(ev.elapsed_ms) j.elapsed_ms=ev.elapsed_ms;
     if(ev.elapsed) j.elapsed_ms=Math.round(parseFloat(ev.elapsed)*1000);
+    if(ev.elapsed_s) j.elapsed_ms=Math.round(parseFloat(ev.elapsed_s)*1000);
+    if(ev.token_count) j.token_count=ev.token_count;
+    if(ev.tokens) j.token_count=ev.tokens;
   } else if(t==='cap.error'){
     j.state='failed';
     j.error=ev.error||'unknown';
@@ -884,18 +913,27 @@ function _ingestCapEventAsJob(ev){
 function _rebuildJobsFromTracker(){
   const now=Date.now();
   const cutoff=now-14400000; // 4 hours
-  const pending=[],running=[],done=[];
+  const STALE_RUNNING_MS=300000; // 5 minutes — running jobs older than this are stale
+  const pending=[],running=[],done=[],failed=[];
   for(const [id,t] of Object.entries(_jobTracker)){
-    // Only evict done/failed jobs older than cutoff; keep pending/running
     if((t.state==='done'||t.state==='failed') && (t.last_update||t.first_seen||0)<cutoff){
       delete _jobTracker[id];continue;
+    }
+    // Detect stale running jobs — no update for >5 min
+    if(t.state==='running'){
+      const lastActivity=t.last_update||t.first_seen||0;
+      if(now-lastActivity>STALE_RUNNING_MS){
+        t.state='failed';
+        t.error='stale_timeout: no update for '+(Math.round((now-lastActivity)/1000))+'s';
+      }
     }
     const j={...t,id};
     if(t.state==='pending') pending.push(j);
     else if(t.state==='running') running.push(j);
-    else if(t.state==='done'||t.state==='failed') done.push(j);
+    else if(t.state==='failed') failed.push(j);
+    else if(t.state==='done') done.push(j);
   }
-  _jobs={pending,running,done};
+  _jobs={pending,running,done,failed};
   renderJobs();
 }
 
@@ -918,6 +956,15 @@ function sq(v){return "'"+String(v??'').replace(/'/g,"\\'")+"'";}
 function $(id){return document.getElementById(id);}
 function txt(id,v){const el=$(id);if(el) el.textContent=v;}
 function age(ts){if(!ts)return '—';try{const d=typeof ts==='number'?new Date(ts*1000):new Date(ts);const s=Math.floor((Date.now()-d)/1000);return s<60?s+'s':s<3600?Math.floor(s/60)+'m':Math.floor(s/3600)+'h';}catch(e){return '—';}}
+function _fmtDateTime(ts){
+  if(!ts) return '—';
+  try{
+    const d=typeof ts==='number'?new Date(ts*1000):new Date(ts);
+    if(isNaN(d.getTime())) return '—';
+    const p=(n)=>String(n).padStart(2,'0');
+    return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+  }catch(_){return '—';}
+}
 
 // ── Refresh ──────────────────────────────────────────────────────────────────
 let _doneTotal = 0;      // total completed jobs on backend
@@ -1416,7 +1463,7 @@ async function saveEmbedCfg(){
 // ── Jobs pane ────────────────────────────────────────────────────────────────
 function jTab(t){
   _jTab=t; _jobPage=0; _histPage=0; _ollamaPage=0;
-  ['pending','running','done','history','ollama','stream'].forEach(k=>{
+  ['pending','running','done','failed','history','ollama','stream'].forEach(k=>{
     const el=$('jt-'+k);if(el) el.classList.toggle('active',k===t);
   });
   const liveWrap=$('j-live-wrap');
@@ -1424,33 +1471,36 @@ function jTab(t){
   const histWrap=$('j-history-wrap');
   const ollaWrap=$('j-ollama-wrap');
   const streamWrap=$('j-stream-wrap');
-  if(liveWrap)   liveWrap.style.display   = ['pending','running','done'].includes(t)?'':'none';
+  if(liveWrap)   liveWrap.style.display   = ['pending','running','done','failed'].includes(t)?'':'none';
   if(jEmpty)     jEmpty.style.display      = 'none';
   if(histWrap)   histWrap.style.display    = t==='history'?'':'none';
   if(ollaWrap)   ollaWrap.style.display    = t==='ollama'?'':'none';
   if(streamWrap) streamWrap.style.display  = t==='stream'?'':'none';
-  if(['pending','running','done'].includes(t)) renderJobList();
+  if(['pending','running','done','failed'].includes(t)) renderJobList();
   else if(t==='history') renderHistory();
   else if(t==='ollama') renderOllamaLog();
   else if(t==='stream') renderStreamHealth();
 }
 
 function renderJobs(){
-  ['pending','running','done'].forEach(k=>{
+  ['pending','running','done','failed'].forEach(k=>{
     txt('jc-'+k,(_jobs[k]||[]).length);
   });
-  // Use backend totals where available for KPIs
   txt('k-j-pend', _pendingTotal || (_jobs.pending||[]).length);
   txt('k-j-run',(_jobs.running||[]).length);
   txt('k-j-done', _doneTotal || (_jobs.done||[]).length);
-  const failCount = (_jobs.done||[]).filter(j=>j.success===false||j.error).length;
-  txt('k-j-fail',failCount);
+  txt('k-j-fail',(_jobs.failed||[]).length);
   setDot('j-pending',(_pendingTotal||(_jobs.pending||[]).length)>0?'warn':'ok');
   setDot('j-running',(_jobs.running||[]).length>0?'warn':'ok');
   setDot('j-done-kpi',(_doneTotal||(_jobs.done||[]).length)>0?'ok':'');
-  setDot('j-failed-kpi',failCount>0?'err':'ok');
+  setDot('j-failed-kpi',(_jobs.failed||[]).length>0?'err':'ok');
   renderJobList();
 }
+
+// Store page jobs for copy-by-index
+let _pageJobsRef=[];
+// Track which job IDs have their detail expanded
+const _expandedJobs=new Set();
 
 function renderJobList(){
   const jobs = _jobs[_jTab]||[];
@@ -1468,8 +1518,12 @@ function renderJobList(){
   }
   if(empty) empty.style.display='none';
   if(tbl) tbl.style.display='';
-  const badgeCls = {pending:'j-pending',running:'j-running',done:'j-done'};
-  // Paginate
+  // Sort newest first by timestamp
+  jobs.sort((a,b)=>{
+    const ta=a.ts||a.created_at||'',tb=b.ts||b.created_at||'';
+    return ta>tb?-1:ta<tb?1:0;
+  });
+  const badgeCls = {pending:'j-pending',running:'j-running',done:'j-done',failed:'j-failed'};
   const pageSize = _JOB_PAGE_SIZE;
   const totalItems = jobs.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
@@ -1477,22 +1531,48 @@ function renderJobList(){
   if(_jobPage < 0) _jobPage = 0;
   const start = _jobPage * pageSize;
   const pageJobs = jobs.slice(start, start + pageSize);
-  tbody.innerHTML = pageJobs.map(j=>{
-    const state = j.success===false||j.error?'failed':_jTab;
+  _pageJobsRef=pageJobs;
+  tbody.innerHTML = pageJobs.map((j,idx)=>{
+    const state = j.state==='failed'||j.success===false||j.error?'failed':(_jTab==='failed'?'failed':_jTab);
     const bc = state==='failed'?'j-failed':(badgeCls[_jTab]||'j-pending');
-    const callerInfo = j.caller_file ? esc(j.caller_file)+':'+esc(j.caller_func||'?') : '';
-    const consumerInfo = j.consumer ? ' <span style="color:var(--dim);font-size:8px">['+esc(j.consumer)+']</span>' : '';
-    const idleInfo = j.idle_ms > 60000 ? ' <span style="color:var(--err);font-size:8px">idle '+Math.floor(j.idle_ms/60000)+'m</span>' : '';
-    return '<tr>'
-      +'<td style="font-size:9px;color:var(--dim2)">'+esc((j.task_id||j.id||'').slice(-10))+'</td>'
+    const callerInfo = j.caller_file ? esc(j.caller_file)+':'+esc(j.caller_func||'?') : '—';
+    const modelStr = j.model ? esc(j.model) : '—';
+    const instId = j.instance_id||j.worker_id||j.worker||'';
+    const isGpu = instId.includes('gpu')||instId.includes('250');
+    const instLabel = instId ? '<span class="j-hist-instance '+(isGpu?'gpu':'cpu')+'">'+(isGpu?'GPU':'CPU')+' '+esc(instId.slice(-8))+'</span>' : '—';
+    const elMs = j.elapsed_ms||0;
+    const elStr = elMs>0?(elMs<1000?elMs+'ms':(elMs/1000).toFixed(1)+'s'):'—';
+    const tokStr = j.token_count ? String(j.token_count) : '—';
+    const tsDisplay = _fmtDateTime(j.created_at||j.queued_at||j.ts);
+    // Use stable job ID for detail row — survives re-renders
+    const stableId = String(j.task_id||j.req_id||j.id||idx).replace(/[^a-zA-Z0-9_-]/g,'');
+    const detailId = 'jd-'+stableId;
+    const isExpanded = _expandedJobs.has(stableId);
+
+    // Main row
+    let row = '<tr onclick="P.jToggleDetail(\''+stableId+'\')" style="cursor:pointer" title="Click to expand">'
+      +'<td style="font-size:8px;color:var(--dim2)">'+esc((j.task_id||j.req_id||j.id||'').slice(-12))+'</td>'
       +'<td>'+esc(j.cap_name||j.capability||'?')+'</td>'
-      +'<td>'+esc(j.worker_id||j.worker||'—')+consumerInfo+'</td>'
-      +(callerInfo?'<td style="font-size:9px;color:var(--acc2)">'+callerInfo+'</td>':'<td>—</td>')
-      +'<td>'+age(j.created_at||j.queued_at||j.ts)+idleInfo+'</td>'
-      +'<td><span class="j-badge '+bc+'">'+state+'</span></td>'
+      +'<td style="font-size:9px;color:var(--acc3)">'+modelStr+'</td>'
+      +'<td>'+instLabel+'</td>'
+      +'<td style="font-size:8.5px;color:var(--acc2)">'+callerInfo+'</td>'
+      +'<td>'+elStr+'</td>'
+      +'<td>'+tokStr+'</td>'
+      +'<td style="font-size:8px;color:var(--dim2);white-space:nowrap">'+tsDisplay+'</td>'
+      +'<td><span class="j-badge '+bc+'">'+esc(state)+'</span></td>'
+      +'<td><button class="btn sm" onclick="event.stopPropagation();P.jCopyRow('+idx+')" style="font-size:7px;padding:1px 5px" title="Copy">copy</button></td>'
       +'</tr>';
+
+    // Expandable detail row — preserve expanded state
+    const parts=[];
+    if(j.error) parts.push('<span style="color:var(--err);font-weight:600">Error: '+esc(j.error)+'</span>');
+    if(j.prompt_preview) parts.push('<span style="color:var(--dim)">Prompt:</span> '+esc(j.prompt_preview));
+    if(j.session_id) parts.push('<span style="color:var(--dim)">Session:</span> '+esc(j.session_id));
+    if(j.consumer) parts.push('<span style="color:var(--dim)">Consumer:</span> '+esc(j.consumer));
+    const detail = parts.length ? parts.join('<br>') : '<span style="color:var(--dim)">No additional detail</span>';
+    row += '<tr id="'+detailId+'" style="display:'+(isExpanded?'table-row':'none')+'"><td colspan="10" style="background:var(--bg0);padding:6px 10px;font-size:9px;color:var(--dim2);line-height:1.6;border-left:3px solid '+(state==='failed'?'var(--err)':'var(--border2)')+'">'+detail+'</td></tr>';
+    return row;
   }).join('');
-  // Show pager
   if(pager){
     if(totalPages > 1){
       pager.style.display='flex';
@@ -1513,6 +1593,18 @@ function renderJobList(){
 
 function jPagePrev(){ _jobPage = Math.max(0, _jobPage-1); renderJobList(); }
 function jPageNext(){ _jobPage++; renderJobList(); }
+
+function jToggleDetail(stableId){
+  const el=$('jd-'+stableId);
+  if(!el) return;
+  const show=el.style.display==='none';
+  el.style.display=show?'table-row':'none';
+  if(show) _expandedJobs.add(stableId); else _expandedJobs.delete(stableId);
+}
+function jCopyRow(idx){
+  const j=_pageJobsRef[idx];if(!j) return;
+  navigator.clipboard.writeText(JSON.stringify(j,null,2)).catch(()=>{});
+}
 
 // ── Persisted job data fetch ─────────────────────────────────────────────────
 let _histPage = 0;
@@ -1587,7 +1679,7 @@ function renderHistory(){
       +'<td>'+(instId?'<span class="j-hist-instance '+instCls+'">'+instLabel+'</span>':'—')+'</td>'
       +'<td class="j-hist-caller">'+callerInfo+'</td>'
       +'<td>'+elStr+'</td>'
-      +'<td>'+age(j.updated_at||j.created_at)+'</td>'
+      +'<td style="font-size:8px;color:var(--dim2);white-space:nowrap">'+_fmtDateTime(j.updated_at||j.created_at)+'</td>'
       +'<td><span class="j-badge '+bc+'">'+esc(st)+'</span></td>'
       +'<td style="font-size:8px;color:var(--dim)">'+esc(bootShort)+'</td>'
       +'</tr>';
@@ -1678,7 +1770,7 @@ function renderOllamaLog(){
       +'<td style="font-size:9px;color:var(--acc2)">'+esc(r.cap_name||'—')+'</td>'
       +'<td style="font-size:8.5px;color:var(--dim2);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(r.prompt_preview||'')+'">'+prompt+'</td>'
       +'<td><span class="j-badge '+bc+'">'+esc(st)+'</span></td>'
-      +'<td>'+age(r.ts)+'</td>'
+      +'<td style="font-size:8px;color:var(--dim2);white-space:nowrap">'+_fmtDateTime(r.ts)+'</td>'
       +'</tr>';
   }).join('');
   // Pager
@@ -1814,7 +1906,10 @@ function gridToggleEdit(pane){
   const lay=_lay(pane);
   lay.editing=!lay.editing;
   const grid=$(gridId(pane));
-  if(grid) grid.classList.toggle('editing',lay.editing);
+  if(grid){
+    grid.classList.toggle('editing',lay.editing);
+    grid.querySelectorAll('.widget').forEach(w=>w.setAttribute('draggable',lay.editing?'true':'false'));
+  }
   const btn=$(pane==='workers'?'w-edit-btn':pane==='ollama'?'ol-edit-btn':'j-edit-btn');
   if(btn){btn.textContent=lay.editing?'✓ Done':'⚙ Configure';btn.classList.toggle('primary',lay.editing);}
   gridRenderHidden(pane);
@@ -1982,7 +2077,7 @@ function _initGridDrag(gridEl){
   if(!gridEl||gridEl._dragInit) return;
   gridEl._dragInit=true;
   gridEl.querySelectorAll('.widget').forEach(w=>{
-    w.setAttribute('draggable','true');
+    w.setAttribute('draggable','false');
     w.addEventListener('dragstart',_onDragStart);
     w.addEventListener('dragover',_onDragOver);
     w.addEventListener('dragleave',_onDragLeave);
@@ -2025,14 +2120,52 @@ function obsRenderRow(ev){
   if(!_obsFilters[ev._cat]) return;
   const row=document.createElement('div');
   row.className='obs-row cat-'+ev._cat;
-  const ts=new Date().toLocaleTimeString();
-  const summary=esc((ev.type||'?')+' '+(ev.msg||ev.text||JSON.stringify(ev).slice(0,120)));
-  row.innerHTML='<span style="color:var(--dim);font-size:8px;margin-right:5px">'+ts+'</span>'+summary
-    +'<div class="obs-detail">'+esc(JSON.stringify(ev,null,2).slice(0,800))+'</div>';
-  row.onclick=function(){this.classList.toggle('expanded');};
-  feed.appendChild(row);
-  if(feed.children.length>OBS_MAX) feed.removeChild(feed.firstChild);
-  feed.scrollTop=feed.scrollHeight;
+
+  // Full datetime
+  const d=ev.ts?new Date(ev.ts):new Date();
+  const _p=(n)=>String(n).padStart(2,'0');
+  const ts=d.getFullYear()+'-'+_p(d.getMonth()+1)+'-'+_p(d.getDate())+' '+_p(d.getHours())+':'+_p(d.getMinutes())+':'+_p(d.getSeconds());
+  const t=ev.type||'?';
+
+  // Build structured field tags — pull out the same detail the screenshot shows
+  let tags='';
+  if(ev.instance_id){
+    const gpu=(ev.instance_id||'').includes('gpu')||(ev.instance_id||'').includes('250');
+    tags+=' <span style="font-size:8px;padding:1px 5px;border-radius:3px;font-weight:600;'
+      +(gpu?'background:rgba(201,122,90,.15);color:var(--gpu)':'background:rgba(90,138,196,.12);color:#5a8ac4')
+      +'">'+esc(ev.instance_id)+'</span>';
+  }
+  if(ev.model) tags+=' <span style="font-size:8.5px;color:var(--acc3);font-family:var(--mono)">'+esc(ev.model)+'</span>';
+  if(ev.caller_file) tags+=' <span style="font-size:8.5px;color:var(--acc2);font-family:var(--mono)">'+esc(ev.caller_file)+':'+esc(ev.caller_func||'?')+'</span>';
+  else if(ev.name||ev.cap_name) tags+=' <span style="font-size:8.5px;color:var(--acc2);font-family:var(--mono)">'+esc(ev.name||ev.cap_name)+'</span>';
+  if(ev.elapsed_s!=null){const v=parseFloat(ev.elapsed_s);if(!isNaN(v)) tags+=' <span style="font-size:8px;color:var(--dim2);font-family:var(--mono)">'+(v<1?Math.round(v*1000)+'ms':v.toFixed(2)+'s')+'</span>';}
+  else if(ev.elapsed_ms!=null){const v=parseFloat(ev.elapsed_ms);if(!isNaN(v)) tags+=' <span style="font-size:8px;color:var(--dim2);font-family:var(--mono)">'+(v<1000?Math.round(v)+'ms':(v/1000).toFixed(2)+'s')+'</span>';}
+  if(ev.token_count) tags+=' <span style="font-size:8px;color:var(--dim2);font-family:var(--mono)">'+ev.token_count+' tok</span>';
+  if(ev.req_id) tags+=' <span style="font-size:7.5px;color:var(--dim);font-family:var(--mono)">'+esc(String(ev.req_id).slice(0,12))+'</span>';
+  if(ev.error) tags+=' <span style="font-size:8.5px;color:var(--err);font-weight:600">'+esc(String(ev.error).slice(0,120))+'</span>';
+  else if(ev.msg||ev.text||ev.message){const m=ev.msg||ev.text||ev.message;tags+=' <span style="font-size:8.5px;color:var(--dim2)">'+esc(String(m).slice(0,100))+'</span>';}
+
+  const uid='ocp'+Date.now()+Math.random().toString(36).slice(2,5);
+  row.innerHTML='<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">'
+    +'<span style="color:var(--dim);font-size:7.5px;flex-shrink:0;white-space:nowrap;min-width:118px;font-family:var(--mono)">'+ts+'</span>'
+    +'<span style="font-size:9px;font-weight:600;color:var(--text);font-family:var(--mono);flex-shrink:0">'+esc(t)+'</span>'
+    +tags
+    +'<span style="flex:1"></span>'
+    +'<button id="'+uid+'" class="btn sm" style="font-size:7px;padding:1px 5px;flex-shrink:0" title="Copy JSON">copy</button>'
+    +'</div>'
+    +'<div class="obs-detail" onclick="event.stopPropagation()">'+esc(JSON.stringify(ev,null,2).slice(0,1200))+'</div>';
+  row.onclick=function(e){
+    if(e.target.id===uid) return;
+    if(e.target.closest('.obs-detail')) return;
+    if(window.getSelection&&window.getSelection().toString().length>0) return;
+    this.classList.toggle('expanded');
+  };
+  row.querySelector('#'+uid).onclick=function(e){
+    e.stopPropagation();
+    navigator.clipboard.writeText(JSON.stringify(ev,null,2)).catch(()=>{});
+  };
+  feed.insertBefore(row,feed.firstChild);
+  if(feed.children.length>OBS_MAX) feed.removeChild(feed.lastChild);
 }
 
 function obsRenderChips(){
@@ -2118,41 +2251,61 @@ function syslogRender(){
   const host=$('sl-entries');if(!host) return;
   if(!_slEntries.length){host.innerHTML='<span style="color:var(--dim);font-size:9px">No entries</span>';return;}
   const levelCol={ERROR:'var(--err)',WARNING:'var(--warn,#c9a35a)',INFO:'var(--acc2)',DEBUG:'var(--dim2)'};
-  host.innerHTML=_slEntries.map((e,i)=>{
+  // Sort newest first
+  const sorted=[..._slEntries].sort((a,b)=>{const ta=a.ts||'',tb=b.ts||'';return ta>tb?-1:ta<tb?1:0;});
+  _slSorted=sorted;
+  host.innerHTML=sorted.map((e,i)=>{
     const lvl=e.level||'INFO';
     const cap=e.cap_name||e.name||'';
-    const ts=(e.ts||'').slice(11,19);
+    const ts=(e.ts||'').replace('T',' ').slice(0,19);
     const msg=esc((e.message||e.msg||'').slice(0,200));
     const detail=e.detail||e.traceback||'';
     return '<div class="sl-entry" data-idx="'+i+'" onclick="P.syslogToggleEntry(this)">'
       +'<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">'
       +'<span style="font-size:8.5px;font-weight:700;font-family:var(--mono);text-transform:uppercase;letter-spacing:.5px;color:'+(levelCol[lvl]||'var(--dim2)')+'">'+esc(lvl)+'</span>'
       +(cap?'<span style="font-size:9px;font-family:var(--mono);color:var(--acc2);font-weight:600">'+esc(cap)+'</span>':'')
-      +'<span style="font-size:7.5px;color:var(--dim2);margin-left:auto;font-family:var(--mono)">'+esc(ts)+'</span>'
+      +'<span style="font-size:7.5px;color:var(--dim2);margin-left:auto;font-family:var(--mono);white-space:nowrap">'+esc(ts)+'</span>'
+      +'<button class="btn sm" onclick="event.stopPropagation();P.syslogCopyEntry('+i+')" style="font-size:7px;padding:1px 5px" title="Copy">copy</button>'
       +'</div>'
       +'<div style="font-size:9px;color:var(--text);margin-top:2px;line-height:1.4;word-break:break-word">'+msg+'</div>'
-      +(detail?'<div class="sl-detail" style="display:none;font-size:8px;color:var(--dim2);margin-top:3px;white-space:pre-wrap;word-break:break-all;background:var(--bg0);padding:4px;border-radius:2px;border:1px solid var(--border);max-height:140px;overflow-y:auto">'+esc(detail.slice(0,1500))+'</div>':'')
+      +(detail?'<div class="sl-detail" onclick="event.stopPropagation()" style="display:none;font-size:8px;color:var(--dim2);margin-top:3px;white-space:pre-wrap;word-break:break-all;background:var(--bg0);padding:4px;border-radius:2px;border:1px solid var(--border);max-height:140px;overflow-y:auto;user-select:text;-webkit-user-select:text;cursor:text">'+esc(detail.slice(0,1500))+'</div>':'')
       +'</div>';
   }).join('');
 }
 
+let _slSorted=[];
+
 function syslogToggleEntry(el){
+  if(window.getSelection&&window.getSelection().toString().length>0) return;
   const detail=el.querySelector('.sl-detail');
   if(detail) detail.style.display=detail.style.display==='none'?'block':'none';
-  // Track selection for ask
   const idx=parseInt(el.dataset.idx);
-  if(!isNaN(idx)&&_slEntries[idx]) _slSelected=_slEntries[idx];
+  if(!isNaN(idx)&&_slSorted[idx]) _slSelected=_slSorted[idx];
+}
+
+function syslogCopyEntry(idx){
+  const entry=_slSorted[idx];
+  if(entry) navigator.clipboard.writeText(JSON.stringify(entry,null,2)).catch(()=>{});
 }
 
 function syslogIngestWsError(ev){
   const box=$('sl-ws-box');if(!box) return;
   box.style.display='flex';
   const div=document.createElement('div');
-  div.style.cssText='padding:3px 5px;font-size:8.5px;font-family:var(--mono);border-left:3px solid var(--err);color:var(--err);background:rgba(201,107,107,.04);border-radius:2px;line-height:1.3;cursor:pointer;word-break:break-all';
+  div.style.cssText='padding:3px 5px;font-size:8.5px;font-family:var(--mono);border-left:3px solid var(--err);color:var(--err);background:rgba(201,107,107,.04);border-radius:2px;line-height:1.3;cursor:pointer;word-break:break-all;display:flex;align-items:flex-start;gap:4px';
   const lvl=ev.level||'ERROR';const logger=ev.logger||ev.cap_name||'';const msg=ev.message||ev.msg||ev.error||'';
-  div.textContent='['+lvl+'] '+logger+': '+msg.slice(0,160);
+  const d=ev.ts?new Date(ev.ts):new Date();
+  const _p=(n)=>String(n).padStart(2,'0');
+  const tsStr=d.getFullYear()+'-'+_p(d.getMonth()+1)+'-'+_p(d.getDate())+' '+_p(d.getHours())+':'+_p(d.getMinutes())+':'+_p(d.getSeconds());
+  div.innerHTML='<span style="flex:1;min-width:0">['+esc(tsStr)+'] ['+esc(lvl)+'] '+esc(logger)+': '+esc(msg.slice(0,200))+'</span>'
+    +'<button class="btn sm" style="font-size:7px;padding:1px 4px;flex-shrink:0;color:var(--dim2);border-color:var(--border)" title="Copy">copy</button>';
   div.title='Click to use in ask-agent';
-  div.addEventListener('click',function(){
+  div.querySelector('.btn').addEventListener('click',function(e){
+    e.stopPropagation();
+    navigator.clipboard.writeText(JSON.stringify(ev,null,2)).catch(()=>{});
+  });
+  div.addEventListener('click',function(e){
+    if(e.target.classList.contains('btn')) return;
     const ta=$('sl-ask-q');
     if(ta) ta.value='Diagnose this error from '+logger+': '+msg.slice(0,250);
     _slSelected=ev;
@@ -2322,7 +2475,7 @@ async function wlAdd(panelId){
   grid.appendChild(widget);
 
   // Register drag on the new widget
-  widget.setAttribute('draggable','true');
+  widget.setAttribute('draggable','false');
   widget.addEventListener('dragstart',_onDragStart);
   widget.addEventListener('dragover',_onDragOver);
   widget.addEventListener('dragleave',_onDragLeave);
@@ -2482,6 +2635,111 @@ async function deleteModelGo(){
   }
 }
 
+// ── Wrapper integration ─────────────────────────────────────────────────────
+let _wrapperUrl='';
+let _wrapperPollTimer=null;
+let _olSubCurrent='nodes';
+
+function olSubTab(name,btn){
+  _olSubCurrent=name;
+  document.querySelectorAll('.ol-sub').forEach(b=>b.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+  ['nodes','jobs','wrapper'].forEach(k=>{
+    const el=$('ol-sub-'+k);
+    if(el) el.style.display=k===name?'':'none';
+    // For wrapper sub-pane, set flex display
+    if(k==='wrapper'&&el) el.style.display=k===name?'flex':'none';
+  });
+  // Show/hide the grid-related toolbar buttons based on sub-tab
+  const editBtn=$('ol-edit-btn');
+  if(editBtn) editBtn.style.display=name==='wrapper'?'none':'';
+}
+
+function wrapperInit(){
+  // Build node selector from known cluster instances
+  const sel=$('obs-wrapper-sel');
+  if(!sel) return;
+  sel.innerHTML='<option value="">Select node...</option>';
+  // Derive wrapper URLs from cluster data — wrapper runs on STATUS_PORT (11436) on same host
+  if(_cluster && _cluster.ollama){
+    for(const [id,n] of Object.entries(_cluster.ollama)){
+      if(!n.url) continue;
+      try{
+        const u=new URL(n.url);
+        const wrapperUrl=u.protocol+'//'+u.hostname+':11436';
+        const label=(n.label||id)+(n.has_gpu?' (GPU)':' (CPU)');
+        sel.innerHTML+='<option value="'+esc(wrapperUrl)+'">'+esc(label)+'</option>';
+      }catch(_){}
+    }
+  }
+  // Auto-select first if only one option
+  if(sel.options.length===2) {
+    sel.selectedIndex=1;
+    wrapperSwitchNode(sel.value);
+  }
+}
+
+// Re-init wrapper selector whenever cluster data refreshes
+function _hookWrapperRefresh(){
+  const origRenderOllama=renderOllama;
+  renderOllama=function(){
+    origRenderOllama();
+    wrapperInit();
+  };
+}
+setTimeout(_hookWrapperRefresh,100);
+
+function wrapperSwitchNode(url){
+  _wrapperUrl=url;
+  if(!url){
+    const iframe=$('obs-wrapper-iframe');
+    if(iframe) iframe.src='about:blank';
+    if(_wrapperPollTimer) clearInterval(_wrapperPollTimer);
+    return;
+  }
+  // Load dashboard in iframe
+  const iframe=$('obs-wrapper-iframe');
+  if(iframe) iframe.src=url;
+  // Start polling the wrapper API
+  wrapperRefresh();
+  if(_wrapperPollTimer) clearInterval(_wrapperPollTimer);
+  _wrapperPollTimer=setInterval(wrapperRefresh,5000);
+}
+
+async function wrapperRefresh(){
+  if(!_wrapperUrl) return;
+  try{
+    // Fetch report endpoint
+    const r=await fetch(_wrapperUrl.replace(/\/$/, '')+'/api/report');
+    const d=await r.json();
+    txt('owb-active',d.active_count||0);
+    txt('owb-total',d.total_requests||0);
+    txt('owb-kills',d.kill_count||0);
+    const wd=d.watchdog||{};
+    txt('owb-wd','soft '+wd.soft_limit+'s / hard '+wd.hard_limit+'s');
+    // Show kills if any
+    const killsEl=$('obs-wrapper-kills');
+    if(killsEl && d.recent_kills && d.recent_kills.length){
+      killsEl.style.display='block';
+      killsEl.innerHTML=d.recent_kills.map(k=>{
+        const ts=(k.ts_iso||'').replace('T',' ').slice(0,19);
+        return '<div style="padding:3px 6px;font-size:8.5px;font-family:var(--mono);border-left:3px solid var(--err);color:var(--err);background:rgba(201,107,107,.04);margin:2px 6px;border-radius:2px">'
+          +'<span style="color:var(--dim);margin-right:4px">'+esc(ts)+'</span>'
+          +'<span style="font-weight:700;margin-right:4px">'+esc(k.source)+'</span>'
+          +esc(k.reason)
+          +(k.model?' <span style="color:var(--acc3)">'+esc(k.model)+'</span>':'')
+          +(k.req_id?' <span style="color:var(--dim2)">'+esc(k.req_id)+'</span>':'')
+          +'</div>';
+      }).join('');
+    } else if(killsEl){
+      killsEl.style.display='none';
+    }
+  }catch(_){
+    txt('owb-active','--');
+    txt('owb-kills','--');
+  }
+}
+
 // ── Pane switching ───────────────────────────────────────────────────────────
 function showPane(name, el){
   document.querySelectorAll('.snav').forEach(n=>n.classList.remove('on'));
@@ -2519,6 +2777,9 @@ obsRenderChips();
 // Connect observe WebSocket
 setTimeout(obsConnectWs,500);
 
+// Init wrapper integration
+setTimeout(wrapperInit,600);
+
 // Load system log
 setTimeout(syslogLoad,800);
 setTimeout(syslogMonStatus,1000);
@@ -2540,15 +2801,16 @@ return {
   openPullModal, closePullModal, pullModelGo,
   openDeleteModel, closeDeleteModel, deleteModelGo,
   saveEmbedCfg, loadEmbedCfg,
-  jTab, jRecoverOrphans,
+  jTab, jRecoverOrphans, jToggleDetail, jCopyRow,
   jPagePrev, jPageNext,
   histPagePrev, histPageNext,
   ollamaPagePrev, ollamaPageNext,
   jDeleteConsumer, jDeleteAllStaleConsumers, jPurgePending,
   gridToggleEdit, gridHide, gridShow, gridReset,
   obsClear, obsTogglePause, obsToggleChip,
-  syslogLoad, syslogToggleAuto, syslogClear, syslogToggleEntry,
+  syslogLoad, syslogToggleAuto, syslogClear, syslogToggleEntry, syslogCopyEntry,
   syslogMonRun, syslogMonToggle, syslogMonStatus, syslogAsk,
+  wrapperSwitchNode, wrapperRefresh, olSubTab,
   openWidgetLoader, closeWidgetLoader, wlFilter, wlAdd, wlRemoveDyn,
 };
 })();

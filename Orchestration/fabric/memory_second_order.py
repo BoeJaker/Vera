@@ -67,8 +67,8 @@ log = logging.getLogger("vera.memory.2nd_order")
 def _memory():
     """Return the live MEMORY singleton from the memory module, or None."""
     import sys as _sys
-    mod = (_sys.modules.get("Vera.Orchestration.fabric.memory")
-            or _sys.modules.get("Vera.Orchestration.fabric.memory"))
+    mod = (_sys.modules.get("memory")
+            or _sys.modules.get("memory"))
     if not mod:
         return None
     return getattr(mod, "MEMORY", None)

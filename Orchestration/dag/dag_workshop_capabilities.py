@@ -72,7 +72,7 @@ _HERE = Path(__file__).parent
 
 def _redis():     return _orch.REDIS
 def _ctx():       return sys.modules.get("vera_context") or sys.modules.get("context")
-def _dag_store(): return sys.modules.get("Vera.Orchestration.dag.dag_store")
+def _dag_store(): return sys.modules.get("dag_store")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -2182,7 +2182,8 @@ CATEGORY_PREFIX_HINTS: Dict[str, List[str]] = {
     "search":         ["caps.search", "context.search_caps", "research.recall",
                        "research.activity", "memory.recall", "fabric.search"],
     "monitoring":     ["obs.", "health.", "system.ping", "research.health"],
-    "code_task":      ["ide.", "exec.bash", "exec.python", "exec.run", "research.code"],
+    "code_task":      ["ide.code.", "ide.inspect.", "ide.agent.", "ide.fs.",
+                       "exec.bash", "exec.python", "exec.run", "research.code"],
     "system_info":    ["system.", "obs.", "health.", "exec.bash"],
     "network_scan":   ["netscan.", "system.ping", "http.head"],
     "ml_task":        ["ml.", "vllm."],
@@ -2213,7 +2214,10 @@ CATEGORY_BASE_ESSENTIALS: Dict[str, List[str]] = {
     "analysis":       ["llm.analyze", "llm.summarize"],
     "search":         ["llm.generate"],
     "monitoring":     ["system.ping", "http.get"],
-    "code_task":      ["llm.generate", "exec.bash.run"],
+    "code_task":      ["llm.generate", "exec.bash.run",
+                       "ide.inspect.snapshot", "ide.inspect.list_snapshots",
+                       "ide.inspect.diff_snapshot", "ide.inspect.review_file",
+                       "ide.inspect.source_info"],
     "system_info":    ["system.ping", "exec.bash.run"],
     "network_scan":   ["system.ping"],
     "ml_task":        ["llm.generate"],
@@ -2776,11 +2780,29 @@ def _workshop_build_toolkit(*, allowed_caps: str, category: str,
         for c in CATEGORY_BASE_ESSENTIALS.get(cat_norm, []):
             add(c)
 
-    # 3. Prefix expansion for ALL categories (respects pool)
+    # 3. Prefix expansion for ALL categories — round-robin per prefix so a
+    #    deep namespace (e.g. ide.inspect.*) is never alphabetically starved
+    #    out of the budget by a shallower sibling (e.g. ide.code.*).
     for cat_norm in cats_list:
-        cat_caps = _expand_prefixes(CATEGORY_PREFIX_HINTS.get(cat_norm, []), seen)
-        for c in cat_caps[:max(8, top_k)]:
-            add(c)
+        buckets = [
+            b for b in (_expand_prefixes([p], seen)
+                        for p in CATEGORY_PREFIX_HINTS.get(cat_norm, []))
+            if b
+        ]
+        budget = max(8, top_k) * 2
+        idx, added = 0, 0
+        while buckets and added < budget:
+            progressed = False
+            for b in buckets:
+                if idx < len(b):
+                    before = len(seen)
+                    add(b[idx])
+                    if len(seen) > before:
+                        added += 1
+                        progressed = True
+            if not progressed:
+                break
+            idx += 1
 
     # 5. Keyword-driven semantic search via the cap index when available
     semantic_added = 0

@@ -383,7 +383,7 @@ async def _ingest_message_to_fabric(chat_rec: Dict[str, Any], msg: Dict[str, Any
     """Best-effort fabric ingest — failures are silent."""
     try:
         import sys as _sys
-        fabric = _sys.modules.get("Vera.Orchestration.fabric.data_fabric")
+        fabric = _sys,modules.get("data_fabric")
         if not fabric or not hasattr(fabric, "ingest_dataset"):
             return
         await fabric.ingest_dataset(

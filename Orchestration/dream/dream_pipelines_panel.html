@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Composite Pipelines</title>
+<style>
+  :root{
+    --bg0:#0d0f12; --bg1:#14171c; --bg2:#1b1f26; --bg3:#232832;
+    --fg1:#e6e9ef; --fg2:#aab2c0; --fg3:#6b7585;
+    --border:#2a2f3a; --acc:#6ea8fe; --grn:#5dd39e; --red:#ef6f6f;
+    --amber:#e6b450; --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg0);color:var(--fg1);
+       font:13px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;}
+  .wrap{max-width:1100px;margin:0 auto;padding:18px 16px 60px}
+  header{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+  header h1{font-size:18px;margin:0;font-weight:600}
+  header .sub{color:var(--fg3);font-size:12px}
+  .toolbar{display:flex;gap:8px;margin:14px 0;flex-wrap:wrap}
+  .btn{background:var(--bg2);color:var(--fg1);border:1px solid var(--border);
+       border-radius:7px;padding:7px 12px;font-size:12px;cursor:pointer;
+       transition:.12s;display:inline-flex;align-items:center;gap:6px}
+  .btn:hover{background:var(--bg3);border-color:var(--acc)}
+  .btn.pri{background:var(--acc);color:#08121f;border-color:var(--acc);font-weight:600}
+  .btn.grn{background:var(--grn);color:#06140d;border-color:var(--grn);font-weight:600}
+  .btn.red{background:transparent;color:var(--red);border-color:#5a2b2b}
+  .btn.red:hover{background:#2a1414}
+  .btn.sm{padding:4px 9px;font-size:11px;border-radius:6px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px}
+  .card{background:var(--bg1);border:1px solid var(--border);border-radius:10px;
+        padding:14px;display:flex;flex-direction:column;gap:8px}
+  .card h3{margin:0;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px}
+  .card .desc{color:var(--fg2);font-size:12px;min-height:34px}
+  .kind{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--acc);
+        border:1px solid var(--border);border-radius:5px;padding:1px 6px;background:var(--bg2)}
+  .stages{display:flex;flex-wrap:wrap;gap:4px}
+  .chip{font-family:var(--mono);font-size:10px;color:var(--fg2);background:var(--bg2);
+        border:1px solid var(--border);border-radius:5px;padding:2px 6px}
+  .chip.act{color:var(--amber);border-color:#4a3a1a}
+  .card .row{display:flex;gap:6px;margin-top:4px}
+  .meta{color:var(--fg3);font-size:11px;display:flex;gap:12px;flex-wrap:wrap}
+  /* modal */
+  .ov{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;
+      align-items:flex-start;justify-content:center;z-index:50;padding:30px 14px;overflow:auto}
+  .ov.on{display:flex}
+  .modal{background:var(--bg1);border:1px solid var(--border);border-radius:12px;
+         width:min(720px,100%);padding:18px}
+  .modal h2{margin:0 0 12px;font-size:15px}
+  .fld{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.05em;
+       color:var(--fg3);margin:10px 0 3px}
+  input[type=text],input[type=number],textarea,select{
+       width:100%;background:var(--bg0);color:var(--fg1);border:1px solid var(--border);
+       border-radius:7px;padding:8px;font-size:12px;font-family:inherit}
+  textarea{font-family:var(--mono);font-size:11px;min-height:64px;resize:vertical}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .three{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+  .chk{display:flex;align-items:center;gap:6px;margin-top:14px}
+  .chk input{width:auto}
+  .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+  .status{font-size:11px;color:var(--fg3);margin-top:8px;min-height:14px}
+  .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
+         background:var(--bg3);border:1px solid var(--border);border-radius:8px;
+         padding:9px 14px;font-size:12px;z-index:80;opacity:0;transition:.2s;pointer-events:none}
+  .toast.on{opacity:1}
+  .toast.err{border-color:var(--red);color:var(--red)}
+  .toast.ok{border-color:var(--grn);color:var(--grn)}
+  .ref{font-size:11px;color:var(--fg3);margin-top:6px}
+  .ref code{font-family:var(--mono);color:var(--fg2);background:var(--bg2);
+            border-radius:4px;padding:1px 4px;cursor:pointer}
+  .ref code:hover{color:var(--acc)}
+  .empty{color:var(--fg3);text-align:center;padding:40px;font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Composite Pipelines</h1>
+    <span class="sub">reusable stage compositions &mdash; create, run, and schedule</span>
+  </header>
+  <div class="toolbar">
+    <button class="btn pri" onclick="openEditor()">+ New pipeline</button>
+    <button class="btn" onclick="loadAll()">&#x21bb; Refresh</button>
+  </div>
+  <div id="grid" class="grid"></div>
+  <div id="empty" class="empty" style="display:none">No pipelines yet. Create one to get started.</div>
+</div>
+
+<div class="ov" id="ov">
+  <div class="modal">
+    <h2 id="m-title">New pipeline</h2>
+    <div class="two">
+      <div><label class="fld">Name (id)</label><input type="text" id="f-name" placeholder="source_review_changes"></div>
+      <div><label class="fld">Kind</label><input type="text" id="f-kind" placeholder="source_review | custom"></div>
+    </div>
+    <label class="fld">Label</label><input type="text" id="f-label" placeholder="Source Review — Recent Changes">
+    <label class="fld">Description</label><textarea id="f-desc" style="min-height:44px"></textarea>
+
+    <label class="fld">Stages (one per line, in order)</label>
+    <textarea id="f-stages" placeholder="dream.stage.snapshot_source&#10;dream.stage.review_codebase&#10;dream.stage.review_report&#10;dream.stage.deliver"></textarea>
+    <div class="ref" id="stage-ref"></div>
+
+    <div class="two">
+      <div><label class="fld">Sensors (one per line)</label><textarea id="f-sensors" style="min-height:44px"></textarea></div>
+      <div><label class="fld">Deliver to (one per line)</label><textarea id="f-deliver" style="min-height:44px" placeholder="notebook&#10;memory"></textarea></div>
+    </div>
+
+    <label class="fld">Stage config (JSON)</label>
+    <textarea id="f-stagecfg" placeholder='{"review_codebase":{"review_type":"changes","max_files":40}}'></textarea>
+    <div class="two">
+      <div><label class="fld">Iterate (JSON)</label><textarea id="f-iterate" placeholder='{"enabled":false}'></textarea></div>
+      <div><label class="fld">Pivot (JSON)</label><textarea id="f-pivot" placeholder='{"enabled":false}'></textarea></div>
+    </div>
+
+    <label class="fld">Whitelist caps (one per line)</label>
+    <textarea id="f-wl" style="min-height:44px"></textarea>
+    <label class="fld">No-HITL caps (one per line)</label>
+    <textarea id="f-nohitl" style="min-height:44px"></textarea>
+
+    <div class="three">
+      <div><label class="fld">Mode</label>
+        <select id="f-mode"><option value="agent_loop">agent_loop</option>
+        <option value="stepwise">stepwise</option><option value="synthesize_only">synthesize_only</option></select></div>
+      <div><label class="fld">Depth</label>
+        <select id="f-depth"><option>brief</option><option selected>standard</option>
+        <option>deep</option><option>exhaustive</option></select></div>
+      <div><label class="fld">Max steps</label><input type="number" id="f-maxsteps" value="8"></div>
+    </div>
+    <div class="chk"><input type="checkbox" id="f-journal" checked><label for="f-journal">Journal activity</label></div>
+
+    <div class="status" id="m-status"></div>
+    <div class="actions">
+      <button class="btn" onclick="closeEditor()">Cancel</button>
+      <button class="btn pri" onclick="savePipeline()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = (window.location.origin || "");
+async function api(p, o={}) {
+  try {
+    const r = await fetch(API+p, {...o, headers:{'Content-Type':'application/json',...(o.headers||{})}});
+    if (!r.ok) throw new Error('HTTP '+r.status);
+    return await r.json();
+  } catch(e){ toast('err', e.message||String(e)); return null; }
+}
+const post = (p,b)=>api(p,{method:'POST',body:JSON.stringify(b)});
+const $ = id => document.getElementById(id);
+const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let _editing = null;
+
+function toast(kind,msg){const t=$('toast');t.className='toast on '+kind;t.textContent=msg;
+  clearTimeout(t._t);t._t=setTimeout(()=>t.className='toast',2600);}
+
+const ACTION_STAGES = new Set(['dream.stage.project_action','dream.stage.ide_workspace_act',
+  'dream.stage.stepwise_execute','dream.stage.agent_loop','dream.stage.execute']);
+
+async function loadAll(){
+  const r = await api('/dream/pipelines');
+  const grid = $('grid'); grid.innerHTML='';
+  const pipes = (r && r.pipelines) || [];
+  $('empty').style.display = pipes.length ? 'none' : 'block';
+  for (const p of pipes){
+    const stages = p.stages || [];
+    const card = document.createElement('div'); card.className='card';
+    card.innerHTML =
+      '<h3>'+esc(p.label||p.name)+' <span class="kind">'+esc(p.kind||'custom')+'</span></h3>'+
+      '<div class="desc">'+esc(p.description||'')+'</div>'+
+      '<div class="stages">'+stages.map(s=>'<span class="chip'+(ACTION_STAGES.has(s)?' act':'')+'">'+
+        esc(s.replace('dream.stage.',''))+'</span>').join('')+'</div>'+
+      '<div class="meta"><span>'+stages.length+' stages</span>'+
+        (p.iterate&&p.iterate.enabled?'<span>iterate</span>':'')+
+        (p.pivot&&p.pivot.enabled?'<span>pivot</span>':'')+
+        (p.journal?'<span>journal</span>':'')+'</div>'+
+      '<div class="row">'+
+        '<button class="btn sm grn" onclick=\'runPipe("'+esc(p.name)+'")\'>&#9654; Run</button>'+
+        '<button class="btn sm" onclick=\'editPipe("'+esc(p.name)+'")\'>&#9998; Edit</button>'+
+        '<button class="btn sm red" onclick=\'delPipe("'+esc(p.name)+'")\'>Delete</button>'+
+      '</div>';
+    grid.appendChild(card);
+  }
+}
+
+async function loadStageRef(){
+  const r = await api('/dream/stages');
+  const stages = (r && (r.stages||r.items)) || [];
+  if (!stages.length) return;
+  const names = stages.map(s=>typeof s==='string'?s:(s.id||s.name)).filter(Boolean);
+  $('stage-ref').innerHTML = 'Available: ' + names.slice(0,60)
+    .map(n=>'<code onclick="addStage(\''+esc(n)+'\')">'+esc(n.replace('dream.stage.',''))+'</code>').join(' ');
+}
+function addStage(n){ const ta=$('f-stages'); ta.value=(ta.value.trim()?ta.value.replace(/\s*$/,'')+'\n':'')+n; }
+
+function lines(v){return (v||'').split('\n').map(s=>s.trim()).filter(Boolean);}
+function parseJSON(v,def){try{return v.trim()?JSON.parse(v):def;}catch(e){return undefined;}}
+
+function openEditor(p){
+  _editing = p || null;
+  $('m-title').textContent = p ? ('Edit: '+(p.label||p.name)) : 'New pipeline';
+  $('f-name').value = p?.name || '';   $('f-name').disabled = !!p;
+  $('f-kind').value = p?.kind || 'custom';
+  $('f-label').value = p?.label || '';
+  $('f-desc').value = p?.description || '';
+  $('f-stages').value = (p?.stages || []).join('\n');
+  $('f-sensors').value = (p?.sensors || []).join('\n');
+  $('f-deliver').value = (p?.deliver_to || ['memory']).join('\n');
+  $('f-stagecfg').value = JSON.stringify(p?.stage_config || {}, null, 2);
+  $('f-iterate').value = JSON.stringify(p?.iterate || {enabled:false}, null, 2);
+  $('f-pivot').value = JSON.stringify(p?.pivot || {enabled:false}, null, 2);
+  $('f-wl').value = (p?.whitelist || []).join('\n');
+  $('f-nohitl').value = (p?.no_hitl_caps || []).join('\n');
+  $('f-mode').value = p?.mode || 'agent_loop';
+  $('f-depth').value = p?.depth || 'standard';
+  $('f-maxsteps').value = p?.max_steps ?? 8;
+  $('f-journal').checked = p?.journal !== false;
+  $('m-status').textContent = '';
+  $('ov').classList.add('on');
+}
+function closeEditor(){ $('ov').classList.remove('on'); }
+
+async function editPipe(name){
+  const r = await api('/dream/pipeline/get?name='+encodeURIComponent(name));
+  if (r && r.pipeline) openEditor(r.pipeline); else toast('err','Could not load '+name);
+}
+
+async function savePipeline(){
+  const name = $('f-name').value.trim();
+  if (!name){ $('m-status').textContent='Name is required'; return; }
+  const stages = lines($('f-stages').value);
+  if (!stages.length){ $('m-status').textContent='At least one stage is required'; return; }
+  const sc = parseJSON($('f-stagecfg').value,{}), it = parseJSON($('f-iterate').value,{}),
+        pv = parseJSON($('f-pivot').value,{});
+  if (sc===undefined||it===undefined||pv===undefined){ $('m-status').textContent='Invalid JSON in stage config / iterate / pivot'; return; }
+  const body = {
+    name, kind:$('f-kind').value.trim()||'custom', label:$('f-label').value.trim(),
+    description:$('f-desc').value.trim(),
+    stages, stage_config:sc, iterate:it, pivot:pv,
+    sensors:lines($('f-sensors').value), deliver_to:lines($('f-deliver').value),
+    whitelist:lines($('f-wl').value), no_hitl_caps:lines($('f-nohitl').value),
+    mode:$('f-mode').value, depth:$('f-depth').value,
+    max_steps:parseInt($('f-maxsteps').value)||8, journal:$('f-journal').checked,
+  };
+  const r = await post('/dream/pipeline/upsert', body);
+  if (r && r.ok!==false){ toast('ok','Pipeline saved'); closeEditor(); loadAll(); }
+  else $('m-status').textContent = 'Failed: '+((r&&r.error)||'?');
+}
+
+async function delPipe(name){
+  if (!confirm('Delete pipeline "'+name+'"? Built-ins re-seed on restart.')) return;
+  const r = await post('/dream/pipeline/delete', {name});
+  if (r && r.ok!==false){ toast('ok','Deleted'); loadAll(); }
+}
+
+async function runPipe(name){
+  toast('ok','Running '+name+'…');
+  const r = await post('/dream/pipeline/run', {name, force:true});
+  if (r && r.ok===false) toast('err','Run failed: '+(r.error||'?'));
+  else toast('ok','Cycle started for '+name);
+}
+
+$('ov').addEventListener('click', e=>{ if (e.target===$('ov')) closeEditor(); });
+loadAll(); loadStageRef();
+</script>
+</body>
+</html>

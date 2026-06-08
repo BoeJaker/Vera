@@ -1,0 +1,87 @@
+# /etc/systemd/system/ollama.service
+#
+# Hardened Ollama systemd unit — v3
+#
+# Install:
+#   sudo cp ollama.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable ollama
+#   sudo systemctl restart ollama
+#
+# Do NOT use this unit if you are starting Ollama from within
+# ollama_wrapper.sh — the wrapper already launches ollama directly.
+# Use this unit ONLY if you want systemd to own the Ollama process
+# and have the wrapper connect to it on OLLAMA_INTERNAL_PORT.
+#
+# In that case, set OLLAMA_HOST below to match OLLAMA_INTERNAL_PORT
+# in your wrapper (default 8888), remove the wrapper's `ollama serve`
+# call, and start the wrapper separately.
+
+[Unit]
+Description=Ollama LLM Server (hardened)
+Documentation=https://ollama.com
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# ── Basic launch ──────────────────────────────────────────────────────────────
+ExecStart=/usr/local/bin/ollama serve
+Restart=always
+RestartSec=3
+TimeoutStartSec=30
+TimeoutStopSec=30
+
+# Listen only on localhost so the wrapper proxy is the only public entry point.
+# Change to match OLLAMA_INTERNAL_PORT in ollama_wrapper.sh (default 8888).
+Environment="OLLAMA_HOST=127.0.0.1:8888"
+
+# Optional: tune these for your hardware
+# Environment="OLLAMA_NUM_PARALLEL=1"
+# Environment="OLLAMA_MAX_LOADED_MODELS=1"
+
+# ── HARD RESOURCE LIMITS  (prevent runaway 1400% CPU) ─────────────────────────
+# Allow up to 6 physical cores (600%) — headroom for one model + overhead.
+# Lower this (e.g. 200%) on shared hosts.
+CPUQuota=600%
+
+# Hard RAM ceiling — adjust to your installed RAM.
+# Killing OOM-style is safer than letting the kernel page-thrash.
+MemoryMax=40G
+MemorySwapMax=4G
+
+# Cap total threads/tasks so a spawning loop can't exhaust PIDs.
+TasksMax=256
+
+# ── PROCESS ISOLATION ─────────────────────────────────────────────────────────
+# Prevent privilege escalation from within the Ollama process.
+NoNewPrivileges=true
+
+# Give Ollama its own /tmp — avoids /tmp pollution and data leaks.
+PrivateTmp=true
+
+# Read-only /usr and /etc — Ollama doesn't need to write there.
+ProtectSystem=strict
+
+# Allow writes only to the model cache and logs.
+# Adjust the first path to wherever your Ollama models live.
+ReadWritePaths=/root/.ollama /var/log/ollama
+
+# Hide /home from the service process.
+ProtectHome=true
+
+# Prevent loading kernel modules.
+ProtectKernelModules=true
+
+# Prevent tampering with kernel tunables.
+ProtectKernelTunables=true
+
+# Block access to raw control groups.
+ProtectControlGroups=true
+
+# Restrict to only the syscalls Ollama actually needs.
+# Remove if you hit unexpected crashes on a custom build.
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

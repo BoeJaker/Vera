@@ -178,6 +178,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg0);color:var(--text);
       <div class="tab" data-tab="faiss">FAISS</div>
       <div class="tab" data-tab="audit">Audit</div>
       <div class="tab" data-tab="compare">Compare</div>
+      <div class="tab" data-tab="reencode">Re-encode</div>
     </div>
     <div class="spacer"></div>
     <div class="model-tag" id="modelTag">--</div>
@@ -291,6 +292,117 @@ html,body{height:100%;overflow:hidden;background:var(--bg0);color:var(--text);
         <div id="compareResult"></div>
       </div>
     </div>
+
+    <!-- ═══ RE-ENCODE ═══ -->
+    <div class="panel" id="panel-reencode">
+
+      <!-- Current model status -->
+      <div class="card" id="reencodeModelCard">
+        <div class="card-header"><span class="sec">Current Embed Configuration</span></div>
+        <div class="loading"><div class="spin"></div>Loading...</div>
+      </div>
+
+      <!-- Probe a model -->
+      <div class="card">
+        <div class="card-header"><span class="sec">Probe Model</span></div>
+        <p style="font-size:11px;color:var(--dim2);margin-bottom:10px">
+          Send a test string to any Ollama model to verify it's reachable and check its output dimension.
+        </p>
+        <div class="filter-bar" style="margin-bottom:8px">
+          <label>Model</label>
+          <input id="probeModel" placeholder="e.g. nomic-embed-text" style="width:220px">
+          <button class="btn primary" onclick="probeModel()">Probe</button>
+        </div>
+        <div id="probeResult" style="font-size:11px;min-height:18px"></div>
+      </div>
+
+      <!-- Re-encode controls -->
+      <div class="card">
+        <div class="card-header">
+          <span class="sec">Re-encode Chroma Store</span>
+          <span class="badge warn" style="margin-left:8px">Destructive</span>
+        </div>
+        <p style="font-size:11px;color:var(--dim2);margin-bottom:12px;line-height:1.6">
+          Wipes and rebuilds the Chroma vector collection using a new embedding model.
+          All records are re-read from SQLite and re-embedded. The existing collection
+          is reset only after the first batch succeeds, so the process is safe to abort.
+        </p>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+          <div>
+            <div style="font-size:9.5px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">New Model</div>
+            <input id="reencodeModel" placeholder="nomic-embed-text" style="width:100%;background:var(--bg1);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius-sm);font-size:11px">
+          </div>
+          <div>
+            <div style="font-size:9.5px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Chunk Limit (chars)</div>
+            <input id="reencodeChunk" type="number" value="6000" min="200" max="32000" style="width:100%;background:var(--bg1);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius-sm);font-size:11px;font-family:var(--mono)" title="6000=nomic-embed-text, 700=all-minilm, 1400=mxbai-embed-large">
+          </div>
+          <div>
+            <div style="font-size:9.5px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Dataset Filter</div>
+            <select id="reencodeDs" style="width:100%;background:var(--bg1);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius-sm);font-size:11px">
+              <option value="">All datasets</option>
+            </select>
+          </div>
+          <div>
+            <div style="font-size:9.5px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">GPU Batch Size</div>
+            <input id="reencodeGpuBatch" type="number" value="32" min="1" max="128" style="width:100%;background:var(--bg1);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius-sm);font-size:11px;font-family:var(--mono)" title="Concurrent embed slots per GPU instance. GPU can typically handle 32+ without issue.">
+          </div>
+          <div>
+            <div style="font-size:9.5px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">CPU Batch Size</div>
+            <input id="reencodeCpuBatch" type="number" value="8" min="1" max="64" style="width:100%;background:var(--bg1);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:var(--radius-sm);font-size:11px;font-family:var(--mono)" title="Concurrent embed slots per CPU instance. Keep lower to avoid context overflow errors.">
+          </div>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">
+          <label style="font-size:11px;color:var(--dim2);display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" id="reencodeForce" style="accent-color:var(--err)">
+            Force reset Chroma collection (required for dim change)
+          </label>
+        </div>
+
+        <div style="display:flex;gap:8px">
+          <button class="btn primary" id="reencodeStartBtn" onclick="startReencode(false)">Start Re-encode</button>
+          <button class="btn" id="reencodeResumeBtn" onclick="resumeReencode()" title="Continue from where a previous run stopped — already-embedded records are skipped automatically" style="border-color:var(--acc2);color:var(--acc2)">⟳ Resume</button>
+          <button class="btn" id="reencodeAbortBtn" style="display:none;border-color:var(--err);color:var(--err)" onclick="abortReencode()">Abort</button>
+        </div>
+      </div>
+
+      <!-- Progress -->
+      <div class="card" id="reencodeProgressCard" style="display:none">
+        <div class="card-header">
+          <span class="sec">Progress</span>
+          <span class="badge dim" id="reencodeStatusBadge">running</span>
+        </div>
+
+        <!-- Progress bar -->
+        <div style="background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius-sm);height:12px;overflow:hidden;margin-bottom:8px">
+          <div id="reencodeBar" style="height:100%;background:var(--acc);width:0%;transition:width .3s"></div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px">
+          <div class="stat-box" style="padding:8px">
+            <div class="label">Embedded</div>
+            <div class="value" id="reencodeEmbedded" style="font-size:16px">0</div>
+          </div>
+          <div class="stat-box" style="padding:8px">
+            <div class="label">Upserted</div>
+            <div class="value" id="reencodeUpserted" style="font-size:16px">0</div>
+          </div>
+          <div class="stat-box" style="padding:8px">
+            <div class="label">Errors</div>
+            <div class="value" id="reencodeErrors" style="font-size:16px">0</div>
+          </div>
+          <div class="stat-box" style="padding:8px">
+            <div class="label">Total</div>
+            <div class="value" id="reencodeTotal" style="font-size:16px">—</div>
+          </div>
+        </div>
+
+        <!-- Log stream -->
+        <div id="reencodeLog" style="font-family:var(--mono);font-size:10px;color:var(--dim2);background:var(--bg0);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px;max-height:200px;overflow-y:auto;white-space:pre-wrap"></div>
+      </div>
+
+    </div>
   </div>
 
   <!-- ── Detail side panel ── -->
@@ -351,6 +463,7 @@ function loadTab(id) {
   else if (id === 'chroma') { loadChromaDatasets(); loadChroma(); }
   else if (id === 'faiss') loadFaiss();
   else if (id === 'audit') runAudit();
+  else if (id === 'reencode') loadReencode();
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -823,6 +936,373 @@ async function runCompare() {
   html += '</div></div>';
 
   el.innerHTML = html;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   RE-ENCODE
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+let _reencodeAbort = false;
+let _reencodeWs    = null;   // WebSocket for live progress
+let _reencodePoll  = null;   // setInterval fallback poll
+let _reencodeLastEventId = null; // for Redis xread resume
+
+// ── Event source ─────────────────────────────────────────────────────────────
+// The backend emits events as {"type":"worldview.progress","stage":"reembed_progress",...}
+// via Redis EVENT_STREAM, readable via:
+//   WS  /ws/mcp   (preferred — already used by vera_graph)
+//   GET /events   (returns recent events snapshot from xrevrange — use for poll)
+// There is NO /events/stream SSE endpoint — fix was using EventSource on a
+// non-existent path.
+
+// Poll /events (Redis xrevrange snapshot) every 1.5s as belt-and-braces
+function _startReencodePoll() {
+  _stopReencodePoll();
+  let _seenKeys = new Set();
+  let _lastProcessed = 0;  // highest processed count seen — never go backwards
+  _reencodePoll = setInterval(async () => {
+    try {
+      const evts = await fetch(BASE + '/events?limit=50').then(r => r.json());
+      if (!Array.isArray(evts)) return;
+      // Events are newest-first — process oldest-first
+      [...evts].reverse().forEach(ev => {
+        // Deduplicate: key on stage + processed count or message
+        const stage = ev.stage || ev.type || '';
+        const dedupeKey = stage + '|' + (ev.processed ?? '') + '|' + (ev.embedded ?? '') + '|' + (ev.missing ?? '');
+        if (_seenKeys.has(dedupeKey)) return;
+        _seenKeys.add(dedupeKey);
+        if (_seenKeys.size > 1000) {
+          const arr = Array.from(_seenKeys);
+          _seenKeys = new Set(arr.slice(-400));
+        }
+        _dispatchReencodeEvent(ev, _lastProcessed, (n) => { _lastProcessed = n; });
+      });
+    } catch(_) {}
+  }, 1500);
+}
+function _stopReencodePoll() {
+  if (_reencodePoll) { clearInterval(_reencodePoll); _reencodePoll = null; }
+}
+
+// Dedup state shared between WS and poll paths
+let _seenEventKeys = new Set();
+
+function _dispatchReencodeEvent(ev, _lastProcessed, _setLastProcessed) {
+  if (!ev) return;
+  const stage = ev.stage || '';
+  // Deduplicate by stage+processed+embedded — prevents WS+poll double-firing
+  const key = stage + '|' + (ev.processed ?? '') + '|' + (ev.embedded ?? '') + '|' + (ev.missing ?? '');
+  if (_seenEventKeys.has(key)) return;
+  _seenEventKeys.add(key);
+  if (_seenEventKeys.size > 2000) {
+    const arr = Array.from(_seenEventKeys);
+    _seenEventKeys = new Set(arr.slice(-800));
+  }
+  const isReembed = stage.startsWith('reembed') || stage === 'probe_ok' || stage === 'embed_missing'
+    || stage === 'chroma_reset' || stage === 'resolve_done' || stage === 'resolving_graph'
+    || stage === 'resolve_fallback' || stage === 'building_graph' || stage === 'graph_ready';
+  if (!isReembed) return;
+  handleReencodeEvent(ev);
+}
+
+function _startReencodeWs() {
+  _stopReencodeWs();
+  _seenEventKeys = new Set();  // reset dedup on new run
+  try {
+    const wsBase = BASE.replace(/^http/, 'ws');
+    _reencodeWs = new WebSocket(wsBase + '/ws/mcp');
+    _reencodeWs.onopen = () => {
+      try { _reencodeWs.send(JSON.stringify({ action: 'subscribe_events' })); } catch(_) {}
+    };
+    _reencodeWs.onmessage = (e) => {
+      try {
+        const raw = JSON.parse(e.data);
+        const ev = (raw.type === 'event' && raw.data) ? raw.data : raw;
+        _dispatchReencodeEvent(ev);
+      } catch(_) {}
+    };
+    _reencodeWs.onerror = () => {};
+    _reencodeWs.onclose = () => { _reencodeWs = null; };
+  } catch(_) { _reencodeWs = null; }
+}
+// Monotonic progress state — never go backwards in the UI
+let _reencodeMaxTotal     = 0;
+let _reencodeMaxProcessed = 0;
+let _reencodeMaxEmbedded  = 0;
+let _reencodeMaxUpserted  = 0;
+
+async function loadReencode() {
+  const cfg  = await api('/ollama/embed_config');
+  const card = document.getElementById('reencodeModelCard');
+  if (cfg && !cfg.error) {
+    card.innerHTML = `
+      <div class="card-header"><span class="sec">Current Embed Configuration</span></div>
+      <div class="stat-grid">
+        <div class="stat-box">
+          <div class="label">Model</div>
+          <div class="value" style="font-size:13px;word-break:break-all">${esc(cfg.embed_model || '--')}</div>
+        </div>
+        <div class="stat-box">
+          <div class="label">Chunk Limit</div>
+          <div class="value" style="font-size:13px">${cfg.embed_chunk_limit ?? '?'}</div>
+          <div class="sub">chars / request</div>
+        </div>
+        <div class="stat-box">
+          <div class="label">GPU Prefer</div>
+          <div class="value" style="font-size:13px">${cfg.prefer_gpu ? 'Yes' : 'No'}</div>
+        </div>
+        <div class="stat-box">
+          <div class="label">Pinned Instance</div>
+          <div class="value" style="font-size:13px">${cfg.pinned_instance || 'auto'}</div>
+        </div>
+      </div>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+        ${Object.entries(cfg.instances || {}).map(([id, inst]) =>
+          `<span class="badge ${inst.status === 'online' ? 'ok' : 'err'}" title="${esc(id)}">
+            ${esc(inst.label || id)} · ${esc(inst.status)}${inst.has_gpu ? ' · GPU' : ''}
+          </span>`
+        ).join('')}
+      </div>`;
+    const modelInput = document.getElementById('reencodeModel');
+    if (modelInput && !modelInput.value) modelInput.value = cfg.embed_model || '';
+    const chunkInput = document.getElementById('reencodeChunk');
+    if (chunkInput && cfg.embed_chunk_limit) chunkInput.value = cfg.embed_chunk_limit;
+  } else {
+    card.innerHTML = `<div class="card-header"><span class="sec">Current Embed Configuration</span></div>
+      <div style="color:var(--err);font-size:11px">${esc((cfg && cfg.error) || 'Failed to load')}</div>`;
+  }
+
+  // Populate dataset selector + show how many already in Chroma vs total
+  await _loadReencodeDatasets();
+}
+
+async function _loadReencodeDatasets() {
+  const dsData = await api('/fabric/vectors/chroma/datasets');
+  const dsSel = document.getElementById('reencodeDs');
+  dsSel.innerHTML = '<option value="">All datasets</option>';
+  (dsData.datasets || []).forEach(ds => {
+    const o = document.createElement('option');
+    o.value = ds.dataset_id;
+    o.textContent = `${ds.dataset_id} (${fmtNum(ds.count)} vectors, dim=${ds.sample_dim || '?'})`;
+    dsSel.appendChild(o);
+  });
+}
+
+// ── Probe ─────────────────────────────────────────────────────────────────────
+async function probeModel() {
+  const model = document.getElementById('probeModel').value.trim();
+  const el = document.getElementById('probeResult');
+  if (!model) { el.innerHTML = '<span style="color:var(--warn)">Enter a model name</span>'; return; }
+  el.innerHTML = '<span style="color:var(--dim2)">Probing…</span>';
+  try {
+    // Set the model first, then probe via worldview/diagnose
+    const r = await api('/ollama/embed_config', { embed_model: model });
+    if (r.error) { el.innerHTML = `<span style="color:var(--err)">${esc(r.error)}</span>`; return; }
+    const probe = await api('/worldview/diagnose', {});
+    const dim = probe.embed_dim || probe.probe_dim || '?';
+    const ok = typeof dim === 'number' && dim > 0;
+    el.innerHTML = `<span style="color:var(--${ok ? 'ok' : 'warn'})">
+      ${ok ? '✓' : '⚠'} model=${esc(model)} · dim=${dim}${ok ? '' : ' · probe returned no dim'}
+    </span>`;
+    await loadReencode();
+  } catch(e) {
+    el.innerHTML = `<span style="color:var(--err)">${esc(String(e))}</span>`;
+  }
+}
+
+// ── Start / Resume ────────────────────────────────────────────────────────────
+async function startReencode(resume = false) {
+  const model       = document.getElementById('reencodeModel').value.trim();
+  const chunkLimit  = parseInt(document.getElementById('reencodeChunk').value) || 6000;
+  const dsId        = document.getElementById('reencodeDs').value;
+  const gpuBatch    = parseInt(document.getElementById('reencodeGpuBatch').value) || 32;
+  const cpuBatch    = parseInt(document.getElementById('reencodeCpuBatch').value) || 8;
+  const force       = !resume && document.getElementById('reencodeForce').checked;
+
+  if (!model) { alert('Enter a target model name first.'); return; }
+
+  if (force && !confirm(
+    `This will RESET the Chroma collection and re-embed ALL records with "${model}".\n\nCurrent vectors will be deleted. Continue?`
+  )) return;
+
+  // Apply embed config
+  const cfgResult = await api('/ollama/embed_config', { embed_model: model, embed_chunk_limit: chunkLimit });
+  if (cfgResult.error) { alert('Failed to update embed config: ' + cfgResult.error); return; }
+
+  _reencodeAbort = false;
+  document.getElementById('reencodeStartBtn').disabled = true;
+  document.getElementById('reencodeResumeBtn').disabled = true;
+  document.getElementById('reencodeAbortBtn').style.display = '';
+  document.getElementById('reencodeProgressCard').style.display = '';
+
+  if (!resume) {
+    // Fresh start — clear progress display and monotonic state
+    document.getElementById('reencodeLog').textContent = '';
+    document.getElementById('reencodeBar').style.width = '0%';
+    document.getElementById('reencodeEmbedded').textContent = '0';
+    document.getElementById('reencodeUpserted').textContent = '0';
+    document.getElementById('reencodeErrors').textContent = '0';
+    document.getElementById('reencodeTotal').textContent = '—';
+    _reencodeMaxTotal = 0; _reencodeMaxProcessed = 0;
+    _reencodeMaxEmbedded = 0; _reencodeMaxUpserted = 0;
+    _seenEventKeys = new Set();
+  }
+  setBadge('reencodeStatusBadge', resume ? 'resuming' : 'running', 'dim');
+  reencodeLog(`[${resume ? 'resume' : 'start'}] model=${model} chunk_limit=${chunkLimit} force=${force} gpu_batch=${gpuBatch} cpu_batch=${cpuBatch}${dsId ? ' dataset='+dsId : ''}\n`);
+
+  // Open WebSocket for live events + poll as fallback
+  _startReencodeWs();
+  _startReencodePoll();
+
+  try {
+    const payload = {
+      dataset_id:     dsId,
+      gpu_batch_size: gpuBatch,
+      cpu_batch_size: cpuBatch,
+      force:          force,
+      limit:          500000,
+    };
+    const result = await api('/worldview/reembed_missing', payload);
+
+    if (result.error) {
+      setBadge('reencodeStatusBadge', 'error', 'err');
+      reencodeLog(`[error] ${result.error}\n`);
+      if (result.hint) reencodeLog(`[hint] ${result.hint}\n`);
+    } else {
+      const total    = result.missing_found || 0;
+      const upserted = result.upserted || 0;
+      const pct      = total > 0 ? Math.round(upserted / total * 100) : 100;
+      document.getElementById('reencodeBar').style.width = pct + '%';
+      setBadge('reencodeStatusBadge', 'done', 'ok');
+      document.getElementById('reencodeEmbedded').textContent = fmtNum(result.embedded);
+      document.getElementById('reencodeUpserted').textContent = fmtNum(upserted);
+      const errCount = Object.values(result.errors || {}).reduce((a, b) => a + b, 0);
+      document.getElementById('reencodeErrors').textContent = fmtNum(errCount);
+      reencodeLog(`[done] embedded=${result.embedded} upserted=${upserted} errors=${JSON.stringify(result.errors || {})}\n`);
+      if (result.missing_found === 0 && resume) reencodeLog(`[info] Nothing remaining — collection is complete.\n`);
+      // Refresh overview to show new dim
+      setTimeout(() => { loadOverview(); loaded['overview'] = true; }, 1200);
+      // Refresh dataset list to show updated counts
+      await _loadReencodeDatasets();
+    }
+  } catch(e) {
+    setBadge('reencodeStatusBadge', 'error', 'err');
+    reencodeLog(`[exception] ${String(e)}\n`);
+  } finally {
+    _stopReencodeWs();
+    _stopReencodePoll();
+    document.getElementById('reencodeStartBtn').disabled = false;
+    document.getElementById('reencodeResumeBtn').disabled = false;
+    document.getElementById('reencodeAbortBtn').style.display = 'none';
+  }
+}
+
+// Resume = start without force, keeping existing Chroma vectors
+function resumeReencode() { startReencode(true); }
+
+// ── Event handler ─────────────────────────────────────────────────────────────
+function handleReencodeEvent(d) {
+  const stage = d.stage || d.type || '';
+  const msg   = d.message || '';
+
+  if (stage === 'probe_ok' || stage === 'embed_missing') {
+    reencodeLog(`[probe] ${msg}${d.dim ? ' dim='+d.dim : ''}\n`);
+
+  } else if (stage === 'chroma_reset') {
+    reencodeLog(`[reset] Chroma collection reset\n`);
+    setBadge('reencodeStatusBadge', 'resetting', 'warn');
+
+  } else if (stage === 'reembed_scan') {
+    reencodeLog(`[scan] ${msg}\n`);
+
+  } else if (stage === 'resolving_graph') {
+    reencodeLog(`[resolve] ${msg}\n`);
+    setBadge('reencodeStatusBadge', 'resolving', 'dim');
+
+  } else if (stage === 'resolve_done') {
+    reencodeLog(`[resolve] ${msg}\n`);
+
+  } else if (stage === 'resolve_fallback') {
+    reencodeLog(`[resolve] ⚠ ${msg}\n`);
+
+  } else if (stage === 'building_graph') {
+    reencodeLog(`[graph] ${msg}\n`);
+    setBadge('reencodeStatusBadge', 'building', 'dim');
+
+  } else if (stage === 'graph_ready') {
+    reencodeLog(`[graph] ${msg}\n`);
+
+  } else if (stage === 'reembed_found') {
+    const missing = d.missing || 0;
+    const already = d.already_in_chroma || 0;
+    // Only update total upward — never show 0 if we already had a higher value
+    if (missing > _reencodeMaxTotal) {
+      _reencodeMaxTotal = missing;
+      document.getElementById('reencodeTotal').textContent = fmtNum(_reencodeMaxTotal);
+    }
+    reencodeLog(`[found] ${fmtNum(missing)} to embed · ${fmtNum(already)} already in Chroma\n`);
+    if (missing === 0 && already > 0) {
+      document.getElementById('reencodeBar').style.width = '100%';
+      setBadge('reencodeStatusBadge', 'done', 'ok');
+    }
+
+  } else if (stage === 'reembed_progress') {
+    const total     = Math.max(_reencodeMaxTotal, d.total || 0, 1);
+    const processed = Math.max(_reencodeMaxProcessed, d.processed || 0);
+    const embedded  = Math.max(_reencodeMaxEmbedded,  d.embedded  || 0);
+    const upserted  = Math.max(_reencodeMaxUpserted,  d.upserted  || 0);
+
+    // Persist maximums
+    _reencodeMaxTotal     = total;
+    _reencodeMaxProcessed = processed;
+    _reencodeMaxEmbedded  = embedded;
+    _reencodeMaxUpserted  = upserted;
+
+    const pct = Math.min(100, Math.round((processed / total) * 100));
+    document.getElementById('reencodeBar').style.width = pct + '%';
+    document.getElementById('reencodeEmbedded').textContent = fmtNum(embedded);
+    document.getElementById('reencodeUpserted').textContent = fmtNum(upserted);
+    document.getElementById('reencodeTotal').textContent    = fmtNum(total);
+
+    const errors   = d.errors || {};
+    const errCount = Object.values(errors).reduce((a, b) => a + b, 0);
+    document.getElementById('reencodeErrors').textContent = fmtNum(errCount);
+
+    const instSummary = d.instances
+      ? ' via: ' + Object.entries(d.instances).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k,v])=>`${k}=${v}`).join(', ')
+      : '';
+    const errSummary = errCount > 0
+      ? ' err:' + Object.entries(errors).sort((a,b)=>b[1]-a[1]).slice(0,2).map(([k,v])=>`${k}=${v}`).join(',')
+      : '';
+    reencodeLog(`[${processed}/${total} ${pct}%] emb=${embedded} ups=${upserted}${instSummary}${errSummary}\n`);
+
+  } else if (stage === 'reembed_done') {
+    setBadge('reencodeStatusBadge', 'done', 'ok');
+    reencodeLog(`[done] embedded=${d.embedded || 0} upserted=${d.upserted || 0}\n`);
+
+  } else if (msg) {
+    reencodeLog(`[${stage || '?'}] ${msg}\n`);
+  }
+}
+
+function abortReencode() {
+  _reencodeAbort = true;
+  reencodeLog('[abort] Abort requested — current batch will complete then stop\n');
+  setBadge('reencodeStatusBadge', 'aborting', 'warn');
+}
+
+function reencodeLog(text) {
+  const el = document.getElementById('reencodeLog');
+  if (!el) return;
+  el.textContent += text;
+  el.scrollTop = el.scrollHeight;
+}
+
+function setBadge(id, label, cls) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = label;
+  el.className = 'badge ' + cls;
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

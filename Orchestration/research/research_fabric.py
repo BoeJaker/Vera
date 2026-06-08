@@ -185,8 +185,8 @@ def _jload(v: Any) -> Any:
 
 def _fabric():
     """Resolve data_fabric module at runtime — avoids import cycles."""
-    return (sys.modules.get("Vera.Orchestration.fabric.data_fabric") or
-            sys.modules.get("Vera.Orchestration.fabric.data_fabric"))
+    return (sys.modules.get("data_fabric") or
+            sys.modules.get("data_fabric"))
 
 def _registry():
     """Resolve CAPABILITY_REGISTRY at runtime."""
@@ -208,7 +208,7 @@ def _emit_event(evt: dict):
 def _memory_hooks():
     """Resolve memory_hooks for graph recording."""
     return (sys.modules.get("Vera.Orchestration.memory_hooks") or
-            sys.modules.get("Vera.Orchestration.fabric.memory_hooks"))
+            sys.modules.get("memory_hooks"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

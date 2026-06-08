@@ -78,10 +78,16 @@ code{font-family:var(--mono);font-size:.9em}
 </style>
 <style>
 /* nav */
-.fab-nav{width:220px;flex-shrink:0;display:flex;flex-direction:column;border-right:1px solid var(--border);background:var(--bg1);height:100%;overflow:hidden}
-.fab-nav-hd{padding:7px 10px;border-bottom:1px solid var(--border);font-size:9.5px;color:var(--dim);text-transform:uppercase;letter-spacing:1.1px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
+.fab-nav{width:220px;flex-shrink:0;display:flex;flex-direction:column;border-right:1px solid var(--border);background:var(--bg1);height:100%;overflow:hidden;transition:width .18s ease}
+.fab-nav.collapsed{width:38px}
+.fab-nav-hd{padding:7px 10px;border-bottom:1px solid var(--border);font-size:9.5px;font-weight:700;font-family:var(--mono);color:var(--dim2);text-transform:uppercase;letter-spacing:1.4px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;white-space:nowrap;overflow:hidden}
+.fab-nav.collapsed .fab-nav-title{display:none}
+.fab-nb-label{overflow:hidden}
+.fab-nav.collapsed .fab-nb-label{display:none}
+.fab-nav.collapsed .fab-nb-badge{display:none}
+.fab-nav.collapsed .fab-ds-search,.fab-nav.collapsed .fab-ds-list,.fab-nav.collapsed .fab-nav-status{display:none}
 .fab-nav-btns{display:flex;flex-direction:column;gap:1px;padding:5px;border-bottom:1px solid var(--border);flex-shrink:0}
-.fab-nb{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:3px;cursor:pointer;font-size:10.5px;color:var(--dim2);border:none;background:transparent;text-align:left;width:100%;transition:.12s}
+.fab-nb{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:3px;cursor:pointer;font-size:9.5px;font-weight:700;font-family:var(--mono);text-transform:uppercase;letter-spacing:1.1px;color:var(--dim2);border:none;background:transparent;text-align:left;width:100%;transition:.12s}
 .fab-nb:hover{background:var(--bg2);color:var(--text)}.fab-nb.active{background:rgba(90,158,143,.12);color:var(--acc);font-weight:500}
 .fab-nb-icon{width:14px;text-align:center;font-size:11px;flex-shrink:0}
 .fab-nb-badge{margin-left:auto;font-size:8.5px;color:var(--dim2);font-family:var(--mono);background:var(--bg3);padding:1px 4px;border-radius:6px;min-width:18px;text-align:center}
@@ -93,6 +99,11 @@ code{font-family:var(--mono);font-size:.9em}
 .fab-ds-item:hover{background:var(--bg2)}.fab-ds-item.active{background:rgba(90,158,143,.13);color:var(--acc)}
 .fab-ds-item .dsn{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:9.5px}
 .fab-ds-item .dsc{font-size:8.5px;color:var(--dim2);white-space:nowrap;flex-shrink:0}
+.fab-ds-folder{display:flex;align-items:center;gap:4px;padding:3px 6px;cursor:pointer;font-size:10px;margin-bottom:1px;border-radius:3px;user-select:none}
+.fab-ds-folder:hover{background:var(--bg2)}
+.fab-ds-caret{font-size:7px;color:var(--dim);width:10px;text-align:center;flex-shrink:0}
+.fab-ds-fname{font-family:var(--mono);font-size:9.5px;color:var(--acc3);font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fab-ds-fcnt{font-size:8px;color:var(--dim2);flex-shrink:0}
 .fab-nav-status{padding:5px 8px;border-top:1px solid var(--border);font-size:8.5px;color:var(--dim2);flex-shrink:0}
 /* main */
 .fab-main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;height:100%}
@@ -153,25 +164,23 @@ code{font-family:var(--mono);font-size:.9em}
 <body>
 <div id="app">
 <!-- LEFT NAV -->
-<div class="fab-nav">
-  <div class="fab-nav-hd">Data Fabric<button class="btn sm" onclick="fabRefreshAll()">↻</button></div>
+<div class="fab-nav" id="fabNav">
+  <div class="fab-nav-hd"><span class="fab-nav-title">Data Fabric</span><button class="btn sm" onclick="fabToggleNav()" id="fabNavCollapseBtn" style="padding:2px 5px;font-size:11px" title="Collapse">‹</button></div>
   <div class="fab-nav-btns">
-    <button class="fab-nb active" id="fnav-datasets" onclick="fabSection('datasets')"><span class="fab-nb-icon">◫</span>Datasets<span class="fab-nb-badge" id="fnav-ds-cnt">—</span></button>
-    <button class="fab-nb" id="fnav-sources"  onclick="fabSection('sources')"><span class="fab-nb-icon">⬡</span>Sources<span class="fab-nb-badge" id="fnav-src-cnt">—</span></button>
-   <button class="fab-nb" id="fnav-discover" onclick="fabSection('discover')"><span class="fab-nb-icon">⊕</span>Discover</button>
-    <button class="fab-nb" id="fnav-query"    onclick="fabSection('query')"><span class="fab-nb-icon">⌕</span>Query</button>
-    <button class="fab-nb" id="fnav-iot"      onclick="fabSection('iot')"><span class="fab-nb-icon">⬡</span>IoT &amp; TS</button>
-    <button class="fab-nb" id="fnav-graph"    onclick="fabSection('graph')"><span class="fab-nb-icon">◈</span>Graph</button>
-    <button class="fab-nb" id="fnav-loom"     onclick="fabSection('loom')"><span class="fab-nb-icon">⧖</span>Loom</button>
-    <button class="fab-nb" id="fnav-schedule" onclick="fabSection('schedule')"><span class="fab-nb-icon">⏱</span>Schedule</button>
-    <button class="fab-nb" id="fnav-bus"      onclick="fabSection('bus')"><span class="fab-nb-icon">⇄</span>Bus</button>
-    <button class="fab-nb" id="fnav-stats"    onclick="fabSection('stats')"><span class="fab-nb-icon">∑</span>Stats</button>
-    <button class="fab-nb" id="fnav-skills"   onclick="fabSection('skills')"><span class="fab-nb-icon">✦</span>Skills</button>
-    <button class="fab-nb" id="fnav-worldview" onclick="fabSection('worldview')"><span class="fab-nb-icon">◈</span>WorldView</button>
-    <button class="fab-nb" id="fnav-vectors"   onclick="fabSection('vectors')"><span class="fab-nb-icon">⬡</span>Vectors</button>
+    <button class="fab-nb active" id="fnav-datasets" onclick="fabSection('datasets')" title="Datasets"><span class="fab-nb-icon">◫</span><span class="fab-nb-label">Datasets</span><span class="fab-nb-badge" id="fnav-ds-cnt">—</span></button>
+    <button class="fab-nb" id="fnav-sources"  onclick="fabSection('sources')" title="Sources"><span class="fab-nb-icon">⬡</span><span class="fab-nb-label">Sources</span><span class="fab-nb-badge" id="fnav-src-cnt">—</span></button>
+   <button class="fab-nb" id="fnav-discover" onclick="fabSection('discover')" title="Discover"><span class="fab-nb-icon">⊕</span><span class="fab-nb-label">Discover</span></button>
+    <button class="fab-nb" id="fnav-query"    onclick="fabSection('query')" title="Query"><span class="fab-nb-icon">⌕</span><span class="fab-nb-label">Query</span></button>
+    <button class="fab-nb" id="fnav-iot"      onclick="fabSection('iot')" title="IoT &amp; TS"><span class="fab-nb-icon">⬡</span><span class="fab-nb-label">IoT &amp; TS</span></button>
+    <button class="fab-nb" id="fnav-graph"    onclick="fabSection('graph')" title="Graph"><span class="fab-nb-icon">◈</span><span class="fab-nb-label">Graph</span></button>
+    <button class="fab-nb" id="fnav-loom"     onclick="fabSection('loom')" title="Loom"><span class="fab-nb-icon">⧖</span><span class="fab-nb-label">Loom</span></button>
+    <button class="fab-nb" id="fnav-schedule" onclick="fabSection('schedule')" title="Schedule"><span class="fab-nb-icon">⏱</span><span class="fab-nb-label">Schedule</span></button>
+    <button class="fab-nb" id="fnav-bus"      onclick="fabSection('bus')" title="Bus"><span class="fab-nb-icon">⇄</span><span class="fab-nb-label">Bus</span></button>
+    <button class="fab-nb" id="fnav-stats"    onclick="fabSection('stats')" title="Stats"><span class="fab-nb-icon">∑</span><span class="fab-nb-label">Stats</span></button>
+    <button class="fab-nb" id="fnav-skills"   onclick="fabSection('skills')" title="Skills"><span class="fab-nb-icon">✦</span><span class="fab-nb-label">Skills</span></button>
+    <button class="fab-nb" id="fnav-worldview" onclick="fabSection('worldview')" title="WorldView"><span class="fab-nb-icon">◈</span><span class="fab-nb-label">WorldView</span></button>
+    <button class="fab-nb" id="fnav-vectors"   onclick="fabSection('vectors')" title="Vectors"><span class="fab-nb-icon">⬡</span><span class="fab-nb-label">Vectors</span></button>
   </div>
-  <div class="fab-ds-search"><input id="fabDsFilter" placeholder="Filter datasets…" oninput="fabFilterDs()" autocomplete="off"></div>
-  <div class="fab-ds-list" id="fabDsList"><span style="color:var(--dim);font-size:9.5px;padding:6px;display:block">Loading…</span></div>
   <div class="fab-nav-status"><span id="fabStatusBar">—</span>
     <button class="btn sm" style="margin-left:6px;font-size:9px;padding:2px 6px" onclick="fabShowHealth()" title="Diagnostic snapshot">Health</button>
 <!-- Graph node detail side panel -->
@@ -214,12 +223,30 @@ code{font-family:var(--mono);font-size:.9em}
 </div>
 
 <!-- MAIN -->
-<div class="fab-main"><div class="fab-content">
+<div class="fab-main">
+
+  <!-- DISCOVER — sibling of fab-content so it fills the full flex height without the 14px padding -->
+  <div id="fsec-discover" style="display:none;flex:1;min-height:0;padding:0;overflow:hidden;position:relative">
+    <iframe id="fsec-discover-frame" src="about:blank" style="width:100%;height:100%;border:none" allow="clipboard-read;clipboard-write"></iframe>
+  </div>
+
+<div class="fab-content" id="fab-content-inner">
 
   <!-- DATASETS -->
   <div id="fsec-datasets">
-    <div id="fabDsEmpty" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:260px;color:var(--dim);gap:10px">
-      <div style="font-size:30px;opacity:.2">◫</div><div style="font-size:12px">Select a dataset from the sidebar</div>
+    <div style="display:flex;gap:0;margin:-14px -14px 12px -14px;border-bottom:1px solid var(--border);background:var(--bg1)">
+      <div style="width:220px;flex-shrink:0;border-right:1px solid var(--border);display:flex;flex-direction:column">
+        <div style="display:flex;align-items:center;gap:4px;padding:5px 7px;border-bottom:1px solid var(--border)">
+          <input id="fabDsFilter" placeholder="Filter datasets…" oninput="fabFilterDs()" autocomplete="off"
+            style="flex:1;font-size:10px;background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:3px">
+          <button class="btn sm" onclick="fabLoadDatasets()" style="padding:2px 5px;font-size:9px" title="Refresh">↻</button>
+        </div>
+        <div class="fab-ds-list" id="fabDsList" style="max-height:240px"><span style="color:var(--dim);font-size:9.5px;padding:6px;display:block">Loading…</span></div>
+      </div>
+      <div style="flex:1;display:flex;align-items:center;padding:8px 12px;font-size:10px;color:var(--dim2)" id="fabDsPickerHint">← Select a dataset to browse</div>
+    </div>
+    <div id="fabDsEmpty" style="display:none;flex-direction:column;align-items:center;justify-content:center;height:200px;color:var(--dim);gap:10px">
+      <div style="font-size:30px;opacity:.2">◫</div><div style="font-size:12px">Select a dataset above</div>
     </div>
     <div id="fabBrowser" style="display:none">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
@@ -378,195 +405,6 @@ code{font-family:var(--mono);font-size:.9em}
       <div id="fabCatGrid" class="cat-grid"></div>
     </div>
   </div>
-
-  <!-- DISCOVER -->
-  
-<div id="fsec-discover-enhanced" style="display:none;flex-direction:column;gap:0;height:calc(100vh - 80px);min-height:520px;position:relative">
-
-  <!-- ── HEADER (slim) ──────────────────────────────────────────────── -->
-  <div style="display:flex;align-items:center;gap:8px;padding:4px 0 8px 0;border-bottom:1px solid var(--border);margin-bottom:6px;flex-shrink:0">
-    <div class="sec" style="margin:0;flex:1">Discover &mdash; Web Acquisition</div>
-    <span id="wacqStatusText" style="font-size:9.5px;color:var(--dim2);margin-right:6px"></span>
-    <button class="btn sm" id="dtab-acquire" onclick="discoverTab('acquire')" style="border-color:var(--acc);color:var(--acc)">Acquisition</button>
-    <button class="btn sm" id="dtab-history" onclick="discoverTab('history')">History</button>
-    <button class="btn sm" onclick="discDrawerToggle()" id="discDrawerBtn" title="Toggle config panel">&#9776; Panel</button>
-  </div>
-
-  <!-- ── MAIN CANVAS WRAPPER ────────────────────────────────────────── -->
-  <div id="discCanvasWrap" style="position:relative;flex:1;min-height:0;border:1px solid var(--border);border-radius:4px;overflow:hidden;display:flex">
-
-    <!-- Graph pane — fills all available space -->
-    <div id="discGraphPane" style="flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg0);padding-right:380px">
-
-      <!-- Live crawl graph (VeraGraph element) — main view -->
-      <div id="wacqLiveGraphHost" style="flex:1;position:relative;overflow:hidden;display:flex;flex-direction:column">
-        <!-- Status overlay — shows current page being scraped + rolling summary -->
-        <div id="wacqLiveStatus" style="position:absolute;bottom:8px;left:8px;right:8px;z-index:10;pointer-events:none;display:none">
-          <div style="background:rgba(24,22,20,.88);border:1px solid var(--border);border-radius:4px;padding:6px 10px;max-height:120px;overflow-y:auto;backdrop-filter:blur(4px)">
-            <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
-              <div id="wacqLiveDot" style="width:6px;height:6px;border-radius:50%;background:var(--ok);box-shadow:0 0 5px var(--ok);flex-shrink:0;animation:pulse-dot 1.5s ease-in-out infinite"></div>
-              <span id="wacqLiveStatusLine" style="font-size:9.5px;color:var(--acc);font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1"></span>
-              <span id="wacqLiveCounters" style="font-size:8.5px;color:var(--dim2);font-family:var(--mono);flex-shrink:0"></span>
-            </div>
-            <div id="wacqLiveSummary" style="font-size:9px;color:var(--dim2);line-height:1.4;max-height:70px;overflow-y:auto;display:none"></div>
-          </div>
-        </div>
-        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:11px;text-align:center;padding:20px">
-          Configure and start an acquisition in the panel to see the live crawl graph.
-        </div>
-      </div>
-
-      <!-- Sitemap / page tree (below graph when visible) -->
-      <div id="wacqTreeWrap" style="display:none;border-top:1px solid var(--border);max-height:180px;overflow-y:auto;flex-shrink:0;padding:6px">
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-          <span style="font-size:9.5px;color:var(--dim2);font-weight:600;text-transform:uppercase;letter-spacing:.5px">Page Map</span>
-          <span id="wacqTreeCount" style="font-size:9px;color:var(--dim2);font-family:var(--mono)"></span>
-        </div>
-        <div class="wacq-tree" id="wacqTree"></div>
-      </div>
-    </div>
-
-    <!-- ── SIDE PANEL (right drawer) ─────────────────────────────────── -->
-    <div id="discDrawer" style="position:absolute;top:0;right:0;width:380px;height:100%;background:var(--bg1);border-left:1px solid var(--border);box-shadow:-2px 0 8px rgba(0,0,0,.3);transition:right .2s ease;overflow-y:auto;z-index:20;display:flex;flex-direction:column">
-
-      <!-- Sticky header inside drawer -->
-      <div style="position:sticky;top:0;background:var(--bg1);padding:8px 10px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px;z-index:3">
-        <div style="font-size:10.5px;font-weight:700;color:var(--acc);flex:1">Discover Panel</div>
-        <button class="btn sm" onclick="discDrawerToggle()" style="font-size:13px;padding:0 7px;line-height:1.2" title="Hide panel">&times;</button>
-      </div>
-
-      <div style="padding:8px 10px;flex:1;overflow-y:auto">
-
-  <!-- ─── WEB ACQUISITION tab ─────────────────────────────────────────────────── -->
-  <div id="dtab-acquire-content">
-
-    <details class="loom-section" open>
-      <summary class="loom-section-head">
-        <span class="loom-stage-num" style="background:rgba(90,158,143,.15);color:var(--acc)">1</span>
-        <span class="loom-section-title">Target &amp; Scope</span>
-      </summary>
-      <div class="loom-section-body">
-        <div class="row"><label>Start URL</label><input id="wacqUrl" placeholder="https://en.wikipedia.org/wiki/Apple_Inc." style="flex:1;font-size:11px"></div>
-        <div class="row"><label>Dataset</label><input id="wacqDs" placeholder="auto" style="flex:1;font-size:11px"></div>
-        <div class="row"><label>Tags</label><input id="wacqTags" placeholder="technology, history" style="flex:1;font-size:11px"></div>
-        <div class="row"><label>Max pages</label><input id="wacqMax" type="number" value="50" min="1" max="2000" style="flex:1;font-size:11px"></div>
-        <div class="row"><label>Max depth</label><input id="wacqDepth" type="number" value="4" min="1" max="20" style="flex:1;font-size:11px"></div>
-        <div class="row">
-          <label>Topic focus</label>
-          <input id="wacqTopic" placeholder="e.g. 'Steve Jobs'" style="flex:1;font-size:11px">
-        </div>
-        <button class="btn sm teal" style="font-size:9px;padding:2px 8px;margin-top:2px;white-space:nowrap"
-                onclick="wacqFindSeedUrls()" title="Use Topic Search to find seed URLs">Find seed URLs &rarr;</button>
-        <div class="row"><label>Topic dropoff</label><input id="wacqDrop" type="number" value="3" min="0" max="20" style="width:60px;font-size:11px"></div>
-        <div style="display:flex;flex-direction:column;gap:3px;margin-top:4px">
-          <label class="loom-check"><input type="checkbox" id="wacqSameDomain" checked><span>Same domain only</span></label>
-          <label class="loom-check"><input type="checkbox" id="wacqEntities" checked><span>Extract entities</span></label>
-          <label class="loom-check"><input type="checkbox" id="wacqContent" checked><span>Fetch full content</span></label>
-        </div>
-      </div>
-    </details>
-
-    <details class="loom-section">
-      <summary class="loom-section-head">
-        <span class="loom-stage-num" style="background:rgba(201,107,107,.15);color:var(--err)">2</span>
-        <span class="loom-section-title">Exclusion Filters</span>
-      </summary>
-      <div class="loom-section-body">
-        <div class="row"><label>Neg words</label><input id="wacqNegWords" placeholder="forum, login, signup" style="flex:1;font-size:11px"></div>
-        <div id="wacqNegWordChips" style="display:flex;flex-wrap:wrap;gap:4px;margin:-2px 0 6px 0;min-height:16px"></div>
-        <div class="row"><label>Neg URLs</label><input id="wacqNegUrls" placeholder="/user/, /login, .pdf" style="flex:1;font-size:11px"></div>
-        <div id="wacqNegUrlChips" style="display:flex;flex-wrap:wrap;gap:4px;margin:-2px 0 2px 0;min-height:16px"></div>
-      </div>
-    </details>
-
-    <details class="loom-section" open>
-      <summary class="loom-section-head">
-        <span class="loom-stage-num" style="background:rgba(109,184,122,.15);color:var(--ok)">3</span>
-        <span class="loom-section-title">Execute</span>
-      </summary>
-      <div class="loom-section-body">
-        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-          <button class="btn primary sm" onclick="wacqStart()" id="wacqStartBtn">Acquire &amp; Index</button>
-          <button class="btn sm" onclick="wacqPreview()">Preview URL</button>
-          <button class="btn sm teal" id="wacqContinueBtn" onclick="wacqContinue()" style="display:none">Continue Crawl</button>
-        </div>
-        <div id="wacqProgressBar" style="display:none;margin-top:6px;height:4px;background:var(--bg3);border-radius:2px;overflow:hidden">
-          <div id="wacqProgressInner" style="height:100%;background:var(--acc);width:0%;transition:width .5s"></div>
-        </div>
-      </div>
-    </details>
-
-    <!-- Topic Discovery -->
-    <details class="loom-section">
-      <summary class="loom-section-head">
-        <span class="loom-stage-num" style="background:rgba(201,149,90,.15);color:var(--acc3)">T</span>
-        <span class="loom-section-title">Topic Discovery</span>
-      </summary>
-      <div class="loom-section-body">
-        <div class="row"><label>Topic</label><input id="discTopicV2" placeholder="e.g. zelda lore, LLM inference" style="flex:1;font-size:11px"></div>
-        <div class="row"><label>Max sources</label><input id="discMaxV2" type="number" value="5" min="1" max="15" style="flex:1;font-size:11px"></div>
-        <div class="row"><label>Content type</label>
-          <select id="discTypeV2" style="flex:1;font-size:11px">
-            <option value="all">All (RSS + scrape)</option>
-            <option value="rss">RSS / Atom only</option>
-            <option value="scrape">HTML scrape only</option>
-            <option value="recon">Recon (API)</option>
-          </select>
-        </div>
-        <button class="btn primary sm" style="margin-top:4px;background:var(--acc3);border-color:var(--acc3)" onclick="discoverTopicV2()">Discover &amp; Ingest</button>
-        <div class="status-bar" id="discStatusV2"></div>
-        <div id="discResultsV2" style="font-size:10px;margin-top:6px"></div>
-      </div>
-    </details>
-
-    <!-- Progress log (in drawer) -->
-    <details class="loom-section" id="wacqProgressSection" style="display:none">
-      <summary class="loom-section-head">
-        <span class="loom-section-title">Acquisition Log</span>
-      </summary>
-      <div class="loom-section-body">
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-          <span style="flex:1"></span>
-          <button class="btn sm" style="font-size:9px;padding:1px 5px" onclick="wacqClearLog()">Clear</button>
-        </div>
-        <div id="wacqLog" style="font-size:9.5px;color:var(--dim);min-height:30px;max-height:200px;overflow-y:auto;font-family:var(--mono);line-height:1.5"></div>
-      </div>
-    </details>
-
-    <!-- Results summary -->
-    <div id="wacqResultWrap" style="margin-top:8px;display:none">
-      <div class="card">
-        <div style="font-size:10.5px;font-weight:600;color:var(--acc);margin-bottom:6px">Acquisition Complete</div>
-        <div id="wacqResultSummary" style="font-size:10px;color:var(--dim2);line-height:1.6"></div>
-        <div style="display:flex;gap:5px;margin-top:8px;flex-wrap:wrap">
-          <button class="btn sm primary" onclick="wacqBrowseResult()">Browse Dataset</button>
-          <button class="btn sm teal" onclick="wacqViewEntities()">View Entity Graph</button>
-          <button class="btn sm" onclick="wacqContinue()">Continue Crawling</button>
-          <button class="btn sm" onclick="wacqViewInGraph()">View in Fabric Graph</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ─── ACQUISITION HISTORY ──────────────────────────────────────────────── -->
-  <div id="dtab-history-content" style="display:none">
-    <details class="loom-section" open>
-      <summary class="loom-section-head">
-        <span class="loom-section-title">Acquisition History</span>
-      </summary>
-      <div class="loom-section-body">
-        <button class="btn sm" onclick="acqLoadHistory()" style="margin-bottom:6px">Refresh</button>
-        <div id="acqHistoryList" style="display:flex;flex-direction:column;gap:3px">
-          <span style="color:var(--dim);font-size:10px">Loading...</span>
-        </div>
-      </div>
-    </details>
-  </div>
-
-      </div>
-    </div>
-  </div>
-</div>
 
   <!-- ═══════════════════════════════════════════════════════════════════════ -->
   <!-- ENTITIES — standalone section (accessible from nav) -->
@@ -935,8 +773,8 @@ code{font-family:var(--mono);font-size:.9em}
 
       <!-- Graph pane — fills all available space -->
       <div id="fgGraphPane" style="flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg0)">
-        <div id="fgGraphHost" style="flex:1;position:relative;overflow:hidden;display:flex;flex-direction:column">
-          <canvas id="fabStructGraph" style="flex:1;height:100%;min-height:400px"></canvas>
+        <div id="fgGraphHost" style="flex:1;position:relative;overflow:hidden;display:flex;flex-direction:column;min-height:0">
+          <canvas id="fabStructGraph" style="flex:1;width:100%;height:100%;min-height:400px"></canvas>
         </div>
       </div>
 
@@ -1549,6 +1387,7 @@ var _fabCatalog=[],_fabCatFilt='',_fabAdded=new Set(),_fabGAnim=null,_fabSuggest
 // ── Init ─────────────────────────────────────────────────────────────────────
 function fabricInit(){fabSection('datasets');fabLoadDatasets();fabLoadSources();}
 function fabRefreshAll(){fabLoadDatasets();fabLoadSources();if(_fabSection==='stats')fabLoadStats();if(_fabSection==='graph')fabStructLoad();if(_fabSection==='schedule')fabLoadSchedule();}
+function fabToggleNav(){var n=document.getElementById('fabNav'),b=document.getElementById('fabNavCollapseBtn');if(!n)return;var c=n.classList.toggle('collapsed');if(b)b.textContent=c?'›':'‹';try{localStorage.setItem('fabNavCollapsed',c?'1':'0');}catch(e){}}
 
 function fabSection(name){
   _fabSection=name;
@@ -1556,24 +1395,26 @@ function fabSection(name){
     var el=document.getElementById('fsec-'+s),btn=document.getElementById('fnav-'+s);
     if(el) {
       if (s === name) {
-        // Loom and Graph use flex layout; worldview/vectors use block (iframe fills 100%)
-        el.style.display = (s === 'loom' || s === 'graph') ? 'flex' : 'block';
+        // discover/loom/graph use flex; worldview/vectors/discover use block (iframe fills 100%)
+        el.style.display = (s === 'loom' || s === 'graph' || s === 'discover') ? 'flex' : 'block';
       } else {
         el.style.display = 'none';
       }
     }
     if(btn)btn.classList.toggle('active',s===name);
   });
-  // Enhanced discover with sub-tabs
-  var enhDiscover = document.getElementById('fsec-discover-enhanced');
-  if (enhDiscover) {
-    enhDiscover.style.display = name === 'discover' ? 'flex' : 'none';
-  }
+  // discover lives outside fab-content-inner — hide the scroll container when showing discover
+  var _fci = document.getElementById('fab-content-inner');
+  if (_fci) _fci.style.display = (name === 'discover') ? 'none' : '';
   if(name==='query')fabPopulateQueryDs();
   if(name==='bus')fabBusStatus();
   if(name==='stats')fabLoadStats();
   if(name==='graph')fabStructLoad();
-  if(name==='discover')fabLoadCatalog();
+  if(name==='discover'){
+    var df=document.getElementById('fsec-discover-frame');
+    if(df&&df.src==='about:blank')df.src=API+'/ui/panels/discover-panel';
+    fabLoadCatalog();
+  }
   if(name==='entities'){name='loom';_fabSection='loom';var el=document.getElementById('fsec-loom');if(el)el.style.display='flex';var btn=document.getElementById('fnav-loom');if(btn)btn.classList.add('active');} // entities merged into loom
   if(name==='loom'){
     fabPopulateLoomDs();
@@ -1644,20 +1485,81 @@ async function fabLoadDatasets(){
   var sb=document.getElementById('fabStatusBar');if(sb)sb.textContent=_fabDatasets.length+' datasets';
   if(_fabDsPending){_fabDsPending=false;setTimeout(fabLoadDatasets,1600);}
 }
+var _fabDsTreeState = {};
 function fabFilterDs(){
   var q=(document.getElementById('fabDsFilter')?.value||'').toLowerCase();
   var list=document.getElementById('fabDsList');if(!list)return;
   var filt=_fabDatasets.filter(function(d){return !q||d.dataset_id.toLowerCase().includes(q);});
   if(!filt.length){list.innerHTML='<span style="color:var(--dim);font-size:9.5px;padding:6px;display:block">None</span>';return;}
-  list.innerHTML=filt.map(function(d){
-    var cnt=d.record_count!==undefined?d.record_count:(d.count!==undefined?d.count:'?');
-    var a=d.dataset_id===_fabSelected;
-    return '<div class="fab-ds-item'+(a?' active':'')+'" onclick="fabSelectDs(\''+esc(d.dataset_id)+'\')">'+
-      '<div class="dsn">'+esc(d.dataset_id)+'</div><div class="dsc">'+cnt+'</div></div>';
-  }).join('');
+
+  // Build tree: each node has {_ds, _children:{}}
+  var root={_ds:null,_children:{}};
+  filt.forEach(function(d){
+    var parts=d.dataset_id.split('.');
+    var node=root;
+    parts.forEach(function(seg){
+      if(!node._children[seg])node._children[seg]={_ds:null,_children:{}};
+      node=node._children[seg];
+    });
+    node._ds=d; // attach dataset at its exact level
+  });
+
+  function countAll(node){
+    var n=node._ds?1:0;
+    Object.keys(node._children).forEach(function(k){n+=countAll(node._children[k]);});
+    return n;
+  }
+
+  function renderNode(node,key,path,depth){
+    var html='';
+    var hasChildren=Object.keys(node._children).length>0;
+    var indent=depth*14;
+    if(!hasChildren){
+      // Pure leaf
+      var d=node._ds;if(!d)return'';
+      var cnt=d.record_count!==undefined?d.record_count:(d.count!==undefined?d.count:'?');
+      var a=d.dataset_id===_fabSelected;
+      html+='<div class="fab-ds-item'+(a?' active':'')+'" onclick="fabSelectDs(\''+esc(d.dataset_id)+'\')" style="padding-left:'+(6+indent)+'px">'+
+        '<div class="dsn">'+esc(key)+'</div><div class="dsc">'+cnt+'</div></div>';
+    } else {
+      // Folder — may also be a selectable dataset itself
+      var isOpen=_fabDsTreeState[path]!==false;
+      var childCnt=countAll(node)-(node._ds?1:0);
+      html+='<div class="fab-ds-folder" style="padding-left:'+(4+indent)+'px;display:flex;align-items:center;gap:3px">'+
+        '<span class="fab-ds-caret" style="cursor:pointer" onclick="fabToggleDsFolder(\''+esc(path)+'\',this.parentElement)">'+(isOpen?'▼':'▶')+'</span>';
+      if(node._ds){
+        var d=node._ds;
+        var cnt=d.record_count!==undefined?d.record_count:(d.count!==undefined?d.count:'?');
+        var a=d.dataset_id===_fabSelected;
+        html+='<span class="fab-ds-fname'+(a?' style="color:var(--acc);"':'"')+' style="cursor:pointer;text-decoration:underline dotted" onclick="fabSelectDs(\''+esc(d.dataset_id)+'\')" title="Browse '+esc(d.dataset_id)+'">'+esc(key)+'</span>'+
+          '<span class="fab-ds-fcnt" style="margin-left:auto">'+cnt+'</span>';
+      } else {
+        html+='<span class="fab-ds-fname" style="cursor:pointer" onclick="fabToggleDsFolder(\''+esc(path)+'\',this.parentElement)">'+esc(key)+'</span>'+
+          '<span class="fab-ds-fcnt">'+childCnt+'</span>';
+      }
+      html+='</div>';
+      if(isOpen){
+        Object.keys(node._children).sort().forEach(function(ck){
+          html+=renderNode(node._children[ck],ck,path+'.'+ck,depth+1);
+        });
+      }
+    }
+    return html;
+  }
+
+  var html='';
+  Object.keys(root._children).sort().forEach(function(k){
+    html+=renderNode(root._children[k],k,k,0);
+  });
+  list.innerHTML=html;
+}
+function fabToggleDsFolder(path, el) {
+  _fabDsTreeState[path] = !(_fabDsTreeState[path] !== false);
+  fabFilterDs();
 }
 async function fabSelectDs(id){
   _fabSelected=id;fabFilterDs();fabSection('datasets');
+  var ph=document.getElementById('fabDsPickerHint');if(ph)ph.style.display='none';
   document.getElementById('fabDsEmpty').style.display='none';
   document.getElementById('fabBrowser').style.display='block';
   document.getElementById('fabBrName').textContent=id;
@@ -5314,7 +5216,36 @@ window.addEventListener('message', function(ev){
     else if(t === 'fabric.source.added')   { fabLoadSources(); fabLoadDatasets(); }
     else if(t === 'fabric.dataset.deleted'){ fabLoadDatasets(); }
     else if(t === 'fabric.web.acquire.progress' && fabEv.stage === 'done') { fabLoadDatasets(); fabLoadSources(); }
+    // Forward worldview.progress events into the WorldView iframe
+    if(t === 'worldview.progress' || t === 'worldview.stream') {
+      var wvf = document.getElementById('fsec-worldview-frame');
+      if(wvf && wvf.contentWindow) {
+        try { wvf.contentWindow.postMessage({type:'vera_fabric_event', event:fabEv}, '*'); } catch(_){}
+        try { wvf.contentWindow.postMessage({type:'vera:event', event:fabEv}, '*'); } catch(_){}
+      }
+    }
   }catch(e){}
+});
+
+// ── Forward worldview events from vera:event channel into the WV iframe ──
+// The parent harness sends worldview.progress as vera:event (not vera_fabric_event),
+// so the main fabric event listener never sees them. This dedicated listener catches them.
+window.addEventListener('message', function(ev){
+  try {
+    if (!ev.data) return;
+    var mtype = ev.data.type;
+    if (mtype !== 'vera:event' && mtype !== 'vera_fabric_event') return;
+    var fabEv = ev.data.event;
+    if (!fabEv || !fabEv.type) return;
+    var t = fabEv.type;
+    if (t === 'worldview.progress' || t === 'worldview.stream' || t.indexOf('worldview.') === 0) {
+      var wvf = document.getElementById('fsec-worldview-frame');
+      if (wvf && wvf.contentWindow) {
+        try { wvf.contentWindow.postMessage({type:'vera_fabric_event', event:fabEv}, '*'); } catch(_){}
+        try { wvf.contentWindow.postMessage({type:'vera:event', event:fabEv}, '*'); } catch(_){}
+      }
+    }
+  } catch(_){}
 });
 
 // Safety-net for __local actions from vera_graph.js CustomEvent dispatch
@@ -7275,3 +7206,6 @@ function qrViewInGraph(recId, dsId) {
 }
 
 </script>
+<script src="/ui/vera-graph-panel-loom.js"></script>
+<script src="/ui/vera-graph-panel-worldview.js"></script>
+<script src="/ui/vera-graph-panel-discover.js"></script>

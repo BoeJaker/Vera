@@ -85,7 +85,7 @@ MEMORY_MIN_TEXT_LEN = 30
 
 def _memory():
     """Lazy import to avoid circular dependency at load time."""
-    vera_memory = sys.modules.get("Vera.Orchestration.fabric.memory")
+    vera_memory = sys.modules.get("memory")
     if vera_memory is None:
         return None, None
     return vera_memory.MEMORY, vera_memory.MemoryRecord

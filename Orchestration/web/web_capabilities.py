@@ -92,7 +92,7 @@ MAX_PAGE_CHARS  = 16000    # max chars to extract per page
 
 
 def _research_fabric():
-    return (sys.modules.get("Vera.Orchestration.research_fabric") or
+    return (sys.modules.get("research_fabric") or
             sys.modules.get("research_fabric"))
 
 

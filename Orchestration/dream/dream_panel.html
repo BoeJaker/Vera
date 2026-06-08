@@ -54,7 +54,7 @@ body{display:flex;height:100vh;overflow:hidden}
 .pill.active .dot{background:var(--acc2)}.pill.active{color:var(--acc2);border-color:rgba(74,222,128,.25)}
 .pill.warn .dot{background:var(--warn)}.pill.warn{color:var(--warn);border-color:rgba(245,158,11,.25)}
 .pill.err{color:var(--err);border-color:rgba(248,113,113,.25)}
-.content{flex:1;overflow-y:auto;padding:14px}
+.content{flex:1;overflow-y:auto;padding:14px;position:relative}
 .sec{display:none}.sec.active{display:block}
 
 /* ── CARDS ── */
@@ -341,18 +341,22 @@ hr{border:none;border-top:1px solid var(--border);margin:10px 0}
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>
     <span>Overview</span>
   </div>
-  <div class="sb-item" data-sec="triggers" title="Triggers">
+  <div class="sb-item" data-sec="triggers" title="Pipelines">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 2L5 9h4l-2 5 6-7H9l2-5z"/></svg>
-    <span>Triggers</span>
+    <span>Pipelines</span>
   </div>
-  <div class="sb-item" data-sec="pipeline" title="Pipeline Builder">
+  <div class="sb-item" data-sec="pipeline" title="Pipeline config">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="3" cy="8" r="2"/><circle cx="13" cy="8" r="2"/><circle cx="8" cy="4" r="2"/><circle cx="8" cy="12" r="2"/><path d="M5 8h3M11 8h-2M8 6v2M8 10v-2"/></svg>
-    <span>Pipeline</span>
+    <span>Pipeline config</span>
   </div>
   <div class="sb-item" data-sec="projects" title="Projects">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12v9a1 1 0 01-1 1H3a1 1 0 01-1-1V4z"/><path d="M2 4l2-2h8l2 2"/><path d="M5 8h6M5 11h4"/></svg>
     <span>Projects</span>
     <span class="sb-badge" id="badge-proj"></span>
+  </div>
+  <div class="sb-item" data-sec="review" title="Dream Review">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/><path d="M5 7h4M7 5v4"/></svg>
+    <span>Dream Review</span>
   </div>
   <div class="sb-sep"></div>
   <div class="sb-item" data-sec="history" title="History">
@@ -803,6 +807,13 @@ hr{border:none;border-top:1px solid var(--border);margin:10px 0}
   </div>
 </div>
 
+<!-- ═══ SOURCE REVIEW (injected) ═══ -->
+<div class="sec" id="sec-review" style="position:absolute;inset:0;padding:0">
+  <iframe src="/dream/review/panel"
+          style="border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"
+          allow="clipboard-read; clipboard-write"></iframe>
+</div>
+
 <!-- ═══ SETTINGS ═══ -->
 <div class="sec" id="sec-settings">
   <div class="card">
@@ -1111,7 +1122,7 @@ async function loadLast(){const r=await api('/dream/last');const b=$('ov-last');
    TRIGGERS
    ═══════════════════════════════════════════════════════════ */
 let _triggers=[],_senMeta=[],_stgMeta=[];
-let _agentModels=[],_teTrigWl=[],_teTrigNh=[];
+let _agentModels=[],_agentList=[],_teTrigWl=[],_teTrigNh=[];
 const PHASE_COLORS={sense:'#3b82f6',analyze:'#8b5cf6',plan:'#ec4899',act:'#f97316',emit:'#10b981'};
 
 async function loadTriggers(){
@@ -1191,12 +1202,12 @@ async function openTrigEditor(t={},isNew=true){
   <div class="form-row"><label class="fld">Agent (LLM model — single)</label><select id="te-agent"><option value="">(default)</option>${(_agentModels.length?_agentModels:[t.agent].filter(Boolean)).map(m=>`<option value="${esc(m)}" ${t.agent===m?'selected':''}>${esc(m)}</option>`).join('')}</select></div>
   <div class="full form-row"><label class="fld">Agents (multi — overrides single)</label>
     <div id="ms-chips-te-agents" class="chip-list" style="margin-bottom:5px;min-height:20px"></div>
-    <div style="display:flex;gap:5px"><input id="ms-q-te-agents" type="text" placeholder="Search models..." style="flex:1" oninput="msSearchAgents('te-agents')"><button class="btn sm" onclick="msSearchAgents('te-agents')" type="button">Browse</button></div>
+    <div style="display:flex;gap:5px"><input id="ms-q-te-agents" type="text" placeholder="Search agents…" style="flex:1" oninput="msSearchAgentList('te-agents')" onkeydown="if(event.key==='Enter'){event.preventDefault();msAddTyped('te-agents')}"><button class="btn sm" onclick="msSearchAgentList('te-agents')" type="button">Browse</button></div>
     <div class="picker" id="ms-results-te-agents" style="display:none;max-height:180px"></div>
   </div>
   <div class="full form-row"><label class="fld">Models pool (multi — round-robin if set)</label>
     <div id="ms-chips-te-models" class="chip-list" style="margin-bottom:5px;min-height:20px"></div>
-    <div style="display:flex;gap:5px"><input id="ms-q-te-models" type="text" placeholder="Search models..." style="flex:1" oninput="msSearchAgents('te-models')"><button class="btn sm" onclick="msSearchAgents('te-models')" type="button">Browse</button></div>
+    <div style="display:flex;gap:5px"><input id="ms-q-te-models" type="text" placeholder="Search models…" style="flex:1" oninput="msSearchAgents('te-models')" onkeydown="if(event.key==='Enter'){event.preventDefault();msAddTyped('te-models')}"><button class="btn sm" onclick="msSearchAgents('te-models')" type="button">Browse</button></div>
     <div class="picker" id="ms-results-te-models" style="display:none;max-height:180px"></div>
   </div>
   <div class="form-row"><label class="fld">Project</label><input id="te-proj" type="text" value="${esc(t.project||'')}" placeholder="project slug (optional)"></div>
@@ -1208,8 +1219,8 @@ async function openTrigEditor(t={},isNew=true){
   <div class="form-row"><label class="fld">Interval (m)</label><input id="te-mv" type="number" min="0" value="${t.min_interval_minutes??120}"></div>
   <div class="form-row"><label class="fld">Require signal (0–1)</label><input id="te-rs" type="number" step="0.05" min="0" max="1" value="${t.require_signal??0}"></div>
   <div class="form-row"><label class="fld">Max steps</label><input id="te-ms" type="number" min="1" max="30" value="${t.max_steps??6}"></div>
-  <div class="full form-row">
-    <label class="fld">Deliver to</label>
+  <div class="full form-row" style="border-top:1px dashed var(--border);padding-top:8px">
+    <label class="fld">Emit / output — deliver to</label>
     <div style="display:flex;gap:12px">${['memory','telegram','notebook'].map(d=>`<label style="display:flex;gap:5px;align-items:center;text-transform:none;font-size:10.5px;cursor:pointer"><input type="checkbox" data-deliver="${d}" ${(t.deliver_to||['memory']).includes(d)?'checked':''} style="width:auto"> ${d}</label>`).join('')}</div>
   </div>
   <div class="full form-row"><label class="fld">Whitelist <span style="font-weight:400;text-transform:none;color:var(--fg3)">(caps the planner may use; empty = global default)</span></label>
@@ -1245,13 +1256,21 @@ async function openTrigEditor(t={},isNew=true){
 /* ═══ AGENT MODELS ═══ */
 async function _loadAgentModels(){
   if(_agentModels.length)return;
-  try{
-    const r=await api('/ollama/instances');
-    if(!r)return;
-    const set=new Set();
-    for(const k of Object.keys(r||{})){const inst=r[k];(inst.models||[]).forEach(m=>set.add(m))}
-    _agentModels=[...set].sort();
-  }catch(e){_agentModels=[]}
+  const set=new Set();
+  const addNames=(arr)=>{(arr||[]).forEach(m=>{const n=(typeof m==='string')?m:(m&&(m.name||m.model));if(n)set.add(n);});};
+  // ollama.list_models → GET /ollama/models : { iid:{models:[{name,size_gb}],...}, ... }
+  try{const r=await api('/ollama/models');
+    if(r&&typeof r==='object')Object.values(r).forEach(v=>{if(v&&Array.isArray(v.models))addNames(v.models);});
+  }catch(e){}
+  // agent.models → GET /agents/models : { instances:{ iid:{models:[name,...]} } }
+  try{const r=await api('/agents/models');
+    const insts=(r&&r.instances)||{};Object.values(insts).forEach(v=>addNames(v&&v.models));
+  }catch(e){}
+  // ollama.instances → GET /ollama/cluster : { iid:{...,models:[name,...]} }
+  try{const r=await api('/ollama/cluster');
+    if(r&&typeof r==='object')Object.values(r).forEach(v=>addNames(v&&v.models));
+  }catch(e){}
+  _agentModels=[...set].filter(Boolean).sort();
 }
 
 /* ═══ CHIP PICKERS for whitelist + no-HITL ═══ */
@@ -1682,12 +1701,28 @@ async function _loadWorkspaces(){
 // Pre-warm caches when entering pipeline/trigger editor
 function _prewarmParamCaches(){_loadFabricDatasets();_loadWorkspaces()}
 
+function _fireConditionBlock(shortId,current,scope){
+  const dataAttr=scope==='pipe'?'psp':'sp';
+  const d=k=>'data-'+dataAttr+'-name="'+esc(shortId)+'" data-'+dataAttr+'-key="'+k+'"';
+  const m=current.match||'',mf=current.match_field||'all',mn=(current.min_signal??''),ng=current.negate===true||current.negate==='true';
+  return '<div style="margin-top:6px;padding-top:6px;border-top:1px dashed var(--border)" onclick="event.stopPropagation()">'
+    +'<div style="font-size:8.5px;color:var(--fg3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">Fire condition (optional)</div>'
+    +'<input type="text" '+d('match')+' data-'+dataAttr+'-type="str" value="'+esc(String(m))+'" placeholder="regex / text — fires only on a hit" onclick="event.stopPropagation()" style="font-size:10px;width:100%">'
+    +'<div style="display:flex;gap:5px;margin-top:4px;align-items:center">'
+    +'<select '+d('match_field')+' data-'+dataAttr+'-type="str" onclick="event.stopPropagation()" style="font-size:10px;flex:1"><option value="all"'+(mf==='all'?' selected':'')+'>all</option><option value="sample"'+(mf==='sample'?' selected':'')+'>sample</option><option value="summary"'+(mf==='summary'?' selected':'')+'>summary</option></select>'
+    +'<input type="number" step="0.05" min="0" max="1" '+d('min_signal')+' data-'+dataAttr+'-type="number" value="'+esc(String(mn))+'" placeholder="min sig" onclick="event.stopPropagation()" style="font-size:10px;width:64px">'
+    +'<label style="font-size:9.5px;display:flex;gap:3px;align-items:center"><input type="checkbox" '+d('negate')+' data-'+dataAttr+'-type="bool"'+(ng?' checked':'')+' onclick="event.stopPropagation()" style="width:auto"> not</label>'
+    +'</div></div>';
+}
+
 function renderSensorParamsForm(sensor,current,scope){
   const params=(sensor&&sensor.params)||[];
   const shortId=_sensorShortId(sensor);
   if(!params.length){
-    // No declared params — show note instead of empty form
-    return '<label class="fld">Params</label><div style="font-size:9.5px;color:var(--fg3);font-style:italic;padding:4px 0">no configurable parameters</div>';
+    // No declared params — still expose the fire-condition gate.
+    return '<label class="fld">Params</label><div style="font-size:9.5px;color:var(--fg3);font-style:italic;padding:4px 0">no configurable parameters</div>'
+      +_fireConditionBlock(shortId,current,scope)
+      +_sensorPreviewBlock(_sensorFullId(sensor),shortId,scope);
   }
   const dataAttr=scope==='pipe'?'psp':'sp';
   let html='<label class="fld">Params</label><div style="display:flex;flex-direction:column;gap:5px;margin-top:3px" onclick="event.stopPropagation()">';
@@ -1730,8 +1765,47 @@ function renderSensorParamsForm(sensor,current,scope){
     }
     html+='</div>';
   }
+  html+=_fireConditionBlock(shortId,current,scope);
+  html+=_sensorPreviewBlock(_sensorFullId(sensor),shortId,scope);
   html+='</div>';
   return html;
+}
+
+function _sensorPreviewBlock(fullId,shortId,scope){
+  const pid='senprev-'+scope+'-'+shortId;
+  return '<div style="margin-top:6px" onclick="event.stopPropagation()">'
+    +'<button class="btn sm" type="button" onclick="previewSensor(\''+esc(fullId)+'\',\''+esc(shortId)+'\',\''+esc(scope)+'\')">Preview data</button>'
+    +'<div id="'+pid+'" style="display:none;margin-top:6px;font-size:10px;background:var(--bg0);border:1px solid var(--border);border-radius:5px;padding:7px;max-height:200px;overflow:auto"></div>'
+    +'</div>';
+}
+
+async function previewSensor(fullId,shortId,scope){
+  const dataAttr=scope==='pipe'?'psp':'sp';
+  const params={};
+  document.querySelectorAll('[data-'+dataAttr+'-name="'+shortId+'"]').forEach(el=>{
+    const key=el.dataset[dataAttr+'Key']||el.getAttribute('data-'+dataAttr+'-key');
+    const typ=el.dataset[dataAttr+'Type']||el.getAttribute('data-'+dataAttr+'-type')||'str';
+    let v;
+    if(el.type==='checkbox')v=el.checked;
+    else if(typ==='int'||typ==='number')v=el.value===''?undefined:Number(el.value);
+    else v=el.value;
+    if(v===undefined||v===''||v===null)return;
+    params[key]=v;
+  });
+  const pid='senprev-'+scope+'-'+shortId;const box=$(pid);if(!box)return;
+  box.style.display='block';box.innerHTML='<span style="color:var(--fg3)">Running sensor…</span>';
+  const r=await api('/dream/sensor/preview',{method:'POST',body:JSON.stringify({sensor:fullId,params})});
+  if(!r||r.ok===false){box.innerHTML='<span style="color:var(--err,#ef6f6f)">'+esc((r&&r.error)||'sensor failed')+'</span>';return}
+  const sig=(r.signal!=null)?Number(r.signal).toFixed(2):'—';
+  const would=(r.would_fire===true)?'<span style="color:var(--ok,#5dd39e)">would fire ✓</span>':(r.would_fire===false?'<span style="color:var(--err,#ef6f6f)">would NOT fire ✕</span>':'');
+  let sample=r.sample;let sampleStr='';
+  try{sampleStr=typeof sample==='string'?sample:JSON.stringify(sample,null,1);}catch(e){sampleStr=String(sample);}
+  if(sampleStr&&sampleStr.length>1400)sampleStr=sampleStr.slice(0,1400)+'…';
+  box.innerHTML='<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:5px"><b>signal: '+sig+'</b>'
+    +(r.count!=null?'<span>count: '+esc(String(r.count))+'</span>':'')
+    +(r.source?'<span>source: '+esc(String(r.source))+'</span>':'')+would+'</div>'
+    +(r.summary?'<div style="color:var(--fg2);margin-bottom:5px">'+esc(String(r.summary).slice(0,400))+'</div>':'')
+    +(sampleStr?'<pre style="white-space:pre-wrap;font-family:var(--mono);font-size:9.5px;color:var(--fg3);margin:0">'+esc(sampleStr)+'</pre>':'');
 }
 
 /* Collect params from rendered inputs by data-{prefix}-name */
@@ -2007,21 +2081,65 @@ async function msSearch(fieldId,type){
 }
 /* Model/agent picker — sources from /ollama/instances directly so we don't need
    a search_targets type for it. Filters by query string against model names. */
-async function msSearchAgents(fieldId){
-  await _loadAgentModels();
-  const q=($('ms-q-'+fieldId)?.value||'').toLowerCase();
+async function _loadAgentList(){
+  if(_agentList.length)return;
+  const set=new Set();
+  // agent.list → GET /agents/list : { agents:[{name,...}] }
+  try{const r=await api('/agents/list');
+    const ags=(r&&(r.agents||r.list))||[];
+    ags.forEach(a=>{const n=(typeof a==='string')?a:(a&&(a.name||a.id));if(n)set.add(n);});
+  }catch(e){}
+  _agentList=[...set].filter(Boolean).sort();
+}
+async function msSearchAgentList(fieldId){
+  await _loadAgentList();
+  const q=($('ms-q-'+fieldId)?.value||'').trim();
+  const ql=q.toLowerCase();
   const sel=new Set((_msState[fieldId]||[]).map(it=>typeof it==='string'?it:it.id));
-  const matches=_agentModels.filter(m=>!sel.has(m)&&(!q||m.toLowerCase().includes(q))).slice(0,20);
+  const matches=_agentList.filter(m=>!sel.has(m)&&(!ql||m.toLowerCase().includes(ql))).slice(0,30);
   const el=$('ms-results-'+fieldId);
   if(!el)return;
-  if(!matches.length){el.innerHTML='<div class="pk-item"><span class="pk-txt" style="color:var(--fg3)">No matching models</span></div>';el.style.display='block';return}
-  el.innerHTML=matches.map(m=>'<div class="pk-item" onclick=\'msAdd("'+esc(fieldId)+'",{"id":"'+esc(m)+'","label":"'+esc(m)+'"})\'><span class="pk-id">'+esc(m)+'</span></div>').join('');
-  el.style.display='block';
+  let rows=matches.map(m=>'<div class="pk-item" onclick=\'msAdd("'+esc(fieldId)+'",{"id":"'+esc(m)+'","label":"'+esc(m)+'"})\'><span class="pk-id">'+esc(m)+'</span></div>').join('');
+  if(q&&!_agentList.some(m=>m.toLowerCase()===ql)&&!sel.has(q)){
+    rows='<div class="pk-item" onclick="msAddTyped(\''+esc(fieldId)+'\')"><span class="pk-id" style="color:var(--acc)">+ use "'+esc(q)+'"</span></div>'+rows;
+  }
+  if(!rows)rows='<div class="pk-item"><span class="pk-txt" style="color:var(--fg3)">'+(_agentList.length?'No matching agents':'No agents from /agents/list — type a name then Enter to add')+'</span></div>';
+  el.innerHTML=rows;el.style.display='block';
 }
-function msField(fieldId,type,label,help){return`
+async function msSearchAgents(fieldId){
+  await _loadAgentModels();
+  const q=($('ms-q-'+fieldId)?.value||'').trim();
+  const ql=q.toLowerCase();
+  const sel=new Set((_msState[fieldId]||[]).map(it=>typeof it==='string'?it:it.id));
+  const matches=_agentModels.filter(m=>!sel.has(m)&&(!ql||m.toLowerCase().includes(ql))).slice(0,20);
+  const el=$('ms-results-'+fieldId);
+  if(!el)return;
+  let rows=matches.map(m=>'<div class="pk-item" onclick=\'msAdd("'+esc(fieldId)+'",{"id":"'+esc(m)+'","label":"'+esc(m)+'"})\'><span class="pk-id">'+esc(m)+'</span></div>').join('');
+  // Always allow typing a model name (cluster list may be empty/offline).
+  if(q&&!_agentModels.some(m=>m.toLowerCase()===ql)&&!sel.has(q)){
+    rows='<div class="pk-item" onclick="msAddTyped(\''+esc(fieldId)+'\')"><span class="pk-id" style="color:var(--acc)">+ use "'+esc(q)+'"</span></div>'+rows;
+  }
+  if(!rows)rows='<div class="pk-item"><span class="pk-txt" style="color:var(--fg3)">'+(_agentModels.length?'No matching models':'No models from cluster — type a name then Enter to add')+'</span></div>';
+  el.innerHTML=rows;el.style.display='block';
+}
+function msAddTyped(fieldId){
+  const inp=$('ms-q-'+fieldId);const v=(inp?.value||'').trim();if(!v)return;
+  msAdd(fieldId,{id:v,label:v});
+  if(inp)inp.value='';
+  const el=$('ms-results-'+fieldId);if(el)el.style.display='none';
+}
+function msField(fieldId,type,label,help){
+  const isAgent=(type==='agents');
+  const isModel=(type==='models');
+  const typed=(isAgent||isModel);
+  const fn=isAgent?`msSearchAgentList('${esc(fieldId)}')`
+          :isModel?`msSearchAgents('${esc(fieldId)}')`
+          :`msSearch('${esc(fieldId)}','${esc(type)}')`;
+  const ph=isAgent?'Type an agent name…':isModel?'Type a model name…':('Search '+esc(type)+'…');
+  return`
 <div class="full form-row"><label class="fld">${esc(label)} ${help?'<span style="font-weight:400;text-transform:none;color:var(--fg3)">'+esc(help)+'</span>':''}</label>
   <div id="ms-chips-${esc(fieldId)}" class="chip-list" style="margin-bottom:5px;min-height:20px"></div>
-  <div style="display:flex;gap:5px"><input id="ms-q-${esc(fieldId)}" type="text" placeholder="Search ${esc(type)}..." style="flex:1" oninput="msSearch('${esc(fieldId)}','${esc(type)}')"><button class="btn sm" onclick="msSearch('${esc(fieldId)}','${esc(type)}')" type="button">Browse</button></div>
+  <div style="display:flex;gap:5px"><input id="ms-q-${esc(fieldId)}" type="text" placeholder="${ph}" style="flex:1" oninput="${fn}" onkeydown="if(event.key==='Enter'){event.preventDefault();${typed?`msAddTyped('${esc(fieldId)}')`:''}}"><button class="btn sm" onclick="${fn}" type="button">Browse</button></div>
   <div class="picker" id="ms-results-${esc(fieldId)}" style="display:none;max-height:180px"></div>
 </div>`}
 
@@ -2040,12 +2158,12 @@ function openProjectEditor(p={},isNew=true){
   ${msField('pj-ws','workspace','IDE workspaces','(workspaces with code or files for this project — includes source-inspect snapshots)')}
   <div class="full form-row"><label class="fld">Project agents <span style="font-weight:400;text-transform:none;color:var(--fg3)">(multi — overrides trigger/pipeline agents)</span></label>
     <div id="ms-chips-pj-agents" class="chip-list" style="margin-bottom:5px;min-height:20px"></div>
-    <div style="display:flex;gap:5px"><input id="ms-q-pj-agents" type="text" placeholder="Search models..." style="flex:1" oninput="msSearchAgents('pj-agents')"><button class="btn sm" onclick="msSearchAgents('pj-agents')" type="button">Browse</button></div>
+    <div style="display:flex;gap:5px"><input id="ms-q-pj-agents" type="text" placeholder="Search agents…" style="flex:1" oninput="msSearchAgentList('pj-agents')" onkeydown="if(event.key==='Enter'){event.preventDefault();msAddTyped('pj-agents')}"><button class="btn sm" onclick="msSearchAgentList('pj-agents')" type="button">Browse</button></div>
     <div class="picker" id="ms-results-pj-agents" style="display:none;max-height:180px"></div>
   </div>
   <div class="full form-row"><label class="fld">Project models pool <span style="font-weight:400;text-transform:none;color:var(--fg3)">(multi — overrides trigger/pipeline models)</span></label>
     <div id="ms-chips-pj-models" class="chip-list" style="margin-bottom:5px;min-height:20px"></div>
-    <div style="display:flex;gap:5px"><input id="ms-q-pj-models" type="text" placeholder="Search models..." style="flex:1" oninput="msSearchAgents('pj-models')"><button class="btn sm" onclick="msSearchAgents('pj-models')" type="button">Browse</button></div>
+    <div style="display:flex;gap:5px"><input id="ms-q-pj-models" type="text" placeholder="Search models…" style="flex:1" oninput="msSearchAgents('pj-models')" onkeydown="if(event.key==='Enter'){event.preventDefault();msAddTyped('pj-models')}"><button class="btn sm" onclick="msSearchAgents('pj-models')" type="button">Browse</button></div>
     <div class="picker" id="ms-results-pj-models" style="display:none;max-height:180px"></div>
   </div>
   <div class="form-row"><label class="fld">Status</label><select id="pj-status"><option value="active" ${p.status!=='paused'&&p.status!=='archived'?'selected':''}>active</option><option value="paused" ${p.status==='paused'?'selected':''}>paused</option><option value="archived" ${p.status==='archived'?'selected':''}>archived</option></select></div>

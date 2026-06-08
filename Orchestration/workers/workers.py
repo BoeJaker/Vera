@@ -208,7 +208,7 @@ async def _ssh_init_gen(p):
     except Exception as e: yield _evt("warn",f"Upload: {e}")
     try:
         async with httpx.AsyncClient(timeout=3) as c:
-            r = await c.get(f"http://{host}:11434/api/version")
+            r = await c.get(f"http://{host}:11435/api/version")
             yield _evt("ok" if r.status_code==200 else "info",
                        f"Ollama {'v'+r.json().get('version','?') if r.status_code==200 else 'not found'}")
     except Exception: yield _evt("info","Ollama not found")

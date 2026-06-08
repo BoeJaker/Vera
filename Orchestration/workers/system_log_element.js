@@ -48,9 +48,9 @@ select option{background:var(--bg2,#272421)}
 .entry-cap{font-size:10px;font-family:var(--mono,'JetBrains Mono',monospace);color:var(--acc2,#8fb87a);font-weight:600}
 .entry-ts{font-size:8px;color:var(--dim2,#8a7e70);margin-left:auto;font-family:var(--mono,'JetBrains Mono',monospace)}
 .entry-msg{font-size:10px;color:var(--text,#ddd5c8);margin-top:3px;line-height:1.5;word-break:break-word}
-.entry-detail{display:none;font-size:9px;color:var(--dim2,#8a7e70);margin-top:4px;white-space:pre-wrap;word-break:break-all;background:var(--bg0,#181614);padding:6px;border-radius:3px;border:1px solid var(--border,#3a3530);max-height:180px;overflow-y:auto}
+.entry-detail{display:none;font-size:9px;color:var(--dim2,#8a7e70);margin-top:4px;white-space:pre-wrap;word-break:break-all;background:var(--bg0,#181614);padding:6px;border-radius:3px;border:1px solid var(--border,#3a3530);max-height:180px;overflow-y:auto;user-select:text;-webkit-user-select:text;cursor:text}
 .entry.expanded .entry-detail{display:block}
-.entry-traceback{font-size:9px;color:var(--err,#c96b6b);margin-top:3px;white-space:pre-wrap;font-family:var(--mono,'JetBrains Mono',monospace);max-height:140px;overflow-y:auto;background:rgba(201,107,107,.05);padding:4px;border-radius:3px}
+.entry-traceback{font-size:9px;color:var(--err,#c96b6b);margin-top:3px;white-space:pre-wrap;font-family:var(--mono,'JetBrains Mono',monospace);max-height:140px;overflow-y:auto;background:rgba(201,107,107,.05);padding:4px;border-radius:3px;user-select:text;-webkit-user-select:text;cursor:text}
 .footer{border-top:1px solid var(--border,#3a3530);padding:6px 8px;background:var(--bg1,#1f1d1a);display:flex;flex-direction:column;gap:5px;flex-shrink:0}
 .footer-row{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
 .mon-label{font-size:8px;color:var(--dim,#6a6058);text-transform:uppercase;letter-spacing:.6px}
@@ -58,6 +58,8 @@ select option{background:var(--bg2,#272421)}
 .report{font-size:10px;line-height:1.6;color:var(--fg,#ddd5c8);background:var(--bg0,#181614);border:1px solid var(--border,#3a3530);border-radius:4px;padding:6px;display:none;white-space:pre-wrap;max-height:120px;overflow-y:auto}
 textarea{background:var(--bg0,#181614);border:1px solid var(--border,#3a3530);color:var(--text,#ddd5c8);padding:4px 6px;border-radius:3px;font-size:10px;font-family:inherit;resize:none}
 .ask-result{font-size:10px;line-height:1.6;background:var(--bg0,#181614);border:1px solid var(--border,#3a3530);border-radius:4px;padding:6px;display:none;white-space:pre-wrap;max-height:120px;overflow-y:auto}
+.entry-copy{font-size:7px;padding:1px 5px;margin-left:auto;flex-shrink:0;background:var(--bg0,#181614);border:1px solid var(--border,#3a3530);color:var(--dim2,#8a7e70);cursor:pointer;border-radius:3px;font-family:inherit;transition:.12s}
+.entry-copy:hover{border-color:var(--acc,#5a9e8f);color:var(--text,#ddd5c8)}
 .status-box{font-size:9.5px;color:var(--dim2,#8a7e70)}
 </style>
 <div class="wrap">
@@ -86,6 +88,15 @@ textarea{background:var(--bg0,#181614);border:1px solid var(--border,#3a3530);co
     <input id="limitVal" type="number" value="50" min="5" max="500" style="width:48px">
     <button class="btn danger" id="trimBtn" title="Trim log">✂</button>
   </div>
+  <!-- Ask agent — pinned above entries -->
+  <div style="padding:5px 8px;border-bottom:1px solid var(--border,#3a3530);background:var(--bg1,#1f1d1a);display:flex;flex-direction:column;gap:4px;flex-shrink:0">
+    <div class="footer-row">
+      <textarea id="askQuestion" style="flex:1;height:32px" placeholder="Ask agent about selected error…"></textarea>
+      <select id="askAgent" style="width:75px"><option value="assistant">assistant</option></select>
+      <button class="btn primary" id="askBtn">Ask</button>
+    </div>
+    <div class="ask-result" id="askResult"></div>
+  </div>
   <div class="entries" id="entries">
     <div class="ws-box" id="wsBox"></div>
     <span style="color:var(--dim,#6a6058);font-size:11px" id="loadingMsg">Loading…</span>
@@ -101,12 +112,6 @@ textarea{background:var(--bg0,#181614);border:1px solid var(--border,#3a3530);co
       <span style="margin-left:auto"><span class="meta" id="entryCount"></span><span class="meta" id="lastTs" style="margin-left:6px"></span></span>
     </div>
     <div class="report" id="monReport"></div>
-    <div class="footer-row">
-      <textarea id="askQuestion" style="flex:1;height:38px" placeholder="Ask agent about selected error…"></textarea>
-      <select id="askAgent" style="width:75px"><option value="assistant">assistant</option></select>
-      <button class="btn primary" id="askBtn">Ask</button>
-    </div>
-    <div class="ask-result" id="askResult"></div>
     <div class="status-box" id="statusBox">—</div>
   </div>
 </div>`;
@@ -194,27 +199,39 @@ textarea{background:var(--bg0,#181614);border:1px solid var(--border,#3a3530);co
     _render() {
       const container = this.shadowRoot.getElementById('entries');
       const wsBox = this.shadowRoot.getElementById('wsBox');
-      // Clear everything except wsBox
       const children = Array.from(container.children);
       children.forEach(c => { if (c !== wsBox) c.remove(); });
 
-      for (const entry of this._entries) {
+      // Sort newest first
+      const sorted = [...this._entries].sort((a, b) => {
+        const ta = a.ts || '', tb = b.ts || '';
+        return ta > tb ? -1 : ta < tb ? 1 : 0;
+      });
+
+      for (const entry of sorted) {
         const div = document.createElement('div');
         div.className = 'entry';
         const lvl = entry.level || 'INFO';
         const capName = entry.cap_name || entry.name || '';
-        const ts = (entry.ts || '').slice(0, 19);
+        const ts = (entry.ts || '').replace('T', ' ').slice(0, 19);
         const msg = entry.message || entry.msg || '';
         const detail = entry.detail || entry.traceback || '';
 
-        div.innerHTML = `<div class="entry-header"><span class="level ${this._esc(lvl)}">${this._esc(lvl)}</span>${capName ? '<span class="entry-cap">'+this._esc(capName)+'</span>' : ''}<span class="entry-ts">${this._esc(ts)}</span></div><div class="entry-msg">${this._esc(msg).slice(0, 300)}</div>${detail ? '<div class="entry-detail">'+this._esc(detail).slice(0, 2000)+'</div>' : ''}${entry.traceback ? '<div class="entry-traceback" style="display:none">'+this._esc(entry.traceback).slice(0, 2000)+'</div>' : ''}`;
+        div.innerHTML = `<div class="entry-header"><span class="level ${this._esc(lvl)}">${this._esc(lvl)}</span>${capName ? '<span class="entry-cap">'+this._esc(capName)+'</span>' : ''}<span class="entry-ts">${this._esc(ts)}</span><button class="entry-copy">copy</button></div><div class="entry-msg">${this._esc(msg).slice(0, 300)}</div>${detail ? '<div class="entry-detail">'+this._esc(detail).slice(0, 2000)+'</div>' : ''}${entry.traceback ? '<div class="entry-traceback" style="display:none">'+this._esc(entry.traceback).slice(0, 2000)+'</div>' : ''}`;
 
-        div.addEventListener('click', () => {
+        div.querySelector('.entry-copy').addEventListener('click', (e) => {
+          e.stopPropagation();
+          navigator.clipboard.writeText(JSON.stringify(entry, null, 2)).catch(() => {});
+        });
+
+        div.addEventListener('click', (e) => {
+          // Don't toggle if user is selecting text or clicked inside detail/traceback
+          if (window.getSelection && window.getSelection().toString().length > 0) return;
+          if (e.target.closest('.entry-detail') || e.target.closest('.entry-traceback')) return;
+          if (e.target.classList.contains('entry-copy')) return;
           div.classList.toggle('expanded');
-          // Show traceback when expanded
           const tb = div.querySelector('.entry-traceback');
           if (tb) tb.style.display = div.classList.contains('expanded') ? 'block' : 'none';
-          // Track selection for ask-agent
           container.querySelectorAll('.entry.selected').forEach(e => e.classList.remove('selected'));
           div.classList.add('selected');
           this._selected = entry;
@@ -225,18 +242,32 @@ textarea{background:var(--bg0,#181614);border:1px solid var(--border,#3a3530);co
     }
 
     ingestError(ev) {
-      // Add WS-delivered error to the top box for live visibility
       const wsBox = this.shadowRoot.getElementById('wsBox');
       if (!wsBox) return;
       wsBox.style.display = 'flex';
       const lvl = ev.level || 'ERROR';
       const msg = ev.message || ev.msg || ev.error || '';
       const logger = ev.logger || ev.cap_name || '';
+      const d = ev.ts ? new Date(ev.ts) : new Date();
+      const p = (n) => String(n).padStart(2, '0');
+      const ts = d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
       const div = document.createElement('div');
-      div.style.cssText = 'padding:4px 6px;font-size:9.5px;font-family:var(--mono);border-left:3px solid var(--err,#c96b6b);color:var(--err,#c96b6b);background:rgba(201,107,107,.04);border-radius:2px;line-height:1.4;cursor:pointer;word-break:break-all';
-      div.textContent = `[${lvl}] ${logger}: ${msg.slice(0, 200)}`;
+      div.style.cssText = 'padding:4px 6px;font-size:9.5px;font-family:var(--mono);border-left:3px solid var(--err,#c96b6b);color:var(--err,#c96b6b);background:rgba(201,107,107,.04);border-radius:2px;line-height:1.4;cursor:pointer;word-break:break-all;display:flex;align-items:flex-start;gap:4px';
+      const textSpan = document.createElement('span');
+      textSpan.style.cssText = 'flex:1;min-width:0';
+      textSpan.textContent = `[${ts}] [${lvl}] ${logger}: ${msg.slice(0, 200)}`;
+      div.appendChild(textSpan);
+      const copyBtn = document.createElement('button');
+      copyBtn.className = 'entry-copy';
+      copyBtn.textContent = 'copy';
+      copyBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        navigator.clipboard.writeText(JSON.stringify(ev, null, 2)).catch(() => {});
+      });
+      div.appendChild(copyBtn);
       div.title = 'Click to copy to ask-agent textarea';
-      div.addEventListener('click', () => {
+      div.addEventListener('click', (e) => {
+        if (e.target.classList.contains('entry-copy')) return;
         const ta = this.shadowRoot.getElementById('askQuestion');
         if (ta) ta.value = `Diagnose this error from ${logger}: ${msg.slice(0, 300)}`;
         this._selected = ev;

@@ -88,6 +88,28 @@ KEY_PREVIEW      = "vera:dream:preview"
 KEY_LLM_TOKENS   = "vera:dream:llm_tokens"
 KEY_NO_HITL      = "vera:dream:no_hitl_caps"      # caps that bypass HITL even when trigger.hitl=true
 KEY_DIRECTOR     = "vera:dream:director"          # director's recommendations cache
+KEY_LOOP_SETTINGS = "vera:dream:loop_settings"    # global agent-loop settings (JSON)
+
+# Global default agent-loop settings — mirrors the dag.agent_loop_v2 surface so
+# dream loops can be tuned exactly like the DAG Workshop loop. Resolution order
+# (low→high): these defaults < global override (Redis) < per-trigger/pipeline
+# (trig["loop_settings"]) < project (seed["project_loop_settings"]) < seed.
+DEFAULT_LOOP_SETTINGS: Dict[str, Any] = {
+    "max_cycles":                8,
+    "triage_top_k":              16,
+    "max_search_calls":          2,
+    "max_expands":               1,
+    "count_failed_cycles":       False,
+    "satisfaction_check":        True,
+    "enable_expand":             True,
+    "await_long_running":        True,
+    "long_running_timeout_secs": 1800,
+    "max_recovery_attempts":     2,
+    "prefer_gpu":                True,
+    "model":                     "",
+    "instance_id":               "",
+    "system_prompt_template":    "",
+}
 
 HISTORY_CAP      = 200
 
@@ -939,50 +961,69 @@ def _default_triggers() -> List[Dict[str, Any]]:
         # ── Phase 1 new triggers ──────────────────────────────────────────
         {
             "name":         "source_review",
-            "label":        "Source Code Review",
-            "description":  "During deep idle, snapshot the Vera source, diff against "
-                            "live, then review changed files with LLM code review.",
+            "label":        "Source Review — Recent Changes",
+            "description":  "On idle, snapshot if source changed, then review the "
+                            "changed files and report. Uses the source_review_changes "
+                            "composite pipeline.",
             "enabled":      True,
+            "pipeline_ref": "source_review_changes",
             "sensors":      ["dream.sensor.source_changes"],
-            "pipeline":     ["dream.stage.gather",
-                             "dream.stage.snapshot_source",
-                             "dream.stage.themes",
-                             "dream.stage.goal_refine",
-                             "dream.stage.agent_loop",
-                             "dream.stage.synthesize",
-                             "dream.stage.deliver"],
-            "mode":         "agent_loop",
             "hitl":         False,
+            "journal":      True,
             "hours_start":  0,
             "hours_end":    24,
             "min_idle_minutes":    60,
             "min_interval_minutes": 720,
             "require_signal":       0.1,
-            "depth":        "standard",
-            "max_steps":    4,
-            "deliver_to":   ["notebook", "memory"],
-            "whitelist": [
-                "ide.inspect.review_file", "ide.inspect.plan_improvement",
-                "memory.search", "memory.create",
-                "llm.generate", "llm.summarize",
-            ],
-            "no_hitl_caps": [
-                "ide.inspect.review_file", "ide.inspect.plan_improvement",
-                "memory.search", "llm.summarize",
-            ],
-            "prompt": (
-                "Review Vera's source code. A fresh snapshot has already been taken "
-                "and diffed by the snapshot_source stage. The state contains:\n"
-                "  state.snapshot.snapshot_id — the snapshot to review against\n"
-                "  state.snapshot.review_candidates — files to review (changed or recent)\n\n"
-                "Your ONLY goals (do not take a snapshot — it's already done):\n"
-                "1. Pick the first file from review_candidates.\n"
-                "2. Call ide.inspect.review_file(snapshot_id=..., path=...) on it.\n"
-                "3. If the review has high-severity issues, call ide.inspect.plan_improvement.\n"
-                "4. Store a brief summary of findings in memory via memory.create.\n"
-                "Focus on real code quality issues. Reference specific file names "
-                "and line numbers from the review output."
-            ),
+        },
+        {
+            "name":         "source_review_wander",
+            "label":        "Source Review — General Wander",
+            "description":  "Periodically roam the whole codebase a window at a "
+                            "time, reviewing files regardless of changes.",
+            "enabled":      False,
+            "pipeline_ref": "source_review_wander",
+            "sensors":      ["dream.sensor.source_review_state"],
+            "hitl":         False,
+            "journal":      True,
+            "hours_start":  1,
+            "hours_end":    6,
+            "min_idle_minutes":    90,
+            "min_interval_minutes": 1440,
+            "require_signal":       0.0,
+        },
+        {
+            "name":         "source_review_continue",
+            "label":        "Source Review — Continue",
+            "description":  "Continue a previous review — looks at the actual "
+                            "snapshot and last review activity to pick up files not "
+                            "yet reviewed.",
+            "enabled":      False,
+            "pipeline_ref": "source_review_continue",
+            "sensors":      ["dream.sensor.source_review_state"],
+            "hitl":         False,
+            "journal":      True,
+            "hours_start":  0,
+            "hours_end":    24,
+            "min_idle_minutes":    45,
+            "min_interval_minutes": 360,
+            "require_signal":       0.1,
+        },
+        {
+            "name":         "source_review_deep",
+            "label":        "Source Review — Deep (Whole Project)",
+            "description":  "In-depth multi-style review of the entire project, "
+                            "producing long detailed reports per module/area.",
+            "enabled":      False,
+            "pipeline_ref": "source_review_deep",
+            "sensors":      ["dream.sensor.source_review_state"],
+            "hitl":         False,
+            "journal":      True,
+            "hours_start":  1,
+            "hours_end":    7,
+            "min_idle_minutes":    120,
+            "min_interval_minutes": 2880,
+            "require_signal":       0.0,
         },
         {
             "name":         "research_continue",
@@ -1408,7 +1449,7 @@ def _redis():
 
 
 def _fabric():
-    return sys.modules.get("Vera.Orchestration.fabric.data_fabric")
+    return sys.modules.get("data_fabric")
 
 
 def _build_datetime_context() -> str:
@@ -1712,6 +1753,492 @@ async def _set_whitelist(caps: List[str]):
             await r.sadd(KEY_WHITELIST, *caps)
     except Exception as e:
         log.warning("dream save whitelist: %s", e)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AGENT-LOOP SETTINGS — global + per-trigger/pipeline, like the DAG system
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _get_global_loop_settings() -> Dict[str, Any]:
+    """Global defaults merged with any stored override in Redis."""
+    out = dict(DEFAULT_LOOP_SETTINGS)
+    r = _redis()
+    if r:
+        try:
+            raw = await r.get(KEY_LOOP_SETTINGS)
+            if raw:
+                stored = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+                if isinstance(stored, dict):
+                    out.update({k: v for k, v in stored.items()
+                                if k in DEFAULT_LOOP_SETTINGS})
+        except Exception as e:
+            log.debug("dream loop settings load: %s", e)
+    return out
+
+
+async def _resolve_loop_settings(trig: Optional[Dict[str, Any]],
+                                 state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Resolve effective loop settings with precedence (low→high):
+    global default < per-trigger/pipeline < project < seed."""
+    s = await _get_global_loop_settings()
+    trig = trig or {}
+    seed = (state or {}).get("seed") or {}
+    for layer in (
+        trig.get("loop_settings"),
+        seed.get("project_loop_settings"),
+        seed.get("loop_settings"),
+    ):
+        if isinstance(layer, dict):
+            s.update({k: v for k, v in layer.items() if k in DEFAULT_LOOP_SETTINGS})
+    # Legacy bridge: a trigger's iterate.max_iterations still sets max_cycles
+    # unless the trigger explicitly overrides it via loop_settings.
+    iter_cfg = trig.get("iterate") or {}
+    if iter_cfg.get("max_iterations") and \
+            "max_cycles" not in (trig.get("loop_settings") or {}):
+        try:
+            s["max_cycles"] = int(iter_cfg["max_iterations"])
+        except Exception:
+            pass
+    # Honour the global prefer_gpu config flag unless overridden.
+    return s
+
+
+def _loop_kwargs_for(cap_func, settings: Dict[str, Any], **overrides) -> Dict[str, Any]:
+    """Build kwargs for whichever loop cap (v1/v2/openclaw) is resolved, passing
+    only the parameters that cap actually accepts so we never raise TypeError on
+    a setting the variant doesn't support."""
+    import inspect
+    try:
+        accepted = set(inspect.signature(cap_func).parameters.keys())
+    except (TypeError, ValueError):
+        accepted = set(settings.keys()) | set(overrides.keys())
+    merged = {**settings, **overrides}
+    return {k: v for k, v in merged.items() if k in accepted}
+
+
+@capability(
+    "dream.loop.settings.get", memory="off", silent=True,
+    http_method="GET", http_path="/dream/loop/settings", http_tags=["dream"],
+    description="Get the global dream agent-loop settings (defaults merged with "
+                "stored overrides). Output: {settings, defaults, fields}.",
+)
+async def dream_loop_settings_get(trace_id=None):
+    return {
+        "settings": await _get_global_loop_settings(),
+        "defaults": dict(DEFAULT_LOOP_SETTINGS),
+        "fields":   list(DEFAULT_LOOP_SETTINGS.keys()),
+    }
+
+
+@capability(
+    "dream.loop.settings.set", memory="off",
+    http_method="POST", http_path="/dream/loop/settings/set", http_tags=["dream"],
+    description="Update global dream agent-loop settings. Accepts any subset of the "
+                "known fields (unknown keys ignored). Pass reset=true to restore "
+                "defaults. These apply to every dream loop unless a trigger overrides "
+                "them via its loop_settings field. "
+                "Input: settings (JSON object), reset (bool). "
+                "Output: {ok, settings, applied}.",
+)
+async def dream_loop_settings_set(
+    settings: Optional[Dict[str, Any]] = None,
+    reset: bool = False,
+    trace_id=None,
+):
+    r = _redis()
+    if not r:
+        return {"ok": False, "error": "redis unavailable"}
+    if reset:
+        try:
+            await r.delete(KEY_LOOP_SETTINGS)
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, "settings": dict(DEFAULT_LOOP_SETTINGS), "reset": True}
+    if isinstance(settings, str):
+        try:
+            settings = json.loads(settings) if settings.strip() else {}
+        except Exception:
+            settings = {}
+    cur = await _get_global_loop_settings()
+    clean = {k: v for k, v in (settings or {}).items() if k in DEFAULT_LOOP_SETTINGS}
+    cur.update(clean)
+    try:
+        await r.set(KEY_LOOP_SETTINGS, json.dumps(cur))
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    await emit_event({"type": "dream.loop.settings.updated",
+                      "applied": list(clean.keys()), "ts": now_iso()})
+    return {"ok": True, "settings": cur, "applied": list(clean.keys())}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DREAM JOURNAL — a running, incrementally-updated log of a dream's thinking.
+# Most stages append to it as they go; the agent loop can append its own
+# thoughts via dream.journal.append. Backed by a capped Redis list per journal,
+# with a registry set so journals are listable. journal_id defaults to the
+# cycle_id, but project dreams use "project:<slug>" so the journal persists
+# across cycles for that project.
+# ─────────────────────────────────────────────────────────────────────────────
+
+KEY_JOURNAL_PREFIX = "vera:dream:journal:"     # + journal_id  -> Redis list
+KEY_JOURNAL_INDEX  = "vera:dream:journals"     # hash: journal_id -> meta JSON
+_JOURNAL_MAX_ENTRIES = 500
+_JOURNAL_TTL_SECS    = 30 * 86400
+
+
+def _journal_key(journal_id: str) -> str:
+    return KEY_JOURNAL_PREFIX + (journal_id or "default")
+
+
+async def _journal_append(
+    journal_id: str,
+    text: str,
+    kind: str = "note",
+    stage: str = "",
+    title: str = "",
+    data: Optional[Dict[str, Any]] = None,
+    emit: bool = True,
+) -> Dict[str, Any]:
+    """Append one entry to a dream journal. Safe to call from anywhere — never
+    raises. Returns the stored entry (or {} if storage unavailable)."""
+    entry = {
+        "ts":    now_iso(),
+        "kind":  kind,            # note | stage | finding | review | plan | action | pivot | thought
+        "stage": stage,
+        "title": (title or "")[:200],
+        "text":  (text or "")[:4000],
+        "data":  data or {},
+    }
+    r = _redis()
+    if not r:
+        return entry
+    try:
+        key = _journal_key(journal_id)
+        await r.rpush(key, json.dumps(entry, default=str))
+        await r.ltrim(key, -_JOURNAL_MAX_ENTRIES, -1)
+        await r.expire(key, _JOURNAL_TTL_SECS)
+        # Update index meta
+        try:
+            meta_raw = await r.hget(KEY_JOURNAL_INDEX, journal_id)
+            meta = json.loads(meta_raw) if meta_raw else {}
+        except Exception:
+            meta = {}
+        meta["journal_id"] = journal_id
+        meta["updated"] = entry["ts"]
+        meta["entries"] = int(meta.get("entries", 0)) + 1
+        meta.setdefault("created", entry["ts"])
+        await r.hset(KEY_JOURNAL_INDEX, journal_id, json.dumps(meta, default=str))
+    except Exception as e:
+        log.debug("journal append: %s", e)
+    if emit:
+        try:
+            await emit_event({
+                "type": "dream.journal.entry", "journal_id": journal_id,
+                "kind": kind, "stage": stage, "title": entry["title"],
+                "preview": entry["text"][:160],
+            })
+        except Exception:
+            pass
+    return entry
+
+
+async def _journal_read(journal_id: str, limit: int = 100,
+                        kinds: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    r = _redis()
+    if not r:
+        return []
+    try:
+        raw = await r.lrange(_journal_key(journal_id), -int(limit or 100), -1)
+    except Exception:
+        return []
+    out: List[Dict[str, Any]] = []
+    for item in raw or []:
+        try:
+            e = json.loads(item.decode() if isinstance(item, bytes) else item)
+            if kinds and e.get("kind") not in kinds:
+                continue
+            out.append(e)
+        except Exception:
+            continue
+    return out
+
+
+def _journal_to_markdown(entries: List[Dict[str, Any]], heading: str = "") -> str:
+    lines: List[str] = []
+    if heading:
+        lines.append(f"## {heading}\n")
+    for e in entries:
+        ts = (e.get("ts") or "")[11:19]  # HH:MM:SS
+        kind = e.get("kind", "note")
+        title = e.get("title") or kind
+        lines.append(f"- `{ts}` **{title}**" + (f" _({e.get('stage')})_" if e.get("stage") else ""))
+        body = (e.get("text") or "").strip()
+        if body and body != title:
+            for bl in body.splitlines():
+                lines.append(f"    {bl}")
+    return "\n".join(lines)
+
+
+def _stage_journal_note(short: str, state: Dict[str, Any]) -> str:
+    """Best-effort one-line summary of what a stage just did, for the journal."""
+    try:
+        if short == "gather":
+            g = state.get("gather") or {}
+            return (f"Gathered {g.get('total_items', g.get('count', 0))} items "
+                    f"(signal {float(g.get('signal', 0) or 0):.2f}).")
+        if short == "themes":
+            return f"Themes: {', '.join((state.get('themes') or [])[:6]) or '(none)'}."
+        if short == "snapshot_source":
+            s = state.get("snapshot") or {}
+            return (f"Snapshot {s.get('snapshot_id','?')}: "
+                    f"{s.get('count', 0)} review candidate(s).")
+        if short == "goal_refine":
+            return f"Refined goal: {(state.get('refined_goal') or '')[:200]}"
+        if short in ("investigate", "agent_loop", "stepwise_execute"):
+            return f"Findings so far: {len(state.get('findings') or [])}."
+        if short == "project_action":
+            pa = state.get("project_action") or {}
+            return (f"Action: {(pa.get('goal') or '')[:160]} — "
+                    f"{'ok' if pa.get('ok') else 'see result'}.")
+        if short == "review_codebase":
+            rv = state.get("review") or {}
+            return (f"Reviewed {rv.get('files_reviewed', 0)} files, "
+                    f"{rv.get('total_issues', 0)} issues.")
+        if short == "synthesize":
+            return f"Report: {(state.get('title') or '')[:160]}"
+        if short == "deliver":
+            return f"Delivered to: {', '.join((state.get('delivered') or {}).keys()) or '(none)'}."
+    except Exception:
+        pass
+    return f"{short} complete."
+
+
+@capability(
+    "dream.journal.append", memory="off", silent=True,
+    http_method="POST", http_path="/dream/journal/append", http_tags=["dream"],
+    description="Append a thought/observation to a dream journal as you work. Use "
+                "this to record reasoning, findings, decisions, and next steps "
+                "incrementally so the journal builds a coherent narrative. "
+                "Input: journal_id (str — usually the cycle_id or project:<slug>), "
+                "text (str!), kind (note|finding|review|plan|action|thought), "
+                "stage (str), title (str). Output: {ok, entry}.",
+)
+async def dream_journal_append(
+    journal_id: str = "",
+    text: str = "",
+    kind: str = "thought",
+    stage: str = "",
+    title: str = "",
+    trace_id=None,
+):
+    if not (text or "").strip():
+        return {"ok": False, "error": "empty text"}
+    entry = await _journal_append(journal_id or "default", text, kind=kind,
+                                  stage=stage, title=title)
+    return {"ok": True, "entry": entry}
+
+
+@capability(
+    "dream.journal.read", memory="off", silent=True,
+    http_method="GET", http_path="/dream/journal/read", http_tags=["dream"],
+    description="Read a dream journal. Input: journal_id (str!), limit (int, "
+                "default 100), kinds (comma-sep filter), as_markdown (bool). "
+                "Output: {ok, journal_id, count, entries|markdown}.",
+)
+async def dream_journal_read(
+    journal_id: str,
+    limit: int = 100,
+    kinds: str = "",
+    as_markdown: bool = False,
+    trace_id=None,
+):
+    kind_list = [k.strip() for k in (kinds or "").split(",") if k.strip()] or None
+    entries = await _journal_read(journal_id, limit=limit, kinds=kind_list)
+    out = {"ok": True, "journal_id": journal_id, "count": len(entries)}
+    if as_markdown:
+        out["markdown"] = _journal_to_markdown(entries, heading=f"Journal — {journal_id}")
+    else:
+        out["entries"] = entries
+    return out
+
+
+@capability(
+    "dream.journal.list", memory="off", silent=True,
+    http_method="GET", http_path="/dream/journal/list", http_tags=["dream"],
+    description="List known dream journals with entry counts and last-updated. "
+                "Output: {ok, journals: [{journal_id, entries, created, updated}]}.",
+)
+async def dream_journal_list(trace_id=None):
+    r = _redis()
+    if not r:
+        return {"ok": True, "journals": []}
+    try:
+        h = await r.hgetall(KEY_JOURNAL_INDEX)
+    except Exception:
+        return {"ok": True, "journals": []}
+    journals: List[Dict[str, Any]] = []
+    for k, v in (h or {}).items():
+        try:
+            journals.append(json.loads(v.decode() if isinstance(v, bytes) else v))
+        except Exception:
+            continue
+    journals.sort(key=lambda m: m.get("updated", ""), reverse=True)
+    return {"ok": True, "journals": journals}
+
+
+@capability(
+    "dream.journal.clear", memory="off",
+    http_method="POST", http_path="/dream/journal/clear", http_tags=["dream"],
+    description="Delete a dream journal and its index entry. Input: journal_id (str!).",
+)
+async def dream_journal_clear(journal_id: str, trace_id=None):
+    r = _redis()
+    if not r:
+        return {"ok": False, "error": "redis unavailable"}
+    try:
+        await r.delete(_journal_key(journal_id))
+        await r.hdel(KEY_JOURNAL_INDEX, journal_id)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": True, "journal_id": journal_id, "cleared": True}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SOURCE REVIEW HELPERS — deterministic snapshot resolution + file selection
+# ─────────────────────────────────────────────────────────────────────────────
+
+KEY_WANDER_CURSOR  = "vera:dream:review:wander_cursor"     # int index into module list
+KEY_REVIEWED_FILES = "vera:dream:review:reviewed:"         # + snapshot_id -> Redis set
+
+
+async def _resolve_review_snapshot(label: str = "dream-review") -> Dict[str, Any]:
+    """Deterministically resolve the snapshot to analyse.
+
+    - Find the most recent snapshot and the current source hash.
+    - If the source has changed since that snapshot (or none exists), create a
+      fresh snapshot and remember the previous one as the diff baseline.
+    - Otherwise reuse the most recent snapshot (no changes since).
+
+    Returns {snapshot_id, baseline_id, created, current_hash, prev}.
+    """
+    out = {"snapshot_id": None, "baseline_id": None, "created": False,
+           "current_hash": "", "prev": None}
+    list_cap = CAPABILITY_REGISTRY.get("ide.inspect.list_snapshots")
+    snap_cap = CAPABILITY_REGISTRY.get("ide.inspect.snapshot")
+    snaps: List[Dict[str, Any]] = []
+    cur_hash = ""
+    if list_cap:
+        try:
+            res = await list_cap["func"]() or {}
+            snaps = res.get("snapshots", []) or []
+            cur_hash = res.get("current_source_hash", "")
+        except Exception as e:
+            log.debug("resolve snapshot list: %s", e)
+    out["current_hash"] = cur_hash
+    newest = snaps[0] if snaps else None
+    out["prev"] = newest
+
+    # "changes" = the newest snapshot's hash differs from live (or it isn't fresh)
+    has_changes = (newest is None
+                   or newest.get("source_hash") != cur_hash
+                   or not newest.get("is_fresh", False))
+
+    if has_changes and snap_cap:
+        try:
+            created = await snap_cap["func"](label=label) or {}
+            if created.get("snapshot_id"):
+                out["snapshot_id"] = created["snapshot_id"]
+                out["created"] = True
+                out["baseline_id"] = newest["id"] if newest else None
+                return out
+        except Exception as e:
+            log.debug("resolve snapshot create: %s", e)
+
+    # No changes (or snapshot cap unavailable): reuse the most recent
+    if newest:
+        out["snapshot_id"] = newest["id"]
+        out["baseline_id"] = snaps[1]["id"] if len(snaps) > 1 else None
+    return out
+
+
+async def _all_source_modules() -> List[Dict[str, Any]]:
+    cap = CAPABILITY_REGISTRY.get("ide.inspect.source_info")
+    if not cap:
+        return []
+    try:
+        info = await cap["func"]() or {}
+        return list(info.get("modules", []))
+    except Exception:
+        return []
+
+
+async def _select_review_files(review_type: str, snap: Dict[str, Any],
+                               max_files: int) -> List[Dict[str, Any]]:
+    """Choose which files to review based on the review type:
+       changes   — files that differ from the diff baseline (recent changes)
+       wander    — a rotating window across the whole codebase
+       continue  — files not yet reviewed against this snapshot
+    """
+    snapshot_id = snap.get("snapshot_id")
+    r = _redis()
+    out: List[Dict[str, Any]] = []
+
+    if review_type == "changes":
+        for f in (snap.get("changed_files") or [])[:max_files]:
+            out.append({"file": f, "snapshot_id": snapshot_id, "has_diff": True})
+        return out
+
+    modules = await _enumerate_source_files(snapshot_id)
+    names = [m["rel"] for m in modules]
+
+    if review_type == "continue":
+        reviewed: set = set()
+        if r and snapshot_id:
+            try:
+                raw = await r.smembers(KEY_REVIEWED_FILES + snapshot_id)
+                reviewed = {(x.decode() if isinstance(x, bytes) else x) for x in (raw or [])}
+            except Exception:
+                reviewed = set()
+        # Prefer changed files first, then unreviewed modules
+        ordered = list(snap.get("changed_files") or []) + names
+        for f in ordered:
+            if f in reviewed or any(c["file"] == f for c in out):
+                continue
+            out.append({"file": f, "snapshot_id": snapshot_id, "has_diff": False})
+            if len(out) >= max_files:
+                break
+        return out
+
+    # wander: rotating window across all modules
+    cursor = 0
+    if r:
+        try:
+            raw = await r.get(KEY_WANDER_CURSOR)
+            cursor = int(raw) if raw else 0
+        except Exception:
+            cursor = 0
+    if names:
+        cursor %= len(names)
+        window = (names[cursor:] + names[:cursor])[:max_files]
+        for f in window:
+            out.append({"file": f, "snapshot_id": snapshot_id, "has_diff": False})
+        if r:
+            try:
+                await r.set(KEY_WANDER_CURSOR, (cursor + len(window)) % max(1, len(names)))
+            except Exception:
+                pass
+    return out
+
+
+async def _mark_reviewed(snapshot_id: str, files: List[str]):
+    r = _redis()
+    if not (r and snapshot_id and files):
+        return
+    try:
+        await r.sadd(KEY_REVIEWED_FILES + snapshot_id, *files)
+        await r.expire(KEY_REVIEWED_FILES + snapshot_id, _JOURNAL_TTL_SECS)
+    except Exception:
+        pass
 
 
 async def _push_history(record: Dict[str, Any]):
@@ -2889,6 +3416,60 @@ async def dream_sensor_source_changes(trace_id=None):
 
 
 @capability(
+    "dream.sensor.source_review_state", memory="off", silent=True,
+    http_method="GET", http_path="/dream/sensor/source_review_state", http_tags=["dream", "sensor"],
+    description="Sense the source-review state: current snapshot, how many files "
+                "exist vs have been reviewed, and what was last reviewed. Drives "
+                "continuation reviews (signal is high while files remain unreviewed).",
+)
+async def dream_sensor_source_review_state(trace_id=None):
+    snap = await _resolve_review_snapshot(label="continue")
+    snapshot_id = snap.get("snapshot_id") or ""
+    files = await _enumerate_source_files(snapshot_id)
+    names = [f["rel"] for f in files]
+
+    reviewed: set = set()
+    last_run: Dict[str, Any] = {}
+    r = _redis()
+    if r and snapshot_id:
+        try:
+            raw = await r.smembers(KEY_REVIEWED_FILES + snapshot_id)
+            reviewed = {(x.decode() if isinstance(x, bytes) else x) for x in (raw or [])}
+        except Exception:
+            reviewed = set()
+        try:
+            lr = await r.get(KEY_REVIEW_RUN)
+            if lr:
+                last_run = json.loads(lr.decode() if isinstance(lr, bytes) else lr)
+        except Exception:
+            last_run = {}
+
+    unreviewed = [n for n in names if n not in reviewed]
+    # Signal: more unreviewed files => stronger pull to continue
+    signal = min(1.0, len(unreviewed) / 5.0) if unreviewed else 0.0
+    sample = [{"text": f"unreviewed: {n}", "file": n} for n in unreviewed[:15]]
+
+    return {
+        "source":          "source_review_state",
+        "count":           len(unreviewed),
+        "signal":          round(signal, 3),
+        "snapshot_id":     snapshot_id,
+        "total_files":     len(names),
+        "reviewed":        len(reviewed),
+        "unreviewed":      len(unreviewed),
+        "unreviewed_files": unreviewed[:50],
+        "last_run":        last_run,
+        "sample":          sample,
+        "summary": (
+            f"Snapshot {snapshot_id}: {len(reviewed)}/{len(names)} files reviewed, "
+            f"{len(unreviewed)} remaining."
+            + (f" Last run generated {last_run.get('reports_generated', 0)} reports."
+               if last_run else "")
+        ),
+    }
+
+
+@capability(
     "dream.sensor.memory_graph_walk",
     memory="off", silent=True,
     http_method="GET", http_path="/dream/sensor/memory_graph_walk",
@@ -3277,6 +3858,8 @@ async def dream_stage_snapshot_source(
 ):
     state = state or {}
     cycle_id = state.get("cycle_id", "?")
+    trig = state.get("trigger", {})
+    journal_id = state.get("journal_id") or cycle_id
 
     await emit_event({
         "type": "dream.stage.started",
@@ -3284,100 +3867,52 @@ async def dream_stage_snapshot_source(
         "stage": "dream.stage.snapshot_source",
     })
 
-    snapshot_id = None
+    # Deterministic: create a fresh snapshot iff source changed, else reuse the
+    # most recent one. The diff baseline is the PREVIOUS snapshot, so changed
+    # files reflect what actually changed (diffing a just-created snapshot vs
+    # live is always empty — the old bug).
+    snap = await _resolve_review_snapshot(label="dream_source_review")
+    snapshot_id = snap.get("snapshot_id")
+    baseline_id = snap.get("baseline_id")
     changed_files: List[str] = []
-    review_candidates: List[Dict[str, Any]] = []
+    diff_blob: Dict[str, Any] = {}
 
-    # Check for existing snapshots
-    snap_list_cap = CAPABILITY_REGISTRY.get("ide.inspect.list_snapshots")
-    if snap_list_cap:
+    diff_cap = CAPABILITY_REGISTRY.get("ide.inspect.diff_snapshot")
+    # Only diff for "recent changes" — i.e. when we just created a snapshot
+    # because the tree changed; diff the baseline (pre-change) against live.
+    diff_target = baseline_id if snap.get("created") else None
+    if diff_cap and diff_target:
         try:
-            snap_res = await snap_list_cap["func"]()
-            snapshots = snap_res.get("snapshots", [])
-            if snapshots and snapshots[0].get("is_fresh"):
-                # Latest snapshot is current — use it
-                snapshot_id = snapshots[0]["id"]
-            elif snapshots:
-                # Stale snapshot — take a fresh one
-                snap_cap = CAPABILITY_REGISTRY.get("ide.inspect.snapshot")
-                if snap_cap:
-                    new_snap = await snap_cap["func"](label="dream_source_review")
-                    snapshot_id = new_snap.get("snapshot_id")
-            else:
-                # No snapshots at all — create first one
-                snap_cap = CAPABILITY_REGISTRY.get("ide.inspect.snapshot")
-                if snap_cap:
-                    new_snap = await snap_cap["func"](label="dream_source_review")
-                    snapshot_id = new_snap.get("snapshot_id")
+            diff = await diff_cap["func"](snapshot_id=diff_target,
+                                          max_chars_per_file=6000) or {}
+            changed_files = (diff.get("modified", []) + diff.get("added", []))
+            diff_blob = diff.get("diffs", {}) or {}
         except Exception as e:
-            log.debug("dream.stage.snapshot_source list: %s", e)
-
-    # If we still don't have a snapshot, try creating one directly
-    if not snapshot_id:
-        snap_cap = CAPABILITY_REGISTRY.get("ide.inspect.snapshot")
-        if snap_cap:
-            try:
-                new_snap = await snap_cap["func"](label="dream_source_review")
-                snapshot_id = new_snap.get("snapshot_id")
-            except Exception as e:
-                log.debug("dream.stage.snapshot_source create: %s", e)
-
-    # Diff to find changed files
-    if snapshot_id:
-        diff_cap = CAPABILITY_REGISTRY.get("ide.inspect.diff_snapshot")
-        if diff_cap:
-            try:
-                diff = await diff_cap["func"](
-                    snapshot_id=snapshot_id,
-                    max_chars_per_file=3000,
-                )
-                changed_files = (
-                    (diff or {}).get("modified", [])
-                    + (diff or {}).get("added", [])
-                )
-                # Build review candidates with file size info
-                for f in changed_files[:10]:
-                    review_candidates.append({
-                        "file": f,
-                        "snapshot_id": snapshot_id,
-                        "has_diff": f in (diff or {}).get("diffs", {}),
-                    })
-            except Exception as e:
-                log.debug("dream.stage.snapshot_source diff: %s", e)
-
-    # If no changed files, get the module list as fallback candidates
-    if not review_candidates and snapshot_id:
-        src_info_cap = CAPABILITY_REGISTRY.get("ide.inspect.source_info")
-        if src_info_cap:
-            try:
-                info = await src_info_cap["func"]()
-                modules = info.get("modules", [])
-                # Sort by mtime desc (most recently modified first)
-                modules.sort(key=lambda m: m.get("mtime", 0), reverse=True)
-                for mod in modules[:5]:
-                    review_candidates.append({
-                        "file": mod["name"],
-                        "snapshot_id": snapshot_id,
-                        "lines": mod.get("lines", 0),
-                        "has_diff": False,
-                    })
-            except Exception:
-                pass
+            log.debug("dream.stage.snapshot_source diff: %s", e)
 
     state["snapshot"] = {
-        "snapshot_id":       snapshot_id,
-        "changed_files":     changed_files,
-        "review_candidates": review_candidates,
-        "count":             len(review_candidates),
+        "snapshot_id":   snapshot_id,
+        "baseline_id":   baseline_id,
+        "created":       snap.get("created", False),
+        "current_hash":  snap.get("current_hash", ""),
+        "changed_files": changed_files,
+        "diffs":         diff_blob,
     }
+
+    await _journal_append(journal_id,
+        (f"Snapshot {snapshot_id} "
+         + ("created (source changed)" if snap.get("created") else "reused (no changes)")
+         + f"; {len(changed_files)} changed file(s) since baseline "
+         + (baseline_id or "—") + "."),
+        kind="note", stage="snapshot_source", title="Source snapshot resolved")
 
     await emit_event({
         "type": "dream.stage.completed",
         "cycle_id": cycle_id,
         "stage": "dream.stage.snapshot_source",
         "snapshot_id": snapshot_id,
+        "created": snap.get("created", False),
         "changed": len(changed_files),
-        "candidates": len(review_candidates),
     })
 
     return state
@@ -3573,6 +4108,18 @@ async def dream_stage_project_action(
 
     goal = f"{system_ctx}\n\nACTION TO EXECUTE:\n{action_goal}"
 
+    # On iterations after the first, tell the agent what's already been done so
+    # it advances to the NEXT step instead of repeating itself.
+    _iter = int(state.get("iteration_index", 1) or 1)
+    if _iter > 1:
+        prior = [f.get("content", "") for f in (state.get("findings") or [])
+                 if f.get("action")][-8:]
+        if prior:
+            goal += (
+                "\n\nALREADY DONE in previous iterations (do NOT repeat these — "
+                "continue with the next most valuable step, or stop if the work "
+                "is complete):\n- " + "\n- ".join(p[:200] for p in prior))
+
     # Run via the agent loop
     agent_loop_cap = CAPABILITY_REGISTRY.get("dag.agent_loop_v2") or \
                      CAPABILITY_REGISTRY.get("dag.agent_loop")
@@ -3582,11 +4129,15 @@ async def dream_stage_project_action(
 
     try:
         max_steps = int(trig.get("max_steps", 6))
-        result = await agent_loop_cap["func"](
+        settings = await _resolve_loop_settings(trig, state)
+        # Action stage caps the budget at 8 unless a smaller value is configured
+        settings["max_cycles"] = min(int(settings.get("max_cycles", max_steps)), 8)
+        loop_kwargs = _loop_kwargs_for(
+            agent_loop_cap["func"], settings,
             goal=goal,
-            whitelist=full_whitelist,
-            max_cycles=min(max_steps, 8),
+            allowed_caps=",".join(full_whitelist),
         )
+        result = await agent_loop_cap["func"](**loop_kwargs)
         state["project_action"] = {
             "goal": action_goal,
             "result": result,
@@ -4643,6 +5194,21 @@ async def dream_stage_synthesize(state: Optional[Dict[str, Any]] = None, trace_i
     }
     system = depth_systems[depth]
 
+    # Output style: any pipeline's synthesize (emit) stage can adopt one of the
+    # shared output styles (docs / critique / improvement / integration /
+    # architecture) — the same palette the source review uses — so the style
+    # selection drives dream synthesis too. Configurable via stage_config.
+    # synthesize.output_style, trigger.output_style, or seed.output_style.
+    out_style = (seed.get("output_style")
+                 or (trig.get("stage_config", {}) or {}).get("synthesize", {}).get("output_style")
+                 or trig.get("output_style") or "").strip()
+    if out_style in REVIEW_STYLES:
+        sdef = REVIEW_STYLES[out_style]
+        system = (_ANTI_HALLU + sdef["system"] + " " + sdef["instruction"]
+                  + " Produce this as your deliverable, grounded ONLY in the data "
+                    "shown below; if the data is thin, say so honestly.")
+        state["output_style"] = out_style
+
     focus = (seed.get("focus_topic") or "").strip()
     extra_prompt = (seed.get("extra_prompt") or "").strip()
     focus_block = ""
@@ -5094,17 +5660,16 @@ async def dream_stage_investigate(
     loop_result: Dict[str, Any] = {}
     try:
         cfg = await _get_config()
-        loop_kwargs: Dict[str, Any] = dict(
+        settings = await _resolve_loop_settings(trig, state)
+        # Global prefer_gpu config still acts as a fallback when unset in settings
+        settings.setdefault("prefer_gpu", bool(cfg.get("llm_prefer_gpu", True)))
+        loop_kwargs = _loop_kwargs_for(
+            agent_loop_cap["func"], settings,
             goal=goal,
             allowed_caps=allowed_caps_str,
-            max_cycles=max_cycles,
-            prefer_gpu=bool(cfg.get("llm_prefer_gpu", True)),
+            max_cycles=settings.get("max_cycles", max_cycles),
             session_id=loop_session_id,
         )
-        # agent_loop_v2 extra params
-        if "dag.agent_loop_v2" in CAPABILITY_REGISTRY:
-            loop_kwargs["satisfaction_check"] = True
-            loop_kwargs["enable_expand"] = True
         loop_result = await agent_loop_cap["func"](**loop_kwargs) or {}
     except Exception as e:
         log.warning("dream.stage.investigate agent_loop error: %s", e)
@@ -5213,9 +5778,19 @@ async def dream_stage_deliver(state: Optional[Dict[str, Any]] = None, trace_id=N
         nb = CAPABILITY_REGISTRY.get("notebook.create") or CAPABILITY_REGISTRY.get("notebook.append")
         if nb:
             try:
+                content = report
+                # Attach the running journal so the notebook captures the
+                # dream's full thinking, not just the final report.
+                if trig.get("journal", True):
+                    j_entries = await _journal_read(
+                        state.get("journal_id") or state.get("cycle_id", ""),
+                        limit=200)
+                    if j_entries:
+                        content = (report + "\n\n---\n\n"
+                                   + _journal_to_markdown(j_entries, heading="Dream Journal"))
                 await nb["func"](
                     title=f"Dream — {trig.get('label', trig.get('name','cycle'))}",
-                    content=report,
+                    content=content,
                     tags=["dream"] + list(state.get("themes", []))[:5],
                 )
                 delivered["notebook"] = True
@@ -5243,6 +5818,1047 @@ async def dream_stage_deliver(state: Optional[Dict[str, Any]] = None, trace_id=N
             delivered["fabric"] = f"error: {e}"
 
     state["delivered"] = delivered
+    return state
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STAGE: REVIEW CODEBASE — whole-snapshot review with a running journal
+# ─────────────────────────────────────────────────────────────────────────────
+# Replaces the old single-file, agent-driven review. Deterministically walks
+# every review candidate (changed files by default, or the whole module list
+# when scope="all"), runs ide.inspect.review_file on each, and journals its
+# findings as it goes so the journal reads like a coherent review narrative.
+# Self-skips cleanly when there is no snapshot in state.
+
+@capability(
+    "dream.stage.review_codebase", memory="off", silent=True,
+    description="Dream pipeline stage: review the whole source snapshot file by "
+                "file (not just one), journalling findings as it goes, then plan "
+                "improvements for the high-severity files. Requires dream.stage."
+                "snapshot_source earlier in the pipeline. Configure via "
+                "stage_config.review_codebase = {scope: changed|all, max_files, "
+                "plan: bool}. Writes state['review'] and appends to state['findings'].",
+)
+async def dream_stage_review_codebase(
+    state: Optional[Dict[str, Any]] = None,
+    trace_id=None,
+):
+    state = state or {}
+    trig = state.get("trigger", {})
+    cycle_id = state.get("cycle_id", "?")
+    journal_id = state.get("journal_id") or cycle_id
+    cfg = (trig.get("stage_config", {}) or {}).get("review_codebase", {}) or {}
+    seed = state.get("seed") or {}
+    # review_type: changes | wander | continue  (scope kept as legacy alias)
+    review_type = (cfg.get("review_type") or seed.get("review_type")
+                   or cfg.get("scope") or "changes").lower()
+    if review_type in ("all", "full"):
+        review_type = "wander"
+    if review_type == "changed":
+        review_type = "changes"
+    max_files = int(cfg.get("max_files", 40) or 40)
+    do_plan = bool(cfg.get("plan", True))
+
+    await emit_event({"type": "dream.stage.started", "cycle_id": cycle_id,
+                      "stage": "dream.stage.review_codebase",
+                      "review_type": review_type})
+
+    # Ensure a snapshot exists (stage is robust when run standalone, without a
+    # preceding snapshot_source stage).
+    snap = state.get("snapshot") or {}
+    if not snap.get("snapshot_id"):
+        snap = await _resolve_review_snapshot(label=f"dream_{review_type}")
+        # compute changed files vs baseline when we just created one
+        if snap.get("created") and snap.get("baseline_id"):
+            dcap = CAPABILITY_REGISTRY.get("ide.inspect.diff_snapshot")
+            if dcap:
+                try:
+                    d = await dcap["func"](snapshot_id=snap["baseline_id"],
+                                           max_chars_per_file=6000) or {}
+                    snap["changed_files"] = d.get("modified", []) + d.get("added", [])
+                except Exception:
+                    snap["changed_files"] = []
+        state["snapshot"] = snap
+    snapshot_id = snap.get("snapshot_id")
+    if not snapshot_id:
+        await _journal_append(journal_id,
+            "No source snapshot available — skipping codebase review.",
+            kind="review", stage="review_codebase", title="Review skipped")
+        state["review"] = {"skipped": True, "reason": "no snapshot"}
+        return state
+
+    # Select the files to review based on the review type
+    candidates = await _select_review_files(review_type, snap, max_files)
+    # If a "changes" review found nothing changed, fall back to continuation so
+    # the run is still productive rather than empty.
+    if not candidates and review_type == "changes":
+        await _journal_append(journal_id,
+            "No changed files — falling back to continuation review.",
+            kind="review", stage="review_codebase", title="No changes")
+        review_type = "continue"
+        candidates = await _select_review_files(review_type, snap, max_files)
+
+    review_cap = CAPABILITY_REGISTRY.get("ide.inspect.review_file")
+    if not review_cap:
+        state["review"] = {"error": "ide.inspect.review_file unavailable"}
+        return state
+
+    await _journal_append(journal_id,
+        f"Starting {review_type} review of {len(candidates)} file(s) against "
+        f"snapshot {snapshot_id}.",
+        kind="review", stage="review_codebase", title="Review started",
+        data={"files": [c.get("file") for c in candidates]})
+
+    results: List[Dict[str, Any]] = []
+    high_sev_files: List[str] = []
+    reviewed_names: List[str] = []
+    total_issues = 0
+    findings = state.setdefault("findings", [])
+
+    for idx, cand in enumerate(candidates):
+        if _CYCLE_CANCEL:
+            break
+        path = cand.get("file")
+        if not path:
+            continue
+        try:
+            rev = await review_cap["func"](
+                snapshot_id=snapshot_id, path=path, agent="dream-reviewer",
+            ) or {}
+        except Exception as e:
+            await _journal_append(journal_id, f"{path}: review error — {e}",
+                kind="review", stage="review_codebase", title=f"Review error: {path}")
+            results.append({"file": path, "error": str(e)})
+            continue
+        reviewed_names.append(path)
+
+        issues = rev.get("issues") or []
+        opportunities = rev.get("opportunities") or []
+        strengths = rev.get("strengths") or []
+        summary = rev.get("summary") or (rev.get("raw", "")[:300])
+        sev = [str(i.get("severity", "")).lower() for i in issues if isinstance(i, dict)]
+        has_high = any(s in ("high", "critical") for s in sev)
+        total_issues += len(issues)
+        if has_high:
+            high_sev_files.append(path)
+
+        results.append({
+            "file": path, "issues": len(issues),
+            "opportunities": len(opportunities), "strengths": len(strengths),
+            "high_severity": has_high, "summary": summary[:600],
+            # keep structured detail so the report stage can render substance
+            "issue_detail": [
+                {"severity": str(i.get("severity", "")), "line": i.get("line"),
+                 "title": (i.get("title") or i.get("issue") or "")[:200],
+                 "detail": (i.get("detail") or i.get("description") or "")[:400]}
+                for i in issues[:12] if isinstance(i, dict)
+            ],
+            "opportunity_detail": [
+                (o.get("title") or o.get("opportunity") or str(o))[:200]
+                for o in opportunities[:8]
+            ],
+        })
+
+        # Journal this file's review as a narrative entry
+        body_lines = [summary.strip()] if summary else []
+        for i in issues[:6]:
+            if isinstance(i, dict):
+                body_lines.append(
+                    f"  • [{i.get('severity','?')}] "
+                    f"{i.get('title') or i.get('issue') or ''} "
+                    f"{('(L'+str(i.get('line'))+')') if i.get('line') else ''}".strip())
+        await _journal_append(journal_id, "\n".join(body_lines) or "(no issues found)",
+            kind="review", stage="review_codebase",
+            title=f"Reviewed {path} — {len(issues)} issue(s)"
+                  + (" [HIGH]" if has_high else ""),
+            data={"file": path, "issues": len(issues), "high_severity": has_high})
+
+        # Accumulate a compact finding for synthesize/iteration
+        if issues or opportunities:
+            findings.append({
+                "topic": f"review:{path}",
+                "content": summary[:600],
+                "source": "ide.inspect.review_file",
+                "iter": state.get("iteration_index", 0),
+            })
+
+        await emit_event({"type": "dream.review.file", "cycle_id": cycle_id,
+                          "file": path, "issues": len(issues),
+                          "high_severity": has_high,
+                          "progress": f"{idx+1}/{len(candidates)}"})
+
+    # Plan improvements for the worst files
+    plan = None
+    if do_plan and high_sev_files:
+        plan_cap = CAPABILITY_REGISTRY.get("ide.inspect.plan_improvement")
+        if plan_cap:
+            try:
+                plan = await plan_cap["func"](
+                    snapshot_id=snapshot_id,
+                    goal=("Address the high-severity issues found during this "
+                          "codebase review across the listed files."),
+                    files=json.dumps(high_sev_files[:12]),
+                ) or {}
+                await _journal_append(journal_id,
+                    (plan.get("plan", {}) or {}).get("overview", "")
+                    or json.dumps(plan)[:600],
+                    kind="plan", stage="review_codebase",
+                    title=f"Improvement plan for {len(high_sev_files)} file(s)")
+            except Exception as e:
+                log.debug("review_codebase plan: %s", e)
+
+    await _mark_reviewed(snapshot_id, reviewed_names)
+
+    state["review"] = {
+        "snapshot_id":      snapshot_id,
+        "baseline_id":      snap.get("baseline_id"),
+        "review_type":      review_type,
+        "files_reviewed":   len(results),
+        "total_issues":     total_issues,
+        "high_severity_files": high_sev_files,
+        "results":          results,
+        "plan":             plan,
+        "journal_id":       journal_id,
+    }
+    state["findings"] = findings
+
+    await _journal_append(journal_id,
+        f"Review complete: {len(results)} files, {total_issues} issues, "
+        f"{len(high_sev_files)} with high-severity findings.",
+        kind="review", stage="review_codebase", title="Review summary")
+
+    await emit_event({"type": "dream.stage.completed", "cycle_id": cycle_id,
+                      "stage": "dream.stage.review_codebase",
+                      "files_reviewed": len(results), "total_issues": total_issues,
+                      "high_severity": len(high_sev_files)})
+    return state
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STAGE: REVIEW REPORT — build a substantial report from the review results
+# ─────────────────────────────────────────────────────────────────────────────
+# The old pipeline left synthesis to the LLM working from thin findings, which
+# produced near-empty reports. This stage composes the report deterministically
+# from state['review'] (so it always has substance), with an optional LLM
+# executive summary on top. Sets state['report'] + state['title'].
+
+def _sev_rank(s: str) -> int:
+    return {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(str(s).lower(), 4)
+
+
+@capability(
+    "dream.stage.review_report", memory="off", silent=True,
+    description="Dream pipeline stage: compose a substantial source-review report "
+                "from state['review'] (per-file issues, opportunities, plan), with "
+                "an optional LLM executive summary. Sets state['report']/['title'].",
+)
+async def dream_stage_review_report(
+    state: Optional[Dict[str, Any]] = None,
+    trace_id=None,
+):
+    state = state or {}
+    trig = state.get("trigger", {})
+    cycle_id = state.get("cycle_id", "?")
+    journal_id = state.get("journal_id") or cycle_id
+    review = state.get("review") or {}
+
+    await emit_event({"type": "dream.stage.started", "cycle_id": cycle_id,
+                      "stage": "dream.stage.review_report"})
+
+    if review.get("skipped") or review.get("error"):
+        state.setdefault("report", f"Source review did not run: "
+                         f"{review.get('reason') or review.get('error')}")
+        state.setdefault("title", "Source Review — skipped")
+        return state
+
+    rtype = review.get("review_type", "changes")
+    results = review.get("results") or []
+    high = review.get("high_severity_files") or []
+    total_issues = review.get("total_issues", 0)
+    snapshot_id = review.get("snapshot_id", "?")
+
+    # Flatten + sort all issues by severity for a priority list
+    prioritized: List[Dict[str, Any]] = []
+    for r in results:
+        for it in r.get("issue_detail", []):
+            prioritized.append({**it, "file": r["file"]})
+    prioritized.sort(key=lambda x: (_sev_rank(x.get("severity")), x.get("file", "")))
+
+    lines: List[str] = []
+    lines.append(f"# Source Code Review — {rtype.title()}")
+    lines.append("")
+    lines.append(f"Snapshot `{snapshot_id}` · {len(results)} file(s) reviewed · "
+                 f"{total_issues} issue(s) · {len(high)} file(s) with "
+                 f"high-severity findings.")
+    lines.append("")
+
+    # Optional LLM executive summary (substance comes from the data below, so a
+    # failed/empty LLM call never produces an empty report)
+    try:
+        top_for_llm = "\n".join(
+            f"- [{p.get('severity')}] {p['file']}: {p.get('title')}"
+            for p in prioritized[:20])
+        if top_for_llm.strip():
+            summary = await _llm_generate(
+                "Write a 3-5 sentence executive summary of this code review. "
+                "Be specific and prioritise. Issues:\n" + top_for_llm,
+                system="You are a senior engineer summarising a code review.")
+            if summary and summary.strip():
+                lines += ["## Summary", "", summary.strip(), ""]
+    except Exception as e:
+        log.debug("review_report summary: %s", e)
+
+    # Priority issues
+    if prioritized:
+        lines += ["## Priority issues", ""]
+        for p in prioritized[:25]:
+            loc = f" (L{p['line']})" if p.get("line") else ""
+            lines.append(f"- **[{p.get('severity','?')}]** `{p['file']}`{loc} — "
+                         f"{p.get('title','')}")
+            if p.get("detail"):
+                lines.append(f"  - {p['detail']}")
+        lines.append("")
+
+    # Per-file breakdown
+    lines += ["## Per-file findings", ""]
+    for r in sorted(results, key=lambda x: (not x.get("high_severity"), x["file"])):
+        flag = " — HIGH" if r.get("high_severity") else ""
+        lines.append(f"### `{r['file']}`{flag}")
+        if r.get("summary"):
+            lines.append(r["summary"].strip())
+        if r.get("issue_detail"):
+            lines.append("")
+            for it in r["issue_detail"]:
+                loc = f" (L{it['line']})" if it.get("line") else ""
+                lines.append(f"- [{it.get('severity','?')}] {it.get('title','')}{loc}")
+        if r.get("opportunity_detail"):
+            lines.append("")
+            lines.append("_Opportunities:_ " + "; ".join(r["opportunity_detail"]))
+        lines.append("")
+
+    # Improvement plan
+    plan = review.get("plan") or {}
+    plan_body = ""
+    if isinstance(plan, dict):
+        p = plan.get("plan", plan)
+        if isinstance(p, dict):
+            plan_body = p.get("overview") or p.get("summary") or ""
+            steps = p.get("steps") or p.get("changes") or []
+            if steps:
+                plan_body += "\n" + "\n".join(
+                    f"- {s.get('description', s) if isinstance(s, dict) else s}"
+                    for s in steps[:15])
+        elif isinstance(p, str):
+            plan_body = p
+    if plan_body.strip():
+        lines += ["## Improvement plan", "", plan_body.strip(), ""]
+
+    report = "\n".join(lines)
+    state["report"] = report
+    state["title"] = (f"Source Review ({rtype}) — {len(results)} files, "
+                      f"{total_issues} issues")
+
+    await _journal_append(journal_id,
+        f"Composed review report: {len(report)} chars, {len(prioritized)} "
+        f"prioritised issues.",
+        kind="note", stage="review_report", title="Report composed")
+
+    await emit_event({"type": "dream.stage.completed", "cycle_id": cycle_id,
+                      "stage": "dream.stage.review_report",
+                      "report_chars": len(report)})
+    return state
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STAGE: IDE WORKSPACE ACT — use the IDE agent to draft fixes in a workspace
+# ─────────────────────────────────────────────────────────────────────────────
+# Optional, OFF by default. For each high-severity file it asks the IDE writer
+# agent to produce a corrected version addressing the issues, and writes the
+# result into a dedicated workspace (never to live source). The user can then
+# review/promote. Enable via stage_config.ide_workspace_act = {enabled: true,
+# workspace: "vera-review-fixes", max_files: 3}.
+
+@capability(
+    "dream.stage.ide_workspace_act", memory="off", silent=True,
+    description="Dream pipeline stage: use the IDE writer agent to draft fixes "
+                "for high-severity review findings into a workspace (not live "
+                "source). OFF unless stage_config.ide_workspace_act.enabled=true.",
+)
+async def dream_stage_ide_workspace_act(
+    state: Optional[Dict[str, Any]] = None,
+    trace_id=None,
+):
+    state = state or {}
+    trig = state.get("trigger", {})
+    cycle_id = state.get("cycle_id", "?")
+    journal_id = state.get("journal_id") or cycle_id
+    cfg = (trig.get("stage_config", {}) or {}).get("ide_workspace_act", {}) or {}
+
+    state["workspace_changes"] = {"enabled": bool(cfg.get("enabled"))}
+    if not cfg.get("enabled"):
+        return state
+
+    review = state.get("review") or {}
+    high = (review.get("high_severity_files") or [])[:int(cfg.get("max_files", 3) or 3)]
+    snapshot_id = review.get("snapshot_id")
+    if not (high and snapshot_id):
+        state["workspace_changes"] = {"enabled": True, "drafted": 0,
+                                      "reason": "no high-severity files"}
+        return state
+
+    await emit_event({"type": "dream.stage.started", "cycle_id": cycle_id,
+                      "stage": "dream.stage.ide_workspace_act"})
+
+    # Resolve the snapshot directory + create the fixes workspace
+    src_info = CAPABILITY_REGISTRY.get("ide.inspect.source_info")
+    ws_create = CAPABILITY_REGISTRY.get("ide.workspace.create")
+    chat = CAPABILITY_REGISTRY.get("ide.agent.chat")
+    fs_read = CAPABILITY_REGISTRY.get("ide.fs.read")
+    fs_write = CAPABILITY_REGISTRY.get("ide.fs.write")
+    if not (chat and fs_write):
+        state["workspace_changes"] = {"enabled": True, "error": "ide agent/fs unavailable"}
+        return state
+
+    snap_root = ""
+    if src_info:
+        try:
+            snap_root = (await src_info["func"]() or {}).get("snapshot_root", "")
+        except Exception:
+            snap_root = ""
+    ws_name = cfg.get("workspace", "vera-review-fixes")
+    ws_path = ""
+    if ws_create:
+        try:
+            ws = await ws_create["func"](name=ws_name) or {}
+            ws_path = ws.get("path", "")
+        except Exception as e:
+            log.debug("ide_workspace_act workspace: %s", e)
+
+    # Build a quick lookup of issues per file
+    issues_by_file: Dict[str, List[Dict[str, Any]]] = {}
+    for r in review.get("results", []):
+        if r.get("file") in high:
+            issues_by_file[r["file"]] = r.get("issue_detail", [])
+
+    drafted = 0
+    for f in high:
+        content = ""
+        if fs_read and snap_root:
+            try:
+                rr = await fs_read["func"](path=f"{snap_root}/{snapshot_id}/{f}") or {}
+                content = rr.get("content", "")
+            except Exception:
+                content = ""
+        issue_txt = "\n".join(
+            f"- [{i.get('severity')}] {i.get('title')}"
+            + (f" (L{i.get('line')})" if i.get("line") else "")
+            + (f": {i.get('detail')}" if i.get("detail") else "")
+            for i in issues_by_file.get(f, []))
+        prompt = (
+            f"Address the following review findings in `{f}`. Return the COMPLETE "
+            f"corrected file content only (no commentary, no markdown fences).\n\n"
+            f"Findings:\n{issue_txt or '(see summary)'}")
+        try:
+            resp = await chat["func"](
+                agent="writer", prompt=prompt,
+                system=("You are a careful senior engineer applying targeted fixes. "
+                        "Preserve behaviour and style; change only what the findings "
+                        "require."),
+                context_files=json.dumps({f: content}) if content else "{}",
+            ) or {}
+            fixed = (resp.get("text") or "").strip()
+            # Strip accidental code fences
+            fixed = re.sub(r"^```[a-zA-Z]*\n|\n```$", "", fixed).strip()
+            if fixed and ws_path:
+                await fs_write["func"](path=f"{ws_path}/{f}",
+                                       content=fixed, agent="dream")
+                drafted += 1
+                await _journal_append(journal_id,
+                    f"Drafted fix for {f} into workspace {ws_name} "
+                    f"({len(fixed)} chars).",
+                    kind="action", stage="ide_workspace_act",
+                    title=f"Drafted fix: {f}")
+                state.setdefault("findings", []).append({
+                    "topic": f"fix:{f}", "content": f"Drafted fix in {ws_name}",
+                    "source": "ide.agent.chat", "action": True,
+                    "iter": state.get("iteration_index", 0)})
+        except Exception as e:
+            log.debug("ide_workspace_act %s: %s", f, e)
+
+    state["workspace_changes"] = {"enabled": True, "workspace": ws_name,
+                                  "path": ws_path, "drafted": drafted,
+                                  "files": high}
+    await emit_event({"type": "dream.stage.completed", "cycle_id": cycle_id,
+                      "stage": "dream.stage.ide_workspace_act", "drafted": drafted})
+    return state
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STAGE: IDE AGENT — run a bounded IDE agent loop over the workspace + snapshot
+# ─────────────────────────────────────────────────────────────────────────────
+# Exposes the IDE agent loop (ide.agent.chat) as a dream stage. It opens/creates
+# an IDE workspace, seeds it with selected source-snapshot files (or the review's
+# flagged files), and runs up to max_turns of the agent toward a goal — the
+# agent can read/edit within the workspace via its own tools. Files the agent
+# returns are written into the workspace (never live source). Configure via
+# stage_config.ide_agent = {goal, agent, workspace, max_turns, files:[...],
+# from_review, max_files}.
+
+@capability(
+    "dream.stage.ide_agent", memory="off", silent=True,
+    description="Dream stage: run a bounded IDE agent loop (ide.agent.chat) over an "
+                "IDE workspace seeded from the source snapshot, toward a goal. "
+                "Configure via stage_config.ide_agent = {goal, agent, workspace, "
+                "max_turns, files, from_review, max_files}. Writes state['ide_agent'].",
+)
+async def dream_stage_ide_agent(state: Optional[Dict[str, Any]] = None, trace_id=None):
+    state = state or {}
+    trig = state.get("trigger", {})
+    seed = state.get("seed") or {}
+    cycle_id = state.get("cycle_id", "?")
+    journal_id = state.get("journal_id") or cycle_id
+    cfg = (trig.get("stage_config", {}) or {}).get("ide_agent", {}) or {}
+
+    chat = CAPABILITY_REGISTRY.get("ide.agent.chat")
+    if not chat:
+        state["ide_agent"] = {"error": "ide.agent.chat unavailable"}
+        return state
+
+    goal = (cfg.get("goal") or seed.get("focus_topic")
+            or state.get("refined_goal") or state.get("goals")
+            or trig.get("prompt") or "Improve and document this code.")[:1500]
+    agent = cfg.get("agent", "code-reviewer")
+    max_turns = int(cfg.get("max_turns", 4) or 4)
+    ws_name = cfg.get("workspace", "vera-dream-agent")
+
+    await emit_event({"type": "dream.stage.started", "cycle_id": cycle_id,
+                      "stage": "dream.stage.ide_agent"})
+
+    # Resolve snapshot root + the files to seed as context
+    roots = await _source_root_info()
+    snap = await _resolve_review_snapshot(label="ide_agent")
+    snapshot_id = snap.get("snapshot_id") or ""
+    files: List[str] = list(cfg.get("files") or [])
+    if not files and cfg.get("from_review", True):
+        files = list(((state.get("review") or {}).get("high_severity_files")) or [])
+    if not files:
+        enum = await _enumerate_source_files(snapshot_id, roots)
+        files = [f["rel"] for f in enum][:int(cfg.get("max_files", 3) or 3)]
+    files = files[:int(cfg.get("max_files", 5) or 5)]
+
+    # Open/create the workspace and seed context from the snapshot
+    ws_create = CAPABILITY_REGISTRY.get("ide.workspace.create")
+    ws_path = ""
+    if ws_create:
+        try:
+            ws_path = ((await ws_create["func"](name=ws_name)) or {}).get("path", "")
+        except Exception as e:
+            log.debug("ide_agent workspace: %s", e)
+    ctx: Dict[str, str] = {}
+    for f in files:
+        c = await _read_source_file(roots, snapshot_id, f, 0)
+        if c:
+            ctx[f] = c
+
+    turns: List[Dict[str, Any]] = []
+    convo = (f"Goal: {goal}\n\nFiles in scope: {', '.join(files) or '(none)'}\n"
+             f"Work within the IDE workspace '{ws_name}'. When you produce a file, "
+             f"return the COMPLETE file content.")
+    system = ("You are an IDE agent working inside a sandbox workspace (never live "
+              "source). Read, reason, and produce concrete edits toward the goal. "
+              "If finished, say DONE.")
+    for t in range(max_turns):
+        if _CYCLE_CANCEL:
+            break
+        try:
+            resp = await chat["func"](
+                agent=agent, prompt=convo, system=system,
+                context_files=json.dumps(ctx) if ctx else "{}") or {}
+        except Exception as e:
+            turns.append({"turn": t, "error": str(e)})
+            break
+        text = (resp.get("text") or "").strip()
+        turns.append({"turn": t, "text": text[:2000]})
+        await _journal_append(journal_id,
+            f"IDE agent turn {t + 1}/{max_turns}: {text[:160]}",
+            kind="action", stage="ide_agent", title=f"IDE agent turn {t + 1}")
+        await emit_event({"type": "dream.ide_agent.turn", "cycle_id": cycle_id,
+                          "turn": t, "chars": len(text)})
+        if not text or "DONE" in text[-80:].upper():
+            break
+        # Feed the response back for the next turn (bounded loop)
+        convo = (f"Continue toward the goal. Your last output:\n{text[:1500]}\n\n"
+                 f"Next concrete step, or say DONE if complete.")
+
+    state["ide_agent"] = {"workspace": ws_name, "path": ws_path,
+                          "files": files, "turns": len(turns),
+                          "transcript": turns, "goal": goal}
+    if not state.get("report"):
+        state["report"] = (f"# IDE Agent Run\n\nGoal: {goal}\n\nWorkspace: `{ws_name}`\n"
+                           f"Files: {', '.join(files)}\nTurns: {len(turns)}")
+    await emit_event({"type": "dream.stage.completed", "cycle_id": cycle_id,
+                      "stage": "dream.stage.ide_agent", "turns": len(turns)})
+    return state
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STAGE: PIVOT — decide whether to launch a *different* dream next
+# ─────────────────────────────────────────────────────────────────────────────
+# STAGE: LOAD WORKSPACE — pull the relevant project workspace into the dream
+# ─────────────────────────────────────────────────────────────────────────────
+# Instead of relying on the agent loop to go fetch project context mid-run, this
+# stage loads it up front and folds it into the prompt + state. For large
+# projects it uses RAG (vector search over the project's fabric/memory targets)
+# to insert only the portions relevant to the current goal, rather than dumping
+# everything. Configure via stage_config.load_workspace = {rag, top_k,
+# max_chars, large_threshold}.
+
+@capability(
+    "dream.stage.load_workspace", memory="off", silent=True,
+    description="Dream pipeline stage: load the relevant project workspace/context "
+                "into the dream up front (not via the agent loop). Uses "
+                "project.context.assemble (dynamic) plus RAG (fabric.search / "
+                "memory.search) for large projects to insert only goal-relevant "
+                "portions. Writes state['workspace'] and folds it into the prompt.",
+)
+async def dream_stage_load_workspace(
+    state: Optional[Dict[str, Any]] = None,
+    trace_id=None,
+):
+    state = state or {}
+    trig = state.get("trigger", {})
+    seed = state.get("seed") or {}
+    cycle_id = state.get("cycle_id", "?")
+    journal_id = state.get("journal_id") or cycle_id
+    cfg = (trig.get("stage_config", {}) or {}).get("load_workspace", {}) or {}
+
+    slug = (seed.get("project_id") or state.get("project_id")
+            or trig.get("project") or "").strip()
+    if not slug:
+        state["workspace"] = {"skipped": True, "reason": "no project scope"}
+        return state
+
+    await emit_event({"type": "dream.stage.started", "cycle_id": cycle_id,
+                      "stage": "dream.stage.load_workspace", "project": slug})
+
+    goal = (state.get("refined_goal") or seed.get("focus_topic")
+            or (state.get("goals") or "") or trig.get("prompt", ""))[:600]
+    use_rag = bool(cfg.get("rag", True))
+    top_k = int(cfg.get("top_k", 8) or 8)
+    max_chars = int(cfg.get("max_chars", 12000) or 12000)
+    large_threshold = int(cfg.get("large_threshold", 12) or 12)
+
+    parts: List[str] = []
+    rag_snippets: List[Dict[str, Any]] = []
+
+    # 1) Base project context (dynamic mode picks goal-relevant context itself)
+    assemble = CAPABILITY_REGISTRY.get("project.context.assemble")
+    if assemble:
+        try:
+            res = await assemble["func"](slug=slug, goal=goal) or {}
+            ctx = res.get("seed") or res.get("context") or res.get("text") or ""
+            if isinstance(ctx, dict):
+                ctx = ctx.get("context") or json.dumps(ctx)[:max_chars]
+            if ctx:
+                parts.append(str(ctx)[:max_chars])
+        except Exception as e:
+            log.debug("load_workspace assemble: %s", e)
+
+    # 2) Browse the project's linked resources (notebooks, IDE workspaces,
+    # fabric, memory). Count them, and for non-huge projects pull their FULL
+    # content so the dream has the whole project context like an IDE/notebook.
+    resource_count = 0
+    full_blocks: List[str] = []
+    browse = CAPABILITY_REGISTRY.get("project.browse_resources")
+    if browse:
+        try:
+            br = await browse["func"](slug=slug, resource_type="all", limit=200) or {}
+            for rtype, v in br.items():
+                if not isinstance(v, list):
+                    continue
+                resource_count += len(v)
+                for it in v:
+                    if not isinstance(it, dict):
+                        continue
+                    body = (it.get("content") or it.get("text") or it.get("body")
+                            or it.get("preview") or "")
+                    title = (it.get("title") or it.get("name") or it.get("id")
+                             or it.get("path") or "")
+                    if body:
+                        full_blocks.append(f"### [{rtype}] {title}\n{str(body)[:8000]}")
+            state["workspace_resources"] = resource_count
+        except Exception as e:
+            log.debug("load_workspace browse: %s", e)
+
+    is_large = resource_count >= large_threshold
+
+    # 3a) Small/medium project (or RAG disabled): include the FULL resource
+    # content — the dream gets the entire project workspace.
+    if full_blocks and (not is_large or not use_rag):
+        parts.append("FULL PROJECT RESOURCES:\n" + "\n\n".join(full_blocks))
+
+    # 3b) Large project: RAG — insert only goal-relevant chunks via vector
+    # search over the project's targets instead of the whole corpus.
+    if use_rag and is_large and goal:
+        for cap_name, qkey in (("fabric.search", "query"),
+                               ("memory.search", "query")):
+            cap = CAPABILITY_REGISTRY.get(cap_name)
+            if not cap:
+                continue
+            try:
+                kwargs = {qkey: goal, "limit": top_k}
+                hits = await cap["func"](**kwargs) or {}
+                items = (hits.get("results") or hits.get("hits")
+                         or hits.get("matches") or [])
+                for it in items[:top_k]:
+                    txt = (it.get("text") or it.get("content")
+                           or it.get("snippet") or str(it))[:800]
+                    rag_snippets.append({"source": cap_name, "text": txt})
+            except Exception as e:
+                log.debug("load_workspace rag %s: %s", cap_name, e)
+        if rag_snippets:
+            joined = "\n\n".join(f"[{s['source']}] {s['text']}" for s in rag_snippets)
+            parts.append("RELEVANT WORKSPACE EXCERPTS (RAG):\n" + joined[:max_chars])
+
+    # Large projects keep a higher cap so full-ish context still fits
+    _cap = max_chars * (2 if not is_large else 4)
+    workspace_ctx = "\n\n".join(p for p in parts if p)[:_cap]
+    state["workspace"] = {
+        "project": slug, "goal": goal, "large": is_large,
+        "resources": resource_count, "rag": bool(rag_snippets),
+        "rag_count": len(rag_snippets), "full": bool(full_blocks and not (is_large and use_rag)),
+        "chars": len(workspace_ctx), "context": workspace_ctx,
+    }
+
+    # Fold into the prompt so downstream stages + the agent loop already have it
+    if workspace_ctx:
+        trig["prompt"] = ("PROJECT WORKSPACE (loaded for you — use this directly, "
+                          "do not re-fetch):\n" + workspace_ctx + "\n\n"
+                          + (trig.get("prompt") or ""))
+
+    await _journal_append(journal_id,
+        f"Loaded workspace for project '{slug}': {resource_count} resources, "
+        + (f"RAG inserted {len(rag_snippets)} relevant excerpts "
+           f"(large project)" if rag_snippets else "full context")
+        + f", {len(workspace_ctx)} chars.",
+        kind="note", stage="load_workspace", title="Workspace loaded")
+
+    await emit_event({"type": "dream.stage.completed", "cycle_id": cycle_id,
+                      "stage": "dream.stage.load_workspace",
+                      "chars": len(workspace_ctx), "rag": len(rag_snippets)})
+    return state
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Reads the report/findings and the trigger's pivot.candidates, then asks the
+# LLM which follow-up dream (if any) would be most valuable. Sets state["pivot"];
+# the post-cycle hook in _run_cycle actually schedules it. Self-skips when no
+# candidates are configured.
+
+@capability(
+    "dream.stage.pivot", memory="off", silent=True,
+    description="Dream pipeline stage: decide whether this dream's findings "
+                "warrant pivoting into a different dream trigger next. Configure "
+                "via trigger pivot={enabled, candidates:[names], min_confidence}. "
+                "Sets state['pivot']={to_trigger, reason, focus_topic, confidence}.",
+)
+async def dream_stage_pivot(
+    state: Optional[Dict[str, Any]] = None,
+    trace_id=None,
+):
+    state = state or {}
+    trig = state.get("trigger", {})
+    cycle_id = state.get("cycle_id", "?")
+    journal_id = state.get("journal_id") or cycle_id
+    # Config can come from the per-stage config (when added explicitly as an
+    # emit stage in Pipeline config) and/or the trigger's pivot block; the
+    # stage_config layer wins. Being placed in the pipeline counts as enabling.
+    _sc = (trig.get("stage_config", {}) or {}).get("pivot", {}) or {}
+    pivot_cfg = {**(trig.get("pivot") or {}), **_sc}
+    if "candidates" in _sc and isinstance(_sc["candidates"], str):
+        pivot_cfg["candidates"] = [c.strip() for c in _sc["candidates"].split(",") if c.strip()]
+    in_pipeline = "dream.stage.pivot" in (trig.get("pipeline") or [])
+    self_name = trig.get("name", "")
+    # "continue" (resume this trigger's train of thought toward its goals) is
+    # always an available outcome; other triggers come from pivot.candidates.
+    candidates = list(pivot_cfg.get("candidates") or [])
+    allow_continue = bool(state.get("goals")) or bool(pivot_cfg.get("allow_continue", True))
+    enabled = pivot_cfg.get("enabled", in_pipeline)  # in-pipeline → on by default
+
+    state["pivot"] = None
+    if not enabled and not allow_continue:
+        return state
+    if not candidates and not allow_continue:
+        return state
+
+    await emit_event({"type": "dream.stage.started", "cycle_id": cycle_id,
+                      "stage": "dream.stage.pivot"})
+
+    # Describe each candidate trigger for the LLM
+    get_t = CAPABILITY_REGISTRY.get("dream.trigger.get")
+    cand_desc: List[str] = []
+    if allow_continue and self_name:
+        cand_desc.append(f"- continue: keep working THIS dream's train of thought "
+                         f"toward its standing goals (more steps remain).")
+    for name in candidates[:8]:
+        desc = ""
+        if get_t:
+            try:
+                t = (await get_t["func"](name=name) or {}).get("trigger") or {}
+                desc = t.get("description") or t.get("label") or ""
+            except Exception:
+                pass
+        cand_desc.append(f"- {name}: {desc}".rstrip())
+
+    report = (state.get("report") or "")[:2500]
+    findings_txt = "\n".join(
+        f"- {f.get('topic','')}: {str(f.get('content',''))[:160]}"
+        for f in (state.get("findings") or [])[:15])
+    goals_txt = str(state.get("goals") or "(none defined)")
+
+    prompt = (
+        "You are deciding this reflective agent's NEXT action after a work cycle. "
+        "Either CONTINUE its current train of thought toward its standing goals, "
+        "PIVOT into a different follow-up dream, or stop (none).\n\n"
+        f"Standing goals:\n{goals_txt}\n\n"
+        f"What it just produced:\n{report}\n\n"
+        f"Key findings:\n{findings_txt or '(none)'}\n\n"
+        f"Options (use 'continue' to keep going on this same dream):\n"
+        + "\n".join(cand_desc) + "\n\n"
+        "If the goals are not yet met and there is a clear next step, prefer "
+        "'continue'. Respond with JSON only: "
+        '{\"to_trigger\": \"<continue|name|none>\", \"reason\": \"<one line>\", '
+        '\"focus_topic\": \"<the next step to take>\", \"confidence\": <0.0-1.0>}'
+    )
+    raw = await _llm_generate(prompt, system="You decide the agent's next action. JSON only.")
+    decision: Dict[str, Any] = {}
+    try:
+        decision = json.loads(re.sub(r"^```(?:json)?|```$", "", (raw or "").strip()).strip())
+    except Exception:
+        decision = {}
+
+    to_trigger = (decision.get("to_trigger") or "").strip()
+    confidence = float(decision.get("confidence", 0) or 0)
+    min_conf = float(pivot_cfg.get("min_confidence", 0.5) or 0.5)
+    is_continue = to_trigger.lower() == "continue"
+    valid = is_continue or (to_trigger and to_trigger.lower() != "none"
+                            and to_trigger in candidates)
+
+    if valid and confidence >= min_conf:
+        target = self_name if is_continue else to_trigger
+        state["pivot"] = {
+            "to_trigger":  target,
+            "reason":      (decision.get("reason") or "")[:300],
+            "focus_topic": (decision.get("focus_topic") or "")[:200],
+            "confidence":  confidence,
+            "continue":    is_continue,
+        }
+        verb = "Continuing" if is_continue else f"Pivoting to '{target}'"
+        await _journal_append(journal_id,
+            f"{verb} (confidence {confidence:.2f}): {decision.get('reason','')}. "
+            f"Next: {decision.get('focus_topic','')}",
+            kind="pivot", stage="pivot",
+            title=("Continue train of thought" if is_continue else f"Pivot → {target}"))
+    else:
+        await _journal_append(journal_id,
+            f"Stopping — goals satisfied or no clear next step "
+            f"(confidence {confidence:.2f}).",
+            kind="pivot", stage="pivot", title="Stop")
+
+    await emit_event({"type": "dream.stage.completed", "cycle_id": cycle_id,
+                      "stage": "dream.stage.pivot",
+                      "pivot": state.get("pivot")})
+    return state
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STAGE: ITERATE / CONTINUE — decide completion and whether to run again
+# ─────────────────────────────────────────────────────────────────────────────
+# An emit-phase stage that can be dropped into ANY pipeline to give it proper
+# continue/iterate behaviour. It decides whether the dream's goal is satisfied
+# or it should run another cycle, and lets the LLM choose the next step, refine
+# the standing goals, suggest which sensors matter, and set the completion
+# threshold. Continuation reuses the same reschedule mechanism as pivot
+# (state["pivot"] with continue=True → the post-cycle hook re-runs this trigger,
+# carrying the per-trigger journal). Completion can be judged on satisfaction
+# (LLM self-assessment), runtime budget, user activity (idle), sensor signal,
+# or any combination via stage_config.iterate.basis.
+
+@capability(
+    "dream.stage.iterate", memory="off", silent=True,
+    description="Dream emit stage: decide whether the dream is complete or should "
+                "continue/iterate, and let the LLM choose next step, refined goals, "
+                "relevant sensors and the completion threshold. Configure via "
+                "stage_config.iterate = {basis:[satisfaction,runtime,user_activity,"
+                "sensors], max_iterations, max_runtime_s, satisfaction_target, "
+                "min_idle_minutes, llm_decides, apply_goals, apply_sensors}. "
+                "Continuation reuses the pivot reschedule (same trigger + journal).",
+)
+async def dream_stage_iterate(
+    state: Optional[Dict[str, Any]] = None,
+    trace_id=None,
+):
+    state = state or {}
+    trig = state.get("trigger", {})
+    seed = state.get("seed") or {}
+    cycle_id = state.get("cycle_id", "?")
+    journal_id = state.get("journal_id") or cycle_id
+
+    cfg = ((trig.get("stage_config", {}) or {}).get("iterate", {})
+           or trig.get("iterate", {}) or {})
+    basis = cfg.get("basis") or ["satisfaction"]
+    if isinstance(basis, str):
+        basis = [b.strip() for b in basis.split(",") if b.strip()]
+    max_iters     = int(cfg.get("max_iterations",
+                                trig.get("max_continuation_depth", 3)) or 3)
+    max_runtime   = float(cfg.get("max_runtime_s", 0) or 0)
+    sat_target    = float(cfg.get("satisfaction_target", 0.8) or 0.8)
+    min_idle      = float(cfg.get("min_idle_minutes",
+                                  trig.get("min_idle_minutes", 0)) or 0)
+    llm_decides   = bool(cfg.get("llm_decides", True))
+    apply_goals   = bool(cfg.get("apply_goals", True))
+    apply_sensors = bool(cfg.get("apply_sensors", False))
+
+    self_name = trig.get("name", "")
+    depth = int(seed.get("pivot_depth", 0) or seed.get("iteration", 0) or 0)
+
+    await emit_event({"type": "dream.stage.started", "cycle_id": cycle_id,
+                      "stage": "dream.stage.iterate"})
+
+    # ── Gather the decision inputs ───────────────────────────────────────────
+    elapsed = 0.0
+    try:
+        st = state.get("started_at")
+        if st:
+            elapsed = (datetime.now(timezone.utc)
+                       - datetime.fromisoformat(st.replace("Z", "+00:00"))).total_seconds()
+    except Exception:
+        pass
+    idle = await _idle_minutes()
+    sensor_eval = (await _eval_trigger_sensors(trig)) if trig.get("sensors") \
+        else {"signal": 1.0, "detail": "(no sensors)"}
+    sensor_signal = float(sensor_eval.get("signal", 0) or 0)
+
+    # ── Hard stops (independent of the LLM) ──────────────────────────────────
+    hard_stop = None
+    if depth >= max_iters:
+        hard_stop = f"reached max iterations ({max_iters})"
+    elif "runtime" in basis and max_runtime and elapsed >= max_runtime:
+        hard_stop = f"runtime budget reached ({int(elapsed)}s >= {int(max_runtime)}s)"
+    elif "user_activity" in basis and min_idle and idle < min_idle:
+        hard_stop = f"user is active (idle {idle:.1f}m < {min_idle:.0f}m) — pausing"
+    elif ("sensors" in basis and trig.get("sensors")
+          and sensor_signal < float(cfg.get("min_sensor_signal", 0.05) or 0.05)):
+        hard_stop = f"sensor signal low ({sensor_signal:.2f}) — nothing left to work on"
+
+    decision: Dict[str, Any] = {"continue": False, "reason": hard_stop or "",
+                                "satisfaction": None}
+
+    if not hard_stop and llm_decides:
+        report = (state.get("report") or "")[:2500]
+        findings_txt = "\n".join(
+            f"- {f.get('topic','')}: {str(f.get('content',''))[:160]}"
+            for f in (state.get("findings") or [])[:15])
+        goals_txt = str(state.get("goals") or "(none defined)")
+        avail_sensors = ", ".join(sorted(SENSOR_REGISTRY.keys())) or "(none)"
+        prompt = (
+            "You are deciding whether this reflective dream has SATISFIED its goal "
+            "or should run another iteration. Judge completeness honestly.\n\n"
+            f"Standing goals:\n{goals_txt}\n\n"
+            f"This iteration produced:\n{report}\n\n"
+            f"Findings so far:\n{findings_txt or '(none)'}\n\n"
+            f"Context — iteration {depth + 1}/{max_iters}, elapsed {int(elapsed)}s"
+            + (f"/{int(max_runtime)}s budget" if max_runtime else "")
+            + f", user idle {idle:.1f}m, sensor signal {sensor_signal:.2f}.\n"
+            f"Decision basis: {', '.join(basis)}.\n"
+            f"Available sensors you may recommend watching: {avail_sensors}\n\n"
+            "Respond with JSON only:\n"
+            '{"satisfied": <bool>, "satisfaction": <0.0-1.0>, "continue": <bool>, '
+            '"next_step": "<the single next step if continuing>", '
+            '"updated_goals": "<refined standing goals, or empty to keep current>", '
+            '"watch_sensors": ["<sensor ids that matter for completion>"], '
+            '"completion_threshold": "<plain-language: when is this DONE>", '
+            '"reason": "<one line>"}'
+        )
+        raw = await _llm_generate(prompt, system="You judge task completion and plan "
+                                                 "iteration. JSON only.")
+        try:
+            decision = json.loads(re.sub(r"^```(?:json)?|```$", "",
+                                         (raw or "").strip()).strip())
+        except Exception:
+            decision = {"continue": False, "reason": "could not parse decision"}
+
+        sat = float(decision.get("satisfaction", 0) or 0)
+        # Combine the LLM's wish with the satisfaction threshold when that basis
+        # is active: high satisfaction forces completion even if the model wants
+        # to keep going; a low score keeps it iterating.
+        want_continue = bool(decision.get("continue"))
+        if "satisfaction" in basis:
+            if sat >= sat_target:
+                want_continue = False
+                decision.setdefault("reason",
+                                    f"satisfaction {sat:.2f} >= target {sat_target:.2f}")
+            elif decision.get("satisfied") is False and depth + 1 < max_iters:
+                want_continue = True
+        decision["continue"] = want_continue and (depth + 1 < max_iters)
+
+    # ── Apply the decision ───────────────────────────────────────────────────
+    if decision.get("continue") and self_name:
+        next_step = (decision.get("next_step") or "").strip()
+        new_goals = (decision.get("updated_goals") or "").strip()
+        if apply_goals and new_goals and new_goals.lower() not in ("", "none"):
+            state["goals"] = new_goals
+            try:
+                up = CAPABILITY_REGISTRY.get("dream.trigger.upsert")
+                if up:
+                    await up["func"](name=self_name, goals=new_goals)
+            except Exception as e:
+                log.debug("iterate goal update: %s", e)
+        watch = [s for s in (decision.get("watch_sensors") or [])
+                 if isinstance(s, str)]
+        if apply_sensors and watch:
+            try:
+                up = CAPABILITY_REGISTRY.get("dream.trigger.upsert")
+                merged = sorted(set((trig.get("sensors") or []) + watch))
+                if up:
+                    await up["func"](name=self_name, sensors=merged)
+            except Exception as e:
+                log.debug("iterate sensor update: %s", e)
+        # Reuse the pivot reschedule path (continue = same trigger + journal)
+        state["pivot"] = {
+            "to_trigger":  self_name,
+            "reason":      (decision.get("reason") or "")[:300],
+            "focus_topic": next_step,
+            "confidence":  float(decision.get("satisfaction", 0.5) or 0.5),
+            "continue":    True,
+        }
+        await _journal_append(journal_id,
+            f"Iterating (iter {depth + 1}/{max_iters}, satisfaction "
+            f"{decision.get('satisfaction','?')}): {decision.get('reason','')}. "
+            f"Next: {next_step}"
+            + (f" · completion = {decision.get('completion_threshold','')}"
+               if decision.get('completion_threshold') else ""),
+            kind="iterate", stage="iterate", title="Continue / iterate")
+    else:
+        state["pivot"] = None  # ensure no stale continuation from a prior stage
+        await _journal_append(journal_id,
+            f"Dream complete — {decision.get('reason') or hard_stop or 'goal satisfied'} "
+            f"(iter {depth + 1}, satisfaction {decision.get('satisfaction','n/a')}).",
+            kind="iterate", stage="iterate", title="Complete")
+
+    state["iterate_decision"] = {
+        "continue":     bool(decision.get("continue")),
+        "satisfaction": decision.get("satisfaction"),
+        "reason":       decision.get("reason") or hard_stop or "",
+        "next_step":    decision.get("next_step", ""),
+        "completion_threshold": decision.get("completion_threshold", ""),
+        "iteration":    depth + 1, "max_iterations": max_iters,
+        "elapsed_s":    int(elapsed), "idle_minutes": round(idle, 1),
+        "sensor_signal": sensor_signal, "basis": basis,
+    }
+    await emit_event({"type": "dream.stage.completed", "cycle_id": cycle_id,
+                      "stage": "dream.stage.iterate",
+                      "decision": state["iterate_decision"]})
     return state
 
 
@@ -5277,6 +6893,21 @@ async def _run_cycle(
     # Apply seed adjustments to a copy of the trigger so we don't mutate it
     trig = dict(trig)
     seed = dict(seed or {})
+
+    # Resolve a referenced composite pipeline: fields from the registered
+    # pipeline fill in anything the trigger hasn't set inline (trigger wins).
+    pref = trig.get("pipeline_ref") or seed.get("pipeline_ref")
+    if pref:
+        reg = await _get_pipeline(pref)
+        if reg:
+            if not trig.get("pipeline") and reg.get("stages"):
+                trig["pipeline"] = list(reg["stages"])
+            for fld in _PIPELINE_FIELDS:
+                if fld == "stages":
+                    continue
+                if trig.get(fld) in (None, [], {}, "") and reg.get(fld) is not None:
+                    trig[fld] = reg[fld]
+
     if seed.get("extra_prompt"):
         trig["prompt"] = (trig.get("prompt") or "") + "\n\n" + seed["extra_prompt"]
     if seed.get("force_caps"):
@@ -5300,6 +6931,42 @@ async def _run_cycle(
         "trigger": trig, "cycle_id": cycle_id,
         "started_at": now_iso(), "seed": seed, "preview": preview_only,
     }
+
+    # Journal id: each TRIGGER keeps a persistent journal so its "train of
+    # thought" accrues across cycles (the unit of continuation). Project dreams
+    # share a per-project journal; a seed can override.
+    _proj_for_journal = seed.get("project_id") or trig.get("project", "")
+    state["journal_id"] = (seed.get("journal_id")
+                           or (f"project:{_proj_for_journal}" if _proj_for_journal
+                               else f"trigger:{trig.get('name', cycle_id)}"))
+
+    # Overall goals for this trigger + the recent train of thought from its
+    # journal — so the dream works toward standing objectives and resumes where
+    # it left off rather than starting cold each cycle.
+    goals = trig.get("goals") or seed.get("goals") or ""
+    if isinstance(goals, list):
+        goals = "\n".join(f"- {g}" for g in goals)
+    state["goals"] = goals
+    if not preview_only:
+        try:
+            recent = await _journal_read(state["journal_id"], limit=25)
+            if recent:
+                state["train_of_thought"] = _journal_to_markdown(
+                    recent, heading="Recent activity (continue from here)")
+        except Exception:
+            pass
+
+    # Fold standing goals + the train of thought into the prompt so every stage
+    # (goal_refine, agent loop, project_action) works toward the objectives and
+    # continues the thread rather than restarting cold.
+    _preamble = []
+    if state.get("goals"):
+        _preamble.append("STANDING GOALS for this dream:\n" + str(state["goals"]))
+    if state.get("train_of_thought"):
+        _preamble.append(state["train_of_thought"]
+                         + "\n(Build on the above — do not repeat completed work.)")
+    if _preamble:
+        trig["prompt"] = "\n\n".join(_preamble) + "\n\n" + (trig.get("prompt") or "")
 
     # ── Project isolation ────────────────────────────────────────────────
     # When a cycle is scoped to a project, tag the state so downstream
@@ -5412,6 +7079,16 @@ async def _run_cycle(
                 state = result
         except Exception as e:
             state[stage_name] = {"error": str(e)}
+        # Journal a compact per-stage note (most dream activity is journalled)
+        if trig.get("journal", True) and not preview_only:
+            short = stage_name.replace("dream.stage.", "")
+            note = _stage_journal_note(short, state)
+            await _journal_append(
+                state.get("journal_id") or cycle_id, note,
+                kind="stage", stage=short,
+                title=f"Stage: {short}"
+                      + (f" (iter {state['iteration_index']})"
+                         if state.get("iteration_index") else ""))
         # Low-signal early exit only after gather
         if stage_name == "dream.stage.gather":
             sig = float(((state.get("gather") or {}).get("signal") or 0.0))
@@ -5430,12 +7107,13 @@ async def _run_cycle(
             break
 
     if not early_exit and not _CYCLE_CANCEL and iter_enabled and iter_stages:
-        # ── Agentic iteration stages ──────────────────────────────────────
-        # dream.stage.investigate and dream.stage.agent_loop now delegate to
-        # dag.agent_loop_v2, which runs its OWN internal loop. The outer
-        # iteration runner only needs to call each stage ONCE — the stage
-        # itself drives max_iterations internally via the Workshop engine.
-        # We still emit the start/end events for the panel's progress display.
+        # ── Agentic iteration loop ─────────────────────────────────────────
+        # The iterate stages (investigate / agent_loop / project_action) each
+        # delegate to dag.agent_loop_v2's internal ReAct loop. We additionally
+        # run that block REPEATEDLY here — up to max_iterations — so the dream
+        # builds on its own accumulated findings/journal across passes, and we
+        # halt early once a pass stops producing materially new findings
+        # (convergence) after min_iterations. This is the "stronger iteration".
         state.setdefault("iterations", [])
         state.setdefault("findings", [])
         state["iterate"] = {"enabled": True, "stop": False, "completed": 0}
@@ -5444,29 +7122,72 @@ async def _run_cycle(
             "type":          "dream.iterate.start",
             "cycle_id":      cycle_id,
             "max_iterations": max_iterations,
+            "min_iterations": min_iterations,
             "iterate_stages": iter_stages,
             "engine":        "dag.agent_loop_v2",
         })
 
-        # Run each iterate stage once — the stage drives its own loop
-        for stage_name in iter_stages:
+        last_finding_count = 0
+        completed = 0
+        for i in range(1, max_iterations + 1):
             if _CYCLE_CANCEL:
                 cancelled = True
                 break
-            if not await _run_one_stage(stage_name):
+            state["iteration_index"] = i
+            await _journal_append(
+                state.get("journal_id") or cycle_id,
+                f"Iteration {i}/{max_iterations} — building on "
+                f"{last_finding_count} prior finding(s).",
+                kind="note", stage="iterate", title=f"Iteration {i} started")
+            await emit_event({"type": "dream.iterate.pass", "cycle_id": cycle_id,
+                              "iteration": i, "max": max_iterations})
+
+            for stage_name in iter_stages:
+                if _CYCLE_CANCEL:
+                    cancelled = True
+                    break
+                if not await _run_one_stage(stage_name):
+                    break
+            if cancelled:
                 break
 
-        # Gather final iterate state from whichever stage ran
+            completed = i
+            new_count = len(state.get("findings", []))
+            delta = new_count - last_finding_count
+            state["iterations"].append({
+                "iteration": i, "findings_total": new_count, "new_findings": delta,
+            })
+            it_loop = state.get("iterate") or {}
+
+            # Respect an explicit satisfaction stop from the stage/loop
+            stage_stop = bool(it_loop.get("stop_requested") or it_loop.get("satisfied"))
+            # Convergence: after min_iterations, halt if too few new findings
+            converged = (i >= min_iterations and delta < convergence_min_new)
+
+            if stage_stop or converged:
+                state["iterate"]["stop_reason"] = (
+                    "satisfied" if stage_stop else "converged")
+                await _journal_append(
+                    state.get("journal_id") or cycle_id,
+                    f"Stopping after iteration {i}: "
+                    f"{state['iterate']['stop_reason']} "
+                    f"(+{delta} new findings).",
+                    kind="note", stage="iterate", title="Iteration converged")
+                break
+            last_finding_count = new_count
+
         it_state = state.get("iterate") or {}
-        it_state.setdefault("completed", 1)
+        it_state["completed"] = completed or 1
         it_state["stop"] = True
         state["iterate"] = it_state
+        state.pop("iteration_index", None)
 
         await emit_event({
             "type":                  "dream.iterate.end",
             "cycle_id":              cycle_id,
             "completed_iterations":  it_state.get("completed", 1),
             "total_findings":        len(state.get("findings", [])),
+            "stop_reason":           it_state.get("stop_reason", "max_iterations"),
             "engine":                it_state.get("engine", "dag.agent_loop_v2"),
         })
 
@@ -5712,6 +7433,55 @@ async def _run_cycle(
                             log.debug("dream auto-continue: %s", e)
                     asyncio.create_task(_schedule_continue())
 
+    # ── Pivot hook ───────────────────────────────────────────────────────
+    # If dream.stage.pivot decided to hand off to a *different* dream, launch
+    # that trigger after a cooldown, carrying the focus + continuation depth so
+    # pivots can't recurse forever.
+    if not preview_only and not early_exit and not cancelled:
+        pivot = state.get("pivot") or {}
+        if pivot.get("to_trigger"):
+            seed_data = state.get("seed") or {}
+            depth = int(seed_data.get("pivot_depth", 0))
+            _iter_cfg = ((trig.get("stage_config", {}) or {}).get("iterate", {})
+                         or trig.get("iterate", {}) or {})
+            max_pivots = int((trig.get("pivot") or {}).get("max_pivots",
+                             max(int(trig.get("max_continuation_depth", 3) or 3),
+                                 int(_iter_cfg.get("max_iterations", 0) or 0))))
+            if depth < max_pivots:
+                target = pivot["to_trigger"]
+                is_cont = bool(pivot.get("continue"))
+                _focus = pivot.get("focus_topic", "")
+                pivot_seed = {
+                    "focus_topic": _focus,
+                    "extra_prompt": (("NEXT STEP (continue the train of thought): "
+                                      if is_cont else "Follow-up focus: ") + _focus)
+                                    if _focus else "",
+                    "pivoted_from": trig.get("name", ""),
+                    "pivot_reason": pivot.get("reason", ""),
+                    "pivot_depth": depth + 1,
+                    "continue": is_cont,
+                    # Carry project scope so a project dream pivots within the project
+                    "project_id": project_slug or seed_data.get("project_id", ""),
+                    # Share the journal so the train of thought continues
+                    "journal_id": state.get("journal_id"),
+                }
+                log.info("dream: %s %s -> %s (depth %d/%d) for %s",
+                         "continue" if is_cont else "pivot",
+                         trig.get("name"), target, depth + 1, max_pivots, cycle_id)
+
+                async def _schedule_pivot():
+                    await asyncio.sleep(30)
+                    try:
+                        run_cap = CAPABILITY_REGISTRY.get("dream.cycle.run")
+                        if run_cap:
+                            await run_cap["func"](trigger_name=target, seed=pivot_seed)
+                    except Exception as e:
+                        log.debug("dream pivot launch: %s", e)
+                asyncio.create_task(_schedule_pivot())
+                await emit_event({"type": "dream.pivot.scheduled",
+                                  "cycle_id": cycle_id, "to_trigger": target,
+                                  "continue": is_cont, "depth": depth + 1})
+
     # ── Stage-to-DAG handover ────────────────────────────────────────────
     # If the cycle produced next steps and has a handover config, queue
     # them as a DAG for later execution
@@ -5756,6 +7526,74 @@ async def _run_cycle(
     return record
 
 
+async def _eval_trigger_sensors(trig: Dict[str, Any]) -> Dict[str, Any]:
+    """Run a trigger's sensors and evaluate the firing condition.
+
+    Per-sensor config lives in trig['sensor_params'][<short_name>] and may
+    include, in addition to the sensor's own params (limit, etc.):
+      • match        — regex (or plain substring) tested against the sensor's
+                        sample/summary text; the trigger only fires if it hits
+      • match_field  — which field to test ('sample'|'summary'|'all', default 'all')
+      • min_signal   — per-sensor signal floor (overrides trig.require_signal
+                        for that sensor)
+      • negate       — if true, fire only when the match does NOT hit
+
+    Returns {signal, matched, detail} where `signal` is the max across sensors
+    and `matched` reflects all configured match conditions."""
+    sensors = trig.get("sensors") or []
+    if not sensors:
+        return {"signal": 1.0, "matched": True, "detail": "(no sensors)"}
+    params = trig.get("sensor_params") or {}
+    sigs: List[float] = []
+    any_match_cfg = False
+    all_matched = True
+    details: List[str] = []
+    for sid in sensors:
+        short = sid.rsplit(".", 1)[-1]
+        p = dict(params.get(short) or params.get(sid) or {})
+        match       = p.pop("match", "") or ""
+        match_field = p.pop("match_field", "all")
+        min_signal  = p.pop("min_signal", None)
+        negate      = bool(p.pop("negate", False))
+        cap = CAPABILITY_REGISTRY.get(sid) or CAPABILITY_REGISTRY.get(f"dream.sensor.{short}")
+        if not cap:
+            continue
+        try:
+            res = await cap["func"](**p) or {}
+        except Exception as e:
+            log.debug("sensor %s eval: %s", sid, e)
+            continue
+        sig = float(res.get("signal", 0) or 0)
+        sigs.append(sig)
+        if min_signal is not None and sig < float(min_signal):
+            all_matched = False
+            details.append(f"{short}: signal {sig:.2f}<{float(min_signal):.2f}")
+            continue
+        if match:
+            any_match_cfg = True
+            if match_field == "sample":
+                blob = json.dumps(res.get("sample") or res.get("items") or "", default=str)
+            elif match_field == "summary":
+                blob = str(res.get("summary") or "")
+            else:
+                blob = json.dumps(res, default=str)
+            try:
+                hit = bool(re.search(match, blob, re.I))
+            except re.error:
+                hit = match.lower() in blob.lower()
+            if negate:
+                hit = not hit
+            if not hit:
+                all_matched = False
+                details.append(f"{short}: no match /{match}/")
+            else:
+                details.append(f"{short}: matched /{match}/")
+    signal = max(sigs) if sigs else 0.0
+    return {"signal": signal, "matched": all_matched,
+            "detail": "; ".join(details) or f"signal {signal:.2f}",
+            "match_configured": any_match_cfg}
+
+
 async def _trigger_due(trig: Dict[str, Any], idle_min: float) -> bool:
     if not trig.get("enabled"):
         return False
@@ -5772,6 +7610,19 @@ async def _trigger_due(trig: Dict[str, Any], idle_min: float) -> bool:
                 return False
         except Exception:
             pass
+    # Sensor gate: only fire when the trigger's sensors clear their signal
+    # threshold AND any configured match (regex/text) condition holds. This is
+    # the single, coherent place firing is decided — configurable per trigger
+    # via sensor_params[<sensor>].{match,match_field,min_signal,negate}.
+    if trig.get("sensors"):
+        ev = await _eval_trigger_sensors(trig)
+        require = float(trig.get("require_signal", 0) or 0)
+        if ev["signal"] < require:
+            return False
+        if not ev["matched"]:
+            await emit_event({"type": "dream.trigger.gated", "trigger": trig.get("name"),
+                              "reason": ev["detail"]})
+            return False
     return True
 
 
@@ -6083,6 +7934,17 @@ async def dream_trigger_upsert(
     depth:         Optional[str]            = None,   # brief|standard|deep|exhaustive
     max_steps:     Optional[int]            = None,   # for stepwise mode
     director_managed: Optional[bool]        = None,   # if True, director may auto-fire/skip
+    # NEW v4 fields ─────────────────────────────────────────────────────────
+    stage_config:  Optional[Dict[str, Any]] = None,   # {stage_id: {cfg}} (review_codebase, snapshot_source, ...)
+    iterate:       Optional[Dict[str, Any]] = None,   # outer convergence loop config
+    pivot:         Optional[Dict[str, Any]] = None,   # {enabled, candidates, min_confidence, max_pivots}
+    loop_settings: Optional[Dict[str, Any]] = None,   # per-trigger agent-loop overrides
+    handover:      Optional[Dict[str, Any]] = None,   # stage->DAG handover config
+    journal:       Optional[bool]           = None,   # journal this trigger's activity
+    max_continuation_depth: Optional[int]   = None,   # cap auto-continue / pivot recursion
+    project:       Optional[str]            = None,   # project slug this trigger is scoped to
+    pipeline_ref:  Optional[str]            = None,   # name of a registered composite pipeline
+    goals:         Optional[Any]            = None,   # overall objectives for this trigger (str or list)
     trace_id=None,
 ):
     if not name:
@@ -6118,6 +7980,11 @@ async def dream_trigger_upsert(
         "whitelist": whitelist, "no_hitl_caps": no_hitl_caps,
         "depth": depth, "max_steps": max_steps,
         "director_managed": director_managed,
+        # v4
+        "stage_config": stage_config, "iterate": iterate, "pivot": pivot,
+        "loop_settings": loop_settings, "handover": handover, "journal": journal,
+        "max_continuation_depth": max_continuation_depth, "project": project,
+        "pipeline_ref": pipeline_ref, "goals": goals,
     }
     for k, v in fields.items():
         if v is not None:
@@ -6154,6 +8021,1361 @@ async def dream_trigger_toggle(name: str, enabled: Optional[bool] = None, trace_
     trig["enabled"] = bool(enabled) if enabled is not None else (not trig.get("enabled"))
     await _save_trigger(trig)
     return {"ok": True, "trigger": trig}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMPOSITE PIPELINE REGISTRY
+# ─────────────────────────────────────────────────────────────────────────────
+# A pipeline is a reusable, named composite of stages + per-stage config +
+# iterate/pivot policy. Triggers may reference one by `pipeline_ref` instead of
+# inlining a `pipeline` list, so the same composite can be scheduled, run ad-hoc
+# (dream.pipeline.run), or managed from the UI. _run_cycle resolves the ref.
+
+KEY_PIPELINES = "vera:dream:pipelines"   # Redis hash: name -> pipeline JSON
+
+# Fields a pipeline contributes to the effective trigger when referenced.
+_PIPELINE_FIELDS = ("stages", "stage_config", "iterate", "pivot", "sensors",
+                    "deliver_to", "max_steps", "journal", "whitelist",
+                    "no_hitl_caps", "mode", "depth")
+
+
+def _builtin_pipelines() -> List[Dict[str, Any]]:
+    """Built-in composite pipelines, seeded on startup (create-if-absent)."""
+    review_stages = ["dream.stage.snapshot_source",
+                     "dream.stage.review_codebase",
+                     "dream.stage.review_report",
+                     "dream.stage.deliver",
+                     "dream.stage.pivot"]
+    review_caps = ["ide.inspect.snapshot", "ide.inspect.list_snapshots",
+                   "ide.inspect.diff_snapshot", "ide.inspect.review_file",
+                   "ide.inspect.plan_improvement", "ide.inspect.source_info",
+                   "memory.create", "dream.journal.append",
+                   "llm.generate", "llm.summarize"]
+    base = {
+        "kind": "source_review", "mode": "agent_loop", "journal": True,
+        "depth": "standard", "max_steps": 8, "deliver_to": ["notebook", "memory"],
+        "sensors": ["dream.sensor.source_changes"],
+        "whitelist": review_caps,
+        "no_hitl_caps": review_caps,
+        "stages": review_stages,
+    }
+    return [
+        {**base, "name": "source_review_changes",
+         "label": "Source Review — Recent Changes",
+         "description": "Snapshot if source changed, then review the files that "
+                        "changed since the last snapshot and report.",
+         "stage_config": {"review_codebase": {"review_type": "changes",
+                                              "max_files": 40, "plan": True}},
+         "pivot": {"enabled": True, "min_confidence": 0.6,
+                   "candidates": ["source_review_continue"]}},
+        {**base, "name": "source_review_wander",
+         "label": "Source Review — General Wander",
+         "description": "Roam the whole codebase a window at a time (rotating "
+                        "cursor), reviewing files regardless of changes.",
+         "sensors": ["dream.sensor.source_review_state"],
+         "stage_config": {"review_codebase": {"review_type": "wander",
+                                              "max_files": 12, "plan": True}},
+         "pivot": {"enabled": False}},
+        {**base, "name": "source_review_continue",
+         "label": "Source Review — Continue Previous",
+         "description": "Continue a previous review: pick up files not yet "
+                        "reviewed against the current snapshot.",
+         "sensors": ["dream.sensor.source_review_state"],
+         "stage_config": {"review_codebase": {"review_type": "continue",
+                                              "max_files": 25, "plan": True}},
+         "pivot": {"enabled": False}},
+        {**base, "name": "source_review_fix",
+         "label": "Source Review — Draft Fixes",
+         "description": "Review recent changes, then use the IDE writer agent to "
+                        "draft fixes for high-severity files into a workspace.",
+         "stages": ["dream.stage.snapshot_source", "dream.stage.review_codebase",
+                    "dream.stage.review_report", "dream.stage.ide_workspace_act",
+                    "dream.stage.deliver"],
+         "whitelist": review_caps + ["ide.agent.chat", "ide.workspace.create",
+                                     "ide.fs.read", "ide.fs.write"],
+         "stage_config": {"review_codebase": {"review_type": "changes",
+                                              "max_files": 40, "plan": True},
+                          "ide_workspace_act": {"enabled": True,
+                                               "workspace": "vera-review-fixes",
+                                               "max_files": 3}},
+         "pivot": {"enabled": False}},
+        {**base, "name": "source_review_deep",
+         "label": "Source Review — Deep (Whole Project)",
+         "description": "In-depth review of EVERY module across multiple styles "
+                        "(docs, critique, improvement, integration, architecture). "
+                        "Produces long detailed reports per file, browsable per "
+                        "area in the Source Review panel.",
+         "kind": "source_review_deep",
+         "sensors": ["dream.sensor.source_review_state"],
+         "stages": ["dream.stage.deep_review", "dream.stage.deliver"],
+         "whitelist": review_caps + ["ide.fs.read"],
+         "stage_config": {"deep_review": {
+             "styles": ["docs", "critique", "improvement", "integration",
+                        "architecture"],
+             "area": "", "max_files": 0, "max_chars": 14000}},
+         "max_steps": 1, "pivot": {"enabled": False}},
+    ]
+
+
+async def _get_pipeline(name: str) -> Optional[Dict[str, Any]]:
+    r = _redis()
+    if not r:
+        for p in _builtin_pipelines():
+            if p["name"] == name:
+                return p
+        return None
+    try:
+        raw = await r.hget(KEY_PIPELINES, name)
+        if raw:
+            return json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+    except Exception as e:
+        log.debug("get pipeline: %s", e)
+    return None
+
+
+async def _save_pipeline(p: Dict[str, Any]):
+    r = _redis()
+    if not r:
+        return
+    try:
+        await r.hset(KEY_PIPELINES, p["name"], json.dumps(p, default=str))
+    except Exception as e:
+        log.warning("save pipeline: %s", e)
+
+
+@capability(
+    "dream.pipeline.list", memory="off", silent=True,
+    http_method="GET", http_path="/dream/pipelines", http_tags=["dream"],
+    description="List registered composite pipelines. "
+                "Output: {pipelines: [{name, label, description, kind, stages, ...}]}.",
+)
+async def dream_pipeline_list(trace_id=None):
+    r = _redis()
+    out: Dict[str, Dict[str, Any]] = {p["name"]: p for p in _builtin_pipelines()}
+    if r:
+        try:
+            h = await r.hgetall(KEY_PIPELINES)
+            for k, v in (h or {}).items():
+                try:
+                    p = json.loads(v.decode() if isinstance(v, bytes) else v)
+                    out[p.get("name") or (k.decode() if isinstance(k, bytes) else k)] = p
+                except Exception:
+                    continue
+        except Exception:
+            pass
+    return {"pipelines": sorted(out.values(), key=lambda x: x.get("name", ""))}
+
+
+@capability(
+    "dream.pipeline.get", memory="off", silent=True,
+    http_method="GET", http_path="/dream/pipeline/get", http_tags=["dream"],
+    description="Get one composite pipeline by name. Input: name (str!).",
+)
+async def dream_pipeline_get(name: str, trace_id=None):
+    p = await _get_pipeline(name)
+    return {"ok": bool(p), "pipeline": p} if p else {"ok": False, "error": "not found"}
+
+
+@capability(
+    "dream.pipeline.upsert", memory="off",
+    http_method="POST", http_path="/dream/pipeline/upsert", http_tags=["dream"],
+    description="Create or update a composite pipeline the user can manage and "
+                "schedule. Input: name (str!), label, description, kind, "
+                "stages (JSON list!), stage_config (JSON), iterate (JSON), "
+                "pivot (JSON), sensors (JSON list), deliver_to (JSON list), "
+                "max_steps (int), journal (bool), whitelist (JSON list), "
+                "no_hitl_caps (JSON list), mode, depth. "
+                "Output: {ok, pipeline}.",
+)
+async def dream_pipeline_upsert(
+    name: str,
+    label: str = "",
+    description: str = "",
+    kind: str = "custom",
+    stages: Optional[Any] = None,
+    stage_config: Optional[Any] = None,
+    iterate: Optional[Any] = None,
+    pivot: Optional[Any] = None,
+    sensors: Optional[Any] = None,
+    deliver_to: Optional[Any] = None,
+    max_steps: Optional[int] = None,
+    journal: Optional[bool] = None,
+    whitelist: Optional[Any] = None,
+    no_hitl_caps: Optional[Any] = None,
+    mode: str = "",
+    depth: str = "",
+    trace_id=None,
+):
+    if not name:
+        return {"ok": False, "error": "name required"}
+
+    def _j(v, default):
+        if v is None:
+            return default
+        if isinstance(v, str):
+            try:
+                return json.loads(v) if v.strip() else default
+            except Exception:
+                return default
+        return v
+
+    existing = await _get_pipeline(name) or {"name": name, "kind": kind}
+    p = dict(existing)
+    p["name"] = name
+    if label:       p["label"] = label
+    if description: p["description"] = description
+    if kind:        p["kind"] = kind
+    if mode:        p["mode"] = mode
+    if depth:       p["depth"] = depth
+    if max_steps is not None:  p["max_steps"] = int(max_steps)
+    if journal is not None:    p["journal"] = bool(journal)
+    if stages is not None:        p["stages"] = _j(stages, p.get("stages", []))
+    if stage_config is not None:  p["stage_config"] = _j(stage_config, p.get("stage_config", {}))
+    if iterate is not None:       p["iterate"] = _j(iterate, p.get("iterate", {}))
+    if pivot is not None:         p["pivot"] = _j(pivot, p.get("pivot", {}))
+    if sensors is not None:       p["sensors"] = _j(sensors, p.get("sensors", []))
+    if deliver_to is not None:    p["deliver_to"] = _j(deliver_to, p.get("deliver_to", []))
+    if whitelist is not None:     p["whitelist"] = _j(whitelist, p.get("whitelist", []))
+    if no_hitl_caps is not None:  p["no_hitl_caps"] = _j(no_hitl_caps, p.get("no_hitl_caps", []))
+
+    if not p.get("stages"):
+        return {"ok": False, "error": "stages required (non-empty list)"}
+
+    await _save_pipeline(p)
+    return {"ok": True, "pipeline": p}
+
+
+@capability(
+    "dream.pipeline.delete", memory="off",
+    http_method="POST", http_path="/dream/pipeline/delete", http_tags=["dream"],
+    description="Delete a composite pipeline by name (built-ins re-seed on "
+                "restart). Input: name (str!).",
+)
+async def dream_pipeline_delete(name: str, trace_id=None):
+    r = _redis()
+    if r:
+        try:
+            await r.hdel(KEY_PIPELINES, name)
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+    return {"ok": True, "deleted": name}
+
+
+@capability(
+    "dream.pipeline.run", memory="off",
+    http_method="POST", http_path="/dream/pipeline/run", http_tags=["dream"],
+    description="Run a composite pipeline ad-hoc (builds a transient trigger and "
+                "runs a cycle). Input: name (str!), seed (JSON, optional), "
+                "force (bool, default true). Output: dream cycle result.",
+)
+async def dream_pipeline_run(name: str, seed: Optional[Any] = None,
+                             force: bool = True, trace_id=None):
+    p = await _get_pipeline(name)
+    if not p:
+        return {"ok": False, "error": f"unknown pipeline: {name}"}
+    if isinstance(seed, str):
+        try:
+            seed = json.loads(seed) if seed.strip() else {}
+        except Exception:
+            seed = {}
+    trig = _trigger_from_pipeline(p)
+    trig["enabled"] = True
+    if _CYCLE_TASK and not _CYCLE_TASK.done():
+        return {"ok": False, "error": "a cycle is already running"}
+    return await _run_cycle(trig, force=force, seed=seed or {})
+
+
+def _trigger_from_pipeline(p: Dict[str, Any]) -> Dict[str, Any]:
+    """Build an effective trigger dict from a registered pipeline."""
+    return {
+        "name":         f"pipeline:{p['name']}",
+        "label":        p.get("label", p["name"]),
+        "description":  p.get("description", ""),
+        "pipeline":     list(p.get("stages") or []),
+        "stage_config": p.get("stage_config", {}),
+        "iterate":      p.get("iterate", {}),
+        "pivot":        p.get("pivot", {}),
+        "sensors":      p.get("sensors", ["dream.sensor.memory_recent"]),
+        "deliver_to":   p.get("deliver_to", ["memory"]),
+        "mode":         p.get("mode", "agent_loop"),
+        "depth":        p.get("depth", "standard"),
+        "max_steps":    p.get("max_steps", 8),
+        "journal":      p.get("journal", True),
+        "whitelist":    p.get("whitelist", []),
+        "no_hitl_caps": p.get("no_hitl_caps", []),
+        "require_signal": 0.0,
+        "hours_start": 0, "hours_end": 24,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DEEP SOURCE REVIEW SUBSYSTEM
+# ─────────────────────────────────────────────────────────────────────────────
+# A thorough, whole-project review engine. It enumerates EVERY source module
+# (not just changed files), groups them into subsystem "areas", and for each
+# file runs one or more analysis *styles* (docs, critique, improvement,
+# integration, architecture). Each style produces a long, detailed markdown
+# report from the actual file content — not a surface summary. Reports are
+# stored per (file, style) and can be aggregated into per-area documents, all
+# browsable from the dedicated Source Review panel.
+
+KEY_REVIEW_REPORTS = "vera:dream:review:reports"   # hash: "file::style" -> JSON
+KEY_REVIEW_RUN     = "vera:dream:review:last_run"  # JSON: last run summary
+KEY_REVIEW_STATUS  = "vera:dream:review:status"    # JSON: live progress
+KEY_REVIEW_RUNLOG  = "vera:dream:review:runlog"    # list: past run summaries
+KEY_REVIEW_PAUSE   = "vera:dream:review:paused"    # "1" = manually paused
+
+REVIEW_STYLES: Dict[str, Dict[str, str]] = {
+    "docs": {
+        "label": "Documentation",
+        "system": "You are a senior engineer writing authoritative developer "
+                  "documentation. Be thorough, structured, and concrete.",
+        "instruction":
+            "Write comprehensive developer documentation for this module in "
+            "Markdown. Cover: (1) purpose and responsibilities; (2) the key "
+            "classes, functions and capabilities it defines, with signatures and "
+            "what each does; (3) the data/control flow through the module; "
+            "(4) external dependencies and the events/streams it emits or "
+            "consumes; (5) configuration and important constants; (6) concrete "
+            "usage examples. Use headings and tables where helpful. Be long and "
+            "detailed — aim for complete coverage, not a summary.",
+    },
+    "critique": {
+        "label": "Critique",
+        "system": "You are a meticulous staff engineer doing a rigorous code "
+                  "critique. Be specific and cite concrete locations.",
+        "instruction":
+            "Provide a detailed critique of this module in Markdown. Identify "
+            "design issues, code smells, correctness risks, race conditions, "
+            "error-handling gaps, unclear abstractions, and edge cases. For each "
+            "finding give: a severity (critical/high/medium/low), the specific "
+            "function or line context, why it matters, and a suggested direction. "
+            "Group findings by severity. Be exhaustive and specific.",
+    },
+    "improvement": {
+        "label": "Improvement notes",
+        "system": "You are a pragmatic architect proposing concrete, prioritised "
+                  "improvements.",
+        "instruction":
+            "Write detailed improvement notes for this module in Markdown. "
+            "Propose concrete refactors and enhancements, prioritised (quick wins "
+            "first, then larger refactors). For each: the rationale, the expected "
+            "benefit, the risk/effort, and a short sketch of the change (pseudocode "
+            "or signatures). Cover performance, readability, testability, and "
+            "robustness. Be specific to THIS code, not generic advice.",
+    },
+    "integration": {
+        "label": "Integration ideas",
+        "system": "You are a systems architect mapping how a module fits into the "
+                  "wider platform and how to integrate it better.",
+        "instruction":
+            "Analyse how this module integrates with the rest of the Vera system "
+            "in Markdown. Cover: what it depends on and what depends on it; the "
+            "capabilities it exposes and how other modules would call them; the "
+            "events/streams it participates in; coupling and seams. Then propose "
+            "concrete integration ideas — new connections to other subsystems "
+            "(dream, ide, memory, fabric, dag, project), new capabilities to "
+            "expose, or ways to make it more composable. Be specific and "
+            "ambitious but grounded in the actual code.",
+    },
+    "architecture": {
+        "label": "Architecture",
+        "system": "You are a principal engineer explaining and assessing module "
+                  "architecture.",
+        "instruction":
+            "Produce a detailed architectural analysis of this module in Markdown: "
+            "its role in the overall system, the patterns it uses, its internal "
+            "structure and layering, state management, concurrency model, and "
+            "failure modes. Include an assessment of how well the architecture "
+            "serves its purpose and where it strains. Be thorough.",
+    },
+}
+
+# Grouping is derived from the file's position in the directory tree (reusable
+# for any codebase), with an optional LLM-aided grouping layer for flat trees.
+KEY_REVIEW_GROUPS = "vera:dream:review:groups"   # snapshot_id -> {group: [rel,...]}
+
+
+def _source_area(rel: str) -> str:
+    """Subsystem/area for a file, from its directory structure. Nested files
+    group by their top directory; top-level files group by a leading token in
+    the filename (split on '_' / '.') so flat projects still cluster sensibly."""
+    rel = (rel or "").replace("\\", "/").lstrip("./")
+    if "/" in rel:
+        return rel.split("/", 1)[0]
+    base = rel.rsplit("/", 1)[-1]
+    stem = base.rsplit(".", 1)[0]
+    # leading token before first underscore (e.g. dream_capabilities -> dream)
+    token = stem.split("_", 1)[0]
+    return token or "(root)"
+
+
+_REVIEW_INCLUDE = ("*.py,*.pyi,*.js,*.jsx,*.ts,*.tsx,*.html,*.css,*.go,*.rs,"
+                   "*.java,*.rb,*.c,*.h,*.cpp,*.hpp,*.cs,*.php,*.sh,*.sql,*.yaml,*.yml")
+
+
+async def _source_root_info() -> Dict[str, str]:
+    cap = CAPABILITY_REGISTRY.get("ide.inspect.source_info")
+    if not cap:
+        return {}
+    try:
+        info = await cap["func"]() or {}
+        return {"source_root": info.get("source_root", ""),
+                "snapshot_root": info.get("snapshot_root", "")}
+    except Exception:
+        return {}
+
+
+async def _enumerate_source_files(snapshot_id: str, roots: Optional[Dict[str, str]] = None,
+                                  max_files: int = 4000) -> List[Dict[str, Any]]:
+    """Recursively enumerate every code file in the snapshot tree (all subdirs).
+    Falls back to live source root, then to the flat source_info module list."""
+    roots = roots or await _source_root_info()
+    listing_root = ""
+    if roots.get("snapshot_root") and snapshot_id:
+        listing_root = f"{roots['snapshot_root']}/{snapshot_id}"
+    elif roots.get("source_root"):
+        listing_root = roots["source_root"]
+
+    lf = CAPABILITY_REGISTRY.get("ide.code.list_files")
+    if lf and listing_root:
+        try:
+            res = await lf["func"](root=listing_root, include=_REVIEW_INCLUDE,
+                                   exclude="*/.git/*,*/node_modules/*,*/__pycache__/*,*/.snapshots/*",
+                                   max_files=max_files) or {}
+            files = res.get("files", [])
+            if files:
+                return [{"rel": f.get("rel"), "path": f.get("path"),
+                         "size": f.get("size", 0)} for f in files if f.get("rel")]
+        except Exception as e:
+            log.debug("enumerate via list_files: %s", e)
+
+    # Fallback: flat top-level module list
+    mods = await _all_source_modules()
+    return [{"rel": m["name"], "path": "", "size": m.get("bytes", 0)} for m in mods]
+
+
+async def _diff_snapshots(a_id: str, b_id: str) -> Dict[str, List[str]]:
+    """Diff two snapshots (not snapshot-vs-live). Returns {modified, added,
+    removed} of rel paths. Uses size as a prefilter, then content compare."""
+    roots = await _source_root_info()
+    a_list = await _enumerate_source_files(a_id, roots)
+    b_list = await _enumerate_source_files(b_id, roots)
+    a = {f["rel"]: f.get("size", 0) for f in a_list}
+    b = {f["rel"]: f.get("size", 0) for f in b_list}
+    added = sorted(set(b) - set(a))
+    removed = sorted(set(a) - set(b))
+    modified: List[str] = []
+    for rel in sorted(set(a) & set(b)):
+        if a[rel] != b[rel]:
+            modified.append(rel)
+            continue
+        # same size — compare content to be sure
+        ca = await _read_source_file(roots, a_id, rel, 0)
+        cb = await _read_source_file(roots, b_id, rel, 0)
+        if ca != cb:
+            modified.append(rel)
+    return {"modified": modified, "added": added, "removed": removed}
+
+
+async def _llm_group_files(files: List[str]) -> Dict[str, List[str]]:
+    """LLM-aided grouping for flat/ambiguous trees: cluster files into named
+    logical groups. Best-effort; returns {} on failure."""
+    if not files:
+        return {}
+    listing = "\n".join(files[:200])
+    prompt = (
+        "Group these source files into a small number of logical subsystems "
+        "based on their names and likely responsibilities. Respond with JSON "
+        "only: an object mapping a short lowercase group name to an array of the "
+        "exact file paths in that group. Every file must appear exactly once.\n\n"
+        + listing)
+    raw = await _llm_generate(prompt, system="You organise codebases. JSON only.")
+    try:
+        obj = json.loads(re.sub(r"^```(?:json)?|```$", "", (raw or "").strip()).strip())
+        if isinstance(obj, dict):
+            # keep only known files
+            known = set(files)
+            return {str(k): [f for f in v if f in known]
+                    for k, v in obj.items() if isinstance(v, list)}
+    except Exception:
+        pass
+    return {}
+
+
+async def _read_source_file(roots: Dict[str, str], snapshot_id: str,
+                            fname: str, max_chars: int = 0) -> str:
+    """Read a source file. max_chars<=0 means NO truncation (read the whole
+    file). The snapshot copy is preferred, falling back to live source."""
+    fs_read = CAPABILITY_REGISTRY.get("ide.fs.read")
+    if not fs_read:
+        return ""
+    cap = max_chars if max_chars and max_chars > 0 else 4_000_000
+    candidates = []
+    if roots.get("snapshot_root") and snapshot_id:
+        candidates.append(f"{roots['snapshot_root']}/{snapshot_id}/{fname}")
+    if roots.get("source_root"):
+        candidates.append(f"{roots['source_root']}/{fname}")
+    for path in candidates:
+        try:
+            r = await fs_read["func"](path=path, max_bytes=cap * 2) or {}
+            c = r.get("content")
+            if c:
+                return c if max_chars <= 0 else c[:max_chars]
+        except Exception:
+            continue
+    return ""
+
+
+def _number_lines(content: str, start: int = 1) -> str:
+    out = []
+    for i, ln in enumerate(content.split("\n"), start):
+        out.append(f"{i:>5}| {ln}")
+    return "\n".join(out)
+
+
+def _chunk_by_lines(content: str, budget_chars: int) -> List[Dict[str, Any]]:
+    """Split into chunks of whole lines so each chunk's numbered text fits the
+    budget. Returns [{start, end, text}] with TRUE file line numbers preserved."""
+    lines = content.split("\n")
+    chunks: List[Dict[str, Any]] = []
+    cur: List[str] = []
+    cur_start = 1
+    cur_len = 0
+    for idx, ln in enumerate(lines, 1):
+        piece = f"{idx:>5}| {ln}\n"
+        if cur and cur_len + len(piece) > budget_chars:
+            chunks.append({"start": cur_start, "end": idx - 1,
+                           "text": "".join(cur)})
+            cur, cur_len, cur_start = [], 0, idx
+        cur.append(piece)
+        cur_len += len(piece)
+    if cur:
+        chunks.append({"start": cur_start, "end": len(lines), "text": "".join(cur)})
+    return chunks
+
+
+_CITATION_RULE = (
+    "\n\nIMPORTANT: the source below is shown with line numbers in the form "
+    "`  42| code`. Whenever you reference a specific location, cite it inline "
+    "as [[L<line>]] for a single line or [[L<start>-<end>]] for a range, using "
+    "those exact line numbers. Cite generously so every concrete point is "
+    "anchored to its line(s).")
+
+
+async def _store_review_report(report: Dict[str, Any]):
+    """Persist one (file, style) review report into the reports hash."""
+    r = _redis()
+    if not r:
+        return
+    try:
+        field = f"{report['file']}::{report['style']}"
+        await r.hset(KEY_REVIEW_REPORTS, field, json.dumps(report, default=str))
+    except Exception as e:
+        log.debug("store review report: %s", e)
+
+
+async def _deep_review_one(roots, snapshot_id, fname, style,
+                           chunk_chars: int = 16000) -> Dict[str, Any]:
+    """Review one file for one style WITHOUT truncating: large files are split
+    into line-numbered chunks, each reviewed, then stitched into one report."""
+    sdef = REVIEW_STYLES.get(style, REVIEW_STYLES["critique"])
+    area = _source_area(fname)
+    content = await _read_source_file(roots, snapshot_id, fname, 0)  # full file
+    if not content:
+        return {"file": fname, "style": style, "area": area, "ok": False,
+                "error": "could not read source", "ts": now_iso()}
+
+    chunks = _chunk_by_lines(content, chunk_chars)
+    parts: List[str] = []
+    cite_line = ("When you reference a location, cite it inline as [[L<line>]] or "
+                 "[[L<start>-<end>]] using the line numbers shown above.")
+    system = (sdef["system"] + " Perform the requested task as your deliverable — "
+              "do NOT just describe or summarise what the code does, and do NOT "
+              "open with a generic overview or restate that this is Python/JS code. "
+              "Begin directly with the specific deliverable, tied to the lines shown.")
+    for ci, ch in enumerate(chunks, 1):
+        chunk_note = (f" (part {ci} of {len(chunks)}, lines {ch['start']}-{ch['end']} "
+                      f"of the file — do the task for THIS range)"
+                      if len(chunks) > 1 else "")
+        # Source FIRST, task LAST: the model attends most to the final
+        # instruction before generating, so the style task must come after the
+        # code, otherwise a large source blob makes it default to summarising.
+        prompt = (
+            f"Below is the source of `{fname}` (subsystem: {area}){chunk_note}, "
+            f"shown with line numbers:\n\n"
+            f"{ch['text']}\n"
+            f"--- END SOURCE ---\n\n"
+            f"YOUR TASK — {sdef['label']}:\n{sdef['instruction']}\n\n"
+            f"{cite_line}\n"
+            f"Produce the {sdef['label']} deliverable now (not a generic summary "
+            f"of what the code does):"
+        )
+        md = await _llm_generate(prompt, system=system)
+        md = (md or "").strip()
+        if md:
+            if len(chunks) > 1:
+                parts.append(f"\n\n### Lines {ch['start']}–{ch['end']}\n\n{md}")
+            else:
+                parts.append(md)
+
+    full_md = "\n".join(parts).strip()
+    report = {
+        "file": fname, "style": style, "area": area,
+        "label": sdef["label"], "snapshot_id": snapshot_id,
+        "markdown": full_md, "chars": len(full_md),
+        "chunks": len(chunks), "truncated": False,
+        "ts": now_iso(), "ok": bool(full_md),
+    }
+    await _store_review_report(report)
+    return report
+
+
+async def _run_deep_review(styles: List[str], area: str, files: List[str],
+                           max_files: int, max_chars: int,
+                           journal_id: str = "", resume: bool = False,
+                           review_type: str = "", baseline_snapshot: str = "",
+                           max_runtime_s: float = 0, pause_on_activity: bool = False,
+                           activity_idle_min: float = 0, auto_resume: bool = True,
+                           resume_scope: str = "any") -> Dict[str, Any]:
+    """Core engine: review the whole project (or a filtered subset) across
+    multiple styles, storing a report per (file, style). Enumerates the snapshot
+    tree RECURSIVELY (all subdirs). max_chars is the per-CHUNK budget — large
+    files are split into line-numbered chunks rather than truncated.
+
+    review_type: '' / 'all' = whole project; 'between' = only files that differ
+    between baseline_snapshot and the current snapshot.
+    resume: skip files already reviewed and START FROM THE FIRST FILE WITH NO
+      OUTPUT. resume_scope='any' (default) skips a (file,style) if it has an ok
+      report under ANY snapshot — so continuing after a new snapshot does NOT
+      reset to file 0; 'snapshot' restricts to the current snapshot only.
+    Interruptibility: the run pauses (stops sending LLM jobs) while manually
+      paused; it stops early and (if auto_resume) reschedules a resume run when
+      it hits max_files, max_runtime_s, or — when pause_on_activity — the user
+      becomes active (idle < activity_idle_min), yielding to other dreams."""
+    global _CYCLE_CANCEL
+    styles = [s for s in styles if s in REVIEW_STYLES] or ["critique"]
+    chunk_chars = max_chars if max_chars and max_chars > 0 else 16000
+    roots = await _source_root_info()
+    snap = await _resolve_review_snapshot(label="deep_review")
+    snapshot_id = snap.get("snapshot_id") or ""
+
+    enumerated = await _enumerate_source_files(snapshot_id, roots)
+    names = [f["rel"] for f in enumerated]
+
+    # between-snapshots targeting
+    if review_type == "between" and baseline_snapshot:
+        changed = await _diff_snapshots(baseline_snapshot, snapshot_id)
+        changed_set = set(changed.get("modified", []) + changed.get("added", []))
+        names = [n for n in names if n in changed_set]
+
+    if files:
+        names = [n for n in names if n in set(files)]
+    if area and area not in ("", "all"):
+        names = [n for n in names if _source_area(n) == area]
+
+    # Build the set of already-reviewed (file, style) pairs. resume_scope='any'
+    # matches across snapshots so continuation starts at the first file lacking
+    # output rather than restarting from zero on a fresh snapshot.
+    existing: set = set()
+    if resume:
+        rr = _redis()
+        if rr:
+            try:
+                h = await rr.hgetall(KEY_REVIEW_REPORTS)
+                for k, v in (h or {}).items():
+                    try:
+                        rep = json.loads(v.decode() if isinstance(v, bytes) else v)
+                        if not rep.get("ok"):
+                            continue
+                        if resume_scope == "snapshot" and rep.get("snapshot_id") != snapshot_id:
+                            continue
+                        existing.add((rep.get("file"), rep.get("style")))
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+    # Worklist preserves enumeration order so we resume at the first file with
+    # no output. Cap to max_files AFTER skipping done pairs (budget per run).
+    worklist = [(f, s) for f in names for s in styles if (f, s) not in existing]
+    full_remaining = len(worklist)
+    if max_files and max_files > 0:
+        # max_files caps FILES this run, not pairs — group by file order
+        capped, seen_files = [], []
+        for f, s in worklist:
+            if f not in seen_files:
+                if len(seen_files) >= max_files:
+                    break
+                seen_files.append(f)
+            capped.append((f, s))
+        worklist = capped
+
+    jid = journal_id or f"review:{snapshot_id or 'live'}"
+    total = max(1, len(worklist))
+
+    async def _status(**kw):
+        r = _redis()
+        if not r:
+            return
+        try:
+            cur = {"running": True, "snapshot_id": snapshot_id, "styles": styles,
+                   "total": total, "review_type": review_type or "all",
+                   "ts": now_iso(), **kw}
+            await r.set(KEY_REVIEW_STATUS, json.dumps(cur, default=str))
+        except Exception:
+            pass
+
+    # All files already reviewed? Switch systems: review only files CHANGED
+    # since the baseline snapshot instead of declaring "nothing to do". This is
+    # the "different system once everything's analysed" behaviour.
+    if resume and not worklist and existing and names and review_type != "between":
+        base = snap.get("baseline_id") or snap.get("prev") or baseline_snapshot
+        if base and base != snapshot_id:
+            try:
+                changed = await _diff_snapshots(base, snapshot_id)
+                changed_set = set(changed.get("modified", []) + changed.get("added", []))
+                cnames = [n for n in names if n in changed_set]
+                if cnames:
+                    worklist = [(f, s) for f in cnames for s in styles]
+                    total = max(1, len(worklist))
+                    review_type = "between"
+                    await _journal_append(jid,
+                        f"All files reviewed — switching to changed-files mode: "
+                        f"{len(cnames)} file(s) changed since {base}.",
+                        kind="review", stage="deep_review",
+                        title="Switch to changed-files")
+            except Exception as e:
+                log.debug("all-done changed-files fallback: %s", e)
+
+    # Nothing to do — say why instead of returning silently with no output.
+    if not worklist:
+        if not names:
+            reason = ("no source files enumerated (snapshot empty or "
+                      "ide.code.list_files unavailable)")
+        elif review_type == "between":
+            reason = "no files changed between the selected snapshots"
+        elif existing:
+            reason = (f"all {len(existing)} file/style report(s) already exist for "
+                      f"this snapshot (turn off resume to regenerate)")
+        else:
+            reason = "no matching files for the selected scope"
+        summary = {"snapshot_id": snapshot_id, "styles": styles,
+                   "review_type": review_type or "all", "files_reviewed": 0,
+                   "reports_generated": 0, "by_area": {}, "resumed": len(existing),
+                   "empty": True, "reason": reason, "ts": now_iso()}
+        r = _redis()
+        if r:
+            try:
+                await r.set(KEY_REVIEW_STATUS, json.dumps(
+                    {"running": False, "done": 0, "total": 0, "generated": 0,
+                     "snapshot_id": snapshot_id, "reason": reason,
+                     "ts": now_iso()}, default=str))
+            except Exception:
+                pass
+        await _journal_append(jid, f"Deep review: nothing to do — {reason}.",
+            kind="review", stage="deep_review", title="Nothing to review")
+        await emit_event({"type": "dream.review.run.done", **summary})
+        return summary
+
+    await _status(done=0, current="", phase="starting")
+    await _journal_append(jid,
+        f"Deep review starting: {len(worklist)} report(s) "
+        f"({review_type or 'whole project'}"
+        + (f", resume: skipped {len(existing)} done" if resume else "")
+        + f"). Snapshot {snapshot_id}.",
+        kind="review", stage="deep_review", title="Deep review started")
+    await emit_event({"type": "dream.review.run.start", "files": len(names),
+                      "styles": styles, "snapshot_id": snapshot_id, "total": total,
+                      "review_type": review_type or "all", "resumed": len(existing)})
+
+    generated = 0
+    by_area: Dict[str, int] = {}
+    done = 0
+    last_file = None
+    _t_start = time.monotonic()
+    stopped_reason = ""
+    rr = _redis()
+
+    async def _is_paused() -> bool:
+        if not rr:
+            return False
+        try:
+            v = await rr.get(KEY_REVIEW_PAUSE)
+            return (v.decode() if isinstance(v, bytes) else v) == "1"
+        except Exception:
+            return False
+
+    for fname, style in worklist:
+        if _CYCLE_CANCEL:
+            stopped_reason = "cancelled"
+            break
+
+        # Manual pause: stop sending LLM jobs and wait until resumed/cancelled.
+        while await _is_paused() and not _CYCLE_CANCEL:
+            await _status(done=done, current="(paused)", phase="paused",
+                          generated=generated, by_area=by_area)
+            await asyncio.sleep(3)
+        if _CYCLE_CANCEL:
+            stopped_reason = "cancelled"
+            break
+
+        # Yield to user / other dreams: stop early (and resume later) when the
+        # user is active or a time/file budget is reached.
+        if pause_on_activity and activity_idle_min:
+            try:
+                if (await _idle_minutes()) < activity_idle_min:
+                    stopped_reason = "user active — yielding"
+                    break
+            except Exception:
+                pass
+        if max_runtime_s and (time.monotonic() - _t_start) >= max_runtime_s:
+            stopped_reason = f"runtime budget {int(max_runtime_s)}s reached"
+            break
+
+        ar = _source_area(fname)
+        try:
+            rep = await _deep_review_one(roots, snapshot_id, fname, style, chunk_chars)
+        except Exception as e:
+            log.warning("deep review %s [%s]: %s", fname, style, e)
+            rep = {"file": fname, "style": style, "ok": False, "error": str(e)}
+        done += 1
+        if rep.get("ok"):
+            generated += 1
+            by_area[ar] = by_area.get(ar, 0) + 1
+        await _status(done=done, current=f"{fname} · {style}", phase="reviewing",
+                      generated=generated, by_area=by_area, remaining=full_remaining - done)
+        await emit_event({"type": "dream.review.progress",
+                          "file": fname, "style": style, "area": ar,
+                          "done": done, "total": total,
+                          "chunks": rep.get("chunks", 1), "chars": rep.get("chars", 0)})
+        if fname != last_file:
+            await _journal_append(jid, f"Reviewing {fname} ({ar}).",
+                kind="review", stage="deep_review", title=f"Reviewing {fname}")
+            last_file = fname
+
+    # If we stopped early with work still outstanding, optionally reschedule a
+    # resume run so the review completes across multiple slots (giving way to
+    # other dreams in between). Manual cancel never auto-resumes.
+    incomplete = bool(stopped_reason) and stopped_reason != "cancelled"
+    remaining_after = (full_remaining - done) if full_remaining else 0
+    if incomplete and auto_resume and remaining_after > 0:
+        async def _resume_later():
+            await asyncio.sleep(60)
+            try:
+                await _run_deep_review(styles, area, files, max_files, chunk_chars,
+                                       journal_id=jid, resume=True,
+                                       review_type="", baseline_snapshot=baseline_snapshot,
+                                       max_runtime_s=max_runtime_s,
+                                       pause_on_activity=pause_on_activity,
+                                       activity_idle_min=activity_idle_min,
+                                       auto_resume=auto_resume, resume_scope=resume_scope)
+            except Exception as e:
+                log.debug("review auto-resume: %s", e)
+        asyncio.create_task(_resume_later())
+        await _journal_append(jid,
+            f"Paused after {done} (—{stopped_reason}); {remaining_after} pair(s) "
+            f"remaining, will resume.", kind="review", stage="deep_review",
+            title="Yielded — will resume")
+
+    reviewed_files = sorted({f for f, _ in worklist})
+    summary = {
+        "snapshot_id": snapshot_id, "styles": styles,
+        "review_type": review_type or "all",
+        "files_reviewed": len(reviewed_files),
+        "reports_generated": generated, "by_area": by_area,
+        "resumed": len(existing), "ts": now_iso(),
+        "incomplete": incomplete, "stopped_reason": stopped_reason,
+        "remaining": remaining_after,
+    }
+    r = _redis()
+    if r:
+        try:
+            await r.set(KEY_REVIEW_RUN, json.dumps(summary, default=str))
+            await r.rpush(KEY_REVIEW_RUNLOG, json.dumps(summary, default=str))
+            await r.ltrim(KEY_REVIEW_RUNLOG, -100, -1)
+            await r.set(KEY_REVIEW_STATUS, json.dumps(
+                {"running": False, "done": done, "total": total,
+                 "generated": generated, "snapshot_id": snapshot_id,
+                 "by_area": by_area, "incomplete": incomplete,
+                 "reason": stopped_reason, "remaining": remaining_after,
+                 "ts": now_iso()}, default=str))
+        except Exception:
+            pass
+    await _journal_append(jid,
+        (f"Deep review yielded ({stopped_reason}): {generated} report(s) this slot, "
+         f"{remaining_after} remaining."
+         if incomplete else
+         f"Deep review complete: {generated} report(s) across {len(by_area)} area(s)."),
+        kind="review", stage="deep_review",
+        title=("Deep review yielded" if incomplete else "Deep review complete"))
+    await emit_event({"type": "dream.review.run.done", **summary})
+    return summary
+
+
+# ── Capabilities ─────────────────────────────────────────────────────────────
+
+@capability(
+    "dream.review.styles", memory="off", silent=True,
+    http_method="GET", http_path="/dream/review/styles", http_tags=["dream", "review"],
+    description="List the available deep-review styles (docs, critique, "
+                "improvement, integration, architecture).",
+)
+async def dream_review_styles(trace_id=None):
+    return {"styles": [{"id": k, "label": v["label"]} for k, v in REVIEW_STYLES.items()]}
+
+
+@capability(
+    "dream.review.run", memory="off",
+    http_method="POST", http_path="/dream/review/run", http_tags=["dream", "review"],
+    description="Run a deep, whole-project source review (RECURSIVE — all subdirs; "
+                "large files are CHUNKED, never truncated). Input: styles "
+                "(comma/JSON list, default all), area (str, '' = whole project), "
+                "files (JSON list, optional subset), max_files (int, 0 = all), "
+                "max_chars (per-CHUNK budget, default 16000), resume (bool — skip "
+                "file/style pairs already reported for this snapshot, to complete a "
+                "review across runs), review_type ('all' | 'between'), "
+                "baseline_snapshot (for review_type='between'), background (bool, "
+                "default true). Poll dream.review.status. For dashboard integration "
+                "prefer the 'source_review_deep' trigger via dream.cycle.run.",
+)
+async def dream_review_run(
+    styles: Optional[Any] = None,
+    area: str = "",
+    files: Optional[Any] = None,
+    max_files: int = 0,
+    max_chars: int = 16000,
+    resume: bool = False,
+    review_type: str = "",
+    baseline_snapshot: str = "",
+    max_runtime_s: float = 0,
+    pause_on_activity: bool = False,
+    activity_idle_min: float = 5,
+    auto_resume: bool = True,
+    background: bool = True,
+    trace_id=None,
+):
+    def _list(v):
+        if v is None:
+            return []
+        if isinstance(v, str):
+            try:
+                j = json.loads(v)
+                if isinstance(j, list):
+                    return j
+            except Exception:
+                pass
+            return [s.strip() for s in v.split(",") if s.strip()]
+        return list(v)
+    style_list = _list(styles) or list(REVIEW_STYLES.keys())
+    file_list = _list(files)
+    kw = dict(journal_id="", resume=bool(resume),
+              review_type=(review_type or "").lower(), baseline_snapshot=baseline_snapshot,
+              max_runtime_s=float(max_runtime_s or 0),
+              pause_on_activity=bool(pause_on_activity),
+              activity_idle_min=float(activity_idle_min or 0),
+              auto_resume=bool(auto_resume))
+    if background:
+        asyncio.create_task(_run_deep_review(
+            style_list, area, file_list, int(max_files or 0), int(max_chars or 16000), **kw))
+        return {"ok": True, "started": True, "background": True,
+                "styles": style_list, "area": area or "(whole project)",
+                "resume": bool(resume), "review_type": review_type or "all",
+                "note": "review running in background; poll dream.review.status"}
+    return await _run_deep_review(style_list, area, file_list,
+                                  int(max_files or 0), int(max_chars or 16000), **kw)
+
+
+@capability(
+    "dream.review.snapshots", memory="off", silent=True,
+    http_method="GET", http_path="/dream/review/snapshots", http_tags=["dream", "review"],
+    description="List available source snapshots (id, created, label, file_count, "
+                "is_fresh) for picking a baseline in between-snapshots reviews.",
+)
+async def dream_review_snapshots(trace_id=None):
+    cap = CAPABILITY_REGISTRY.get("ide.inspect.list_snapshots")
+    if not cap:
+        return {"snapshots": []}
+    try:
+        res = await cap["func"]() or {}
+        return {"snapshots": res.get("snapshots", []),
+                "current_source_hash": res.get("current_source_hash", "")}
+    except Exception as e:
+        return {"snapshots": [], "error": str(e)}
+
+
+@capability(
+    "dream.review.status", memory="off", silent=True,
+    http_method="GET", http_path="/dream/review/status", http_tags=["dream", "review"],
+    description="Live progress of the current/last deep review run "
+                "(running, done, total, current file, generated, by_area).",
+)
+async def dream_review_status(trace_id=None):
+    r = _redis()
+    if not r:
+        return {"running": False}
+    try:
+        raw = await r.get(KEY_REVIEW_STATUS)
+        if raw:
+            return json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+    except Exception:
+        pass
+    return {"running": False}
+
+
+@capability(
+    "dream.review.pause", memory="off",
+    http_method="POST", http_path="/dream/review/pause", http_tags=["dream", "review"],
+    description="Pause the deep source review — stops sending LLM jobs after the "
+                "current file. Progress is preserved; resume continues from the "
+                "first file with no output.",
+)
+async def dream_review_pause(trace_id=None):
+    r = _redis()
+    if r:
+        try:
+            await r.set(KEY_REVIEW_PAUSE, "1")
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+    await emit_event({"type": "dream.review.paused"})
+    return {"ok": True, "paused": True}
+
+
+@capability(
+    "dream.review.resume", memory="off",
+    http_method="POST", http_path="/dream/review/resume", http_tags=["dream", "review"],
+    description="Resume a paused deep source review (clears the pause flag). If no "
+                "run is in-flight, start one with resume=true to continue from the "
+                "first un-reviewed file.",
+)
+async def dream_review_resume(start: bool = True, trace_id=None):
+    r = _redis()
+    running = False
+    if r:
+        try:
+            await r.delete(KEY_REVIEW_PAUSE)
+            raw = await r.get(KEY_REVIEW_STATUS)
+            if raw:
+                st = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+                running = bool(st.get("running"))
+        except Exception:
+            pass
+    await emit_event({"type": "dream.review.resumed"})
+    if start and not running:
+        asyncio.create_task(_run_deep_review(
+            list(REVIEW_STYLES.keys()), "", [], 0, 16000,
+            resume=True, pause_on_activity=True, activity_idle_min=5,
+            max_runtime_s=0, auto_resume=True))
+        return {"ok": True, "resumed": True, "started": True}
+    return {"ok": True, "resumed": True, "running": running}
+
+
+@capability(
+    "dream.review.runs", memory="off", silent=True,
+    http_method="GET", http_path="/dream/review/runs", http_tags=["dream", "review"],
+    description="History of past deep-review runs (most recent first): snapshot, "
+                "styles, files reviewed, reports generated, by_area, ts.",
+)
+async def dream_review_runs(limit: int = 50, trace_id=None):
+    r = _redis()
+    if not r:
+        return {"runs": []}
+    try:
+        raw = await r.lrange(KEY_REVIEW_RUNLOG, -int(limit or 50), -1)
+    except Exception:
+        return {"runs": []}
+    runs = []
+    for item in raw or []:
+        try:
+            runs.append(json.loads(item.decode() if isinstance(item, bytes) else item))
+        except Exception:
+            continue
+    runs.reverse()
+    return {"runs": runs, "count": len(runs)}
+
+
+@capability(
+    "dream.review.source", memory="off", silent=True,
+    http_method="GET", http_path="/dream/review/source", http_tags=["dream", "review"],
+    description="Return a source file's content (from the snapshot) plus lint "
+                "annotations for the split source+report view. Input: file (str!), "
+                "snapshot_id (str, optional — defaults to most recent). Output: "
+                "{ok, file, content, lines, annotations:[{line, severity, msg, source}]}.",
+)
+async def dream_review_source(file: str, snapshot_id: str = "", trace_id=None):
+    roots = await _source_root_info()
+    if not snapshot_id:
+        snap = await _resolve_review_snapshot(label="view")
+        snapshot_id = snap.get("snapshot_id") or ""
+    content = await _read_source_file(roots, snapshot_id, file, 200000)
+    if not content:
+        return {"ok": False, "error": "could not read source", "file": file}
+
+    annotations: List[Dict[str, Any]] = []
+    # 1) Real linting via ruff/pyflakes (best-effort) on the snapshot copy
+    abs_path = ""
+    if roots.get("snapshot_root") and snapshot_id:
+        abs_path = f"{roots['snapshot_root']}/{snapshot_id}/{file}"
+    elif roots.get("source_root"):
+        abs_path = f"{roots['source_root']}/{file}"
+    bash = CAPABILITY_REGISTRY.get("exec.bash.run")
+    if bash and abs_path and file.endswith(".py"):
+        for tool, cmd in (("ruff", f"ruff check --output-format=concise '{abs_path}'"),
+                          ("pyflakes", f"python -m pyflakes '{abs_path}'")):
+            try:
+                res = await bash["func"](command=cmd + " 2>&1", timeout=20) or {}
+                out = res.get("stdout") or res.get("output") or ""
+                if not out.strip():
+                    continue
+                for ln in out.splitlines():
+                    m = re.search(r":(\d+):(?:\d+:)?\s*(.*)$", ln)
+                    if m:
+                        msg = m.group(2).strip()
+                        sev = ("high" if re.search(r"\b(E\d|F\d|undefined|error)\b", msg, re.I)
+                               else "medium")
+                        annotations.append({"line": int(m.group(1)), "severity": sev,
+                                            "msg": msg[:200], "source": tool})
+                if annotations:
+                    break
+            except Exception:
+                continue
+    # 2) Merge in any stored critique findings that carry line numbers
+    rr = _redis()
+    if rr:
+        try:
+            raw = await rr.hget(KEY_REVIEW_REPORTS, f"{file}::critique")
+            if raw:
+                rep = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+                for m in re.finditer(r"L(\d+)", rep.get("markdown", "")):
+                    annotations.append({"line": int(m.group(1)), "severity": "info",
+                                        "msg": "referenced in critique", "source": "critique"})
+        except Exception:
+            pass
+
+    return {"ok": True, "file": file, "snapshot_id": snapshot_id,
+            "content": content, "lines": content.count("\n") + 1,
+            "annotations": annotations}
+
+
+@capability(
+    "dream.review.areas", memory="off", silent=True,
+    http_method="GET", http_path="/dream/review/areas", http_tags=["dream", "review"],
+    description="List subsystem areas with module counts and how many reports "
+                "exist per area/style. Output: {areas: [{area, modules, reports, "
+                "styles:{style:count}}], total_reports}.",
+)
+async def dream_review_areas(trace_id=None):
+    snap = await _resolve_review_snapshot(label="areas")
+    files = await _enumerate_source_files(snap.get("snapshot_id") or "")
+    area_mods: Dict[str, int] = {}
+    for f in files:
+        a = _source_area(f["rel"])
+        area_mods[a] = area_mods.get(a, 0) + 1
+
+    r = _redis()
+    rep_by_area: Dict[str, Dict[str, Any]] = {}
+    total = 0
+    if r:
+        try:
+            h = await r.hgetall(KEY_REVIEW_REPORTS)
+            for _, v in (h or {}).items():
+                try:
+                    rep = json.loads(v.decode() if isinstance(v, bytes) else v)
+                except Exception:
+                    continue
+                total += 1
+                a = rep.get("area", "core")
+                bucket = rep_by_area.setdefault(a, {"reports": 0, "styles": {}})
+                bucket["reports"] += 1
+                st = rep.get("style", "?")
+                bucket["styles"][st] = bucket["styles"].get(st, 0) + 1
+        except Exception:
+            pass
+
+    areas = []
+    for a in sorted(set(list(area_mods.keys()) + list(rep_by_area.keys()))):
+        b = rep_by_area.get(a, {"reports": 0, "styles": {}})
+        areas.append({"area": a, "modules": area_mods.get(a, 0),
+                      "reports": b["reports"], "styles": b["styles"]})
+    return {"areas": areas, "total_reports": total}
+
+
+@capability(
+    "dream.review.list", memory="off", silent=True,
+    http_method="GET", http_path="/dream/review/list", http_tags=["dream", "review"],
+    description="List stored review reports (metadata only). Input: area (str), "
+                "style (str), both optional filters. Output: {reports: [{file, "
+                "style, area, label, chars, ts}]}.",
+)
+async def dream_review_list(area: str = "", style: str = "", trace_id=None):
+    r = _redis()
+    out: List[Dict[str, Any]] = []
+    if r:
+        try:
+            h = await r.hgetall(KEY_REVIEW_REPORTS)
+            for _, v in (h or {}).items():
+                try:
+                    rep = json.loads(v.decode() if isinstance(v, bytes) else v)
+                except Exception:
+                    continue
+                if area and rep.get("area") != area:
+                    continue
+                if style and rep.get("style") != style:
+                    continue
+                out.append({k: rep.get(k) for k in
+                            ("file", "style", "area", "label", "chars", "ts",
+                             "snapshot_id", "truncated")})
+        except Exception:
+            pass
+    out.sort(key=lambda x: (x.get("area", ""), x.get("file", ""), x.get("style", "")))
+    return {"reports": out, "count": len(out)}
+
+
+@capability(
+    "dream.review.get", memory="off", silent=True,
+    http_method="GET", http_path="/dream/review/get", http_tags=["dream", "review"],
+    description="Get one stored review report (full markdown). Input: file (str!), "
+                "style (str!). Output: {ok, report}.",
+)
+async def dream_review_get(file: str, style: str, trace_id=None):
+    r = _redis()
+    if not r:
+        return {"ok": False, "error": "redis unavailable"}
+    try:
+        raw = await r.hget(KEY_REVIEW_REPORTS, f"{file}::{style}")
+        if raw:
+            return {"ok": True, "report": json.loads(
+                raw.decode() if isinstance(raw, bytes) else raw)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": False, "error": "not found"}
+
+
+@capability(
+    "dream.review.area_report", memory="off", silent=True,
+    http_method="GET", http_path="/dream/review/area_report", http_tags=["dream", "review"],
+    description="Aggregate all reports for one area (optionally one style) into a "
+                "single long Markdown document with a table of contents. Input: "
+                "area (str!), style (str, optional). Output: {ok, area, markdown}.",
+)
+async def dream_review_area_report(area: str, style: str = "", trace_id=None):
+    r = _redis()
+    if not r:
+        return {"ok": False, "error": "redis unavailable"}
+    reps: List[Dict[str, Any]] = []
+    try:
+        h = await r.hgetall(KEY_REVIEW_REPORTS)
+        for _, v in (h or {}).items():
+            try:
+                rep = json.loads(v.decode() if isinstance(v, bytes) else v)
+            except Exception:
+                continue
+            if rep.get("area") != area:
+                continue
+            if style and rep.get("style") != style:
+                continue
+            reps.append(rep)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+    reps.sort(key=lambda x: (x.get("file", ""), x.get("style", "")))
+    lines = [f"# {area.title()} — Source Review", ""]
+    if reps:
+        lines.append("## Contents")
+        for rep in reps:
+            lines.append(f"- {rep.get('file')} — _{rep.get('label', rep.get('style'))}_")
+        lines.append("")
+        for rep in reps:
+            lines.append(f"\n---\n\n## `{rep.get('file')}` — {rep.get('label', rep.get('style'))}\n")
+            lines.append(rep.get("markdown", "").strip())
+    else:
+        lines.append("_No reports yet for this area. Run a deep review._")
+    return {"ok": True, "area": area, "report_count": len(reps),
+            "markdown": "\n".join(lines)}
+
+
+@capability(
+    "dream.review.clear", memory="off",
+    http_method="POST", http_path="/dream/review/clear", http_tags=["dream", "review"],
+    description="Clear stored review reports. Input: area (str, optional — clears "
+                "only that area), confirm (bool!). Output: {ok, cleared}.",
+)
+async def dream_review_clear(area: str = "", confirm: bool = False, trace_id=None):
+    if not confirm:
+        return {"ok": False, "error": "pass confirm=true"}
+    r = _redis()
+    if not r:
+        return {"ok": False, "error": "redis unavailable"}
+    try:
+        if not area:
+            await r.delete(KEY_REVIEW_REPORTS)
+            return {"ok": True, "cleared": "all"}
+        h = await r.hgetall(KEY_REVIEW_REPORTS)
+        removed = 0
+        for k, v in (h or {}).items():
+            try:
+                rep = json.loads(v.decode() if isinstance(v, bytes) else v)
+            except Exception:
+                continue
+            if rep.get("area") == area:
+                await r.hdel(KEY_REVIEW_REPORTS, k)
+                removed += 1
+        return {"ok": True, "cleared": area, "removed": removed}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@capability(
+    "dream.stage.deep_review", memory="off", silent=True,
+    description="Dream pipeline stage: run the deep whole-project review engine. "
+                "Configure via stage_config.deep_review = {styles:[...], area, "
+                "max_files, max_chars}. Writes state['deep_review'] summary and a "
+                "report index into state['report'].",
+)
+async def dream_stage_deep_review(state: Optional[Dict[str, Any]] = None, trace_id=None):
+    state = state or {}
+    trig = state.get("trigger", {})
+    cycle_id = state.get("cycle_id", "?")
+    journal_id = state.get("journal_id") or cycle_id
+    cfg = (trig.get("stage_config", {}) or {}).get("deep_review", {}) or {}
+    seed = state.get("seed") or {}
+
+    styles = cfg.get("styles") or seed.get("review_styles") or list(REVIEW_STYLES.keys())
+    area = cfg.get("area") or seed.get("review_area") or ""
+    max_files = int(seed.get("review_max_files", cfg.get("max_files", 0)) or 0)
+    max_chars = int(seed.get("review_max_chars", cfg.get("max_chars", 16000)) or 16000)
+    # Resume defaults ON for the cycle path so re-runs continue from the first
+    # un-reviewed file rather than restarting.
+    resume = bool(seed.get("review_resume", cfg.get("resume", True)))
+    review_type = (seed.get("review_mode") or cfg.get("review_type") or "").lower()
+    baseline = seed.get("review_baseline") or cfg.get("baseline_snapshot") or ""
+    # Interruptibility / budget — yields to the user and other dreams.
+    max_runtime_s = float(seed.get("review_max_runtime_s", cfg.get("max_runtime_s", 0)) or 0)
+    pause_on_activity = bool(cfg.get("pause_on_activity",
+                                     seed.get("review_pause_on_activity", True)))
+    activity_idle_min = float(cfg.get("activity_idle_min",
+                                      trig.get("min_idle_minutes", 5)) or 5)
+
+    summary = await _run_deep_review(list(styles), area, [], max_files,
+                                     max_chars, journal_id=journal_id,
+                                     resume=resume, review_type=review_type,
+                                     baseline_snapshot=baseline,
+                                     max_runtime_s=max_runtime_s,
+                                     pause_on_activity=pause_on_activity,
+                                     activity_idle_min=activity_idle_min,
+                                     auto_resume=True)
+    state["deep_review"] = summary
+    state["title"] = (f"Deep Source Review — {summary.get('reports_generated', 0)} "
+                      f"reports across {len(summary.get('by_area', {}))} areas")
+    idx = ["# Deep Source Review", "",
+           f"Snapshot `{summary.get('snapshot_id')}` · "
+           f"{summary.get('reports_generated', 0)} reports · "
+           f"styles: {', '.join(summary.get('styles', []))}", "", "## Coverage by area"]
+    for a, n in sorted((summary.get("by_area") or {}).items()):
+        idx.append(f"- **{a}** — {n} reports")
+    idx.append("\nBrowse full reports in the Source Review panel.")
+    state["report"] = "\n".join(idx)
+    return state
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -6663,16 +9885,15 @@ async def dream_stage_stepwise_execute(
         loop_session_id = f"dream:{cycle_id}:stepwise"
         cfg = await _get_config()
 
-        loop_kwargs: Dict[str, Any] = dict(
+        settings = await _resolve_loop_settings(trig, state)
+        settings.setdefault("prefer_gpu", bool(cfg.get("llm_prefer_gpu", True)))
+        loop_kwargs = _loop_kwargs_for(
+            agent_loop_cap["func"], settings,
             goal=goal,
             allowed_caps=allowed_caps_str,
-            max_cycles=max_steps,
-            prefer_gpu=bool(cfg.get("llm_prefer_gpu", True)),
+            max_cycles=settings.get("max_cycles", max_steps),
             session_id=loop_session_id,
         )
-        if "dag.agent_loop_v2" in CAPABILITY_REGISTRY:
-            loop_kwargs["satisfaction_check"] = True
-            loop_kwargs["enable_expand"] = True
 
         loop_result: Dict[str, Any] = {}
         try:
@@ -6814,19 +10035,18 @@ async def dream_stage_agent_loop(
 
     engine = "dag.agent_loop_v2" if "dag.agent_loop_v2" in CAPABILITY_REGISTRY else "dag.agent_loop"
     cfg = await _get_config()
-    loop_kwargs: Dict[str, Any] = dict(
+    settings = await _resolve_loop_settings(trig, state)
+    settings.setdefault("prefer_gpu", bool(cfg.get("llm_prefer_gpu", True)))
+    loop_kwargs = _loop_kwargs_for(
+        agent_loop_cap["func"], settings,
         goal=goal,
         allowed_caps=",".join(whitelist),
-        max_cycles=max_steps,
-        prefer_gpu=bool(cfg.get("llm_prefer_gpu", True)),
+        max_cycles=settings.get("max_cycles", max_steps),
         session_id=f"dream:{cycle_id}:agent_loop",
     )
-    if engine == "dag.agent_loop_v2":
-        loop_kwargs["satisfaction_check"] = True
-        loop_kwargs["enable_expand"] = True
 
     await emit_event({"type": "dream.agent_loop.start", "cycle_id": cycle_id,
-                      "engine": engine, "max_steps": max_steps})
+                      "engine": engine, "max_steps": loop_kwargs.get("max_cycles", max_steps)})
 
     loop_result: Dict[str, Any] = {}
     try:
@@ -6883,6 +10103,65 @@ async def dream_stage_agent_loop(
 async def dream_sensors_list(trace_id=None):
     return {"sensors": list(SENSOR_REGISTRY.values()),
             "count": len(SENSOR_REGISTRY)}
+
+
+@capability(
+    "dream.sensor.preview", memory="off", silent=True,
+    http_method="POST", http_path="/dream/sensor/preview", http_tags=["dream", "sensor"],
+    description="Run a single sensor with the given params and return its live "
+                "output (signal, count, source, summary, sample) — for previewing "
+                "sensor data during pipeline configuration. If match/min_signal "
+                "are included in params, also reports whether the fire condition "
+                "would currently hold.",
+)
+async def dream_sensor_preview(sensor: str, params: Optional[Dict[str, Any]] = None,
+                               trace_id=None):
+    params = dict(params or {})
+    full = sensor if sensor.startswith("dream.sensor.") else f"dream.sensor.{sensor}"
+    meta = SENSOR_REGISTRY.get(full) or SENSOR_REGISTRY.get(sensor) or {}
+    cap_name = meta.get("cap") or full
+    cap = (CAPABILITY_REGISTRY.get(cap_name) or CAPABILITY_REGISTRY.get(full)
+           or CAPABILITY_REGISTRY.get(sensor))
+    if not cap:
+        return {"ok": False, "error": f"sensor not found: {sensor}"}
+    # Separate the fire-condition keys from the sensor's own params
+    match       = params.pop("match", "") or ""
+    match_field = params.pop("match_field", "all")
+    min_signal  = params.pop("min_signal", None)
+    negate      = bool(params.pop("negate", False))
+    try:
+        res = await cap["func"](**params) or {}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "sensor": full}
+    signal = float(res.get("signal", 0) or 0)
+    out = {
+        "ok": True, "sensor": full,
+        "signal": signal, "count": res.get("count"),
+        "source": res.get("source"), "summary": res.get("summary"),
+        "sample": res.get("sample") or res.get("items") or res.get("records"),
+    }
+    # Evaluate the fire condition so the preview shows whether it WOULD trigger
+    if match or min_signal is not None:
+        would = True
+        if min_signal is not None and signal < float(min_signal):
+            would = False
+        if match:
+            if match_field == "sample":
+                blob = json.dumps(res.get("sample") or res.get("items") or "", default=str)
+            elif match_field == "summary":
+                blob = str(res.get("summary") or "")
+            else:
+                blob = json.dumps(res, default=str)
+            try:
+                hit = bool(re.search(match, blob, re.I))
+            except re.error:
+                hit = match.lower() in blob.lower()
+            if negate:
+                hit = not hit
+            if not hit:
+                would = False
+        out["would_fire"] = would
+    return out
 
 
 @capability(
@@ -8000,6 +11279,14 @@ _register_sensor(
     params=[],
 )
 _register_sensor(
+    "source_review_state",
+    "Source — review state",
+    "Current snapshot + which files have/haven't been reviewed + last run. Use "
+    "for continuation reviews instead of memory_recent.",
+    "dream.sensor.source_review_state",
+    params=[],
+)
+_register_sensor(
     "memory_graph_walk",
     "Memory — random graph walk",
     "Picks a random recent memory node (weighted toward under-explored ones) "
@@ -8037,6 +11324,80 @@ _register_stage(
     "Place before goal_refine in source_review pipelines so the agent loop "
     "doesn't waste cycles on snapshot management.",
     "dream.stage.snapshot_source", phase="gather", optional=True,
+)
+_register_stage(
+    "dream.stage.review_codebase", "Review codebase (deterministic)",
+    "Deterministic source review of changed / wandered / continued files against "
+    "the current snapshot (via ide.inspect.review_file). Writes state['review'] "
+    "(results, high_severity_files). Configure via stage_config.review_codebase = "
+    "{review_type: changes|wander|continue, max_files}.",
+    "dream.stage.review_codebase", phase="analyze", optional=True,
+    params=[
+        {"name": "review_type", "type": "str", "default": "changes",
+         "help": "changes | wander | continue"},
+        {"name": "max_files", "type": "int", "default": 8, "help": "files per run"},
+    ],
+)
+_register_stage(
+    "dream.stage.review_report", "Review report (markdown)",
+    "Turns state['review'] into a rich markdown report (priority issues, per-file "
+    "detail, plan) with an optional LLM executive summary. Place after "
+    "review_codebase in deterministic source-review pipelines.",
+    "dream.stage.review_report", phase="emit", optional=True,
+)
+_register_stage(
+    "dream.stage.deep_review", "Deep source review (LLM, chunked)",
+    "Runs the whole-project deep review engine across one or more styles, chunking "
+    "large files (no truncation), resumable, interruptible (pauses on user "
+    "activity / pause flag, yields on file/time budget). Configure via "
+    "stage_config.deep_review = {styles, area, max_files, max_chars, resume, "
+    "review_type, baseline_snapshot, max_runtime_s, pause_on_activity, "
+    "activity_idle_min}.",
+    "dream.stage.deep_review", phase="analyze", optional=True,
+    params=[
+        {"name": "styles", "type": "str", "default": "",
+         "help": "comma list: docs,critique,improvement,integration,architecture"},
+        {"name": "area", "type": "str", "default": "", "help": "subsystem (blank = all)"},
+        {"name": "max_files", "type": "int", "default": 0, "help": "files per run (0 = all)"},
+        {"name": "max_chars", "type": "int", "default": 16000, "help": "per-chunk budget"},
+        {"name": "max_runtime_s", "type": "int", "default": 0,
+         "help": "yield after this many seconds (0 = no limit)"},
+        {"name": "resume", "type": "bool", "default": True,
+         "help": "continue from first un-reviewed file across runs"},
+        {"name": "pause_on_activity", "type": "bool", "default": True,
+         "help": "yield to the user when active"},
+    ],
+)
+_register_stage(
+    "dream.stage.ide_workspace_act", "IDE workspace — draft fixes",
+    "OFF by default. Drafts fixes for high-severity review files into a sandbox "
+    "IDE workspace via ide.agent.chat + ide.fs.write (never live source). "
+    "Configure via stage_config.ide_workspace_act = {enabled, workspace, max_files}.",
+    "dream.stage.ide_workspace_act", phase="emit", optional=True,
+    params=[
+        {"name": "enabled", "type": "bool", "default": False, "help": "draft fixes"},
+        {"name": "workspace", "type": "str", "default": "vera-review-fixes",
+         "help": "IDE workspace name"},
+        {"name": "max_files", "type": "int", "default": 3, "help": "files to draft"},
+    ],
+)
+_register_stage(
+    "dream.stage.ide_agent", "IDE agent loop (workspace + snapshot)",
+    "Runs a bounded IDE agent loop (ide.agent.chat) over an IDE workspace seeded "
+    "from the source snapshot, toward a goal. The agent reads/edits within the "
+    "sandbox workspace. Configure via stage_config.ide_agent = {goal, agent, "
+    "workspace, max_turns, files, from_review, max_files}.",
+    "dream.stage.ide_agent", phase="analyze", optional=True,
+    params=[
+        {"name": "goal", "type": "str", "default": "", "help": "agent objective"},
+        {"name": "agent", "type": "str", "default": "code-reviewer", "help": "IDE agent name"},
+        {"name": "workspace", "type": "str", "default": "vera-dream-agent",
+         "help": "IDE workspace name"},
+        {"name": "max_turns", "type": "int", "default": 4, "help": "agent loop turns"},
+        {"name": "max_files", "type": "int", "default": 5, "help": "snapshot files seeded"},
+        {"name": "from_review", "type": "bool", "default": True,
+         "help": "seed from the review's high-severity files"},
+    ],
 )
 _register_stage(
     "dream.stage.cap_execute", "Cap execute — run a single capability",
@@ -8094,8 +11455,11 @@ _register_stage(
 _register_stage(
     "dream.stage.synthesize", "Synthesize report",
     "Asks the LLM to write the dream report. Honours the trigger's depth setting "
-    "(brief / standard / deep / exhaustive).",
+    "(brief / standard / deep / exhaustive) and an optional output_style.",
     "dream.stage.synthesize", phase="emit", optional=True,
+    params=[{"name": "output_style", "type": "str", "default": "",
+             "help": "shared output style: docs|critique|improvement|integration|"
+                     "architecture (blank = depth-based default)"}],
 )
 _register_stage(
     "dream.stage.enrich_context", "Enrich — fetch missing info",
@@ -8135,6 +11499,52 @@ _register_stage(
     "dream.stage.deliver", "Deliver report",
     "Delivers the finished report to the configured channels (memory / telegram / notebook).",
     "dream.stage.deliver", phase="emit", optional=True,
+)
+_register_stage(
+    "dream.stage.pivot", "Pivot — hand off to another dream",
+    "Decides whether this dream's findings warrant handing off to a DIFFERENT "
+    "follow-up dream (or continuing this one). The LLM picks from the candidate "
+    "pipelines; the chosen one is scheduled next. An emit-phase sibling of "
+    "iterate — use pivot to branch into other pipelines, iterate to keep going "
+    "on this one. Place near the end (after deliver).",
+    "dream.stage.pivot", phase="emit", optional=True,
+    params=[
+        {"name": "candidates", "type": "str", "default": "",
+         "help": "comma list of pipeline/trigger names this may hand off to"},
+        {"name": "min_confidence", "type": "number", "default": 0.5,
+         "help": "only pivot when LLM confidence >= this (0-1)"},
+        {"name": "allow_continue", "type": "bool", "default": True,
+         "help": "allow 'continue this dream' as an outcome alongside pivots"},
+        {"name": "max_pivots", "type": "int", "default": 3,
+         "help": "hard cap on chained hand-offs"},
+    ],
+)
+_register_stage(
+    "dream.stage.iterate", "Iterate / continue",
+    "Decides whether the dream is complete or should run another iteration. The "
+    "LLM judges satisfaction and chooses the next step, refined goals, relevant "
+    "sensors and the completion threshold. Continuation re-runs this same "
+    "pipeline carrying its journal. Place LAST (after deliver) so each iteration "
+    "is delivered before the next is decided.",
+    "dream.stage.iterate", phase="emit", optional=True,
+    params=[
+        {"name": "basis", "type": "str", "default": "satisfaction",
+         "help": "comma list: satisfaction,runtime,user_activity,sensors"},
+        {"name": "max_iterations", "type": "int", "default": 3,
+         "help": "hard cap on continuations"},
+        {"name": "satisfaction_target", "type": "number", "default": 0.8,
+         "help": "stop when LLM satisfaction >= this (0-1)"},
+        {"name": "max_runtime_s", "type": "int", "default": 0,
+         "help": "stop after this many seconds total (0 = no limit)"},
+        {"name": "min_idle_minutes", "type": "int", "default": 0,
+         "help": "stop if the user is active (idle < this); 0 = ignore"},
+        {"name": "llm_decides", "type": "bool", "default": True,
+         "help": "let the LLM judge completion + plan next step"},
+        {"name": "apply_goals", "type": "bool", "default": True,
+         "help": "persist the LLM's refined goals back to the pipeline"},
+        {"name": "apply_sensors", "type": "bool", "default": False,
+         "help": "adopt the sensors the LLM flags as relevant"},
+    ],
 )
 
 
@@ -8267,6 +11677,14 @@ async def _research_panel():
                         else "<p style='color:red'>dream_panel.html not found</p>")
 
 
+@APP.get("/dream/review/panel", include_in_schema=False)
+async def _review_panel():
+    from fastapi.responses import HTMLResponse
+    p = _HERE / "dream_review_panel.html"
+    return HTMLResponse(p.read_text(encoding="utf-8") if p.exists()
+                        else "<p style='color:red'>dream_review_panel.html not found</p>")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # PANEL
 # ─────────────────────────────────────────────────────────────────────────────
@@ -8311,6 +11729,16 @@ register_ui(
         "dream.trigger.delete", "dream.trigger.toggle", "dream.trigger.generate",
         "dream.whitelist.list", "dream.whitelist.set",
         "dream.config.get", "dream.config.set",
+        "dream.loop.settings.get", "dream.loop.settings.set",
+        "dream.journal.read", "dream.journal.list", "dream.journal.clear",
+        "dream.pipeline.list", "dream.pipeline.get", "dream.pipeline.upsert",
+        "dream.pipeline.delete", "dream.pipeline.run",
+        "dream.review.run", "dream.review.styles", "dream.review.areas",
+        "dream.review.list", "dream.review.get", "dream.review.area_report",
+        "dream.review.clear", "dream.review.status", "dream.review.source",
+        "dream.stage.deep_review",
+        "dream.stage.review_codebase", "dream.stage.review_report",
+        "dream.stage.snapshot_source", "dream.stage.ide_workspace_act",
         "dream.history", "dream.last",
         "dream.cycle.detail",
         "dream.hitl.pending", "dream.hitl.respond", "dream.hitl.clear",
@@ -8338,6 +11766,10 @@ register_ui(
 )
 
 
+# The Source Review panel is injected INTO the dream panel (sidebar section),
+# not registered as a separate top-level tab. It is served at /dream/review/panel.
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # STARTUP — seed defaults, merge new triggers/whitelist, auto-start scheduler
 # ─────────────────────────────────────────────────────────────────────────────
@@ -8349,6 +11781,7 @@ register_ui(
 
 KEY_SEEDED_TRIGGERS  = "vera:dream:seeded_trigger_names"   # Redis set
 KEY_SEEDED_WHITELIST = "vera:dream:seeded_whitelist_caps"   # Redis set
+KEY_SEEDED_ITERATE   = "vera:dream:backfilled_iterate"      # Redis set
 
 
 async def _startup():
@@ -8415,6 +11848,27 @@ async def _startup():
             if merged:
                 log.info("dream: merged %d new triggers into existing set", merged)
 
+        # ── Targeted upgrade: migrate the old inline source_review trigger ──
+        # to the composite pipeline_ref version so the rebuilt review pipeline
+        # takes effect for existing installs (preserves enabled/schedule).
+        try:
+            cur = await _get_trigger("source_review")
+            if cur and not cur.get("pipeline_ref"):
+                new_def = next((t for t in _default_triggers()
+                                if t["name"] == "source_review"), None)
+                if new_def:
+                    upgraded = dict(new_def)
+                    # keep user's enabled state + schedule tweaks
+                    for k in ("enabled", "hours_start", "hours_end",
+                              "min_idle_minutes", "min_interval_minutes"):
+                        if k in cur:
+                            upgraded[k] = cur[k]
+                    upgraded.pop("pipeline", None)   # drop stale inline pipeline
+                    await _save_trigger(upgraded)
+                    log.info("dream: upgraded source_review trigger to pipeline_ref")
+        except Exception as e:
+            log.debug("dream upgrade source_review: %s", e)
+
         # ── Whitelist: smart merge ───────────────────────────────────────
         # Same strategy: track what we've seeded, add only new entries.
         wl_count = await r.scard(KEY_WHITELIST)
@@ -8456,6 +11910,58 @@ async def _startup():
             # Record all defaults
             if DEFAULT_WHITELIST:
                 await r.sadd(KEY_SEEDED_WHITELIST, *DEFAULT_WHITELIST)
+
+        # ── Composite pipelines: seed built-ins (create-if-absent) ──────────
+        try:
+            for p in _builtin_pipelines():
+                if not await r.hexists(KEY_PIPELINES, p["name"]):
+                    await _save_pipeline(p)
+            log.info("dream: ensured %d built-in pipelines", len(_builtin_pipelines()))
+        except Exception as e:
+            log.debug("dream seed pipelines: %s", e)
+
+        # ── Backfill continue/iterate into existing pipelines ───────────────
+        # Append dream.stage.iterate (emit, last) to any trigger that has
+        # continuation intent — standing goals, an iterate config, or pivot
+        # enabled — and doesn't already have it. Tracked per-name in a seeded
+        # set so a user who later removes it isn't re-backfilled.
+        try:
+            seeded_iter = set()
+            try:
+                s = await r.smembers(KEY_SEEDED_ITERATE)
+                seeded_iter = {(n.decode() if isinstance(n, bytes) else str(n))
+                               for n in (s or set())}
+            except Exception:
+                pass
+            backfilled = 0
+            for t in await _list_triggers():
+                name = t.get("name", "")
+                if not name or name in seeded_iter:
+                    continue
+                pipe = list(t.get("pipeline") or [])
+                wants = bool(t.get("goals")
+                             or (t.get("iterate") or {}).get("enabled")
+                             or (t.get("pivot") or {}).get("enabled"))
+                if pipe and wants and "dream.stage.iterate" not in pipe:
+                    pipe.append("dream.stage.iterate")
+                    t["pipeline"] = pipe
+                    # seed a sane default iterate config if none present
+                    t.setdefault("stage_config", {})
+                    if "iterate" not in t["stage_config"]:
+                        t["stage_config"]["iterate"] = {
+                            "basis": ["satisfaction", "user_activity"],
+                            "max_iterations": int(t.get("max_continuation_depth", 3) or 3),
+                            "satisfaction_target": 0.8,
+                            "min_idle_minutes": int(t.get("min_idle_minutes", 0) or 0),
+                            "llm_decides": True, "apply_goals": True,
+                        }
+                    await _save_trigger(t)
+                    backfilled += 1
+                await r.sadd(KEY_SEEDED_ITERATE, name)
+            if backfilled:
+                log.info("dream: backfilled iterate stage into %d pipeline(s)", backfilled)
+        except Exception as e:
+            log.debug("dream backfill iterate: %s", e)
 
         # Reload custom sensors from Redis into the in-memory SENSOR_REGISTRY
         try:

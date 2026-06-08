@@ -1619,8 +1619,8 @@ input,select,textarea{font:inherit;color:inherit;background:none;border:none;out
         <div class="sg">
           <div class="sl">Thinker (CPU large)</div>
           <div class="sr"><label>Host</label><input class="si" id="cfg-t-h" value="llm.int" onchange="saveCfg()"></div>
-          <div class="sr"><label>Port</label><input class="si" id="cfg-t-p" value="11434" onchange="saveCfg()"></div>
-          <div class="sr"><label>Model</label><input class="si" id="cfg-t-m" value="nemotron-super" onchange="saveCfg()"></div>
+          <div class="sr"><label>Port</label><input class="si" id="cfg-t-p" value="11435" onchange="saveCfg()"></div>
+          <div class="sr"><label>Model</label><input class="si" id="cfg-t-m" value="jaahas/qwen3.5-uncensored" onchange="saveCfg()"></div>
           <div class="sr"><label>Context</label><input class="si" id="cfg-t-c" value="131072" onchange="saveCfg()"></div>
           <div class="sr" title="Enable for qwen3/deepseek-r1 thinking models. Streams reasoning to UI without polluting the result.">
             <label>Thinking mode</label>
@@ -1634,7 +1634,7 @@ input,select,textarea{font:inherit;color:inherit;background:none;border:none;out
           <div class="sl">Writer (GPU fast)</div>
           <div class="sr"><label>Host</label><input class="si" id="cfg-w-h" value="llm.int" onchange="saveCfg()"></div>
           <div class="sr"><label>Port</label><input class="si" id="cfg-w-p" value="11435" onchange="saveCfg()"></div>
-          <div class="sr"><label>Model</label><input class="si" id="cfg-w-m" value="mistral-small" onchange="saveCfg()"></div>
+          <div class="sr"><label>Model</label><input class="si" id="cfg-w-m" value="jaahas/qwen3.5-uncensored" onchange="saveCfg()"></div>
           <div class="sr"><label>Context</label><input class="si" id="cfg-w-c" value="32768" onchange="saveCfg()"></div>
           <div class="sr" title="Enable thinking mode for the writer (usually off — writer should be fast)">
             <label>Thinking mode</label>
@@ -1646,7 +1646,7 @@ input,select,textarea{font:inherit;color:inherit;background:none;border:none;out
           <div class="sr"><label>Enable</label><div class="tgl" id="tgl-analyst" onclick="toggleAnalyst()"></div></div>
           <div class="sr"><label>Host</label><input class="si" id="cfg-a-h" value="llm.int" onchange="saveCfg()"></div>
           <div class="sr"><label>Port</label><input class="si" id="cfg-a-p" value="11436" onchange="saveCfg()"></div>
-          <div class="sr"><label>Model</label><input class="si" id="cfg-a-m" value="phi4" onchange="saveCfg()"></div>
+          <div class="sr"><label>Model</label><input class="si" id="cfg-a-m" value="jaahas/qwen3.5-uncensored" onchange="saveCfg()"></div>
           <div class="sr" title="Enable thinking mode for the analyst">
             <label>Thinking mode</label>
             <div class="tgl" id="tgl-a-think" onclick="this.classList.toggle('on');saveCfg()"></div>
