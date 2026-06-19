@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Welcome to Vera</title>
+<style>
+  :root { --bg:#0c0f14; --panel:#141923; --ink:#e6edf3; --mut:#8b97a7;
+          --acc:#44ffaa; --acc2:#3aa0ff; --line:#222b38; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:15px/1.6 system-ui,Segoe UI,Roboto,sans-serif; }
+  header { padding:32px 24px; border-bottom:1px solid var(--line);
+           background:linear-gradient(180deg,#10151d,#0c0f14); }
+  header h1 { margin:0; font-size:30px; letter-spacing:.5px; }
+  header h1 span { color:var(--acc); }
+  header p { margin:6px 0 0; color:var(--mut); }
+  .wrap { display:grid; grid-template-columns:220px 1fr; gap:0; min-height:60vh; }
+  nav { border-right:1px solid var(--line); padding:18px 12px; }
+  nav a { display:block; padding:8px 12px; color:var(--mut);
+          text-decoration:none; border-radius:8px; }
+  nav a:hover, nav a.on { background:var(--panel); color:var(--ink); }
+  main { padding:28px 32px; max-width:900px; }
+  section { display:none; animation:f .25s ease; }
+  section.on { display:block; }
+  @keyframes f { from{opacity:0;transform:translateY(6px)} to{opacity:1} }
+  h2 { margin-top:0; }
+  code, pre { font-family:ui-monospace,Consolas,monospace; }
+  pre { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+        padding:14px 16px; overflow:auto; }
+  .card { background:var(--panel); border:1px solid var(--line);
+          border-radius:12px; padding:16px 18px; margin:14px 0; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; }
+  .pill { display:inline-block; padding:2px 10px; border-radius:999px;
+          background:#16202c; color:var(--acc); font-size:12px; border:1px solid var(--line); }
+  button { background:var(--acc); color:#04110b; border:0; border-radius:9px;
+           padding:9px 14px; font-weight:600; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--ink); border:1px solid var(--line); }
+  .status { font-family:ui-monospace,monospace; white-space:pre-wrap;
+            color:var(--mut); margin-top:10px; }
+  .ok { color:var(--acc);} .bad{ color:#ff6b6b;} .warn{color:#ffcf5c;}
+  a.link { color:var(--acc2); }
+  footer { color:var(--mut); border-top:1px solid var(--line); padding:18px 32px; }
+  .tourbar { display:flex; gap:10px; align-items:center; margin-top:18px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Welcome to <span>Vera</span></h1>
+  <p>A Distributed Capability Runtime - guided tour &amp; live console.</p>
+</header>
+
+<div class="wrap">
+  <nav id="nav"></nav>
+  <main id="main"></main>
+</div>
+
+<footer>
+  Base URL: <code id="base"></code> &middot;
+  <a class="link" id="ui" href="#">Harness UI</a> &middot;
+  <a class="link" id="docs" href="#">API Docs</a>
+</footer>
+
+<script>
+const PORT = 8999;
+const BASE = `http://localhost:${PORT}`;
+document.getElementById('base').textContent = BASE;
+document.getElementById('ui').href = BASE + '/';
+document.getElementById('docs').href = BASE + '/docs';
+
+const SECTIONS = [
+  { id:'start', title:'Get started', html:`
+    <h2>Get started</h2>
+    <p>Pick a path. The docker stack is the fastest way to see everything working.</p>
+    <div class="grid">
+      <div class="card"><span class="pill">Docker</span>
+        <pre>cp .env.example .env
+make secret   # paste into .env
+make up
+make logs</pre></div>
+      <div class="card"><span class="pill">Native</span>
+        <pre>make venv
+make run
+# python -m Vera.vera.capability_orchestration</pre></div>
+    </div>
+    <p>No <code>make</code>? Use <code>./build.sh up</code> (Linux/macOS) or
+       <code>.\\build.ps1 up</code> (Windows).</p>` },
+
+  { id:'concepts', title:'Core concepts', html:`
+    <h2>Everything is a capability</h2>
+    <p>A capability is one decorated async function that becomes, at once:</p>
+    <div class="grid">
+      <div class="card">a <b>REST</b> endpoint (auto OpenAPI)</div>
+      <div class="card">an <b>MCP</b> tool (<code>/mcp/tools</code>, <code>/mcp/call</code>)</div>
+      <div class="card">a <b>DAG</b> node</div>
+      <div class="card">an <b>event</b> emitter (Redis stream)</div>
+    </div>
+    <pre>@capability("math.add", http_method="POST", http_path="/math/add")
+async def cap_add(a: float, b: float, trace_id=None):
+    return {"sum": a + b}</pre>` },
+
+  { id:'arch', title:'Architecture', html:`
+    <h2>The moving parts</h2>
+    <div class="grid">
+      <div class="card"><b>Orchestrator</b><br>FastAPI on :${PORT}. Registry, routing, events.</div>
+      <div class="card"><b>Redis</b><br>Event streams, task queues, cache.</div>
+      <div class="card"><b>Postgres</b><br>Durable state.</div>
+      <div class="card"><b>ChromaDB</b><br>Vector embeddings.</div>
+      <div class="card"><b>Neo4j</b><br>Memory graph.</div>
+      <div class="card"><b>Ollama nodes</b><br>Heterogeneous LLM workers (GPU/CPU).</div>
+    </div>` },
+
+  { id:'console', title:'Live console', html:`
+    <h2>Live console</h2>
+    <p>These call the running orchestrator from your browser.</p>
+    <div class="tourbar">
+      <button onclick="ping()">Check /health</button>
+      <button class="ghost" onclick="listCaps()">List capabilities</button>
+      <button class="ghost" onclick="doEcho()">Call echo</button>
+    </div>
+    <div class="status" id="out">Idle.</div>` },
+
+  { id:'next', title:'Where next', html:`
+    <h2>Where to go next</h2>
+    <ul>
+      <li>Open the <a class="link" href="${BASE}/" target="_blank">harness UI</a>.</li>
+      <li>Browse every route in the <a class="link" href="${BASE}/docs" target="_blank">API docs</a>.</li>
+      <li>Run the quickstart notebook: <code>make notebook</code>.</li>
+      <li>Read <code>docs/GETTING_STARTED.md</code> and the <code>documentation/</code> folder.</li>
+      <li>Write your first capability - see <code>documentation/01-capability-framework.md</code>.</li>
+    </ul>` },
+];
+
+const nav = document.getElementById('nav');
+const main = document.getElementById('main');
+SECTIONS.forEach((s, i) => {
+  const a = document.createElement('a'); a.textContent = `${i+1}. ${s.title}`;
+  a.href = '#' + s.id; a.dataset.id = s.id; a.onclick = () => show(s.id);
+  nav.appendChild(a);
+  const sec = document.createElement('section'); sec.id = 'sec-' + s.id;
+  sec.innerHTML = s.html + tourBar(i); main.appendChild(sec);
+});
+function tourBar(i){
+  const prev = i>0 ? `<button class="ghost" onclick="show('${SECTIONS[i-1].id}')">Back</button>`:'';
+  const next = i<SECTIONS.length-1 ? `<button onclick="show('${SECTIONS[i+1].id}')">Next</button>`:'';
+  return `<div class="tourbar">${prev}${next}</div>`;
+}
+function show(id){
+  SECTIONS.forEach(s=>{
+    document.getElementById('sec-'+s.id).classList.toggle('on', s.id===id);
+    [...nav.children].forEach(a=>a.classList.toggle('on', a.dataset.id===id));
+  });
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+show('start');
+
+const out = () => document.getElementById('out');
+async function ping(){
+  out().textContent = 'GET /health ...';
+  try {
+    const r = await fetch(BASE + '/health'); const j = await r.json();
+    out().innerHTML = `<span class="ok">+ orchestrator up</span>  caps=${j.caps} `
+      + `workers=${j.workers} mode=${j.mode}\n`
+      + ['redis','postgres','chroma','neo4j'].map(k=>
+          `${j[k]?'<span class=ok>+</span>':'<span class=warn>-</span>'} ${k}`).join('   ');
+  } catch(e){ out().innerHTML = `<span class="bad">x not reachable at ${BASE}</span> - start it with make up / make run`; }
+}
+async function listCaps(){
+  out().textContent = 'GET /mcp/tools ...';
+  try {
+    const r = await fetch(BASE + '/mcp/tools'); const j = await r.json();
+    const tools = Array.isArray(j) ? j : (j.tools||[]);
+    out().innerHTML = `<span class="ok">+ ${tools.length} capabilities</span>\n`
+      + tools.slice(0,40).map(t=>'- '+(t.name||t)).join('\n');
+  } catch(e){ out().innerHTML = `<span class="bad">x ${e}</span>`; }
+}
+async function doEcho(){
+  out().textContent = 'POST /mcp/call echo ...';
+  try {
+    const r = await fetch(BASE + '/mcp/call', {method:'POST',
+      headers:{'content-type':'application/json'},
+      body: JSON.stringify({name:'echo', arguments:{message:'Hello from the welcome guide'}})});
+    out().textContent = JSON.stringify(await r.json(), null, 2);
+  } catch(e){ out().innerHTML = `<span class="bad">x ${e}</span>`; }
+}
+</script>
+</body>
+</html>

@@ -16,6 +16,7 @@ neo4j>=5.19,<6.0
 # ── Utilities ────────────────────────────────────────────
 pydantic>=2.0,<3.0
 python-multipart>=0.0.9
+cryptography>=42          # Fernet auth-encryption for stored cloud calendar credentials
 
 # ── Optional (uncomment as needed) ──────────────────────
 # asyncssh>=2.14          # remote worker SSH provisioning

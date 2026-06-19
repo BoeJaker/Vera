@@ -11,7 +11,7 @@ This document is the reference for what the decorator does, how the registry is 
 ## 1. The decorator
 
 ```python
-from Vera.Orchestration.capability_orchestration import capability
+from Vera.vera.capability_orchestration import capability
 
 @capability(
     name,

@@ -35,6 +35,14 @@ services:
       ORCHESTRATOR_PORT: "8999"
       BACKEND_HOST: "${BACKEND_HOST:-llm.int}"
 
+      # ── Master key for encrypting stored cloud-calendar credentials (Fernet).
+      #    SET THIS in your .env for production. If left blank, a key is
+      #    auto-generated inside the container at ~/.vera/secret.key — which is
+      #    EPHEMERAL and lost on rebuild, making sealed secrets in the (persisted)
+      #    Redis volume undecryptable. Generate one with:
+      #      python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"
+      VERA_SECRET_KEY: "${VERA_SECRET_KEY:-}"
+
       # ── Backing services (point at compose service names)
       REDIS_URL: "redis://redis:6379"
       POSTGRES_URL: "postgresql://admin:admin@postgres:5432/postgres"

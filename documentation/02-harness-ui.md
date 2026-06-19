@@ -45,7 +45,7 @@ The shared bus pattern (`vera_graph.js` uses this) prefers the parent's connecti
 Modules register panels by calling `register_ui()` (imported from `capability_orchestration`):
 
 ```python
-from Vera.Orchestration.capability_orchestration import register_ui
+from Vera.vera.capability_orchestration import register_ui
 
 register_ui(
     panel_id   = "my-panel",

@@ -168,7 +168,7 @@ This is wired into Telegram for off-device approval — see `agents.py` and the 
 
 ## 5. The agentic loop
 
-A separate variant, `dag.agent_loop` (and its more flexible cousin `dag.agent_loop_openclaw`), runs an **open-ended** agentic loop rather than a fixed DAG:
+A separate variant, `dag.agent_loop` (and its more flexible cousin `dag.agent_loop_v3`), runs an **open-ended** agentic loop rather than a fixed DAG:
 
 1. Build a system prompt with the available toolkit (filtered by relevance to the goal).
 2. Loop:
@@ -179,9 +179,23 @@ A separate variant, `dag.agent_loop` (and its more flexible cousin `dag.agent_lo
 
 The loop registers itself as a `streams.agent_loop` stream so observers can watch live. Each cycle emits `agent_loop.cycle_planning`, `agent_loop.tool_done`, etc.
 
+### Phase model (think → explore → act → validate)
+
+v2 and v3 run a **phased** loop (on by default, `phased=True`) that forces information-gathering before action:
+
+- **Think / Explore** — until `min_explore_cycles` (default 2) cheap read-only calls (get/list/search/query/describe — see `_cap_phase`) have succeeded, the agent is in the explore phase. Action ("act") tools are **blocked** with a nudge if requested early, and **long-running** tools (research, ml, exec…) trigger a **forced HITL approval** (`long_running_force_hitl=True`) regardless of the global HITL setting — the run pauses for a human go/no-go.
+- **Act** — once exploration is satisfied, action tools run normally.
+- **Validate** — when `require_validate=True`, the agent must run one read-only check after acting before its `final`/`done` is accepted; the first attempt to finish without validating is bounced once.
+
+Phase transitions emit `agent_loop_v{2,3}.phase` events, surfaced as badges in the loop output renderer.
+
+### Continue (budget extension)
+
+When the cycle budget is reached, instead of forcing a final answer the loop emits `agent_loop_v{2,3}.budget_pause` and waits (`allow_continue=True`). The output renderer shows a **Continue (+N)** / **Wrap up now** card that POSTs to `/workshop/agent_loop/hitl/respond` (decision `continue`/`wrap`, on a negative `step` id). `continue_increment` (default 8) cycles are added per continue; `auto_continue_max` (default 0) auto-extends N times before asking.
+
 ### The loop builder
 
-The DAG Workshop has a visual loop builder (`dag_workshop_panel.html`) that compiles a flow of named blocks (Triage, Seed toolkit, Planner, HITL, Executor, Satisfy, Expand toolkit, Loop, DAG, Prompt) into the kwargs for `dag.agent_loop_openclaw`. Each block has a small config form. The compiled config is shown live in the inspector.
+The DAG Workshop has a visual loop builder (`dag_workshop_panel.html`) that compiles a flow of named blocks (Triage, Seed toolkit, **Think, Explore**, Planner, HITL, **Act**, Executor, **Validate**, Satisfy, Expand toolkit, Loop, DAG, Prompt) into the kwargs for `dag.agent_loop_v3`. The four phase blocks (Think/Explore/Act/Validate) drive the phase model: presence of any of them sets `phased`, the Explore block sets `min_explore_cycles`, Validate sets `require_validate`, Act sets `long_running_force_hitl`, and the Loop block carries the continue settings. Each block has a small config form and the compiled config is shown live in the inspector. A **Load variant** menu populates the canvas with the real v1/v2/v3 pipeline as editable blocks (`LB_VARIANT_PIPELINES`) so each variant's steps can be seen and modified.
 
 ---
 
@@ -241,7 +255,7 @@ The planner sometimes makes up capability names. The DAG engine validates agains
 
 The DAG Workshop tab has four panes:
 
-- **Planner** — enter a goal, hit Plan or Plan+Run. Shows the SVG-rendered DAG, the rationale, any warnings.
+- **Planner** — enter a goal, hit Plan or Plan+Run. `dag.plan` returns the DAG plus a **problem → subgoals → validation** framing (the same convention as the agentic loop's phases): `problem` restates the goal, `subgoals` is an ordered list of `{step, description, caps}`, and `validation` describes how success is verified. The review card shows the SVG-rendered DAG, the rationale, these three sections, and any warnings.
 - **Editor** — raw JSON for the DAG and initial state, plus a parameter-aware cap picker that builds nodes interactively.
 - **Loop builder** — drag-and-drop visual composer for agent_loop flows.
 - **Store** — save / load / browse stored DAGs.

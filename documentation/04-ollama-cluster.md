@@ -38,7 +38,7 @@ Override individual URLs via env vars:
 Add a new instance at runtime:
 
 ```python
-from Vera.Orchestration.capability_orchestration import add_ollama_instance
+from Vera.vera.capability_orchestration import add_ollama_instance
 
 add_ollama_instance("gpu-300", "http://192.168.0.300:11435", has_gpu=True, label="GPU Node B")
 ```

@@ -1,0 +1,962 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Vera Calendar</title>
+<style>
+:root {
+  --bg:#0d0f12; --bg1:#14181d; --bg2:#1a1f26; --bg3:#20262e;
+  --border:#232a33; --border2:#2e3742;
+  --fg:#d8dde3; --fg2:#9aa3ad; --dim:#5f6975;
+  --acc:#4a9eff; --acc2:#28c28a; --warn:#f5b341; --err:#ef5b5b; --purple:#a78bfa;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+* { box-sizing:border-box; }
+html,body{ margin:0;padding:0;background:var(--bg);color:var(--fg);
+  font:12px/1.5 -apple-system,BlinkMacSystemFont,"Inter",system-ui,sans-serif;
+  height:100%;overflow:hidden; }
+
+#root{ display:flex;height:100vh;min-height:0; }
+
+/* ── Sidebar ─────────────────────────────────────────── */
+#sidebar{ width:184px;flex-shrink:0;background:var(--bg1);
+  border-right:1px solid var(--border);display:flex;flex-direction:column; }
+#side-head{ padding:14px 14px 10px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:8px; }
+#side-head .ico{ width:24px;height:24px;background:var(--bg2);
+  border:1px solid var(--border2);border-radius:6px;display:flex;
+  align-items:center;justify-content:center;color:var(--acc);font-size:14px; }
+#side-head h1{ margin:0;font-size:12px;font-weight:600;letter-spacing:.04em; }
+#side-head .sub{ font-size:9px;color:var(--dim);letter-spacing:.12em;
+  text-transform:uppercase;margin-top:1px; }
+#nav{ flex:1;padding:8px 6px; }
+.nav-btn{ display:flex;align-items:center;gap:9px;width:100%;padding:8px 10px;
+  background:transparent;border:1px solid transparent;color:var(--fg2);
+  border-radius:5px;font:inherit;font-size:11px;cursor:pointer;text-align:left;
+  margin-bottom:2px; }
+.nav-btn:hover{ background:var(--bg2);color:var(--fg); }
+.nav-btn.active{ background:var(--bg2);border-color:var(--border2);color:var(--acc); }
+.nav-btn .gl{ width:15px;text-align:center;opacity:.85; }
+#sync-tile{ margin:6px;padding:10px;background:var(--bg2);border:1px solid var(--border);
+  border-radius:6px;font-size:10px; }
+#sync-tile .lbl{ color:var(--dim);text-transform:uppercase;letter-spacing:.08em;
+  font-size:9px;margin-bottom:5px; }
+#sync-tile .row{ display:flex;align-items:center;gap:6px;margin-top:4px; }
+.dot{ width:7px;height:7px;border-radius:50%;background:var(--dim);flex-shrink:0; }
+.dot.on{ background:var(--acc2);box-shadow:0 0 6px rgba(40,194,138,.5); }
+.dot.off{ background:var(--err); }
+.dot.warn{ background:var(--warn); }
+
+/* ── Main ────────────────────────────────────────────── */
+#main{ flex:1;min-width:0;display:flex;flex-direction:column; }
+#topbar{ height:42px;flex-shrink:0;border-bottom:1px solid var(--border);
+  background:var(--bg1);padding:0 16px;display:flex;align-items:center;gap:12px; }
+#topbar h2{ margin:0;font-size:13px;font-weight:600; }
+#topbar .crumb{ font-size:10px;color:var(--dim); }
+#topbar .right{ margin-left:auto;display:flex;align-items:center;gap:8px; }
+#content{ flex:1;overflow-y:auto;padding:18px 22px;min-height:0; }
+.section{ display:none; }
+.section.active{ display:block; }
+
+/* ── Buttons / inputs ────────────────────────────────── */
+.btn{ background:var(--bg2);border:1px solid var(--border2);color:var(--fg);
+  border-radius:5px;padding:7px 13px;font:inherit;font-size:11px;cursor:pointer;
+  display:inline-flex;align-items:center;gap:6px;transition:.12s; }
+.btn:hover{ background:var(--bg3);border-color:var(--acc); }
+.btn.primary{ background:var(--acc);border-color:var(--acc);color:#04121f;font-weight:600; }
+.btn.primary:hover{ filter:brightness(1.1); }
+.btn.ghost{ background:transparent; }
+.btn.sm{ padding:4px 9px;font-size:10px; }
+.btn.danger:hover{ border-color:var(--err);color:var(--err); }
+input,select,textarea{ width:100%;background:var(--bg1);border:1px solid var(--border);
+  border-radius:5px;color:var(--fg);padding:8px 10px;font:inherit;font-size:12px;
+  outline:none;transition:border-color .12s; }
+input:focus,select:focus,textarea:focus{ border-color:var(--acc); }
+textarea{ font-family:var(--mono);resize:vertical;min-height:80px; }
+label.fl{ display:block;font-size:10px;color:var(--fg2);text-transform:uppercase;
+  letter-spacing:.07em;margin-bottom:5px;font-weight:500; }
+.field{ margin-bottom:13px; }
+.hint{ font-size:10px;color:var(--dim);margin-top:4px;line-height:1.5; }
+.row2{ display:grid;grid-template-columns:1fr 1fr;gap:12px; }
+.muted{ color:var(--dim); }
+
+/* ── Calendar grid ───────────────────────────────────── */
+#cal-toolbar{ display:flex;align-items:center;gap:10px;margin-bottom:14px; }
+#cal-title{ font-size:15px;font-weight:600;min-width:170px; }
+.cal-grid{ display:grid;grid-template-columns:repeat(7,1fr);gap:1px;
+  background:var(--border);border:1px solid var(--border);border-radius:8px;
+  overflow:hidden; }
+.cal-dow{ background:var(--bg1);padding:7px 8px;font-size:9px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--dim);text-align:center; }
+.cal-cell{ background:var(--bg);min-height:96px;padding:6px;cursor:pointer;
+  position:relative;transition:background .1s; }
+.cal-cell:hover{ background:var(--bg1); }
+.cal-cell.other{ background:#0a0c0f;color:var(--dim); }
+.cal-cell.today{ background:rgba(74,158,255,.07); }
+.cal-cell .dnum{ font-size:11px;font-weight:600;color:var(--fg2); }
+.cal-cell.today .dnum{ color:var(--acc); }
+.chip{ display:block;font-size:10px;padding:2px 6px;margin-top:3px;border-radius:4px;
+  background:var(--bg2);border-left:3px solid var(--acc);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;cursor:pointer; }
+.chip .ct{ color:var(--fg); }
+.more{ font-size:9px;color:var(--dim);margin-top:3px; }
+
+/* ── Day view ────────────────────────────────────────── */
+.day-event{ display:flex;gap:10px;padding:9px 11px;background:var(--bg1);
+  border:1px solid var(--border);border-radius:6px;margin-bottom:7px;
+  border-left:3px solid var(--acc);cursor:pointer; }
+.day-event .tm{ font-family:var(--mono);font-size:11px;color:var(--fg2);min-width:96px; }
+.day-event .ti{ font-weight:500; }
+.day-event .lo{ font-size:10px;color:var(--dim); }
+
+/* ── Lists (todos/notes/sources) ─────────────────────── */
+.list-item{ display:flex;align-items:flex-start;gap:10px;padding:10px 12px;
+  background:var(--bg1);border:1px solid var(--border);border-radius:6px;margin-bottom:7px; }
+.list-item .meta{ flex:1;min-width:0; }
+.list-item .t{ font-weight:500; }
+.list-item .s{ font-size:10px;color:var(--dim);margin-top:2px; }
+.check{ width:16px;height:16px;border:1.5px solid var(--border2);border-radius:4px;
+  cursor:pointer;flex-shrink:0;margin-top:1px;display:flex;align-items:center;
+  justify-content:center;font-size:11px;color:var(--acc2); }
+.check.on{ background:rgba(40,194,138,.12);border-color:var(--acc2); }
+.done .t{ text-decoration:line-through;color:var(--dim); }
+.pri{ font-size:9px;padding:1px 6px;border-radius:10px;background:var(--bg2);
+  border:1px solid var(--border2);color:var(--fg2); }
+.pri.p3{ color:var(--err);border-color:var(--err); }
+.pri.p2{ color:var(--warn);border-color:var(--warn); }
+
+/* ── Brain dump review cards ─────────────────────────── */
+.bd-group{ margin-bottom:18px; }
+.bd-group h4{ margin:0 0 8px;font-size:11px;text-transform:uppercase;
+  letter-spacing:.08em;color:var(--fg2); }
+.bd-card{ display:flex;gap:10px;padding:10px 12px;background:var(--bg1);
+  border:1px solid var(--border);border-radius:6px;margin-bottom:6px; }
+.bd-card.kev{ border-left:3px solid var(--acc); }
+.bd-card.ktd{ border-left:3px solid var(--acc2); }
+.bd-card.knt{ border-left:3px solid var(--purple); }
+.bd-card .bd-main{ flex:1; }
+.bd-card .bd-t{ font-weight:600;font-size:12px; }
+.bd-card .bd-s{ font-size:10px;color:var(--dim);margin-top:2px; }
+.plan-row{ display:flex;gap:12px;padding:5px 0;border-bottom:1px solid var(--border); }
+.plan-row .pt{ font-family:var(--mono);color:var(--acc);min-width:60px; }
+
+/* ── Modal ───────────────────────────────────────────── */
+.modal-bg{ position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;
+  align-items:center;justify-content:center;z-index:50; }
+.modal-bg.show{ display:flex; }
+.modal{ background:var(--bg1);border:1px solid var(--border2);border-radius:10px;
+  width:440px;max-width:92vw;max-height:88vh;overflow:auto;padding:18px 20px; }
+.modal h3{ margin:0 0 14px;font-size:14px; }
+.modal-foot{ display:flex;gap:8px;justify-content:flex-end;margin-top:16px; }
+
+.empty{ text-align:center;color:var(--dim);padding:40px 0;font-size:12px; }
+.tag{ display:inline-block;font-size:9px;padding:1px 7px;border-radius:10px;
+  background:var(--bg2);border:1px solid var(--border2);color:var(--fg2);margin-left:6px; }
+.spin{ display:inline-block;width:12px;height:12px;border:2px solid var(--border2);
+  border-top-color:var(--acc);border-radius:50%;animation:sp .7s linear infinite; }
+@keyframes sp{ to{ transform:rotate(360deg); } }
+.toast{ position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
+  background:var(--bg2);border:1px solid var(--border2);border-radius:6px;
+  padding:9px 16px;font-size:11px;z-index:80;opacity:0;transition:opacity .2s; }
+.toast.show{ opacity:1; }
+
+/* ── Calendar multi-select (Google layers) ───────────── */
+.cal-multi{ border:1px solid var(--border);border-radius:6px;background:var(--bg);
+  max-height:184px;overflow-y:auto;padding:4px; }
+.cal-multi .crow{ display:flex;align-items:center;gap:9px;padding:6px 8px;
+  border-radius:5px;cursor:pointer; }
+.cal-multi .crow:hover{ background:var(--bg2); }
+.cal-multi .crow input{ width:auto;margin:0;flex-shrink:0;cursor:pointer; }
+.cal-multi .sw{ width:11px;height:11px;border-radius:3px;flex-shrink:0;
+  border:1px solid rgba(255,255,255,.15); }
+.cal-multi .nm{ flex:1;min-width:0;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis; }
+.cal-multi .pri-tag{ font-size:9px;color:var(--dim); }
+.cal-multi .empty-mini{ padding:14px;text-align:center;color:var(--dim);font-size:11px; }
+
+/* ── Layers dropdown on the calendar view ────────────── */
+#layer-wrap{ position:relative; }
+#layer-pop{ position:absolute;top:30px;right:0;z-index:40;width:230px;
+  background:var(--bg1);border:1px solid var(--border2);border-radius:8px;
+  box-shadow:0 8px 24px rgba(0,0,0,.45);padding:6px;display:none; }
+#layer-pop.show{ display:block; }
+#layer-pop .lp-head{ display:flex;align-items:center;justify-content:space-between;
+  padding:4px 8px 7px;color:var(--dim);font-size:9px;letter-spacing:.08em;
+  text-transform:uppercase; }
+#layer-pop .lp-head a{ color:var(--acc);cursor:pointer;text-transform:none;
+  letter-spacing:0;font-size:10px; }
+.layer-row{ display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:5px;
+  cursor:pointer; }
+.layer-row:hover{ background:var(--bg2); }
+.layer-row input{ width:auto;margin:0;flex-shrink:0;cursor:pointer; }
+.layer-row .sw{ width:11px;height:11px;border-radius:3px;flex-shrink:0; }
+.layer-row .nm{ flex:1;min-width:0;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis; }
+.layer-row.off .nm{ color:var(--dim);text-decoration:line-through; }
+
+.cal-cell.sel{ box-shadow:inset 0 0 0 1px var(--acc); }
+
+/* ── Day detail timeline ─────────────────────────────── */
+.dd-head{ display:flex;align-items:center;gap:10px;margin:4px 0 12px; }
+.dd-head h3{ margin:0;font-size:14px;font-weight:600; }
+.dd-head .dd-sub{ font-size:10px;color:var(--dim); }
+.dd-head .right{ margin-left:auto;display:flex;gap:6px;align-items:center; }
+.dd-allday{ margin-bottom:10px;display:flex;flex-direction:column;gap:5px; }
+.dd-allday .ad{ display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg1);
+  border:1px solid var(--border);border-radius:6px;border-left:3px solid var(--acc);cursor:pointer; }
+.dd-allday .ad .lbl{ font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:.07em; }
+.dd-grid{ border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--bg1); }
+.hour-row{ display:flex;min-height:42px;border-bottom:1px solid var(--border);
+  position:relative;cursor:pointer;transition:background .1s; }
+.hour-row:last-child{ border-bottom:none; }
+.hour-row:hover{ background:var(--bg2); }
+.hour-row.now{ background:rgba(239,91,91,.06); }
+.hour-row .hr-label{ width:60px;flex-shrink:0;padding:5px 9px;font-family:var(--mono);
+  font-size:10px;color:var(--dim);text-align:right;border-right:1px solid var(--border); }
+.hour-row.now .hr-label{ color:var(--err); }
+.hour-row .hr-body{ flex:1;padding:3px 7px;display:flex;flex-direction:column;gap:3px;min-width:0; }
+.hr-event{ font-size:11px;padding:4px 9px;border-radius:5px;background:var(--bg3);
+  border-left:3px solid var(--acc);cursor:pointer;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis; }
+.hr-event .ht{ font-weight:500; }
+.hr-event .hm{ color:var(--dim);font-family:var(--mono);font-size:10px;margin-right:6px; }
+.hr-add{ position:absolute;right:10px;top:50%;transform:translateY(-50%);opacity:0;
+  font-size:15px;color:var(--acc);pointer-events:none;transition:opacity .1s; }
+.hour-row:hover .hr-add{ opacity:.7; }
+
+/* ── Brain-dump chat UI ──────────────────────────────── */
+#bd-chat{ display:flex;flex-direction:column;gap:14px;max-width:760px;
+  margin-bottom:16px;min-height:60px; }
+.bd-msg{ display:flex;gap:10px;align-items:flex-start; }
+.bd-msg .av{ width:26px;height:26px;border-radius:7px;flex-shrink:0;display:flex;
+  align-items:center;justify-content:center;font-size:13px;background:var(--bg2);
+  border:1px solid var(--border2); }
+.bd-msg.user .av{ color:var(--acc); }
+.bd-msg.bot .av{ color:var(--purple); }
+.bd-msg .bubble{ flex:1;min-width:0;background:var(--bg1);border:1px solid var(--border);
+  border-radius:8px;padding:11px 13px; }
+.bd-msg.user .bubble{ background:var(--bg2); }
+.bd-msg .bubble p.txt{ margin:0;white-space:pre-wrap;word-break:break-word; }
+.bd-summary{ display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px; }
+.bd-pill{ font-size:10px;padding:3px 9px;border-radius:11px;background:var(--bg2);
+  border:1px solid var(--border2);color:var(--fg2); }
+.bd-pill b{ color:var(--fg); }
+#bd-composer{ display:flex;gap:8px;align-items:flex-end;max-width:760px; }
+#bd-composer textarea{ min-height:46px;max-height:160px; }
+</style>
+</head>
+<body>
+<div id="root">
+  <!-- Sidebar -->
+  <aside id="sidebar">
+    <div id="side-head">
+      <div class="ico">🗓</div>
+      <div><h1>Calendar</h1><div class="sub">Scheduler &amp; Diary</div></div>
+    </div>
+    <nav id="nav">
+      <button class="nav-btn active" data-sec="calendar"><span class="gl">▦</span> Calendar</button>
+      <button class="nav-btn" data-sec="braindump"><span class="gl">✦</span> Brain Dump</button>
+      <button class="nav-btn" data-sec="todos"><span class="gl">☑</span> Todos</button>
+      <button class="nav-btn" data-sec="sources"><span class="gl">☁</span> Sources</button>
+      <button class="nav-btn" data-sec="settings"><span class="gl">⚙</span> Settings</button>
+    </nav>
+    <div id="sync-tile">
+      <div class="lbl">Sync</div>
+      <div class="row"><span class="dot" id="sync-dot"></span><span id="sync-text" class="muted">never synced</span></div>
+      <button class="btn ghost sm" style="margin-top:8px;width:100%" onclick="syncNow()">⟳ Sync now</button>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div id="main">
+    <div id="topbar">
+      <h2 id="page-title">Calendar</h2>
+      <span class="crumb" id="page-crumb"></span>
+      <div class="right" id="topbar-actions"></div>
+    </div>
+    <div id="content">
+
+      <!-- CALENDAR -->
+      <section class="section active" data-sec="calendar">
+        <div id="cal-toolbar">
+          <button class="btn sm" onclick="moveMonth(-1)">‹</button>
+          <button class="btn sm" onclick="goToday()">Today</button>
+          <button class="btn sm" onclick="moveMonth(1)">›</button>
+          <span id="cal-title"></span>
+          <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+            <label style="font-size:11px;display:inline-flex;align-items:center;gap:4px;cursor:pointer" title="Overlay projected scheduled dream fires (read-only)">
+              <input type="checkbox" id="cal-dreams" checked onchange="renderMonth()"> 💭 Dreams</label>
+            <div id="layer-wrap">
+              <button class="btn sm" onclick="toggleLayerPop(event)" title="Show / hide calendar layers">▦ Layers</button>
+              <div id="layer-pop">
+                <div class="lp-head"><span>Layers</span><a onclick="setAllLayers(true)">all</a></div>
+                <div id="layer-list"></div>
+              </div>
+            </div>
+            <button class="btn primary sm" onclick="openEvent()">+ Event</button>
+          </div>
+        </div>
+        <div class="cal-grid" id="cal-grid"></div>
+        <div id="day-view" style="margin-top:16px"></div>
+      </section>
+
+      <!-- BRAIN DUMP -->
+      <section class="section" data-sec="braindump">
+        <div id="bd-chat"></div>
+        <div id="bd-composer">
+          <textarea id="bd-input" rows="2" placeholder="Dump anything on your mind — meetings, deadlines, errands, ideas… (Enter to send, Shift+Enter for newline)"></textarea>
+          <button class="btn primary" id="bd-go" onclick="runBraindump()">✦ Organise</button>
+        </div>
+      </section>
+
+      <!-- TODOS -->
+      <section class="section" data-sec="todos">
+        <div style="display:flex;gap:8px;margin-bottom:14px">
+          <input id="td-quick" placeholder="Add a todo and press Enter…" onkeydown="if(event.key==='Enter')quickTodo()">
+          <button class="btn" onclick="quickTodo()">Add</button>
+        </div>
+        <div id="todo-list"></div>
+      </section>
+
+      <!-- SOURCES -->
+      <section class="section" data-sec="sources">
+        <p class="hint" style="margin-top:0;max-width:680px">
+          Connect cloud calendars. Credentials are encrypted at rest (Fernet) and
+          never shown again — leave a secret field blank when editing to keep it.</p>
+        <div style="display:flex;gap:8px;margin-bottom:14px">
+          <button class="btn" onclick="openSource('ics')">+ ICS URL</button>
+          <button class="btn" onclick="openSource('caldav')">+ CalDAV</button>
+          <button class="btn" onclick="openSource('google')">+ Google</button>
+        </div>
+        <div id="source-list"></div>
+      </section>
+
+      <!-- SETTINGS -->
+      <section class="section" data-sec="settings">
+        <div style="max-width:520px">
+          <div class="field">
+            <label class="fl">Ollama model</label>
+            <input id="set-model" placeholder="(cluster default)">
+            <div class="hint">Model used for the brain-dump assistant. Blank = cluster default.</div>
+          </div>
+          <div class="row2">
+            <div class="field">
+              <label class="fl">Auto-sync interval (min)</label>
+              <input id="set-interval" type="number" min="0" value="15">
+              <div class="hint">0 disables background sync.</div>
+            </div>
+            <div class="field">
+              <label class="fl">Timezone</label>
+              <input id="set-tz" placeholder="UTC">
+            </div>
+          </div>
+          <div class="field">
+            <label class="fl"><input type="checkbox" id="set-fabric" style="width:auto;margin-right:7px;vertical-align:middle">Persist diary to data fabric</label>
+            <div class="hint">Mirror events into a fabric dataset for search &amp; memory.</div>
+          </div>
+          <div class="field">
+            <label class="fl">Fabric dataset</label>
+            <input id="set-dataset" value="diary">
+          </div>
+          <button class="btn primary" onclick="saveSettings()">Save settings</button>
+          <span id="set-status" class="muted" style="margin-left:10px"></span>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<!-- Event modal -->
+<div class="modal-bg" id="ev-modal">
+  <div class="modal">
+    <h3 id="ev-modal-title">New event</h3>
+    <input type="hidden" id="ev-id">
+    <div class="field"><label class="fl">Title</label><input id="ev-title"></div>
+    <div class="row2">
+      <div class="field"><label class="fl">Start</label><input id="ev-start" type="datetime-local"></div>
+      <div class="field"><label class="fl">End</label><input id="ev-end" type="datetime-local"></div>
+    </div>
+    <div class="field"><label class="fl"><input type="checkbox" id="ev-allday" style="width:auto;margin-right:7px;vertical-align:middle">All day</label></div>
+    <div class="field"><label class="fl">Location</label><input id="ev-loc"></div>
+    <div class="field"><label class="fl">Description</label><textarea id="ev-desc" rows="3"></textarea></div>
+    <div class="modal-foot">
+      <button class="btn danger ghost" id="ev-del" onclick="deleteEvent()">Delete</button>
+      <button class="btn ghost" onclick="closeModal('ev-modal')">Cancel</button>
+      <button class="btn primary" onclick="saveEvent()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Source modal -->
+<div class="modal-bg" id="src-modal">
+  <div class="modal">
+    <h3 id="src-modal-title">Add source</h3>
+    <input type="hidden" id="src-id"><input type="hidden" id="src-type">
+    <div class="field"><label class="fl">Label</label><input id="src-label"></div>
+    <div class="field" id="src-acct-wrap" style="display:none">
+      <label class="fl">Use saved account <span class="muted" style="text-transform:none;letter-spacing:0">(optional — pulls creds from the Accounts tab)</span></label>
+      <select id="src-acct" onchange="onSrcAcct()"><option value="">— none (enter manually) —</option></select>
+    </div>
+    <div id="src-ics" class="src-fields">
+      <div class="field"><label class="fl">ICS URL</label><input id="src-url-ics" placeholder="https://…/basic.ics"></div>
+    </div>
+    <div id="src-caldav" class="src-fields">
+      <div class="field"><label class="fl">CalDAV URL</label><input id="src-url-cd" placeholder="https://host/dav/calendars/user/cal/"></div>
+      <div class="row2">
+        <div class="field"><label class="fl">Username</label><input id="src-user"></div>
+        <div class="field"><label class="fl">App password</label><input id="src-pass" type="password" placeholder="(kept if blank)"></div>
+      </div>
+    </div>
+    <div id="src-google" class="src-fields">
+      <div class="field"><label class="fl">Client ID</label><input id="src-gcid"></div>
+      <div class="field"><label class="fl">Client secret</label><input id="src-gcs" type="password" placeholder="(kept if blank)"></div>
+      <div class="hint" id="src-goauth"></div>
+      <div class="field" id="src-gcals-wrap" style="display:none;margin-top:13px">
+        <label class="fl">Calendars to load <span class="muted" id="src-gcals-count"></span>
+          <a onclick="loadGoogleCalendars($('src-id').value)" style="float:right;color:var(--acc);cursor:pointer;text-transform:none;letter-spacing:0">⟳ refresh</a>
+        </label>
+        <div id="src-gcals" class="cal-multi"></div>
+        <div class="hint">Each selected calendar becomes a colour-coded layer you can toggle on the calendar.</div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closeModal('src-modal')">Cancel</button>
+      <button class="btn primary" onclick="saveSource()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = "";
+const $ = id => document.getElementById(id);
+async function call(path, body){
+  const opt = body ? {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)} : {};
+  const r = await fetch(API+path, opt);
+  try { return await r.json(); } catch(e){ return {error:"bad response"}; }
+}
+function toast(msg){ const t=$("toast"); t.textContent=msg; t.classList.add("show");
+  setTimeout(()=>t.classList.remove("show"),2200); }
+function pad(n){ return String(n).padStart(2,"0"); }
+const MON=["January","February","March","April","May","June","July","August","September","October","November","December"];
+const DOW=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+
+let view = new Date(); view.setDate(1);
+let selectedDay = null;
+let monthEvents = [];
+
+/* ── Layers (toggle visibility of sources / Google calendars) ── */
+let hiddenLayers = new Set(JSON.parse(localStorage.getItem("cal.hiddenLayers")||"[]"));
+function saveHidden(){ localStorage.setItem("cal.hiddenLayers",JSON.stringify([...hiddenLayers])); }
+function escAttr(s){ return (s||"").replace(/[\\']/g,c=>"\\"+c); }
+function eventLayer(e){
+  if(e.source==="dream"||e.read_only) return "dream";
+  if(!e.source||e.source==="local") return "local";
+  if(e.calendar) return e.source+"::"+e.calendar;   // a single Google calendar
+  return e.source;
+}
+function layerLabel(e){
+  const k=eventLayer(e);
+  if(k==="local") return "Local";
+  if(e.calendar_label) return e.calendar_label;
+  return (e.source||"").split(":")[0];
+}
+function layerVisible(e){ return !hiddenLayers.has(eventLayer(e)); }
+function collectLayers(){
+  const map=new Map();
+  monthEvents.forEach(e=>{
+    const k=eventLayer(e);
+    if(k==="dream") return;            // Dreams have their own toolbar toggle
+    if(!map.has(k)) map.set(k,{key:k,label:layerLabel(e),color:e.color||"#4a9eff",n:0});
+    map.get(k).n++;
+  });
+  return [...map.values()].sort((a,b)=>{
+    const rank=k=>k==="local"?0:1;
+    return rank(a.key)-rank(b.key) || a.label.localeCompare(b.label);
+  });
+}
+function renderLayerList(){
+  const box=$("layer-list"); if(!box) return;
+  const layers=collectLayers();
+  if(!layers.length){ box.innerHTML='<div class="empty-mini" style="padding:10px">No layers in view.</div>'; return; }
+  box.innerHTML=layers.map(L=>{
+    const off=hiddenLayers.has(L.key);
+    return '<label class="layer-row'+(off?" off":"")+'"><input type="checkbox" '+(off?"":"checked")+
+      ' onchange="toggleLayer(\''+escAttr(L.key)+'\')">'+
+      '<span class="sw" style="background:'+esc(L.color)+'"></span>'+
+      '<span class="nm">'+esc(L.label)+'</span>'+
+      '<span class="muted" style="font-size:9px">'+L.n+'</span></label>';
+  }).join("");
+}
+function toggleLayer(k){ hiddenLayers.has(k)?hiddenLayers.delete(k):hiddenLayers.add(k);
+  saveHidden(); renderLayerList(); renderMonth(); }
+function setAllLayers(){ hiddenLayers.clear(); saveHidden(); renderLayerList(); renderMonth(); }
+function toggleLayerPop(ev){ ev.stopPropagation(); $("layer-pop").classList.toggle("show"); }
+document.addEventListener("click",e=>{ const w=$("layer-wrap");
+  if(w&&!w.contains(e.target)) $("layer-pop").classList.remove("show"); });
+
+/* ── Navigation ─────────────────────────────── */
+document.querySelectorAll(".nav-btn").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll(".nav-btn").forEach(x=>x.classList.remove("active"));
+  document.querySelectorAll(".section").forEach(x=>x.classList.remove("active"));
+  b.classList.add("active");
+  const sec=b.dataset.sec;
+  document.querySelector('.section[data-sec="'+sec+'"]').classList.add("active");
+  $("page-title").textContent=b.textContent.trim();
+  $("page-crumb").textContent="";
+  if(sec==="todos") loadTodos();
+  if(sec==="sources") loadSources();
+  if(sec==="settings") loadSettings();
+  if(sec==="calendar") renderMonth();
+  if(sec==="braindump") bdGreet();
+});
+function bdGreet(){
+  if($("bd-chat").children.length) { $("bd-input").focus(); return; }
+  bdAddMsg("bot",'<p class="txt">Hi — dump anything on your mind and I\'ll sort it into '+
+    'events, todos and notes for you to review. Meetings, deadlines, errands, ideas… '+
+    'just type it the way you\'d say it.</p>');
+  $("bd-input").focus();
+}
+
+/* ── Calendar month grid ────────────────────── */
+function isoLocal(d){ return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate()); }
+function moveMonth(d){ view.setMonth(view.getMonth()+d); renderMonth(); }
+function goToday(){ view=new Date(); view.setDate(1); selectedDay=isoLocal(new Date()); renderMonth(); }
+
+async function renderMonth(){
+  $("cal-title").textContent = MON[view.getMonth()]+" "+view.getFullYear();
+  // window: first visible Monday .. 6 weeks
+  const first=new Date(view); const startOff=(first.getDay()+6)%7;
+  const gridStart=new Date(first); gridStart.setDate(1-startOff);
+  const gridEnd=new Date(gridStart); gridEnd.setDate(gridStart.getDate()+42);
+  const wantDreams=$("cal-dreams")?$("cal-dreams").checked:true;
+  const res=await call("/cal/events?start="+isoLocal(gridStart)+"&end="+isoLocal(gridEnd)+(wantDreams?"&include_dreams=1":""));
+  monthEvents=(res.events)||[];
+  renderLayerList();
+  const byDay={};
+  monthEvents.filter(layerVisible).forEach(e=>{ const k=(e.start||"").slice(0,10); (byDay[k]=byDay[k]||[]).push(e); });
+
+  const g=$("cal-grid"); g.innerHTML="";
+  DOW.forEach(d=>{ const c=document.createElement("div"); c.className="cal-dow"; c.textContent=d; g.appendChild(c); });
+  const today=isoLocal(new Date());
+  for(let i=0;i<42;i++){
+    const d=new Date(gridStart); d.setDate(gridStart.getDate()+i);
+    const k=isoLocal(d);
+    const cell=document.createElement("div");
+    cell.dataset.k=k;
+    cell.className="cal-cell"+(d.getMonth()!==view.getMonth()?" other":"")+(k===today?" today":"")+(k===selectedDay?" sel":"");
+    cell.onclick=()=>{ selectedDay=k; highlightSelected(); renderDay(true); };
+    cell.ondblclick=()=>{ selectedDay=k; openEventAt(k,9); };
+    let html='<div class="dnum">'+d.getDate()+'</div>';
+    const evs=(byDay[k]||[]).sort((a,b)=>(a.start||"").localeCompare(b.start||""));
+    evs.slice(0,3).forEach(e=>{
+      const col=e.color||"#4a9eff";
+      html+='<span class="chip" style="border-left-color:'+col+'" onclick="event.stopPropagation();openEvent(\''+e.id+'\')"><span class="ct">'+esc(timeOf(e))+esc(e.title)+'</span></span>';
+    });
+    if(evs.length>3) html+='<div class="more">+'+(evs.length-3)+' more</div>';
+    cell.innerHTML=html;
+    g.appendChild(cell);
+  }
+  if(selectedDay) renderDay(false); else $("day-view").innerHTML="";
+}
+function timeOf(e){ if(e.all_day) return ""; const t=(e.start||"").slice(11,16); return t?t+" ":""; }
+function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+let dayEvents=[];
+function fmtHour(h){ const ap=h<12?"am":"pm"; let hh=h%12; if(hh===0)hh=12; return hh+" "+ap; }
+function moveDay(n){
+  const d=new Date(selectedDay+"T00:00"); d.setDate(d.getDate()+n);
+  selectedDay=isoLocal(d);
+  if(d.getMonth()!==view.getMonth()||d.getFullYear()!==view.getFullYear()){
+    view=new Date(d.getFullYear(),d.getMonth(),1); renderMonth();
+  } else { highlightSelected(); renderDay(true); }
+}
+function highlightSelected(){
+  document.querySelectorAll(".cal-cell").forEach(c=>c.classList.toggle("sel",c.dataset.k===selectedDay));
+}
+async function renderDay(scroll){
+  const dv=$("day-view");
+  if(!selectedDay){ dv.innerHTML=""; return; }
+  const wantDreams=$("cal-dreams")?$("cal-dreams").checked:true;
+  const next=new Date(selectedDay+"T00:00"); next.setDate(next.getDate()+1);
+  const res=await call("/cal/events?start="+selectedDay+"&end="+isoLocal(next)+(wantDreams?"&include_dreams=1":""));
+  dayEvents=(res.events||[]).filter(e=>(e.start||"").slice(0,10)===selectedDay&&layerVisible(e));
+
+  const dObj=new Date(selectedDay+"T00:00");
+  const heading=dObj.toLocaleDateString(undefined,{weekday:"long",day:"numeric",month:"long",year:"numeric"});
+  const allDay=dayEvents.filter(e=>e.all_day);
+  const timed=dayEvents.filter(e=>!e.all_day);
+  const byHour={};
+  timed.forEach(e=>{ const h=parseInt((e.start||"").slice(11,13),10); (byHour[isNaN(h)?0:h]=byHour[isNaN(h)?0:h]||[]).push(e); });
+
+  let html='<div class="dd-head"><div><h3>'+esc(heading)+'</h3>'+
+    '<div class="dd-sub">'+timed.length+' timed · '+allDay.length+' all-day</div></div>'+
+    '<div class="right">'+
+      '<button class="btn sm" onclick="moveDay(-1)" title="Previous day">‹</button>'+
+      '<button class="btn sm" onclick="moveDay(1)" title="Next day">›</button>'+
+      '<button class="btn primary sm" onclick="openEventAt(selectedDay,9)">+ Add</button>'+
+    '</div></div>';
+
+  if(allDay.length){
+    html+='<div class="dd-allday">';
+    allDay.forEach(e=>{ html+='<div class="ad" style="border-left-color:'+(e.color||"#4a9eff")+'" onclick="openEvent(\''+esc(e.id)+'\')">'+
+      '<span class="lbl">All day</span><span class="ti">'+esc(e.title)+'</span>'+
+      (e.calendar_label?'<span class="tag">'+esc(e.calendar_label)+'</span>':'')+'</div>'; });
+    html+='</div>';
+  }
+
+  const nowH=(selectedDay===isoLocal(new Date()))?new Date().getHours():-1;
+  html+='<div class="dd-grid">';
+  for(let h=0;h<24;h++){
+    const list=(byHour[h]||[]).sort((a,b)=>(a.start||"").localeCompare(b.start||""));
+    let body="";
+    list.forEach(e=>{
+      const tm=(e.start||"").slice(11,16)+(e.end&&!e.all_day?"–"+(e.end||"").slice(11,16):"");
+      body+='<div class="hr-event" style="border-left-color:'+(e.color||"#4a9eff")+'" '+
+        'onclick="event.stopPropagation();openEvent(\''+esc(e.id)+'\')">'+
+        '<span class="hm">'+esc(tm)+'</span><span class="ht">'+esc(e.title)+'</span></div>';
+    });
+    html+='<div class="hour-row'+(h===nowH?" now":"")+'" onclick="openEventAt(selectedDay,'+h+')">'+
+      '<div class="hr-label">'+fmtHour(h)+'</div>'+
+      '<div class="hr-body">'+body+'</div><span class="hr-add">+</span></div>';
+  }
+  html+='</div>';
+  dv.innerHTML=html;
+  if(scroll) dv.scrollIntoView({behavior:"smooth",block:"start"});
+}
+
+/* ── Event modal ────────────────────────────── */
+function findEvent(id){ return dayEvents.find(x=>x.id===id)||monthEvents.find(x=>x.id===id); }
+// Open the new-event modal pre-filled at a given day + hour (click-to-add).
+function openEventAt(day,hour){
+  openEvent(null,(day||selectedDay||isoLocal(new Date()))+"T"+pad(hour)+":00");
+}
+function openEvent(id,startISO){
+  if(id){
+    const ev=findEvent(id);
+    // Dream overlay events are virtual/read-only — surface info, don't edit.
+    if(ev&&(ev.read_only||ev.source==="dream")){
+      toast("💭 "+(ev.label||ev.title||"dream")+(ev.recurrence?" · "+ev.recurrence:"")+(ev.project?" · project: "+ev.project:""));
+      return;
+    }
+  }
+  const m=$("ev-modal"); m.classList.add("show");
+  if(id){
+    const e=findEvent(id)||{};
+    $("ev-modal-title").textContent="Edit event";
+    $("ev-id").value=e.id||""; $("ev-title").value=e.title||"";
+    $("ev-start").value=(e.start||"").slice(0,16); $("ev-end").value=(e.end||"").slice(0,16);
+    $("ev-allday").checked=!!e.all_day; $("ev-loc").value=e.location||""; $("ev-desc").value=e.description||"";
+    $("ev-del").style.display=(e.source&&e.source!=="local")?"none":"inline-flex";
+    setTimeout(()=>$("ev-title").focus(),30);
+  } else {
+    $("ev-modal-title").textContent="New event"; $("ev-id").value="";
+    $("ev-title").value=""; $("ev-loc").value=""; $("ev-desc").value=""; $("ev-allday").checked=false;
+    if(startISO){
+      const d=new Date(startISO); const e2=new Date(d.getTime()+60*60*1000);
+      $("ev-start").value=startISO.slice(0,16);
+      $("ev-end").value=isoLocal(e2)+"T"+pad(e2.getHours())+":"+pad(e2.getMinutes());
+    } else {
+      const base=selectedDay||isoLocal(new Date());
+      $("ev-start").value=base+"T09:00"; $("ev-end").value=base+"T10:00";
+    }
+    $("ev-del").style.display="none";
+    setTimeout(()=>$("ev-title").focus(),30);
+  }
+}
+function closeModal(id){ $(id).classList.remove("show"); }
+async function saveEvent(){
+  const body={ id:$("ev-id").value, title:$("ev-title").value.trim(),
+    start:$("ev-start").value, end:$("ev-end").value,
+    all_day:$("ev-allday").checked, location:$("ev-loc").value, description:$("ev-desc").value };
+  if(!body.title){ toast("Title required"); return; }
+  const r=await call("/cal/event/upsert",body);
+  if(r.error){ toast(r.error); return; }
+  closeModal("ev-modal"); toast("Saved"); renderMonth();
+}
+async function deleteEvent(){
+  const id=$("ev-id").value; if(!id) return;
+  await call("/cal/event/delete",{id}); closeModal("ev-modal"); toast("Deleted"); renderMonth();
+}
+
+/* ── Brain dump (chat) ──────────────────────── */
+let bdProposals={};   // msgId -> proposal, so each bot turn keeps its own state
+let bdSeq=0;
+function bdAddMsg(role,inner){
+  const id="bdm"+(++bdSeq);
+  const av=role==="user"?"🧠":"✦";
+  const div=document.createElement("div");
+  div.className="bd-msg "+role; div.id=id;
+  div.innerHTML='<div class="av">'+av+'</div><div class="bubble">'+inner+'</div>';
+  $("bd-chat").appendChild(div);
+  div.scrollIntoView({behavior:"smooth",block:"end"});
+  return id;
+}
+function bdInner(id){ return document.querySelector("#"+id+" .bubble"); }
+async function runBraindump(){
+  const text=$("bd-input").value.trim();
+  if(!text){ toast("Type something first"); return; }
+  bdAddMsg("user",'<p class="txt">'+esc(text)+'</p>');
+  $("bd-input").value=""; $("bd-input").style.height="auto";
+  $("bd-go").disabled=true;
+  const botId=bdAddMsg("bot",'<span class="muted"><span class="spin"></span> organising…</span>');
+  const r=await call("/cal/braindump",{text,apply:false});
+  $("bd-go").disabled=false;
+  if(r.error){ bdInner(botId).innerHTML='<span style="color:var(--err)">'+esc(r.error)+'</span>'; return; }
+  renderProposal(botId,r.proposal||{});
+}
+function renderProposal(botId,p){
+  bdProposals[botId]=p;
+  const wrap=bdInner(botId);
+  if(p._parse_error){
+    wrap.innerHTML='<p class="txt">I couldn\'t structure that cleanly. Try splitting it into shorter lines, '+
+      'or naming dates explicitly (e.g. "Tue 3pm").</p>'+
+      '<button class="btn ghost sm" style="margin-top:8px" onclick="this.nextElementSibling.style.display=\'block\'">Show raw output</button>'+
+      '<pre style="display:none;margin-top:8px;max-height:160px;overflow:auto;background:var(--bg);padding:8px;border-radius:6px;font-size:10px;white-space:pre-wrap">'+esc(p._raw||"")+'</pre>';
+    return;
+  }
+  const counts=[["events",(p.events||[]).length],["todos",(p.todos||[]).length],
+               ["notes",(p.notes||[]).length]];
+  const total=counts.reduce((a,c)=>a+c[1],0);
+  if(!total&&!(p.daily_plan||[]).length){
+    wrap.innerHTML='<p class="txt">Nothing actionable found in that — try adding a time, date or task.</p>';
+    return;
+  }
+  let html='<div class="bd-summary">';
+  counts.forEach(c=>{ if(c[1]) html+='<span class="bd-pill"><b>'+c[1]+'</b> '+c[0]+'</span>'; });
+  html+='</div>';
+  const grp=(title,items,cls,render)=>{
+    if(!items||!items.length) return "";
+    let h='<div class="bd-group"><h4>'+title+' · '+items.length+'</h4>';
+    items.forEach((it,i)=>{ h+='<div class="bd-card '+cls+'"><input type="checkbox" data-g="'+cls+'" data-i="'+i+'" checked style="width:auto;margin-top:2px">'+render(it)+'</div>'; });
+    return h+'</div>';
+  };
+  html+=grp("Events",p.events,"kev",e=>'<div class="bd-main"><div class="bd-t">'+esc(e.title||"")+'</div><div class="bd-s">'+esc((e.start||"")+(e.location?" · "+e.location:""))+'</div></div>');
+  html+=grp("Todos",p.todos,"ktd",t=>'<div class="bd-main"><div class="bd-t">'+esc(t.title||"")+'</div><div class="bd-s">'+esc((t.due?"due "+t.due:"")+(t.priority?" · P"+t.priority:""))+'</div></div>');
+  html+=grp("Notes",p.notes,"knt",n=>'<div class="bd-main"><div class="bd-t">'+esc(n.title||n.body||"")+'</div>'+(n.title&&n.body?'<div class="bd-s">'+esc(n.body)+'</div>':'')+'</div>');
+  if(p.daily_plan&&p.daily_plan.length){
+    html+='<div class="bd-group"><h4>Suggested plan</h4>';
+    p.daily_plan.forEach(r=>{ html+='<div class="plan-row"><span class="pt">'+esc(r.time||"—")+'</span><span>'+esc(r.item||"")+'</span></div>'; });
+    html+='</div>';
+  }
+  html+='<div style="margin-top:14px;display:flex;gap:8px"><button class="btn primary sm" onclick="acceptProposal(\''+botId+'\',this)">✓ Add selected</button><button class="btn ghost sm" onclick="bdInner(\''+botId+'\').querySelectorAll(\'input[type=checkbox]\').forEach(c=>c.checked=false)">Clear</button></div>';
+  wrap.innerHTML=html;
+}
+async function acceptProposal(botId,btn){
+  const p=bdProposals[botId]; if(!p) return;
+  const pick={events:[],todos:[],notes:[]};
+  bdInner(botId).querySelectorAll('input[type=checkbox]').forEach(cb=>{
+    if(!cb.checked) return;
+    const g=cb.dataset.g, i=+cb.dataset.i;
+    if(g==="kev") pick.events.push(p.events[i]);
+    if(g==="ktd") pick.todos.push(p.todos[i]);
+    if(g==="knt") pick.notes.push(p.notes[i]);
+  });
+  if(btn){ btn.disabled=true; btn.textContent="Adding…"; }
+  const r=await call("/cal/braindump/commit",{proposal:pick});
+  if(r.error){ toast(r.error); if(btn){ btn.disabled=false; btn.textContent="✓ Add selected"; } return; }
+  const a=r.applied||{};
+  const n=(a.events||[]).length+(a.todos||[]).length+(a.notes||[]).length;
+  bdAddMsg("bot",'<p class="txt">✓ Added '+((a.events||[]).length)+' events, '+
+    ((a.todos||[]).length)+' todos and '+((a.notes||[]).length)+' notes to your diary.</p>');
+  toast("Added "+n+" item"+(n===1?"":"s"));
+}
+
+/* ── Todos ──────────────────────────────────── */
+async function loadTodos(){
+  const r=await call("/cal/todos"); const list=$("todo-list");
+  const todos=r.todos||[];
+  if(!todos.length){ list.innerHTML='<div class="empty">No todos yet.</div>'; return; }
+  list.innerHTML=todos.map(t=>{
+    const pr=t.priority?'<span class="pri p'+t.priority+'">P'+t.priority+'</span>':"";
+    return '<div class="list-item '+(t.done?"done":"")+'">'+
+      '<div class="check '+(t.done?"on":"")+'" onclick="toggleTodo(\''+t.id+'\')">'+(t.done?"✓":"")+'</div>'+
+      '<div class="meta"><div class="t">'+esc(t.title)+'</div>'+
+      ((t.due||t.notes)?'<div class="s">'+esc((t.due?"due "+t.due:"")+(t.notes?" · "+t.notes:""))+'</div>':'')+'</div>'+
+      pr+'<button class="btn ghost sm danger" onclick="delTodo(\''+t.id+'\')">✕</button></div>';
+  }).join("");
+}
+async function quickTodo(){
+  const v=$("td-quick").value.trim(); if(!v) return;
+  await call("/cal/todo/upsert",{title:v}); $("td-quick").value=""; loadTodos();
+}
+async function toggleTodo(id){ await call("/cal/todo/toggle",{id}); loadTodos(); }
+async function delTodo(id){ await call("/cal/todo/delete",{id}); loadTodos(); }
+
+/* ── Sources ────────────────────────────────── */
+async function loadSources(){
+  const r=await call("/cal/sources"); const list=$("source-list");
+  const srcs=r.sources||[];
+  if(!srcs.length){ list.innerHTML='<div class="empty">No cloud calendars connected.</div>'; updateSyncTile(null); return; }
+  list.innerHTML=srcs.map(s=>{
+    const last=s.last_sync?("synced "+new Date(s.last_sync).toLocaleString()):"never synced";
+    const res=s.last_result?(" · +"+s.last_result.added+" / ~"+s.last_result.updated+(s.last_result.errors?" · ⚠":"")):"";
+    const needAuth=s.type==="google"&&!s.has_refresh_token;
+    return '<div class="list-item">'+
+      '<span class="dot '+(s.enabled?(s.last_result&&s.last_result.errors?"warn":"on"):"off")+'" style="margin-top:4px"></span>'+
+      '<div class="meta"><div class="t">'+esc(s.label||s.type)+' <span class="tag">'+s.type+'</span>'+(needAuth?'<span class="tag" style="color:var(--warn);border-color:var(--warn)">needs auth</span>':'')+'</div>'+
+      '<div class="s">'+esc(last+res)+'</div></div>'+
+      (needAuth?'<button class="btn sm" onclick="googleConnect(\''+s.id+'\')">Connect</button>':'')+
+      '<button class="btn ghost sm" onclick="syncNow(\''+s.id+'\')">⟳</button>'+
+      '<button class="btn ghost sm" onclick="editSource(\''+s.id+'\')">✎</button>'+
+      '<button class="btn ghost sm danger" onclick="delSource(\''+s.id+'\',\''+esc(s.label||s.type)+'\')">✕</button></div>';
+  }).join("");
+  const newest=srcs.map(s=>s.last_sync).filter(Boolean).sort().pop();
+  updateSyncTile(newest);
+}
+let curSources=[];
+let gCalList=[];   // calendars shown in the Google picker for the open source
+async function openSource(type,existing){
+  const m=$("src-modal"); m.classList.add("show");
+  document.querySelectorAll(".src-fields").forEach(f=>f.style.display="none");
+  $("src-"+type).style.display="block";
+  $("src-type").value=type;
+  $("src-modal-title").textContent=(existing?"Edit ":"Add ")+type+" source";
+  $("src-id").value=existing?existing.id:"";
+  $("src-label").value=existing?existing.label||"":"";
+  $("src-url-ics").value=existing&&existing.url||""; $("src-url-cd").value=existing&&existing.url||"";
+  $("src-user").value=existing&&existing.username||""; $("src-pass").value="";
+  $("src-gcid").value=existing&&existing.client_id||""; $("src-gcs").value="";
+  // Account link (ics/caldav only): populate the picker and apply visibility.
+  $("src-acct-wrap").style.display=(type==="ics"||type==="caldav")?"block":"none";
+  if(type==="ics"||type==="caldav") loadSrcAccounts(existing&&existing.account_id||"");
+  if(type==="google"){
+    const authed=existing&&existing.has_refresh_token;
+    $("src-goauth").innerHTML = authed
+      ? "✓ Authorised. Re-enter client secret only if it changed."
+      : "After saving, click <b>Connect</b> in the list to authorise — then re-open to pick calendars.";
+    gCalList=[]; $("src-gcals").innerHTML=""; $("src-gcals-count").textContent="";
+    $("src-gcals-wrap").style.display = authed ? "block" : "none";
+    if(authed) loadGoogleCalendars(existing.id, existing.calendars);
+  }
+}
+async function loadGoogleCalendars(srcId, current){
+  if(!srcId){ toast("Save & connect the source first"); return; }
+  $("src-gcals-wrap").style.display="block";
+  $("src-gcals").innerHTML='<div class="empty-mini"><span class="spin"></span> loading calendars…</div>';
+  const r=await call("/cal/google/calendars?source="+encodeURIComponent(srcId));
+  if(r.error){ $("src-gcals").innerHTML='<div class="empty-mini">'+esc(r.error)+'</div>';
+    gCalList=[]; $("src-gcals-count").textContent=""; return; }
+  gCalList=r.calendars||[];
+  // A saved selection on the source wins over the server-side default.
+  if(current&&current.length){
+    const sel=new Set(current.map(c=>c.id));
+    gCalList.forEach(c=>c.selected=sel.has(c.id));
+  }
+  renderGoogleCalendars();
+}
+function renderGoogleCalendars(){
+  const box=$("src-gcals");
+  if(!gCalList.length){ box.innerHTML='<div class="empty-mini">No calendars found.</div>';
+    $("src-gcals-count").textContent=""; return; }
+  box.innerHTML=gCalList.map((c,i)=>
+    '<label class="crow"><input type="checkbox" '+(c.selected?"checked":"")+
+    ' onchange="gCalList['+i+'].selected=this.checked;updateGcalCount()">'+
+    '<span class="sw" style="background:'+esc(c.color||"#888")+'"></span>'+
+    '<span class="nm">'+esc(c.summary||c.id)+(c.primary?' <span class="pri-tag">· primary</span>':'')+
+    '</span></label>').join("");
+  updateGcalCount();
+}
+function updateGcalCount(){
+  $("src-gcals-count").textContent="· "+gCalList.filter(c=>c.selected).length+" selected";
+}
+function editSource(id){ const s=curSources.find(x=>x.id===id); if(s) openSource(s.type,s); }
+async function loadSrcAccounts(selected){
+  const r=await call("/accounts/list"); const accts=r.accounts||[];
+  $("src-acct").innerHTML='<option value="">— none (enter manually) —</option>'+
+    accts.map(a=>'<option value="'+a.id+'">'+esc(a.label||a.email||a.id)+'</option>').join("");
+  $("src-acct").value=selected||""; onSrcAcct();
+}
+function onSrcAcct(){
+  // When an account is chosen, the manual cred inputs are filled from it server-side,
+  // so dim them as optional overrides.
+  const using=!!$("src-acct").value;
+  ["src-url-ics","src-url-cd","src-user","src-pass"].forEach(id=>{ const el=$(id); if(el) el.placeholder=using?"(from account — override optional)":el.getAttribute("data-ph")||el.placeholder; });
+}
+async function saveSource(){
+  const type=$("src-type").value;
+  const body={ id:$("src-id").value, type, label:$("src-label").value, enabled:true };
+  if(type==="ics"||type==="caldav") body.account_id=$("src-acct").value;
+  if(type==="ics") body.url=$("src-url-ics").value.trim();
+  if(type==="caldav"){ body.url=$("src-url-cd").value.trim(); body.username=$("src-user").value.trim();
+    if($("src-pass").value) body.password=$("src-pass").value; }
+  if(type==="google"){ body.client_id=$("src-gcid").value.trim();
+    if($("src-gcs").value) body.client_secret=$("src-gcs").value;
+    if(gCalList.length) body.calendars=gCalList.filter(c=>c.selected)
+        .map(c=>({id:c.id,summary:c.summary,color:c.color})); }
+  const r=await call("/cal/source/upsert",body);
+  if(r.error){ toast(r.error); return; }
+  closeModal("src-modal"); toast("Source saved"); loadSources();
+}
+async function delSource(id,label){
+  if(!confirm("Remove “"+label+"” and its synced events?")) return;
+  await call("/cal/source/delete",{id}); toast("Removed"); loadSources();
+}
+async function googleConnect(id){
+  const r=await call("/cal/google/auth_url?source="+encodeURIComponent(id));
+  if(r.error){ toast(r.error); return; }
+  window.open(r.url,"_blank");
+  const code=prompt("Sign in & approve in the opened tab, then paste the code Google shows you here:");
+  if(!code) return;
+  const c=await call("/cal/google/auth_complete",{source:id,code});
+  if(c.error){ toast(c.error); return; }
+  toast("Google connected — choose calendars to load");
+  await loadSources();
+  const s=curSources.find(x=>x.id===id);
+  if(s) openSource("google",s);
+}
+
+/* ── Sync ───────────────────────────────────── */
+async function syncNow(id){
+  $("sync-dot").className="dot warn"; $("sync-text").textContent="syncing…";
+  const r=await call("/cal/sync/run", id?{source:id}:{});
+  if(r.error){ toast(r.error); $("sync-dot").className="dot off"; return; }
+  const tot=(r.results||[]).reduce((a,x)=>a+x.added+x.updated,0);
+  toast("Synced — "+tot+" events updated");
+  updateSyncTile(new Date().toISOString());
+  if(document.querySelector('.section[data-sec="calendar"]').classList.contains("active")) renderMonth();
+  if(document.querySelector('.section[data-sec="sources"]').classList.contains("active")) loadSources();
+}
+function updateSyncTile(ts){
+  $("sync-dot").className="dot "+(ts?"on":"");
+  $("sync-text").textContent=ts?("synced "+new Date(ts).toLocaleTimeString()):"never synced";
+}
+
+/* ── Settings ───────────────────────────────── */
+async function loadSettings(){
+  const c=await call("/cal/config");
+  $("set-model").value=c.model||""; $("set-interval").value=c.sync_interval_min??15;
+  $("set-tz").value=c.tz||"UTC"; $("set-fabric").checked=!!c.fabric_auto_persist;
+  $("set-dataset").value=c.fabric_dataset||"diary";
+}
+async function saveSettings(){
+  const body={ model:$("set-model").value, sync_interval_min:+$("set-interval").value,
+    tz:$("set-tz").value, fabric_auto_persist:$("set-fabric").checked,
+    fabric_dataset:$("set-dataset").value };
+  const r=await call("/cal/config/set",body);
+  $("set-status").textContent=r.ok?"✓ saved":"error"; setTimeout(()=>$("set-status").textContent="",2000);
+}
+
+/* keep curSources for edit */
+const _ls=loadSources; loadSources=async function(){ const r=await call("/cal/sources"); curSources=r.sources||[]; await _ls(); };
+
+/* ── Brain-dump composer: Enter sends, Shift+Enter newlines, auto-grow ── */
+(function(){
+  const ta=$("bd-input"); if(!ta) return;
+  ta.addEventListener("keydown",e=>{
+    if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); runBraindump(); }
+  });
+  ta.addEventListener("input",()=>{ ta.style.height="auto";
+    ta.style.height=Math.min(ta.scrollHeight,160)+"px"; });
+})();
+
+/* ── Boot ───────────────────────────────────── */
+selectedDay=isoLocal(new Date());
+renderMonth();
+(async()=>{ const r=await call("/cal/sync/status"); if(r.ts) updateSyncTile(r.ts); })();
+</script>
+<script src="/ui/vera-panel-bridge.js"></script>
+</body>
+</html>

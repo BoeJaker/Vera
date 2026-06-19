@@ -9,7 +9,7 @@ Every field can be overridden via environment variable. The defaults assume a ho
 ## 1. Usage
 
 ```python
-from Vera.Orchestration.config import cfg
+from Vera.vera.config import cfg
 
 print(cfg.REDIS_URL)            # → "redis://localhost:6379"
 print(cfg.OLLAMA_GPU_URL)       # → "http://192.168.0.250:11435"
@@ -21,7 +21,7 @@ To override, set the env var before starting the orchestrator:
 export REDIS_URL=redis://prod-redis:6379
 export POSTGRES_URL=postgresql://prod:secret@prod-pg/llm
 export OLLAMA_GPU_URL=http://gpu-host:11435
-python -m Vera.Orchestration.capability_orchestration
+python -m Vera.vera.capability_orchestration
 ```
 
 ---
@@ -119,7 +119,7 @@ The three nodes get instance IDs `gpu-250`, `cpu-246`, `cpu-247` regardless of t
 To add more nodes at runtime:
 
 ```python
-from Vera.Orchestration.capability_orchestration import add_ollama_instance
+from Vera.vera.capability_orchestration import add_ollama_instance
 add_ollama_instance("gpu-300", "http://192.168.0.300:11435", has_gpu=True, label="GPU Node B")
 ```
 
@@ -198,7 +198,7 @@ Set to `"1"` to turn on activity recording. With it off (the default), the activ
 
 ```bash
 # Everything on one machine; defaults work after starting Redis/Postgres/Neo4j locally
-python -m Vera.Orchestration.capability_orchestration
+python -m Vera.vera.capability_orchestration
 ```
 
 ### Distributed cluster
@@ -209,7 +209,7 @@ On every host:
 export REDIS_URL=redis://llm.int:6379
 export POSTGRES_URL=postgresql://admin:admin@llm.int:5433/postgres
 export NEO4J_URI=bolt://llm.int:7687
-python -m Vera.Orchestration.capability_orchestration
+python -m Vera.vera.capability_orchestration
 ```
 
 On the GPU host, additionally:
@@ -245,7 +245,7 @@ class VeraConfig:
 Then in the module:
 
 ```python
-from Vera.Orchestration.config import cfg
+from Vera.vera.config import cfg
 timeout = cfg.MY_FEATURE_TIMEOUT
 ```
 

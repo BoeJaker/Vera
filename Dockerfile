@@ -26,10 +26,13 @@ FROM python:3.11-slim AS runtime
 
 WORKDIR /app
 
-# Runtime-only system libs (libpq for asyncpg)
+# Runtime-only system libs (libpq for asyncpg). pandoc + wkhtmltopdf power the
+# render.export document capabilities (DOCX/PDF/HTML/ODT/PPTX/… via vera/render).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libpq5 \
         curl \
+        pandoc \
+        wkhtmltopdf \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages from deps stage
@@ -37,11 +40,11 @@ COPY --from=deps /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.
 COPY --from=deps /usr/local/bin /usr/local/bin
 
 # Copy application code
-# Assumes project lives under Vera/Orchestration/ or flat in the build context
-COPY . /app/Vera/Orchestration/
+# Assumes project lives under Vera/vera/ or flat in the build context
+COPY . /app/Vera/vera/
 
 # Make the package importable
-RUN touch /app/Vera/__init__.py /app/Vera/Orchestration/__init__.py
+RUN touch /app/Vera/__init__.py /app/Vera/vera/__init__.py
 
 # Create project data directory
 RUN mkdir -p /data/projects
@@ -54,5 +57,5 @@ EXPOSE 8999
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD curl -sf http://localhost:8999/docs || exit 1
 
-CMD ["uvicorn", "Vera.Orchestration.capability_orchestration:APP", \
+CMD ["uvicorn", "Vera.vera.capability_orchestration:APP", \
      "--host", "0.0.0.0", "--port", "8999", "--workers", "1"]

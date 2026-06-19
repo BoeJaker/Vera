@@ -80,11 +80,11 @@ from typing import Any, Dict, List, Optional, Tuple
 log = logging.getLogger("vera.worldview_jepa")
 
 # ── Orchestrator integration ──────────────────────────────────────────────────
-import Vera.Orchestration.capability_orchestration as _orch
-from Vera.Orchestration.capability_orchestration import (
+import Vera.vera.capability_orchestration as _orch
+from Vera.vera.capability_orchestration import (
     capability, emit_event, now_iso, schedule, ollama_generate, register_ui,
 )
-from Vera.Orchestration.config import cfg
+from Vera.vera.config import cfg
 
 # ── Optional heavy imports (graceful degradation) ─────────────────────────────
 try:

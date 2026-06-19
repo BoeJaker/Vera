@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Vera Email</title>
+<style>
+:root {
+  --bg:#0d0f12; --bg1:#14181d; --bg2:#1a1f26; --bg3:#20262e;
+  --border:#232a33; --border2:#2e3742;
+  --fg:#d8dde3; --fg2:#9aa3ad; --dim:#5f6975;
+  --acc:#4a9eff; --acc2:#28c28a; --warn:#f5b341; --err:#ef5b5b; --purple:#a78bfa;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+* { box-sizing:border-box; }
+html,body{ margin:0;padding:0;background:var(--bg);color:var(--fg);
+  font:12px/1.5 -apple-system,BlinkMacSystemFont,"Inter",system-ui,sans-serif;height:100%;overflow:hidden; }
+#root{ display:flex;height:100vh;min-height:0; }
+
+#sidebar{ width:184px;flex-shrink:0;background:var(--bg1);border-right:1px solid var(--border);display:flex;flex-direction:column; }
+#side-head{ padding:14px 14px 10px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px; }
+#side-head .ico{ width:24px;height:24px;background:var(--bg2);border:1px solid var(--border2);border-radius:6px;
+  display:flex;align-items:center;justify-content:center;color:var(--acc);font-size:14px; }
+#side-head h1{ margin:0;font-size:12px;font-weight:600;letter-spacing:.04em; }
+#side-head .sub{ font-size:9px;color:var(--dim);letter-spacing:.12em;text-transform:uppercase;margin-top:1px; }
+#nav{ flex:1;padding:8px 6px; }
+.nav-btn{ display:flex;align-items:center;gap:9px;width:100%;padding:8px 10px;background:transparent;
+  border:1px solid transparent;color:var(--fg2);border-radius:5px;font:inherit;font-size:11px;cursor:pointer;text-align:left;margin-bottom:2px; }
+.nav-btn:hover{ background:var(--bg2);color:var(--fg); }
+.nav-btn.active{ background:var(--bg2);border-color:var(--border2);color:var(--acc); }
+.nav-btn .gl{ width:15px;text-align:center;opacity:.85; }
+#status-tile{ margin:6px;padding:10px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;font-size:10px; }
+#status-tile .lbl{ color:var(--dim);text-transform:uppercase;letter-spacing:.08em;font-size:9px;margin-bottom:5px; }
+#status-tile .row{ display:flex;align-items:center;gap:6px;margin-top:4px; }
+.dot{ width:7px;height:7px;border-radius:50%;background:var(--dim);flex-shrink:0; }
+.dot.on{ background:var(--acc2);box-shadow:0 0 6px rgba(40,194,138,.5); }
+.dot.off{ background:var(--err); }
+.dot.warn{ background:var(--warn); }
+
+#main{ flex:1;min-width:0;display:flex;flex-direction:column; }
+#topbar{ height:42px;flex-shrink:0;border-bottom:1px solid var(--border);background:var(--bg1);
+  padding:0 16px;display:flex;align-items:center;gap:12px; }
+#topbar h2{ margin:0;font-size:13px;font-weight:600; }
+#topbar .right{ margin-left:auto;display:flex;align-items:center;gap:8px; }
+#acct-sel{ width:auto;min-width:150px;padding:5px 8px;font-size:11px; }
+#content{ flex:1;overflow-y:auto;padding:18px 22px;min-height:0; }
+.section{ display:none; max-width:880px; }
+.section.active{ display:block; }
+.section h3{ margin:0 0 4px;font-size:13px;font-weight:600; }
+.sect-desc{ font-size:11px;color:var(--dim);margin-bottom:16px;line-height:1.6; }
+
+.btn{ background:var(--bg2);border:1px solid var(--border2);color:var(--fg);border-radius:5px;padding:7px 13px;
+  font:inherit;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:.12s; }
+.btn:hover{ background:var(--bg3);border-color:var(--acc); }
+.btn.primary{ background:var(--acc);border-color:var(--acc);color:#04121f;font-weight:600; }
+.btn.primary:hover{ filter:brightness(1.1); }
+.btn.ghost{ background:transparent; }
+.btn.sm{ padding:4px 9px;font-size:10px; }
+input,select,textarea{ width:100%;background:var(--bg1);border:1px solid var(--border);border-radius:5px;color:var(--fg);
+  padding:8px 10px;font:inherit;font-size:12px;outline:none;transition:border-color .12s; }
+input:focus,select:focus,textarea:focus{ border-color:var(--acc); }
+textarea{ font-family:var(--mono);resize:vertical;min-height:120px; }
+label.fl{ display:block;font-size:10px;color:var(--fg2);text-transform:uppercase;letter-spacing:.07em;margin-bottom:5px;font-weight:500; }
+.field{ margin-bottom:13px; }
+.hint{ font-size:10px;color:var(--dim);margin-top:4px;line-height:1.5; }
+.row2{ display:grid;grid-template-columns:1fr 1fr;gap:12px; }
+.muted{ color:var(--dim); }
+.toggle{ display:flex;align-items:center;gap:8px;font-size:11px;color:var(--fg2); }
+.toggle input{ width:auto; }
+
+.msg{ display:flex;gap:10px;padding:10px 12px;background:var(--bg1);border:1px solid var(--border);border-radius:6px;margin-bottom:6px;cursor:pointer; }
+.msg:hover{ border-color:var(--acc); }
+.msg.unseen{ border-left:3px solid var(--acc); }
+.msg .m-main{ flex:1;min-width:0; }
+.msg .m-from{ font-weight:600;font-size:12px; }
+.msg .m-subj{ font-size:11px;color:var(--fg2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.msg .m-date{ font-size:10px;color:var(--dim);white-space:nowrap; }
+.reader{ background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:16px; }
+.reader .r-subj{ font-size:15px;font-weight:600;margin-bottom:6px; }
+.reader .r-meta{ font-size:11px;color:var(--dim);margin-bottom:4px; }
+.reader .r-body{ font-family:var(--mono);font-size:11px;white-space:pre-wrap;margin-top:14px;border-top:1px solid var(--border);
+  padding-top:14px;line-height:1.6;max-height:50vh;overflow:auto; }
+
+.gate{ text-align:center;padding:46px 20px;border:1px dashed var(--border2);border-radius:10px;background:var(--bg1); }
+.gate .ic{ font-size:30px;opacity:.5; }
+.gate p{ color:var(--dim);max-width:440px;margin:10px auto 16px; }
+.empty{ text-align:center;color:var(--dim);padding:36px 0;font-size:12px; }
+.spin{ display:inline-block;width:12px;height:12px;border:2px solid var(--border2);border-top-color:var(--acc);border-radius:50%;animation:sp .7s linear infinite;vertical-align:middle; }
+@keyframes sp{ to{ transform:rotate(360deg); } }
+.toast{ position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--bg2);border:1px solid var(--border2);
+  border-radius:6px;padding:9px 16px;font-size:11px;z-index:80;opacity:0;transition:opacity .2s; }
+.toast.show{ opacity:1; }
+.banner{ background:rgba(245,179,65,.08);border:1px solid var(--warn);color:var(--warn);border-radius:6px;padding:8px 12px;font-size:11px;margin-bottom:14px; }
+.ev-type{ display:flex;align-items:center;gap:7px;font-size:11px;margin-bottom:5px;color:var(--fg2); }
+.ev-type input{ width:auto; }
+.linkcard{ background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:16px;font-size:11px;color:var(--fg2); }
+</style>
+</head>
+<body>
+<div id="root">
+  <aside id="sidebar">
+    <div id="side-head">
+      <div class="ico">✉</div>
+      <div><h1>Email</h1><div class="sub">IMAP / SMTP</div></div>
+    </div>
+    <nav id="nav">
+      <button class="nav-btn active" data-sec="inbox"><span class="gl">▤</span> Inbox</button>
+      <button class="nav-btn" data-sec="compose"><span class="gl">✎</span> Compose</button>
+      <button class="nav-btn" data-sec="notify"><span class="gl">🔔</span> Notifications</button>
+      <button class="nav-btn" data-sec="settings"><span class="gl">⚙</span> Settings</button>
+    </nav>
+    <div id="status-tile">
+      <div class="lbl">Connection</div>
+      <div class="row"><span class="dot" id="dot-imap"></span><span class="muted">IMAP (read)</span></div>
+      <div class="row"><span class="dot" id="dot-smtp"></span><span class="muted">SMTP (send)</span></div>
+      <button class="btn ghost sm" style="margin-top:8px;width:100%" onclick="testConn()">Test connection</button>
+    </div>
+  </aside>
+
+  <div id="main">
+    <div id="topbar">
+      <h2 id="page-title">Inbox</h2>
+      <div class="right">
+        <select id="acct-sel" onchange="onAcctChange()"></select>
+      </div>
+    </div>
+    <div id="content">
+
+      <!-- INBOX -->
+      <section class="section active" data-sec="inbox"><div id="inbox-wrap"></div></section>
+
+      <!-- COMPOSE -->
+      <section class="section" data-sec="compose">
+        <h3 id="compose-title">New message</h3>
+        <div class="sect-desc">Sending from the account selected top-right. Write your own, or let Vera's local model draft it.</div>
+        <input type="hidden" id="reply-uid">
+        <div class="field"><label class="fl">To</label><input id="c-to" placeholder="someone@example.com"></div>
+        <div class="row2">
+          <div class="field"><label class="fl">Cc</label><input id="c-cc"></div>
+          <div class="field"><label class="fl">Bcc</label><input id="c-bcc"></div>
+        </div>
+        <div class="field"><label class="fl">Subject</label><input id="c-subj"></div>
+        <div class="field"><label class="fl">Body</label><textarea id="c-body" rows="9"></textarea></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input id="c-ai" placeholder="AI: e.g. 'reply accepting, suggest Thursday'" style="flex:1;min-width:240px">
+          <button class="btn" id="ai-btn" onclick="aiDraft()">✦ AI draft</button>
+          <button class="btn primary" id="send-btn" onclick="sendMail()">Send</button>
+          <span id="compose-status" class="muted"></span>
+        </div>
+      </section>
+
+      <!-- NOTIFICATIONS -->
+      <section class="section" data-sec="notify">
+        <h3>Event notifications</h3>
+        <div class="sect-desc">Email yourself (via your default account) when selected Vera events fire.</div>
+        <label class="toggle" style="margin-bottom:12px"><input type="checkbox" id="n-enabled"> Enabled</label>
+        <div class="field"><label class="fl">Send to</label><input id="n-to" placeholder="you@example.com"></div>
+        <div class="field">
+          <label class="fl">Event types</label>
+          <div id="n-types"></div>
+          <div style="display:flex;gap:6px;margin-top:8px">
+            <input id="n-add" placeholder="add a type prefix, e.g. dream.completed">
+            <button class="btn sm" onclick="addType()">Add</button>
+          </div>
+        </div>
+        <button class="btn primary" onclick="saveNotify()">Save</button>
+        <span id="notify-status" class="muted" style="margin-left:10px"></span>
+      </section>
+
+      <!-- SETTINGS -->
+      <section class="section" data-sec="settings">
+        <h3>Email settings</h3>
+        <div class="sect-desc">Mail credentials live in the <b>Accounts</b> tab and are shared with Calendar. These are global email options.</div>
+        <div class="linkcard">👤 Add or edit mail accounts in the <b>Accounts</b> tab (top-level). Accounts with a mail block appear in the picker here.</div>
+        <div class="row2">
+          <div class="field">
+            <label class="fl">Default account</label>
+            <select id="s-default"></select>
+            <div class="hint">Used for sending when none is picked, and for notifications.</div>
+          </div>
+          <div class="field"><label class="fl">AI model (Ollama)</label><input id="s-model" placeholder="(cluster default)"></div>
+        </div>
+        <div class="field">
+          <label class="fl">Reading</label>
+          <label class="toggle"><input type="checkbox" id="s-reading"> Enable inbox reading (off by default)</label>
+          <div class="hint">When off, Vera never connects to read your mail — only sending works.</div>
+        </div>
+        <div class="field"><label class="fl">Signature</label><textarea id="s-sig" rows="3" style="min-height:60px"></textarea></div>
+        <button class="btn primary" onclick="saveSettings()">Save settings</button>
+        <span id="set-status" class="muted" style="margin-left:8px"></span>
+      </section>
+
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $=id=>document.getElementById(id);
+async function call(path,body){
+  const opt=body?{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}:{};
+  const r=await fetch(path,opt); try{return await r.json();}catch(e){return {error:"bad response"};}
+}
+function toast(m){ const t=$("toast"); t.textContent=m; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),2400); }
+function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function aq(){ return curAccount?("&account="+encodeURIComponent(curAccount)):""; }
+
+let accounts=[], curAccount="", settings={};
+
+document.querySelectorAll(".nav-btn").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll(".nav-btn").forEach(x=>x.classList.remove("active"));
+  document.querySelectorAll(".section").forEach(x=>x.classList.remove("active"));
+  b.classList.add("active");
+  const sec=b.dataset.sec;
+  document.querySelector('.section[data-sec="'+sec+'"]').classList.add("active");
+  $("page-title").textContent=b.textContent.trim();
+  $("acct-sel").style.display=(sec==="inbox"||sec==="compose")?"":"none";
+  if(sec==="inbox") loadInbox();
+  if(sec==="notify") loadNotify();
+  if(sec==="settings") loadSettings();
+});
+
+async function boot(){
+  const r=await call("/mail/accounts"); accounts=r.accounts||[];
+  curAccount=r.default || (accounts[0]&&accounts[0].id) || "";
+  const sel=$("acct-sel");
+  sel.innerHTML=accounts.map(a=>'<option value="'+a.id+'">'+esc(a.label||a.email||a.id)+'</option>').join("")
+    || '<option value="">no accounts</option>';
+  sel.value=curAccount;
+  loadInbox();
+}
+function onAcctChange(){ curAccount=$("acct-sel").value; loadInbox(); }
+
+/* ── Inbox (gated) ───────────────────────────── */
+async function loadInbox(){
+  const wrap=$("inbox-wrap");
+  if(!accounts.length){
+    wrap.innerHTML='<div class="gate"><div class="ic">👤</div><p>No mail account yet. Add one in the <b>Accounts</b> tab (enable its Mail block with an app password), then come back.</p></div>';
+    return;
+  }
+  wrap.innerHTML='<div class="muted"><span class="spin"></span> loading…</div>';
+  const r=await call("/mail/inbox?limit=30"+aq());
+  if(r.disabled){
+    wrap.innerHTML='<div class="gate"><div class="ic">🔒</div>'+
+      '<p>Inbox reading is turned <b>off</b>. Vera will not connect to read your mail until you enable it.</p>'+
+      '<button class="btn primary" onclick="gotoSettings()">Enable reading in Settings</button></div>';
+    return;
+  }
+  if(r.error){ wrap.innerHTML='<div class="banner">'+esc(r.error)+'</div>'; return; }
+  wrap.innerHTML='<div style="display:flex;gap:8px;margin-bottom:12px">'+
+    '<input id="srch" placeholder="Search from / subject / text…" onkeydown="if(event.key===\'Enter\')doSearch()">'+
+    '<button class="btn" onclick="doSearch()">Search</button>'+
+    '<button class="btn ghost" onclick="loadInbox()">↻</button></div><div id="msg-list"></div>';
+  renderMsgs(r.messages||[]);
+}
+function renderMsgs(msgs){
+  const list=$("msg-list");
+  if(!msgs.length){ list.innerHTML='<div class="empty">No messages.</div>'; return; }
+  list.innerHTML=msgs.map(m=>'<div class="msg '+(m.seen?'':'unseen')+'" onclick="openMsg(\''+esc(m.uid)+'\')">'+
+    '<div class="m-main"><div class="m-from">'+esc(m.from)+'</div><div class="m-subj">'+esc(m.subject)+'</div></div>'+
+    '<div class="m-date">'+esc((m.date||"").slice(0,22))+'</div></div>').join("");
+}
+async function doSearch(){
+  const q=$("srch").value.trim(); const list=$("msg-list");
+  list.innerHTML='<div class="muted"><span class="spin"></span></div>';
+  const r=await call("/mail/search?q="+encodeURIComponent(q)+"&limit=30"+aq());
+  if(r.error){ list.innerHTML='<div class="banner">'+esc(r.error)+'</div>'; return; }
+  renderMsgs(r.messages||[]);
+}
+async function openMsg(uid){
+  const wrap=$("inbox-wrap");
+  wrap.innerHTML='<div class="muted"><span class="spin"></span> loading…</div>';
+  const m=await call("/mail/message?uid="+encodeURIComponent(uid)+aq());
+  if(m.error){ wrap.innerHTML='<div class="banner">'+esc(m.error)+'</div>'; return; }
+  wrap.innerHTML='<button class="btn ghost sm" onclick="loadInbox()">‹ Back</button>'+
+    '<div class="reader" style="margin-top:10px"><div class="r-subj">'+esc(m.subject)+'</div>'+
+    '<div class="r-meta">From: '+esc(m.from)+'</div><div class="r-meta">To: '+esc(m.to)+'</div>'+
+    '<div class="r-meta">'+esc(m.date)+'</div>'+
+    (m.attachments&&m.attachments.length?'<div class="r-meta">📎 '+m.attachments.map(a=>esc(a.filename)).join(", ")+'</div>':'')+
+    '<div style="margin-top:12px;display:flex;gap:8px">'+
+      '<button class="btn primary sm" onclick="startReply(\''+esc(uid)+'\')">Reply</button>'+
+      '<button class="btn sm" onclick="summarise(\''+esc(uid)+'\')">✦ Summarise</button></div>'+
+    '<div class="r-body">'+esc(m.body)+'</div></div>';
+}
+function gotoSettings(){ document.querySelector('.nav-btn[data-sec=settings]').click(); }
+
+/* ── Compose / reply / AI ────────────────────── */
+function startReply(uid){
+  $("reply-uid").value=uid; document.querySelector('.nav-btn[data-sec=compose]').click();
+  $("compose-title").textContent="Reply"; $("c-ai").value="write a reply";
+  toast("Reply mode — threads to the original");
+}
+async function aiDraft(){
+  const instr=$("c-ai").value.trim();
+  if(!instr){ toast("Describe what to write"); return; }
+  $("ai-btn").disabled=true; $("compose-status").innerHTML='<span class="spin"></span> drafting…';
+  const body={instruction:instr, account:curAccount};
+  if($("reply-uid").value) body.uid=$("reply-uid").value;
+  const r=await call("/mail/draft",body);
+  $("ai-btn").disabled=false; $("compose-status").textContent="";
+  if(r.error){ toast(r.error); return; }
+  if(r.subject) $("c-subj").value=r.subject;
+  if(r.body) $("c-body").value=r.body;
+  toast("Draft ready — review before sending");
+}
+async function summarise(uid){
+  toast("Summarising…");
+  const r=await call("/mail/draft",{instruction:"summarise",mode:"summarise",uid,account:curAccount});
+  if(r.error){ toast(r.error); return; }
+  alert(r.body||"(no summary)");
+}
+async function sendMail(){
+  const to=$("c-to").value.trim();
+  const replyUid=$("reply-uid").value;
+  $("send-btn").disabled=true; $("compose-status").innerHTML='<span class="spin"></span> sending…';
+  let r;
+  if(replyUid){ r=await call("/mail/reply",{uid:replyUid, body:$("c-body").value, account:curAccount}); }
+  else {
+    if(!to){ toast("To is required"); $("send-btn").disabled=false; $("compose-status").textContent=""; return; }
+    r=await call("/mail/send",{to, subject:$("c-subj").value, body:$("c-body").value, cc:$("c-cc").value, bcc:$("c-bcc").value, account:curAccount});
+  }
+  $("send-btn").disabled=false; $("compose-status").textContent="";
+  if(r.error){ toast("Send failed: "+r.error); return; }
+  toast("Sent ✓");
+  ["c-to","c-cc","c-bcc","c-subj","c-body","c-ai"].forEach(id=>$(id).value=""); $("reply-uid").value=""; $("compose-title").textContent="New message";
+}
+
+/* ── Notifications ───────────────────────────── */
+let notifyTypes=[];
+async function loadNotify(){
+  const r=await call("/mail/events"); const e=r.events||{};
+  $("n-enabled").checked=!!e.enabled; $("n-to").value=e.to_addr||"";
+  notifyTypes=e.types||[]; renderTypes();
+}
+function renderTypes(){
+  $("n-types").innerHTML=notifyTypes.map((t,i)=>'<div class="ev-type"><input type="checkbox" checked disabled> '+esc(t)+
+    ' <button class="btn ghost sm" style="margin-left:auto" onclick="rmType('+i+')">✕</button></div>').join("")
+    || '<div class="muted" style="font-size:11px">No types — add one below.</div>';
+}
+function addType(){ const v=$("n-add").value.trim(); if(!v)return; notifyTypes.push(v); $("n-add").value=""; renderTypes(); }
+function rmType(i){ notifyTypes.splice(i,1); renderTypes(); }
+async function saveNotify(){
+  const r=await call("/mail/events",{enabled:$("n-enabled").checked, to_addr:$("n-to").value, types:notifyTypes});
+  $("notify-status").textContent=r.ok?"✓ saved":"error"; setTimeout(()=>$("notify-status").textContent="",2000);
+}
+
+/* ── Settings ────────────────────────────────── */
+async function loadSettings(){
+  const c=await call("/mail/config"); settings=c;
+  $("s-model").value=c.model||""; $("s-reading").checked=!!c.reading_enabled; $("s-sig").value=c.signature||"";
+  const accts=c.accounts||[];
+  $("s-default").innerHTML='<option value="">— first available —</option>'+
+    accts.map(a=>'<option value="'+a.id+'">'+esc(a.label||a.email||a.id)+'</option>').join("");
+  $("s-default").value=c.default_account||"";
+}
+async function saveSettings(){
+  const r=await call("/mail/config/set",{ model:$("s-model").value, reading_enabled:$("s-reading").checked,
+    signature:$("s-sig").value, default_account:$("s-default").value });
+  if(r.error){ toast(r.error); return; }
+  $("set-status").textContent="✓ saved"; setTimeout(()=>$("set-status").textContent="",2000);
+  boot();
+}
+async function testConn(){
+  if(!curAccount){ toast("No account selected"); return; }
+  $("dot-imap").className="dot warn"; $("dot-smtp").className="dot warn";
+  const r=await call("/mail/test",{account:curAccount});
+  if(r.error){ toast(r.error); $("dot-imap").className="dot off"; $("dot-smtp").className="dot off"; return; }
+  $("dot-imap").className="dot "+(r.imap&&r.imap.ok?"on":"off");
+  $("dot-smtp").className="dot "+(r.smtp&&r.smtp.ok?"on":"off");
+  toast("IMAP "+(r.imap&&r.imap.ok?"✓":"✕")+"  ·  SMTP "+(r.smtp&&r.smtp.ok?"✓":"✕")+
+    (r.imap&&r.imap.error?" — "+r.imap.error:"")+(r.smtp&&r.smtp.error?" — "+r.smtp.error:""));
+}
+
+boot();
+</script>
+<script src="/ui/vera-panel-bridge.js"></script>
+</body>
+</html>

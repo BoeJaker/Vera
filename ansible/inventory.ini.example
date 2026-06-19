@@ -1,0 +1,14 @@
+# Vera Ansible inventory — copy to inventory.ini and edit.
+#
+# Two ways to deploy (choose with --tags):
+#   ansible-playbook -i inventory.ini playbook.yml --tags docker
+#   ansible-playbook -i inventory.ini playbook.yml --tags native
+
+[vera]
+vera-host ansible_host=192.168.0.10 ansible_user=ubuntu
+
+[vera:vars]
+# Where to place the repo on the target host
+vera_dest=/opt/vera
+# Master Fernet key (generate with: make secret). Leave blank to auto-generate.
+vera_secret_key=

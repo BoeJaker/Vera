@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Vera Accounts</title>
+<style>
+:root {
+  --bg:#0d0f12; --bg1:#14181d; --bg2:#1a1f26; --bg3:#20262e;
+  --border:#232a33; --border2:#2e3742;
+  --fg:#d8dde3; --fg2:#9aa3ad; --dim:#5f6975;
+  --acc:#4a9eff; --acc2:#28c28a; --warn:#f5b341; --err:#ef5b5b; --purple:#a78bfa;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+* { box-sizing:border-box; }
+html,body{ margin:0;padding:0;background:var(--bg);color:var(--fg);
+  font:12px/1.5 -apple-system,BlinkMacSystemFont,"Inter",system-ui,sans-serif;height:100%;overflow:hidden; }
+#root{ display:flex;flex-direction:column;height:100vh;min-height:0; }
+#topbar{ height:46px;flex-shrink:0;border-bottom:1px solid var(--border);background:var(--bg1);
+  padding:0 18px;display:flex;align-items:center;gap:10px; }
+#topbar .ico{ width:24px;height:24px;background:var(--bg2);border:1px solid var(--border2);
+  border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--acc);font-size:14px; }
+#topbar h1{ margin:0;font-size:13px;font-weight:600; }
+#topbar .sub{ font-size:10px;color:var(--dim); }
+#topbar .right{ margin-left:auto; }
+#content{ flex:1;overflow-y:auto;padding:20px 22px;min-height:0; }
+.wrap{ max-width:760px; }
+.sect-desc{ font-size:11px;color:var(--dim);margin:0 0 18px;line-height:1.6; }
+
+.btn{ background:var(--bg2);border:1px solid var(--border2);color:var(--fg);border-radius:5px;
+  padding:7px 13px;font:inherit;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:.12s; }
+.btn:hover{ background:var(--bg3);border-color:var(--acc); }
+.btn.primary{ background:var(--acc);border-color:var(--acc);color:#04121f;font-weight:600; }
+.btn.primary:hover{ filter:brightness(1.1); }
+.btn.ghost{ background:transparent; }
+.btn.sm{ padding:4px 9px;font-size:10px; }
+.btn.danger:hover{ border-color:var(--err);color:var(--err); }
+input,select{ width:100%;background:var(--bg1);border:1px solid var(--border);border-radius:5px;
+  color:var(--fg);padding:8px 10px;font:inherit;font-size:12px;outline:none;transition:border-color .12s; }
+input:focus,select:focus{ border-color:var(--acc); }
+label.fl{ display:block;font-size:10px;color:var(--fg2);text-transform:uppercase;letter-spacing:.07em;margin-bottom:5px;font-weight:500; }
+.field{ margin-bottom:13px; }
+.hint{ font-size:10px;color:var(--dim);margin-top:4px;line-height:1.5; }
+.row2{ display:grid;grid-template-columns:1fr 1fr;gap:12px; }
+.row3{ display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px; }
+.toggle{ display:flex;align-items:center;gap:8px;font-size:11px;color:var(--fg2); }
+.toggle input{ width:auto; }
+.muted{ color:var(--dim); }
+
+.acct{ display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--bg1);
+  border:1px solid var(--border);border-radius:7px;margin-bottom:8px; }
+.acct .av{ width:30px;height:30px;border-radius:7px;display:flex;align-items:center;justify-content:center;
+  font-weight:700;color:#04121f;flex-shrink:0; }
+.acct .meta{ flex:1;min-width:0; }
+.acct .t{ font-weight:600;font-size:12px; }
+.acct .s{ font-size:10px;color:var(--dim);margin-top:2px; }
+.badge{ display:inline-block;font-size:9px;padding:1px 7px;border-radius:10px;background:var(--bg2);
+  border:1px solid var(--border2);color:var(--fg2);margin-left:6px; }
+.badge.on{ color:var(--acc2);border-color:var(--acc2); }
+.empty{ text-align:center;color:var(--dim);padding:46px 0;font-size:12px; }
+
+.modal-bg{ position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:50; }
+.modal-bg.show{ display:flex; }
+.modal{ background:var(--bg1);border:1px solid var(--border2);border-radius:10px;width:560px;max-width:94vw;
+  max-height:90vh;overflow:auto;padding:20px 22px; }
+.modal h3{ margin:0 0 6px;font-size:14px; }
+.block{ border:1px solid var(--border);border-radius:8px;padding:14px;margin:14px 0;background:var(--bg); }
+.block h4{ margin:0 0 10px;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--fg2); }
+.modal-foot{ display:flex;gap:8px;justify-content:flex-end;margin-top:16px;align-items:center; }
+.spin{ display:inline-block;width:12px;height:12px;border:2px solid var(--border2);border-top-color:var(--acc);
+  border-radius:50%;animation:sp .7s linear infinite;vertical-align:middle; }
+@keyframes sp{ to{ transform:rotate(360deg); } }
+.toast{ position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--bg2);border:1px solid var(--border2);
+  border-radius:6px;padding:9px 16px;font-size:11px;z-index:80;opacity:0;transition:opacity .2s;max-width:80vw; }
+.toast.show{ opacity:1; }
+</style>
+</head>
+<body>
+<div id="root">
+  <div id="topbar">
+    <div class="ico">👤</div>
+    <div><h1>Accounts</h1><div class="sub">Shared identities for Calendar &amp; Email</div></div>
+    <div class="right"><button class="btn primary" onclick="openEditor()">+ Add account</button></div>
+  </div>
+  <div id="content">
+    <div class="wrap">
+      <p class="sect-desc">Set up an identity once — its mail credentials power the Email tab and its
+        calendar credentials power Calendar sources. Use an <b>app password</b> (Gmail needs 2-Step
+        Verification on) — no API setup. Secrets are encrypted at rest and never shown again.</p>
+      <div id="list"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Editor -->
+<div class="modal-bg" id="ed">
+  <div class="modal">
+    <h3 id="ed-title">Add account</h3>
+    <div class="muted" style="font-size:10px;margin-bottom:6px">Identity</div>
+    <input type="hidden" id="f-id">
+    <div class="row2">
+      <div class="field"><label class="fl">Label</label><input id="f-label" placeholder="Personal / Work"></div>
+      <div class="field"><label class="fl">Email address</label><input id="f-email" placeholder="you@example.com"></div>
+    </div>
+    <div class="field">
+      <label class="fl">Provider preset</label>
+      <select id="f-preset" onchange="applyPreset()">
+        <option value="">— custom —</option>
+        <option value="gmail">Gmail</option>
+        <option value="outlook">Outlook / Office 365</option>
+        <option value="fastmail">Fastmail</option>
+        <option value="yahoo">Yahoo</option>
+      </select>
+    </div>
+
+    <div class="block">
+      <h4><label class="toggle"><input type="checkbox" id="f-mailen"> Mail (IMAP / SMTP)</label></h4>
+      <div class="row2">
+        <div class="field"><label class="fl">Username</label><input id="f-muser" placeholder="(defaults to email)"></div>
+        <div class="field"><label class="fl">App password</label><input id="f-pass" type="password" placeholder="(kept if blank)"></div>
+      </div>
+      <div class="row3">
+        <div class="field"><label class="fl">IMAP host</label><input id="f-imaph"></div>
+        <div class="field"><label class="fl">IMAP port</label><input id="f-imapp" type="number" value="993"></div>
+        <div class="field"><label class="fl">&nbsp;</label><label class="toggle"><input type="checkbox" id="f-imapssl" checked> SSL</label></div>
+      </div>
+      <div class="row3">
+        <div class="field"><label class="fl">SMTP host</label><input id="f-smtph"></div>
+        <div class="field"><label class="fl">SMTP port</label><input id="f-smtpp" type="number" value="587"></div>
+        <div class="field"><label class="fl">&nbsp;</label><label class="toggle"><input type="checkbox" id="f-smtptls" checked> STARTTLS</label></div>
+      </div>
+    </div>
+
+    <div class="block">
+      <h4>Calendar (CalDAV / ICS)</h4>
+      <div class="field"><label class="fl">ICS URL <span class="muted" style="text-transform:none">(read-only feed, e.g. Google secret iCal address)</span></label><input id="f-ics" placeholder="https://…/basic.ics"></div>
+      <div id="ics-hint" class="hint"></div>
+      <div class="field"><label class="fl">CalDAV URL</label><input id="f-cdurl" placeholder="https://host/dav/calendars/user/cal/"></div>
+      <div class="row2">
+        <div class="field"><label class="fl">CalDAV username</label><input id="f-cduser"></div>
+        <div class="field"><label class="fl">CalDAV password</label><input id="f-cdpass" type="password" placeholder="(kept if blank)"></div>
+      </div>
+    </div>
+
+    <div class="modal-foot">
+      <button class="btn ghost" id="ed-test" onclick="testAcct()">Test</button>
+      <span id="ed-status" class="muted" style="margin-right:auto"></span>
+      <button class="btn ghost" onclick="close_('ed')">Cancel</button>
+      <button class="btn primary" onclick="saveAcct()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $=id=>document.getElementById(id);
+async function call(path,body){
+  const opt=body?{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}:{};
+  const r=await fetch(path,opt); try{return await r.json();}catch(e){return {error:"bad response"};}
+}
+function toast(m){ const t=$("toast"); t.textContent=m; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),2600); }
+function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function close_(id){ $(id).classList.remove("show"); }
+
+let presets={}, accounts=[];
+async function load(){
+  const r=await call("/accounts/list"); accounts=r.accounts||[]; presets=r.presets||{};
+  const list=$("list");
+  if(!accounts.length){ list.innerHTML='<div class="empty">No accounts yet. Click “+ Add account”.</div>'; return; }
+  list.innerHTML=accounts.map(a=>{
+    const init=(a.label||a.email||"?").trim().charAt(0).toUpperCase();
+    const mail=a.mail_enabled&&a.has_app_password?'<span class="badge on">mail</span>':(a.imap_host?'<span class="badge">mail off</span>':'');
+    const cal=(a.has_caldav_password||a.caldav_url||a.ics_url)?'<span class="badge on">calendar</span>':'';
+    return '<div class="acct"><div class="av" style="background:'+(a.color||'#4a9eff')+'">'+esc(init)+'</div>'+
+      '<div class="meta"><div class="t">'+esc(a.label||a.email)+mail+cal+'</div>'+
+      '<div class="s">'+esc(a.email||'')+'</div></div>'+
+      '<button class="btn ghost sm" onclick="testById(\''+a.id+'\')">Test</button>'+
+      '<button class="btn ghost sm" onclick="edit(\''+a.id+'\')">✎</button>'+
+      '<button class="btn ghost sm danger" onclick="del(\''+a.id+'\',\''+esc(a.label||a.email)+'\')">✕</button></div>';
+  }).join("");
+}
+function applyPreset(){
+  const p=presets[$("f-preset").value]; if(!p) return;
+  if(p.imap_host) $("f-imaph").value=p.imap_host; if(p.imap_port) $("f-imapp").value=p.imap_port;
+  if(p.smtp_host) $("f-smtph").value=p.smtp_host; if(p.smtp_port) $("f-smtpp").value=p.smtp_port;
+  if(p.smtp_tls!==undefined) $("f-smtptls").checked=p.smtp_tls;
+  $("f-mailen").checked=true;
+  $("ics-hint").textContent=p.ics_hint?("ICS: "+p.ics_hint):"";
+  if(p.caldav_hint && !$("f-cdurl").value) $("f-cdurl").placeholder=p.caldav_hint;
+}
+function openEditor(a){
+  a=a||{}; $("ed").classList.add("show"); $("ed-status").textContent="";
+  $("ed-title").textContent=a.id?"Edit account":"Add account";
+  $("f-id").value=a.id||""; $("f-label").value=a.label||""; $("f-email").value=a.email||"";
+  $("f-preset").value="";
+  $("f-mailen").checked=!!a.mail_enabled; $("f-muser").value=a.mail_username||"";
+  $("f-pass").value=""; $("f-pass").placeholder=a.has_app_password?"•••••••• (saved — blank keeps it)":"app password";
+  $("f-imaph").value=a.imap_host||""; $("f-imapp").value=a.imap_port||993; $("f-imapssl").checked=a.imap_ssl!==false;
+  $("f-smtph").value=a.smtp_host||""; $("f-smtpp").value=a.smtp_port||587; $("f-smtptls").checked=a.smtp_tls!==false;
+  $("f-ics").value=a.ics_url||""; $("ics-hint").textContent="";
+  $("f-cdurl").value=a.caldav_url||""; $("f-cduser").value=a.caldav_username||"";
+  $("f-cdpass").value=""; $("f-cdpass").placeholder=a.has_caldav_password?"•••••••• (saved — blank keeps it)":"app password";
+}
+function edit(id){ const a=accounts.find(x=>x.id===id); if(a) openEditor(a); }
+function collect(){
+  const b={ id:$("f-id").value, label:$("f-label").value, email:$("f-email").value,
+    mail_enabled:$("f-mailen").checked, mail_username:$("f-muser").value,
+    imap_host:$("f-imaph").value, imap_port:+$("f-imapp").value, imap_ssl:$("f-imapssl").checked,
+    smtp_host:$("f-smtph").value, smtp_port:+$("f-smtpp").value, smtp_tls:$("f-smtptls").checked,
+    ics_url:$("f-ics").value, caldav_url:$("f-cdurl").value, caldav_username:$("f-cduser").value };
+  if($("f-pass").value) b.app_password=$("f-pass").value;
+  if($("f-cdpass").value) b.caldav_password=$("f-cdpass").value;
+  return b;
+}
+async function saveAcct(){
+  const r=await call("/accounts/upsert",collect());
+  if(r.error){ toast(r.error); return; }
+  // keep editor open with the saved id so a Test right after works
+  $("f-id").value=r.account.id; toast("Saved"); close_("ed"); load();
+}
+async function testAcct(){
+  // Save first (so creds exist server-side), then test.
+  $("ed-test").disabled=true; $("ed-status").innerHTML='<span class="spin"></span> saving + testing…';
+  const r=await call("/accounts/upsert",collect());
+  if(r.error){ $("ed-test").disabled=false; $("ed-status").textContent=r.error; return; }
+  $("f-id").value=r.account.id;
+  const t=await call("/accounts/test",{id:r.account.id});
+  $("ed-test").disabled=false;
+  $("ed-status").innerHTML=fmtTest(t);
+  load();
+}
+async function testById(id){
+  toast("Testing…");
+  const t=await call("/accounts/test",{id});
+  toast(fmtTest(t).replace(/<[^>]+>/g,""));
+}
+function fmtTest(t){
+  if(t.error) return '<span style="color:var(--err)">'+esc(t.error)+'</span>';
+  let p=[];
+  if(t.mail) p.push("IMAP "+(t.mail.imap&&t.mail.imap.ok?"✓":"✕")+" · SMTP "+(t.mail.smtp&&t.mail.smtp.ok?"✓":"✕"));
+  if(t.caldav) p.push("CalDAV "+(t.caldav.ok?"✓":"✕"));
+  const errs=[t.mail&&t.mail.imap&&t.mail.imap.error, t.mail&&t.mail.smtp&&t.mail.smtp.error, t.caldav&&t.caldav.error].filter(Boolean);
+  return esc(p.join("  ·  "))+(errs.length?' <span style="color:var(--err)">— '+esc(errs[0])+'</span>':'');
+}
+async function del(id,label){
+  if(!confirm("Delete account “"+label+"”? Calendar sources / Email using it will need updating.")) return;
+  await call("/accounts/delete",{id}); toast("Deleted"); load();
+}
+load();
+</script>
+<script src="/ui/vera-panel-bridge.js"></script>
+</body>
+</html>
