@@ -66,6 +66,11 @@ def _redis(): return _orch.REDIS
 # Proxy state
 PROXY_QUEUE: asyncio.Queue = asyncio.Queue(maxsize=50)
 _proxy_active = 0
+# Runtime soft-pause for the Ollama mimic proxy. When True, the proxy returns 503
+# without forwarding — lets the operator stop accepting mimic traffic from the
+# control page without restarting Vera (the routes stay mounted). PROXY_MAX_-
+# CONCURRENCY is likewise mutable at runtime via ollama.proxy.config.
+_proxy_paused = False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -86,6 +91,23 @@ async def _fetch_instance_detail(iid: str, inst: dict):
                 inst["version"] = r.json().get("version", "")
     except Exception:
         inst.setdefault("version", "")
+
+    # Detect the model's true context window (POST /api/show) so the cluster
+    # panel shows the real number instead of a hand-set default. Detection is
+    # cached in the orchestrator helper; we only fill num_ctx when it's unset.
+    if not inst.get("num_ctx"):
+        model = next(iter(inst.get("models") or []), "")
+        if model:
+            try:
+                async with httpx.AsyncClient(timeout=6) as c:
+                    r = await c.post(f"{url}/api/show", json={"model": model})
+                    if r.status_code == 200:
+                        ctx = _orch._extract_ctx_from_show(
+                            r.json().get("model_info", {}) or {})
+                        if ctx:
+                            inst["num_ctx"] = ctx
+            except Exception:
+                pass
 
     # /api/ps — running models + VRAM (Ollama ≥ 0.3)
     try:
@@ -477,6 +499,11 @@ async def _proxy_handler(path: str, req: Request):
             "error": "Proxy inactive — set LOCAL_OLLAMA_INSTANCE env var"
         }, status_code=503)
 
+    if _proxy_paused:
+        return JSONResponse({
+            "error": "Ollama mimic proxy is paused"
+        }, status_code=503)
+
     try:
         body = await req.json()
     except Exception:
@@ -553,6 +580,108 @@ if LOCAL_OLLAMA_ID:
             return JSONResponse(r.json(), status_code=r.status_code)
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=502)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OLLAMA MIMIC PROXY — monitor + control
+# ─────────────────────────────────────────────────────────────────────────────
+# The mimic exposes an Ollama-compatible API at /ollama/* (this is what lets Vera
+# "mimic Ollama"); every request is logged to the request log + emitted as an
+# ollama.request event so prompts/jobs submitted this way are observable. These
+# capabilities back the "Mimic" page in the Workers & Ollama panel.
+#
+# NOTE on paths: when the mimic is active, the catch-all `/ollama/{path:path}`
+# proxy routes (registered at import) shadow any exact `/ollama/...` route mounted
+# later by _mount_all_http_routes. So the monitor/control endpoints deliberately
+# live under `/cluster/mimic/*` (no catch-all there) — they keep working whether
+# or not the mimic is forwarding traffic. The cap names mirror the paths so the
+# auto-POST fallback doesn't also mount a shadowed `/ollama/...` alias.
+
+@capability(
+    "cluster.mimic.status", memory="off", silent=True,
+    http_method="GET", http_path="/cluster/mimic/status", http_tags=["cluster"],
+    description="Live status of the Ollama mimic proxy: whether it's mounted, "
+                "paused, the local instance it targets, queue depth, active "
+                "in-flight requests and the concurrency cap. Output: {mounted, "
+                "paused, local_instance, active, queue_depth, queue_max, "
+                "max_concurrency, queue_timeout}.")
+async def cap_mimic_status(trace_id=None) -> Dict:
+    return {
+        "mounted":         bool(LOCAL_OLLAMA_ID),
+        "paused":          _proxy_paused,
+        "local_instance":  LOCAL_OLLAMA_ID,
+        "active":          _proxy_active,
+        "queue_depth":     PROXY_QUEUE.qsize(),
+        "queue_max":       PROXY_QUEUE.maxsize,
+        "max_concurrency": PROXY_MAX_CONCURRENCY,
+        "queue_timeout":   PROXY_QUEUE_TIMEOUT,
+    }
+
+
+@capability(
+    "cluster.mimic.config", memory="off",
+    http_method="POST", http_path="/cluster/mimic/config", http_tags=["cluster"],
+    description="Control the Ollama mimic proxy at runtime. Inputs: paused (bool "
+                "— stop/resume forwarding without restart), max_concurrency (int "
+                ">=1, simultaneous forwards before queuing). Omitted fields are "
+                "left unchanged. Output: the same shape as cluster.mimic.status.")
+async def cap_mimic_config(paused: Optional[bool] = None,
+                           max_concurrency: Optional[int] = None,
+                           trace_id=None) -> Dict:
+    global _proxy_paused, PROXY_MAX_CONCURRENCY
+    if paused is not None:
+        _proxy_paused = bool(paused)
+    if max_concurrency is not None:
+        try:
+            PROXY_MAX_CONCURRENCY = max(1, int(max_concurrency))
+        except (TypeError, ValueError):
+            return {"error": "max_concurrency must be an integer >= 1"}
+    await emit_event({"type": "ollama.proxy.config",
+                      "paused": _proxy_paused,
+                      "max_concurrency": PROXY_MAX_CONCURRENCY})
+    return await cap_mimic_status()
+
+
+@capability(
+    "cluster.mimic.requests", memory="off", silent=True,
+    http_method="GET", http_path="/cluster/mimic/requests", http_tags=["cluster"],
+    description="Recent prompts/jobs submitted through the mimic (newest first) "
+                "from the in-memory Ollama request log. Query: limit (int, default "
+                "100). Output: {entries:[...], total}. A non-shadowed mirror of "
+                "/ollama/request_log that keeps working while the mimic forwards.")
+async def cap_mimic_requests(limit: int = 100, trace_id=None) -> Dict:
+    rl = getattr(_orch, "_OLLAMA_REQUEST_LOG", [])
+    entries = list(reversed(rl))
+    return {"entries": entries[:max(1, limit)], "total": len(rl)}
+
+
+@capability(
+    "cluster.mimic.requests.clear", memory="off",
+    http_method="POST", http_path="/cluster/mimic/requests/clear", http_tags=["cluster"],
+    description="Clear the in-memory Ollama request log (prompts/jobs submitted "
+                "through the mimic + ollama_generate). Output: {ok, cleared}.")
+async def cap_mimic_requests_clear(trace_id=None) -> Dict:
+    n = len(getattr(_orch, "_OLLAMA_REQUEST_LOG", []))
+    try:
+        _orch._OLLAMA_REQUEST_LOG.clear()
+    except Exception as e:
+        return {"error": str(e)}
+    return {"ok": True, "cleared": n}
+
+
+_MIMIC_PANEL_PATH = os.path.join(os.path.dirname(__file__), "ollama_mimic_panel.html")
+
+
+@APP.get("/cluster/mimic/panel", include_in_schema=False)
+async def _ollama_mimic_panel():
+    """Standalone monitor+control page for the Ollama mimic proxy (iframed by the
+    Workers & Ollama panel's 'Mimic' pane)."""
+    from fastapi.responses import HTMLResponse
+    if os.path.exists(_MIMIC_PANEL_PATH):
+        with open(_MIMIC_PANEL_PATH, encoding="utf-8") as fh:
+            return HTMLResponse(fh.read())
+    return HTMLResponse("<p style='color:#c96b6b'>ollama_mimic_panel.html not found</p>",
+                        status_code=404)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

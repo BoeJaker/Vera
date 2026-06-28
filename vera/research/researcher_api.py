@@ -49,6 +49,11 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+# Single source of truth for the internal domain. Imported under an alias because
+# `cfg` is used throughout this module as a local name for per-source config dicts.
+from Vera.vera.config import cfg as _vera_cfg
+_BACKEND_HOST = _vera_cfg.BACKEND_HOST
+
 # Persistence through the data fabric (replaces research_db.py)
 try:
     from Vera.vera.research.research_fabric import DB
@@ -117,6 +122,8 @@ class SourceType(str, Enum):
     CUSTOM      = "custom"
     FABRIC      = "fabric"        # Vera data fabric (SQLite + FAISS + Chroma + PG)
     MEMORY      = "memory"        # Vera memory graph (session history, cap traces)
+    DISCOVERY   = "discovery"     # Vera discovery crawl store (fabric_pages)
+    WORLDVIEW   = "worldview"     # Vera worldview latent space (JEPA)
 
 class JobStatus(str, Enum):
     QUEUED    = "queued"
@@ -326,19 +333,21 @@ DEFAULT_INSTANCES: list[OllamaInstance] = [
 ]
 
 DEFAULT_SOURCES: list[DataSource] = [
-    DataSource("searxng",     "SearXNG",         SourceType.WEB_SEARCH,  True,  {"host":"http://llm.int:8888"}),
+    DataSource("searxng",     "SearXNG",         SourceType.WEB_SEARCH,  True,  {"host":f"http://{_BACKEND_HOST}:8888"}),
     DataSource("brave",       "Brave Search",    SourceType.WEB_SEARCH,  False, {"api_key":""}),
     DataSource("crawl4ai",    "Web Crawl",       SourceType.WEB_CRAWL,   True,  {}),
     DataSource("commoncrawl", "Common Crawl",    SourceType.WEB_ARCHIVE, False, {}),
     DataSource("wayback",     "Wayback Machine", SourceType.WEB_ARCHIVE, True,  {}),
-    DataSource("neo4j",       "Neo4j Graph",     SourceType.NEO4J,       True,  {"uri":"bolt://llm.int:7687","user":"neo4j","password":""}),
-    DataSource("chroma",      "ChromaDB",        SourceType.CHROMA,      True,  {"host":"llm.int","port":8000}),
+    DataSource("neo4j",       "Neo4j Graph",     SourceType.NEO4J,       True,  {"uri":f"bolt://{_BACKEND_HOST}:7687","user":"neo4j","password":""}),
+    DataSource("chroma",      "ChromaDB",        SourceType.CHROMA,      True,  {"host":_BACKEND_HOST,"port":8000}),
     DataSource("github",      "GitHub",          SourceType.GITHUB,      False, {"token":""}),
     DataSource("hackernews",  "Hacker News",     SourceType.NEWS,        True,  {}),
     DataSource("arxiv",       "arXiv",           SourceType.NEWS,        True,  {}),
-    DataSource("redis",       "Redis",           SourceType.REDIS,       False, {"host":"llm.int","port":6379,"password":"","db":0,"prefix":"vera:"}),
+    DataSource("redis",       "Redis",           SourceType.REDIS,       False, {"host":_BACKEND_HOST,"port":6379,"password":"","db":0,"prefix":"vera:"}),
     DataSource("fabric",      "Data Fabric",     SourceType.FABRIC,      True,  {"top_k": 30}),
     DataSource("memory",      "Memory Graph",    SourceType.MEMORY,      True,  {"top_k": 20}),
+    DataSource("discovery",   "Discovery",       SourceType.DISCOVERY,   True,  {"top_k": 30}),
+    DataSource("worldview",   "WorldView",       SourceType.WORLDVIEW,   True,  {"top_k": 15}),
 ]
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -796,7 +805,7 @@ async def query_redis(query: str) -> list[Citation]:
     try:
         import redis.asyncio as aioredis  # type: ignore
         r = aioredis.Redis(
-            host=src.config.get("host","llm.int"),
+            host=src.config.get("host",_BACKEND_HOST),
             port=int(src.config.get("port",6379)),
             password=src.config.get("password") or None,
             db=int(src.config.get("db",0)),
@@ -847,7 +856,7 @@ async def search_searxng(query: str, limit: int) -> list[dict]:
     if isinstance(src.config, str):
         try: cfg = json.loads(src.config)
         except Exception: cfg = {}
-    host = cfg.get("host", "http://llm.int:8888")
+    host = cfg.get("host", f"http://{_BACKEND_HOST}:8888")
     try:
         async with httpx.AsyncClient(timeout=10.0) as c:
             r = await c.get(f"{host}/search",
@@ -3397,6 +3406,105 @@ async def gather_memory(query: str, top_k: int = 20) -> list[Citation]:
         return []
 
 
+async def gather_discovery(query: str, top_k: int = 30) -> list[Citation]:
+    """Search discovery-crawled pages (fabric_pages) by keyword → Citations.
+
+    Discovery records are full web pages the fabric.discover.* crawlers have
+    already fetched and stored in the shared vera_fabric.db. Surfacing them as
+    research citations lets a research run build on existing crawls instead of
+    re-fetching from the open web.
+    """
+    try:
+        disc = sys.modules.get("discovery")
+        if not disc or not hasattr(disc, "_sqlite_conn"):
+            log.debug("gather_discovery: discovery module not loaded")
+            return []
+        try:
+            disc._ensure_tables()
+        except Exception:
+            pass
+        conn = disc._sqlite_conn()
+
+        # Build an OR keyword match over title/full_text from significant terms.
+        terms = [t for t in query.lower().split() if len(t) >= 3][:6] or [query[:40].lower()]
+        clauses, params = [], []
+        for t in terms:
+            clauses.append("lower(full_text) LIKE ? OR lower(title) LIKE ?")
+            params += [f"%{t}%", f"%{t}%"]
+        where = " OR ".join(clauses)
+        try:
+            rows = conn.execute(
+                f"SELECT url, title, full_text, tags, dataset_id FROM fabric_pages "
+                f"WHERE {where} ORDER BY rowid DESC LIMIT ?",
+                (*params, top_k),
+            ).fetchall()
+        except Exception as e:
+            log.debug("gather_discovery: query failed (%s)", e)
+            return []
+
+        cits: list[Citation] = []
+        for r in rows:
+            d = dict(r)
+            text = (d.get("full_text") or "").strip()
+            if not text:
+                continue
+            title = (d.get("title") or "").strip() or (d.get("url") or "discovery record")
+            cits.append(Citation(
+                id=str(uuid.uuid4())[:8],
+                url=d.get("url") or f"discovery://{d.get('dataset_id', '')}",
+                title=f"[Discovery] {title}",
+                snippet=text[:400],
+                full_text=text[:8000],
+                source_type="discovery",
+                domain=f"discovery:{d.get('dataset_id', '')}",
+                fetched_at=time.time(),
+            ))
+        log.info("gather_discovery: %d results", len(cits))
+        return cits
+    except Exception as e:
+        log.warning("gather_discovery: %s", e)
+        return []
+
+
+async def gather_worldview(query: str, top_k: int = 15) -> list[Citation]:
+    """Nearest-neighbour records from the WorldView latent space → Citations.
+
+    Calls worldview.query via the capability registry; returns [] gracefully if
+    the model/index isn't trained yet.
+    """
+    try:
+        reg = CAPABILITY_REGISTRY.get("worldview.query")
+        if not reg or "func" not in reg:
+            log.debug("gather_worldview: worldview.query not registered")
+            return []
+        res = await reg["func"](text=query, top_k=top_k, trace_id=None)
+        if not isinstance(res, dict) or res.get("error"):
+            log.debug("gather_worldview: %s", (res or {}).get("error") if isinstance(res, dict) else res)
+            return []
+        results = res.get("results", [])
+        cits: list[Citation] = []
+        for r in results:
+            text = (r.get("text") or "").strip()
+            if not text:
+                continue
+            label = r.get("concept_label") or ""
+            cits.append(Citation(
+                id=str(uuid.uuid4())[:8],
+                url=f"worldview://{r.get('dataset_id', '')}/{r.get('id', '')}",
+                title=f"[WorldView{':' + label if label else ''}] {text[:60]}",
+                snippet=text[:400],
+                full_text=text[:8000],
+                source_type="worldview",
+                domain="worldview",
+                fetched_at=time.time(),
+            ))
+        log.info("gather_worldview: %d results", len(cits))
+        return cits
+    except Exception as e:
+        log.warning("gather_worldview: %s", e)
+        return []
+
+
 async def gather_all_sources(
     query: str,
     job: ResearchJob,
@@ -3449,6 +3557,14 @@ async def gather_all_sources(
         _mem_cfg = next((s.config for s in sources if s.id == "memory"), {})
         _mem_k = int(_mem_cfg.get("top_k", 20)) if isinstance(_mem_cfg, dict) else 20
         task_map["memory"] = asyncio.create_task(gather_memory(query, top_k=_mem_k))
+    if _src_active({"discovery"}, {"discovery"}):
+        _disc_cfg = next((s.config for s in sources if s.id == "discovery"), {})
+        _disc_k = int(_disc_cfg.get("top_k", 30)) if isinstance(_disc_cfg, dict) else 30
+        task_map["discovery"] = asyncio.create_task(gather_discovery(query, top_k=_disc_k))
+    if _src_active({"worldview"}, {"worldview"}):
+        _wv_cfg = next((s.config for s in sources if s.id == "worldview"), {})
+        _wv_k = int(_wv_cfg.get("top_k", 15)) if isinstance(_wv_cfg, dict) else 15
+        task_map["worldview"] = asyncio.create_task(gather_worldview(query, top_k=_wv_k))
 
     all_cits: list[Citation] = []
     if task_map:
@@ -3503,6 +3619,48 @@ def _today_preamble() -> str:
             "search queries — do not assume an earlier year.\n\n")
 
 
+# Detected context windows, cached per (base_url, model). Ollama reports a
+# model's real window via /api/show → model_info.<arch>.context_length, so we
+# don't have to hand-tune ctx_size per instance.
+_DETECTED_CTX_CACHE: dict[str, int] = {}
+# Global ceiling on the auto-detected window (0 = no cap → full model max).
+_MAX_AUTO_CTX = int(os.environ.get("OLLAMA_MAX_AUTO_CTX", "0"))
+
+
+async def _detect_ctx(inst: OllamaInstance) -> int:
+    """Effective num_ctx for this instance's model.
+
+    Detected model max by default; `inst.ctx_size` (when set below the model max)
+    caps it down, as does OLLAMA_MAX_AUTO_CTX. Falls back to `inst.ctx_size`
+    when /api/show is unreachable.
+    """
+    key = f"{inst.base_url}::{inst.model}"
+    detected = _DETECTED_CTX_CACHE.get(key)
+    if detected is None:
+        detected = 0
+        try:
+            async with httpx.AsyncClient(timeout=8) as c:
+                r = await c.post(f"{inst.base_url}/api/show", json={"model": inst.model})
+                if r.status_code == 200:
+                    info = r.json().get("model_info", {}) or {}
+                    arch = info.get("general.architecture", "")
+                    val  = info.get(f"{arch}.context_length") if arch else None
+                    if not isinstance(val, (int, float)):
+                        val = next((v for k, v in info.items()
+                                    if k.endswith(".context_length")
+                                    and isinstance(v, (int, float))), 0)
+                    detected = int(val or 0)
+        except Exception as e:
+            log.debug("_detect_ctx [%s/%s]: %s", inst.name, inst.model, e)
+        _DETECTED_CTX_CACHE[key] = detected
+    ctx = detected or inst.ctx_size or 8192
+    if inst.ctx_size and inst.ctx_size > 0:
+        ctx = min(ctx, inst.ctx_size)
+    if _MAX_AUTO_CTX > 0:
+        ctx = min(ctx, _MAX_AUTO_CTX)
+    return ctx
+
+
 async def stream_ollama(
     inst: OllamaInstance,
     prompt: str,
@@ -3531,13 +3689,14 @@ async def stream_ollama(
     # Anchor every research generation to the current date so the model never
     # falls back to its training-era year (esp. when composing search queries).
     system = _today_preamble() + (system or "")
+    num_ctx = await _detect_ctx(inst)   # detected model max (ctx_size caps it down)
     payload = {
         "model":  inst.model,
         "prompt": prompt,
         "system": system,
         "stream": True,
         "think":  inst.enable_thinking,   # Ollama ≥0.7
-        "options": {"num_ctx": inst.ctx_size},
+        "options": {"num_ctx": num_ctx},
     }
     to = httpx.Timeout(connect=5.0, read=eff_timeout, write=30.0, pool=5.0)
 
@@ -6103,6 +6262,109 @@ async def run_parallel(job: ResearchJob, project: Optional[Project] = None):
         job.result += ar2.to_report_section()
 
 
+def _research_slug(text: str, maxlen: int = 48) -> str:
+    s = "".join(c if c.isalnum() else "-" for c in (text or "").lower())
+    while "--" in s:
+        s = s.replace("--", "-")
+    return s.strip("-")[:maxlen].strip("-") or "untitled"
+
+
+async def persist_research_to_fabric(job: ResearchJob) -> dict:
+    """Write a completed research job's findings back into the data fabric and the
+    discovery page store, closing the research↔fabric loop so future research and
+    discovery runs can build on them.
+
+    Controlled by env VERA_RESEARCH_PERSIST (default "1" — set "0" to disable).
+      • Ingests the report + citation index as a record in dataset 'research.findings'.
+      • Registers each web citation as a discovery page in 'research.<slug>'.
+    """
+    if os.getenv("VERA_RESEARCH_PERSIST", "1").lower() not in ("1", "true", "yes"):
+        return {"persisted": False, "reason": "disabled"}
+
+    report = job.result or ""
+    cits   = job.citations or []
+    if not report and not cits:
+        return {"persisted": False, "reason": "nothing to persist"}
+
+    slug        = _research_slug(job.query)
+    findings_ds = "research.findings"
+    pages_ds    = f"research.{slug}"
+    out = {"persisted": True, "fabric": 0, "discovery_pages": 0,
+           "findings_dataset": findings_ds, "pages_dataset": pages_ds}
+
+    # ── 1. Ingest report + citation index into the data fabric ────────────────
+    fabric = sys.modules.get("data_fabric")
+    if fabric and hasattr(fabric, "ingest_dataset"):
+        try:
+            record = {
+                "job_id":      job.id,
+                "query":       job.query,
+                "mode":        getattr(job.mode, "value", str(job.mode)),
+                "output_mode": getattr(job.output_mode, "value", str(job.output_mode)),
+                "title":       f"Research: {job.query[:120]}",
+                "text":        report[:2000],
+                "full_text":   report,
+                "url":         f"research://{job.id}",
+                "source":      "research",
+                "citations":   [{"url": c.url, "title": c.title, "domain": c.domain,
+                                 "source_type": c.source_type} for c in cits[:100]],
+                "n_citations": len(cits),
+                "created_at":  now_iso(),
+            }
+            r = await fabric.ingest_dataset(
+                findings_ds, [record], source="research",
+                tags=["research", getattr(job.mode, "value", "single")],
+            )
+            out["fabric"] = (r or {}).get("ingested", 0) if isinstance(r, dict) else 0
+        except Exception as e:
+            log.warning("persist: fabric ingest failed: %s", e)
+
+    # ── 2. Register web citations as discovery pages ─────────────────────────
+    disc = sys.modules.get("discovery")
+    web_cits = [c for c in cits
+                if (c.url or "").startswith(("http://", "https://"))
+                and (c.full_text or c.snippet)]
+    if disc and hasattr(disc, "_sqlite_conn") and web_cits:
+        try:
+            try: disc._ensure_tables()
+            except Exception: pass
+            conn = disc._sqlite_conn()
+            # fabric_pages lives in the shared vera_fabric.db — create defensively.
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS fabric_pages ("
+                "id TEXT PRIMARY KEY, dataset_id TEXT, crawl_id TEXT, url TEXT, "
+                "title TEXT, full_text TEXT, tags TEXT, headings TEXT, "
+                "word_count INTEGER, created_at TEXT)"
+            )
+            import hashlib as _hashlib
+            n = 0
+            for c in web_cits:
+                body    = c.full_text or c.snippet or ""
+                page_id = "page:" + _hashlib.sha1(c.url.encode()).hexdigest()[:16]
+                tags    = ",".join((c.tags or [])[:20]) if isinstance(c.tags, list) else ""
+                conn.execute(
+                    "INSERT OR REPLACE INTO fabric_pages "
+                    "(id, dataset_id, crawl_id, url, title, full_text, tags, "
+                    " headings, word_count, created_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))",
+                    (page_id, pages_ds, "", c.url, c.title or c.url, body,
+                     tags, "[]", len(body.split())),
+                )
+                n += 1
+            conn.commit()
+            out["discovery_pages"] = n
+        except Exception as e:
+            log.warning("persist: discovery page write failed: %s", e)
+
+    log.info("persist_research_to_fabric: job=%s fabric=%d discovery_pages=%d",
+             job.id, out["fabric"], out["discovery_pages"])
+    try:
+        await broadcast(job.id, {"type": "persisted", "job_id": job.id, **out})
+    except Exception:
+        pass
+    return out
+
+
 async def run_job(job: ResearchJob):
     project: Optional[Project] = None
     if job.project_id and job.project_id in projects:
@@ -6122,6 +6384,14 @@ async def run_job(job: ResearchJob):
         if project:
             thinker = await get_instance(ModelTier.THINKER)
             await update_project_context(project, job, thinker)
+
+        # Persist findings back into the data fabric + discovery store so future
+        # research/discovery can build on them (env VERA_RESEARCH_PERSIST).
+        if job.status == JobStatus.DONE:
+            try:
+                await persist_research_to_fabric(job)
+            except Exception as e:
+                log.warning("persist_research_to_fabric failed for %s: %s", job.id, e)
 
     except Exception as e:
         log.exception("Job %s failed", job.id)
@@ -6893,7 +7163,7 @@ async def test_source(req: SourceTestRequest):
         except Exception: cfg = {}
 
     if src.id=="searxng":
-        host=cfg.get("host","http://llm.int:8888")
+        host=cfg.get("host",f"http://{_BACKEND_HOST}:8888")
         try:
             async with httpx.AsyncClient(timeout=8.0) as c:
                 r=await c.get(f"{host.rstrip('/')}/search",
@@ -7098,6 +7368,31 @@ async def test_source(req: SourceTestRequest):
                 detail=f"memory module not loaded (candidates: {mem_mods})"
             else:
                 ok=True; detail=f"Memory module available ({mem.__name__})"
+        except Exception as e: detail=f"{type(e).__name__}: {e}"
+
+    elif src.type==SourceType.DISCOVERY:
+        try:
+            disc = sys.modules.get("discovery")
+            if not disc or not hasattr(disc, "_sqlite_conn"):
+                detail="discovery module not loaded in sys.modules"
+            else:
+                try: disc._ensure_tables()
+                except Exception: pass
+                conn = disc._sqlite_conn()
+                try:
+                    n = conn.execute("SELECT COUNT(*) FROM fabric_pages").fetchone()[0]
+                    ok=True; detail=f"Discovery OK · {n} crawled pages in fabric_pages"
+                except Exception:
+                    ok=True; detail="Discovery module available (no pages crawled yet)"
+        except Exception as e: detail=f"{type(e).__name__}: {e}"
+
+    elif src.type==SourceType.WORLDVIEW:
+        try:
+            reg = CAPABILITY_REGISTRY.get("worldview.query")
+            if not reg:
+                detail="worldview.query capability not registered"
+            else:
+                ok=True; detail="WorldView available (run worldview.train + rebuild_index to populate)"
         except Exception as e: detail=f"{type(e).__name__}: {e}"
 
     src.status="ok" if ok else "error"

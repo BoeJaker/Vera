@@ -2106,9 +2106,367 @@ if _CAP_AVAILABLE:
             "total_modules": len(loaded),
         }
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # AGENTIC BUILD-AND-TEST  — design → train → evaluate → iterate
+    # An autonomous loop that, from a plain-language goal, asks the LLM to design
+    # an architecture (ml.generate), trains it on a (synthetic or fabric) dataset,
+    # evaluates it, then revises the design over several rounds to drive the
+    # validation loss down — keeping the best candidate. Streams ml.agent_step
+    # events the ML Lab "Agent" area renders live.
+    # ─────────────────────────────────────────────────────────────────────────
+
+    _AGENT_RUNS: Dict[str, dict] = {}
+
+    def _task_loss(task: str) -> str:
+        return {
+            "classification":        "cross_entropy",
+            "binary_classification": "bce",
+            "regression":            "mse",
+            "forecasting":           "mse",
+            "ohlcv_direction":       "bce",
+            "reconstruction":        "mse",
+        }.get(task, "mse")
+
+    async def _agent_emit(run: dict, stage: str, message: str, extra: dict = None):
+        """Record a step on the run and broadcast it as an ml.agent_step event."""
+        run["stage"] = stage
+        run.setdefault("log", []).append({"ts": now_iso(), "stage": stage, "message": message})
+        run["log"] = run["log"][-100:]
+        payload = {
+            "type":    "ml.agent_step",
+            "run_id":  run["run_id"],
+            "stage":   stage,
+            "message": message,
+            "round":   run.get("round", 0),
+            "rounds":  run.get("rounds", 0),
+            "status":  run.get("status", "running"),
+            "best":    run.get("best"),
+        }
+        if extra:
+            payload.update(extra)
+        try:
+            await emit_event(payload)
+        except Exception:
+            pass
+
+    async def _agent_train_eval(run: dict, module_id: str, prep: dict, task: str, epochs: int):
+        """Train a freshly-built module to completion, then evaluate on the test split.
+        Returns (job, evaluation). Training reuses the standard _train_loop so the
+        ML Lab Train area sees the same ml.train_epoch stream."""
+        loss_fn = _task_loss(task)
+        cfg = {
+            "epochs":      int(epochs),
+            "loss":        loss_fn,
+            "optimiser":   "adam",
+            "lr":          1e-3,
+            "batch_size":  32,
+            "lr_schedule": "cosine",
+        }
+        job_id = "agent-" + str(uuid.uuid4())[:6]
+        job = {
+            "job_id":    job_id,
+            "module_id": module_id,
+            "status":    "queued",
+            "config":    cfg,
+            "X_train":   prep["X_train"], "y_train": prep["y_train"],
+            "X_val":     prep["X_val"],   "y_val":   prep["y_val"],
+            "epoch":     0, "progress": 0.0, "history": {}, "stop": False,
+            "created_at": now_iso(),
+        }
+        _TRAINING_JOBS[job_id] = job
+        run["current_job_id"] = job_id
+        await _train_loop(job_id, job)
+        ev = await ml_train_evaluate(
+            module_id = module_id,
+            X_test    = json.dumps(prep["X_test"]),
+            y_test    = json.dumps(prep["y_test"]),
+            loss_fn   = loss_fn,
+        )
+        return job, ev
+
+    async def _agent_loop(run_id: str, run: dict):
+        goal        = run["goal"]
+        task        = run["task"]
+        rounds      = run["rounds"]
+        epochs      = run["epochs"]
+        target      = run["target_metric"]
+        constraints0 = run["constraints"]
+        higher_better = task in ("classification", "binary_classification", "ohlcv_direction")
+
+        # ── 1. Ensure a dataset exists ─────────────────────────────────────────
+        ds_id = run.get("dataset_id") or ""
+        if not ds_id:
+            await _agent_emit(run, "dataset", f"Generating synthetic '{run['dataset_kind']}' dataset")
+            try:
+                ds = await ml_data_fetch_synthetic(
+                    kind     = run["dataset_kind"],
+                    n        = run.get("n_samples", 600),
+                    features = run.get("features", 8),
+                    classes  = run.get("classes", 3),
+                )
+                ds_id = ds.get("dataset_id", "") if isinstance(ds, dict) else ""
+            except Exception as e:
+                run["status"] = "error"; run["error"] = f"dataset generation failed: {e}"
+                await _agent_emit(run, "error", run["error"]); return
+        if not ds_id:
+            run["status"] = "error"; run["error"] = "no dataset available"
+            await _agent_emit(run, "error", run["error"]); return
+        run["dataset_id"] = ds_id
+
+        # ── 2. Prepare the dataset once (reused for every round) ────────────────
+        prep = await ml_data_prepare(dataset_id=ds_id, task=task)
+        if not isinstance(prep, dict) or prep.get("error"):
+            run["status"] = "error"
+            run["error"]  = (prep or {}).get("error", "prepare failed")
+            await _agent_emit(run, "error", run["error"]); return
+
+        n_features = int(prep.get("features", 8))
+        # Output dimension the generated architecture must target
+        if task in ("binary_classification", "ohlcv_direction"):
+            out_dim, out_act = 1, "sigmoid"
+        elif task == "classification":
+            all_y = (prep.get("y_train", []) + prep.get("y_val", []) + prep.get("y_test", []))
+            try:
+                out_dim = int(max((v[0] if isinstance(v, list) else v) for v in all_y)) + 1
+            except Exception:
+                out_dim = 2
+            out_dim, out_act = max(2, out_dim), "softmax"
+        else:  # regression / forecasting / reconstruction
+            y0 = prep.get("y_train", [[1]])[0] if prep.get("y_train") else [1]
+            out_dim, out_act = (len(y0) if isinstance(y0, list) else 1), "identity"
+
+        run["data_summary"] = {
+            "dataset_id": ds_id, "task": task, "features": n_features,
+            "out_dim": out_dim, "n_train": prep.get("n_train", 0),
+            "n_val": prep.get("n_val", 0), "n_test": prep.get("n_test", 0),
+        }
+        await _agent_emit(
+            run, "prepared",
+            f"Dataset ready: {prep.get('n_train',0)} train / {prep.get('n_val',0)} val / "
+            f"{prep.get('n_test',0)} test · {n_features}→{out_dim}",
+            extra={"data": run["data_summary"]},
+        )
+
+        gen_func = CAPABILITY_REGISTRY.get("ml.generate", {}).get("func")
+        if not gen_func:
+            run["status"] = "error"; run["error"] = "ml.generate capability unavailable"
+            await _agent_emit(run, "error", run["error"]); return
+
+        best        = None
+        prev_design = None
+
+        for rnd in range(1, rounds + 1):
+            if run.get("stop"):
+                run["status"] = "stopped"; break
+            run["round"] = rnd
+
+            # ── 3. Design (or revise) the architecture via the LLM ──────────────
+            await _agent_emit(run, "designing", f"Round {rnd}/{rounds}: designing architecture")
+            cons = (
+                f"The input feature vector dimension is exactly {n_features}; the first "
+                f"input node MUST use params shape [{n_features}]. "
+                f"This is a {task} task; the final output node MUST use shape [{out_dim}]"
+            )
+            cons += (f" with activation {out_act}. " if out_act != "identity" else ". ")
+            if constraints0:
+                cons += constraints0.strip() + " "
+            if prev_design is not None and best is not None:
+                cons += (
+                    f"A previous design '{best['name']}' reached validation loss "
+                    f"{best['metric']:.5f}. Improve on it: vary layer types, depth, width, "
+                    f"normalisation or regularisation to achieve a LOWER validation loss. "
+                    f"Previous architecture JSON: {json.dumps(prev_design)[:1500]}"
+                )
+
+            try:
+                gen = await gen_func(description=goal, constraints=cons, save=True)
+            except Exception as e:
+                gen = {"error": str(e)}
+            if not isinstance(gen, dict) or gen.get("error") or not gen.get("module"):
+                await _agent_emit(run, "warn",
+                    f"Round {rnd}: generation failed ({(gen or {}).get('error','no response')})")
+                continue
+
+            module    = gen["module"]
+            module_id = gen["id"]
+            prev_design = {"nodes": module.get("nodes", []), "edges": module.get("edges", [])}
+            run["current_module"] = {
+                "id": module_id, "name": module.get("name", ""),
+                "param_count": module.get("param_count", 0),
+                "nodes": len(module.get("nodes", [])),
+            }
+            await _agent_emit(
+                run, "training",
+                f"Round {rnd}: training '{module.get('name','module')}' "
+                f"({module.get('param_count',0)} params, {len(module.get('nodes',[]))} nodes)",
+                extra={"module_id": module_id, "module": run["current_module"]},
+            )
+
+            # ── 4. Train + evaluate ─────────────────────────────────────────────
+            try:
+                job, ev = await _agent_train_eval(run, module_id, prep, task, epochs)
+            except Exception as e:
+                await _agent_emit(run, "warn", f"Round {rnd}: training error — {e}")
+                continue
+            if run.get("stop"):
+                run["status"] = "stopped"; break
+
+            metrics = (ev or {}).get("metrics", {}) if isinstance(ev, dict) else {}
+            metric_val = job.get("best_val_loss")
+            if metric_val is None:
+                vl = job.get("history", {}).get("val_loss", [])
+                metric_val = min(vl) if vl else float("inf")
+            metric_val = float(metric_val)
+            acc = metrics.get("accuracy")
+
+            cand = {
+                "module_id":   module_id,
+                "name":        module.get("name", ""),
+                "metric":      metric_val,        # validation loss (lower is better)
+                "accuracy":    acc,
+                "metrics":     metrics,
+                "param_count": module.get("param_count", 0),
+                "round":       rnd,
+            }
+            run.setdefault("rounds_log", []).append(cand)
+            improved = best is None or metric_val < best["metric"]
+            if improved:
+                best = cand
+                run["best"] = best
+            await _agent_emit(
+                run, "evaluated",
+                f"Round {rnd}: val_loss={metric_val:.5f}"
+                + (f", acc={acc:.3f}" if acc is not None else "")
+                + (" ★ new best" if improved else ""),
+                extra={"module_id": module_id, "metric": metric_val, "candidate": cand},
+            )
+
+            # ── 5. Early exit if the target was reached ─────────────────────────
+            if target and metric_val <= target:
+                await _agent_emit(run, "target_met",
+                    f"Target validation loss {target} reached — stopping early")
+                break
+
+        if run.get("status") not in ("stopped", "error"):
+            run["status"] = "complete"
+        run["finished_at"] = now_iso()
+        await _agent_emit(
+            run, "complete",
+            ("Agent finished — best val_loss="
+             + (f"{best['metric']:.5f} ('{best['name']}')" if best else "n/a")),
+            extra={"best": best},
+        )
+
+    @capability(
+        "ml.agent.build_and_test",
+        http_method="POST", http_path="/ml/agent/build_and_test", http_tags=["ml", "agent"],
+        memory="on",
+        description=(
+            "Autonomously design, train and refine a neural network from a plain-language goal. "
+            "The agent asks the LLM to design an architecture, trains it on a dataset (a fresh "
+            "synthetic dataset when dataset_id is omitted), evaluates it, then revises the design "
+            "over `rounds` iterations to minimise validation loss, keeping the best candidate. "
+            "task: classification | binary_classification | regression | forecasting | "
+            "ohlcv_direction | reconstruction. "
+            "Returns {run_id} immediately; stream ml.agent_step events or poll ml.agent.status."
+        ),
+    )
+    async def ml_agent_build_and_test(
+        goal:          str,
+        task:          str   = "classification",
+        dataset_id:    str   = "",
+        dataset_kind:  str   = "classification",
+        rounds:        int   = 3,
+        epochs:        int   = 30,
+        target_metric: float = 0.0,
+        n_samples:     int   = 600,
+        features:      int   = 8,
+        classes:       int   = 3,
+        constraints:   str   = "",
+        trace_id=None,
+    ):
+        if not HAS_NP:
+            return {"error": "NumPy required for the agentic loop"}
+        if not goal or not goal.strip():
+            return {"error": "goal is required"}
+        run_id = "agt-" + str(uuid.uuid4())[:8]
+        run = {
+            "run_id":        run_id,
+            "goal":          goal.strip(),
+            "task":          task,
+            "dataset_id":    dataset_id,
+            "dataset_kind":  dataset_kind,
+            "rounds":        max(1, int(rounds)),
+            "epochs":        max(1, int(epochs)),
+            "target_metric": float(target_metric),
+            "n_samples":     int(n_samples),
+            "features":      int(features),
+            "classes":       int(classes),
+            "constraints":   constraints,
+            "status":        "running",
+            "stage":         "queued",
+            "round":         0,
+            "rounds_log":    [],
+            "best":          None,
+            "current_module": None,
+            "log":           [],
+            "stop":          False,
+            "created_at":    now_iso(),
+        }
+        _AGENT_RUNS[run_id] = run
+        asyncio.create_task(_agent_loop(run_id, run))
+        await emit_event({"type": "ml.agent_started", "run_id": run_id,
+                          "goal": run["goal"], "task": task, "rounds": run["rounds"]})
+        return {
+            "ok": True, "run_id": run_id,
+            "message": "Agent started — listen for ml.agent_step events or poll ml.agent.status",
+        }
+
+    def _agent_slim(r: dict) -> dict:
+        return {k: r.get(k) for k in (
+            "run_id", "goal", "task", "status", "stage", "round", "rounds",
+            "best", "current_module", "dataset_id", "data_summary",
+            "rounds_log", "created_at", "finished_at", "error",
+        )}
+
+    @capability(
+        "ml.agent.status",
+        http_method="GET", http_path="/ml/agent/status", http_tags=["ml", "agent"],
+        memory="off", silent=True,
+        description="Status of an agentic build-and-test run. Pass run_id, or omit for all runs.",
+    )
+    async def ml_agent_status(run_id: str = "", trace_id=None):
+        if run_id:
+            r = _AGENT_RUNS.get(run_id)
+            if not r:
+                return {"error": f"Agent run {run_id} not found"}
+            out = _agent_slim(r)
+            out["log"] = r.get("log", [])[-60:]
+            return out
+        return {"runs": [_agent_slim(r) for r in sorted(
+            _AGENT_RUNS.values(), key=lambda x: x.get("created_at", ""), reverse=True)]}
+
+    @capability(
+        "ml.agent.stop",
+        http_method="POST", http_path="/ml/agent/stop", http_tags=["ml", "agent"],
+        memory="off",
+        description="Stop a running agentic build-and-test run after the current round.",
+    )
+    async def ml_agent_stop(run_id: str, trace_id=None):
+        r = _AGENT_RUNS.get(run_id)
+        if not r:
+            return {"error": f"Agent run {run_id} not found"}
+        r["stop"] = True
+        jid = r.get("current_job_id")
+        if jid and jid in _TRAINING_JOBS:
+            _TRAINING_JOBS[jid]["stop"] = True
+        return {"ok": True, "run_id": run_id, "status": "stopping"}
+
     # if _CAP_AVAILABLE:
     _HERE = _Path(__file__).parent
 
+    # The training panel is still served as a route — it is embedded as the
+    # "Train" area inside the combined ML Lab panel (below) via an iframe.
     @APP.get("/ml/training_panel", include_in_schema=False)
     async def _ml_panel_route():
         from fastapi.responses import HTMLResponse
@@ -2117,25 +2475,42 @@ if _CAP_AVAILABLE:
             return HTMLResponse(p.read_text(encoding="utf-8"))
         return HTMLResponse("<p style='color:red'>ml_training_panel.html not found</p>")
 
+    # ── Combined ML Lab panel ────────────────────────────────────────────────
+    # One tab with three areas (Build / Train / Agent). Build and Train embed the
+    # existing /ml/panel and /ml/training_panel; Agent drives ml.agent.*.
+    @APP.get("/ml/lab", include_in_schema=False)
+    async def _ml_lab_route():
+        from fastapi.responses import HTMLResponse
+        p = _HERE / "ml_lab_panel.html"
+        if p.exists():
+            return HTMLResponse(p.read_text(encoding="utf-8"))
+        return HTMLResponse("<p style='color:red'>ml_lab_panel.html not found</p>")
+
     try:
         register_ui(
-            "ml-training",
-            "ML Training",
+            "ml-lab",
+            "ML Lab",
             "⬡",
-            """<div id="ml-training-mount" style="height:100%;display:flex;flex-direction:column;">
-        <iframe src="/ml/training_panel"
+            """<div id="ml-lab-mount" style="height:100%;display:flex;flex-direction:column;">
+        <iframe src="/ml/lab"
                 style="flex:1;border:none;width:100%;height:100%"
                 allow="clipboard-read; clipboard-write">
         </iframe>
         </div>""",
             "",
-            ui_caps=["ml.create", "ml.list", "ml.run", "ml.generate", "ml.inspect","ml.data.fetch_synthetic","ml.data.fetch_ohlcv","ml.data.fetch_crypto","ml.data.fetch_macro","ml.data.list","ml.data.prepare","ml.train", "ml.train.from_dataset", "ml.train.status", "ml.train.stop","ml.train.history","ml.train.evaluate","ml.train.predict","ml.train.weights_get","ml.train.weights_load","ml.examples.load_all" ],
+            ui_caps=["ml.create", "ml.list", "ml.run", "ml.generate", "ml.inspect",
+                     "ml.data.fetch_synthetic", "ml.data.fetch_ohlcv", "ml.data.fetch_crypto",
+                     "ml.data.fetch_macro", "ml.data.list", "ml.data.prepare",
+                     "ml.train", "ml.train.from_dataset", "ml.train.status", "ml.train.stop",
+                     "ml.train.history", "ml.train.evaluate", "ml.train.predict",
+                     "ml.train.weights_get", "ml.train.weights_load", "ml.examples.load_all",
+                     "ml.agent.build_and_test", "ml.agent.status", "ml.agent.stop"],
             mode="tab",
-            tab_order=66,
+            tab_order=65,
         )
     except Exception as _e:
-        log.warning("ml_workshop register_ui: %s", _e)
-        
+        log.warning("ml_lab register_ui: %s", _e)
+
     # ── Startup: load weights from Redis ──────────────────────────────────────
 
     async def _training_startup():

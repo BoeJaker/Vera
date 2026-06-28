@@ -150,6 +150,10 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 /* Multi-panel split divider — always col-resize since panels are always row-flex */
 .panel-divider{width:5px;background:var(--border);cursor:col-resize;flex-shrink:0;transition:background .15s;position:relative;z-index:10}
 .panel-divider:hover,.panel-divider.dragging{background:var(--acc)}
+/* While a divider is being dragged, stop panels (and their embedded iframes)
+   from capturing the mouse — otherwise the drag dies the instant the cursor
+   passes over an iframe panel, which is why the handle "couldn't be dragged". */
+.panels.resizing .panel{pointer-events:none}
 .panel-divider::after{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:2px;height:40px;border-radius:2px;background:var(--border2);transition:background .15s}
 .panel-divider:hover::after,.panel-divider.dragging::after{background:var(--acc)}
 /* Tab close button */
@@ -392,7 +396,7 @@ select option{background:var(--bg2)}
   <div id="hdrPills"></div>
   <div class="hdr-right">
       <button class="btn sm" id="themeBtn" onclick="toggleTheme()" title="Toggle light/dark mode" style="padding:3px 8px;font-size:13px">☀</button>
-    <input class="url-input" id="backendUrl" value="http://llm.int:8999">
+    <input class="url-input" id="backendUrl" value="" placeholder="http://host:8999">
     <button class="btn primary" onclick="connect()">Connect</button>
     <button class="btn sm" onclick="refreshAll()">↻</button>
   </div>
@@ -1023,6 +1027,23 @@ let _fabricHandleEvent = (ev) => {
 const base  = ()=>document.getElementById('backendUrl').value.replace(/\/$/,'');
 const wsUrl = ()=>base().replace(/^http/,'ws')+'/ws/mcp';
 
+// The panel is served BY the orchestrator, so default the backend field to this
+// page's own origin. This keeps the protocol in sync (https → wss) and avoids
+// "An insecure WebSocket connection may not be initiated from a page loaded over
+// HTTPS" mixed-content errors when TLS is enabled. For file:// use (no origin),
+// fall back to the injected config domain (window.__VERA_BASE__).
+(function _syncBackendToOrigin(){
+  try{
+    const el = document.getElementById('backendUrl');
+    if(!el) return;
+    if(location.protocol === 'http:' || location.protocol === 'https:'){
+      el.value = location.origin;
+    } else if(!el.value){
+      el.value = window.__VERA_BASE__ || '';
+    }
+  }catch(e){}
+})();
+
 // _veraBase is used by injected panel JS (skills, ontologies, tts, sd).
 // Defined as a getter so it always reflects the current backendUrl input,
 // even before connect() is called and even if the URL changes.
@@ -1034,8 +1055,8 @@ Object.defineProperty(window, '_veraBase', { get: base, configurable: true });
 Object.defineProperty(window, '_veraResearcherUrl', {
   get: () => {
     try {
-      return (localStorage.getItem('cfg-url') || 'http://llm.int:8765').replace(/\/$/, '');
-    } catch(e) { return 'http://llm.int:8765'; }
+      return (localStorage.getItem('cfg-url') || ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8765')).replace(/\/$/, '');
+    } catch(e) { return ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8765'); }
   },
   configurable: true,
 });
@@ -1285,6 +1306,10 @@ function _attachDividerDrag(divider){
     next.style.width = nextStart + 'px';
 
     divider.classList.add('dragging');
+    // Disable pointer events on sibling panels so iframe content doesn't eat
+    // the mousemove/mouseup stream mid-drag.
+    const panelsEl = divider.parentElement;
+    if(panelsEl) panelsEl.classList.add('resizing');
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
 
@@ -1295,6 +1320,7 @@ function _attachDividerDrag(divider){
     };
     const onUp = ()=>{
       divider.classList.remove('dragging');
+      if(panelsEl) panelsEl.classList.remove('resizing');
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
       document.removeEventListener('mousemove', onMove);
@@ -1652,7 +1678,7 @@ function handleLiveEvent(ev){
 function setStatus(s){
   const dot=document.getElementById('dot'),label=document.getElementById('connLabel'),tile=document.getElementById('hStatus');
   dot.className='dot '+{ok:'live',connecting:'warn',err:''}[s];
-  label.textContent={ok:wsUrl().slice(5),connecting:'connecting…',err:'disconnected'}[s]||'';
+  label.textContent={ok:wsUrl().replace(/^wss?:\/\//,''),connecting:'connecting…',err:'disconnected'}[s]||'';
   // Status widget on the dashboard — keep both 'tile-val' and 'kpi-val' compatible
   // so the value is styled regardless of which dashboard layout is active.
   if(tile){

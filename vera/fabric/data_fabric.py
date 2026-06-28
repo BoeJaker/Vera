@@ -823,30 +823,108 @@ class ObjectStore:
             self._client = None
             return False
 
-    def put(self, key: str, data: bytes, content_type: str = "application/octet-stream") -> bool:
-        if not self._client: return False
+    def put(self, key: str, data: bytes, content_type: str = "application/octet-stream",
+            bucket: str = "") -> bool:
+        if not self.ensure(): return False
         try:
-            self._client.put_object(Bucket=self._bucket, Key=key, Body=data, ContentType=content_type)
+            self._client.put_object(Bucket=bucket or self._bucket, Key=key, Body=data,
+                                    ContentType=content_type)
             return True
         except Exception as e:
             log.error("ObjectStore put %s: %s", key, e); return False
 
-    def get(self, key: str) -> Optional[bytes]:
-        if not self._client: return None
+    def get(self, key: str, bucket: str = "") -> Optional[bytes]:
+        if not self.ensure(): return None
         try:
-            return self._client.get_object(Bucket=self._bucket, Key=key)["Body"].read()
+            return self._client.get_object(Bucket=bucket or self._bucket, Key=key)["Body"].read()
         except Exception: return None
 
-    def list_prefix(self, prefix: str) -> List[str]:
-        if not self._client: return []
+    def list_prefix(self, prefix: str, bucket: str = "") -> List[str]:
+        if not self.ensure(): return []
         try:
-            resp = self._client.list_objects_v2(Bucket=self._bucket, Prefix=prefix)
+            resp = self._client.list_objects_v2(Bucket=bucket or self._bucket, Prefix=prefix)
             return [o["Key"] for o in resp.get("Contents", [])]
         except Exception: return []
 
     @property
     def available(self) -> bool:
         return self._client is not None
+
+    # ── Extended management API (powers the fabric.objects.* capabilities) ───────
+    def ensure(self) -> bool:
+        """Connect on demand; returns True if an S3 client is available."""
+        if self._client is not None:
+            return True
+        return self.connect()
+
+    @property
+    def mode(self) -> str:        return self._mode
+    @property
+    def endpoint(self) -> str:    return FABRIC_S3_ENDPOINT
+    @property
+    def default_bucket(self) -> str: return self._bucket
+
+    def list_buckets(self) -> List[dict]:
+        if not self.ensure(): return []
+        try:
+            resp = self._client.list_buckets()
+            return [{"name": b["Name"],
+                     "created": b["CreationDate"].isoformat() if b.get("CreationDate") else ""}
+                    for b in resp.get("Buckets", [])]
+        except Exception as e:
+            log.error("ObjectStore list_buckets: %s", e); return []
+
+    def create_bucket(self, bucket: str) -> bool:
+        if not self.ensure() or not bucket: return False
+        try:
+            self._client.create_bucket(Bucket=bucket); return True
+        except Exception as e:
+            log.error("ObjectStore create_bucket %s: %s", bucket, e); return False
+
+    def list_objects(self, prefix: str = "", bucket: str = "", max_keys: int = 1000) -> List[dict]:
+        if not self.ensure(): return []
+        b = bucket or self._bucket
+        try:
+            resp = self._client.list_objects_v2(Bucket=b, Prefix=prefix or "",
+                                                MaxKeys=max(1, min(max_keys, 1000)))
+            out = []
+            for o in resp.get("Contents", []):
+                out.append({"key": o["Key"], "size": o.get("Size", 0),
+                            "last_modified": o["LastModified"].isoformat() if o.get("LastModified") else "",
+                            "etag": (o.get("ETag") or "").strip('"')})
+            return out
+        except Exception as e:
+            log.error("ObjectStore list_objects %s: %s", b, e); return []
+
+    def stat(self, key: str, bucket: str = "") -> Optional[dict]:
+        if not self.ensure(): return None
+        b = bucket or self._bucket
+        try:
+            h = self._client.head_object(Bucket=b, Key=key)
+            return {"key": key, "bucket": b, "size": h.get("ContentLength", 0),
+                    "content_type": h.get("ContentType", ""),
+                    "last_modified": h["LastModified"].isoformat() if h.get("LastModified") else "",
+                    "etag": (h.get("ETag") or "").strip('"'),
+                    "metadata": h.get("Metadata", {})}
+        except Exception:
+            return None
+
+    def delete(self, key: str, bucket: str = "") -> bool:
+        if not self.ensure(): return False
+        try:
+            self._client.delete_object(Bucket=bucket or self._bucket, Key=key); return True
+        except Exception as e:
+            log.error("ObjectStore delete %s: %s", key, e); return False
+
+    def presign(self, key: str, method: str = "get", bucket: str = "", expires: int = 3600) -> str:
+        if not self.ensure(): return ""
+        op = "put_object" if method.lower() == "put" else "get_object"
+        try:
+            return self._client.generate_presigned_url(
+                op, Params={"Bucket": bucket or self._bucket, "Key": key},
+                ExpiresIn=max(1, min(expires, 604800)))
+        except Exception as e:
+            log.error("ObjectStore presign %s: %s", key, e); return ""
 
 
 OBJECT_STORE = ObjectStore()
@@ -4891,6 +4969,174 @@ async def fabric_sources_pull(source_id: str, trace_id=None):
     return {"ingested": n, "dataset_id": src.get("dataset_id",""), "source_id": source_id}
 
 
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OBJECT STORE CAPABILITIES (Garage / Ceph / any S3-compatible blob store)
+# ─────────────────────────────────────────────────────────────────────────────
+async def _obj_run(fn, *a, **k):
+    """Run a blocking boto3 call in the default executor."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: fn(*a, **k))
+
+
+@capability(
+    "fabric.objects.status", memory="off", silent=True,
+    http_method="GET", http_path="/fabric/objects/status", http_tags=["fabric", "objects"],
+    description="Object store (Garage/Ceph/S3) status. Output: "
+                "{enabled, available, mode, endpoint, default_bucket, has_boto}. "
+                "If enabled but not available, check FABRIC_S3_* env vars.",
+)
+async def cap_objects_status(trace_id=None) -> Dict:
+    available = await _obj_run(OBJECT_STORE.ensure) if FABRIC_OBJECT_STORE != "none" else False
+    return {
+        "enabled":        FABRIC_OBJECT_STORE != "none",
+        "available":      bool(available),
+        "mode":           OBJECT_STORE.mode,
+        "endpoint":       OBJECT_STORE.endpoint,
+        "default_bucket": OBJECT_STORE.default_bucket,
+        "region":         FABRIC_S3_REGION,
+        "has_boto":       HAS_BOTO,
+    }
+
+
+@capability(
+    "fabric.objects.buckets", memory="off", silent=True,
+    http_method="GET", http_path="/fabric/objects/buckets", http_tags=["fabric", "objects"],
+    description="List buckets in the object store. Output: {buckets:[{name, created}], count}.",
+)
+async def cap_objects_buckets(trace_id=None) -> Dict:
+    buckets = await _obj_run(OBJECT_STORE.list_buckets)
+    return {"buckets": buckets, "count": len(buckets),
+            "default_bucket": OBJECT_STORE.default_bucket}
+
+
+@capability(
+    "fabric.objects.list", memory="off", silent=True,
+    http_method="POST", http_path="/fabric/objects/list", http_tags=["fabric", "objects"],
+    description="List objects under a prefix. Input: bucket (str — default configured), "
+                "prefix (str), max_keys (int default 1000). "
+                "Output: {objects:[{key, size, last_modified, etag}], count, bucket, prefix}.",
+)
+async def cap_objects_list(bucket: str = "", prefix: str = "", max_keys: int = 1000,
+                           trace_id=None) -> Dict:
+    objs = await _obj_run(OBJECT_STORE.list_objects, prefix, bucket, max_keys)
+    return {"objects": objs, "count": len(objs),
+            "bucket": bucket or OBJECT_STORE.default_bucket, "prefix": prefix}
+
+
+@capability(
+    "fabric.objects.stat", memory="off", silent=True,
+    http_method="POST", http_path="/fabric/objects/stat", http_tags=["fabric", "objects"],
+    description="Object metadata (HEAD). Input: key (str!), bucket (str). "
+                "Output: {key, size, content_type, last_modified, etag, metadata} or {error}.",
+)
+async def cap_objects_stat(key: str, bucket: str = "", trace_id=None) -> Dict:
+    if not key:
+        return {"error": "key required"}
+    meta = await _obj_run(OBJECT_STORE.stat, key, bucket)
+    return meta or {"error": "not found", "key": key}
+
+
+@capability(
+    "fabric.objects.get", memory="off",
+    http_method="POST", http_path="/fabric/objects/get", http_tags=["fabric", "objects"],
+    description="Download an object. Input: key (str!), bucket (str), "
+                "as_url (bool — return a presigned URL instead of inline bytes). "
+                "Objects > 5 MB always return a presigned URL. "
+                "Output: {key, size, content_type, content_base64} or {key, url, presigned:true}.",
+)
+async def cap_objects_get(key: str, bucket: str = "", as_url: bool = False,
+                          trace_id=None) -> Dict:
+    if not key:
+        return {"error": "key required"}
+    meta = await _obj_run(OBJECT_STORE.stat, key, bucket)
+    size = (meta or {}).get("size", 0)
+    if as_url or size > 5 * 1024 * 1024:
+        url = await _obj_run(OBJECT_STORE.presign, key, "get", bucket, 3600)
+        if not url:
+            return {"error": "could not presign / object unavailable", "key": key}
+        return {"key": key, "url": url, "presigned": True,
+                "size": size, "content_type": (meta or {}).get("content_type", "")}
+    data = await _obj_run(OBJECT_STORE.get, key, bucket)
+    if data is None:
+        return {"error": "not found", "key": key}
+    import base64 as _b64
+    return {"key": key, "size": len(data),
+            "content_type": (meta or {}).get("content_type", "application/octet-stream"),
+            "content_base64": _b64.b64encode(data).decode()}
+
+
+@capability(
+    "fabric.objects.put", memory="off",
+    http_method="POST", http_path="/fabric/objects/put", http_tags=["fabric", "objects"],
+    description="Upload an object from base64 content. Input: key (str!), "
+                "content_base64 (str!), content_type (str), bucket (str). "
+                "Output: {ok, key, bucket, size}.",
+)
+async def cap_objects_put(key: str, content_base64: str = "",
+                          content_type: str = "application/octet-stream",
+                          bucket: str = "", trace_id=None) -> Dict:
+    if not key or not content_base64:
+        return {"error": "key and content_base64 required"}
+    import base64 as _b64
+    try:
+        data = _b64.b64decode(content_base64)
+    except Exception:
+        return {"error": "content_base64 is not valid base64"}
+    ok = await _obj_run(OBJECT_STORE.put, key, data, content_type, bucket)
+    if ok:
+        try: await emit_event({"type": "fabric.object.put", "key": key,
+                               "bucket": bucket or OBJECT_STORE.default_bucket})
+        except Exception: pass
+    return {"ok": bool(ok), "key": key,
+            "bucket": bucket or OBJECT_STORE.default_bucket, "size": len(data)}
+
+
+@capability(
+    "fabric.objects.delete", memory="off",
+    http_method="POST", http_path="/fabric/objects/delete", http_tags=["fabric", "objects"],
+    description="Delete an object. Input: key (str!), bucket (str). Output: {ok, key, bucket}.",
+)
+async def cap_objects_delete(key: str, bucket: str = "", trace_id=None) -> Dict:
+    if not key:
+        return {"error": "key required"}
+    ok = await _obj_run(OBJECT_STORE.delete, key, bucket)
+    if ok:
+        try: await emit_event({"type": "fabric.object.delete", "key": key,
+                               "bucket": bucket or OBJECT_STORE.default_bucket})
+        except Exception: pass
+    return {"ok": bool(ok), "key": key, "bucket": bucket or OBJECT_STORE.default_bucket}
+
+
+@capability(
+    "fabric.objects.bucket_create", memory="off",
+    http_method="POST", http_path="/fabric/objects/bucket/create", http_tags=["fabric", "objects"],
+    description="Create a bucket. Input: bucket (str!). Output: {ok, bucket}.",
+)
+async def cap_objects_bucket_create(bucket: str, trace_id=None) -> Dict:
+    if not bucket:
+        return {"error": "bucket required"}
+    ok = await _obj_run(OBJECT_STORE.create_bucket, bucket)
+    return {"ok": bool(ok), "bucket": bucket}
+
+
+@capability(
+    "fabric.objects.presign", memory="off",
+    http_method="POST", http_path="/fabric/objects/presign", http_tags=["fabric", "objects"],
+    description="Generate a presigned URL for direct browser GET/PUT. Input: key (str!), "
+                "method (get|put, default get), bucket (str), expires (int seconds, default 3600). "
+                "Output: {url, key, method, expires} or {error}.",
+)
+async def cap_objects_presign(key: str, method: str = "get", bucket: str = "",
+                              expires: int = 3600, trace_id=None) -> Dict:
+    if not key:
+        return {"error": "key required"}
+    url = await _obj_run(OBJECT_STORE.presign, key, method, bucket, expires)
+    if not url:
+        return {"error": "could not presign (object store unavailable?)", "key": key}
+    return {"url": url, "key": key, "method": method.lower(), "expires": expires,
+            "bucket": bucket or OBJECT_STORE.default_bucket}
 
 
 @capability(

@@ -1,0 +1,25 @@
+#!/bin/sh
+# ─────────────────────────────────────────────────────────────────────────────
+#  Vera pre-commit hook — blocks commits that contain likely secrets.
+#  Enabled via `git config core.hooksPath tools/hooks` (run `make install-hooks`
+#  or `pwsh tools/install-hooks.ps1`). Git Bash supplies /bin/sh on Windows too.
+#  Bypass in a genuine emergency with:  git commit --no-verify
+# ─────────────────────────────────────────────────────────────────────────────
+set -e
+
+# Find a working interpreter. We probe by actually running it: on Windows the
+# `python3` on PATH is often a Store stub that fails with "Permission denied".
+PY=""
+for cand in python3 python py; do
+    if command -v "$cand" >/dev/null 2>&1 && "$cand" --version >/dev/null 2>&1; then
+        PY=$cand
+        break
+    fi
+done
+if [ -z "$PY" ]; then
+    echo "secret-scan: no working python found on PATH; skipping (install python to enable)." >&2
+    exit 0
+fi
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+exec "$PY" "$REPO_ROOT/tools/secret_scan.py" --staged

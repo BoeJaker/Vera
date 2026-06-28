@@ -72,7 +72,15 @@ label.fl{ display:block;font-size:10px;color:var(--fg2);text-transform:uppercase
 .toast{ position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--bg2);border:1px solid var(--border2);
   border-radius:6px;padding:9px 16px;font-size:11px;z-index:80;opacity:0;transition:opacity .2s;max-width:80vw; }
 .toast.show{ opacity:1; }
+.badge.oauth{ color:var(--purple);border-color:var(--purple); }
+.scope-list{ display:flex;flex-direction:column;gap:6px; }
+.scope-list label.sc{ display:flex;align-items:center;gap:8px;font-size:11px;color:var(--fg);text-transform:none;letter-spacing:0;margin:0; }
+.scope-list label.sc input{ width:auto; }
+.scope-list .sc-for{ color:var(--dim);font-size:10px; }
+.scope-grp{ font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin:8px 0 2px; }
+.oauth-actions{ display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap; }
 </style>
+<link rel="stylesheet" href="/ui/vera-panel.css">
 </head>
 <body>
 <div id="root">
@@ -85,7 +93,9 @@ label.fl{ display:block;font-size:10px;color:var(--fg2);text-transform:uppercase
     <div class="wrap">
       <p class="sect-desc">Set up an identity once — its mail credentials power the Email tab and its
         calendar credentials power Calendar sources. Use an <b>app password</b> (Gmail needs 2-Step
-        Verification on) — no API setup. Secrets are encrypted at rest and never shown again.</p>
+        Verification on), or <b>Connect with OAuth</b> and tick the scopes you want (Calendar, Mail …) —
+        one grant can cover everything, or make separate accounts to split per use-case.
+        Secrets are encrypted at rest and never shown again.</p>
       <div id="list"></div>
     </div>
   </div>
@@ -141,6 +151,30 @@ label.fl{ display:block;font-size:10px;color:var(--fg2);text-transform:uppercase
       </div>
     </div>
 
+    <div class="block">
+      <h4>Connect (OAuth)</h4>
+      <div class="field">
+        <label class="fl">Provider</label>
+        <select id="f-oauthprov" onchange="renderScopes()">
+          <option value="">— none (use app password above) —</option>
+          <option value="google">Google</option>
+        </select>
+      </div>
+      <div id="oauth-cfg" style="display:none">
+        <div class="row2">
+          <div class="field"><label class="fl">Client ID <span class="muted" style="text-transform:none">(blank = shared app)</span></label><input id="f-oauthcid" placeholder="(blank uses the shared Google app)"></div>
+          <div class="field"><label class="fl">Client secret</label><input id="f-oauthsec" type="password" placeholder="(kept if blank)"></div>
+        </div>
+        <div class="field"><label class="fl">Scopes to grant</label><div id="oauth-scopes" class="scope-list"></div></div>
+        <div class="oauth-actions">
+          <button class="btn" id="oauth-connect" onclick="connectOAuth()">🔗 Connect</button>
+          <button class="btn ghost sm danger" id="oauth-disc" onclick="disconnectOAuth()" style="display:none">Disconnect</button>
+          <span id="oauth-status" class="muted"></span>
+        </div>
+        <div class="hint" id="oauth-redirect-hint"></div>
+      </div>
+    </div>
+
     <div class="modal-foot">
       <button class="btn ghost" id="ed-test" onclick="testAcct()">Test</button>
       <span id="ed-status" class="muted" style="margin-right:auto"></span>
@@ -163,6 +197,11 @@ function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">
 function close_(id){ $(id).classList.remove("show"); }
 
 let presets={}, accounts=[];
+let oauthCat={providers:{}, redirect_uri:"", shared_client:false}, editingAcct={};
+async function loadOAuthCat(){
+  const r=await call("/accounts/oauth/providers");
+  if(r&&r.providers) oauthCat=r;
+}
 async function load(){
   const r=await call("/accounts/list"); accounts=r.accounts||[]; presets=r.presets||{};
   const list=$("list");
@@ -171,8 +210,9 @@ async function load(){
     const init=(a.label||a.email||"?").trim().charAt(0).toUpperCase();
     const mail=a.mail_enabled&&a.has_app_password?'<span class="badge on">mail</span>':(a.imap_host?'<span class="badge">mail off</span>':'');
     const cal=(a.has_caldav_password||a.caldav_url||a.ics_url)?'<span class="badge on">calendar</span>':'';
+    const oauth=a.has_oauth_refresh_token?'<span class="badge oauth">'+esc(a.oauth_provider||'oauth')+' · '+((a.oauth_scopes||[]).length)+' scope'+(((a.oauth_scopes||[]).length)===1?'':'s')+'</span>':'';
     return '<div class="acct"><div class="av" style="background:'+(a.color||'#4a9eff')+'">'+esc(init)+'</div>'+
-      '<div class="meta"><div class="t">'+esc(a.label||a.email)+mail+cal+'</div>'+
+      '<div class="meta"><div class="t">'+esc(a.label||a.email)+mail+cal+oauth+'</div>'+
       '<div class="s">'+esc(a.email||'')+'</div></div>'+
       '<button class="btn ghost sm" onclick="testById(\''+a.id+'\')">Test</button>'+
       '<button class="btn ghost sm" onclick="edit(\''+a.id+'\')">✎</button>'+
@@ -189,7 +229,7 @@ function applyPreset(){
   if(p.caldav_hint && !$("f-cdurl").value) $("f-cdurl").placeholder=p.caldav_hint;
 }
 function openEditor(a){
-  a=a||{}; $("ed").classList.add("show"); $("ed-status").textContent="";
+  a=a||{}; editingAcct=a; $("ed").classList.add("show"); $("ed-status").textContent="";
   $("ed-title").textContent=a.id?"Edit account":"Add account";
   $("f-id").value=a.id||""; $("f-label").value=a.label||""; $("f-email").value=a.email||"";
   $("f-preset").value="";
@@ -200,6 +240,41 @@ function openEditor(a){
   $("f-ics").value=a.ics_url||""; $("ics-hint").textContent="";
   $("f-cdurl").value=a.caldav_url||""; $("f-cduser").value=a.caldav_username||"";
   $("f-cdpass").value=""; $("f-cdpass").placeholder=a.has_caldav_password?"•••••••• (saved — blank keeps it)":"app password";
+  $("f-oauthprov").value=a.oauth_provider||""; $("f-oauthcid").value=a.oauth_client_id||""; $("f-oauthsec").value="";
+  renderScopes();
+}
+// Render the OAuth scope picker for the selected provider, reflecting what the
+// account currently has granted, and toggle the connect/disconnect controls.
+function renderScopes(){
+  const prov=$("f-oauthprov").value;
+  const cfg=oauthCat.providers[prov];
+  $("oauth-cfg").style.display=prov?"block":"none";
+  if(!prov){ return; }
+  const a=editingAcct||{};
+  const granted=new Set(a.oauth_scopes||[]);
+  // Group scopes by their `group` label.
+  const groups={};
+  (cfg.scopes||[]).forEach(s=>{ (groups[s.group]=groups[s.group]||[]).push(s); });
+  let h="";
+  Object.keys(groups).forEach(g=>{
+    h+='<div class="scope-grp">'+esc(g)+'</div>';
+    groups[g].forEach(s=>{
+      h+='<label class="sc"><input type="checkbox" class="oauth-scope" value="'+esc(s.key)+'" '+
+         (granted.has(s.key)?'checked':'')+'> '+esc(s.label)+
+         (s.for?' <span class="sc-for">— '+esc(s.for)+'</span>':'')+'</label>';
+    });
+  });
+  $("oauth-scopes").innerHTML=h;
+  const connected=!!a.has_oauth_refresh_token;
+  $("oauth-disc").style.display=connected?"inline-flex":"none";
+  $("oauth-connect").textContent=connected?"🔗 Reconnect / add scopes":"🔗 Connect";
+  $("oauth-status").innerHTML=connected
+    ? '<span style="color:var(--acc2)">connected · '+((a.oauth_scopes||[]).length)+' scope(s)</span>'
+    : '';
+  $("f-oauthsec").placeholder=a.has_oauth_client_secret?"•••••••• (saved — blank keeps it)":"(kept if blank)";
+  $("oauth-redirect-hint").innerHTML="Redirect URI to register on the Google client: <code>"+
+    esc(oauthCat.redirect_uri||"")+"</code>"+
+    (oauthCat.shared_client?" · a shared app is configured, so Client ID/secret can be left blank.":"");
 }
 function edit(id){ const a=accounts.find(x=>x.id===id); if(a) openEditor(a); }
 function collect(){
@@ -207,10 +282,46 @@ function collect(){
     mail_enabled:$("f-mailen").checked, mail_username:$("f-muser").value,
     imap_host:$("f-imaph").value, imap_port:+$("f-imapp").value, imap_ssl:$("f-imapssl").checked,
     smtp_host:$("f-smtph").value, smtp_port:+$("f-smtpp").value, smtp_tls:$("f-smtptls").checked,
-    ics_url:$("f-ics").value, caldav_url:$("f-cdurl").value, caldav_username:$("f-cduser").value };
+    ics_url:$("f-ics").value, caldav_url:$("f-cdurl").value, caldav_username:$("f-cduser").value,
+    oauth_provider:$("f-oauthprov").value, oauth_client_id:$("f-oauthcid").value };
   if($("f-pass").value) b.app_password=$("f-pass").value;
   if($("f-cdpass").value) b.caldav_password=$("f-cdpass").value;
+  if($("f-oauthsec").value) b.oauth_client_secret=$("f-oauthsec").value;
   return b;
+}
+async function connectOAuth(){
+  // Persist provider + client first so the server can build the consent URL.
+  const sv=await call("/accounts/upsert",collect());
+  if(sv.error){ toast(sv.error); return; }
+  const id=sv.account.id; $("f-id").value=id; editingAcct=sv.account;
+  const scopes=[...document.querySelectorAll('.oauth-scope:checked')].map(c=>c.value);
+  if(!scopes.length){ toast("Pick at least one scope to grant"); return; }
+  const r=await call("/accounts/oauth/auth_url?id="+encodeURIComponent(id)+
+                     "&scopes="+encodeURIComponent(scopes.join(",")));
+  if(r.error){ toast(r.error); return; }
+  window.open(r.url,"_blank","noopener");
+  $("oauth-status").innerHTML='<span class="spin"></span> approve in the opened tab…';
+  pollOAuth(id,0);
+}
+function pollOAuth(id,n){
+  if(n>40){ $("oauth-status").textContent="timed out — Save and reopen to check"; return; }
+  setTimeout(async()=>{
+    const a=await call("/accounts/get?id="+encodeURIComponent(id));
+    if(a&&a.has_oauth_refresh_token){
+      editingAcct=a; toast("Connected");
+      $("oauth-status").innerHTML='<span style="color:var(--acc2)">connected ✓</span>';
+      renderScopes(); load(); return;
+    }
+    pollOAuth(id,n+1);
+  },1500);
+}
+async function disconnectOAuth(){
+  const id=$("f-id").value; if(!id){ toast("Save first"); return; }
+  if(!confirm("Disconnect this OAuth grant? Calendar/Email using it will stop until reconnected.")) return;
+  const r=await call("/accounts/oauth/disconnect",{id});
+  if(r.error){ toast(r.error); return; }
+  const a=await call("/accounts/get?id="+encodeURIComponent(id));
+  editingAcct=a||{}; toast("Disconnected"); renderScopes(); load();
 }
 async function saveAcct(){
   const r=await call("/accounts/upsert",collect());
@@ -246,8 +357,10 @@ async function del(id,label){
   if(!confirm("Delete account “"+label+"”? Calendar sources / Email using it will need updating.")) return;
   await call("/accounts/delete",{id}); toast("Deleted"); load();
 }
-load();
+(async()=>{ await loadOAuthCat(); load(); })();
 </script>
+<script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>

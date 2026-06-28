@@ -8,6 +8,8 @@
 #    postgres     – Persistent storage (port 5433)
 #    chromadb     – Vector embeddings store (port 8008)
 #    neo4j        – Memory graph database (ports 7474/7687)
+#    garage       – S3-compatible blob storage for the data fabric (port 3900)
+#    garage-init  – One-shot bootstrap (layout, access key, bucket)
 #
 #  Ollama GPU/CPU workers are expected to run on separate hosts and are
 #  configured via environment variables (OLLAMA_GPU_URL, etc).
@@ -43,6 +45,14 @@ services:
       #      python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"
       VERA_SECRET_KEY: "${VERA_SECRET_KEY:-}"
 
+      # ── HTTPS (secure context for the Web Serial API / webcam getUserMedia).
+      #    Set TLS_ENABLED=1 to serve https:// on the same port (8999). A
+      #    self-signed cert is auto-generated at /root/.vera/tls on first start
+      #    (persisted via the vera-tls volume below) — browsers show a one-time
+      #    "not trusted" warning. Supply your own cert by mounting it and setting
+      #    TLS_CERTFILE / TLS_KEYFILE to its path inside the container.
+      TLS_ENABLED: "${TLS_ENABLED:-0}"
+
       # ── Backing services (point at compose service names)
       REDIS_URL: "redis://redis:6379"
       POSTGRES_URL: "postgresql://admin:admin@postgres:5432/postgres"
@@ -51,6 +61,17 @@ services:
       NEO4J_URI: "bolt://neo4j:7687"
       NEO4J_USER: "${NEO4J_USER:-neo4j}"
       NEO4J_PASS: "${NEO4J_PASS:-veraneo4j}"
+
+      # ── Data-fabric object store (Garage S3). FABRIC_OBJECT_STORE must be
+      #    non-"none" to enable it. ACCESS/SECRET are deterministic dev creds
+      #    that garage-init imports — override all four in your .env together
+      #    with the matching values used by the garage-init service below.
+      FABRIC_OBJECT_STORE: "${FABRIC_OBJECT_STORE:-garage}"
+      FABRIC_S3_ENDPOINT: "http://garage:3900"
+      FABRIC_S3_ACCESS: "${FABRIC_S3_ACCESS:-GKa1b2c3d4e5f6708192a3b4c5}"
+      FABRIC_S3_SECRET: "${FABRIC_S3_SECRET:-a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90}"
+      FABRIC_S3_BUCKET: "${FABRIC_S3_BUCKET:-vera-data-fabric}"
+      FABRIC_S3_REGION: "${FABRIC_S3_REGION:-garage}"
 
       # ── Ollama cluster (external hosts — override as needed)
       OLLAMA_GPU_URL: "${OLLAMA_GPU_URL:-http://192.168.0.250:11435}"
@@ -72,6 +93,7 @@ services:
       SYSLOG_MONITOR: "${SYSLOG_MONITOR:-1}"
     volumes:
       - vera-projects:/data/projects
+      - vera-tls:/root/.vera/tls   # persist auto-generated self-signed TLS cert
     depends_on:
       redis:
         condition: service_healthy
@@ -81,6 +103,8 @@ services:
         condition: service_started
       neo4j:
         condition: service_healthy
+      garage-init:
+        condition: service_completed_successfully
     restart: unless-stopped
     networks:
       - vera-net
@@ -162,6 +186,50 @@ services:
     networks:
       - vera-net
 
+  # ── Garage (S3-compatible blob storage) ────────────────────────────────────
+  garage:
+    image: dxflrs/garage:v1.0.1
+    container_name: vera-garage
+    command: ["/garage", "server"]
+    ports:
+      - "${GARAGE_S3_PORT:-3900}:3900"   # S3 API (admin :3903 stays internal)
+    volumes:
+      - ./garage/garage.toml:/etc/garage.toml:ro
+      - garage-meta:/var/lib/garage/meta
+      - garage-data:/var/lib/garage/data
+    healthcheck:
+      # distroless image: the garage binary itself is the only thing we can run
+      test: ["CMD", "/garage", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - vera-net
+
+  # ── Garage bootstrap (one-shot) ────────────────────────────────────────────
+  #  Applies a single-node layout, imports the deterministic S3 key the vera
+  #  service expects, and creates + grants the data-fabric bucket. Talks to the
+  #  garage admin API (v1) over HTTP because the garage image has no shell.
+  garage-init:
+    image: alpine:3.20
+    container_name: vera-garage-init
+    depends_on:
+      garage:
+        condition: service_healthy
+    environment:
+      GARAGE_ADMIN_TOKEN: "vera-garage-admin-change-me"
+      S3_ACCESS_KEY: "${FABRIC_S3_ACCESS:-GKa1b2c3d4e5f6708192a3b4c5}"
+      S3_SECRET_KEY: "${FABRIC_S3_SECRET:-a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90}"
+      S3_BUCKET: "${FABRIC_S3_BUCKET:-vera-data-fabric}"
+    volumes:
+      - ./garage/init.sh:/init.sh:ro
+    command: ["sh", "-c", "apk add --no-cache curl jq >/dev/null && sh /init.sh"]
+    restart: "no"
+    networks:
+      - vera-net
+
 # ── Volumes ────────────────────────────────────────────────────────────────────
 volumes:
   redis-data:
@@ -169,6 +237,9 @@ volumes:
   chroma-data:
   neo4j-data:
   vera-projects:
+  vera-tls:
+  garage-meta:
+  garage-data:
 
 # ── Network ────────────────────────────────────────────────────────────────────
 networks:

@@ -4,6 +4,7 @@
 *.db
 *.db-shm
 *.db-wal
+*.claude
 
 lib/
 
@@ -34,6 +35,7 @@ lib/
 **/.env
 **/secret/
 **/.security_cache/
+vera/mesh/firmware/bin/.cache/
 **/.obsidian/
 **/.vscode/
 **/.trash/

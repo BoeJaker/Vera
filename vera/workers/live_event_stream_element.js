@@ -135,7 +135,7 @@ input:focus{outline:none;border-color:var(--acc,#5a9e8f)}
     _getBase() {
       if (this._base) return this._base;
       const el = document.getElementById('backendUrl');
-      return (el ? el.value : '') || window._veraBase || window.location.origin || 'http://llm.int:8999';
+      return (el ? el.value : '') || window._veraBase || window.location.origin || (window.__VERA_BASE__||('http://'+location.hostname+':8999'));
     }
 
     connectWs() {

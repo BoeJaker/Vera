@@ -276,5 +276,7 @@ See [Research System](./07-research.md) for the full recall surface.
 ## See also
 
 - [Memory Graph](./05-memory-graph.md) — sister system; cap activity is mirrored to fabric `caps.*` datasets
+- [Vector Browser](./25-vector-browser.md) — inspect/audit the Chroma + FAISS stores behind the fabric
+- [Markets](./15-markets.md) & [Device Mesh](./14-mesh.md) — high-volume numeric sources that write straight to fabric datasets
 - [Research System](./07-research.md) — research artifacts are fabric records
 - [Capability Framework](./01-capability-framework.md) — the `fabric.*` caps surface

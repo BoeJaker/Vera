@@ -54,7 +54,7 @@
 html, body, button, input, select, textarea, span, div {
   font-variant-emoji: text;
 }
-.es-icon, .rt-icon, .agent-entry, .scaffold-log, .toast-icon, .tb-btn .icon,
+.es-icon, .agent-entry, .scaffold-log, .toast-icon,
 .fb-icon, .fb-ws-icon, .sf-icon, .term-line, .msg-avatar, .src-dot,
 #scaffold-progress .empty-state .es-icon, .empty-state .es-icon {
   filter: grayscale(1) brightness(1.05) contrast(0.95);
@@ -75,10 +75,11 @@ html, body { height: 100%; overflow: hidden; background: var(--bg0); color: var(
 #titlebar { display: flex; align-items: center; gap: 8px; padding: 0 12px; background: var(--bg1); border-bottom: 1px solid var(--border); user-select: none; }
 #titlebar .logo { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--accent); letter-spacing: 2px; text-transform: uppercase; margin-right: 8px; }
 #titlebar .sep { width: 1px; height: 16px; background: var(--border); }
-.tb-btn { display: flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: var(--radius); border: none; background: transparent; color: var(--text1); cursor: pointer; font-size: 12px; font-family: var(--sans); transition: background .15s, color .15s; }
+.tb-btn { display: flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: var(--radius); border: none; background: transparent; color: var(--text1); cursor: pointer; font-size: 12px; font-family: var(--sans); transition: background .15s, color .15s; }
 .tb-btn:hover { background: var(--bg3); color: var(--text0); }
 .tb-btn.active { background: var(--bg3); color: var(--accent); }
-.tb-btn .icon { font-size: 14px; }
+.tb-btn .icon { font-size: 14px; display: flex; align-items: center; }
+.tb-btn .icon svg { width: 14px; height: 14px; display: block; }
 #titlebar .spacer { flex: 1; }
 #model-badge { font-family: var(--mono); font-size: 10px; color: var(--text2); background: var(--bg3); padding: 2px 8px; border-radius: 10px; border: 1px solid var(--border); }
 
@@ -98,7 +99,9 @@ html, body { height: 100%; overflow: hidden; background: var(--bg0); color: var(
 .tree-item.active { background: var(--bg2); }
 .tree-item.active::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--accent); border-radius: 0 2px 2px 0; }
 .tree-item .indent { flex-shrink: 0; }
-.tree-item .fi { font-size: 13px; flex-shrink: 0; }
+.tree-item .fi { display: inline-flex; align-items: center; justify-content: center; width: 16px; flex-shrink: 0; color: var(--text2); }
+.tree-item.dir .fi { font-size: 9px; color: var(--text2); }
+.tree-item.active .fi, .tree-item:hover .fi { color: var(--text1); }
 .tree-item .name { font-family: var(--mono); font-size: 11.5px; color: var(--text1); overflow: hidden; text-overflow: ellipsis; }
 .tree-item.dir .name { color: var(--text0); font-weight: 500; }
 .tree-item.modified .name::after { content: '●'; color: var(--accent4); font-size: 8px; margin-left: 4px; vertical-align: middle; }
@@ -113,14 +116,18 @@ html, body { height: 100%; overflow: hidden; background: var(--bg0); color: var(
 
 /* ── EDITOR AREA ── */
 #editor-area { display: flex; flex-direction: column; background: var(--bg0); overflow: hidden; }
-#tabs-bar { display: flex; align-items: stretch; background: var(--bg1); border-bottom: 1px solid var(--border); overflow-x: auto; flex-shrink: 0; }
+#tabs-bar { display: flex; align-items: stretch; background: var(--bg1); border-bottom: 1px solid var(--border); overflow-x: auto; flex-shrink: 0; min-height: 36px; }
 #tabs-bar::-webkit-scrollbar { height: 3px; }
-.tab { display: flex; align-items: center; gap: 6px; padding: 0 14px; border-right: 1px solid var(--border); cursor: pointer; white-space: nowrap; font-family: var(--mono); font-size: 11.5px; color: var(--text2); transition: all .15s; min-height: 32px; position: relative; flex-shrink: 0; }
+.tab { display: flex; align-items: center; gap: 7px; padding: 0 8px 0 12px; border-right: 1px solid var(--border); cursor: pointer; white-space: nowrap; font-family: var(--sans); font-size: 12px; color: var(--text2); transition: background .12s, color .12s; min-height: 36px; position: relative; flex-shrink: 0; max-width: 200px; }
+.tab span:not(.tab-close):not(.tab-dot) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tab:hover { background: var(--bg2); color: var(--text1); }
-.tab.active { background: var(--bg0); color: var(--text0); border-bottom: 2px solid var(--accent); margin-bottom: -1px; }
-.tab .tab-close { opacity: 0; font-size: 14px; color: var(--text2); transition: opacity .15s; }
-.tab:hover .tab-close { opacity: 1; }
-.tab .tab-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent4); flex-shrink: 0; }
+.tab.active { background: var(--bg0); color: var(--text0); }
+.tab.active::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: var(--accent); }
+.tab.active::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px; background: var(--bg0); }
+.tab .tab-close { display: flex; align-items: center; justify-content: center; width: 17px; height: 17px; border-radius: 3px; opacity: 0; font-size: 15px; line-height: 1; color: var(--text2); transition: opacity .12s, background .12s, color .12s; flex-shrink: 0; margin-left: 2px; }
+.tab .tab-close:hover { background: var(--bg4); color: var(--text0); }
+.tab:hover .tab-close, .tab.active .tab-close { opacity: 1; }
+.tab .tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent4); flex-shrink: 0; }
 
 #editor-view { flex: 1; display: flex; overflow: hidden; position: relative; }
 #editor-panels { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
@@ -227,11 +234,12 @@ pre[class*="language-"] {
 
 /* ── RIGHT PANEL ── */
 #right-panel { display: flex; flex-direction: column; background: var(--bg1); border-left: 1px solid var(--border); overflow: hidden; }
-#right-tabs { display: flex; border-bottom: 1px solid var(--border); }
-.right-tab { flex: 1; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 8px 4px; cursor: pointer; font-size: 11px; color: var(--text2); border-bottom: 2px solid transparent; transition: all .15s; }
+#right-tabs { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--border); background: var(--bg1); flex-shrink: 0; }
+.right-tab { flex: 1 0 22%; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 8px 6px; cursor: pointer; font-size: 11px; color: var(--text2); border-bottom: 2px solid transparent; transition: color .12s, background .12s, border-color .12s; white-space: nowrap; overflow: hidden; }
 .right-tab:hover { color: var(--text0); background: var(--bg2); }
-.right-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
-.right-tab .rt-icon { font-size: 14px; }
+.right-tab.active { color: var(--accent); border-bottom-color: var(--accent); background: var(--bg0); }
+.right-tab .rt-icon { display: flex; align-items: center; }
+.right-tab .rt-icon svg { width: 15px; height: 15px; display: block; }
 
 .right-content { display: none; flex: 1; flex-direction: column; overflow: hidden; }
 .right-content.active { display: flex; }
@@ -728,6 +736,22 @@ pre[class*="language-"] {
 }
 #inspect-drawer-resize:hover ~ #inspect-drawer-bar .grip-line,
 #inspect-drawer.resizing .grip-line { background: var(--accent); }
+
+/* ── File-type SVG glyphs (monochrome, inherit theme text colour) ── */
+svg.fic { width: 14px; height: 14px; flex-shrink: 0; vertical-align: -2px; }
+.tab svg.fic { width: 14px; height: 14px; vertical-align: 0; }
+.ctx-chip svg.fic, #ctx-popup svg.fic { width: 12px; height: 12px; opacity: .85; }
+
+/* ── Breadcrumb bar (path of the active file, VS Code-style) ── */
+#breadcrumb { display: none; align-items: center; gap: 5px; overflow-x: auto; white-space: nowrap;
+  padding: 4px 14px; background: var(--bg0); border-bottom: 1px solid var(--border);
+  font-family: var(--mono); font-size: 11px; color: var(--text2); flex-shrink: 0; min-height: 26px; }
+#breadcrumb.visible { display: flex; }
+#breadcrumb::-webkit-scrollbar { height: 0; }
+#breadcrumb .crumb { display: inline-flex; align-items: center; gap: 4px; color: var(--text2); }
+#breadcrumb .crumb:last-child { color: var(--text0); }
+#breadcrumb .crumb-sep { color: var(--text3); }
+#breadcrumb .bc-fi { display: inline-flex; align-items: center; color: var(--text1); }
 </style>
 </head>
 <body>
@@ -736,13 +760,13 @@ pre[class*="language-"] {
   <div id="titlebar">
     <span class="logo">⟨/⟩ IDE</span>
     <div class="sep"></div>
-    <button class="tb-btn" id="btn-open-folder"><span class="icon">📂</span> Open Folder</button>
-    <button class="tb-btn" id="btn-new-file"><span class="icon">+</span> New File</button>
+    <button class="tb-btn" id="btn-open-folder"><span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H21a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/></svg></span> Open Folder</button>
+    <button class="tb-btn" id="btn-new-file"><span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h5"/><path d="M12 11v6"/><path d="M9 14h6"/></svg></span> New File</button>
     <div class="sep"></div>
-    <button class="tb-btn" id="btn-save"><span class="icon">💾</span> Save</button>
-    <button class="tb-btn" id="btn-find"><span class="icon">🔍</span> Find</button>
-    <button class="tb-btn" id="btn-preview-toggle"><span class="icon">▶</span> Preview</button>
-    <button class="tb-btn" id="btn-diff-toggle"><span class="icon">⊟</span> Diff</button>
+    <button class="tb-btn" id="btn-save"><span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg></span> Save</button>
+    <button class="tb-btn" id="btn-find"><span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></span> Find</button>
+    <button class="tb-btn" id="btn-preview-toggle"><span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></span> Preview</button>
+    <button class="tb-btn" id="btn-diff-toggle"><span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M6 9v6a3 3 0 0 0 3 3h6"/><path d="M18 15V9a3 3 0 0 0-3-3H9"/></svg></span> Diff</button>
     <div class="sep"></div>
     <button class="tb-btn" id="btn-open-inspect" title="Inspect Vera's own source — snapshot, review, scaffold">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -784,6 +808,7 @@ pre[class*="language-"] {
     <!-- EDITOR AREA -->
     <div id="editor-area">
       <div id="tabs-bar"></div>
+      <div id="breadcrumb"></div>
       <div id="editor-view">
         <div id="editor-panels">
           <div id="code-editor-wrap">
@@ -838,13 +863,14 @@ pre[class*="language-"] {
     <!-- RIGHT PANEL -->
     <div id="right-panel">
       <div id="right-tabs">
-        <div class="right-tab active" data-panel="chat"><span class="rt-icon">💬</span> AI</div>
-        <div class="right-tab" data-panel="run"><span class="rt-icon">▶</span> Run</div>
-        <div class="right-tab" data-panel="agent"><span class="rt-icon">🤖</span> Agent</div>
-        <div class="right-tab" data-panel="scaffold"><span class="rt-icon">🏗</span> Build</div>
-        <div class="right-tab" data-panel="docs"><span class="rt-icon">📖</span> Docs</div>
-        <div class="right-tab" data-panel="vc"><span class="rt-icon">🔀</span> VCS</div>
-        <div class="right-tab" data-panel="test"><span class="rt-icon">🧪</span> Test</div>
+        <div class="right-tab active" data-panel="chat" title="AI Chat"><span class="rt-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span> AI</div>
+        <div class="right-tab" data-panel="run" title="Run / Terminal"><span class="rt-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg></span> Run</div>
+        <div class="right-tab" data-panel="agent" title="Autonomous Agent"><span class="rt-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4"/><circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/><path d="M2 13v3M22 13v3"/></svg></span> Agent</div>
+        <div class="right-tab" data-panel="scaffold" title="Project Builder"><span class="rt-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span> Build</div>
+        <div class="right-tab" data-panel="docs" title="Documentation Search"><span class="rt-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span> Docs</div>
+        <div class="right-tab" data-panel="vc" title="Version Control"><span class="rt-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="9" r="3"/><path d="M18 12a6 6 0 0 1-6 6H6"/><path d="M6 9v6"/></svg></span> VCS</div>
+        <div class="right-tab" data-panel="test" title="Tests"><span class="rt-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6"/><path d="M10 3v6.5L5.2 18a1.5 1.5 0 0 0 1.3 2.3h11a1.5 1.5 0 0 0 1.3-2.3L14 9.5V3"/><path d="M8 14h8"/></svg></span> Test</div>
+        <div class="right-tab" data-panel="sandbox" title="Sandbox Policy"><span class="rt-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span> Sandbox</div>
       </div>
 
       <!-- CHAT PANEL -->
@@ -951,6 +977,10 @@ pre[class*="language-"] {
             </div>
           </div>
         </div>
+      </div>
+      <!-- SANDBOX PANEL — shared exec-sandbox policy editor (gates the Run terminal) -->
+      <div class="right-content" id="panel-sandbox">
+        <vera-sandbox-controls id="ide-sandbox-ctl" style="flex:1;min-height:0;"></vera-sandbox-controls>
       </div>
       <!-- RUN PANEL -->
       <div class="right-content" id="panel-run">
@@ -1439,14 +1469,40 @@ function langFromExt(name) {
     sql:'SQL', txt:'Plain Text', vue:'Vue', svelte:'Svelte', jsx:'JSX', tsx:'TSX' };
   return map[ext] || 'Plain Text';
 }
+// Monochrome line-art file glyphs — shapes vary by type, colour inherits the
+// theme via currentColor (so no palette is hard-coded here).
+const FILE_ICONS = (() => {
+  const w = '<svg class="fic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">';
+  const doc = 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5';
+  return {
+    folder: w + '<path d="M3 7a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.6.8l.9 1.2a2 2 0 0 0 1.6.8H19a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+    file: w + '<path d="' + doc + '"/></svg>',
+    doc:  w + '<path d="' + doc + '"/><path d="M9 13h6"/><path d="M9 17h5"/></svg>',
+    code: w + '<path d="' + doc + '"/><path d="m10 12-2 2 2 2"/><path d="m14 12 2 2-2 2"/></svg>',
+    cfg:  w + '<path d="M8 5H7a2 2 0 0 0-2 2v3a2 2 0 0 1-2 2 2 2 0 0 1 2 2v3a2 2 0 0 0 2 2h1"/><path d="M16 5h1a2 2 0 0 1 2 2v3a2 2 0 0 0 2 2 2 2 0 0 0-2 2v3a2 2 0 0 1-2 2h-1"/></svg>',
+    img:  w + '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="m21 16-4.5-4.5L7 21"/></svg>',
+    html: w + '<path d="m16 18 6-6-6-6"/><path d="M8 6 2 12l6 6"/></svg>',
+    css:  w + '<path d="M4 9h16"/><path d="M4 15h16"/><path d="m10 3-2 18"/><path d="m16 3-2 18"/></svg>',
+    term: w + '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3"/><path d="M13 15h4"/></svg>',
+    db:   w + '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>',
+  };
+})();
 function fileIcon(name, kind) {
-  if (kind === 'directory') return '📁';
-  const ext = name.split('.').pop().toLowerCase();
-  const icons = { js:'🟨', ts:'🔷', py:'🐍', html:'🌐', css:'🎨', json:'{}',
-    md:'📝', sh:'⚙️', yml:'⚙️', yaml:'⚙️', rs:'🦀', go:'🐹', java:'☕',
-    cpp:'⚡', c:'⚡', cs:'🔷', rb:'💎', php:'🐘', sql:'🗃️', vue:'💚',
-    jsx:'⚛️', tsx:'⚛️', svg:'🖼️', png:'🖼️', jpg:'🖼️', gif:'🖼️', pdf:'📄' };
-  return icons[ext] || '📄';
+  if (kind === 'directory') return FILE_ICONS.folder;
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  const map = {
+    js:'code', ts:'code', jsx:'code', tsx:'code', py:'code', rs:'code', go:'code',
+    java:'code', cpp:'code', cc:'code', c:'code', h:'code', cs:'code', rb:'code',
+    php:'code', vue:'code', swift:'code', kt:'code',
+    json:'cfg', yml:'cfg', yaml:'cfg', toml:'cfg', ini:'cfg', env:'cfg', lock:'cfg', xml:'cfg',
+    html:'html', htm:'html',
+    css:'css', scss:'css', sass:'css', less:'css',
+    md:'doc', markdown:'doc', txt:'doc', rst:'doc', pdf:'doc',
+    sh:'term', bash:'term', zsh:'term', ps1:'term',
+    sql:'db',
+    svg:'img', png:'img', jpg:'img', jpeg:'img', gif:'img', webp:'img', ico:'img', bmp:'img',
+  };
+  return FILE_ICONS[map[ext]] || FILE_ICONS.file;
 }
 function toast(msg, type='') {
   const t = document.getElementById('toast');
@@ -1902,7 +1958,8 @@ function renderFileTree() {
 
     const fi = document.createElement('span');
     fi.className = 'fi';
-    fi.textContent = item.kind === 'directory' ? (item.collapsed ? '▶' : '▼') : fileIcon(item.name);
+    if (item.kind === 'directory') fi.textContent = item.collapsed ? '▶' : '▼';
+    else fi.innerHTML = fileIcon(item.name);
     div.appendChild(fi);
 
     const name = document.createElement('span');
@@ -2027,10 +2084,25 @@ function closeTab(path) {
   renderFileTree();
 }
 
+function updateBreadcrumb(path) {
+  const bc = document.getElementById('breadcrumb');
+  if (!bc) return;
+  if (!path) { bc.classList.remove('visible'); bc.innerHTML = ''; return; }
+  const proj = (document.getElementById('project-name')?.textContent || 'project').trim();
+  const parts = path.split('/').filter(Boolean);
+  const file = parts.pop();
+  let html = '<span class="crumb">' + escapeHtml(proj) + '</span>';
+  for (const p of parts) html += '<span class="crumb-sep">›</span><span class="crumb">' + escapeHtml(p) + '</span>';
+  html += '<span class="crumb-sep">›</span><span class="crumb"><span class="bc-fi">' + fileIcon(file) + '</span>' + escapeHtml(file) + '</span>';
+  bc.innerHTML = html;
+  bc.classList.add('visible');
+}
+
 function loadTab(path) {
   const editor = document.getElementById('code-editor');
   const diffOverlay = document.getElementById('diff-overlay');
   diffOverlay.classList.remove('visible');
+  updateBreadcrumb(path);
   if (!path) {
     editor.value = '';
     updateLineNumbers('');
@@ -3679,6 +3751,20 @@ document.querySelectorAll('.right-tab').forEach(tab => {
     document.getElementById('panel-'+tab.dataset.panel).classList.add('active');
   };
 });
+
+// Sandbox tab: point the shared exec-sandbox editor at the harness backend
+// (the IDE runs inside the harness iframe, so requests must hit API, not the
+// panel's own origin) and refresh it each time the tab is opened.
+(function(){
+  var sbx = document.getElementById('ide-sandbox-ctl');
+  if (sbx) sbx.setAttribute('api-base', API);   // read by connectedCallback on upgrade
+  var tab = document.querySelector('.right-tab[data-panel="sandbox"]');
+  if (tab) tab.addEventListener('click', function(){
+    var el = document.getElementById('ide-sandbox-ctl');
+    if (el && el.setApiBase) el.setApiBase(API);
+    if (el && el.refresh) el.refresh();
+  });
+})();
 
 // Expose loadProjectFromPath on window so the Inspect drawer's iframe can call
 // parent.loadProjectFromPath(snapshotPath) to open a snapshot in the IDE.
@@ -6286,5 +6372,6 @@ document.getElementById('tg-test-btn').onclick = async () => {
 </script>
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
+<script src="/ui/elements/sandbox_controls.js" id="vera-sandbox-controls-js"></script>
 </body>
 </html>

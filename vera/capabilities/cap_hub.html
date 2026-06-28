@@ -2579,6 +2579,8 @@ customElements.define('vera-job-stream', class extends HTMLElement {
   setAttribute(k, v) { super.setAttribute(k, v); if (k === 'job-id' && this.isConnected) this.connect(v); }
 });
 </script>
+<link rel="stylesheet" href="/ui/vera-panel.css">
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel.js"></script>
 </body>
 </html>

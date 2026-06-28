@@ -1440,6 +1440,25 @@ async function resumeJob(job_id,module_id){
 // ═══════════════════════════════════════════════════════════════════════════
 function connectEvents(){
   window.addEventListener('message', e=>{
+    // ML Lab "Load in Train" — select a specific module across the combos.
+    if(e.data?.type==='vera_lab_open_module' && e.data.id){
+      const id=e.data.id;
+      loadModules().then(()=>{
+        const m=(_modules||[]).find(x=>x.id===id);
+        const label=m?m.name:id;
+        _activeModuleId=id;
+        document.getElementById('cfg-module-id').value=id;
+        document.getElementById('tb-mod').textContent=label;
+        ['eval-module','pred-module','w-module'].forEach(k=>{
+          const inputEl=document.getElementById(`combo-${k}-input`);
+          const hiddenEl=document.getElementById(k);
+          if(inputEl)  inputEl.value=label;
+          if(hiddenEl) hiddenEl.value=id;
+        });
+        log_(`Loaded module from Lab: ${label} (${id})`,'info');
+      });
+      return;
+    }
     const ev=e.data?.event; if(!ev) return;
     if(ev.type==='ml.train_epoch'&&ev.job_id===_activeJobId){
       _history.train_loss.push(ev.train_loss||0);

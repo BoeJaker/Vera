@@ -72,6 +72,7 @@
   .ref code:hover{color:var(--acc)}
   .empty{color:var(--fg3);text-align:center;padding:40px;font-size:13px}
 </style>
+<link rel="stylesheet" href="/ui/vera-panel.css">
 </head>
 <body>
 <div class="wrap">
@@ -265,6 +266,8 @@ async function runPipe(name){
 $('ov').addEventListener('click', e=>{ if (e.target===$('ov')) closeEditor(); });
 loadAll(); loadStageRef();
 </script>
+<script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>

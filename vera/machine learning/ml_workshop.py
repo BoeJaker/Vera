@@ -1757,6 +1757,9 @@ async def _load_all_modules():
 if _CAP_AVAILABLE:
     _HERE = _Path(__file__).parent
 
+    # The workshop panel is served as a route — it is embedded as the "Build"
+    # area inside the combined ML Lab panel (registered in ml_training.py) via an
+    # iframe. The standalone "ML Workshop" tab has been merged into "ML Lab".
     @APP.get("/ml/panel", include_in_schema=False)
     async def _ml_panel_route():
         from fastapi.responses import HTMLResponse
@@ -1764,25 +1767,6 @@ if _CAP_AVAILABLE:
         if p.exists():
             return HTMLResponse(p.read_text(encoding="utf-8"))
         return HTMLResponse("<p style='color:red'>ml_workshop_panel.html not found</p>")
-
-    try:
-        register_ui(
-            "ml-workshop",
-            "ML Workshop",
-            "⬡",
-            """<div id="ml-workshop-mount" style="height:100%;display:flex;flex-direction:column;">
-        <iframe src="/ml/panel"
-                style="flex:1;border:none;width:100%;height:100%"
-                allow="clipboard-read; clipboard-write">
-        </iframe>
-        </div>""",
-            "",
-            ui_caps=["ml.create", "ml.list", "ml.run", "ml.generate", "ml.inspect"],
-            mode="tab",
-            tab_order=65,
-        )
-    except Exception as _e:
-        log.warning("ml_workshop register_ui: %s", _e)
 
     # ── Catalogue ──────────────────────────────────────────────────────────────
 

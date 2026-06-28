@@ -94,10 +94,11 @@ label.fl{ display:block;font-size:10px;color:var(--fg2);text-transform:uppercase
 .ev-type input{ width:auto; }
 .linkcard{ background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:16px;font-size:11px;color:var(--fg2); }
 </style>
+<link rel="stylesheet" href="/ui/vera-panel.css">
 </head>
 <body>
 <div id="root">
-  <aside id="sidebar">
+  <aside id="sidebar" data-vera-lhm>
     <div id="side-head">
       <div class="ico">✉</div>
       <div><h1>Email</h1><div class="sub">IMAP / SMTP</div></div>
@@ -372,6 +373,8 @@ async function testConn(){
 
 boot();
 </script>
+<script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>

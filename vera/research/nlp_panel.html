@@ -288,7 +288,8 @@ select.param-input{min-width:100px}
 <script>
 /* ══════════════════════════════════════════════════════════════════════════
    Config — reads from localStorage keys set by research.html settings
-   Fallback defaults point to llm.int (your local network)
+   Fallback defaults derive from the injected config domain (window.__VERA_*)
+   or the host this page was served from — no hostname is hardcoded.
 ══════════════════════════════════════════════════════════════════════════ */
 // Read API URLs — user can set via research.html Settings or direct localStorage edit
 // NLP_API and VERA_API — when embedded in Vera harness iframe, resolve from parent.
@@ -307,7 +308,7 @@ const _parentBase = _resolveBase();
 // When standalone: talk directly to NLP service (:8766)
 const NLP_API  = (_parentBase
   ? _parentBase + ''           // /run/{module} calls go to capability /nlp/run via panel's fetch
-  : (localStorage.getItem('vera-nlp-url') || 'http://llm.int:8766')).replace(/\/$/, '');
+  : (localStorage.getItem('vera-nlp-url') || ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8766'))).replace(/\/$/, '');
 // VERA_API = researcher_api server (for ctx.llm() proxy calls from NLP modules).
 // When in harness: stored in parent._veraResearcherUrl or falls back to localStorage.
 // When standalone: from localStorage or hardcoded default.
@@ -316,7 +317,7 @@ const VERA_API = (()=>{
     if (window.parent !== window && window.parent._veraResearcherUrl)
       return window.parent._veraResearcherUrl.replace(/\/$/, '');
   } catch(e) {}
-  return (localStorage.getItem('cfg-url') || 'http://llm.int:8765').replace(/\/$/, '');
+  return (localStorage.getItem('cfg-url') || ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8765')).replace(/\/$/, '');
 })();
 // Capability NLP route prefix — when in harness, NLP endpoints are at /nlp/*
 const _NLP_PREFIX = _parentBase ? '/api/nlp' : '';
@@ -1337,8 +1338,8 @@ async function checkHealth() {
 }
 
 function showSettings() {
-  const currentNlp  = localStorage.getItem('vera-nlp-url')  || 'http://llm.int:8766';
-  const currentVera = localStorage.getItem('cfg-url') || 'http://llm.int:8765';
+  const currentNlp  = localStorage.getItem('vera-nlp-url')  || ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8766');
+  const currentVera = localStorage.getItem('cfg-url') || ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8765');
   const nlp  = prompt('NLP engine URL:', currentNlp);
   if (nlp === null) return;
   const vera = prompt('Vera API URL:', currentVera);

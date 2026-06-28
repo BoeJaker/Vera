@@ -26,7 +26,7 @@ Routing
 ───────
 - All three search engines share a single dispatcher with a clean fallback
   chain. The user can force an engine via `engine="searxng|brave|ddg|auto"`.
-- SearXNG host comes from env `VERA_SEARXNG_URL` (default: http://llm.int:8888)
+- SearXNG host comes from env `VERA_SEARXNG_URL` (default: http://<BACKEND_HOST>:8888)
 - Brave key from env `BRAVE_API_KEY`
 - HTTP timeouts are aggressive (8s default) — these caps are meant to be
   responsive, not exhaustive.
@@ -75,6 +75,8 @@ if not _orch:
 capability  = _orch.capability
 emit_event  = _orch.emit_event
 
+from Vera.vera.config import cfg
+
 log = logging.getLogger("vera.web_capabilities")
 
 
@@ -82,7 +84,7 @@ log = logging.getLogger("vera.web_capabilities")
 # CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
 
-DEFAULT_SEARXNG = os.getenv("VERA_SEARXNG_URL", "http://llm.int:8888").rstrip("/")
+DEFAULT_SEARXNG = os.getenv("VERA_SEARXNG_URL", f"http://{cfg.BACKEND_HOST}:8888").rstrip("/")
 DEFAULT_TIMEOUT = float(os.getenv("VERA_WEB_TIMEOUT", "8.0"))
 USER_AGENT      = os.getenv("VERA_WEB_UA", "Vera-Research/1.0 (+https://vera.local)")
 HEADERS         = {"User-Agent": USER_AGENT}

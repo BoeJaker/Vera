@@ -117,9 +117,25 @@ async def _save_settings(s: Dict[str, Any]):
 # ACCOUNT → TRANSPORT
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _build_mail_cfg(acct: Dict) -> Dict[str, Any]:
-    """Map an (opened) account into the cfg dict the mail transport expects."""
-    return {
+def _has_mail_oauth(acct: Dict) -> bool:
+    """True if the account carries an OAuth grant that includes mail access."""
+    return bool(acct and acct.get("oauth_refresh_token")
+                and "mail" in (acct.get("oauth_scopes") or []))
+
+
+def _mail_capable(acct: Optional[Dict]) -> bool:
+    """An account can send/receive mail via either an app-password or OAuth."""
+    return bool(acct and (acct.get("app_password") or _has_mail_oauth(acct)))
+
+
+async def _build_mail_cfg(acct: Dict) -> Dict[str, Any]:
+    """Map an (opened) account into the cfg dict the mail transport expects.
+
+    Prefers an app-password; otherwise authenticates via XOAUTH2 using the
+    account's OAuth grant (mail scope). For an OAuth Google account with no
+    host overrides we default to Gmail's IMAP/SMTP endpoints.
+    """
+    cfg: Dict[str, Any] = {
         "transport_type": "imap_smtp",
         "imap_host": acct.get("imap_host", ""), "imap_port": acct.get("imap_port", 993),
         "imap_ssl": acct.get("imap_ssl", True),
@@ -129,6 +145,16 @@ def _build_mail_cfg(acct: Dict) -> Dict[str, Any]:
         "password": acct.get("app_password", ""),
         "from_addr": acct.get("email", ""), "from_name": acct.get("label", ""),
     }
+    if not cfg["password"] and _has_mail_oauth(acct):
+        am = _accounts()
+        token = await am.get_oauth_token(acct["id"], "mail") if am else None
+        if token:
+            cfg["auth_mode"] = "xoauth2"
+            cfg["oauth_token"] = token
+            if (acct.get("oauth_provider") or "").lower() == "google":
+                cfg["imap_host"] = cfg["imap_host"] or "imap.gmail.com"
+                cfg["smtp_host"] = cfg["smtp_host"] or "smtp.gmail.com"
+    return cfg
 
 
 async def _resolve_account(account_id: str = "") -> Optional[Dict]:
@@ -141,17 +167,24 @@ async def _resolve_account(account_id: str = "") -> Optional[Dict]:
     settings = await _get_settings()
     if settings.get("default_account"):
         a = await am.get_account(settings["default_account"])
-        if a and a.get("app_password"):
+        if _mail_capable(a):
             return a
-    return await am.default_mail_account()
+    a = await am.default_mail_account()
+    if a:
+        return a
+    # OAuth-only mail accounts aren't found by default_mail_account (app-pw only).
+    for a in await am.list_accounts(opened=True):
+        if _mail_capable(a):
+            return a
+    return None
 
 
 async def _transport(account_id: str = ""):
     """Return (transport, account) for the resolved account, or (None, None)."""
     acct = await _resolve_account(account_id)
-    if not acct or not acct.get("app_password"):
+    if not _mail_capable(acct):
         return None, None
-    return mail_transport.get_transport(_build_mail_cfg(acct)), acct
+    return mail_transport.get_transport(await _build_mail_cfg(acct)), acct
 
 
 _NO_ACCOUNT = {"error": "no mail account configured — add one in the Accounts tab"}
@@ -200,10 +233,15 @@ async def _mail_accounts() -> List[Dict]:
         return []
     out = []
     for a in await am.list_accounts(opened=False):
-        if a.get("mail_enabled") or a.get("imap_host") or a.get("smtp_host"):
+        # Redacted accounts expose has_oauth_refresh_token + oauth_scopes.
+        mail_oauth = bool(a.get("has_oauth_refresh_token")
+                          and "mail" in (a.get("oauth_scopes") or []))
+        if (a.get("mail_enabled") or a.get("imap_host") or a.get("smtp_host")
+                or mail_oauth):
             out.append({"id": a.get("id"), "label": a.get("label"),
                         "email": a.get("email"), "mail_enabled": a.get("mail_enabled"),
-                        "has_app_password": a.get("has_app_password", False)})
+                        "has_app_password": a.get("has_app_password", False),
+                        "has_oauth": mail_oauth})
     return out
 
 
@@ -683,6 +721,6 @@ register_ui(
         "mail.send", "mail.reply", "mail.draft",
         "mail.events.configure", "mail.events.status",
     ],
-    mode="tab",
+    mode="inject",          # now a sub-tab of the combined "Comms" tab
     tab_order=76,
 )

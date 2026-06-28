@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dusk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Vera / Identity</title>
+<style>
+:root{--bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;--border:#3a3530;--border2:#4a4540;--acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--acc4:#9e8fa0;--ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;--gpu:#c97a5a;--text:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;--mono:'JetBrains Mono','Fira Mono',monospace;--sans:'Inter',system-ui,sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg0);color:var(--text);font:13px/1.45 'ui-monospace','SFMono-Regular','Menlo',monospace}
+body{overflow:hidden}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,select{font:inherit;color:inherit;background:var(--bg0);border:1px solid var(--border);border-radius:5px;padding:8px 10px;outline:none;width:100%}
+input:focus,select:focus{border-color:var(--acc)}
+::-webkit-scrollbar{width:7px;height:7px}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px}
+#shell{display:flex;flex-direction:column;height:100vh;height:100dvh;overflow:hidden}
+#top{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg1);border-bottom:1px solid var(--border);flex-shrink:0}
+#top .logo{color:var(--acc);font-weight:700;white-space:nowrap}
+.spacer{flex:1}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:6px;background:var(--bg3);border:1px solid var(--border2);color:var(--text);font-size:12px;white-space:nowrap}
+.btn:hover{border-color:var(--acc)}.btn.pri{background:var(--acc);border-color:var(--acc);color:#06121c;font-weight:700}
+.btn.gho{background:transparent}.btn.sm{padding:6px 9px;font-size:11px}.btn:disabled{opacity:.4;cursor:not-allowed}
+.iconbtn{padding:8px 10px;border-radius:6px;background:var(--bg3);border:1px solid var(--border2);font-size:14px;line-height:1}
+#body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px;padding-bottom:60px}
+.wrap{max-width:1100px;margin:0 auto;display:grid;grid-template-columns:1fr;gap:14px}
+@media(min-width:900px){.wrap{grid-template-columns:1fr 1fr}.span2{grid-column:1 / -1}}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:12px}
+.card h3{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim2);display:flex;align-items:center;gap:8px}
+.badge{font-size:10px;padding:2px 9px;border-radius:20px;border:1px solid var(--dim);color:var(--dim2);white-space:nowrap;margin-left:auto}
+.badge.ok{color:var(--ok);border-color:var(--ok);background:rgba(94,201,160,.08)}.badge.err{color:var(--err);border-color:var(--err)}
+.field{display:flex;flex-direction:column;gap:5px}.field label{font-size:10.5px;color:var(--dim2);text-transform:uppercase;letter-spacing:.04em}
+.row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1;min-width:0}
+.hint{font-size:10.5px;color:var(--dim)}
+.list-row{display:flex;align-items:center;gap:8px;padding:7px 9px;background:var(--bg1);border:1px solid var(--border);border-radius:6px;font-size:12px}
+.list-row .k{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mono-out{background:#000;border:1px solid var(--border);border-radius:6px;padding:8px;font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow:auto;display:none}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:80;background:var(--bg3);border:1px solid var(--border2);padding:10px 16px;border-radius:8px;font-size:12px;opacity:0;transition:.2s;pointer-events:none}
+.toast.on{opacity:1}.toast.err{border-color:var(--err);color:var(--err)}
+</style>
+<script src="/ui/vera-ui.js"></script>
+</head>
+<body>
+<div id="shell">
+  <div id="top">
+    <span class="logo">🆔 Identity · FreeIPA</span>
+    <span id="ipaBadge" class="badge" style="margin-left:10px">—</span>
+    <span class="spacer"></span>
+    <button class="iconbtn" onclick="refresh()" title="Refresh">⟳</button>
+  </div>
+  <div id="body">
+    <div class="wrap">
+      <!-- Connect -->
+      <div class="card span2">
+        <h3>① Connect FreeIPA <span id="cfgBadge" class="badge">edit &amp; save</span></h3>
+        <div class="row">
+          <div class="field"><label>IPA URL</label><input id="cUrl" placeholder="https://ipa.lan"></div>
+          <div class="field"><label>Admin user</label><input id="cUser" placeholder="admin"></div>
+          <div class="field"><label>Admin password <span id="pwFlag" class="hint"></span></label><input id="cPass" type="password" placeholder="(blank keeps stored)"></div>
+        </div>
+        <div class="row">
+          <div class="field"><label>Domain</label><input id="cDomain" placeholder="lan"></div>
+          <div class="field"><label>Realm</label><input id="cRealm" placeholder="LAN"></div>
+          <div class="field"><label>DNS zone</label><input id="cZone" placeholder="lan."></div>
+          <div class="field" style="flex:0;min-width:120px;align-self:flex-end"><label>&nbsp;</label><label class="hint" style="display:flex;gap:6px;align-items:center;text-transform:none"><input type="checkbox" id="cVerify" style="width:auto"> Verify TLS</label></div>
+        </div>
+        <div class="row" style="flex:0 0 auto"><button class="btn pri" style="flex:0 0 auto" onclick="saveCfg()">Save</button></div>
+      </div>
+
+      <!-- Register device -->
+      <div class="card">
+        <h3>② Register a device (host)</h3>
+        <div class="row"><input id="hFqdn" placeholder="fqdn e.g. nas.lan"><input id="hIp" placeholder="ip (optional → A record)"></div>
+        <div class="row" style="flex:0 0 auto"><button class="btn pri" style="flex:0 0 auto" onclick="regHost()">Enrol host</button></div>
+        <div id="hOut" class="mono-out"></div>
+        <div id="hList" style="display:flex;flex-direction:column;gap:6px"></div>
+      </div>
+
+      <!-- Register user -->
+      <div class="card">
+        <h3>③ Register a user</h3>
+        <div class="row"><input id="uLogin" placeholder="login"><input id="uFirst" placeholder="first"><input id="uLast" placeholder="last"></div>
+        <div class="row"><input id="uMail" placeholder="email (optional)"><input id="uPass" type="password" placeholder="initial password (optional)"></div>
+        <div class="row" style="flex:0 0 auto"><button class="btn pri" style="flex:0 0 auto" onclick="regUser()">Create user</button></div>
+        <div id="uList" style="display:flex;flex-direction:column;gap:6px"></div>
+      </div>
+
+      <!-- Register application -->
+      <div class="card">
+        <h3>④ Register an application</h3>
+        <div class="row"><input id="aName" placeholder="host label e.g. grafana"><input id="aIp" placeholder="ip"><input id="aPort" placeholder="port" style="max-width:90px"></div>
+        <div class="hint">Creates a DNS A record + HTTP service principal, then requests a TLS cert from the PKI (if the Security suite is set up).</div>
+        <div class="row" style="flex:0 0 auto"><button class="btn pri" style="flex:0 0 auto" onclick="regApp()">Register app</button></div>
+        <div id="aOut" class="mono-out"></div>
+      </div>
+
+      <!-- AD trust -->
+      <div class="card">
+        <h3>⑤ Windows / AD trust</h3>
+        <div class="hint">Establish the IPA↔AD cross-forest trust so Windows clients in your Samba/AD domain interoperate. AD admin password is used transiently and never stored.</div>
+        <div class="row"><input id="tDomain" placeholder="ad.domain.com"><input id="tAdmin" placeholder="AD admin"><input id="tPass" type="password" placeholder="AD password"></div>
+        <div class="row" style="flex:0 0 auto"><button class="btn" style="flex:0 0 auto" onclick="addTrust()">Establish trust</button></div>
+        <div id="tOut" class="mono-out"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+"use strict";
+const $=s=>document.querySelector(s);
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function toast(m,e){const t=$('#toast');t.textContent=m;t.className='toast on'+(e?' err':'');clearTimeout(t._h);t._h=setTimeout(()=>t.className='toast',2800);}
+async function api(p,m='GET',b){const o={method:m,headers:{'Content-Type':'application/json'}};if(b)o.body=JSON.stringify(b);const r=await fetch(p,o);if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}
+function show(id,txt){const o=$(id);o.style.display='block';o.textContent=txt;}
+
+async function loadCfg(){
+  let c={}; try{ c=await api('/identity/config'); }catch(e){}
+  $('#cUrl').value=c.ipa_url||''; $('#cUser').value=c.ipa_user||'admin'; $('#cDomain').value=c.ipa_domain||'';
+  $('#cRealm').value=c.ipa_realm||''; $('#cZone').value=c.dns_zone||''; $('#cVerify').checked=!!c.verify_tls;
+  $('#pwFlag').textContent=c.has_ipa_password?'· stored':'';
+}
+async function saveCfg(){
+  const b={ipa_url:$('#cUrl').value.trim(),ipa_user:$('#cUser').value.trim(),ipa_domain:$('#cDomain').value.trim(),
+    ipa_realm:$('#cRealm').value.trim(),dns_zone:$('#cZone').value.trim(),verify_tls:$('#cVerify').checked};
+  const pw=$('#cPass').value; if(pw)b.ipa_password=pw;
+  try{ await api('/identity/config/save','POST',b); toast('Saved'); $('#cPass').value=''; refresh(); }catch(e){ toast(e.message,true); }
+}
+async function refresh(){
+  let s={}; try{ s=await api('/identity/status'); }catch(e){ return; }
+  const b=$('#ipaBadge');
+  if(!s.configured){ b.textContent='not configured'; b.className='badge'; }
+  else if(s.reachable){ b.textContent='connected'+(s.version?' · '+s.version:''); b.className='badge ok'; loadHosts(); loadUsers(); }
+  else { b.textContent='unreachable'; b.className='badge err'; }
+}
+async function regHost(){
+  const fqdn=$('#hFqdn').value.trim(),ip=$('#hIp').value.trim(); if(!fqdn)return toast('fqdn required',true);
+  try{ const r=await api('/identity/host/register','POST',{fqdn,ip}); if(r.error)return toast(r.error,true);
+    show('#hOut','Enrolled '+r.fqdn+(r.otp?'\nOne-time enrol password: '+r.otp:'')); $('#hFqdn').value='';$('#hIp').value=''; loadHosts();
+  }catch(e){ toast(e.message,true); }
+}
+async function loadHosts(){ try{ const r=await api('/identity/host/list'); $('#hList').innerHTML=(r.hosts||[]).map(h=>`<div class="list-row"><span class="k">${esc(h.fqdn)}</span><span class="hint">${h.enrolled?'enrolled':'pending'}</span></div>`).join(''); }catch(e){} }
+async function regUser(){
+  const login=$('#uLogin').value.trim(),first=$('#uFirst').value.trim(),last=$('#uLast').value.trim();
+  if(!login||!first||!last)return toast('login, first, last required',true);
+  try{ const r=await api('/identity/user/register','POST',{login,first,last,email:$('#uMail').value.trim(),password:$('#uPass').value});
+    if(r.error)return toast(r.error,true); toast('user '+login+' created'); ['uLogin','uFirst','uLast','uMail','uPass'].forEach(i=>$('#'+i).value=''); loadUsers();
+  }catch(e){ toast(e.message,true); }
+}
+async function loadUsers(){ try{ const r=await api('/identity/user/list'); $('#uList').innerHTML=(r.users||[]).map(u=>`<div class="list-row"><span class="k">${esc(u.login)}</span><span class="hint">${esc(u.name||'')}</span></div>`).join(''); }catch(e){} }
+async function regApp(){
+  const name=$('#aName').value.trim(); if(!name)return toast('name required',true);
+  toast('registering '+name+'…');
+  try{ const r=await api('/identity/app/register','POST',{name,ip:$('#aIp').value.trim(),port:parseInt($('#aPort').value||'0')});
+    if(r.error)return toast(r.error,true); show('#aOut',JSON.stringify(r,null,2));
+  }catch(e){ toast(e.message,true); }
+}
+async function addTrust(){
+  const ad_domain=$('#tDomain').value.trim(),ad_admin=$('#tAdmin').value.trim(),ad_password=$('#tPass').value;
+  if(!ad_domain||!ad_admin||!ad_password)return toast('all AD fields required',true);
+  toast('establishing trust…');
+  try{ const r=await api('/identity/trust/add','POST',{ad_domain,ad_admin,ad_password}); $('#tPass').value='';
+    if(r.error)return show('#tOut','Error: '+r.error); show('#tOut','Trust established with '+r.domain);
+  }catch(e){ toast(e.message,true); }
+}
+(async()=>{ await loadCfg(); refresh(); })();
+</script>
+</body>
+</html>

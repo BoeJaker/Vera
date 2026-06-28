@@ -78,18 +78,20 @@ code{font-family:var(--mono);font-size:.9em}
 </style>
 <style>
 /* nav */
-.fab-nav{width:220px;flex-shrink:0;display:flex;flex-direction:column;border-right:1px solid var(--border);background:var(--bg1);height:100%;overflow:hidden;transition:width .18s ease}
-.fab-nav.collapsed{width:38px}
-.fab-nav-hd{padding:7px 10px;border-bottom:1px solid var(--border);font-size:9.5px;font-weight:700;font-family:var(--mono);color:var(--dim2);text-transform:uppercase;letter-spacing:1.4px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;white-space:nowrap;overflow:hidden}
+/* nav — styled to match the canonical telegram LHM (vera-panel.css) */
+.fab-nav{width:var(--lhm-width,184px);flex-shrink:0;display:flex;flex-direction:column;border-right:1px solid var(--border);background:var(--bg1);height:100%;overflow:hidden;transition:width .18s ease}
+.fab-nav.collapsed{width:var(--lhm-collapsed-width,46px)}
+.fab-nav-hd{padding:14px 14px 10px;border-bottom:1px solid var(--border);font-size:12px;font-weight:600;color:var(--fg);letter-spacing:.04em;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;white-space:nowrap;overflow:hidden}
 .fab-nav.collapsed .fab-nav-title{display:none}
 .fab-nb-label{overflow:hidden}
 .fab-nav.collapsed .fab-nb-label{display:none}
 .fab-nav.collapsed .fab-nb-badge{display:none}
 .fab-nav.collapsed .fab-ds-search,.fab-nav.collapsed .fab-ds-list,.fab-nav.collapsed .fab-nav-status{display:none}
-.fab-nav-btns{display:flex;flex-direction:column;gap:1px;padding:5px;border-bottom:1px solid var(--border);flex-shrink:0}
-.fab-nb{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:3px;cursor:pointer;font-size:9.5px;font-weight:700;font-family:var(--mono);text-transform:uppercase;letter-spacing:1.1px;color:var(--dim2);border:none;background:transparent;text-align:left;width:100%;transition:.12s}
-.fab-nb:hover{background:var(--bg2);color:var(--text)}.fab-nb.active{background:rgba(90,158,143,.12);color:var(--acc);font-weight:500}
-.fab-nb-icon{width:14px;text-align:center;font-size:11px;flex-shrink:0}
+.fab-nav.collapsed .fab-nb{justify-content:center;padding:8px 0}
+.fab-nav-btns{display:flex;flex-direction:column;gap:2px;padding:8px 6px;border-bottom:1px solid var(--border);flex-shrink:0}
+.fab-nb{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:var(--ui-radius,5px);cursor:pointer;font-size:11px;color:var(--fg2,var(--dim2));border:1px solid transparent;background:transparent;text-align:left;width:100%;transition:.12s}
+.fab-nb:hover{background:var(--bg2);color:var(--fg)}.fab-nb.active{background:var(--bg2);border-color:var(--border2);color:var(--acc)}
+.fab-nb-icon{width:15px;text-align:center;font-size:13px;flex-shrink:0;opacity:.85}
 .fab-nb-badge{margin-left:auto;font-size:8.5px;color:var(--dim2);font-family:var(--mono);background:var(--bg3);padding:1px 4px;border-radius:6px;min-width:18px;text-align:center}
 .fab-ds-search{padding:5px;border-bottom:1px solid var(--border);flex-shrink:0}
 .fab-ds-search input{width:100%;font-size:10px;background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:3px}
@@ -135,6 +137,19 @@ code{font-family:var(--mono);font-size:.9em}
 #fabTagsBar .tagchip .tagn{opacity:.7;font-size:9px;margin-left:4px}
 .src-card:hover{border-color:var(--border2)}.src-card.editing{border-color:var(--acc);background:var(--bg2)}
 .src-edit-row{display:flex;flex-direction:column;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)}
+/* source multiselect + grouping */
+.src-card.selected{border-color:var(--acc);background:var(--bg2);box-shadow:0 0 0 1px var(--acc) inset}
+.src-sel-cb{flex-shrink:0;margin-top:4px;cursor:pointer;accent-color:var(--acc);width:13px;height:13px}
+#fabSrcBulkBar{display:none;align-items:center;gap:8px;margin-bottom:8px;padding:6px 10px;background:var(--bg2);border:1px solid var(--acc);border-radius:4px;font-size:11px}
+.src-subtabs{display:flex;gap:3px;margin-bottom:10px;border-bottom:1px solid var(--border);padding-bottom:6px}
+.src-group{margin-bottom:8px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.src-group-hd{display:flex;align-items:center;gap:7px;padding:6px 10px;background:var(--bg2);cursor:pointer;user-select:none;font-size:11px;font-weight:600}
+.src-group-hd:hover{background:var(--bg1)}
+.src-group-caret{font-size:9px;color:var(--dim2);width:10px;text-align:center}
+.src-group-name{font-family:var(--mono);color:var(--acc);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.src-group-cnt{font-size:9px;color:var(--dim2);background:var(--bg0);border:1px solid var(--border);border-radius:8px;padding:0 7px}
+.src-group-body{padding:8px}
+.src-group-body.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:8px}
 /* catalog */
 .cat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:7px}
 .cat-card{border:1px solid var(--border);border-radius:var(--radius);background:var(--bg1);padding:9px;transition:.12s;cursor:pointer}
@@ -180,6 +195,7 @@ code{font-family:var(--mono);font-size:.9em}
     <button class="fab-nb" id="fnav-skills"   onclick="fabSection('skills')" title="Skills"><span class="fab-nb-icon">✦</span><span class="fab-nb-label">Skills</span></button>
     <button class="fab-nb" id="fnav-worldview" onclick="fabSection('worldview')" title="WorldView"><span class="fab-nb-icon">◈</span><span class="fab-nb-label">WorldView</span></button>
     <button class="fab-nb" id="fnav-vectors"   onclick="fabSection('vectors')" title="Vectors"><span class="fab-nb-icon">⬡</span><span class="fab-nb-label">Vectors</span></button>
+    <button class="fab-nb" id="fnav-objects"   onclick="fabSection('objects')" title="Blob Store (Garage/Ceph)"><span class="fab-nb-icon">⛁</span><span class="fab-nb-label">Blobs</span></button>
   </div>
   <div class="fab-nav-status"><span id="fabStatusBar">—</span>
     <button class="btn sm" style="margin-left:6px;font-size:9px;padding:2px 6px" onclick="fabShowHealth()" title="Diagnostic snapshot">Health</button>
@@ -296,7 +312,12 @@ code{font-family:var(--mono);font-size:.9em}
 
   <!-- SOURCES -->
   <div id="fsec-sources" style="display:none">
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+    <div class="src-subtabs">
+      <button class="btn sm active" id="srctab-sources" onclick="fabSrcTab('sources')" style="border-color:var(--acc);color:var(--acc)">Sources</button>
+      <button class="btn sm" id="srctab-catalog" onclick="fabSrcTab('catalog')">Source Catalog</button>
+    </div>
+    <div id="srcpane-sources">
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
       <input id="fabSrcFilter" placeholder="Search sources by label, url, type, dataset, or tag..." oninput="fabFilterSources()" style="flex:1 1 200px;min-width:200px;font-size:12px;padding:7px 10px;background:var(--bg0);border:1px solid var(--border);border-radius:4px;color:var(--fg);height:32px;box-sizing:border-box">
       <span id="fabSrcFilterMeta" style="font-size:10px;color:var(--dim2);min-width:80px;text-align:right;flex-shrink:0"></span>
       <select id="fabSrcSort" onchange="fabFilterSources()" style="width:auto;font-size:11px;height:32px;padding:0 6px;flex-shrink:0">
@@ -305,16 +326,30 @@ code{font-family:var(--mono);font-size:.9em}
         <option value="last_pulled">Sort: recency</option>
         <option value="type">Sort: type</option>
       </select>
+      <select id="fabSrcGroupBy" onchange="fabFilterSources()" style="width:auto;font-size:11px;height:32px;padding:0 6px;flex-shrink:0" title="Group sources">
+        <option value="none">Group: none</option>
+        <option value="domain">Group: domain</option>
+        <option value="type">Group: type</option>
+        <option value="tag">Group: tag</option>
+      </select>
       <select id="fabSrcView" onchange="fabSwitchSrcView()" style="width:auto;font-size:11px;height:32px;padding:0 6px;flex-shrink:0" title="Layout">
         <option value="grid">Grid view</option>
         <option value="list">List view</option>
       </select>
     </div>
+    <!-- Bulk selection action bar -->
+    <div id="fabSrcBulkBar">
+      <span id="fabSrcSelCount" style="font-weight:600;color:var(--acc)">0 selected</span>
+      <span style="flex:1"></span>
+      <button class="btn sm" onclick="fabSrcSelAll()" style="font-size:9.5px">Select all (filtered)</button>
+      <button class="btn sm" onclick="fabSrcSelClear()" style="font-size:9.5px">Clear</button>
+      <button class="btn sm danger" onclick="fabSrcDelSelected()" style="font-size:9.5px">Delete selected</button>
+    </div>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
       <div class="sec" style="margin:0">Sources</div>
       <button class="btn sm" onclick="fabLoadSources()">↻</button>
       <div style="flex:1"></div>
-      <button class="btn sm teal" onclick="fabSection('discover')">+ Add from catalog</button>
+      <button class="btn sm teal" onclick="fabSrcTab('catalog')">+ Add from catalog</button>
     </div>
     <!-- Live ingest stream -->
     <div id="fabIngestStreamWrap" class="card" style="margin-bottom:12px;display:none">
@@ -399,10 +434,24 @@ code{font-family:var(--mono);font-size:.9em}
     </div>
     <div id="fabTagsBar"></div>
     <div id="fabSrcList" style="display:flex;flex-direction:column;gap:0"><span style="color:var(--dim);font-size:10px">Loading…</span></div>
-    <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
-      <div class="sec" style="margin-bottom:6px">Source Catalog</div>
-      <div style="display:flex;gap:3px;flex-wrap:wrap;margin-bottom:8px">
-        <button class="btn sm active" id="cf-all" onclick="fabCatFilter('')">All</button>
+    </div><!-- /srcpane-sources -->
+
+    <!-- SOURCE CATALOG (its own sub-page within the source area) -->
+    <div id="srcpane-catalog" style="display:none">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <div class="sec" style="margin:0">Source Catalog</div>
+        <span style="font-size:9.5px;color:var(--dim2)">Curated feeds &amp; APIs — click a card to ingest.</span>
+      </div>
+      <div style="display:flex;gap:3px;flex-wrap:wrap;margin-bottom:10px">
+        <button class="btn sm active" id="cf-all"      onclick="fabCatFilter('')">All</button>
+        <button class="btn sm" id="cf-security" onclick="fabCatFilter('security')">Security</button>
+        <button class="btn sm" id="cf-ai"       onclick="fabCatFilter('ai')">AI</button>
+        <button class="btn sm" id="cf-research" onclick="fabCatFilter('research')">Research</button>
+        <button class="btn sm" id="cf-news"     onclick="fabCatFilter('news')">News</button>
+        <button class="btn sm" id="cf-software" onclick="fabCatFilter('software')">Software</button>
+        <button class="btn sm" id="cf-docs"     onclick="fabCatFilter('docs')">Docs</button>
+        <button class="btn sm" id="cf-science"  onclick="fabCatFilter('science')">Science</button>
+        <button class="btn sm" id="cf-weather"  onclick="fabCatFilter('weather')">Weather</button>
       </div>
       <div id="fabCatGrid" class="cat-grid"></div>
     </div>
@@ -471,10 +520,12 @@ code{font-family:var(--mono);font-size:.9em}
       <div class="card" style="margin-bottom:10px">
         <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">
           <input id="plName" placeholder="Pipeline name (for saving)…" style="flex:1;font-size:11px">
+          <button class="btn sm" id="pl-canvas-btn" onclick="fabToggleCanvas()" title="Toggle the reusable visual flow canvas">&#8862; Canvas</button>
+          <button class="btn sm" onclick="fabRunAsDag()" title="Execute cap nodes (+ wiring/conditions) via the DAG engine">&#9654; Run as DAG</button>
           <button class="btn sm primary" onclick="plSave()">💾 Save</button>
           <button class="btn sm" onclick="plClear()">✕ Clear</button>
         </div>
-        <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px">
+        <div id="pl-addstage-row" style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px">
           <span style="font-size:9.5px;color:var(--dim2);padding-top:2px">Add stage:</span>
           <button class="btn sm" onclick="plAddStage('text_search')"   style="font-size:9.5px">text_search</button>
           <button class="btn sm" onclick="plAddStage('vector_search')" style="font-size:9.5px">vector_search</button>
@@ -493,6 +544,14 @@ code{font-family:var(--mono);font-size:.9em}
         <div id="plEmpty" style="color:var(--dim2);font-size:10px;padding:14px 0;text-align:center">
           No stages yet — add one above to start building
         </div>
+      </div>
+      <!-- Reusable visual canvas (toggled via the Canvas button) -->
+      <div id="pl-canvas-wrap" style="display:none;height:440px;margin-bottom:10px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+        <vera-flow-builder id="fabFlow" style="display:block;width:100%;height:100%"></vera-flow-builder>
+      </div>
+      <div id="fab-dag-out" style="display:none;margin-bottom:10px;border:1px solid var(--border);border-radius:var(--radius);padding:8px;max-height:200px;overflow:auto;background:var(--bg0)">
+        <div style="font-size:9px;color:var(--dim2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">DAG run · caps execute on the state-table engine</div>
+        <div id="fab-dag-log"></div>
       </div>
 
       <!-- Run controls + input context -->
@@ -1269,6 +1328,52 @@ code{font-family:var(--mono);font-size:.9em}
     </iframe>
   </div>
 
+  <!-- ── Blob / Object store (Garage / Ceph / S3) ─────────────────────────── -->
+  <div id="fsec-objects" style="display:none">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <span class="sec" style="margin:0">Blob Store</span>
+      <span id="objStatus" style="font-size:10px;color:var(--dim2)">checking…</span>
+      <span style="flex:1"></span>
+      <button class="btn sm" onclick="fabObjectsLoad()" title="Refresh">↻</button>
+    </div>
+
+    <div id="objDisabled" style="display:none;padding:12px;border:1px dashed var(--bd);border-radius:6px;font-size:11px;color:var(--dim2);line-height:1.6">
+      Object store is <b>not enabled</b>. Set these environment variables and restart the orchestrator:
+      <pre style="margin:6px 0 0;font-size:10px;white-space:pre-wrap">FABRIC_OBJECT_STORE=garage        # or "ceph"
+FABRIC_S3_ENDPOINT=http://localhost:3900
+FABRIC_S3_ACCESS=&lt;access-key&gt;
+FABRIC_S3_SECRET=&lt;secret-key&gt;
+FABRIC_S3_BUCKET=vera-data-fabric</pre>
+    </div>
+
+    <div id="objMain" style="display:none">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+        <select id="objBucket" onchange="fabObjectsList()" style="min-width:160px"></select>
+        <input id="objPrefix" placeholder="prefix filter…" style="flex:1;min-width:140px"
+               onkeydown="if(event.key==='Enter')fabObjectsList()">
+        <button class="btn sm" onclick="fabObjectsList()">Search</button>
+        <button class="btn sm teal" onclick="fabObjectsNewBucket()">+ Bucket</button>
+        <label class="btn sm primary" style="cursor:pointer;position:relative;overflow:hidden">
+          Upload
+          <input type="file" id="objUpload" onchange="fabObjectsUpload(this)"
+                 style="position:absolute;left:0;top:0;opacity:0;width:100%;height:100%;cursor:pointer">
+        </label>
+      </div>
+      <div id="objBar" style="font-size:10px;color:var(--dim2);margin-bottom:6px"></div>
+      <div style="border:1px solid var(--bd);border-radius:6px;overflow:auto;max-height:calc(100vh - 230px)">
+        <table style="width:100%;border-collapse:collapse;font-size:11px">
+          <thead><tr style="position:sticky;top:0;background:var(--s1)">
+            <th style="text-align:left;padding:5px 8px">Key</th>
+            <th style="text-align:right;padding:5px 8px;width:90px">Size</th>
+            <th style="text-align:left;padding:5px 8px;width:150px">Modified</th>
+            <th style="padding:5px 8px;width:130px">Actions</th>
+          </tr></thead>
+          <tbody id="objRows"><tr><td colspan="4" style="padding:10px;color:var(--dim2)">—</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
 </div></div><!-- /fab-content /fab-main -->
 </div>
 
@@ -1418,9 +1523,116 @@ function fabricInit(){fabSection('datasets');fabLoadDatasets();fabLoadSources();
 function fabRefreshAll(){fabLoadDatasets();fabLoadSources();if(_fabSection==='stats')fabLoadStats();if(_fabSection==='graph')fabStructLoad();if(_fabSection==='schedule')fabLoadSchedule();}
 function fabToggleNav(){var n=document.getElementById('fabNav'),b=document.getElementById('fabNavCollapseBtn');if(!n)return;var c=n.classList.toggle('collapsed');if(b)b.textContent=c?'›':'‹';try{localStorage.setItem('fabNavCollapsed',c?'1':'0');}catch(e){}}
 
+/* ── Blob / Object store (Garage / Ceph / S3) ─────────────────────────────── */
+function _objEsc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+function _objSize(n){n=n||0;var u=['B','KB','MB','GB','TB'],i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return (i?n.toFixed(1):n)+' '+u[i];}
+function _objBucket(){var s=document.getElementById('objBucket');return s&&s.value?s.value:'';}
+
+async function fabObjectsLoad(){
+  var st=document.getElementById('objStatus');
+  var dis=document.getElementById('objDisabled');
+  var main=document.getElementById('objMain');
+  st.textContent='checking…';
+  var s=await api('/fabric/objects/status');
+  if(!s||s.error){st.textContent='status error';return;}
+  if(!s.enabled||!s.available){
+    st.textContent=s.enabled?('enabled but unavailable @ '+s.endpoint):'disabled';
+    dis.style.display='block'; main.style.display='none'; return;
+  }
+  st.textContent=s.mode+' @ '+s.endpoint;
+  dis.style.display='none'; main.style.display='block';
+  await fabObjectsBuckets(s.default_bucket);
+  await fabObjectsList();
+}
+
+async function fabObjectsBuckets(preferred){
+  var sel=document.getElementById('objBucket');
+  var r=await api('/fabric/objects/buckets');
+  var buckets=(r&&r.buckets)||[];
+  var def=preferred||(r&&r.default_bucket)||'';
+  if(!buckets.length&&def)buckets=[{name:def}];
+  sel.innerHTML=buckets.map(function(b){return '<option value="'+_objEsc(b.name)+'">'+_objEsc(b.name)+'</option>';}).join('');
+  if(def)sel.value=def;
+}
+
+async function fabObjectsList(){
+  var bucket=_objBucket();
+  var prefix=document.getElementById('objPrefix').value||'';
+  var bar=document.getElementById('objBar');
+  var tb=document.getElementById('objRows');
+  bar.textContent='loading…';
+  var r=await api('/fabric/objects/list','POST',{bucket:bucket,prefix:prefix,max_keys:1000});
+  var objs=(r&&r.objects)||[];
+  if(r&&r.error){bar.textContent='error: '+r.error;tb.innerHTML='';return;}
+  bar.textContent=objs.length+' object(s) in '+(bucket||'(default)')+(prefix?(' · prefix "'+prefix+'"'):'');
+  if(!objs.length){tb.innerHTML='<tr><td colspan="4" style="padding:10px;color:var(--dim2)">No objects.</td></tr>';return;}
+  tb.innerHTML=objs.map(function(o){
+    var k=_objEsc(o.key),kj=JSON.stringify(o.key);
+    return '<tr style="border-top:1px solid var(--bd)">'
+      +'<td style="padding:4px 8px;font-family:var(--mono);word-break:break-all">'+k+'</td>'
+      +'<td style="padding:4px 8px;text-align:right;color:var(--dim2)">'+_objSize(o.size)+'</td>'
+      +'<td style="padding:4px 8px;color:var(--dim2)">'+_objEsc((o.last_modified||'').replace('T',' ').slice(0,19))+'</td>'
+      +'<td style="padding:4px 8px;white-space:nowrap">'
+      +'<button class="btn sm" onclick=\'fabObjectsDownload('+kj+')\'>↓</button> '
+      +'<button class="btn sm danger" onclick=\'fabObjectsDelete('+kj+')\'>✕</button></td></tr>';
+  }).join('');
+}
+
+async function fabObjectsDownload(key){
+  var r=await api('/fabric/objects/presign','POST',{key:key,method:'get',bucket:_objBucket(),expires:600});
+  if(r&&r.url){window.open(r.url,'_blank');}
+  else{alert('Could not generate download URL'+(r&&r.error?(': '+r.error):''));}
+}
+
+async function fabObjectsDelete(key){
+  if(!confirm('Delete "'+key+'" ?'))return;
+  var r=await api('/fabric/objects/delete','POST',{key:key,bucket:_objBucket()});
+  if(r&&r.ok)fabObjectsList();
+  else alert('Delete failed'+(r&&r.error?(': '+r.error):''));
+}
+
+async function fabObjectsNewBucket(){
+  var name=prompt('New bucket name:');
+  if(!name)return;
+  var r=await api('/fabric/objects/bucket/create','POST',{bucket:name});
+  if(r&&r.ok){await fabObjectsBuckets(name);fabObjectsList();}
+  else alert('Create failed'+(r&&r.error?(': '+r.error):''));
+}
+
+function _objToB64(buf){
+  var bytes=new Uint8Array(buf),bin='',chunk=0x8000;
+  for(var i=0;i<bytes.length;i+=chunk){bin+=String.fromCharCode.apply(null,bytes.subarray(i,i+chunk));}
+  return btoa(bin);
+}
+
+async function fabObjectsUpload(input){
+  var f=input.files&&input.files[0];if(!f)return;
+  var bar=document.getElementById('objBar');
+  var prefix=document.getElementById('objPrefix').value||'';
+  var key=(prefix&&!prefix.endsWith('/')?prefix+'/':prefix)+f.name;
+  var bucket=_objBucket();
+  bar.textContent='uploading '+f.name+' ('+_objSize(f.size)+')…';
+  try{
+    var buf=await f.arrayBuffer();
+    if(f.size>8*1024*1024){
+      // Large file: presigned PUT straight to the object store
+      var pr=await api('/fabric/objects/presign','POST',{key:key,method:'put',bucket:bucket,expires:600});
+      if(!pr||!pr.url){bar.textContent='upload failed (presign)';input.value='';return;}
+      var up=await fetch(pr.url,{method:'PUT',body:buf,headers:{'Content-Type':f.type||'application/octet-stream'}});
+      if(!up.ok){bar.textContent='upload failed (HTTP '+up.status+')';input.value='';return;}
+    }else{
+      var r=await api('/fabric/objects/put','POST',{key:key,content_base64:_objToB64(buf),
+            content_type:f.type||'application/octet-stream',bucket:bucket},60000);
+      if(!r||!r.ok){bar.textContent='upload failed'+(r&&r.error?(': '+r.error):'');input.value='';return;}
+    }
+    input.value='';
+    fabObjectsList();
+  }catch(e){bar.textContent='upload error: '+(e&&e.message||e);input.value='';}
+}
+
 function fabSection(name){
   _fabSection=name;
-  ['datasets','sources','discover','query','iot','graph','loom','schedule','bus','stats','skills','worldview','vectors'].forEach(function(s){
+  ['datasets','sources','discover','query','iot','graph','loom','schedule','bus','stats','skills','worldview','vectors','objects'].forEach(function(s){
     var el=document.getElementById('fsec-'+s),btn=document.getElementById('fnav-'+s);
     if(el) {
       if (s === name) {
@@ -1438,6 +1650,7 @@ function fabSection(name){
   var _fci = document.getElementById('fab-content-inner');
   if (_fci) _fci.style.display = (name === 'discover' || name === 'datasets') ? 'none' : '';
   if(name==='query')fabPopulateQueryDs();
+  if(name==='objects' && typeof fabObjectsLoad==='function')fabObjectsLoad();
   if(name==='bus')fabBusStatus();
   if(name==='stats')fabLoadStats();
   if(name==='graph')fabStructLoad();
@@ -2407,34 +2620,24 @@ async function fabLoadSources(){
     if(_fabSrcPending){_fabSrcPending=false;setTimeout(fabLoadSources,1600);}
     return;
   }
-  // Render with per-source error isolation — one bad source can't crash the rest
-  var html=[];
-  for(var i=0;i<_fabSrcData.length;i++){
-    try{html.push(fabRenderSrcCard(_fabSrcData[i]));}
-    catch(e){
-      var sid=(_fabSrcData[i]&&_fabSrcData[i].id)||'?';
-      console.error('Render source failed',sid,e);
-      html.push('<div class="src-card" style="border-color:var(--err)"><div style="font-size:10px;color:var(--err)">Error rendering source '+esc(sid)+': '+esc(String(e&&e.message||e))+'</div>'+
-        '<button class="btn sm danger" style="margin-top:5px" onclick="fabDelSrc(\''+esc(sid)+'\')">Remove this source</button></div>');
-    }
+  // Publish the data and let fabRenderSrcList() build the list (it applies the
+  // active text filter, tag filter, sort, grouping, and multi-select state).
+  window._fabSourcesAll = _fabSrcData || [];
+  // Prune selection of ids that no longer exist
+  if (window._fabSrcSel && window._fabSrcSel.size) {
+    var present = {};
+    _fabSrcData.forEach(function(s){ present[s.id] = 1; });
+    Array.from(window._fabSrcSel).forEach(function(id){ if (!present[id]) window._fabSrcSel.delete(id); });
   }
-  list.innerHTML=html.join('');
+  try {
+    var v = localStorage.getItem('fabSrcView') || 'grid';
+    var vsel = document.getElementById('fabSrcView');
+    if (vsel) vsel.value = v;
+  } catch (e) {}
+  if (typeof fabRenderSrcList === 'function') fabRenderSrcList();
+  if (typeof fabRenderTagsBar === 'function') fabRenderTagsBar();
   // If another load was queued while we were busy, run it once
   if(_fabSrcPending){_fabSrcPending=false;setTimeout(fabLoadSources,1600);}
-
-  // Hook the filter UI: re-apply current filter against newly-loaded data
-  try {
-    window._fabSourcesAll = _fabSrcData || [];
-    if (typeof fabFilterSources === 'function') fabFilterSources();
-    if (typeof fabRenderTagsBar === 'function') fabRenderTagsBar();
-    try {
-      var v = localStorage.getItem('fabSrcView') || 'grid';
-      var sel = document.getElementById('fabSrcView');
-      if (sel) sel.value = v;
-      var list = document.getElementById('fabSrcList');
-      if (list) list.classList.toggle('grid', v === 'grid');
-    } catch (e) {}
-  } catch (e) {}
 }
 function fabRenderSrcCard(s){
   var active=s.interval>0&&s.enabled!==false,col=active?'var(--ok)':'var(--dim2)';
@@ -2446,10 +2649,13 @@ function fabRenderSrcCard(s){
   // Type-specific badge colour for visual scan
   var typeColors = {rss:'rgba(123,159,247,.18)', api:'rgba(180,140,247,.18)', scrape:'rgba(247,180,140,.18)', recon:'rgba(247,140,180,.18)', docs:'rgba(140,247,180,.18)', topic:'rgba(247,247,140,.18)', gitea:'rgba(140,200,247,.18)', github:'rgba(140,200,247,.18)', gitlab:'rgba(247,140,140,.18)', postgres:'rgba(140,200,247,.18)', mysql:'rgba(247,200,140,.18)', sqlite:'rgba(180,180,180,.18)', mongodb:'rgba(140,247,140,.18)', elasticsearch:'rgba(247,247,140,.18)'};
   var typeBg = typeColors[srcType] || 'rgba(123,159,247,.10)';
+  var seld = !!(window._fabSrcSel && window._fabSrcSel.has(s.id));
+  var sidJs = esc(String(s.id||'')).replace(/'/g,"\\'");
 
-  return'<div class="src-card" data-src-id="'+esc(s.id||'')+'" id="srccard-'+esc(s.id)+'">'+
-    // Row 1: status dot + label + type badge + interval
+  return'<div class="src-card'+(seld?' selected':'')+'" data-src-id="'+esc(s.id||'')+'" id="srccard-'+esc(s.id)+'">'+
+    // Row 1: select checkbox + status dot + label + type badge + interval
     '<div style="display:flex;align-items:flex-start;gap:6px">'+
+      '<input type="checkbox" class="src-sel-cb" data-sel-id="'+esc(s.id||'')+'"'+(seld?' checked':'')+' title="Select for bulk actions" onclick="event.stopPropagation();fabSrcSelToggle(\''+sidJs+'\',this.checked)">'+
       '<div class="dot" style="background:'+col+';box-shadow:'+(active?'0 0 5px '+col:'none')+';flex-shrink:0;margin-top:5px"></div>'+
       '<div style="flex:1;min-width:0">'+
         '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:2px">'+
@@ -2966,6 +3172,112 @@ function plMoveStage(idx,dir){
 }
 function plRemoveStage(idx){ _plStages.splice(idx,1); plRenderCanvas(); }
 function plClear(){ _plStages=[]; plRenderCanvas(); document.getElementById('plName').value=''; }
+
+/* ═══ REUSABLE VISUAL CANVAS (<vera-flow-builder>) ═══
+   Alternate "Canvas" view for the query pipeline. Round-trips through _plStages
+   so plRun()/plSave() are unchanged. Palette = the same query-op stage types. */
+var fabricProvider = {
+  id:'fabric-query', paletteLabel:'Query stages',
+  loadPalette:function(){
+    var items = Object.keys(_PL_STAGE_DEFS).map(function(type){
+      return { type:type, label:type, description:'', schema:{name:type, params:[]} };
+    });
+    var groups=[{ group:'query stages', items:items }];
+    if(window.VeraFlowCaps){ return window.VeraFlowCaps.paletteGroups().then(function(caps){ return groups.concat(caps); }).catch(function(){ return groups; }); }
+    return Promise.resolve(groups);
+  },
+  schemaFor:function(t){
+    var type=(t&&typeof t==='object')?t.type:t;
+    if(window.VeraFlowCaps && window.VeraFlowCaps.isCap(type)) return window.VeraFlowCaps.schemaFor(type);
+    return _PL_STAGE_DEFS[type] ? {name:type, params:[]} : null;
+  },
+  createNode:function(item){
+    var def=_PL_STAGE_DEFS[item.type]||{fields:[]}; var config={};
+    (def.fields||[]).forEach(function(f){ if(f.default!=null) config[f.k]=f.default; });
+    return { id:'n'+Math.random().toString(36).slice(2,9), type:item.type, out:null, params:{},
+             output_map:null, condition:'', parallel_with:null, pos:null, meta:{config:config} };
+  },
+  validateNode:function(){ return []; },
+  nodeCard:function(n){
+    if(window.VeraFlowCaps && window.VeraFlowCaps.isCap(n.type)) return { title:(n.type||'').split('.').pop(), line:'⚙ cap', sub:n.type };
+    var cfg=(n.meta&&n.meta.config)||{}; var parts=[];
+    Object.keys(cfg).forEach(function(k){ if(cfg[k]!=='' && cfg[k]!=null) parts.push(k+'='+String(cfg[k]).slice(0,10)); });
+    return { title:n.type, line:'query op', sub:parts.join('  ').slice(0,38) };
+  },
+  // Native save = query-op stages only; cap nodes execute via "Run as DAG".
+  serialize:function(graph){
+    return { stages: graph.nodes
+      .filter(function(n){ return !(window.VeraFlowCaps && window.VeraFlowCaps.isCap(n.type)); })
+      .map(function(n){ return { type:n.type, config:(n.meta&&n.meta.config)||{} }; }) };
+  },
+  deserialize:function(doc){
+    var st=(doc&&doc.stages)||[]; var i=0;
+    return { nodes: st.map(function(s){
+      return { id:'n'+(++i), type:s.type, out:null, params:{}, output_map:null, condition:'',
+               parallel_with:null, pos:null, meta:{config:Object.assign({}, s.config||{})} };
+    }), meta:{} };
+  },
+  renderInspector:function(node, ctx){
+    if(window.VeraFlowCaps && window.VeraFlowCaps.isCap(node.type)){
+      var csc=window.VeraFlowCaps.schemaFor(node.type)||{};
+      return '<div class="insp-h">'+ctx.esc((node.type||'').split('.').pop())+' <span style="font-size:8.5px;color:var(--acc3,#c5a572)">capability</span></div>'+
+             '<div class="insp-desc" style="font-size:10px;color:var(--dim,#7a8290)">'+ctx.esc(csc.description||node.type)+'</div>';
+    }
+    var def=_PL_STAGE_DEFS[node.type]||{fields:[]};
+    var cfg=(node.meta&&node.meta.config)||(node.meta={config:{}}).config;
+    var rows=(def.fields||[]).map(function(f){
+      var v=cfg[f.k]!=null?cfg[f.k]:'';
+      var ctrl;
+      if(f.t==='bool'){
+        ctrl='<label style="display:flex;align-items:center;gap:6px;font-size:10.5px"><input type="checkbox" data-fk="'+ctx.esc(f.k)+'" '+(v?'checked':'')+'> '+ctx.esc(f.label||f.k)+'</label>';
+      } else if(f.t==='select'){
+        ctrl='<select data-fk="'+ctx.esc(f.k)+'">'+(f.opts||[]).map(function(o){return '<option value="'+ctx.esc(o)+'"'+(v===o?' selected':'')+'>'+ctx.esc(o)+'</option>';}).join('')+'</select>';
+      } else {
+        ctrl='<input type="'+(f.t==='number'?'number':'text')+'" data-fk="'+ctx.esc(f.k)+'" value="'+ctx.esc(String(v))+'" placeholder="'+ctx.esc(f.ph||'')+'">';
+      }
+      return '<div class="insp-row"><div class="insp-row-label">'+ctx.esc(f.k)+'</div>'+ctrl+'</div>';
+    }).join('');
+    var html='<div class="insp-h">'+ctx.esc(node.type)+'</div>'+
+      '<div class="insp-section"><div class="insp-section-h">Stage config</div>'+(rows||'<div class="insp-row" style="font-size:10px;color:var(--dim,#7a8290)">No config for this stage.</div>')+'</div>';
+    return { html:html, bind:function(root){
+      root.querySelectorAll('[data-fk]').forEach(function(inp){
+        var ev=(inp.tagName==='SELECT'||inp.type==='checkbox')?'change':'input';
+        inp.addEventListener(ev, function(){
+          var k=inp.getAttribute('data-fk');
+          node.meta.config[k] = inp.type==='checkbox' ? inp.checked : inp.value;
+          ctx.refresh();   // canvas + sync, keep field focus
+        });
+      });
+    }};
+  }
+};
+var _fabCanvasReady=false;
+function fabToggleCanvas(){
+  var wrap=document.getElementById('pl-canvas-wrap'), el=document.getElementById('fabFlow'),
+      btn=document.getElementById('pl-canvas-btn'), addRow=document.getElementById('pl-addstage-row'),
+      cv=document.getElementById('plCanvas');
+  if(!wrap||!el) return;
+  if(wrap.style.display!=='none'){               // leaving canvas → write stages back
+    if(el.serialize){ var d=el.serialize(); if(d) _plStages=d.stages||[]; }
+    wrap.style.display='none'; if(cv)cv.style.display=''; if(addRow)addRow.style.display='';
+    if(btn)btn.innerHTML='&#8862; Canvas'; plRenderCanvas(); return;
+  }
+  if(!el.setProvider){ setEl('plStatus','Flow builder not loaded — restart the server so /ui/elements/flow_builder.js registers','err'); return; }
+  if(!_fabCanvasReady){
+    el.setProvider(fabricProvider);
+    el.addEventListener('flow:change', function(){ var d=el.serialize(); if(d) _plStages=d.stages||[]; });
+    _fabCanvasReady=true;
+  }
+  el.loadFromSource({stages:_plStages});
+  if(cv)cv.style.display='none'; if(addRow)addRow.style.display='none'; wrap.style.display='';
+  if(btn)btn.innerHTML='&#8801; List';
+}
+function fabRunAsDag(){
+  var el=document.getElementById('fabFlow');
+  if(!el||!el.runAsDag){ setEl('plStatus','Flow builder not loaded — restart the server','err'); return; }
+  var out=document.getElementById('fab-dag-out'); if(out) out.style.display='block';
+  el.runAsDag({into:document.getElementById('fab-dag-log')});
+}
 function plPreviewJson(){
   var pre=document.getElementById('plJsonPreview');
   if(!pre) return;
@@ -3223,7 +3535,7 @@ var _tsOHLCVBars     = null;   // normalized OHLCV bars (CSV export)
 
 // A dataset is OHLCV-chartable if it's an IoT series or a market/synthetic dataset.
 function _tsIsChartDs(id){
-  return !!id && (id.startsWith('ts.') || /^ml\.(ohlcv|crypto|synthetic\.ohlcv)/.test(id));
+  return !!id && (id.startsWith('ts.') || id.startsWith('mkt.') || /^ml\.(ohlcv|crypto|synthetic\.ohlcv)/.test(id));
 }
 
 function tsChartRefreshDs(){
@@ -5172,59 +5484,192 @@ async function fabDsGraphRunLoom(){
 // ===== Source search/filter =====
 window._fabSourcesAll = [];
 
-function fabFilterSources(){
-  var q = ((document.getElementById('fabSrcFilter') || {}).value || '').toLowerCase().trim();
-  var sortBy = ((document.getElementById('fabSrcSort') || {}).value || 'label');
-  var srcs = (window._fabSourcesAll || _fabSrcData || []).slice();
-  var tokens = q ? q.split(/\s+/).filter(Boolean) : [];
-  function matches(s){
-    if (!tokens.length) return true;
-    var tags = (s.tags || []);
-    if (typeof tags === 'string') {
-      try { tags = JSON.parse(tags); } catch(e) { tags = [tags]; }
-    }
-    var hay = ((s.label||'') + ' ' + (s.url||'') + ' ' + (s.source_type||'') +
-                ' ' + (s.dataset_id||'') + ' ' + (Array.isArray(tags)?tags.join(' '):'')).toLowerCase();
-    return tokens.every(function(t){ return hay.indexOf(t) >= 0; });
+// Normalised tags array for a source (tags may arrive as a JSON string).
+function _fabSrcTagsOf(s){
+  var tags = (s && s.tags) || [];
+  if (typeof tags === 'string') {
+    try { tags = JSON.parse(tags); } catch(e) { tags = tags ? [tags] : []; }
   }
-  // Filter the DOM: each card was rendered with id="src-<source-id>" or a
-  // data-src-id attribute. Walk the card list and toggle visibility.
+  return Array.isArray(tags) ? tags : [];
+}
+// Best-effort domain for grouping.
+function _fabSrcDomain(s){
+  var u = (s && s.url) || '';
+  if (!u) return '(no domain)';
+  try { return new URL(u).hostname.replace(/^www\./,''); }
+  catch(e){
+    var m = u.match(/^[a-z][a-z0-9+.\-]*:\/\/([^\/?#]+)/i);
+    return m ? m[1].replace(/^www\./,'') : '(no domain)';
+  }
+}
+
+// Full render of the source list: applies text search, the exact tag filter,
+// the chosen sort, optional collapsible grouping, and multi-select state.
+function fabRenderSrcList(){
   var list = document.getElementById('fabSrcList');
   if (!list) return;
-  var cards = list.querySelectorAll('.src-card, [data-src-id]');
-  var shown = 0;
-  // Map source id → matches?
-  var idMatches = {};
-  srcs.forEach(function(s){ idMatches[s.id] = matches(s); });
-  // Sort visible cards by chosen criterion
-  var matchedSrcs = srcs.filter(matches);
-  matchedSrcs.sort(function(a,b){
+  var q        = ((document.getElementById('fabSrcFilter')  || {}).value || '').toLowerCase().trim();
+  var sortBy   = ((document.getElementById('fabSrcSort')    || {}).value || 'label');
+  var groupBy  = ((document.getElementById('fabSrcGroupBy') || {}).value || 'none');
+  var gridView = (((document.getElementById('fabSrcView')   || {}).value || 'grid') === 'grid');
+  var tagFilter = window._fabTagFilter || '';
+  var tokens = q ? q.split(/\s+/).filter(Boolean) : [];
+  var srcs = (window._fabSourcesAll || _fabSrcData || []).slice();
+  var collapsed = window._fabSrcCollapsed || (window._fabSrcCollapsed = new Set());
+
+  function matchText(s){
+    if (!tokens.length) return true;
+    var tags = _fabSrcTagsOf(s);
+    var hay = ((s.label||'') + ' ' + (s.url||'') + ' ' + (s.source_type||s.type||'') +
+                ' ' + (s.dataset_id||'') + ' ' + tags.join(' ')).toLowerCase();
+    return tokens.every(function(t){ return hay.indexOf(t) >= 0; });
+  }
+  // Exact tag match — the chip bar must not behave like a substring search.
+  function matchTag(s){
+    if (!tagFilter) return true;
+    return _fabSrcTagsOf(s).indexOf(tagFilter) >= 0;
+  }
+  var matched = srcs.filter(function(s){ return matchText(s) && matchTag(s); });
+  matched.sort(function(a,b){
     if (sortBy === 'last_pulled') return ((b.last_pulled||'')).localeCompare(a.last_pulled||'');
     if (sortBy === 'dataset')     return ((a.dataset_id||'').toLowerCase()).localeCompare((b.dataset_id||'').toLowerCase());
-    if (sortBy === 'type')        return ((a.source_type||'').toLowerCase()).localeCompare((b.source_type||'').toLowerCase());
+    if (sortBy === 'type')        return ((a.source_type||a.type||'').toLowerCase()).localeCompare((b.source_type||b.type||'').toLowerCase());
     return ((a.label||a.url||'').toLowerCase()).localeCompare((b.label||b.url||'').toLowerCase());
   });
-  // Re-order DOM if cards have data-src-id; else just hide non-matching.
-  cards.forEach(function(card){
-    var sid = card.getAttribute('data-src-id') || (card.id||'').replace(/^src-/,'');
-    if (sid && idMatches[sid] === false) {
-      card.style.display = 'none';
-    } else {
-      card.style.display = '';
-      shown++;
+
+  function renderCard(s){
+    try { return fabRenderSrcCard(s); }
+    catch(e){
+      var sid = (s && s.id) || '?';
+      console.error('Render source failed', sid, e);
+      return '<div class="src-card" style="border-color:var(--err)"><div style="font-size:10px;color:var(--err)">Error rendering source '+esc(sid)+': '+esc(String(e&&e.message||e))+'</div>'+
+        '<button class="btn sm danger" style="margin-top:5px" onclick="fabDelSrc(\''+esc(sid)+'\')">Remove this source</button></div>';
     }
-  });
-  // If we have data-src-id, re-order DOM by sort key
-  if (matchedSrcs.length && cards.length && cards[0].getAttribute('data-src-id')) {
-    matchedSrcs.forEach(function(s){
-      var card = list.querySelector('[data-src-id="' + s.id + '"]');
-      if (card) list.appendChild(card);  // moves to end in sorted order
-    });
   }
+
+  if (groupBy === 'none') {
+    list.classList.toggle('grid', gridView);
+    list.innerHTML = matched.length
+      ? matched.map(renderCard).join('')
+      : '<div style="color:var(--dim);font-size:10px;padding:8px">No sources match.</div>';
+  } else {
+    list.classList.remove('grid');  // groups stack; grid applies inside each body
+    var groups = {};
+    matched.forEach(function(s){
+      var keys;
+      if (groupBy === 'tag')         { var ts = _fabSrcTagsOf(s); keys = ts.length ? ts : ['(untagged)']; }
+      else if (groupBy === 'domain') { keys = [_fabSrcDomain(s)]; }
+      else                           { keys = [(s.source_type || s.type || '(none)')]; }
+      keys.forEach(function(k){ (groups[k] = groups[k] || []).push(s); });
+    });
+    var gkeys = Object.keys(groups).sort(function(a,b){ return a.toLowerCase().localeCompare(b.toLowerCase()); });
+    if (!gkeys.length) {
+      list.innerHTML = '<div style="color:var(--dim);font-size:10px;padding:8px">No sources match.</div>';
+    } else {
+      list.innerHTML = gkeys.map(function(k){
+        var items = groups[k];
+        var isColl = collapsed.has(k);
+        var body = '<div class="src-group-body'+(gridView?' grid':'')+'"'+(isColl?' style="display:none"':'')+'>'+
+                     items.map(renderCard).join('')+'</div>';
+        return '<div class="src-group">'+
+          '<div class="src-group-hd" data-gkey="'+esc(k)+'" onclick="fabSrcToggleGroup(this)">'+
+            '<span class="src-group-caret">'+(isColl?'▸':'▾')+'</span>'+
+            '<span class="src-group-name">'+esc(k)+'</span>'+
+            '<span class="src-group-cnt">'+items.length+'</span>'+
+          '</div>'+ body +
+        '</div>';
+      }).join('');
+    }
+  }
+
+  fabSrcUpdateBar();
   var meta = document.getElementById('fabSrcFilterMeta');
-  if (meta) meta.textContent = q
-    ? (shown + ' / ' + cards.length + ' shown')
+  if (meta) meta.textContent = (q || tagFilter)
+    ? (matched.length + ' / ' + srcs.length + ' shown')
     : (srcs.length + ' total');
+}
+// Back-compat alias — inputs and other code call fabFilterSources().
+function fabFilterSources(){ return fabRenderSrcList(); }
+
+// Collapsible group header toggle.
+function fabSrcToggleGroup(hd){
+  if (!hd) return;
+  var key = hd.getAttribute('data-gkey') || '';
+  var coll = window._fabSrcCollapsed || (window._fabSrcCollapsed = new Set());
+  var body = hd.nextElementSibling;
+  var caret = hd.querySelector('.src-group-caret');
+  if (coll.has(key)) { coll.delete(key); if (body) body.style.display = ''; if (caret) caret.textContent = '▾'; }
+  else               { coll.add(key);    if (body) body.style.display = 'none'; if (caret) caret.textContent = '▸'; }
+}
+
+// ===== Source multi-select =====
+function fabSrcSelToggle(id, checked){
+  if (!id) return;
+  var sel = window._fabSrcSel || (window._fabSrcSel = new Set());
+  if (checked) sel.add(id); else sel.delete(id);
+  // Keep any duplicate checkboxes (e.g. a source shown under several tags) in sync.
+  document.querySelectorAll('#fabSrcList .src-sel-cb').forEach(function(cb){
+    if (cb.getAttribute('data-sel-id') === id) cb.checked = checked;
+  });
+  var card = document.getElementById('srccard-' + id);
+  if (card) card.classList.toggle('selected', checked);
+  fabSrcUpdateBar();
+}
+function fabSrcSelAll(){
+  var sel = window._fabSrcSel || (window._fabSrcSel = new Set());
+  document.querySelectorAll('#fabSrcList .src-sel-cb').forEach(function(cb){
+    var id = cb.getAttribute('data-sel-id');
+    if (id) { sel.add(id); cb.checked = true; var c = document.getElementById('srccard-'+id); if (c) c.classList.add('selected'); }
+  });
+  fabSrcUpdateBar();
+}
+function fabSrcSelClear(){
+  if (window._fabSrcSel) window._fabSrcSel.clear();
+  document.querySelectorAll('#fabSrcList .src-sel-cb').forEach(function(cb){
+    cb.checked = false;
+    var id = cb.getAttribute('data-sel-id');
+    var c = id && document.getElementById('srccard-'+id);
+    if (c) c.classList.remove('selected');
+  });
+  fabSrcUpdateBar();
+}
+function fabSrcUpdateBar(){
+  var sel = window._fabSrcSel || new Set();
+  var bar = document.getElementById('fabSrcBulkBar');
+  if (bar) bar.style.display = sel.size ? 'flex' : 'none';
+  var cnt = document.getElementById('fabSrcSelCount');
+  if (cnt) cnt.textContent = sel.size + ' selected';
+}
+async function fabSrcDelSelected(){
+  var sel = window._fabSrcSel;
+  if (!sel || !sel.size) return;
+  var ids = Array.from(sel);
+  if (!confirm('Delete ' + ids.length + ' selected source' + (ids.length>1?'s':'') + '? This cannot be undone.')) return;
+  var ok = 0, fail = 0;
+  for (var i = 0; i < ids.length; i++) {
+    try {
+      var r = await api('/fabric/sources/delete', 'POST', {source_id: ids[i]});
+      if (r && !r.error) ok++; else fail++;
+    } catch(e) { fail++; }
+  }
+  sel.clear();
+  addEv(fail ? 'warn' : 'ok', 'Deleted ' + ok + ' source' + (ok===1?'':'s') + (fail ? (', ' + fail + ' failed') : ''));
+  await fabLoadSources();
+}
+
+// ===== Sources / Catalog sub-tab toggle =====
+function fabSrcTab(which){
+  var sp = document.getElementById('srcpane-sources');
+  var cp = document.getElementById('srcpane-catalog');
+  var sb = document.getElementById('srctab-sources');
+  var cb = document.getElementById('srctab-catalog');
+  var onCat = (which === 'catalog');
+  if (sp) sp.style.display = onCat ? 'none' : '';
+  if (cp) cp.style.display = onCat ? '' : 'none';
+  [sb, cb].forEach(function(b){ if (b){ b.classList.remove('active'); b.style.borderColor=''; b.style.color=''; } });
+  var act = onCat ? cb : sb;
+  if (act) { act.classList.add('active'); act.style.borderColor = 'var(--acc)'; act.style.color = 'var(--acc)'; }
+  if (onCat && typeof fabLoadCatalog === 'function') fabLoadCatalog();
 }
 
 
@@ -5320,10 +5765,9 @@ async function fabMainGraphLoom(){
 // ===== Source view toggle =====
 function fabSwitchSrcView(){
   var v = (document.getElementById('fabSrcView')||{}).value || 'grid';
-  var list = document.getElementById('fabSrcList');
-  if (!list) return;
-  list.classList.toggle('grid', v === 'grid');
   try { localStorage.setItem('fabSrcView', v); } catch(e){}
+  // Re-render so the grid layout applies whether grouped or flat.
+  if (typeof fabRenderSrcList === 'function') fabRenderSrcList();
 }
 
 // ===== Tag chips bar =====
@@ -5349,12 +5793,11 @@ async function fabRenderTagsBar(){
       : '');
 }
 function fabTagFilter(tag){
-  window._fabTagFilter = tag || '';
-  var input = document.getElementById('fabSrcFilter');
-  if (input) {
-    input.value = tag || '';
-    if (typeof fabFilterSources === 'function') fabFilterSources();
-  }
+  // Toggle the exact-tag filter. This is a structured filter on the tags array —
+  // it is NOT funnelled through the free-text box (which does substring matching
+  // across all fields and gave wrong results for tags).
+  window._fabTagFilter = (window._fabTagFilter === tag) ? '' : (tag || '');
+  if (typeof fabRenderSrcList === 'function') fabRenderSrcList();
   fabRenderTagsBar();
 }
 async function fabTagFanOut(tag){
@@ -5620,7 +6063,11 @@ window.addEventListener('vg:action', function(ev){
 });
 
 </script>
+<link rel="stylesheet" href="/ui/vera-panel.css">
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel.js"></script>
+<script src="/ui/elements/flow_builder.js"></script>
+<script src="/ui/elements/flow_caps.js"></script>
 <script src="/ui/vera-graph.js"></script>
 
 <!-- Health modal — placed at body level, never inside layout containers -->

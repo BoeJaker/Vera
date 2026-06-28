@@ -49,9 +49,19 @@ log = logging.getLogger("vera.vector_browser")
 # HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _has_emb(emb) -> bool:
+    """True if an embedding is present and non-empty.
+
+    Chroma may return embeddings as numpy arrays, for which bare truthiness
+    (`if emb:` / `emb or []`) raises "truth value of an array is ambiguous".
+    Always test with `is not None` + `len()` instead.
+    """
+    return emb is not None and len(emb) > 0
+
+
 def _safe_embedding_stats(emb: List[float]) -> Dict:
     """Compute basic stats about an embedding vector."""
-    if not emb:
+    if not _has_emb(emb):
         return {"dim": 0}
     dim = len(emb)
     out: Dict[str, Any] = {"dim": dim}
@@ -93,8 +103,9 @@ async def cap_vectors_overview(trace_id=None) -> Dict:
     if col:
         try:
             sample = col.peek(limit=1)
-            if sample and sample.get("embeddings") and sample["embeddings"][0]:
-                chroma_dim = len(sample["embeddings"][0])
+            sample_embs = sample.get("embeddings") if sample else None
+            if _has_emb(sample_embs) and _has_emb(sample_embs[0]):
+                chroma_dim = len(sample_embs[0])
         except Exception:
             pass
 
@@ -174,15 +185,20 @@ async def cap_vectors_chroma_browse(
         ids        = result.get("ids") or []
         docs       = result.get("documents") or []
         metas      = result.get("metadatas") or []
-        embeddings = result.get("embeddings") or []
+        # Chroma may return embeddings as a numpy array — avoid `or []` (ambiguous
+        # truthiness). Normalise None to an empty list explicitly.
+        embeddings = result.get("embeddings")
+        if embeddings is None:
+            embeddings = []
 
         for i, rid in enumerate(ids):
             rec: Dict[str, Any] = {"id": rid}
             rec["document"] = (docs[i][:500] if docs[i] else "") if i < len(docs) else ""
             rec["metadata"] = metas[i] if i < len(metas) else {}
             emb = embeddings[i] if i < len(embeddings) else None
-            rec["embedding_stats"] = _safe_embedding_stats(emb) if emb else {"dim": 0}
-            if include_embeddings and emb:
+            has_emb = _has_emb(emb)
+            rec["embedding_stats"] = _safe_embedding_stats(emb) if has_emb else {"dim": 0}
+            if include_embeddings and has_emb:
                 # Send first/last 8 values as a preview, not the full vector
                 rec["embedding_preview"] = {
                     "first_8": [round(v, 6) for v in emb[:8]],
@@ -221,7 +237,8 @@ async def cap_vectors_chroma_get(record_id: str, trace_id=None) -> Dict:
         if not result.get("ids"):
             return {"error": f"Record {record_id} not found in Chroma"}
 
-        emb  = result["embeddings"][0] if result.get("embeddings") else None
+        embs = result.get("embeddings")
+        emb  = embs[0] if _has_emb(embs) else None
         doc  = result["documents"][0] if result.get("documents") else ""
         meta = result["metadatas"][0] if result.get("metadatas") else {}
 
@@ -229,9 +246,9 @@ async def cap_vectors_chroma_get(record_id: str, trace_id=None) -> Dict:
             "id":              record_id,
             "document":        doc[:2000] if doc else "",
             "metadata":        meta,
-            "embedding_stats": _safe_embedding_stats(emb) if emb else {"dim": 0},
+            "embedding_stats": _safe_embedding_stats(emb) if _has_emb(emb) else {"dim": 0},
         }
-        if emb:
+        if _has_emb(emb):
             out["embedding_preview"] = {
                 "first_16": [round(v, 6) for v in emb[:16]],
                 "last_16":  [round(v, 6) for v in emb[-16:]],
@@ -278,8 +295,9 @@ async def cap_vectors_chroma_datasets(trace_id=None) -> Dict:
             if sample_id:
                 try:
                     s = col.get(ids=[sample_id], include=["embeddings"])
-                    if s.get("embeddings") and s["embeddings"][0]:
-                        entry["sample_dim"] = len(s["embeddings"][0])
+                    s_embs = s.get("embeddings")
+                    if _has_emb(s_embs) and _has_emb(s_embs[0]):
+                        entry["sample_dim"] = len(s_embs[0])
                 except Exception:
                     pass
             datasets.append(entry)
@@ -425,7 +443,9 @@ async def cap_vectors_audit(trace_id=None) -> Dict:
                     include=["embeddings", "metadatas"],
                     limit=sample_size
                 )
-                embeddings = result.get("embeddings") or []
+                embeddings = result.get("embeddings")
+                if embeddings is None:
+                    embeddings = []
                 metas      = result.get("metadatas") or []
 
                 dim_counts: Dict[int, int] = {}
@@ -570,7 +590,8 @@ async def cap_vectors_compare(
         try:
             cr = col.get(ids=[record_id], include=["embeddings", "metadatas", "documents"])
             if cr.get("ids"):
-                chroma_emb = cr["embeddings"][0] if cr.get("embeddings") else None
+                cr_embs    = cr.get("embeddings")
+                chroma_emb = cr_embs[0] if _has_emb(cr_embs) else None
                 result["chroma"] = {
                     "found":    True,
                     "document": (cr["documents"][0] or "")[:300] if cr.get("documents") else "",
@@ -616,11 +637,12 @@ async def cap_vectors_compare(
         result["faiss"] = {"available": False}
 
     # Match status
-    if chroma_emb and faiss_found:
+    chroma_has = _has_emb(chroma_emb)
+    if chroma_has and faiss_found:
         result["match_status"] = "both_stores"
-    elif chroma_emb and not faiss_found:
+    elif chroma_has and not faiss_found:
         result["match_status"] = "chroma_only"
-    elif not chroma_emb and faiss_found:
+    elif not chroma_has and faiss_found:
         result["match_status"] = "faiss_only"
     else:
         result["match_status"] = "neither"

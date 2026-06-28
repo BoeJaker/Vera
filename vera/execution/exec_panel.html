@@ -200,6 +200,7 @@ code{font-family:inherit;background:var(--s2);padding:1px 4px;border-radius:2px;
   <button class="tbtn" data-mode="ps" onclick="setMode('ps')">PowerShell</button>
   <button class="tbtn" data-mode="ssh" onclick="setMode('ssh')">SSH</button>
   <button class="tbtn" data-mode="hosts" onclick="setMode('hosts')">Hosts</button>
+  <button class="tbtn" data-mode="sandbox" onclick="setMode('sandbox')" title="Execution sandbox policy">⛉ Sandbox</button>
   <div style="flex:1"></div>
   <div class="layout-switch" id="layout-switch">
     <button id="lay-form" class="active" onclick="setLayout('form')">Form</button>
@@ -361,6 +362,13 @@ code{font-family:inherit;background:var(--s2);padding:1px 4px;border-radius:2px;
     </div>
   </div>
 
+  <!-- ─── SANDBOX (exec policy) ─────────────────────────────────────────── -->
+  <div class="mode-pane" data-pane="sandbox">
+    <div class="form-layout active" data-layout="form">
+      <vera-sandbox-controls id="exec-sandbox-ctl" style="flex:1;min-height:0"></vera-sandbox-controls>
+    </div>
+  </div>
+
 </div><!-- /#body -->
 
 <!-- ── LLM Action strip (collapsible) ────────────────────────────────────── -->
@@ -462,11 +470,12 @@ function setMode(m){
   _mode=m;
   document.querySelectorAll('.tbtn[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===m));
   document.querySelectorAll('.mode-pane').forEach(p=>p.classList.toggle('active',p.dataset.pane===m));
-  // Hosts mode has no terminal layout — force form
+  // Hosts + Sandbox modes have no terminal layout — force form
   const sw=document.getElementById('layout-switch');
-  sw.style.display = (m==='hosts') ? 'none' : '';
-  if(m==='hosts') applyLayoutAll('form'); else applyLayoutAll(_layout);
+  sw.style.display = (m==='hosts'||m==='sandbox') ? 'none' : '';
+  if(m==='hosts'||m==='sandbox') applyLayoutAll('form'); else applyLayoutAll(_layout);
   if(m==='hosts') hostsRefresh();
+  if(m==='sandbox'){ const el=document.getElementById('exec-sandbox-ctl'); if(el&&el.refresh) el.refresh(); }
   if(m==='ssh'){ updateTermPrefix('ssh'); }
   if(m==='bash'){ updateTermPrefix('bash'); }
   if(m==='ps'){ updateTermPrefix('ps'); }
@@ -479,7 +488,7 @@ function setLayout(l){
 }
 function applyLayoutAll(l){
   document.querySelectorAll('.mode-pane').forEach(p=>{
-    if(p.dataset.pane==='hosts') return;
+    if(p.dataset.pane==='hosts'||p.dataset.pane==='sandbox') return;
     p.querySelectorAll('.form-layout,.term-layout').forEach(x=>x.classList.remove('active'));
     const sel = l==='form' ? '.form-layout' : '.term-layout';
     const node = p.querySelector(sel);
@@ -487,7 +496,7 @@ function applyLayoutAll(l){
   });
 }
 function clearCurrent(){
-  if(_mode==='hosts') return;
+  if(_mode==='hosts'||_mode==='sandbox') return;
   if(_layout==='form'){ document.getElementById(_mode+'-out').innerHTML=''; }
   else { termClear(_mode); }
 }
@@ -1220,6 +1229,7 @@ window.VeraExec = {setMode,setLayout,sshTo,sshToInline,loadHosts,runLocal,runSsh
 </script>
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
+<script src="/ui/elements/sandbox_controls.js" id="vera-sandbox-controls-js"></script>
 <script>
 /* ── Vera chat ↔ panel bridge wiring ─────────────────────────────────────
    Lets a chat agent DRIVE this exec panel's UI — switch mode, type a command

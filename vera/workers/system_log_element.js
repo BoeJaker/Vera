@@ -159,7 +159,7 @@ textarea{background:var(--bg0,#181614);border:1px solid var(--border,#3a3530);co
     _getBase() {
       if (this._base) return this._base;
       const el = document.getElementById('backendUrl');
-      return (el ? el.value : '') || window._veraBase || window.location.origin || 'http://llm.int:8999';
+      return (el ? el.value : '') || window._veraBase || window.location.origin || (window.__VERA_BASE__||('http://'+location.hostname+':8999'));
     }
 
     async _api(path, method, body) {

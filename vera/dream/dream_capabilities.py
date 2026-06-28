@@ -99,6 +99,10 @@ KEY_MEM_LAST_NODE = "vera:dream:mem:last_node:"   # + journal_id -> last dream-l
 # (low→high): these defaults < global override (Redis) < per-trigger/pipeline
 # (trig["loop_settings"]) < project (seed["project_loop_settings"]) < seed.
 DEFAULT_LOOP_SETTINGS: Dict[str, Any] = {
+    # Engine selection — which dag.agent_loop variant dream stages delegate to.
+    # v5 (orchestrator + scoped specialist sub-agents) is the default; the shared
+    # _resolve_agent_loop_cap falls back v5 → v2 → v1 if a variant isn't loaded.
+    "loop_version":              "v5",
     "max_cycles":                8,
     "triage_top_k":              16,
     "max_search_calls":          2,
@@ -113,6 +117,16 @@ DEFAULT_LOOP_SETTINGS: Dict[str, Any] = {
     "model":                     "",
     "instance_id":               "",
     "system_prompt_template":    "",
+    # ── v5-only knobs (ignored by older variants via _loop_kwargs_for signature
+    #    filtering, so they're harmless when loop_version != v5). ──────────────
+    "max_steps":                 6,
+    "step_cycle_budget":         6,
+    "catalog_size":              40,
+    "enable_replan":             True,
+    "enable_dynamic_skills":     True,
+    "skill_allow":               "",
+    "skill_deny":                "",
+    "auto_suggest_skills":       True,
 }
 
 HISTORY_CAP      = 200
@@ -251,15 +265,18 @@ DEFAULT_WHITELIST = [
     "ide.inspect.list_snapshots", "ide.inspect.diff_snapshot",
     "ide.inspect.review_file", "ide.inspect.plan_improvement",
     # Phase 1: project awareness
-    "project.list", "project.context",
+    "project.list", "project.get", "project.context", "project.context.assemble",
+    # Composite-topics entity sources: schedule + review reports
+    "cal.events.list", "cal.todos.list", "cal.notes.list",
+    "ide.fs.read", "dream.review.area_report",
     # Sensors + stages
     "dream.sensor.memory_recent", "dream.sensor.fabric_recent",
     "dream.sensor.syslog_errors", "dream.sensor.bus_events",
     "dream.sensor.news_overnight", "dream.sensor.research_recent",
     "dream.sensor.active_projects", "dream.sensor.source_changes",
-    "dream.sensor.memory_graph_walk",
+    "dream.sensor.memory_graph_walk", "dream.sensor.topics",
     "dream.stage.gather", "dream.stage.themes", "dream.stage.synthesize",
-    "dream.stage.goal_refine",
+    "dream.stage.goal_refine", "dream.stage.compose_topics",
 ]
 
 
@@ -367,17 +384,16 @@ def _default_triggers() -> List[Dict[str, Any]]:
         },
         {
             "name":         "wander",
-            "label":        "Memory Wander",
-            "description":  "Agentic graph exploration — picks an under-explored memory "
-                            "node, traverses edges, runs entity extraction on sparse "
-                            "records, and stores new connections.",
+            "label":        "Topic Wander",
+            "description":  "Composite-topic exploration — harvests interesting topics "
+                            "(projects, source changes, research, schedule, errors, memory) "
+                            "with their entities, picks one, and uses the agent loop to "
+                            "think about it and wander to related things.",
             "enabled":      True,
-            "sensors":      ["dream.sensor.memory_graph_walk",
-                             "dream.sensor.memory_recent"],
+            "sensors":      ["dream.sensor.topics",
+                             "dream.sensor.memory_graph_walk"],
             "pipeline":     ["dream.stage.gather",
-                             "dream.stage.memory_deep_traverse",
-                             "dream.stage.themes",
-                             "dream.stage.goal_refine",
+                             "dream.stage.compose_topics",
                              "dream.stage.agent_loop",
                              "dream.stage.synthesize",
                              "dream.stage.deliver"],
@@ -391,32 +407,42 @@ def _default_triggers() -> List[Dict[str, Any]]:
             "depth":        "standard",
             "max_steps":    6,
             "deliver_to":   ["notebook", "memory"],
+            "stage_config": {"compose_topics": {"top_n": 6, "per_topic_entities": 6}},
             "whitelist": [
                 "memory.search", "memory.recall", "memory.similar",
                 "memory.traverse", "memory.all_nodes", "memory.create",
                 "memory.graph_stats",
-                "fabric.query", "fabric.datasets",
+                "fabric.query", "fabric.datasets", "fabric.sources",
                 "fabric.entity_graph.snapshot",
+                "project.list", "project.get", "project.context.assemble",
+                "research.history", "research.job.status", "research.expand",
+                "research.quick_search",
+                "cal.events.list", "cal.todos.list", "cal.notes.list",
+                "ide.inspect.diff_snapshot", "ide.inspect.review_file",
+                "ide.fs.read", "dream.review.area_report",
                 "nlp.run", "nlp.modules",
                 "llm.generate", "llm.summarize", "llm.qa",
             ],
             "no_hitl_caps": [
                 "memory.search", "memory.recall", "memory.similar",
                 "memory.traverse", "memory.all_nodes", "memory.graph_stats",
-                "fabric.query", "fabric.datasets",
+                "fabric.query", "fabric.datasets", "fabric.sources",
+                "project.list", "project.get", "project.context.assemble",
+                "research.history", "research.job.status", "research.expand",
+                "cal.events.list", "cal.todos.list", "cal.notes.list",
+                "ide.inspect.diff_snapshot", "ide.inspect.review_file", "ide.fs.read",
+                "dream.review.area_report",
                 "nlp.run", "llm.summarize", "llm.qa",
             ],
             "prompt": (
-                "You are wandering the memory graph looking for unexplored territory. "
-                "The sensor data includes a SEED NODE and its connections. Your goals:\n"
-                "1. If the seed node has few connections, use memory.similar to find "
-                "semantically related nodes that SHOULD be connected but aren't.\n"
-                "2. If you find a node with rich text but no entity extraction done, "
-                "use nlp.run to extract entities from it.\n"
-                "3. If you find an interesting cluster, use memory.create to store a "
-                "'connection' observation linking the related IDs.\n"
-                "4. If you find nothing interesting, say so honestly and stop.\n"
-                "Always reference specific node IDs and content. Never invent data."
+                "You are wandering Vera's most interesting topics. compose_topics has "
+                "already chosen ONE focus topic and listed its known entities + ways to "
+                "go deeper (ids and pull hints). Build the complete picture with MINIMAL "
+                "calls — prefer the given ids/hints over broad searches. Then produce a "
+                "concrete, specific insight or next action grounded in real data. For a "
+                "source-change topic, outline how you'd implement the change. You may "
+                "wander to an adjacent topic if it proves more relevant. Never invent "
+                "data; cite the entity ids you used."
             ),
         },
         {
@@ -1866,6 +1892,117 @@ def _loop_kwargs_for(cap_func, settings: Dict[str, Any], **overrides) -> Dict[st
     return {k: v for k, v in merged.items() if k in accepted}
 
 
+# ── Agent-loop engine resolution + result normalization ──────────────────────
+# All dream agent-loop stages delegate to a dag.agent_loop_v{N} cap. Historically
+# four stages hard-wired v2 and only understood v2's {tool_calls, summary, cycles}
+# return shape. These helpers centralise engine selection (default v5, with
+# graceful fallback to whatever variant is registered) and normalise every
+# variant's output onto one shape so the stages are engine-agnostic.
+_LOOP_VERSION_CAPS = {
+    "v5": "dag.agent_loop_v5",
+    "v4": "dag.agent_loop_v4",
+    "v3": "dag.agent_loop_v3",
+    "v2": "dag.agent_loop_v2",
+    "v1": "dag.agent_loop",
+}
+# Preference order when the requested version isn't loaded: prefer the newest
+# orchestrated engine, then the stable v2 ReAct engine, then the rest.
+_LOOP_FALLBACK_ORDER = ["v5", "v2", "v4", "v3", "v1"]
+
+
+def _resolve_agent_loop_cap(settings: Optional[Dict[str, Any]] = None):
+    """Pick the agent-loop cap for the requested loop_version (default "v5"),
+    falling back through _LOOP_FALLBACK_ORDER to whatever is registered.
+    Returns (cap_record_or_None, engine_cap_name)."""
+    want = str((settings or {}).get("loop_version", "v5") or "v5").lower().strip()
+    order = [want] + [v for v in _LOOP_FALLBACK_ORDER if v != want]
+    for ver in order:
+        cap_name = _LOOP_VERSION_CAPS.get(ver)
+        if cap_name and cap_name in CAPABILITY_REGISTRY:
+            return CAPABILITY_REGISTRY[cap_name], cap_name
+    return None, ""
+
+
+def _normalize_loop_result(loop_result: Dict[str, Any], engine: str) -> Dict[str, Any]:
+    """Map any agent-loop variant's output onto a single shape:
+        {engine, steps:[{step,cap,ok,reason,preview[,error]}], summary, cycles, error}
+    v1–v4 expose tool_calls + summary + cycles; v5 exposes steps
+    (id/title/ok/summary/outputs) with `final` aliased to `summary`."""
+    loop_result = loop_result or {}
+    summary = (loop_result.get("summary") or loop_result.get("final") or "").strip()
+    error = loop_result.get("error")
+    steps: List[Dict[str, Any]] = []
+
+    v5_steps = loop_result.get("steps")
+    is_v5 = (isinstance(v5_steps, list) and v5_steps
+             and isinstance(v5_steps[0], dict) and "title" in v5_steps[0])
+    if is_v5:
+        for i, st in enumerate(v5_steps):
+            if not isinstance(st, dict):
+                continue
+            outs = st.get("outputs") or {}
+            cap_label = ", ".join(str(k) for k in outs.keys()) or f"step:{st.get('id', i)}"
+            steps.append({
+                "step":    i,
+                "cap":     cap_label,
+                "ok":      bool(st.get("ok")),
+                "reason":  str(st.get("title", ""))[:200],
+                "preview": str(st.get("summary", ""))[:300],
+            })
+        cycles = loop_result.get("cycles") or len(v5_steps)
+    else:
+        tool_calls = loop_result.get("tool_calls") or []
+        for i, tc in enumerate(tool_calls):
+            if not isinstance(tc, dict):
+                continue
+            cap_called = tc.get("tool") or tc.get("cap") or "?"
+            preview = str(tc.get("result") or tc.get("output") or tc.get("preview") or "")[:300]
+            thought = str(tc.get("thought") or tc.get("reason") or "")[:200]
+            ok = not bool(tc.get("error"))
+            rec: Dict[str, Any] = {"step": i, "cap": cap_called, "ok": ok,
+                                   "reason": thought, "preview": preview}
+            if not ok:
+                rec["error"] = str(tc.get("error", ""))[:200]
+            steps.append(rec)
+        cycles = loop_result.get("cycles", len(tool_calls))
+
+    return {"engine": engine, "steps": steps, "summary": summary,
+            "cycles": cycles, "error": error}
+
+
+async def _run_agent_loop(*, goal: str, allowed_caps: str,
+                          settings: Dict[str, Any], session_id: str,
+                          max_steps: int = 6, **overrides) -> Dict[str, Any]:
+    """Resolve + run the configured agent-loop variant and return a normalized
+    result (plus the raw result under "raw"). Centralises engine selection so
+    every dream stage picks up v5 via DEFAULT_LOOP_SETTINGS["loop_version"].
+    `max_steps` (the dream's step budget) overrides the settings value so the
+    trigger's max_steps drives v5's plan length; it's filtered out for variants
+    that don't accept it."""
+    cap, engine = _resolve_agent_loop_cap(settings)
+    if not cap:
+        return {"engine": "", "steps": [], "summary": "", "cycles": 0,
+                "error": "no agent_loop variant registered", "raw": {}}
+    loop_kwargs = _loop_kwargs_for(
+        cap["func"], settings,
+        goal=goal,
+        allowed_caps=allowed_caps,
+        max_cycles=settings.get("max_cycles", max_steps),
+        max_steps=max_steps,
+        session_id=session_id,
+        **overrides,
+    )
+    try:
+        raw = await cap["func"](**loop_kwargs) or {}
+    except Exception as e:
+        log.warning("dream agent-loop (%s) error: %s", engine, e)
+        return {"engine": engine, "steps": [], "summary": "", "cycles": 0,
+                "error": str(e), "raw": {}}
+    norm = _normalize_loop_result(raw, engine)
+    norm["raw"] = raw
+    return norm
+
+
 @capability(
     "dream.loop.settings.get", memory="off", silent=True,
     http_method="GET", http_path="/dream/loop/settings", http_tags=["dream"],
@@ -2381,7 +2518,15 @@ async def _idle_minutes() -> float:
             try:
                 rec = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
                 name = rec.get("name", "")
+                sid  = str(rec.get("sid", "") or "")
             except Exception:
+                continue
+            # Never let a dream's own activity reset the idle timer — otherwise a
+            # running dream (which calls llm.*/research.*/web.* under a "dream:*"
+            # session) makes itself look like an active user, causing reviews to
+            # yield ("user active") and the scheduler cadence to thrash. Skip
+            # entries from dream sessions and from infra/dream cap names.
+            if sid.startswith("dream") or any(name.startswith(p) for p in _IDLE_IGNORE_PREFIXES):
                 continue
             # Only count caps whose prefix is in the reset list
             if any(name.startswith(p) for p in reset_prefixes):
@@ -2395,17 +2540,54 @@ async def _idle_minutes() -> float:
 # SENSORS
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Trivial chatter that shouldn't be treated as "signal" for the dream pipeline.
+_GREETING_TEXTS = {"hello", "hi", "hey", "yo", "sup", "ok", "okay", "thanks",
+                   "ty", "test", "ping", "hello there", "good morning"}
+# Markers of the dream's OWN low-value diagnostic notes. Re-ingesting these is
+# the noise feedback loop, so they're filtered out of the recent-memory signal.
+_DREAM_DIAG_MARKERS = (
+    "all sensors returned no usable data",
+    "— no signal", "- no signal", "no usable data",
+    "no new items for", "nothing new to think about",
+    "skipping synthesis to avoid fabricating",
+)
+
+
+def _is_low_value_memory(rec: Dict[str, Any], min_chars: int = 12,
+                         exclude_dream_diagnostics: bool = True) -> bool:
+    """True when a memory record is chatter or one of the dream's own diagnostic
+    notes — i.e. it shouldn't count as recent-activity signal. Centralised so
+    sensors and the dream-layer browse share one definition of 'noise'."""
+    text = (rec.get("text") or rec.get("summary") or "").strip()
+    low = text.lower()
+    if len(text) < int(min_chars):
+        return True
+    if low in _GREETING_TEXTS:
+        return True
+    if exclude_dream_diagnostics and any(m in low for m in _DREAM_DIAG_MARKERS):
+        return True
+    return False
+
+
 @capability(
     "dream.sensor.memory_recent", memory="off", silent=True,
     http_method="GET", http_path="/dream/sensor/memory_recent",
     http_tags=["dream", "sensor"],
-    description="Sample recent memory records — wander-friendly signal for the dream pipeline.",
+    description="Sample recent memory records — wander-friendly signal for the dream "
+                "pipeline. Filters out chatter + the dream's own diagnostic notes so "
+                "the signal reflects real activity, not its own noise. Params: limit, "
+                "min_chars, exclude_dream_diagnostics, exclude_source_types (csv).",
 )
-async def dream_sensor_memory_recent(limit: int = 30, trace_id=None):
+async def dream_sensor_memory_recent(limit: int = 30, min_chars: int = 12,
+                                     exclude_dream_diagnostics: bool = True,
+                                     exclude_source_types: str = "",
+                                     trace_id=None):
     """
     Pull recent memory records. Prefers memory.all_nodes (chronological) since
     memory.search with empty query produces no embedding and returns nothing.
     Falls back to memory.session_history then memory.search if all_nodes is unavailable.
+    Quality-filters chatter + dream self-diagnostics so the firing signal reflects
+    genuine recent activity rather than the dream's own accumulated noise.
     """
     records: List[Any] = []
     last_err: str = ""
@@ -2450,15 +2632,35 @@ async def dream_sensor_memory_recent(limit: int = 30, trace_id=None):
             except Exception:
                 normalised.append({"text": str(rec)})
 
-    signal = min(1.0, len(normalised) / max(20, int(limit)))
+    # ── Quality filter — drop chatter, dream self-diagnostics, and any
+    #    excluded source_types so the firing signal isn't dominated by noise. ──
+    _excl_src = {s.strip().lower() for s in (exclude_source_types or "").split(",") if s.strip()}
+    raw_count = len(normalised)
+    quality: List[Dict[str, Any]] = []
+    for rec in normalised:
+        if _excl_src and str(rec.get("source_type", "")).lower() in _excl_src:
+            continue
+        if _is_low_value_memory(rec, min_chars=min_chars,
+                                exclude_dream_diagnostics=exclude_dream_diagnostics):
+            continue
+        quality.append(rec)
+
+    # Signal now reflects how much *quality* recent activity exists. When recent
+    # memory is all chatter/diagnostics, signal collapses → repetitive low-value
+    # dreams stop firing on their own noise.
+    signal = min(1.0, len(quality) / max(20, int(limit)))
     out = {
-        "source":  "memory",
-        "count":   len(normalised),
-        "signal":  round(signal, 3),
-        "sample":  normalised[:int(limit)],
-        "summary": f"{len(normalised)} recent memory records",
+        "source":   "memory",
+        "count":    len(quality),
+        "raw_count": raw_count,
+        "filtered": raw_count - len(quality),
+        "signal":   round(signal, 3),
+        "sample":   quality[:int(limit)],
+        "summary":  f"{len(quality)} recent memory records"
+                    + (f" ({raw_count - len(quality)} low-value filtered)"
+                       if raw_count != len(quality) else ""),
     }
-    if not normalised and last_err:
+    if not quality and last_err:
         out["error"] = last_err
     return out
 
@@ -2474,18 +2676,37 @@ async def dream_sensor_fabric_recent(limit: int = 20, trace_id=None):
     Pull recent records from the fabric. Lists datasets, then queries each for
     the most recent items. Falls back to dataset count if querying isn't available.
     """
-    fabric = _fabric()
-    if not fabric:
-        return {"source": "fabric", "count": 0, "signal": 0.0, "note": "fabric not loaded"}
+    # Enumerate datasets via the fabric.datasets / fabric.sources CAPS (the fabric
+    # object's own list_datasets() returns nothing in this deployment — that's why
+    # this sensor read 0 while fabric_by_tag, which uses fabric.sources, saw 28).
     try:
         # 1. Get datasets
         datasets: List[Dict[str, Any]] = []
-        if hasattr(fabric, "list_datasets"):
-            res = await fabric.list_datasets()  # type: ignore
-            datasets = res if isinstance(res, list) else (res.get("datasets", []) if isinstance(res, dict) else [])
-        elif hasattr(fabric, "datasets"):
-            res = await fabric.datasets()  # type: ignore
-            datasets = res if isinstance(res, list) else (res.get("datasets", []) if isinstance(res, dict) else [])
+        ds_cap = CAPABILITY_REGISTRY.get("fabric.datasets")
+        if ds_cap:
+            try:
+                res = await ds_cap["func"]() or {}
+                datasets = (res.get("datasets") if isinstance(res, dict) else res) or []
+            except Exception:
+                datasets = []
+        if not datasets:
+            src_cap = CAPABILITY_REGISTRY.get("fabric.sources")
+            if src_cap:
+                try:
+                    res = await src_cap["func"]() or {}
+                    srcs = (res.get("sources") if isinstance(res, dict) else res) or []
+                    # Collapse sources to unique datasets (a source ≈ a dataset here)
+                    seen_ds: set = set()
+                    for s in srcs:
+                        if not isinstance(s, dict):
+                            continue
+                        did = s.get("dataset_id") or s.get("id") or s.get("name") or ""
+                        if did and did not in seen_ds:
+                            seen_ds.add(did)
+                            datasets.append({"dataset_id": did,
+                                             "record_count": s.get("record_count", s.get("count", 0))})
+                except Exception:
+                    pass
 
         # 2. Pull a few items from the most-populated datasets
         items: List[Dict[str, Any]] = []
@@ -2653,6 +2874,128 @@ async def dream_sensor_web_feed(url: str = "", feed_id: str = "",
         "signal":  round(signal, 3),
         "sample":  new_items,
         "summary": f"{len(new_items)} new item(s) from {url}",
+    }
+
+
+@capability(
+    "dream.sensor.topic_research", memory="off", silent=True,
+    http_method="GET", http_path="/dream/sensor/topic_research",
+    http_tags=["dream", "sensor"],
+    description="Subject-scoped grounding for thinking loops: blends a memory.search, "
+                "a fabric.query, and (optionally) a web.search on the subject, dedupes, "
+                "and surfaces only NEW items per feed so each idle slot reflects on "
+                "fresh, relevant material instead of re-reading raw recent memory. "
+                "Params: subject (str!), use_fabric (bool), use_web (bool), limit (int), "
+                "feed_id (str — novelty cursor key, defaults from subject).",
+)
+async def dream_sensor_topic_research(subject: str = "", use_fabric: bool = True,
+                                      use_web: bool = True, limit: int = 20,
+                                      feed_id: str = "", trace_id=None):
+    subject = (subject or "").strip()
+    if not subject:
+        return {"source": "topic_research", "count": 0, "signal": 0.0,
+                "note": "no subject"}
+    fid = feed_id or _think_slug(subject)
+    items: List[Dict[str, Any]] = []
+
+    # 1) Memory — what we already know / have noted about the subject.
+    mem_search = CAPABILITY_REGISTRY.get("memory.search")
+    if mem_search:
+        try:
+            sr = await mem_search["func"](query=subject, limit=int(limit))
+            for it in (sr or {}).get("results", [])[:int(limit)]:
+                rec = it.get("record", it) if isinstance(it, dict) else {}
+                txt = (rec.get("text") or rec.get("summary") or "").strip()
+                if txt and not _is_low_value_memory(rec):
+                    items.append({"id": rec.get("id"), "text": txt[:600],
+                                  "source": "memory", "ts": rec.get("created_at", "")})
+        except Exception as e:
+            log.debug("topic_research memory: %s", e)
+
+    # 2) Fabric — structured/ingested data about the subject.
+    if use_fabric:
+        fab_q = CAPABILITY_REGISTRY.get("fabric.query")
+        if fab_q:
+            try:
+                res = await fab_q["func"](query=json.dumps({
+                    "text": subject, "top_k": int(limit), "include_data": True,
+                    "cache": False}))
+                for row in (res or {}).get("results", [])[:int(limit)]:
+                    if isinstance(row, dict):
+                        txt = (row.get("text") or row.get("content") or "").strip()
+                        if txt:
+                            items.append({"id": row.get("id"), "text": txt[:600],
+                                          "source": "fabric",
+                                          "dataset": row.get("dataset_id", "")})
+            except Exception as e:
+                log.debug("topic_research fabric: %s", e)
+
+    # 3) Web — fresh external material (autonomous search while idle).
+    if use_web:
+        web = CAPABILITY_REGISTRY.get("web.search")
+        if web:
+            try:
+                res = await web["func"](query=subject, limit=min(int(limit), 10))
+                for row in (res or {}).get("results", [])[:int(limit)]:
+                    if isinstance(row, dict):
+                        txt = (row.get("snippet") or row.get("title")
+                               or row.get("text") or "").strip()
+                        url = row.get("url") or row.get("link") or ""
+                        if txt:
+                            items.append({"id": url or txt[:80],
+                                          "title": row.get("title", ""),
+                                          "text": txt[:600], "link": url, "source": "web"})
+            except Exception as e:
+                log.debug("topic_research web: %s", e)
+
+    # Dedupe by id/link/text.
+    seen_ids: set = set()
+    deduped: List[Dict[str, Any]] = []
+    for it in items:
+        key = str(it.get("id") or it.get("link") or it.get("text", "")[:120])
+        if key in seen_ids:
+            continue
+        seen_ids.add(key)
+        deduped.append(it)
+
+    # Novelty: only surface items not seen in prior slots for this subject, so a
+    # thinking loop builds on fresh material each idle window (mirrors web_feed).
+    r = _redis()
+    seen_key = f"vera:dream:topic:seen:{fid}"
+    new_items: List[Dict[str, Any]] = []
+    first_run = False
+    if r:
+        try:
+            first_run = (await r.scard(seen_key)) == 0
+        except Exception:
+            pass
+    for it in deduped:
+        iid = str(it.get("id") or it.get("link") or it.get("text", "")[:120])
+        is_new = True
+        if r:
+            try:
+                is_new = bool(await r.sadd(seen_key, iid))
+            except Exception:
+                pass
+        if is_new:
+            new_items.append(it)
+    if r:
+        try:
+            await r.expire(seen_key, 30 * 86400)
+        except Exception:
+            pass
+    # First run: surface a sample so the loop has something to think about.
+    if first_run and not new_items and deduped:
+        new_items = deduped[:int(limit)]
+    new_items = new_items[:int(limit)]
+    signal = min(1.0, len(new_items) / max(5, int(limit) // 2))
+    srcs = "memory" + ("+fabric" if use_fabric else "") + ("+web" if use_web else "")
+    return {
+        "source":  "topic_research", "subject": subject, "feed_id": fid,
+        "count":   len(new_items),
+        "signal":  round(signal, 3),
+        "sample":  new_items,
+        "summary": f"{len(new_items)} new item(s) on '{subject}' ({srcs})",
     }
 
 
@@ -3484,20 +3827,57 @@ async def dream_sensor_active_projects(
                 "dominant": pct > 40,
             })
 
-        signal = min(1.0, len(projects) / 3.0)
         dominant = next((p for p in projects if p.get("dominant")), None)
+
+        # ── Real projects (project.list) — the actual content the dream should
+        #    reason about. Previously this sensor only counted cap-call namespaces
+        #    and exposed them under `projects` (NOT `sample`), so the pipeline —
+        #    which reads `sample` — saw nothing. Surface real projects in `sample`.
+        sample: List[Dict[str, Any]] = []
+        real_projects: List[Dict[str, Any]] = []
+        plist = CAPABILITY_REGISTRY.get("project.list")
+        if plist:
+            try:
+                pres = await plist["func"]() or {}
+                for p in (pres.get("projects") or []):
+                    if not isinstance(p, dict):
+                        continue
+                    ctx = (p.get("summary") or p.get("llm_context")
+                           or p.get("user_context") or "").strip()
+                    real_projects.append({"slug": p.get("slug"), "name": p.get("name")})
+                    sample.append({
+                        "text": f"PROJECT {p.get('name','?')}: {ctx[:400]}".strip(),
+                        "id":   p.get("slug"),
+                        "name": p.get("name"),
+                        "role": "project",
+                        "status": p.get("status", ""),
+                    })
+            except Exception as e:
+                log.debug("active_projects project.list: %s", e)
+        # Append the cap-namespace activity as one digest item for context.
+        if projects:
+            sample.append({
+                "text": ("Recent system activity by area: "
+                         + ", ".join(f"{p['prefix']} ({p['pct']}%)" for p in projects[:6])),
+                "role": "activity_digest",
+            })
+
+        # Signal from real projects + recent activity (favours having projects).
+        signal = min(1.0, (len(real_projects) * 0.4) + (len(projects) / 5.0))
 
         return {
             "source":       "active_projects",
-            "count":        len(projects),
+            "count":        len(real_projects) or len(projects),
             "signal":       round(signal, 3),
+            "sample":       sample,
+            "projects":     real_projects,
+            "activity_by_area": projects,
             "total_calls":  total_calls,
             "hours_back":   hours_back,
-            "projects":     projects,
             "dominant":     dominant.get("prefix") if dominant else None,
             "summary": (
-                f"{total_calls} cap calls across {len(prefix_counter)} namespaces "
-                f"in last {hours_back}h. "
+                f"{len(real_projects)} project(s); {total_calls} cap calls across "
+                f"{len(prefix_counter)} namespaces in last {hours_back}h. "
                 + (f"Dominant area: {dominant['prefix']} ({dominant['pct']}%)"
                    if dominant else "No dominant area.")
             ),
@@ -3536,31 +3916,30 @@ async def dream_sensor_source_changes(trace_id=None):
 
     snap_cap = CAPABILITY_REGISTRY.get("ide.inspect.list_snapshots")
     snapshots = []
+    snap_res: Dict[str, Any] = {}
     if snap_cap:
         try:
-            snap_res = await snap_cap["func"]()
+            snap_res = await snap_cap["func"]() or {}
             snapshots = snap_res.get("snapshots", [])
         except Exception:
             pass
 
+    # CHEAP change detection — compare the latest snapshot's hash/freshness
+    # against the live source hash (both already returned by list_snapshots).
+    # The previous implementation ran ide.inspect.diff_snapshot, which READS
+    # every changed file's content (max_chars_per_file=5000) → this sensor timed
+    # out (>35s). A sensor must be fast; the exact changed-file list is available
+    # on demand to the agent loop via ide.inspect.diff_snapshot when it matters.
     changed_files: List[str] = []
+    source_changed = False
+    cur_hash = ""
     if snapshots:
         latest_snap = snapshots[0]
-        diff_cap = CAPABILITY_REGISTRY.get("ide.inspect.diff_snapshot")
-        if diff_cap and not latest_snap.get("is_fresh"):
-            try:
-                diff_data = await diff_cap["func"](
-                    snapshot_id=latest_snap["id"],
-                    max_chars_per_file=5000,
-                )
-                changed_files = (
-                    (diff_data or {}).get("modified", [])
-                    + (diff_data or {}).get("added", [])
-                )
-            except Exception:
-                pass
+        cur_hash = snap_res.get("current_source_hash", "")
+        source_changed = (not latest_snap.get("is_fresh", False)) or (
+            bool(cur_hash) and latest_snap.get("source_hash") != cur_hash)
 
-    signal = min(1.0, len(changed_files) / 3.0) if changed_files else 0.1
+    signal = 0.5 if source_changed else 0.1
 
     sample: List[Dict[str, Any]] = []
     for mod in modules[:15]:
@@ -3572,10 +3951,11 @@ async def dream_sensor_source_changes(trace_id=None):
 
     return {
         "source":         "source_changes",
-        "count":          len(changed_files) or len(modules),
+        "count":          len(modules),
         "signal":         round(signal, 3),
         "sample":         sample,
-        "changed_files":  changed_files[:20],
+        "source_changed": source_changed,
+        "changed_files":  changed_files[:20],   # empty by design; pull on demand
         "modules_count":  len(modules),
         "cap_count":      cap_count,
         "has_snapshot":    bool(snapshots),
@@ -3583,11 +3963,11 @@ async def dream_sensor_source_changes(trace_id=None):
         "snapshot_fresh":  snapshots[0].get("is_fresh") if snapshots else None,
         "summary": (
             f"{len(modules)} Python modules, {cap_count} caps registered. "
-            + (f"{len(changed_files)} files changed since snapshot {snapshots[0]['id']}."
-               if changed_files
+            + ("Source HAS CHANGED since the last snapshot — run "
+               "ide.inspect.diff_snapshot for the exact files."
+               if source_changed
                else ("Source unchanged since last snapshot."
-                     if snapshots and snapshots[0].get("is_fresh")
-                     else "No snapshot taken yet."))
+                     if snapshots else "No snapshot taken yet."))
         ),
     }
 
@@ -3784,9 +4164,363 @@ async def dream_sensor_memory_graph_walk(
         "summary": (
             f"Walked from '{seed_text[:60]}' ({seed_category or 'uncat'}): "
             f"{len(connected)} connected nodes, {len(similar_nodes)} similar. "
-            f"Edge types: {', '.join(set(edge_types)[:5]) or 'none'}."
+            f"Edge types: {', '.join(sorted(set(edge_types))[:5]) or 'none'}."
         ),
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMPOSITE TOPICS SENSOR — the "interesting topics + their entities" layer
+# ─────────────────────────────────────────────────────────────────────────────
+# Most sensors return a flat, disconnected list. The dream then sees "10 news
+# items" + "32 file paths" + "8 memories" as separate piles with no notion of a
+# THING to think about. This sensor harvests candidate TOPICS from many signals
+# (projects, source changes, research threads, schedule, recurring errors,
+# memory clusters), ranks them by interestingness, and for the top N assembles a
+# compact ENTITY BUNDLE (linked memories/fabric/files/research) so the agent
+# loop gets a complete-but-cheap picture and can WANDER between related things,
+# pulling full detail on demand via the named caps.
+
+def _topic_signature(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "")).strip().lower()[:80]
+
+
+async def _topic_entities(title: str, limit: int = 6,
+                          tags: str = "") -> List[Dict[str, Any]]:
+    """Cross-source entity finder for a topic — a few related memory + fabric
+    records (bounded, cheap). The agent loop pulls more on demand."""
+    ents: List[Dict[str, Any]] = []
+    ms = CAPABILITY_REGISTRY.get("memory.search")
+    if ms and title:
+        try:
+            kw = {"query": title, "limit": 3}
+            if tags:
+                kw["tags"] = tags
+            r = await ms["func"](**kw)
+            for it in (r or {}).get("results", [])[:3]:
+                rec = it.get("record", it) if isinstance(it, dict) else {}
+                txt = (rec.get("text") or rec.get("summary") or "")
+                if txt and not _is_low_value_memory(rec):
+                    ents.append({"kind": "memory", "id": rec.get("id"),
+                                 "label": rec.get("category") or "memory",
+                                 "snippet": txt[:140]})
+        except Exception:
+            pass
+    fq = CAPABILITY_REGISTRY.get("fabric.query")
+    if fq and title:
+        try:
+            r = await fq["func"](query=json.dumps({
+                "text": title, "top_k": 3, "include_data": True, "cache": False}))
+            for row in (r or {}).get("results", [])[:3]:
+                txt = (row.get("text") or "")
+                if txt:
+                    ents.append({"kind": "fabric", "id": row.get("id"),
+                                 "label": row.get("dataset_id", ""),
+                                 "snippet": txt[:140]})
+        except Exception:
+            pass
+    return ents[:limit]
+
+
+def _topic_card_text(t: Dict[str, Any]) -> str:
+    """Render one topic as a compact, complete card for the LLM/agent loop."""
+    lines = [f"## TOPIC [{t['type']}] {t['title']}  (interest {t.get('score', 0):.2f})"]
+    if t.get("summary"):
+        lines.append(t["summary"][:300])
+    for e in (t.get("entities") or [])[:8]:
+        lines.append(f"  · [{e.get('kind')}] {e.get('label','')}: {e.get('snippet','')}"
+                     + (f"  (id={e.get('id')})" if e.get("id") else ""))
+    if t.get("pull"):
+        lines.append("  → to go deeper: " + "; ".join(t["pull"][:4]))
+    return "\n".join(lines)
+
+
+@capability(
+    "dream.sensor.topics", memory="off", silent=True,
+    http_method="GET", http_path="/dream/sensor/topics", http_tags=["dream", "sensor"],
+    description="Composite 'interesting topics + entities' sensor. Harvests candidate "
+                "topics from projects, source changes, research threads, schedule, "
+                "recurring errors and memory clusters; ranks by interestingness; and "
+                "for the top N assembles a compact entity bundle (related memory/fabric/"
+                "files/research) so the dream can think about THINGS, not piles. Params: "
+                "top_n (int), types (csv: project,source_change,research,schedule,error,"
+                "memory), per_topic_entities (int), hours_back (int).",
+)
+async def dream_sensor_topics(top_n: int = 6, types: str = "",
+                              per_topic_entities: int = 6, hours_back: int = 72,
+                              trace_id=None):
+    enabled = {t.strip() for t in (types or "").split(",") if t.strip()} or {
+        "project", "source_change", "research", "schedule", "error", "memory"}
+    cands: List[Dict[str, Any]] = []
+
+    # ── project ──────────────────────────────────────────────────────────────
+    if "project" in enabled:
+        plist = CAPABILITY_REGISTRY.get("project.list")
+        if plist:
+            try:
+                for p in (await plist["func"]() or {}).get("projects", []):
+                    if not isinstance(p, dict):
+                        continue
+                    ctx = (p.get("summary") or p.get("llm_context")
+                           or p.get("user_context") or "").strip()
+                    cands.append({
+                        "type": "project", "key": f"project:{p.get('slug')}",
+                        "title": p.get("name", p.get("slug", "?")),
+                        "summary": ctx[:400], "score": 0.8,
+                        "slug": p.get("slug"), "tags": f"project:{p.get('slug')}",
+                        "pull": [f"project.get(slug='{p.get('slug')}')",
+                                 f"project.context.assemble(slug='{p.get('slug')}')"],
+                    })
+            except Exception as e:
+                log.debug("topics/project: %s", e)
+
+    # ── research threads ─────────────────────────────────────────────────────
+    if "research" in enabled:
+        try:
+            rr = await dream_sensor_research_recent(limit=8, full_content_top=2)
+            for it in (rr.get("sample") or [])[:6]:
+                q = (it.get("query") or it.get("text") or it.get("title") or "").strip()
+                if not q:
+                    continue
+                cands.append({
+                    "type": "research", "key": f"research:{_topic_signature(q)}",
+                    "title": q[:90], "summary": (it.get("text") or "")[:300],
+                    "score": 0.7, "job_id": it.get("id"),
+                    "pull": [f"research.job.status(job_id='{it.get('id')}')",
+                             "research.expand(...)"],
+                })
+        except Exception as e:
+            log.debug("topics/research: %s", e)
+
+    # ── source changes / unreviewed areas ────────────────────────────────────
+    if "source_change" in enabled:
+        try:
+            srs = await dream_sensor_source_review_state()
+            area_counts: Counter = Counter()
+            for f in (srs.get("unreviewed_files") or
+                      [it.get("file") for it in (srs.get("sample") or [])]):
+                if f:
+                    area_counts[_source_area(f)] += 1
+            sc = await dream_sensor_source_changes()
+            changed = bool(sc.get("source_changed"))
+            for area, n in area_counts.most_common(4):
+                cands.append({
+                    "type": "source_change", "key": f"source:{area}",
+                    "title": f"Source area '{area}' — {n} unreviewed file(s)"
+                             + (" (source changed)" if changed else ""),
+                    "summary": (f"{n} files in '{area}' have no current review report"
+                                + ("; live source has changed since the last snapshot." if changed else ".")),
+                    "score": 0.75 if changed else 0.55, "area": area,
+                    "pull": [f"dream.review.area_report(area='{area}')",
+                             "ide.inspect.diff_snapshot(...)",
+                             f"dream.review.run(area='{area}')"],
+                })
+        except Exception as e:
+            log.debug("topics/source_change: %s", e)
+
+    # ── schedule (upcoming events + open todos) ──────────────────────────────
+    if "schedule" in enabled:
+        ev_cap = CAPABILITY_REGISTRY.get("cal.events.list")
+        td_cap = CAPABILITY_REGISTRY.get("cal.todos.list")
+        now = datetime.now(timezone.utc)
+        if ev_cap:
+            try:
+                for e in (await ev_cap["func"]() or {}).get("events", [])[:20]:
+                    start = e.get("start", "")
+                    try:
+                        sdt = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+                    except Exception:
+                        continue
+                    hrs = (sdt - now).total_seconds() / 3600.0
+                    if -2 <= hrs <= 24 * 7:   # upcoming week (and just-started)
+                        prox = max(0.0, 1.0 - (hrs / (24 * 7))) if hrs > 0 else 0.9
+                        cands.append({
+                            "type": "schedule", "key": f"event:{e.get('id')}",
+                            "title": f"Event: {e.get('title','?')} ({str(start)[:16]})",
+                            "summary": (e.get("description") or "")[:200]
+                                       + (f" @ {e.get('location')}" if e.get("location") else ""),
+                            "score": round(0.5 + 0.4 * prox, 3),
+                            "pull": ["cal.events.list()", "cal.notes.list()"],
+                        })
+            except Exception as e:
+                log.debug("topics/schedule events: %s", e)
+        if td_cap:
+            try:
+                for t in (await td_cap["func"]() or {}).get("todos", [])[:20]:
+                    if t.get("done"):
+                        continue
+                    cands.append({
+                        "type": "schedule", "key": f"todo:{t.get('id')}",
+                        "title": f"Todo: {t.get('title','?')}"
+                                 + (f" (due {str(t.get('due'))[:10]})" if t.get("due") else ""),
+                        "summary": (t.get("notes") or "")[:200],
+                        "score": round(0.55 + 0.1 * int(t.get("priority", 0) or 0), 3),
+                        "pull": ["cal.todos.list()"],
+                    })
+            except Exception as e:
+                log.debug("topics/schedule todos: %s", e)
+
+    # ── recurring errors ─────────────────────────────────────────────────────
+    if "error" in enabled:
+        try:
+            se = await dream_sensor_syslog_errors(limit=30)
+            sigs: Counter = Counter()
+            examples: Dict[str, str] = {}
+            for it in (se.get("sample") or []):
+                msg = (it.get("text") or it.get("message") or "")
+                sig = _topic_signature(msg)
+                if sig:
+                    sigs[sig] += 1
+                    examples.setdefault(sig, msg[:200])
+            for sig, n in sigs.most_common(3):
+                if n < 2:
+                    continue   # only RECURRING errors are interesting
+                cands.append({
+                    "type": "error", "key": f"error:{sig}",
+                    "title": f"Recurring error ×{n}: {examples[sig][:70]}",
+                    "summary": examples[sig], "score": min(0.9, 0.5 + n * 0.1),
+                    "pull": ["syslog.query(...)", "syslog.errors(limit=50)"],
+                })
+        except Exception as e:
+            log.debug("topics/error: %s", e)
+
+    # ── memory clusters ──────────────────────────────────────────────────────
+    if "memory" in enabled:
+        try:
+            mr = await dream_sensor_memory_recent(limit=25)
+            cats: Counter = Counter()
+            cat_ex: Dict[str, str] = {}
+            for rec in (mr.get("sample") or []):
+                c = (rec.get("category") or "uncategorised")
+                cats[c] += 1
+                cat_ex.setdefault(c, (rec.get("text") or rec.get("summary") or "")[:160])
+            for c, n in cats.most_common(3):
+                if n < 2:
+                    continue
+                cands.append({
+                    "type": "memory", "key": f"memory:{c}",
+                    "title": f"Memory cluster '{c}' ×{n}",
+                    "summary": cat_ex.get(c, ""), "score": min(0.6, 0.35 + n * 0.05),
+                    "pull": [f"memory.search(query='{c}')", "memory.traverse(...)"],
+                })
+        except Exception as e:
+            log.debug("topics/memory: %s", e)
+
+    # ── rank + bundle entities for the top N ─────────────────────────────────
+    cands.sort(key=lambda t: t.get("score", 0), reverse=True)
+    top = cands[:max(1, int(top_n))]
+    for t in top:
+        try:
+            t["entities"] = await _topic_entities(
+                t["title"], limit=int(per_topic_entities),
+                tags=t.get("tags", ""))
+        except Exception:
+            t["entities"] = []
+
+    sample = [{
+        "text": _topic_card_text(t),
+        "topic_type": t["type"], "title": t["title"],
+        "score": t.get("score", 0), "key": t.get("key"),
+        "seed": {k: t[k] for k in ("slug", "area", "job_id") if t.get(k)},
+        "pull": t.get("pull", []),
+    } for t in top]
+
+    by_type = Counter(t["type"] for t in top)
+    signal = min(1.0, len(top) / max(3, int(top_n)))
+    return {
+        "source": "topics", "count": len(top), "signal": round(signal, 3),
+        "sample": sample, "topics": top, "candidates_total": len(cands),
+        "summary": (f"{len(top)} interesting topic(s) from {len(cands)} candidates: "
+                    + ", ".join(f"{k}×{v}" for k, v in by_type.items())),
+    }
+
+
+@capability(
+    "dream.stage.compose_topics", memory="off", silent=True,
+    description="Dream stage: assemble the composite topic list (via dream.sensor.topics), "
+                "pick a focus topic (seed.focus_topic / topic_type match, else highest "
+                "interest), and set state['refined_goal'] so the agent loop WANDERS that "
+                "topic + its entities, pulling full detail on demand. Writes state['topics'] "
+                "and folds the topic cards into gather for synthesis. Config via "
+                "stage_config.compose_topics = {top_n, types, per_topic_entities, topic_type}.",
+)
+async def dream_stage_compose_topics(state: Optional[Dict[str, Any]] = None, trace_id=None):
+    state = state or {}
+    trig = state.get("trigger", {})
+    seed = state.get("seed") or {}
+    cycle_id = state.get("cycle_id", "?")
+    cfg = (trig.get("stage_config", {}) or {}).get("compose_topics", {}) or {}
+
+    # 1. Reuse a topics result already in gather, else call the sensor now.
+    topics: Optional[List[Dict[str, Any]]] = None
+    gres = ((state.get("gather") or {}).get("results") or {})
+    for _k, v in gres.items():
+        if isinstance(v, dict) and v.get("source") == "topics" and v.get("topics") is not None:
+            topics = v.get("topics") or []
+            break
+    if topics is None:
+        res = await dream_sensor_topics(
+            top_n=int(cfg.get("top_n", 6)),
+            types=cfg.get("types", "") or seed.get("topic_types", ""),
+            per_topic_entities=int(cfg.get("per_topic_entities", 6)))
+        topics = res.get("topics", [])
+        g = state.setdefault("gather", {"results": {}, "signal": 0.0, "sensors": []})
+        g.setdefault("results", {})["dream.sensor.topics"] = res
+        g["sensors"] = list(g["results"].keys())
+        g["signal"] = max(float(g.get("signal", 0) or 0), float(res.get("signal", 0) or 0))
+    state["topics"] = topics
+
+    if not topics:
+        state["compose_topics"] = {"count": 0, "note": "no topics harvested"}
+        return state
+
+    # 2. Pick the focus topic.
+    focus = (seed.get("focus_topic") or cfg.get("focus") or "").strip().lower()
+    want_type = (seed.get("topic_type") or cfg.get("topic_type") or "").strip()
+    chosen = None
+    if focus:
+        chosen = next((t for t in topics
+                       if focus in (t.get("title", "") + " " + t.get("summary", "")).lower()), None)
+    if not chosen and want_type:
+        chosen = next((t for t in topics if t.get("type") == want_type), None)
+    chosen = chosen or topics[0]
+
+    # 3. Build a focused, entity-grounded goal for the agent loop to WANDER.
+    ent_lines = "\n".join(
+        f"  - [{e.get('kind')}] {e.get('label','')}: {e.get('snippet','')}"
+        + (f" (id={e.get('id')})" if e.get("id") else "")
+        for e in (chosen.get("entities") or [])[:8])
+    pull = "; ".join(chosen.get("pull", [])[:5])
+    other = ", ".join(f"{t['type']}:{t['title'][:40]}" for t in topics[1:6])
+    impl_hint = ("\nThis is a SOURCE-CHANGE topic: outline concretely HOW you'd implement "
+                 "the change (files, approach, risks), pulling only the code you need.\n"
+                 if chosen.get("type") == "source_change" else "")
+    goal = (
+        f"Think about and advance this topic: [{chosen['type']}] {chosen['title']}.\n"
+        f"{chosen.get('summary','')}\n"
+        f"{impl_hint}\n"
+        f"Known associated entities (start here; pull full detail on demand):\n"
+        f"{ent_lines or '  (none yet — discover them via the hints below)'}\n\n"
+        f"Ways to go deeper: {pull or '(use memory/fabric/research/ide/project caps)'}\n\n"
+        f"Adjacent topics you may wander to if they prove more relevant: {other or '(none)'}\n\n"
+        "Build the COMPLETE picture with MINIMAL calls — prefer the ids/pull hints above. "
+        "Then produce a concrete, specific insight or next action grounded in real data. "
+        "Never invent data; cite the entity ids you used."
+    )
+    state["refined_goal"] = goal
+    state["compose_topics"] = {
+        "count": len(topics),
+        "chosen": {"type": chosen["type"], "title": chosen["title"], "key": chosen.get("key")},
+        "focus_topic": chosen["title"],
+    }
+    state.setdefault("themes", [])
+    if chosen["title"] not in state["themes"]:
+        state["themes"].insert(0, chosen["title"][:60])
+
+    await emit_event({"type": "dream.compose_topics", "cycle_id": cycle_id,
+                      "count": len(topics), "chosen_type": chosen["type"],
+                      "chosen": chosen["title"][:80]})
+    return state
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3985,6 +4719,9 @@ async def dream_stage_think_reflect(state: Optional[Dict[str, Any]] = None, trac
         state["report"] = f"No new items for '{subject}'."
         state["title"] = f"Thoughts on {subject}"
         state.setdefault("themes", [subject])
+        # Don't persist/deliver an empty "nothing new" thought — it would just
+        # become more noise for memory_recent to re-ingest next cycle.
+        state["early_exit"] = {"reason": "no_new_items", "subject": subject}
         return state
 
     # 2) Broader context: the recent thought stream + related dream memories.
@@ -4432,36 +5169,35 @@ async def dream_stage_project_action(
                 "continue with the next most valuable step, or stop if the work "
                 "is complete):\n- " + "\n- ".join(p[:200] for p in prior))
 
-    # Run via the agent loop
-    agent_loop_cap = CAPABILITY_REGISTRY.get("dag.agent_loop_v2") or \
-                     CAPABILITY_REGISTRY.get("dag.agent_loop")
-    if not agent_loop_cap:
-        state["project_action"] = {"error": "dag.agent_loop not available"}
+    # Run via the configured agent-loop variant (default v5, graceful fallback).
+    settings = await _resolve_loop_settings(trig, state)
+    cap, engine_name = _resolve_agent_loop_cap(settings)
+    if not cap:
+        state["project_action"] = {"error": "no agent_loop variant available"}
         return state
 
     try:
         max_steps = int(trig.get("max_steps", 6))
-        settings = await _resolve_loop_settings(trig, state)
         # Action stage caps the budget at 8 unless a smaller value is configured
+        settings = dict(settings)
         settings["max_cycles"] = min(int(settings.get("max_cycles", max_steps)), 8)
-        loop_kwargs = _loop_kwargs_for(
-            agent_loop_cap["func"], settings,
-            goal=goal,
-            allowed_caps=",".join(full_whitelist),
-        )
-        result = await agent_loop_cap["func"](**loop_kwargs)
+        norm = await _run_agent_loop(
+            goal=goal, allowed_caps=",".join(full_whitelist), settings=settings,
+            session_id=f"dream:{cycle_id}:project_action",
+            max_steps=min(max_steps, 8))
         state["project_action"] = {
             "goal": action_goal,
-            "result": result,
-            "ok": isinstance(result, dict) and result.get("summary"),
+            "engine": engine_name,
+            "summary": norm.get("summary", ""),
+            "ok": bool(norm.get("summary")) and not norm.get("error"),
         }
-        # Merge findings
-        if isinstance(result, dict) and result.get("tool_calls"):
+        # Merge findings from each step
+        if norm.get("steps"):
             existing_findings = state.get("findings", [])
-            for tc in result.get("tool_calls", []):
+            for st in norm["steps"]:
                 existing_findings.append({
-                    "source": tc.get("tool", "?"),
-                    "content": str(tc.get("preview", ""))[:500],
+                    "source": st.get("cap", "?"),
+                    "content": str(st.get("preview", ""))[:500],
                     "action": True,
                 })
             state["findings"] = existing_findings
@@ -5418,6 +6154,12 @@ async def dream_stage_synthesize(state: Optional[Dict[str, Any]] = None, trace_i
         state["report"] = note
         state["title"]  = f"{trig.get('label', 'Dream')} — no signal"
         state["depth"]  = depth
+        # Mark as an early exit so _run_cycle does NOT persist this note to the
+        # dream memory layer and the deliver stage skips it. Persisting/​delivering
+        # "no signal" diagnostics is the root of the noise feedback loop:
+        # memory_recent re-ingests them → the next dream reflects on its own
+        # diagnostics → more noise.
+        state["early_exit"] = {"reason": "no_signal", "signal": gather_signal}
         return state
 
     # Sample budget per depth — how many sensor results and items to include
@@ -5835,11 +6577,11 @@ async def dream_stage_quality_check(state: Optional[Dict[str, Any]] = None, trac
 
 @capability(
     "dream.stage.investigate", memory="off", silent=True,
-    description="Agentic investigation loop — delegates to dag.agent_loop_v2 "
-                "(the DAG Workshop ReAct engine). Runs up to max_iterations "
-                "tool-use cycles, accumulating findings in state['findings']. "
-                "Halts when the loop signals satisfaction, on max_iterations, "
-                "or on cancel. Caps in no_hitl_caps skip per-step HITL.",
+    description="Agentic investigation loop — delegates to the configured "
+                "agent-loop variant (default v5; falls back to v2/v1). Runs up to "
+                "max_iterations tool-use cycles, accumulating findings in "
+                "state['findings']. Halts when the loop signals satisfaction, on "
+                "max_iterations, or on cancel. Caps in no_hitl_caps skip per-step HITL.",
 )
 async def dream_stage_investigate(
     state: Optional[Dict[str, Any]] = None,
@@ -5878,6 +6620,7 @@ async def dream_stage_investigate(
         return state
 
     # Build sensor digest for the goal context
+    gather_lines: List[str] = []
     for sname, sres in (gather.get("results", {}) or {}).items():
         if isinstance(sres, dict):
             cnt = sres.get("count", 0)
@@ -5929,14 +6672,14 @@ async def dream_stage_investigate(
         )
         goal = "\n\n".join(goal_parts)
 
-    # Resolve the agent_loop cap — prefer v2, fall back to v1
-    agent_loop_cap = (
-        CAPABILITY_REGISTRY.get("dag.agent_loop_v2")
-        or CAPABILITY_REGISTRY.get("dag.agent_loop")
-    )
+    # Resolve the configured agent-loop variant (default v5, graceful fallback).
+    cfg = await _get_config()
+    settings = await _resolve_loop_settings(trig, state)
+    settings.setdefault("prefer_gpu", bool(cfg.get("llm_prefer_gpu", True)))
+    agent_loop_cap, engine_name = _resolve_agent_loop_cap(settings)
     if not agent_loop_cap:
-        # dag.agent_loop not loaded — fall back to a simple sequential scan
-        log.warning("dream.stage.investigate: dag.agent_loop_v2 not registered; "
+        # No agent_loop variant loaded — fall back to a simple sequential scan
+        log.warning("dream.stage.investigate: no agent_loop variant registered; "
                     "using lightweight fallback")
         findings: List[Dict[str, Any]] = []
         for cap_name in whitelist[:max_cycles]:
@@ -5952,53 +6695,32 @@ async def dream_stage_investigate(
                 await emit_event({"type": "dream.investigate.result", "cycle_id": cycle_id,
                                   "cap": cap_name, "ok": False, "error": str(e)[:200]})
         state["findings"] = findings
-        state["iterate"] = {"stop": True, "reason": "fallback: no agent_loop_v2", "completed": 1}
+        state["iterate"] = {"stop": True, "reason": "fallback: no agent_loop variant", "completed": 1}
         return state
 
-    # ── Delegate to dag.agent_loop_v2 ────────────────────────────────────────
-    # allowed_caps is a comma-separated string expected by the agent loop
-    allowed_caps_str = ",".join(whitelist)
     loop_session_id = f"dream:{cycle_id}:investigate"
-
     await emit_event({
         "type":      "dream.investigate.start",
         "cycle_id":  cycle_id,
         "trigger":   trig.get("name"),
         "max_cycles": max_cycles,
-        "using_engine": "dag.agent_loop_v2" if "dag.agent_loop_v2" in CAPABILITY_REGISTRY
-                        else "dag.agent_loop",
+        "using_engine": engine_name,
     })
 
-    loop_result: Dict[str, Any] = {}
-    try:
-        cfg = await _get_config()
-        settings = await _resolve_loop_settings(trig, state)
-        # Global prefer_gpu config still acts as a fallback when unset in settings
-        settings.setdefault("prefer_gpu", bool(cfg.get("llm_prefer_gpu", True)))
-        loop_kwargs = _loop_kwargs_for(
-            agent_loop_cap["func"], settings,
-            goal=goal,
-            allowed_caps=allowed_caps_str,
-            max_cycles=settings.get("max_cycles", max_cycles),
-            session_id=loop_session_id,
-        )
-        loop_result = await agent_loop_cap["func"](**loop_kwargs) or {}
-    except Exception as e:
-        log.warning("dream.stage.investigate agent_loop error: %s", e)
-        loop_result = {"error": str(e)}
+    norm = await _run_agent_loop(
+        goal=goal, allowed_caps=",".join(whitelist), settings=settings,
+        session_id=loop_session_id, max_steps=max_cycles)
 
-    # ── Extract findings from the agent loop's tool-call history ────────────
-    # dag.agent_loop_v2 returns {"summary", "cycles", "tool_calls": [...], ...}
-    # We convert each successful tool call into a finding record so the
-    # downstream synthesize stage can reference them naturally.
+    # ── Extract findings from the normalized loop result ────────────────────
+    # Each step becomes a finding so the synthesize stage can reference them.
     findings: List[Dict[str, Any]] = list(state.get("findings") or [])
     iterations: List[Dict[str, Any]] = list(state.get("iterations") or [])
 
-    tool_calls: List[Dict[str, Any]] = loop_result.get("tool_calls") or []
-    for i, tc in enumerate(tool_calls):
-        cap_called = tc.get("tool") or tc.get("cap") or "?"
-        result_preview = str(tc.get("result") or tc.get("output") or tc.get("preview") or "")[:800]
-        thought = str(tc.get("thought") or tc.get("reason") or "")[:200]
+    norm_steps = norm.get("steps") or []
+    for i, st in enumerate(norm_steps):
+        cap_called = st.get("cap") or "?"
+        result_preview = str(st.get("preview") or "")[:800]
+        thought = str(st.get("reason") or "")[:200]
         if result_preview:
             findings.append({
                 "topic":   f"{cap_called} — {thought}" if thought else cap_called,
@@ -6009,17 +6731,17 @@ async def dream_stage_investigate(
         iterations.append({
             "i": i, "action": "call", "cap": cap_called,
             "preview": result_preview[:200], "why": thought,
-            "ok": not bool(tc.get("error")),
+            "ok": bool(st.get("ok")),
         })
 
     # If the loop produced a summary, add it as a top-level finding
-    summary = (loop_result.get("summary") or "").strip()
+    summary = (norm.get("summary") or "").strip()
     if summary:
         findings.append({
             "topic":   "agent_loop_summary",
             "content": summary[:2000],
-            "source":  "dag.agent_loop_v2",
-            "iter":    len(tool_calls),
+            "source":  engine_name,
+            "iter":    len(norm_steps),
         })
 
     state["findings"] = findings
@@ -6027,12 +6749,11 @@ async def dream_stage_investigate(
     state["iterate"] = {
         "stop": True,
         "reason": "agent_loop completed",
-        "completed": loop_result.get("cycles", len(tool_calls)),
-        "engine": "dag.agent_loop_v2" if "dag.agent_loop_v2" in CAPABILITY_REGISTRY
-                  else "dag.agent_loop",
+        "completed": norm.get("cycles", len(norm_steps)),
+        "engine": engine_name,
     }
-    if loop_result.get("error"):
-        state["iterate"]["error"] = loop_result["error"]
+    if norm.get("error"):
+        state["iterate"]["error"] = norm["error"]
 
     await emit_event({
         "type":      "dream.investigate.complete",
@@ -6059,6 +6780,15 @@ async def dream_stage_deliver(state: Optional[Dict[str, Any]] = None, trace_id=N
     targets = trig.get("deliver_to") or ["memory"]
     delivered: Dict[str, Any] = {}
 
+    # Don't deliver/persist no-signal or cancelled cycles — delivering a
+    # "no usable data" note to memory is exactly what pollutes memory_recent and
+    # feeds the next dream more noise. Skip cleanly.
+    if state.get("early_exit") or not report.strip():
+        state["delivered"] = {"skipped": (state.get("early_exit") or {}).get("reason")
+                                          if isinstance(state.get("early_exit"), dict)
+                                          else "no_report"}
+        return state
+
     if "telegram" in targets:
         tg_notify = CAPABILITY_REGISTRY.get("tg.notify")
         if tg_notify:
@@ -6073,11 +6803,14 @@ async def dream_stage_deliver(state: Optional[Dict[str, Any]] = None, trace_id=N
         store = CAPABILITY_REGISTRY.get("memory.store")
         if store:
             try:
+                tag_list = ["dream", trig.get("name", "cycle")] + list(state.get("themes", []))[:5]
                 await _call_cap(
                     "memory.store",
                     text=report[:4000],
                     category="dream",
-                    tags=["dream", trig.get("name", "cycle")] + list(state.get("themes", []))[:5],
+                    # memory.store parses tags via tags.split(",") — pass a
+                    # comma-separated string, not a list.
+                    tags=",".join(str(t) for t in tag_list if t),
                     record_type="dream_report",
                     session_id=f"dream:{trig.get('name', 'cycle')}",
                     importance=0.4,
@@ -6173,7 +6906,10 @@ async def dream_stage_review_codebase(
     # Yield to the user: stop reviewing (and resume on the next idle slot) when
     # the user becomes active. Defaults ON so a running review never blocks the
     # user taking over. Mirrors _run_deep_review's pause_on_activity behaviour.
-    pause_on_activity = bool(cfg.get("pause_on_activity", True))
+    # A forced/manual run ("run now") explicitly bypasses idle checks, so it
+    # must NOT yield to activity — otherwise an actively-watching user makes the
+    # review yield before reviewing a single file (files_reviewed: 0).
+    pause_on_activity = bool(cfg.get("pause_on_activity", True)) and not state.get("force")
     activity_idle_min = float(cfg.get("activity_idle_min",
                                       trig.get("min_idle_minutes", 5)) or 5)
 
@@ -6278,8 +7014,10 @@ async def dream_stage_review_codebase(
             break
 
         # Yield to the user: stop early (review resumes on the next idle slot)
-        # the moment the user becomes active again.
-        if pause_on_activity and activity_idle_min:
+        # the moment the user becomes active again. Always review at least one
+        # file first (idx > 0) so a perpetually-active user still makes progress
+        # rather than every cycle completing with files_reviewed: 0.
+        if pause_on_activity and activity_idle_min and idx > 0:
             try:
                 if (await _idle_minutes()) < activity_idle_min:
                     yielded_reason = "user active — yielding"
@@ -7471,6 +8209,10 @@ async def _run_cycle(
     state: Dict[str, Any] = {
         "trigger": trig, "cycle_id": cycle_id,
         "started_at": now_iso(), "seed": seed, "preview": preview_only,
+        # force = manual/explicit run (dream.cycle.run, continue, director,
+        # pipeline run). These bypass idle checks, so stages must not yield to
+        # user activity. Only the scheduler's idle-fired cycles run unforced.
+        "force": bool(force),
     }
 
     # Journal id: each TRIGGER keeps a persistent journal so its "train of
@@ -7532,6 +8274,9 @@ async def _run_cycle(
         "started_at": state["started_at"],
         "pipeline":   pipeline_seed,
         "preview":    preview_only,
+        # Manual/explicit runs own the slot; scheduler-fired (unforced) cycles
+        # can be preempted by a manual run (see _preempt_for_manual).
+        "force":      bool(force),
     })
 
     await emit_event({
@@ -7650,22 +8395,25 @@ async def _run_cycle(
     if not early_exit and not _CYCLE_CANCEL and iter_enabled and iter_stages:
         # ── Agentic iteration loop ─────────────────────────────────────────
         # The iterate stages (investigate / agent_loop / project_action) each
-        # delegate to dag.agent_loop_v2's internal ReAct loop. We additionally
-        # run that block REPEATEDLY here — up to max_iterations — so the dream
-        # builds on its own accumulated findings/journal across passes, and we
-        # halt early once a pass stops producing materially new findings
-        # (convergence) after min_iterations. This is the "stronger iteration".
+        # delegate to the configured agent-loop variant (default v5) via the
+        # shared _run_agent_loop helper. We additionally run that block
+        # REPEATEDLY here — up to max_iterations — so the dream builds on its own
+        # accumulated findings/journal across passes, and we halt early once a
+        # pass stops producing materially new findings (convergence) after
+        # min_iterations. This is the "stronger iteration".
         state.setdefault("iterations", [])
         state.setdefault("findings", [])
         state["iterate"] = {"enabled": True, "stop": False, "completed": 0}
 
+        _iter_engine = _resolve_agent_loop_cap(
+            await _resolve_loop_settings(trig, state))[1] or "agent_loop"
         await emit_event({
             "type":          "dream.iterate.start",
             "cycle_id":      cycle_id,
             "max_iterations": max_iterations,
             "min_iterations": min_iterations,
             "iterate_stages": iter_stages,
-            "engine":        "dag.agent_loop_v2",
+            "engine":        _iter_engine,
         })
 
         last_finding_count = 0
@@ -7729,7 +8477,7 @@ async def _run_cycle(
             "completed_iterations":  it_state.get("completed", 1),
             "total_findings":        len(state.get("findings", [])),
             "stop_reason":           it_state.get("stop_reason", "max_iterations"),
-            "engine":                it_state.get("engine", "dag.agent_loop_v2"),
+            "engine":                it_state.get("engine", _iter_engine),
         })
 
     # ── Post-iteration stages (synthesize, deliver, etc.) ──────────────
@@ -8191,10 +8939,44 @@ async def dream_scheduler_status(trace_id=None):
     }
 
 
+async def _preempt_for_manual(reason: str = "manual run") -> Dict[str, Any]:
+    """Make room for a manual/explicit cycle. If a *scheduler-fired* (unforced)
+    cycle is running, cancel it cooperatively so the manual run takes priority —
+    fixes the "a cycle is already running" wall the user hit when triggering a
+    source review while a background dream was active. If a *manual* cycle
+    already owns the slot, return blocked so we don't stomp it.
+
+    Returns {preempted: bool, blocked?: bool, was?: trigger}."""
+    global _CYCLE_TASK, _CYCLE_CANCEL
+    if not (_CYCLE_TASK and not _CYCLE_TASK.done()):
+        return {"preempted": False}
+    running = await _get_running() or {}
+    if running.get("force"):
+        return {"blocked": True, "running": running.get("trigger")}
+    # Cooperative cancel of the scheduled cycle, then hard cancel + bounded wait.
+    _CYCLE_CANCEL = True
+    try:
+        _CYCLE_TASK.cancel()
+    except Exception:
+        pass
+    try:
+        await asyncio.wait_for(asyncio.shield(_CYCLE_TASK), timeout=5)
+    except Exception:
+        pass
+    _CYCLE_CANCEL = False
+    await _set_running(None)
+    await emit_event({"type": "dream.cycle.preempted", "reason": reason,
+                      "preempted_trigger": running.get("trigger")})
+    log.info("dream: preempted scheduled cycle %s for %s",
+             running.get("trigger"), reason)
+    return {"preempted": True, "was": running.get("trigger")}
+
+
 @capability(
     "dream.cycle.run", memory="off",
     http_method="POST", http_path="/dream/cycle/run", http_tags=["dream"],
     description="Manually run a dream cycle for a named trigger. Bypasses idle/hours/cooldown checks. "
+                "A manual run preempts any scheduler-fired cycle in flight (manual wins). "
                 "Optional seed (JSON dict) lets you curate the dream: focus_topic, pinned_memory_ids, "
                 "extra_fabric_ids, extra_prompt, force_caps, only_stages, skip_stages.",
 )
@@ -8207,8 +8989,10 @@ async def dream_cycle_run(
     trig = await _get_trigger(trigger_name)
     if not trig:
         return {"ok": False, "error": f"unknown trigger: {trigger_name}"}
-    if _CYCLE_TASK and not _CYCLE_TASK.done():
-        return {"ok": False, "error": "a cycle is already running"}
+    pre = await _preempt_for_manual(f"manual run: {trigger_name}")
+    if pre.get("blocked"):
+        return {"ok": False, "error": f"a manual cycle is already running "
+                f"({pre.get('running')}); try again shortly"}
     # Accept JSON-string seed too (for clients that send everything as strings)
     if isinstance(seed, str):
         try:
@@ -8242,8 +9026,10 @@ async def dream_cycle_continue(
     global _CYCLE_TASK
     if not cycle_id:
         return {"ok": False, "error": "cycle_id required"}
-    if _CYCLE_TASK and not _CYCLE_TASK.done():
-        return {"ok": False, "error": "a cycle is already running"}
+    pre = await _preempt_for_manual(f"manual continue: {cycle_id}")
+    if pre.get("blocked"):
+        return {"ok": False, "error": f"a manual cycle is already running "
+                f"({pre.get('running')}); try again shortly"}
 
     # Load the previous cycle's detail
     r = _redis()
@@ -8416,6 +9202,7 @@ async def dream_trigger_upsert(
     pipeline_ref:  Optional[str]            = None,   # name of a registered composite pipeline
     goals:         Optional[Any]            = None,   # overall objectives for this trigger (str or list)
     persist_to_memory: Optional[bool]       = None,   # persist this dream's graph to the memory "dream layer"
+    flow_graph:    Optional[Dict[str, Any]] = None,   # full <vera-flow-builder> canvas graph (editor state — caps/wiring/conditions; the cycle runner ignores it and uses sensors/pipeline)
     trace_id=None,
 ):
     if not name:
@@ -8456,7 +9243,7 @@ async def dream_trigger_upsert(
         "loop_settings": loop_settings, "handover": handover, "journal": journal,
         "max_continuation_depth": max_continuation_depth, "project": project,
         "pipeline_ref": pipeline_ref, "goals": goals,
-        "persist_to_memory": persist_to_memory,
+        "persist_to_memory": persist_to_memory, "flow_graph": flow_graph,
     }
     for k, v in fields.items():
         if v is not None:
@@ -8558,9 +9345,14 @@ async def dream_think_create(
         sensors = [sid]
         source_kind = "sensor"
     else:
-        # Self-reflective topic: surface related memories to think over.
-        sensors = ["dream.sensor.memory_recent"]
-        sensor_params = {"memory_recent": {"limit": 20}}
+        # Plain topic: ground the thinking loop in subject-scoped material from
+        # memory + the data fabric + the web (surfacing only what's new each
+        # slot) rather than re-reading the raw recent-memory dump.
+        sensors = ["dream.sensor.topic_research"]
+        sensor_params = {"topic_research": {"subject": subject, "use_fabric": True,
+                                            "use_web": True, "limit": 20,
+                                            "feed_id": name}}
+        source_kind = "topic"
 
     res = await dream_trigger_upsert(
         name=name,
@@ -8668,16 +9460,28 @@ async def dream_think_stream(name: str, limit: int = 50, trace_id=None):
     mem_search = CAPABILITY_REGISTRY.get("memory.search")
     if mem_search:
         try:
-            sr = await mem_search["func"](query="", limit=int(limit or 50),
+            sr = await mem_search["func"](query="", limit=int(limit or 50) * 2,
                                           tags=f"dream,{name}")
             for item in (sr or {}).get("results", []):
                 rec = item.get("record", item) if isinstance(item, dict) else {}
+                # memory.search with an empty query can fall back to relevance/
+                # recency and leak non-dream chatter into this view. Keep only
+                # genuine dream-layer records (source_type/tag) and drop noise so
+                # "Dream-layer memories" shows real thoughts, not chat "hello"s.
+                tags = rec.get("tags") or []
+                is_dream = (str(rec.get("source_type", "")).lower() == "dream"
+                            or "dream" in tags
+                            or str(rec.get("category", "")).startswith("dream"))
+                if not is_dream or _is_low_value_memory(rec):
+                    continue
                 memories.append({
                     "id":       rec.get("id"),
                     "category": rec.get("category"),
                     "text":     (rec.get("text") or rec.get("summary") or "")[:300],
                     "ts":       rec.get("created_at", ""),
                 })
+                if len(memories) >= int(limit or 50):
+                    break
         except Exception:
             pass
     return {"ok": True, "name": name, "journal_id": journal_id,
@@ -8954,7 +9758,12 @@ async def dream_pipeline_run(name: str, seed: Optional[Any] = None,
             seed = {}
     trig = _trigger_from_pipeline(p)
     trig["enabled"] = True
-    if _CYCLE_TASK and not _CYCLE_TASK.done():
+    if force:
+        pre = await _preempt_for_manual(f"manual pipeline: {name}")
+        if pre.get("blocked"):
+            return {"ok": False, "error": f"a manual cycle is already running "
+                    f"({pre.get('running')}); try again shortly"}
+    elif _CYCLE_TASK and not _CYCLE_TASK.done():
         return {"ok": False, "error": "a cycle is already running"}
     return await _run_cycle(trig, force=force, seed=seed or {})
 
@@ -9071,9 +9880,13 @@ async def _enumerate_source_files(snapshot_id: str, roots: Optional[Dict[str, st
     return [{"rel": m["name"], "path": "", "size": m.get("bytes", 0)} for m in mods]
 
 
-async def _diff_snapshots(a_id: str, b_id: str) -> Dict[str, List[str]]:
+async def _diff_snapshots(a_id: str, b_id: str,
+                          size_only: bool = False) -> Dict[str, List[str]]:
     """Diff two snapshots (not snapshot-vs-live). Returns {modified, added,
-    removed} of rel paths. Uses size as a prefilter, then content compare."""
+    removed} of rel paths. Uses size as a prefilter, then content compare.
+    size_only=True skips the per-file content read for same-size files — much
+    faster (no I/O), at the cost of missing same-size edits; used for the resume
+    staleness check so a review starts producing output promptly."""
     roots = await _source_root_info()
     a_list = await _enumerate_source_files(a_id, roots)
     b_list = await _enumerate_source_files(b_id, roots)
@@ -9085,6 +9898,8 @@ async def _diff_snapshots(a_id: str, b_id: str) -> Dict[str, List[str]]:
     for rel in sorted(set(a) & set(b)):
         if a[rel] != b[rel]:
             modified.append(rel)
+            continue
+        if size_only:
             continue
         # same size — compare content to be sure
         ca = await _read_source_file(roots, a_id, rel, 0)
@@ -9297,25 +10112,57 @@ async def _run_deep_review(styles: List[str], area: str, files: List[str],
     if area and area not in ("", "all"):
         names = [n for n in names if _source_area(n) == area]
 
-    # Build the set of already-reviewed (file, style) pairs. resume_scope='any'
-    # matches across snapshots so continuation starts at the first file lacking
-    # output rather than restarting from zero on a fresh snapshot.
+    # Build the set of already-reviewed (file, style) pairs.
+    #
+    # CONTENT-AWARE resume: a report counts as "done" only if it's still current
+    # for the file's CURRENT content. A report made under a prior snapshot is
+    # honoured only when the file is UNCHANGED between that snapshot and the
+    # current one. So when the source has changed a lot since the last review,
+    # the changed files are re-reviewed automatically instead of the run
+    # declaring "nothing to review". (resume_scope='snapshot' restricts to the
+    # current snapshot only; 'any' = the cross-snapshot, content-aware default.)
     existing: set = set()
     if resume:
         rr = _redis()
         if rr:
             try:
                 h = await rr.hgetall(KEY_REVIEW_REPORTS)
+                ok_reports: List[tuple] = []         # (file, style, report_snapshot_id)
+                prior_snaps: set = set()             # distinct snapshots != current
                 for k, v in (h or {}).items():
                     try:
                         rep = json.loads(v.decode() if isinstance(v, bytes) else v)
                         if not rep.get("ok"):
                             continue
-                        if resume_scope == "snapshot" and rep.get("snapshot_id") != snapshot_id:
+                        rsid = rep.get("snapshot_id") or ""
+                        if resume_scope == "snapshot" and rsid != snapshot_id:
                             continue
-                        existing.add((rep.get("file"), rep.get("style")))
+                        ok_reports.append((rep.get("file"), rep.get("style"), rsid))
+                        if rsid and rsid != snapshot_id:
+                            prior_snaps.add(rsid)
                     except Exception:
                         continue
+                # Which files changed between each prior report-snapshot and now.
+                changed_since: Dict[str, set] = {}
+                if resume_scope != "snapshot" and snapshot_id:
+                    for rsid in prior_snaps:
+                        try:
+                            # size_only → fast (no content reads) so the review
+                            # starts producing output promptly rather than
+                            # appearing to hang on a large resume diff.
+                            d = await _diff_snapshots(rsid, snapshot_id, size_only=True)
+                            changed_since[rsid] = set(d.get("modified", [])
+                                                      + d.get("added", []))
+                        except Exception as e:
+                            # Can't diff → assume the file MIGHT have changed so we
+                            # re-review (favour correctness over skipping); the
+                            # whole-codebase cost is bounded by max_files.
+                            log.debug("resume diff %s→%s: %s", rsid, snapshot_id, e)
+                            changed_since[rsid] = set(names)
+                for f, s, rsid in ok_reports:
+                    if rsid and rsid != snapshot_id and f in changed_since.get(rsid, set()):
+                        continue   # file changed since this report → re-review
+                    existing.add((f, s))
             except Exception:
                 pass
 
@@ -9379,8 +10226,11 @@ async def _run_deep_review(styles: List[str], area: str, files: List[str],
         elif review_type == "between":
             reason = "no files changed between the selected snapshots"
         elif existing:
-            reason = (f"all {len(existing)} file/style report(s) already exist for "
-                      f"this snapshot (turn off resume to regenerate)")
+            _fresh = " (fresh snapshot taken)" if snap.get("created") else \
+                     " (reused existing snapshot — source may not have been re-snapshotted)"
+            reason = (f"all {len(existing)} file/style report(s) are already current "
+                      f"for snapshot {snapshot_id}{_fresh}. No files changed since "
+                      f"their last review. Turn OFF 'Resume' to regenerate all reports.")
         else:
             reason = "no matching files for the selected scope"
         summary = {"snapshot_id": snapshot_id, "styles": styles,
@@ -9444,8 +10294,11 @@ async def _run_deep_review(styles: List[str], area: str, files: List[str],
             break
 
         # Yield to user / other dreams: stop early (and resume later) when the
-        # user is active or a time/file budget is reached.
-        if pause_on_activity and activity_idle_min:
+        # user is active or a time/file budget is reached. Always review at least
+        # one file first (done > 0) so a run never yields with zero progress —
+        # mirrors review_codebase's idx>0 guard and prevents the "yields instantly"
+        # failure even if pause_on_activity is somehow left on.
+        if pause_on_activity and activity_idle_min and done > 0:
             try:
                 if (await _idle_minutes()) < activity_idle_min:
                     stopped_reason = "user active — yielding"
@@ -9686,9 +10539,11 @@ async def dream_review_resume(start: bool = True, trace_id=None):
             pass
     await emit_event({"type": "dream.review.resumed"})
     if start and not running:
+        # User-initiated resume → run it through, don't yield to activity
+        # (the click itself would otherwise trip the activity gate).
         asyncio.create_task(_run_deep_review(
             list(REVIEW_STYLES.keys()), "", [], 0, 16000,
-            resume=True, pause_on_activity=True, activity_idle_min=5,
+            resume=True, pause_on_activity=False, activity_idle_min=5,
             max_runtime_s=0, auto_resume=True))
         return {"ok": True, "resumed": True, "started": True}
     return {"ok": True, "resumed": True, "running": running}
@@ -10094,10 +10949,14 @@ async def dream_stage_deep_review(state: Optional[Dict[str, Any]] = None, trace_
     resume = bool(seed.get("review_resume", cfg.get("resume", True)))
     review_type = (seed.get("review_mode") or cfg.get("review_type") or "").lower()
     baseline = seed.get("review_baseline") or cfg.get("baseline_snapshot") or ""
-    # Interruptibility / budget — yields to the user and other dreams.
+    # Interruptibility / budget — yields to the user and other dreams. A
+    # forced/manual run ("run now") must NOT yield to activity, otherwise the
+    # user's own click (or the dream's own activity) makes it stop before
+    # reviewing anything — the source of the "user active — yielding" failure.
     max_runtime_s = float(seed.get("review_max_runtime_s", cfg.get("max_runtime_s", 0)) or 0)
     pause_on_activity = bool(cfg.get("pause_on_activity",
-                                     seed.get("review_pause_on_activity", True)))
+                                     seed.get("review_pause_on_activity", True))) \
+                        and not state.get("force")
     activity_idle_min = float(cfg.get("activity_idle_min",
                                       trig.get("min_idle_minutes", 5)) or 5)
 
@@ -10524,11 +11383,10 @@ async def dream_hitl_clear(cycle_id: str = "", trace_id=None):
 @capability(
     "dream.stage.stepwise_execute", memory="off", silent=True,
     description="Dream pipeline stage — agentic stepwise plan+execute. "
-                "Delegates to dag.agent_loop_v2 (the DAG Workshop ReAct engine). "
-                "The loop plans one tool call at a time, observes results, and "
-                "iterates until the goal is satisfied or max_steps is reached. "
-                "Tool-call history is surfaced as state['stepwise']['steps'] for "
-                "the synthesize stage. Falls back to dag.agent_loop if v2 is absent.",
+                "Delegates to the configured agent-loop variant (default v5; falls "
+                "back to v2/v1). Step results are surfaced as "
+                "state['stepwise']['steps'] for the synthesize stage. Engine is set "
+                "globally via dream.loop.settings (loop_version).",
 )
 async def dream_stage_stepwise_execute(
     state: Optional[Dict[str, Any]] = None,
@@ -10593,16 +11451,11 @@ async def dream_stage_stepwise_execute(
             goal_parts.append("Sensor activity:\n" + "\n".join(gather_summary_lines))
         goal = "\n\n".join(goal_parts)
 
-    # Resolve dag.agent_loop_v2 (preferred) or dag.agent_loop (fallback)
-    agent_loop_cap = (
-        CAPABILITY_REGISTRY.get("dag.agent_loop_v2")
-        or CAPABILITY_REGISTRY.get("dag.agent_loop")
-    )
-    engine_name = (
-        "dag.agent_loop_v2" if "dag.agent_loop_v2" in CAPABILITY_REGISTRY
-        else "dag.agent_loop" if "dag.agent_loop" in CAPABILITY_REGISTRY
-        else None
-    )
+    # Resolve the configured agent-loop variant (default v5, graceful fallback).
+    cfg = await _get_config()
+    settings = await _resolve_loop_settings(trig, state)
+    settings.setdefault("prefer_gpu", bool(cfg.get("llm_prefer_gpu", True)))
+    agent_loop_cap, engine_name = _resolve_agent_loop_cap(settings)
 
     await emit_event({
         "type":      "dream.stepwise.start",
@@ -10613,8 +11466,8 @@ async def dream_stage_stepwise_execute(
     })
 
     if not agent_loop_cap:
-        # Lightweight fallback when dag.agent_loop is not loaded yet
-        log.warning("dream.stage.stepwise_execute: dag.agent_loop_v2 not registered; "
+        # Lightweight fallback when no agent_loop variant is loaded yet
+        log.warning("dream.stage.stepwise_execute: no agent_loop variant registered; "
                     "falling back to sequential whitelist scan")
         steps: List[Dict[str, Any]] = []
         for step_i, cap_name in enumerate(whitelist[:max_steps]):
@@ -10641,56 +11494,26 @@ async def dream_stage_stepwise_execute(
         # Per-step HITL for specific caps (hitl_enabled + not in no_hitl_caps)
         # is signalled to the panel via dream.hitl.requested events — the loop
         # will still run but approvals can be sent via dream.hitl.respond.
-        allowed_caps_str = ",".join(whitelist)
         loop_session_id = f"dream:{cycle_id}:stepwise"
-        cfg = await _get_config()
+        norm = await _run_agent_loop(
+            goal=goal, allowed_caps=",".join(whitelist), settings=settings,
+            session_id=loop_session_id, max_steps=max_steps)
 
-        settings = await _resolve_loop_settings(trig, state)
-        settings.setdefault("prefer_gpu", bool(cfg.get("llm_prefer_gpu", True)))
-        loop_kwargs = _loop_kwargs_for(
-            agent_loop_cap["func"], settings,
-            goal=goal,
-            allowed_caps=allowed_caps_str,
-            max_cycles=settings.get("max_cycles", max_steps),
-            session_id=loop_session_id,
-        )
-
-        loop_result: Dict[str, Any] = {}
-        try:
-            loop_result = await agent_loop_cap["func"](**loop_kwargs) or {}
-        except Exception as e:
-            log.warning("dream.stage.stepwise_execute agent_loop error: %s", e)
-            loop_result = {"error": str(e)}
-
-        # Map agent loop tool-call history → steps list
-        tool_calls: List[Dict[str, Any]] = loop_result.get("tool_calls") or []
+        # Normalized steps → emit per-step + keep for synthesize
         steps = []
-        for i, tc in enumerate(tool_calls):
-            cap_called = tc.get("tool") or tc.get("cap") or "?"
-            result_preview = str(tc.get("result") or tc.get("output") or tc.get("preview") or "")[:300]
-            thought = str(tc.get("thought") or tc.get("reason") or "")[:200]
-            ok = not bool(tc.get("error"))
-            step_rec: Dict[str, Any] = {
-                "step":    i,
-                "cap":     cap_called,
-                "ok":      ok,
-                "reason":  thought,
-                "preview": result_preview,
-            }
-            if not ok:
-                step_rec["error"] = str(tc.get("error", ""))[:200]
+        for step_rec in (norm.get("steps") or []):
             steps.append(step_rec)
             await emit_event({
                 "type":    "dream.stepwise.result",
                 "cycle_id": cycle_id,
-                "step":    i,
-                "cap":     cap_called,
-                "ok":      ok,
-                "preview": result_preview[:200],
+                "step":    step_rec.get("step"),
+                "cap":     step_rec.get("cap"),
+                "ok":      step_rec.get("ok"),
+                "preview": str(step_rec.get("preview", ""))[:200],
             })
 
         # Add loop summary as a final synthetic step so synthesize can see it
-        summary_text = (loop_result.get("summary") or "").strip()
+        summary_text = (norm.get("summary") or "").strip()
         if summary_text:
             steps.append({
                 "step":    len(steps),
@@ -10705,8 +11528,8 @@ async def dream_stage_stepwise_execute(
             "cycle_id": cycle_id,
             "steps":    len(steps),
             "engine":   engine_name,
-            "cycles":   loop_result.get("cycles", len(tool_calls)),
-            "error":    loop_result.get("error"),
+            "cycles":   norm.get("cycles", len(steps)),
+            "error":    norm.get("error"),
         })
 
     state["stepwise"] = {
@@ -10716,25 +11539,26 @@ async def dream_stage_stepwise_execute(
     }
     # stepwise replaces plan+execute — mark plan as handled
     if "plan" not in state:
-        state["plan"] = {"skipped": True, "reason": "stepwise mode (dag.agent_loop_v2)"}
+        state["plan"] = {"skipped": True,
+                         "reason": f"stepwise mode ({engine_name or 'fallback'})"}
     return state
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # AGENT LOOP STAGE — named entry point for the DAG Workshop engine
 # ─────────────────────────────────────────────────────────────────────────────
-# dream.stage.agent_loop is a cleaner pipeline stage name that triggers the
-# DAG Workshop's dag.agent_loop_v2 engine directly, without the stepwise_execute
-# wrapper's fallback compatibility shim.  Use it in new pipelines; the older
-# dream.stage.stepwise_execute and dream.stage.investigate remain as aliases.
+# dream.stage.agent_loop is a cleaner pipeline stage name that runs the
+# configured agent-loop variant (default v5) via the shared _run_agent_loop
+# helper, without the stepwise_execute wrapper's fallback shim. Use it in new
+# pipelines; dream.stage.stepwise_execute and dream.stage.investigate are aliases.
 
 @capability(
     "dream.stage.agent_loop", memory="off", silent=True,
-    description="Run the DAG Workshop ReAct agent loop (dag.agent_loop_v2) as a "
+    description="Run the configured agent-loop variant (default v5, the "
+                "orchestrator + scoped specialist engine; falls back to v2/v1) as a "
                 "dream pipeline stage. Builds a goal from sensor context, runs the "
-                "loop, and stores tool-call results in state['agent_loop']. "
-                "Drop-in replacement for dream.stage.stepwise_execute with no "
-                "legacy compatibility overhead.",
+                "loop, and stores step results in state['agent_loop']. Engine is set "
+                "globally via dream.loop.settings (loop_version).",
 )
 async def dream_stage_agent_loop(
     state: Optional[Dict[str, Any]] = None,
@@ -10785,47 +11609,23 @@ async def dream_stage_agent_loop(
         if gather_lines:    goal_parts.append("Sensor data:\n" + "\n".join(gather_lines))
         goal = "\n\n".join(goal_parts)
 
-    agent_loop_cap = (
-        CAPABILITY_REGISTRY.get("dag.agent_loop_v2")
-        or CAPABILITY_REGISTRY.get("dag.agent_loop")
-    )
-    if not agent_loop_cap:
-        state["agent_loop"] = {"error": "dag.agent_loop_v2 not registered", "steps": []}
-        return state
-
-    engine = "dag.agent_loop_v2" if "dag.agent_loop_v2" in CAPABILITY_REGISTRY else "dag.agent_loop"
     cfg = await _get_config()
     settings = await _resolve_loop_settings(trig, state)
     settings.setdefault("prefer_gpu", bool(cfg.get("llm_prefer_gpu", True)))
-    loop_kwargs = _loop_kwargs_for(
-        agent_loop_cap["func"], settings,
-        goal=goal,
-        allowed_caps=",".join(whitelist),
-        max_cycles=settings.get("max_cycles", max_steps),
-        session_id=f"dream:{cycle_id}:agent_loop",
-    )
+    cap, engine = _resolve_agent_loop_cap(settings)
+    if not cap:
+        state["agent_loop"] = {"error": "no agent_loop variant registered", "steps": []}
+        return state
 
     await emit_event({"type": "dream.agent_loop.start", "cycle_id": cycle_id,
-                      "engine": engine, "max_steps": loop_kwargs.get("max_cycles", max_steps)})
+                      "engine": engine, "max_steps": max_steps})
 
-    loop_result: Dict[str, Any] = {}
-    try:
-        loop_result = await agent_loop_cap["func"](**loop_kwargs) or {}
-    except Exception as e:
-        log.warning("dream.stage.agent_loop error: %s", e)
-        loop_result = {"error": str(e)}
+    norm = await _run_agent_loop(
+        goal=goal, allowed_caps=",".join(whitelist), settings=settings,
+        session_id=f"dream:{cycle_id}:agent_loop", max_steps=max_steps)
 
-    # Map tool calls → steps
-    tool_calls = loop_result.get("tool_calls") or []
-    steps = []
-    for i, tc in enumerate(tool_calls):
-        cap_called = tc.get("tool") or tc.get("cap") or "?"
-        preview = str(tc.get("result") or tc.get("output") or tc.get("preview") or "")[:300]
-        thought = str(tc.get("thought") or tc.get("reason") or "")[:200]
-        steps.append({"step": i, "cap": cap_called, "ok": not bool(tc.get("error")),
-                      "reason": thought, "preview": preview})
-
-    summary = (loop_result.get("summary") or "").strip()
+    steps = list(norm.get("steps") or [])
+    summary = (norm.get("summary") or "").strip()
     if summary:
         steps.append({"step": len(steps), "cap": "__summary__", "ok": True,
                       "reason": "loop complete", "preview": summary[:600]})
@@ -10837,8 +11637,8 @@ async def dream_stage_agent_loop(
 
     state["agent_loop"] = {
         "steps": steps, "count": len(steps), "engine": engine,
-        "cycles": loop_result.get("cycles", len(tool_calls)),
-        "error": loop_result.get("error"),
+        "cycles": norm.get("cycles", len(steps)),
+        "error": norm.get("error"),
     }
     # Also populate stepwise so synthesize works regardless of which stage name was used
     state["stepwise"] = state["agent_loop"]
@@ -10847,7 +11647,7 @@ async def dream_stage_agent_loop(
 
     await emit_event({"type": "dream.agent_loop.complete", "cycle_id": cycle_id,
                       "engine": engine, "steps": len(steps),
-                      "cycles": loop_result.get("cycles", 0), "error": loop_result.get("error")})
+                      "cycles": norm.get("cycles", 0), "error": norm.get("error")})
     return state
 
 
@@ -11971,11 +12771,47 @@ async def dream_trigger_generate(
 _register_sensor(
     "memory_recent",
     "Memory — recent records",
-    "Pulls recent records from the memory backends. Useful for spotting what the "
-    "system has been thinking about.",
+    "Pulls recent records from the memory backends, filtering out chatter and the "
+    "dream's own diagnostic notes so the signal reflects real activity.",
     "dream.sensor.memory_recent",
     params=[
         {"name": "limit", "type": "int", "default": 30, "help": "max records to fetch"},
+        {"name": "min_chars", "type": "int", "default": 12,
+         "help": "drop records shorter than this (chatter)"},
+        {"name": "exclude_dream_diagnostics", "type": "bool", "default": True,
+         "help": "drop the dream's own 'no signal' notes"},
+        {"name": "exclude_source_types", "type": "str", "default": "",
+         "help": "csv of source_types to drop (e.g. chat)"},
+    ],
+)
+_register_sensor(
+    "topic_research",
+    "Topic — subject-scoped research",
+    "Blends memory + fabric + web search on a subject and surfaces only NEW items "
+    "per feed. The grounded fuel for a thinking loop pointed at a topic.",
+    "dream.sensor.topic_research",
+    params=[
+        {"name": "subject", "type": "str", "default": "", "help": "subject to research"},
+        {"name": "use_fabric", "type": "bool", "default": True, "help": "include fabric.query"},
+        {"name": "use_web", "type": "bool", "default": True, "help": "include web.search"},
+        {"name": "limit", "type": "int", "default": 20, "help": "max items"},
+        {"name": "feed_id", "type": "str", "default": "", "help": "novelty cursor key"},
+    ],
+)
+_register_sensor(
+    "topics",
+    "Composite — interesting topics + entities",
+    "Harvests candidate topics from projects, source changes, research, schedule, "
+    "recurring errors and memory clusters; ranks them; and bundles each top topic "
+    "with its related memory/fabric/file entities. The richest single input for a "
+    "dream — lets it think about THINGS and wander between them.",
+    "dream.sensor.topics",
+    params=[
+        {"name": "top_n", "type": "int", "default": 6, "help": "how many topics to bundle"},
+        {"name": "types", "type": "str", "default": "",
+         "help": "csv: project,source_change,research,schedule,error,memory (blank=all)"},
+        {"name": "per_topic_entities", "type": "int", "default": 6, "help": "entities per topic"},
+        {"name": "hours_back", "type": "int", "default": 72, "help": "recency window"},
     ],
 )
 _register_sensor(
@@ -12169,6 +13005,17 @@ _register_stage(
     "dream.stage.gather", phase="gather", optional=False,
 )
 _register_stage(
+    "dream.stage.compose_topics", "Compose topics (interesting things + entities)",
+    "Assembles the composite topic list (dream.sensor.topics), picks a focus topic "
+    "(seed.focus_topic / topic_type, else highest interest), and sets a focused, "
+    "entity-grounded refined_goal so the agent loop wanders that topic and pulls "
+    "detail on demand. Place after gather, before the agent-loop stage. Config: "
+    "stage_config.compose_topics = {top_n, types, per_topic_entities, topic_type}.",
+    "dream.stage.compose_topics", phase="analyze", optional=True,
+    params=[{"name": "topic_type", "type": "str", "default": "",
+             "help": "prefer this topic type: project|source_change|research|schedule|error|memory"}],
+)
+_register_stage(
     "dream.stage.think_reflect", "Think / reflect (thinking loop)",
     "Reads the newly-gathered items, extracts what's interesting w.r.t. the "
     "thought's subject + goal and the broader system context, and appends a "
@@ -12323,11 +13170,10 @@ _register_stage(
 )
 _register_stage(
     "dream.stage.stepwise_execute", "Stepwise — DAG Workshop agent loop (compat)",
-    "Delegates to dag.agent_loop_v2 (the DAG Workshop ReAct engine). "
-    "Each cycle the LLM picks ONE tool to call, observes the result, and "
-    "iterates until satisfied or max_steps is reached. Tool-call history is "
-    "surfaced as state['stepwise']['steps']. Prefer dream.stage.agent_loop "
-    "for new pipelines.",
+    "Delegates to the configured agent-loop variant (default v5, the orchestrator "
+    "+ scoped specialist engine; falls back to v2/v1). Step results are surfaced "
+    "as state['stepwise']['steps']. Engine is set globally via dream.loop.settings "
+    "(loop_version). Prefer dream.stage.agent_loop for new pipelines.",
     "dream.stage.stepwise_execute", phase="act", optional=True,
 )
 _register_stage(
@@ -12359,18 +13205,19 @@ _register_stage(
 )
 _register_stage(
     "dream.stage.investigate", "Investigate — DAG Workshop agent loop",
-    "Delegates to dag.agent_loop_v2 (the DAG Workshop ReAct engine) to run "
-    "an iterative investigation. The loop selects tools from the whitelist, "
-    "calls them, observes results, and halts when satisfied or max_iterations "
-    "is reached. Findings are stored in state['findings'] for the synthesize "
-    "stage. Requires dag.agent_loop_v2 (vera_context.py) to be loaded.",
+    "Delegates to the configured agent-loop variant (default v5; falls back to "
+    "v2/v1) to run an iterative investigation. The loop selects tools from the "
+    "whitelist, calls them, observes results, and halts when satisfied or "
+    "max_iterations is reached. Findings are stored in state['findings'] for the "
+    "synthesize stage. Engine set globally via dream.loop.settings (loop_version).",
     "dream.stage.investigate", phase="act", optional=True,
 )
 _register_stage(
     "dream.stage.agent_loop", "Agent Loop — DAG Workshop ReAct engine",
-    "Cleaner entry point for dag.agent_loop_v2. Identical behaviour to "
-    "dream.stage.investigate but without legacy iteration-runner overhead. "
-    "Populates state['agent_loop'] and state['stepwise'] for synthesize.",
+    "Runs the configured agent-loop variant (default v5; falls back to v2/v1) as "
+    "a dream stage, without legacy iteration-runner overhead. Populates "
+    "state['agent_loop'] and state['stepwise'] for synthesize. Engine is set "
+    "globally via dream.loop.settings (loop_version).",
     "dream.stage.agent_loop", phase="act", optional=True,
 )
 _register_stage(
@@ -12840,6 +13687,67 @@ async def _startup():
                 log.info("dream: backfilled iterate stage into %d pipeline(s)", backfilled)
         except Exception as e:
             log.debug("dream backfill iterate: %s", e)
+
+        # ── v5 engine + grounded-think migration (idempotent, fill-only) ────
+        # Make v5 the default engine for existing stored triggers (preserves any
+        # explicit per-trigger loop_version) and upgrade old topic "think" loops
+        # from the raw memory_recent dump to the grounded topic_research sensor.
+        try:
+            if not await r.get("vera:dream:migrated:v5"):
+                migrated_v5 = 0
+                for t in await _list_triggers():
+                    changed = False
+                    ls = dict(t.get("loop_settings") or {})
+                    if "loop_version" not in ls:
+                        ls["loop_version"] = "v5"
+                        t["loop_settings"] = ls
+                        changed = True
+                    # Old topic think loop → grounded topic_research (fabric + web)
+                    if _is_think_trigger(t):
+                        sensors = t.get("sensors") or []
+                        sc = (t.get("stage_config") or {}).get("think_reflect") or {}
+                        subj = sc.get("subject") or ""
+                        is_topic = sensors in (["dream.sensor.memory_recent"],
+                                               ["memory_recent"])
+                        if is_topic and subj:
+                            t["sensors"] = ["dream.sensor.topic_research"]
+                            sp = dict(t.get("sensor_params") or {})
+                            sp.pop("memory_recent", None)
+                            sp["topic_research"] = {
+                                "subject": subj, "use_fabric": True, "use_web": True,
+                                "limit": 20, "feed_id": t.get("name", "")}
+                            t["sensor_params"] = sp
+                            changed = True
+                    if changed:
+                        await _save_trigger(t)
+                        migrated_v5 += 1
+                await r.set("vera:dream:migrated:v5", now_iso())
+                if migrated_v5:
+                    log.info("dream: v5 migration updated %d trigger(s)", migrated_v5)
+        except Exception as e:
+            log.debug("dream v5 migration: %s", e)
+
+        # ── Composite-topics migration: upgrade the stored `wander` trigger to
+        #    the new topic-wander pipeline (startup only merges NEW triggers, so
+        #    an existing wander keeps its old broken graph-walk pipeline). One-off.
+        try:
+            if not await r.get("vera:dream:migrated:topics"):
+                cur = await _get_trigger("wander")
+                if cur and "dream.stage.compose_topics" not in (cur.get("pipeline") or []):
+                    new_def = next((t for t in _default_triggers()
+                                    if t["name"] == "wander"), None)
+                    if new_def:
+                        upgraded = dict(new_def)
+                        for k in ("enabled", "hours_start", "hours_end",
+                                  "min_idle_minutes", "min_interval_minutes",
+                                  "deliver_to", "depth", "loop_settings"):
+                            if k in cur:
+                                upgraded[k] = cur[k]
+                        await _save_trigger(upgraded)
+                        log.info("dream: upgraded 'wander' to the composite-topics pipeline")
+                await r.set("vera:dream:migrated:topics", now_iso())
+        except Exception as e:
+            log.debug("dream topics migration: %s", e)
 
         # Reload custom sensors from Redis into the in-memory SENSOR_REGISTRY
         try:

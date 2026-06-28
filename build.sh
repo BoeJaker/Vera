@@ -10,7 +10,20 @@ PARENT="$(dirname "$REPO_ROOT")"
 PY="${PY:-python3}"
 VENV="${VENV:-.venv}"
 PORT="${PORT:-8999}"
-BASE="http://localhost:$PORT"
+
+# Resolve the base URL just-in-time for the health/caps targets. config.py is the
+# single source of truth for TLS (it reads env + repo-root .env), so the helper
+# picks https + accepts the self-signed cert (-k) exactly when `run` serves it.
+resolve_base() {
+  local tls
+  tls="$(cd "$PARENT" && PYTHONPATH="$PARENT" "$PY" -c 'from Vera.vera.config import cfg; print(1 if cfg.TLS_ENABLED else 0)' 2>/dev/null || echo 0)"
+  if [ "$tls" = "1" ]; then
+    BASE="https://localhost:$PORT"; CURL="curl -skf"
+  else
+    BASE="http://localhost:$PORT";  CURL="curl -sf"
+  fi
+}
+BASE="http://localhost:$PORT"; CURL="curl -sf"
 
 if docker compose version >/dev/null 2>&1; then COMPOSE="docker compose"; else COMPOSE="docker-compose"; fi
 
@@ -41,8 +54,8 @@ case "$cmd" in
   venv)    "$PY" -m venv "$VENV" && "$VENV/bin/pip" install --upgrade pip && "$VENV/bin/pip" install -r requirements.txt ;;
   run)     cd "$PARENT" && PYTHONPATH="$PARENT" "$PY" -m Vera.vera.capability_orchestration ;;
   secret)  "$PY" -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())" ;;
-  health)  curl -sf "$BASE/health" | "$PY" -m json.tool || echo "Vera not reachable at $BASE" ;;
-  caps)    curl -sf "$BASE/mcp/tools" | "$PY" -m json.tool || echo "Vera not reachable at $BASE" ;;
+  health)  resolve_base; $CURL "$BASE/health" | "$PY" -m json.tool || echo "Vera not reachable at $BASE" ;;
+  caps)    resolve_base; $CURL "$BASE/mcp/tools" | "$PY" -m json.tool || echo "Vera not reachable at $BASE" ;;
   tour)    "$PY" welcome/welcome.py ;;
   welcome) "$PY" -c "import webbrowser,pathlib;webbrowser.open(pathlib.Path('welcome/index.html').resolve().as_uri())" ;;
   help|*)  usage ;;

@@ -11,7 +11,17 @@ PARENT    := $(abspath $(REPO_ROOT)/..)
 PY        ?= python3
 VENV      ?= .venv
 PORT      ?= 8999
-BASE      ?= http://localhost:8999
+
+# config.py is the single source of truth for TLS (it reads env + repo-root .env);
+# ask it so health/caps/docs pick the right scheme and accept the self-signed cert.
+TLS_ON    := $(shell cd $(PARENT) && PYTHONPATH=$(PARENT) $(PY) -c 'from Vera.vera.config import cfg; print(1 if cfg.TLS_ENABLED else 0)' 2>/dev/null || echo 0)
+ifeq ($(TLS_ON),1)
+BASE      ?= https://localhost:$(PORT)
+CURL      := curl -skf
+else
+BASE      ?= http://localhost:$(PORT)
+CURL      := curl -sf
+endif
 
 COMPOSE := $(shell if docker compose version >/dev/null 2>&1; then echo "docker compose"; else echo "docker-compose"; fi)
 
@@ -60,14 +70,23 @@ run:  ## Run the orchestrator locally (python -m), reading .env if present
 secret:  ## Print a fresh VERA_SECRET_KEY
 	$(PY) -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"
 
+.PHONY: install-hooks
+install-hooks:  ## Enable the pre-commit secret scanner (git core.hooksPath)
+	git config core.hooksPath tools/hooks
+	@echo "Secret scan will run on every commit. Bypass once with: git commit --no-verify"
+
+.PHONY: scan
+scan:  ## Scan all tracked files for leaked secrets
+	$(PY) tools/secret_scan.py --all
+
 # ── Verification & exploration ─────────────────────────────────────────────────
 .PHONY: health
 health:  ## Hit GET /health on the running orchestrator
-	curl -sf $(BASE)/health | $(PY) -m json.tool || echo "Vera not reachable at $(BASE)"
+	$(CURL) $(BASE)/health | $(PY) -m json.tool || echo "Vera not reachable at $(BASE)"
 
 .PHONY: caps
 caps:  ## List registered capabilities (GET /mcp/tools)
-	curl -sf $(BASE)/mcp/tools | $(PY) -m json.tool || echo "Vera not reachable at $(BASE)"
+	$(CURL) $(BASE)/mcp/tools | $(PY) -m json.tool || echo "Vera not reachable at $(BASE)"
 
 .PHONY: test
 test:  ## Smoke-test the running orchestrator

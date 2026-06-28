@@ -260,8 +260,15 @@ async def _scrape_metrics(inst: VLLMInstance) -> None:
         pass
 
 
-async def _health_loop(interval: float = 15.0) -> None:
+async def _health_loop(interval: float = 20.0) -> None:
     while True:
+        # Nothing to probe until at least one instance is configured. Idle
+        # quietly (long sleep, no event) rather than pinging hosts and emitting
+        # an empty vllm.health event every cycle — this is what made the module
+        # noisy on the event bus when no vLLM backend was set up.
+        if not VLLM_INSTANCES:
+            await asyncio.sleep(max(interval, 60))
+            continue
         tasks = []
         for inst in VLLM_INSTANCES.values():
             tasks.append(_ping_vllm(inst))
@@ -1206,28 +1213,28 @@ async def _vllm_proxy(instance_id: str, path: str, request: _Req):
 # ══════════════════════════════════════════════════════════════════════════════
 
 import contextlib as _ctx
+from pathlib import Path as _Path
 
-try:
-    _panel_path = __file__.replace("vllm_capabilities.py", "vllm_panel.html")
-    with open(_panel_path, encoding="utf-8") as _fh:
-        _PANEL_HTML = _fh.read()
-except Exception as _e:
-    _PANEL_HTML = f"<p style='color:var(--err)'>vllm_panel.html not found: {_e}</p>"
+_VLLM_PANEL_PATH = _Path(__file__).parent / "vllm_panel.html"
 
-register_ui(
-    panel_id="vllm",
-    label="vLLM",
-    icon="",
-    html=_PANEL_HTML,
-    mode="tab",
-    tab_order=45,
-    ui_caps=[
-        "vllm.status", "vllm.models", "vllm.generate", "vllm.chat", "vllm.embed",
-        "vllm.instances.add", "vllm.instances.remove",
-        "vllm.lora.load", "vllm.lora.list",
-        "vllm.metrics", "vllm.server.start", "vllm.server.stop",
-    ],
-)
+
+@APP.get("/vllm/panel", include_in_schema=False)
+async def _vllm_panel_html():
+    """Serve the vLLM panel as a standalone page for iframe embedding.
+
+    The panel ships its own ``<script>`` blocks and relies on ``DOMContentLoaded``
+    + relative ``fetch('/vllm/...')`` calls. Injecting that full document into the
+    harness via ``innerHTML`` (the old ``register_ui(mode="tab")`` path) silently
+    drops every script — the panel renders but nothing is clickable. Serving it
+    standalone here, loaded in an iframe, runs the scripts in their own window and
+    resolves fetches against this origin. The vLLM tab now lives inside the
+    Workers & Ollama panel, which iframes this route.
+    """
+    from fastapi.responses import HTMLResponse as _HTMLResp
+    if _VLLM_PANEL_PATH.exists():
+        return _HTMLResp(_VLLM_PANEL_PATH.read_text(encoding="utf-8"))
+    return _HTMLResp("<p style='color:#c96b6b'>vllm_panel.html not found</p>",
+                     status_code=404)
 
 # ── Start health loop ──────────────────────────────────────────────────────────
 schedule(_health_loop, interval=0)

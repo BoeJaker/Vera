@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dusk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Vera / Proxmox</title>
+
+<!-- xterm.js (terminal) + noVNC (remote desktop) from CDN. Both are optional:
+     the dashboard works without them and only loads consoles on demand. -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+<script type="module">
+  // noVNC is an ES module; expose it globally once loaded.
+  import('https://cdn.jsdelivr.net/npm/@novnc/novnc@1.4.0/core/rfb.js')
+    .then(m => { window.NoVNCRFB = m.default; })
+    .catch(e => console.warn('noVNC load failed', e));
+</script>
+
+<style>
+[data-theme="dusk"]{--bg:#0e0f12;--s1:#13151a;--s2:#1a1d24;--s3:#222630;--bd:rgba(255,255,255,.07);--bd2:rgba(255,255,255,.14);--t1:#d4dae4;--t2:#6b7585;--t3:#3b4252;--ac:#6ea8d8;--ok:#5ec9a0;--warn:#e09a55;--err:#e06060;--ac5:#a78bfa}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--t1);font:13px/1.45 'ui-monospace','SFMono-Regular','Menlo',monospace}
+body{overflow:hidden}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,select{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--bd);border-radius:5px;padding:8px 10px;outline:none;width:100%}
+input:focus,select:focus{border-color:var(--ac)}
+::-webkit-scrollbar{width:7px;height:7px}
+::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:4px}
+a{color:var(--ac)}
+
+#shell{display:flex;flex-direction:column;height:100vh;height:100dvh;overflow:hidden}
+
+/* ── Top bar ───────────────────────────────────────────────────────────── */
+#top{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--s1);border-bottom:1px solid var(--bd);flex-shrink:0}
+#top .logo{color:var(--ac);font-weight:700;letter-spacing:.04em;white-space:nowrap}
+#top select{width:auto;min-width:120px;max-width:46vw}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:6px;background:var(--s3);border:1px solid var(--bd2);color:var(--t1);font-size:12px;white-space:nowrap}
+.btn:hover{border-color:var(--ac)}
+.btn.pri{background:var(--ac);border-color:var(--ac);color:#06121c;font-weight:700}
+.btn.gho{background:transparent}
+.btn.sm{padding:6px 9px;font-size:11px}
+.btn.danger{color:var(--err);border-color:var(--err)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.spacer{flex:1}
+.iconbtn{padding:8px 10px;border-radius:6px;background:var(--s3);border:1px solid var(--bd2);font-size:14px;line-height:1}
+
+/* ── Body ──────────────────────────────────────────────────────────────── */
+#body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px;padding-bottom:60px}
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;height:100%;color:var(--t2);text-align:center;padding:24px}
+.empty h2{color:var(--t1);font-size:15px}
+
+.section-h{display:flex;align-items:center;gap:8px;margin:6px 2px 8px;color:var(--t2);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+.section-h .count{color:var(--t3)}
+.section-h::after{content:"";flex:1;height:1px;background:var(--bd)}
+
+/* responsive card grid */
+.grid{display:grid;grid-template-columns:1fr;gap:10px;margin-bottom:18px}
+@media(min-width:560px){.grid{grid-template-columns:repeat(2,1fr)}}
+@media(min-width:920px){.grid{grid-template-columns:repeat(3,1fr)}}
+@media(min-width:1300px){.grid{grid-template-columns:repeat(4,1fr)}}
+
+.card{background:var(--s2);border:1px solid var(--bd);border-radius:9px;padding:12px;display:flex;flex-direction:column;gap:9px}
+.card .hd{display:flex;align-items:center;gap:8px}
+.card .hd .nm{font-weight:700;color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card .hd .sub{color:var(--t3);font-size:11px;margin-left:auto;white-space:nowrap}
+
+.pill{font-size:10px;padding:2px 8px;border-radius:20px;border:1px solid;white-space:nowrap;flex-shrink:0}
+.pill.run{color:var(--ok);border-color:var(--ok);background:rgba(94,201,160,.08)}
+.pill.stop{color:var(--t2);border-color:var(--t3)}
+.pill.warn{color:var(--warn);border-color:var(--warn)}
+
+.bar{height:7px;border-radius:4px;background:var(--s3);overflow:hidden}
+.bar>i{display:block;height:100%;border-radius:4px;background:var(--ac);transition:width .4s}
+.bar.hi>i{background:var(--err)}
+.bar.mid>i{background:var(--warn)}
+.metric{display:flex;flex-direction:column;gap:4px}
+.metric .lab{display:flex;justify-content:space-between;font-size:10.5px;color:var(--t2)}
+
+.guest-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
+
+/* ── Slide-over (settings / add cluster) ───────────────────────────────── */
+#scrim{position:fixed;inset:0;background:rgba(0,0,0,.55);opacity:0;pointer-events:none;transition:.18s;z-index:40}
+#scrim.on{opacity:1;pointer-events:auto}
+#sheet{position:fixed;z-index:50;background:var(--s1);border:1px solid var(--bd);display:flex;flex-direction:column;transition:transform .22s ease;overflow:hidden}
+/* desktop: right drawer; phone: bottom sheet */
+#sheet{top:0;right:0;height:100%;width:420px;max-width:92vw;border-left:1px solid var(--bd2);transform:translateX(105%)}
+#sheet.on{transform:none}
+@media(max-width:560px){
+  #sheet{top:auto;right:0;left:0;bottom:0;width:100%;max-width:100%;height:88vh;border-radius:16px 16px 0 0;border-left:none;border-top:1px solid var(--bd2);transform:translateY(105%)}
+  #sheet.on{transform:none}
+}
+#sheet .sh-hd{display:flex;align-items:center;gap:8px;padding:14px;border-bottom:1px solid var(--bd);flex-shrink:0}
+#sheet .sh-hd .ttl{font-weight:700}
+#sheet .sh-bd{padding:14px;overflow-y:auto;display:flex;flex-direction:column;gap:14px}
+.field{display:flex;flex-direction:column;gap:5px}
+.field label{font-size:10.5px;color:var(--t2);letter-spacing:.04em;text-transform:uppercase}
+.field .hint{font-size:10.5px;color:var(--t3)}
+.checkrow{display:flex;align-items:center;gap:8px}
+.checkrow input{width:auto}
+.cl-row{display:flex;align-items:center;gap:8px;padding:9px 10px;background:var(--s2);border:1px solid var(--bd);border-radius:7px}
+.cl-row .nm{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cl-row .meta{font-size:10.5px;color:var(--t3)}
+
+/* ── Console modal (terminal / desktop) ────────────────────────────────── */
+#con{position:fixed;inset:0;z-index:60;background:#000;display:none;flex-direction:column}
+#con.on{display:flex}
+#con .con-hd{display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--s1);border-bottom:1px solid var(--bd);flex-shrink:0}
+#con .con-hd .ttl{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#con .con-body{flex:1;position:relative;overflow:hidden;background:#000}
+#termMount{position:absolute;inset:0;padding:6px}
+#vncMount{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+#conMsg{position:absolute;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;gap:12px;color:var(--t2);text-align:center;padding:24px}
+
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:80;background:var(--s3);border:1px solid var(--bd2);color:var(--t1);padding:10px 16px;border-radius:8px;font-size:12px;box-shadow:0 8px 30px rgba(0,0,0,.5);opacity:0;transition:.2s;pointer-events:none}
+.toast.on{opacity:1}
+.toast.err{border-color:var(--err);color:var(--err)}
+</style>
+</head>
+<body>
+<div id="shell">
+  <div id="top">
+    <span class="logo">▤ Proxmox</span>
+    <select id="clusterSel" onchange="selectCluster(this.value)" title="Cluster"></select>
+    <button class="iconbtn" onclick="refresh()" title="Refresh">⟳</button>
+    <span class="spacer"></span>
+    <span id="autoStat" style="font-size:11px;color:var(--t3)"></span>
+    <button class="iconbtn" onclick="openSheet()" title="Clusters &amp; settings">⚙</button>
+  </div>
+
+  <div id="body">
+    <div class="empty" id="emptyState">
+      <h2>No Proxmox cluster yet</h2>
+      <div style="max-width:340px">Add a cluster with its API token to monitor nodes &amp; guests, control lifecycle, and open consoles. The token is encrypted (Fernet) in Redis and never shown again.</div>
+      <button class="btn pri" onclick="openSheet(true)">+ Add cluster</button>
+    </div>
+    <div id="content" style="display:none"></div>
+  </div>
+</div>
+
+<!-- Settings / clusters slide-over -->
+<div id="scrim" onclick="closeSheet()"></div>
+<aside id="sheet">
+  <div class="sh-hd">
+    <span class="ttl" id="sheetTtl">Clusters</span>
+    <span class="spacer"></span>
+    <button class="iconbtn" onclick="closeSheet()">✕</button>
+  </div>
+  <div class="sh-bd" id="sheetBody"></div>
+</aside>
+
+<!-- Console (terminal / desktop) -->
+<div id="con">
+  <div class="con-hd">
+    <span class="ttl" id="conTtl">Console</span>
+    <span class="spacer"></span>
+    <button class="btn sm gho" id="conDeep" style="display:none" onclick="openDeeplink()">Open in Proxmox ↗</button>
+    <button class="btn sm" onclick="closeConsole()">Close</button>
+  </div>
+  <div class="con-body">
+    <div id="termMount"></div>
+    <div id="vncMount"></div>
+    <div id="conMsg"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+/* All API calls are relative — this panel is served by the same FastAPI app
+   that exposes the /proxmox/* endpoints, so same-origin fetch just works. */
+let CLUSTERS = [];
+let CUR = null;           // current cluster id
+let SNAP = null;          // last status snapshot
+let timer = null;
+let con = { term:null, fit:null, ws:null, rfb:null, deeplink:'' };
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const pct = (a,b) => b>0 ? Math.min(100, Math.round(a/b*100)) : 0;
+
+function toast(msg, isErr){
+  const t=$('#toast'); t.textContent=msg; t.className='toast on'+(isErr?' err':'');
+  clearTimeout(t._h); t._h=setTimeout(()=>t.className='toast',2600);
+}
+
+async function api(path, method='GET', body){
+  const o={method,headers:{'Content-Type':'application/json'}};
+  if(body) o.body=JSON.stringify(body);
+  const r=await fetch(path,o);
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  return r.json();
+}
+function fmtBytes(n){ if(!n) return '0'; const u=['B','K','M','G','T']; let i=0; while(n>=1024&&i<u.length-1){n/=1024;i++;} return n.toFixed(n<10&&i>0?1:0)+u[i]; }
+function fmtUptime(s){ if(!s) return '—'; const d=Math.floor(s/86400),h=Math.floor(s%86400/3600); return d?`${d}d ${h}h`:`${h}h ${Math.floor(s%3600/60)}m`; }
+function barClass(p){ return p>=88?'bar hi':p>=65?'bar mid':'bar'; }
+
+/* ── Clusters ──────────────────────────────────────────────────────────── */
+async function loadClusters(){
+  try{ CLUSTERS=(await api('/proxmox/cluster/list')).clusters||[]; }
+  catch(e){ CLUSTERS=[]; }
+  const sel=$('#clusterSel'); sel.innerHTML='';
+  CLUSTERS.forEach(c=>{ const o=document.createElement('option'); o.value=c.id; o.textContent=c.label||c.api_url; sel.appendChild(o); });
+  if(CLUSTERS.length){
+    if(!CUR || !CLUSTERS.find(c=>c.id===CUR)) CUR=CLUSTERS[0].id;
+    sel.value=CUR; $('#emptyState').style.display='none'; $('#content').style.display='';
+    sel.parentElement.querySelector('select').disabled=false;
+  }else{
+    CUR=null; $('#emptyState').style.display=''; $('#content').style.display='none';
+  }
+}
+function selectCluster(id){ CUR=id; SNAP=null; $('#content').innerHTML=''; refresh(); }
+
+/* ── Monitoring ────────────────────────────────────────────────────────── */
+async function refresh(){
+  if(!CUR){ await loadClusters(); return; }
+  try{
+    const s=await api('/proxmox/status','POST',{cluster_id:CUR});
+    if(s.error){ toast(s.error,true); $('#autoStat').textContent='error'; return; }
+    SNAP=s; render(); $('#autoStat').textContent='updated '+new Date().toLocaleTimeString();
+  }catch(e){ toast('status failed: '+e.message,true); }
+}
+
+function render(){
+  if(!SNAP){ return; }
+  const c=SNAP.cluster||{};
+  const quor = c.quorate===true?'<span class="pill run">quorate</span>'
+             : c.quorate===false?'<span class="pill warn">no quorum</span>':'';
+  let h=`<div class="section-h">Nodes <span class="count">${SNAP.nodes.length}</span> ${quor} <span style="flex:0;color:var(--t3)">${esc(c.name||'')}</span></div><div class="grid">`;
+  SNAP.nodes.forEach(n=>{
+    const cp=pct(n.cpu*100,(n.maxcpu||1)*100)||Math.round((n.cpu||0)*100);
+    const mp=pct(n.mem,n.maxmem);
+    const up = n.status==='online';
+    h+=`<div class="card">
+      <div class="hd"><span class="nm">🖥 ${esc(n.node)}</span>
+        <span class="pill ${up?'run':'stop'}">${esc(n.status||'?')}</span></div>
+      ${metric('CPU',Math.round((n.cpu||0)*100)+'%',Math.round((n.cpu||0)*100))}
+      ${metric('Mem',fmtBytes(n.mem)+' / '+fmtBytes(n.maxmem),mp)}
+      <div class="hd"><span class="sub" style="margin-left:0">up ${fmtUptime(n.uptime)}</span></div>
+    </div>`;
+  });
+  h+='</div>';
+
+  const guests=SNAP.guests.filter(g=>!g.template);
+  h+=`<div class="section-h">Guests <span class="count">${guests.length}</span> · running ${SNAP.counts&&SNAP.counts.running||0}</div><div class="grid">`;
+  guests.forEach(g=>{
+    const run=g.status==='running';
+    const mp=pct(g.mem,g.maxmem);
+    h+=`<div class="card">
+      <div class="hd">
+        <span class="nm">${g.type==='lxc'?'📦':'🗔'} ${esc(g.name||('vm'+g.vmid))}</span>
+        <span class="pill ${run?'run':'stop'}">${esc(g.status)}</span>
+      </div>
+      <div class="hd"><span class="sub" style="margin-left:0;color:var(--t2)">${g.type} · ${g.vmid} · ${esc(g.node)}</span></div>
+      ${run?metric('CPU',Math.round((g.cpu||0)*100)+'%',Math.round((g.cpu||0)*100)):''}
+      ${run?metric('Mem',fmtBytes(g.mem)+' / '+fmtBytes(g.maxmem),mp):''}
+      <div class="guest-actions">
+        ${run
+          ? `<button class="btn sm" onclick="guest('${g.node}','${g.type}',${g.vmid},'shutdown')">Shutdown</button>
+             <button class="btn sm danger" onclick="guest('${g.node}','${g.type}',${g.vmid},'stop')">Stop</button>
+             <button class="btn sm gho" onclick="guest('${g.node}','${g.type}',${g.vmid},'reboot')">Reboot</button>`
+          : `<button class="btn sm pri" onclick="guest('${g.node}','${g.type}',${g.vmid},'start')">Start</button>`}
+      </div>
+      <div class="guest-actions">
+        <button class="btn sm" ${run?'':'disabled'} onclick="openConsole('${g.node}','${g.type}',${g.vmid},'term','${esc(g.name||g.vmid)}')">⌨ Terminal</button>
+        <button class="btn sm" ${run?'':'disabled'} onclick="openConsole('${g.node}','${g.type}',${g.vmid},'vnc','${esc(g.name||g.vmid)}')">🖵 Desktop</button>
+      </div>
+    </div>`;
+  });
+  h+='</div>';
+
+  if(SNAP.storage&&SNAP.storage.length){
+    const seen=new Set();
+    h+=`<div class="section-h">Storage</div><div class="grid">`;
+    SNAP.storage.forEach(s=>{
+      const key=s.storage+'@'+s.node; if(seen.has(s.storage))return; seen.add(s.storage);
+      const dp=pct(s.disk,s.maxdisk);
+      h+=`<div class="card"><div class="hd"><span class="nm">💾 ${esc(s.storage)}</span>
+        <span class="pill ${s.status==='available'?'run':'stop'}">${esc(s.status||'')}</span></div>
+        ${metric('Used',fmtBytes(s.disk)+' / '+fmtBytes(s.maxdisk),dp)}</div>`;
+    });
+    h+='</div>';
+  }
+  $('#content').innerHTML=h;
+}
+
+function metric(lab,val,p){
+  return `<div class="metric"><div class="lab"><span>${lab}</span><span>${esc(val)}</span></div>
+    <div class="${barClass(p)}"><i style="width:${Math.max(2,p)}%"></i></div></div>`;
+}
+
+async function guest(node,type,vmid,action){
+  if((action==='stop'||action==='shutdown')&&!confirm(`${action} ${type} ${vmid}?`)) return;
+  toast(`${action} ${vmid}…`);
+  try{
+    const r=await api('/proxmox/guest/action','POST',{cluster_id:CUR,node,guest_type:type,vmid,action});
+    if(r.error) return toast(r.error,true);
+    setTimeout(refresh,1500); setTimeout(refresh,4000);
+  }catch(e){ toast('action failed: '+e.message,true); }
+}
+
+/* ── Console: terminal (xterm) + desktop (noVNC) ───────────────────────── */
+async function openConsole(node,type,vmid,mode,name){
+  $('#conTtl').textContent=(mode==='vnc'?'Desktop · ':'Terminal · ')+name+' ('+vmid+')';
+  $('#con').classList.add('on');
+  $('#termMount').innerHTML=''; $('#vncMount').innerHTML='';
+  $('#conMsg').style.display='none'; $('#conDeep').style.display='none';
+  let info;
+  try{ info=await api('/proxmox/console/ticket','POST',{cluster_id:CUR,node,guest_type:type,vmid,mode}); }
+  catch(e){ return conMsg('Could not reach console endpoint: '+e.message); }
+  con.deeplink=info.deeplink_url||'';
+  if(con.deeplink) $('#conDeep').style.display='';
+  if(!info.proxy_available){
+    const why=info.needs_console_creds
+      ? 'No console credentials configured for this cluster. Add a console user/password in ⚙ Settings to embed the console here, or open it directly in Proxmox.'
+      : 'The console proxy is unavailable on the server (install the "websockets" package).';
+    return conMsg(why, true);
+  }
+  const wsUrl=(location.protocol==='https:'?'wss':'ws')+'://'+location.host+info.ws_path;
+  if(mode==='vnc') startVnc(wsUrl, info.password||''); else startTerm(wsUrl);
+}
+
+function conMsg(text, showDeep){
+  const m=$('#conMsg'); m.style.display='flex';
+  m.innerHTML=`<div style="max-width:420px">${esc(text)}</div>`+
+    (showDeep&&con.deeplink?`<button class="btn pri" onclick="openDeeplink()">Open in Proxmox ↗</button>`:'');
+}
+function openDeeplink(){ if(con.deeplink) window.open(con.deeplink,'_blank','noopener'); }
+
+function startTerm(wsUrl){
+  if(!window.Terminal){ return conMsg('Terminal library failed to load (CDN blocked?).', true); }
+  const term=new Terminal({cursorBlink:true,fontSize:13,fontFamily:'ui-monospace,Menlo,monospace',theme:{background:'#000000'}});
+  const fit=new FitAddon.FitAddon(); term.loadAddon(fit);
+  term.open($('#termMount')); fit.fit();
+  const ws=new WebSocket(wsUrl,'binary'); ws.binaryType='arraybuffer';
+  const dec=new TextDecoder();
+  // Proxmox term wire protocol: input frames "0:<len>:<data>", resize "1:<cols>:<rows>:".
+  // The server side already sent the "<user>:<ticket>" auth frame for us.
+  const sendResize=()=>{ try{ if(ws.readyState===1) ws.send('1:'+term.cols+':'+term.rows+':'); }catch(e){} };
+  ws.onopen=()=>{ sendResize(); term.focus(); };
+  term.onData(d=>{ try{ if(ws.readyState===1) ws.send('0:'+d.length+':'+d); }catch(e){} });
+  ws.onmessage=ev=>{ try{ term.write(typeof ev.data==='string'?ev.data:dec.decode(ev.data)); }catch(e){} };
+  ws.onerror=()=>toast('terminal socket error',true);
+  ws.onclose=()=>{ try{ term.write('\r\n\x1b[90m[disconnected]\x1b[0m\r\n'); }catch(e){} };
+  con.term=term; con.fit=fit; con.ws=ws; con.sendResize=sendResize;
+  window.addEventListener('resize',resizeTerm);
+}
+function resizeTerm(){ try{ con.fit&&con.fit.fit(); con.sendResize&&con.sendResize(); }catch(e){} }
+
+function startVnc(wsUrl,password){
+  if(!window.NoVNCRFB){ return conMsg('Remote-desktop library still loading — try again in a moment, or open in Proxmox.', true); }
+  try{
+    const rfb=new window.NoVNCRFB($('#vncMount'),wsUrl,{wsProtocols:['binary'],credentials:{password:password}});
+    rfb.scaleViewport=true; rfb.resizeSession=false;
+    rfb.addEventListener('disconnect',()=>toast('desktop disconnected'));
+    rfb.addEventListener('securityfailure',()=>conMsg('Desktop auth failed. Open in Proxmox instead.',true));
+    con.rfb=rfb;
+  }catch(e){ conMsg('Desktop failed: '+e.message,true); }
+}
+
+function closeConsole(){
+  $('#con').classList.remove('on');
+  window.removeEventListener('resize',resizeTerm);
+  try{ con.ws&&con.ws.close(); }catch(e){}
+  try{ con.rfb&&con.rfb.disconnect(); }catch(e){}
+  try{ con.term&&con.term.dispose(); }catch(e){}
+  con={term:null,fit:null,ws:null,rfb:null,deeplink:''};
+  $('#termMount').innerHTML=''; $('#vncMount').innerHTML='';
+}
+
+/* ── Settings / clusters sheet ─────────────────────────────────────────── */
+function openSheet(addNew){ renderSheet(addNew?'new':null); $('#scrim').classList.add('on'); $('#sheet').classList.add('on'); }
+function closeSheet(){ $('#scrim').classList.remove('on'); $('#sheet').classList.remove('on'); }
+
+function renderSheet(editId){
+  const editing = editId==='new' ? {} : (editId? CLUSTERS.find(c=>c.id===editId) : null);
+  if(editing){
+    $('#sheetTtl').textContent = editId==='new' ? 'Add cluster' : 'Edit cluster';
+    const e=editing;
+    $('#sheetBody').innerHTML=`
+      <div class="field"><label>Label</label><input id="fLabel" value="${esc(e.label||'')}" placeholder="home-cluster"></div>
+      <div class="field"><label>API URL</label><input id="fUrl" value="${esc(e.api_url||'')}" placeholder="https://192.168.0.10:8006">
+        <span class="hint">Host root or full /api2/json — either works.</span></div>
+      <div class="field"><label>API token ${e.has_token?'<span style="color:var(--ok)">· stored</span>':''}</label>
+        <input id="fToken" placeholder="${e.has_token?'•••••• (leave blank to keep)':'user@pam!tokenid=secret-uuid'}">
+        <span class="hint">Sealed with Fernet in Redis; never shown again.</span></div>
+      <div class="checkrow"><input type="checkbox" id="fVerify" ${e.verify_tls?'checked':''}><label style="text-transform:none">Verify TLS (off for self-signed)</label></div>
+      <div class="field"><label>Console user <span style="color:var(--t3)">(optional)</span></label>
+        <input id="fCUser" value="${esc(e.console_user||'')}" placeholder="root@pam">
+        <span class="hint">Needed to embed terminal/desktop in Vera. Without it, consoles deep-link to Proxmox.</span></div>
+      <div class="field"><label>Console password ${e.has_console_password?'<span style="color:var(--ok)">· stored</span>':''}</label>
+        <input id="fCPass" type="password" placeholder="${e.has_console_password?'•••••• (leave blank to keep)':'password'}"></div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button class="btn pri" onclick="saveCluster('${editId==='new'?'':e.id}')">Save</button>
+        <button class="btn gho" onclick="renderSheet()">Cancel</button>
+        ${editId!=='new'?`<span class="spacer"></span><button class="btn danger gho" onclick="delCluster('${e.id}')">Delete</button>`:''}
+      </div>`;
+    return;
+  }
+  $('#sheetTtl').textContent='Clusters';
+  let h=`<button class="btn pri" onclick="renderSheet('new')">+ Add cluster</button>`;
+  if(!CLUSTERS.length) h+=`<div class="hint">No clusters yet.</div>`;
+  CLUSTERS.forEach(c=>{
+    h+=`<div class="cl-row">
+      <div style="min-width:0;flex:1"><div class="nm">${esc(c.label||c.api_url)}</div>
+        <div class="meta">${esc(c.api_url||'')} ${c.has_token?'· 🔒 token':'· ⚠ no token'} ${c.has_console_password?'· console':''}</div></div>
+      <button class="btn sm gho" onclick="renderSheet('${c.id}')">Edit</button>
+    </div>`;
+  });
+  $('#sheetBody').innerHTML=h;
+}
+
+async function saveCluster(id){
+  const body={
+    id: id||'',
+    label: $('#fLabel').value.trim(),
+    api_url: $('#fUrl').value.trim(),
+    verify_tls: $('#fVerify').checked,
+    console_user: $('#fCUser').value.trim(),
+  };
+  const tok=$('#fToken').value.trim(); if(tok) body.token=tok;
+  const cp=$('#fCPass').value; if(cp) body.console_password=cp;
+  if(!body.api_url) return toast('API URL required',true);
+  try{
+    const r=await api('/proxmox/cluster/save','POST',body);
+    if(r.error) return toast(r.error,true);
+    toast('Saved'); if(!CUR) CUR=r.cluster.id;
+    await loadClusters(); $('#clusterSel').value=CUR; renderSheet(); refresh();
+  }catch(e){ toast('save failed: '+e.message,true); }
+}
+async function delCluster(id){
+  if(!confirm('Delete this cluster connection?')) return;
+  try{ await api('/proxmox/cluster/delete','POST',{id}); }catch(e){}
+  if(CUR===id) CUR=null;
+  await loadClusters(); renderSheet();
+  if(CUR) refresh(); else { $('#content').innerHTML=''; }
+}
+
+/* ── Boot + auto-refresh ───────────────────────────────────────────────── */
+async function boot(){
+  await loadClusters();
+  if(CUR) refresh();
+  timer=setInterval(()=>{ if(CUR && document.visibilityState==='visible' && !$('#con').classList.contains('on')) refresh(); }, 5000);
+}
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ if($('#con').classList.contains('on'))closeConsole(); else if($('#sheet').classList.contains('on'))closeSheet(); }});
+boot();
+</script>
+</body>
+</html>

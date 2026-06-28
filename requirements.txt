@@ -12,15 +12,29 @@ redis[hiredis]>=5.0,<6.0
 asyncpg>=0.29,<1.0
 chromadb-client>=0.5,<1.0
 neo4j>=5.19,<6.0
+boto3>=1.34,<2.0         # S3 client for the data-fabric object store (Garage); guarded by HAS_BOTO
 
 # ── Utilities ────────────────────────────────────────────
 pydantic>=2.0,<3.0
 python-multipart>=0.0.9
 cryptography>=42          # Fernet auth-encryption for stored cloud calendar credentials
 
+# ── Markets / OHLCV ingestion ────────────────────────────
+ccxt>=4.0,<5.0            # multi-exchange crypto OHLCV (Markets panel); guarded by HAS_CCXT
+
+# ── ESP32 Mesh (optional transports — guarded by HAS_AIOMQTT / HAS_PYSERIAL) ──
+aiomqtt>=2.0             # MQTT transport for the Mesh manager (active only if VERA_MQTT_URL set)
+pyserial>=3.5            # USB-serial transport for the Mesh manager (active only if VERA_MESH_SERIAL_PORTS set)
+
+# ── ONNX export + runtime (ML Workshop → portable inference caps) ────────
+# Guarded by HAS_ONNX / HAS_ORT in machine learning/ml_onnx.py — Vera runs fine
+# without them; the ml.export.onnx / ml.onnx.* caps just report they're disabled.
+onnx>=1.16               # graph builder for ml.export.onnx
+onnxruntime>=1.18        # CPU inference engine for ml.onnx.run / per-model caps
+# onnxruntime-gpu>=1.18  # use instead of onnxruntime on the CUDA GPU node
+# onnxruntime-directml>=1.18  # use instead on the Windows host (DirectML EP)
+
 # ── Optional (uncomment as needed) ──────────────────────
 # asyncssh>=2.14          # remote worker SSH provisioning
-# aiomqtt>=2.0            # MQTT IoT collector
 # aiomysql>=0.2           # MySQL data fabric connector
 # beautifulsoup4>=4.12    # web scraping capabilities
-# pyserial>=3.5           # serial/IoT collector

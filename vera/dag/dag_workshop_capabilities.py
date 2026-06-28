@@ -13,6 +13,9 @@ Registers a dedicated DAG Workshop UI panel with rich features for:
       - v2: triage + dynamic toolkit  (dag.agent_loop_v2)
       - v3: full message-history Anthropic-style observe/think/act
                   (dag.agent_loop_v3 — defined here)
+      - v4: strict explore/think/act/verify cadence (dag.agent_loop_v4)
+      - v5: orchestrator + ephemeral scoped specialist sub-agents
+                  (dag.agent_loop_v5 — defined here)
   • Reviewing / approving / retrying / editing planned tool calls (HITL)
   • Composing custom agentic flows from primitives (the Loop Builder pane)
   • Rich tool-call progress including long-running research jobs &
@@ -1671,6 +1674,25 @@ _LOOP_VARIANTS = [
         "supports_plan":         True,
         "supports_verify":       True,
     },
+    {
+        "id":       "v5",
+        "cap":      "dag.agent_loop_v5",
+        "label":    "v5 — specialist sub-agents",
+        "description": "An orchestrator decomposes the goal into a step plan in a "
+                        "single call, then hands each step to an ephemeral scoped "
+                        "specialist sub-agent. The orchestrator sees only cap "
+                        "names+descriptions and the skill list; each step's agent "
+                        "sees only full schemas for its caps, any dynamically-loaded "
+                        "skills, and a curated slice of prior-step output. Fast start "
+                        "and per-step scoped toolkits (never balloons).",
+        "supports_satisfaction": False,
+        "supports_expand":       False,
+        "supports_progress":     True,
+        "supports_hitl":         False,
+        "supports_steps":        True,
+        "supports_plan":         True,
+        "supports_verify":       False,
+    },
 ]
 
 
@@ -2098,13 +2120,16 @@ def _is_thinking_model(model: str) -> bool:
 
 
 async def _safe_ollama_generate_dw(prompt, *, system="", json_mode=True,
-                                     model="", instance_id="", prefer_gpu=True):
+                                     model="", instance_id="", prefer_gpu=True,
+                                     stream_cb=None):
     """Thinking-model-aware ollama_generate wrapper for dag_workshop callers.
 
     Lazily resolves ollama_generate via the context module so we don't have
     a circular import. Disables json_mode for thinking models (they often
     return empty under format=json), and retries without json_mode if the
-    response is empty.
+    response is empty. When `stream_cb` is given it is forwarded to
+    ollama_generate so callers can stream tokens live (the full text is still
+    returned). The empty-retry is always non-streaming.
     """
     import importlib
     try:
@@ -2123,12 +2148,17 @@ async def _safe_ollama_generate_dw(prompt, *, system="", json_mode=True,
         return ""
 
     use_json = bool(json_mode) and not _is_thinking_model(model)
-    raw = await og(
-        prompt, system=system, json_mode=use_json,
-        model=model or None,
-        instance_id=instance_id or None,
-        prefer_gpu=bool(prefer_gpu),
-    )
+    _gen_kwargs = dict(system=system, json_mode=use_json,
+                       model=model or None, instance_id=instance_id or None,
+                       prefer_gpu=bool(prefer_gpu))
+    if stream_cb is not None:
+        try:
+            raw = await og(prompt, stream_cb=stream_cb, **_gen_kwargs)
+        except TypeError:
+            # Older ollama_generate without stream_cb support — degrade to blocking.
+            raw = await og(prompt, **_gen_kwargs)
+    else:
+        raw = await og(prompt, **_gen_kwargs)
     cleaned = (raw or "").strip()
     if not cleaned or len(cleaned) < 4:
         try:
@@ -2145,26 +2175,137 @@ async def _safe_ollama_generate_dw(prompt, *, system="", json_mode=True,
     return raw or ""
 
 
+def _coerce_json_loads(text: str) -> Optional[Dict]:
+    """json.loads restricted to objects, with light trailing-comma cleanup."""
+    for candidate in (text, text.replace(",}", "}").replace(",]", "]")):
+        try:
+            out = json.loads(candidate)
+        except Exception:
+            continue
+        if isinstance(out, dict):
+            return out
+    return None
+
+
+def _iter_balanced_json_objects(s: str) -> List[str]:
+    """Return every top-level balanced ``{...}`` substring, honouring string
+    literals/escapes so braces inside quoted text don't confuse the scan.
+
+    This is what lets us pull a real JSON action out of output that ALSO
+    contains echoed prose / observation blocks (which themselves contain
+    braces, e.g. ``args: {"text": ...}``) before the actual action object."""
+    objs: List[str] = []
+    depth = 0
+    start = -1
+    in_str = False
+    esc = False
+    for i, ch in enumerate(s):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start >= 0:
+                    objs.append(s[start:i + 1])
+                    start = -1
+    return objs
+
+
+# Keys that mark an object as an actual agent action (vs an echoed observation
+# or a chunk of result JSON the model parroted back).
+_JSON_ACTION_KEYS = ("tool_use", "tool_call", "final", "todo_done",
+                     "action", "tool", "capability", "name")
+
+
 def _extract_json(raw: str) -> Optional[Dict]:
     # Strip thinking tokens first — qwen3/deepseek-r1 etc. wrap JSON in <think>
     s, _think = _strip_think(raw or "")
     s = s.strip()
-    if s.startswith("```"):
-        s = s.split("```", 2)[1]
-        if s.startswith("json"):
-            s = s[4:]
+    # Prefer an explicit ```json fenced block if one is present.
+    if "```" in s:
+        try:
+            import re as _re
+            m = _re.search(r"```(?:json)?\s*(\{.*?\})\s*```", s, _re.DOTALL)
+            if m:
+                cand = _coerce_json_loads(m.group(1))
+                if cand is not None:
+                    return cand
+        except Exception:
+            pass
+        if s.startswith("```"):
+            s = s.split("```", 2)[-1].strip()
+    # Fast path: the whole payload is already a single JSON object.
+    whole = _coerce_json_loads(s)
+    if whole is not None:
+        return whole
+    # Models frequently emit prose / echoed observations (which contain braces)
+    # BEFORE the real JSON action. Scan every balanced object and prefer the
+    # LAST one that carries an action key; otherwise the last that parses at all.
+    best_action = None
+    last_ok = None
+    for obj_str in _iter_balanced_json_objects(s):
+        parsed = _coerce_json_loads(obj_str)
+        if parsed is None:
+            continue
+        last_ok = parsed
+        if any(k in parsed for k in _JSON_ACTION_KEYS):
+            best_action = parsed
+    if best_action is not None:
+        return best_action
+    if last_ok is not None:
+        return last_ok
+    # Legacy last-ditch: first { to last } with trailing-comma cleanup.
     a = s.find("{")
     b = s.rfind("}")
-    if a < 0 or b <= a:
+    if 0 <= a < b:
+        return _coerce_json_loads(s[a:b + 1])
+    return None
+
+
+def _salvage_action(raw: str) -> Optional[Dict[str, Any]]:
+    """Regex salvage for when JSON parsing fails outright — e.g. the model
+    truncated mid-object (ran out of output budget) or left an unescaped quote
+    inside ``thought``. Pulls out a recognizable action so a near-miss doesn't
+    burn a whole cycle. Returns a canonical-ish payload or None."""
+    s, _ = _strip_think(raw or "")
+    if not s.strip():
         return None
-    try:
-        return json.loads(s[a:b+1])
-    except Exception:
-        cleaned = s[a:b+1].replace(",}", "}").replace(",]", "]")
-        try:
-            return json.loads(cleaned)
-        except Exception:
-            return None
+    import re as _re
+    tm = _re.search(r'"thought"\s*:\s*"((?:[^"\\]|\\.){0,300})', s)
+    thought = (tm.group(1) if tm else "")
+    # final — take everything after the opening quote (it's usually last/longest)
+    fm = _re.search(r'"final"\s*:\s*"((?:[^"\\]|\\.)+)', s)
+    if fm and fm.group(1).strip():
+        return {"thought": thought, "final": fm.group(1)}
+    # todo_done
+    dm = _re.search(r'"todo_done"\s*:\s*"?(\d+)', s)
+    if dm:
+        return {"thought": thought, "todo_done": int(dm.group(1))}
+    # a tool name (tool_use.name, tool_call.name, or top-level name/tool)
+    nm = _re.search(r'"(?:name|tool|capability)"\s*:\s*"([A-Za-z0-9_.\-]+)"', s)
+    if nm:
+        inp: Dict[str, Any] = {}
+        im = _re.search(r'"(?:input|args|arguments|parameters)"\s*:\s*\{', s)
+        if im:
+            objs = _iter_balanced_json_objects(s[im.end() - 1:])
+            if objs:
+                cand = _coerce_json_loads(objs[0])
+                if isinstance(cand, dict):
+                    inp = cand
+        return {"thought": thought, "tool_use": {"name": nm.group(1), "input": inp}}
+    return None
 
 
 def _result_preview(result: Any, max_len: int = 1500) -> str:
@@ -2433,14 +2574,18 @@ async def _search_relevant_datasets(
     model: str = "",
     instance_id: str = "",
     prefer_gpu: bool = True,
+    allow_llm_fallback: bool = True,
 ) -> List[Dict[str, Any]]:
     """Search fabric datasets for ones relevant to the goal.
 
     Step 1 — keyword matching: score each dataset_id against triage keywords
     and words extracted from the goal.  Fast, no extra LLM call.
 
-    Step 2 — LLM fallback: if keyword scoring yields nothing, ask the LLM to
-    pick relevant datasets from the full list (using goal-seeded queries).
+    Step 2 — LLM fallback: if keyword scoring yields nothing AND
+    `allow_llm_fallback` is set, ask the LLM to pick relevant datasets from the
+    full list. Callers gate this off for goals that clearly aren't data-shaped
+    (e.g. a `whoami`) so it doesn't add a pointless LLM round-trip before the
+    first cycle.
 
     Returns a list of dataset dicts: [{dataset_id, record_count, ...}]
     """
@@ -2477,6 +2622,9 @@ async def _search_relevant_datasets(
     top = [ds for ds in scored if _score(ds) > 0][:max_results]
     if top:
         return top
+
+    if not allow_llm_fallback:
+        return []
 
     # LLM fallback — ask model to pick from the list using goal-seeded queries
     ollama_generate = getattr(_ctx(), "ollama_generate", None)
@@ -2532,6 +2680,31 @@ async def _search_relevant_datasets(
     except Exception as e:
         log.debug("dataset search LLM fallback failed: %s", e)
     return []
+
+
+_TRIAGE_STOPWORDS = {
+    "the", "and", "for", "with", "that", "this", "from", "have", "not", "are",
+    "but", "can", "you", "will", "get", "all", "any", "some", "one", "into",
+    "then", "than", "its", "also", "using", "please", "make", "create", "give",
+    "want", "need", "find", "show", "tell", "about", "what", "which", "how",
+    "when", "where", "your", "our", "their", "them", "they", "and", "use",
+}
+
+
+def _goal_terms(goal: str, limit: int = 8) -> List[str]:
+    """Meaningful lowercased words from a goal (minus stopwords) — a fallback
+    source of keywords when triage produces none, so the toolkit's semantic cap
+    search always has something to match against."""
+    import re as _re
+    out: List[str] = []
+    for w in _re.findall(r"[A-Za-z][A-Za-z0-9_]{2,}", goal or ""):
+        wl = w.lower()
+        if wl in _TRIAGE_STOPWORDS or wl in out:
+            continue
+        out.append(wl)
+        if len(out) >= limit:
+            break
+    return out
 
 
 async def _workshop_triage_goal(goal: str, *, model: str = "",
@@ -2632,19 +2805,36 @@ async def _workshop_triage_goal(goal: str, *, model: str = "",
                 prefer_gpu=bool(prefer_gpu),
                 json_mode=True,
             )
+        # Thinking models often return an EMPTY string under format=json, which
+        # is the #1 reason triage collapses to "other"/no-keywords on complex
+        # goals. Retry once without json_mode before giving up on the LLM.
+        if len((raw or "").strip()) < 4:
+            raw = await ollama_generate(
+                f"Goal: {goal.strip()}\n\nRespond with a single JSON object and nothing else.",
+                system=sys,
+                model=model or None,
+                instance_id=instance_id or None,
+                prefer_gpu=bool(prefer_gpu),
+                json_mode=False,
+            )
     except Exception as e:
         log.debug("workshop triage failed: %s", e)
-        return {"category": "other", "keywords": [], "reasoning": ""}
+        return {"category": "other", "keywords": _goal_terms(goal), "reasoning": ""}
 
     parsed = _parse_json_object(raw or "")
     if not parsed:
-        # Even if LLM failed, prefer heuristic over total failure
-        if heuristic:
-            out = {"category": heuristic[0], "keywords": heuristic[1],
-                   "reasoning": "(heuristic) " + heuristic[2]}
-            _TRIAGE_CACHE[cache_key] = dict(out)
-            return out
-        return {"category": "other", "keywords": [], "reasoning": ""}
+        # Even if LLM failed, never strand the toolkit with no signal: prefer the
+        # heuristic, and ALWAYS fall back to goal-derived keywords so the toolkit
+        # builder can still surface relevant caps via semantic search.
+        cat0 = heuristic[0] if heuristic else "other"
+        kws0 = list(dict.fromkeys((heuristic[1] if heuristic else []) + _goal_terms(goal)))[:6]
+        out = {"category": cat0,
+               "categories": [cat0] if cat0 != "other" else [],
+               "keywords": kws0,
+               "reasoning": (("(heuristic) " + heuristic[2]) if heuristic
+                             else "(fallback) classifier unavailable — keywords derived from goal text")}
+        _TRIAGE_CACHE[cache_key] = dict(out)
+        return out
 
     cat = str(parsed.get("category", "other")).strip().lower()
     if cat not in TRIAGE_CATEGORIES:
@@ -2675,6 +2865,12 @@ async def _workshop_triage_goal(goal: str, *, model: str = "",
         cat = heuristic[0]
         # Merge heuristic keywords too
         cleaned_kws = list(dict.fromkeys(heuristic[1] + cleaned_kws))[:6]
+
+    # Never return an empty keyword set — a complex goal that the LLM left
+    # keyword-less would otherwise get only a generic toolkit. Backfill from the
+    # goal text so semantic cap discovery always has fuel.
+    if not cleaned_kws:
+        cleaned_kws = list(dict.fromkeys((heuristic[1] if heuristic else []) + _goal_terms(goal)))[:6]
 
     out = {
         "category":   cat,
@@ -2957,6 +3153,8 @@ async def _workshop_build_toolkit(*, allowed_caps: str, category: str,
                               categories: Optional[List[str]] = None,
                               keywords: List[str], top_k: int = 16,
                               extra_caps: Optional[List[str]] = None,
+                              goal: str = "",
+                              base_caps: Optional[List[str]] = None,
                               skip_useless_essentials: bool = True) -> List[str]:
     """Build a category-aware toolkit.
 
@@ -3014,6 +3212,14 @@ async def _workshop_build_toolkit(*, allowed_caps: str, category: str,
             seen_cats.add(c)
     cats_list = deduped
 
+    # 0. BASE TOOLKIT — always present, highest priority (mirrors the agent's
+    #    baseline domain_caps, or the default Web/browser + skills set). These
+    #    are never truncated and are the floor when triage can't narrow things.
+    base_list = [c.strip() for c in (base_caps or []) if c and c.strip()]
+    for c in base_list:
+        add(c)
+    n_base = len(toolkit)  # everything up to here is protected from the size cap
+
     # 1. Discovery caps — always present (bypass pool)
     for c in WORKSHOP_DISCOVERY_CAPS:
         add(c)
@@ -3059,11 +3265,21 @@ async def _workshop_build_toolkit(*, allowed_caps: str, category: str,
     # X") never surface caps like research.guide.
     semantic_added = 0
     semantic_budget = max(4, top_k // 2)
+    # When triage was weak (category "other" or sparse keywords), widen the net
+    # so a misclassified complex goal still gets relevant caps.
+    weak_triage = (len(keywords or []) < 2) or all(c == "other" for c in cats_list)
+    if weak_triage:
+        semantic_budget = max(semantic_budget, top_k)
     try:
         ds = _dag_store()
         cap_index = getattr(ds, "CAP_INDEX", None) if ds else None
-        if cap_index is not None and keywords:
-            kw_query = " ".join(keywords)
+        # Query from keywords AND the goal text, so relevant caps surface even
+        # when triage produced no/poor keywords.
+        query_parts = list(keywords or [])
+        if goal:
+            query_parts.append(goal)
+        kw_query = " ".join(query_parts).strip()
+        if cap_index is not None and kw_query:
             hits = await cap_index.relevance_search(kw_query, top_k=top_k * 2)
             for entry in hits or []:
                 name = entry[0] if isinstance(entry, tuple) else (
@@ -3081,6 +3297,14 @@ async def _workshop_build_toolkit(*, allowed_caps: str, category: str,
     # 6. Extras — user-provided or expand_tools-driven
     for c in (extra_caps or []):
         add(c)
+
+    # Hard size cap so a weak triage can never balloon the prompt toward "all
+    # tools" (the cause of slow first responses). The base toolkit and discovery
+    # caps (the first n_base + len(WORKSHOP_DISCOVERY_CAPS) entries) are always
+    # protected; only the category/keyword-discovered tail is trimmed.
+    max_total = max(int(top_k) * 2, n_base + len(WORKSHOP_DISCOVERY_CAPS) + 8)
+    if len(toolkit) > max_total:
+        toolkit = toolkit[:max_total]
 
     return toolkit
 
@@ -3283,7 +3507,8 @@ def _is_arg_error(error_text: str) -> bool:
 def _build_recovery_prompt(*, cap_name: str, failed_args: Dict[str, Any],
                              error_text: str, attempt: int,
                              max_attempts: int,
-                             prior_attempts: List[Dict[str, Any]] = None) -> str:
+                             prior_attempts: List[Dict[str, Any]] = None,
+                             goal: str = "", thought: str = "") -> str:
     """Build the user message for an error-recovery sub-cycle."""
     cap = CAPABILITY_REGISTRY.get(cap_name) or {}
     schema = cap.get("schema", {}) or {}
@@ -3323,15 +3548,29 @@ def _build_recovery_prompt(*, cap_name: str, failed_args: Dict[str, Any],
     except Exception:
         failed_args_s = str(failed_args)[:300]
 
+    # Give the fixer the original intent so it can supply REAL values for
+    # missing required fields (e.g. a search `query`) instead of inventing a
+    # generic placeholder. Without this the fixer is blind and guesses.
+    context_block = ""
+    if goal and goal.strip():
+        context_block += f"\nORIGINAL USER GOAL:\n{str(goal).strip()[:600]}\n"
+    if thought and thought.strip():
+        context_block += (f"\nWHY THIS TOOL WAS CALLED (agent's own reasoning "
+                          f"for this step):\n{str(thought).strip()[:400]}\n")
+
     return (
         f"TOOL CALL FAILED -- recovery attempt {attempt}/{max_attempts}\n\n"
         f"Tool: {cap_name}\n"
-        f"Schema:\n{schema_block}\n\n"
+        f"Schema:\n{schema_block}\n"
+        f"{context_block}\n"
         f"Failed args: {failed_args_s}\n"
         f"Error: {str(error_text)[:400]}"
         f"{history_block}\n\n"
-        "Fix the input args so the call succeeds. The tool MUST stay as "
-        f"`{cap_name}` -- do not change it. Respond with EXACTLY:\n"
+        "Fix the input args so the call succeeds. Derive missing required "
+        "values (e.g. a search query) from the ORIGINAL USER GOAL and the "
+        "agent's reasoning above -- do NOT invent generic placeholders. The "
+        f"tool MUST stay as `{cap_name}` -- do not change it. Respond with "
+        "EXACTLY:\n"
         '  {"input": { ... new args ... }}\n'
         '  OR if recovery is impossible:\n'
         '  {"give_up": true, "reason": "<why>"}\n'
@@ -3349,6 +3588,10 @@ _RECOVERY_SYSTEM_PROMPT = (
     "remove unknown fields.\n"
     "3. Read the schema carefully -- required fields are marked REQUIRED. "
     "Enum fields have a fixed list of valid values.\n"
+    "3b. When a required field is missing, infer its value from the ORIGINAL "
+    "USER GOAL and the agent's reasoning provided in the message. NEVER fill "
+    "a field with a generic placeholder like 'default search query' -- use the "
+    "real intended value.\n"
     "4. If the schema is unclear or the error is not fixable by changing "
     "args (network, auth, etc.), respond with give_up.\n"
     "5. Respond with EXACTLY one JSON object: "
@@ -3367,7 +3610,9 @@ async def _attempt_arg_recovery(*, cap_name: str, failed_args: Dict[str, Any],
                                   trace_id: str = "",
                                   emit_fn: Any = None,
                                   cycle: int = 0,
-                                  stream_id: str = "") -> Dict[str, Any]:
+                                  stream_id: str = "",
+                                  goal: str = "",
+                                  thought: str = "") -> Dict[str, Any]:
     """Run an error-recovery sub-cycle. Returns dict:
 
     {
@@ -3406,6 +3651,7 @@ async def _attempt_arg_recovery(*, cap_name: str, failed_args: Dict[str, Any],
             cap_name=cap_name, failed_args=last_args,
             error_text=last_error, attempt=attempt_i,
             max_attempts=max_attempts, prior_attempts=attempts,
+            goal=goal, thought=thought,
         )
         try:
             raw = await _safe_ollama_generate_dw(
@@ -3554,8 +3800,22 @@ def _canonicalise_tool_use_payload(parsed: Any) -> Optional[Dict[str, Any]]:
             inp = parsed.get("input") or parsed.get("args") or parsed.get("arguments") or {}
             return {"thought": thought,
                     "tool_use": {"name": tu, "input": inp}}
+    # tool_call as an alias of tool_use (the v4 loop reads either key).
+    tc = parsed.get("tool_call")
+    if isinstance(tc, dict) and "name" in tc:
+        return {"thought": thought,
+                "tool_use": {"name": tc.get("name") or "",
+                             "input": tc.get("input") or tc.get("arguments")
+                                      or tc.get("args") or {}}}
     if "final" in parsed:
         return {"thought": thought, "final": str(parsed["final"])}
+    # v4 control action: {"thought":"…","todo_done":<id>} marks a plan item
+    # complete without a tool call this turn. Without this branch the
+    # canonicaliser returned None and the turn was mis-reported as a parse error
+    # even though the model's JSON was perfectly valid — burning cycles and
+    # stalling the plan. (final takes priority above, matching the loop.)
+    if parsed.get("todo_done") is not None:
+        return {"thought": thought, "todo_done": parsed.get("todo_done")}
     if parsed.get("action") in ("expand_tools", "expand"):
         return {"thought": thought,
                 "action": "expand_tools",
@@ -3599,6 +3859,12 @@ def _canonicalise_tool_use_payload(parsed: Any) -> Optional[Dict[str, Any]]:
             if r:
                 if not r.get("thought"): r["thought"] = thought
                 return r
+
+    # Thought-only payload: {"thought":"…"} with no action. This is the model
+    # reasoning out loud — a valid (if incomplete) turn, NOT a parse error. Return
+    # it so the loop can render/stream the thought and re-prompt for an action.
+    if thought:
+        return {"thought": thought}
 
     return None
 
@@ -3880,6 +4146,7 @@ async def cap_workshop_triage_preview(goal: str = "", allowed_caps: str = "",
         categories=triage.get("categories"),
         keywords=triage.get("keywords", []),
         top_k=int(triage_top_k),
+        goal=goal,
     )
     return {
         "triage":              triage,
@@ -3965,6 +4232,13 @@ async def cap_dag_agent_loop_v3(
     triage_top_k = max(1, min(64, int(triage_top_k)))
     sid = session_id or str(uuid.uuid4())
 
+    # Scope ollama.* events to this run so the UI can show which node served each
+    # planner call (task-local contextvar — no leak across concurrent runs).
+    try:
+        _orch.OLLAMA_EVENT_SESSION.set(sid)
+    except Exception:
+        pass
+
     ctx = _ctx()
     ds  = _dag_store()
     ollama_generate = getattr(ctx, "ollama_generate", None) if ctx else None
@@ -3995,6 +4269,7 @@ async def cap_dag_agent_loop_v3(
         categories=triage.get("categories"),
         keywords=triage.get("keywords", []),
         top_k=int(triage_top_k),
+        goal=goal,
     )
 
     if not toolkit:
@@ -4252,11 +4527,16 @@ async def cap_dag_agent_loop_v3(
             cycle_i += 1
             cycles = cycle_i
 
+            # Keep the observation block COMPACT: a large result dump (e.g. a
+            # multi-KB fabric.query) bloats the prompt and tempts weaker models
+            # to echo it back verbatim instead of acting. Only the most recent
+            # result needs detail; older ones get a short tail.
+            _recent = history[-5:]
             obs_block = "\n\n".join(
                 f"[Observation {i+1}] tool={h['tool']} ok={h.get('ok')}\n"
-                f"args: {json.dumps(h.get('args', {}), default=str)[:240]}\n"
-                f"result: {h['preview']}"
-                for i, h in enumerate(history[-5:])
+                f"args: {json.dumps(h.get('args', {}), default=str)[:160]}\n"
+                f"result: {(h.get('preview') or '')[:(700 if i == len(_recent) - 1 else 250)]}"
+                for i, h in enumerate(_recent)
             ) or "(no observations yet — make your first tool call)"
 
             # Quota status hint so the LLM knows when to wrap up
@@ -4871,6 +5151,7 @@ async def cap_dag_agent_loop_v3(
                     session_id=sid, trace_id=trace_id or "",
                     emit_fn=emit_event, cycle=cycles,
                     stream_id=stream_id,
+                    goal=goal, thought=thought,
                 )
                 if recovery_result.get("recovered"):
                     invoke = recovery_result["final_invoke"]
@@ -5117,6 +5398,40 @@ async def cap_dag_agent_loop_v3(
 
 _V4_ALL_STEPS = ["plan", "explore", "think", "act", "verify"]
 
+# Categories where searching the data fabric for relevant datasets is worthwhile.
+# For everything else (system_info, network_scan, exec-style goals, etc.) the
+# dataset LLM-fallback is pure latency before the first cycle — skip it.
+_V4_DATA_CATEGORIES = {
+    "data_lookup", "data_pipeline", "research", "analysis",
+    "summarisation", "search", "memory_recall", "report_generation",
+}
+
+# Read-only "discovery/listing" caps — useful for orienting, but repeating them
+# once a plan item is pending is the classic v4 stall (it re-lists datasets/caps
+# instead of executing the todo). The plan-progress logic excludes these so a
+# discovery call never counts as completing a todo item.
+_V4_DISCOVERY_CAPS = {
+    "caps.search", "caps.describe", "context.search_caps",
+    "context.search_dags", "fabric.datasets",
+}
+
+# Default BASE TOOLKIT — used when the loop isn't given one (e.g. an agent with
+# no configured baseline). Web & browser + skills, per product default. Only the
+# entries actually present in the registry are seeded (the builder filters).
+_V4_DEFAULT_BASE_TOOLKIT = [
+    # Terminal — write/read/edit files (echo > file, cat, grep, sed) + run code.
+    "exec.bash.run", "exec.ps.run", "exec.code.run",
+    # Structured code/file tools — write artifact, list (tree), read, grep, replace, edit.
+    "exec.sandbox.write_artifact",
+    "ide.code.list_files", "ide.code.read_lines", "ide.code.grep",
+    "ide.code.replace", "ide.code.edit_lines", "ide.code.insert_at",
+    # Web & browser.
+    "web.search", "web.fetch", "http.get",
+    "browser.navigate", "browser.action", "scrape.fetch",
+    # Skills.
+    "fabric.skills.list", "fabric.skills.get",
+]
+
 
 async def _v4_select_steps(goal: str, enabled: List[str], *, model: str = "",
                            instance_id: str = "", prefer_gpu: bool = True) -> Dict[str, Any]:
@@ -5161,12 +5476,24 @@ async def _v4_select_steps(goal: str, enabled: List[str], *, model: str = "",
 
 
 async def _v4_make_plan(goal: str, toolkit_brief: str, *, model: str = "",
-                        instance_id: str = "", prefer_gpu: bool = True) -> List[Dict[str, Any]]:
-    """PLAN step: break the goal into a short, ordered, verifiable todo list."""
+                        instance_id: str = "", prefer_gpu: bool = True,
+                        steps: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    """PLAN step: break the goal into a short, ordered, verifiable todo list.
+
+    `steps` are the stages actually enabled for this run — the plan must not
+    assume stages that aren't active (e.g. don't add a 'verify' item when verify
+    isn't an enabled step), which is what made plans contradict the stage set."""
+    stage_note = ""
+    if steps:
+        active = ", ".join(s for s in steps if s != "plan")
+        stage_note = (f"\nThe agent will run ONLY these stages: {active}. Each todo must be "
+                      "achievable within those stages — do NOT add steps for stages that are "
+                      "not enabled (e.g. no explicit 'verify the result' item if verify is off).\n")
     sys = (
         "You are planning an autonomous agent's work. Break the GOAL into a short ordered "
         "todo list (2-6 concrete, individually verifiable steps). Each item is a single "
         "action or check. Prefer steps achievable with the AVAILABLE TOOLS.\n"
+        + stage_note +
         'Respond ONLY with JSON: {"todos":[{"task":"..."},{"task":"..."}]}'
     )
     prompt = f"GOAL: {goal}\nAVAILABLE TOOLS: {toolkit_brief}\nProduce the todo list."
@@ -5248,10 +5575,20 @@ def _v4_system_prompt(goal: str, toolkit_block: str, *, steps: List[str],
         "YOUR TOOLKIT — curated for this goal by a triage step. Start here.\n"
         "═════════════════════════════════════════════════════════════\n"
         f"{toolkit_block}\n\n"
-        "ON EACH TURN, RESPOND WITH EXACTLY ONE JSON OBJECT. No prose, no fences:\n"
-        '  {"thought":"<reasoning>","tool_use":{"name":"<cap.name>","input":{...}}}\n'
-        '  {"thought":"<reasoning>","todo_done":<id>}   (mark a verified todo item complete)\n'
-        '  {"thought":"<reasoning>","final":"<answer addressing the GOAL>"}\n\n'
+        "ON EACH TURN: do your reasoning FIRST inside a <think>...</think> block (or a brief "
+        "line of prose), THEN emit EXACTLY ONE compact JSON object — the ACTION ONLY — as the "
+        "last thing in your reply:\n"
+        '  {"tool_use":{"name":"<cap.name>","input":{...}}}\n'
+        '  {"todo_done":<id>}   (mark a verified todo item complete)\n'
+        '  {"final":"<answer addressing the GOAL>"}\n'
+        'An optional "thought":"<one line>" key is allowed, but keep any longer rationale '
+        "OUTSIDE the JSON (in <think>) so it can never truncate your action.\n"
+        "EVERY object MUST contain an action key (tool_use, todo_done, or final). A bare "
+        '{"thought":"…"} with no action is NOT a valid turn — pair reasoning with an action.\n'
+        "STAGE CONTROL — you order the stages: if you have already learned enough, add "
+        '"explore_done":true to your tool_use to act immediately (skip the explore minimum); '
+        'add "verified":true when an action is already confirmed so you can finish without a '
+        "separate re-check. Use these when a stage's goal is met.\n\n"
         "RULES:\n"
         "1. PICK A TOOL FROM THE TOOLKIT on the FIRST turn — it is already filtered.\n"
         "2. Tool result messages tagged [tool_result <name>] are YOUR observations, "
@@ -5262,6 +5599,8 @@ def _v4_system_prompt(goal: str, toolkit_block: str, *, steps: List[str],
         + ("(at most 1 expand + 2 searches per run).\n" if enable_expand else "(at most 2 searches per run).\n") +
         "6. Emit final ONLY after every todo item is done AND each action was verified. "
         "A strict completion check runs before your final is accepted.\n"
+        "7. Reasoning goes in <think> (or a line before the JSON) — NEVER as a long string "
+        "inside the action object. Emit only the single JSON action; do not restate observations.\n"
         + _v4_cadence_block(steps, min_explore_cycles)
         + _v4_smart_tools_block(toolkit_names)
         + (("\n" + extra) if extra else "")
@@ -5364,11 +5703,12 @@ async def _v4_completion_check(goal: str, history: List[Dict[str, Any]],
                                prefer_gpu: bool = True) -> Dict[str, Any]:
     """Gate before accepting `final`. Returns {passed, missing, summary}.
 
-    Judge-primary: if the evidence-backed goal-satisfaction judge is convinced,
-    we PASS regardless of todo checkboxes (a read-only goal may answer itself
-    without any 'act'). Only when the judge is NOT convinced (or unavailable) do
-    the deterministic gates — open todos, and any act lacking a later read-only
-    verification — surface as blocking reasons."""
+    Structural-primary: the goal-satisfaction judge is a flaky LLM (it silently
+    returns "not satisfied" whenever its JSON reply comes back empty), so it must
+    NOT be able to veto an otherwise-complete run. The only blocking reasons are
+    deterministic: open todo items, and any 'act' lacking a later read-only
+    verification. A convinced judge is still a fast-path PASS; an unconvinced
+    judge is purely advisory and never blocks on its own."""
     missing: List[str] = []
     summary = ""
     ctx = _ctx()
@@ -5389,7 +5729,8 @@ async def _v4_completion_check(goal: str, history: List[Dict[str, Any]],
     if judged is True:
         return {"passed": True, "missing": [], "summary": summary}
 
-    # Judge unconvinced or unavailable → apply structural gates.
+    # Judge unconvinced or unavailable → apply the deterministic structural
+    # gates only. (The judge's opinion is advisory and never blocks by itself.)
     undone = [t for t in (todos or []) if not t.get("done")]
     if undone:
         missing.append(f"{len(undone)} todo item(s) still open: "
@@ -5406,8 +5747,6 @@ async def _v4_completion_check(goal: str, history: List[Dict[str, Any]],
         if not verified_after:
             missing.append(f"action '{h.get('tool')}' has no read-only verification after it")
             break
-    if judged is False:
-        missing.append("goal-satisfaction judge was not convinced by the evidence so far")
 
     return {"passed": not missing, "missing": missing, "summary": summary}
 
@@ -5450,6 +5789,9 @@ async def cap_dag_agent_loop_v4(
     attach_ontologies:  str  = "",
     session_id:         str  = "",
     triage_top_k:       int  = 16,
+    triage_category:    str  = "",
+    triage_keywords:    str  = "",
+    base_toolkit:       str  = "",
     hitl_timeout_secs:  int  = 300,
     await_long_running: bool = True,
     long_running_timeout_secs: int = 1800,
@@ -5510,8 +5852,29 @@ async def cap_dag_agent_loop_v4(
     except Exception as e:
         log.debug("v4 triage failed: %s", e)
         triage = {"category": "other", "keywords": [], "reasoning": ""}
+    # ── Caller triage overrides (from chat UI / workshop panel) ───────────────
+    # A forced category pins toolkit seeding; seed keywords are merged in front of
+    # the triaged ones so the user can steer cap discovery when auto-triage is weak.
+    _force_cat = (triage_category or "").strip().lower()
+    if _force_cat and _force_cat != "auto":
+        triage["category"] = _force_cat
+        cats = [c for c in (triage.get("categories") or []) if c != _force_cat]
+        triage["categories"] = [_force_cat] + cats
+        triage["reasoning"] = (triage.get("reasoning") or "") + " [category forced by user]"
+    _seed_kws = [k.strip().lower() for k in (triage_keywords or "").replace(",", " ").split() if k.strip()]
+    if _seed_kws:
+        triage["keywords"] = list(dict.fromkeys(_seed_kws + (triage.get("keywords") or [])))[:8]
     await emit_event({"type": "agent_loop_v4.triage_done",
                       "triage": triage, "session_id": sid})
+
+    # ── Base toolkit ─────────────────────────────────────────────────────────
+    # The caller (chat / workshop UI) passes the active agent's baseline caps
+    # here (or a decoupled per-run set). These are ALWAYS in the toolkit and act
+    # as the floor when triage can't narrow things down. Empty → product default
+    # (Web & browser + skills).
+    base_caps = [c.strip() for c in (base_toolkit or "").replace(",", " ").split() if c.strip()]
+    if not base_caps:
+        base_caps = list(_V4_DEFAULT_BASE_TOOLKIT)
 
     # ── Stage 2: TOOLKIT ─────────────────────────────────────────────────────
     toolkit = await _workshop_build_toolkit(
@@ -5520,6 +5883,8 @@ async def cap_dag_agent_loop_v4(
         categories=triage.get("categories"),
         keywords=triage.get("keywords", []),
         top_k=int(triage_top_k),
+        goal=goal,
+        base_caps=base_caps,
     )
     if not toolkit:
         return {"error": "No usable tools after triage", "triage": triage}
@@ -5529,9 +5894,44 @@ async def cap_dag_agent_loop_v4(
             and "exec.bash.run" not in toolkit:
         toolkit.insert(0, "exec.bash.run")
 
-    relevant_datasets = await _search_relevant_datasets(
-        goal, keywords=triage.get("keywords", []),
-        model=model, instance_id=instance_id, prefer_gpu=bool(prefer_gpu))
+    # ── Artifact directory (sandbox-configured) ──────────────────────────────
+    # Where the agent writes generated files (code/documents). Resolved per the
+    # exec sandbox's artifact_scope; the dir is sandbox-allowed for writes and
+    # used as the default cwd for exec.* calls so output lands there.
+    artifact_dir_path = ""
+    try:
+        import importlib as _il
+        _exec_mod = _il.import_module("Vera.vera.execution.exec_capabilities")
+        artifact_dir_path = _exec_mod.artifact_dir(session_id=sid)
+    except Exception as e:
+        log.debug("v4 artifact dir resolve failed: %s", e)
+    if artifact_dir_path:
+        await emit_event({"type": "agent_loop_v4.artifact_dir",
+                          "session_id": sid, "dir": artifact_dir_path})
+
+    # ── Dataset discovery + step selection (run CONCURRENTLY) ────────────────
+    # Both are independent of the toolkit and of each other. v4 has more
+    # pre-loop LLM calls than v2/v3 (dataset search + step selection + plan),
+    # and running them serially is the main reason the first cycle feels slow.
+    # The dataset LLM-fallback is also gated to data-shaped goals so a `whoami`
+    # never pays for a fabric scan it can't use.
+    _data_shaped = (triage.get("category", "") in _V4_DATA_CATEGORIES
+                    or any(c in _V4_DATA_CATEGORIES
+                           for c in (triage.get("categories") or [])))
+
+    async def _ds_task():
+        return await _search_relevant_datasets(
+            goal, keywords=triage.get("keywords", []),
+            model=model, instance_id=instance_id, prefer_gpu=bool(prefer_gpu),
+            allow_llm_fallback=_data_shaped)
+
+    async def _steps_task():
+        if select_steps:
+            return await _v4_select_steps(goal, user_enabled, model=model,
+                                          instance_id=instance_id, prefer_gpu=prefer_gpu)
+        return {"steps": list(user_enabled), "reason": "user-fixed step set"}
+
+    relevant_datasets, sel = await asyncio.gather(_ds_task(), _steps_task())
     if relevant_datasets:
         for ds_cap in ("fabric.datasets", "fabric.query"):
             if ds_cap in CAPABILITY_REGISTRY and ds_cap not in toolkit:
@@ -5554,27 +5954,36 @@ async def cap_dag_agent_loop_v4(
         ds_hint = ("\n\nRELEVANT DATASETS IN FABRIC:\n" + ds_lines
                    + "\nUse fabric.query(dataset_id=\"<name>\", text=\"<query>\") to search these.")
         ctx_extra = (ctx_extra.rstrip() + ds_hint) if ctx_extra else ds_hint.strip()
+    if artifact_dir_path:
+        art_hint = ("\n\nARTIFACT DIRECTORY: write any generated files (code, documents, "
+                    f"reports) into:\n  {artifact_dir_path}\n"
+                    "Use a relative filename (e.g. exec.bash.run with `cat > script.py`, or "
+                    "ide.code.* paths under this dir) — exec.* calls already default their cwd "
+                    "here. Read/grep/replace these files to edit prior output.")
+        ctx_extra = (ctx_extra.rstrip() + art_hint) if ctx_extra else art_hint.strip()
 
     def _toolkit_block(names: List[str]) -> str:
         return "\n".join(rich_cap_signature(n) for n in names)
 
-    # ── Stage 3: STEP SELECTION (agent-picked within the user gate) ──────────
-    if select_steps:
-        sel = await _v4_select_steps(goal, user_enabled, model=model,
-                                     instance_id=instance_id, prefer_gpu=prefer_gpu)
-        steps = sel["steps"]
-    else:
-        steps = list(user_enabled)
-        sel = {"steps": steps, "reason": "user-fixed step set"}
+    # ── Stage 3: STEP SELECTION (computed above, agent-picked within the gate) ─
+    steps = [s for s in (sel.get("steps") or user_enabled) if s in _V4_ALL_STEPS] \
+        or list(user_enabled)
+
+    # Single-action task: the agent decided this goal needs neither planning nor
+    # exploration — i.e. one capability call should answer it. We let the first
+    # successful, informative result finish the run (see the fast-path in the
+    # loop below) instead of dragging it through a verify/completion dance.
+    single_action = ("plan" not in steps) and ("explore" not in steps)
     await emit_event({"type": "agent_loop_v4.step_plan", "session_id": sid,
                       "steps": steps, "enabled": user_enabled,
+                      "single_action": single_action,
                       "reason": sel.get("reason", "")})
 
     # ── Stage 4: PLAN / todo list ────────────────────────────────────────────
     todos: List[Dict[str, Any]] = []
     if "plan" in steps:
         todos = await _v4_make_plan(goal, ", ".join(toolkit[:30]), model=model,
-                                    instance_id=instance_id, prefer_gpu=prefer_gpu)
+                                    instance_id=instance_id, prefer_gpu=prefer_gpu, steps=steps)
         await emit_event({"type": "agent_loop_v4.plan", "session_id": sid, "todos": todos})
 
     async def _emit_plan():
@@ -5746,8 +6155,8 @@ async def cap_dag_agent_loop_v4(
                 quota_hint += ("\n\n⚠ BUDGET WARNING: finish your verified items and emit "
                                '{"thought":"...","final":"<answer>"} NOW.')
             open_todos = [t for t in todos if not t.get("done")]
+            cur = open_todos[0] if open_todos else None
             if todos:
-                cur = open_todos[0] if open_todos else None
                 quota_hint += ("\n\nTODO STATUS: "
                                + (f"current item #{cur['id']}: {cur['task']}" if cur
                                   else "all items marked done — run a final verification then emit final."))
@@ -5758,6 +6167,17 @@ async def cap_dag_agent_loop_v4(
             elif gate_verify and acted and not validated:
                 phase_hint = ("\n\nPHASE: VERIFY. You acted — confirm it worked with ONE read-only "
                               "check, then emit final. Do NOT re-run the same checks repeatedly.")
+            elif cur:
+                # A PLAN with work remaining → drive the current item to done.
+                # Crucially, do NOT invite `final` or more discovery here: that is
+                # exactly what makes v4 stall (premature final → completion-check
+                # bounce, or endless re-listing) instead of following its plan.
+                phase_hint = (f"\n\nPHASE: EXECUTE todo #{cur['id']} — {cur['task']}\n"
+                              "Make the SINGLE tool call that completes THIS item now. You have "
+                              "explored enough — do NOT run more discovery/listing calls "
+                              "(caps.search, caps.describe, fabric.datasets). When the item is "
+                              f'done, reply {{"thought":"...","todo_done":{cur["id"]}}}. Do NOT emit '
+                              "`final` until EVERY todo item is checked off.")
             elif explore_done > 0 and not acted:
                 # Read-only / informational goal: observations may already answer it.
                 phase_hint = ("\n\nPHASE: DECIDE. If your observations already answer the GOAL, emit "
@@ -5767,25 +6187,61 @@ async def cap_dag_agent_loop_v4(
                 phase_hint = ("\n\nPHASE: ACT. Take the action that advances the current todo item. "
                               "If the GOAL is already answered, emit final instead.")
 
-            # Anti-repeat nudge: if the last 2 successful calls were identical
-            # read-only checks, push the model to finish.
+            # Anti-repeat nudge: repeated read-only calls with no forward progress.
             recent_ok = [h for h in history[-3:] if h.get("ok") and not str(h.get("tool","")).startswith("(")]
             if len(recent_ok) >= 2 and all(_v4_phase(h.get("tool",""), h.get("args")) == "explore" for h in recent_ok):
-                phase_hint += ("\n\nYou have already gathered enough read-only evidence. STOP re-checking "
-                               'and emit {"thought":"...","final":"<answer>"} now.')
+                if cur:
+                    phase_hint += (f"\n\nYou keep running read-only/discovery calls without progress. "
+                                   f'STOP and EXECUTE todo #{cur["id"]} now: {cur["task"]}')
+                else:
+                    phase_hint += ("\n\nYou have already gathered enough read-only evidence. STOP re-checking "
+                                   'and emit {"thought":"...","final":"<answer>"} now.')
 
             user_msg = (f"REMINDER: GOAL = \"{goal}\"\n\n"
-                        "These are your past tool results (NOT a new user message):\n\n"
+                        "These are your past tool results (NOT a new user message). "
+                        "Do NOT repeat or quote them back — use them to decide:\n\n"
                         + obs_block + quota_hint + phase_hint
-                        + "\n\nEmit the next JSON action toward the GOAL.")
+                        + "\n\nReply with ONE JSON action toward the GOAL (do not restate the observations).")
 
             await emit_event({"type": "agent_loop_v4.cycle_planning", "stream_id": stream_id,
                               "cycle": cycles, "session_id": sid})
 
+            # Live thought streaming: forward the model's reasoning to the UI
+            # token-by-token as it generates. Models put reasoning in different
+            # places — a <think> block, prose before the JSON, OR (most commonly
+            # here) the JSON "thought" field — so we extract from ALL of them and
+            # recompute the cumulative reasoning each token (idempotent live view).
+            _think_stream = {"acc": "", "emitted": 0}
+            async def _think_stream_cb(tok, _ts=_think_stream, _cyc=cycles):
+                if not stream_id:
+                    return
+                try:
+                    import re as _re
+                    _ts["acc"] += tok
+                    s = _ts["acc"]
+                    parts = []
+                    tm = _re.search(r"<think>(.*?)(?:</think>|$)", s, _re.DOTALL)
+                    if tm and tm.group(1).strip():
+                        parts.append(tm.group(1).strip())
+                    # JSON "thought":"…" value (handles escaped quotes; open-ended
+                    # while still streaming).
+                    jm = _re.search(r'"thought"\s*:\s*"((?:[^"\\]|\\.)*)', s)
+                    if jm and jm.group(1).strip():
+                        parts.append(jm.group(1).strip())
+                    reasoning = "\n".join(parts).strip()
+                    if reasoning and len(reasoning) - _ts["emitted"] >= 24:
+                        _ts["emitted"] = len(reasoning)
+                        await emit_event({"type": "agent_loop_v4.think_delta",
+                                          "stream_id": stream_id, "cycle": _cyc,
+                                          "text": reasoning[:4000], "session_id": sid})
+                except Exception:
+                    pass
+
             try:
                 raw = await _safe_ollama_generate_dw(
                     user_msg, system=system_prompt, model=model, instance_id=instance_id,
-                    prefer_gpu=bool(prefer_gpu), json_mode=True)
+                    prefer_gpu=bool(prefer_gpu), json_mode=True,
+                    stream_cb=(_think_stream_cb if stream_id else None))
             except Exception as e:
                 history.append({"tool": "(planner_error)", "args": {}, "ok": False,
                                 "preview": f"Planner LLM failed: {e}"})
@@ -5812,20 +6268,103 @@ async def cap_dag_agent_loop_v4(
             raw_action = _extract_json(_raw_clean)
             action = _canonicalise_tool_use_payload(raw_action) if raw_action else None
             if not isinstance(action, dict):
+                # Last-resort regex salvage (truncated / unescaped-quote JSON)
+                # before giving up the cycle.
+                _salv = _salvage_action(raw or _raw_clean)
+                action = _canonicalise_tool_use_payload(_salv) if _salv else None
+                if isinstance(action, dict):
+                    await emit_event({"type": "agent_loop_v4.args_coerced", "stream_id": stream_id,
+                                      "cycle": cycles, "tool": "(planner)",
+                                      "notes": ["recovered an action from malformed/partial JSON"],
+                                      "session_id": sid})
+            if not isinstance(action, dict):
+                # Surface WHAT failed — show the FULL output (don't truncate the
+                # error, that's what made the cause unreadable). Distinguish the
+                # common cases so the fix is obvious.
+                _snippet = (_raw_clean or raw or "").strip()
+                _echoed = ("[Observation" in _snippet or "[tool_result" in _snippet
+                           or _snippet.startswith("REMINDER:"))
+                if not _snippet:
+                    _detail = ("Planner returned an EMPTY response (no JSON, no text) — "
+                               "likely an Ollama json_mode/timeout issue, not bad formatting.")
+                elif _echoed:
+                    _detail = ("Planner echoed the observation/prompt text instead of emitting an "
+                               "action. Full output:\n" + _snippet)
+                else:
+                    _detail = "Could not parse a JSON action. Full planner output:\n" + _snippet
                 history.append({"tool": "(parse_error)", "args": {}, "ok": False,
-                                "preview": f"Could not parse JSON: {(raw or '')[:300]}"})
+                                "preview": _detail})
                 await emit_event({"type": "agent_loop_v4.tool_done", "stream_id": stream_id,
                                   "cycle": cycles, "tool": "(planner)", "ok": False,
-                                  "elapsed_ms": 0, "preview": "Could not parse JSON",
-                                  "error": "parse_error", "session_id": sid})
-                messages.append({"role": "user",
-                                 "content": "[system] Your previous response was not valid JSON. "
-                                 'Reply ONLY with one JSON object: '
-                                 '{"thought":"...","tool_use":{"name":"<cap.name>","input":{...}}} '
-                                 'or {"thought":"...","final":"..."}.'})
+                                  "elapsed_ms": 0, "preview": _detail[:6000],
+                                  "error": _detail[:6000], "session_id": sid})
+                if _echoed:
+                    _fix = ("[system] Do NOT restate the observations or results — they are context, "
+                            "not your output. Reply with ONLY one compact JSON object and nothing "
+                            'else: {"thought":"<one short sentence>","tool_use":{"name":"<cap>","input":{...}}} '
+                            'or {"thought":"...","final":"..."}.')
+                else:
+                    _fix = ("[system] Your previous response was not valid JSON (it may have been cut "
+                            "off — keep `thought` to ONE short sentence). Reply with ONLY one compact "
+                            'JSON object: {"thought":"...","tool_use":{"name":"<cap.name>","input":{...}}} '
+                            'or {"thought":"...","final":"..."}.')
+                messages.append({"role": "user", "content": _fix})
                 continue
 
-            thought = action.get("thought", "")
+            # Thought lives OUT of the action JSON (in <think> or as prose before
+            # it), so a long rationale can never truncate the action. Prefer an
+            # inline "thought" if the model included one, else the <think> text,
+            # else the prose preceding the JSON object.
+            thought = (action.get("thought") or "").strip() or (_think_text or "").strip()
+            if not thought and "{" in _raw_clean:
+                _pre = _raw_clean.split("{", 1)[0].strip()
+                # Ignore echoed observation/prompt text masquerading as prose.
+                if _pre and not _pre.startswith(("[Observation", "[tool_result", "REMINDER:")):
+                    thought = _pre[:2000]
+
+            # Finalize the (possibly live-streamed) think block with the full
+            # thought — covers reasoning carried in the JSON "thought" field,
+            # which the early <think>-only emit above misses.
+            if thought and not _think_text:
+                await emit_event({"type": "agent_loop_v4.think", "stream_id": stream_id,
+                                  "cycle": cycles, "thought": thought[:2000], "session_id": sid})
+
+            # ── Agent-driven stage control ───────────────────────────────────
+            # The LLM may judge a stage's goal already met and override the rigid
+            # gates: "explore_done" lets it act without the minimum explore quota;
+            # "verified" lets it finish without a forced read-only re-check. This
+            # is what lets the agent order/skip stages per its own judgement.
+            _explore_override = bool(action.get("explore_done") or action.get("skip_explore")
+                                     or action.get("ready_to_act"))
+            _self_verified    = bool(action.get("verified") or action.get("verify_done"))
+            if _self_verified and acted and not validated:
+                validated = True
+                await _emit_phase("verify", reason="self_verified", validated=True)
+
+            # ── Thinking-only turn ───────────────────────────────────────────
+            # The model reasoned but emitted no action (e.g. {"thought":"…"}).
+            # That's a valid thinking step, NOT a parse error: record it and ask
+            # for the action instead of burning the turn.
+            _has_action = any(action.get(k) for k in
+                              ("tool_use", "tool_call", "final", "todo_done",
+                               "action", "expand_tools", "tool", "capability"))
+            if not _has_action:
+                history.append({"tool": "(thinking)", "args": {}, "ok": True,
+                                "preview": (thought or "(no action emitted)")[:400]})
+                # Short marker only — the full reasoning is already in the think
+                # block (streamed + finalized), so don't duplicate it in a result.
+                await emit_event({"type": "agent_loop_v4.tool_done", "stream_id": stream_id,
+                                  "cycle": cycles, "tool": "(thinking)", "ok": True,
+                                  "elapsed_ms": 0, "preview": "reasoning step — no action taken",
+                                  "session_id": sid})
+                cur_t = next((t for t in todos if not t.get("done")), None)
+                _nudge = ("[system] That was reasoning only — no action was taken. Now emit ONE "
+                          'JSON action: {"tool_use":{"name":"<cap>","input":{…}}}, '
+                          '{"todo_done":<id>}, or {"final":"…"}.')
+                if cur_t:
+                    _nudge += f' Work todo #{cur_t["id"]}: {cur_t["task"]}'
+                messages.append({"role": "user", "content": _nudge})
+                continue
 
             # ── Explicit todo completion ────────────────────────────────────
             if action.get("todo_done") is not None and not action.get("final"):
@@ -5981,6 +6520,11 @@ async def cap_dag_agent_loop_v4(
             # ── Phase gate: explore before act (command-aware) ───────────────
             _forced_hitl_done = False
             _tool_is_long = _lr(tool, args)
+            # Agent override: if it declares exploration done, satisfy the gate so
+            # it can act now (it ordered the stages itself).
+            if _explore_override and gate_explore and not _explore_satisfied():
+                explore_done = max(explore_done, max(1, min_explore_cycles))
+                await _emit_phase("act", reason="explore_overridden", tool=tool)
             if gate_explore and _v4_phase(tool, args) == "act" and not _explore_satisfied():
                 await _emit_phase("explore", reason="act_blocked", tool=tool)
                 _blk = (f"BLOCKED: '{tool}' is an action tool but you have explored only "
@@ -5992,6 +6536,22 @@ async def cap_dag_agent_loop_v4(
                 await emit_event({"type": "agent_loop_v4.tool_done", "stream_id": stream_id,
                                   "cycle": cycles, "tool": tool, "ok": False, "elapsed_ms": 0,
                                   "preview": _blk[:400], "error": "act blocked pre-explore",
+                                  "session_id": sid})
+                continue
+
+            # ── Plan-progress guard: don't re-run discovery/listing once a plan
+            #    item is pending and exploration is satisfied. Re-listing the same
+            #    datasets/caps instead of executing the todo is the classic stall. ─
+            if (cur is not None and _explore_satisfied() and tool in _V4_DISCOVERY_CAPS
+                    and any(h.get("ok") and h.get("tool") == tool for h in history)):
+                _dblk = (f"BLOCKED: '{tool}' is a discovery/listing call you already ran. "
+                         f"Execute todo #{cur['id']} now instead: {cur['task']}")
+                history.append({"tool": "(discovery_blocked)", "args": {"tool": tool}, "ok": False,
+                                "preview": _dblk})
+                messages.append({"role": "user", "content": "[system] " + _dblk})
+                await emit_event({"type": "agent_loop_v4.tool_done", "stream_id": stream_id,
+                                  "cycle": cycles, "tool": tool, "ok": False, "elapsed_ms": 0,
+                                  "preview": _dblk[:400], "error": "discovery repeat blocked",
                                   "session_id": sid})
                 continue
 
@@ -6078,6 +6638,13 @@ async def cap_dag_agent_loop_v4(
                                      "content": "[system] Search quota exhausted. Pick a real tool or emit final."})
                     continue
 
+            # Default the local exec working dir to the artifact dir so generated
+            # files land in the sandbox-configured, UI-browsable location. (Not
+            # exec.ssh.run — that's remote.)
+            if (artifact_dir_path and tool in ("exec.bash.run", "exec.ps.run", "exec.code.run")
+                    and isinstance(args, dict) and not str(args.get("cwd") or "").strip()):
+                args["cwd"] = artifact_dir_path
+
             # ── Execute ──────────────────────────────────────────────────────
             productive_cycles += 1
             await emit_event({"type": "agent_loop_v4.tool_call", "stream_id": stream_id,
@@ -6102,7 +6669,8 @@ async def cap_dag_agent_loop_v4(
                     model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
                     max_attempts=int(max_recovery_attempts), call_tool=_agent_loop_call_tool,
                     session_id=sid, trace_id=trace_id or "", emit_fn=emit_event,
-                    cycle=cycles, stream_id=stream_id)
+                    cycle=cycles, stream_id=stream_id,
+                    goal=goal, thought=thought)
                 if recovery_result.get("recovered"):
                     invoke = recovery_result["final_invoke"]
                     last_a = recovery_result.get("attempts") or []
@@ -6178,12 +6746,47 @@ async def cap_dag_agent_loop_v4(
                               "error": invoke.get("error", "") if not invoke.get("ok") else "",
                               "empty_search": empty_search, "session_id": sid})
 
-            # A verified action auto-advances the todo list when the model didn't
-            # mark it explicitly.
-            if todos and validated:
+            # Auto-advance the plan on real forward progress so it actually moves
+            # (and the completion gate can eventually clear) without relying on the
+            # model to always emit todo_done. Progress = a verified action, OR any
+            # successful, non-repeat, non-discovery tool call once exploration is
+            # satisfied. Discovery/listing calls never advance a todo.
+            made_progress = (
+                invoke.get("ok") and not empty_search
+                and not str(tool).startswith("(")
+                and tool not in _V4_DISCOVERY_CAPS
+                and _explore_satisfied()
+            )
+            if todos and (validated or made_progress):
                 m = _mark_next_todo_done()
                 if m:
                     await _emit_plan()
+
+            # ── Single-action fast-path ──────────────────────────────────────
+            # The agent decided this goal needs no planning or exploration, and
+            # the very first real (non-discovery) tool call just succeeded with a
+            # usable result. That result IS the answer — return it now instead of
+            # forcing a verify/re-check cycle. We still ask the judge for a clean
+            # one-line summary, but (unlike the generic check) we DON'T require it
+            # to be convinced — the flaky judge must not strand a done task.
+            informative = (invoke.get("ok") and not empty_search
+                           and tool not in SEARCH_CAPS
+                           and not str(tool).startswith("("))
+            if single_action and informative and not todos:
+                summary = ""
+                if _check_goal_satisfied:
+                    try:
+                        sat = await _check_goal_satisfied(goal, preview, model=model,
+                                                          instance_id=instance_id, prefer_gpu=prefer_gpu)
+                        summary = (sat or {}).get("summary") or ""
+                    except Exception:
+                        summary = ""
+                final = summary or f"Done via {tool}.\n\n{preview[:600]}"
+                done = True
+                await emit_event({"type": "agent_loop_v4.done", "stream_id": stream_id,
+                                  "cycles": cycles, "summary": final,
+                                  "reason": "single_action", "session_id": sid})
+                break
 
             # ── Satisfaction check (still gated by strict completion on final) ─
             if satisfaction_check and invoke.get("ok") and _check_goal_satisfied and not todos:
@@ -6192,7 +6795,9 @@ async def cap_dag_agent_loop_v4(
                                                       instance_id=instance_id, prefer_gpu=prefer_gpu)
                 except Exception:
                     sat = {"satisfied": False, "summary": ""}
-                if sat.get("satisfied") and (not gate_verify or validated):
+                # A read-only/informational goal that never `acted` has nothing to
+                # verify — don't let the verify gate block its acceptance.
+                if sat.get("satisfied") and (not gate_verify or validated or not acted):
                     final = sat.get("summary") or "Goal satisfied."
                     done = True
                     await emit_event({"type": "agent_loop_v4.done", "stream_id": stream_id,
@@ -6239,6 +6844,1323 @@ async def cap_dag_agent_loop_v4(
         "stream_id": stream_id, "session_id": sid, "phase": phase,
         "explore_done": explore_done, "validated": validated,
         "auto_continues": auto_continues, "steps": steps, "todos": todos,
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# v5 AGENT LOOP — ORCHESTRATED SPECIALIST SUB-AGENTS
+# ─────────────────────────────────────────────────────────────────────────────
+# Unlike v1–v4 (one planner that sees the whole toolkit), v5 splits the work:
+#   • The ORCHESTRATOR sees only cap NAME+DESCRIPTION (a brief catalog) and a
+#     list of available SKILLS, and emits an ordered step plan in ONE LLM call
+#     (no separate triage→step-select→plan round-trips → fast start).
+#   • Each STEP runs an EPHEMERAL SCOPED SUB-AGENT that sees only its slice:
+#     full schemas for just that step's caps, any dynamically-loaded skills, and
+#     a curated context slice (the outputs of the prior steps it depends on).
+# Events are namespaced agent_loop_v5.* and reuse the shared renderer: the
+# suffix-matched ones (.triage_done/.toolkit/.cycle_planning/.tool_call/
+# .tool_done/.think/.done/.phase) render natively; v5-only events (.plan with a
+# step shape, .step_start/.step_done/.replan) get dedicated handlers.
+# ═════════════════════════════════════════════════════════════════════════════
+
+_V5_CATALOG_MAX_DEFAULT = 40      # caps shown to the orchestrator (name+desc)
+
+# Action primitives ALWAYS seeded into the v5 catalog so the orchestrator always
+# has a real way to *do* things: run a command, persist/read a file, hit a URL.
+# Without this, a goal like "get the current bash user" semantically matches read
+# caps with "get" in the name and the orchestrator wrongly delegates the action to
+# a generative cap; and "create a script" produces no file to iterate on because
+# no file-write cap was offered.
+_V5_ESSENTIAL_ACTION_CAPS = ("exec.bash.run", "ide.fs.write", "ide.fs.read", "http.get")
+
+# Pre-plan recon + one-level sub-plan bounds.
+_V5_RECON_MAX = 3                  # max read-only recon actions run before planning
+_V5_SUBPLAN_MAX_STEPS = 6          # max sub-steps a single "complex" step may expand into
+_V5_RECOVERY_MAX = 10              # max recovery caps auto-granted to a failing step
+
+# Optional v4-style per-step phase model. The orchestrator may give a step a
+# `phases` subset; each phase runs as its OWN scoped ephemeral sub-agent in this
+# canonical order. explore = read-only recon, think = reasoning with NO tools,
+# act = do the work (full caps), verify = read-only check of the act result.
+_V5_PHASES = ("explore", "think", "act", "verify")
+_V5_PHASE_GUIDE = {
+    "explore": ("PHASE: EXPLORE (recon). Gather the information the later phases need using "
+                "ONLY read-only capabilities — do NOT write files, run commands, or modify "
+                "anything. When you have enough context, emit `done` with a concise digest of "
+                "what you found."),
+    "think":   ("PHASE: THINK. You have NO tools this phase. Reason about the goal and the "
+                "EXPLORE findings, then emit `done` with a concrete plan/decision/analysis. Do "
+                "NOT claim to have performed any action — that happens in the ACT phase."),
+    "act":     ("PHASE: ACT. Carry out the actual work using your capabilities, building on the "
+                "prior phases' context. Emit `done` with the concrete result or the artifact you "
+                "produced."),
+    "verify":  ("PHASE: VERIFY. Check whether the ACT phase actually satisfied the step goal, "
+                "using read-only capabilities to inspect the result if helpful. Emit `done` "
+                "starting with 'PASS' if the goal is met, or 'FAIL: <what is wrong or missing>' "
+                "otherwise."),
+}
+
+# Caps that only GENERATE/PROCESS text — they need a REAL model name (or none),
+# never an invented one. Used to inject the cluster's model list into a step.
+_V5_GENERATIVE_PREFIXES = ("llm.", "ollama.")
+_V5_GENERATIVE_EXACT = {"agent.chat", "agent.chat_voice"}
+
+
+def _v5_is_generative(tool: str) -> bool:
+    """True for llm.*/ollama.*/agent.chat* — caps that only emit text."""
+    return bool(tool) and (tool in _V5_GENERATIVE_EXACT
+                           or any(tool.startswith(p) for p in _V5_GENERATIVE_PREFIXES))
+
+
+# Read-only vs mutating verbs — gate pre-plan recon to SAFE caps only, and pick a
+# step's recovery toolkit. Anti-verbs win (e.g. "fabric.objects.bucket_create").
+_V5_READONLY_TOKENS = ("search", "list", "get", "read", "describe", "query",
+                       "inspect", "status", "fetch", "find", "lookup", "discover",
+                       "expand", "landscape")
+_V5_MUTATING_TOKENS = ("write", "create", "delete", "update", "set", "remove",
+                       "run", "exec", "send", "build", "train", "deploy", "apply",
+                       "install", "start", "stop", "kill", "save", "put", "post",
+                       "edit", "move", "rename", "drop", "generate", "synthesize")
+
+
+def _v5_is_read_only(cap_name: str) -> bool:
+    """Heuristic: a cap is recon-safe if its name implies reading, not mutating.
+    `http.get` is explicitly allowed (HTTP GET); exec.*/ide.fs.write are not."""
+    n = (cap_name or "").lower()
+    if not n:
+        return False
+    if n == "http.get":
+        return True
+    last = n.rsplit(".", 1)[-1]
+    if any(tok in last for tok in _V5_MUTATING_TOKENS):
+        return False
+    return any(tok in n for tok in _V5_READONLY_TOKENS)
+
+
+# Markers that a "successful" fetch actually returned an unusable page (consent
+# walls, bot checks, JS-required shells). Lets a step treat an ok-but-useless
+# result as a SOFT failure and pivot to a different query/URL/cap instead of
+# re-hammering the same call until the stuck-loop guard fires.
+_V5_UNHELPFUL_MARKERS = (
+    "consent.google.com", "before you continue", "enable javascript",
+    "captcha", "are you a robot", "unusual traffic", "access denied",
+    "verify you are human", "cookies to continue", "/sorry/index",
+    "please enable cookies",
+)
+
+
+def _v5_looks_unhelpful(text: str) -> bool:
+    """Cheap heuristic: did an ok result actually return a blocked/consent page?"""
+    if not text:
+        return False
+    low = text.lower()
+    return any(m in low for m in _V5_UNHELPFUL_MARKERS)
+
+
+async def _v5_available_models(trace_id: str = "", *, limit: int = 40) -> List[str]:
+    """Distinct model names available across the Ollama cluster, so a specialist
+    that uses llm.*/ollama.* caps picks a REAL model (or omits it) instead of
+    inventing names like 'gpt-3.5-turbo'. Best-effort; returns [] if unknown."""
+    names: List[str] = []
+    seen: set = set()
+    cap = CAPABILITY_REGISTRY.get("ollama.list_models")
+    if cap:
+        try:
+            r = await cap["func"](trace_id=trace_id or "")
+            if isinstance(r, dict):
+                for node in r.values():
+                    if not isinstance(node, dict):
+                        continue
+                    for m in (node.get("models") or []):
+                        nm = m.get("name") if isinstance(m, dict) else str(m)
+                        if nm and nm not in seen:
+                            seen.add(nm); names.append(nm)
+        except Exception as e:
+            log.debug("v5 model list (ollama.list_models) failed: %s", e)
+    if not names:
+        cap = CAPABILITY_REGISTRY.get("ollama.instances")
+        if cap:
+            try:
+                r = await cap["func"](trace_id=trace_id or "")
+                if isinstance(r, dict):
+                    for node in r.values():
+                        for m in ((node or {}).get("models") or []):
+                            nm = m if isinstance(m, str) else (m.get("name") if isinstance(m, dict) else "")
+                            if nm and nm not in seen:
+                                seen.add(nm); names.append(nm)
+            except Exception as e:
+                log.debug("v5 model list (ollama.instances) failed: %s", e)
+    return names[:limit]
+
+
+# Global default skill-injection blacklist (mirrors context._AGENT_LOOP_BLACKLIST
+# for caps). Skills whose id is listed here are never offered to / injected by the
+# loop, regardless of per-run allow lists. Starts empty — curate as needed.
+_SKILL_INJECT_BLACKLIST: set = set()
+
+
+def _v5_brief_cap_line(name: str) -> str:
+    """One-line 'name — description' for the orchestrator catalog (no schema)."""
+    cap = CAPABILITY_REGISTRY.get(name)
+    if not cap:
+        return name
+    desc = (cap.get("description") or "").strip().replace("\n", " ")[:120]
+    return f"{name} — {desc}" if desc else name
+
+
+def _v5_cap_skill_map(skills: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+    """Build {cap_name: [skill_id, ...]} from each skill's applies_to_caps, so a
+    step that uses a cap can be offered the skill(s) that teach it."""
+    out: Dict[str, List[str]] = {}
+    for s in skills:
+        for c in (s.get("applies_to_caps") or []):
+            out.setdefault(c, []).append(s["id"])
+    return out
+
+
+def _v5_apply_skill_suggestions(steps: List[Dict[str, Any]],
+                                cap_skill_map: Dict[str, List[str]],
+                                eligible_ids: set, enabled: bool = True) -> None:
+    """Fallback auto-attach: for steps that list caps but NO skills, soft-merge the
+    cap-suggested (and eligible) skills. The orchestrator's explicit skill choices
+    are never overwritten — this only fills the gap when it picked none."""
+    if not enabled:
+        return
+    for st in steps:
+        if st.get("caps") and not st.get("skills"):
+            sug: List[str] = []
+            for c in st["caps"]:
+                for sid_ in cap_skill_map.get(c, []):
+                    if sid_ in eligible_ids and sid_ not in sug:
+                        sug.append(sid_)
+            if sug:
+                st["skills"] = sug[:4]
+
+
+async def _v5_list_skills(trace_id: str = "", *, allow: Optional[set] = None,
+                          deny: Optional[set] = None) -> List[Dict[str, Any]]:
+    """List ELIGIBLE skills for the orchestrator to pick from, with the metadata
+    v5 needs (id/name/description/tags/applies_to_caps).
+
+    Eligibility: skill is enabled AND not in the global blacklist AND not in the
+    per-run `deny` set AND (per-run `allow` empty OR skill in `allow`)."""
+    allow = allow or set()
+    deny = deny or set()
+
+    def _eligible(sid: str, rec: Dict[str, Any]) -> bool:
+        if not sid or not rec.get("enabled", True):
+            return False
+        if sid in _SKILL_INJECT_BLACKLIST or sid in deny:
+            return False
+        if allow and sid not in allow:
+            return False
+        return True
+
+    for cap_name in ("skills.list", "fabric.skills.list", "skills.registry", "skills.all"):
+        cap = CAPABILITY_REGISTRY.get(cap_name)
+        if not cap:
+            continue
+        try:
+            r = await cap["func"](trace_id=trace_id or "")
+            items = (r.get("skills") or r.get("items") or r.get("list") or []) if isinstance(r, dict) else []
+            if isinstance(items, list) and items:
+                out: List[Dict[str, Any]] = []
+                for x in items:
+                    if not isinstance(x, dict):
+                        x = {"id": str(x), "name": str(x)}
+                    sid = x.get("id") or x.get("name") or ""
+                    if not _eligible(sid, x):
+                        continue
+                    out.append({"id": sid,
+                                "name": x.get("name") or sid,
+                                "description": (x.get("description") or "")[:160],
+                                "tags": x.get("tags") or [],
+                                "applies_to_caps": x.get("applies_to_caps") or []})
+                return out[:60]
+        except Exception:
+            continue
+    return []
+
+
+async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List[Dict[str, Any]],
+                               cap_skill_map: Optional[Dict[str, List[str]]] = None,
+                               *, model: str = "", instance_id: str = "",
+                               prefer_gpu: bool = True, max_steps: int = 8,
+                               recon_findings: str = "", master_plan: str = "") -> Dict[str, Any]:
+    """ONE LLM call: decompose the goal into an ordered step plan. Each step names
+    only the few caps and skills it needs. Folds triage+step-select+plan into a
+    single call so the loop starts working almost immediately.
+
+    Also returns `complexity` (simple|complex) and an optional `recon` list of
+    READ-ONLY actions the orchestrator wants run BEFORE the plan is committed
+    (only on the fast path when `recon_findings` is empty). When `recon_findings`
+    is supplied, those findings are fed back in so the plan is informed by them.
+    A step may set `complex: true` to be expanded into its own sub-plan.
+
+    The catalog is annotated with each cap's SUGGESTED skills (from the skill↔cap
+    map) — the orchestrator sees the suggestions and may keep, drop, or add to
+    them. Skills with no cap link are still pickable from the skill catalog by
+    their description."""
+    cap_skill_map = cap_skill_map or {}
+    cap_line_parts = []
+    for n in catalog_names:
+        line = "  " + _v5_brief_cap_line(n)
+        sug = cap_skill_map.get(n) or []
+        if sug:
+            line += f"   [suggested skills: {', '.join(sug)}]"
+        cap_line_parts.append(line)
+    cap_lines = "\n".join(cap_line_parts) or "  (none)"
+    skill_lines = "\n".join(
+        f"  {s['id']} — {s['description']}"
+        f"{(' (teaches: ' + ', '.join(s['applies_to_caps']) + ')') if s.get('applies_to_caps') else ''}"
+        for s in skills) or "  (none)"
+    sys = (
+        "You are an ORCHESTRATOR. Turn the GOAL into a COMPLETE, ordered plan of steps. "
+        "Each step is handed to a focused specialist sub-agent that can ONLY use the "
+        "capabilities and skills you assign it.\n"
+        "RIGHT-SIZE THE PLAN: use as many steps as the task genuinely needs — and no more. "
+        "A trivial goal may be ONE step; a substantial goal (e.g. research + design + build + "
+        "test + document) deserves a thorough multi-step plan with a SEPARATE step for each "
+        "distinct unit of work. Do NOT under-plan: cramming unrelated work into one step is the "
+        "main cause of failure — prefer more, well-scoped steps over fewer overloaded ones (up "
+        "to " + str(max_steps) + "). But do NOT pad the plan with artifacts the user did not "
+        "ask for — no UI panels, sensors, ML models, datasets, ontologies, or DAGs unless they "
+        "were explicitly requested.\n"
+        "INFORMATION FIRST: when a later step depends on something you don't yet know (facts to "
+        "research, files to read, the environment/data to inspect), put the information-gathering "
+        "step BEFORE the step that uses it and wire them with `needs`.\n"
+        "For each step choose the capabilities (by exact name from the catalog) it needs, plus "
+        "any skills that would help. Each cap lists its SUGGESTED skills — include them when "
+        "relevant; you may drop a suggestion or add a different (e.g. conceptual) skill. Only "
+        "assign a skill when the step genuinely needs that expertise.\n"
+        "CRITICAL — generative vs action caps: capabilities under llm.*, ollama.*, and "
+        "agent.chat/agent.chat_voice only GENERATE or PROCESS text. They CANNOT run "
+        "commands, read/write files, query data, or call services. For any step that must "
+        "DO something, assign a cap that actually performs it (e.g. exec.bash.run to run a "
+        "shell command, http.get to fetch a URL, fabric.query to search data). NEVER use "
+        "llm.* or agent.chat to 'execute', 'run', 'fetch', or 'retrieve' — they will just "
+        "make up an answer. Example: 'get the current bash user' → a step with "
+        "caps:[\"exec.bash.run\"] running `whoami`, NOT agent.chat.\n"
+        "WRITING CODE / SCRIPTS / FILES / ARTIFACTS: generate the content with llm.generate and "
+        "SAVE it to a FILE with ide.fs.write (into the artifact directory, so it PERSISTS and the "
+        "user can read/edit/iterate on it later), then OPTIONALLY run it with "
+        "exec.python.run(path=\"<artifact_dir>/<file>\") / exec.bash.run. For a SMALL file one "
+        "step is fine; for a SUBSTANTIAL program use separate steps (e.g. implement → run/test → "
+        "refine). To EDIT an existing file, use ide.fs.read then ide.fs.write the updated content "
+        "(or sed -i via exec.bash.run). Do NOT just run throwaway code with no saved file — the "
+        "user must end up with an artifact. Do NOT use llm.plan to 'plan a DAG' for a coding task "
+        "(llm.plan builds a DAG WORKFLOW, only for when the user explicitly asks for a "
+        "DAG/pipeline).\n"
+        "COMPLEX STEPS: if a single step is itself a big sub-project with several parts, mark it "
+        "\"complex\": true and give it a clear `goal` plus the caps the whole sub-project may use "
+        "— it will be expanded into its OWN sub-plan by a sub-orchestrator.\n"
+        "STEP PHASES (optional): a step may carry a `phases` list — any of "
+        "\"explore\",\"think\",\"act\",\"verify\" — and EACH phase runs as its own scoped sub-agent "
+        "(explore = read-only recon, think = reasoning with no tools, act = do the work, verify = "
+        "read-only check of the result). Add phases to steps that benefit from gathering context "
+        "first and/or validating the outcome (e.g. [\"explore\",\"act\",\"verify\"]); OMIT `phases` "
+        "for simple, direct steps so they stay fast.\n"
+        "RECON (optional, only when needed): if you cannot make a good plan without first "
+        "inspecting the environment/data/web, put up to " + str(_V5_RECON_MAX) + " READ-ONLY "
+        "actions in `recon` (e.g. caps.search, context.search_caps, fabric.query, http.get, "
+        "ide.fs.read). They run BEFORE the plan is finalised and their results are fed back to "
+        "you. For straightforward goals leave `recon` EMPTY and just produce the steps — do not "
+        "slow the simple path down. Recon actions MUST be safe and read-only (never write, run, "
+        "delete, or send).\n"
+        "Set \"complexity\" to \"simple\", \"complex\", or \"extreme\" for the whole goal. Use "
+        "\"extreme\" ONLY for very large, multi-domain, or research-heavy goals that warrant a "
+        "strategic long-form plan before step breakdown (a specialist planner will draft one and "
+        "hand it back to you). "
+        "Use `needs` to list ids of EARLIER steps whose output a step depends on.\n"
+        'Respond ONLY with JSON:\n'
+        '{"complexity":"simple|complex|extreme","recon":[{"cap":"cap.name","args":{},"why":"<short>"}],'
+        '"steps":[{"id":1,"title":"<short>","goal":"<what this step must achieve>",'
+        '"caps":["cap.name"],"skills":["skill_id"],"needs":[],"complex":false,"phases":[]}],'
+        '"reason":"<one sentence>"}'
+    )
+    prompt = (f"GOAL: {goal}\n\n"
+              + (f"STRATEGIC MASTER PLAN (a specialist planner wrote this — BREAK IT INTO concrete, "
+                 f"ordered, executable steps; keep its intent and sequencing):\n{master_plan}\n\n"
+                 if master_plan else "")
+              + (f"RECON FINDINGS (already gathered — use these to inform the plan):\n{recon_findings}\n\n"
+                 if recon_findings else "")
+              + f"AVAILABLE CAPABILITIES (name — description [suggested skills]):\n{cap_lines}\n\n"
+              f"AVAILABLE SKILLS (id — description):\n{skill_lines}\n\nProduce the plan.")
+    steps: List[Dict[str, Any]] = []
+    reason = ""
+    complexity = ""
+    recon_actions: List[Dict[str, Any]] = []
+    catalog_set = set(catalog_names)
+    try:
+        raw = await _safe_ollama_generate_dw(
+            prompt, system=sys, model=model, instance_id=instance_id,
+            prefer_gpu=prefer_gpu, json_mode=True)
+        parsed = _extract_json(_strip_think(raw or "")[0]) or {}
+        reason = str(parsed.get("reason") or "")
+        complexity = str(parsed.get("complexity") or "").strip().lower()
+        # Read-only recon actions — only honoured on the fast path (no findings yet).
+        if not recon_findings:
+            for ra in (parsed.get("recon") or [])[:_V5_RECON_MAX]:
+                if not isinstance(ra, dict):
+                    continue
+                rc = str(ra.get("cap") or "").strip()
+                if (rc in CAPABILITY_REGISTRY and rc in catalog_set
+                        and _v5_is_read_only(rc)):
+                    recon_actions.append({
+                        "cap": rc,
+                        "args": ra.get("args") if isinstance(ra.get("args"), dict) else {},
+                        "why": str(ra.get("why") or "")[:160]})
+        valid_skill_ids = {s["id"] for s in skills}
+        for i, st in enumerate(parsed.get("steps") or []):
+            if not isinstance(st, dict):
+                continue
+            caps = [c for c in (st.get("caps") or []) if isinstance(c, str) and c in CAPABILITY_REGISTRY][:8]
+            sk = [s for s in (st.get("skills") or []) if isinstance(s, str) and s in valid_skill_ids][:4]
+            needs = [n for n in (st.get("needs") or []) if isinstance(n, int)]
+            phases = [p for p in _V5_PHASES if p in set(st.get("phases") or [])]
+            steps.append({
+                "id": i + 1,
+                "title": str(st.get("title") or st.get("goal") or f"Step {i+1}")[:120],
+                "goal": str(st.get("goal") or st.get("title") or goal)[:400],
+                "caps": caps, "skills": sk, "needs": needs,
+                "complex": bool(st.get("complex")), "phases": phases,
+            })
+    except Exception as e:
+        log.debug("v5 orchestrate_plan failed: %s", e)
+    return {"steps": steps[:max_steps], "reason": reason,
+            "complexity": complexity, "recon": recon_actions}
+
+
+async def _v5_run_recon(actions: List[Dict[str, Any]], *, session_id: str, stream_id: str,
+                        trace_id: Any, call_tool) -> str:
+    """Run the orchestrator's READ-ONLY recon actions before the plan is finalised,
+    and return a compact findings digest to feed back into planning. Bounded and
+    best-effort; only runs when the orchestrator actually requested recon (so the
+    simple path stays a single LLM call with no tool calls)."""
+    findings: List[str] = []
+    for a in actions[:_V5_RECON_MAX]:
+        cap = a.get("cap"); args = a.get("args") or {}
+        await emit_event({"type": "agent_loop_v5.recon", "session_id": session_id,
+                          "stream_id": stream_id, "cap": cap, "args": args,
+                          "why": a.get("why", ""), "phase": "start"})
+        ok = False
+        try:
+            inv = await call_tool(cap, args, session_id=session_id, trace_id=trace_id or "")
+            ok = bool(inv.get("ok"))
+            if ok and isinstance(inv.get("result"), dict) and inv["result"].get("error"):
+                ok = False
+                preview = "ERROR: " + str(inv["result"]["error"])
+            else:
+                preview = _result_preview(inv["result"]) if ok else ("ERROR: " + str(inv.get("error", "")))
+        except Exception as e:
+            preview = "ERROR: " + str(e)
+        findings.append(f"[{cap}] {'ok' if ok else 'failed'}\n{preview[:700]}")
+        await emit_event({"type": "agent_loop_v5.recon", "session_id": session_id,
+                          "stream_id": stream_id, "cap": cap, "ok": ok,
+                          "preview": preview[:600], "phase": "done"})
+    return "\n\n".join(findings)
+
+
+async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int, Dict[str, Any]],
+                       model: str, instance_id: str, prefer_gpu: bool,
+                       session_id: str, stream_id: str, trace_id: Any,
+                       cycle_budget: int, cycle_offset: int,
+                       artifact_dir_path: str, call_tool, build_ctx,
+                       catalog_caps: Optional[List[str]] = None,
+                       available_models: Optional[List[str]] = None,
+                       await_long_running: bool = True,
+                       long_running_timeout_secs: int = 1800,
+                       phase: str = "") -> Dict[str, Any]:
+    """Run ONE step as an ephemeral scoped sub-agent. Sees only: full schemas for
+    its assigned caps, dynamically-loaded skill instructions, and the outputs of
+    the prior steps it depends on. Returns {id,title,ok,summary,outputs,cycle_end}.
+
+    `cycle_offset` seeds a GLOBAL monotonic cycle counter so each step's cycle
+    cards get distinct ids in the shared renderer (which keys cards by cycle).
+
+    `phase` (explore/think/act/verify) runs the step as ONE phase of a v4-style
+    cadence: it reframes the prompt and auto-scopes the caps (read-only for
+    explore/verify, none for think, full for act). When `phase` is empty and the
+    step itself carries a `phases` list, the step is delegated to
+    `_v5_run_phased_step`, which runs each phase as its own scoped sub-agent."""
+    sid = session_id
+    step_id = step["id"]
+
+    # Per-step phase cadence (opt-in, planner-chosen): hand each phase to its own
+    # scoped sub-agent. Guarded by `not phase` so the phase sub-calls don't recurse.
+    if not phase:
+        valid_phases = [p for p in _V5_PHASES if p in set(step.get("phases") or [])]
+        if valid_phases:
+            return await _v5_run_phased_step(
+                step, valid_phases, goal=goal, blackboard=blackboard, model=model,
+                instance_id=instance_id, prefer_gpu=prefer_gpu, session_id=session_id,
+                stream_id=stream_id, trace_id=trace_id, cycle_budget=cycle_budget,
+                cycle_offset=cycle_offset, artifact_dir_path=artifact_dir_path,
+                call_tool=call_tool, build_ctx=build_ctx, catalog_caps=catalog_caps,
+                available_models=available_models, await_long_running=await_long_running,
+                long_running_timeout_secs=long_running_timeout_secs)
+
+    caps = list(dict.fromkeys(step.get("caps") or []))
+    # Phase auto-scoping: explore/verify see only READ-ONLY caps; think has no
+    # tools; act keeps the full set. If a read-only phase's step listed no
+    # read-only caps, seed a few from the catalog so it can actually gather/check.
+    if phase in ("explore", "verify"):
+        caps = [c for c in caps if _v5_is_read_only(c)]
+        if not caps and catalog_caps:
+            caps = [c for c in catalog_caps if _v5_is_read_only(c)][:6]
+    elif phase == "think":
+        caps = []
+    # `allowed` is the MUTABLE working scope: it starts as the orchestrator's
+    # assigned caps but can be widened mid-step — on request (`need_caps`) or
+    # automatically after a failure — so a specialist can self-correct instead
+    # of being hard-blocked. Widening is bounded to the run's catalog.
+    allowed = list(caps)
+    catalog_set = set(catalog_caps or []) | set(caps)
+    model_set = set(available_models or [])
+    # Recovery toolkit a failing step may escalate to (read-only/search caps +
+    # the essential action primitives, drawn only from the catalog). In a
+    # read-only phase (explore/verify) the mutating essentials are withheld; the
+    # think phase gets no recovery caps at all (it is tool-free by design).
+    _essentials = () if phase in ("explore", "verify", "think") else _V5_ESSENTIAL_ACTION_CAPS
+    recovery_caps = [] if phase == "think" else [
+        c for c in (catalog_caps or [])
+        if c not in allowed and (c in _essentials or _v5_is_read_only(c))][:_V5_RECOVERY_MAX]
+
+    # Full schemas — for this step's caps. Newly granted caps are appended to
+    # `dynamic_caps_block` so the specialist learns their schemas mid-step.
+    sig_block = "\n".join(rich_cap_signature(c) for c in caps) \
+        or "  (no caps assigned — reason about the step goal and report your findings)"
+    dynamic_caps_block = ""
+
+    # Dynamic skills — inject the chosen skills' instructions for this step only.
+    skill_prompt = ""
+    loaded_skills: List[str] = []
+    if step.get("skills") and build_ctx:
+        try:
+            cobj = await build_ctx(step.get("goal") or goal, attach_skills=",".join(step["skills"]))
+            skill_prompt = (cobj or {}).get("system_prompt", "") or ""
+            loaded_skills = (cobj or {}).get("skills", []) or []
+        except Exception as e:
+            log.debug("v5 step %s skill load failed: %s", step_id, e)
+
+    # Curated context slice — outputs of the steps this one depends on.
+    needs = step.get("needs") or []
+    rel = [blackboard[n] for n in needs if n in blackboard]
+    if not rel:
+        rel = list(blackboard.values())  # no explicit deps → all prior results
+    ctx_slice = "\n\n".join(
+        f"[from step {r['id']} · {r['title']}]\n{(r.get('summary') or '')[:800]}" for r in rel)
+
+    await emit_event({"type": "agent_loop_v5.step_start", "session_id": sid, "stream_id": stream_id,
+                      "step_id": step_id, "title": step["title"], "goal": step["goal"],
+                      "caps": caps, "skills": loaded_skills, "phase": phase})
+
+    # Model guidance — only when the step actually uses a generative cap, so the
+    # specialist picks a REAL cluster model (or omits it) instead of inventing one.
+    model_block = ""
+    if model_set and any(_v5_is_generative(c) for c in caps):
+        sample = ", ".join(list(model_set)[:20])
+        model_block = ("\nAVAILABLE MODELS for any `model` argument (this is an Ollama cluster): "
+                       + sample + ".\nOMIT the `model` argument to use the cluster default "
+                       "(recommended). NEVER invent a model name such as 'gpt-3.5-turbo' or 'gpt-4' "
+                       "— use a name from this list or omit it.\n")
+
+    phase_guide = _V5_PHASE_GUIDE.get(phase, "")
+    sys = (
+        "You are a FOCUSED SPECIALIST sub-agent. Complete ONE step of a larger task and "
+        "nothing else. Stay strictly within the step goal.\n"
+        f"STEP GOAL: {step['goal']}\n\n"
+        + ((phase_guide + "\n\n") if phase_guide else "")
+        + "You may use these capabilities (full schemas):\n" + sig_block + "\n"
+        + model_block
+        + (("\nRELEVANT SKILLS (follow this guidance):\n" + skill_prompt + "\n") if skill_prompt else "")
+        + (("\nCONTEXT FROM PRIOR STEPS:\n" + ctx_slice + "\n") if ctx_slice else "")
+        + (("\nARTIFACT DIRECTORY for generated files: " + artifact_dir_path + "\n") if artifact_dir_path else "")
+        + "\nWork in a tight loop. Each turn reply with ONE compact JSON object — ONE of:\n"
+          '  {"thought":"<one sentence>","tool_use":{"name":"<cap>","input":{...}}}  to ACT, OR\n'
+          '  {"thought":"<your reasoning>"}  to just THINK (no tool_use, no done) when you need to plan, '
+          "are unsure, or are missing something — this is allowed and does NOT consume a cycle, OR\n"
+          '  {"thought":"<why>","need_caps":["cap.name"]}  to REQUEST extra capabilities when your '
+          "assigned ones are insufficient or a tool keeps failing/returning unusable results "
+          "(granted if they exist in the broader toolkit; their schemas are then provided), OR\n"
+          '  {"thought":"<one sentence>","done":"<concise result for the orchestrator>"}  when finished.\n'
+          "Only emit a tool_use when you can fill in ALL of that cap's REQUIRED inputs — never call a cap "
+          "with empty or placeholder args (e.g. llm.generate with no `prompt`). If you don't yet have an "
+          "argument, THINK first (no tool_use) to work it out, then act.\n"
+          "SELF-CORRECT: if a call FAILS or returns a USELESS result (an error, an empty body, or a "
+          "consent/login/captcha/redirect page), do NOT repeat it with reworded args — try a DIFFERENT "
+          "approach: a different URL/query, or request a different capability via need_caps. "
+          "Use as many tool calls as the step genuinely needs; as soon as the goal is met, emit `done`."
+    )
+
+    history: List[Dict[str, Any]] = []
+    outputs: Dict[str, Any] = {}
+    all_thoughts: List[str] = []
+    result_summary = ""
+    ok = False
+    had_useful = False          # at least one tool returned a genuinely usable result
+    pending_note = ""           # one-shot note injected into the next user message
+    gc = cycle_offset
+    productive = 0
+    # Thought-only turns accomplish nothing actionable, so they must NOT consume
+    # the step's cycle budget (which limits real, productive cycles). A separate
+    # `turns` cap stops a model that only ever "thinks" from looping forever.
+    max_turns = max(2, max(1, cycle_budget) * 3)
+    turns = 0
+    think_cycle: Optional[int] = None     # current thinking-streak card id
+    streak_thoughts: List[str] = []
+    tool_calls: Dict[str, int] = {}       # per-tool call count (stuck-loop guard)
+    _MAX_SAME_TOOL = 3                     # break the step after this many calls to one cap
+
+    while productive < max(1, cycle_budget) and turns < max_turns:
+        turns += 1
+        obs = "\n\n".join(
+            f"[result {i+1}] tool={h['tool']} ok={h['ok']}\n{h['preview']}"
+            for i, h in enumerate(history[-4:])
+        ) or "(no tool calls yet — make your first call or emit done)"
+        _rep_tool = next((t for t, n in tool_calls.items() if n >= 2), "")
+        _rep_hint = (f"\n\nNOTE: you have already called {_rep_tool} {tool_calls.get(_rep_tool,0)}× — "
+                     "do NOT call it again with reworded args. Either try a DIFFERENT capability "
+                     "(or request one via need_caps), or emit a `done` summary with what you have "
+                     "now.") if _rep_tool else ""
+        _grant_block = (f"\n\nNEWLY AVAILABLE CAPABILITIES (full schemas):\n{dynamic_caps_block}"
+                        if dynamic_caps_block else "")
+        _note = ("\n\n" + pending_note) if pending_note else ""
+        pending_note = ""
+        user_msg = (f"STEP GOAL: {step['goal']}\n\nYour results so far:\n{obs}{_rep_hint}{_note}{_grant_block}\n\n"
+                    "Reply with ONE JSON action, or a `done` summary if the step goal is met.")
+
+        raw = await _safe_ollama_generate_dw(
+            user_msg, system=sys, model=model, instance_id=instance_id,
+            prefer_gpu=prefer_gpu, json_mode=True)
+        clean, think_text = _strip_think(raw or "")
+        raw_obj = _extract_json(clean) or {}
+        action = _canonicalise_tool_use_payload(raw_obj) or {}
+        # `done`/`final`/`thought` are read from the RAW object: the shared
+        # canonicaliser only preserves tool_use/final/todo_done and silently
+        # drops v5's `done` key, which would strand a finished step.
+        done_val = raw_obj.get("done") or raw_obj.get("final") or action.get("final")
+        thought = (raw_obj.get("thought") or action.get("thought") or think_text or "").strip()
+        if thought:
+            all_thoughts.append(thought)
+
+        # Step complete?
+        if done_val:
+            result_summary = str(done_val)[:1500]
+            ok = True
+            break
+
+        tu = action.get("tool_use") or action.get("tool_call") or {}
+        if not isinstance(tu, dict):
+            tu = {}
+        tool = (tu.get("name") or action.get("tool") or action.get("capability") or "").strip()
+        args = tu.get("input") or action.get("args") or action.get("arguments") or {}
+        if not isinstance(args, dict):
+            args = {}
+
+        # ── Capability request — widen this step's scope on demand, bounded to
+        #    the run's catalog. Lets an under-scoped/stuck specialist pivot
+        #    instead of being hard-blocked (the plan is flexible on failure). ──
+        req_caps = raw_obj.get("need_caps") or action.get("need_caps")
+        if req_caps:
+            if not isinstance(req_caps, list):
+                req_caps = [req_caps]
+            granted, denied = [], []
+            for rc in req_caps:
+                rc = str(rc).strip()
+                if not rc or rc in allowed:
+                    continue
+                if rc in catalog_set and rc in CAPABILITY_REGISTRY:
+                    allowed.append(rc); granted.append(rc)
+                else:
+                    denied.append(rc)
+            if granted:
+                new_sigs = "\n".join(rich_cap_signature(c) for c in granted)
+                dynamic_caps_block = (dynamic_caps_block + "\n" + new_sigs) if dynamic_caps_block else new_sigs
+                await emit_event({"type": "agent_loop_v5.scope_widened", "session_id": sid,
+                                  "stream_id": stream_id, "step_id": step_id,
+                                  "added": granted, "reason": "requested"})
+            if granted or denied:
+                pending_note = ("Scope updated. "
+                                + (f"Now also available: {', '.join(granted)}. " if granted else "")
+                                + (f"Not in the toolkit (denied): {', '.join(denied)}." if denied else ""))
+            # A request-only turn (no tool/done) is the whole turn — loop again
+            # so the specialist can act with its widened scope.
+            if not tool:
+                continue
+
+        # ── Thought-only turn — NOT an error and NOT a real cycle. Join the
+        #    reasoning into a single "thinking" card and continue without
+        #    spending the budget. ─────────────────────────────────────────────
+        if not tool:
+            if thought:
+                if think_cycle is None:
+                    gc += 1
+                    think_cycle = gc
+                    streak_thoughts = []
+                streak_thoughts.append(thought)
+                await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
+                                  "cycle": think_cycle, "step_id": step_id,
+                                  "thought": "\n\n".join(streak_thoughts)[:4000],
+                                  "session_id": sid})
+            continue
+
+        # ── Productive turn (a tool attempt) — opens a real cycle + budget. ───
+        productive += 1
+        gc += 1
+        cur_cycle = gc
+        think_cycle = None          # the thinking streak (if any) ends here
+        streak_thoughts = []
+        await emit_event({"type": "agent_loop_v5.cycle_planning", "stream_id": stream_id,
+                          "cycle": cur_cycle, "step_id": step_id, "session_id": sid})
+        if thought:
+            await emit_event({"type": "agent_loop_v5.think", "stream_id": stream_id,
+                              "cycle": cur_cycle, "step_id": step_id,
+                              "thought": thought[:1500], "session_id": sid})
+
+        if tool not in allowed:
+            # Soft scope: the step is scoped to its assigned (+ any widened) caps,
+            # but a cap that IS in the broader toolkit can be requested via
+            # need_caps rather than hard-failing the specialist.
+            _avail = ", ".join(allowed) or "(none — emit done)"
+            _can_req = [c for c in catalog_set if c not in allowed][:12]
+            _msg = (f"'{tool}' is not in this step's scope. Allowed now: {_avail}. "
+                    + ("Request it with need_caps (it IS in the toolkit). " if tool in catalog_set
+                       else "It is not in the toolkit. ")
+                    + (f"Other requestable caps: {', '.join(_can_req)}." if _can_req else ""))
+            # Recorded as a meta entry ("(denied …)") so it doesn't pollute the
+            # unique-tool / ok stats on the final card.
+            history.append({"tool": f"(denied {tool})", "ok": False, "preview": _msg,
+                            "args": args, "ms": 0})
+            pending_note = _msg
+            await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
+                              "cycle": cur_cycle, "step_id": step_id, "tool": tool, "ok": False,
+                              "elapsed_ms": 0, "preview": _msg, "error": _msg, "session_id": sid})
+            continue
+
+        tool_calls[tool] = tool_calls.get(tool, 0) + 1
+
+        coerced_args, coerce_notes = _coerce_args(tool, args)
+        if coerce_notes:
+            args = coerced_args
+        if (artifact_dir_path and tool in ("exec.bash.run", "exec.ps.run", "exec.code.run")
+                and isinstance(args, dict) and not str(args.get("cwd") or "").strip()):
+            args["cwd"] = artifact_dir_path
+        # Safety net for generative caps: never let an INVENTED model name through
+        # (e.g. 'gpt-3.5-turbo' on an Ollama cluster → 0 tokens). Drop it so the
+        # cluster default is used. pending_note was just consumed, so this won't
+        # clobber a later failure note (which would correctly take precedence).
+        if model_set and _v5_is_generative(tool):
+            _m = str(args.get("model") or "").strip()
+            if _m and _m not in model_set:
+                args.pop("model", None)
+                pending_note = f"(note: dropped unknown model '{_m}' — used the cluster default instead)"
+
+        await emit_event({"type": "agent_loop_v5.tool_call", "stream_id": stream_id,
+                          "cycle": cur_cycle, "step_id": step_id, "tool": tool, "args": args,
+                          "thought": thought, "session_id": sid})
+        t0 = time.monotonic()
+        invoke = await call_tool(tool, args, session_id=sid, trace_id=trace_id or "")
+        if invoke.get("ok") and isinstance(invoke.get("result"), dict) and invoke["result"].get("error"):
+            invoke["ok"] = False
+            invoke["error"] = str(invoke["result"]["error"])
+
+        # ── Long-running jobs: a cap like research.*/ml.*/exec.* returns a job_id
+        #    immediately and streams the REAL output over seconds–minutes. Await
+        #    it (WS-stream for research.*, else poll the status cap) so the step
+        #    collects the actual result instead of a `{job_id, status:queued}`
+        #    blob and racing ahead. Mid-run sub-service errors are NOT treated as
+        #    total failure — the job still returns (partial) output; only a true
+        #    await-level failure (timeout/unreachable status cap) fails the call. ─
+        if (invoke.get("ok") and await_long_running
+                and isinstance(invoke.get("result"), dict)
+                and _detect_job_id(invoke["result"])):
+            try:
+                awaited = await _universal_await_job(
+                    cap_name=tool, immediate=invoke["result"],
+                    session_id=sid, trace_id=trace_id or "", cycle=cur_cycle,
+                    max_wait_secs=float(long_running_timeout_secs), stream_id=stream_id)
+                if isinstance(awaited, dict):
+                    invoke["result"] = awaited
+                    if awaited.get("_await_error"):
+                        invoke["ok"] = False
+                        invoke["error"] = str(awaited["_await_error"])
+            except Exception as e:
+                log.debug("v5 long-running await failed for %s: %s", tool, e)
+        elapsed = round((time.monotonic() - t0) * 1000)
+
+        invoke_ok = bool(invoke.get("ok"))
+        # A call can SUCCEED yet return junk (consent/captcha/redirect page). Treat
+        # that as a soft failure so the step pivots instead of declaring victory.
+        unhelpful = False
+        if invoke_ok:
+            preview = _result_preview(invoke["result"])
+            unhelpful = _v5_looks_unhelpful(preview)
+            if unhelpful:
+                preview = "(result looks like a consent/blocked/login page — not usable)\n" + preview
+            else:
+                outputs[tool] = preview[:1000]
+                had_useful = True
+                ok = True
+        else:
+            preview = "ERROR: " + str(invoke.get("error", "unknown error"))
+            if coerce_notes:
+                preview += "\n\nNote: args auto-coerced: " + "; ".join(coerce_notes[:4])
+        entry_ok = invoke_ok and not unhelpful
+        history.append({"tool": tool, "ok": entry_ok, "preview": preview[:1200],
+                        "args": args, "ms": elapsed})
+        await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
+                          "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                          "ok": entry_ok, "elapsed_ms": elapsed,
+                          "preview": preview[:1800],
+                          "error": (str(invoke.get("error", "")) if not invoke_ok
+                                    else ("unusable result" if unhelpful else "")),
+                          "session_id": sid})
+
+        # ── Self-correction: a hard failure OR an ok-but-useless result widens
+        #    the step's scope to its recovery toolkit so it can try another cap. ─
+        if not entry_ok:
+            newly = [c for c in recovery_caps if c not in allowed]
+            if newly:
+                allowed.extend(newly)
+                show = newly[:8]
+                new_sigs = "\n".join(rich_cap_signature(c) for c in show)
+                dynamic_caps_block = (dynamic_caps_block + "\n" + new_sigs) if dynamic_caps_block else new_sigs
+                await emit_event({"type": "agent_loop_v5.scope_widened", "session_id": sid,
+                                  "stream_id": stream_id, "step_id": step_id,
+                                  "added": newly, "reason": "auto (last call failed)"})
+                pending_note = ("The last call did not yield a usable result. You may now also use: "
+                                + ", ".join(show) + ". Try a DIFFERENT approach.")
+            else:
+                pending_note = ("The last call did not yield a usable result — try a different "
+                                "query/URL, or request another capability via need_caps.")
+
+        # Stuck-loop guard: the specialist keeps hammering one cap without
+        # finishing. Stop the step and keep the best result it produced.
+        if tool_calls[tool] >= _MAX_SAME_TOOL:
+            result_summary = (outputs.get(tool) or preview)[:1500]
+            ok = ok or had_useful
+            await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
+                              "cycle": (gc + 1), "step_id": step_id,
+                              "thought": f"(auto-wrapped: '{tool}' was called {tool_calls[tool]}× "
+                                         "without finishing — using the best result so far.)",
+                              "session_id": sid})
+            break
+
+    if not result_summary:
+        if outputs:
+            # Prefer the last genuinely useful tool output over a trailing error.
+            result_summary = list(outputs.values())[-1][:800]
+        elif history:
+            result_summary = history[-1]["preview"][:800]
+        elif all_thoughts:
+            # A reasoning-only step (e.g. analysis) never called a tool — its
+            # reasoning IS the deliverable, so keep it and don't mark it failed.
+            result_summary = ("\n\n".join(all_thoughts))[:1200]
+            ok = True
+        else:
+            result_summary = "Step finished with no explicit result."
+    res = {"id": step_id, "title": step["title"], "ok": ok,
+           "summary": result_summary, "outputs": outputs, "cycle_end": gc,
+           "history": history}
+    await emit_event({"type": "agent_loop_v5.step_done", "session_id": sid, "stream_id": stream_id,
+                      "step_id": step_id, "ok": ok, "summary": result_summary[:1500]})
+    return res
+
+
+async def _v5_run_phased_step(step: Dict[str, Any], phases: List[str], *, goal: str,
+                              blackboard: Dict[int, Dict[str, Any]], model: str, instance_id: str,
+                              prefer_gpu: bool, session_id: str, stream_id: str, trace_id: Any,
+                              cycle_budget: int, cycle_offset: int, artifact_dir_path: str,
+                              call_tool, build_ctx, catalog_caps: Optional[List[str]] = None,
+                              available_models: Optional[List[str]] = None,
+                              await_long_running: bool = True,
+                              long_running_timeout_secs: int = 1800) -> Dict[str, Any]:
+    """Run a step as a v4-style cadence: each chosen phase (explore/think/act/verify)
+    is handed to its OWN scoped ephemeral sub-agent, in canonical order, threading
+    each phase's output to the next. Aggregates into a single step result; a VERIFY
+    phase that reports 'FAIL…' marks the step not-ok so the normal failure→replan
+    fires."""
+    sid = session_id
+    parent_id = step["id"]
+    await emit_event({"type": "agent_loop_v5.step_start", "session_id": sid, "stream_id": stream_id,
+                      "step_id": parent_id, "title": step["title"], "goal": step["goal"],
+                      "caps": step.get("caps") or [], "skills": [], "phases": phases})
+    await emit_event({"type": "agent_loop_v5.phases", "session_id": sid, "stream_id": stream_id,
+                      "parent_id": parent_id, "title": step["title"], "phases": phases})
+
+    gc = cycle_offset
+    merged_bb = dict(blackboard)
+    phase_results: List[Dict[str, Any]] = []
+    history: List[Dict[str, Any]] = []
+    for k, ph in enumerate(phases):
+        sub_id = parent_id * 100 + 90 + k        # collision-free with sub-plan ids (parent*100+1..6)
+        sub = {"id": sub_id, "title": step["title"], "goal": step["goal"],
+               "caps": list(step.get("caps") or []), "skills": list(step.get("skills") or []),
+               "needs": []}
+        r = await _v5_run_step(
+            sub, goal=goal, blackboard=merged_bb, model=model, instance_id=instance_id,
+            prefer_gpu=prefer_gpu, session_id=sid, stream_id=stream_id, trace_id=trace_id,
+            cycle_budget=cycle_budget, cycle_offset=gc, artifact_dir_path=artifact_dir_path,
+            call_tool=call_tool, build_ctx=build_ctx, catalog_caps=catalog_caps,
+            available_models=available_models, await_long_running=await_long_running,
+            long_running_timeout_secs=long_running_timeout_secs, phase=ph)
+        gc = r.get("cycle_end", gc)
+        merged_bb[sub_id] = r
+        phase_results.append(r)
+        history.extend(r.get("history") or [])
+
+    verify_failed = any(ph == "verify" and str(r.get("summary") or "").strip().upper().startswith("FAIL")
+                        for ph, r in zip(phases, phase_results))
+    agg_ok = bool(phase_results) and all(r.get("ok") for r in phase_results) and not verify_failed
+    summary = "\n\n".join(f"[{ph}] {(r.get('summary') or '')[:500]}"
+                          for ph, r in zip(phases, phase_results))[:1800]
+    await emit_event({"type": "agent_loop_v5.step_done", "session_id": sid, "stream_id": stream_id,
+                      "step_id": parent_id, "ok": agg_ok, "summary": summary[:1500]})
+    return {"id": parent_id, "title": step["title"], "ok": agg_ok, "summary": summary,
+            "outputs": {}, "cycle_end": gc, "history": history, "phased": True,
+            "phase_results": phase_results}
+
+
+async def _v5_master_plan(goal: str, catalog_brief: str, *, model: str = "",
+                          instance_id: str = "", prefer_gpu: bool = True) -> Dict[str, str]:
+    """For an EXTREME goal, build a specialist planner ON THE FLY and have it write
+    a long-form strategic plan. Two cheap calls: (1) generate a domain-expert
+    planner persona tailored to this goal, (2) use that persona to produce a
+    comprehensive prose/outline plan. The normal orchestrator then breaks the
+    long-form plan into actionable steps (passed in as `master_plan`)."""
+    persona = ("a world-class strategic planner with deep, relevant domain expertise for the goal")
+    try:
+        p_raw = await _safe_ollama_generate_dw(
+            f"GOAL: {goal}\n\nIn ONE sentence, describe the ideal expert PLANNER persona to "
+            "design a strategy for this goal (their domain expertise and planning style). "
+            "Reply with just the persona description.",
+            system=("You assemble expert planner personas on demand. Name the specific domain "
+                    "expertise the goal demands."),
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu, json_mode=False)
+        cand = _strip_think(p_raw or "")[0].strip()
+        if cand:
+            persona = cand[:400]
+    except Exception as e:
+        log.debug("v5 master-planner persona build failed: %s", e)
+
+    long_form = ""
+    try:
+        lf_raw = await _safe_ollama_generate_dw(
+            (f"GOAL: {goal}\n\nAVAILABLE CAPABILITY AREAS (for grounding):\n{catalog_brief}\n\n"
+             "Write a COMPREHENSIVE long-form plan: the overall strategy, the major phases/"
+             "work-streams in order, key sub-goals and their dependencies, milestones, the main "
+             "risks/unknowns and how to de-risk them, and clear success criteria. Prose and "
+             "outline — NOT JSON. Be thorough; this will be broken into concrete executable steps."),
+            system=(f"You are {persona}. Produce rigorous, actionable strategic plans."),
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu, json_mode=False)
+        long_form = _strip_think(lf_raw or "")[0].strip()[:6000]
+    except Exception as e:
+        log.debug("v5 master-planner long-form build failed: %s", e)
+    return {"persona": persona, "long_form": long_form}
+
+
+async def _v5_synthesize_final(goal: str, results: List[Dict[str, Any]], *,
+                               model: str = "", instance_id: str = "",
+                               prefer_gpu: bool = True) -> str:
+    """Compose a final answer from the per-step results (the blackboard)."""
+    block = "\n\n".join(
+        f"STEP {r['id']} — {r['title']} ({'ok' if r.get('ok') else 'failed'}):\n{(r.get('summary') or '')[:1000]}"
+        for r in results) or "(no steps were executed)"
+    sys = ("Write the final answer to the user's GOAL using the results of the executed steps. "
+           "Be direct and concrete. Do not mention 'steps' or internal orchestration unless the "
+           "goal asked for a process. If something failed, state what is known and what is missing.")
+    prompt = f"GOAL: {goal}\n\nSTEP RESULTS:\n{block}\n\nWrite the final answer."
+    try:
+        raw = await _safe_ollama_generate_dw(
+            prompt, system=sys, model=model, instance_id=instance_id,
+            prefer_gpu=prefer_gpu, json_mode=False)
+        out = _strip_think(raw or "")[0].strip()
+        if out:
+            return out[:8000]
+    except Exception as e:
+        log.debug("v5 synthesize_final failed: %s", e)
+    # Fallback: concatenate the step summaries.
+    return block[:8000]
+
+
+@capability(
+    "dag.agent_loop_v5",
+    http_method="POST", http_path="/dag/agent_loop_v5",
+    http_tags=["dag", "agents"],
+    memory="on",
+    streams=["dag.agent_loop_v5"],
+    description=(
+        "v5 agent loop: an ORCHESTRATOR decomposes the goal into an ordered step plan in a "
+        "single LLM call, then hands each step to an EPHEMERAL SCOPED SPECIALIST sub-agent. "
+        "The orchestrator sees only cap name+description (a capped catalog) and the skill list; "
+        "each step's sub-agent sees only full schemas for its assigned caps, any dynamically "
+        "loaded skills, and a curated slice of prior-step outputs. Fast start (no separate "
+        "triage/step-select/plan calls) and per-step scoped toolkits (never balloons). "
+        "Inputs: goal (str!), allowed_caps (csv), base_toolkit (csv — only the first few act as "
+        "a catalog floor), max_steps (int default 8), step_cycle_budget (int default 6), "
+        "catalog_size (int default 40), enable_replan (bool default True), "
+        "enable_dynamic_skills (bool default True), skill_allow (csv — only these skills are "
+        "eligible), skill_deny (csv — exclude these skills), auto_suggest_skills (bool default "
+        "True — soft-attach a cap's suggested skills when a step picks none), "
+        "enable_recon (bool default True — let the orchestrator run a few READ-ONLY recon "
+        "actions before finalising the plan when it needs grounding; the simple path stays one "
+        "LLM call), enable_subplans (bool default True — a step marked `complex` is expanded into "
+        "its own one-level sub-plan), enable_phases (bool default True — the planner may give a "
+        "step a `phases` subset of explore/think/act/verify, each run as its own scoped sub-agent), "
+        "enable_master_planner (bool default True — an EXTREME goal is first handed to a specialist "
+        "long-form planner built on the fly, whose strategy the orchestrator then breaks into "
+        "steps), await_long_running (bool default True — when a cap returns a job_id, WS-stream/poll "
+        "it to completion so the step gets the REAL result, not a {job_id,queued} blob), "
+        "long_running_timeout_secs (int default 1800), handover (bool), "
+        "handover_max_chars (int), plus model/instance_id/prefer_gpu/session_id. A specialist "
+        "whose caps are insufficient or whose call fails/returns junk can request more caps "
+        "(need_caps) or is auto-granted a recovery toolkit, and is shown the cluster's real model "
+        "names so it never invents one. "
+        "Output: {goal, steps, blackboard, history, cycles, final, toolkit, stream_id, done}."
+    ),
+)
+async def cap_dag_agent_loop_v5(
+    goal:               str,
+    allowed_caps:       str  = "",
+    max_cycles:         int  = 12,
+    model:              str  = "",
+    instance_id:        str  = "",
+    prefer_gpu:         bool = True,
+    attach_skills:      str  = "",
+    attach_ontologies:  str  = "",
+    session_id:         str  = "",
+    triage_top_k:       int  = 16,
+    base_toolkit:       str  = "",
+    handover:           bool = False,
+    handover_max_chars: int  = 20000,
+    max_steps:          int  = 8,
+    step_cycle_budget:  int  = 6,
+    catalog_size:       int  = _V5_CATALOG_MAX_DEFAULT,
+    enable_replan:      bool = True,
+    enable_dynamic_skills: bool = True,
+    skill_allow:        str  = "",
+    skill_deny:         str  = "",
+    auto_suggest_skills: bool = True,
+    enable_recon:       bool = True,
+    enable_subplans:    bool = True,
+    enable_phases:      bool = True,
+    enable_master_planner: bool = True,
+    await_long_running: bool = True,
+    long_running_timeout_secs: int = 1800,
+    trace_id=None,
+):
+    if not goal:
+        return {"error": "goal required"}
+    sid = session_id or str(uuid.uuid4())
+    max_steps = max(1, min(20, int(max_steps)))
+    step_cycle_budget = max(1, min(20, int(step_cycle_budget)))
+    catalog_size = max(8, min(80, int(catalog_size)))
+    long_running_timeout_secs = max(30, int(long_running_timeout_secs))
+
+    ctx = _ctx()
+    ollama_generate = getattr(ctx, "ollama_generate", None) if ctx else None
+    if ollama_generate is None:
+        return {"error": "context module not loaded — ollama_generate missing"}
+
+    # Tool-call shim (reuses ctx helper when present, else a minimal local caller).
+    _agent_loop_call_tool = getattr(ctx, "_agent_loop_call_tool", None)
+    if _agent_loop_call_tool is None:
+        async def _call(cap_name, args, **kw):
+            cap = CAPABILITY_REGISTRY.get(cap_name)
+            if not cap:
+                return {"ok": False, "error": f"Unknown cap: {cap_name}"}
+            accepted = set(cap.get("schema", {}).get("properties", {}).keys()) | {"trace_id"}
+            kwargs = {k: v for k, v in (args or {}).items() if k in accepted}
+            try:
+                result = await cap["func"](**kwargs, trace_id=kw.get("trace_id", "") or "")
+                return {"ok": True, "result": result}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+        _agent_loop_call_tool = _call  # type: ignore
+    build_ctx = getattr(ctx, "build_context_prompt", None) if enable_dynamic_skills else None
+
+    await emit_event({"type": "agent_loop_v5.triage_start", "goal": goal[:200], "session_id": sid})
+
+    # ── Catalog: relevance-discovered, name+desc only, HARD-capped (no base-cap
+    #    ballooning — only the first few base caps act as a floor). ────────────
+    base_caps = [c.strip() for c in (base_toolkit or "").replace(",", " ").split() if c.strip()]
+    try:
+        catalog_names = await _workshop_build_toolkit(
+            allowed_caps=allowed_caps, category="other", keywords=[],
+            top_k=max(8, catalog_size // 2), goal=goal, base_caps=base_caps[:8])
+    except Exception as e:
+        log.debug("v5 catalog build failed: %s", e)
+        catalog_names = list(base_caps[:8])
+    catalog_names = catalog_names[:catalog_size]
+    # Guarantee a real action tool is always offered (see _V5_ESSENTIAL_ACTION_CAPS).
+    for _ess in reversed(_V5_ESSENTIAL_ACTION_CAPS):
+        if _ess in CAPABILITY_REGISTRY and _ess not in catalog_names:
+            catalog_names.insert(0, _ess)
+    if not catalog_names:
+        return {"error": "No capabilities available to orchestrate"}
+
+    # Eligible skills (enabled, not blacklisted, honoring per-run allow/deny).
+    _skill_allow = {s.strip() for s in (skill_allow or "").replace(",", " ").split() if s.strip()}
+    _skill_deny = {s.strip() for s in (skill_deny or "").replace(",", " ").split() if s.strip()}
+    skills = (await _v5_list_skills(trace_id or "", allow=_skill_allow, deny=_skill_deny)
+              if enable_dynamic_skills else [])
+    cap_skill_map = _v5_cap_skill_map(skills)
+    eligible_skill_ids = {s["id"] for s in skills}
+
+    await emit_event({"type": "agent_loop_v5.triage_done", "session_id": sid,
+                      "triage": {"category": "orchestrated", "keywords": [],
+                                 "reasoning": "v5 plans steps and delegates to scoped specialists"}})
+    await emit_event({"type": "agent_loop_v5.toolkit", "stream_id": "", "session_id": sid,
+                      "toolkit": list(catalog_names)})
+
+    # ── Artifact directory (sandbox-configured) ───────────────────────────────
+    artifact_dir_path = ""
+    try:
+        import importlib as _il
+        _exec_mod = _il.import_module("Vera.vera.execution.exec_capabilities")
+        artifact_dir_path = _exec_mod.artifact_dir(session_id=sid)
+    except Exception as e:
+        log.debug("v5 artifact dir resolve failed: %s", e)
+
+    # ── Stream registration ───────────────────────────────────────────────────
+    stream_register = getattr(ctx, "stream_register", None)
+    stream_complete = getattr(ctx, "stream_complete", None)
+    stream_id = ""
+    if stream_register:
+        try:
+            stream_id = await stream_register(
+                kind="agent_loop_v5", source_cap="dag.agent_loop_v5",
+                session_id=sid, label=goal[:80], persist_full=True,
+                fabric_dataset="streams.agent_loop_v5",
+                metadata={"goal": goal, "catalog": list(catalog_names), "max_steps": max_steps})
+        except Exception:
+            stream_id = ""
+
+    # Available cluster models — so specialists using llm.*/ollama.* caps pick a
+    # REAL model (or omit it) instead of inventing one. Best-effort, fetched once.
+    available_models = await _v5_available_models(trace_id or "")
+
+    # ── Orchestrate (ONE LLM call on the fast path) ───────────────────────────
+    plan = await _v5_orchestrate_plan(
+        goal, catalog_names, skills, cap_skill_map,
+        model=model, instance_id=instance_id, prefer_gpu=prefer_gpu, max_steps=max_steps)
+    complexity = (plan.get("complexity") or "").lower()
+
+    # ── EXTREME goals: defer to a specialist long-form planner built ON THE FLY,
+    #    then re-break its master plan into concrete actionable steps. Only fires
+    #    for goals the orchestrator itself classed "extreme", so simple/complex
+    #    goals are untouched. ───────────────────────────────────────────────────
+    if enable_master_planner and complexity == "extreme":
+        try:
+            catalog_brief = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:24])
+            mp = await _v5_master_plan(goal, catalog_brief, model=model,
+                                       instance_id=instance_id, prefer_gpu=prefer_gpu)
+            await emit_event({"type": "agent_loop_v5.master_plan", "session_id": sid,
+                              "stream_id": stream_id, "persona": mp.get("persona", ""),
+                              "long_form": mp.get("long_form", "")})
+            if mp.get("long_form"):
+                plan2 = await _v5_orchestrate_plan(
+                    goal, catalog_names, skills, cap_skill_map,
+                    model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+                    max_steps=max_steps, master_plan=mp["long_form"])
+                if plan2.get("steps"):
+                    plan = plan2
+        except Exception as e:
+            log.debug("v5 master-planner stage failed: %s", e)
+
+    # Optional pre-plan recon: ONLY when the orchestrator actually asked for it, so
+    # simple goals stay a single LLM call with no tool calls. When recon runs, a
+    # SECOND orchestration call is made with the findings to finalise the plan.
+    recon = plan.get("recon") or []
+    if enable_recon and recon:
+        try:
+            findings = await _v5_run_recon(
+                recon, session_id=sid, stream_id=stream_id, trace_id=trace_id,
+                call_tool=_agent_loop_call_tool)
+            if findings:
+                plan2 = await _v5_orchestrate_plan(
+                    goal, catalog_names, skills, cap_skill_map,
+                    model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+                    max_steps=max_steps, recon_findings=findings)
+                if plan2.get("steps"):
+                    plan = plan2
+        except Exception as e:
+            log.debug("v5 recon stage failed: %s", e)
+    steps = plan.get("steps") or []
+    if not steps:
+        steps = [{"id": 1, "title": goal[:120], "goal": goal,
+                  "caps": list(catalog_names[:6]), "skills": [], "needs": [],
+                  "complex": False, "phases": []}]
+    if not enable_phases:
+        for s in steps:
+            s["phases"] = []
+    # Soft-merge cap-suggested skills into steps that picked none (orchestrator
+    # choices are preserved; this only fills gaps).
+    _v5_apply_skill_suggestions(steps, cap_skill_map, eligible_skill_ids, auto_suggest_skills)
+    await emit_event({"type": "agent_loop_v5.plan", "session_id": sid, "stream_id": stream_id,
+                      "steps": [{"id": s["id"], "title": s["title"], "caps": s["caps"],
+                                 "skills": s["skills"], "complex": bool(s.get("complex")),
+                                 "phases": s.get("phases") or []} for s in steps],
+                      "reason": plan.get("reason", ""),
+                      "complexity": plan.get("complexity", "")})
+
+    # ── Execute steps over a shared blackboard (cheap, failure-triggered replan) ─
+    blackboard: Dict[int, Dict[str, Any]] = {}
+    results: List[Dict[str, Any]] = []
+    flat_history: List[Dict[str, Any]] = []   # flat tool-call log → final-card stats
+    queue = list(steps)
+    executed = 0
+    gcycle = 0
+
+    async def _run_complex_step(cstep, gc_in):
+        """Expand a step flagged `complex` into its OWN one-level sub-plan (a
+        master plan of phases → sub-steps), run the sub-steps as scoped
+        specialists, then aggregate them into a single parent result."""
+        parent_id = cstep["id"]
+        sub_catalog = list(dict.fromkeys(
+            list(cstep.get("caps") or []) + list(catalog_names)))[:catalog_size]
+        await emit_event({"type": "agent_loop_v5.step_start", "session_id": sid, "stream_id": stream_id,
+                          "step_id": parent_id, "title": cstep["title"], "goal": cstep["goal"],
+                          "caps": cstep.get("caps") or [], "skills": []})
+        sub = await _v5_orchestrate_plan(
+            cstep["goal"], sub_catalog, skills, cap_skill_map,
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+            max_steps=min(_V5_SUBPLAN_MAX_STEPS, max_steps))
+        sub_steps = sub.get("steps") or []
+        if not sub_steps:
+            # Nothing to decompose — fall back to a normal scoped mini-loop.
+            return await _v5_run_step(
+                cstep, goal=goal, blackboard=blackboard, model=model, instance_id=instance_id,
+                prefer_gpu=prefer_gpu, session_id=sid, stream_id=stream_id, trace_id=trace_id,
+                cycle_budget=step_cycle_budget, cycle_offset=gc_in,
+                artifact_dir_path=artifact_dir_path, call_tool=_agent_loop_call_tool,
+                build_ctx=build_ctx, catalog_caps=sub_catalog, available_models=available_models,
+                await_long_running=await_long_running,
+                long_running_timeout_secs=long_running_timeout_secs)
+        # Renumber sub-steps to collision-free display ids and remap their needs.
+        idmap: Dict[int, int] = {}
+        for j, ss in enumerate(sub_steps):
+            idmap[ss.get("id", j + 1)] = parent_id * 100 + j + 1
+        for j, ss in enumerate(sub_steps):
+            ss["id"] = parent_id * 100 + j + 1
+            ss["needs"] = [idmap.get(n, n) for n in (ss.get("needs") or [])]
+            ss["title"] = (f"{parent_id}.{j + 1} " + str(ss.get("title") or "")).strip()[:120]
+            ss["complex"] = False   # ONE nesting level only
+            ss["phases"] = []       # sub-plan sub-steps stay flat (bounds nesting)
+        _v5_apply_skill_suggestions(sub_steps, cap_skill_map, eligible_skill_ids, auto_suggest_skills)
+        await emit_event({"type": "agent_loop_v5.subplan", "session_id": sid, "stream_id": stream_id,
+                          "parent_id": parent_id, "title": cstep["title"],
+                          "steps": [{"id": s["id"], "title": s["title"], "caps": s["caps"]}
+                                    for s in sub_steps],
+                          "reason": sub.get("reason", "")})
+        sub_bb: Dict[int, Dict[str, Any]] = {}
+        sub_results: List[Dict[str, Any]] = []
+        sub_history: List[Dict[str, Any]] = []
+        gc = gc_in
+        for ss in sub_steps:
+            r = await _v5_run_step(
+                ss, goal=cstep["goal"], blackboard={**blackboard, **sub_bb},
+                model=model, instance_id=instance_id, prefer_gpu=prefer_gpu, session_id=sid,
+                stream_id=stream_id, trace_id=trace_id, cycle_budget=step_cycle_budget,
+                cycle_offset=gc, artifact_dir_path=artifact_dir_path,
+                call_tool=_agent_loop_call_tool, build_ctx=build_ctx,
+                catalog_caps=sub_catalog, available_models=available_models,
+                await_long_running=await_long_running,
+                long_running_timeout_secs=long_running_timeout_secs)
+            gc = r.get("cycle_end", gc)
+            sub_bb[ss["id"]] = r
+            sub_results.append(r)
+            sub_history.extend(r.get("history") or [])
+        agg_ok = all(r.get("ok") for r in sub_results) if sub_results else False
+        agg_summary = "\n\n".join(
+            f"[{r['title']}] {(r.get('summary') or '')[:500]}" for r in sub_results)[:1800]
+        await emit_event({"type": "agent_loop_v5.step_done", "session_id": sid, "stream_id": stream_id,
+                          "step_id": parent_id, "ok": agg_ok, "summary": agg_summary[:1500]})
+        return {"id": parent_id, "title": cstep["title"], "ok": agg_ok, "summary": agg_summary,
+                "outputs": {}, "cycle_end": gc, "history": sub_history, "subplan": True,
+                "sub_steps": sub_results}
+
+    while queue and executed < max_steps:
+        step = queue.pop(0)
+        executed += 1
+        if enable_subplans and step.get("complex"):
+            res = await _run_complex_step(step, gcycle)
+        else:
+            res = await _v5_run_step(
+                step, goal=goal, blackboard=blackboard, model=model, instance_id=instance_id,
+                prefer_gpu=prefer_gpu, session_id=sid, stream_id=stream_id, trace_id=trace_id,
+                cycle_budget=step_cycle_budget, cycle_offset=gcycle,
+                artifact_dir_path=artifact_dir_path, call_tool=_agent_loop_call_tool,
+                build_ctx=build_ctx, catalog_caps=catalog_names, available_models=available_models,
+                await_long_running=await_long_running,
+                long_running_timeout_secs=long_running_timeout_secs)
+        gcycle = res.get("cycle_end", gcycle)
+        blackboard[step["id"]] = res
+        results.append(res)
+        flat_history.extend(res.get("history") or [])
+        # Failure-triggered re-plan: only spend an extra LLM call when a step
+        # failed and work remains (keeps the happy path fast).
+        if enable_replan and not res.get("ok") and queue and executed < max_steps:
+            try:
+                adj = await _v5_orchestrate_plan(
+                    goal + f"\n\n[Step {step['id']} ('{step['title']}') failed: "
+                    f"{(res.get('summary') or '')[:300]}. Re-plan the REMAINING work only.]",
+                    catalog_names, skills, cap_skill_map,
+                    model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+                    max_steps=max(1, max_steps - executed))
+                new_steps = adj.get("steps") or []
+                if new_steps:
+                    base = executed
+                    for j, ns in enumerate(new_steps):
+                        ns["id"] = base + j + 1
+                        if not enable_phases:
+                            ns["phases"] = []
+                    _v5_apply_skill_suggestions(new_steps, cap_skill_map, eligible_skill_ids, auto_suggest_skills)
+                    queue = new_steps
+                    await emit_event({"type": "agent_loop_v5.replan", "session_id": sid,
+                                      "stream_id": stream_id, "after_step": step["id"],
+                                      "remaining": [{"id": s["id"], "title": s["title"]} for s in queue],
+                                      "reason": adj.get("reason", "")})
+            except Exception as e:
+                log.debug("v5 replan failed: %s", e)
+
+    # ── Synthesize final ──────────────────────────────────────────────────────
+    final = await _v5_synthesize_final(
+        goal, results, model=model, instance_id=instance_id, prefer_gpu=prefer_gpu)
+    handover_output = ""
+    if handover and results:
+        try:
+            ho = await _run_handover_stage(
+                goal=goal,
+                history=[{"tool": f"step{r['id']}:{r['title']}", "args": {},
+                          "ok": r.get("ok"), "preview": r.get("summary") or ""} for r in results],
+                triage={}, cur_final=final, model=model, instance_id=instance_id,
+                prefer_gpu=prefer_gpu, max_chars=int(handover_max_chars), session_id=sid)
+            handover_output = ho or ""
+            if handover_output:
+                final = handover_output
+        except Exception as e:
+            log.debug("v5 handover stage failed: %s", e)
+
+    await emit_event({"type": "agent_loop_v5.done", "stream_id": stream_id, "session_id": sid,
+                      "summary": final, "cycles": gcycle, "steps_run": len(results),
+                      "reason": "complete"})
+    if stream_complete and stream_id:
+        try:
+            await stream_complete(stream_id, final)
+        except Exception:
+            pass
+
+    return {
+        "goal": goal, "steps": results,
+        "blackboard": {str(k): v for k, v in blackboard.items()},
+        "toolkit": list(catalog_names), "plan": steps,
+        # Flat tool-call log + cycle count drive the final-card stats (the shared
+        # renderer reads ev.history / ev.cycles).
+        "history": flat_history, "cycles": gcycle,
+        "final": final, "summary": final, "handover_output": handover_output,
+        "stream_id": stream_id, "session_id": sid, "done": True,
     }
 
 
@@ -6304,6 +8226,9 @@ async def workshop_agent_loop_stream(request: Request):
     require_approval   = bool(body.get("require_approval", False))
     hitl_timeout_secs  = int(body.get("hitl_timeout_secs", 300))
     triage_top_k       = int(body.get("triage_top_k", 16) or 16)
+    triage_category    = (body.get("triage_category", "") or "").strip()
+    triage_keywords    = body.get("triage_keywords", "") or ""
+    base_toolkit       = body.get("base_toolkit", "") or ""
     await_long_running = bool(body.get("await_long_running", True))
     long_running_timeout_secs = int(body.get("long_running_timeout_secs", 1800))
     handover           = bool(body.get("handover", False))
@@ -6330,6 +8255,19 @@ async def workshop_agent_loop_stream(request: Request):
     strict_complete     = bool(body.get("strict_complete", True))
     prefer_terminal_tools = bool(body.get("prefer_terminal_tools", True))
     long_running_caps   = body.get("long_running_caps", "") or ""
+    # ── v5-specific ──────────────────────────────────────────────────────────
+    v5_max_steps        = int(body.get("max_steps", 8) or 8)
+    v5_step_cycle_budget = int(body.get("step_cycle_budget", 6) or 6)
+    v5_catalog_size     = int(body.get("catalog_size", 40) or 40)
+    v5_enable_replan    = bool(body.get("enable_replan", True))
+    v5_enable_dynamic_skills = bool(body.get("enable_dynamic_skills", True))
+    v5_skill_allow      = body.get("skill_allow", "") or ""
+    v5_skill_deny       = body.get("skill_deny", "") or ""
+    v5_auto_suggest_skills = bool(body.get("auto_suggest_skills", True))
+    v5_enable_recon     = bool(body.get("enable_recon", True))
+    v5_enable_subplans  = bool(body.get("enable_subplans", True))
+    v5_enable_phases    = bool(body.get("enable_phases", True))
+    v5_enable_master_planner = bool(body.get("enable_master_planner", True))
 
     def _phase_kwargs():
         return dict(
@@ -6344,7 +8282,9 @@ async def workshop_agent_loop_stream(request: Request):
         return dict(
             satisfaction_check=satisfaction_check, enable_expand=enable_expand,
             require_approval=require_approval, hitl_timeout_secs=hitl_timeout_secs,
-            triage_top_k=triage_top_k, await_long_running=await_long_running,
+            triage_top_k=triage_top_k, triage_category=triage_category,
+            triage_keywords=triage_keywords, base_toolkit=base_toolkit,
+            await_long_running=await_long_running,
             long_running_timeout_secs=long_running_timeout_secs,
             handover=handover, handover_max_chars=handover_max_chars,
             max_search_calls=max_search_calls, max_expands=max_expands,
@@ -6358,6 +8298,22 @@ async def workshop_agent_loop_stream(request: Request):
             prefer_terminal_tools=prefer_terminal_tools,
             long_running_caps=long_running_caps,
             long_running_force_hitl=long_running_force_hitl,
+        )
+
+    def _v5_kwargs():
+        return dict(
+            triage_top_k=triage_top_k, base_toolkit=base_toolkit,
+            handover=handover, handover_max_chars=handover_max_chars,
+            max_steps=v5_max_steps, step_cycle_budget=v5_step_cycle_budget,
+            catalog_size=v5_catalog_size, enable_replan=v5_enable_replan,
+            enable_dynamic_skills=v5_enable_dynamic_skills,
+            skill_allow=v5_skill_allow, skill_deny=v5_skill_deny,
+            auto_suggest_skills=v5_auto_suggest_skills,
+            enable_recon=v5_enable_recon, enable_subplans=v5_enable_subplans,
+            enable_phases=v5_enable_phases,
+            enable_master_planner=v5_enable_master_planner,
+            await_long_running=await_long_running,
+            long_running_timeout_secs=long_running_timeout_secs,
         )
 
     def _sse(payload):
@@ -6398,6 +8354,7 @@ async def workshop_agent_loop_stream(request: Request):
         "v2":       "dag.agent_loop_v2",
         "v3":       "dag.agent_loop_v3",
         "v4":       "dag.agent_loop_v4",
+        "v5":       "dag.agent_loop_v5",
     }
     cap_name = cap_name_map.get(version, "dag.agent_loop_v2")
 
@@ -6474,6 +8431,8 @@ async def workshop_agent_loop_stream(request: Request):
                     kwargs.update(_phase_kwargs())
                 elif version == "v4":
                     kwargs.update(_v4_kwargs())
+                elif version == "v5":
+                    kwargs.update(_v5_kwargs())
                 result = await cap["func"](**kwargs)
                 # Run handover post-hoc for v1/v2 if requested (they don't
                 # accept a handover param themselves).
@@ -6551,12 +8510,33 @@ async def workshop_agent_loop_stream(request: Request):
             "agent_loop_v4.repetition_block",
             "agent_loop_v4.args_coerced",
             "agent_loop_v4.think",
+            "agent_loop_v4.think_delta",
             "agent_loop_v4.phase",
             "agent_loop_v4.budget_pause",
             "agent_loop_v4.budget_continue",
             "agent_loop_v4.step_plan",
             "agent_loop_v4.plan",
             "agent_loop_v4.completion_check",
+            "agent_loop_v4.artifact_dir",
+            # v5 — orchestrated specialist sub-agents
+            "agent_loop_v5.triage_start",
+            "agent_loop_v5.triage_done",
+            "agent_loop_v5.toolkit",
+            "agent_loop_v5.recon",
+            "agent_loop_v5.master_plan",
+            "agent_loop_v5.plan",
+            "agent_loop_v5.subplan",
+            "agent_loop_v5.phases",
+            "agent_loop_v5.step_start",
+            "agent_loop_v5.step_done",
+            "agent_loop_v5.replan",
+            "agent_loop_v5.scope_widened",
+            "agent_loop_v5.cycle_planning",
+            "agent_loop_v5.tool_call",
+            "agent_loop_v5.tool_done",
+            "agent_loop_v5.think",
+            "agent_loop_v5.thinking",
+            "agent_loop_v5.done",
             # phase model + continue (v2/v3)
             "agent_loop_v3.phase",
             "agent_loop_v3.budget_pause",
@@ -6589,6 +8569,8 @@ async def workshop_agent_loop_stream(request: Request):
             # workshop tool invocation enrichment (covers v1/v2 too)
             "workshop.tool_invoked",
             "workshop.tool_finished",
+            # routed-node visibility — which Ollama instance served the planner
+            "ollama.request",
             # generic streaming
             "stream.token", "stream.complete",
             # long-running progress
@@ -6634,6 +8616,7 @@ async def workshop_agent_loop_stream(request: Request):
             "agent_loop_v2.think",
             "agent_loop_v3.think",
             "agent_loop_v4.think",
+            "agent_loop_v5.think",
         }
 
         # Map v1 event types to v2-style names so the UI can use a single renderer.
@@ -6699,6 +8682,8 @@ async def workshop_agent_loop_stream(request: Request):
                     kwargs.update(_phase_kwargs())
                 elif version == "v4":
                     kwargs.update(_v4_kwargs())
+                elif version == "v5":
+                    kwargs.update(_v5_kwargs())
                 result = await cap["func"](**kwargs)
                 # Post-hoc handover for v1/v2 (they don't have the param)
                 if handover and version in ("v1", "v2") and isinstance(result, dict):
@@ -6770,8 +8755,14 @@ async def workshop_agent_loop_stream(request: Request):
                 if ev.get("session_id") and ev.get("session_id") != session_id:
                     continue
 
+                # ollama.* events are global (published by every caller); only
+                # forward the ones this run stamped with its own session_id.
+                if ev_type.startswith("ollama.") and ev.get("session_id") != session_id:
+                    continue
+
                 if ev_type.startswith(("agent_loop.", "agent_loop_v2.",
-                                         "agent_loop_v3.", "agent_loop_v4.")):
+                                         "agent_loop_v3.", "agent_loop_v4.",
+                                         "agent_loop_v5.")):
                     if ev_type.endswith(".tool_call"):
                         active_tool["name"]  = ev.get("tool", "")
                         active_tool["cycle"] = ev.get("cycle", 0)

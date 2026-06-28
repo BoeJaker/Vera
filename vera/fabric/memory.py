@@ -137,6 +137,27 @@ MEMORY_AUTO_EMBED   = os.getenv("MEMORY_AUTO_EMBED",   "1") == "1"
 MEMORY_PROMO_STREAM = "vera:events"
 MEMORY_EVENT_TYPES  = {"memory.store", "memory.promote", "llm.generate", "cap.ok"}
 
+# Version the Chroma collection by embed model. Different models emit different
+# vector dimensions (e.g. all-MiniLM=384 vs nomic-embed-text=768); reusing one
+# collection across models triggers Chroma's "expecting embedding with dimension
+# of N, got M" error. Suffixing the model keeps each dimension in its own
+# collection — switching models just creates a fresh one (old data untouched).
+def _versioned_collection(base: str, model: str) -> str:
+    tag = re.sub(r"[^A-Za-z0-9._-]", "_", (model or "default")).strip("._-") or "default"
+    return f"{base}__{tag}"[:63]   # Chroma collection names cap at 63 chars
+
+CHROMA_COLLECTION = _versioned_collection(CHROMA_COLLECTION, OLLAMA_EMBED_MODEL)
+
+# Lucene query-parser special characters. The Neo4j fulltext index
+# (db.index.fulltext.queryNodes) parses its query as Lucene syntax, so raw text
+# containing these — e.g. the parentheses in "openclaw_status() got an
+# unexpected keyword argument" — raises a ParseException. Escape them so any
+# free-text query is treated literally.
+_LUCENE_SPECIAL = re.compile(r'([+\-&|!(){}\[\]^"~*?:\\/])')
+
+def _lucene_escape(q: str) -> str:
+    return _LUCENE_SPECIAL.sub(r"\\\1", q or "")
+
 # ─────────────────────────────────────────────────────────────────────────────
 # MEMORY RECORD  —  the universal schema
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1062,7 +1083,7 @@ class Neo4jBackend(MemoryBackend):
             where = " AND ".join(where_parts)
 
             if query.strip():
-                params["query"] = query
+                params["query"] = _lucene_escape(query)
                 cypher = f"""
                     CALL db.index.fulltext.queryNodes('vera_mem_text', $query)
                     YIELD node AS m, score
@@ -1718,13 +1739,17 @@ async def memory_store(
     parent_id:      str   = "",
     trace_id_param=None,
 ):
+    # tags is documented as a comma-separated string, but internal/LLM callers
+    # sometimes pass a list — coerce so we don't blow up on .split().
+    if isinstance(tags, (list, tuple)):
+        tags = ",".join(str(t) for t in tags if t)
     rec = MemoryRecord(
         session_id  = session_id,
         trace_id    = trace_id or trace_id_param or "",
         record_type = record_type,
         source_type = source_type,
         category    = category,
-        tags        = [t.strip() for t in tags.split(",") if t.strip()],
+        tags        = [t.strip() for t in str(tags).split(",") if t.strip()],
         text        = text,
         summary     = summary,
         full_text   = full_text or text,

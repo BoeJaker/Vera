@@ -46,11 +46,11 @@ def _redis():
 # ─────────────────────────────────────────────────────────────────────────────
 
 BUILTIN_THEMES = {
-    "ash":   {"label":"Ash",   "type":"light", "accent":"#2e6da4", "vars":{"--bg":"#f0ede8","--s1":"#e8e5df","--s2":"#dedbd4","--s3":"#d4d1c8","--bd":"rgba(0,0,0,.08)","--bd2":"rgba(0,0,0,.15)","--t1":"#1a1a18","--t2":"#6a6860","--t3":"#a8a69e","--ac":"#2e6da4","--ac2":"#228060","--ac3":"#c47020","--ac4":"#c03030","--ac5":"#6040a0"}},
-    "dusk":  {"label":"Dusk",  "type":"dark",  "accent":"#6ea8d8", "vars":{"--bg":"#0e0f12","--s1":"#13151a","--s2":"#1a1d24","--s3":"#222630","--bd":"rgba(255,255,255,.07)","--bd2":"rgba(255,255,255,.14)","--t1":"#d4dae4","--t2":"#6b7585","--t3":"#3b4252","--ac":"#6ea8d8","--ac2":"#5ec9a0","--ac3":"#e09a55","--ac4":"#e06060","--ac5":"#a78bfa"}},
-    "void":  {"label":"Void",  "type":"dark",  "accent":"#9b8dfa", "vars":{"--bg":"#000","--s1":"#070707","--s2":"#0d0d0d","--s3":"#141414","--bd":"rgba(255,255,255,.05)","--bd2":"rgba(255,255,255,.1)","--t1":"#e0e0e0","--t2":"#929292","--t3":"#636363","--ac":"#9b8dfa","--ac2":"#5ecab0","--ac3":"#dba355","--ac4":"#e06060","--ac5":"#f472b6"}},
-    "chalk": {"label":"Chalk", "type":"dark",  "accent":"#d4a96a", "vars":{"--bg":"#1c1c1e","--s1":"#242428","--s2":"#2c2c32","--s3":"#34343c","--bd":"rgba(255,255,255,.08)","--bd2":"rgba(255,255,255,.16)","--t1":"#e8e4d8","--t2":"#b6ac97","--t3":"#6e6b5b","--ac":"#d4a96a","--ac2":"#80c090","--ac3":"#c08878","--ac4":"#e07070","--ac5":"#9080c0"}},
-    "ice":   {"label":"Ice",   "type":"dark",  "accent":"#5ab0f0", "vars":{"--bg":"#090f18","--s1":"#0d1620","--s2":"#121e2c","--s3":"#182638","--bd":"rgba(80,160,255,.1)","--bd2":"rgba(80,160,255,.2)","--t1":"#c0d8f0","--t2":"#406880","--t3":"#1e3850","--ac":"#5ab0f0","--ac2":"#38d0b0","--ac3":"#e0b060","--ac4":"#e06868","--ac5":"#8070e0"}},
+    "ash":   {"label":"Ash",   "type":"light", "accent":"#2e6da4", "vars":{"--bg":"#f0ede8","--s1":"#e8e5df","--s2":"#dedbd4","--s3":"#d4d1c8","--bd":"rgba(0,0,0,.08)","--bd2":"rgba(0,0,0,.15)","--t1":"#1a1a18","--t2":"#6a6860","--t3":"#a8a69e","--ac":"#2e6da4","--ac2":"#228060","--ac3":"#c47020","--ac4":"#c03030","--ac5":"#6040a0","--ui-radius":"5px","--lhm-width":"184px","--lhm-collapsed-width":"46px"}},
+    "dusk":  {"label":"Dusk",  "type":"dark",  "accent":"#6ea8d8", "vars":{"--bg":"#0e0f12","--s1":"#13151a","--s2":"#1a1d24","--s3":"#222630","--bd":"rgba(255,255,255,.07)","--bd2":"rgba(255,255,255,.14)","--t1":"#d4dae4","--t2":"#6b7585","--t3":"#3b4252","--ac":"#6ea8d8","--ac2":"#5ec9a0","--ac3":"#e09a55","--ac4":"#e06060","--ac5":"#a78bfa","--ui-radius":"5px","--lhm-width":"184px","--lhm-collapsed-width":"46px"}},
+    "void":  {"label":"Void",  "type":"dark",  "accent":"#9b8dfa", "vars":{"--bg":"#000","--s1":"#070707","--s2":"#0d0d0d","--s3":"#141414","--bd":"rgba(255,255,255,.05)","--bd2":"rgba(255,255,255,.1)","--t1":"#e0e0e0","--t2":"#929292","--t3":"#636363","--ac":"#9b8dfa","--ac2":"#5ecab0","--ac3":"#dba355","--ac4":"#e06060","--ac5":"#f472b6","--ui-radius":"5px","--lhm-width":"184px","--lhm-collapsed-width":"46px"}},
+    "chalk": {"label":"Chalk", "type":"dark",  "accent":"#d4a96a", "vars":{"--bg":"#1c1c1e","--s1":"#242428","--s2":"#2c2c32","--s3":"#34343c","--bd":"rgba(255,255,255,.08)","--bd2":"rgba(255,255,255,.16)","--t1":"#e8e4d8","--t2":"#b6ac97","--t3":"#6e6b5b","--ac":"#d4a96a","--ac2":"#80c090","--ac3":"#c08878","--ac4":"#e07070","--ac5":"#9080c0","--ui-radius":"5px","--lhm-width":"184px","--lhm-collapsed-width":"46px"}},
+    "ice":   {"label":"Ice",   "type":"dark",  "accent":"#5ab0f0", "vars":{"--bg":"#090f18","--s1":"#0d1620","--s2":"#121e2c","--s3":"#182638","--bd":"rgba(80,160,255,.1)","--bd2":"rgba(80,160,255,.2)","--t1":"#c0d8f0","--t2":"#406880","--t3":"#1e3850","--ac":"#5ab0f0","--ac2":"#38d0b0","--ac3":"#e0b060","--ac4":"#e06868","--ac5":"#8070e0","--ui-radius":"5px","--lhm-width":"184px","--lhm-collapsed-width":"46px"}},
 }
 
 # Custom themes stored at runtime (persisted to Redis if available)
@@ -251,6 +251,34 @@ async def _serve_vera_ui_js():
                     media_type="application/javascript")
 
 
+# Serve vera-panel.css — the canonical LHM + form-control chrome
+@APP.get("/ui/vera-panel.css", include_in_schema=False)
+async def _serve_vera_panel_css():
+    from fastapi.responses import Response
+    from pathlib import Path
+    p = Path(__file__).parent.parent / "vera-panel.css"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"),
+                        media_type="text/css",
+                        headers={"Cache-Control": "no-cache"})
+    return Response(content="/* vera-panel.css not found */",
+                    media_type="text/css")
+
+
+# Serve vera-panel.js — canonical LHM collapse + collapsible-section behavior
+@APP.get("/ui/vera-panel.js", include_in_schema=False)
+async def _serve_vera_panel_js():
+    from fastapi.responses import Response
+    from pathlib import Path
+    p = Path(__file__).parent.parent / "vera-panel.js"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
+    return Response(content="console.warn('vera-panel.js not found');",
+                    media_type="application/javascript")
+
+
 # Serve vera-graph.js — the unified reusable graph element
 @APP.get("/ui/vera-graph.js", include_in_schema=False)
 async def _serve_vera_graph_js():
@@ -279,6 +307,40 @@ async def _serve_agent_loop_output_js():
                             headers={"Cache-Control": "no-cache"})
     return Response(
         content="console.warn('agent_loop_output element JS not found');",
+        media_type="application/javascript"
+    )
+
+
+# Serve sandbox_controls.js — the <vera-sandbox-controls> exec-sandbox editor.
+# Shared by the Exec panel and the IDE panel; both edit the one server-side
+# policy (exec.sandbox.get/set), so the controls stay linked.
+@APP.get("/ui/elements/sandbox_controls.js", include_in_schema=False)
+async def _serve_sandbox_controls_js():
+    from fastapi.responses import Response
+    from pathlib import Path
+    p = Path(__file__).parent.parent / "sandbox_controls_element.js"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
+    return Response(
+        content="console.warn('sandbox_controls element JS not found');",
+        media_type="application/javascript"
+    )
+
+
+# Serve character.js — the <vera-character> animated companion element.
+@APP.get("/ui/elements/character.js", include_in_schema=False)
+async def _serve_character_js():
+    from fastapi.responses import Response
+    from pathlib import Path
+    p = Path(__file__).parent.parent / "character" / "character_element.js"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
+    return Response(
+        content="console.warn('character element JS not found');",
         media_type="application/javascript"
     )
 

@@ -458,10 +458,24 @@ async function api(path, method='GET', body=null){
 // ── Boot ──────────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
   refreshStatus();
-  setInterval(refreshStatus, 10000);
+  // Baseline poll only while the tab is actually visible — a backgrounded panel
+  // doesn't need live status, and SSE vllm.* events refresh us on real changes.
+  setInterval(() => { if(document.visibilityState === 'visible') scheduleRefresh(); }, 20000);
+  // Refresh immediately when the user returns to a stale panel.
+  document.addEventListener('visibilitychange', () => {
+    if(document.visibilityState === 'visible') scheduleRefresh();
+  });
   subscribeEvents();
   updatePgMode();
 });
+
+// Debounced refresh — collapses bursts of vllm.health/* events (which arrive
+// every health cycle) into a single /vllm/status fetch instead of one per event.
+let _refreshTimer = null;
+function scheduleRefresh(){
+  if(_refreshTimer) return;
+  _refreshTimer = setTimeout(() => { _refreshTimer = null; refreshStatus(); }, 400);
+}
 
 // ── Status ────────────────────────────────────────────────────────────────────
 async function refreshStatus(){
@@ -888,7 +902,7 @@ function subscribeEvents(){
   es.onmessage=(e)=>{
     let msg; try{ msg=JSON.parse(e.data); }catch{ return; }
     if((msg.event||msg.type||'').startsWith('vllm.')){
-      refreshStatus();
+      scheduleRefresh();   // debounced — avoid a fetch per health event
     }
   };
 }

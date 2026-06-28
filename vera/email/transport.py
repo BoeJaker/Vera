@@ -20,6 +20,7 @@ Config dict shape (see email_capabilities.DEFAULT_CONFIG):
 from __future__ import annotations
 
 import asyncio
+import base64
 import email
 import imaplib
 import logging
@@ -38,6 +39,11 @@ log = logging.getLogger("vera.email.transport")
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _xoauth2_bytes(user: str, token: str) -> bytes:
+    """SASL XOAUTH2 initial-client-response (un-base64'd; callers/imaplib encode)."""
+    return f"user={user}\x01auth=Bearer {token}\x01\x01".encode()
+
 
 def _dh(value: str) -> str:
     """Decode a possibly RFC-2047-encoded header into a plain string."""
@@ -132,34 +138,56 @@ class BaseTransport:
 class ImapSmtpTransport(BaseTransport):
 
     # ── IMAP connection (sync, run via to_thread) ────────────────────────────
+    def _xoauth2(self) -> bool:
+        return (self.cfg.get("auth_mode") == "xoauth2"
+                and bool(self.cfg.get("oauth_token")))
+
     def _imap_connect(self) -> imaplib.IMAP4:
         host = self.cfg.get("imap_host", "")
         port = int(self.cfg.get("imap_port", 993) or 993)
         user = self.cfg.get("username", "")
+        xoauth = self._xoauth2()
         pw = self.cfg.get("password", "")
-        if not (host and user and pw):
-            raise RuntimeError("IMAP host/username/password not configured")
+        if not (host and user and (xoauth or pw)):
+            raise RuntimeError("IMAP host/username/credential not configured")
         if self.cfg.get("imap_ssl", True):
             M = imaplib.IMAP4_SSL(host, port, ssl_context=ssl.create_default_context())
         else:
             M = imaplib.IMAP4(host, port)
-        M.login(user, pw)
+        if xoauth:
+            # imaplib base64-encodes the bytes the callback returns.
+            M.authenticate(
+                "XOAUTH2",
+                lambda _: _xoauth2_bytes(user, self.cfg["oauth_token"]))
+        else:
+            M.login(user, pw)
         return M
 
     def _smtp_connect(self) -> smtplib.SMTP:
         host = self.cfg.get("smtp_host", "")
         port = int(self.cfg.get("smtp_port", 587) or 587)
         user = self.cfg.get("username", "")
+        xoauth = self._xoauth2()
         pw = self.cfg.get("password", "")
-        if not (host and user and pw):
-            raise RuntimeError("SMTP host/username/password not configured")
+        if not (host and user and (xoauth or pw)):
+            raise RuntimeError("SMTP host/username/credential not configured")
         if int(port) == 465:
             S = smtplib.SMTP_SSL(host, port, context=ssl.create_default_context(), timeout=30)
         else:
             S = smtplib.SMTP(host, port, timeout=30)
             if self.cfg.get("smtp_tls", True):
                 S.starttls(context=ssl.create_default_context())
-        S.login(user, pw)
+        if xoauth:
+            S.ehlo()
+            b64 = base64.b64encode(
+                _xoauth2_bytes(user, self.cfg["oauth_token"])).decode()
+            code, resp = S.docmd("AUTH", "XOAUTH2 " + b64)
+            if code == 334:           # server wants the (base64) error read back
+                code, resp = S.docmd("")
+            if code != 235:
+                raise smtplib.SMTPAuthenticationError(code, resp)
+        else:
+            S.login(user, pw)
         return S
 
     # ── test ─────────────────────────────────────────────────────────────────

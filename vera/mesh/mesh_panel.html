@@ -1,0 +1,952 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Vera — Mesh</title>
+<style>
+:root{
+  --bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;
+  --border:#3a3530;--border2:#4a4540;
+  --acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--acc4:#9e8fa0;
+  --ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;--info:#5a8fc9;
+  --text:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;
+  --mono:'JetBrains Mono','Fira Mono',monospace;
+  --sans:'Inter','IBM Plex Sans',system-ui,sans-serif;
+  --radius:5px;--radius-sm:3px;color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:13px}
+body{display:flex;flex-direction:column;overflow:hidden}
+.hdr{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--bg1);flex-shrink:0}
+.hdr h1{font-size:14px;font-weight:600;color:var(--acc);letter-spacing:.3px}
+.hdr .sub{font-size:10px;color:var(--dim2)}
+.hdr .tx{margin-left:auto;display:flex;gap:5px;align-items:center}
+.tx .chip{font-size:9px;padding:2px 7px;border-radius:10px;border:1px solid var(--border);color:var(--dim2)}
+.tx .chip.on{color:var(--ok);border-color:var(--ok)}
+.tx .chip.off{color:var(--dim);opacity:.6}
+.wrap{flex:1;display:flex;min-height:0}
+.side{width:312px;flex-shrink:0;border-right:1px solid var(--border);overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:10px}
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.insp{width:340px;flex-shrink:0;border-left:1px solid var(--border);overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:10px}
+.card{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);padding:10px}
+.card h2{font-size:11px;font-weight:600;color:var(--acc2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;gap:6px}
+label{font-size:10px;color:var(--dim2);display:block;margin-bottom:3px}
+.row{display:flex;align-items:center;gap:6px;margin-bottom:7px}
+.row label{margin-bottom:0;min-width:58px}
+input,select,textarea{background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:5px 7px;border-radius:var(--radius-sm);font-family:var(--sans);font-size:11px;width:100%}
+textarea{font-family:var(--mono);resize:vertical;min-height:54px}
+input[type=checkbox]{width:auto}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;padding:5px 11px;border-radius:var(--radius-sm);
+  background:var(--bg2);border:1px solid var(--border2);color:var(--text);font-size:11px;cursor:pointer;font-family:var(--sans)}
+.btn:hover{border-color:var(--acc);color:var(--acc)}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:#10201c;font-weight:600}
+.btn.primary:hover{filter:brightness(1.1);color:#10201c}
+.btn.sm{padding:3px 7px;font-size:10px}
+.btn.danger:hover{border-color:var(--err);color:var(--err)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.status{font-size:10px;color:var(--dim2);margin-top:6px;min-height:13px;word-break:break-word}
+.status.ok{color:var(--ok)}.status.err{color:var(--err)}.status.warn{color:var(--warn)}
+.muted{color:var(--dim2);font-size:10px}
+.pill{display:inline-block;background:var(--bg0);border:1px solid var(--border);border-radius:10px;padding:1px 6px;font-size:9px;color:var(--dim2);margin:1px}
+.pill.mod{border-color:var(--acc4);color:var(--acc4)}
+/* node list */
+.nlist{display:flex;flex-direction:column;gap:4px}
+.nitem{padding:6px 7px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg0);cursor:pointer}
+.nitem:hover{border-color:var(--acc)}
+.nitem.sel{border-color:var(--acc);background:var(--bg2)}
+.nitem .nt{display:flex;align-items:center;gap:6px;justify-content:space-between}
+.nitem .nm{font-size:11.5px;color:var(--text);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;display:inline-block}
+.dot.online{background:var(--ok)}.dot.stale{background:var(--warn)}.dot.offline{background:var(--err)}.dot.new{background:var(--info)}
+/* graph */
+.toolbar{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--border);background:var(--bg1);flex-wrap:wrap}
+#graphWrap{flex:1;position:relative;overflow:hidden;background:
+  radial-gradient(circle at 50% 45%, #201d1a 0%, var(--bg0) 70%)}
+#graph{width:100%;height:100%;display:block;cursor:grab}
+.legend{position:absolute;left:10px;bottom:10px;background:rgba(24,22,20,.82);border:1px solid var(--border);border-radius:var(--radius-sm);padding:7px 9px;font-size:9.5px;color:var(--dim2);display:flex;gap:12px}
+.legend span{display:inline-flex;align-items:center;gap:4px}
+.bcast{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.bcast input,.bcast select{width:auto}
+table{width:100%;border-collapse:collapse;font-size:10.5px}
+th{text-align:left;color:var(--dim2);font-weight:500;padding:3px 5px;border-bottom:1px solid var(--border);font-size:9px;text-transform:uppercase}
+td{padding:3px 5px;border-bottom:1px solid var(--bg2);vertical-align:middle}
+.jrow .st{font-size:9px}
+.st.done{color:var(--ok)}.st.error{color:var(--err)}.st.sent{color:var(--info)}.st.queued{color:var(--warn)}
+.modrow{display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--bg2)}
+.modrow .mn{flex:1;font-size:11px}
+.spark{width:100%;height:34px;background:var(--bg0);border:1px solid var(--border);border-radius:var(--radius-sm)}
+.tele-metric{display:flex;justify-content:space-between;font-size:10.5px;padding:2px 0}
+.tele-metric b{color:var(--acc2);font-family:var(--mono)}
+.fw-links{display:flex;gap:5px;flex-wrap:wrap}
+code{font-family:var(--mono);font-size:10px;background:var(--bg0);border:1px solid var(--border);border-radius:3px;padding:1px 4px;color:var(--acc3)}
+</style>
+<link rel="stylesheet" href="/ui/vera-panel.css">
+</head>
+<body>
+<div class="hdr">
+  <h1>🛰️ Mesh</h1>
+  <span class="sub">ESP32 fleet — enroll, send work, stream sensors, kiosk &amp; control</span>
+  <div class="tx" id="txBar"></div>
+</div>
+
+<div class="wrap">
+  <!-- ── Left: onboarding + node list ── -->
+  <div class="side">
+    <div class="card">
+      <h2>Flash / Onboard</h2>
+      <label>Server URL <span class="muted">(baked into firmware &amp; provisioning — set a Twingate/LAN URL the node can reach)</span></label>
+      <div class="row" style="gap:4px">
+        <input id="srvUrl" placeholder="http://host:8000" onchange="updateFwLinks()">
+        <button class="btn sm" onclick="saveSettings()" title="Remember across reboots">💾</button>
+      </div>
+      <label>Wi-Fi profile <span class="muted">(saved, sealed; reused for provisioning)</span></label>
+      <div class="row" style="gap:4px">
+        <input id="wifiSsid" placeholder="SSID" style="flex:1">
+        <input id="wifiPass" type="password" placeholder="password" style="flex:1">
+      </div>
+      <div class="status" id="setStatus" style="margin:0 0 4px"></div>
+
+      <label>USB device</label>
+      <div class="row" style="gap:5px;flex-wrap:wrap">
+        <button class="btn sm" id="serBtn" onclick="serialConnect()">🔌 Connect</button>
+        <button class="btn sm" id="detectBtn" onclick="detectChip()" disabled>Detect</button>
+        <button class="btn sm" id="provBtn" onclick="serialProvision()" disabled>Wi-Fi…</button>
+        <button class="btn sm" id="bridgeBtn" onclick="toggleBridge()" disabled
+                title="Relay this USB board to Vera over the serial cable — use when the board can't reach the server over Wi-Fi (firewall)">🌉 Bridge</button>
+      </div>
+
+      <label style="margin-top:7px">Firmware / tool</label>
+      <select id="fwSel" style="margin-bottom:5px"><option>loading…</option></select>
+      <div class="row" style="gap:5px;flex-wrap:wrap">
+        <button class="btn sm primary" id="flashBtn" onclick="flashSelected()" disabled>⚡ Flash</button>
+        <button class="btn sm" id="pushBtn" onclick="pushSelected()" disabled title="Send to selected node over Wi-Fi (OTA)">📡 OTA→node</button>
+        <button class="btn sm" id="eraseBtn" onclick="eraseChip()" disabled>Erase</button>
+        <button class="btn sm" id="uploadBtn" onclick="document.getElementById('binFile').click()">Upload .bin</button>
+        <input type="file" id="binFile" accept=".bin" style="display:none" onchange="uploadBin(this)">
+      </div>
+      <div id="flashBar" style="display:none;height:6px;background:var(--bg3);border-radius:3px;margin-top:6px;overflow:hidden">
+        <div id="flashBarFill" style="height:100%;width:0%;background:var(--acc);transition:width .2s"></div></div>
+      <div class="status" id="serStatus">Connect a USB ESP32 to flash firmware, push a MicroPython worker, provision Wi-Fi, or relay it into the mesh.</div>
+
+      <details style="margin-top:7px"><summary class="muted" style="cursor:pointer">Serial console</summary>
+        <pre id="serConsole" style="height:120px;overflow:auto;background:var(--bg0);border:1px solid var(--border);border-radius:3px;padding:6px;font-family:var(--mono);font-size:10px;white-space:pre-wrap;margin-top:5px;color:var(--dim2)"></pre>
+        <div class="row" style="margin-top:4px;gap:4px">
+          <input id="serInput" placeholder='send line — JSON job or REPL command' onkeydown="if(event.key==='Enter')serialSend()">
+          <button class="btn sm" onclick="serialSend()">Send</button>
+        </div>
+      </details>
+      <details style="margin-top:4px"><summary class="muted" style="cursor:pointer">View firmware source</summary>
+        <div class="fw-links" style="margin-top:5px">
+          <a class="btn sm" id="fwArduino" target="_blank">Arduino</a>
+          <a class="btn sm" id="fwMicro" target="_blank">MicroPython</a>
+          <a class="btn sm" id="fwIdf" target="_blank">ESP-IDF</a>
+        </div>
+      </details>
+    </div>
+
+    <div class="card" style="flex:1;min-height:120px;display:flex;flex-direction:column">
+      <h2>Nodes <span class="muted" id="nodeCount" style="margin-left:auto"></span></h2>
+      <input id="nodeSearch" placeholder="filter nodes…" oninput="renderList()" style="margin-bottom:7px">
+      <div class="nlist" id="nodeList"><span class="muted">Loading…</span></div>
+    </div>
+  </div>
+
+  <!-- ── Center: node graph ── -->
+  <div class="main">
+    <div class="toolbar">
+      <strong style="font-size:11px;color:var(--acc2)">TOPOLOGY</strong>
+      <button class="btn sm" onclick="refresh()">⟳ Refresh</button>
+      <button class="btn sm" onclick="resetLayout()">Reset layout</button>
+      <span class="muted" id="graphMeta" style="margin-left:6px"></span>
+      <div class="bcast" style="margin-left:auto">
+        <span class="muted">Broadcast</span>
+        <select id="bcType">
+          <option value="identify">identify</option>
+          <option value="reboot">reboot</option>
+          <option value="read_sensor">read_sensor</option>
+          <option value="alert">alert</option>
+        </select>
+        <input id="bcModule" placeholder="module (any)" style="width:96px">
+        <button class="btn sm" onclick="broadcast()">Send all</button>
+      </div>
+    </div>
+    <div id="graphWrap">
+      <svg id="graph"></svg>
+      <div class="legend">
+        <span><i class="dot online"></i>online</span>
+        <span><i class="dot stale"></i>stale</span>
+        <span><i class="dot offline"></i>offline</span>
+        <span><i class="dot new"></i>new</span>
+        <span style="color:var(--dim)">edge = mesh uplink</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Right: inspector ── -->
+  <div class="insp" id="inspector">
+    <div class="card"><span class="muted">Select a node to inspect, configure modules and send work.</span></div>
+  </div>
+</div>
+
+<script>
+const BASE = window.parent?._veraBase || '';
+let _nodes = [];
+let _graph = {nodes:[],edges:[]};
+let _sel = null;
+let _drag = {};          // id -> {x,y} manual positions
+let _pollTimer = null;
+let _editingCfg = false;
+let _serPort = null, _serReader = null, _serWriter = null, _serBusy = false;
+let _catalog = [], _esptool = null, _settings = {}, _usbConnected = false;
+let _bridgeNodeId = null, _bridgeTimer = null;
+
+async function api(path, method='GET', body=null, timeoutMs=30000){
+  const opts={method,headers:{'Content-Type':'application/json'}};
+  if(body) opts.body=JSON.stringify(body);
+  let ctl=null,timer=null;
+  if(typeof AbortController!=='undefined'){ctl=new AbortController();opts.signal=ctl.signal;
+    timer=setTimeout(()=>{try{ctl.abort();}catch(e){}},timeoutMs);}
+  try{
+    const r=await fetch(BASE+path,opts);
+    const t=await r.text(); if(timer)clearTimeout(timer);
+    if(!r.ok) return {error:'HTTP '+r.status};
+    return t.trim()?JSON.parse(t):null;
+  }catch(e){ if(timer)clearTimeout(timer);
+    return {error:(e&&e.name==='AbortError')?'timeout':String(e&&e.message||e)}; }
+}
+function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function setStatus(id,msg,kind){const el=document.getElementById(id);if(!el)return;el.textContent=msg;el.className='status'+(kind?' '+kind:'');}
+function ago(iso){ if(!iso) return '—'; const s=(Date.now()-Date.parse(iso))/1000;
+  if(s<60) return Math.round(s)+'s'; if(s<3600) return Math.round(s/60)+'m'; if(s<86400) return Math.round(s/3600)+'h'; return Math.round(s/86400)+'d'; }
+
+// ── Init ────────────────────────────────────────────────────────────────────
+async function init(){
+  await loadSettings();
+  updateFwLinks();
+  if(!('serial' in navigator)){
+    document.getElementById('serBtn').disabled = true;
+    setStatus('serStatus','Web Serial unsupported here — use Chrome/Edge over https or localhost.','warn');
+  } else {
+    navigator.serial.addEventListener('disconnect', ev=>{
+      if(_serPort && ev.target===_serPort){ setStatus('serStatus','USB disconnected — click Connect to reattach','warn'); cleanupSerial(); }
+    });
+  }
+  await loadCatalog();
+  await refresh();
+  _pollTimer = setInterval(refresh, 3000);
+}
+function serverUrl(){ return (document.getElementById('srvUrl').value||'').trim() || location.origin; }
+function updateFwLinks(){
+  const baked='&server='+encodeURIComponent(serverUrl()), o=location.origin;
+  document.getElementById('fwArduino').href = o+'/mesh/firmware?flavor=arduino'+baked;
+  document.getElementById('fwMicro').href   = o+'/mesh/firmware?flavor=micropython'+baked;
+  document.getElementById('fwIdf').href     = o+'/mesh/firmware?flavor=esp-idf'+baked;
+}
+async function loadSettings(){
+  const s=await api('/mesh/settings'); _settings=(s&&!s.error)?s:{};
+  document.getElementById('srvUrl').value = _settings.server_url || location.origin;
+  if(_settings.wifi_ssid) document.getElementById('wifiSsid').value=_settings.wifi_ssid;
+  if(_settings.has_wifi_password) document.getElementById('wifiPass').placeholder='•••••••• (saved)';
+  if(_settings.secrets===false) setStatus('setStatus','⚠ install cryptography to seal Wi-Fi passwords','warn');
+}
+async function saveSettings(){
+  const body={server_url:serverUrl(), wifi_ssid:(document.getElementById('wifiSsid').value||'').trim()};
+  const pw=document.getElementById('wifiPass').value; if(pw) body.wifi_password=pw;
+  const r=await api('/mesh/settings/set','POST',body);
+  if(r&&r.ok){ document.getElementById('wifiPass').value=''; await loadSettings(); updateFwLinks();
+    setStatus('setStatus','saved ✓ — remembered across reboots','ok'); }
+  else setStatus('setStatus',(r&&r.error)||'save failed','err');
+}
+
+async function loadCatalog(){
+  const r = await api('/mesh/firmware/catalog');
+  _catalog = (r && r.artifacts) || [];
+  const sel = document.getElementById('fwSel');
+  sel.innerHTML = _catalog.map((a,i)=>`<option value="${i}">${esc(a.label||a.id)}</option>`).join('')
+    || '<option value="">no firmware in catalog</option>';
+  // flash/erase acquire the USB port on demand; OTA targets the selected node — enable now
+  if('serial' in navigator){ ['flashBtn','eraseBtn'].forEach(id=>{const e=document.getElementById(id); if(e)e.disabled=false;}); }
+  const pb=document.getElementById('pushBtn'); if(pb) pb.disabled=false;
+}
+
+async function refresh(){
+  const [g,n] = await Promise.all([api('/mesh/graph'), api('/mesh/nodes')]);
+  if(g && !g.error) _graph = g;
+  if(n && !n.error){ _nodes = n.nodes||[]; renderTransports(n.transports||{}); }
+  document.getElementById('graphMeta').textContent = (_graph.count||0)+' nodes';
+  document.getElementById('nodeCount').textContent = (_nodes.length||0);
+  renderList(); renderGraph();
+  // Don't re-render the inspector while the user is typing in it (the 3s poll was
+  // recreating inputs and stealing focus from the web-fetch box etc.).
+  if(_sel && !_editingCfg && !inspectorFocused()) loadNode(_sel, true);
+}
+function inspectorFocused(){
+  const i=document.getElementById('inspector'), a=document.activeElement;
+  return !!(i && a && i.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
+}
+
+function renderTransports(tx){
+  const order=[['http','HTTP'],['ws','WebSocket'],['mqtt','MQTT'],['serial','Serial']];
+  document.getElementById('txBar').innerHTML = order.map(([k,lbl])=>
+    `<span class="chip ${tx[k]?'on':'off'}" title="${tx[k]?'available':'not configured'}">${lbl}</span>`).join('');
+}
+
+// ── Node list ────────────────────────────────────────────────────────────────
+function renderList(){
+  const q=(document.getElementById('nodeSearch').value||'').toLowerCase();
+  const el=document.getElementById('nodeList');
+  const rows=_nodes.filter(n=>!q || (n.name||'').toLowerCase().includes(q) || (n.node_id||'').toLowerCase().includes(q)
+     || (n.role||'').toLowerCase().includes(q));
+  if(!rows.length){ el.innerHTML='<span class="muted">No nodes yet — onboard one above.</span>'; return; }
+  el.innerHTML = rows.map(n=>{
+    const mods=Object.keys(n.modules||{}).slice(0,4).map(m=>`<span class="pill mod">${esc(m)}</span>`).join('');
+    return `<div class="nitem ${_sel===n.node_id?'sel':''}" onclick="loadNode('${esc(n.node_id)}')">
+      <div class="nt"><span class="nm"><i class="dot ${n.status}"></i> ${esc(n.name||n.node_id)}</span>
+        <span class="muted">${ago(n.last_seen)}</span></div>
+      <div style="margin-top:3px">${mods}<span class="pill">${esc((n.channels||[]).join('/')||'—')}</span></div>
+    </div>`;
+  }).join('');
+}
+
+// ── Node graph (radial tree by reported uplink) ──────────────────────────────
+function radialLayout(nodes, cx, cy, ring){
+  const byId={}; nodes.forEach(n=>byId[n.id]=n);
+  const children={'__hub__':[]};
+  nodes.forEach(n=>{ if(n.id==='__hub__')return;
+    const p=(n.parent_id && byId[n.parent_id])?n.parent_id:'__hub__';
+    (children[p]=children[p]||[]).push(n.id); });
+  const pos={'__hub__':{x:cx,y:cy}};
+  (function place(id,a0,a1,depth){
+    if(id!=='__hub__'){ const a=(a0+a1)/2;
+      pos[id]={x:cx+Math.cos(a)*ring*depth, y:cy+Math.sin(a)*ring*depth}; }
+    const kids=children[id]||[]; const n=kids.length; if(!n) return;
+    const span=(a1-a0)||(Math.PI*2);
+    kids.forEach((k,i)=>place(k, a0+span*i/n, a0+span*(i+1)/n, depth+1));
+  })('__hub__',0,Math.PI*2,0);
+  return pos;
+}
+const STC={online:'#6db87a',stale:'#c9a35a',offline:'#c96b6b',new:'#5a8fc9',hub:'#5a9e8f'};
+function _graphForRender(){
+  // overlay the USB port this browser has open (so a not-yet-enrolled board still shows)
+  const nodes=(_graph.nodes||[]).slice(), edges=(_graph.edges||[]).slice();
+  if(_usbConnected && !nodes.some(n=>n.id==='__usb__')){
+    nodes.push({id:'__usb__', label:'USB (browser)', kind:'usb', status:'online', channels:['serial']});
+    edges.push({from:'__usb__', to:'__hub__', channel:'serial'});
+  }
+  return {nodes, edges};
+}
+function renderGraph(){
+  const svg=document.getElementById('graph');
+  const W=svg.clientWidth||800, H=svg.clientHeight||600;
+  svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+  const ring=Math.max(90, Math.min(W,H)/2/ (1+maxDepth()) );
+  const G=_graphForRender();
+  const pos=radialLayout(G.nodes, W/2, H/2, ring);
+  for(const id in _drag) if(pos[id]) pos[id]=_drag[id];
+  let svgEdges='', svgNodes='';
+  G.edges.forEach(e=>{
+    const a=pos[e.from], b=pos[e.to]; if(!a||!b) return;
+    const dash=e.channel==='serial'?' stroke-dasharray="4 3"':'';
+    svgEdges+=`<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="#3a3530" stroke-width="1.4"${dash}/>`;
+  });
+  G.nodes.forEach(n=>{
+    const p=pos[n.id]; if(!p) return;
+    if(n.id==='__hub__'){
+      svgNodes+=`<g class="gn" data-id="__hub__" transform="translate(${p.x},${p.y})">
+        <circle r="20" fill="#23302c" stroke="${STC.hub}" stroke-width="2"/>
+        <text text-anchor="middle" dy="4" font-size="14">🛰️</text>
+        <text text-anchor="middle" dy="34" font-size="10" fill="#8a7e70">Vera Hub</text></g>`;
+      return;
+    }
+    if(n.kind==='usb' || n.kind==='serial_port'){
+      svgNodes+=`<g class="gn" data-id="${esc(n.id)}" transform="translate(${p.x},${p.y})">
+        <rect x="-15" y="-12" width="30" height="24" rx="4" fill="#201d1a" stroke="${STC.online}" stroke-width="2" stroke-dasharray="4 3"/>
+        <text text-anchor="middle" dy="4" font-size="12">🔌</text>
+        <text text-anchor="middle" dy="26" font-size="9" fill="#8a7e70">${esc((n.label||'serial').slice(0,16))}</text></g>`;
+      return;
+    }
+    const col=STC[n.status]||'#888';
+    const sel=_sel===n.id?`<circle r="19" fill="none" stroke="#5a9e8f" stroke-width="1.5" stroke-dasharray="3 3"/>`:'';
+    const ch=(n.channels||[])[0]||'';
+    svgNodes+=`<g class="gn" data-id="${esc(n.id)}" transform="translate(${p.x},${p.y})" style="cursor:pointer">
+      ${sel}
+      <circle r="13" fill="#201d1a" stroke="${col}" stroke-width="2.4"/>
+      <circle r="4" cx="9" cy="-9" fill="${col}"/>
+      <text text-anchor="middle" dy="4" font-size="11" fill="#ddd5c8">${esc((n.label||'?')[0].toUpperCase())}</text>
+      <text text-anchor="middle" dy="27" font-size="9.5" fill="#ddd5c8">${esc((n.label||n.id).slice(0,14))}</text>
+      <text text-anchor="middle" dy="38" font-size="8" fill="#6a6058">${esc(ch)} · ${(n.modules||[]).length}m</text>
+    </g>`;
+  });
+  svg.innerHTML = svgEdges + svgNodes;
+  // interactions
+  svg.querySelectorAll('.gn').forEach(g=>{
+    const id=g.getAttribute('data-id');
+    g.addEventListener('mousedown', ev=>startDrag(ev,id,svg,pos));
+    g.addEventListener('click', ev=>{ if(g._moved) return;
+      if(id==='__hub__'||id==='__usb__'||id.indexOf('serial:')===0){ document.getElementById('serBtn').focus(); return; }
+      loadNode(id); });
+  });
+}
+function maxDepth(){
+  const byId={}; _graph.nodes.forEach(n=>byId[n.id]=n); let mx=1;
+  _graph.nodes.forEach(n=>{ let d=0,c=n,seen=new Set();
+    while(c&&c.parent_id&&byId[c.parent_id]&&!seen.has(c.id)){seen.add(c.id);c=byId[c.parent_id];d++;if(d>12)break;}
+    mx=Math.max(mx,d+1); });
+  return mx;
+}
+function startDrag(ev,id,svg,pos){
+  if(id==='__hub__') return; ev.preventDefault();
+  const g=ev.currentTarget; g._moved=false;
+  const move=e=>{ g._moved=true;
+    const pt=svgPoint(svg,e.clientX,e.clientY); _drag[id]={x:pt.x,y:pt.y}; renderGraph(); };
+  const up=()=>{ document.removeEventListener('mousemove',move); document.removeEventListener('mouseup',up); };
+  document.addEventListener('mousemove',move); document.addEventListener('mouseup',up);
+}
+function svgPoint(svg,cx,cy){ const r=svg.getBoundingClientRect();
+  const vb=svg.viewBox.baseVal; return {x:(cx-r.left)/r.width*vb.width, y:(cy-r.top)/r.height*vb.height}; }
+function resetLayout(){ _drag={}; renderGraph(); }
+
+// ── Inspector ────────────────────────────────────────────────────────────────
+async function loadNode(id, quiet){
+  _sel=id; if(!quiet){ renderList(); renderGraph(); }
+  const r=await api('/mesh/node?node_id='+encodeURIComponent(id));
+  if(!r||r.error){ document.getElementById('inspector').innerHTML=`<div class="card"><span class="status err">${esc(r&&r.error||'load failed')}</span></div>`; return; }
+  renderInspector(r);
+}
+function renderInspector(r){
+  const n=r.node, mods=n.modules||{}, cfg=n.config||{};
+  const tele=n.telemetry||{};
+  const insp=document.getElementById('inspector');
+  const allMods=['sensor','web_fetch','watch','alert','kiosk','control'];
+  insp.innerHTML = `
+  <div class="card">
+    <h2><i class="dot ${n.status}"></i> ${esc(n.name||n.node_id)}
+      <button class="btn sm" style="margin-left:auto" onclick="renameNode('${esc(n.node_id)}','${esc(n.name||'')}')">✎</button></h2>
+    <div class="muted" style="margin-bottom:6px">
+      <code>${esc(n.node_id)}</code> · ${esc(n.board||'esp32')} · fw ${esc(n.fw_version||'?')}<br>
+      ${esc(n.ip||'')} ${n.rssi!=null?('· '+n.rssi+'dBm'):''} · seen ${ago(n.last_seen)} ago<br>
+      transports: ${(n.channels||[]).map(c=>`<span class="pill">${esc(c)}</span>`).join('')||'—'}
+      ${n.role?`· role <span class="pill">${esc(n.role)}</span>`:''}
+    </div>
+    <div class="row" style="gap:5px;flex-wrap:wrap;margin:0">
+      <button class="btn sm" onclick="act('identify','${esc(n.node_id)}')">💡 Identify</button>
+      <button class="btn sm" onclick="act('reboot','${esc(n.node_id)}')">↻ Reboot</button>
+      <button class="btn sm" onclick="readSensor('${esc(n.node_id)}')">📊 Read now</button>
+      <button class="btn sm danger" onclick="forgetNode('${esc(n.node_id)}')">🗑 Forget</button>
+    </div>
+    <div class="status" id="actStatus"></div>
+  </div>
+
+  <div class="card">
+    <h2>Modules</h2>
+    <div id="modList">${allMods.map(m=>{
+      const en = (mods[m] && mods[m].enabled!==false) || (cfg[m] && cfg[m].enabled);
+      const avail = !!mods[m];
+      return `<div class="modrow">
+        <input type="checkbox" data-mod="${m}" ${en?'checked':''} ${avail?'':''}>
+        <span class="mn">${m} ${avail?'':'<span class="muted">(not on device)</span>'}</span>
+      </div>`;}).join('')}</div>
+    <label style="margin-top:6px">Config (JSON)</label>
+    <textarea id="cfgJson" onfocus="_editingCfg=true" onblur="_editingCfg=false">${esc(JSON.stringify(cfg,null,2))}</textarea>
+    <button class="btn primary sm" style="margin-top:6px;width:100%" onclick="saveConfig('${esc(n.node_id)}')">Save &amp; push config</button>
+    <div class="status" id="cfgStatus"></div>
+  </div>
+
+  ${mods.web_fetch||cfg.web_fetch?moduleWebFetch(n):''}
+  ${mods.kiosk||cfg.kiosk?moduleKiosk(n):''}
+  ${mods.control||cfg.control?moduleControl(n):''}
+  ${mods.alert||cfg.alert?moduleAlert(n):''}
+  ${moduleIO(n)}
+  ${moduleWifi(n, r.jobs)}
+  ${moduleWorker(n)}
+
+  <div class="card">
+    <h2>Telemetry</h2>
+    ${Object.keys(tele).length?'':'<span class="muted">No readings yet.</span>'}
+    <div id="teleLatest">${Object.entries(tele).map(([k,v])=>
+        `<div class="tele-metric"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('')}</div>
+    <div id="sparks"></div>
+  </div>
+
+  <div class="card">
+    <h2>Jobs</h2>
+    <table><thead><tr><th>type</th><th>status</th><th>when</th></tr></thead><tbody>
+    ${(r.jobs||[]).slice(0,14).map(j=>`<tr class="jrow"><td>${esc(j.type)}</td>
+       <td class="st ${esc(j.status)}">${esc(j.status)}</td><td class="muted">${ago(j.created_at)}</td></tr>`).join('')
+       || '<tr><td colspan="3" class="muted">No jobs.</td></tr>'}
+    </tbody></table>
+  </div>`;
+  drawSparks(r.telemetry||[]);
+}
+
+function moduleWebFetch(n){return `<div class="card"><h2>🌐 Web Fetch</h2>
+  <div class="row"><input id="wfUrl" placeholder="https://example.com/api"></div>
+  <button class="btn sm" onclick="webFetch('${esc(n.node_id)}')">Fetch on node</button></div>`;}
+function moduleKiosk(n){return `<div class="card"><h2>🖥 Kiosk</h2>
+  <div class="row"><label>URL</label><input id="kioUrl" placeholder="https://…"></div>
+  <div class="row"><label>Text</label><input id="kioText" placeholder="or a message"></div>
+  <div class="row"><label>Bright</label><input id="kioBri" type="range" min="0" max="100" value="80"></div>
+  <button class="btn sm" onclick="kioskSet('${esc(n.node_id)}')">Set display</button></div>`;}
+function moduleControl(n){return `<div class="card"><h2>🎚 Control</h2>
+  <div class="row"><label>Channel</label><input id="ctlCh" placeholder="relay1 / 26"></div>
+  <div class="row"><label>Value</label>
+    <select id="ctlVal"><option value="1">on / 1</option><option value="0">off / 0</option><option value="toggle">toggle</option></select></div>
+  <button class="btn sm" onclick="controlSet('${esc(n.node_id)}')">Actuate</button></div>`;}
+function moduleAlert(n){return `<div class="card"><h2>🔔 Alert</h2>
+  <div class="row"><input id="alMsg" placeholder="message…"></div>
+  <div class="row"><label>Level</label><select id="alLvl"><option>info</option><option>warn</option><option>crit</option></select>
+    <label style="min-width:auto;margin-left:6px"><input type="checkbox" id="alSnd" checked> sound</label></div>
+  <button class="btn sm" onclick="alertNode('${esc(n.node_id)}')">Send alert</button></div>`;}
+function moduleIO(n){return `<div class="card"><h2>🔌 IO control</h2>
+  <div class="row" style="gap:4px">
+    <input id="ioPin" placeholder="pin (e.g. 26)" style="width:84px">
+    <select id="ioMode" style="width:auto"><option value="digital">digital</option><option value="pwm">pwm</option></select>
+    <input id="ioVal" placeholder="value / 0-255" style="width:90px">
+  </div>
+  <div class="row" style="gap:5px;margin:0">
+    <button class="btn sm" onclick="ioSet('${esc(n.node_id)}')">Write</button>
+    <button class="btn sm" onclick="ioRead('${esc(n.node_id)}',false)">Read</button>
+    <button class="btn sm" onclick="ioRead('${esc(n.node_id)}',true)">Read ADC</button>
+  </div>
+  <div class="muted" style="margin-top:4px">Over Wi-Fi or serial — reads return as <code>pinN</code> telemetry.</div></div>`;}
+function moduleWifi(n, jobs){
+  const scan=(jobs||[]).find(j=>j.type==='wifi_scan' && j.result && j.result.aps);
+  const aps=scan?scan.result.aps:null;
+  return `<div class="card"><h2>📶 Wi-Fi</h2>
+  <button class="btn sm" onclick="wifiScan('${esc(n.node_id)}')">Scan networks</button>
+  <span class="muted" id="wifiScanStatus" style="margin-left:6px"></span>
+  ${aps?`<table style="margin-top:6px"><thead><tr><th>SSID</th><th>ch</th><th>rssi</th></tr></thead><tbody>`+
+    aps.slice(0,12).map(a=>`<tr><td>${esc(a.ssid||'(hidden)')}</td><td>${esc(a.channel)}</td><td>${esc(a.rssi)} dBm</td></tr>`).join('')+
+    `</tbody></table><div class="muted" style="margin-top:3px">${aps.length} APs · ${ago(scan.created_at)} ago</div>`:''}
+  <div class="muted" style="margin-top:4px">Channel-state info (CSI) needs custom ESP-IDF firmware — not in the MicroPython build.</div></div>`;}
+function moduleWorker(n){
+  const tasks=((n.config&&n.config.worker&&n.config.worker.tasks)||[]);
+  return `<div class="card"><h2>⚙ Worker tasks</h2>
+  ${tasks.length?tasks.map(t=>`<div class="modrow"><span class="mn">${esc(t.type)} · every ${esc(t.interval_s||60)}s</span></div>`).join(''):'<span class="muted">No recurring tasks.</span>'}
+  <div class="row" style="gap:4px;margin-top:6px">
+    <select id="wkType" style="width:auto"><option value="read_sensor">read_sensor</option><option value="io_read">io_read</option><option value="web_fetch">web_fetch</option></select>
+    <input id="wkArg" placeholder="pin / url (optional)" style="flex:1">
+    <input id="wkEvery" type="number" value="60" style="width:62px"><span class="muted">s</span>
+  </div>
+  <div class="row" style="gap:5px;margin:0">
+    <button class="btn sm" onclick="assignWorker('${esc(n.node_id)}')">Assign</button>
+    <button class="btn sm danger" onclick="clearWorker('${esc(n.node_id)}')">Clear all</button>
+  </div></div>`;}
+
+function drawSparks(rows){
+  // group by metric, build mini sparkline of numeric values (oldest→newest)
+  const by={}; rows.slice().reverse().forEach(r=>{ if(r.value==null)return; (by[r.metric]=by[r.metric]||[]).push(r.value); });
+  const host=document.getElementById('sparks'); if(!host) return;
+  host.innerHTML=Object.entries(by).map(([m,vals])=>{
+    if(vals.length<2) return '';
+    const mn=Math.min(...vals), mx=Math.max(...vals), rng=(mx-mn)||1, W=300,H=34;
+    const pts=vals.map((v,i)=>`${(i/(vals.length-1)*W).toFixed(1)},${(H-2-((v-mn)/rng)*(H-6)).toFixed(1)}`).join(' ');
+    return `<div style="margin-top:6px"><div class="muted">${esc(m)} <span style="float:right">${esc(vals[vals.length-1])}</span></div>
+      <svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+        <polyline points="${pts}" fill="none" stroke="#8fb87a" stroke-width="1.5"/></svg></div>`;
+  }).join('');
+}
+
+// ── Actions ──────────────────────────────────────────────────────────────────
+async function act(kind,id){ const r=await api('/mesh/'+kind,'POST',{node_id:id});
+  setStatus('actStatus', r&&r.ok?(kind+' queued ('+r.job_id+')'):(r&&r.error||'failed'), r&&r.ok?'ok':'err'); }
+async function readSensor(id){ const r=await api('/mesh/send','POST',{node_id:id,type:'read_sensor',payload:{}});
+  setStatus('actStatus', r&&r.ok?'read requested':'failed', r&&r.ok?'ok':'err'); }
+async function webFetch(id){ const url=document.getElementById('wfUrl').value.trim(); if(!url)return;
+  const r=await api('/mesh/web_fetch','POST',{node_id:id,url}); setStatus('actStatus', r&&r.ok?'fetch queued':r.error,'ok'); }
+async function kioskSet(id){ const url=document.getElementById('kioUrl').value.trim(), text=document.getElementById('kioText').value.trim(),
+  brightness=parseInt(document.getElementById('kioBri').value);
+  const r=await api('/mesh/kiosk_set','POST',{node_id:id,url,text,brightness}); setStatus('actStatus', r&&r.ok?'kiosk set':r.error, r&&r.ok?'ok':'err'); }
+async function controlSet(id){ const channel=document.getElementById('ctlCh').value.trim(), value=document.getElementById('ctlVal').value;
+  if(!channel)return; const r=await api('/mesh/control_set','POST',{node_id:id,channel,value}); setStatus('actStatus', r&&r.ok?'actuated':r.error, r&&r.ok?'ok':'err'); }
+async function alertNode(id){ const message=document.getElementById('alMsg').value, level=document.getElementById('alLvl').value, sound=document.getElementById('alSnd').checked;
+  const r=await api('/mesh/alert','POST',{node_id:id,message,level,sound}); setStatus('actStatus', r&&r.ok?'alert sent':r.error, r&&r.ok?'ok':'err'); }
+async function ioSet(id){ const pin=document.getElementById('ioPin').value.trim(), mode=document.getElementById('ioMode').value, raw=document.getElementById('ioVal').value;
+  if(pin==='') return; const value=(raw!==''&&!isNaN(+raw))?+raw:raw;
+  const r=await api('/mesh/io/set','POST',{node_id:id, pin:isNaN(+pin)?pin:+pin, mode, value});
+  setStatus('actStatus', r&&r.ok?'io_set queued':(r&&r.error||'failed'), r&&r.ok?'ok':'err'); }
+async function ioRead(id,analog){ const pin=document.getElementById('ioPin').value.trim(); if(pin==='') return;
+  const r=await api('/mesh/io/read','POST',{node_id:id, pin:isNaN(+pin)?pin:+pin, analog});
+  setStatus('actStatus', r&&r.ok?'io_read queued — watch telemetry':(r&&r.error||'failed'), r&&r.ok?'ok':'err'); }
+async function assignWorker(id){
+  const type=document.getElementById('wkType').value, arg=document.getElementById('wkArg').value.trim(), every=parseInt(document.getElementById('wkEvery').value)||60;
+  const payload={}; if(type==='io_read'&&arg) payload.pin=isNaN(+arg)?arg:+arg; if(type==='web_fetch'&&arg) payload.url=arg;
+  const r=await api('/mesh/worker/assign','POST',{node_id:id, task:{type, interval_s:every, payload}});
+  setStatus('actStatus', r&&r.ok?'task assigned':(r&&r.error||'failed'), r&&r.ok?'ok':'err'); if(r&&r.ok) loadNode(id,true); }
+async function clearWorker(id){ const r=await api('/mesh/worker/assign','POST',{node_id:id, replace:true});
+  setStatus('actStatus', r&&r.ok?'tasks cleared':'failed', r&&r.ok?'ok':'err'); if(r&&r.ok) loadNode(id,true); }
+async function wifiScan(id){
+  const s=document.getElementById('wifiScanStatus'); if(s) s.textContent='scanning…';
+  const r=await api('/mesh/wifi/scan','POST',{node_id:id});
+  if(s) s.textContent = r&&r.ok?'queued — results in a few seconds':(r&&r.error||'failed');
+  setTimeout(()=>{ if(!inspectorFocused()) loadNode(id,true); }, 6000);   // show APs once the result returns
+}
+async function saveConfig(id){
+  let cfg; try{ cfg=JSON.parse(document.getElementById('cfgJson').value||'{}'); }catch(e){ setStatus('cfgStatus','invalid JSON','err'); return; }
+  // fold module checkboxes into config.enabled flags
+  document.querySelectorAll('#modList input[data-mod]').forEach(cb=>{
+    const m=cb.getAttribute('data-mod'); cfg[m]=Object.assign({}, cfg[m]||{}, {enabled:cb.checked}); });
+  _editingCfg=false;
+  const r=await api('/mesh/config','POST',{node_id:id,config:cfg,merge:false});
+  setStatus('cfgStatus', r&&r.ok?'saved &amp; pushed':(r&&r.error||'failed'), r&&r.ok?'ok':'err');
+}
+async function renameNode(id,cur){ const name=prompt('Node name:',cur); if(name==null)return;
+  await api('/mesh/update','POST',{node_id:id,name}); refresh(); }
+async function forgetNode(id){ if(!confirm('Forget node '+id+'?'))return;
+  await api('/mesh/forget','POST',{node_id:id,delete_data:true}); _sel=null;
+  document.getElementById('inspector').innerHTML='<div class="card"><span class="muted">Node removed.</span></div>'; refresh(); }
+async function broadcast(){ const type=document.getElementById('bcType').value, module=document.getElementById('bcModule').value.trim();
+  const r=await api('/mesh/broadcast','POST',{type,module}); document.getElementById('graphMeta').textContent=
+    (r&&r.ok)?('sent '+type+' → '+r.count+' nodes'):(r&&r.error||'failed'); setTimeout(refresh,600); }
+
+// ── Web Serial: console, flashing (esptool-js), MicroPython upload, OTA ───────
+function logCon(s){ const el=document.getElementById('serConsole'); if(!el) return;
+  el.textContent=(el.textContent+s).slice(-6000); el.scrollTop=el.scrollHeight;
+  if(/invalid header|0xffffffff|rst:0x[0-9a-f]+ \(.*RTC/i.test(s))
+    setStatus('serStatus','Board has erased/invalid flash — flash a runtime (e.g. MicroPython) first, then push the Vera node.','warn');
+}
+function showBar(on){ const b=document.getElementById('flashBar'); if(b) b.style.display=on?'block':'none'; if(!on) setBar(0); }
+function setBar(f){ const e=document.getElementById('flashBarFill'); if(e) e.style.width=Math.round((f||0)*100)+'%'; }
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+function ab2bstr(buf){ const u=new Uint8Array(buf); let s=''; const ch=0x8000;
+  for(let i=0;i<u.length;i+=ch) s+=String.fromCharCode.apply(null,u.subarray(i,i+ch)); return s; }
+
+async function ensurePort(){ if(!_serPort) _serPort = await navigator.serial.requestPort(); return _serPort; }
+
+// Console (raw read/write). Does NOT block on a "hello" — shows everything, and
+// opportunistically relay-enrols a node if it speaks the Vera JSON protocol.
+async function acquirePort(forceRequest){
+  if(!forceRequest){ const g=await navigator.serial.getPorts(); if(g && g[0]) return g[0]; }
+  return await navigator.serial.requestPort();
+}
+async function openSerial(){
+  if(!_serPort.readable){ await _serPort.open({baudRate:115200}); }   // skip if already open
+  _serWriter=_serPort.writable.getWriter();
+  ['detectBtn','provBtn','flashBtn','eraseBtn','bridgeBtn'].forEach(id=>{const e=document.getElementById(id); if(e)e.disabled=false;});
+  document.getElementById('serBtn').textContent='🔌 Connected';
+  setStatus('serStatus','Connected. Flash, provision Wi-Fi, or 🌉 Bridge over USB. Auto-enrols if it already runs Vera.','ok');
+  _usbConnected=true; renderGraph();
+  readSerialLoop();
+  try{ await _serWriter.write(new TextEncoder().encode(JSON.stringify({cmd:'ping'})+'\n')); }catch(e){}  // elicit a hello
+}
+// Robust (re)connect: after a disconnect the old port handle is stale — release
+// locks, then reuse the granted port or request a fresh one. No more lockout.
+async function serialConnect(){
+  if(!('serial' in navigator)) return;
+  try{
+    if(!_serPort) _serPort=await acquirePort(false);
+    await openSerial();
+  }catch(e1){
+    await cleanupSerial();
+    try{ _serPort=await acquirePort(true); await openSerial(); }
+    catch(e2){ setStatus('serStatus','Serial: '+(e2.message||e2)+' — unplug/replug, then Connect','err'); }
+  }
+}
+async function cleanupSerial(){
+  stopBridge();
+  try{ if(_serReader) await _serReader.cancel(); }catch(e){}
+  try{ if(_serReader) _serReader.releaseLock(); }catch(e){}
+  try{ if(_serWriter) _serWriter.releaseLock(); }catch(e){}
+  _serReader=null; _serWriter=null;
+  try{ if(_serPort && _serPort.readable) await _serPort.close(); }catch(e){}
+  _serPort=null; _usbConnected=false;
+  const b=document.getElementById('serBtn'); if(b) b.textContent='🔌 Connect';
+  ['detectBtn','provBtn','bridgeBtn'].forEach(id=>{const e=document.getElementById(id); if(e)e.disabled=true;});
+  renderGraph();
+}
+// ── USB bridge: relay a USB board to Vera when it can't reach the server ─────
+async function toggleBridge(){
+  if(_bridgeTimer){ stopBridge(); setStatus('serStatus','Bridge stopped','ok'); return; }
+  if(!_serWriter){ setStatus('serStatus','Connect the USB board first','warn'); return; }
+  // Ask the board to stop blocking on Wi-Fi and announce itself, then relay it.
+  try{ await _serWriter.write(new TextEncoder().encode(JSON.stringify({cmd:'serial_mode',on:true})+'\n')); }catch(e){}
+  try{ await _serWriter.write(new TextEncoder().encode(JSON.stringify({cmd:'ping'})+'\n')); }catch(e){}
+  startBridge();
+  const b=document.getElementById('bridgeBtn'); if(b) b.textContent='🌉 Bridging';
+}
+function startBridge(){
+  if(_bridgeTimer) return;
+  const tick=async ()=>{
+    _bridgeTimer=null;
+    if(!_serWriter) return;                       // bridge ended
+    if(_bridgeNodeId){
+      try{
+        const r=await api('/mesh/poll?node_id='+encodeURIComponent(_bridgeNodeId)+'&wait=0','GET',null,8000);
+        if(r && r.jobs && r.jobs.length)
+          await _serWriter.write(new TextEncoder().encode(JSON.stringify({jobs:r.jobs})+'\n'));
+      }catch(e){}
+    }
+    _bridgeTimer=setTimeout(tick, 1500);
+  };
+  _bridgeTimer=setTimeout(tick, 400);
+  setStatus('serStatus', _bridgeNodeId? ('Bridging '+_bridgeNodeId+' ↔ Vera over USB'):'Bridge armed — waiting for the board to announce over serial…','ok');
+}
+function stopBridge(){
+  if(_bridgeTimer){ clearTimeout(_bridgeTimer); _bridgeTimer=null; }
+  try{ if(_serWriter) _serWriter.write(new TextEncoder().encode(JSON.stringify({cmd:'serial_mode',on:false})+'\n')); }catch(e){}
+  const b=document.getElementById('bridgeBtn'); if(b) b.textContent='🌉 Bridge';
+}
+async function readSerialLoop(){
+  const dec=new TextDecoder(); let buf='';
+  try{ _serReader=_serPort.readable.getReader(); }catch(e){ return; }
+  try{
+    while(true){
+      const {value,done}=await _serReader.read(); if(done) break;
+      const text=dec.decode(value,{stream:true}); logCon(text);
+      buf+=text; let nl;
+      while((nl=buf.indexOf('\n'))>=0){ const line=buf.slice(0,nl).trim(); buf=buf.slice(nl+1);
+        if(line && line[0]==='{') handleSerialLine(line); }
+    }
+  }catch(e){ /* reader cancelled for flashing, or port closed */ }
+  finally{ try{ _serReader && _serReader.releaseLock(); }catch(e){} _serReader=null; }
+}
+async function handleSerialLine(line){
+  let msg; try{ msg=JSON.parse(line); }catch(e){ return; }     // ignore boot noise
+  if(msg.node_id) _bridgeNodeId=msg.node_id;                   // learn the node for the bridge
+  if(msg.kind==='hello'){ await api('/mesh/hello','POST',msg);
+    setStatus('serStatus','Enrolled '+(msg.node_id||'node')+' via USB'+(_bridgeTimer?' (bridging)':''),'ok'); refresh(); }
+  else if(msg.kind==='telemetry'){ await api('/mesh/telemetry','POST',msg); }
+  else if(msg.kind==='result'){ await api('/mesh/result','POST',msg); }
+}
+async function serialSend(){
+  const inp=document.getElementById('serInput'); const v=inp.value; if(!v||!_serWriter) return;
+  await _serWriter.write(new TextEncoder().encode(v+'\r\n')); logCon('> '+v+'\n'); inp.value='';
+}
+async function serialProvision(){
+  if(!_serWriter){ setStatus('serStatus','Connect first','warn'); return; }
+  let ssid=(document.getElementById('wifiSsid').value||'').trim() || prompt('Wi-Fi SSID:'); if(!ssid) return;
+  let pass=document.getElementById('wifiPass').value;
+  if(!pass && _settings.has_wifi_password){ const rv=await api('/mesh/settings?reveal=1'); pass=(rv&&rv.wifi_password)||''; }
+  if(!pass) pass=prompt('Wi-Fi password:')||'';
+  const server=serverUrl();
+  await api('/mesh/settings/set','POST',{server_url:server, wifi_ssid:ssid, wifi_password:pass});  // remember across reboots
+  const obj={cmd:'provision', ssid, pass, server, node_id:('esp32-'+Math.random().toString(16).slice(2,8))};
+  await _serWriter.write(new TextEncoder().encode(JSON.stringify(obj)+'\n'));
+  await loadSettings();
+  setStatus('serStatus','Provisioned + saved — node joining over Wi-Fi at '+server,'ok');
+}
+
+// ── esptool-js flashing (loaded lazily from CDN) ────────────────────────────
+async function loadEsptool(){
+  if(_esptool) return _esptool;
+  setStatus('serStatus','loading flasher…');
+  _esptool = await import('https://unpkg.com/esptool-js@0.5/bundle.js');
+  return _esptool;
+}
+async function stopConsole(){
+  try{ if(_serReader){ await _serReader.cancel(); } }catch(e){}
+  try{ if(_serWriter){ _serWriter.releaseLock(); } }catch(e){}
+  _serWriter=null;
+  try{ if(_serPort){ await _serPort.close(); } }catch(e){}
+}
+async function startConsole(){
+  try{ await _serPort.open({baudRate:115200}); }catch(e){}
+  try{ _serWriter=_serPort.writable.getWriter(); readSerialLoop(); }catch(e){}
+}
+async function withEsptool(run){
+  const mod=await loadEsptool(); await ensurePort();
+  const hadConsole=!!_serWriter;
+  if(hadConsole) await stopConsole();
+  const term={clean(){}, writeLine(d){logCon((d||'')+'\n');}, write(d){logCon(d||'');}};
+  const transport=new mod.Transport(_serPort, true);
+  const esp=new mod.ESPLoader({transport, baudrate:460800, romBaudrate:115200, terminal:term});
+  try{
+    const chip= await (esp.main ? esp.main() : esp.main_fn());
+    logCon('\n[chip: '+chip+']\n');
+    return await run(esp, String(chip||''), transport);
+  } finally {
+    try{ await hardReset(esp, transport); }catch(e){}   // boot into the new firmware, not the bootloader
+    try{ await transport.disconnect(); }catch(e){}
+    if(hadConsole) await startConsole();
+  }
+}
+async function hardReset(esp, transport){
+  try{ if(esp && esp.hardReset){ await esp.hardReset(); return; } }catch(e){}
+  try{ await transport.setDTR(false); await sleep(100);     // GPIO0 released
+       await transport.setRTS(true);  await sleep(100);     // EN low (reset)
+       await transport.setRTS(false); }catch(e){}           // release → run
+}
+async function detectChip(){
+  try{ await withEsptool(async (esp,chip)=>{ setStatus('serStatus','Detected '+chip,'ok'); }); }
+  catch(e){ setStatus('serStatus','detect: '+(e.message||e),'err'); }
+}
+async function eraseChip(){
+  if(!confirm('Erase the entire flash?')) return;
+  try{ await withEsptool(async (esp)=>{ setStatus('serStatus','erasing…'); await esp.eraseFlash();
+    setStatus('serStatus','✓ flash erased','ok'); }); }
+  catch(e){ setStatus('serStatus','erase: '+(e.message||e),'err'); }
+}
+function selectedArtifact(){ const i=+document.getElementById('fwSel').value; return _catalog[i]; }
+function resolveOffset(a, chip){
+  if(a.offset && a.offset!=='auto') return a.offset;
+  const c=(chip||'').toLowerCase();
+  return (c.includes('s3')||c.includes('s2')||c.includes('c3')||c.includes('c6'))?'0x0':'0x1000';
+}
+function parseTotal(cl){ if(!cl) return 0; const m=String(cl).match(/\/(\d+)\s*$/); if(m) return +m[1]; const n=parseInt(cl,10); return isNaN(n)?0:n; }
+function fetchTimeout(url, opts, ms){
+  opts=opts||{};
+  if(typeof AbortController!=='undefined'){
+    const ctl=new AbortController(); opts=Object.assign({},opts,{signal:ctl.signal});
+    const t=setTimeout(()=>{try{ctl.abort();}catch(e){}},ms);
+    return fetch(url,opts).finally(()=>clearTimeout(t));
+  }
+  return fetch(url,opts);
+}
+// Download in small byte-range chunks and reassemble, so a proxy/tunnel in front of
+// Vera can't reset the big single response. Each chunk has a timeout + retries so a
+// stalled tunnel fails fast (with the % reached) instead of hanging forever.
+async function chunkedDownload(mkUrl, total, useRangeHeader){
+  const CHUNK=262144, nChunks=Math.ceil(total/CHUNK);
+  const out=new Uint8Array(total); let off=0, idx=0; showBar(true); setBar(0);
+  setStatus('serStatus','preparing image on server (first chunk caches it)…');
+  try{
+    while(off<total){
+      const end=Math.min(off+CHUNK,total)-1;
+      const opts=useRangeHeader?{headers:{Range:'bytes='+off+'-'+end}}:{};
+      const timeout=(idx===0?60000:20000);            // first request fills the server-side cache
+      let r=null, ok=false, lastErr='';
+      for(let attempt=0; attempt<3 && !ok; attempt++){
+        if(attempt) setStatus('serStatus','retry '+attempt+' at '+Math.round(off/total*100)+'%…');
+        try{ r=await fetchTimeout(mkUrl(off,end), opts, timeout); ok=!!(r&&r.ok);
+             if(!ok){ try{ lastErr=await r.text(); }catch(_){ lastErr='HTTP '+(r&&r.status); } } }
+        catch(e){ ok=false; lastErr=(e&&e.name==='AbortError')?'timed out':(e&&e.message||String(e)); }
+      }
+      if(!ok){ setStatus('serStatus','download stalled at '+Math.round(off/total*100)+'% ('+idx+'/'+nChunks+' chunks) — '+lastErr+'. Open Vera directly on the LAN ('+location.hostname+') or Upload .bin.','err'); return null; }
+      const buf=new Uint8Array(await r.arrayBuffer()); if(!buf.length) break;
+      out.set(buf.subarray(0, Math.min(buf.length, total-off)), off); off+=buf.length; idx++;
+      setBar(off/total); setStatus('serStatus','downloading '+Math.round(off/total*100)+'%  ('+idx+'/'+nChunks+')…');
+    }
+  } finally { showBar(false); }
+  return out.buffer.slice(0, off);
+}
+async function fetchArtifactBin(a){
+  // Local / uploaded bin → chunk via Range header (Starlette FileResponse honours it).
+  if(a.url && a.url.indexOf('/mesh/firmware/bin/')===0){
+    const base=BASE+a.url; let total=a.bytes||0;
+    if(!total){ try{ const h=await fetch(base,{method:'HEAD'}); total=+(h.headers.get('content-length')||0); }catch(e){} }
+    if(!total){ try{ const r=await fetch(base); return r.ok? await r.arrayBuffer():null; }catch(e){ return null; } }
+    return await chunkedDownload(()=>base, total, true);
+  }
+  // Everything else (remote / resolver / pinned external url) → ALWAYS via the Vera
+  // proxy by id. External hosts (micropython.org) block CORS, so the browser must
+  // never fetch them directly — the catalog `url` is a server-side hint only.
+  setStatus('serStatus','checking build on server…');
+  let d=null; try{ d=await api('/mesh/firmware/probe?id='+encodeURIComponent(a.id)); }catch(_){}
+  if(!d || !d.ok){ await diagnoseFetch(a, new Error(d&&d.error||'probe failed')); return null; }
+  const total=parseTotal(d.content_length);
+  const idu=BASE+'/mesh/firmware/fetch?id='+encodeURIComponent(a.id);
+  if(!total){ try{ const r=await fetch(idu); return r.ok? await r.arrayBuffer():null; }catch(e){ await diagnoseFetch(a,e); return null; } }
+  return await chunkedDownload((s,e)=>idu+'&start='+s+'&end='+e, total, false);
+}
+async function diagnoseFetch(a, e){
+  // The big proxied download failed at the connection level. A tiny probe call
+  // tells us whether the SERVER can reach the build (→ a proxy/tunnel reset the
+  // large response) or not (→ no server internet). Either way: Upload .bin works.
+  let d=null; try{ d=await api('/mesh/firmware/probe?id='+encodeURIComponent(a.id)); }catch(_){}
+  if(d && d.ok){
+    setStatus('serStatus','Server reached the build ('+(d.content_length||'?')+' bytes) but the download to your browser was reset — likely a proxy/tunnel size limit. Restart Vera (buffered route) or just Upload .bin.','err');
+  } else if(d && d.error){
+    setStatus('serStatus','Server could not download it: '+d.error+'. Update the catalog url or Upload .bin.','err');
+  } else {
+    setStatus('serStatus','Download failed ('+(e&&e.message||e)+'). The probe endpoint is missing — restart Vera — or just Upload .bin.','err');
+  }
+}
+async function flashSelected(){
+  const a=selectedArtifact(); if(!a){ return; }
+  if(a.kind==='script') return mpUploadScript(a);            // MicroPython main.py over REPL — no flashing
+  try{
+    setStatus('serStatus','fetching '+(a.label||a.id)+'…');
+    const buf=await fetchArtifactBin(a);
+    if(!buf){ showBar(false); return; }   // fetchArtifactBin already showed the specific reason
+    const u8=new Uint8Array(buf);
+    if(u8[0]!==0xE9){ setStatus('serStatus','not an ESP image (magic 0x'+(u8[0]||0).toString(16)+') — wrong URL or not a .bin','err'); return; }
+    const binStr=ab2bstr(buf); showBar(true);
+    await withEsptool(async (esp,chip)=>{
+      const offset=resolveOffset(a, chip);
+      setStatus('serStatus','flashing '+(a.label||a.id)+' @ '+offset+' …');
+      await esp.writeFlash({ fileArray:[{data:binStr, address:parseInt(offset,16)}],
+        flashSize:'keep', flashMode:'keep', flashFreq:'keep',
+        eraseAll:!!a.erase, compress:true,
+        reportProgress:(i,w,t)=> setBar(t? w/t : 0) });
+      setStatus('serStatus','✓ flashed '+(a.label||a.id),'ok');
+    });
+    showBar(false);
+    if(a.then){ const idx=_catalog.findIndex(x=>x.id===a.then);
+      if(idx>=0){ document.getElementById('fwSel').value=idx;
+        setStatus('serStatus','Runtime flashed ✓ — Connect, then click Flash to push '+_catalog[idx].label+' over the REPL.','ok'); } }
+  }catch(e){ showBar(false); setStatus('serStatus','flash: '+(e.message||e),'err'); }
+}
+// MicroPython: push a source file over the serial REPL (raw mode). No compiler.
+async function mpUploadText(filename, content){
+  if(!_serWriter){ await serialConnect(); }
+  if(!_serWriter) throw new Error('serial not connected');
+  const w=_serWriter, enc=new TextEncoder();
+  await w.write(enc.encode('\r\x03\x03')); await sleep(120);       // Ctrl-C twice (interrupt)
+  await w.write(enc.encode('\r\x01')); await sleep(180);           // Ctrl-A (raw REPL)
+  await w.write(enc.encode('f=open('+JSON.stringify(filename)+",'w')\r"));
+  for(let i=0;i<content.length;i+=180){
+    const chunk=content.slice(i,i+180);
+    await w.write(enc.encode('f.write('+JSON.stringify(chunk)+')\r'));
+    await sleep(14);
+  }
+  await w.write(enc.encode('f.close()\r')); await sleep(60);
+  await w.write(enc.encode('\x04')); await sleep(400);             // Ctrl-D (execute block)
+  await w.write(enc.encode('\x02')); await sleep(80);              // Ctrl-B (friendly REPL)
+  await w.write(enc.encode('\r\x04')); await sleep(80);            // soft reset → run main.py
+}
+async function mpReplPresent(){
+  if(!_serWriter) return false;
+  const el=document.getElementById('serConsole'); const mark=(el?el.textContent:'').length;
+  await _serWriter.write(new TextEncoder().encode('\r\x03\r'));    // Ctrl-C + Enter → expect a >>> prompt
+  await sleep(380);
+  return />>>/.test((el?el.textContent:'').slice(Math.max(0,mark-6)));
+}
+async function mpUploadScript(a){
+  try{
+    if(!_serWriter){ await serialConnect(); }
+    if(!_serWriter){ setStatus('serStatus','connect the USB device first','warn'); return; }
+    if(!(await mpReplPresent())){
+      setStatus('serStatus','No MicroPython REPL — flash the “MicroPython runtime” first, then push this.','err'); return; }
+    const sep=(a.text_url||'').includes('?')?'&':'?';
+    const url=BASE+(a.text_url||'/mesh/firmware?flavor=micropython')+sep+'server='+encodeURIComponent(serverUrl());
+    setStatus('serStatus','fetching '+(a.label||a.id)+'…');
+    const text=await (await fetch(url)).text();
+    setStatus('serStatus','pushing '+(a.upload_as||'main.py')+' over REPL ('+text.length+' bytes)…');
+    await mpUploadText(a.upload_as||'main.py', text);
+    setStatus('serStatus','✓ pushed '+(a.upload_as||'main.py')+' — node resetting & joining','ok');
+  }catch(e){ setStatus('serStatus','upload: '+(e.message||e),'err'); }
+}
+// OTA: program the selected node over Wi-Fi
+async function pushSelected(){
+  if(!_sel){ setStatus('serStatus','select a node in the graph first','warn'); return; }
+  const a=selectedArtifact(); if(!a) return;
+  let body;
+  if(a.kind==='script') body={node_id:_sel, mode:'file', filename:a.upload_as||'main.py', url:(a.text_url||'/mesh/firmware?flavor=micropython')};
+  else if(a.source==='local_bin' || (a.url && a.url.startsWith('/mesh/firmware/bin/'))) body={node_id:_sel, mode:'bin', url:a.url};
+  else { setStatus('serStatus','remote runtimes must be flashed over USB; upload a .bin to OTA it','warn'); return; }
+  const r=await api('/mesh/ota','POST',body);
+  setStatus('serStatus', r&&r.ok?('OTA queued → '+_sel):(r&&r.error||'failed'), r&&r.ok?'ok':'err');
+}
+async function uploadBin(input){
+  const f=input.files[0]; if(!f) return;
+  const fd=new FormData(); fd.append('file', f, f.name);
+  setStatus('serStatus','uploading '+f.name+'…');
+  try{
+    const r=await fetch(BASE+'/mesh/firmware/upload',{method:'POST',body:fd});
+    const j=await r.json();
+    if(j&&j.ok){ await loadCatalog();
+      const idx=_catalog.findIndex(x=>x.id==='bin:'+j.name); if(idx>=0) document.getElementById('fwSel').value=idx;
+      setStatus('serStatus','uploaded '+j.name+' — select it, then Flash (USB) or OTA→node','ok');
+    } else setStatus('serStatus','upload failed','err');
+  }catch(e){ setStatus('serStatus','upload: '+(e.message||e),'err'); }
+  input.value='';
+}
+
+init();
+</script>
+<script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel.js"></script>
+</body>
+</html>

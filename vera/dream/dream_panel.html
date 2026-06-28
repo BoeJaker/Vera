@@ -370,71 +370,74 @@ hr{border:none;border-top:1px solid var(--border);margin:10px 0}
 .gx-legend i.gx-cd{background:var(--warn)}.gx-legend i.gx-out{background:transparent;border:1px solid var(--border2)}
 .gx-pin-leg{color:var(--acc4)}
 </style>
+<link rel="stylesheet" href="/ui/vera-panel.css">
 </head>
 <body>
 
-<div class="sb" id="sidebar">
-  <div class="sb-logo">
-    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
-      <path d="M10 2C6 2 3 5 3 9c0 2.5 1.3 4.7 3.2 6L7 17h6l.8-2C15.7 13.7 17 11.5 17 9c0-4-3-7-7-7z"/>
-      <path d="M7 17v2h6v-2"/>
-    </svg>
+<aside id="sidebar" data-vera-lhm>
+  <div id="side-head">
+    <div class="ico">
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M10 2C6 2 3 5 3 9c0 2.5 1.3 4.7 3.2 6L7 17h6l.8-2C15.7 13.7 17 11.5 17 9c0-4-3-7-7-7z"/>
+        <path d="M7 17v2h6v-2"/>
+      </svg>
+    </div>
+    <div><h1>Dream</h1><div class="sub">Pipelines &amp; cycles</div></div>
   </div>
-  <div class="sb-item active" data-sec="overview" title="Overview">
+  <nav id="nav">
+  <button class="nav-btn active" data-sec="overview" title="Overview">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>
     <span>Overview</span>
-  </div>
-  <div class="sb-item" data-sec="triggers" title="Pipelines">
+  </button>
+  <button class="nav-btn" data-sec="triggers" title="Pipelines">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 2L5 9h4l-2 5 6-7H9l2-5z"/></svg>
     <span>Pipelines</span>
-  </div>
-  <div class="sb-item" data-sec="pipeline" title="Pipeline config">
+  </button>
+  <button class="nav-btn" data-sec="pipeline" title="Pipeline config">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="3" cy="8" r="2"/><circle cx="13" cy="8" r="2"/><circle cx="8" cy="4" r="2"/><circle cx="8" cy="12" r="2"/><path d="M5 8h3M11 8h-2M8 6v2M8 10v-2"/></svg>
     <span>Pipeline config</span>
-  </div>
-  <div class="sb-item" data-sec="projects" title="Projects">
+  </button>
+  <button class="nav-btn" data-sec="projects" title="Projects" style="position:relative">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12v9a1 1 0 01-1 1H3a1 1 0 01-1-1V4z"/><path d="M2 4l2-2h8l2 2"/><path d="M5 8h6M5 11h4"/></svg>
     <span>Projects</span>
     <span class="sb-badge" id="badge-proj"></span>
-  </div>
-  <div class="sb-item" data-sec="review" title="Dream Review">
+  </button>
+  <button class="nav-btn" data-sec="review" title="Dream Review">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/><path d="M5 7h4M7 5v4"/></svg>
     <span>Dream Review</span>
-  </div>
-  <div class="sb-item" data-sec="thoughts" title="Thinking loops">
+  </button>
+  <button class="nav-btn" data-sec="thoughts" title="Thinking loops">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2.5a4 4 0 00-2.5 7.1V12h5V9.6A4 4 0 008 2.5z"/><path d="M6.5 13.5h3M7 12v1.5M9 12v1.5"/></svg>
     <span>Thoughts</span>
-  </div>
+  </button>
   <div class="sb-sep"></div>
-  <div class="sb-item" data-sec="history" title="History">
+  <button class="nav-btn" data-sec="history" title="History">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/></svg>
     <span>History</span>
-  </div>
-  <div class="sb-item" data-sec="hitl" title="Approvals">
+  </button>
+  <button class="nav-btn" data-sec="hitl" title="Approvals" style="position:relative">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 12a5 5 0 0110 0"/><circle cx="8" cy="5" r="2.5"/></svg>
     <span>Approvals</span>
     <span class="sb-badge" id="badge-hitl"></span>
-  </div>
-  <div class="sb-item" data-sec="whitelist" title="Whitelist">
+  </button>
+  <button class="nav-btn" data-sec="whitelist" title="Whitelist">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="12" height="10" rx="1"/><path d="M5 7l2 2 4-4"/></svg>
     <span>Whitelist</span>
-  </div>
-  <div class="sb-item" data-sec="timeline" title="Timeline">
+  </button>
+  <button class="nav-btn" data-sec="timeline" title="Timeline">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13h12M4 9v4M7 5v8M10 7v6M13 3v10"/></svg>
     <span>Timeline</span>
-  </div>
-  <div class="sb-item" data-sec="director" title="Director">
+  </button>
+  <button class="nav-btn" data-sec="director" title="Director">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="5" r="3"/><path d="M8 8c-3 0-5 1.5-5 4h10c0-2.5-2-4-5-4z"/><path d="M12 2l2 2-2 2M14 4h-3"/></svg>
     <span>Director</span>
-  </div>
-  <div class="sb-item" data-sec="settings" title="Settings">
+  </button>
+  <button class="nav-btn" data-sec="settings" title="Settings">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.5"/><path d="M8 2v1.5M8 12.5V14M2 8h1.5M12.5 8H14M3.5 3.5l1 1M11.5 11.5l1 1M11.5 3.5l1-1M3.5 11.5l1-1"/></svg>
     <span>Settings</span>
-  </div>
-  <div class="sb-toggle" id="sb-toggle" title="Expand">
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" id="sb-toggle-icon"><path d="M6 4l4 4-4 4"/></svg>
-  </div>
-</div>
+  </button>
+  </nav>
+</aside>
 
 <div class="main">
 <div class="topbar">
@@ -444,6 +447,8 @@ hr{border:none;border-top:1px solid var(--border);margin:10px 0}
   <span class="pill" id="pill-hitl" style="display:none"><span class="dot"></span><span id="pill-hitl-txt">0 pending</span></span>
   <button class="btn sm" onclick="refreshAll()" title="Refresh">&#8635;</button>
   <button class="btn sm grn" onclick="runQuickCycle()" id="btn-run" title="Run next due trigger">&#9654; Run</button>
+  <button class="btn sm red" onclick="stopDreaming()" id="btn-stop" title="Stop now — cancel the running cycle and stop the scheduler">&#9632; Stop</button>
+  <button class="btn sm red" onclick="toggleDreamEnabled()" id="btn-enable" title="Disable dreaming — turns off the scheduler so no new cycles can fire">Disable</button>
 </div>
 <div class="content">
 
@@ -688,7 +693,7 @@ hr{border:none;border-top:1px solid var(--border);margin:10px 0}
     <b style="color:var(--acc)">synthesize_only</b> — gather sensors, write report, no action &nbsp;&#x2022;&nbsp;
     <b style="color:var(--acc2)">plan_execute</b> — plan a capability DAG then run it &nbsp;&#x2022;&nbsp;
     <b style="color:var(--acc3)">oneshot</b> — single LLM call, immediate action &nbsp;&#x2022;&nbsp;
-    <b style="color:var(--acc4)">stepwise / agent_loop</b> — DAG Workshop ReAct engine (dag.agent_loop_v2)
+    <b style="color:var(--acc4)">stepwise / agent_loop</b> — DAG Workshop agent engine (default v5; set in Settings → Agent-loop controls)
     &nbsp;&#x2022;&nbsp;
     <b style="color:var(--fg2)">goal_refine</b> — auto-refines vague themes into specific tool goals
   </div>
@@ -719,9 +724,19 @@ hr{border:none;border-top:1px solid var(--border);margin:10px 0}
   <div class="card">
     <div class="card-hd"><h3>Pipeline flow</h3>
       <span style="font-size:9.5px;color:var(--fg3)">Click any sensor or stage to configure it · drag stages to reorder</span>
+      <div style="flex:1"></div>
+      <button class="btn sm" id="pipe-canvas-btn" onclick="pipeToggleCanvas()" title="Toggle the reusable visual flow canvas">&#8862; Canvas</button>
+      <button class="btn sm" onclick="pipeRunAsDag()" title="Execute the graph (caps + wiring + conditions) via the DAG engine">&#9654; Run as DAG</button>
     </div>
     <div class="card-bd">
       <div class="pipeline-flow" id="pipe-flow"><div class="empty">Select a trigger above.</div></div>
+      <div id="pipe-canvas-wrap" style="display:none;height:calc(100vh - 190px);min-height:520px;margin-top:4px;border:1px solid var(--border);border-radius:6px;overflow:hidden">
+        <vera-flow-builder id="pipeFlowCanvas" style="display:block;width:100%;height:100%"></vera-flow-builder>
+      </div>
+      <div id="pipe-dag-out" style="display:none;margin-top:8px;border:1px solid var(--border);border-radius:6px;padding:8px;max-height:200px;overflow:auto;background:var(--bg0,#0d0f12)">
+        <div style="font-size:9px;color:var(--fg3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">DAG run · caps execute on the state-table engine</div>
+        <div id="pipe-dag-log"></div>
+      </div>
       <div id="pipe-stage-cfg" style="margin-top:10px;display:none">
         <hr>
         <div style="font-size:10px;color:var(--acc);font-family:var(--mono);margin-bottom:6px" id="pipe-cfg-name"></div>
@@ -764,13 +779,14 @@ hr{border:none;border-top:1px solid var(--border);margin:10px 0}
         Stages run in the pipeline after sensors. Tick stages above in the flow to include them. Each stage has a phase.
       </p>
       <div style="font-size:10px;color:var(--fg3);background:rgba(251,146,60,.06);border:1px solid rgba(251,146,60,.2);border-radius:5px;padding:7px 10px;margin-bottom:10px">
-        <b style="color:var(--acc3)">dag.agent_loop_v2 integration:</b>
+        <b style="color:var(--acc3)">Agent-loop engine:</b>
         The <span style="font-family:var(--mono);color:var(--acc)">agent_loop</span>,
         <span style="font-family:var(--mono);color:var(--acc)">stepwise_execute</span>, and
         <span style="font-family:var(--mono);color:var(--acc)">investigate</span> stages
-        now all delegate to the DAG Workshop's
-        <span style="font-family:var(--mono);color:var(--acc3)">dag.agent_loop_v2</span> engine.
-        Live tool-call steps appear in the <b>Agent loop</b> card on the Overview tab.
+        delegate to the configured DAG Workshop engine —
+        <span style="font-family:var(--mono);color:var(--acc3)">v5</span> by default
+        (set in <b>Settings → Agent-loop controls</b>; falls back to v2/v1).
+        Live steps appear in the <b>Agent loop</b> card on the Overview tab.
         Use <span style="font-family:var(--mono);color:var(--acc)">agent_loop</span>
         for new pipelines — it's the cleanest entry point.
       </div>
@@ -943,6 +959,8 @@ hr{border:none;border-top:1px solid var(--border);margin:10px 0}
     <div class="card-bd">
       <div class="settings-section">
         <div class="form-grid">
+          <div class="form-row"><label class="fld">Dreaming enabled</label>
+            <select id="s-enabled"><option value="true">on</option><option value="false">off</option></select></div>
           <div class="form-row"><label class="fld">Min idle minutes</label><input id="s-mi" type="number" min="0"></div>
           <div class="form-row"><label class="fld">Tick interval (s)</label><input id="s-tick" type="number" min="10"></div>
           <div class="form-row"><label class="fld">Telegram bridge</label>
@@ -967,6 +985,43 @@ hr{border:none;border-top:1px solid var(--border);margin:10px 0}
       </div>
       <div style="display:flex;justify-content:flex-end">
         <button class="btn pri" onclick="saveConfig()">Save settings</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hd"><h3>Agent-loop controls (global)</h3></div>
+    <div class="card-bd">
+      <p style="font-size:10px;color:var(--fg3);margin-bottom:10px">
+        Defaults for every dream agent-loop stage (investigate / agent_loop / stepwise / project_action).
+        A trigger can override these via its <code>loop_settings</code>.
+        <b style="color:var(--acc3)">v5</b> is the orchestrator + scoped-specialist engine (default).
+      </p>
+      <div class="form-grid">
+        <div class="form-row"><label class="fld">Engine</label>
+          <select id="lp-version"><option value="v5">v5 — orchestrated specialists</option><option value="v2">v2 — ReAct</option><option value="v1">v1 — legacy</option></select></div>
+        <div class="form-row"><label class="fld">Max steps</label><input id="lp-maxsteps" type="number" min="1" max="20"></div>
+        <div class="form-row"><label class="fld">Step cycle budget (v5)</label><input id="lp-stepbudget" type="number" min="1" max="20"></div>
+        <div class="form-row"><label class="fld">Catalog size (v5)</label><input id="lp-catalog" type="number" min="8" max="80"></div>
+        <div class="form-row"><label class="fld">Max cycles (v1/v2)</label><input id="lp-maxcycles" type="number" min="1" max="40"></div>
+        <div class="form-row"><label class="fld">Satisfaction check</label>
+          <select id="lp-sat"><option value="true">on</option><option value="false">off</option></select></div>
+        <div class="form-row"><label class="fld">Re-plan on failure (v5)</label>
+          <select id="lp-replan"><option value="true">on</option><option value="false">off</option></select></div>
+        <div class="form-row"><label class="fld">Dynamic skills (v5)</label>
+          <select id="lp-dynskills"><option value="true">on</option><option value="false">off</option></select></div>
+        <div class="form-row"><label class="fld">Auto-suggest skills (v5)</label>
+          <select id="lp-autoskill"><option value="true">on</option><option value="false">off</option></select></div>
+        <div class="form-row"><label class="fld">Prefer GPU</label>
+          <select id="lp-gpu"><option value="true">on</option><option value="false">off</option></select></div>
+        <div class="form-row"><label class="fld">Skill allow (csv)</label><input id="lp-skillallow" type="text" placeholder="(any)"></div>
+        <div class="form-row"><label class="fld">Skill deny (csv)</label><input id="lp-skilldeny" type="text" placeholder="(none)"></div>
+        <div class="form-row"><label class="fld">Model (blank=default)</label><input id="lp-model" type="text" placeholder=""></div>
+        <div class="form-row"><label class="fld">Instance id</label><input id="lp-instance" type="text" placeholder=""></div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:6px;margin-top:8px">
+        <button class="btn sm" onclick="resetLoopSettings()">Reset defaults</button>
+        <button class="btn pri" onclick="saveLoopSettings()">Save loop controls</button>
       </div>
     </div>
   </div>
@@ -1031,19 +1086,17 @@ function closeModal(){$('modal-bg').classList.remove('on')}
 $('modal-bg').addEventListener('click',e=>{if(e.target.id==='modal-bg')closeModal()});
 
 /* ═══ SIDEBAR NAV ═══ */
-let _sbWide=false;
-$('sb-toggle').onclick=()=>{_sbWide=!_sbWide;$('sidebar').classList.toggle('wide',_sbWide);$('sb-toggle-icon').innerHTML=_sbWide?'<path d="M10 4l-4 4 4 4"/>':'<path d="M6 4l4 4-4 4"/>'};
 function nav(sec){
-  document.querySelectorAll('.sb-item').forEach(el=>el.classList.toggle('active',el.dataset.sec===sec));
+  document.querySelectorAll('.nav-btn').forEach(el=>el.classList.toggle('active',el.dataset.sec===sec));
   document.querySelectorAll('.sec').forEach(el=>el.classList.toggle('active',el.id==='sec-'+sec));
-  const el=document.querySelector('.sb-item[data-sec="'+sec+'"]');
+  const el=document.querySelector('.nav-btn[data-sec="'+sec+'"]');
   $('sec-title').textContent=el?.querySelector('span')?.textContent||sec;
   ({triggers:loadTriggers,history:loadHistory,hitl:loadHitl,whitelist:loadWl,
     timeline:loadTimeline,settings:loadSettings,sensors:()=>{},
     pipeline:pipelineInit,projects:loadProjects,director:()=>{},
     thoughts:loadThoughts})[sec]?.();
 }
-document.querySelectorAll('.sb-item[data-sec]').forEach(el=>{el.onclick=()=>nav(el.dataset.sec)});
+document.querySelectorAll('.nav-btn[data-sec]').forEach(el=>{el.onclick=()=>nav(el.dataset.sec)});
 
 /* ═══════════════════════════════════════════════════════════
    STATUS + STREAM
@@ -1052,6 +1105,11 @@ async function refreshStatus(){
   const s=await api('/dream/scheduler/status');if(!s)return;
   $('pill-sched').className='pill'+(s.enabled?' active':'');$('pill-sched-txt').textContent=s.enabled?'running':'stopped';
   const cyc=s.in_cycle;$('pill-cycle').className='pill'+(cyc?' warn':'');$('pill-cycle-txt').textContent=cyc?'dreaming':'idle';
+  const eb=$('btn-enable');
+  if(eb){eb.textContent=s.enabled?'Disable':'Enable';
+    eb.classList.toggle('red',s.enabled);eb.classList.toggle('grn',!s.enabled);
+    eb.title=s.enabled?'Disable dreaming — turns off the scheduler so no new cycles can fire':'Enable dreaming — lets the scheduler fire cycles again';}
+  const stb=$('btn-stop');if(stb)stb.disabled=!(cyc||s.scheduler_running);
   $('ov-en').textContent=s.enabled?'On':'Off';
   $('ov-en').className='kpi-val '+(s.enabled?'tv-ok':'tv-err');
   const idleMin=Math.min(s.idle_minutes??0,99999);
@@ -1064,7 +1122,7 @@ async function refreshAll(){
   const r=await api('/dream/triggers');if(r)$('ov-trigs').textContent=(r.triggers||[]).filter(t=>t.enabled).length+'/'+(r.triggers||[]).length;
   await refreshHitl();
   await loadActiveProject();
-  const sec=document.querySelector('.sb-item.active')?.dataset.sec;
+  const sec=document.querySelector('.nav-btn.active')?.dataset.sec;
   if(sec==='overview')loadLast();if(sec==='triggers')loadTriggers();
   if(sec==='history')loadHistory();if(sec==='hitl')loadHitl();
   if(sec==='whitelist')loadWl();if(sec==='settings')loadSettings();
@@ -1076,6 +1134,27 @@ async function refreshHitl(){const r=await api('/dream/hitl/pending');const n=(r
 async function schedStart(){await post('/dream/scheduler/start',{});toast('ok','Scheduler started');refreshStatus()}
 async function schedStop(){await post('/dream/scheduler/stop',{});toast('ok','Scheduler stopped');refreshStatus()}
 async function cycleCancel(){await post('/dream/cycle/cancel',{});toast('warn','Cancel requested')}
+// Stop now: cancel any running cycle AND stop the scheduler loop. Does not change
+// the persistent enabled flag, so dreaming can be restarted via Run / scheduler start.
+async function stopDreaming(){
+  await post('/dream/cycle/cancel',{});
+  await post('/dream/scheduler/stop',{});
+  toast('warn','Dreaming stopped — cycle cancel requested, scheduler halted');
+  setTimeout(refreshStatus,600);
+}
+// Disable/enable dreaming: flips the persistent config.enabled kill switch.
+// The scheduler loop checks this each tick, so disabling prevents any cycle from
+// firing even if the loop is running. Disabling also halts the loop + current cycle now.
+async function toggleDreamEnabled(){
+  const s=await api('/dream/scheduler/status');if(!s)return;
+  const next=!s.enabled;
+  const r=await post('/dream/config',{enabled:next});
+  if(r?.ok===false){toast('err','Could not update dreaming state');return}
+  if(next){await post('/dream/scheduler/start',{});}
+  else{await post('/dream/scheduler/stop',{});await post('/dream/cycle/cancel',{});}
+  toast(next?'ok':'warn',next?'Dreaming enabled':'Dreaming disabled');
+  setTimeout(refreshStatus,600);
+}
 async function runQuickCycle(){const r=await api('/dream/triggers');const t=(r?.triggers||[]).filter(x=>x.enabled)[0];if(!t){toast('warn','No enabled triggers');return}const s=await post('/dream/cycle/run',{trigger_name:t.name,seed:{}});if(s?.ok!==false){toast('ok','Started: '+t.label||t.name);setTimeout(refreshStatus,600)}}
 
 /* ═══ STREAM ═══ */
@@ -1149,8 +1228,7 @@ function _ownWs(){try{const pr=location.protocol==='https:'?'wss:':'ws:';const b
 // Event types the <vera-agent-loop-output> element handles natively.
 // We forward these directly — no reconstruction, no stripping.
 function _isAgentLoopEvent(type){
-  return type.startsWith('agent_loop_v2.')
-      || type.startsWith('agent_loop_v3.')
+  return type.startsWith('agent_loop_v')   // v2..v5 variant events (incl. v5 default)
       || type.startsWith('agent_loop.')
       || type.startsWith('stream.')
       || type.startsWith('workshop.tool_')
@@ -1514,7 +1592,7 @@ async function pipelineReload(){if($('pipeline-trig-sel'))pipelineInit()}
 async function pipelineLoadTrig(){const n=$('pipeline-trig-sel').value;
   if(!n){_pipeTrig=null;$('pipe-flow').innerHTML='<div class="empty">Select a trigger above.</div>';$('pipe-sensors').innerHTML='';$('pipe-cfg-card').style.display='none';return}
   const r=await api('/dream/trigger/get?name='+encodeURIComponent(n));_pipeTrig=r?.trigger||null;
-  if(_pipeTrig){renderPipelineFlow();renderPipelineSensors();renderPipelineConfig();$('pipe-cfg-card').style.display='block'}}
+  if(_pipeTrig){renderPipelineFlow();pipeCanvasSync();renderPipelineSensors();renderPipelineConfig();$('pipe-cfg-card').style.display='block'}}
 
 /* Mirror of trigger-editor fields, but inline on the pipeline page so the user
    can change every option without opening a modal. Wired to update _pipeTrig
@@ -1733,7 +1811,162 @@ async function pipelineSave(){if(!_pipeTrig){toast('warn','No trigger selected')
     if(!_pipeTrig.stage_params[stage])_pipeTrig.stage_params[stage]={};
     _pipeTrig.stage_params[stage][name]=el.value;
   });
+  // Persist the full canvas graph (caps / wiring / conditions) so nothing is
+  // lost on reload; sync sensors+pipeline first if the canvas is open.
+  if(_pipeCanvasReady){ const fb=$('pipeFlowCanvas'); if(fb&&fb.getGraph){ if(pipeCanvasActive())_pipeSyncFromCanvas(); _pipeTrig.flow_graph=fb.getGraph(); } }
   const r=await post('/dream/trigger/upsert',_pipeTrig);if(r&&r.ok!==false){toast('ok','Pipeline saved');loadTriggers()}else toast('err','Failed: '+(r?.error||'?'))}
+
+/* ═══ REUSABLE VISUAL CANVAS (<vera-flow-builder>) ═══
+   An alternate "Canvas" view for the pipeline flow, backed by the shared,
+   registered flow-builder element. It edits _pipeTrig.pipeline (stage order)
+   and reuses the existing #pipe-stage-cfg config panel on node-select, so
+   pipelineSave() persists everything exactly as before. */
+const PIPE_STAGE_PREFIX='dream.stage.';
+const PIPE_SENSOR_PREFIX='dream.sensor.';
+const dreamTriggerProvider={
+  id:'dream-trigger', paletteLabel:'Sensors · stages · caps',
+  async loadPalette(){
+    if(((!_stgMeta||!_stgMeta.length)||(!_senMeta||!_senMeta.length)) && typeof _loadSenStgMeta==='function'){ try{await _loadSenStgMeta()}catch(_){}}
+    const groups=[];
+    // Sensors (sense phase — run first)
+    if((_senMeta||[]).length){
+      groups.push({group:'sensors', items:(_senMeta||[]).map(s=>({
+        type:PIPE_SENSOR_PREFIX+s.id, label:s.id, description:s.description||'',
+        schema:{name:PIPE_SENSOR_PREFIX+s.id, description:s.description||'', params:s.params||[]}
+      }))});
+    }
+    // Stages grouped by phase
+    const byPhase={};
+    for(const s of (_stgMeta||[])){
+      const ph=s.phase||'analyze';
+      (byPhase[ph]=byPhase[ph]||[]).push({
+        type:s.id, label:(s.id||'').replace(PIPE_STAGE_PREFIX,''),
+        description:s.description||'',
+        schema:{name:s.id, description:s.description||'', params:s.params||[]}
+      });
+    }
+    const order=['sense','gather','analyze','plan','act','emit'];
+    Object.keys(byPhase)
+      .sort((a,b)=>((order.indexOf(a)+1)||99)-((order.indexOf(b)+1)||99))
+      .forEach(ph=>groups.push({group:ph, items:byPhase[ph]}));
+    // Capabilities (shared palette) — run via "Run as DAG"
+    if(window.VeraFlowCaps){ try{ (await window.VeraFlowCaps.paletteGroups()).forEach(g=>groups.push(g)); }catch(_){} }
+    return groups;
+  },
+  schemaFor(typeOrNode){
+    const type=(typeOrNode&&typeof typeOrNode==='object')?typeOrNode.type:typeOrNode;
+    if(window.VeraFlowCaps && window.VeraFlowCaps.isCap(type)) return window.VeraFlowCaps.schemaFor(type);
+    if((type||'').startsWith(PIPE_SENSOR_PREFIX)){ const s=(_senMeta||[]).find(x=>PIPE_SENSOR_PREFIX+x.id===type); return s?{name:type,description:s.description||'',params:s.params||[]}:null; }
+    const m=(_stgMeta||[]).find(x=>x.id===type); return m?{name:type,description:m.description||'',params:m.params||[]}:null;
+  },
+  createNode(item){
+    return {id:'n'+Math.random().toString(36).slice(2,9), type:item.type, out:null, params:{},
+            output_map:null, condition:'', parallel_with:null, pos:null, meta:{}};
+  },
+  validateNode(){return[]},
+  nodeCard(n){
+    const t=n.type||'';
+    if(t.startsWith(PIPE_SENSOR_PREFIX)) return {title:t.replace(PIPE_SENSOR_PREFIX,''), line:'sensor', sub:''};
+    if(t.startsWith(PIPE_STAGE_PREFIX)){ const meta=(_stgMeta||[]).find(x=>x.id===t)||{}; return {title:t.replace(PIPE_STAGE_PREFIX,''), line:(meta.phase||'stage'), sub:''}; }
+    return {title:t.split('.').pop(), line:'⚙ cap', sub:t};
+  },
+  // Dream-native save = sensors + stages. Cap nodes aren't part of the trigger
+  // format (they execute via "Run as DAG"); they're kept on the canvas only.
+  serialize(graph){
+    const sensors=[], pipeline=[];
+    for(const n of graph.nodes){
+      const t=n.type||'';
+      if(t.startsWith(PIPE_SENSOR_PREFIX)) sensors.push(t);
+      else if(t.startsWith(PIPE_STAGE_PREFIX)) pipeline.push(t);
+    }
+    return {sensors, pipeline};
+  },
+  deserialize(doc){
+    const sensors=(doc&&doc.sensors)||[], pipeline=(doc&&doc.pipeline)||[]; let i=0;
+    const mk=(t)=>({id:'n'+(++i), type:t, out:null, params:{}, output_map:null, condition:'', parallel_with:null, pos:null, meta:{}});
+    return {nodes:[...sensors.map(mk), ...pipeline.map(mk)], meta:{}};
+  },
+  renderInspector(node,ctx){
+    const t=node.type||'';
+    if(t.startsWith(PIPE_SENSOR_PREFIX)){
+      const s=(_senMeta||[]).find(x=>PIPE_SENSOR_PREFIX+x.id===t)||{};
+      return `<div class="insp-h">${ctx.esc(t.replace(PIPE_SENSOR_PREFIX,''))} <span style="font-size:8.5px;color:var(--acc,#6ea8fe)">sensor</span></div>
+        <div class="insp-desc">${ctx.esc(s.description||'Sensor — collects signal in the sense phase.')}</div>
+        <div class="insp-section"><div class="insp-section-h">Configure</div>
+          <div class="insp-row" style="font-size:10px;color:var(--dim,#7a8290)">Sensor params appear in the config panel below the canvas when selected.</div></div>`;
+    }
+    if(t.startsWith(PIPE_STAGE_PREFIX)){
+      const meta=(_stgMeta||[]).find(x=>x.id===t)||{};
+      return `<div class="insp-h">${ctx.esc(t.replace(PIPE_STAGE_PREFIX,''))}</div>
+        <div class="insp-desc">${ctx.esc(meta.description||'')}</div>
+        <div class="insp-section"><div class="insp-section-h">Phase</div>
+          <div class="insp-row" style="font-family:var(--mono);color:var(--acc2,#8fb87a)">${ctx.esc(meta.phase||'analyze')}</div></div>
+        <div class="insp-section"><div class="insp-section-h">Configure</div>
+          <div class="insp-row" style="font-size:10px;color:var(--dim,#7a8290)">Detailed stage params appear in the config panel below the canvas when selected.</div></div>`;
+    }
+    const sc=(window.VeraFlowCaps&&window.VeraFlowCaps.schemaFor(t))||{};
+    return `<div class="insp-h">${ctx.esc(t.split('.').pop())} <span style="font-size:8.5px;color:var(--amber,#e6b450)">capability</span></div>
+      <div class="insp-desc">${ctx.esc(sc.description||t)}</div>`;
+  }
+};
+let _pipeCanvasReady=false, _pipeCanvasTrig=null;
+function pipeCanvasActive(){const w=$('pipe-canvas-wrap');return !!(w && w.style.display!=='none')}
+// In canvas mode the redundant compact cards (stage library = the palette,
+// sensors grid = sensor nodes) fold into the canvas; node + trigger config
+// stay below it.
+function _pipeCanvasCards(show){
+  ['pipe-sensors','pipe-stage-lib'].forEach(function(id){ const e=$(id); if(e){ const c=e.closest('.card'); if(c) c.style.display=show?'':'none'; } });
+}
+// Canvas → trigger model. Sensors + stages feed the dream cycle runner; the
+// FULL graph (incl. cap / wiring / condition nodes) is stashed in flow_graph so
+// nothing is lost on toggle or save. Caps execute via "Run as DAG", not the
+// scheduled cycle.
+function _pipeSyncFromCanvas(){
+  const el=$('pipeFlowCanvas'); if(!el||!el.serialize||!_pipeTrig)return;
+  const d=el.serialize(); if(d){ _pipeTrig.sensors=d.sensors||[]; _pipeTrig.pipeline=d.pipeline||[]; }
+  if(el.getGraph) _pipeTrig.flow_graph=el.getGraph();
+}
+// Trigger model → canvas. Prefer the saved full graph (flow_graph); fall back to
+// deriving a node chain from sensors + pipeline for legacy triggers.
+function pipeCanvasLoad(){
+  const el=$('pipeFlowCanvas'); if(!el)return;
+  const g=_pipeTrig&&_pipeTrig.flow_graph;
+  if(g && g.nodes && g.nodes.length && el.setGraph){ el.setGraph(JSON.parse(JSON.stringify(g))); }
+  else if(el.loadFromSource){ el.loadFromSource({sensors:(_pipeTrig&&_pipeTrig.sensors)||[], pipeline:(_pipeTrig&&_pipeTrig.pipeline)||[]}); }
+  _pipeCanvasTrig=_pipeTrig?_pipeTrig.name:null;
+}
+function pipeCanvasSync(){ if(pipeCanvasActive()) pipeCanvasLoad(); }   // on trigger change
+function pipeToggleCanvas(){
+  const wrap=$('pipe-canvas-wrap'), el=$('pipeFlowCanvas'), btn=$('pipe-canvas-btn');
+  if(!wrap||!el)return;
+  if(wrap.style.display!=='none'){            // leaving canvas → write back, show compact
+    _pipeSyncFromCanvas();
+    wrap.style.display='none'; $('pipe-flow').style.display=''; _pipeCanvasCards(true);
+    if(btn)btn.innerHTML='&#8862; Canvas';
+    renderPipelineFlow(); renderPipelineSensors(); return;
+  }
+  if(!_pipeTrig){toast('warn','Select a trigger first');return}
+  if(!el.setProvider){toast('err','Flow builder not loaded — restart the server so /ui/elements/flow_builder.js registers');return}
+  if(!_pipeCanvasReady){
+    el.setProvider(dreamTriggerProvider);
+    el.addEventListener('flow:change', _pipeSyncFromCanvas);
+    el.addEventListener('flow:select',e=>{ const n=e.detail&&e.detail.node; if(!n||!n.type)return;
+      if(n.type.indexOf('dream.sensor.')===0) pipeSelectSensor(n.type);
+      else if(n.type.indexOf('dream.stage.')===0) pipeSelectStage(n.type); });
+    _pipeCanvasReady=true;
+  }
+  // Only (re)load when the trigger changed or the canvas is empty — preserves
+  // caps / wiring / conditions across compact↔canvas toggles for the same trigger.
+  const hasNodes = el.getGraph && el.getGraph().nodes && el.getGraph().nodes.length;
+  if(_pipeCanvasTrig!==_pipeTrig.name || !hasNodes) pipeCanvasLoad();
+  $('pipe-flow').style.display='none'; wrap.style.display=''; _pipeCanvasCards(false);
+  if(btn)btn.innerHTML='&#8801; Compact';
+}
+function pipeRunAsDag(){
+  const el=$('pipeFlowCanvas'); if(!el||!el.runAsDag){toast('err','Flow builder not loaded');return}
+  const out=$('pipe-dag-out'); if(out) out.style.display='block';
+  el.runAsDag({into:$('pipe-dag-log')});
+}
 
 /* ═══ PIPELINE TEMPLATES ═══ */
 async function openTemplateApply(){
@@ -2948,6 +3181,7 @@ async function runDir(fire){const b=$('dir-body');b.innerHTML='<div class="empty
 /* ═══ SETTINGS ═══ */
 let _idlePrefixes=[];let _idleFollow=true;let _idleEffective=[];
 async function loadSettings(){const r=await api('/dream/config');if(!r?.config)return;const c=r.config;
+  $('s-enabled').value=c.enabled?'true':'false';
   $('s-mi').value=c.min_idle_minutes;$('s-tick').value=c.tick_interval_seconds;
   $('s-tg').value=c.telegram_bridge?'true':'false';$('s-hitl').value=c.default_hitl_timeout_s;
   _idleFollow=c.idle_reset_follow_tracking!==false;
@@ -2957,7 +3191,23 @@ async function loadSettings(){const r=await api('/dream/config');if(!r?.config)r
   renderIdleChips();
   if(!_allCaps.length){const cr=await api('/dream/caps/search?limit=500');_allCaps=(cr?.caps||[])}
   renderPhaseEditor();
-  renderDefaultTrigList();}
+  renderDefaultTrigList();
+  loadLoopSettings();}
+async function loadLoopSettings(){const r=await api('/dream/loop/settings');if(!r?.settings)return;const s=r.settings;
+  const bv=(id,v)=>{const e=$(id);if(e)e.value=(v===true?'true':v===false?'false':(v??''))};
+  bv('lp-version',s.loop_version||'v5');bv('lp-maxsteps',s.max_steps);bv('lp-stepbudget',s.step_cycle_budget);
+  bv('lp-catalog',s.catalog_size);bv('lp-maxcycles',s.max_cycles);bv('lp-sat',s.satisfaction_check);
+  bv('lp-replan',s.enable_replan);bv('lp-dynskills',s.enable_dynamic_skills);bv('lp-autoskill',s.auto_suggest_skills);
+  bv('lp-gpu',s.prefer_gpu);bv('lp-skillallow',s.skill_allow);bv('lp-skilldeny',s.skill_deny);
+  bv('lp-model',s.model);bv('lp-instance',s.instance_id);}
+async function saveLoopSettings(){const b=(id)=>$(id)?.value==='true';const num=(id)=>+$(id).value;
+  const settings={loop_version:$('lp-version').value,max_steps:num('lp-maxsteps'),step_cycle_budget:num('lp-stepbudget'),
+    catalog_size:num('lp-catalog'),max_cycles:num('lp-maxcycles'),satisfaction_check:b('lp-sat'),
+    enable_replan:b('lp-replan'),enable_dynamic_skills:b('lp-dynskills'),auto_suggest_skills:b('lp-autoskill'),
+    prefer_gpu:b('lp-gpu'),skill_allow:$('lp-skillallow').value.trim(),skill_deny:$('lp-skilldeny').value.trim(),
+    model:$('lp-model').value.trim(),instance_id:$('lp-instance').value.trim()};
+  const r=await post('/dream/loop/settings/set',{settings});if(r?.ok!==false){toast('ok','Loop controls saved')}}
+async function resetLoopSettings(){const r=await post('/dream/loop/settings/set',{reset:true});if(r?.ok!==false){toast('ok','Loop controls reset');loadLoopSettings()}}
 function _idleActiveList(){return _idleFollow?_idleEffective:_idlePrefixes}
 function renderIdleChips(){
   const note=$('s-idle-follow-note');
@@ -2974,7 +3224,7 @@ function idleCapFilter(){const q=($('s-idle-q')?.value||'').toLowerCase();if(!q)
   $('s-idle-picker').innerHTML=[...groups].sort().map(g=>{const on=_idleActiveList().includes(g);return'<div class="pk-item '+(on?'sel':'')+'" onclick="idleTog(\''+esc(g)+'\',this)"><span class="pk-id">'+esc(g)+'*</span><span class="pk-txt">all '+esc(g)+' caps</span><span style="font-size:9px;color:'+(on?'var(--acc2)':'var(--fg3)')+';">'+(on?'&#x2713;':'+')+'</span></div>'}).join('');$('s-idle-picker').style.display='block'}
 function idleCapBrowse(){const groups=new Set();for(const c of _allCaps)groups.add(c.group+'.');$('s-idle-picker').innerHTML=[...groups].sort().map(g=>{const on=_idleActiveList().includes(g);return'<div class="pk-item '+(on?'sel':'')+'" onclick="idleTog(\''+esc(g)+'\',this)"><span class="pk-id">'+esc(g)+'*</span><span class="pk-txt">all '+esc(g)+' caps</span><span style="font-size:9px;color:'+(on?'var(--acc2)':'var(--fg3)')+';">'+(on?'&#x2713;':'+')+'</span></div>'}).join('');$('s-idle-picker').style.display='block'}
 function idleTog(g,el){_idleToOverride();if(_idlePrefixes.includes(g)){_idlePrefixes=_idlePrefixes.filter(x=>x!==g);el?.classList.remove('sel');el?.querySelector('span:last-child')&&(el.querySelector('span:last-child').textContent='+')}else{_idlePrefixes.push(g);el?.classList.add('sel');el?.querySelector('span:last-child')&&(el.querySelector('span:last-child').textContent='✓')}renderIdleChips()}
-async function saveConfig(){const body={min_idle_minutes:+$('s-mi').value,tick_interval_seconds:+$('s-tick').value,telegram_bridge:$('s-tg').value==='true',default_hitl_timeout_s:+$('s-hitl').value,idle_reset_follow_tracking:_idleFollow};if(!_idleFollow)body.idle_reset_prefixes=_idlePrefixes;const r=await post('/dream/config',body);if(r?.ok!==false){toast('ok','Settings saved');if(r?.config){_idleEffective=r.config.idle_reset_effective||_idleEffective;renderIdleChips()}}}
+async function saveConfig(){const body={enabled:$('s-enabled').value==='true',min_idle_minutes:+$('s-mi').value,tick_interval_seconds:+$('s-tick').value,telegram_bridge:$('s-tg').value==='true',default_hitl_timeout_s:+$('s-hitl').value,idle_reset_follow_tracking:_idleFollow};if(!_idleFollow)body.idle_reset_prefixes=_idlePrefixes;const r=await post('/dream/config',body);if(r?.ok!==false){toast('ok','Settings saved');refreshStatus();if(r?.config){_idleEffective=r.config.idle_reset_effective||_idleEffective;renderIdleChips()}}}
 function renderPhaseEditor(){const el=$('phase-editor');if(!el)return;
   const phases=[{id:'sense',label:'Sense',color:'#3b82f6',desc:'Data collection — sensors run here'},{id:'analyze',label:'Analyze',color:'#8b5cf6',desc:'Process and extract themes'},{id:'plan',label:'Plan',color:'#ec4899',desc:'Decide what to do next'},{id:'act',label:'Act',color:'#f97316',desc:'Execute actions and capabilities'},{id:'emit',label:'Emit',color:'#10b981',desc:'Deliver output — reports, notifications'}];
   el.innerHTML=phases.map(p=>`<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)"><div style="width:10px;height:10px;border-radius:2px;background:${p.color};flex-shrink:0"></div><b style="font-size:11px;min-width:60px">${p.label}</b><span style="font-size:10px;color:var(--fg2);flex:1">${p.desc}</span></div>`).join('')}
@@ -3374,12 +3624,12 @@ function updateActiveDreamDetail(ev){
     }
     renderActiveDream();
   }
-  if(ev.type==='agent_loop_v2.tool_call'||ev.type==='agent_loop.tool_call'){
+  if(ev.type.startsWith('agent_loop')&&ev.type.endsWith('.tool_call')){
     if(!_activeDreamState.tools_called)_activeDreamState.tools_called=[];
     _activeDreamState.tools_called.push({tool:ev.tool||ev.cap||'?',thought:ev.thought||'',status:'running'});
     renderActiveDream();
   }
-  if(ev.type==='agent_loop_v2.tool_done'||ev.type==='agent_loop.tool_done'){
+  if(ev.type.startsWith('agent_loop')&&ev.type.endsWith('.tool_done')){
     const tool=ev.tool||ev.cap||'?';
     const calls=_activeDreamState.tools_called||[];
     const last=[...calls].reverse().find(c=>c.tool===tool&&c.status==='running');
@@ -3447,7 +3697,10 @@ handleEv=function(ev){
 };
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel.js"></script>
 <script src="/ui/elements/agent_loop_output.js"></script>
+<script src="/ui/elements/flow_builder.js"></script>
+<script src="/ui/elements/flow_caps.js"></script>
 <script src="/ui/vera-graph.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>

@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dusk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Vera / Enroll</title>
+<style>
+:root{--bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;--border:#3a3530;--border2:#4a4540;--acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--acc4:#9e8fa0;--ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;--gpu:#c97a5a;--text:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;--mono:'JetBrains Mono','Fira Mono',monospace;--sans:'Inter',system-ui,sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg0);color:var(--text);font:13px/1.45 'ui-monospace','Menlo',monospace}
+body{overflow:hidden}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,select{font:inherit;color:inherit;background:var(--bg0);border:1px solid var(--border);border-radius:5px;padding:7px 9px;outline:none;width:100%}
+input:focus,select:focus{border-color:var(--acc)}
+::-webkit-scrollbar{width:7px;height:7px}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px}
+#shell{display:flex;flex-direction:column;height:100vh;height:100dvh;overflow:hidden}
+#top{display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--bg1);border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap}
+.logo{color:var(--acc);font-weight:700;white-space:nowrap}
+.spacer{flex:1}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border-radius:6px;background:var(--bg3);border:1px solid var(--border2);color:var(--text);font-size:12px;white-space:nowrap;flex:0 0 auto}
+.btn:hover{border-color:var(--acc)}.btn.pri{background:var(--acc);border-color:var(--acc);color:#06121c;font-weight:700}
+.btn.sm{padding:5px 8px;font-size:11px}.btn.danger{color:var(--err);border-color:var(--err)}.btn:disabled{opacity:.4}
+#body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px;padding-bottom:60px}
+.wrap{max-width:1050px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+.statbar{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+@media(min-width:640px){.statbar{grid-template-columns:repeat(4,1fr)}}
+.stat{background:var(--bg2);border:1px solid var(--border);border-radius:9px;padding:11px 13px}
+.stat .v{font-size:20px;font-weight:700}.stat .l{font-size:10px;color:var(--dim2);text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
+.stat .v.ok{color:var(--ok)}.stat .v.warn{color:var(--warn)}.stat .v.err{color:var(--err)}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:11px}
+.card h3{font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--dim2);display:flex;align-items:center;gap:8px}
+.row{display:flex;gap:8px;flex-wrap:wrap}.row>input,.row>select{flex:1;min-width:120px}
+.tbl{width:100%;border-collapse:collapse;font-size:11.5px}
+.tbl th{text-align:left;color:var(--dim);font-weight:600;padding:5px 8px;border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase}
+.tbl td{padding:6px 8px;border-bottom:1px solid var(--border)}
+.pill{font-size:9.5px;padding:1px 7px;border-radius:12px;border:1px solid var(--dim);color:var(--dim2);white-space:nowrap}
+.pill.ok{color:var(--ok);border-color:var(--ok)}.pill.run{color:var(--ok)}.pill.stop{color:var(--dim2)}
+.mono{background:#000;border:1px solid var(--border);border-radius:6px;padding:8px;font-size:10.5px;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto;display:none}
+.field{display:flex;flex-direction:column;gap:4px}.field label{font-size:10px;color:var(--dim2);text-transform:uppercase}
+#modal{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.55);display:none}
+#modal .sheet{position:absolute;top:0;right:0;height:100%;width:420px;max-width:94%;background:var(--bg1);border-left:1px solid var(--border2);display:flex;flex-direction:column}
+#modal .hd{display:flex;align-items:center;gap:8px;padding:13px;border-bottom:1px solid var(--border)}
+#modal .bd{padding:14px;overflow-y:auto;display:flex;flex-direction:column;gap:11px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:60;background:var(--bg3);border:1px solid var(--border2);padding:10px 16px;border-radius:8px;font-size:12px;opacity:0;transition:.2s;pointer-events:none}
+.toast.on{opacity:1}.toast.err{border-color:var(--err);color:var(--err)}
+</style>
+<script src="/ui/vera-ui.js"></script>
+</head>
+<body>
+<div id="shell">
+  <div id="top">
+    <span class="logo">🔐 Enroll</span>
+    <select id="clusterSel" onchange="discover()" style="max-width:200px;width:auto"></select>
+    <button class="btn sm" onclick="refresh()">⟳ Refresh</button>
+    <span class="spacer"></span>
+    <button class="btn sm pri" onclick="enrollOpen('')">+ Enroll a host</button>
+  </div>
+  <div id="body">
+    <div class="wrap">
+      <div class="statbar">
+        <div class="stat"><div class="v" id="st-enrolled">—</div><div class="l">Enrolled</div></div>
+        <div class="stat"><div class="v" id="st-total">—</div><div class="l">Guests</div></div>
+        <div class="stat"><div class="v" id="st-ca">—</div><div class="l">step-ca PKI</div></div>
+        <div class="stat"><div class="v" id="st-sshca">—</div><div class="l">SSH cert CA</div></div>
+      </div>
+
+      <div class="card">
+        <h3>Guests <span id="gh-cluster" class="pill" style="margin-left:auto"></span></h3>
+        <div style="overflow-x:auto"><table class="tbl">
+          <thead><tr><th>VMID</th><th>Name</th><th>Type</th><th>Node</th><th>Status</th><th>Enrolment</th><th></th></tr></thead>
+          <tbody id="g-tbody"><tr><td colspan="7" style="color:var(--dim);padding:12px">Pick a cluster…</td></tr></tbody>
+        </table></div>
+      </div>
+
+      <div class="card">
+        <h3>Vera SSH identity <span id="vc-badge" class="pill" style="margin-left:auto">—</span></h3>
+        <div class="field" style="font-size:10.5px;color:var(--dim)">Vera mints its own SSH user certificate from step-ca's SSH CA, then logs into enrolled hosts cert-only — no per-host passwords. Needs the <code>step</code> CLI on the Vera host + step-ca configured.</div>
+        <div class="row"><button class="btn sm pri" onclick="mintCert(false)">Mint / renew cert</button><button class="btn sm" onclick="mintCert(true)">Force new key</button></div>
+        <div id="vc-out" class="mono"></div>
+      </div>
+
+      <div class="card">
+        <h3>SSH credentials <span style="margin-left:auto"><button class="btn sm" onclick="hostOpen('')">+ Add host</button></span></h3>
+        <div class="field" style="font-size:10.5px;color:var(--dim)">Auth preference: certificate (step-ca SSH CA) → key → password. Secrets are sealed (Fernet) in Redis.</div>
+        <div style="overflow-x:auto"><table class="tbl">
+          <thead><tr><th>Label</th><th>Host</th><th>User</th><th>Auth</th><th>Secret</th><th></th></tr></thead>
+          <tbody id="h-tbody"></tbody>
+        </table></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="modal"><div class="sheet">
+  <div class="hd"><span style="font-weight:700" id="m-ttl">—</span><span class="spacer"></span><button class="btn sm" onclick="modalClose()">✕</button></div>
+  <div class="bd" id="m-body"></div>
+</div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const $=s=>document.querySelector(s);
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function toast(m,e){const t=$('#toast');t.textContent=m;t.className='toast on'+(e?' err':'');clearTimeout(t._h);t._h=setTimeout(()=>t.className='toast',3000);}
+async function api(p,m='GET',b){const o={method:m,headers:{'Content-Type':'application/json'}};if(b!==undefined)o.body=JSON.stringify(b||{});const r=await fetch(p,o);if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}
+let GUESTS=[], CUR='';
+
+async function boot(){
+  let cl={}; try{ cl=await api('/proxmox/cluster/list'); }catch(e){}
+  const cs=cl.clusters||[];
+  $('#clusterSel').innerHTML=cs.map(c=>`<option value="${esc(c.id)}">${esc(c.label||c.id)}</option>`).join('')||'<option value="">no clusters</option>';
+  if(cs.length) CUR=cs[0].id;
+  refresh();
+}
+async function refresh(){ await Promise.all([loadStatus(), discover(), loadHosts(), loadCertStatus()]); }
+
+async function loadCertStatus(){
+  let s={}; try{ s=await api('/enroll/ssh/cert/status'); }catch(e){ return; }
+  const b=$('#vc-badge');
+  if(s.has_cert){ b.textContent='cert ready'; b.className='pill ok'; }
+  else if(s.has_key){ b.textContent='key only — sign it'; b.className='pill'; }
+  else { b.textContent=s.step_cli?'not minted':'no step CLI'; b.className='pill'; }
+}
+async function mintCert(force){
+  toast('minting…'); const o=$('#vc-out'); o.style.display='block'; o.textContent='Requesting certificate from step-ca…';
+  try{ const r=await api('/enroll/ssh/cert/mint','POST',{force:!!force});
+    if(r.ok){ o.textContent='✓ Minted\nkey: '+r.key_path+'\ncert: '+r.cert_path; toast('cert minted'); }
+    else if(r.need_step_cli){ o.textContent='step CLI not on the Vera host.\n\nSign this public key with step-ca\'s SSH user CA and place the cert at '+(r.key_path||'')+'-cert.pub :\n\n'+(r.public_key||'(keygen unavailable)'); toast('manual signing needed',true); }
+    else { o.textContent='Error: '+(r.error||'unknown'); toast(r.error||'mint failed',true); }
+    loadCertStatus();
+  }catch(e){ o.textContent='Error: '+e.message; toast(e.message,true); }
+}
+
+async function loadStatus(){
+  let s={}; try{ s=await api('/provisioning/status'); }catch(e){}
+  const ca=s.stepca||{};
+  const el=$('#st-ca'); el.textContent=ca.reachable?(ca.has_root?'ready':'no root'):'—'; el.className='v '+(ca.reachable&&ca.has_root?'ok':ca.configured?'warn':'');
+  // SSH CA presence — probe via the script preview
+  try{ const sc=await api('/enroll/script','POST',{fqdn:'probe.local'}); const e2=$('#st-sshca'); e2.textContent=sc.ssh_user_ca_present?'ready':'absent'; e2.className='v '+(sc.ssh_user_ca_present?'ok':'warn'); }
+  catch(e){ $('#st-sshca').textContent='—'; }
+}
+
+async function discover(){
+  CUR=$('#clusterSel').value||CUR;
+  $('#gh-cluster').textContent='loading…';
+  let d={}; try{ d=await api('/enroll/discover','POST',{cluster_id:CUR}); }catch(e){ $('#g-tbody').innerHTML=`<tr><td colspan="7" style="color:var(--err);padding:12px">${esc(e.message)}</td></tr>`; return; }
+  GUESTS=d.guests||[];
+  $('#gh-cluster').textContent=GUESTS.length+' guests';
+  const enr=GUESTS.filter(g=>g.enrolled).length;
+  $('#st-enrolled').textContent=enr; $('#st-enrolled').className='v '+(enr?'ok':'');
+  $('#st-total').textContent=GUESTS.length;
+  $('#g-tbody').innerHTML=GUESTS.length?GUESTS.map(g=>`<tr>
+    <td style="color:var(--dim)">${g.vmid}</td>
+    <td style="font-weight:600">${esc(g.name||'?')}</td>
+    <td><span class="pill">${g.type==='qemu'?'VM':'CT'}</span></td>
+    <td style="color:var(--dim2)">${esc(g.node)}</td>
+    <td><span class="pill ${g.status==='running'?'run':'stop'}">${esc(g.status)}</span></td>
+    <td>${g.enrolled?`<span class="pill ok">enrolled · ${esc(g.auth||'')}</span>`:'<span class="pill">not enrolled</span>'}</td>
+    <td><button class="btn sm ${g.enrolled?'':'pri'}" onclick='enrollOpen(${JSON.stringify(g.vmid)})'>${g.enrolled?'Re-enroll':'Enroll'}</button></td>
+  </tr>`).join(''):'<tr><td colspan="7" style="color:var(--dim);padding:12px">No guests</td></tr>';
+}
+
+async function loadHosts(){
+  let d={}; try{ d=await api('/enroll/ssh/host/list'); }catch(e){}
+  const hs=d.hosts||[];
+  $('#h-tbody').innerHTML=hs.length?hs.map(h=>`<tr>
+    <td style="font-weight:600">${esc(h.label||'')}</td>
+    <td style="color:var(--dim2)">${esc(h.host||'')}:${h.port||22}</td>
+    <td>${esc(h.user||'')}</td>
+    <td><span class="pill ${h.auth==='cert'?'ok':''}">${esc(h.auth||'')}</span></td>
+    <td style="color:var(--dim);font-size:10px">${h.has_private_key?'🔑 key':''}${h.has_password?'🔒 pw':''}${(!h.has_private_key&&!h.has_password)?'—':''}</td>
+    <td style="white-space:nowrap">
+      <button class="btn sm" onclick="hostTest('${esc(h.id)}')">Test</button>
+      <button class="btn sm" onclick='hostOpen(${JSON.stringify(h.id)})'>Edit</button>
+    </td></tr>`).join(''):'<tr><td colspan="6" style="color:var(--dim);padding:10px">No SSH credentials stored yet.</td></tr>';
+}
+
+/* ── Enrol modal ──────────────────────────────────────────────────────── */
+function modalClose(){ $('#modal').style.display='none'; }
+function enrollOpen(vmid){
+  const g=GUESTS.find(x=>x.vmid===vmid)||{};
+  $('#m-ttl').textContent=g.name?('Enroll '+g.name):'Enroll a host';
+  const ip='width:100%';
+  $('#m-body').innerHTML=`
+    <div class="field" style="font-size:10.5px;color:var(--dim)">Vera SSHes in with the bootstrap creds below, installs the step-ca trust + SSH user-CA (enables cert logins), requests a TLS cert, and registers the host in FreeIPA/DNS.</div>
+    <div class="field"><label>FQDN</label><input id="e-fqdn" value="${esc(g.name?g.name:'')}" placeholder="host.lan"></div>
+    <div class="field"><label>IP / reachable host</label><input id="e-ip" placeholder="10.0.0.42"></div>
+    <div class="row"><div class="field" style="flex:1"><label>SSH user</label><input id="e-user" value="root"></div><div class="field" style="flex:0 0 90px"><label>Port</label><input id="e-port" value="22"></div></div>
+    <div class="field"><label>SSH password <span style="color:var(--dim)">(bootstrap)</span></label><input id="e-pass" type="password" placeholder="used once for enrolment"></div>
+    <div class="field"><label>…or key path on server</label><input id="e-key" placeholder="/root/.ssh/id_ed25519"></div>
+    <input type="hidden" id="e-vmid" value="${esc(vmid||'')}"><input type="hidden" id="e-type" value="${esc(g.type||'')}"><input type="hidden" id="e-node" value="${esc(g.node||'')}">
+    <button class="btn pri" onclick="enrollGo()">Enroll host</button>
+    <div id="e-out" class="mono"></div>`;
+  $('#modal').style.display='block';
+}
+async function enrollGo(){
+  const body={cluster_id:CUR,vmid:parseInt($('#e-vmid').value||'0'),guest_type:$('#e-type').value,node:$('#e-node').value,
+    fqdn:$('#e-fqdn').value.trim(),ip:$('#e-ip').value.trim(),ssh_user:$('#e-user').value.trim(),
+    ssh_password:$('#e-pass').value,ssh_key_path:$('#e-key').value.trim(),ssh_port:parseInt($('#e-port').value||'22')};
+  if(!body.ip||!body.fqdn) return toast('FQDN and IP required',true);
+  toast('enrolling '+body.fqdn+'…');
+  const o=$('#e-out'); o.style.display='block'; o.textContent='Running enrolment…';
+  try{ const r=await api('/enroll/guest','POST',body);
+    o.textContent=JSON.stringify(r.steps||r,null,2);
+    if(r.ok) toast('enrolled '+body.fqdn); else toast('enrolment had issues — see output',true);
+    discover(); loadHosts();
+  }catch(e){ o.textContent='Error: '+e.message; toast(e.message,true); }
+}
+
+/* ── SSH host editor ──────────────────────────────────────────────────── */
+async function hostOpen(id){
+  let h={}; if(id){ const d=await api('/enroll/ssh/host/list'); h=(d.hosts||[]).find(x=>x.id===id)||{}; }
+  $('#m-ttl').textContent=id?'Edit SSH host':'Add SSH host';
+  $('#m-body').innerHTML=`
+    <div class="field"><label>Label</label><input id="h-label" value="${esc(h.label||'')}"></div>
+    <div class="row"><div class="field" style="flex:1"><label>Host</label><input id="h-host" value="${esc(h.host||'')}"></div><div class="field" style="flex:0 0 90px"><label>Port</label><input id="h-port" value="${h.port||22}"></div></div>
+    <div class="field"><label>User</label><input id="h-user" value="${esc(h.user||'root')}"></div>
+    <div class="field"><label>Auth</label><select id="h-auth"><option value="cert"${h.auth==='cert'?' selected':''}>certificate (step-ca)</option><option value="key"${h.auth==='key'?' selected':''}>private key</option><option value="password"${h.auth==='password'?' selected':''}>password</option></select></div>
+    <div class="field"><label>Password ${h.has_password?'· stored':''}</label><input id="h-pass" type="password" placeholder="${h.has_password?'•••• (blank=keep)':''}"></div>
+    <div class="field"><label>Private key ${h.has_private_key?'· stored':''}</label><textarea id="h-key" style="background:var(--bg0);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:7px;min-height:64px;font-size:10px" placeholder="-----BEGIN OPENSSH PRIVATE KEY----- (blank=keep)"></textarea></div><!-- pragma: allowlist secret -->
+    <input type="hidden" id="h-id" value="${esc(id||'')}">
+    <div class="row"><button class="btn pri" onclick="hostSave()">Save</button>${id?`<button class="btn danger" onclick="hostDelete('${esc(id)}')">Delete</button>`:''}</div>`;
+  $('#modal').style.display='block';
+}
+async function hostSave(){
+  const body={id:$('#h-id').value,label:$('#h-label').value.trim(),host:$('#h-host').value.trim(),
+    port:parseInt($('#h-port').value||'22'),user:$('#h-user').value.trim(),auth:$('#h-auth').value};
+  const pw=$('#h-pass').value; if(pw) body.password=pw;
+  const pk=$('#h-key').value.trim(); if(pk) body.private_key=pk;
+  if(!body.host||!body.user) return toast('host and user required',true);
+  try{ const r=await api('/enroll/ssh/host/save','POST',body); if(r.error)return toast(r.error,true); toast('saved'); modalClose(); loadHosts(); }
+  catch(e){ toast(e.message,true); }
+}
+async function hostDelete(id){ if(!confirm('Delete these SSH creds?'))return; try{ await api('/enroll/ssh/host/delete','POST',{id}); modalClose(); loadHosts(); }catch(e){ toast(e.message,true); } }
+async function hostTest(id){ toast('testing…'); try{ const r=await api('/enroll/ssh/host/test','POST',{id}); toast(r.ok?('OK · '+(r.stdout||'').split('\n').pop()):('Fail: '+(r.error||'').slice(0,60)),!r.ok); }catch(e){ toast(e.message,true); } }
+
+boot();
+</script>
+</body>
+</html>

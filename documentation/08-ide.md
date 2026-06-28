@@ -288,4 +288,6 @@ This is the bootstrap path for growing the system — sketch a capability in Eng
 - [Capability Framework](./01-capability-framework.md) — the underlying registration system
 - [Memory Graph](./05-memory-graph.md) — where IDE activity lands
 - [DAG Engine](./03-dag-engine.md) — the agentic loop is a stepwise DAG
+- [Execution & Network Mapping](./12-execution.md) — the exec sandbox the IDE **Run** action shares
+- [Agents & Chat](./19-agents-chat.md) — the shared `<vera-agent-loop-output>` renderer
 - [Research System](./07-research.md) — the code pipeline shares the agent triplet

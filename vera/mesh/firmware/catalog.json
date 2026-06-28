@@ -1,0 +1,84 @@
+[
+  {
+    "id": "mp-esp32",
+    "label": "MicroPython — ESP32 (classic WROOM/WROVER)",
+    "kind": "runtime",
+    "chip": "esp32",
+    "offset": "0x1000",
+    "source": "micropython_latest",
+    "mp_board": "ESP32_GENERIC",
+    "url": "https://micropython.org/resources/firmware/ESP32_GENERIC-20260406-v1.28.0.bin",
+    "erase": true,
+    "then": "vera-node-mpy",
+    "note": "Classic ESP32 flashes at 0x1000. Server auto-fetches the latest stable build (falls back to the pinned url)."
+  },
+  {
+    "id": "mp-esp32s3-oct",
+    "label": "MicroPython — ESP32-S3 Octal PSRAM (N8R8/N16R8)",
+    "kind": "runtime",
+    "chip": "esp32s3",
+    "offset": "0x0",
+    "source": "micropython_latest",
+    "mp_board": "ESP32_GENERIC_S3-SPIRAM_OCT",
+    "url": "https://micropython.org/resources/firmware/ESP32_GENERIC_S3-SPIRAM_OCT-20260406-v1.28.0.bin",
+    "erase": true,
+    "then": "vera-node-mpy",
+    "note": "Most S3 devkits (-N8R8/-N16R8) have OCTAL PSRAM. Use this if you saw 'PSRAM … wrong line mode'."
+  },
+  {
+    "id": "mp-esp32s3",
+    "label": "MicroPython — ESP32-S3 (no / quad PSRAM)",
+    "kind": "runtime",
+    "chip": "esp32s3",
+    "offset": "0x0",
+    "source": "micropython_latest",
+    "mp_board": "ESP32_GENERIC_S3",
+    "url": "https://micropython.org/resources/firmware/ESP32_GENERIC_S3-20260406-v1.28.0.bin",
+    "erase": true,
+    "then": "vera-node-mpy",
+    "note": "Plain S3. If PSRAM init fails on your board, use the Octal PSRAM build above."
+  },
+  {
+    "id": "mp-esp32c3",
+    "label": "MicroPython — ESP32-C3 (RISC-V)",
+    "chip": "esp32c3",
+    "kind": "runtime",
+    "offset": "0x0",
+    "source": "micropython_latest",
+    "mp_board": "ESP32_GENERIC_C3",
+    "url": "https://micropython.org/resources/firmware/ESP32_GENERIC_C3-20260406-v1.28.0.bin",
+    "erase": true,
+    "then": "vera-node-mpy",
+    "note": "C3 flashes at 0x0; GPIO 0-21 only."
+  },
+  {
+    "id": "vera-node-mpy",
+    "label": "Vera Node — MicroPython (main.py)",
+    "kind": "script",
+    "runtime": "micropython",
+    "source": "server_text",
+    "text_url": "/mesh/firmware?flavor=micropython",
+    "upload_as": "main.py",
+    "note": "Pushed over the serial REPL after the runtime is flashed — no compiler. Board-robust pins (override via config.io)."
+  },
+  {
+    "id": "vera-worker-mpy",
+    "label": "Vera Worker — MicroPython (main.py)",
+    "kind": "script",
+    "runtime": "micropython",
+    "source": "server_text",
+    "text_url": "/mesh/firmware?flavor=micropython",
+    "upload_as": "main.py",
+    "note": "Same firmware; assign recurring edge tasks with mesh.worker.assign."
+  },
+  {
+    "id": "vera-node-arduino",
+    "label": "Vera Node — Arduino sketch (.ino)",
+    "kind": "sketch",
+    "runtime": "arduino",
+    "source": "server_text",
+    "text_url": "/mesh/firmware?flavor=arduino",
+    "needs_build": true,
+    "note": "Compile with arduino-cli (mesh.firmware.build) or the Arduino IDE, then flash the .bin over USB or OTA. Adjust LED/RELAY/ADC #defines per board."
+  }
+]

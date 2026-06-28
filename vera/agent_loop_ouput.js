@@ -230,6 +230,15 @@
 .alo-cycle.expand{border-color:var(--acc4,#a07ec1);background:rgba(160,126,193,.05)}
 .alo-cycle.warn{border-color:#c9a45a;background:rgba(201,164,90,.06)}
 .alo-cycle.handover{border-color:var(--acc,#5a9e8f);border-left-width:3px;background:rgba(90,158,143,.04)}
+/* v5: a specialist sub-agent step — a labelled section the step's cycle cards
+   appear under. Left accent bar distinguishes it from ordinary cycle cards. */
+.alo-cycle.step{border-left:3px solid var(--acc2,#a8c87a);background:rgba(168,200,122,.05)}
+.alo-cycle.step .alo-cycle-dot{border-color:var(--acc2,#a8c87a);background:var(--acc2,#a8c87a)}
+.alo-step-meta{font-family:var(--mono,monospace);font-size:9px;color:var(--dim,#a89f92);margin-top:3px}
+/* v5: joined thought-only "reasoning" card — muted, not an error/result. */
+.alo-cycle.thinking{border-style:dashed;border-color:var(--border2,#3a3530);background:transparent}
+.alo-cycle.thinking .alo-cycle-dot{border-color:var(--dim2,#8a7e70)}
+.alo-think-join{margin-top:4px;font-size:10px;line-height:1.45;color:var(--text2,#bfb6a8);white-space:pre-wrap;font-style:italic}
 /* Timeline: a dot + timestamp per card on a rail down the right side. The rail
    is composed of per-card connector segments (::after) rather than one long
    container line, so it spans the full content height even when the scroll
@@ -655,7 +664,8 @@
 
       // think events (any variant)
       if(t === 'agent_loop.think' || t === 'agent_loop_v2.think'
-         || t === 'agent_loop_v3.think' || t === 'agent_loop_v4.think'){
+         || t === 'agent_loop_v3.think' || t === 'agent_loop_v4.think'
+         || t === 'agent_loop_v5.think'){
         if(!this._showThinking) return;
         const ref = this._cycleRefs.get(ev.cycle);
         if(!ref || !ref.el) return;
@@ -667,13 +677,55 @@
         return;
       }
 
+      // ── v4-only: LIVE thought streaming (token-by-token during planning) ──
+      // The backend emits the cumulative reasoning as it generates; _appendThink
+      // replaces the block content, so repeated deltas render live without dupes.
+      if(t === 'agent_loop_v4.think_delta'){
+        if(!this._showThinking) return;
+        const ref = this._cycleRefs.get(ev.cycle);
+        if(!ref || !ref.el) return;
+        ref._thinkFromEvent = true;  // suppress the post-hoc [think #N] blob flush
+        this._appendThink(ref, ev.text || '');
+        // Auto-expand the think block so the reasoning is visible as it streams.
+        const d = ref.el.querySelector('.alo-cycle-think');
+        if(d) d.open = true;
+        return;
+      }
+
+      // ── Routed Ollama node — which instance/model served this call ──────
+      if(t === 'ollama.request'){
+        const node = ev.instance_id || '';
+        if(!node) return;
+        // Attach to the most recent cycle card, else the Starting card.
+        let lastCycle = 0;
+        this._cycleRefs.forEach((_v, k) => { if(k > lastCycle) lastCycle = k; });
+        const ref = this._cycleRefs.get(lastCycle);
+        const host = (ref && ref.el) ? ref.el
+                   : (this._startCardEl && this._startCardEl.isConnected ? this._startCardEl : null);
+        if(!host) return;
+        let badge = host.querySelector(':scope > .alo-node-badge');
+        if(!badge){
+          badge = document.createElement('div');
+          badge.className = 'alo-node-badge';
+          badge.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:8.5px;'
+            + 'color:var(--dim2,#8a7e70);margin-top:3px;font-family:var(--mono,monospace)';
+          host.appendChild(badge);
+        }
+        badge.textContent = `⚙ node: ${node}${ev.model ? ' · ' + ev.model : ''}`;
+        badge.title = 'Ollama instance that served this request' + (ev.instance_url ? ' — ' + ev.instance_url : '');
+        return;
+      }
+
       // ── v4-only: step selection (which phases will run) ──────────────
       if(t === 'agent_loop_v4.step_plan'){
         const steps = (ev.steps||[]).map(_esc).join(' › ') || '(none)';
         const reason = ev.reason ? `<div class="alo-cycle-preview">${_esc(ev.reason)}</div>` : '';
+        const single = ev.single_action
+          ? ` <span class="alo-version-pill" style="padding:1px 5px;font-size:8px;background:#2a3a1d;color:#aede7e">single-action</span>`
+          : '';
         this._cycleEl(`<div class="alo-cycle-h">
           <span class="alo-cycle-tool">⚙ Steps selected</span>
-          <span class="alo-cycle-status">${steps}</span>
+          <span class="alo-cycle-status">${steps}${single}</span>
         </div>${reason}`, 'expand');
         return;
       }
@@ -700,13 +752,206 @@
       }
 
       // ── v4-only: strict completion check before final ────────────────
+      // The check belongs to the cycle that *proposed* the final answer — render
+      // it inside that cycle's card (which would otherwise sit empty showing only
+      // "planning…") rather than as a detached standalone card.
       if(t === 'agent_loop_v4.completion_check'){
         const passed = !!ev.passed;
         const miss = (ev.missing||[]).map(_esc).map(m=>`<div>• ${m}</div>`).join('');
+        const label = passed ? '✓ Completion check passed' : '⚠ Completion check failed';
+        const ref = this._cycleRefs.get(ev.cycle);
+        if(ref && ref.el){
+          ref.el.classList.add(passed ? 'done' : 'error');
+          const toolEl = ref.el.querySelector(':scope > .alo-cycle-h > .alo-cycle-tool');
+          if(toolEl){ toolEl.textContent = label; }
+          if(!passed && miss){
+            let body = ref.el.querySelector('.alo-cc-miss');
+            if(!body){
+              body = document.createElement('div');
+              body.className = 'alo-cycle-preview alo-cc-miss';
+              ref.el.appendChild(body);
+            }
+            body.innerHTML = miss;
+          }
+          return;
+        }
+        // Fallback: no cycle ref for this event (shouldn't normally happen).
         this._cycleEl(`<div class="alo-cycle-h">
-          <span class="alo-cycle-tool">${passed?'✓ Completion check passed':'⚠ Completion check failed'}</span>
+          <span class="alo-cycle-tool">${label}</span>
         </div>${passed?'':`<div class="alo-cycle-preview">${miss}</div>`}`,
           passed?'expand':'error');
+        return;
+      }
+
+      // ── v5-only: orchestrator step plan (step shape, not todos) ──────
+      if(t === 'agent_loop_v5.plan'){
+        const steps = ev.steps||[];
+        const rows = steps.map(s => {
+          const caps = (s.caps||[]).map(_esc).join(', ');
+          const sk = (s.skills||[]).length
+            ? ` <span style="color:var(--acc2,#a8c87a)">+skills: ${(s.skills||[]).map(_esc).join(', ')}</span>` : '';
+          const cx = s.complex
+            ? ` <span style="color:var(--warn,#c9a45a)" title="expands into its own sub-plan">⧉ sub-plan</span>` : '';
+          const ph = (s.phases&&s.phases.length)
+            ? ` <span style="color:var(--acc2,#a8c87a)" title="runs as scoped phases">▤ ${s.phases.map(_esc).join('→')}</span>` : '';
+          return `<div style="font-family:var(--mono,monospace);font-size:10px;color:var(--text2,#bfb6a8);margin:2px 0">`
+            + `<b>${s.id}.</b> ${_esc(s.title||'')}${cx}${ph}`
+            + (caps?`<div style="color:var(--dim,#a89f92);font-size:9px;margin-left:12px">caps: ${caps}${sk}</div>`:'')
+            + `</div>`;
+        }).join('');
+        const reason = ev.reason ? `<div class="alo-cycle-thought" style="font-style:italic">${_esc(ev.reason)}</div>` : '';
+        let card = this._sr.querySelector('.alo-cycle.plan[data-plan-v5="1"]');
+        const inner = `<div class="alo-cycle-h">
+            <span class="alo-cycle-tool">▤ Orchestrator plan</span>
+            <span class="alo-cycle-status">${steps.length} step${steps.length===1?'':'s'}</span>
+          </div>${reason}<div class="alo-cycle-preview">${rows||'(empty plan)'}</div>`;
+        if(card){ card.innerHTML = inner; }
+        else { card = this._cycleEl(inner, 'plan'); if(card) card.setAttribute('data-plan-v5','1'); }
+        return;
+      }
+
+      // ── v5-only: a specialist sub-agent step begins (section header) ──
+      if(t === 'agent_loop_v5.step_start'){
+        const caps = (ev.caps||[]).map(_esc).join(', ') || '(reasoning only)';
+        const sk = (ev.skills||[]).length
+          ? `<div class="alo-step-meta">🛠 skills: ${(ev.skills||[]).map(_esc).join(', ')}</div>` : '';
+        const PH = {explore:'🔍 explore', think:'💭 think', act:'⚙ act', verify:'✓ verify'};
+        const phaseBadge = ev.phase
+          ? ` <span style="color:var(--acc2,#a8c87a);font-size:9px">· ${PH[ev.phase]||_esc(ev.phase)}</span>` : '';
+        const phasesMeta = (ev.phases&&ev.phases.length)
+          ? `<div class="alo-step-meta">▤ phases: ${ev.phases.map(p=>_esc(p)).join(' → ')}</div>` : '';
+        const el = this._cycleEl(`<div class="alo-cycle-h">
+            <span class="alo-cycle-tool">▶ Step ${_esc(String(ev.step_id))} — ${_esc(ev.title||'')}${phaseBadge}</span>
+            <span class="alo-cycle-status"><span class="alo-spinner"></span> running…</span>
+          </div>
+          ${ev.goal?`<div class="alo-cycle-thought">${_esc(ev.goal)}</div>`:''}
+          <div class="alo-step-meta">🧰 scoped caps: ${caps}</div>${sk}${phasesMeta}`, 'step');
+        if(el) el.setAttribute('data-step', String(ev.step_id));
+        return;
+      }
+
+      // ── v5-only: a step's v4-style phase cadence (explore/think/act/verify) ──
+      if(t === 'agent_loop_v5.phases'){
+        const PH = {explore:'🔍 explore (recon)', think:'💭 think', act:'⚙ act', verify:'✓ verify'};
+        const seq = (ev.phases||[]).map(p=>PH[p]||_esc(p)).join('  →  ') || '(none)';
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">▤ Phased step ${_esc(String(ev.parent_id||'?'))} — ${_esc(ev.title||'')}</span>
+          <span class="alo-cycle-status">${(ev.phases||[]).length} phase${(ev.phases||[]).length===1?'':'s'}</span>
+        </div><div class="alo-cycle-preview">${seq}</div>`, 'plan');
+        return;
+      }
+
+      // ── v5-only: extreme-goal long-form master plan (specialist planner) ──
+      if(t === 'agent_loop_v5.master_plan'){
+        const lf = ev.long_form||'';
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">🧠 Master plan (specialist planner)</span>
+          <span class="alo-cycle-status">${lf.length} chars</span>
+        </div>${ev.persona?`<div class="alo-cycle-thought" style="font-style:italic">${_esc(ev.persona)}</div>`:''}
+        <details style="margin-top:4px"><summary style="cursor:pointer;font-size:9.5px;color:var(--dim,#a89f92)">show long-form strategy</summary>
+        <div class="alo-cycle-preview" style="white-space:pre-wrap">${_esc(lf)}</div></details>`, 'plan');
+        return;
+      }
+
+      // ── v5-only: a specialist sub-agent step finishes ────────────────
+      if(t === 'agent_loop_v5.step_done'){
+        const card = this._sr.querySelector(`.alo-cycle.step[data-step="${ev.step_id}"]`);
+        if(card){
+          card.classList.add(ev.ok ? 'done' : 'error');
+          const status = card.querySelector('.alo-cycle-status');
+          if(status) status.innerHTML = ev.ok
+            ? `<span style="color:var(--ok,#5a9e8f)">✓ done</span>`
+            : `<span style="color:var(--err,#c75a5a)">✗ incomplete</span>`;
+          if(ev.summary){
+            let body = card.querySelector('.alo-step-summary');
+            if(!body){ body = document.createElement('div'); body.className='alo-cycle-preview alo-step-summary'; card.appendChild(body); }
+            body.textContent = ev.summary;
+          }
+        }
+        return;
+      }
+
+      // ── v5-only: thought-only turns, joined into ONE reasoning card ──
+      // A specialist that reasons without acting is NOT an error and does not
+      // consume a real cycle. Each thinking streak reuses one card (keyed by
+      // its cycle id) and shows the accumulated reasoning.
+      if(t === 'agent_loop_v5.thinking'){
+        if(!this._showThinking) return;
+        let card = this._sr.querySelector(`.alo-cycle.thinking[data-think-cycle="${ev.cycle}"]`);
+        if(!card){
+          card = this._cycleEl(`<div class="alo-cycle-h">
+              <span class="alo-cycle-tool">💭 reasoning</span>
+              <span class="alo-cycle-status" style="color:var(--dim,#a89f92)">no action — thinking</span>
+            </div><div class="alo-think-join"></div>`, 'thinking');
+          if(card) card.setAttribute('data-think-cycle', String(ev.cycle));
+        }
+        const body = card && card.querySelector('.alo-think-join');
+        if(body) body.textContent = ev.thought || '';
+        return;
+      }
+
+      // ── v5-only: orchestrator re-planned the remaining steps ─────────
+      if(t === 'agent_loop_v5.replan'){
+        const rem = (ev.remaining||[]).map(s=>`${s.id}. ${_esc(s.title||'')}`).join(' › ') || '(none)';
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">↻ Re-planned remaining work</span>
+          <span class="alo-cycle-status">after step ${ev.after_step||'?'}</span>
+        </div><div class="alo-cycle-preview">${rem}</div>
+        ${ev.reason?`<div class="alo-cycle-thought" style="font-style:italic">${_esc(ev.reason)}</div>`:''}`, 'warn');
+        return;
+      }
+
+      // ── v5-only: pre-plan READ-ONLY recon (start → done, runs sequentially) ──
+      if(t === 'agent_loop_v5.recon'){
+        if(ev.phase === 'done'){
+          const open = this._sr.querySelectorAll('.alo-cycle.recon:not(.recon-done)');
+          const card = open[open.length - 1];
+          if(card){
+            card.classList.add('recon-done', ev.ok ? 'done' : 'error');
+            const status = card.querySelector('.alo-cycle-status');
+            if(status) status.innerHTML = ev.ok
+              ? `<span style="color:var(--ok,#5a9e8f)">✓</span>`
+              : `<span style="color:var(--err,#c75a5a)">✗</span>`;
+            if(ev.preview){
+              const p = document.createElement('div');
+              p.className = 'alo-cycle-preview'; p.textContent = ev.preview;
+              card.appendChild(p);
+            }
+          }
+          return;
+        }
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">🔍 recon · ${_esc(ev.cap||'')}</span>
+          <span class="alo-cycle-status"><span class="alo-spinner"></span> gathering…</span>
+        </div>${ev.why?`<div class="alo-cycle-thought">${_esc(ev.why)}</div>`:''}`, 'recon');
+        return;
+      }
+
+      // ── v5-only: a step's capability scope was widened (request or auto) ──
+      if(t === 'agent_loop_v5.scope_widened'){
+        const added = (ev.added||[]).map(_esc).join(', ');
+        const n = (ev.added||[]).length;
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">⊕ Scope widened${ev.step_id?` · step ${_esc(String(ev.step_id))}`:''}</span>
+          <span class="alo-cycle-status">${n} cap${n===1?'':'s'}</span>
+        </div><div class="alo-cycle-preview">${added}${ev.reason?` <span style="color:var(--dim,#a89f92)">(${_esc(ev.reason)})</span>`:''}</div>`, 'expand');
+        return;
+      }
+
+      // ── v5-only: a `complex` step expanded into its own sub-plan ─────
+      if(t === 'agent_loop_v5.subplan'){
+        const steps = ev.steps||[];
+        const rows = steps.map(s => {
+          const caps = (s.caps||[]).map(_esc).join(', ');
+          return `<div style="font-family:var(--mono,monospace);font-size:10px;color:var(--text2,#bfb6a8);margin:2px 0">`
+            + `<b>${_esc(String(s.id))}.</b> ${_esc(s.title||'')}`
+            + (caps?`<div style="color:var(--dim,#a89f92);font-size:9px;margin-left:12px">caps: ${caps}</div>`:'')
+            + `</div>`;
+        }).join('');
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">▤ Sub-plan · step ${_esc(String(ev.parent_id||'?'))} — ${_esc(ev.title||'')}</span>
+          <span class="alo-cycle-status">${steps.length} sub-step${steps.length===1?'':'s'}</span>
+        </div>${ev.reason?`<div class="alo-cycle-thought" style="font-style:italic">${_esc(ev.reason)}</div>`:''}<div class="alo-cycle-preview">${rows||'(empty)'}</div>`, 'plan');
         return;
       }
 
@@ -1067,6 +1312,8 @@
       let pre = thinkEl.querySelector('pre');
       if(!pre){ pre = document.createElement('pre'); thinkEl.appendChild(pre); }
       pre.textContent = text;
+      // Keep the latest reasoning in view while it streams in.
+      pre.scrollTop = pre.scrollHeight;
     }
 
     _renderToolCall(ev){

@@ -3,6 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <title>Vera — Workers · Ollama · Jobs</title>
+<!-- Proxmox console: xterm.js (terminal) + noVNC (remote desktop), loaded on demand -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+<script type="module">
+  import('https://cdn.jsdelivr.net/npm/@novnc/novnc@1.4.0/core/rfb.js')
+    .then(m=>{ window.NoVNCRFB=m.default; }).catch(e=>console.warn('noVNC load failed',e));
+</script>
 <style>
 :root{
   --bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;
@@ -43,6 +51,10 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
 .snav[data-pane="observe"].on{color:var(--acc4)}
 .snav[data-pane="proxmox"].on{color:#e36b2d}
 .snav[data-pane="docker"].on{color:#2496ed}
+.snav[data-pane="mimic"].on{color:var(--gpu)}
+.snav[data-pane="vllm"].on{color:var(--acc2)}
+.snav[data-pane="openclaw"].on{color:#b07ad6}
+.snav[data-pane="api"].on{color:var(--acc4)}
 .navdiv{width:24px;height:1px;background:var(--border);margin:3px 0;flex-shrink:0}
 #panes{flex:1;overflow:hidden;position:relative}
 .pane{position:absolute;inset:0;display:none;overflow-y:auto;padding:12px}
@@ -330,6 +342,12 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
     <div class="snav" data-pane="proxmox" onclick="P.show('proxmox',this)">Proxmox</div>
     <div class="navdiv"></div>
     <div class="snav" data-pane="docker" onclick="P.show('docker',this)">Docker</div>
+    <div class="snav" data-pane="sandbox" onclick="P.show('sandbox',this)">Sandbox</div>
+    <div class="navdiv"></div>
+    <div class="snav" data-pane="mimic" onclick="P.show('mimic',this)">Mimic</div>
+    <div class="snav" data-pane="vllm" onclick="P.show('vllm',this)">vLLM</div>
+    <div class="snav" data-pane="openclaw" onclick="P.show('openclaw',this)">OpenClaw</div>
+    <div class="snav" data-pane="api" onclick="P.show('api',this)">API</div>
   </div>
 
   <div id="panes">
@@ -871,19 +889,25 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
          ════════════════════════════════════════════════════════════════════ -->
     <div class="pane" id="pane-proxmox" style="padding:0;overflow:hidden">
       <div style="display:flex;flex-direction:column;height:100%;overflow:hidden">
-        <div class="pane-tb" style="flex-shrink:0;padding:8px 12px 6px">
+        <div class="pane-tb" style="flex-shrink:0;padding:8px 12px 6px;gap:6px;flex-wrap:wrap">
           <span class="pane-tb-title" style="color:#e36b2d">PROXMOX</span>
           <span class="tb-sep"></span>
-          <input id="pmx-host" placeholder="https://proxmox:8006" style="font-size:9px;width:180px;background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:2px 7px;border-radius:3px;font-family:var(--mono)">
-          <input id="pmx-token-id" placeholder="user@pam!token" style="font-size:9px;width:130px;background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:2px 7px;border-radius:3px;font-family:var(--mono)">
-          <input id="pmx-token-secret" type="password" placeholder="token secret" style="font-size:9px;width:120px;background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:2px 7px;border-radius:3px;font-family:var(--mono)">
-          <button class="btn sm" onclick="P.pmxConnect()" style="border-color:#e36b2d;color:#e36b2d">Connect</button>
+          <select id="pmx-cluster" onchange="P.pmxSelectCluster(this.value)" style="font-size:9px;max-width:200px;background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:3px 7px;border-radius:3px;font-family:var(--mono)"></select>
+          <button class="btn sm" onclick="P.pmxManage()" style="border-color:#e36b2d;color:#e36b2d">⚙ Clusters</button>
           <button class="btn sm" onclick="P.pmxRefresh()">↻ Refresh</button>
           <button class="btn sm" id="pmx-auto-btn" onclick="P.pmxAutoToggle()">Auto 10s</button>
-          <span class="status-hint" id="pmx-status">Not connected</span>
+          <span class="status-hint" id="pmx-status">—</span>
+          <span style="flex:1"></span>
+          <div id="pmx-subnav" style="display:flex;gap:2px">
+            <span class="j-tab active" id="pmxs-dash" onclick="P.pmxSub('dash')" style="padding:3px 9px;font-size:9px">Dashboard</span>
+            <span class="j-tab" id="pmxs-security" onclick="P.pmxSub('security')" style="padding:3px 9px;font-size:9px">Security</span>
+            <span class="j-tab" id="pmxs-identity" onclick="P.pmxSub('identity')" style="padding:3px 9px;font-size:9px">Identity</span>
+            <span class="j-tab" id="pmxs-netpolicy" onclick="P.pmxSub('netpolicy')" style="padding:3px 9px;font-size:9px">Net Policy</span>
+            <span class="j-tab" id="pmxs-enroll" onclick="P.pmxSub('enroll')" style="padding:3px 9px;font-size:9px">Enroll</span>
+          </div>
         </div>
 
-        <div style="flex:1;overflow-y:auto;padding:10px 12px;min-height:0">
+        <div id="pmx-sub-dash" style="flex:1;overflow-y:auto;padding:10px 12px;min-height:0">
           <!-- KPIs -->
           <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:10px" id="pmx-kpi-row">
             <div class="widget w-h1"><div class="w-head"><span class="w-dot" id="pmx-dot-nodes"></span><span class="w-title">Nodes</span></div><div class="w-body" style="padding:6px 10px"><div class="kpi"><div class="kpi-val" id="pmx-k-nodes">—</div><div class="kpi-sub" id="pmx-k-nodes-sub">hosts</div></div></div></div>
@@ -926,6 +950,39 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
             </div>
           </div>
         </div>
+
+        <!-- Sub-tab iframes (Security / Identity / Net Policy) embedded in the Proxmox section -->
+        <iframe id="pmx-sub-security" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
+        <iframe id="pmx-sub-identity" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
+        <iframe id="pmx-sub-netpolicy" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
+        <iframe id="pmx-sub-enroll" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
+
+        <!-- Cluster manager (add / edit / delete — sealed creds in Redis) -->
+        <div id="pmx-mgr" style="display:none;position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.55)">
+          <div style="position:absolute;top:0;right:0;height:100%;width:400px;max-width:94%;background:var(--bg1);border-left:1px solid var(--border2);display:flex;flex-direction:column">
+            <div style="display:flex;align-items:center;gap:8px;padding:13px;border-bottom:1px solid var(--border)">
+              <span style="font-weight:700;color:#e36b2d" id="pmx-mgr-ttl">Clusters</span>
+              <span style="flex:1"></span>
+              <button class="btn sm" onclick="P.pmxMgrClose()">✕</button>
+            </div>
+            <div id="pmx-mgr-body" style="padding:13px;overflow-y:auto;display:flex;flex-direction:column;gap:11px"></div>
+          </div>
+        </div>
+
+        <!-- Console (terminal / remote desktop) -->
+        <div id="pmx-con" style="display:none;position:fixed;inset:0;z-index:60;background:#000;flex-direction:column">
+          <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--bg1);border-bottom:1px solid var(--border);flex-shrink:0">
+            <span style="font-weight:700" id="pmx-con-ttl">Console</span>
+            <span style="flex:1"></span>
+            <button class="btn sm" id="pmx-con-deep" style="display:none" onclick="P.pmxConDeeplink()">Open in Proxmox ↗</button>
+            <button class="btn sm" onclick="P.pmxConClose()">Close</button>
+          </div>
+          <div style="flex:1;position:relative;overflow:hidden;background:#000">
+            <div id="pmx-con-term" style="position:absolute;inset:0;padding:6px"></div>
+            <div id="pmx-con-vnc" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center"></div>
+            <div id="pmx-con-msg" style="position:absolute;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;gap:12px;color:var(--dim2);text-align:center;padding:24px"></div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -956,6 +1013,38 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
             <div class="widget w-h1"><div class="w-head"><span class="w-dot"></span><span class="w-title">Volumes</span></div><div class="w-body" style="padding:6px 10px"><div class="kpi"><div class="kpi-val" id="dkr-k-vol">—</div><div class="kpi-sub">total</div></div></div></div>
             <div class="widget w-h1"><div class="w-head"><span class="w-dot"></span><span class="w-title">Networks</span></div><div class="w-body" style="padding:6px 10px"><div class="kpi"><div class="kpi-val" id="dkr-k-net">—</div><div class="kpi-sub">total</div></div></div></div>
           </div>
+
+          <!-- Vera network monitor (Proxmox cluster) -->
+          <div class="widget" id="nm-widget" style="margin-bottom:10px">
+            <div class="w-head"><span class="w-dot" id="nm-dot"></span><span class="w-title">Network Monitor · Proxmox</span><span style="margin-left:auto;font-size:9px;color:var(--dim2)" id="nm-sub">—</span></div>
+            <div class="w-body" style="padding:8px 10px">
+              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+                <div class="kpi"><div class="kpi-val tv-ok" id="nm-run">—</div><div class="kpi-sub">running</div></div>
+                <div class="kpi"><div class="kpi-val" id="nm-guests">—</div><div class="kpi-sub">guests</div></div>
+                <div class="kpi"><div class="kpi-val" id="nm-in">—</div><div class="kpi-sub">net in</div></div>
+                <div class="kpi"><div class="kpi-val" id="nm-out">—</div><div class="kpi-sub">net out</div></div>
+              </div>
+              <div id="nm-nodes" style="margin-top:8px;display:flex;flex-direction:column;gap:4px"></div>
+            </div>
+          </div>
+          <script>
+          (function(){
+            function fb(n){if(!n)return'0';const u=['B','K','M','G','T'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return n.toFixed(n<10&&i>0?1:0)+u[i];}
+            async function tick(){
+              try{
+                const r=await fetch('/netmon/snapshot',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+                if(!r.ok)throw 0; const d=await r.json(); const t=d.totals||{};
+                const g=id=>document.getElementById(id); if(!g('nm-run'))return;
+                g('nm-run').textContent=t.running!=null?t.running:'—';
+                g('nm-guests').textContent=t.guests!=null?t.guests:'—';
+                g('nm-in').textContent=fb(t.netin||0); g('nm-out').textContent=fb(t.netout||0);
+                g('nm-nodes').innerHTML=(d.nodes||[]).map(n=>`<div style="display:flex;align-items:center;gap:6px;font-size:10px"><span style="width:7px;height:7px;border-radius:50%;background:${n.status==='online'?'var(--ok)':'var(--dim)'}"></span><span style="flex:1">${n.node}</span><span style="color:var(--dim2)">cpu ${n.cpu}% · mem ${n.mem}%</span></div>`).join('');
+                const dot=g('nm-dot'); if(dot)dot.className='w-dot ok'; const s=g('nm-sub'); if(s)s.textContent=new Date().toLocaleTimeString();
+              }catch(e){ const dot=document.getElementById('nm-dot'); if(dot)dot.className='w-dot'; }
+            }
+            tick(); setInterval(tick,7000);
+          })();
+          </script>
 
           <!-- Container list -->
           <div class="widget" style="margin-bottom:10px">
@@ -990,8 +1079,52 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
               <div id="dkr-img-empty" class="j-empty" style="display:none">No images</div>
             </div>
           </div>
+
+          <!-- Vera Workers — run the Vera image as a cluster worker on this host -->
+          <div class="widget">
+            <div class="w-head">
+              <span class="w-dot ok"></span><span class="w-title">Vera Workers</span>
+              <span style="flex:1"></span>
+              <span class="status-hint" id="dkr-wk-reg" style="margin-right:8px"></span>
+              <button class="btn sm" onclick="P.dkrWorkerList()">↻</button>
+              <button class="btn sm" onclick="P.dkrSpawnWorker()" style="border-color:#2496ed;color:#2496ed">➕ Spawn worker</button>
+            </div>
+            <div class="w-body flush" style="padding:0;max-height:200px;overflow-y:auto">
+              <table class="job-tbl" id="dkr-wk-table">
+                <thead><tr><th>Name</th><th>Image</th><th>State</th><th></th></tr></thead>
+                <tbody id="dkr-wk-tbody"></tbody>
+              </table>
+              <div id="dkr-wk-empty" class="j-empty">No Vera worker containers — Spawn one to add cluster capacity.</div>
+            </div>
+          </div>
         </div>
       </div>
+    </div>
+
+    <!-- Sandbox pane — shared exec-sandbox policy editor (gates exec.*, IDE Run, docker.* CLI) -->
+    <div class="pane" id="pane-sandbox" style="padding:0;overflow:hidden">
+      <vera-sandbox-controls id="wk-sandbox-ctl" style="display:block;height:100%"></vera-sandbox-controls>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         MIMIC / vLLM / OPENCLAW / API panes — standalone pages in iframes.
+         Each loads lazily (src set on first activation in showPane) so the
+         backend isn't hit until the tab is opened. vLLM and OpenClaw moved
+         here from their old top-level harness tabs; the iframe pattern also
+         fixes the vLLM "nothing is clickable" bug (its scripts now run in
+         their own window instead of being dropped by innerHTML injection).
+         ════════════════════════════════════════════════════════════════════ -->
+    <div class="pane" id="pane-mimic" style="padding:0;overflow:hidden">
+      <iframe id="mimic-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
+    <div class="pane" id="pane-vllm" style="padding:0;overflow:hidden">
+      <iframe id="vllm-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
+    <div class="pane" id="pane-openclaw" style="padding:0;overflow:hidden">
+      <iframe id="openclaw-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
+    <div class="pane" id="pane-api" style="padding:0;overflow:hidden">
+      <iframe id="api-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
     </div>
 
   </div>
@@ -1079,7 +1212,7 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
 const P = (function(){
 
 // ── State ────────────────────────────────────────────────────────────────────
-const BASE = window.location.origin || 'http://llm.int:8999';
+const BASE = window.location.origin || (window.__VERA_BASE__||('http://'+location.hostname+':8999'));
 let _cluster = null;
 let _jobs = {pending:[],running:[],done:[],failed:[]};
 let _selWorker = null;
@@ -3582,63 +3715,120 @@ function wkjRender(){
 }
 
 // ── Proxmox monitoring ────────────────────────────────────────────────────────
-let _pmxConfig={host:'',tokenId:'',tokenSecret:''};
+// ── Proxmox — server-side sealed-creds backend (multi-cluster) ────────────
+let _pmxClusters=[];      // [{id,label,api_url,has_token,...}] (redacted)
+let _pmxCur='';           // selected cluster id
 let _pmxData={nodes:[],vms:[],storages:[]};
 let _pmxAutoTimer=null;
 let _pmxAutoOn=false;
 let _pmxVmTab='all';
 let _pmxVmSearch='';
+let _pmxInited=false;
+let _pmxSub='dash';
+const _pmxSubSrc={security:'/provisioning/panel',identity:'/identity/panel',netpolicy:'/netgraph/panel',enroll:'/enroll/panel'};
 
-function pmxSaveConfig(){
-  const h=($('pmx-host')||{}).value?.trim()||'';
-  const t=($('pmx-token-id')||{}).value?.trim()||'';
-  const s=($('pmx-token-secret')||{}).value?.trim()||'';
-  if(h) _pmxConfig={host:h.replace(/\/$/,''),tokenId:t,tokenSecret:s};
-  try{localStorage.setItem('vera:pmx-cfg',JSON.stringify(_pmxConfig));}catch(e){}
-}
-function pmxLoadConfig(){
-  try{const r=localStorage.getItem('vera:pmx-cfg');if(r){_pmxConfig=JSON.parse(r);const h=$('pmx-host'),t=$('pmx-token-id'),s=$('pmx-token-secret');if(h)h.value=_pmxConfig.host||'';if(t)t.value=_pmxConfig.tokenId||'';}}catch(e){}
-}
-
-async function _pmxFetch(path){
-  const {host,tokenId,tokenSecret}=_pmxConfig;
-  if(!host) throw new Error('No host');
-  const headers={'Authorization':'PVEAPIToken='+tokenId+'='+tokenSecret};
-  const r=await fetch(host+'/api2/json'+path,{headers,signal:AbortSignal.timeout(6000)});
+async function _pmxApi(path,method,body){
+  const o={method:method||'GET',headers:{'Content-Type':'application/json'}};
+  if(body) o.body=JSON.stringify(body);
+  const r=await fetch(path,o);
   if(!r.ok) throw new Error('HTTP '+r.status);
-  const d=await r.json();
-  return d.data||d;
+  return r.json();
 }
 
-async function pmxConnect(){
-  pmxSaveConfig();
-  await pmxRefresh();
+async function pmxInit(){ if(_pmxInited) return; _pmxInited=true; await pmxLoadClusters(); }
+
+async function pmxLoadClusters(){
+  try{ _pmxClusters=(await _pmxApi('/proxmox/cluster/list')).clusters||[]; }
+  catch(e){ _pmxClusters=[]; }
+  const sel=$('pmx-cluster');
+  if(sel){
+    sel.innerHTML=_pmxClusters.length
+      ? _pmxClusters.map(c=>'<option value="'+esc(c.id)+'">'+esc(c.label||c.api_url||c.id)+'</option>').join('')
+      : '<option value="">no clusters</option>';
+    if(_pmxClusters.length){ if(!_pmxCur||!_pmxClusters.find(c=>c.id===_pmxCur)) _pmxCur=_pmxClusters[0].id; sel.value=_pmxCur; }
+    else _pmxCur='';
+  }
+  if(_pmxCur) pmxRefresh();
+  else { txt('pmx-status','No cluster — click ⚙ Clusters to add one'); pmxRender(); }
 }
+function pmxSelectCluster(id){ _pmxCur=id; _pmxData={nodes:[],vms:[],storages:[]}; pmxRefresh(); }
 
 async function pmxRefresh(){
-  if(!_pmxConfig.host){txt('pmx-status','Enter host + credentials');return;}
+  if(!_pmxCur){ txt('pmx-status','No cluster configured'); return; }
   txt('pmx-status','Loading…');
   try{
-    // Fetch nodes, resources in parallel
-    const [nodes,resources] = await Promise.all([
-      _pmxFetch('/nodes'),
-      _pmxFetch('/cluster/resources'),
-    ]);
-    _pmxData.nodes=nodes||[];
-    // Split resources by type
-    _pmxData.vms=(resources||[]).filter(r=>r.type==='qemu'||r.type==='lxc');
-    _pmxData.storages=(resources||[]).filter(r=>r.type==='storage');
-    const nodeResources=(resources||[]).filter(r=>r.type==='node');
-    // Merge node resource data into nodes array
-    _pmxData.nodes=_pmxData.nodes.map(n=>{
-      const res=nodeResources.find(r=>r.node===n.node)||{};
-      return {...n,...res};
-    });
-    txt('pmx-status','Updated '+new Date().toLocaleTimeString());
+    const s=await _pmxApi('/proxmox/status','POST',{cluster_id:_pmxCur});
+    if(s.error){ txt('pmx-status','Error: '+String(s.error).slice(0,60)); return; }
+    _pmxData.nodes=s.nodes||[];
+    _pmxData.vms=(s.guests||[]).filter(g=>!g.template);
+    _pmxData.storages=s.storage||[];
+    const c=s.cluster||{};
+    txt('pmx-status',(c.name?esc(c.name)+' · ':'')+(c.quorate===false?'⚠ NO QUORUM · ':'')+'Updated '+new Date().toLocaleTimeString());
     pmxRender();
-  }catch(e){
-    txt('pmx-status','Error: '+e.message.slice(0,60));
-  }
+  }catch(e){ txt('pmx-status','Error: '+e.message.slice(0,60)); }
+}
+
+// ── Sub-tabs: Dashboard / Security / Identity / Net Policy ────────────────
+function pmxSub(name){
+  _pmxSub=name;
+  ['dash','security','identity','netpolicy','enroll'].forEach(k=>{ const t=$('pmxs-'+k); if(t) t.classList.toggle('active',k===name); });
+  const dash=$('pmx-sub-dash'); if(dash) dash.style.display=(name==='dash')?'':'none';
+  ['security','identity','netpolicy','enroll'].forEach(k=>{
+    const f=$('pmx-sub-'+k); if(!f) return;
+    if(k===name){ if(!f.src||/blank/.test(f.src)) f.src=_pmxSubSrc[k]; f.style.display='flex'; }
+    else f.style.display='none';
+  });
+}
+
+// ── Cluster manager (add / edit / delete; secrets sealed in Redis) ────────
+function pmxManage(){ $('pmx-mgr').style.display='block'; pmxMgrList(); }
+function pmxMgrClose(){ $('pmx-mgr').style.display='none'; }
+function pmxMgrList(){
+  $('pmx-mgr-ttl').textContent='Clusters';
+  let h='<button class="btn sm" style="border-color:#e36b2d;color:#e36b2d;align-self:flex-start" onclick="P.pmxMgrEdit(\'\')">+ Add cluster</button>';
+  if(!_pmxClusters.length) h+='<div style="font-size:10px;color:var(--dim)">No clusters yet.</div>';
+  _pmxClusters.forEach(c=>{
+    h+='<div style="display:flex;align-items:center;gap:8px;padding:9px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:6px">'
+      +'<div style="min-width:0;flex:1"><div style="font-weight:600;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.label||c.api_url||c.id)+'</div>'
+      +'<div style="font-size:9px;color:var(--dim2)">'+esc(c.api_url||'')+' '+(c.has_token?'· 🔒 token':'· ⚠ no token')+(c.has_console_password?' · console':'')+'</div></div>'
+      +'<button class="btn sm" onclick="P.pmxMgrEdit(\''+esc(c.id)+'\')">Edit</button></div>';
+  });
+  $('pmx-mgr-body').innerHTML=h;
+}
+function pmxMgrEdit(id){
+  const c=_pmxClusters.find(x=>x.id===id)||{};
+  $('pmx-mgr-ttl').textContent=id?'Edit cluster':'Add cluster';
+  const ip='font-size:11px;background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:7px 9px;border-radius:5px;width:100%;font-family:var(--mono)';
+  const fld=(lbl,el,hint)=>'<div style="display:flex;flex-direction:column;gap:4px"><label style="font-size:9px;color:var(--dim2);text-transform:uppercase">'+lbl+'</label>'+el+(hint?'<span style="font-size:9px;color:var(--dim)">'+hint+'</span>':'')+'</div>';
+  $('pmx-mgr-body').innerHTML=
+    fld('Label','<input id="pmxf-label" value="'+esc(c.label||'')+'" placeholder="home-cluster" style="'+ip+'">')
+    +fld('API URL','<input id="pmxf-url" value="'+esc(c.api_url||'')+'" placeholder="https://192.168.0.10:8006" style="'+ip+'">','Host root or full /api2/json.')
+    +fld('API token'+(c.has_token?' · stored':''),'<input id="pmxf-token" placeholder="'+(c.has_token?'****** (blank = keep)':'user@pam!tokenid=secret-uuid')+'" style="'+ip+'">','Sealed (Fernet) in Redis; never shown again.')
+    +'<label style="display:flex;gap:7px;align-items:center;font-size:11px;color:var(--text)"><input type="checkbox" id="pmxf-verify" '+(c.verify_tls?'checked':'')+'> Verify TLS (off for self-signed)</label>'
+    +fld('Console user (optional)','<input id="pmxf-cuser" value="'+esc(c.console_user||'')+'" placeholder="root@pam" style="'+ip+'">','Enables embedded terminal/desktop; else consoles deep-link to Proxmox.')
+    +fld('Console password'+(c.has_console_password?' · stored':''),'<input id="pmxf-cpass" type="password" placeholder="'+(c.has_console_password?'****** (blank = keep)':'password')+'" style="'+ip+'">')
+    +'<div style="display:flex;gap:8px;margin-top:4px"><button class="btn sm" style="border-color:#e36b2d;color:#e36b2d" onclick="P.pmxMgrSave(\''+esc(id)+'\')">Save</button>'
+    +'<button class="btn sm" onclick="P.pmxMgrList()">Cancel</button>'
+    +(id?'<span style="flex:1"></span><button class="btn sm err-btn" onclick="P.pmxMgrDelete(\''+esc(id)+'\')">Delete</button>':'')+'</div>';
+}
+async function pmxMgrSave(id){
+  const v=i=>(($('pmxf-'+i))||{}).value;
+  const body={id:id||'',label:(v('label')||'').trim(),api_url:(v('url')||'').trim(),verify_tls:(($('pmxf-verify'))||{}).checked,console_user:(v('cuser')||'').trim()};
+  const tok=(v('token')||'').trim(); if(tok) body.token=tok;
+  const cp=v('cpass'); if(cp) body.console_password=cp;
+  if(!body.api_url){ alert('API URL required'); return; }
+  try{
+    const r=await _pmxApi('/proxmox/cluster/save','POST',body);
+    if(r.error){ alert(r.error); return; }
+    if(!_pmxCur && r.cluster) _pmxCur=r.cluster.id;
+    await pmxLoadClusters(); pmxMgrList();
+  }catch(e){ alert('Save failed: '+e.message); }
+}
+async function pmxMgrDelete(id){
+  if(!confirm('Delete this cluster connection?')) return;
+  try{ await _pmxApi('/proxmox/cluster/delete','POST',{id}); }catch(e){}
+  if(_pmxCur===id){ _pmxCur=''; _pmxData={nodes:[],vms:[],storages:[]}; }
+  await pmxLoadClusters(); pmxMgrList();
 }
 
 function pmxAutoToggle(){
@@ -3739,7 +3929,7 @@ function pmxRenderVms(){
   if(_pmxVmSearch) vms=vms.filter(v=>(v.name||v.vmid+''||'').toLowerCase().includes(_pmxVmSearch)||(v.node||'').toLowerCase().includes(_pmxVmSearch));
   if(!vms.length){
     tbody.innerHTML='';if(tbl)tbl.style.display='none';
-    if(empty){empty.style.display='block';empty.textContent=_pmxConfig.host?'No VMs match filter':'Not connected';}
+    if(empty){empty.style.display='block';empty.textContent=_pmxCur?'No VMs match filter':'No cluster — click ⚙ Clusters';}
     return;
   }
   if(empty) empty.style.display='none';if(tbl) tbl.style.display='';
@@ -3759,28 +3949,96 @@ function pmxRenderVms(){
       +'<td style="font-size:9px">'+_fmtBytes(v.mem||0)+'<span style="color:var(--dim2)">/'+_fmtBytes(v.maxmem||0)+'</span></td>'
       +'<td style="font-size:9px">'+_fmtBytes(v.disk||0)+'</td>'
       +'<td style="font-size:9px;color:var(--dim2)">'+_fmtUptime(v.uptime||0)+'</td>'
-      +'<td>'+(running?'<button class="btn sm err-btn" style="font-size:7.5px;padding:1px 5px" onclick="P.pmxStopVm('+sq(v.node)+','+sq(v.vmid+'')+','+sq(v.type)+')">Stop</button>':
-        '<button class="btn sm" style="font-size:7.5px;padding:1px 5px;border-color:var(--ok);color:var(--ok)" onclick="P.pmxStartVm('+sq(v.node)+','+sq(v.vmid+'')+','+sq(v.type)+')">Start</button>')+'</td>'
+      +'<td style="white-space:nowrap">'+(running?
+          '<button class="btn sm" title="Terminal" style="font-size:7.5px;padding:1px 5px" onclick="P.pmxConsole('+sq(v.node)+','+sq(v.type)+','+sq(v.vmid+'')+','+sq('term')+','+sq(v.name||(v.vmid+''))+')">⌨</button>'
+         +'<button class="btn sm" title="Remote desktop" style="font-size:7.5px;padding:1px 5px" onclick="P.pmxConsole('+sq(v.node)+','+sq(v.type)+','+sq(v.vmid+'')+','+sq('vnc')+','+sq(v.name||(v.vmid+''))+')">🖵</button>'
+         +'<button class="btn sm err-btn" title="Shutdown" style="font-size:7.5px;padding:1px 5px" onclick="P.pmxStopVm('+sq(v.node)+','+sq(v.vmid+'')+','+sq(v.type)+')">Stop</button>':
+          '<button class="btn sm" style="font-size:7.5px;padding:1px 5px;border-color:var(--ok);color:var(--ok)" onclick="P.pmxStartVm('+sq(v.node)+','+sq(v.vmid+'')+','+sq(v.type)+')">Start</button>')+'</td>'
       +'</tr>';
   }).join('');
 }
 
 async function pmxStartVm(node,vmid,type){
+  if(!_pmxCur) return;
   if(!confirm('Start '+(type==='qemu'?'VM':'CT')+' '+vmid+'?')) return;
   try{
-    const ep=type==='qemu'?'/nodes/'+node+'/qemu/'+vmid+'/status/start':'/nodes/'+node+'/lxc/'+vmid+'/status/start';
-    await _pmxFetch(ep);
-    setTimeout(pmxRefresh,2000);
+    const r=await _pmxApi('/proxmox/guest/action','POST',{cluster_id:_pmxCur,node,guest_type:type,vmid:parseInt(vmid),action:'start'});
+    if(r.error) alert('Error: '+r.error);
+    setTimeout(pmxRefresh,1500); setTimeout(pmxRefresh,4000);
   }catch(e){alert('Error: '+e.message);}
 }
 
 async function pmxStopVm(node,vmid,type){
-  if(!confirm('Stop '+(type==='qemu'?'VM':'CT')+' '+vmid+'?')) return;
+  if(!_pmxCur) return;
+  if(!confirm('Shut down '+(type==='qemu'?'VM':'CT')+' '+vmid+'?')) return;
   try{
-    const ep=type==='qemu'?'/nodes/'+node+'/qemu/'+vmid+'/status/stop':'/nodes/'+node+'/lxc/'+vmid+'/status/stop';
-    await _pmxFetch(ep);
-    setTimeout(pmxRefresh,2000);
+    const r=await _pmxApi('/proxmox/guest/action','POST',{cluster_id:_pmxCur,node,guest_type:type,vmid:parseInt(vmid),action:'shutdown'});
+    if(r.error) alert('Error: '+r.error);
+    setTimeout(pmxRefresh,1500); setTimeout(pmxRefresh,4000);
   }catch(e){alert('Error: '+e.message);}
+}
+
+// ── Console: terminal (xterm) + remote desktop (noVNC) ────────────────────
+let _pmxCon={term:null,fit:null,ws:null,rfb:null,deeplink:'',sendResize:null};
+async function pmxConsole(node,type,vmid,mode,name){
+  $('pmx-con-ttl').textContent=(mode==='vnc'?'Desktop · ':'Terminal · ')+name+' ('+vmid+')';
+  $('pmx-con').style.display='flex';
+  $('pmx-con-term').innerHTML=''; $('pmx-con-vnc').innerHTML='';
+  $('pmx-con-msg').style.display='none'; $('pmx-con-deep').style.display='none';
+  let info;
+  try{ info=await _pmxApi('/proxmox/console/ticket','POST',{cluster_id:_pmxCur,node,guest_type:type,vmid:parseInt(vmid),mode}); }
+  catch(e){ return pmxConMsg('Could not reach console endpoint: '+e.message,false); }
+  if(info.error){ return pmxConMsg(info.error,false); }
+  _pmxCon.deeplink=info.deeplink_url||'';
+  if(_pmxCon.deeplink) $('pmx-con-deep').style.display='';
+  if(!info.proxy_available){
+    return pmxConMsg(info.needs_console_creds
+      ? 'No console credentials for this cluster. Add a console user/password via ⚙ Clusters → Edit to embed the console here, or open it directly in Proxmox.'
+      : 'The console proxy is unavailable on the server (install the "websockets" package).', true);
+  }
+  const wsUrl=(location.protocol==='https:'?'wss':'ws')+'://'+location.host+info.ws_path;
+  if(mode==='vnc') pmxStartVnc(wsUrl, info.password||''); else pmxStartTerm(wsUrl);
+}
+function pmxConMsg(text,showDeep){
+  const m=$('pmx-con-msg'); m.style.display='flex';
+  m.innerHTML='<div style="max-width:440px">'+esc(text)+'</div>'+
+    (showDeep&&_pmxCon.deeplink?'<button class="btn" onclick="P.pmxConDeeplink()" style="border:1px solid var(--acc);color:var(--acc);padding:6px 12px;border-radius:6px">Open in Proxmox ↗</button>':'');
+}
+function pmxConDeeplink(){ if(_pmxCon.deeplink) window.open(_pmxCon.deeplink,'_blank','noopener'); }
+function pmxStartTerm(wsUrl){
+  if(!window.Terminal){ return pmxConMsg('Terminal library failed to load (CDN blocked?).',true); }
+  const term=new Terminal({cursorBlink:true,fontSize:13,fontFamily:'ui-monospace,Menlo,monospace',theme:{background:'#000000'}});
+  const fit=new FitAddon.FitAddon(); term.loadAddon(fit);
+  term.open($('pmx-con-term')); fit.fit();
+  const ws=new WebSocket(wsUrl,'binary'); ws.binaryType='arraybuffer';
+  const dec=new TextDecoder();
+  // Proxmox term wire protocol: input "0:<len>:<data>", resize "1:<cols>:<rows>:".
+  const sendResize=()=>{ try{ if(ws.readyState===1) ws.send('1:'+term.cols+':'+term.rows+':'); }catch(e){} };
+  ws.onopen=()=>{ sendResize(); term.focus(); };
+  term.onData(d=>{ try{ if(ws.readyState===1) ws.send('0:'+d.length+':'+d); }catch(e){} });
+  ws.onmessage=ev=>{ try{ term.write(typeof ev.data==='string'?ev.data:dec.decode(ev.data)); }catch(e){} };
+  ws.onclose=()=>{ try{ term.write('\r\n\x1b[90m[disconnected]\x1b[0m\r\n'); }catch(e){} };
+  _pmxCon.term=term; _pmxCon.fit=fit; _pmxCon.ws=ws; _pmxCon.sendResize=sendResize;
+  window.addEventListener('resize',pmxConResize);
+}
+function pmxConResize(){ try{ _pmxCon.fit&&_pmxCon.fit.fit(); _pmxCon.sendResize&&_pmxCon.sendResize(); }catch(e){} }
+function pmxStartVnc(wsUrl,password){
+  if(!window.NoVNCRFB){ return pmxConMsg('Remote-desktop library still loading — try again in a moment, or open in Proxmox.',true); }
+  try{
+    const rfb=new window.NoVNCRFB($('pmx-con-vnc'),wsUrl,{wsProtocols:['binary'],credentials:{password:password}});
+    rfb.scaleViewport=true; rfb.resizeSession=false;
+    rfb.addEventListener('securityfailure',()=>pmxConMsg('Desktop auth failed. Open in Proxmox instead.',true));
+    _pmxCon.rfb=rfb;
+  }catch(e){ pmxConMsg('Desktop failed: '+e.message,true); }
+}
+function pmxConClose(){
+  $('pmx-con').style.display='none';
+  window.removeEventListener('resize',pmxConResize);
+  try{ _pmxCon.ws&&_pmxCon.ws.close(); }catch(e){}
+  try{ _pmxCon.rfb&&_pmxCon.rfb.disconnect(); }catch(e){}
+  try{ _pmxCon.term&&_pmxCon.term.dispose(); }catch(e){}
+  _pmxCon={term:null,fit:null,ws:null,rfb:null,deeplink:'',sendResize:null};
+  $('pmx-con-term').innerHTML=''; $('pmx-con-vnc').innerHTML='';
 }
 
 // ── Docker monitoring ─────────────────────────────────────────────────────────
@@ -3791,45 +4049,73 @@ let _dkrAutoTimer=null;
 let _dkrAutoOn=false;
 let _dkrTab='all';
 let _dkrSearch='';
+let _dkrHostId='local';          // backend-registered host id ('local' default)
+// (_dkrHosts is declared above; now holds id -> host record from docker.hosts.list)
 
-function _dkrInitHosts(){
-  // Auto-populate from known cluster worker hosts
-  const hosts={};
+function _normDkrUrl(u){return (u||'').replace(/^tcp:\/\//,'http://').replace(/\/$/,'');}
+
+// Load registered Docker hosts from the backend (docker.hosts.list) and merge
+// cluster worker hosts as quick-add tcp suggestions.
+async function _dkrInitHosts(){
+  const sel=$('dkr-host-sel'); if(!sel) return;
+  let recs=[];
+  try{ const j=await api('/workers/docker/hosts'); recs=(j&&j.hosts)||[]; }catch(e){}
+  _dkrHosts={}; recs.forEach(r=>{_dkrHosts[r.id]=r; if(r.default) _dkrHostId=r.id;});
+  sel.innerHTML='<option value="">Select host…</option>';
+  recs.forEach(r=>{
+    const tail=r.kind==='tcp'&&r.url?(' '+r.url):r.kind==='ssh'?(' '+(r.ssh_host_id||'')):'';
+    sel.innerHTML+='<option value="'+esc(r.id)+'">'+esc(r.label+' ['+r.kind+']'+tail)+'</option>';
+  });
   if(_cluster){
     Object.values(_cluster.workers||{}).forEach(w=>{
-      const h=w.host||w.id||'';
-      if(h && !hosts[h]) hosts['Worker: '+h]='http://'+h+':2375';
+      const h=w.host||''; if(!h) return;
+      const url='http://'+h+':2375';
+      if(!recs.find(r=>_normDkrUrl(r.url)===url))
+        sel.innerHTML+='<option value="new::'+esc(url)+'">＋ Worker '+esc(h)+' (register tcp)</option>';
     });
   }
-  _dkrHosts=hosts;
-  const sel=$('dkr-host-sel');
-  if(!sel) return;
-  sel.innerHTML='<option value="">Select host…</option>';
-  Object.entries(hosts).forEach(([label,url])=>{
-    sel.innerHTML+='<option value="'+esc(url)+'">'+esc(label)+'</option>';
-  });
+  if(_dkrHosts[_dkrHostId]) sel.value=_dkrHostId;
 }
 
-function dkrSelectHost(url){
-  const inp=$('dkr-host-input');
-  if(inp&&url) inp.value=url;
+async function dkrSelectHost(v){
+  if(!v) return;
+  if(v.startsWith('new::')){
+    const url=v.slice(5);
+    txt('dkr-status','Registering '+url+'…');
+    const j=await api('/workers/docker/hosts/save','POST',{kind:'tcp',url,label:url.replace(/^https?:\/\//,'')});
+    if(j&&j.ok){ _dkrHostId=j.host.id; await _dkrInitHosts(); dkrRefresh(); }
+    else txt('dkr-status','Register failed: '+((j&&j.error)||''));
+    return;
+  }
+  _dkrHostId=v;
+  const rec=_dkrHosts[v];
+  const inp=$('dkr-host-input'); if(inp) inp.value=rec?(rec.url||rec.kind):'';
+  dkrRefresh();
 }
 
+// All Engine-API calls now go through Vera's reverse proxy (no browser→daemon
+// CORS / unix-socket problem) keyed by the selected host id.
 async function _dkrFetch(path){
-  let url=($('dkr-host-input')||{}).value?.trim()||_dkrActiveUrl;
-  if(!url) throw new Error('No host');
-  url=url.replace(/\/$/,'');
-  _dkrActiveUrl=url;
-  const r=await fetch(url+path,{signal:AbortSignal.timeout(6000)});
+  const hid=_dkrHostId||'local';
+  const r=await fetch(BASE+'/workers/docker/engine/'+encodeURIComponent(hid)+path,{signal:AbortSignal.timeout(8000)});
   if(!r.ok) throw new Error('HTTP '+r.status);
   return r.json();
 }
 
-async function dkrConnect(){ await dkrRefresh(); }
+// Connect: register the typed URL as a tcp host (or use 'local'), then refresh.
+async function dkrConnect(){
+  const inp=$('dkr-host-input'); const v=(inp&&inp.value||'').trim();
+  if(v && v!=='local'){
+    txt('dkr-status','Connecting…');
+    const j=await api('/workers/docker/hosts/save','POST',{kind:'tcp',url:v,label:v.replace(/^https?:\/\//,'')});
+    if(j&&j.ok){ _dkrHostId=j.host.id; await _dkrInitHosts(); }
+    else { txt('dkr-status','Save failed: '+((j&&j.error)||'')); return; }
+  } else if(v==='local'){ _dkrHostId='local'; }
+  await dkrRefresh();
+}
 
 async function dkrRefresh(){
-  const url=($('dkr-host-input')||{}).value?.trim();
-  if(!url){txt('dkr-status','Enter a Docker host URL');return;}
+  if(!_dkrHostId){txt('dkr-status','Select or connect a Docker host');return;}
   txt('dkr-status','Loading…');
   try{
     const [containers,images,volumes,networks]=await Promise.all([
@@ -3949,6 +4235,39 @@ async function dkrStart(id){await _dkrFetch('/containers/'+id+'/start');setTimeo
 async function dkrStop(id){if(!confirm('Stop container?'))return;await _dkrFetch('/containers/'+id+'/stop');setTimeout(dkrRefresh,800);}
 async function dkrRemove(id){if(!confirm('Remove stopped container?'))return;await _dkrFetch('/containers/'+id+'?force=true');setTimeout(dkrRefresh,800);}
 
+// ── Vera workers (run the Vera image as a cluster worker on the host) ─────────
+async function dkrWorkerList(){
+  const tb=$('dkr-wk-tbody'),empty=$('dkr-wk-empty');
+  if(!tb) return;
+  try{
+    const j=await api('/workers/docker/worker/list?host_id='+encodeURIComponent(_dkrHostId||'local'));
+    const ws=(j&&j.workers)||[];
+    txt('dkr-wk-reg', j?('cluster: '+(j.registered||0)+' registered'):'');
+    if(!ws.length){ tb.innerHTML=''; if(empty){empty.style.display='block';empty.textContent='No Vera worker containers — Spawn one to add cluster capacity.';} return; }
+    if(empty) empty.style.display='none';
+    tb.innerHTML=ws.map(w=>'<tr>'
+      +'<td style="font-weight:600;color:var(--acc2)">'+esc(w.name)+'</td>'
+      +'<td style="font-size:9px;color:var(--dim2);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(w.image)+'">'+esc((w.image||'').split('@')[0])+'</td>'
+      +'<td><span class="j-badge '+(w.state==='running'?'j-running':'j-done')+'">'+esc(w.state)+'</span></td>'
+      +'<td><button class="btn sm err-btn" style="font-size:7.5px;padding:1px 5px" onclick="P.dkrWorkerStop('+sq(w.id)+')">Stop</button></td>'
+      +'</tr>').join('');
+  }catch(e){ if(empty){empty.style.display='block';empty.textContent='Error: '+e.message;} }
+}
+
+async function dkrSpawnWorker(){
+  if(!confirm('Spin up a new Vera worker container on this host?\nIt runs the Vera image wired to this cluster\'s REDIS_URL and joins the worker pool.')) return;
+  txt('dkr-status','Spawning Vera worker…');
+  const j=await api('/workers/docker/worker/spawn','POST',{host_id:_dkrHostId||'local'});
+  if(j&&j.ok){ txt('dkr-status','Worker '+(j.name||'')+' started ('+((j.container_id||'').slice(0,12))+')'); setTimeout(()=>{dkrRefresh();dkrWorkerList();},1000); }
+  else { const msg=(j&&(j.error||(j.blocked&&'blocked by sandbox')))||'unknown error'; txt('dkr-status','Spawn failed: '+msg); alert('Spawn failed: '+msg); }
+}
+
+async function dkrWorkerStop(id){
+  if(!confirm('Stop and remove this Vera worker container?')) return;
+  await api('/workers/docker/worker/stop','POST',{host_id:_dkrHostId||'local',container:id});
+  setTimeout(()=>{dkrRefresh();dkrWorkerList();},700);
+}
+
 function dkrRenderImages(){
   const tbody=$('dkr-img-tbody'),empty=$('dkr-img-empty'),tbl=$('dkr-img-table');
   if(!tbody) return;
@@ -3997,6 +4316,13 @@ function _fmtUptime(s){
 }
 
 // ── Pane switching ───────────────────────────────────────────────────────────
+// Lazily point an embedded panel iframe at its standalone page on first show, so
+// the backend route isn't hit until the operator opens that tab.
+function _mountFrame(id, url){
+  const f=$(id);
+  if(f && (!f.src || f.src==='about:blank' || f.src==='')) f.src=url;
+}
+
 function showPane(name, el){
   document.querySelectorAll('.snav').forEach(n=>n.classList.remove('on'));
   if(el) el.classList.add('on');
@@ -4004,6 +4330,13 @@ function showPane(name, el){
   const pane=$('pane-'+name);
   if(pane) pane.classList.add('on');
   if(name==='ollama'){ loadRouting(); loadEmbedCfg(); }
+  if(name==='docker'){ if(!Object.keys(_dkrHosts||{}).length) _dkrInitHosts(); dkrWorkerList(); }
+  if(name==='proxmox'){ pmxInit(); }
+  if(name==='sandbox'){ const el=$('wk-sandbox-ctl'); if(el&&el.refresh) el.refresh(); }
+  if(name==='mimic'){ _mountFrame('mimic-frame', BASE+'/cluster/mimic/panel'); }
+  if(name==='vllm'){ _mountFrame('vllm-frame', BASE+'/vllm/panel'); }
+  if(name==='openclaw'){ _mountFrame('openclaw-frame', BASE+'/openclaw/panel'); }
+  if(name==='api'){ _mountFrame('api-frame', BASE+'/providers/panel'); }
 }
 
 // ── Theme relay ──────────────────────────────────────────────────────────────
@@ -4054,10 +4387,10 @@ setTimeout(()=>{refresh();autoToggle();},120);
 setTimeout(loadEmbedCfg, 600);
 
 // Load Proxmox config from localStorage
-setTimeout(pmxLoadConfig, 100);
+// Proxmox loads lazily when its pane is first shown (pmxInit in showPane).
 
-// Init Docker host list after first cluster load
-setTimeout(()=>{ if(_cluster) _dkrInitHosts(); }, 2000);
+// Init Docker host list (from the backend registry; merges cluster hosts)
+setTimeout(()=>{ _dkrInitHosts(); }, 1500);
 
 // ── Public API ───────────────────────────────────────────────────────────────
 return {
@@ -4082,14 +4415,18 @@ return {
   syslogToggleSel, syslogAskEntry, syslogSelAll, syslogClearSel,
   openOlDetail, closeOlDetail,
   wrapperSwitchNode, wrapperRefresh, wrapperRefreshStats, olSubTab,
-  pmxConnect, pmxRefresh, pmxAutoToggle, pmxVmTab, pmxFilterVms, pmxStartVm, pmxStopVm,
+  pmxRefresh, pmxAutoToggle, pmxVmTab, pmxFilterVms, pmxStartVm, pmxStopVm,
+  pmxSelectCluster, pmxSub, pmxManage, pmxMgrClose, pmxMgrList, pmxMgrEdit, pmxMgrSave, pmxMgrDelete,
+  pmxConsole, pmxConClose, pmxConDeeplink,
   dkrConnect, dkrRefresh, dkrAutoToggle, dkrTab, dkrFilter, dkrSelectHost,
   dkrStart, dkrStop, dkrRemove, dkrRmi, dkrPruneImages,
+  dkrSpawnWorker, dkrWorkerList, dkrWorkerStop,
   openWidgetLoader, closeWidgetLoader, wlFilter, wlAdd, wlRemoveDyn,
 };
 })();
 </script>
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
+<script src="/ui/elements/sandbox_controls.js" id="vera-sandbox-controls-js"></script>
 </body>
 </html>

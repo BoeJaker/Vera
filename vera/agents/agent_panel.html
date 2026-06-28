@@ -141,6 +141,13 @@ input[type=range]{padding:0;accent-color:var(--acc3);cursor:pointer}
             <div style="display:flex;flex-direction:column;gap:8px">
               <div class="row"><label class="lbl">Avatar</label><input id="f-avatar" placeholder="" style="max-width:90px" oninput="AP.updateAv()"></div>
               <div id="av-prev" style="display:flex;align-items:center;justify-content:center;width:56px;height:56px;border:1px solid var(--border);border-radius:8px;background:var(--bg2);font-size:28px"></div>
+              <!-- Optional animated character (instead of the emoji avatar) -->
+              <script src="/ui/elements/character.js"></script>
+              <button type="button" title="Preview this agent's animated character"
+                onclick="(function(){var id=document.getElementById('f-id').value;var c=document.getElementById('ap-char-prev');if(!id){alert('Save the agent first, then preview its character.');return;}c.style.display='';c.setAgent(id);})()"
+                style="font-size:10px;padding:3px 8px;background:var(--bg2);border:1px solid var(--border2);color:var(--text);border-radius:4px;cursor:pointer">Preview character</button>
+              <vera-character id="ap-char-prev" size="64" style="display:none"></vera-character>
+              <div class="hint" style="font-size:9px;max-width:120px">Give this agent an animated character in the <b>Companion&nbsp;→&nbsp;Studio</b> tab.</div>
             </div>
           </div>
           <div class="sec" style="margin-top:8px">Greeting</div>
@@ -193,8 +200,8 @@ input[type=range]{padding:0;accent-color:var(--acc3);cursor:pointer}
           <div class="sec">Limits</div>
           <div class="g3" style="margin-bottom:10px">
             <div><div style="font-size:9.5px;color:var(--dim2);margin-bottom:3px">Context window</div>
-              <input id="f-num_ctx" type="number" value="4096" min="512" step="512">
-              <div class="hint">tokens</div></div>
+              <input id="f-num_ctx" type="number" value="0" min="0" step="512">
+              <div class="hint">0 = auto (model max)</div></div>
             <div><div style="font-size:9.5px;color:var(--dim2);margin-bottom:3px">Max output</div>
               <input id="f-num_predict" type="number" value="-1" min="-1">
               <div class="hint">-1 = unlimited</div></div>
@@ -426,7 +433,7 @@ input[type=range]{padding:0;accent-color:var(--acc3);cursor:pointer}
 'use strict';
 const AP = (() => {
   // URL: always use page origin — correct when served as /ui/panels/agents-panel
-  let BASE = window.location.origin || 'http://llm.int:8999';
+  let BASE = window.location.origin || (window.__VERA_BASE__||('http://'+location.hostname+':8999'));
   const base = () => BASE;
 
   async function api(path, method='GET', body=null) {
@@ -515,7 +522,7 @@ const AP = (() => {
     seRange('f-top_p','topp-v',a.top_p??0.9);
     seRange('f-repeat_penalty','rep-v',a.repeat_penalty??1.1);
     seRange('f-top_k','topk-v',a.top_k??40);
-    document.getElementById('f-num_ctx').value=a.num_ctx??4096;
+    document.getElementById('f-num_ctx').value=a.num_ctx??0;
     document.getElementById('f-num_predict').value=a.num_predict??-1;
     document.getElementById('f-seed').value=a.seed??-1;
     seSel('f-mirostat',String(a.mirostat??0));
@@ -543,7 +550,7 @@ const AP = (() => {
     activeId=null;selCaps=new Set();selSk=new Set();selOnt=new Set();testHist=[];
     renderList();
     fillEditor({name:'',label:'',description:'',avatar:'',model:'',instance_id:'',prefer_gpu:true,
-      temperature:0.7,top_p:0.9,top_k:40,repeat_penalty:1.1,num_ctx:4096,num_predict:-1,seed:-1,
+      temperature:0.7,top_p:0.9,top_k:40,repeat_penalty:1.1,num_ctx:0,num_predict:-1,seed:-1,
       mirostat:0,stop:[],think:false,system_prompt:'',greeting:'',voice:'af_heart',tts_speed:1.0,
       domain_caps:[],domain_description:'',tool_mode:'none',
       memory_enabled:true,memory_inject:false,memory_inject_limit:5,memory_tags:'',

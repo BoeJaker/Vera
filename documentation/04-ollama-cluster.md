@@ -1,6 +1,6 @@
 # 04 · LLM Cluster
 
-Vera orchestrates a heterogeneous cluster of LLM instances — Ollama nodes, VLLM servers, hosted LLM APIs — with health-checking, load balancing, and automatic failover. The reference deployment is a small home network: one GPU node and two CPU nodes running Ollama. The cluster layer abstracts over the backend type, so adding a VLLM server or routing to an external API is a registration concern, not a code change.
+Vera orchestrates a backend-agnostic cluster of LLM instances — Ollama nodes, VLLM servers, hosted LLM APIs — with health-checking, load balancing, and automatic failover. The reference deployment is a small home network: one GPU node and two CPU nodes running Ollama. The cluster layer abstracts over the backend type, so adding a VLLM server or routing to an external API is a registration concern, not a code change.
 
 The `cluster.py` module provides three integrated systems:
 
@@ -199,5 +199,8 @@ A separate process (the GPU node's `:8765` `gpu_infer` server) handles Whisper S
 ## See also
 
 - [Capability Framework](./01-capability-framework.md) — `llm.*` and `gpu.*` caps that consume the cluster
+- [vLLM Backend](./21-vllm.md) — the other backend type the agnostic router can route to
+- [Docker](./13-docker.md) — `docker.worker.*` spawn containers that join this cluster
+- [Workers, Jobs & Syslog](./22-workers-jobs-syslog.md) — worker registry, job persistence, the proxy log
 - [Configuration](./10-configuration.md) — all env vars in one place
 - [Research System](./07-research.md) — uses tier-based routing (THINKER→GPU, WRITER+ANALYST→CPU)

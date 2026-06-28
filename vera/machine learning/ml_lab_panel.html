@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ML Lab — Vera</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Syne:wght@400;500;600;700;800&display=swap');
+
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+:root{
+  --void:#050709; --bg1:#080c12; --bg2:#0d1320; --bg3:#111b2e; --bg4:#162238;
+  --border:rgba(56,120,220,0.13); --border2:rgba(56,120,220,0.26);
+  --acc:#3878dc; --acc-glow:rgba(56,120,220,0.3);
+  --teal:#00d4aa; --amber:#f5a623; --rose:#e05a6b; --violet:#8b5cf6; --lime:#84cc16;
+  --text:#c8d8f4; --dim:rgba(140,170,230,0.45); --dim2:rgba(140,170,230,0.28);
+  --mono:'JetBrains Mono',monospace; --head:'Syne',sans-serif;
+}
+
+html,body{height:100%;width:100%;background:var(--void);color:var(--text);
+  font-family:var(--mono);font-size:12px;overflow:hidden}
+
+#root{display:grid;grid-template-rows:44px 1fr;height:100vh}
+
+/* ── Topbar ── */
+#topbar{display:flex;align-items:center;gap:14px;padding:0 14px;
+  background:var(--bg1);border-bottom:1px solid var(--border);position:relative;overflow:hidden}
+#topbar::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--acc) 30%,var(--teal) 65%,transparent)}
+.tb-logo{font-family:var(--head);font-size:14px;font-weight:700;
+  background:linear-gradient(135deg,var(--acc),var(--teal));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+  letter-spacing:0.05em;white-space:nowrap}
+
+/* segmented control */
+.seg{display:flex;background:var(--bg3);border:1px solid var(--border);border-radius:4px;overflow:hidden}
+.seg-btn{font-family:var(--mono);font-size:11px;padding:6px 16px;color:var(--dim);
+  cursor:pointer;border:none;background:transparent;transition:all .15s;letter-spacing:.03em;
+  display:flex;align-items:center;gap:6px;border-right:1px solid var(--border)}
+.seg-btn:last-child{border-right:none}
+.seg-btn:hover{color:var(--text);background:var(--bg4)}
+.seg-btn.active{color:var(--acc);background:rgba(56,120,220,0.16)}
+.seg-btn.active.agent{color:var(--teal);background:rgba(0,212,170,0.16)}
+
+#tb-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.tb-stat{display:flex;flex-direction:column;gap:1px}
+.tb-stat-l{font-size:8px;color:var(--dim2);text-transform:uppercase;letter-spacing:.08em}
+.tb-stat-v{font-size:11px;color:var(--text);font-weight:500}
+
+/* ── Areas ── */
+#areas{position:relative;overflow:hidden}
+.area{position:absolute;inset:0;display:none}
+.area.active{display:block}
+.area iframe{width:100%;height:100%;border:none;display:block}
+
+/* ── Agent area ── */
+#area-agent{display:none;grid-template-columns:330px 1fr}
+#area-agent.active{display:grid}
+
+#agent-config{background:var(--bg1);border-right:1px solid var(--border);
+  overflow-y:auto;padding:14px 14px 24px}
+#agent-main{overflow-y:auto;padding:14px 16px 24px;background:var(--void)}
+#agent-config::-webkit-scrollbar,#agent-main::-webkit-scrollbar{width:4px}
+#agent-config::-webkit-scrollbar-thumb,#agent-main::-webkit-scrollbar-thumb{background:rgba(56,120,220,0.2)}
+
+.sec-title{font-family:var(--head);font-size:10px;font-weight:600;color:var(--dim);
+  text-transform:uppercase;letter-spacing:.12em;margin:0 0 9px}
+.fld{margin-bottom:10px}
+.fld label{display:block;font-size:9.5px;color:var(--dim);margin-bottom:3px;letter-spacing:.03em}
+.inp,select.inp,textarea.inp{width:100%;background:var(--bg2);border:1px solid var(--border);
+  color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 8px;border-radius:3px;
+  outline:none;transition:border-color .15s}
+.inp:focus,select.inp:focus,textarea.inp:focus{border-color:var(--border2)}
+textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
+select.inp option{background:var(--bg2)}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+
+.btn{font-family:var(--mono);font-size:11px;padding:7px 14px;background:var(--bg3);
+  border:1px solid var(--border);color:var(--dim);cursor:pointer;border-radius:3px;
+  letter-spacing:.03em;transition:all .15s}
+.btn:hover{border-color:var(--border2);color:var(--text)}
+.btn.teal{background:rgba(0,212,170,0.12);border-color:var(--teal);color:var(--teal)}
+.btn.teal:hover{background:rgba(0,212,170,0.22)}
+.btn.rose{background:rgba(224,90,107,0.1);border-color:var(--rose);color:var(--rose)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-row{display:flex;gap:8px;margin-top:6px}
+
+.adv-toggle{font-size:9.5px;color:var(--dim2);cursor:pointer;margin:4px 0 8px;user-select:none}
+.adv-toggle:hover{color:var(--acc)}
+#agent-advanced{display:none}
+
+/* status + cards */
+.statusline{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.pill{font-size:10px;padding:3px 10px;border-radius:10px;border:1px solid var(--border);
+  background:var(--bg2);color:var(--dim)}
+.pill.run{border-color:var(--amber);color:var(--amber);background:rgba(245,166,35,0.1)}
+.pill.ok{border-color:var(--teal);color:var(--teal);background:rgba(0,212,170,0.1)}
+.pill.err{border-color:var(--rose);color:var(--rose);background:rgba(224,90,107,0.1)}
+.pill.idle{border-color:var(--border);color:var(--dim2)}
+
+.prog-track{height:5px;background:rgba(255,255,255,0.06);border-radius:3px;overflow:hidden;flex:1;min-width:120px}
+.prog-fill{height:100%;width:0;background:linear-gradient(90deg,var(--acc),var(--teal));
+  border-radius:3px;transition:width .3s}
+
+.card{background:var(--bg1);border:1px solid var(--border);border-radius:5px;padding:12px 14px;margin-bottom:12px}
+.card.best{border-color:var(--teal);background:rgba(0,212,170,0.05)}
+.card-hdr{font-family:var(--head);font-size:10px;font-weight:600;color:var(--dim);
+  text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:10px}
+.metric{display:flex;flex-direction:column;gap:2px}
+.metric-l{font-size:8.5px;color:var(--dim2);text-transform:uppercase;letter-spacing:.06em}
+.metric-v{font-size:15px;font-family:var(--mono);color:var(--teal);font-weight:600}
+
+#chart-wrap{position:relative;height:180px}
+#agent-chart{width:100%;height:180px;display:block}
+
+table.rounds{width:100%;border-collapse:collapse;font-size:10.5px}
+table.rounds th{text-align:left;color:var(--dim2);font-weight:500;font-size:8.5px;
+  text-transform:uppercase;letter-spacing:.06em;padding:4px 8px;border-bottom:1px solid var(--border)}
+table.rounds td{padding:5px 8px;border-bottom:1px solid var(--border);color:var(--text)}
+table.rounds tr.best td{color:var(--teal)}
+table.rounds tr:hover td{background:var(--bg2)}
+
+#agent-log{font-size:10px;line-height:1.7;max-height:200px;overflow-y:auto;
+  font-family:var(--mono)}
+#agent-log::-webkit-scrollbar{width:3px}
+#agent-log::-webkit-scrollbar-thumb{background:rgba(56,120,220,0.2)}
+.log-line{padding:1px 0;color:var(--dim)}
+.log-line .ts{color:var(--dim2);margin-right:6px}
+.log-line.stage-error{color:var(--rose)}
+.log-line.stage-warn{color:var(--amber)}
+.log-line.stage-complete,.log-line.stage-target_met,.log-line.stage-evaluated{color:var(--teal)}
+.log-line.stage-designing,.log-line.stage-training{color:var(--acc)}
+
+.empty{text-align:center;color:var(--dim2);font-size:11px;padding:28px 0}
+.hint{font-size:9.5px;color:var(--dim2);line-height:1.5;margin-top:4px}
+::placeholder{color:var(--dim2)}
+</style>
+</head>
+<body>
+<div id="root">
+
+  <!-- ── TOPBAR ── -->
+  <div id="topbar">
+    <div class="tb-logo">ML Lab</div>
+    <div class="seg" role="tablist">
+      <button class="seg-btn active" id="seg-build" role="button" onclick="showArea('build')">🔨 Build</button>
+      <button class="seg-btn" id="seg-train" role="button" onclick="showArea('train')">🎓 Train</button>
+      <button class="seg-btn" id="seg-agent" role="button" onclick="showArea('agent')">🤖 Agent</button>
+    </div>
+    <div id="tb-right">
+      <div class="tb-stat">
+        <div class="tb-stat-l">Agent</div>
+        <div class="tb-stat-v" id="tb-agent-state">idle</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── AREAS ── -->
+  <div id="areas">
+
+    <!-- BUILD -->
+    <div class="area active" id="area-build">
+      <iframe id="frame-build" src="/ml/panel" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
+
+    <!-- TRAIN -->
+    <div class="area" id="area-train">
+      <iframe id="frame-train" src="/ml/training_panel" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
+
+    <!-- AGENT -->
+    <div class="area" id="area-agent">
+
+      <!-- config -->
+      <div id="agent-config">
+        <div class="sec-title">Agentic Build &amp; Test</div>
+        <div class="hint" style="margin-bottom:12px">
+          Describe a goal. The agent designs an architecture, trains it on data,
+          evaluates it, then revises the design over several rounds — keeping the
+          best by validation loss.
+        </div>
+
+        <div class="fld">
+          <label>Goal</label>
+          <textarea class="inp" id="ag-goal"
+            placeholder="e.g. A compact classifier that separates 3 well-clustered classes of 8-dim feature vectors"></textarea>
+        </div>
+
+        <div class="fld">
+          <label>Task</label>
+          <select class="inp" id="ag-task" onchange="onTaskChange()">
+            <option value="classification">classification</option>
+            <option value="binary_classification">binary_classification</option>
+            <option value="regression">regression</option>
+            <option value="forecasting">forecasting</option>
+            <option value="reconstruction">reconstruction</option>
+            <option value="ohlcv_direction">ohlcv_direction</option>
+          </select>
+        </div>
+
+        <div class="fld">
+          <label>Dataset id <span style="color:var(--dim2)">(blank → generate synthetic)</span></label>
+          <input class="inp" id="ag-dataset-id" list="ag-ds-list" placeholder="leave blank to auto-generate">
+          <datalist id="ag-ds-list"></datalist>
+          <div class="btn-row">
+            <button class="btn" onclick="refreshDatasets()" style="font-size:9.5px;padding:4px 10px">↻ List fabric datasets</button>
+          </div>
+        </div>
+
+        <div class="fld" id="ag-kind-fld">
+          <label>Synthetic kind</label>
+          <select class="inp" id="ag-kind">
+            <option value="classification">classification</option>
+            <option value="spiral">spiral</option>
+            <option value="moons">moons</option>
+            <option value="xor">xor</option>
+            <option value="regression">regression</option>
+            <option value="timeseries">timeseries</option>
+            <option value="autoencoder">autoencoder</option>
+          </select>
+        </div>
+
+        <div class="row2">
+          <div class="fld"><label>Rounds</label><input class="inp" id="ag-rounds" type="number" value="3" min="1" max="10"></div>
+          <div class="fld"><label>Epochs / round</label><input class="inp" id="ag-epochs" type="number" value="30" min="1" max="500"></div>
+        </div>
+
+        <div class="fld">
+          <label>Target val loss <span style="color:var(--dim2)">(0 = run all rounds)</span></label>
+          <input class="inp" id="ag-target" type="number" value="0" step="0.001" min="0">
+        </div>
+
+        <div class="adv-toggle" onclick="toggleAdvanced()">▸ Advanced (synthetic shape, constraints)</div>
+        <div id="agent-advanced">
+          <div class="row2">
+            <div class="fld"><label>Samples</label><input class="inp" id="ag-n" type="number" value="600"></div>
+            <div class="fld"><label>Features</label><input class="inp" id="ag-features" type="number" value="8"></div>
+          </div>
+          <div class="fld"><label>Classes</label><input class="inp" id="ag-classes" type="number" value="3"></div>
+          <div class="fld">
+            <label>Design constraints (optional)</label>
+            <textarea class="inp" id="ag-constraints" style="min-height:48px"
+              placeholder="e.g. keep under 50k params; prefer attention layers"></textarea>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn teal" id="ag-start" onclick="startAgent()">▶ Run Agent</button>
+          <button class="btn rose" id="ag-stop" onclick="stopAgent()" disabled>■ Stop</button>
+        </div>
+      </div>
+
+      <!-- main -->
+      <div id="agent-main">
+        <div class="statusline">
+          <span class="pill idle" id="ag-status">idle</span>
+          <span class="pill" id="ag-round" style="display:none">round 0/0</span>
+          <span class="pill" id="ag-epoch" style="display:none">epoch —</span>
+          <div class="prog-track"><div class="prog-fill" id="ag-prog"></div></div>
+        </div>
+
+        <div id="ag-empty" class="empty">
+          No agent run yet. Set a goal on the left and press <b>Run Agent</b>.
+        </div>
+
+        <div id="ag-results" style="display:none">
+          <div class="card best" id="ag-best-card" style="display:none">
+            <div class="card-hdr">★ Best candidate
+              <span id="ag-best-name" style="color:var(--text);font-weight:500;text-transform:none;letter-spacing:0"></span>
+            </div>
+            <div class="metric-grid" id="ag-best-metrics"></div>
+            <div class="btn-row">
+              <button class="btn" onclick="openBest('build')">Open in Build</button>
+              <button class="btn" onclick="openBest('train')">Load in Train</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-hdr">Validation loss by round</div>
+            <div id="chart-wrap"><canvas id="agent-chart"></canvas></div>
+          </div>
+
+          <div class="card">
+            <div class="card-hdr">Rounds</div>
+            <table class="rounds">
+              <thead><tr><th>#</th><th>Architecture</th><th>Params</th><th>Val loss</th><th>Acc</th></tr></thead>
+              <tbody id="ag-rounds-body"></tbody>
+            </table>
+          </div>
+
+          <div class="card">
+            <div class="card-hdr">Activity log</div>
+            <div id="agent-log"></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// Combined ML Lab shell — hosts Build / Train iframes + an Agent driver.
+// ═══════════════════════════════════════════════════════════════════════════
+const BASE = (function(){ try{ return (window.parent && window.parent._veraBase) || ''; }catch(e){ return ''; } })();
+// Expose so the nested Build/Train iframes can read window.parent._veraBase.
+try{ window._veraBase = BASE; }catch(e){}
+
+let _area = 'build';
+let _runId = null;
+let _polling = null;
+let _rounds = [];      // [{round,name,param_count,metric,accuracy}]
+let _best = null;
+
+// ── API helpers ────────────────────────────────────────────────────────────
+async function api(path, method='GET', body=null){
+  try{
+    const opts = {method, headers:{'Content-Type':'application/json'}};
+    if(body) opts.body = JSON.stringify(body);
+    const r = await fetch(BASE+path, opts);
+    const t = await r.text();
+    return t.trim() ? JSON.parse(t) : null;
+  }catch(e){ console.error(path, e); return null; }
+}
+async function cap(name, args={}){
+  const r = await api('/mcp/call','POST',{name, arguments:args});
+  return r?.content ?? r;
+}
+
+// ── Area switching ──────────────────────────────────────────────────────────
+function showArea(name){
+  _area = name;
+  ['build','train','agent'].forEach(a=>{
+    document.getElementById('area-'+a).classList.toggle('active', a===name);
+    const b = document.getElementById('seg-'+a);
+    b.classList.toggle('active', a===name);
+    b.classList.toggle('agent', a==='agent');
+  });
+  if(name==='agent') drawChart();
+}
+
+// ── Event relay: shell → nested iframes; render agent events here ────────────
+window.addEventListener('message', (e)=>{
+  const d = e.data;
+  if(!d || typeof d!=='object') return;
+  let fromParent=false, fromChild=false;
+  try{ fromParent = (e.source === window.parent); }catch(_){}
+  try{
+    fromChild = (e.source === document.getElementById('frame-build')?.contentWindow ||
+                 e.source === document.getElementById('frame-train')?.contentWindow);
+  }catch(_){}
+
+  // Live event stream from the Vera shell → forward to the embedded panels so
+  // their own listeners (module refresh, training curves) keep working.
+  if(d.event){
+    if(fromParent || !fromChild) relayToChildren(d);
+    handleAgentEvent(d.event);
+    return;
+  }
+  // Bridge state/results bubbling up from a child → pass through to the shell.
+  if(fromChild && typeof d.type==='string' && d.type.indexOf('vera:panel:')===0){
+    try{ window.parent.postMessage(d, '*'); }catch(_){}
+  }
+});
+
+function relayToChildren(msg){
+  ['frame-build','frame-train'].forEach(id=>{
+    const f = document.getElementById(id);
+    try{ f && f.contentWindow && f.contentWindow.postMessage(msg, '*'); }catch(_){}
+  });
+}
+
+// ── Agent run ───────────────────────────────────────────────────────────────
+function onTaskChange(){
+  const task = document.getElementById('ag-task').value;
+  const map = {classification:'classification', binary_classification:'xor',
+    regression:'regression', forecasting:'timeseries',
+    reconstruction:'autoencoder', ohlcv_direction:'classification'};
+  if(map[task]) document.getElementById('ag-kind').value = map[task];
+}
+function toggleAdvanced(){
+  const el = document.getElementById('agent-advanced');
+  const t  = event.currentTarget;
+  const open = el.style.display==='block';
+  el.style.display = open?'none':'block';
+  t.textContent = (open?'▸':'▾') + ' Advanced (synthetic shape, constraints)';
+}
+
+async function refreshDatasets(){
+  const r = await cap('ml.data.list');
+  const dl = document.getElementById('ag-ds-list');
+  const items = (r?.datasets || r?.items || (Array.isArray(r)?r:[])) || [];
+  dl.innerHTML = items.map(d=>{
+    const id = typeof d==='string' ? d : (d.dataset_id||d.id||'');
+    return id ? `<option value="${esc(id)}">` : '';
+  }).join('');
+}
+
+async function startAgent(){
+  const goal = document.getElementById('ag-goal').value.trim();
+  if(!goal){ setStatus('enter a goal first','err'); return; }
+  const args = {
+    goal,
+    task:          document.getElementById('ag-task').value,
+    dataset_id:    document.getElementById('ag-dataset-id').value.trim(),
+    dataset_kind:  document.getElementById('ag-kind').value,
+    rounds:        +document.getElementById('ag-rounds').value || 3,
+    epochs:        +document.getElementById('ag-epochs').value || 30,
+    target_metric: +document.getElementById('ag-target').value || 0,
+    n_samples:     +document.getElementById('ag-n').value || 600,
+    features:      +document.getElementById('ag-features').value || 8,
+    classes:       +document.getElementById('ag-classes').value || 3,
+    constraints:   document.getElementById('ag-constraints').value.trim(),
+  };
+  // reset
+  _rounds = []; _best = null;
+  document.getElementById('ag-rounds-body').innerHTML = '';
+  document.getElementById('agent-log').innerHTML = '';
+  document.getElementById('ag-best-card').style.display='none';
+  document.getElementById('ag-empty').style.display='none';
+  document.getElementById('ag-results').style.display='block';
+  setProgress(0);
+  drawChart();
+
+  setStatus('starting…','run');
+  const r = await cap('ml.agent.build_and_test', args);
+  if(!r || r.error){ setStatus(r?.error||'failed to start','err'); return; }
+  _runId = r.run_id;
+  document.getElementById('ag-start').disabled = true;
+  document.getElementById('ag-stop').disabled  = false;
+  document.getElementById('tb-agent-state').textContent = 'running';
+  logLine({stage:'start', message:'Agent run '+_runId+' started', ts:nowts()});
+  startPolling();
+}
+
+async function stopAgent(){
+  if(!_runId) return;
+  await cap('ml.agent.stop', {run_id:_runId});
+  setStatus('stopping…','run');
+}
+
+function startPolling(){
+  stopPolling();
+  _polling = setInterval(async ()=>{
+    if(!_runId) return;
+    const r = await cap('ml.agent.status', {run_id:_runId});
+    if(r && !r.error) applyStatus(r);
+  }, 2500);
+}
+function stopPolling(){ if(_polling){ clearInterval(_polling); _polling=null; } }
+
+// Apply a full status snapshot (poll). Events give finer-grained live updates.
+function applyStatus(r){
+  if(Array.isArray(r.rounds_log)){
+    _rounds = r.rounds_log.map(c=>({
+      round:c.round, name:c.name, param_count:c.param_count,
+      metric:c.metric, accuracy:c.accuracy ?? (c.metrics||{}).accuracy,
+    }));
+    renderRounds();
+    drawChart();
+  }
+  if(r.best){ _best = r.best; renderBest(); }
+  if(r.round!=null && r.rounds!=null) setRound(r.round, r.rounds);
+  setStatus(r.stage || r.status, statusClass(r.status, r.stage));
+  if(r.status==='complete' || r.status==='stopped' || r.status==='error'){
+    finishRun(r.status);
+  }
+}
+
+function handleAgentEvent(ev){
+  const t = ev.type || '';
+  // Live training progress while the agent's own job runs.
+  if(t==='ml.train_epoch' && typeof ev.job_id==='string' && ev.job_id.indexOf('agent-')===0){
+    const ep = ev.epoch, tot = ev.epochs||1;
+    const pill = document.getElementById('ag-epoch');
+    pill.style.display=''; pill.textContent = `epoch ${ep}/${tot} · val ${(ev.val_loss??0).toFixed(4)}`;
+    return;
+  }
+  if(t==='ml.agent_started' && ev.run_id){ /* started locally already */ return; }
+  if((t==='ml.agent_step') && ev.run_id===_runId){
+    if(ev.message) logLine({stage:ev.stage, message:ev.message, ts:nowts()});
+    if(ev.round!=null && ev.rounds!=null) setRound(ev.round, ev.rounds);
+    if(ev.stage) setStatus(ev.stage, statusClass(ev.status, ev.stage));
+    if(ev.candidate){
+      upsertRound(ev.candidate);
+      renderRounds(); drawChart();
+    }
+    if(ev.best){ _best = ev.best; renderBest(); }
+    if(ev.stage==='complete' || ev.status==='complete' || ev.status==='stopped' || ev.status==='error'){
+      finishRun(ev.status||'complete');
+    }
+  }
+}
+
+function upsertRound(c){
+  const rec = {round:c.round, name:c.name, param_count:c.param_count,
+               metric:c.metric, accuracy:c.accuracy ?? (c.metrics||{}).accuracy};
+  const i = _rounds.findIndex(x=>x.round===rec.round);
+  if(i>=0) _rounds[i]=rec; else _rounds.push(rec);
+  _rounds.sort((a,b)=>a.round-b.round);
+}
+
+function finishRun(status){
+  stopPolling();
+  _runId = null;
+  document.getElementById('ag-start').disabled = false;
+  document.getElementById('ag-stop').disabled  = true;
+  document.getElementById('tb-agent-state').textContent = status;
+  setProgress(100);
+  setStatus(status, statusClass(status));
+}
+
+// ── Rendering ───────────────────────────────────────────────────────────────
+function renderRounds(){
+  const body = document.getElementById('ag-rounds-body');
+  const bestRound = _best ? _best.round : null;
+  body.innerHTML = _rounds.map(c=>`
+    <tr class="${c.round===bestRound?'best':''}">
+      <td>${c.round}</td>
+      <td>${esc(c.name||'—')}</td>
+      <td>${fmtParams(c.param_count)}</td>
+      <td>${c.metric==null?'—':(+c.metric).toFixed(5)}</td>
+      <td>${c.accuracy==null?'—':(+c.accuracy).toFixed(3)}</td>
+    </tr>`).join('') || '<tr><td colspan="5" style="color:var(--dim2)">no rounds yet</td></tr>';
+}
+
+function renderBest(){
+  if(!_best){ return; }
+  document.getElementById('ag-best-card').style.display='block';
+  document.getElementById('ag-best-name').textContent = _best.name ? '· '+_best.name : '';
+  const m = _best.metrics || {};
+  const cells = [
+    ['Val loss', _best.metric==null?'—':(+_best.metric).toFixed(5)],
+    ['Accuracy', (_best.accuracy ?? m.accuracy)==null?'—':(+(_best.accuracy ?? m.accuracy)).toFixed(3)],
+    ['Params', fmtParams(_best.param_count)],
+    ['Round', _best.round ?? '—'],
+  ];
+  document.getElementById('ag-best-metrics').innerHTML = cells.map(([l,v])=>`
+    <div class="metric"><div class="metric-l">${l}</div><div class="metric-v">${v}</div></div>`).join('');
+}
+
+function openBest(where){
+  if(!_best || !_best.module_id) return;
+  const id = _best.module_id;
+  const frame = document.getElementById(where==='train'?'frame-train':'frame-build');
+  showArea(where==='train'?'train':'build');
+  // Nudge the panel to refresh its module list, then open the module.
+  try{ frame.contentWindow.postMessage({event:{type:'ml.module_generated', id}}, '*'); }catch(_){}
+  setTimeout(()=>{ try{ frame.contentWindow.postMessage({type:'vera_lab_open_module', id}, '*'); }catch(_){} }, 350);
+}
+
+// ── Chart: validation loss per round ────────────────────────────────────────
+function drawChart(){
+  const cv = document.getElementById('agent-chart');
+  if(!cv) return;
+  const wrap = document.getElementById('chart-wrap');
+  const dpr = window.devicePixelRatio||1;
+  const W = wrap.clientWidth||600, H = 180;
+  cv.width = W*dpr; cv.height = H*dpr;
+  cv.style.width=W+'px'; cv.style.height=H+'px';
+  const ctx = cv.getContext('2d'); ctx.scale(dpr,dpr);
+  ctx.clearRect(0,0,W,H);
+
+  const pts = _rounds.filter(c=>c.metric!=null && isFinite(c.metric));
+  const pad = {l:46, r:14, t:12, b:24};
+  // axes
+  ctx.strokeStyle='rgba(56,120,220,0.18)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(pad.l,pad.t); ctx.lineTo(pad.l,H-pad.b); ctx.lineTo(W-pad.r,H-pad.b); ctx.stroke();
+
+  if(!pts.length){
+    ctx.fillStyle='rgba(140,170,230,0.35)'; ctx.font='11px JetBrains Mono';
+    ctx.textAlign='center'; ctx.fillText('waiting for first round…', W/2, H/2);
+    return;
+  }
+  const vals = pts.map(p=>+p.metric);
+  let vmin = Math.min(...vals), vmax = Math.max(...vals);
+  if(vmin===vmax){ vmax = vmin + (Math.abs(vmin)||1)*0.1 + 1e-6; }
+  const rmin = pts[0].round, rmax = pts[pts.length-1].round;
+  const sx = r => pad.l + (rmax===rmin?0.5:( (r-rmin)/(rmax-rmin) ))*(W-pad.l-pad.r) - (rmax===rmin?(W-pad.l-pad.r)/2:0);
+  const sy = v => pad.t + (1-(v-vmin)/(vmax-vmin))*(H-pad.t-pad.b);
+
+  // y labels
+  ctx.fillStyle='rgba(140,170,230,0.4)'; ctx.font='9px JetBrains Mono'; ctx.textAlign='right';
+  ctx.fillText(vmax.toFixed(4), pad.l-6, pad.t+8);
+  ctx.fillText(vmin.toFixed(4), pad.l-6, H-pad.b);
+
+  // line
+  ctx.strokeStyle='rgba(56,120,220,0.9)'; ctx.lineWidth=2; ctx.beginPath();
+  pts.forEach((p,i)=>{ const x=sx(p.round), y=sy(+p.metric); i?ctx.lineTo(x,y):ctx.moveTo(x,y); });
+  ctx.stroke();
+
+  // dots + round labels
+  const bestRound = _best?_best.round:null;
+  ctx.textAlign='center'; ctx.font='9px JetBrains Mono';
+  pts.forEach(p=>{
+    const x=sx(p.round), y=sy(+p.metric);
+    const isBest = p.round===bestRound;
+    ctx.fillStyle = isBest?'#00d4aa':'#3878dc';
+    ctx.beginPath(); ctx.arc(x,y,isBest?5:3.5,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='rgba(140,170,230,0.5)';
+    ctx.fillText('r'+p.round, x, H-pad.b+13);
+  });
+}
+window.addEventListener('resize', ()=>{ if(_area==='agent') drawChart(); });
+
+// ── small UI helpers ────────────────────────────────────────────────────────
+function setStatus(txt, cls){
+  const el = document.getElementById('ag-status');
+  el.textContent = txt || 'idle';
+  el.className = 'pill ' + (cls||'idle');
+}
+function statusClass(status, stage){
+  if(status==='error' || stage==='error') return 'err';
+  if(status==='complete' || stage==='complete' || stage==='target_met') return 'ok';
+  if(status==='stopped') return 'idle';
+  return 'run';
+}
+function setRound(r, tot){
+  const pill = document.getElementById('ag-round');
+  pill.style.display=''; pill.textContent = `round ${r}/${tot}`;
+  setProgress(tot? Math.round((r-1)/tot*100) : 0);
+}
+function setProgress(pct){ document.getElementById('ag-prog').style.width = Math.max(0,Math.min(100,pct))+'%'; }
+function logLine(e){
+  const box = document.getElementById('agent-log');
+  const div = document.createElement('div');
+  div.className = 'log-line stage-'+(e.stage||'info');
+  div.innerHTML = `<span class="ts">${esc(e.ts||nowts())}</span>${esc(e.message||'')}`;
+  box.insertBefore(div, box.firstChild);
+  while(box.children.length>120) box.removeChild(box.lastChild);
+}
+function nowts(){ return new Date().toLocaleTimeString(); }
+function fmtParams(n){
+  if(!n) return '0';
+  if(n>=1e9) return (n/1e9).toFixed(1)+'B';
+  if(n>=1e6) return (n/1e6).toFixed(2)+'M';
+  if(n>=1e3) return (n/1e3).toFixed(1)+'K';
+  return ''+n;
+}
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── boot ────────────────────────────────────────────────────────────────────
+onTaskChange();
+
+// Expose semantic actions to the Vera chat agent via the panel bridge.
+if(window.VeraPanelBridge){
+  window.VeraPanelBridge.registerStateProvider(()=>({
+    area:_area, agent_run:_runId, agent_best:_best,
+    agent_rounds:_rounds.length,
+  }));
+  window.VeraPanelBridge.registerActionHandler('show_area', p=>{ showArea(p.area||'agent'); return {area:_area}; });
+  window.VeraPanelBridge.registerActionHandler('run_agent', p=>{
+    if(p && typeof p==='object'){
+      const set=(id,v)=>{ if(v!=null){ const el=document.getElementById(id); if(el) el.value=v; } };
+      set('ag-goal',p.goal); set('ag-task',p.task); set('ag-dataset-id',p.dataset_id);
+      set('ag-kind',p.dataset_kind); set('ag-rounds',p.rounds); set('ag-epochs',p.epochs);
+    }
+    showArea('agent'); startAgent(); return {run_id:_runId};
+  });
+}
+</script>
+<script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel-bridge.js"></script>
+</body>
+</html>

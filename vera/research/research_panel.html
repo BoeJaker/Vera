@@ -212,7 +212,20 @@ input,select,textarea{font:inherit;color:inherit;background:none;border:none;out
 .chip-dot{width:4px;height:4px;border-radius:50%;background:currentColor;flex-shrink:0}
 
 /* ── Right panel ─────────────────────────────────────────────────────────── */
-#right{border-left:1px solid var(--bd);display:flex;flex-direction:column;overflow:hidden;background:var(--s1);min-height:0}
+#right{border-left:1px solid var(--bd);display:flex;flex-direction:column;overflow:hidden;background:var(--s1);min-height:0;position:relative}
+/* RHM resize handle — sits on the left border of the right panel */
+#rhm-resizer{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize;z-index:30}
+#rhm-resizer:hover,#rhm-resizer.drag{background:linear-gradient(90deg,transparent,var(--ac),transparent);opacity:.6}
+body.rhm-resizing{cursor:col-resize;user-select:none}
+/* Discovery graph */
+#tab-graph .dg-wrap{flex:1;overflow:auto;min-height:0;position:relative;background:var(--s1)}
+#disco-graph{display:block}
+.dg-node-rect{cursor:pointer;transition:.1s}
+.dg-node-rect:hover{filter:brightness(1.2)}
+.dg-edge{fill:none;stroke:var(--bd2);stroke-width:1.2;opacity:.7}
+.dg-label{font-size:10px;fill:var(--t1);pointer-events:none;font-family:inherit}
+.dg-count{font-size:8px;fill:var(--t3);pointer-events:none}
+.dg-empty{padding:18px 14px;font-size:11px;color:var(--t3)}
 .ph{height:42px;border-bottom:1px solid var(--bd);display:flex;align-items:center;padding:0 13px;gap:7px;flex-shrink:0}
 .ph h3{font-size:10px;color:var(--t3);letter-spacing:.1em;text-transform:uppercase;flex:1}
 .pscroll{flex:1;overflow-y:auto;padding:11px}
@@ -1219,7 +1232,7 @@ input,select,textarea{font:inherit;color:inherit;background:none;border:none;out
               <option value="github">GitHub</option><option value="news">News</option><option value="custom">Custom</option>
             </select>
           </div>
-          <div class="src-cfg-row" style="margin-bottom:8px"><label>Config JSON</label><input id="ns-cfg" placeholder='{"host":"llm.int"}' class="si wide"></div>
+          <div class="src-cfg-row" style="margin-bottom:8px"><label>Config JSON</label><input id="ns-cfg" placeholder='{"host":"example.host"}' class="si wide"></div>
           <div style="display:flex;gap:6px">
             <button class="abtn" style="margin:0" onclick="addSource()">Add</button>
             <button class="abtn" style="margin:0" onclick="document.getElementById('add-src-form').style.display='none'">Cancel</button>
@@ -1381,6 +1394,8 @@ input,select,textarea{font:inherit;color:inherit;background:none;border:none;out
             <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><polyline points="7,2 3,6 7,10"/></svg>
           </button>
           <input id="pl-name" placeholder="Pipeline name…" style="flex:1;background:var(--s2);border:1px solid var(--bd);border-radius:6px;padding:5px 10px;font-size:12px;color:var(--t1);outline:none">
+          <button class="test-btn" id="pl-canvas-btn" onclick="resToggleCanvas()" title="Toggle the reusable visual flow canvas">&#8862; Canvas</button>
+          <button class="test-btn" onclick="resRunAsDag()" title="Execute cap nodes (+ wiring/conditions) via the DAG engine">&#9654; Run as DAG</button>
           <button class="test-btn" onclick="plSavePipeline()">Save</button>
           <button class="test-btn" onclick="plRunPipeline()" style="background:var(--ac);color:#fff;border-color:var(--ac)">▶ Run</button>
         </div>
@@ -1389,7 +1404,14 @@ input,select,textarea{font:inherit;color:inherit;background:none;border:none;out
         <div style="flex:1;overflow-y:auto;padding:12px 14px;min-height:0">
           <div style="font-size:10px;color:var(--t3);letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px">Stages</div>
           <div id="pl-stages"></div>
-          <div class="nb-add-row" style="opacity:1;margin-top:8px">
+          <div id="pl-canvas-wrap" style="display:none;height:460px;border:1px solid var(--bd);border-radius:8px;overflow:hidden">
+            <vera-flow-builder id="resFlow" style="display:block;width:100%;height:100%"></vera-flow-builder>
+          </div>
+          <div id="res-dag-out" style="display:none;margin-top:8px;border:1px solid var(--bd);border-radius:8px;padding:8px;max-height:200px;overflow:auto;background:var(--s1)">
+            <div style="font-size:9px;color:var(--t3);letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px">DAG run · caps execute on the state-table engine</div>
+            <div id="res-dag-log"></div>
+          </div>
+          <div class="nb-add-row" id="pl-addstage-row" style="opacity:1;margin-top:8px">
             <div class="nb-add-line"></div>
             <button class="nb-add-btn" onclick="plAddStage()">+ Add Stage</button>
             <div class="nb-add-line"></div>
@@ -1414,6 +1436,7 @@ input,select,textarea{font:inherit;color:inherit;background:none;border:none;out
 
   <!-- ── Right panel ────────────────────────────────────────────────────── -->
   <div id="right">
+    <div id="rhm-resizer" title="Drag to resize" onpointerdown="rhmResizeStart(event)"></div>
     <!-- RHM tab strip — always visible, always navigable -->
     <div style="display:flex;align-items:center;border-bottom:1px solid var(--bd);flex-shrink:0;background:var(--s1);overflow:scroll;scrollbar-width: none;">
       <button id="rhtab-a"   onclick="switchTab('a')"   title="Agents"
@@ -1435,6 +1458,13 @@ input,select,textarea{font:inherit;color:inherit;background:none;border:none;out
         <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
           <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="5.5" cy="5.5" r="3.5"/><line x1="8.5" y1="8.5" x2="12" y2="12"/></svg>
           Sources
+        </div>
+      </button>
+      <button id="rhtab-graph" onclick="switchTab('graph')" title="Discovery graph"
+        style="flex:1;padding:9px 9px;font-size:10px;color:var(--t3);border-bottom:2px solid transparent;letter-spacing:.06em;text-transform:uppercase;transition:.1s">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
+          <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="7" cy="2.5" r="1.6"/><circle cx="3" cy="11" r="1.6"/><circle cx="11" cy="11" r="1.6"/><line x1="7" y1="4.1" x2="3.6" y2="9.5"/><line x1="7" y1="4.1" x2="10.4" y2="9.5"/></svg>
+          Graph
         </div>
       </button>
       <button id="rhtab-h"   onclick="switchTab('h')"   title="History"
@@ -1545,6 +1575,23 @@ input,select,textarea{font:inherit;color:inherit;background:none;border:none;out
       </div>
       <div class="pscroll" id="rh-clist"></div>
     </div>
+    <!-- Discovery graph tab -->
+    <div class="tc" id="tab-graph">
+      <div style="padding:7px 11px;border-bottom:1px solid var(--bd);flex-shrink:0;display:flex;align-items:center;gap:6px">
+        <span style="font-size:10px;color:var(--t3);letter-spacing:.08em;text-transform:uppercase;flex:1" id="dg-count">Discovery Graph</span>
+        <select id="dg-groupby" onchange="renderDiscoveryGraph()" title="Group by"
+          style="font-size:9px;padding:2px 4px;background:var(--s2);border:1px solid var(--bd);color:var(--t2);border-radius:3px">
+          <option value="type">Source type</option>
+          <option value="domain">Domain</option>
+        </select>
+        <button class="ib" onclick="dgFit()" title="Fit to view">
+          <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M1.5 4V1.5H4M8 1.5h2.5V4M10.5 8v2.5H8M4 10.5H1.5V8"/></svg>
+        </button>
+      </div>
+      <div class="dg-wrap" id="dg-wrap">
+        <svg id="disco-graph" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+    </div>
     <!-- Files tab -->
     <div class="tc" id="tab-fl">
       <div style="padding:7px 11px;border-bottom:1px solid var(--bd);flex-shrink:0;display:flex;align-items:center;gap:6px">
@@ -1618,7 +1665,7 @@ input,select,textarea{font:inherit;color:inherit;background:none;border:none;out
         </div>
         <div class="sg">
           <div class="sl">Thinker (CPU large)</div>
-          <div class="sr"><label>Host</label><input class="si" id="cfg-t-h" value="llm.int" onchange="saveCfg()"></div>
+          <div class="sr"><label>Host</label><input class="si" id="cfg-t-h" value="" placeholder="ollama host" onchange="saveCfg()"></div>
           <div class="sr"><label>Port</label><input class="si" id="cfg-t-p" value="11435" onchange="saveCfg()"></div>
           <div class="sr"><label>Model</label><input class="si" id="cfg-t-m" value="jaahas/qwen3.5-uncensored" onchange="saveCfg()"></div>
           <div class="sr"><label>Context</label><input class="si" id="cfg-t-c" value="131072" onchange="saveCfg()"></div>
@@ -1632,7 +1679,7 @@ input,select,textarea{font:inherit;color:inherit;background:none;border:none;out
         </div>
         <div class="sg">
           <div class="sl">Writer (GPU fast)</div>
-          <div class="sr"><label>Host</label><input class="si" id="cfg-w-h" value="llm.int" onchange="saveCfg()"></div>
+          <div class="sr"><label>Host</label><input class="si" id="cfg-w-h" value="" placeholder="ollama host" onchange="saveCfg()"></div>
           <div class="sr"><label>Port</label><input class="si" id="cfg-w-p" value="11435" onchange="saveCfg()"></div>
           <div class="sr"><label>Model</label><input class="si" id="cfg-w-m" value="jaahas/qwen3.5-uncensored" onchange="saveCfg()"></div>
           <div class="sr"><label>Context</label><input class="si" id="cfg-w-c" value="32768" onchange="saveCfg()"></div>
@@ -1644,7 +1691,7 @@ input,select,textarea{font:inherit;color:inherit;background:none;border:none;out
         <div class="sg">
           <div class="sl">Analyst (optional)</div>
           <div class="sr"><label>Enable</label><div class="tgl" id="tgl-analyst" onclick="toggleAnalyst()"></div></div>
-          <div class="sr"><label>Host</label><input class="si" id="cfg-a-h" value="llm.int" onchange="saveCfg()"></div>
+          <div class="sr"><label>Host</label><input class="si" id="cfg-a-h" value="" placeholder="ollama host" onchange="saveCfg()"></div>
           <div class="sr"><label>Port</label><input class="si" id="cfg-a-p" value="11436" onchange="saveCfg()"></div>
           <div class="sr"><label>Model</label><input class="si" id="cfg-a-m" value="jaahas/qwen3.5-uncensored" onchange="saveCfg()"></div>
           <div class="sr" title="Enable thinking mode for the analyst">
@@ -1652,8 +1699,8 @@ input,select,textarea{font:inherit;color:inherit;background:none;border:none;out
             <div class="tgl" id="tgl-a-think" onclick="this.classList.toggle('on');saveCfg()"></div>
           </div>
         </div>
-        <div class="sr"><label>Backend URL</label><input class="si" id="cfg-url" value="http://llm.int:8765" onchange="saveCfg()"></div>
-        <div class="sr"><label>Orchestrator URL</label><input class="si" id="cfg-orch-url" value="http://llm.int:8999" onchange="saveCfg()" title="Vera capability backend URL (for NLP panel, graph, fabric)"></div>
+        <div class="sr"><label>Backend URL</label><input class="si" id="cfg-url" value="" placeholder="http://host:8765" onchange="saveCfg()"></div>
+        <div class="sr"><label>Orchestrator URL</label><input class="si" id="cfg-orch-url" value="" placeholder="http://host:8999" onchange="saveCfg()" title="Vera capability backend URL (for NLP panel, graph, fabric)"></div>
         <button class="abtn" onclick="pushCfg()">Apply to backend</button>
       </div>
     </div>
@@ -1721,9 +1768,9 @@ const S={
     } catch(e) {}
     try {
       const r = localStorage.getItem('cfg-url') || '';
-      const u = new URL(r || 'http://llm.int:8765');
+      const u = new URL(r || ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8765'));
       return u.protocol + '//' + u.host;
-    } catch(e) { return 'http://llm.int:8765'; }
+    } catch(e) { return ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8765'); }
   })(),
   // Orchestrator URL (capability backend :8999) — for /research/* capability endpoints
   orchUrl: (()=>{
@@ -1735,7 +1782,7 @@ const S={
       const r = localStorage.getItem('vera-orch-url') || '';
       if (r) { const u = new URL(r); return u.protocol + '//' + u.host; }
     } catch(e) {}
-    return 'http://llm.int:8999';
+    return (window.__VERA_BASE__||('http://'+location.hostname+':8999'));
   })(),
   mode:'single', om:'report', projOM:'report',
   jobId:null, ws:null, buf:'', cursor:null,
@@ -1794,7 +1841,7 @@ Object.defineProperty(S, 'researchApi', {
     const stored = localStorage.getItem('cfg-url');
     if (stored) { S.api = new URL(stored).origin; return; }
   } catch(e) {}
-  S.api = 'http://llm.int:8765';
+  S.api = ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8765');
 })();
 
 // ── Session ID — always reads the live harness session ────────────────────// ── Session ID — always reads the live harness session ────────────────────
@@ -1891,6 +1938,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.pr').forEach(r=>r.classList.toggle('active',r.dataset.t===t));
   loadCfgUI(); loadWSCfg();
   renderChips();
+  rhmRestoreWidth();
   renderAgentCards(null);
   startAgentPoll();
   loadHistory();
@@ -1947,20 +1995,22 @@ function switchView(v){
   if(v==='pl') plInit();
 }
 function switchTab(t){
+  window._rhTab=t;
   if(t==='fl') renderRHFiles();
   // All tab content panels
-  ['a','iter','src','h','bm','cfg','fl'].forEach(id=>{
+  ['a','iter','src','graph','h','bm','cfg','fl'].forEach(id=>{
     const el=document.getElementById('tab-'+id);
     if(el) el.classList.toggle('show',id===t);
   });
   // Tab strip button highlighting
-  ['a','iter','src','h','bm','cfg','fl'].forEach(id=>{
+  ['a','iter','src','graph','h','bm','cfg','fl'].forEach(id=>{
     const btn=document.getElementById('rhtab-'+id);
     if(!btn) return;
     const active=id===t;
     btn.style.color=active?'var(--ac)':'var(--t3)';
     btn.style.borderBottom=active?'2px solid var(--ac)':'2px solid transparent';
   });
+  if(t==='graph') renderDiscoveryGraph();
   // Old sidebar nav buttons (kept for backward compat)
   ['h','bm','cfg'].forEach(id=>{
     const b=document.getElementById('nv-'+id);
@@ -1976,6 +2026,182 @@ function iterTogglePanel(){
   const rb = document.getElementById('rb');
   if(rb && !rb.classList.contains('ws')){rb.classList.add('ws');}
   switchTab('iter');
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   RHM resize  +  live discovery graph
+══════════════════════════════════════════════════════════════════════════ */
+function rhmResizeStart(e){
+  e.preventDefault();
+  const main=document.getElementById('main');
+  const right=document.getElementById('right');
+  const handle=document.getElementById('rhm-resizer');
+  if(!main||!right) return;
+  const startX=e.clientX, startW=right.getBoundingClientRect().width;
+  document.body.classList.add('rhm-resizing');
+  if(handle)handle.classList.add('drag');
+  function mv(ev){
+    let w=startW-(ev.clientX-startX);
+    const cap=Math.min(760, window.innerWidth-360);
+    w=Math.max(240, Math.min(w, Math.max(240,cap)));
+    main.style.gridTemplateColumns='1fr '+w+'px';
+  }
+  function up(){
+    document.removeEventListener('pointermove',mv);
+    document.removeEventListener('pointerup',up);
+    document.body.classList.remove('rhm-resizing');
+    if(handle)handle.classList.remove('drag');
+    try{localStorage.setItem('rhmWidth', String(right.getBoundingClientRect().width));}catch(_){}
+    if(window._rhTab==='graph') dgFit();
+  }
+  document.addEventListener('pointermove',mv);
+  document.addEventListener('pointerup',up);
+}
+function rhmRestoreWidth(){
+  try{
+    const w=parseFloat(localStorage.getItem('rhmWidth'));
+    if(w&&w>=240){
+      const main=document.getElementById('main');
+      if(main)main.style.gridTemplateColumns='1fr '+Math.min(w,window.innerWidth-360)+'px';
+    }
+  }catch(_){}
+}
+
+const DG_COLORS={web:'#2e6da4',fabric:'#7a5cc0',discovery:'#1f9d6b',worldview:'#c06a2e',
+  memory:'#b03a6e',arxiv:'#9a3b3b',github:'#5a6270',hackernews:'#d2691e',
+  neo4j:'#3a7d44',chroma:'#8a6d3b',root:'#555'};
+const DG_TYPE_LABELS={web:'Web',fabric:'Fabric',discovery:'Discovery',worldview:'WorldView',
+  memory:'Memory',arxiv:'arXiv',github:'GitHub',hackernews:'Hacker News'};
+window._dgCollapsed=window._dgCollapsed||new Set();
+
+function _dgCount(n){
+  if(!n.children||!n.children.length) return n.kind==='page'?1:0;
+  return n.children.reduce((s,c)=>s+(c.kind==='page'?1:_dgCount(c)),0);
+}
+function _dgLeaf(c){
+  return {id:'p:'+(c.url||(c.title||'')+Math.random()),
+    label:c.title||c.domain||c.url||'page',kind:'page',
+    gtype:(c.source_type||'web'),url:decodeRedirectUrl?decodeRedirectUrl(c.url):c.url,children:[]};
+}
+function _dgBuildTree(){
+  const groupBy=(document.getElementById('dg-groupby')||{}).value||'type';
+  const cits=S.cits||[];
+  const root={id:'root',label:(S.query||'Current research'),kind:'root',gtype:'root',children:[]};
+  const l1=new Map();
+  cits.forEach(c=>{
+    let key,label;
+    if(groupBy==='domain'){key=c.domain||'(unknown)';label=key;}
+    else{key=c.source_type||'web';label=DG_TYPE_LABELS[key]||key;}
+    if(!l1.has(key))l1.set(key,{id:'l1:'+key,label:label,kind:'group',
+      gtype:(c.source_type||'web'),children:[],_sub:new Map()});
+    const bucket=l1.get(key);
+    if(groupBy==='type'){
+      const dk=c.domain||'(page)';
+      if(!bucket._sub.has(dk))bucket._sub.set(dk,{id:bucket.id+'|'+dk,label:dk,
+        kind:'domain',gtype:(c.source_type||'web'),children:[]});
+      bucket._sub.get(dk).children.push(_dgLeaf(c));
+    }else{
+      bucket.children.push(_dgLeaf(c));
+    }
+  });
+  l1.forEach(b=>{ if(b._sub&&b._sub.size)b.children=[...b._sub.values()]; delete b._sub; });
+  root.children=[...l1.values()];
+  return root;
+}
+let _dgXcursor=0;
+function _dgLayout(node,depth){
+  node.depth=depth;
+  const collapsed=window._dgCollapsed.has(node.id);
+  const kids=(collapsed?[]:(node.children||[]));
+  if(!kids.length){ node.x=_dgXcursor; _dgXcursor+=1; }
+  else{ kids.forEach(k=>_dgLayout(k,depth+1)); node.x=(kids[0].x+kids[kids.length-1].x)/2; }
+}
+function _dgWalk(node,fn){fn(node);if(!window._dgCollapsed.has(node.id))(node.children||[]).forEach(c=>_dgWalk(c,fn));}
+
+function renderDiscoveryGraph(){
+  const svg=document.getElementById('disco-graph');
+  const wrap=document.getElementById('dg-wrap');
+  const cnt=document.getElementById('dg-count');
+  if(!svg||!wrap) return;
+  while(svg.firstChild) svg.removeChild(svg.firstChild);
+  const cits=S.cits||[];
+  if(cnt) cnt.textContent='Discovery Graph'+(cits.length?(' ('+cits.length+')'):'');
+  if(!cits.length){
+    svg.setAttribute('width','100%'); svg.setAttribute('height','100');
+    const t=document.createElementNS('http://www.w3.org/2000/svg','text');
+    t.setAttribute('x','14'); t.setAttribute('y','30'); t.setAttribute('class','dg-label');
+    t.setAttribute('fill','var(--t3)');
+    t.textContent='No discovery yet — run a research query.';
+    svg.appendChild(t); return;
+  }
+  const root=_dgBuildTree();
+  _dgXcursor=0; _dgLayout(root,0);
+
+  const X_GAP=130, LEVEL_H=66, MX=70, MY=26, NW=112, NH=30;
+  let maxDepth=0, slots=0;
+  _dgWalk(root,n=>{ if(n.depth>maxDepth)maxDepth=n.depth; if(typeof n.x==='number')slots=Math.max(slots,n.x); });
+  const W=MX*2+(slots+1)*X_GAP, H=MY*2+(maxDepth+1)*LEVEL_H+NH;
+  svg.setAttribute('viewBox','0 0 '+W+' '+H);
+  svg.setAttribute('width', W); svg.setAttribute('height', H);
+  const NS='http://www.w3.org/2000/svg';
+  const px=n=>MX+n.x*X_GAP, py=n=>MY+n.depth*LEVEL_H;
+
+  // edges first
+  _dgWalk(root,n=>{
+    if(window._dgCollapsed.has(n.id))return;
+    (n.children||[]).forEach(c=>{
+      const x1=px(n)+NW/2, y1=py(n)+NH, x2=px(c)+NW/2, y2=py(c);
+      const my=(y1+y2)/2;
+      const path=document.createElementNS(NS,'path');
+      path.setAttribute('d','M'+x1+','+y1+' C'+x1+','+my+' '+x2+','+my+' '+x2+','+y2);
+      path.setAttribute('class','dg-edge');
+      svg.appendChild(path);
+    });
+  });
+  // nodes
+  _dgWalk(root,n=>{
+    const g=document.createElementNS(NS,'g');
+    g.setAttribute('transform','translate('+px(n)+','+py(n)+')');
+    const rect=document.createElementNS(NS,'rect');
+    rect.setAttribute('width',NW); rect.setAttribute('height',NH);
+    rect.setAttribute('rx','6'); rect.setAttribute('class','dg-node-rect');
+    const col=DG_COLORS[n.gtype]||DG_COLORS.web;
+    if(n.kind==='page'){ rect.setAttribute('fill','var(--s2)'); rect.setAttribute('stroke',col); rect.setAttribute('stroke-width','1.4'); }
+    else if(n.kind==='root'){ rect.setAttribute('fill',col); rect.setAttribute('width',NW+10); }
+    else { rect.setAttribute('fill',col); rect.setAttribute('opacity','0.9'); }
+    g.appendChild(rect);
+    const label=document.createElementNS(NS,'text');
+    label.setAttribute('x', (n.kind==='root'?(NW+10):NW)/2); label.setAttribute('y',n.kind==='page'?19:(_dgHasCount(n)?15:19));
+    label.setAttribute('text-anchor','middle'); label.setAttribute('class','dg-label');
+    if(n.kind!=='page') label.setAttribute('fill','#fff');
+    label.textContent=_dgTrunc(n.label, n.kind==='root'?20:15);
+    const tt=document.createElementNS(NS,'title'); tt.textContent=n.label; g.appendChild(tt);
+    g.appendChild(label);
+    if(_dgHasCount(n)){
+      const cc=document.createElementNS(NS,'text');
+      cc.setAttribute('x',NW/2); cc.setAttribute('y',25); cc.setAttribute('text-anchor','middle');
+      cc.setAttribute('class','dg-count'); cc.setAttribute('fill','rgba(255,255,255,.8)');
+      const c=_dgCount(n); const col2=window._dgCollapsed.has(n.id)?' ▸':'';
+      cc.textContent=c+' source'+(c===1?'':'s')+col2;
+      g.appendChild(cc);
+    }
+    if(n.kind==='page'&&n.url){ g.style.cursor='pointer'; g.onclick=()=>window.open(n.url,'_blank'); }
+    else if(n.kind==='group'||n.kind==='domain'){ g.style.cursor='pointer';
+      g.onclick=()=>{ if(window._dgCollapsed.has(n.id))window._dgCollapsed.delete(n.id); else window._dgCollapsed.add(n.id); renderDiscoveryGraph(); }; }
+    svg.appendChild(g);
+  });
+}
+function _dgHasCount(n){return n.kind==='group'||n.kind==='domain'||n.kind==='root';}
+function _dgTrunc(s,n){s=String(s||'');return s.length>n?s.slice(0,n-1)+'…':s;}
+function dgFit(){
+  const svg=document.getElementById('disco-graph'), wrap=document.getElementById('dg-wrap');
+  if(!svg||!wrap||!svg.viewBox||!svg.viewBox.baseVal||!svg.viewBox.baseVal.width) return;
+  const W=svg.viewBox.baseVal.width, H=svg.viewBox.baseVal.height;
+  const cw=wrap.clientWidth-4;
+  if(cw<=0) return;
+  const scale=Math.min(1, cw/W);
+  svg.setAttribute('width', Math.round(W*scale));
+  svg.setAttribute('height', Math.round(H*scale));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -2019,8 +2245,10 @@ const CHIP_DEFS=[
   {id:'searxng',l:'Search'},{id:'crawl4ai',l:'Crawl'},{id:'neo4j',l:'Graph'},
   {id:'chroma',l:'Vectors'},{id:'redis',l:'Redis'},{id:'hackernews',l:'HN'},
   {id:'arxiv',l:'arXiv'},{id:'github',l:'GitHub'},{id:'wayback',l:'Archive'},
+  {id:'fabric',l:'Fabric'},{id:'memory',l:'Memory'},
+  {id:'discovery',l:'Discovery'},{id:'worldview',l:'WorldView'},
 ];
-const activeChips=new Set(['searxng','crawl4ai','neo4j','chroma','hackernews','arxiv']);
+const activeChips=new Set(['searxng','crawl4ai','neo4j','chroma','hackernews','arxiv','fabric','discovery','worldview']);
 function renderChips(){
   const tray = document.getElementById('src-chip-tray');
   if (!tray) return;
@@ -2065,6 +2293,7 @@ function clearProject(){setActiveProject(null,'');}
 async function submit(){
   const q=document.getElementById('qi').value.trim();
   if(!q||S.jobId) return;
+  S.query=q;
   showRA();
   // Don't wipe existing thread — just reset the active streaming state
   clearActiveStream();
@@ -2176,6 +2405,7 @@ function finishStream(m){
   removeCursor(); setSending(false); S.currentJobId=m.job_id; S.jobId=null; S.ws&&S.ws.close();
   if(m.result){S.buf=m.result;_updateActiveEntry(m.result,true);}
   if(m.citations&&m.citations.length) showCits(m.citations);
+  if(window._rhTab==='graph') renderDiscoveryGraph();
   if(m.file_tree&&m.file_tree.length) showFileTree(m.file_tree);
 
   // Update chain state from done message
@@ -2361,7 +2591,9 @@ function showCits(cits){
   S.cits=[...S.cits,...fresh];
   // Single location: RHM Sources tab only
   renderRHSources();
-  switchTab('src');
+  // Keep the user on the Graph tab if they're watching it; otherwise surface Sources.
+  if(window._rhTab==='graph') renderDiscoveryGraph();
+  else switchTab('src');
   if(NB.showResearch) nbRefreshResearch();
 }
 
@@ -3345,10 +3577,10 @@ async function exportDB(){
 function _sanitiseApiUrl(raw) {
   // Strip trailing slashes and any path — only keep scheme://host:port
   try {
-    const u = new URL(raw && raw.trim() ? raw.trim() : (S && S.api ? S.api : 'http://llm.int:8765'));
-    return u.protocol + '//' + u.host;  // e.g. "http://llm.int:8999"
+    const u = new URL(raw && raw.trim() ? raw.trim() : (S && S.api ? S.api : ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8765')));
+    return u.protocol + '//' + u.host;  // e.g. "http://host:8999"
   } catch(e) {
-    return 'http://llm.int:8999';
+    return (window.__VERA_BASE__||('http://'+location.hostname+':8999'));
   }
 }
 function _saveCfgInputs(){
@@ -3371,9 +3603,15 @@ function loadCfgUI(){
   // Step 1: restore cfg-url from localStorage so S.api is set immediately
   const saved=JSON.parse(localStorage.getItem('vera-cfg4')||'{}');
   const urlEl=document.getElementById('cfg-url');
-  if(urlEl&&saved['cfg-url']) urlEl.value=saved['cfg-url'];
+  if(urlEl) urlEl.value = saved['cfg-url'] || urlEl.value
+            || ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8765');
   S.api=_sanitiseApiUrl(urlEl?.value);
-  const orchEl=document.getElementById('cfg-orch-url'); if(orchEl&&saved['cfg-orch-url']){orchEl.value=saved['cfg-orch-url'];S.orchUrl=_sanitiseApiUrl(saved['cfg-orch-url']);}
+  const orchEl=document.getElementById('cfg-orch-url');
+  if(orchEl){
+    orchEl.value = saved['cfg-orch-url'] || orchEl.value
+                 || (window.__VERA_BASE__||('http://'+location.hostname+':8999'));
+    S.orchUrl=_sanitiseApiUrl(orchEl.value);
+  }
 
   // Restore toggles from localStorage while we wait for backend
   ['tgl-t-think','tgl-w-think','tgl-a-think'].forEach(id=>{
@@ -6360,6 +6598,122 @@ function plMoveStage(idx,dir){
   plRenderStages();
 }
 
+/* ═══ REUSABLE VISUAL CANVAS (<vera-flow-builder>) ═══
+   Alternate "Canvas" view for the research pipeline editor. Edits the same
+   PL.current.stages (each node carries its full stage object in meta.stage),
+   so plSavePipeline()/plRunPipeline() are unchanged. */
+var researchProvider = {
+  id:'research', paletteLabel:'Stage kinds',
+  loadPalette:function(){
+    var groups=[{ group:'stages', items:[
+      {type:'research',  label:'Research',  description:'Agentic research stage'},
+      {type:'transform', label:'Transform', description:'Transform prior output'},
+      {type:'synthesis', label:'Synthesis', description:'Synthesise a final report'}
+    ]}];
+    if(window.VeraFlowCaps){
+      try{ window.VeraFlowCaps.setBase(S.orchUrl||''); }catch(_){}
+      return window.VeraFlowCaps.paletteGroups().then(function(caps){ return groups.concat(caps); }).catch(function(){ return groups; });
+    }
+    return Promise.resolve(groups);
+  },
+  schemaFor:function(t){
+    var type=(t&&typeof t==='object')?t.type:t;
+    if(window.VeraFlowCaps && window.VeraFlowCaps.isCap(type)) return window.VeraFlowCaps.schemaFor(type);
+    return null;
+  },
+  createNode:function(item){
+    if(window.VeraFlowCaps && window.VeraFlowCaps.isCap(item.type)){
+      return { id:'n'+Math.random().toString(36).slice(2,9), type:item.type, out:null, params:{},
+               output_map:null, condition:'', parallel_with:null, pos:null, meta:{} };
+    }
+    return { id:'n'+Math.random().toString(36).slice(2,9), type:item.type, out:null, params:{},
+             output_map:null, condition:'', parallel_with:null, pos:null, meta:{ stage:plBlankStage(item.type) } };
+  },
+  validateNode:function(){ return []; },
+  nodeCard:function(n){
+    if(window.VeraFlowCaps && window.VeraFlowCaps.isCap(n.type)) return { title:(n.type||'').split('.').pop(), line:'⚙ cap', sub:n.type };
+    var st=(n.meta&&n.meta.stage)||{};
+    return { title:st.name||n.type, line:st.kind||'stage',
+             sub:st.kind==='research' ? ((st.mode||'')+(st.output_mode?' · '+st.output_mode:'')) : '' };
+  },
+  // Native save = research stages only; cap nodes execute via "Run as DAG".
+  serialize:function(graph){ return { stages: graph.nodes
+      .filter(function(n){ return !(window.VeraFlowCaps && window.VeraFlowCaps.isCap(n.type)) && n.meta && n.meta.stage; })
+      .map(function(n){ return n.meta.stage; }) }; },
+  deserialize:function(doc){
+    var st=(doc&&doc.stages)||[]; var i=0;
+    return { nodes: st.map(function(s){
+      return { id:'n'+(++i), type:s.kind||'research', out:null, params:{}, output_map:null,
+               condition:'', parallel_with:null, pos:null, meta:{ stage:s } };
+    }), meta:{} };
+  },
+  renderInspector:function(node, ctx){
+    if(window.VeraFlowCaps && window.VeraFlowCaps.isCap(node.type)){
+      var csc=window.VeraFlowCaps.schemaFor(node.type)||{};
+      return '<div class="insp-h">'+ctx.esc((node.type||'').split('.').pop())+' <span style="font-size:8.5px;color:var(--ac,#6ea8fe)">capability</span></div>'+
+             '<div class="insp-desc" style="font-size:10px">'+ctx.esc(csc.description||node.type)+'</div>';
+    }
+    var st=node.meta.stage||(node.meta.stage=plBlankStage('research'));
+    var isR=st.kind==='research';
+    function opt(v,l,cur){ return '<option value="'+v+'"'+(v===cur?' selected':'')+'>'+l+'</option>'; }
+    function pill(attr,id,label,on){ return '<span '+attr+'="'+ctx.esc(id)+'" style="cursor:pointer;font-size:9.5px;padding:1px 6px;border-radius:8px;border:1px solid var(--border,#2a313e);'+(on?'background:rgba(90,158,143,.2);color:var(--acc,#5a9e8f)':'color:var(--dim,#7a8290)')+'">'+ctx.esc(label)+'</span>'; }
+    var h='<div class="insp-h">'+ctx.esc(st.name||'Stage')+'</div>';
+    h+='<div class="insp-section"><div class="insp-section-h">Stage</div>';
+    h+='<div class="insp-row"><div class="insp-row-label">name</div><input data-f="name" value="'+ctx.esc(st.name||'')+'"></div>';
+    h+='<div class="insp-row"><div class="insp-row-label">type</div><select data-f="kind">'+opt('research','Research',st.kind)+opt('transform','Transform',st.kind)+opt('synthesis','Synthesis',st.kind)+'</select></div>';
+    h+='<div class="insp-row"><div class="insp-row-label">model</div><select data-f="model_tier">'+opt('auto','Auto',st.model_tier)+opt('thinker','Thinker',st.model_tier)+opt('writer','Writer',st.model_tier)+opt('analyst','Analyst',st.model_tier)+'</select></div>';
+    if(isR){
+      h+='<div class="insp-row"><div class="insp-row-label">agent mode</div><select data-f="mode">'+opt('single','Single',st.mode)+opt('parallel','Parallel',st.mode)+opt('deep','Deep',st.mode)+'</select></div>';
+      h+='<div class="insp-row"><div class="insp-row-label">output</div><select data-f="output_mode">'+opt('report','Report',st.output_mode)+opt('guide','Guide',st.output_mode)+opt('filestore','Files',st.output_mode)+opt('code','Code',st.output_mode)+'</select></div>';
+    }
+    h+='</div>';
+    h+='<div class="insp-section"><div class="insp-section-h">'+(isR?'Query template':'Input')+' — {topic} {prev} {all}</div><div class="insp-row"><textarea data-f="query_template" rows="2">'+ctx.esc(st.query_template||'')+'</textarea></div></div>';
+    h+='<div class="insp-section"><div class="insp-section-h">Stage prompt</div><div class="insp-row"><textarea data-f="prompt" rows="3">'+ctx.esc(st.prompt||'')+'</textarea></div></div>';
+    if(isR){
+      h+='<div class="insp-section"><div class="insp-section-h">Sources (none = all)</div><div class="insp-row" style="display:flex;flex-wrap:wrap;gap:3px">';
+      (PL.sources||[]).forEach(function(src){ h+=pill('data-src',src.id,src.label,(st.sources||[]).indexOf(src.id)>=0); });
+      h+='</div></div><div class="insp-section"><div class="insp-section-h">NLP tools</div><div class="insp-row" style="display:flex;flex-wrap:wrap;gap:3px">';
+      (PL_NLP_TOOLS||[]).forEach(function(t){ h+=pill('data-nlp',t,t,(st.nlp_tools||[]).indexOf(t)>=0); });
+      h+='</div></div>';
+    }
+    return { html:h, bind:function(root){
+      root.querySelectorAll('[data-f]').forEach(function(inp){
+        var ev=(inp.tagName==='SELECT')?'change':'input';
+        inp.addEventListener(ev,function(){ var f=inp.getAttribute('data-f'); st[f]=inp.value; if(f==='kind')ctx.update(); else ctx.refresh(); });
+      });
+      root.querySelectorAll('[data-src]').forEach(function(p){ p.addEventListener('click',function(){ st.sources=st.sources||[]; var id=p.getAttribute('data-src'); var i=st.sources.indexOf(id); if(i>=0)st.sources.splice(i,1); else st.sources.push(id); ctx.update(); }); });
+      root.querySelectorAll('[data-nlp]').forEach(function(p){ p.addEventListener('click',function(){ st.nlp_tools=st.nlp_tools||[]; var t=p.getAttribute('data-nlp'); var i=st.nlp_tools.indexOf(t); if(i>=0)st.nlp_tools.splice(i,1); else st.nlp_tools.push(t); ctx.update(); }); });
+    }};
+  }
+};
+var _resCanvasReady=false;
+function resToggleCanvas(){
+  var wrap=document.getElementById('pl-canvas-wrap'), el=document.getElementById('resFlow'),
+      btn=document.getElementById('pl-canvas-btn'), stagesEl=document.getElementById('pl-stages'),
+      addRow=document.getElementById('pl-addstage-row');
+  if(!wrap||!el||!PL.current) return;
+  if(wrap.style.display!=='none'){                 // leaving canvas → write stages back
+    if(el.serialize){ var d=el.serialize(); if(d) PL.current.stages=d.stages||[]; }
+    wrap.style.display='none'; if(stagesEl)stagesEl.style.display=''; if(addRow)addRow.style.display='';
+    if(btn)btn.innerHTML='&#8862; Canvas'; plRenderStages(); return;
+  }
+  if(!el.setProvider){ showToast('Flow builder not loaded — restart the server so /ui/elements/flow_builder.js registers'); return; }
+  if(!_resCanvasReady){
+    el.setProvider(researchProvider);
+    el.addEventListener('flow:change', function(){ if(PL.current){ var d=el.serialize(); if(d) PL.current.stages=d.stages||[]; } });
+    _resCanvasReady=true;
+  }
+  el.loadFromSource({stages:PL.current.stages});
+  if(stagesEl)stagesEl.style.display='none'; if(addRow)addRow.style.display='none'; wrap.style.display='';
+  if(btn)btn.innerHTML='&#8801; List';
+}
+function resRunAsDag(){
+  var el=document.getElementById('resFlow');
+  if(!el||!el.runAsDag){ showToast('Flow builder not loaded — restart the server'); return; }
+  var out=document.getElementById('res-dag-out'); if(out) out.style.display='block';
+  el.runAsDag({ base:(window.S&&S.orchUrl)||'', into:document.getElementById('res-dag-log') });
+}
+
 async function plSavePipeline(){
   PL.current.name=document.getElementById('pl-name').value.trim()||'Untitled Pipeline';
   PL.current.description=document.getElementById('pl-desc').value.trim();
@@ -6493,6 +6847,8 @@ async function plStopRun(){
   }catch(e){ showToast('Stop error: '+e.message); }
 }
 </script>
+<script src="/ui/elements/flow_builder.js"></script>
+<script src="/ui/elements/flow_caps.js"></script>
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>

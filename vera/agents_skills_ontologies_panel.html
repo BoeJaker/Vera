@@ -67,7 +67,7 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
 <script>
 'use strict';
 // KEY FIX: base URL is always the origin of THIS page since it's served by the backend
-const BASE = window.location.origin || 'http://llm.int:8999';
+const BASE = window.location.origin || (window.__VERA_BASE__||('http://'+location.hostname+':8999'));
 const LOADED = { agents:false, skills:false, ontologies:false };
 let _lastThemeVars = null;
 

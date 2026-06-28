@@ -1456,6 +1456,11 @@ function setSaveStatus(cls,msg){
 
 window.addEventListener('message',e=>{
   if(e.data?.type==='vera_fabric_event') return;
+  // ML Lab "Open in Build" — load a specific module by id into the canvas.
+  if(e.data?.type==='vera_lab_open_module' && e.data.id){
+    loadModules().then(()=>loadModule(e.data.id));
+    return;
+  }
   const ev=e.data?.event;
   if(!ev) return;
   if(ev.type==='ml.module_created'||ev.type==='ml.module_generated') loadModules();

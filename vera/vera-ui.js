@@ -49,6 +49,17 @@
     if(vars['--ac2']) root.style.setProperty('--ok', vars['--ac2']);
     if(vars['--ac3']) root.style.setProperty('--warn', vars['--ac3']);
 
+    // Fill remaining namespace gaps so every panel repaints fully on a theme
+    // switch (Telegram family: --fg2/--purple; warm family: --gpu).
+    // --fg1/--fg3 are the primary/muted text vars used by the dream + several
+    // other panels; without mapping them, those panels keep dark-theme text in
+    // light mode (unreadable buttons/text). Map them from --t1/--t3.
+    if(vars['--t1']) root.style.setProperty('--fg1', vars['--t1']);
+    if(vars['--t3']) root.style.setProperty('--fg3', vars['--t3']);
+    if(vars['--t2']) root.style.setProperty('--fg2', vars['--t2']);
+    if(vars['--ac5']) root.style.setProperty('--purple', vars['--ac5']);
+    if(vars['--ac3']) root.style.setProperty('--gpu', vars['--ac3']);
+
     // Map research → IDE namespace
     if(vars['--bg'])  root.style.setProperty('--bg0', vars['--bg']);
     if(vars['--s1'])  root.style.setProperty('--bg1', vars['--s1']);

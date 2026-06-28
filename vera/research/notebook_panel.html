@@ -445,7 +445,7 @@ const API = (()=>{
     if (window.parent !== window && window.parent._veraBase)
       return window.parent._veraBase;
   } catch(e) {}
-  return localStorage.getItem('cfg-url') || 'http://llm.int:8765';
+  return localStorage.getItem('cfg-url') || ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8765');
 })();
 const WS_BASE = API.replace(/^http/, 'ws');
 

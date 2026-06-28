@@ -26,5 +26,19 @@
     "created_at": "2026-05-20T21:46:16.505527Z",
     "template": "python",
     "opened": false
+  },
+  {
+    "name": "lan_scanner",
+    "path": "/home/boejaker/vera_projects/lan_scanner",
+    "created_at": "2026-06-27T14:42:14.546006Z",
+    "template": "python",
+    "opened": false
+  },
+  {
+    "name": "python_project",
+    "path": "/home/boejaker/vera_projects/python_project",
+    "created_at": "2026-06-27T16:49:27.550521Z",
+    "template": "python",
+    "opened": false
   }
 ]

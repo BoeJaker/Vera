@@ -2397,6 +2397,22 @@ async def _check_goal_satisfied(goal: str, last_observation: str,
         return {"satisfied": False, "summary": ""}
 
     raw = (raw or "").strip()
+    # Thinking models frequently return an EMPTY string under format=json, which
+    # would silently collapse to satisfied=False and make callers (e.g. the v4
+    # completion check) loop forever on an already-answered goal. Retry once
+    # without json_mode before giving up.
+    if len(raw) < 4:
+        try:
+            raw = (await ollama_generate(
+                prompt + "\n\nRespond with a single JSON object and nothing else.",
+                system=sys,
+                model=model or None,
+                instance_id=instance_id or None,
+                prefer_gpu=bool(prefer_gpu),
+                json_mode=False,
+            ) or "").strip()
+        except Exception:
+            return {"satisfied": False, "summary": ""}
     try:
         if raw.startswith("```"):
             raw = raw.split("```", 2)[1]

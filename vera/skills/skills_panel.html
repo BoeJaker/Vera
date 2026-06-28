@@ -315,8 +315,8 @@ const SP = (() => {
 
   function base() {
     if (BASE) return BASE;
-    try { BASE = (window.location.origin && window.location.origin !== 'null') ? window.location.origin : (window.parent?._veraBase || window._veraBase || localStorage.getItem('vera_base') || 'http://llm.int:8999'); } catch(_){}
-    return BASE || 'http://llm.int:8999';
+    try { BASE = (window.location.origin && window.location.origin !== 'null') ? window.location.origin : (window.parent?._veraBase || window._veraBase || localStorage.getItem('vera_base') || (window.__VERA_BASE__||('http://'+location.hostname+':8999'))); } catch(_){}
+    return BASE || (window.__VERA_BASE__||('http://'+location.hostname+':8999'));
   }
 
   async function api(path, method = 'GET', body = null) {

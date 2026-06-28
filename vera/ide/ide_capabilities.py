@@ -1191,6 +1191,22 @@ async def ide_fs_read(path: str, max_bytes: int = 1_048_576, trace_id=None):
         return {"error": str(e)}
 
 
+def _unescape_collapsed(content: str) -> str:
+    """Recover a file an LLM double-escaped — it emitted literal "\\n"/"\\t"
+    instead of real newlines/tabs, collapsing the whole file onto one line
+    (a frequent small-model failure that makes saved scripts unrunnable).
+
+    Conservative: only fires when there is NO real newline at all and at least
+    two literal "\\n" sequences are present, so normal multi-line content (and a
+    one-off "\\n" inside a string literal) is left untouched."""
+    if not content or "\n" in content:
+        return content
+    if content.count("\\n") < 2:
+        return content
+    return (content.replace("\\r\\n", "\n").replace("\\n", "\n")
+                   .replace("\\t", "\t"))
+
+
 @capability(
     "ide.fs.write",
     http_method="POST", http_path="/ide/fs/write", http_tags=["ide", "fs"],
@@ -1201,6 +1217,7 @@ async def ide_fs_read(path: str, max_bytes: int = 1_048_576, trace_id=None):
 )
 async def ide_fs_write(path: str, content: str, agent: str = "", session_id: str = "", trace_id=None):
     try:
+        content = _unescape_collapsed(content)
         p = Path(path)
         created = not p.exists()
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -1889,3 +1906,294 @@ async def _startup():
 
 
 schedule(_startup, interval=999999, name="ide_startup")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RUN TERMINAL  —  /ide-api/exec/{run,stop,stdin}
+# ─────────────────────────────────────────────────────────────────────────────
+# The IDE panel's Run tab streams shell commands here. Every command is gated by
+# the SAME exec sandbox policy that governs exec.bash.run / exec.code.run — we
+# locate the loaded exec_capabilities module and reuse its _sandbox_check, so the
+# <vera-sandbox-controls> editor (Exec panel OR IDE panel) controls both. SSE
+# frames match what ide_panel.html's _streamSSE expects:
+#     data: {"event": "pid"|"stdout"|"stderr"|"exit", "data": "..."}
+# ─────────────────────────────────────────────────────────────────────────────
+import sys as _sys
+import time as _time
+
+# pid -> live process, so /stop and /stdin can reach a running run.
+_IDE_RUN_PROCS: "Dict[int, asyncio.subprocess.Process]" = {}
+
+
+def _exec_sandbox_mod():
+    """Return the loaded exec_capabilities module (owner of the single exec
+    sandbox policy + _sandbox_check), or None if it hasn't been imported yet."""
+    for _name, _mod in list(_sys.modules.items()):
+        if _mod is not None and _name.endswith("exec_capabilities") \
+                and hasattr(_mod, "_sandbox_check"):
+            return _mod
+    return None
+
+
+def _ide_run_sse(event: str, data) -> bytes:
+    return ("data: " + json.dumps({"event": event, "data": data}) + "\n\n").encode("utf-8")
+
+
+@APP.post("/ide-api/exec/run", include_in_schema=False)
+async def ide_exec_run(request: Request):
+    """SSE-stream a shell command for the IDE Run terminal, gated by the shared
+    exec sandbox policy."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    cmd = (body.get("cmd") or "").strip()
+    cwd = body.get("cwd") or ""
+    session_id = body.get("session_id") or _ide_get_session_id()
+
+    def _err_stream(msg: str, code: int = 126):
+        async def _g():
+            yield _ide_run_sse("stderr", msg)
+            yield _ide_run_sse("exit", str(code))
+        return StreamingResponse(
+            _g(), media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    if not cmd:
+        return _err_stream("sandbox: empty command")
+
+    # Gate through the shared exec sandbox (identical rules to exec.* runs).
+    sb = _exec_sandbox_mod()
+    timeout = 0
+    if sb is not None:
+        try:
+            ok, reason = sb._sandbox_check(cmd, cwd=cwd)
+        except Exception as e:
+            ok, reason = True, ""
+            log.warning("ide run sandbox check errored (allowing): %s", e)
+        if not ok:
+            await emit_event({"type": "exec.sandbox.blocked", "shell": "ide.run",
+                              "reason": reason, "session_id": session_id})
+            return _err_stream(f"⛔ sandbox blocked: {reason}")
+        try:
+            cwd = sb._sandbox_effective_cwd(cwd)
+            # Pass a large sentinel so the policy's max_timeout (if any) caps it;
+            # an unset cap leaves it effectively uncapped.
+            timeout = sb._sandbox_clamp_timeout(10 ** 9)
+            if timeout >= 10 ** 9:
+                timeout = 0
+        except Exception:
+            timeout = 0
+    else:
+        log.warning("ide run: exec sandbox module not loaded — running ungated")
+
+    run_cwd = cwd or None
+
+    async def _gen():
+        try:
+            proc = await asyncio.create_subprocess_shell(
+                cmd, cwd=run_cwd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.PIPE,
+            )
+        except Exception as e:
+            yield _ide_run_sse("stderr", f"spawn failed: {e}")
+            yield _ide_run_sse("exit", "-1")
+            return
+
+        pid = proc.pid
+        _IDE_RUN_PROCS[pid] = proc
+        yield _ide_run_sse("pid", str(pid))
+        await emit_event({"type": "ide.run.started", "pid": pid, "cmd": cmd[:200],
+                          "cwd": run_cwd or "", "session_id": session_id})
+
+        q: "asyncio.Queue" = asyncio.Queue()
+
+        async def _pump(stream, kind):
+            try:
+                while True:
+                    line = await stream.readline()
+                    if not line:
+                        break
+                    await q.put((kind, line.decode("utf-8", "replace").rstrip("\r\n")))
+            except Exception:
+                pass
+            finally:
+                await q.put((kind + ":eof", ""))
+
+        t_out = asyncio.create_task(_pump(proc.stdout, "stdout"))
+        t_err = asyncio.create_task(_pump(proc.stderr, "stderr"))
+        t0 = _time.monotonic()
+        eofs = 0
+        rc = -1
+        try:
+            while eofs < 2:
+                try:
+                    kind, text = await asyncio.wait_for(q.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    if timeout and (_time.monotonic() - t0) > timeout:
+                        try: proc.kill()
+                        except Exception: pass
+                        yield _ide_run_sse("stderr", f"⛔ sandbox: timeout after {timeout}s")
+                        break
+                    continue
+                if kind.endswith(":eof"):
+                    eofs += 1
+                    continue
+                yield _ide_run_sse(kind, text)
+            rc = await proc.wait()
+        except asyncio.CancelledError:
+            try: proc.kill()
+            except Exception: pass
+            raise
+        finally:
+            for _t in (t_out, t_err):
+                if not _t.done():
+                    _t.cancel()
+            _IDE_RUN_PROCS.pop(pid, None)
+
+        yield _ide_run_sse("exit", str(rc))
+        await emit_event({"type": "ide.run.exited", "pid": pid, "rc": rc,
+                          "session_id": session_id})
+
+    return StreamingResponse(
+        _gen(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@APP.post("/ide-api/exec/stop", include_in_schema=False)
+async def ide_exec_stop(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        pid = int(body.get("pid"))
+    except Exception:
+        return {"ok": False, "error": "pid required"}
+    proc = _IDE_RUN_PROCS.get(pid)
+    if not proc:
+        return {"ok": False, "error": f"no running process with pid {pid}"}
+    try:
+        proc.kill()
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": True, "pid": pid}
+
+
+@APP.post("/ide-api/exec/stdin", include_in_schema=False)
+async def ide_exec_stdin(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        pid = int(body.get("pid"))
+    except Exception:
+        return {"ok": False, "error": "pid required"}
+    data = body.get("data") or ""
+    proc = _IDE_RUN_PROCS.get(pid)
+    if not proc or proc.stdin is None:
+        return {"ok": False, "error": f"no stdin for pid {pid}"}
+    try:
+        proc.stdin.write(data.encode("utf-8"))
+        await proc.stdin.drain()
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": True, "pid": pid, "bytes": len(data)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# IDE DOCKER BUTTONS  —  /ide-api/docker/{build,run,stop,ping}
+# ─────────────────────────────────────────────────────────────────────────────
+# Thin aliases that delegate to the docker_capabilities subsystem so the IDE
+# Run tab's Build / Run / Stop buttons (which post {docker_host|host, ...}) work
+# and are sandbox-gated like everything else. The docker_host is either 'local'
+# or an ad-hoc tcp URL — mapped to a transient host record.
+# ─────────────────────────────────────────────────────────────────────────────
+def _docker_mod():
+    m = _sys.modules.get("docker_capabilities")
+    return m if (m and hasattr(m, "_gated_stream_response")) else None
+
+
+def _ide_docker_host(ref: str):
+    ref = (ref or "").strip()
+    if not ref or ref == "local":
+        return {"id": "local", "kind": "local",
+                "socket": os.getenv("DOCKER_SOCK", "/var/run/docker.sock")}
+    return {"id": "adhoc", "kind": "tcp", "url": ref}
+
+
+def _ide_docker_err_stream(msg: str):
+    async def _g():
+        yield ("data: " + json.dumps({"event": "stderr", "data": msg}) + "\n\n").encode("utf-8")
+        yield ("data: " + json.dumps({"event": "exit", "data": "-1"}) + "\n\n").encode("utf-8")
+    return StreamingResponse(_g(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@APP.post("/ide-api/docker/build", include_in_schema=False)
+async def ide_docker_build(request: Request):
+    dm = _docker_mod()
+    if not dm:
+        return _ide_docker_err_stream("docker subsystem not loaded")
+    try: body = await request.json()
+    except Exception: body = {}
+    rec = _ide_docker_host(body.get("docker_host") or body.get("host") or "")
+    cwd = body.get("cwd", "") or ""
+    tag = body.get("tag") or "vera-app:latest"
+    return await dm._gated_stream_response(rec, ["build", "-t", tag, cwd or "."], cwd=cwd)
+
+
+@APP.post("/ide-api/docker/run", include_in_schema=False)
+async def ide_docker_run(request: Request):
+    dm = _docker_mod()
+    if not dm:
+        return _ide_docker_err_stream("docker subsystem not loaded")
+    try: body = await request.json()
+    except Exception: body = {}
+    rec = _ide_docker_host(body.get("docker_host") or body.get("host") or "")
+    image = (body.get("image") or "").strip()
+    if not image:
+        return _ide_docker_err_stream("image required")
+    detach = bool(body.get("detach", False))
+    args = (["run", "-d"] if detach else ["run", "--rm"]) + [image]
+    return await dm._gated_stream_response(rec, args,
+                                           on_first_line_as="name" if detach else "")
+
+
+@APP.post("/ide-api/docker/stop", include_in_schema=False)
+async def ide_docker_stop(request: Request):
+    dm = _docker_mod()
+    if not dm:
+        return {"ok": False, "error": "docker subsystem not loaded"}
+    try: body = await request.json()
+    except Exception: body = {}
+    rec = _ide_docker_host(body.get("docker_host") or body.get("host") or "")
+    cid = body.get("container_id") or body.get("container") or ""
+    if not cid:
+        return {"ok": False, "error": "container_id required"}
+    argv = await dm._docker_argv(rec, ["stop", cid])
+    res = await dm._run_local(argv, timeout=40)
+    return {"ok": res.get("ok", False), "stdout": res.get("stdout", ""),
+            "stderr": res.get("stderr", "")}
+
+
+@APP.post("/ide-api/docker/ping", include_in_schema=False)
+async def ide_docker_ping(request: Request):
+    dm = _docker_mod()
+    if not dm:
+        return {"ok": False, "error": "docker subsystem not loaded"}
+    try: body = await request.json()
+    except Exception: body = {}
+    rec = _ide_docker_host(body.get("host") or body.get("docker_host") or "")
+    try:
+        status, payload, _ = await dm._engine_request(rec, "GET", "/version", timeout=6)
+        if status != 200:
+            return {"ok": False, "error": f"HTTP {status}"}
+        j = json.loads(payload or b"{}")
+        return {"ok": True, "version": j.get("Version", ""),
+                "api_version": j.get("ApiVersion", "")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}

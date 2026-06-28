@@ -1154,7 +1154,7 @@ register_ui(
         "tg.history",
         "tg.events.configure", "tg.events.status",
     ],
-    mode="tab",
+    mode="inject",          # now a sub-tab of the combined "Comms" tab
     tab_order=75,
 )
 

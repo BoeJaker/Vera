@@ -405,6 +405,14 @@ async def cap_bash_run(command: str, timeout: int = _DEFAULT_TIMEOUT,
     if not command.strip():
         return {"ok": False, "error": "empty command", "rc": -1,
                 "stdout": "", "stderr": ""}
+    ok, reason = _sandbox_check(command, cwd=cwd)
+    if not ok:
+        await emit_event({"type": "exec.sandbox.blocked", "shell": "bash",
+                          "reason": reason})
+        return {"ok": False, "error": f"sandbox: {reason}", "blocked": True,
+                "rc": -1, "stdout": "", "stderr": ""}
+    timeout = _sandbox_clamp_timeout(timeout)
+    cwd = _sandbox_effective_cwd(cwd)
     # Use bash -lc so aliases, PATH, env are loaded
     bash_bin = os.getenv("VERA_BASH_BIN", "/bin/bash")
     argv = [bash_bin, "-lc", command]
@@ -425,6 +433,14 @@ async def cap_ps_run(command: str, timeout: int = _DEFAULT_TIMEOUT,
     if not command.strip():
         return {"ok": False, "error": "empty command", "rc": -1,
                 "stdout": "", "stderr": ""}
+    ok, reason = _sandbox_check(command, cwd=cwd)
+    if not ok:
+        await emit_event({"type": "exec.sandbox.blocked", "shell": "powershell",
+                          "reason": reason})
+        return {"ok": False, "error": f"sandbox: {reason}", "blocked": True,
+                "rc": -1, "stdout": "", "stderr": ""}
+    timeout = _sandbox_clamp_timeout(timeout)
+    cwd = _sandbox_effective_cwd(cwd)
     ps_bin = os.getenv("VERA_PS_BIN", "")
     if not ps_bin:
         # Probe pwsh (cross-platform) first, then powershell (Windows)
@@ -445,6 +461,745 @@ async def cap_ps_run(command: str, timeout: int = _DEFAULT_TIMEOUT,
                 "rc": -1, "stdout": "", "stderr": ""}
     argv = [ps_bin, "-NoProfile", "-NonInteractive", "-Command", command]
     return await _run_local(argv, timeout=timeout, cwd=cwd or None)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EXEC SANDBOX  —  configurable allow/deny policy for local execution
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# A small, JSON-persisted policy that gates every *local* execution path
+# (bash, powershell, and the code runners below). It is intentionally
+# best-effort: it cannot fully jail an interpreter, but it blocks obviously
+# destructive commands, restricts which filesystem roots a run may touch
+# (by cwd) and which languages may run, and caps the timeout.
+#
+# Stored at ~/.vera_exec_sandbox.json (override via VERA_EXEC_SANDBOX). Read
+# fresh on every call so edits via exec.sandbox.set take effect immediately.
+# ─────────────────────────────────────────────────────────────────────────────
+_SANDBOX_PATH = Path(os.getenv(
+    "VERA_EXEC_SANDBOX",
+    os.path.join(os.path.expanduser("~"), ".vera_exec_sandbox.json"),
+))
+
+# Shipped out-of-the-box: enabled with a starter blocklist of obviously
+# destructive patterns. No path/language restriction by default so normal
+# usage is unaffected — only the egregious stuff is denied until the operator
+# tightens the policy via exec.sandbox.set.
+_SAFE_BLOCKLIST = [
+    r"rm\s+-rf?\s+(/|~|\$HOME)(\s|$)",          # rm -rf / | ~ | $HOME
+    r"rm\s+-rf?\s+--no-preserve-root",
+    r"\bmkfs\.[a-z0-9]+\b",                       # format a filesystem
+    r"\bdd\b[^\n]*\bof=/dev/(sd|nvme|vd|hd|mmcblk)", # overwrite a block device
+    r">\s*/dev/(sd|nvme|vd|hd)[a-z]",            # redirect onto a raw disk
+    r"\b(shutdown|reboot|halt|poweroff|init\s+0|init\s+6)\b",
+    r":\s*\(\s*\)\s*\{[^}]*\}\s*;\s*:",          # classic fork bomb :(){ :|:& };:
+    r"\bchmod\s+-R?\s*0?777\s+/",                # chmod -R 777 /
+    r"\bchown\s+-R\b[^\n]*\s+/(\s|$)",           # chown -R ... /
+    r"(curl|wget)\b[^\n|]*\|\s*(sudo\s+)?(bash|sh|zsh)\b",  # curl … | sh
+    r"\bformat\s+[c-zC-Z]:",                      # windows format C:
+    r"Remove-Item\b[^\n]*-Recurse[^\n]*-Force[^\n]*[A-Za-z]:\\(\s|$|\")",  # rm -rf on a drive root
+    r"\bdel\b\s+/[sSqQfF]\b[^\n]*[A-Za-z]:\\",   # del /s /q C:\
+]
+
+# Where agent-generated files (code/documents/artifacts) land by default. The
+# resolved per-run directory is ALWAYS treated as allowed by the sandbox (it's a
+# controlled location), so the agent can write artifacts even under a strict
+# allow_paths jail. deny_paths still override it.
+_DEFAULT_ARTIFACT_ROOT = os.path.join(os.path.expanduser("~"), ".vera_artifacts")
+_ARTIFACT_SCOPES = ("artifact", "session", "project", "workspace")
+
+_DEFAULT_SANDBOX: Dict[str, Any] = {
+    "enabled":           True,
+    "languages":         [],            # [] = all allowed; else whitelist of lang ids
+    "allow_paths":       [],            # [] = no restriction; else cwd must live under one
+    "deny_paths":        [],            # cwd / command may never reference these roots
+    "command_blocklist": list(_SAFE_BLOCKLIST),  # regex; any match → deny
+    "command_allowlist": [],            # regex; if non-empty, command MUST match one
+    "max_timeout":       0,             # 0 = no cap (seconds)
+    "network":           True,          # informational hint (not enforced)
+    "artifact_root":     "",            # "" = _DEFAULT_ARTIFACT_ROOT
+    "artifact_scope":    "session",     # artifact | session | project | workspace
+}
+
+
+def _load_sandbox() -> Dict[str, Any]:
+    """Return the active policy, merging the on-disk file over the defaults."""
+    pol = dict(_DEFAULT_SANDBOX)
+    try:
+        if _SANDBOX_PATH.exists():
+            raw = json.loads(_SANDBOX_PATH.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                pol.update({k: v for k, v in raw.items() if k in _DEFAULT_SANDBOX})
+    except Exception as e:
+        log.warning("exec sandbox config corrupt (%s) — using defaults", e)
+    return pol
+
+
+def _save_sandbox(pol: Dict[str, Any]) -> None:
+    try:
+        _SANDBOX_PATH.write_text(
+            json.dumps(pol, indent=2, sort_keys=True), encoding="utf-8")
+        try:
+            os.chmod(_SANDBOX_PATH, 0o600)
+        except Exception:
+            pass
+    except Exception as e:
+        log.error("Failed to persist exec sandbox config: %s", e)
+
+
+def _norm_path(p: str) -> str:
+    if not p:
+        return ""
+    try:
+        return os.path.abspath(os.path.expanduser(os.path.expandvars(p)))
+    except Exception:
+        return p
+
+
+def _path_within(child: str, parent: str) -> bool:
+    if not child or not parent:
+        return False
+    c, p = _norm_path(child), _norm_path(parent)
+    return c == p or c.startswith(p.rstrip(os.sep) + os.sep)
+
+
+def _sandbox_check(text: str, *, cwd: str = "", language: str = "") -> Tuple[bool, str]:
+    """Gate a local execution. Returns (allowed, reason). reason is '' when ok.
+
+    `text` is the command or source about to run. `cwd` is the requested working
+    directory (may be empty). `language` is the resolved language id (or '' for
+    raw shell)."""
+    pol = _load_sandbox()
+    if not pol.get("enabled"):
+        return True, ""
+
+    # 1. Language whitelist
+    langs = pol.get("languages") or []
+    if language and langs and language not in langs:
+        return False, f"language '{language}' is not in the sandbox whitelist"
+
+    # 2. Denied paths — match either the cwd or a literal mention in the command
+    eff_cwd = _norm_path(cwd) if cwd else ""
+    for deny in (pol.get("deny_paths") or []):
+        dn = _norm_path(deny)
+        if eff_cwd and _path_within(eff_cwd, dn):
+            return False, f"cwd is inside denied path: {deny}"
+        if dn and dn in (text or ""):
+            return False, f"command references denied path: {deny}"
+
+    # 3. Allowed paths — if set, cwd must live under one of them. The artifact
+    #    root is always implicitly allowed (a controlled location for agent
+    #    output); deny_paths above still override it.
+    allow = list(pol.get("allow_paths") or [])
+    if allow:
+        allow.append(_artifact_root(pol))
+        if eff_cwd and not any(_path_within(eff_cwd, a) for a in allow):
+            return False, f"cwd '{cwd}' is outside the sandbox allow_paths"
+
+    # 4. Blocklist — any regex match denies
+    for pat in (pol.get("command_blocklist") or []):
+        try:
+            if re.search(pat, text or "", re.IGNORECASE):
+                return False, f"command matches blocked pattern: {pat}"
+        except re.error:
+            continue
+
+    # 5. Allowlist — if present, command must match at least one
+    allowlist = pol.get("command_allowlist") or []
+    if allowlist:
+        if not any(_safe_search(pat, text) for pat in allowlist):
+            return False, "command does not match any sandbox allowlist pattern"
+
+    return True, ""
+
+
+def _safe_search(pat: str, text: str) -> bool:
+    try:
+        return bool(re.search(pat, text or "", re.IGNORECASE))
+    except re.error:
+        return False
+
+
+def _sandbox_clamp_timeout(timeout: int) -> int:
+    pol = _load_sandbox()
+    cap = int(pol.get("max_timeout") or 0)
+    if cap > 0:
+        return min(int(timeout), cap)
+    return int(timeout)
+
+
+def _sandbox_effective_cwd(cwd: str) -> str:
+    """If allow_paths is set and no cwd was given, default cwd to the first
+    allowed root so unspecified runs land inside the jail rather than the
+    process cwd."""
+    pol = _load_sandbox()
+    if cwd:
+        return cwd
+    if pol.get("enabled") and (pol.get("allow_paths") or []):
+        return pol["allow_paths"][0]
+    return cwd
+
+
+def _safe_seg(s: str) -> str:
+    """Filesystem-safe single path segment (no separators / traversal)."""
+    s = (s or "").strip().replace("\\", "_").replace("/", "_")
+    s = re.sub(r"[^A-Za-z0-9._-]", "_", s)
+    s = s.strip("._") or "default"
+    return s[:80]
+
+
+def _artifact_root(pol: Optional[Dict[str, Any]] = None) -> str:
+    pol = pol or _load_sandbox()
+    return _norm_path(pol.get("artifact_root") or _DEFAULT_ARTIFACT_ROOT)
+
+
+def artifact_dir(*, session_id: str = "", project: str = "", workspace: str = "",
+                 artifact: str = "", create: bool = True) -> str:
+    """Resolve the artifact directory for a run, per the sandbox's artifact_scope:
+      • artifact  → <root>/<artifact or session>   (a per-output folder)
+      • session   → <root>/session/<session_id>
+      • project   → <root>/project/<project>
+      • workspace → <root>/workspace/<workspace>
+    The directory is created (when `create`) and is always sandbox-allowed."""
+    pol = _load_sandbox()
+    root = _artifact_root(pol)
+    scope = (pol.get("artifact_scope") or "session").lower()
+    if scope not in _ARTIFACT_SCOPES:
+        scope = "session"
+    if scope == "artifact":
+        path = os.path.join(root, _safe_seg(artifact or session_id))
+    elif scope == "project":
+        path = os.path.join(root, "project", _safe_seg(project))
+    elif scope == "workspace":
+        path = os.path.join(root, "workspace", _safe_seg(workspace))
+    else:  # session
+        path = os.path.join(root, "session", _safe_seg(session_id))
+    path = _norm_path(path)
+    if create:
+        try:
+            os.makedirs(path, exist_ok=True)
+        except Exception as e:
+            log.warning("could not create artifact dir %s: %s", path, e)
+    return path
+
+
+@capability(
+    "exec.sandbox.get",
+    http_method="GET", http_path="/exec/sandbox", http_tags=["exec"],
+    memory="off", silent=True,
+    description="Return the active exec sandbox policy (allow/deny paths, "
+                "language whitelist, command block/allow lists, timeout cap). "
+                "Output: {policy: {...}, path, defaults}.",
+)
+async def cap_sandbox_get(trace_id=None) -> Dict:
+    return {
+        "policy":   _load_sandbox(),
+        "path":     str(_SANDBOX_PATH),
+        "defaults": _DEFAULT_SANDBOX,
+    }
+
+
+@capability(
+    "exec.sandbox.set",
+    http_method="POST", http_path="/exec/sandbox/set", http_tags=["exec"],
+    description="Update the exec sandbox policy. Any omitted field is left "
+                "unchanged. Input: enabled (bool), languages (list[str] — [] = all), "
+                "allow_paths (list[str]), deny_paths (list[str]), "
+                "command_blocklist (list[str] regex), command_allowlist (list[str] regex), "
+                "max_timeout (int sec, 0=uncapped), network (bool), "
+                "artifact_root (str — '' = default ~/.vera_artifacts), "
+                "artifact_scope (artifact|session|project|workspace), "
+                "reset (bool — restore shipped defaults first). "
+                "Output: {ok, policy}.",
+)
+async def cap_sandbox_set(
+    enabled:           Optional[bool] = None,
+    languages:         Optional[List[str]] = None,
+    allow_paths:       Optional[List[str]] = None,
+    deny_paths:        Optional[List[str]] = None,
+    command_blocklist: Optional[List[str]] = None,
+    command_allowlist: Optional[List[str]] = None,
+    max_timeout:       Optional[int] = None,
+    network:           Optional[bool] = None,
+    artifact_root:     Optional[str] = None,
+    artifact_scope:    Optional[str] = None,
+    reset:             bool = False,
+    trace_id=None,
+) -> Dict:
+    pol = dict(_DEFAULT_SANDBOX) if reset else _load_sandbox()
+
+    if artifact_root is not None:
+        pol["artifact_root"] = str(artifact_root).strip()
+    if artifact_scope is not None:
+        sc = str(artifact_scope).strip().lower()
+        if sc and sc not in _ARTIFACT_SCOPES:
+            return {"ok": False, "error": f"artifact_scope must be one of {_ARTIFACT_SCOPES}"}
+        if sc:
+            pol["artifact_scope"] = sc
+
+    def _as_list(v):
+        if v is None:
+            return None
+        if isinstance(v, list):
+            return [str(x).strip() for x in v if str(x).strip()]
+        # accept newline- or comma-separated strings from form inputs
+        return [s.strip() for s in re.split(r"[\n,]", str(v)) if s.strip()]
+
+    if enabled is not None:           pol["enabled"] = bool(enabled)
+    if network is not None:           pol["network"] = bool(network)
+    if max_timeout is not None:       pol["max_timeout"] = int(max_timeout)
+    for key, val in (
+        ("languages", languages), ("allow_paths", allow_paths),
+        ("deny_paths", deny_paths), ("command_blocklist", command_blocklist),
+        ("command_allowlist", command_allowlist),
+    ):
+        lst = _as_list(val)
+        if lst is not None:
+            pol[key] = lst
+
+    # Validate regex lists so a bad pattern can't silently disable a list
+    bad = []
+    for key in ("command_blocklist", "command_allowlist"):
+        for pat in pol.get(key, []):
+            try:
+                re.compile(pat)
+            except re.error as e:
+                bad.append(f"{key}: {pat!r} ({e})")
+    if bad:
+        return {"ok": False, "error": "invalid regex pattern(s)", "details": bad}
+
+    _save_sandbox(pol)
+    await emit_event({"type": "exec.sandbox.updated", "enabled": pol["enabled"]})
+    return {"ok": True, "policy": pol, "path": str(_SANDBOX_PATH)}
+
+
+@capability(
+    "exec.sandbox.artifact_dir",
+    http_method="GET", http_path="/exec/sandbox/artifact_dir", http_tags=["exec"],
+    memory="off", silent=True,
+    description="Resolve (and create) the artifact directory for agent-generated "
+                "files, per the sandbox's artifact_scope. Inputs: session_id (str), "
+                "project (str), workspace (str), artifact (str), create (bool, default true). "
+                "Output: {dir, root, scope}.",
+)
+async def cap_sandbox_artifact_dir(
+    session_id: str = "", project: str = "", workspace: str = "",
+    artifact: str = "", create: bool = True, trace_id=None,
+) -> Dict:
+    pol = _load_sandbox()
+    d = artifact_dir(session_id=session_id, project=project, workspace=workspace,
+                     artifact=artifact, create=bool(create))
+    return {"dir": d, "root": _artifact_root(pol), "scope": pol.get("artifact_scope", "session")}
+
+
+def _unescape_collapsed(content: str) -> str:
+    """Recover a file an LLM double-escaped — it emitted literal "\\n"/"\\t"
+    instead of real newlines/tabs, collapsing the whole file onto one line
+    (a frequent small-model failure that makes saved scripts unrunnable).
+
+    Conservative: only fires when there is NO real newline at all and at least
+    two literal "\\n" sequences are present, so normal multi-line content (and a
+    one-off "\\n" inside a string literal) is left untouched."""
+    if not content or "\n" in content:
+        return content
+    if content.count("\\n") < 2:
+        return content
+    return (content.replace("\\r\\n", "\n").replace("\\n", "\n")
+                   .replace("\\t", "\t"))
+
+
+@capability(
+    "exec.sandbox.write_artifact",
+    http_method="POST", http_path="/exec/sandbox/write_artifact", http_tags=["exec"],
+    description="Write content to a file inside the run's artifact directory "
+                "(resolved per artifact_scope; path is confined to that dir). "
+                "Inputs: filename (str! — may include subdirs), content (str), "
+                "session_id, project, workspace. Output: {ok, path, rel}.",
+)
+async def cap_sandbox_write_artifact(
+    filename:   str,
+    content:    str = "",
+    session_id: str = "", project: str = "", workspace: str = "",
+    trace_id=None,
+) -> Dict:
+    if not filename or not str(filename).strip():
+        return {"ok": False, "error": "filename required"}
+    base = artifact_dir(session_id=session_id, project=project, workspace=workspace)
+    # Sanitize each path segment (allow subdirs, block traversal / separators).
+    parts = [_safe_seg(p) for p in re.split(r"[\\/]+", str(filename).strip("/\\"))
+             if p and p not in (".", "..")]
+    if not parts:
+        return {"ok": False, "error": "invalid filename"}
+    target = _norm_path(os.path.join(base, *parts))
+    if not _path_within(target, base):
+        return {"ok": False, "error": "path escapes the artifact directory"}
+    try:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w", encoding="utf-8") as fh:
+            fh.write(_unescape_collapsed(content or ""))
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    await emit_event({"type": "exec.sandbox.artifact_written",
+                      "path": target, "session_id": session_id})
+    return {"ok": True, "path": target, "rel": os.path.relpath(target, base)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MULTI-LANGUAGE CODE EXECUTION
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# exec.code.run runs a snippet in a chosen language by writing it to a temp
+# file and invoking the interpreter. Per-language convenience caps
+# (exec.python.run, exec.node.run, …) delegate here. bash / powershell route
+# back to the dedicated runners above so behaviour stays identical.
+#
+# Each entry: bins = interpreter candidates (first found on PATH wins, unless
+# VERA_<LANG>_BIN overrides), ext = temp-file suffix, argv = how to invoke.
+# ─────────────────────────────────────────────────────────────────────────────
+_LANG_SPECS: Dict[str, Dict[str, Any]] = {
+    "python": {"bins": ["python3", "python"], "ext": ".py",  "argv": lambda b, f: [b, f]},
+    "node":   {"bins": ["node"],              "ext": ".js",  "argv": lambda b, f: [b, f]},
+    "ruby":   {"bins": ["ruby"],              "ext": ".rb",  "argv": lambda b, f: [b, f]},
+    "php":    {"bins": ["php"],               "ext": ".php", "argv": lambda b, f: [b, f]},
+    "perl":   {"bins": ["perl"],              "ext": ".pl",  "argv": lambda b, f: [b, f]},
+    "go":     {"bins": ["go"],                "ext": ".go",  "argv": lambda b, f: [b, "run", f]},
+    "lua":    {"bins": ["lua"],               "ext": ".lua", "argv": lambda b, f: [b, f]},
+    "deno":   {"bins": ["deno"],              "ext": ".ts",  "argv": lambda b, f: [b, "run", "-A", f]},
+}
+
+# Friendly aliases → canonical lang id (also used by the chat UI's Run button)
+_LANG_ALIASES: Dict[str, str] = {
+    "py": "python", "python3": "python",
+    "js": "node", "javascript": "node", "nodejs": "node", "mjs": "node",
+    "rb": "ruby",
+    "pl": "perl",
+    "golang": "go",
+    "ts": "deno", "typescript": "deno",
+    # shell langs route to the dedicated runners
+    "sh": "bash", "shell": "bash", "zsh": "bash",
+    "ps": "powershell", "ps1": "powershell", "pwsh": "powershell", "posh": "powershell",
+}
+
+
+def _canon_lang(language: str) -> str:
+    l = (language or "").strip().lower()
+    return _LANG_ALIASES.get(l, l)
+
+
+def _resolve_lang_bin(lang: str) -> str:
+    """Find the interpreter for a canonical lang id. Honours VERA_<LANG>_BIN."""
+    import shutil
+    env_bin = os.getenv(f"VERA_{lang.upper()}_BIN", "")
+    if env_bin:
+        return env_bin
+    spec = _LANG_SPECS.get(lang)
+    if not spec:
+        return ""
+    for cand in spec["bins"]:
+        found = shutil.which(cand)
+        if found:
+            return found
+    return ""
+
+
+# Map a file extension → canonical run language (used when running a saved file
+# by path without an explicit language).
+_EXT_LANG: Dict[str, str] = {
+    ".py": "python", ".js": "node", ".mjs": "node", ".cjs": "node",
+    ".rb": "ruby", ".php": "php", ".pl": "perl", ".go": "go", ".lua": "lua",
+    ".ts": "deno", ".sh": "bash", ".bash": "bash", ".zsh": "bash",
+    ".ps1": "powershell",
+}
+
+
+def _lang_from_ext(p: str) -> str:
+    return _EXT_LANG.get(os.path.splitext(str(p))[1].lower(), "")
+
+
+# Interpreter-prefixed one-liner, e.g. "python /art/app.py" — a very common way
+# an agent tries (wrongly) to "run a file" by passing the shell invocation as code.
+_INVOCATION_RE = re.compile(
+    r'^\s*(?:python3?|node|nodejs|ruby|php|perl|lua|deno|bash|sh)\s+'
+    r'(["\']?)([^"\']+\.[A-Za-z0-9]+)\1\s*$')
+
+
+def _invocation_path(code: str) -> str:
+    """If `code` is really just *running a file* (an interpreter + path, or a
+    bare path to an existing file) rather than a snippet, return that path so we
+    can run the file directly. Empty string otherwise."""
+    s = (code or "").strip()
+    if not s or "\n" in s:
+        return ""
+    m = _INVOCATION_RE.match(s)
+    if m:
+        return m.group(2)
+    if re.match(r'^["\']?[~/][^\n]*\.[A-Za-z0-9]+["\']?$', s):
+        cand = s.strip('"\'')
+        if os.path.isfile(cand):
+            return cand
+    return ""
+
+
+async def _run_code(language: str, code: str, *, stdin: str = "",
+                    timeout: int = _DEFAULT_TIMEOUT, cwd: str = "",
+                    args: Optional[List[str]] = None, path: str = "") -> Dict[str, Any]:
+    import tempfile
+    lang = _canon_lang(language)
+
+    # ── Run an existing FILE by path ────────────────────────────────────────
+    # Agents routinely save a script then want to run it. Accept an explicit
+    # `path`, or recover from the common mistake of passing the invocation
+    # (e.g. "python /art/app.py") or a bare file path as `code`.
+    run_path = str(path or "").strip().strip('"\'')
+    if not run_path and code:
+        run_path = _invocation_path(code)
+    if run_path:
+        try:
+            with open(run_path, "r", encoding="utf-8", errors="replace") as fh:
+                code = fh.read()
+        except Exception as e:
+            return {"ok": False, "rc": -1, "stdout": "", "stderr": str(e),
+                    "language": lang, "error": f"cannot read file '{run_path}': {e}"}
+        if not lang:
+            lang = _canon_lang(_lang_from_ext(run_path))
+        if not cwd:
+            cwd = os.path.dirname(run_path)
+
+    if not code or not code.strip():
+        return {"ok": False, "error": "empty code", "rc": -1,
+                "stdout": "", "stderr": "", "language": lang}
+
+    timeout = _sandbox_clamp_timeout(parse_timeout(timeout))
+    cwd = _sandbox_effective_cwd(cwd)
+
+    # Shared sandbox gate (skipped for bash/ps — their own caps re-check)
+    if lang not in ("bash", "powershell"):
+        ok, reason = _sandbox_check(code, cwd=cwd, language=lang)
+        if not ok:
+            await emit_event({"type": "exec.sandbox.blocked",
+                              "language": lang, "reason": reason})
+            return {"ok": False, "error": f"sandbox: {reason}", "blocked": True,
+                    "rc": -1, "stdout": "", "stderr": "", "language": lang}
+
+    # Shell languages reuse the dedicated runners (identical behaviour)
+    if lang == "bash":
+        r = await cap_bash_run(command=code, timeout=timeout, cwd=cwd)
+        r["language"] = "bash"; return r
+    if lang == "powershell":
+        r = await cap_ps_run(command=code, timeout=timeout, cwd=cwd)
+        r["language"] = "powershell"; return r
+
+    spec = _LANG_SPECS.get(lang)
+    if not spec:
+        return {"ok": False, "rc": -1, "stdout": "", "stderr": "",
+                "language": lang,
+                "error": f"unsupported language '{language}'. "
+                         f"Known: {', '.join(sorted(_LANG_SPECS) + ['bash', 'powershell'])}"}
+
+    bin_path = _resolve_lang_bin(lang)
+    if not bin_path:
+        return {"ok": False, "rc": -1, "stdout": "", "stderr": "",
+                "language": lang,
+                "error": f"interpreter for '{lang}' not found on PATH "
+                         f"(tried {', '.join(spec['bins'])}). Install it or set "
+                         f"VERA_{lang.upper()}_BIN."}
+
+    # Write the snippet to a temp file, run it, then clean up.
+    tmp_path = ""
+    try:
+        fd, tmp_path = tempfile.mkstemp(suffix=spec["ext"], prefix="vera_exec_")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(code)
+        argv = spec["argv"](bin_path, tmp_path) + list(args or [])
+        result = await _run_local(argv, stdin_data=stdin, timeout=timeout,
+                                  cwd=cwd or None)
+        result["language"] = lang
+        result["bin"] = bin_path
+        return result
+    except Exception as e:
+        return {"ok": False, "rc": -1, "stdout": "", "stderr": str(e),
+                "language": lang, "error": f"{type(e).__name__}: {e}"}
+    finally:
+        if tmp_path:
+            try: os.unlink(tmp_path)
+            except Exception: pass
+
+
+@capability(
+    "exec.code.run",
+    http_method="POST", http_path="/exec/code/run", http_tags=["exec"],
+    description="Run a code snippet locally in a chosen language and capture output. "
+                "WHEN TO USE: test-run a script Vera (or the user) wrote — a Python "
+                "LAN scanner, a Node helper, a Ruby one-liner, etc. Subject to the exec "
+                "sandbox policy (exec.sandbox.get/set). "
+                "Input: language (str — python|node|ruby|php|perl|go|lua|deno|bash|powershell, "
+                "aliases py/js/ts accepted; optional when `path` is given — inferred from the "
+                "file extension), code (str — inline snippet), path (str — run an EXISTING saved "
+                "file instead of a snippet; use this to run a script you wrote to the artifact "
+                "dir), stdin (str), timeout (int sec, default 60), cwd (str — working dir, "
+                "defaults to the file's dir when running by path), args (list[str] — passed to "
+                "the script). Provide EITHER code OR path. "
+                "Output: {ok, rc, stdout, stderr, elapsed_ms, language, bin}. "
+                "Use the /exec/code/stream endpoint for live output of long runs.",
+    schema={"properties": {
+        "language": {"enum": sorted(set(list(_LANG_SPECS) + ["bash", "powershell"]
+                                        + list(_LANG_ALIASES)))},
+    }},
+)
+async def cap_code_run(language: str = "", code: str = "", stdin: str = "",
+                       timeout: int = _DEFAULT_TIMEOUT, cwd: str = "",
+                       args: Optional[List[str]] = None, path: str = "",
+                       trace_id=None) -> Dict:
+    if not language and not str(path or "").strip():
+        return {"ok": False, "error": "language required (or pass a file `path`)",
+                "rc": -1, "stdout": "", "stderr": ""}
+    return await _run_code(language, code, stdin=stdin, timeout=timeout,
+                           cwd=cwd, args=args, path=path)
+
+
+def _make_lang_cap(lang_id: str, label: str):
+    """Build a thin per-language @capability that delegates to _run_code."""
+    async def _runner(code: str = "", stdin: str = "",
+                      timeout: int = _DEFAULT_TIMEOUT, cwd: str = "",
+                      args: Optional[List[str]] = None, path: str = "",
+                      trace_id=None) -> Dict:
+        return await _run_code(lang_id, code, stdin=stdin, timeout=timeout,
+                               cwd=cwd, args=args, path=path)
+    _runner.__name__ = f"cap_{lang_id}_run"
+    return capability(
+        f"exec.{lang_id}.run",
+        http_method="POST", http_path=f"/exec/{lang_id}/run", http_tags=["exec"],
+        description=f"Run {label} locally and capture output. Subject to the exec "
+                    f"sandbox policy. Provide EITHER an inline snippet via code, OR a saved "
+                    f"file to run via path (e.g. a script you wrote to the artifact dir — "
+                    f"pass the absolute path, NOT 'python <path>' as code). "
+                    f"Input: code (str), path (str — existing file to run), stdin (str), "
+                    f"timeout (int sec), cwd (str), args (list[str]). "
+                    f"Output: {{ok, rc, stdout, stderr, elapsed_ms, language, bin}}.",
+    )(_runner)
+
+
+# Register the per-language convenience capabilities.
+cap_python_run = _make_lang_cap("python", "Python")
+cap_node_run   = _make_lang_cap("node",   "Node.js / JavaScript")
+cap_ruby_run   = _make_lang_cap("ruby",   "Ruby")
+cap_php_run    = _make_lang_cap("php",    "PHP")
+cap_perl_run   = _make_lang_cap("perl",   "Perl")
+cap_go_run     = _make_lang_cap("go",     "Go")
+cap_lua_run    = _make_lang_cap("lua",    "Lua")
+
+
+@capability(
+    "exec.code.langs",
+    http_method="GET", http_path="/exec/code/langs", http_tags=["exec"],
+    memory="off", silent=True,
+    description="List supported code-execution languages and whether each "
+                "interpreter is installed on the host. "
+                "Output: {languages: [{id, bins, ext, available, bin}], sandbox_enabled}.",
+)
+async def cap_code_langs(trace_id=None) -> Dict:
+    pol = _load_sandbox()
+    langs = []
+    for lang, spec in sorted(_LANG_SPECS.items()):
+        bin_path = _resolve_lang_bin(lang)
+        langs.append({
+            "id":        lang,
+            "bins":      spec["bins"],
+            "ext":       spec["ext"],
+            "available": bool(bin_path),
+            "bin":       bin_path,
+            "allowed":   (not pol.get("languages")) or lang in pol["languages"],
+        })
+    # bash / powershell are always available via the dedicated runners
+    for lang in ("bash", "powershell"):
+        langs.append({"id": lang, "bins": [lang], "ext": "", "available": True,
+                      "bin": "", "allowed": (not pol.get("languages"))
+                      or lang in pol["languages"]})
+    return {"languages": langs, "sandbox_enabled": bool(pol.get("enabled")),
+            "aliases": _LANG_ALIASES}
+
+
+@APP.post("/exec/code/stream")
+async def exec_code_stream(request: Request):
+    """SSE-stream stdout/stderr of a code snippet (writes a temp file, runs the
+    interpreter, deletes the temp file when the stream ends)."""
+    import tempfile
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    language   = body.get("language", "")
+    code       = body.get("code", "")
+    cwd        = body.get("cwd", "") or ""
+    timeout    = int(body.get("timeout", 300))
+    session_id = body.get("session_id", "") or ""
+
+    lang = _canon_lang(language)
+    timeout = _sandbox_clamp_timeout(timeout)
+    cwd = _sandbox_effective_cwd(cwd)
+
+    def _err_stream(msg: str):
+        async def _g():
+            yield _sse("error", {"error": msg})
+            yield _sse("done", {"rc": -1})
+        return StreamingResponse(_g(), media_type="text/event-stream")
+
+    if not code.strip():
+        return _err_stream("empty code")
+
+    # Shell langs reuse the existing stream endpoints' machinery via argv
+    if lang == "bash":
+        bash_bin = os.getenv("VERA_BASH_BIN", "/bin/bash")
+        ok, reason = _sandbox_check(code, cwd=cwd, language="")
+        if not ok:
+            return _err_stream(f"sandbox: {reason}")
+        argv = [bash_bin, "-lc", code]
+    elif lang == "powershell":
+        ps_bin = os.getenv("VERA_PS_BIN", "pwsh")
+        ok, reason = _sandbox_check(code, cwd=cwd, language="")
+        if not ok:
+            return _err_stream(f"sandbox: {reason}")
+        argv = [ps_bin, "-NoProfile", "-NonInteractive", "-Command", code]
+    else:
+        ok, reason = _sandbox_check(code, cwd=cwd, language=lang)
+        if not ok:
+            return _err_stream(f"sandbox: {reason}")
+        spec = _LANG_SPECS.get(lang)
+        if not spec:
+            return _err_stream(f"unsupported language '{language}'")
+        bin_path = _resolve_lang_bin(lang)
+        if not bin_path:
+            return _err_stream(f"interpreter for '{lang}' not found on PATH")
+        fd, tmp_path = tempfile.mkstemp(suffix=spec["ext"], prefix="vera_exec_")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(code)
+        argv = spec["argv"](bin_path, tmp_path)
+
+    if session_id:
+        _syslog = sys.modules.get("syslog")
+        if _syslog:
+            try:
+                _syslog.set_trigger(str(uuid.uuid4()), "exec.code.stream", session_id)
+            except Exception:
+                pass
+
+    async def _gen():
+        try:
+            async for chunk in _stream_subprocess_recorded(
+                argv, cap_name="exec.code.stream", session_id=session_id,
+                params={"language": lang, "cwd": cwd, "timeout": timeout},
+                cwd=cwd or None, timeout=timeout,
+            ):
+                yield chunk
+        finally:
+            if lang not in ("bash", "powershell"):
+                try: os.unlink(argv[-1])
+                except Exception: pass
+
+    return StreamingResponse(
+        _gen(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -911,6 +1666,14 @@ async def exec_bash_stream(request: Request):
             yield _sse("error", {"error": "empty command"})
             yield _sse("done", {"rc": -1})
         return StreamingResponse(_err(), media_type="text/event-stream")
+    _ok, _reason = _sandbox_check(command, cwd=cwd or "")
+    if not _ok:
+        async def _blocked():
+            yield _sse("error", {"error": f"sandbox: {_reason}"})
+            yield _sse("done", {"rc": -1})
+        return StreamingResponse(_blocked(), media_type="text/event-stream")
+    timeout = _sandbox_clamp_timeout(timeout)
+    cwd = _sandbox_effective_cwd(cwd or "") or None
     bash_bin = os.getenv("VERA_BASH_BIN", "/bin/bash")
     argv = [bash_bin, "-lc", command]
     return StreamingResponse(
@@ -949,6 +1712,14 @@ async def exec_ps_stream(request: Request):
             yield _sse("error", {"error": "empty command"})
             yield _sse("done", {"rc": -1})
         return StreamingResponse(_err(), media_type="text/event-stream")
+    _ok, _reason = _sandbox_check(command, cwd=cwd or "")
+    if not _ok:
+        async def _blocked():
+            yield _sse("error", {"error": f"sandbox: {_reason}"})
+            yield _sse("done", {"rc": -1})
+        return StreamingResponse(_blocked(), media_type="text/event-stream")
+    timeout = _sandbox_clamp_timeout(timeout)
+    cwd = _sandbox_effective_cwd(cwd or "") or None
     ps_bin = os.getenv("VERA_PS_BIN", "pwsh")
     argv = [ps_bin, "-NoProfile", "-NonInteractive", "-Command", command]
     return StreamingResponse(
@@ -3122,6 +3893,10 @@ register_ui(
     "",
     ui_caps=[
         "exec.bash.run", "exec.ps.run", "exec.ssh.run",
+        "exec.code.run", "exec.code.langs",
+        "exec.python.run", "exec.node.run", "exec.ruby.run",
+        "exec.php.run", "exec.perl.run", "exec.go.run", "exec.lua.run",
+        "exec.sandbox.get", "exec.sandbox.set",
         "exec.ssh.hosts.list", "exec.ssh.hosts.save",
         "exec.ssh.hosts.delete", "exec.ssh.probe",
         "exec.llm.models",

@@ -54,8 +54,10 @@ ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8999
 
+# Try HTTPS first (TLS_ENABLED=1, self-signed → -k), fall back to plain HTTP.
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD curl -sf http://localhost:8999/docs || exit 1
+    CMD curl -skf https://localhost:8999/docs || curl -sf http://localhost:8999/docs || exit 1
 
-CMD ["uvicorn", "Vera.vera.capability_orchestration:APP", \
-     "--host", "0.0.0.0", "--port", "8999", "--workers", "1"]
+# Launch via the module entrypoint (not the uvicorn CLI) so TLS_ENABLED is
+# honoured: it auto-generates a self-signed cert and serves HTTPS when set.
+CMD ["python", "-m", "Vera.vera.capability_orchestration"]

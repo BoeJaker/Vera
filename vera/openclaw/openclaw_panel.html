@@ -150,6 +150,7 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
 input:checked+.toggle-slider{background:rgba(90,158,143,.3);border-color:var(--acc)}
 input:checked+.toggle-slider:before{background:var(--acc);transform:translateX(14px)}
 </style>
+<link rel="stylesheet" href="/ui/vera-panel.css">
 </head>
 <body>
 <div id="app">
@@ -432,7 +433,15 @@ document.addEventListener('DOMContentLoaded', function() {
   buildProfiles();
   wireEvents();
   refreshStatus();
-  setInterval(refreshStatus, 5000);
+  // Poll only while the panel is visible. Connect/disconnect/error transitions
+  // already arrive over SSE (subscribeEvents → refreshStatus), so this slower
+  // baseline just reconciles drift instead of hammering /openclaw/status.
+  setInterval(function() {
+    if (document.visibilityState === 'visible') refreshStatus();
+  }, 12000);
+  document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'visible') refreshStatus();
+  });
   subscribeEvents();
 
   document.getElementById('prompt-input').addEventListener('input', function(e) {
@@ -924,6 +933,8 @@ function showToast(msg) {
 
 })(); // end IIFE
 </script>
+<script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>

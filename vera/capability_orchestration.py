@@ -19,11 +19,11 @@ Endpoints:
   Ollama  : http://192.168.0.250:11435  (GPU)
              http://192.168.0.246:11435  (CPU A)
              http://192.168.0.247:11435  (CPU B)
-  Redis   : redis://llm.int:6379
-  Postgres: postgresql://postgres:password@llm.int:5432/llm
+  Redis   : redis://<BACKEND_HOST>:6379
+  Postgres: postgresql://postgres:password@<BACKEND_HOST>:5432/llm
 """
 
-import asyncio, functools, inspect, json, logging, os, sys, time, uuid
+import asyncio, contextvars, functools, inspect, json, logging, os, sys, time, uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -62,6 +62,12 @@ except ImportError as _e:
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s [%(name)s] %(message)s")
 log = logging.getLogger("vera.orch")
+
+# Set by long-running callers (e.g. the agentic loop) so the ollama.* events
+# emitted during generation can be scoped to that run's session and surfaced in
+# its UI (which Ollama node served the request). Defaults to "" (unscoped).
+OLLAMA_EVENT_SESSION: "contextvars.ContextVar[str]" = contextvars.ContextVar(
+    "ollama_event_session", default="")
 if not HAS_NEO:
     log.warning("neo4j driver NOT installed (%s) — Neo4j backend will stay down. "
                 "Fix: pip install 'neo4j>=5.19,<6.0'", _NEO_IMPORT_ERR)
@@ -424,6 +430,81 @@ def pick_instance(prefer_gpu: bool = False, instance_id: Optional[str] = None,
         log.warning("pick_instance: model '%s' not found on any online node — routing to least busy", model)
     return _pick_best(online)
 
+
+# ── Context-window detection ────────────────────────────────────────────────
+# Instead of hand-tuning num_ctx per agent/node/worker, ask Ollama what the
+# model's real context window is (POST /api/show → model_info[<arch>.context_length])
+# and use that. Cached per (url, model) since it never changes for a given model.
+_MODEL_CTX_CACHE: Dict[str, int] = {}            # "url::model" -> context_length
+# Global ceiling on the auto-detected window (0 = no cap → use the full model max).
+# Lets an operator dial big-context models (e.g. 128k) down cluster-wide.
+OLLAMA_MAX_AUTO_CTX = int(os.environ.get("OLLAMA_MAX_AUTO_CTX", "0"))
+
+
+def _extract_ctx_from_show(info: dict) -> Optional[int]:
+    """Pull the context length out of an /api/show `model_info` block.
+    Prefers the architecture-specific key (e.g. llama.context_length,
+    qwen3.context_length); falls back to any *.context_length key."""
+    if not isinstance(info, dict):
+        return None
+    arch = info.get("general.architecture", "")
+    if arch and isinstance(info.get(f"{arch}.context_length"), (int, float)):
+        return int(info[f"{arch}.context_length"])
+    for k, v in info.items():
+        if k.endswith(".context_length") and isinstance(v, (int, float)):
+            return int(v)
+    return None
+
+
+async def ollama_model_ctx(model: str, instance_id: Optional[str] = None,
+                            prefer_gpu: bool = False) -> Optional[int]:
+    """Return a model's true max context length from Ollama /api/show.
+
+    Cached per (instance url, model). Returns None when it can't be determined
+    (Ollama unreachable, model not present, or no context_length in the report).
+    """
+    if not model:
+        return None
+    chosen = pick_instance(prefer_gpu=prefer_gpu, instance_id=instance_id, model=model)
+    if not chosen:
+        return None
+    url = OLLAMA_INSTANCES.get(chosen, {}).get("url", "")
+    if not url:
+        return None
+    key = f"{url}::{model}"
+    if key in _MODEL_CTX_CACHE:
+        return _MODEL_CTX_CACHE[key] or None
+    ctx = None
+    try:
+        async with httpx.AsyncClient(timeout=8) as c:
+            r = await c.post(f"{url}/api/show", json={"model": model})
+            if r.status_code == 200:
+                ctx = _extract_ctx_from_show(r.json().get("model_info", {}) or {})
+    except Exception as e:
+        log.debug("ollama_model_ctx [%s/%s]: %s", chosen, model, e)
+    if ctx:
+        _MODEL_CTX_CACHE[key] = ctx
+    return ctx
+
+
+async def effective_num_ctx(model: str, instance_id: Optional[str] = None,
+                             prefer_gpu: bool = False, manual: int = 0) -> int:
+    """Resolve the context window to actually use for a request.
+
+    Defaults to the model's full detected max. `manual` (>0) caps it *down*
+    (so a per-agent/worker setting can only shrink, never inflate, the window);
+    OLLAMA_MAX_AUTO_CTX applies the same cap cluster-wide. Falls back to
+    `manual or 4096` when detection fails.
+    """
+    detected = await ollama_model_ctx(model, instance_id, prefer_gpu)
+    ctx = detected or manual or 4096
+    if manual and manual > 0:
+        ctx = min(ctx, manual)
+    if OLLAMA_MAX_AUTO_CTX > 0:
+        ctx = min(ctx, OLLAMA_MAX_AUTO_CTX)
+    return ctx
+
+
 def _ollama_caller_info(depth: int = 3) -> dict:
     """Walk the call stack to identify who triggered this Ollama request.
     Returns {caller_file, caller_func, caller_module, cap_name} for logging."""
@@ -459,7 +540,8 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                            model: Optional[str] = None, instance_id: Optional[str] = None,
                            prefer_gpu: bool = False, stream_cb: Optional[Callable] = None,
                            caller_override: Optional[dict] = None,
-                           job_type: Optional[str] = None) -> str:
+                           job_type: Optional[str] = None,
+                           think: Optional[bool] = None) -> str:
     # ── Identify caller and log the request ──────────────────────────────────
     # caller_override lets an intermediary cap (e.g. llm.generate) pass
     # through the true upstream caller rather than appearing as the caller.
@@ -481,6 +563,15 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     body   = {"model":mdl,"prompt":prompt,"stream":stream_cb is not None}
     if system:    body["system"]  = system
     if json_mode: body["format"]  = "json"
+    # Reasoning models (e.g. Qwen3) route their <think> output into a separate
+    # `thinking` field under native-thinking Ollama, leaving `response` empty if
+    # the answer never lands — which silently breaks JSON callers. Default such
+    # callers to think=False (the API-level switch; the `/no_think` prompt token
+    # is ignored by native-thinking models). Explicit `think` always wins.
+    if think is None and json_mode:
+        think = False
+    if think is not None:
+        body["think"] = think
     req_id   = str(uuid.uuid4())[:12]
     t_start  = time.time()
     prompt_preview = (prompt or "")[:120].replace("\n", " ")
@@ -500,6 +591,7 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
             "model":       mdl,
             "instance_id": chosen,
             "instance_url": inst.get("url", ""),
+            "session_id":  OLLAMA_EVENT_SESSION.get(""),
             "job_type":    eff_job_type,
             "caller_file": caller["caller_file"],
             "caller_func": caller["caller_func"],
@@ -567,7 +659,10 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                                   req_id, r.status_code, chosen, err_detail)
                         raise Exception(f"ollama {r.status_code} on {chosen}: {err_detail}")
                     d = r.json()
-                    result = d.get("response","")
+                    # Fall back to `thinking` if a reasoning model left `response`
+                    # empty (think=False ignored) — the answer may be in there for
+                    # _strip_json to recover rather than failing on an empty string.
+                    result = d.get("response","") or d.get("thinking","") or ""
                     elapsed = round(time.time() - t_start, 2)
                     eval_count = d.get("eval_count", 0)
                     log.info("ollama_done [%s] %.2fs eval_count=%s caller=%s:%s",
@@ -635,7 +730,8 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                     req_entry.update({"status": "done_fallback",
                                       "fallback_instance": fb_id,
                                       "elapsed_s": fb_elapsed})
-                    return r.json().get("response","")
+                    fb = r.json()
+                    return fb.get("response","") or fb.get("thinking","") or ""
             except: pass
         return ""
     finally:
@@ -2289,8 +2385,13 @@ def capability(
                         # preventing TypeError on unexpected keyword arguments
                         # (e.g. dream system passing 'iterate' to a cap that
                         # doesn't have it in its signature).
-                        _call_kw = _filter_kwargs_for_func(func, kw)
-                        result=await func(**_call_kw,trace_id=tid)
+                        # Route trace_id through the same signature filter so caps
+                        # whose signature can't accept it (no trace_id param and no
+                        # **kwargs, e.g. openclaw.status) don't raise
+                        # 'unexpected keyword argument'. Covers every call path
+                        # (HTTP, DAG, direct, MCP) since all flow through wrap.
+                        _call_kw = _filter_kwargs_for_func(func, {**kw, "trace_id": tid})
+                        result=await func(**_call_kw)
                     for s in (streams or []):
                         await emit_stream(s,tid,result,name)
                     _elapsed_ms = round((time.monotonic()-_t0)*1000)
@@ -3407,6 +3508,25 @@ async def cluster_instance_update(id: str, num_ctx: int = 0, label: str = "",
 async def cap_llm_route(prompt: str, prefer: str = "", trace_id=None):
     return await route_llm(prompt,prefer=prefer or None)
 
+@capability("ollama.model_ctx", memory="off",
+            http_method="GET", http_path="/ollama/model_ctx", http_tags=["ollama"],
+            description="Detect a model's true max context window from Ollama "
+                        "(/api/show → model_info.<arch>.context_length). Returns the "
+                        "detected context_length plus the effective num_ctx after "
+                        "applying the optional manual cap / OLLAMA_MAX_AUTO_CTX.")
+async def cap_ollama_model_ctx(model: str, instance_id: str = "", prefer_gpu: bool = False,
+                                manual: int = 0, trace_id=None):
+    detected  = await ollama_model_ctx(model, instance_id or None, prefer_gpu)
+    effective = await effective_num_ctx(model, instance_id or None, prefer_gpu, manual)
+    return {
+        "model":          model,
+        "instance":       pick_instance(prefer_gpu=prefer_gpu,
+                                        instance_id=instance_id or None, model=model),
+        "context_length": detected,
+        "effective":      effective,
+        "max_auto_ctx":   OLLAMA_MAX_AUTO_CTX or None,
+    }
+
 # ── Minimal built-ins (full LLM group lives in vera_capabilities.py) ──────────
 
 @capability("echo", http_method="POST", http_path="/debug/echo", http_tags=["debug"], memory="off", description="Echo a message back with timestamp.")
@@ -3581,6 +3701,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "workers/syslog.py"),
         os.path.join(_here, "workers/observe_elements_capabilities.py"),
         os.path.join(_here, "elements/general_widgets_capabilities.py"),
+        os.path.join(_here, "elements/flow_builder_capabilities.py"),
         os.path.join(_here, "ui builder/ui_capabilities.py"),
         os.path.join(_here, "ide/ide_capabilities.py"),
         os.path.join(_here, "ide/ide_code_capabilities.py"),
@@ -3594,12 +3715,22 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "dream/dream_capabilities.py"),
         os.path.join(_here, "dream/project_capabilities.py"),
         os.path.join(_here, "execution/exec_capabilities.py"),
+        os.path.join(_here, "proxmox/proxmox_capabilities.py"),
+        os.path.join(_here, "provisioning/provisioning_capabilities.py"),
+        os.path.join(_here, "provisioning/identity_capabilities.py"),
+        os.path.join(_here, "provisioning/enroll_capabilities.py"),
+        os.path.join(_here, "networking/netgraph_capabilities.py"),
+        os.path.join(_here, "workers/docker_capabilities.py"),
         os.path.join(_here, "workers/workers.py"),
         os.path.join(_here, "web/browser_capabilities.py"),
-        # os.path.join(_here, "vllm/vllm_capabilities.py"),
+        os.path.join(_here, "vllm/vllm_capabilities.py"),
         os.path.join(_here, "machine learning/ml_workshop.py"),
         os.path.join(_here, "machine learning/ml_training.py"),
-        # os.path.join(_here, "openclaw/openclaw_capabilities.py"),
+        os.path.join(_here, "machine learning/ml_onnx.py"),
+        os.path.join(_here, "markets/markets_capabilities.py"),
+        os.path.join(_here, "mesh/mesh_capabilities.py"),
+        os.path.join(_here, "openclaw/openclaw_capabilities.py"),
+        os.path.join(_here, "providers/providers_capabilities.py"),
         # os.path.join(_here, "dream/dream_research_integration.py"),
         # os.path.join(_here, "project_research_extension.py"),
         os.path.join(_here, "ontologies/cap_ontology.py"),
@@ -3613,6 +3744,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "calendar/calendar_capabilities.py"),
         os.path.join(_here, "email/email_capabilities.py"),
         os.path.join(_here, "render/render_capabilities.py"),
+        os.path.join(_here, "character/character_capabilities.py"),
         os.path.join(_here, "vera_graph_panels.py")
 
     ]
@@ -3860,6 +3992,46 @@ def _mount_all_http_routes(app: FastAPI):
 
 APP = FastAPI(title="Vera Orchestrator", version="3.0", lifespan=lifespan)
 APP.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
+# ── Client config injection ───────────────────────────────────────────────────
+# Browser panels can't read the Python config, so the single source-of-truth
+# domain (cfg.BACKEND_HOST) is handed to the frontend here: a tiny script setting
+# window.__VERA_DOMAIN__ / window.__VERA_BASE__ is injected into every served HTML
+# document. Panels resolve their backend as
+#     window.location.origin || window.__VERA_BASE__ || <location-derived>
+# so no hostname is hardcoded anywhere in the UI.
+_VERA_BASE_URL = (f"{'https' if cfg.TLS_ENABLED else 'http'}://"
+                  f"{cfg.BACKEND_HOST}:{cfg.ORCHESTRATOR_PORT}")
+_CLIENT_CONFIG_SNIPPET = (
+    "<script>window.__VERA_DOMAIN__=%s;window.__VERA_BASE__=%s;</script>" % (
+        json.dumps(cfg.BACKEND_HOST), json.dumps(_VERA_BASE_URL))
+).encode("utf-8")
+
+
+@APP.middleware("http")
+async def _inject_client_config(request: Request, call_next):
+    """Inject the configured domain into every served HTML page (see above)."""
+    response = await call_next(request)
+    if "text/html" not in response.headers.get("content-type", "").lower():
+        return response
+    if response.headers.get("content-encoding"):
+        return response  # don't touch compressed bodies
+    from starlette.responses import Response as _Resp
+    body = b"".join([chunk async for chunk in response.body_iterator])
+    if response.status_code == 200 and body:
+        lower = body.lower()
+        idx = lower.find(b"<head")
+        gt = body.find(b">", idx) if idx != -1 else -1
+        if gt != -1:
+            body = body[:gt + 1] + _CLIENT_CONFIG_SNIPPET + body[gt + 1:]
+        else:
+            body = _CLIENT_CONFIG_SNIPPET + body
+    headers = dict(response.headers)
+    headers.pop("content-length", None)
+    headers.pop("content-type", None)
+    return _Resp(content=body, status_code=response.status_code,
+                 headers=headers, media_type=response.headers.get("content-type"))
 
 
 @APP.get("/memgraph/panel", include_in_schema=False)
@@ -4637,5 +4809,69 @@ async def ws_mcp(ws: WebSocket):
         WS_CONNECTIONS[:]=[p for p in WS_CONNECTIONS if p[0] is not ws]
 
 
+def _ensure_self_signed_cert(certfile: str, keyfile: str) -> None:
+    """Generate a self-signed cert/key pair at the given paths if either is missing.
+
+    This is "just enough" TLS to give the browser a secure context so the Web
+    Serial API and getUserMedia (webcam/mic) become available when Vera is opened
+    over the LAN. http://localhost is already a secure context, so a cert is only
+    needed for non-localhost origins. The cert is self-signed, so browsers show a
+    one-time "not trusted" warning that must be accepted — the origin is still a
+    secure context once accepted.
+    """
+    cp, kp = Path(certfile), Path(keyfile)
+    if cp.exists() and kp.exists():
+        return
+
+    import ipaddress, socket
+    from datetime import timedelta
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    cp.parent.mkdir(parents=True, exist_ok=True)
+    kp.parent.mkdir(parents=True, exist_ok=True)
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+    host = socket.gethostname()
+    dns = {n for n in {"localhost", host, f"{host}.local", cfg.BACKEND_HOST} if n}
+    ips = {"127.0.0.1", "::1"}
+    try:
+        ips.add(socket.gethostbyname(host))
+    except OSError:
+        pass
+    san = [x509.DNSName(n) for n in sorted(dns)]
+    san += [x509.IPAddress(ipaddress.ip_address(ip)) for ip in sorted(ips)]
+
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "vera-orchestrator")])
+    cert = (x509.CertificateBuilder()
+            .subject_name(name).issuer_name(name)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(datetime.utcnow() - timedelta(days=1))
+            .not_valid_after(datetime.utcnow() + timedelta(days=3650))
+            .add_extension(x509.SubjectAlternativeName(san), critical=False)
+            .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+            .sign(key, hashes.SHA256()))
+
+    kp.write_bytes(key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption()))
+    cp.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    log.info("Generated self-signed TLS cert at %s (key: %s), SAN=%s",
+             cp, kp, [str(g.value) for g in san])
+
+
 if __name__=="__main__":
-    uvicorn.run("Vera.vera.capability_orchestration:APP",host="0.0.0.0",port=8999,reload=False)
+    ssl_kwargs: Dict[str, Any] = {}
+    if cfg.TLS_ENABLED:
+        _ensure_self_signed_cert(cfg.TLS_CERTFILE, cfg.TLS_KEYFILE)
+        ssl_kwargs = {"ssl_certfile": cfg.TLS_CERTFILE, "ssl_keyfile": cfg.TLS_KEYFILE}
+        log.info("HTTPS enabled — serving on https://%s:%s",
+                 cfg.ORCHESTRATOR_HOST, cfg.ORCHESTRATOR_PORT)
+    uvicorn.run("Vera.vera.capability_orchestration:APP",
+                host=cfg.ORCHESTRATOR_HOST, port=cfg.ORCHESTRATOR_PORT,
+                reload=False, **ssl_kwargs)

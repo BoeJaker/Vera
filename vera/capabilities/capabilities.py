@@ -276,6 +276,94 @@ async def list_loras(trace_id=None):
         return {"error": str(e), "loras": []}
 
 
+@capability(
+    "image.img2img",
+    http_method="POST", http_path="/image/img2img", http_tags=["gpu", "sd", "image"],
+    memory="on",
+    description="Derive a new image from an init image with Stable Diffusion (img2img) "
+                "on the GPU node. Input: prompt (str), init_image_b64 (base64 PNG/JPEG), "
+                "strength (float 0-1, lower = closer to init), negative_prompt, steps, "
+                "guidance, width/height, seed, loras ('name:weight' csv). "
+                "Output: {image_b64, mime_type, format}. Use to keep a character "
+                "consistent across expression frames. Falls back to image.generate "
+                "(txt2img) if the server lacks img2img.",
+)
+async def image_img2img(
+    prompt:          str,
+    init_image_b64:  str,
+    strength:        float = 0.55,
+    negative_prompt: str   = "blurry, low quality, distorted",
+    width:           int   = 512,
+    height:          int   = 512,
+    steps:           int   = 20,
+    guidance:        float = 7.5,
+    seed:            int   = -1,
+    loras:           str   = "",
+    trace_id=None,
+):
+    lora_list = []
+    for part in (loras or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if ":" in part:
+            name, _, weight = part.partition(":")
+            lora_list.append({"name": name.strip(), "weight": float(weight.strip() or 1.0)})
+        else:
+            lora_list.append({"name": part, "weight": 1.0})
+
+    body = {
+        "prompt": prompt,
+        "init_image_b64": init_image_b64,
+        "strength": strength,
+        "negative_prompt": negative_prompt,
+        "width": width, "height": height,
+        "steps": steps, "guidance": guidance,
+        "loras": lora_list,
+    }
+    if seed >= 0:
+        body["seed"] = seed
+
+    try:
+        async with httpx.AsyncClient(timeout=300) as c:
+            r = await c.post(f"{GPU_INFER_URL}/img2img", json=body)
+            r.raise_for_status()
+            data = r.json()
+        return {
+            "image_b64": data.get("image_b64", ""),
+            "mime_type": "image/png",
+            "format":    data.get("format", "png"),
+            "seed":      data.get("seed"),
+            "strength":  strength,
+        }
+    except Exception as e:
+        log.error("image.img2img: %s", e)
+        return {"error": str(e), "image_b64": ""}
+
+
+@capability(
+    "image.sd_capabilities",
+    http_method="GET", http_path="/image/sd_capabilities", http_tags=["gpu", "sd"],
+    memory="off",
+    description="Report which Stable Diffusion generation tiers the GPU server can "
+                "serve right now (txt2img / img2img / controlnet / talking_head) so "
+                "callers can pick the best-available path and degrade gracefully. "
+                "Output: {txt2img, img2img, controlnet, talking_head, model, device}.",
+)
+async def image_sd_capabilities(trace_id=None):
+    try:
+        async with httpx.AsyncClient(timeout=8) as c:
+            r = await c.get(f"{GPU_INFER_URL}/sd/capabilities")
+            r.raise_for_status()
+            return r.json()
+    except Exception as e:
+        # Server too old to expose /sd/capabilities → assume txt2img only.
+        return {
+            "txt2img": True, "img2img": False, "controlnet": False,
+            "talking_head": False, "error": str(e),
+        }
+
+
 # ── Chat + Speak (LLM → TTS fan-out) ─────────────────────────────────────────
 
 @capability(

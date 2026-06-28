@@ -163,7 +163,7 @@
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
       <div><label class="fld">Max runtime sec (0=none)</label><input type="number" id="run-maxruntime" value="0"></div>
-      <div style="display:flex;align-items:flex-end"><label class="chk"><input type="checkbox" id="run-pauseact" checked> Yield when I'm active</label></div>
+      <div style="display:flex;align-items:flex-end"><label class="chk"><input type="checkbox" id="run-pauseact"> Yield when I'm active (manual runs complete regardless)</label></div>
     </div>
     <label class="chk"><input type="checkbox" id="run-resume" checked> Resume — start from the first file with no output (across snapshots)</label>
   </div>
@@ -246,7 +246,7 @@ async function buildTree(){
   const NOW=Date.now(),DAY=864e5,FRESH=ts=>{const t=ts?Date.parse(ts):NaN;return !isNaN(t)&&(NOW-t)<DAY;};
   const fileFresh=(a,f)=>Object.values((tsMap[a]||{})[f]||{}).some(FRESH);
   const areaFresh=a=>Object.keys(byArea[a]).some(f=>fileFresh(a,f));
-  const dot='<span class="fdot" title="report generated in the last 24h"></span>';
+  const dot='<span class="fdot" title="report revised in the last 24h"></span>';
   const areas=Object.keys(byArea).sort();
   let html='';
   if(!areas.length)html='<div class="placeholder">No reports yet — Run a review.</div>';
@@ -299,7 +299,7 @@ async function openReport(file,style){curFile=file;curStyle=style;buildTree();
   $('report-body').innerHTML='<div class="placeholder">Loading…</div>';
   const r=await api('/dream/review/get?file='+encodeURIComponent(file)+'&style='+encodeURIComponent(style));
   if(r&&r.ok){const rep=r.report;
-    $('report-head').innerHTML='<div class="meta"><b style="font-family:var(--mono)">'+esc(file)+'</b><span>'+esc(rep.label||style)+'</span><span>'+(rep.chars||0)+' chars</span>'+(rep.chunks>1?'<span>'+rep.chunks+' chunks</span>':'')+(rep.ts?'<span class="report-ts">&#9873; generated '+esc((rep.ts||'').slice(0,19).replace('T',' '))+'</span>':'')+'</div>';
+    $('report-head').innerHTML='<div class="meta"><b style="font-family:var(--mono)">'+esc(file)+'</b><span>'+esc(rep.label||style)+'</span><span>'+(rep.chars||0)+' chars</span>'+(rep.chunks>1?'<span>'+rep.chunks+' chunks</span>':'')+(rep.ts?'<span class="report-ts" title="last time this report was (re)generated">&#9873; last revised '+esc((rep.ts||'').slice(0,19).replace('T',' '))+'</span>':'')+'</div>';
     $('report-body').innerHTML=mdToHtml(rep.markdown);wireLrefs();
   }else $('report-body').innerHTML='<div class="placeholder">Not found.</div>';}
 async function openAreaForFile(file){curFile=file;if(splitOn)loadSource(file);

@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Vera — Companion</title>
+<style>
+:root{
+  --bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;
+  --border:#3a3530;--border2:#4a4540;
+  --acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--acc4:#9e8fa0;
+  --ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;
+  --text:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;
+  --mono:'JetBrains Mono','Fira Mono',monospace;
+  --sans:'Inter','IBM Plex Sans',system-ui,sans-serif;
+  --radius:5px;--radius-sm:3px;color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:13px}
+body{display:flex;flex-direction:column;overflow:hidden}
+.hdr{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--bg1);flex-shrink:0}
+.hdr h1{font-size:14px;font-weight:600;color:var(--acc);letter-spacing:.3px}
+.hdr .sub{font-size:10px;color:var(--dim2)}
+.tabs{display:flex;gap:4px;margin-left:auto}
+.tab{padding:4px 12px;border-radius:var(--radius-sm);background:var(--bg2);border:1px solid var(--border);color:var(--dim2);cursor:pointer;font-size:11px}
+.tab.active{background:var(--acc);border-color:var(--acc);color:#10201c;font-weight:600}
+.caps{font-size:10px;color:var(--dim2);padding:4px 12px;border-bottom:1px solid var(--border);background:var(--bg1);display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.cap-pill{border:1px solid var(--border);border-radius:10px;padding:1px 7px;font-size:9.5px}
+.cap-pill.on{color:var(--ok);border-color:var(--ok)}
+.cap-pill.off{color:var(--dim);text-decoration:line-through}
+.wrap{flex:1;display:flex;min-height:0}
+.side{width:360px;flex-shrink:0;border-right:1px solid var(--border);overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:10px}
+.main{flex:1;min-width:0;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px;align-items:center}
+.card{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);padding:10px;width:100%}
+.card h2{font-size:11px;font-weight:600;color:var(--acc2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px}
+label{font-size:10px;color:var(--dim2);display:block;margin-bottom:3px}
+.row{display:flex;align-items:center;gap:6px;margin-bottom:7px}
+.row label{margin-bottom:0;min-width:80px}
+input,select,textarea{background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:5px 7px;border-radius:var(--radius-sm);font-family:var(--sans);font-size:11px;width:100%}
+textarea{resize:vertical;min-height:64px;line-height:1.45}
+input[type=checkbox]{width:auto}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;padding:5px 11px;border-radius:var(--radius-sm);background:var(--bg2);border:1px solid var(--border2);color:var(--text);font-size:11px;cursor:pointer;font-family:var(--sans)}
+.btn:hover{border-color:var(--acc);color:var(--acc)}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:#10201c;font-weight:600}
+.btn.primary:hover{filter:brightness(1.1);color:#10201c}
+.btn.sm{padding:3px 7px;font-size:10px}
+.btn.danger:hover{border-color:var(--err);color:var(--err)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.status{font-size:10px;color:var(--dim2);margin-top:6px;min-height:13px;word-break:break-word}
+.status.ok{color:var(--ok)}.status.err{color:var(--err)}.status.warn{color:var(--warn)}
+.muted{color:var(--dim2);font-size:10px}
+.stategrid{display:flex;flex-wrap:wrap;gap:4px}
+.stategrid label{display:inline-flex;align-items:center;gap:3px;font-size:10px;color:var(--text);background:var(--bg0);border:1px solid var(--border);border-radius:var(--radius-sm);padding:3px 6px;cursor:pointer;margin:0}
+.preview-row{display:flex;gap:5px;flex-wrap:wrap;justify-content:center;margin-top:8px}
+.view{display:none;width:100%;flex:1;min-height:0}
+.view.active{display:flex}
+.companion-stage{display:flex;flex-direction:column;align-items:center;gap:14px;width:100%}
+.chatline{display:flex;gap:6px;width:100%;max-width:520px}
+.chatline input{flex:1}
+.hint{font-size:10px;color:var(--dim2);text-align:center;max-width:480px;line-height:1.5}
+</style>
+<link rel="stylesheet" href="/ui/vera-panel.css">
+<script src="/ui/elements/character.js"></script>
+</head>
+<body>
+<div class="hdr">
+  <h1>🧚 Companion</h1>
+  <span class="sub">Animated agent characters — generate, customise, talk</span>
+  <div class="tabs">
+    <div class="tab active" data-view="companion" onclick="showView('companion')">Companion</div>
+    <div class="tab" data-view="studio" onclick="showView('studio')">Studio</div>
+  </div>
+</div>
+<div class="caps" id="capsBar"><span class="muted">probing capabilities…</span></div>
+
+<!-- ════════════════ COMPANION VIEW ════════════════ -->
+<div class="view active wrap" id="view-companion">
+  <div class="main">
+    <div class="card" style="max-width:560px">
+      <div class="row">
+        <label>Companion</label>
+        <select id="compAgent" onchange="loadCompanion()"></select>
+        <label style="min-width:auto;display:inline-flex;align-items:center;gap:4px;margin:0">
+          <input type="checkbox" id="compNarrate" checked onchange="toggleNarrate()"> narrate
+        </label>
+      </div>
+    </div>
+    <div class="companion-stage">
+      <vera-character id="companion" interactive narrate size="280"></vera-character>
+      <div class="chatline">
+        <input id="compInput" placeholder="Talk to your companion… (Enter to send, 🎤 to speak)"
+               onkeydown="if(event.key==='Enter')sendCompanion()">
+        <button class="btn primary" onclick="sendCompanion()">Send</button>
+      </div>
+      <div class="hint">The companion reacts to running jobs and dreams, speaks replies aloud,
+        and narrates system activity when <b>narrate</b> is on. Give it a character in the
+        <b>Studio</b> tab — any agent without one shows its emoji avatar.</div>
+      <div class="status" id="compStatus"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════ STUDIO VIEW ════════════════ -->
+<div class="view wrap" id="view-studio">
+  <div class="side">
+    <div class="card">
+      <h2>Agent</h2>
+      <div class="row"><label>Character for</label>
+        <select id="studAgent" onchange="loadStudio()"></select>
+      </div>
+      <div class="muted" id="studHasChar"></div>
+    </div>
+
+    <div class="card">
+      <h2>Describe</h2>
+      <label>Description</label>
+      <textarea id="descIn" placeholder="e.g. a friendly robot owl with brass goggles and a teal scarf, warm and curious"></textarea>
+      <div class="row" style="margin-top:7px"><label>Style</label>
+        <select id="styleIn">
+          <option value="pixel">pixel art</option>
+          <option value="painted">painted</option>
+          <option value="anime">anime</option>
+          <option value="cartoon">cartoon</option>
+          <option value="3d">3d</option>
+        </select>
+      </div>
+      <button class="btn" style="width:100%" onclick="designLLM()">✨ Design with the LLM</button>
+      <div class="status" id="descStatus"></div>
+      <label style="margin-top:8px">Base prompt (editable)</label>
+      <textarea id="baseIn" placeholder="character identity prompt — fixed across all frames"></textarea>
+    </div>
+
+    <div class="card">
+      <h2>Generate</h2>
+      <div class="row"><label>Render mode</label>
+        <select id="modeIn">
+          <option value="procedural">procedural (stills + idle/lip-flap)</option>
+          <option value="spritesheet">spritesheet</option>
+          <option value="talkinghead">talking head</option>
+        </select>
+      </div>
+      <label>Expressions to generate</label>
+      <div class="stategrid" id="stateGrid"></div>
+      <div class="row" style="margin-top:8px"><label>Seed</label>
+        <input type="number" id="seedIn" value="-1" title="-1 = random, fixed value = repeatable">
+        <label style="min-width:auto">Steps</label>
+        <input type="number" id="stepsIn" value="22" style="width:70px">
+      </div>
+      <button class="btn primary" style="width:100%" id="genBtn" onclick="generate()">⚡ Generate frames</button>
+      <div class="status" id="genStatus"></div>
+      <div class="muted" style="margin-top:4px">SD runs on CPU here — expect ~30–60s per frame.</div>
+    </div>
+
+    <div class="card">
+      <h2>Behaviour</h2>
+      <div class="row"><label>Voice</label><select id="voiceIn"></select></div>
+      <div class="row"><label style="min-width:auto"><input type="checkbox" id="bobIn" checked> idle bob</label>
+        <label style="min-width:auto"><input type="checkbox" id="blinkIn" checked> blink</label></div>
+      <div class="row"><button class="btn sm" onclick="saveBehaviour()">Save</button>
+        <button class="btn sm danger" onclick="deleteChar()">Delete character</button></div>
+      <div class="status" id="behStatus"></div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="card" style="max-width:420px">
+      <h2>Preview</h2>
+      <div style="display:flex;justify-content:center">
+        <vera-character id="preview" size="260"></vera-character>
+      </div>
+      <div class="preview-row" id="stateBtns"></div>
+      <div class="chatline" style="margin-top:8px;max-width:none">
+        <input id="speakIn" placeholder="Type a line for the character to speak…"
+               onkeydown="if(event.key==='Enter')speakTest()">
+        <button class="btn" onclick="speakTest()">🔊 Speak</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/ui/vera-panel.js"></script>
+<script>
+const BASE=(window._veraBase||(window.parent&&window.parent._veraBase)||location.origin).toString().replace(/\/$/,'');
+const $=id=>document.getElementById(id);
+async function api(p,o){try{const r=await fetch(BASE+p,o);return await r.json();}catch(e){return{error:String(e)};}}
+const post=(p,b)=>api(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+let CAPS=null, AGENTS=[];
+
+function showView(v){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.view===v));
+  document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));
+  $('view-'+v).classList.add('active');
+  if(v==='companion') $('view-companion').classList.add('active');
+}
+
+async function init(){
+  CAPS=await api('/character/capabilities');
+  renderCaps();
+  const r=await api('/agents/list'); AGENTS=(r&&r.agents)||[];
+  const opts=AGENTS.map(a=>`<option value="${a.id}">${(a.avatar||'🤖')} ${a.label||a.name}</option>`).join('');
+  $('compAgent').innerHTML=opts; $('studAgent').innerHTML=opts;
+  // state checkboxes + buttons
+  const states=(CAPS&&CAPS.states)||['neutral','talking','thinking','happy'];
+  $('stateGrid').innerHTML=states.map(s=>{
+    const on=['neutral','talking','thinking','happy'].includes(s)?'checked':'';
+    return `<label><input type="checkbox" value="${s}" ${on}> ${s}</label>`;
+  }).join('');
+  $('stateBtns').innerHTML=states.map(s=>`<button class="btn sm" onclick="prevState('${s}')">${s}</button>`).join('')
+    +`<button class="btn sm" onclick="prevState('idle')">idle</button>`;
+  // greyed render modes
+  if(CAPS&&CAPS.render_modes){
+    const live={}; CAPS.render_modes.forEach(m=>live[m.id]=m.live);
+    [...$('modeIn').options].forEach(o=>{ if(live[o.value]===false){o.disabled=true;o.text+=' (n/a)';} });
+  }
+  // voices
+  const vr=await api('/tts/voices'); const voices=(vr&&vr.voices)||[];
+  $('voiceIn').innerHTML=voices.map(v=>`<option value="${v.id}">${v.name} (${v.lang||''} ${v.gender||''})</option>`).join('');
+  if(AGENTS.length){ loadCompanion(); loadStudio(); }
+}
+
+function renderCaps(){
+  const sd=(CAPS&&CAPS.sd)||{};
+  const pill=(k,on)=>`<span class="cap-pill ${on?'on':'off'}">${k}</span>`;
+  $('capsBar').innerHTML='<span class="muted">tiers:</span>'
+    +pill('txt2img',sd.txt2img!==false)
+    +pill('img2img',!!sd.img2img)
+    +pill('controlnet',!!sd.controlnet)
+    +pill('talking-head',!!sd.talking_head)
+    +`<span class="muted" style="margin-left:auto">${sd.model||''} · ${sd.device||''}</span>`;
+}
+
+/* ── Companion ── */
+function toggleNarrate(){
+  const el=$('companion');
+  if($('compNarrate').checked){el.setAttribute('narrate','');el.bindEvents&&el.bindEvents();}
+  else{el.removeAttribute('narrate');el.unbindEvents&&el.unbindEvents();}
+}
+function loadCompanion(){
+  const id=$('compAgent').value; if(!id)return;
+  const el=$('companion'); el.setAgent(id);
+  el.addEventListener('char:heard', e=>{ $('compInput').value=e.detail.text; sendCompanion(); }, {once:false});
+}
+async function sendCompanion(){
+  const msg=$('compInput').value.trim(); if(!msg)return;
+  const id=$('compAgent').value; $('compInput').value='';
+  $('compStatus').textContent='thinking…'; $('companion').setState('thinking');
+  const res=await post('/agents/chat',{message:msg,agent_id:id});
+  const text=(res&&(res.text||res.response))||res.error||'…';
+  $('compStatus').textContent='';
+  $('companion').speak(text);
+}
+
+/* ── Studio ── */
+async function loadStudio(){
+  const id=$('studAgent').value; if(!id)return;
+  $('preview').setAgent(id);
+  const c=await api('/character/get?agent_id='+encodeURIComponent(id));
+  if(c&&!c.error){
+    $('studHasChar').textContent='✓ has a character ('+(c.states||[]).join(', ')+') · tier: '+(c.sd_tier_used||'—');
+    if(c.base_prompt)$('baseIn').value=c.base_prompt;
+    if(c.style)$('styleIn').value=c.style;
+    if(c.render_mode)$('modeIn').value=c.render_mode;
+    if(c.voice)$('voiceIn').value=c.voice;
+    $('bobIn').checked=c.idle_bob!==false; $('blinkIn').checked=c.idle_blink!==false;
+    if(typeof c.seed==='number')$('seedIn').value=c.seed;
+  }else{
+    $('studHasChar').textContent='no character yet — describe & generate below';
+  }
+}
+async function designLLM(){
+  const d=$('descIn').value.trim(); if(!d){$('descStatus').textContent='Enter a description first.';return;}
+  $('descStatus').className='status'; $('descStatus').textContent='designing…';
+  const r=await post('/character/describe',{description:d,style:$('styleIn').value});
+  if(r.error){$('descStatus').className='status err';$('descStatus').textContent=r.error;return;}
+  $('baseIn').value=r.base_prompt||'';
+  $('descStatus').className='status ok'; $('descStatus').textContent='prompt ready — tweak & generate.';
+}
+function selectedStates(){
+  return [...document.querySelectorAll('#stateGrid input:checked')].map(i=>i.value);
+}
+async function generate(){
+  const id=$('studAgent').value; if(!id){$('genStatus').textContent='Pick an agent.';return;}
+  const states=selectedStates(); if(!states.length){$('genStatus').textContent='Pick at least one expression.';return;}
+  $('genBtn').disabled=true; $('genStatus').className='status warn';
+  $('genStatus').textContent='generating… (this can take a few minutes on CPU)';
+  watchProgress(id);
+  const body={
+    agent_id:id, description:$('descIn').value, base_prompt:$('baseIn').value,
+    style:$('styleIn').value, render_mode:$('modeIn').value, states:states.join(','),
+    seed:parseInt($('seedIn').value||'-1',10), steps:parseInt($('stepsIn').value||'22',10),
+  };
+  const r=await post('/character/generate',body);
+  $('genBtn').disabled=false;
+  const err=r.error||r.detail;   // r.detail = a FastAPI 500 surfaced as an error
+  const frames=Object.keys(r.frame_urls||{});
+  if(err||!frames.length){
+    $('genStatus').className='status err';
+    $('genStatus').textContent=err||'No frames were generated — check Stable Diffusion on the GPU node (GET /image/sd_capabilities).';
+    return;
+  }
+  $('genStatus').className='status ok';
+  $('genStatus').textContent='done — frames: '+frames.join(', ')+' (tier '+(r.sd_tier_used||'?')+')';
+  $('preview').reload(); loadStudio();
+}
+// Live progress via the event WS while the long generate request runs.
+let _genWS=null;
+function watchProgress(agentId){
+  try{
+    if(_genWS){try{_genWS.close();}catch(_){}}
+    const ws=new WebSocket(BASE.replace(/^http/,'ws')+'/ws/mcp'); _genWS=ws;
+    ws.onopen=()=>ws.send(JSON.stringify({action:'subscribe_events'}));
+    ws.onmessage=m=>{let ev;try{ev=JSON.parse(m.data);}catch(_){return;}
+      if(!ev||ev.agent_id!==agentId)return;
+      if(ev.type==='character.generate.progress')
+        $('genStatus').textContent=`generating ${ev.state} (${(ev.index||0)+1}/${ev.total})…`;
+      else if(ev.type==='character.generate.error')
+        $('genStatus').textContent=`SD error on ${ev.state}: ${ev.error||'no image'}`;
+      else if(ev.type==='character.generate.done'){$('genStatus').textContent='finalising…';try{ws.close();}catch(_){}}
+    };
+  }catch(_){}
+}
+function prevState(s){ $('preview').setState(s); }
+function speakTest(){ const t=$('speakIn').value.trim(); if(t)$('preview').speak(t); }
+async function saveBehaviour(){
+  const id=$('studAgent').value; if(!id)return;
+  const r=await post('/character/set',{agent_id:id,render_mode:$('modeIn').value,
+    voice:$('voiceIn').value,idle_bob:$('bobIn').checked,idle_blink:$('blinkIn').checked,style:$('styleIn').value});
+  $('behStatus').className=r.error?'status err':'status ok';
+  $('behStatus').textContent=r.error||'saved.'; $('preview').reload();
+}
+async function deleteChar(){
+  const id=$('studAgent').value; if(!id)return;
+  if(!confirm('Delete this character and its frames?'))return;
+  const r=await post('/character/delete',{agent_id:id});
+  $('behStatus').textContent=r.deleted?'deleted.':'nothing to delete';
+  $('preview').reload(); loadStudio();
+}
+init();
+</script>
+</body>
+</html>

@@ -4,6 +4,8 @@ All Vera configuration is centralised in `config.py` as a single `VeraConfig` cl
 
 Every field can be overridden via environment variable. The defaults assume a home network with `llm.int` as the internal hostname and three Ollama nodes at `192.168.0.250`, `.246`, `.247`.
 
+The internal hostname is a **single** config variable, `BACKEND_HOST` (default `llm.int`). All host-derived defaults (SearXNG, the research datasource defaults, the Google OAuth redirect base, etc.) build on it, and it is injected into the served UI as `window.__VERA_DOMAIN__` / `window.__VERA_BASE__` so the browser panels resolve the backend from config too. Set `BACKEND_HOST` once to retarget everything.
+
 ---
 
 ## 1. Usage
@@ -30,7 +32,7 @@ python -m Vera.vera.capability_orchestration
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `BACKEND_HOST` | `llm.int` | Internal hostname where backend services live |
+| `BACKEND_HOST` | `llm.int` | Single internal-domain variable. Backend host defaults derive from it and it is injected into the UI (`window.__VERA_DOMAIN__`/`__VERA_BASE__`). Set this once to retarget the whole stack. |
 | `ORCHESTRATOR_HOST` | `0.0.0.0` | Bind address for the orchestrator |
 | `ORCHESTRATOR_PORT` | `8999` | Port for the orchestrator |
 
@@ -97,7 +99,7 @@ Used by the data fabric for vector storage with metadata filtering, and by the m
 | `NEO4J_USER` | `neo4j` | Username |
 | `NEO4J_PASS` | `neo4j` | Password |
 
-The primary store for the memory graph and the auxiliary fabric graph. The orchestrator's Neo4j driver is shared across modules (`memory.py`, `data_fabric.py`, `memory_hooks.py`, `fabric_web_acquisition.py`).
+The primary store for the memory graph and the auxiliary fabric graph. The orchestrator's Neo4j driver is shared across modules (`fabric/memory.py`, `fabric/data_fabric.py`, `fabric/memory_hooks.py`, `fabric/fabric_web_acquisition.py`).
 
 If Neo4j is offline, capabilities that write to the graph degrade silently — the cap call itself still succeeds, just without a graph node. Anything that reads from Neo4j returns an empty result.
 
@@ -161,7 +163,7 @@ researcher_api runs as a separate process. If it's not running, the `research.*`
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `VERA_SEARXNG_URL` | `http://llm.int:8888` | SearXNG instance |
+| `VERA_SEARXNG_URL` | `http://<BACKEND_HOST>:8888` | SearXNG instance (host defaults to `BACKEND_HOST`) |
 | `BRAVE_API_KEY` | (unset) | Brave Search API key (fallback engine) |
 | `FABRIC_CRAWL_DELAY_S` | `2` | Rate-limit delay between web fetches |
 
@@ -192,7 +194,61 @@ Set to `"1"` to turn on activity recording. With it off (the default), the activ
 
 ---
 
-## 14. Common deployment patterns
+## 14. Subsystem environment variables
+
+These cover the modules added since the original config reference. Most have sensible defaults; the opt-in backends (vLLM, OpenClaw) only matter once enabled (see [Capability Framework §11](./01-capability-framework.md#11-module-loading)).
+
+**Secrets & module loading**
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `VERA_SECRET_KEY` | (unset → `~/.vera/secret.key`) | Fernet master key that seals stored credentials. Keep it stable — see [Security & Secrets](./29-security.md) |
+| `VERA_MODULES` | (unset) | Comma-separated extra module paths appended to `_module_files` |
+
+**Execution & Docker** (see [Execution](./12-execution.md), [Docker](./13-docker.md))
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `VERA_EXEC_SANDBOX` | `~/.vera_exec_sandbox.json` | Path to the exec sandbox policy |
+| `VERA_DOCKER_HOSTS` | `~/.vera_docker_hosts.json` | Docker host registry path |
+| `VERA_WORKER_IMAGE` | `vera:latest` | Image used by `docker.worker.spawn` |
+| `DOCKER_SOCK` | `/var/run/docker.sock` | Local Docker socket |
+
+**Device mesh** (see [Device Mesh](./14-mesh.md))
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `VERA_MESH_TOKEN` | (unset) | If set, required on every mesh device call |
+| `VERA_MQTT_URL` | (unset) | Enable the MQTT mesh transport (needs `aiomqtt`) |
+| `VERA_MESH_SERIAL_PORTS` | (unset) | Host USB ports for the serial mesh transport (needs `pyserial`) |
+
+**vLLM** (opt-in; see [vLLM Backend](./21-vllm.md))
+
+| Variable | Purpose |
+|---|---|
+| `VLLM_INSTANCES` | JSON list or single URL of vLLM servers |
+| `VLLM_MODEL` / `VLLM_API_KEY` | Default model / optional API key |
+| `VLLM_QUANTIZATION` / `VLLM_TENSOR_PARALLEL` / `VLLM_GPU_MEM_UTIL` | Launch tuning |
+| `VLLM_SPEC_MODEL` / `VLLM_CPU_OFFLOAD_GB` | Speculative decoding / KV offload |
+
+**Browser & OpenClaw**
+
+| Variable | Purpose |
+|---|---|
+| `BROWSER_HEADLESS`, `BROWSER_TIMEOUT_MS`, `BROWSER_VIEWPORT_W/H`, `BROWSER_MAX_SESSIONS`, … | Playwright browser ([Web & Browser](./24-web-browser.md)) |
+| `OPENCLAW_ENABLED`, `OPENCLAW_WS_URL`, `OPENCLAW_TOKEN`, … | OpenClaw bridge ([OpenClaw](./27-openclaw.md)) |
+
+**Observability & prompt tuning**
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SYSLOG_MONITOR` | `1` | Enable the syslog LLM monitor ([Workers, Jobs & Syslog](./22-workers-jobs-syslog.md)) |
+| `MAX_CAPS_IN_PROMPT` | `25` | Max capabilities injected into a planner prompt |
+| `EMBED_CAPS_ON_START` | `1` | Embed cap descriptions at startup for semantic cap search |
+
+---
+
+## 15. Common deployment patterns
 
 ### Single-host development
 
@@ -206,9 +262,10 @@ python -m Vera.vera.capability_orchestration
 On every host:
 
 ```bash
-export REDIS_URL=redis://llm.int:6379
-export POSTGRES_URL=postgresql://admin:admin@llm.int:5433/postgres
-export NEO4J_URI=bolt://llm.int:7687
+export BACKEND_HOST=your-host.lan      # single internal-domain knob
+export REDIS_URL=redis://$BACKEND_HOST:6379
+export POSTGRES_URL=postgresql://admin:admin@$BACKEND_HOST:5433/postgres
+export NEO4J_URI=bolt://$BACKEND_HOST:7687
 python -m Vera.vera.capability_orchestration
 ```
 
@@ -231,7 +288,7 @@ export VERA_ACTIVITY_RECORDING=1
 
 ---
 
-## 15. Adding new config fields
+## 16. Adding new config fields
 
 If a module needs a new tunable, add it to `VeraConfig` in `config.py`:
 
@@ -255,6 +312,9 @@ Don't read `os.getenv` directly outside `config.py` — it makes overrides invis
 
 ## See also
 
-- [Capability Framework](./01-capability-framework.md) — env var `VERA_ACTIVITY_RECORDING`
+- [Capability Framework](./01-capability-framework.md) — env var `VERA_ACTIVITY_RECORDING`, `VERA_MODULES`, the `_module_files` list
 - [Ollama Cluster](./04-ollama-cluster.md) — Ollama-specific config in context
+- [Execution](./12-execution.md) & [Docker](./13-docker.md) — the exec sandbox + Docker env vars
+- [Device Mesh](./14-mesh.md) · [vLLM Backend](./21-vllm.md) — subsystem-specific config
+- [Security & Secrets](./29-security.md) — `VERA_SECRET_KEY` and key management
 - [Research System](./07-research.md) — researcher_api/NLP URLs

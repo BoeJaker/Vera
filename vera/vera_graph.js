@@ -431,6 +431,17 @@
     if(_cssInjected)return; _cssInjected=true;
     var s=document.createElement('style');
     s.textContent = [
+      // ── Minimalist themed scrollbars (scoped to this component) ─────────────
+      //    One rule for every scrollable descendant so native chunky bars never
+      //    leak through. Slim, rounded, transparent track; thumb uses the theme
+      //    border colour and brightens to --dim2 on hover. Firefox via
+      //    scrollbar-width/color; Chromium via ::-webkit-scrollbar.
+      '.vera-graph-host *{scrollbar-width:thin;scrollbar-color:var(--border2,#4a4540) transparent}',
+      '.vera-graph-host ::-webkit-scrollbar{width:6px;height:6px}',
+      '.vera-graph-host ::-webkit-scrollbar-track{background:transparent}',
+      '.vera-graph-host ::-webkit-scrollbar-thumb{background:var(--border2,#4a4540);border-radius:6px}',
+      '.vera-graph-host ::-webkit-scrollbar-thumb:hover{background:var(--dim2,#8a7e70)}',
+      '.vera-graph-host ::-webkit-scrollbar-corner{background:transparent}',
       '.vg-left{width:220px;max-width:100%;flex-shrink:0;background:var(--bg1,#1f1d1a);border-right:1px solid var(--border,#3a3530);display:flex;flex-direction:column;overflow:hidden;transition:width .2s ease,min-width .2s ease}',
       '.vg-sb-panel .vg-left{width:100%!important;max-width:100%!important;border-right:none!important;flex:1}',
       '.vg-left.collapsed{width:32px;min-width:32px}',
@@ -440,7 +451,6 @@
       '.vg-left.collapsed .vg-left-toggle{transform:rotate(180deg)}',
       '.vg-left-hd{padding:6px 10px;border-bottom:1px solid var(--border,#3a3530);font-size:9px;color:var(--dim,#6a6058);text-transform:uppercase;letter-spacing:.8px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}',
       '.vg-left-body{flex:1;overflow-y:auto;padding:6px 8px}',
-      '.vg-left-body::-webkit-scrollbar{width:3px} .vg-left-body::-webkit-scrollbar-thumb{background:var(--border2,#4a4540)}',
       '.vg-sl{font-size:8.5px;letter-spacing:.08em;color:var(--dim,#6a6058);text-transform:uppercase;margin:8px 0 4px;display:flex;align-items:center;gap:5px}',
       '.vg-chips{display:flex;flex-wrap:wrap;gap:2px;margin-bottom:4px}',
       '.vg-chip{font-family:var(--mono,monospace);font-size:8px;padding:1px 6px;border-radius:8px;border:1px solid var(--border,#3a3530);background:transparent;color:var(--dim,#6a6058);cursor:pointer;user-select:none;transition:all .12s;white-space:nowrap}',
@@ -484,7 +494,6 @@
       '.vg-sidebar.collapsed .vg-sb-panels{width:0}',
       '.vg-sb-panel{flex:1;overflow-y:auto;display:none;flex-direction:column}',
       '.vg-sb-panel.on{display:flex}',
-      '.vg-sb-panel::-webkit-scrollbar{width:4px} .vg-sb-panel::-webkit-scrollbar-thumb{background:var(--border2,#4a4540)}',
       '.vg-sb-panel-hd{padding:7px 10px;border-bottom:1px solid var(--border,#3a3530);font-size:9px;color:var(--dim,#6a6058);text-transform:uppercase;letter-spacing:.8px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}',
       '.vg-sb-panel-body{flex:1;overflow-y:auto;padding:8px 10px}',
       // ── Bottom drawers ─────────────────────────────────────────────────────
@@ -506,7 +515,6 @@
       '.vg-bd-panel.on{display:flex}',
       // Terminal panel
       '.vg-bd-term{flex:1;overflow-y:auto;padding:5px 8px;font-family:var(--mono,ui-monospace,monospace);font-size:9px;line-height:1.55;background:var(--bg0,#181614)}',
-      '.vg-bd-term::-webkit-scrollbar{width:3px} .vg-bd-term::-webkit-scrollbar-thumb{background:var(--border2,#4a4540)}',
       '.vg-bd-term-bar{display:flex;align-items:center;gap:6px;padding:2px 8px;border-bottom:1px solid var(--border,#3a3530);background:var(--bg1,#1f1d1a);font-size:8.5px;flex-shrink:0}',
       '.vg-bd-term-bar button{font-size:8px;padding:1px 6px;background:var(--bg2,#272421);border:1px solid var(--border,#3a3530);color:var(--dim,#6a6058);border-radius:2px;cursor:pointer}',
       '.vg-bd-term-bar button:hover{border-color:var(--acc,#5a9e8f);color:var(--acc,#5a9e8f)}',
@@ -521,7 +529,6 @@
       '.vg-bd-tbl-bar input{flex:1;min-width:0;font-size:9px;padding:2px 5px;background:var(--bg0,#181614);border:1px solid var(--border,#3a3530);color:var(--text,#ddd5c8);border-radius:2px}',
       // Content panel
       '.vg-bd-content{flex:1;overflow-y:auto;padding:10px 14px;font-size:11px;line-height:1.65;color:var(--text,#ddd5c8);white-space:pre-wrap;word-break:break-word;font-family:var(--sans,system-ui,sans-serif);background:var(--bg0,#181614)}',
-      '.vg-bd-content::-webkit-scrollbar{width:4px} .vg-bd-content::-webkit-scrollbar-thumb{background:var(--border2,#4a4540)}',
       '.vg-bd-content-bar{display:flex;align-items:center;gap:8px;padding:4px 8px;border-bottom:1px solid var(--border,#3a3530);background:var(--bg1,#1f1d1a);font-size:9px;flex-shrink:0}',
       '.vg-bd-content-title{font-size:10px;font-weight:600;color:var(--acc,#5a9e8f);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
     ].join('\n');

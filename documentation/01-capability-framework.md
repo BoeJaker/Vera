@@ -296,17 +296,19 @@ A small set of capabilities is built into `capability_orchestration.py` itself:
 | `llm.route` | `POST /llm/route` | Route a prompt to best instance |
 | `echo` | `POST /debug/echo` | Echo with timestamp |
 
-Plus capabilities from any companion module that loads at startup: `capabilities.py` (the full LLM group), `data_fabric.py` (`fabric.*`), `memory.py` and `memory_hooks.py` (`memory.*`), and so on.
+Plus capabilities from any companion module that loads at startup: `capabilities/capabilities.py` (the full LLM group), `fabric/data_fabric.py` (`fabric.*`), `fabric/memory.py` and `fabric/memory_hooks.py` (`memory.*`), and so on.
 
 ---
 
 ## 11. Module loading
 
-At startup, `capability_orchestration.py` scans for sibling Python files (in the same directory) matching common patterns (`*_capabilities.py`, `data_fabric*.py`, `memory*.py`, `agents.py`, etc.) and imports them. Each module that defines `@capability`-decorated functions or calls `register_ui()` registers its content as a side effect of import.
+At startup, `capability_orchestration.py` loads companion modules from an **explicit, ordered list** — `_module_files` — using `importlib`. Each entry is a path to a file inside one of the subpackages (`fabric/data_fabric.py`, `agents/agents.py`, `workers/cluster.py`, `dream/dream_capabilities.py`, …). Each module registers its content as a side effect of import: defining `@capability`-decorated functions or calling `register_ui()`.
 
-Modules can also pull in their own siblings. There's no manifest — registration is purely the side-effect of importing a module that uses the decorator.
+The list is order-sensitive — modules that others depend on (the fabric, memory, the cluster) load first. A `sys.modules` guard means each module loads at most once. The `VERA_MODULES` env var appends extra comma-separated paths to the end of the list, so you can add a module without editing the core.
 
-If a module fails to import, the orchestrator logs the error and continues. The harness UI's "Loaded modules" panel shows the status of every attempted import, with the failure reason for any that crashed.
+Some modules ship **commented out** in the list — they're opt-in (e.g. `vllm/vllm_capabilities.py` and `openclaw/openclaw_capabilities.py`). Enable one by uncommenting it or naming it in `VERA_MODULES`.
+
+If a module isn't found or fails to import, the orchestrator logs the error and continues. Each successful load logs `✓ <module>  caps=<n> ui_panels=<n>`, and the harness UI's "Loaded modules" panel shows the status of every attempted import, with the failure reason for any that crashed.
 
 ---
 

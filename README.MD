@@ -1,7 +1,7 @@
 
 # **Vera:** 
 <!-- Yet another agentic harness (Yaass) -->
-### A Distributed Capability Runtime for Autonomous Systems Orchestration, Semantic Memory, Heterogeneous LLM Execution, and Multi-source Reasoning-Action Loops.
+### A Distributed Capability Runtime for Autonomous Systems Orchestration, Semantic Memory, Agnostic LLM Execution, and Multi-source Reasoning-Action Loops.
 
 ---
 > [!IMPORTANT]  
@@ -73,7 +73,7 @@ Core Mechanisms: Self-Modification Engine, Multi Agent Congnition, Proactive Ref
 
 ---
 
-Vera is built on FastAPI, with a single abstraction at its core — the `@capability` decorator — that serves as the sole registration primitive for every function in the system. From that primitive it builds a multi-backend AI platform: a heterogeneous LLM cluster, a DAG execution engine, a polyglot data fabric, a memory graph, and a harness UI that any module can extend.
+Vera is built on FastAPI, with a single abstraction at its core — the `@capability` decorator — that serves as the sole registration primitive for every function in the system. From that primitive it builds a multi-backend AI platform: a backend-agnostic LLM cluster, a DAG execution engine, a polyglot data fabric, a memory graph, and a harness UI that any module can extend.
 
 ![Alt text](https://github.com/BoeJaker/Vera/blob/main/images/dashboard.jpg)
 
@@ -100,7 +100,7 @@ The net effect is a single-file orchestration core that turns any Python functio
 
 ## What it does
 
-**LLM orchestration.** Vera manages a heterogeneous cluster of LLM instances — Ollama nodes, VLLM servers, hosted LLM APIs — with health-checking, load balancing, and automatic failover. If an active node goes down mid-request, the call transparently retries on an available node.
+**LLM orchestration.** Vera manages a backend-agnostic cluster of LLM instances — Ollama nodes, VLLM servers, hosted LLM APIs — with health-checking, load balancing, and automatic failover. If an active node goes down mid-request, the call transparently retries on an available node.
 
 **DAG execution.** Beyond simple request-response, Vera includes a DAG execution engine. Multi-step workflows are directed acyclic graphs of capabilities, executed sequentially, in parallel branches, or conditionally, threading a shared state dictionary through each node. An LLM-powered DAG planner takes a natural-language goal, inspects the available capability schemas, and produces an executable plan. A *supervised* mode inserts LLM checkpoints between steps to decide whether to continue, retry, or abort; a *stepwise* mode has the LLM plan one step at a time in an agentic loop. Human-in-the-loop approval is supported via Telegram or SSE streaming with configurable auto-approve timeouts.
 
@@ -150,54 +150,50 @@ The net effect is a single-file orchestration core that turns any Python functio
 
 ```
 Vera/vera/
-├── capability_orchestration.py     # The core: @capability, DAG engine, lifespan, routes
-├── capability_orchestration.html   # The harness UI (single-page, panel-aware)
-├── config.py                       # Single source of truth for all backend URLs
-├── cluster.py                      # LLM cluster monitor + load-aware routing (Ollama / VLLM / APIs)
-├── workers.py                      # Worker registry, metrics, /cluster/jobs feed
-├── capabilities.py                 # Built-in LLM/system caps (loaded at startup)
-├── context.py                      # Toolkit assembly for agentic loops
+├── capability_orchestration.py      # The core: @capability, DAG engine, lifespan, routes
+├── capability_orchestration.html    # The harness UI (single-page, panel-aware)
+├── config.py                        # Single source of truth for all backend URLs
+├── output_formats.py                # Shared REVIEW_STYLES / export profiles
+├── agent_loop_output_capabilities.py + agent_loop_ouput.js  # <vera-agent-loop-output> renderer
+├── vera_graph.js / vera-ui.js / vera_panel_bridge.js        # Shared UI primitives
 │
-├── data_fabric.py                  # Polyglot data fabric core
-├── data_fabric_collectors.py       # Source connectors (RSS, API, DB, etc.)
-├── fabric_web_acquisition.py       # Deep web crawl + entity graph
-├── fabric_panel.html               # Fabric UI panel
+├── capabilities/     # Built-in LLM/system caps, cap hub, per-cap usage tracking
+├── core/   data/     # (reserved)
 │
-├── memory.py                       # MemoryRecord + backends (Neo4j + vector)
-├── memory_hooks.py                 # Session graph helpers + memory.* caps
-├── memory_second_order.py          # Inferred edges (co-occurrence, similarity)
-├── memory_graph_panel.html         # Session graph UI
+│   ── Compute & LLM backends ─────────────────────────────────────────────
+├── workers/          # Worker registry, LLM cluster routing, jobs, syslog, docker   → 04·13·22
+├── vllm/             # vLLM backend integration                                     → 21
+├── execution/        # Shell / PowerShell / SSH / code exec + network mapping        → 12
+├── machine learning/ # Neural-net workshop + training engine                        → 16
+├── markets/          # CCXT OHLCV ingestion                                         → 15
+├── mesh/             # ESP32 / edge device fleet                                     → 14
 │
-├── agents.py                       # Chat agents, presets, voice, tool_mode
-├── chat_panel.html                 # Conversational UI with agent loops
-├── chat_panels_capabilities.py
+│   ── Knowledge & memory ─────────────────────────────────────────────────
+├── fabric/           # Polyglot data fabric + memory graph + context assembly        → 05·06
+├── vector browser/   # Chroma / FAISS audit & browser                               → 25
+├── skills/           # Skills + domain ontologies (+ OWL)                           → 18
+├── ontologies/       # Capability ↔ capability relationship matrix                  → 18
+├── research/         # Research pipeline server + fabric bridge                      → 07
+├── worldview/        # JEPA world-model module                                      → 11
 │
-├── ide_capabilities.py             # IDE sandbox, agent presets (Thinker/Writer/Analyser)
-├── ide_code_capabilities.py        # Coding-agent tool dispatch + whitelist
-├── ide_inspect_capabilities.py     # Source inspection, capability generation
-├── ide_panel.html                  # Full IDE harness panel
+│   ── Agents & cognition ─────────────────────────────────────────────────
+├── agents/           # Agent personas + agentic loop                                → 19
+├── chat/             # Conversational UI + panel bridge                             → 19
+├── dream/            # Autonomous idle-time reflection engine + projects            → 17
+├── ide/              # IDE workspace, coding agents, inspection                      → 08
+├── dag/              # DAG Workshop panel + store                                   → 03
 │
-├── research_capabilities.py        # Wraps researcher_api as @capability functions
-├── research_vera_bridge.py         # researcher_api → Vera bridge (LLM + fabric)
-├── research_fabric.py              # Research artifact persistence to fabric
-├── research_recall_capabilities.py # Semantic recall over the research corpus
-├── research_activity_capabilities.py
-├── researcher_api.py               # Standalone research pipeline server (:8765)
-├── research_panel.html
-├── notebook_panel.html
-├── nlp_panel.html
-│
-├── web_capabilities.py             # web.search / web.fetch / web.crawl as caps
-├── cap_ontology.py                 # Pairwise cap-to-cap relationship matrix
-├── cap_hub.html                    # Capability hub + cap_ontology UI
-├── cap_tracking.py                 # Per-cap usage stats + rate limiting
-│
-├── vera_graph.js                   # Reusable graph web component (window.veraUI.Graph)
-├── vera-ui.js                      # Other shared UI primitives
-├── vera_panel_bridge.js            # iframe ↔ harness message bridge
-│
-└── session_integration.py          # Cross-module session graph integration
+│   ── UI, integrations & ops ─────────────────────────────────────────────
+├── elements/         # Reusable UI custom elements (flow builder, widgets)          → 20
+├── ui builder/       # Theme system, panel CRUD, capability ACLs                     → 02·26
+├── calendar/  email/  telegram/  accounts/   # Outward integrations                 → 23
+├── security/         # Fernet-sealed secrets                                        → 29
+├── web/              # web.search/fetch/crawl + Playwright browser                   → 24
+├── openclaw/         # OpenClaw agentic-gateway bridge                              → 27
+└── render/           # pandoc-backed document export                                → 28
 ```
+
+> The `→ NN` markers point to the numbered guides in the [Documentation](#documentation) table below. `core/` and `data/` are reserved package slots. Each package registers its capabilities and UI panels as a side effect of import — there is no central manifest.
 
 ---
 
@@ -226,8 +222,10 @@ GPU Node:
 pip install fastapi uvicorn httpx redis asyncpg chromadb neo4j
 
 # 2. Set backend URLs (or rely on defaults in config.py)
-export REDIS_URL=redis://llm.int:6379
-export POSTGRES_URL=postgresql://admin:admin@llm.int:5433/llm
+#    BACKEND_HOST is the single internal-domain knob; service URLs build on it.
+export BACKEND_HOST=your-host.lan
+export REDIS_URL=redis://$BACKEND_HOST:6379
+export POSTGRES_URL=postgresql://admin:admin@$BACKEND_HOST:5433/llm
 export OLLAMA_GPU_URL=http://192.168.0.250:11435
 
 # 3. Start the orchestrator
@@ -273,18 +271,61 @@ The decorator accepts many other options for distributed dispatch, retries, memo
 
 ## Documentation
 
-| Document | What it covers |
+The full guide set lives in [`documentation/`](documentation/), grouped by theme below.
+
+**Core**
+
+| Doc | What it covers |
 |---|---|
-| [Capability Framework](https://github.com/BoeJaker/Vera/blob/main/documentation/01-capability-framework.md) | The `@capability` decorator, registry, MCP, REST, retries, distributed dispatch, schema generation |
-| [Harness UI](https://github.com/BoeJaker/Vera/blob/main/documentation/02-harness-ui.md) | The single-page harness, panel registration, iframe mounting, themes |
-| [DAG Engine](https://github.com/BoeJaker/Vera/blob/main/documentation/03-dag-engine.md) | DAG syntax, run modes, planner, supervised/stepwise execution, HITL streaming |
-| [LLM Cluster](https://github.com/BoeJaker/Vera/blob/main/documentation/04-ollama-cluster.md) | Heterogeneous LLM cluster (Ollama / VLLM / APIs), load-aware routing, failover, VRAM tracking |
-| [Memory Graph](https://github.com/BoeJaker/Vera/blob/main/documentation/05-memory-graph.md) | MemoryRecord, FOLLOWS_ACTIVITY chains, session graphs, second-order edges |
-| [Data Fabric](https://github.com/BoeJaker/Vera/blob/main/documentation/06-data-fabric.md) | Polyglot fabric, ingestion pipeline, query DSL, entity graph, sources |
-| [Research System](https://github.com/BoeJaker/Vera/blob/main/documentation/07-research.md) | researcher_api, 11 pipeline caps, notebook, NLP addon, recall |
-| [IDE Module](https://github.com/BoeJaker/Vera/blob/main/documentation/08-ide.md) | Workspace, agent presets, tool dispatch, sandbox, capability generation |
-| [Galaxy Graph](https://github.com/BoeJaker/Vera/blob/main/documentation/09-galaxy-graph.md) | `vera-graph.js` web component, layouts, action registry, live updates |
-| [Configuration](https://github.com/BoeJaker/Vera/blob/main/documentation/10-configuration.md) | Environment variables, `cfg`, networking, backend URLs |
+| [01 · Capability Framework](documentation/01-capability-framework.md) | The `@capability` decorator, registry, MCP, REST, retries, distributed dispatch, schema generation |
+| [02 · Harness UI](documentation/02-harness-ui.md) | The single-page harness, panel registration, iframe mounting, themes |
+| [03 · DAG Engine](documentation/03-dag-engine.md) | DAG syntax, run modes, planner, supervised/stepwise execution, HITL streaming |
+| [10 · Configuration](documentation/10-configuration.md) | Environment variables, `cfg`, networking, backend URLs |
+
+**LLM & compute**
+
+| Doc | What it covers |
+|---|---|
+| [04 · LLM Cluster](documentation/04-ollama-cluster.md) | Backend-agnostic LLM cluster (Ollama / VLLM / APIs), load-aware routing, failover, VRAM tracking |
+| [21 · vLLM Backend](documentation/21-vllm.md) | OpenAI-compatible vLLM integration, PagedAttention, LoRA, quantisation |
+| [13 · Docker](documentation/13-docker.md) | Server-side Docker backend, engine proxy, sandbox-gated lifecycle, Vera workers |
+| [22 · Workers, Jobs & Syslog](documentation/22-workers-jobs-syslog.md) | Worker registry, durable job persistence/recovery, syslog feed + LLM monitor |
+| [12 · Execution & Network Mapping](documentation/12-execution.md) | Sandboxed shell/PowerShell/SSH/code exec; `netscan.*` discovery + topology graph |
+| [16 · Machine Learning](documentation/16-machine-learning.md) | Neural-net workshop (graph modules) + pure-NumPy training engine + datasets |
+| [15 · Markets](documentation/15-markets.md) | CCXT OHLCV ingestion, watchlist, fabric-backed bars |
+| [14 · Device Mesh](documentation/14-mesh.md) | ESP32 / edge fleet — durable job queue, multi-transport, telemetry → fabric |
+
+**Knowledge & memory**
+
+| Doc | What it covers |
+|---|---|
+| [05 · Memory Graph](documentation/05-memory-graph.md) | MemoryRecord, FOLLOWS_ACTIVITY chains, session graphs, second-order edges |
+| [06 · Data Fabric](documentation/06-data-fabric.md) | Polyglot fabric, ingestion pipeline, query DSL, entity graph, sources |
+| [25 · Vector Browser](documentation/25-vector-browser.md) | Chroma / FAISS audit, browse, dimension-alignment checks |
+| [18 · Skills & Ontologies](documentation/18-skills-ontologies.md) | Prompt skills, domain ontologies (+ OWL), the capability-relationship matrix |
+| [07 · Research System](documentation/07-research.md) | researcher_api, pipeline caps, notebook, NLP addon, recall |
+| [11 · Worldview](documentation/11-worldview.md) | The JEPA world-model module |
+
+**Agents & cognition**
+
+| Doc | What it covers |
+|---|---|
+| [19 · Agents & Chat](documentation/19-agents-chat.md) | Agent personas, `tool_mode`/`domain_caps`, the V4 agentic loop, shared renderer, voice |
+| [17 · Dream](documentation/17-dream.md) | Autonomous idle-time reflection — triggers, sensors, stages, HITL, reviews |
+| [08 · IDE Module](documentation/08-ide.md) | Workspace, agent presets, tool dispatch, sandbox, capability generation |
+
+**UI, integrations & ops**
+
+| Doc | What it covers |
+|---|---|
+| [09 · Galaxy Graph](documentation/09-galaxy-graph.md) | `vera-graph.js` web component, layouts, action registry, live updates |
+| [20 · Flow Builder & UI Elements](documentation/20-flow-builder.md) | The reusable `<vera-flow-builder>` element + provider pattern |
+| [26 · UI Builder](documentation/26-ui-builder.md) | Theme system, runtime panel CRUD, capability ACL scopes |
+| [23 · Integrations](documentation/23-integrations.md) | Calendar, Email, Telegram, and the shared Accounts registry |
+| [24 · Web & Browser](documentation/24-web-browser.md) | `web.search/fetch/crawl` + Playwright browser automation |
+| [27 · OpenClaw](documentation/27-openclaw.md) | Bridge to an external OpenClaw agentic gateway |
+| [28 · Render](documentation/28-render.md) | pandoc-backed document export (DOCX/PDF/…) |
+| [29 · Security & Secrets](documentation/29-security.md) | Fernet sealing for stored credentials |
 
 ---
 

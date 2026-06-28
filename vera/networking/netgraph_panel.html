@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dusk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Vera / Net Policy</title>
+<script src="https://unpkg.com/layout-base/layout-base.js"></script>
+<script src="https://unpkg.com/cose-base/cose-base.js"></script>
+<script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+<script src="https://unpkg.com/cytoscape-cose-bilkent@4.1.0/cytoscape-cose-bilkent.js"></script>
+<style>
+:root{--bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;--border:#3a3530;--border2:#4a4540;--acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--acc4:#9e8fa0;--ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;--gpu:#c97a5a;--text:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;--mono:'JetBrains Mono','Fira Mono',monospace;--sans:'Inter',system-ui,sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg0);color:var(--text);font:13px/1.45 'ui-monospace','Menlo',monospace;overflow:hidden}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+select{font:inherit;color:inherit;background:var(--bg0);border:1px solid var(--border);border-radius:5px;padding:6px 8px;outline:none}
+input{font:inherit;color:inherit;background:var(--bg0);border:1px solid var(--border);border-radius:5px;padding:8px 10px;outline:none;width:100%}
+#shell{display:flex;flex-direction:column;height:100vh;height:100dvh}
+#top{display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--bg1);border-bottom:1px solid var(--border);flex-wrap:wrap;flex-shrink:0}
+.logo{color:var(--acc);font-weight:700;white-space:nowrap}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border-radius:6px;background:var(--bg3);border:1px solid var(--border2);color:var(--text);font-size:12px;white-space:nowrap}
+.btn:hover{border-color:var(--acc)}.btn.on{background:var(--acc);border-color:var(--acc);color:#06121c;font-weight:700}
+.btn.sm{padding:5px 9px;font-size:11px}.btn.danger{color:var(--err);border-color:var(--err)}.btn:disabled{opacity:.4}
+.spacer{flex:1}
+#main{flex:1;position:relative;min-height:0}
+#cy{position:absolute;inset:0}
+#hint{position:absolute;top:8px;left:50%;transform:translateX(-50%);background:var(--bg1);border:1px solid var(--border2);border-radius:20px;padding:5px 14px;font-size:11px;color:var(--dim2);z-index:5;white-space:nowrap;opacity:0;transition:.2s}
+#hint.on{opacity:1}
+#legend{position:absolute;bottom:8px;left:8px;background:rgba(19,21,26,.9);border:1px solid var(--border);border-radius:7px;padding:7px 9px;font-size:10px;color:var(--dim2);display:flex;flex-direction:column;gap:3px;z-index:5}
+.lg{display:flex;align-items:center;gap:5px}.dot{width:9px;height:9px;border-radius:50%}
+#info{position:absolute;top:0;right:0;height:100%;width:300px;max-width:88vw;background:var(--bg1);border-left:1px solid var(--border2);transform:translateX(105%);transition:.2s;z-index:8;display:flex;flex-direction:column;overflow:hidden}
+#info.on{transform:none}
+@media(max-width:560px){#info{top:auto;bottom:0;left:0;right:0;height:62vh;width:100%;max-width:100%;border-left:none;border-top:1px solid var(--border2);border-radius:14px 14px 0 0;transform:translateY(105%)}#info.on{transform:none}}
+#info .hd{display:flex;align-items:center;gap:8px;padding:12px;border-bottom:1px solid var(--border)}
+#info .hd .t{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#info .bd{padding:12px;overflow-y:auto;display:flex;flex-direction:column;gap:10px}
+.kvp{font-size:11px;color:var(--dim2)}.kvp b{color:var(--text)}
+.field{display:flex;flex-direction:column;gap:5px}.field label{font-size:10px;color:var(--dim2);text-transform:uppercase}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:30;background:var(--bg3);border:1px solid var(--border2);padding:10px 16px;border-radius:8px;font-size:12px;opacity:0;transition:.2s;pointer-events:none}
+.toast.on{opacity:1}.toast.err{border-color:var(--err);color:var(--err)}
+</style>
+<script src="/ui/vera-ui.js"></script>
+</head>
+<body>
+<div id="shell">
+  <div id="top">
+    <span class="logo">🕸 Net Policy</span>
+    <select id="clusterSel" onchange="load()"></select>
+    <select id="dockerSel" onchange="load()"><option value="">no docker host</option></select>
+    <button class="btn sm" onclick="load()">⟳</button>
+    <span class="spacer"></span>
+    <button class="btn sm" id="connBtn" onclick="toggleConnect()">＋ Connect</button>
+    <button class="btn sm danger" id="cutBtn" onclick="cutSelected()" disabled>✂ Cut</button>
+  </div>
+  <div id="main">
+    <div id="cy"></div>
+    <div id="hint"></div>
+    <div id="legend">
+      <div class="lg"><span class="dot" style="background:#fb923c"></span>PVE node</div>
+      <div class="lg"><span class="dot" style="background:#6ea8d8"></span>Guest (VM/LXC)</div>
+      <div class="lg"><span class="dot" style="background:#38bdf8"></span>Docker network</div>
+      <div class="lg"><span class="dot" style="background:#a78bfa"></span>Container</div>
+      <div class="lg"><span class="dot" style="background:#5ec9a0"></span>allow &nbsp;<span class="dot" style="background:#e06060"></span>deny</div>
+    </div>
+  </div>
+</div>
+
+<aside id="info">
+  <div class="hd"><span class="t" id="infoT">—</span><span class="spacer"></span><button class="btn sm" onclick="closeInfo()">✕</button></div>
+  <div class="bd" id="infoB"></div>
+</aside>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const $=s=>document.querySelector(s);
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function toast(m,e){const t=$('#toast');t.textContent=m;t.className='toast on'+(e?' err':'');clearTimeout(t._h);t._h=setTimeout(()=>t.className='toast',2800);}
+function hint(m){const h=$('#hint');if(m){h.textContent=m;h.className='on';}else h.className='';}
+async function api(p,m='POST',b){const o={method:m,headers:{'Content-Type':'application/json'}};if(b!==undefined)o.body=JSON.stringify(b||{});const r=await fetch(p,o);if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}
+
+let cy=null, TOPO=null, connectMode=false, armed=null, selEdge=null;
+const KCOL={pve_node:'#fb923c',guest:'#6ea8d8',dnet:'#38bdf8',container:'#a78bfa',cidr:'#8a8f98'};
+
+async function boot(){
+  let cl={}; try{ cl=await api('/proxmox/cluster/list','GET'); }catch(e){}
+  const cs=cl.clusters||[]; $('#clusterSel').innerHTML=cs.map(c=>`<option value="${esc(c.id)}">${esc(c.label||c.id)}</option>`).join('')||'<option value="">no cluster</option>';
+  let dh={}; try{ dh=await api('/workers/docker/hosts/list','GET'); }catch(e){ try{ dh=await api('/docker/hosts/list','GET'); }catch(_){ } }
+  const hosts=(dh.hosts||dh.items||[]); $('#dockerSel').innerHTML='<option value="">no docker host</option>'+hosts.map(h=>`<option value="${esc(h.id)}">${esc(h.label||h.id)}</option>`).join('');
+  load();
+}
+
+async function load(){
+  const cluster_id=$('#clusterSel').value, docker_host_id=$('#dockerSel').value;
+  let t; try{ t=await api('/netgraph/topology','POST',{cluster_id,docker_host_id}); }catch(e){ return toast('topology failed: '+e.message,true); }
+  TOPO=t; render(t);
+}
+
+function render(t){
+  const els=[];
+  t.nodes.forEach(n=>els.push({data:{...n}}));
+  t.edges.forEach(e=>els.push({data:{...e}}));
+  if(cy) cy.destroy();
+  cy=cytoscape({container:$('#cy'),elements:els,wheelSensitivity:.2,
+    style:[
+      {selector:'node',style:{'background-color':e=>KCOL[e.data('kind')]||'#8a7e70','label':'data(label)','color':'#c9d2de','font-size':'8px','text-valign':'bottom','text-margin-y':'3px','width':e=>e.data('kind')==='pve_node'?26:e.data('kind')==='dnet'?22:16,'height':e=>e.data('kind')==='pve_node'?26:e.data('kind')==='dnet'?22:16,'border-width':1,'border-color':'rgba(255,255,255,.25)'}},
+      {selector:'node[kind="dnet"]',style:{'shape':'round-rectangle'}},
+      {selector:'node[kind="cidr"]',style:{'shape':'diamond'}},
+      {selector:':selected',style:{'border-width':3,'border-color':'#fff'}},
+      {selector:'edge',style:{'width':1.3,'line-color':'#4a5160','target-arrow-color':'#4a5160','curve-style':'bezier','target-arrow-shape':'triangle','arrow-scale':.7}},
+      {selector:'edge[rel="member"]',style:{'line-color':'#38bdf8','target-arrow-color':'#38bdf8','line-style':'dashed'}},
+      {selector:'edge[policy="accept"]',style:{'line-color':'#5ec9a0','target-arrow-color':'#5ec9a0'}},
+      {selector:'edge[policy="drop"]',style:{'line-color':'#e06060','target-arrow-color':'#e06060'}},
+      {selector:'edge[policy="reject"]',style:{'line-color':'#e09a55','target-arrow-color':'#e09a55'}},
+      {selector:'edge:selected',style:{'width':3,'line-color':'#fff'}},
+    ],
+    layout:{name:'cose-bilkent',animate:false,nodeDimensionsIncludeLabels:true,idealEdgeLength:70,nodeRepulsion:6000}
+  });
+  cy.on('tap','node',ev=>onNode(ev.target));
+  cy.on('tap','edge',ev=>onEdge(ev.target));
+  cy.on('tap',ev=>{ if(ev.target===cy){ closeInfo(); selEdge=null; $('#cutBtn').disabled=true; } });
+}
+
+function onNode(n){
+  if(connectMode){
+    if(!armed){ armed=n; n.select(); hint('Tap the target to connect "'+n.data('label')+'"'); return; }
+    if(armed.id()===n.id()){ armed=null; n.unselect(); hint('Connect: tap a source node'); return; }
+    doConnect(armed, n); armed=null; cy.$(':selected').unselect(); return;
+  }
+  showNodeInfo(n);
+}
+function onEdge(e){
+  selEdge=e; e.select(); $('#cutBtn').disabled=!(e.data('rel')==='member'||e.data('rel')==='fw');
+  const m=e.data('meta')||{};
+  showInfo(e.data('rel')==='fw'?('Firewall · '+(e.data('policy')||'')):e.data('rel'),
+    `<div class="kvp"><b>${esc(e.source().data('label'))}</b> → <b>${esc(e.target().data('label'))}</b></div>`+
+    (e.data('rel')==='fw'?`<div class="kvp">proto ${esc(m.proto||'any')} · dport ${esc(m.dport||'any')} · pos ${esc(m.pos)}</div>`:'')+
+    (e.data('rel')==='member'?`<div class="kvp">network membership — Cut to disconnect</div>`:'')+
+    ((e.data('rel')==='member'||e.data('rel')==='fw')?`<button class="btn danger" onclick="cutSelected()">✂ Cut connection</button>`:''));
+}
+
+function showNodeInfo(n){
+  const d=n.data();
+  let h=`<div class="kvp"><b>Kind:</b> ${esc(d.kind)}</div>`;
+  if(d.kind==='guest') h+=`<div class="kvp"><b>VMID:</b> ${esc(d.vmid)} · ${esc(d.gtype)} · ${esc(d.status)} @ ${esc(d.node)}</div>`;
+  if(d.kind==='dnet') h+=`<div class="kvp"><b>Driver:</b> ${esc(d.driver||'')}</div>`;
+  h+=`<div class="kvp" style="margin-top:4px;color:var(--dim)">Use ＋ Connect, then tap another node to link them.</div>`;
+  showInfo(d.label, h);
+}
+function showInfo(t,html){ $('#infoT').textContent=t; $('#infoB').innerHTML=html; $('#info').classList.add('on'); }
+function closeInfo(){ $('#info').classList.remove('on'); }
+
+function toggleConnect(){
+  connectMode=!connectMode; armed=null; cy&&cy.$(':selected').unselect();
+  $('#connBtn').classList.toggle('on',connectMode);
+  hint(connectMode?'Connect: tap a source node, then a target':'');
+}
+
+async function doConnect(a,b){
+  const ka=a.data('kind'), kb=b.data('kind');
+  // Docker: container ↔ network
+  const pair=[ka,kb].sort().join('+');
+  if(pair==='container+dnet'){
+    const cont=(ka==='container'?a:b).data('container_id');
+    const net=(ka==='dnet'?a:b).data('net_id');
+    const host=$('#dockerSel').value; if(!host) return toast('select a docker host',true);
+    try{ const r=await api('/netgraph/edge/allow','POST',{kind:'docker',host_id:host,container:cont,network:net});
+      if(r.error) return toast(r.error,true); toast('connected'); load(); }catch(e){ toast(e.message,true); }
+    return;
+  }
+  // Proxmox firewall: <something> → guest  → open ALLOW rule form
+  const guest = ka==='guest'?a : kb==='guest'?b : null;
+  if(guest){
+    const other = guest===a?b:a;
+    fwForm(guest, other.data('kind')==='cidr'?other.data('label'):'');
+    return;
+  }
+  toast('unsupported pair: '+pair,true);
+}
+
+function fwForm(guest, srcDefault){
+  const d=guest.data();
+  showInfo('Allow → '+d.label, `
+    <div class="kvp">Add an ACCEPT firewall rule on guest <b>${esc(d.label)}</b> (vmid ${esc(d.vmid)}).</div>
+    <div class="field"><label>Source (CIDR/IP/ipset)</label><input id="fwSrc" value="${esc(srcDefault||'')}" placeholder="10.0.0.0/24"></div>
+    <div class="field"><label>Proto</label><input id="fwProto" placeholder="tcp (optional)"></div>
+    <div class="field"><label>Dest port</label><input id="fwDport" placeholder="443 (optional)"></div>
+    <button class="btn on" onclick='fwAllow(${JSON.stringify({vmid:d.vmid,node:d.node,gtype:d.gtype})})'>Add ACCEPT rule</button>`);
+}
+async function fwAllow(g){
+  const cluster_id=$('#clusterSel').value;
+  try{ const r=await api('/netgraph/edge/allow','POST',{kind:'pve',cluster_id,node:g.node,guest_type:g.gtype,vmid:g.vmid,source:$('#fwSrc').value.trim(),proto:$('#fwProto').value.trim(),dport:$('#fwDport').value.trim()});
+    if(r.error) return toast(r.error,true); toast('rule added'); closeInfo(); load(); }catch(e){ toast(e.message,true); }
+}
+
+async function cutSelected(){
+  if(!selEdge) return;
+  const e=selEdge, m=e.data('meta')||{};
+  if(e.data('rel')==='member'){
+    const host=$('#dockerSel').value;
+    const cont=e.source().data('container_id'), net=e.target().data('net_id');
+    try{ const r=await api('/netgraph/edge/deny','POST',{kind:'docker',host_id:host,container:cont,network:net});
+      if(r.error) return toast(r.error,true); toast('disconnected'); load(); }catch(ex){ toast(ex.message,true); }
+  } else if(e.data('rel')==='fw'){
+    const cluster_id=$('#clusterSel').value;
+    if(!confirm('Delete firewall rule pos '+m.pos+'?')) return;
+    try{ const r=await api('/netgraph/edge/deny','POST',{kind:'pve',cluster_id,node:m.node,guest_type:m.gtype,vmid:m.vmid,pos:m.pos});
+      if(r.error) return toast(r.error,true); toast('rule removed'); load(); }catch(ex){ toast(ex.message,true); }
+  }
+  selEdge=null; $('#cutBtn').disabled=true;
+}
+document.addEventListener('keydown',e=>{ if((e.key==='Delete'||e.key==='Backspace')&&selEdge){ e.preventDefault(); cutSelected(); }});
+boot();
+</script>
+</body>
+</html>

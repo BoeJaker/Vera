@@ -116,10 +116,73 @@ details.lp-sub:not([open])>summary{opacity:.8}
 .src-chip{display:inline-flex;align-items:center;padding:1px 7px;border-radius:10px;font-size:9px;cursor:pointer;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);transition:.14s;user-select:none}
 .src-chip.on{background:rgba(90,158,143,.18);border-color:var(--acc);color:var(--acc)}
 
+/* ── Collapsible rail sections ─────────────────────────────────────
+   The .sec headers in the Config / Context / Loop panes are upgraded at
+   runtime (_initRailSections) into clickable collapse toggles with a caret.
+   The siblings that follow each header are wrapped into a .sec-body. */
+.sec-toggle{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;border-radius:4px;margin:0 -3px;padding-left:3px;padding-right:3px;transition:color .14s,background .14s}
+.sec-toggle:hover{color:var(--dim2);background:var(--bg2)}
+.sec-caret{display:inline-block;font-size:8px;line-height:1;color:var(--dim2);transition:transform .16s;transform:rotate(90deg)}
+.sec-toggle.collapsed .sec-caret{transform:rotate(0deg)}
+.sec-body{display:flex;flex-direction:column;gap:5px;padding:2px 0 3px}
+.sec-body.collapsed{display:none}
+
+/* ── Option cards — the "multiselect list" look for related toggles ──
+   Each pure-checkbox row in the Config / Context panes is rewritten into a
+   tappable card with a name, a one-line description and a green tick when
+   selected. The underlying <input type=checkbox> (with its id / onchange /
+   checked state) is preserved verbatim inside the label so all existing
+   wiring keeps working — only the presentation changes. */
+.optlist{display:flex;flex-direction:column;gap:5px}
+.opt{position:relative;display:flex;align-items:flex-start;gap:8px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);cursor:pointer;transition:border-color .13s,background .13s}
+.opt:hover{border-color:var(--border2);background:var(--bg3)}
+.opt>input{position:absolute;opacity:0;width:0;height:0;margin:0;pointer-events:none}
+.opt .opt-tick{flex-shrink:0;width:16px;height:16px;margin-top:1px;border:1.5px solid var(--border2);border-radius:5px;display:flex;align-items:center;justify-content:center;transition:background .13s,border-color .13s;background:var(--bg0)}
+.opt .opt-tick::after{content:'';width:4px;height:8px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg) scale(0);transform-origin:center;transition:transform .13s;margin-top:-1px}
+.opt>input:checked ~ .opt-tick{background:var(--ok);border-color:var(--ok)}
+.opt>input:checked ~ .opt-tick::after{transform:rotate(45deg) scale(1)}
+.opt:has(>input:checked){border-color:rgba(109,184,122,.5);background:rgba(109,184,122,.07)}
+.opt-main{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.opt-name{font-size:11px;font-weight:600;color:var(--dim2);line-height:1.2}
+.opt>input:checked ~ .opt-main .opt-name{color:var(--text)}
+.opt-desc{font-size:9px;color:var(--dim);line-height:1.4}
+.opt>input:disabled ~ .opt-tick{opacity:.45}
+.opt.disabled,.opt:has(>input:disabled){opacity:.5;cursor:not-allowed}
+
+/* ── Unified rail form controls ──────────────────────────────────────
+   Number / text / select / textarea inside the rail panes share the same
+   card-like surface as the .opt toggles so Config / Context / Loop read as
+   one system (the Loop pane previously used bare browser defaults). */
+.rpane input[type=number],.rpane input[type=text],.rpane select,.rpane textarea{
+  background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text);
+  font-size:10.5px;padding:5px 8px;transition:border-color .13s,background .13s}
+.rpane input[type=text]:hover,.rpane select:hover,.rpane textarea:hover{border-color:var(--border2);background:var(--bg3)}
+.rpane input[type=number]:focus,.rpane input[type=text]:focus,.rpane select:focus,.rpane textarea:focus{border-color:var(--acc);background:var(--bg2)}
+.rpane select{cursor:pointer;appearance:none;-webkit-appearance:none;padding-right:22px;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 8 8'><path d='M1 2.5L4 5.5L7 2.5' stroke='%238a7e70' fill='none' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat:no-repeat;background-position:right 8px center}
+.rpane select[multiple]{background-image:none;padding-right:8px}
+/* Number / select / text rows become bordered cards too; the control sits
+   inset on bg0. Selects size to their content with the .nlbl filling the rest. */
+.rpane .numrow{border:1px solid var(--border);border-radius:6px;background:var(--bg2);padding:5px 8px;gap:8px;transition:border-color .13s,background .13s}
+.rpane .numrow:hover{border-color:var(--border2);background:var(--bg3)}
+.rpane .numrow>input[type=number],.rpane .numrow>input[type=text],.rpane .numrow>select{background:var(--bg0);border:1px solid var(--border)}
+.rpane .numrow>input[type=number]:hover,.rpane .numrow>input[type=text]:hover,.rpane .numrow>select:hover{border-color:var(--border2);background:var(--bg0)}
+.rpane .numrow>select{flex:0 1 auto;min-width:64px;max-width:62%}
+
+/* ── Chip multiselect ───────────────────────────────────────────────
+   _enhanceMultiSelect replaces a <select multiple> (kept but hidden, so
+   existing selectedOptions reads still work) with tappable toggle chips. */
+.chips{display:flex;flex-wrap:wrap;gap:5px}
+.chip{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:14px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);font-size:10px;cursor:pointer;user-select:none;transition:border-color .13s,background .13s,color .13s}
+.chip:hover{border-color:var(--border2);color:var(--text)}
+.chip.on{background:rgba(90,158,143,.16);border-color:var(--acc);color:var(--acc)}
+.chip.on::before{content:'\2713';font-size:9px;line-height:1}
+.ms-hidden{position:absolute!important;opacity:0;width:0;height:0;pointer-events:none;overflow:hidden}
+#loopV4Box{display:flex;flex-direction:column;gap:5px;padding-top:5px}
+
 /* CENTRE */
 #centre{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
-#agentBar{flex-shrink:0;display:flex;align-items:center;gap:6px;padding:4px 9px;background:var(--bg1);border-bottom:1px solid var(--border);flex-wrap:wrap;min-height:34px}
-#agentBar select{height:25px;font-size:11px}
 .model-pill{display:inline-block;font-family:var(--mono);font-size:8.5px;padding:1px 6px;border-radius:10px;border:1px solid var(--border2);color:var(--acc2);background:rgba(143,184,122,.1);white-space:nowrap}
 .tool-badge{display:inline-block;font-size:8px;padding:1px 5px;border-radius:3px;border:1px solid rgba(90,158,143,.4);color:var(--acc);background:rgba(90,158,143,.08)}
 
@@ -153,11 +216,15 @@ details.lp-sub:not([open])>summary{opacity:.8}
 #jumpToBottomBtn:hover{ background:var(--acc); color:#fff; transform:translateY(-1px); }
 #jumpToBottomBtn .arr{ font-size:13px; line-height:1; }
 .mwrap{display:flex;flex-direction:column;border-bottom:1px solid var(--border);padding:10px 16px;gap:4px}
-/* User questions pin to the top of the scroll area while you read their
-   answer. Each subsequent question pushes the previous one out (standard
-   sticky-section-header pattern). Needs an opaque background so the answer
-   text scrolls cleanly underneath, and a z-index above assistant rows. */
-.mwrap.u{background:#1b1c1a;position:sticky;top:0;z-index:6;box-shadow:0 1px 0 var(--border),0 6px 12px -8px rgba(0,0,0,.55)}
+/* Only the NEWEST user question pins to the top while you read its answer.
+   Older questions scroll normally — making every question sticky piles them
+   all at top:0 (they're flat siblings, so there's no section boundary to
+   release them), and a taller older card then pokes out below the newer one.
+   The .pin class is toggled in _mkMsg so exactly one question is ever stuck.
+   Pinned cards need an opaque background (so answer text scrolls cleanly
+   underneath) and a z-index above assistant rows. */
+.mwrap.u{background:#1b1c1a}
+.mwrap.u.pin{position:sticky;top:0;z-index:6;box-shadow:0 1px 0 var(--border),0 6px 12px -8px rgba(0,0,0,.55)}
 /* Keep a long question from dominating the viewport when pinned — it scrolls
    internally instead. */
 .mwrap.u .msg-body{max-height:34vh;overflow-y:auto}
@@ -262,10 +329,23 @@ details.lp-sub:not([open])>summary{opacity:.8}
 
 /* ctx strip */
 #ctxStrip{flex-shrink:0;display:flex;align-items:center;gap:7px;padding:3px 9px;border-top:1px solid var(--border);background:var(--bg1);min-height:22px;font-size:9px}
+/* The context/"memory controls" strip is hidden at rest and only revealed
+   while the composer is in use — keeps the single-bar layout uncluttered.
+   _initComposerReveal() toggles body.composer-focus on input focus/blur
+   (with a grace period so the strip's own chips/selects stay clickable). */
+#ctxStrip{display:none}
+body.composer-focus #ctxStrip{display:flex}
 #ctxStripTxt{color:var(--dim2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* Input bar */
-#inputBar{flex-shrink:0;display:flex;gap:5px;align-items:flex-end;padding:6px 9px;border-top:1px solid var(--border);background:var(--bg1)}
+#inputBar{flex-shrink:0;display:flex;gap:5px;align-items:flex-end;padding:6px 9px;border-top:1px solid var(--border);background:var(--bg1);position:relative}
+/* Slash-command autocomplete — floats above the input bar. */
+.slash-menu{display:none;position:absolute;bottom:calc(100% + 4px);left:9px;right:9px;max-height:244px;overflow-y:auto;z-index:120;background:var(--bg1);border:1px solid var(--border2);border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.45);padding:4px}
+.slash-hdr{font-size:8.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim);padding:3px 9px 2px}
+.slash-item{display:flex;align-items:baseline;gap:8px;padding:5px 9px;border-radius:5px;cursor:pointer}
+.slash-item.on,.slash-item:hover{background:var(--bg3)}
+.slash-lbl{font-family:var(--mono);font-size:11px;color:var(--acc2);font-weight:600;white-space:nowrap}
+.slash-hint{font-size:9.5px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
 #chatInput{flex:1;min-height:33px;max-height:105px;resize:vertical;font-size:12px;padding:5px 9px;line-height:1.4;background:var(--bg0)}
 .ib{padding:6px 10px;font-size:12px;border-radius:3px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);transition:all .14s;flex-shrink:0;cursor:pointer}
 .ib:hover{border-color:var(--acc);color:var(--acc)}
@@ -456,6 +536,19 @@ body.has-panel #chatStack.resized{ flex:0 0 auto; }
 .code-card .code-lang{color:var(--acc);text-transform:uppercase;letter-spacing:.7px;font-weight:600}
 .code-card .cb-act{padding:1px 6px;font-size:9px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);border-radius:3px;cursor:pointer;transition:all .14s}
 .code-card .cb-act:hover{border-color:var(--acc);color:var(--acc)}
+.code-card .cb-act.run{color:var(--acc2);border-color:var(--acc2)}
+.code-card .cb-act.run:hover{background:var(--acc2);color:var(--bg0)}
+.code-card .cb-act:disabled{opacity:.5;cursor:default}
+.code-card .code-exec-out{border-top:1px solid var(--border);background:var(--bg0);font-family:var(--mono);font-size:11px;line-height:1.5;max-height:340px;overflow:auto}
+.code-card .code-exec-out pre{margin:0;padding:6px 12px;white-space:pre-wrap;word-break:break-word;background:transparent}
+.code-card .code-exec-out .ce-stdout{color:var(--text)}
+.code-card .code-exec-out .ce-stderr{color:#e0a060}
+.code-card .code-exec-out .ce-err{padding:6px 12px;color:#e06060}
+.code-card .code-exec-out .ce-meta{padding:6px 12px;color:var(--dim2);font-size:9.5px}
+.code-card .code-exec-out .ce-foot{padding:5px 12px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center}
+.code-card .code-exec-out .ce-foot .ce-meta{padding:0}
+.code-card .code-exec-out .ce-ok{color:var(--acc2);font-weight:600}
+.code-card .code-exec-out .ce-bad{color:#e06060;font-weight:600}
 
 /* ── DOC CHIPS ─────────────────────────────────────────────────
    Pinned-paste UX: large pastes become chips above the input bar
@@ -527,15 +620,6 @@ body[data-view="minimal"]:not(.has-msgs).has-panel #msgs > .min-welcome{
 body[data-view="minimal"]:not(.has-msgs) #ctxStrip{
   background:var(--bg1);
 }
-/* In minimal mode keep the agent meta (model pill, T:0.7, caps badge)
-   visible — the user wants to confirm which agent is loaded before
-   sending. Only the "0 ctx" counter and ctx-refresh button are hidden
-   because they're not actionable on an empty session. */
-body[data-view="minimal"]:not(.has-msgs) #agentBar{
-  border-bottom:1px solid transparent;background:transparent;
-}
-body[data-view="minimal"]:not(.has-msgs) #agentBar > #ctxCount,
-body[data-view="minimal"]:not(.has-msgs) #agentBar > .btn{display:none}
 /* The minimal welcome line (set by JS) */
 .min-welcome{font-size:18px;color:var(--dim2);text-align:center;letter-spacing:.5px;font-weight:300}
 
@@ -627,6 +711,14 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
 <div id="topBar">
   <span class="tb-logo">VERA</span>
   <div class="conn-dot" id="connDot"></div>
+  <div class="tb-sep"></div>
+
+  <!-- Agent selector — moved up from the old #agentBar so the two top bars
+       collapse into one. Keeps its original id/handlers so all the JS that
+       reads document.getElementById('agentBarSel') keeps working. -->
+  <select id="agentBarSel" style="height:24px;font-size:11px;max-width:150px;flex-shrink:0" onchange="CH.agentBarChanged()" onfocus="CH._refreshAgentList()"><option>Loading…</option></select>
+  <div id="agentMeta" style="font-size:9px;color:var(--dim2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px"></div>
+  <div id="capBadge" class="hidden"><span class="tool-badge">caps</span></div>
   <div class="tb-sep"></div>
 
   <!-- Session name — editable, truncates gracefully -->
@@ -728,9 +820,8 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
     <div class="row"><label style="min-width:70px">Unattended</label><input type="checkbox" id="cfgUnattended" title="Automatically retry/correct cap failures without asking for approval"></div>
     <div class="row"><label style="min-width:70px">Show results</label><input type="checkbox" id="cfgShowCapResult" checked></div>
     <div class="row"><label style="min-width:70px">Monitor</label><input type="checkbox" id="cfgMonitor" title="Show planning/execution commentary in a side stream"></div>
-    <div class="row"><label style="min-width:70px">Auto-panels</label><input type="checkbox" id="cfgAutoPanel" title="Auto-open the UI panel most relevant to your message and let the agent read its state and dispatch actions to it (panel.query / panel.dispatch)."></div>
     <div class="sec" style="margin-top:5px">Stepwise Agentic</div>
-    <div class="row"><label style="min-width:70px">Max steps</label><input type="number" id="cfgStepMax" value="8" min="1" max="20" style="width:40px"></div>
+    <label class="row numrow"><input type="number" id="cfgStepMax" value="8" min="1" max="20"><span class="nlbl">Max steps</span></label>
     <div class="row"><label style="min-width:70px">Step pause</label><input type="checkbox" id="cfgStepPause" title="Pause between steps for review (attended mode)"></div>
     <div class="sec" style="margin-top:5px">Telegram HITL</div>
     <div style="font-size:9px;color:var(--dim2);margin-bottom:3px">Chat ID for remote approval / notifications</div>
@@ -742,7 +833,7 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
       <div class="row"><label style="min-width:56px">Execute</label><input type="checkbox" id="cfgDagExec" checked></div>
       <div class="row"><label style="min-width:56px">Stepwise</label><input type="checkbox" id="cfgDagStepwise"></div>
       <div class="row"><label style="min-width:56px">HITL</label><input type="checkbox" id="cfgDagHitl"></div>
-      <div class="row"><label style="min-width:56px">Timeout</label><input type="number" id="cfgDagTimeout" value="30" style="width:40px"><span style="font-size:9px;color:var(--dim2)">s</span></div>
+      <label class="row numrow"><input type="number" id="cfgDagTimeout" value="30"><span class="nlbl">Timeout (s)</span></label>
     </div>
     <div class="sec" style="margin-top:5px">Output</div>
     <div class="row"><label style="min-width:56px">TTS</label><input type="checkbox" id="cfgTts"></div>
@@ -752,21 +843,23 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
     <div style="font-size:9px;color:var(--dim2);margin-bottom:3px">SearXNG URL (server-side — e.g. localhost:8088)</div>
     <input id="cfgSearxng" placeholder="http://localhost:8088" style="width:100%;font-size:10px" value="http://localhost:8088">
     <div class="row" style="margin-top:3px"><label style="min-width:60px">DDG fallback</label><input type="checkbox" id="cfgDdgFallback" checked title="Fall back to DuckDuckGo lite if SearXNG unavailable"></div>
-    <div class="row" style="margin-top:3px">
-      <label style="min-width:60px">Results</label>
-      <select id="cfgSearchK" style="font-size:10px;height:22px">
+    <label class="row numrow">
+      <select id="cfgSearchK">
         <option value="3">3 (fast)</option>
         <option value="5" selected>5</option>
         <option value="8">8</option>
         <option value="12">12 (deep)</option>
       </select>
-      <label style="margin-left:6px;min-width:40px">News</label>
-      <select id="cfgNewsK" style="font-size:10px;height:22px">
+      <span class="nlbl">Results</span>
+    </label>
+    <label class="row numrow">
+      <select id="cfgNewsK">
         <option value="0">Off</option>
         <option value="3" selected>3</option>
         <option value="5">5</option>
       </select>
-    </div>
+      <span class="nlbl">News</span>
+    </label>
     <div class="sec" style="margin-top:5px">Research Streaming</div>
     <div style="font-size:9px;color:var(--dim2);margin-bottom:3px">Researcher URL (WebSocket for job streaming)</div>
     <input id="cfgResearcherUrl" placeholder="http://localhost:8765" style="width:100%;font-size:10px" value="" oninput="CH.setResearcherBase(this.value.replace(/\\/$/,''))" title="researcher_api server URL — WebSocket connects to ws://host:port/ws/stream/job_id">
@@ -784,39 +877,39 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
     <div class="sec">Context Injection</div>
     <div style="font-size:9px;color:var(--dim2);margin-bottom:4px">Skills, ontologies and caps injected into the system prompt each turn</div>
     <!-- Skills picker -->
-    <div style="display:flex;align-items:center;gap:4px;margin-bottom:3px">
-      <span style="font-size:9px;min-width:56px;color:var(--dim2)">Skills</span>
-      <select id="ctxSkillMode" style="font-size:10px;height:22px;flex:1" onchange="CH._ctxItemModeChange('skill',this.value)">
+    <label class="row numrow">
+      <select id="ctxSkillMode" onchange="CH._ctxItemModeChange('skill',this.value)">
         <option value="">Off</option>
         <option value="auto">Auto (query)</option>
         <option value="agent" selected>Agent skills</option>
         <option value="pick">Pick…</option>
       </select>
-    </div>
+      <span class="nlbl">Skills</span>
+    </label>
     <div id="ctxSkillPicker" style="display:none;margin-bottom:4px">
       <div id="ctxSkillList" style="display:flex;flex-wrap:wrap;gap:3px;max-height:80px;overflow-y:auto;border:1px solid var(--border);border-radius:3px;padding:3px 5px;background:var(--bg0)"></div>
     </div>
     <!-- Ontologies picker -->
-    <div style="display:flex;align-items:center;gap:4px;margin-bottom:3px">
-      <span style="font-size:9px;min-width:56px;color:var(--dim2)">Ontologies</span>
-      <select id="ctxOntMode" style="font-size:10px;height:22px;flex:1" onchange="CH._ctxItemModeChange('ont',this.value)">
+    <label class="row numrow">
+      <select id="ctxOntMode" onchange="CH._ctxItemModeChange('ont',this.value)">
         <option value="">Off</option>
         <option value="auto">Auto (query)</option>
         <option value="agent" selected>Agent ontologies</option>
         <option value="pick">Pick…</option>
       </select>
-    </div>
+      <span class="nlbl">Ontologies</span>
+    </label>
     <div id="ctxOntPicker" style="display:none;margin-bottom:4px">
       <div id="ctxOntList" style="display:flex;flex-wrap:wrap;gap:3px;max-height:80px;overflow-y:auto;border:1px solid var(--border);border-radius:3px;padding:3px 5px;background:var(--bg0)"></div>
     </div>
     <!-- DAGs picker -->
-    <div style="display:flex;align-items:center;gap:4px;margin-bottom:3px">
-      <span style="font-size:9px;min-width:56px;color:var(--dim2)">DAGs</span>
-      <select id="ctxDagMode" style="font-size:10px;height:22px;flex:1">
+    <label class="row numrow">
+      <select id="ctxDagMode">
         <option value="">Off</option>
         <option value="auto">Auto (query)</option>
       </select>
-    </div>
+      <span class="nlbl">DAGs</span>
+    </label>
     <!-- Active items display -->
     <div id="ctxInjBadges" style="display:flex;flex-wrap:wrap;gap:3px;margin-top:3px;min-height:14px"></div>
     <div class="sec" style="margin-top:5px">Sources</div>
@@ -830,13 +923,14 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
       <span class="src-chip"    data-s="news"   onclick="CH.srcToggle(this)" title="News search — opt in (off by default)">News</span>
     </div>
     <div class="sec" style="margin-top:4px">Parameters</div>
-    <div class="row"><label style="min-width:60px">K results</label><input type="number" id="ctxK" value="8" min="1" max="40" style="width:44px"></div>
-    <div class="row"><label style="min-width:60px">Min sim</label>
+    <label class="row numrow"><input type="number" id="ctxK" value="8" min="1" max="40"><span class="nlbl">K results</span></label>
+    <label class="row numrow">
+      <span class="nlbl" style="flex:0 0 56px">Min sim</span>
       <input type="range" id="ctxSim" min="0.3" max="1" step="0.05" value="0.55" style="flex:1" oninput="document.getElementById('ctxSimV').textContent=parseFloat(this.value).toFixed(2)">
-      <span id="ctxSimV" style="font-size:9px;min-width:26px">0.55</span>
-    </div>
-    <div class="row"><label style="min-width:60px">Mem limit</label><input type="number" id="ctxMemLim" value="5" min="1" max="20" style="width:36px"></div>
-    <div class="row"><label style="min-width:60px">Fabric K</label><input type="number" id="ctxFabK" value="5" min="1" max="20" style="width:36px"></div>
+      <span id="ctxSimV" style="font-size:9px;min-width:26px;text-align:right">0.55</span>
+    </label>
+    <label class="row numrow"><input type="number" id="ctxMemLim" value="5" min="1" max="20"><span class="nlbl">Mem limit</span></label>
+    <label class="row numrow"><input type="number" id="ctxFabK" value="5" min="1" max="20"><span class="nlbl">Fabric K</span></label>
     <div class="sec" style="margin-top:4px">Behaviour</div>
     <div class="row"><label style="min-width:60px">Live preview</label><input type="checkbox" id="ctxLive" checked></div>
     <div class="row"><label style="min-width:60px">Inject ctx</label><input type="checkbox" id="ctxInject" checked></div>
@@ -940,6 +1034,7 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
       <option value="dag.agent_loop_v2">v2 — Triage + dynamic toolkit</option>
       <option value="dag.agent_loop_v3">v3 — full message history</option>
       <option value="dag.agent_loop_v4">v4 — strict explore/think/act/verify</option>
+      <option value="dag.agent_loop_v5">v5 — specialist sub-agents</option>
     </select>
     <div id="loopVariantDesc" style="font-size:8.5px;color:var(--dim);margin-top:3px;line-height:1.4"></div>
 
@@ -958,11 +1053,11 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
     </label>
 
     <div class="sec" style="margin-top:6px">Server-loop options</div>
-    <label class="row" style="font-size:9.5px" title="(v2/v3) Run a satisfaction check after each step">
+    <label class="row" style="font-size:9.5px" title="(v2/v3/v4) Run a satisfaction check after each step">
       <input type="checkbox" id="loopSatisfaction" checked onchange="CH._loopVariantChange()">
       Satisfaction checks
     </label>
-    <label class="row" style="font-size:9.5px" title="(v2/v3) Allow the agent to expand its toolkit mid-run">
+    <label class="row" style="font-size:9.5px" title="(v2/v3/v4) Allow the agent to expand its toolkit mid-run (caps.search / expand_tools), bounded by Max expands">
       <input type="checkbox" id="loopExpand" checked onchange="CH._loopVariantChange()">
       Toolkit expansion
     </label>
@@ -972,6 +1067,50 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
       <input id="loopTriageTopK" type="number" min="1" max="64" value="16">
       <span class="nlbl">Toolkit size (top-K)</span>
     </label>
+    <label class="row numrow" title="Force the triage category (Auto = let the classifier decide). Useful when auto-triage misclassifies a complex goal.">
+      <select id="loopTriageCat">
+        <option value="">Auto</option>
+        <option value="research">research</option>
+        <option value="web_check">web_check</option>
+        <option value="data_lookup">data_lookup</option>
+        <option value="file_edit">file_edit</option>
+        <option value="summarisation">summarisation</option>
+        <option value="analysis">analysis</option>
+        <option value="search">search</option>
+        <option value="monitoring">monitoring</option>
+        <option value="code_task">code_task</option>
+        <option value="system_info">system_info</option>
+        <option value="network_scan">network_scan</option>
+        <option value="ml_task">ml_task</option>
+        <option value="data_pipeline">data_pipeline</option>
+        <option value="memory_recall">memory_recall</option>
+        <option value="creative">creative</option>
+        <option value="general_qa">general_qa</option>
+        <option value="messaging">messaging</option>
+        <option value="image_gen">image_gen</option>
+        <option value="audio">audio</option>
+        <option value="browser_task">browser_task</option>
+        <option value="agent_op">agent_op</option>
+        <option value="report_generation">report_generation</option>
+      </select>
+      <span class="nlbl">Force category</span>
+    </label>
+    <label class="row numrow" title="Seed keywords (space/comma separated) merged ahead of triage keywords to steer which caps are discovered.">
+      <input id="loopTriageKws" type="text" placeholder="e.g. research web llm scrape">
+      <span class="nlbl">Seed keywords</span>
+    </label>
+    <div class="sec" style="margin-top:6px">Base toolkit (always-available caps)</div>
+    <label class="row" style="font-size:9.5px" title="When on, the active agent's Domain Capabilities are always included as the loop's base toolkit; the caps below are ADDED to them. When off, only the caps below are used (empty = exec + web/browser + skills default).">
+      <input type="checkbox" id="loopBaseMirror" checked>
+      Mirror agent baseline (Domain Capabilities)
+    </label>
+    <div class="row" style="gap:4px">
+      <textarea id="loopBaseCaps" rows="2" style="flex:1;font-size:9.5px;font-family:var(--mono,monospace);resize:vertical" placeholder="exec.bash.run web.search ide.code.grep ide.code.replace browser.navigate fabric.skills.get" title="Caps always included in the loop's toolkit (space/comma separated). With mirror ON these are added to the agent baseline; with mirror OFF they are the full base set."></textarea>
+    </div>
+    <div class="row" style="gap:4px;justify-content:flex-end">
+      <button class="btn xs" type="button" onclick="CH.loopLoadAgentCaps()" title="Fill the box with the current agent's caps so you can see and prune what's available">Load agent caps</button>
+      <button class="btn xs" type="button" onclick="CH.loopLoadDefaultCaps()" title="Fill with the default base set (exec + web/browser + code/file + skills)">Defaults</button>
+    </div>
     <label class="row numrow" title="Hard quota for caps.search / context.search_caps">
       <input id="loopMaxSearch" type="number" min="1" max="10" value="2">
       <span class="nlbl">Max search calls</span>
@@ -1017,7 +1156,7 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
     <details id="loopV4Details" class="lp-sub" open>
       <summary class="sec" style="margin-top:6px;cursor:pointer;list-style:revert">v4 — strict loop</summary>
     <div id="loopV4Box">
-      <div style="font-size:8.5px;color:var(--dim);margin:2px 0">Steps the loop may run (ctrl/⌘-click for multi-select — it picks within these):</div>
+      <div style="font-size:8.5px;color:var(--dim);margin:2px 0">Steps the loop may run (tap to toggle — the agent picks within these):</div>
       <select id="loopStepsSel" class="loopStep" multiple size="5" style="width:100%;font-size:9.5px">
         <option value="plan" selected>plan</option>
         <option value="explore" selected>explore</option>
@@ -1041,6 +1180,42 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
         <input type="checkbox" id="loopPreferTerminal" checked>
         Prefer terminal tools (grep/sed/awk)
       </label>
+    </div>
+    </details>
+
+    <!-- ── v5 specialist-sub-agent options (only meaningful for v5) ──────── -->
+    <details id="loopV5Details" class="lp-sub">
+      <summary class="sec" style="margin-top:6px;cursor:pointer;list-style:revert">v5 — specialist sub-agents</summary>
+    <div id="loopV5Box">
+      <div style="font-size:8.5px;color:var(--dim);margin:2px 0">The orchestrator plans steps and hands each to a scoped specialist that only sees the caps/skills/context it needs.</div>
+      <label class="row numrow" title="Maximum number of steps the orchestrator may plan">
+        <input id="loopMaxSteps5" type="number" min="1" max="20" value="8">
+        <span class="nlbl">Max steps</span>
+      </label>
+      <label class="row numrow" title="Max tool-call cycles each step's specialist sub-agent may use">
+        <input id="loopStepBudget" type="number" min="1" max="20" value="6">
+        <span class="nlbl">Per-step cycle budget</span>
+      </label>
+      <label class="row numrow" title="How many caps (name + description only) the orchestrator sees when planning">
+        <input id="loopCatalogSize" type="number" min="8" max="80" value="40">
+        <span class="nlbl">Catalog size (caps)</span>
+      </label>
+      <label class="row" style="font-size:9.5px" title="If a step fails, spend one extra LLM call to re-plan the remaining work (happy path stays fast)">
+        <input type="checkbox" id="loopEnableReplan" checked>
+        Re-plan on step failure
+      </label>
+      <label class="row" style="font-size:9.5px" title="Let the orchestrator load skills (e.g. shell/file-IO, UI-building) into a step's specialist when it needs that expertise">
+        <input type="checkbox" id="loopDynSkills" checked>
+        Dynamic skill loading
+      </label>
+      <label class="row" style="font-size:9.5px" title="When a step uses a cap but the orchestrator picked no skill, auto-attach the cap's suggested skill(s)">
+        <input type="checkbox" id="loopAutoSuggestSkills" checked>
+        Auto-suggest skills from caps
+      </label>
+      <div style="font-size:8.5px;color:var(--dim);margin:4px 0 1px">Skill allow-list (only these skill ids are eligible; empty = all):</div>
+      <textarea id="loopSkillAllow" rows="1" style="width:100%;font-size:9.5px;font-family:var(--mono,monospace);resize:vertical" placeholder="sys-dag-creation sys-fabric-query" title="Whitelist: if non-empty, ONLY these skill ids may be injected (space/comma separated)."></textarea>
+      <div style="font-size:8.5px;color:var(--dim);margin:4px 0 1px">Skill deny-list (never inject these skill ids):</div>
+      <textarea id="loopSkillDeny" rows="1" style="width:100%;font-size:9.5px;font-family:var(--mono,monospace);resize:vertical" placeholder="sys-ui-building" title="Blacklist: these skill ids are never injected (space/comma separated)."></textarea>
     </div>
     </details>
 
@@ -1074,14 +1249,9 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
 
 <!-- CENTRE -->
 <div id="centre">
-  <div id="agentBar">
-    <select id="agentBarSel" style="height:25px;font-size:11px;max-width:155px" onchange="CH.agentBarChanged()" onfocus="CH._refreshAgentList()"><option>Loading…</option></select>
-    <div id="agentMeta" style="font-size:9px;color:var(--dim2)"></div>
-    <div id="capBadge" class="hidden"><span class="tool-badge">caps</span></div>
-    <div style="flex:1"></div>
-    <span id="ctxCount" style="font-size:9px;font-family:var(--mono);color:var(--dim2)">0 ctx</span>
-    <button class="btn xs" onclick="CH.ctxFetch(true)">&#8635; ctx</button>
-  </div>
+  <!-- The old #agentBar lived here. Its agent selector now sits in #topBar
+       (single combined top bar) and the "0 ctx" counter + ctx-refresh
+       button were dropped — the Context tab / ⟳ Ctx already cover refresh. -->
 
   <div id="councilPanel">
     <div style="font-size:9px;color:#f472b6;margin-bottom:5px;display:flex;align-items:center;gap:6px">
@@ -1183,8 +1353,9 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
       </div>
 
       <div id="inputBar">
+        <div id="slashMenu" class="slash-menu"></div>
         <div id="micDot"></div>
-        <textarea id="chatInput" placeholder="Type a message…" onkeydown="return CH.onKD(event)" oninput="CH.onInput()" onpaste="CH._onPaste(event)"></textarea>
+        <textarea id="chatInput" placeholder="Type a message…  (/ for commands)" onkeydown="return CH.onKD(event)" oninput="CH.onInput()" onpaste="CH._onPaste(event)" onblur="CH._slashBlur()"></textarea>
         <button id="stopBtn" onclick="CH.stopAll()" title="Stop all running streams and agentic loops (Escape)">Stop</button>
         <button class="ib send" onclick="CH.send()">&#8593;</button>
       </div>
@@ -1344,6 +1515,7 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
       <button class="lbtn on" data-ctx-layer="skill"     onclick="CH._ctxLayerToggle('skill')"     style="font-size:7px;padding:1px 4px;color:#5a9e8f;border-color:#5a9e8f" title="Skills">Skills</button>
       <button class="lbtn on" data-ctx-layer="ontology"  onclick="CH._ctxLayerToggle('ontology')"  style="font-size:7px;padding:1px 4px;color:#c9955a;border-color:#c9955a" title="Ontologies (full graph)">Ont</button>
       <button class="lbtn on" data-ctx-layer="related_qa" onclick="CH._ctxLayerToggle('related_qa')" style="font-size:7px;padding:1px 4px;color:#e8a44c;border-color:#e8a44c" title="Related Q&A (2nd-order)">Q&amp;A</button>
+      <button class="lbtn on" data-ctx-layer="worldview" onclick="CH._ctxLayerToggle('worldview')" style="font-size:7px;padding:1px 4px;color:#2dd4bf;border-color:#2dd4bf" title="Worldview — JEPA latent-space neighbours &amp; rollout">World</button>
       <button class="lbtn on" data-ctx-layer="agent"     onclick="CH._ctxLayerToggle('agent')"     style="font-size:7px;padding:1px 4px;color:#888;border-color:#888" title="Agent node">Agent</button>
     </div>
     <div style="flex:1"></div>
@@ -1460,9 +1632,21 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
   <!-- Code Preview pane — sandboxed iframe for HTML/JS/CSS preview & execution.
        Driven by the Code/Preview/Run buttons rendered into agent code blocks. -->
   <div class="ctx-pane" id="paneCode" style="flex-direction:column;padding:0">
+    <!-- Artifacts: navigable tree of files the agent generated/maintains -->
+    <div style="display:flex;align-items:center;gap:6px;padding:5px 8px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg1);flex-wrap:wrap">
+      <span style="font-size:10px;font-weight:600;font-family:var(--mono)">Artifacts</span>
+      <span id="artifactDirLbl" style="font-size:8px;color:var(--dim2);font-family:var(--mono);flex:1;min-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="">—</span>
+      <label style="display:flex;align-items:center;gap:2px;font-size:8.5px;color:var(--dim2);cursor:pointer" title="Automatically save every code block the agent produces into the artifact directory. A fence label (e.g. ```python app.py) names the file and lets the agent maintain/edit it across turns; unlabeled snippets are saved under snippets/ with a content-hashed name"><input type="checkbox" id="cfgAutoArtifacts" checked style="margin:0;width:11px;height:11px">auto-save</label>
+      <label style="display:flex;align-items:center;gap:2px;font-size:8.5px;color:var(--dim2);cursor:pointer" title="Include the artifact files (names + contents) in the agent's context each turn, so it can read and maintain them"><input type="checkbox" id="cfgArtifactCtx" checked style="margin:0;width:11px;height:11px">in context</label>
+      <button class="btn xs" onclick="CH._artifactsRefresh()" title="Re-scan the agent's artifact directory">⟳</button>
+    </div>
+    <div id="artifactTree" style="flex:0 0 auto;max-height:34%;overflow:auto;padding:3px 6px;font-size:9.5px;font-family:var(--mono);border-bottom:1px solid var(--border);background:var(--bg0)">
+      <div style="color:var(--dim2);padding:4px">No artifacts yet — run an agentic loop that writes files, then ⟳.</div>
+    </div>
     <div style="display:flex;align-items:center;gap:6px;padding:5px 8px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg1)">
       <span id="codePreviewTitle" style="font-size:10px;font-weight:600;font-family:var(--mono)">Code preview</span>
       <div style="flex:1"></div>
+      <label style="display:flex;align-items:center;gap:3px;font-size:9px;color:var(--dim2);cursor:pointer;user-select:none" title="Automatically open this pane and render the agent's renderable HTML / CSS / JS / SVG code blocks as they arrive"><input type="checkbox" id="cfgAutoPreview" style="margin:0;width:12px;height:12px" onchange="CH._autoPreviewToggle(this.checked)">Auto-open</label>
       <button class="btn xs on" id="codeViewPreviewBtn" onclick="CH._codeViewMode('preview')" title="Show rendered preview">Preview</button>
       <button class="btn xs"    id="codeViewSourceBtn"  onclick="CH._codeViewMode('source')"  title="Show source code">Source</button>
       <button class="btn xs" onclick="CH._codePreviewClose()" title="Clear">&#215;</button>
@@ -1570,6 +1754,11 @@ const CH = (() => {
   let CTX_LAYER='both', CTX_TAB='ctx';
   let CTX_SRCS=new Set(['memory','fabric','entities','urls']);
   let CTX_TIMER=null, _ctxVersion=0, _ctxAbort=null;
+  // The query string CTX_NODES were last retrieved for. Used to detect when
+  // the assembled context is stale relative to the message being sent (the
+  // user edited the input and sent before the live fetch caught up) so the
+  // previous message's context is never leaked into the new one.
+  let _ctxQuery='';
   let DAG_MODE=false, TTS_ON=false, MIC_ACTIVE=false, MIC_REC=null;
   let COUNCIL_MODE=false, COUNCIL_INSTS=new Set();
 
@@ -1688,6 +1877,29 @@ const CH = (() => {
      the user spins the scroll wheel away from the bottom. `scroll` is the
      general fallback (covers programmatic scrollbar drag, keyboard PgUp,
      scroll-into-view from clicks, etc.). */
+  /* Reveal the context strip ("memory controls") only while the composer
+     is in active use, then tuck it away again. The blur uses a short grace
+     timer so the strip's own source chips / depth selects stay clickable —
+     focusing a select (or any element inside the strip) keeps it open;
+     once focus leaves both the input and the strip it collapses. */
+  function _initComposerReveal(){
+    const inp=document.getElementById('chatInput');
+    const strip=document.getElementById('ctxStrip');
+    if(!inp||!strip||inp.dataset.revealWired==='1')return;
+    inp.dataset.revealWired='1';
+    let hideT=null;
+    const show=()=>{clearTimeout(hideT);document.body.classList.add('composer-focus');};
+    const scheduleHide=()=>{clearTimeout(hideT);hideT=setTimeout(()=>{
+      const a=document.activeElement;
+      if(a===inp||strip.contains(a))return;   // still interacting — keep open
+      document.body.classList.remove('composer-focus');
+    },180);};
+    inp.addEventListener('focus',show);
+    inp.addEventListener('blur',scheduleHide);
+    strip.addEventListener('mousedown',show);
+    strip.addEventListener('focusin',show);
+    strip.addEventListener('focusout',scheduleHide);
+  }
   function _initStickListeners(){
     const b = BOX(); if(!b || b.dataset.stickWired==='1') return;
     b.dataset.stickWired='1';
@@ -1955,6 +2167,12 @@ const CH = (() => {
     const wrap=document.createElement('div');
     wrap.className='mwrap '+(role==='user'?'u':'a');
     wrap.dataset.mid = mid;
+    // Sticky-pin only the newest question. Un-pin any earlier one first so two
+    // questions never stick at top:0 at once (the "older card pokes out" bug).
+    if(role==='user'){
+      try{ document.querySelectorAll('#msgs .mwrap.u.pin').forEach(el=>el.classList.remove('pin')); }catch(_){}
+      wrap.classList.add('pin');
+    }
     const row=document.createElement('div');row.className='msg-user-line';
     const gutter=document.createElement('div');
     gutter.className='msg-gutter '+(role==='user'?'u':'a');
@@ -2002,6 +2220,141 @@ const CH = (() => {
   }
 
   /* Append a system note (centre line) */
+  /* ═══════════════════════════════════════════════════════════════════
+     LEFT-RAIL UX — collapsible sections + option cards
+     Progressive enhancement, applied once at boot. Pure presentation:
+     every checkbox keeps its id / onchange / checked state, so the existing
+     config wiring (cfgAgentSync, _loopVariantSync, twin-sync…) is untouched.
+     ═══════════════════════════════════════════════════════════════════ */
+  // One-line descriptions for the otherwise-terse rail toggles. Falls back to
+  // the control's title attribute, then to no description.
+  const OPT_DESC={
+    cfgGpu:'Run this agent on the GPU instance pool',
+    cfgThink:"Show the model's step-by-step reasoning before its answer",
+    cfgCapInteg:'Inject the capability manifest so the agent can call tools',
+    cfgCapAutoExec:'Run capability calls automatically, without asking first',
+    cfgUnattended:'Retry and self-correct failed capabilities without approval',
+    cfgShowCapResult:"Show each capability's raw result inline in the chat",
+    cfgMonitor:'Stream planning / execution commentary in a side panel',
+    cfgStepPause:'Pause between agent steps so you can review each one',
+    cfgTgHitl:'Send approval requests to Telegram before running caps / DAGs',
+    cfgDag:'Plan multi-step tasks as a DAG and execute the graph',
+    cfgDagExec:'Actually run the planned DAG (off = plan only)',
+    cfgDagStepwise:'Execute the DAG one node at a time',
+    cfgDagHitl:'Ask for approval before each DAG node runs',
+    cfgTts:"Speak the agent's replies aloud (text-to-speech)",
+    cfgStt:'Enable voice input (speech-to-text) from the mic',
+    cfgAutoPlay:'Play streamed audio automatically as it arrives',
+    cfgDdgFallback:'Fall back to DuckDuckGo if SearXNG is unavailable',
+    ctxLive:'Continuously preview retrieved context as you type',
+    ctxInject:'Inject retrieved context into the system prompt each turn',
+    ctxOnType:'Re-run context retrieval while you type',
+    ctxOnSend:'Re-run context retrieval when you send a message',
+    ctxRollout:'Also pull context for the predicted next concepts (Worldview)',
+    // Loop pane — titles cover the rest; these fill the title-less toggles.
+    loopPause:'Pause for your approval before each loop step',
+    loopAwaitLong:'Block the turn until long-running tools finish',
+    loopPreferGpu:'Prefer the GPU instance pool for this loop',
+    loopSelectSteps:'Let the agent pick which enabled steps to run for the goal',
+    loopRequireVerify:'Require a read-only verify after each action before finishing',
+    loopStrictComplete:'Strict completion check before accepting the final answer',
+    loopPreferTerminal:'Steer file work toward grep / sed / awk via the terminal',
+  };
+
+  // Rewrite a pure-checkbox .row into a tappable option card. Skips rows that
+  // carry any other control (number / select / range / >1 input) or are done.
+  function _enhanceOptRow(row){
+    if(row._opt) return;
+    const inputs=row.querySelectorAll('input,select,textarea');
+    if(inputs.length!==1) return;
+    const cb=inputs[0];
+    if(cb.tagName!=='INPUT' || cb.type!=='checkbox') return;
+    // Name source: a descendant <label> (Config/Context rows put the text in
+    // one), else the row's own text — the Loop pane's rows ARE the <label> with
+    // the caption as a bare text node after the checkbox.
+    const lbl=row.querySelector('label');
+    let name=((lbl?lbl.textContent:row.textContent)||'').trim();
+    if(!name) name=(cb.id||'').replace(/^cfg|^ctx|^loop/,'');
+    const desc=OPT_DESC[cb.id] || cb.getAttribute('title') || (lbl&&lbl.getAttribute('title')) || row.getAttribute('title') || '';
+    const opt=document.createElement('label');
+    opt.className='opt'; opt._opt=true;
+    const tick=document.createElement('span'); tick.className='opt-tick';
+    const main=document.createElement('span'); main.className='opt-main';
+    const nm=document.createElement('span'); nm.className='opt-name'; nm.textContent=name; main.appendChild(nm);
+    if(desc){ const d=document.createElement('span'); d.className='opt-desc'; d.textContent=desc; main.appendChild(d); }
+    // Move the live checkbox node in — preserves id / onchange / checked state.
+    opt.appendChild(cb); opt.appendChild(tick); opt.appendChild(main);
+    row.replaceWith(opt);
+  }
+  function _enhanceRailOpts(){
+    ['rpCfg','rpCtx','rpLoop'].forEach(pid=>{
+      const pane=document.getElementById(pid); if(!pane) return;
+      [...pane.querySelectorAll('.row')].forEach(_enhanceOptRow);
+    });
+  }
+
+  // Replace a <select multiple> with tappable toggle chips. The original
+  // <select> stays in the DOM (hidden) with its option.selected state kept in
+  // sync, so existing reads (e.g. loopStepsSel.selectedOptions) keep working.
+  function _enhanceMultiSelect(sel){
+    if(!sel || sel._chips) return;
+    sel._chips=true;
+    const wrap=document.createElement('div'); wrap.className='chips';
+    [...sel.options].forEach(o=>{
+      const chip=document.createElement('span');
+      chip.className='chip'+(o.selected?' on':'');
+      chip.textContent=o.textContent;
+      chip.addEventListener('click',()=>{
+        o.selected=!o.selected;
+        chip.classList.toggle('on',o.selected);
+        try{ sel.dispatchEvent(new Event('change',{bubbles:true})); }catch(_){}
+      });
+      wrap.appendChild(chip);
+    });
+    sel.classList.add('ms-hidden');
+    sel.after(wrap);
+  }
+
+  // All rail sections start collapsed by default, so each tab opens as a tidy
+  // list of section headers the user can expand on demand. User toggles are
+  // remembered in localStorage and always win over this default.
+  function _secKey(pid,title){ return 'vera_sec_'+pid+'_'+title.replace(/\s+/g,'_'); }
+  // Turn each direct-child .sec header into a collapse toggle, wrapping the
+  // siblings that follow it (up to the next .sec) into a .sec-body. A <details>
+  // element (e.g. the Loop pane's "v4 — strict loop" block, which carries its
+  // own collapse) is treated as a hard boundary so it's never swallowed.
+  function _initRailSections(){
+    ['rpCfg','rpCtx','rpLoop'].forEach(pid=>{
+      const pane=document.getElementById(pid); if(!pane) return;
+      [...pane.children].filter(el=>el.classList&&el.classList.contains('sec')).forEach(sec=>{
+        if(sec._coll) return; sec._coll=true;
+        const title=sec.textContent.trim();
+        const body=document.createElement('div'); body.className='sec-body';
+        let n=sec.nextElementSibling;
+        while(n && n.tagName!=='DETAILS' && !(n.classList&&n.classList.contains('sec'))){ const nx=n.nextElementSibling; body.appendChild(n); n=nx; }
+        sec.after(body);
+        const caret=document.createElement('span'); caret.className='sec-caret'; caret.textContent='▸';
+        sec.insertBefore(caret, sec.firstChild);
+        sec.classList.add('sec-toggle');
+        let collapsed=true;
+        try{ const s=localStorage.getItem(_secKey(pid,title)); if(s!=null) collapsed=(s==='1'); }catch(_){}
+        if(collapsed){ sec.classList.add('collapsed'); body.classList.add('collapsed'); }
+        sec.addEventListener('click',()=>{
+          const c=sec.classList.toggle('collapsed');
+          body.classList.toggle('collapsed', c);
+          try{ localStorage.setItem(_secKey(pid,title), c?'1':'0'); }catch(_){}
+        });
+      });
+    });
+  }
+  function _initRailUX(){
+    try{ _enhanceRailOpts(); }catch(_){}
+    try{ _enhanceMultiSelect(document.getElementById('loopStepsSel')); }catch(_){}
+    try{ _initRailSections(); }catch(_){}
+    // Auto-open defaults ON; only an explicit opt-out ('0') disables it.
+    try{ const ap=document.getElementById('cfgAutoPreview'); if(ap) ap.checked=(localStorage.getItem('vera_auto_preview')!=='0'); }catch(_){}
+  }
+
   function appendSys(html){const d=document.createElement('div');d.className='sys-msg';d.innerHTML=html;BOX().appendChild(d);scroll();}
 
   /* ── Session ──
@@ -2048,8 +2401,19 @@ const CH = (() => {
   function _bumpSessionTs(){
     try{ localStorage.setItem('vera_session_id_ts', String(Date.now())); }catch(_){}
   }
-  function setName(n){SNAME=n||SID.slice(-10);const el=document.getElementById('sessionName');if(el)el.textContent=SNAME;}
-  async function checkConn(){const dot=document.getElementById('connDot');const r=await api('/obs/health');dot.className='conn-dot '+(r?'ok':'warn');}
+  function setName(n){SNAME=n||SID.slice(-10);const el=document.getElementById('sessionName');if(el)el.textContent=SNAME;if(n&&n!=='New session')_cacheSessionName(SID,n);}
+  /* Session-name cache (localStorage). The authoritative copy is the
+     name-tagged /memory record, but the history list reads it back via
+     /memory/search which lags indexing and is capped — so names "didn't show
+     up" in the menu. This cache makes the name appear instantly and survive
+     reloads regardless of the memory backend; histLoad merges it. */
+  function _cachedSessionNames(){ try{ return JSON.parse(localStorage.getItem('vera_session_names')||'{}')||{}; }catch(_){ return {}; } }
+  function _cacheSessionName(sid,name){ if(!sid||!name) return; try{ const m=_cachedSessionNames(); m[sid]=name; localStorage.setItem('vera_session_names',JSON.stringify(m)); }catch(_){} }
+  /* Health-dot. The backend exposes obs.health at GET /health (NOT
+     /obs/health — that path 404s, which is why the dot was stuck amber).
+     Re-polled on an interval so it tracks the live connection state
+     instead of freezing on whatever the first probe returned. */
+  async function checkConn(){const dot=document.getElementById('connDot');if(!dot)return;const r=await api('/health');dot.className='conn-dot '+(r?'ok':'warn');}
 
   /* ── Context window meter ── */
   function updateCtxMeter(used,max){
@@ -2255,7 +2619,6 @@ const CH = (() => {
     // and tells the agent what's already open so it stops re-opening.
     let panelLine='';
     if(typeof UI_PANELS!=='undefined' && UI_PANELS && UI_PANELS.length){
-      const autoPanel=document.getElementById('cfgAutoPanel')?.checked;
       const fmt=p=>{const lbl=(p.label||p.id||'').slice(0,30);return `${p.id}${lbl&&lbl!==p.id?' ('+lbl+')':''}`;};
       // Which panel owns the caps relevant to THIS message? This is the
       // authoritative cap→panel map — far better than letting the model guess.
@@ -2280,6 +2643,8 @@ const CH = (() => {
       // rather than forbidding them.
       panelLine=`\n- PANELS vs CAPS: capabilities run on their own — you do NOT need a panel open to call [[cap:...]]. NEVER open a panel just to run a capability, and there is NO generic "execution"/"fabric"/"console" panel for running tools.`
         +`\n- You MAY open a relevant panel with [[panel:id]] when it helps the user see or work with the task. Open at most ONE, and don't open any for purely conversational replies (thanks/ok/etc.).`
+        +`\n- Available panels — use one of these EXACT ids, never invent one: ${recs}.`
+        +(ownerHints?`\n- Most relevant to THIS request: ${ownerHints}.`:'')
         +`\n- Currently open panel: ${_activePanelId||'none'}.${_activePanelId?' It is already open — do NOT re-open it or open another.':''}`
         +`\n- TWO ways to act, pick by intent: (a) the user just wants a RESULT → call the cap directly ([[cap:...]]), no panel needed; (b) the user wants it done IN / VIA the panel → open it then DRIVE it with [[cap:panel.dispatch ...]]. When driving a panel, do NOT call the panel's own caps (its netscan.*/exec.*/etc.) — those run headless and never touch the open UI.`;
       // Panel-interaction caps (state read / action dispatch). These route by
@@ -2305,6 +2670,7 @@ const CH = (() => {
         panelLine+=`\n- DRIVE the open panel's UI via the panel.dispatch capability — that is the ONLY cap that drives panels. Do NOT call the panel's own underlying caps to "use" it, and NEVER call an action name (e.g. "${actName}") or a state field (e.g. "panel_actions"/"ui") as if it were a capability.`
           +`\n  Read panel state: [[cap:panel.query {${sidArg}}]]`
           +`\n  Run an action:    [[cap:panel.dispatch {${sidPfx}"action":"${actName}","payload":${actPayload}}]]`
+          +`\n  panel.dispatch takes ONLY action + payload — there is NO "arg"/"args" parameter. To target one of several buttons that share a handler, use the EXACT disambiguated key from "panel_actions" (e.g. "fabSection:discover", NOT action:"fabSection" arg:"discover"). Extra args go inside payload {…}.`
           +`\n  Action names come from the panel state: semantic ones under "panel_actions"; universal ones — click {id|label}, set_field {id,value}, set_fields {fields}, submit {fields,click} — operate on the buttons & inputs under "ui". You may open a panel and dispatch to it in the same reply.`;
       }
     }
@@ -2737,37 +3103,78 @@ IMPORTANT:
      showing the rendered result. The Preview opens in the right rail's
      Code Preview tab (added below). */
   let _codeBlockSeq=0;
-  const _CODE_BLOCKS={}; // id -> {lang, code}
-  function _registerCodeBlock(lang, code){
+  const _CODE_BLOCKS={}; // id -> {lang, code, filename}
+  function _registerCodeBlock(lang, code, filename){
     const id='cb'+(++_codeBlockSeq);
-    _CODE_BLOCKS[id]={lang:lang||'',code:code||''};
+    _CODE_BLOCKS[id]={lang:lang||'',code:code||'',filename:filename||''};
     return id;
+  }
+  /* Pull a filename out of a code-fence info line — supports `app.py`,
+     `file=app.py`, `path=src/app.py`, `title=app.py`, etc. This is how the
+     agent labels a code block so it auto-persists as a maintainable artifact. */
+  function _parseFenceFilename(info){
+    if(!info) return '';
+    const s=String(info).trim();
+    let m=s.match(/(?:file|filename|name|title|path)\s*[=:]\s*["']?([\w./\-]+)["']?/i);
+    if(m) return m[1];
+    m=s.match(/(?:^|\s)([\w./\-]+\.[A-Za-z0-9]+)(?:\s|$)/);  // bare foo.ext token
+    if(m) return m[1];
+    return '';
   }
   function _isPreviewable(lang){
     const l=(lang||'').toLowerCase();
     return l==='html' || l==='js' || l==='javascript' || l==='css' || l==='jsx' || l==='svg';
   }
+  // Languages Vera can execute server-side via /exec/code/run. Keep this in
+  // sync with _LANG_SPECS / _LANG_ALIASES in exec_capabilities.py.
+  const _SERVER_RUN_LANGS=new Set([
+    'python','py','python3',
+    'node','js','javascript','nodejs','mjs',
+    'ruby','rb','php','perl','pl','go','golang','lua',
+    'deno','ts','typescript',
+    'bash','sh','shell','zsh',
+    'powershell','ps','ps1','pwsh','posh',
+  ]);
+  function _isServerRunnable(lang){
+    return _SERVER_RUN_LANGS.has((lang||'').toLowerCase());
+  }
   function renderMd(t){
     // 1. HTML-escape (keep this first)
     let s=t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    // 2. Fenced code blocks — capture language + body, register, render with toolbar
-    s=s.replace(/```(\w*)\n?([\s\S]*?)```/g,(_,lang,code)=>{
-      const id=_registerCodeBlock(lang,code);
-      const langLbl=esc((lang||'plain').toLowerCase());
+    // 2. Fenced code blocks — capture language + info-line + body, register,
+    //    render with toolbar. The info line after the language (e.g.
+    //    ```python app.py) carries an optional filename that auto-persists the
+    //    block as a maintainable artifact.
+    s=s.replace(/```(\w*)([^\n]*)\n?([\s\S]*?)```/g,(_,lang,info,code)=>{
+      // `code` here is ALREADY html-escaped (step 1 escapes the whole string),
+      // so store the RAW source for Preview / Run / Copy — otherwise the
+      // preview iframe receives "&lt;div&gt;…" and renders it as literal text.
+      // The escaped `code` is still used below for the <pre><code> display.
+      const raw=code.replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&amp;/g,'&');
+      const fname=_parseFenceFilename(info ? info.replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&') : '');
+      const id=_registerCodeBlock(lang,raw,fname);
+      const langLbl=esc((lang||'plain').toLowerCase())+(fname?` · <span style="color:var(--acc,#5a9e8f)">${esc(fname)}</span>`:'');
       const previewable=_isPreviewable(lang);
       const previewBtn=previewable
         ? `<button class="cb-act" onclick="CH._codePreview('${id}')" title="Render in preview pane">Preview</button>`
         : '';
       const runBtn=(['js','javascript','jsx'].includes((lang||'').toLowerCase()))
-        ? `<button class="cb-act" onclick="CH._codeRun('${id}')" title="Run in sandboxed iframe (console output captured)">Run</button>`
+        ? `<button class="cb-act" onclick="CH._codeRun('${id}')" title="Render in sandboxed iframe (browser console output captured)">Preview JS</button>`
         : '';
+      // Server-side execution for backend languages (python, node, ruby, …).
+      // Routes through /exec/code/run, subject to the exec sandbox policy.
+      const execBtn=_isServerRunnable(lang)
+        ? `<button class="cb-act run" onclick="CH._codeExec('${id}',this)" title="Execute on the Vera host and show output inline (exec sandbox applies)">&#9654; Run</button>`
+        : '';
+      const saveBtn=`<button class="cb-act" onclick="CH._codeSaveArtifact('${id}',this)" title="Save this code to the session's artifact directory (shows in the Code tab tree)">&#8681; Save</button>`;
       return `<div class="code-card" data-cb="${id}">`
            + `<div class="code-bar"><span class="code-lang">${langLbl}</span>`
            +   `<div style="flex:1"></div>`
            +   `<button class="cb-act" onclick="CH._codeCopy('${id}',this)" title="Copy to clipboard">Copy</button>`
-           +   previewBtn + runBtn
+           +   saveBtn + previewBtn + runBtn + execBtn
            + `</div>`
            + `<pre><code>${code}</code></pre>`
+           + `<div class="code-exec-out" data-exec-out="${id}" style="display:none"></div>`
            + `</div>`;
     });
     // 3. Inline code, bold, italic, headings, line breaks
@@ -2861,6 +3268,89 @@ IMPORTANT:
       r.classList.remove('slim');
       const h=document.getElementById('rResize'); if(h) h.style.display='';
       try{localStorage.setItem('vera_right_collapsed','0');}catch(_){}
+    }
+  }
+
+  /* ── Save a chat code block to the artifact system ──────────────
+     Writes the block to the session's artifact dir (same place the v4
+     loop writes), then opens the Code tab and refreshes the tree — so
+     chat-generated code uses the same artifact pipeline. */
+  const _LANG_EXT={html:'html',htm:'html',css:'css',js:'js',javascript:'js',
+    jsx:'jsx',ts:'ts',tsx:'tsx',python:'py',py:'py',json:'json',markdown:'md',
+    md:'md',bash:'sh',sh:'sh',shell:'sh',yaml:'yaml',yml:'yaml',svg:'svg',
+    sql:'sql',go:'go',rust:'rs',rs:'rs',java:'java',c:'c',cpp:'cpp',plain:'txt',text:'txt'};
+  async function _codeSaveArtifact(id, btn){
+    const blk=_CODE_BLOCKS[id]; if(!blk) return;
+    const ext=_LANG_EXT[(blk.lang||'').toLowerCase()]||'txt';
+    const suggested=(blk.filename||(_describeCode(blk)+'.'+ext));
+    const name=prompt('Save to artifacts as (filename, may include sub/dir):', suggested);
+    if(!name) return;
+    const orig=btn?btn.textContent:'';
+    if(btn){ btn.disabled=true; btn.innerHTML='Saving…'; }
+    try{
+      const r=await fetch(BASE+'/exec/sandbox/write_artifact',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({filename:name, content:blk.code||'',
+          session_id:(typeof SID!=='undefined'?SID:'')||''})});
+      const j=await r.json();
+      if(!r.ok || j.ok===false) throw new Error(j.error||('HTTP '+r.status));
+      if(btn) btn.innerHTML='Saved ✓';
+      ctxTab('code', null);              // open Code tab
+      const rr=document.getElementById('rightRail');
+      if(rr && rr.classList.contains('slim')){
+        rr.classList.remove('slim');
+        const h=document.getElementById('rResize'); if(h) h.style.display='';
+      }
+      _artifactsRefresh();               // show the new file in the tree
+    }catch(e){
+      if(btn) btn.innerHTML='Save failed';
+      alert('Save to artifacts failed: '+(e&&e.message||e));
+    }finally{
+      setTimeout(()=>{ if(btn){ btn.disabled=false; btn.innerHTML=orig||'⇩ Save'; } },1500);
+    }
+  }
+
+  /* ── SERVER-SIDE CODE EXECUTION ─────────────────────────────────
+     Run a code block on the Vera host via /exec/code/run and render
+     stdout/stderr/rc inline beneath the block. Subject to the exec
+     sandbox policy (exec.sandbox.get/set) — a blocked run comes back
+     with {blocked:true} and is shown as an error. */
+  async function _codeExec(id, btn){
+    const blk=_CODE_BLOCKS[id]; if(!blk) return;
+    const out=document.querySelector(`[data-exec-out="${id}"]`);
+    if(!out) return;
+    const orig=btn?btn.textContent:'';
+    if(btn){ btn.disabled=true; btn.textContent='Running…'; }
+    out.style.display='block';
+    out.innerHTML='<div class="ce-meta">running…</div>';
+    try{
+      const r=await fetch('/exec/code/run',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          language: blk.lang||'',
+          code: blk.code||'',
+          timeout: 120,
+          session_id: (typeof SID!=='undefined'?SID:'')||'',
+        }),
+      });
+      const j=await r.json();
+      const parts=[];
+      const bin=j.bin?` · ${esc(j.bin)}`:'';
+      if(j.error || j.blocked){
+        parts.push(`<div class="ce-err">${j.blocked?'⛔ ':'✗ '}${esc(j.error||'error')}</div>`);
+      }
+      if(j.stdout) parts.push(`<pre class="ce-stdout">${esc(j.stdout)}</pre>`);
+      if(j.stderr) parts.push(`<pre class="ce-stderr">${esc(j.stderr)}</pre>`);
+      const rc=(j.rc!=null)?j.rc:'?';
+      const okCls=(j.ok)?'ce-ok':'ce-bad';
+      parts.push(`<div class="ce-foot"><span class="${okCls}">[rc=${esc(rc)}]</span>`
+                +` <span class="ce-meta">${esc(j.language||blk.lang||'')}${bin}`
+                +`${j.elapsed_ms!=null?' · '+esc(j.elapsed_ms)+'ms':''}</span></div>`);
+      out.innerHTML=parts.join('')||'<div class="ce-meta">(no output)</div>';
+    }catch(e){
+      out.innerHTML=`<div class="ce-err">✗ ${esc(String(e))}</div>`;
+    }finally{
+      if(btn){ btn.disabled=false; btn.textContent=orig||'▶ Run'; }
     }
   }
 
@@ -2966,6 +3456,244 @@ IMPORTANT:
     if(c)c.textContent='';
     const t=document.getElementById('codePreviewTitle');
     if(t)t.textContent='Code preview';
+  }
+
+  /* ── Artifacts file tree (agentic-loop generated files) ──────────────
+     Resolves the sandbox artifact dir for this session, lists files, and
+     lets the user click one to view it in the preview/source pane. */
+  const _EXT_LANG={html:'html',htm:'html',css:'css',svg:'svg',js:'js',mjs:'js',
+    jsx:'js',ts:'js',py:'python',json:'json',md:'markdown',markdown:'markdown',
+    txt:'plain',csv:'plain',yaml:'yaml',yml:'yaml',sh:'bash'};
+  let _artifactDir='';
+  async function _artifactsRefresh(){
+    const treeEl=document.getElementById('artifactTree');
+    const lblEl=document.getElementById('artifactDirLbl');
+    if(treeEl) treeEl.innerHTML='<div style="color:var(--dim2);padding:4px">scanning…</div>';
+    try{
+      // 1) resolve the artifact dir for this session
+      let r=await fetch(BASE+'/exec/sandbox/artifact_dir?session_id='+encodeURIComponent(SID||''),
+        {headers:{'Content-Type':'application/json'}});
+      const info=await r.json();
+      _artifactDir=info?.dir||'';
+      if(lblEl){ lblEl.textContent=_artifactDir||'(unavailable)'; lblEl.title=_artifactDir||''; }
+      if(!_artifactDir){ if(treeEl) treeEl.innerHTML='<div style="color:var(--dim2);padding:4px">No artifact directory.</div>'; return; }
+      // 2) list files under it
+      r=await fetch(BASE+'/ide/code/list_files',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({root:_artifactDir,max_files:500})});
+      const j=await r.json();
+      const files=(j&&j.files)||[];
+      if(!files.length){ if(treeEl) treeEl.innerHTML='<div style="color:var(--dim2);padding:4px">No files yet.</div>'; return; }
+      files.sort((a,b)=>String(a.rel).localeCompare(String(b.rel)));
+      if(treeEl) treeEl.innerHTML=files.map(f=>{
+        const rel=esc(f.rel||''); const sz=f.size!=null?` <span style="color:var(--dim2)">(${f.size}b)</span>`:'';
+        // Path lives in a data attribute (HTML-escaped) so Windows backslashes
+        // and quotes can't break the inline handler.
+        return `<div class="art-file" data-path="${esc(f.path||'')}" data-rel="${rel}"
+          style="padding:2px 4px;cursor:pointer;border-radius:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"
+          onmouseover="this.style.background='var(--bg2)'" onmouseout="this.style.background=''"
+          onclick="CH._artifactOpen(this.dataset.path, this.dataset.rel)"
+          title="${esc(f.path||'')}">📄 ${rel}${sz}</div>`;
+      }).join('');
+    }catch(e){
+      if(treeEl) treeEl.innerHTML='<div style="color:var(--err);padding:4px">scan failed: '+esc(String(e&&e.message||e))+'</div>';
+    }
+  }
+  async function _artifactOpen(path, rel){
+    try{
+      const r=await fetch(BASE+'/ide/code/read_lines',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({path})});
+      const j=await r.json();
+      if(j&&j.error){ alert('Could not read file: '+j.error); return; }
+      const content=(j&&(j.content!=null?j.content:(Array.isArray(j.lines)?j.lines.join('\n'):'')))||'';
+      const ext=(rel||path||'').split('.').pop().toLowerCase();
+      const lang=_EXT_LANG[ext]||'plain';
+      const titleEl=document.getElementById('codePreviewTitle');
+      if(titleEl) titleEl.textContent=rel||'file';
+      if(lang==='markdown'){
+        // Render markdown into the sandboxed preview frame.
+        const frame=document.getElementById('codePreviewFrame');
+        const codeEl=document.getElementById('codePreviewCode');
+        if(codeEl) codeEl.textContent=content;
+        if(frame){
+          const body=renderMd(content);
+          frame.removeAttribute('src'); frame.setAttribute('sandbox','allow-scripts');
+          frame.srcdoc='<!DOCTYPE html><html><head><meta charset="utf-8"><style>'
+            +'body{font:13px/1.6 system-ui,sans-serif;color:#222;padding:14px;max-width:760px;margin:0 auto}'
+            +'pre{background:#f4f4f4;padding:8px;border-radius:4px;overflow:auto}code{font-family:monospace}'
+            +'table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:4px 8px}</style></head><body>'
+            +body+'</body></html>';
+        }
+        document.getElementById('codePreviewView').style.display='block';
+        document.getElementById('codePreviewSource').style.display='none';
+        document.getElementById('codeViewPreviewBtn')?.classList.add('on');
+        document.getElementById('codeViewSourceBtn')?.classList.remove('on');
+      } else {
+        _codePreviewLoad(lang, content, false);
+        // Non-visual types open straight to Source so the file is readable.
+        if(!(lang==='html'||lang==='css'||lang==='svg')) _codeViewMode('source');
+      }
+    }catch(e){ alert('Read failed: '+(e&&e.message||e)); }
+  }
+
+  /* Short, stable content hash (djb2) → used to name unlabeled code blocks so
+     re-rendering the same snippet overwrites its file instead of piling up
+     duplicates, while two distinct snippets still get distinct files. */
+  function _shortHash(s){
+    let h=5381; s=s||'';
+    for(let i=0;i<s.length;i++){ h=((h<<5)+h+s.charCodeAt(i))>>>0; }
+    return h.toString(36);
+  }
+  /* Slugify an identifier/phrase into a safe, short filename base. */
+  function _slugify(s){
+    return String(s||'').toLowerCase()
+      .replace(/[^a-z0-9]+/g,'-')
+      .replace(/^-+|-+$/g,'')
+      .slice(0,40);
+  }
+
+  /* Derive a short, human-readable base name from a code block by pulling out
+     its most salient identifier for the language (function / class / component
+     / table / selector / <title> …). Falls back to a leading comment, then a
+     language-appropriate noun. Returns a slug — no directory, no extension. */
+  function _describeCode(blk){
+    const lang=(blk.lang||'').toLowerCase();
+    const code=blk.code||'';
+    let m, s;
+    const py=['python','py','python3'];
+    const jsish=['js','javascript','jsx','ts','tsx','typescript','node','nodejs','mjs','deno'];
+    const shish=['bash','sh','shell','zsh','powershell','ps','ps1','pwsh','posh'];
+    if(py.includes(lang)){
+      if((m=code.match(/^\s*class\s+([A-Za-z_]\w*)/m))) return _slugify(m[1]);
+      if((m=code.match(/^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)/m))) return _slugify(m[1]);
+    } else if(jsish.includes(lang)){
+      if((m=code.match(/(?:export\s+default\s+)?(?:async\s+)?function\s*\*?\s+([A-Za-z_$][\w$]*)/))) return _slugify(m[1]);
+      if((m=code.match(/(?:export\s+(?:default\s+)?)?class\s+([A-Za-z_$][\w$]*)/))) return _slugify(m[1]);
+      if((m=code.match(/(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/))) return _slugify(m[1]);
+    } else if(lang==='html'||lang==='htm'){
+      if((m=code.match(/<title[^>]*>([^<]+)<\/title>/i))) return _slugify(m[1]);
+      if((m=code.match(/<h1[^>]*>([^<]+)<\/h1>/i))) return _slugify(m[1]);
+    } else if(lang==='css'){
+      if((m=code.match(/([.#][A-Za-z_-][\w-]*)\s*[,{]/))) return _slugify(m[1]);
+    } else if(lang==='sql'){
+      if((m=code.match(/create\s+(?:table|view)\s+(?:if\s+not\s+exists\s+)?["'`]?([\w.]+)/i))) return _slugify(m[1]);
+      if((m=code.match(/\bfrom\s+["'`]?([\w.]+)/i))) return _slugify(m[1]);
+    } else if(shish.includes(lang)){
+      if((m=code.match(/^\s*(?:function\s+)?([A-Za-z_]\w*)\s*\(\)\s*\{/m))) return _slugify(m[1]);
+    } else if(lang==='go'||lang==='golang'){
+      if((m=code.match(/^\s*func\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)/m))) return _slugify(m[1]);
+    } else if(lang==='rust'||lang==='rs'){
+      if((m=code.match(/^\s*(?:pub\s+)?(?:struct|fn|enum)\s+([A-Za-z_]\w*)/m))) return _slugify(m[1]);
+    } else if(['java','c','cpp','cs','kotlin','swift'].includes(lang)){
+      if((m=code.match(/(?:class|struct|interface)\s+([A-Za-z_]\w*)/))) return _slugify(m[1]);
+      if((m=code.match(/\b([A-Za-z_]\w*)\s*\([^)]*\)\s*\{/))) return _slugify(m[1]);
+    }
+    // Leading comment line often names/describes the snippet.
+    if((m=code.match(/^\s*(?:#|\/\/|--|;)\s*(.+)/)) && (s=_slugify(m[1]))) return s;
+    // Language-appropriate generic noun.
+    const FALLBACK={html:'page',htm:'page',css:'styles',sql:'query',json:'data',
+      yaml:'config',yml:'config',md:'notes',markdown:'notes',svg:'image',
+      dockerfile:'dockerfile'};
+    return FALLBACK[lang] || 'snippet';
+  }
+
+  /* Filename a code block is persisted under. An explicit fence label wins
+     (and gives "maintain/edit" semantics across turns); otherwise we mint a
+     descriptive <name>-<hash>.<ext> from the code's salient identifier plus a
+     content hash. The hash keeps the dedup/overwrite property (same content →
+     same file) while distinct snippets that share a name stay distinct. */
+  function _autoArtifactName(blk){
+    if(blk.filename) return blk.filename;
+    const ext=_LANG_EXT[(blk.lang||'').toLowerCase()]||'txt';
+    const base=_describeCode(blk)||'snippet';
+    return 'snippets/'+base+'-'+_shortHash((blk.lang||'')+'\n'+(blk.code||''))+'.'+ext;
+  }
+
+  /* Auto-persist EVERY code block from a finished assistant message into the
+     session's artifact dir. Labeled blocks keep their filename (re-using a
+     filename overwrites, i.e. "maintains" the file); unlabeled blocks are saved
+     under a content-hashed snippets/ name so any code the agent produces lands
+     in the artifact store. */
+  async function _maybeAutoSaveArtifacts(container){
+    if(!container || document.getElementById('cfgAutoArtifacts')?.checked===false) return;
+    const cards=container.querySelectorAll('.code-card[data-cb]');
+    let saved=0;
+    for(const c of cards){
+      const blk=_CODE_BLOCKS[c.getAttribute('data-cb')];
+      if(!blk || !(blk.code||'').trim()) continue;
+      try{
+        const r=await fetch(BASE+'/exec/sandbox/write_artifact',{method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({filename:_autoArtifactName(blk), content:blk.code||'',
+            session_id:(typeof SID!=='undefined'?SID:'')||''})});
+        const j=await r.json();
+        if(r.ok && j.ok!==false){ saved++; c.dataset.artifactSaved='1'; }
+      }catch(_){}
+    }
+    if(saved && CTX_TAB==='code') _artifactsRefresh();
+    return saved;
+  }
+
+  /* Build a context block of the session's current artifact files (names +
+     contents, bounded) so the LLM "has them loaded" and can update them by
+     re-emitting a same-named code block. Always includes a short how-to so the
+     agent knows it can create files even when none exist yet. */
+  async function _fetchArtifactContext(){
+    if(document.getElementById('cfgArtifactCtx')?.checked===false) return '';
+    const HOWTO='To create or update a file, emit a fenced code block whose info line '
+      + 'includes a filename, e.g. ```python app.py — it is saved to your artifacts and '
+      + 'shown back to you here next turn. Re-use the SAME filename to maintain/edit a file.';
+    try{
+      let r=await fetch(BASE+'/exec/sandbox/artifact_dir?session_id='+encodeURIComponent((typeof SID!=='undefined'?SID:'')||''));
+      const info=await r.json(); const dir=info?.dir||''; if(!dir) return '';
+      r=await fetch(BASE+'/ide/code/list_files',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({root:dir,max_files:60})});
+      const j=await r.json(); const files=(j&&j.files)||[];
+      if(!files.length) return '═══ ARTIFACTS ═══\n(no files yet) '+HOWTO;
+      files.sort((a,b)=>(b.mtime||0)-(a.mtime||0));  // most-recent first
+      const MAX_FILES=12, PER=2400, TOTAL=14000;
+      let out='═══ ARTIFACT FILES — you created these; '+HOWTO+' ═══\n', used=0, n=0;
+      for(const f of files){
+        if(n>=MAX_FILES || used>=TOTAL) break;
+        try{
+          const rr=await fetch(BASE+'/ide/code/read_lines',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({path:f.path})});
+          const jj=await rr.json();
+          const content=(jj&&(jj.content!=null?jj.content:(Array.isArray(jj.lines)?jj.lines.join('\n'):'')))||'';
+          const snip=content.slice(0,PER);
+          out+=`\n--- ${f.rel} (${f.size}b) ---\n${snip}${content.length>PER?'\n…[truncated]':''}\n`;
+          used+=snip.length; n++;
+        }catch(_){}
+      }
+      return n ? out : '';
+    }catch(_){ return ''; }
+  }
+
+  /* ── Auto-open code preview ──────────────────────────────────────
+     When enabled, the moment an assistant message finishes rendering we
+     look for the last renderable code block it produced and pop it into
+     the preview pane automatically. Toggle persisted in localStorage. */
+  function _autoPreviewToggle(on){
+    try{ localStorage.setItem('vera_auto_preview', on?'1':'0'); }catch(_){}
+  }
+  function _autoPreviewEnabled(){
+    return !!document.getElementById('cfgAutoPreview')?.checked;
+  }
+  // Only the languages that produce a *visual* render auto-open the pane —
+  // bare JS/JSX would just dump source, which isn't worth stealing the rail.
+  function _isAutoPreviewable(lang){
+    const l=(lang||'').toLowerCase();
+    return l==='html' || l==='css' || l==='svg';
+  }
+  // Scan a freshly-rendered message container for the last renderable code
+  // block and open it. No-op when the toggle is off or there's nothing to show.
+  function _maybeAutoPreview(container){
+    try{
+      if(!_autoPreviewEnabled() || !container) return;
+      const cards=container.querySelectorAll('.code-card[data-cb]');
+      let id=null;
+      cards.forEach(c=>{ const cid=c.getAttribute('data-cb'); const blk=_CODE_BLOCKS[cid]; if(blk && _isAutoPreviewable(blk.lang)) id=cid; });
+      if(id) _codePreview(id);
+    }catch(_){}
   }
 
   function appendSys(html){const d=document.createElement('div');d.className='sys-msg';d.innerHTML=html;BOX().appendChild(d);scroll();}
@@ -3650,14 +4378,20 @@ IMPORTANT:
   }
 
   /* ═══ AUTO-ACT vs ASK-BEFORE-ACTING — one switch across all modes ═══
-     Ask-first ON  → require approval before acting in: chat caps (Unattended OFF),
-                     the agentic loop (step pause / require_approval ON), and DAG
-                     runs (DAG HITL ON).
-     Ask-first OFF → act automatically everywhere. Persisted in localStorage. */
+     Ask-first ON  → require approval before acting in: chat caps (Auto-exec +
+                     Unattended OFF), the agentic loop (step pause /
+                     require_approval ON), and DAG runs (DAG HITL ON).
+     Ask-first OFF (Auto-act) → act automatically everywhere: also flips the
+                     agent-autonomy toggles (Auto-exec, Unattended) ON so one
+                     switch = fully autonomous. Output-only conveniences
+                     (Auto-play, Auto-open preview) are left as the user set them.
+     Persisted in localStorage. */
   let ASK_BEFORE_ACTING=true;
   function _applyAskBeforeActing(){
     const ask=ASK_BEFORE_ACTING;
-    // Chat caps: "Unattended" means auto-act, so it is the inverse of ask-first.
+    // Chat caps: auto-act ⇒ execute caps without confirmation and retry failures
+    // unattended. Both are the inverse of ask-first.
+    const ae=document.getElementById('cfgCapAutoExec');          if(ae) ae.checked=!ask;
     const un=document.getElementById('cfgUnattended');           if(un) un.checked=!ask;
     // Agentic loop: pause for approval each step (both mirrored ids).
     const lp=document.getElementById('loopPause');               if(lp) lp.checked=ask;
@@ -3966,27 +4700,33 @@ Your task: decide what to do next to advance toward the goal.
   async function _fetchContextBlock(agentRecord, userMessage){
     const {attachSkills,attachOnts,attachDags,attachMem}=_getContextInjectSpec(agentRecord,userMessage);
     const relatedQa=document.getElementById('ctxRelatedQa')?.value||'';
-    if(!attachSkills&&!attachOnts&&!attachDags&&!attachMem&&!relatedQa) return '';
-    try{
-      const res=await api('/context/assemble','POST',{
-        message:userMessage,
-        attach_skills:attachSkills,
-        attach_ontologies:attachOnts,
-        attach_caps:'',  // caps injected separately via buildCapHint
-        attach_dags:attachDags,
-        attach_memory:attachMem,
-        attach_related_qa:relatedQa,
-        session_id:SID,
-        agent_name:agentRecord?.name||'',
-        memory_limit:5,
-      });
-      // Update the assembled context cache so the Context tab can
-      // display exactly what was sent to the agent.
-      // Fetch skill + ontology details in the background (non-blocking
-      // for the send path — the tab will show them when the user looks).
-      _updateAssembledCtxFromSend(agentRecord, res);
-      return res?.system_prompt||'';
-    }catch(e){return '';}
+    // Artifact files are always offered to the agent (so it can load/maintain
+    // them) independent of the other context layers. Start it concurrently with
+    // the server context assemble so it doesn't add serial latency.
+    const artP=_fetchArtifactContext();
+    let serverCtx='';
+    if(attachSkills||attachOnts||attachDags||attachMem||relatedQa){
+      try{
+        const res=await api('/context/assemble','POST',{
+          message:userMessage,
+          attach_skills:attachSkills,
+          attach_ontologies:attachOnts,
+          attach_caps:'',  // caps injected separately via buildCapHint
+          attach_dags:attachDags,
+          attach_memory:attachMem,
+          attach_related_qa:relatedQa,
+          session_id:SID,
+          agent_name:agentRecord?.name||'',
+          memory_limit:5,
+        });
+        // Update the assembled context cache so the Context tab can
+        // display exactly what was sent to the agent.
+        _updateAssembledCtxFromSend(agentRecord, res);
+        serverCtx=res?.system_prompt||'';
+      }catch(e){}
+    }
+    let artBlock=''; try{ artBlock=await artP; }catch(_){}
+    return [serverCtx, artBlock].filter(Boolean).join('\n\n');
   }
 
   /** After a send, update _assembledCtx with the assemble response and
@@ -4042,8 +4782,27 @@ Your task: decide what to do next to advance toward the goal.
       }
     }catch(_){}
   }
-  function buildCtxInj(){
+  // Normalise a query/message for stale-context comparison.
+  const _ctxNorm=s=>String(s||'').toLowerCase().replace(/\s+/g,' ').trim();
+  // True when the live-context fetch in CTX_NODES corresponds to `msg`. We use
+  // containment (not just equality) so a pinned-doc prefix or a trailing "?"
+  // still counts as a match; only a genuinely different query fails.
+  function _ctxMatches(msg){
+    const b=_ctxNorm(_ctxQuery); if(!b) return false;
+    const a=_ctxNorm(msg);
+    return a===b || a.includes(b) || b.includes(a);
+  }
+  const _ctxLiveOn=()=>!!(document.getElementById('ctxOnType')?.checked
+                          && document.getElementById('ctxLive')?.checked);
+
+  function buildCtxInj(forMsg){
     if(!document.getElementById('ctxInject')?.checked)return'';
+    // In live-context mode CTX_NODES is query-driven: never inject context that
+    // was retrieved for a DIFFERENT message. If the user edited the input and
+    // sent before the debounced fetch caught up, CTX_NODES may still hold the
+    // previous message's context. (Skipped when live mode is off so manually
+    // curated context — added nodes, frames, recall — still injects.)
+    if(forMsg!==undefined && _ctxLiveOn() && !_ctxMatches(forMsg)) return '';
     const minSim=parseFloat(document.getElementById('ctxSim')?.value||'0.55');
     const k=parseInt(document.getElementById('ctxK')?.value||'8');
     const items=CTX_NODES
@@ -4065,6 +4824,9 @@ Your task: decide what to do next to advance toward the goal.
   function send(){
     const inp=document.getElementById('chatInput');
     let msg=(inp?.value||'').trim();
+    // Slash command? Run it locally (open panel / switch agent / toggle) and
+    // do NOT send to the agent. Unknown "/…" falls through as normal chat.
+    if(msg.startsWith('/') && _runSlash(msg)){ if(inp) inp.value=''; _slashHide(); return; }
     // Pinned doc chips: prepend their fenced bodies before the user's
     // typed message. Empty typed message + at least one doc still sends
     // (the doc IS the prompt). Without that fallback, the user would
@@ -4268,7 +5030,7 @@ Your task: decide what to do next to advance toward the goal.
     // any network await, so pressing send feels immediate. The agent record
     // (`a`) and everything that depends on it are resolved just below; the
     // throbber covers that latency and is replaced by the first token.
-    const ctxInj=buildCtxInj();
+    let ctxInj=buildCtxInj(msg);
     const uCtx=ctxInj?` <span class="ctx-pill">+${CTX_NODES.filter(n=>(n.score||0)>=parseFloat(document.getElementById('ctxSim')?.value||'0.55')).slice(0,parseInt(document.getElementById('ctxK')?.value||'8')).length} ctx</span>`:'';
     const uMsg=_mkMsg('user','you',esc(msg).replace(/\n/g,'<br>')+uCtx);
     try{ uMsg.body.dataset.markdown = msg; }catch(_){}
@@ -4281,16 +5043,24 @@ Your task: decide what to do next to advance toward the goal.
     const THROBBER='<span class="think-throb"><span class="lbl">thinking</span><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>';
     const aMsg=_mkMsg('agent',agentName,THROBBER);
     const thkEl=Object.assign(document.createElement('div'),{className:'think-box'});thkEl.style.display='none';
-    aMsg.wrap.insertBefore(thkEl,aMsg.wrap.querySelector('.mtime'));
+    // Reasoning streams before the answer and must read ABOVE it. Insert the
+    // think-box as the first child of the wrap (above the gutter+body row);
+    // inserting it before .mtime put it AFTER the response body, which is why
+    // the thought was rendering underneath the chat output.
+    aMsg.wrap.insertBefore(thkEl,aMsg.wrap.firstChild);
     BOX().appendChild(aMsg.wrap);scroll();
     const bubEl=aMsg.body; // alias for the body div
 
     // Always fetch fresh agent data so domain_caps changes take effect immediately
     const a=await _getCurrentAgent()||AGENTS.find(x=>x.name===agentName);
     try{ const g=aMsg.wrap.querySelector('.msg-gutter'); if(g && a?.label) g.textContent=a.label; }catch(_){}
-    // Auto-panels: open the most relevant panel BEFORE building the cap hint
-    // so its ui_caps + interaction guidance land in this turn's prompt.
-    try{ await _maybeAutoOpenPanel(msg); }catch(_){}
+    // Explicit "open the X panel" → resolve & mount it in code (the model is
+    // unreliable at picking the right panel id). This is the ONLY pre-response
+    // open: the relevance-based heuristic that used to fire here before the
+    // model replied was removed — it kept opening panels for plain questions
+    // that didn't need them. Otherwise panels open only when the model itself
+    // emits [[panel:id]] during its reply.
+    try{ await _maybeExplicitOpenPanel(msg); }catch(_){}
     const capHint=buildCapHint(a,msg);
     _lastUserMessage=msg;
     _lastCapHint=capHint;
@@ -4303,6 +5073,32 @@ Your task: decide what to do next to advance toward the goal.
     const outFmt=document.getElementById('cfgFormat')?.value||'';
     // Fetch skills/ontologies/DAGs context block (async, may be empty)
     const ctxBlock=await _fetchContextBlock(a,msg);
+
+    // ── Context freshness guard ───────────────────────────────────────
+    // In live-context mode, if CTX_NODES were gathered for a DIFFERENT input
+    // (the user edited the box and sent before the debounced fetch ran),
+    // re-run retrieval for THIS message synchronously so the turn carries its
+    // own context instead of the previous message's. buildCtxInj(msg) already
+    // returns '' on a mismatch, so even if this fetch is skipped or fails we
+    // never leak stale context — worst case the turn just carries none.
+    if(document.getElementById('ctxInject')?.checked && _ctxLiveOn()
+       && msg.trim().length>2 && !_ctxMatches(msg)){
+      try{ await ctxFetch(false,msg); }catch(_){}
+    }
+    // Recompute injection now that context is guaranteed to match this msg,
+    // then reconcile the "+N ctx" pill on the already-painted user message.
+    ctxInj=buildCtxInj(msg);
+    try{
+      const _mS=parseFloat(document.getElementById('ctxSim')?.value||'0.55');
+      const _kK=parseInt(document.getElementById('ctxK')?.value||'8');
+      const _n=ctxInj?CTX_NODES.filter(x=>(x.score||0)>=_mS&&x.included!==false).slice(0,_kK).length:0;
+      let _pill=uMsg.body.querySelector('.ctx-pill');
+      if(_n>0){
+        if(!_pill){_pill=document.createElement('span');_pill.className='ctx-pill';uMsg.body.appendChild(_pill);}
+        _pill.textContent=` +${_n} ctx`;
+      }else if(_pill){ _pill.remove(); }
+    }catch(_){}
+
     const modelOverride=effectiveModel();
     // Pull a fresh panel-state snapshot before composing the message —
     // panels emit state on init+events, but a "what's currently here?"
@@ -4441,6 +5237,10 @@ Your task: decide what to do next to advance toward the goal.
     if(fullText && !(myAbort.signal.aborted)){
       try{ _renderFormatExtras(aMsg, bubEl, fullText, outFmt); }catch(_){}
     }
+    // Auto-open the preview pane for the last renderable code block, if enabled.
+    _maybeAutoPreview(bubEl);
+    // Auto-persist labeled code blocks into the artifact system (no manual Save).
+    try{ _maybeAutoSaveArtifacts(bubEl); }catch(_){}
     // NOTE: audio is played in-stream via _enqueueAudio above.
     // Show a playback indicator row if audio was received (for replaying)
     if(_hadAudio&&useTts){
@@ -4530,7 +5330,7 @@ Your task: decide what to do next to advance toward the goal.
       presetConfig = p?.config || {};
       // Map the preset's stored variant to a cap name
       const variantName = presetConfig.variant || 'v3';
-      const reverseMap = {'v1':'dag.agent_loop','v2':'dag.agent_loop_v2','v3':'dag.agent_loop_v3','v4':'dag.agent_loop_v4'};
+      const reverseMap = {'v1':'dag.agent_loop','v2':'dag.agent_loop_v2','v3':'dag.agent_loop_v3','v4':'dag.agent_loop_v4','v5':'dag.agent_loop_v5'};
       resolvedVariant = reverseMap[variantName] || 'dag.agent_loop_v3';
     }
 
@@ -4540,6 +5340,7 @@ Your task: decide what to do next to advance toward the goal.
       'dag.agent_loop_v2':        'v2',
       'dag.agent_loop_v3':  'v3',
       'dag.agent_loop_v4':  'v4',
+      'dag.agent_loop_v5':  'v5',
     };
     const version=versionMap[resolvedVariant]||'v2';
 
@@ -4642,17 +5443,24 @@ Your task: decide what to do next to advance toward the goal.
     });
     aloEl.addEventListener('alo:done', ()=>{ scroll(); });
     aloEl.addEventListener('alo:error', ()=>{ scroll(); });
+    // Keep the latest loop output in view AS IT STREAMS. The loop renders into a
+    // shadow DOM (so MutationObserver on the host won't see it), but the host
+    // element grows as cycles/think/results stream in — a ResizeObserver catches
+    // every growth. scroll() (auto path) only moves the viewport if the user is
+    // stuck to the bottom, so scrolling up to read still works.
+    try{
+      const _aloRO = new ResizeObserver(()=>{ scroll(); });
+      _aloRO.observe(aloEl);
+      aloEl.addEventListener('alo:done', ()=>{ try{ _aloRO.disconnect(); }catch(_){} });
+    }catch(_){}
 
-    // Pull a fresh panel-state snapshot before composing the goal — the
-    // server-side loop sees the goal as the user's request, so we append
-    // the panel state inline (similar to sendMsg). If no panel is open,
-    // panelStateBlock is empty and the goal is unchanged.
-    if(_activePanelId) requestPanelState();
-    const panelStateBlock = _formatPanelStateForPrompt();
-    const effectiveGoal = goal + panelStateBlock;
-
+    // NOTE: unlike sendMsg (chat), we deliberately do NOT inject the active
+    // panel-state block here. The agentic loop treats the goal as the user's
+    // request and discovers tools/context on its own; leaking the
+    // "[Active Panel: …]" snapshot into the goal pollutes the loop's
+    // reasoning and triage. Keep the goal exactly as the user typed it.
     const body={
-      goal: effectiveGoal,
+      goal: goal,
       allowed_caps: '',  // triage discovers tools from the full registry
       max_cycles: maxSteps,             // ← user's chosen step limit (default 8)
       // Model resolution: loop pane override > config panel dropdown > agent default
@@ -4674,6 +5482,17 @@ Your task: decide what to do next to advance toward the goal.
       hitl_timeout_secs: autoSecs,
       // ── Extended Loop pane fields (triage, recovery, long-running) ──
       triage_top_k:            parseInt(document.getElementById('loopTriageTopK')?.value||'16',10)||16,
+      triage_category:         document.getElementById('loopTriageCat')?.value||'',
+      triage_keywords:         (document.getElementById('loopTriageKws')?.value||'').trim(),
+      // Base toolkit: agent baseline (when mirroring) unioned with the explicit
+      // caps box; or just the explicit box when decoupled (empty → backend default).
+      base_toolkit:            (function(){
+                                 const extra=(document.getElementById('loopBaseCaps')?.value||'')
+                                   .split(/[\s,]+/).filter(Boolean);
+                                 const mirror=document.getElementById('loopBaseMirror')?.checked!==false;
+                                 const set=mirror ? [...allowedCaps, ...extra] : extra;
+                                 return [...new Set(set)].join(',');
+                               })(),
       max_search_calls:        parseInt(document.getElementById('loopMaxSearch')?.value||'2',10)||2,
       max_expands:             parseInt(document.getElementById('loopMaxExpands')?.value||'1',10)||1,
       count_failed_cycles:     !!document.getElementById('loopCountFailed')?.checked,
@@ -4690,6 +5509,15 @@ Your task: decide what to do next to advance toward the goal.
       require_verify:          document.getElementById('loopRequireVerify')?.checked!==false,
       strict_complete:         document.getElementById('loopStrictComplete')?.checked!==false,
       prefer_terminal_tools:   document.getElementById('loopPreferTerminal')?.checked!==false,
+      // ── v5 specialist-sub-agent fields ──────────────────────────────────
+      max_steps:               parseInt(document.getElementById('loopMaxSteps5')?.value||'8',10)||8,
+      step_cycle_budget:       parseInt(document.getElementById('loopStepBudget')?.value||'6',10)||6,
+      catalog_size:            parseInt(document.getElementById('loopCatalogSize')?.value||'40',10)||40,
+      enable_replan:           document.getElementById('loopEnableReplan')?.checked!==false,
+      enable_dynamic_skills:   document.getElementById('loopDynSkills')?.checked!==false,
+      auto_suggest_skills:     document.getElementById('loopAutoSuggestSkills')?.checked!==false,
+      skill_allow:             (document.getElementById('loopSkillAllow')?.value||'').trim(),
+      skill_deny:              (document.getElementById('loopSkillDeny')?.value||'').trim(),
     };
 
     // Apply preset config overrides — the preset's stored settings take priority
@@ -4837,6 +5665,13 @@ Your task: decide what to do next to advance toward the goal.
     // v4 strict-loop options only apply to the v4 variant.
     const v4d=document.getElementById('loopV4Details');
     if(v4d) v4d.style.display = (v==='dag.agent_loop_v4') ? '' : 'none';
+    // v5 specialist-sub-agent options only apply to the v5 variant.
+    const v5d=document.getElementById('loopV5Details');
+    if(v5d){
+      const isV5=(v==='dag.agent_loop_v5');
+      v5d.style.display = isV5 ? '' : 'none';
+      if(isV5) v5d.open = true;
+    }
     // Sync values both ways once
     _loopVariantSync(document.getElementById('loopMaxSteps'),'cfgStepMax');
     _loopVariantSync(document.getElementById('loopPause'),'cfgStepPause');
@@ -4851,6 +5686,25 @@ Your task: decide what to do next to advance toward the goal.
     if(!twin)return;
     if(srcEl.type==='checkbox') twin.checked=srcEl.checked;
     else twin.value=srcEl.value;
+  }
+
+  /* Fill the Base-toolkit box with the current agent's effective caps so the
+     user can SEE and prune what's available for the loop. */
+  async function loopLoadAgentCaps(){
+    let a=null;
+    try{ a=await _getCurrentAgent(); }catch(_){}
+    if(!a) a=AGENTS.find(x=>x.name===(document.getElementById('agentBarSel')?.value));
+    const caps=_getAgentCaps(a)||[];
+    const ta=document.getElementById('loopBaseCaps');
+    if(ta) ta.value=caps.join(' ');
+  }
+  /* Fill with the default base set (exec + code/file + web/browser + skills). */
+  function loopLoadDefaultCaps(){
+    const ta=document.getElementById('loopBaseCaps');
+    if(ta) ta.value='exec.bash.run exec.ps.run exec.code.run '
+      +'ide.code.list_files ide.code.read_lines ide.code.grep ide.code.replace ide.code.edit_lines '
+      +'web.search web.fetch http.get browser.navigate browser.action scrape.fetch '
+      +'fabric.skills.list fabric.skills.get';
   }
 
   /* ═══════════════════════════════════════════════════════
@@ -5415,6 +6269,20 @@ Your task: decide what to do next to advance toward the goal.
     const nodes=[],edges=[];
     const nowTs=Date.now();
 
+    // Progressive render: commit whatever we have so far and redraw, so context
+    // nodes stream into the graph as each source returns rather than appearing
+    // all at once at the very end. Self-guards on stale() so a superseded fetch
+    // never paints over a newer one. The final block below still writes the
+    // authoritative summary (per-source breakdown) once everything has settled.
+    const _flush=()=>{
+      if(stale())return;
+      CTX_NODES=nodes;CTX_EDGES=edges;_ctxQuery=query;
+      renderCtxGraph();renderCtxList();renderFabPane();
+      const cc=document.getElementById('ctxCount');if(cc)cc.textContent=nodes.length+' ctx';
+      const empty=document.getElementById('ctxEmpty');if(empty)empty.style.display=nodes.length?'none':'flex';
+      if(st&&nodes.length)st.textContent=nodes.length+' ctx…';
+    };
+
     // Kick the fabric query off NOW so it overlaps the memory round-trips
     // below (the two are independent). It's awaited in §2. — speed win.
     let _fabricPromise=null;
@@ -5520,6 +6388,7 @@ Your task: decide what to do next to advance toward the goal.
         }
       }
     }
+    _flush();   // paint memory hits immediately
 
     /* 2. FABRIC — with fuzzy re-rank and exact-match suppression */
     if(CTX_SRCS.has('fabric')&&!stale()){
@@ -5546,6 +6415,7 @@ Your task: decide what to do next to advance toward the goal.
         });
       }
     }
+    _flush();   // paint fabric hits
 
     /* 2b. CONTEXT RECALL — entity crawl + worldview + related-Q&A.
        One server-side call that runs its sources concurrently. Additive: the
@@ -5553,7 +6423,7 @@ Your task: decide what to do next to advance toward the goal.
        are merged into `nodes` with cross-source dedup so a record returned by
        several systems (e.g. memory AND worldview) appears once with combined
        provenance. New render sources map onto existing layers:
-         entity→graph(Neo) · worldview→vector(Vec) · qa→related_qa(Q&A). */
+         entity→graph(Neo) · worldview→worldview(World) · qa→related_qa(Q&A). */
     const _wantEnt=CTX_SRCS.has('entities'), _wantWv=CTX_SRCS.has('worldview'),
           _wantQa=CTX_SRCS.has('memory');
     if((_wantEnt||_wantWv||_wantQa)&&!stale()){
@@ -5575,7 +6445,7 @@ Your task: decide what to do next to advance toward the goal.
       });
       if(!stale()&&rr?.results){
         const _renderSrc=(r)=>{
-          const map={entity:'graph',worldview:'vector',qa:'related_qa',memory:'memory',fabric:'fabric'};
+          const map={entity:'graph',worldview:'worldview',qa:'related_qa',memory:'memory',fabric:'fabric'};
           const srcs=(r.sources&&r.sources.length)?r.sources:[r.source];
           for(const s of srcs){if(map[s])return map[s];}
           return 'graph';
@@ -5607,6 +6477,7 @@ Your task: decide what to do next to advance toward the goal.
         });
       }
     }
+    _flush();   // paint recall hits (entities · worldview · related-Q&A)
 
     /* 3. URLS IN QUERY — these go DIRECTLY to the browser pane (loads the URL
        in the iframe / screenshot view) AND are added to context. We no longer
@@ -5633,6 +6504,7 @@ Your task: decide what to do next to advance toward the goal.
           }
         }catch(e){}
       }));
+      _flush();   // paint URL fetches
     }
 
     /* 4. WEB SEARCH */
@@ -5646,6 +6518,7 @@ Your task: decide what to do next to advance toward the goal.
           webRequestedButEmpty=true;
         }
       }
+      _flush();   // paint web results
     }
 
     /* 5. NEWS */
@@ -5659,6 +6532,7 @@ Your task: decide what to do next to advance toward the goal.
           newsRequestedButEmpty=true;
         }
       }
+      _flush();   // paint news results
     }
 
     /* 6. Similarity edges */
@@ -5669,7 +6543,7 @@ Your task: decide what to do next to advance toward the goal.
     if(stale()){if(sp)sp.classList.add('hidden');return;}
 
     _ctxAbort=null;
-    CTX_NODES=nodes;CTX_EDGES=edges;
+    CTX_NODES=nodes;CTX_EDGES=edges;_ctxQuery=query;
     if(sp)sp.classList.add('hidden');
     const vec=nodes.filter(n=>n.source==='vector'||n.source==='both').length;
     const grp=nodes.filter(n=>n.source==='graph').length;
@@ -6020,10 +6894,13 @@ Your task: decide what to do next to advance toward the goal.
   function dagGraphFit(){_dagAutoFit();}
 
   /* ═══ CONTEXT GRAPH ═══ */
-  const srcCol=s=>s==='vector'?'#a78bfa':s==='graph'?'#fb923c':s==='both'?'#8fb87a':s==='fabric'?'#38bdf8':s==='memory'?'#5a9e8f':s==='web'?'#f59e0b':s==='news'?'#e879f9':s==='cap'?'#ec4899':s==='skill'?'#5a9e8f':s==='ontology'?'#c9955a':s==='related_qa'?'#e8a44c':s==='agent'?'#888':'#8a7e70';
+  const srcCol=s=>s==='vector'?'#a78bfa':s==='graph'?'#fb923c':s==='both'?'#8fb87a':s==='fabric'?'#38bdf8':s==='memory'?'#5a9e8f':s==='web'?'#f59e0b':s==='news'?'#e879f9':s==='cap'?'#ec4899':s==='skill'?'#5a9e8f':s==='ontology'?'#c9955a':s==='related_qa'?'#e8a44c':s==='worldview'?'#2dd4bf':s==='agent'?'#888':'#8a7e70';
 
   // Per-source layer state (all on by default)
-  let _ctxLayers=new Set(['vector','graph','memory','fabric','web','cap','skill','ontology','related_qa','agent','news','both']);
+  let _ctxLayers=new Set(['vector','graph','memory','fabric','web','cap','skill','ontology','related_qa','worldview','agent','news','both']);
+  // Persistent node-position cache (keyed by node id) so progressive/incremental
+  // renders and resize reflows keep a stable layout instead of re-randomising.
+  let _ctxPos=new Map();
   function _ctxLayerToggle(layer){
     const btn=document.querySelector(`[data-ctx-layer="${layer}"]`);
     if(_ctxLayers.has(layer)){_ctxLayers.delete(layer);if(btn)btn.classList.remove('on');}
@@ -6234,16 +7111,34 @@ Your task: decide what to do next to advance toward the goal.
     const allEdges=[...visE,...extraEdges.filter(e=>allVisIds.has(e.from)&&allVisIds.has(e.to))];
 
     const W=svg.clientWidth||270,H=svg.clientHeight||240;const cx=W/2,cy=H/2;
+    // Resize reflow: when the canvas changed size since the last paint, rescale
+    // every known/cached position proportionally so the graph fills the new
+    // dimensions instead of clinging to the old corner (or getting clamped flat).
+    if(svg._lastW&&svg._lastH&&(svg._lastW!==W||svg._lastH!==H)){
+      const rx=W/svg._lastW, ry=H/svg._lastH;
+      _ctxPos.forEach(p=>{p.x*=rx;p.y*=ry;});
+      allVis.forEach(n=>{if(n.x!=null){n.x*=rx;n.y*=ry;}});
+    }
+    svg._lastW=W;svg._lastH=H;
     const ranked=[...allVis].sort((a,b)=>(b.score||0)-(a.score||0));
     const nMax=Math.max(1,ranked.length-1);
     ranked.forEach((n,i)=>{n._rankOpacity = 1 - (i/nMax)*0.7;});
-    allVis.forEach((n,i)=>{if(n.x===undefined){const a=(i/Math.max(allVis.length,1))*Math.PI*2,r=Math.min(W,H)*.28;n.x=cx+Math.cos(a)*r*(.6+Math.random()*.4);n.y=cy+Math.sin(a)*r*(.6+Math.random()*.4);n.vx=0;n.vy=0;}});
+    // Seed positions from the persistent cache (stable across progressive
+    // re-renders and resizes); only freshly-seen nodes get a random ring slot.
+    allVis.forEach((n,i)=>{
+      const cached=_ctxPos.get(n.id);
+      if(cached){n.x=cached.x;n.y=cached.y;n.vx=n.vx||0;n.vy=n.vy||0;}
+      else if(n.x===undefined){const a=(i/Math.max(allVis.length,1))*Math.PI*2,r=Math.min(W,H)*.28;n.x=cx+Math.cos(a)*r*(.6+Math.random()*.4);n.y=cy+Math.sin(a)*r*(.6+Math.random()*.4);n.vx=0;n.vy=0;}
+    });
     for(let t=0;t<10;t++){
       for(let i=0;i<allVis.length;i++)for(let j=i+1;j<allVis.length;j++){const a=allVis[i],b=allVis[j],dx=a.x-b.x,dy=a.y-b.y,d=Math.sqrt(dx*dx+dy*dy)||1,f=600/(d*d);a.vx+=f*dx/d;a.vy+=f*dy/d;b.vx-=f*dx/d;b.vy-=f*dy/d;}
       allVis.forEach(n=>{n.vx+=(cx-n.x)*.008;n.vy+=(cy-n.y)*.008;});
       allEdges.forEach(e=>{const a=allVis.find(n=>n.id===e.from),b=allVis.find(n=>n.id===e.to);if(!a||!b)return;const dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)||1,f=(d-90)*.035;a.vx+=f*dx/d;a.vy+=f*dy/d;b.vx-=f*dx/d;b.vy-=f*dy/d;});
       allVis.forEach(n=>{n.x+=n.vx*.45;n.y+=n.vy*.45;n.vx*=.65;n.vy*=.65;n.x=Math.max(22,Math.min(W-22,n.x));n.y=Math.max(22,Math.min(H-22,n.y));});
     }
+    // Persist settled positions so the next render (progressive add, layer
+    // toggle, assembled-context refresh, or resize) starts from here.
+    allVis.forEach(n=>_ctxPos.set(n.id,{x:n.x,y:n.y}));
     eG.innerHTML=allEdges.map(e=>{const a=allVis.find(n=>n.id===e.from),b=allVis.find(n=>n.id===e.to);if(!a||!b)return'';const c=srcCol(e.source);const mk=`url(#m${e.source==='vector'?'V':e.source==='fabric'?'F':e.source==='memory'||e.source==='skill'?'M':'G'})`;
       const lbl=e.type?`<text x="${(a.x+b.x)/2}" y="${(a.y+b.y)/2-3}" font-size="6.5" fill="${c}" text-anchor="middle" opacity=".75" style="pointer-events:none">${esc(String(e.type).replace(/_/g,' ').slice(0,14))}</text>`:'';
       return`<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="${c}" stroke-opacity=".5" stroke-width="1.2"${e.source==='vector'?' stroke-dasharray="4,3"':''} marker-end="${mk}"/>${lbl}`;
@@ -6262,9 +7157,24 @@ Your task: decide what to do next to advance toward the goal.
     setupPan();
   }
 
-  function setupPan(){const svg=document.getElementById('ctxSvg');if(!svg||svg._pb)return;svg._pb=true;svg.addEventListener('wheel',e=>{e.preventDefault();SVG_PAN.s=Math.max(.25,Math.min(4,SVG_PAN.s*(1-e.deltaY*.001)));applyPan();},{passive:false});svg.addEventListener('mousedown',e=>{if(e.target.closest('g[onclick]'))return;SVG_DRG={sx:e.clientX-SVG_PAN.x,sy:e.clientY-SVG_PAN.y};});window.addEventListener('mousemove',e=>{if(!SVG_DRG)return;SVG_PAN.x=e.clientX-SVG_DRG.sx;SVG_PAN.y=e.clientY-SVG_DRG.sy;applyPan();});window.addEventListener('mouseup',()=>SVG_DRG=null);}
+  function setupPan(){const svg=document.getElementById('ctxSvg');if(!svg||svg._pb)return;svg._pb=true;
+    // Wheel zoom anchored on the cursor: keep the graph point under the mouse
+    // fixed while scaling, so zooming homes in on what the user is pointing at
+    // rather than drifting toward the SVG origin (top-left).
+    svg.addEventListener('wheel',e=>{
+      e.preventDefault();
+      const rect=svg.getBoundingClientRect();
+      const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+      const ns=Math.max(.25,Math.min(4,SVG_PAN.s*(1-e.deltaY*.001)));
+      const k=ns/SVG_PAN.s;
+      SVG_PAN.x=mx-(mx-SVG_PAN.x)*k;
+      SVG_PAN.y=my-(my-SVG_PAN.y)*k;
+      SVG_PAN.s=ns;
+      applyPan();
+    },{passive:false});
+    svg.addEventListener('mousedown',e=>{if(e.target.closest('g[onclick]'))return;SVG_DRG={sx:e.clientX-SVG_PAN.x,sy:e.clientY-SVG_PAN.y};});window.addEventListener('mousemove',e=>{if(!SVG_DRG)return;SVG_PAN.x=e.clientX-SVG_DRG.sx;SVG_PAN.y=e.clientY-SVG_DRG.sy;applyPan();});window.addEventListener('mouseup',()=>SVG_DRG=null);}
   function applyPan(){const g=document.getElementById('ctxG');if(g)g.setAttribute('transform',`translate(${SVG_PAN.x},${SVG_PAN.y}) scale(${SVG_PAN.s})`);}
-  function resetGraph(){SVG_PAN={x:0,y:0,s:1};CTX_NODES.forEach(n=>{delete n.x;delete n.y;delete n.vx;delete n.vy;});applyPan();renderCtxGraph();}
+  function resetGraph(){SVG_PAN={x:0,y:0,s:1};_ctxPos.clear();CTX_NODES.forEach(n=>{delete n.x;delete n.y;delete n.vx;delete n.vy;});applyPan();renderCtxGraph();}
 
   function nodeClick(id){
     const n=CTX_NODES.find(x=>x.id===id);if(!n)return;
@@ -6535,6 +7445,7 @@ Your task: decide what to do next to advance toward the goal.
     document.getElementById('paneFrames').style.display=name==='frames'?'flex':'none';document.getElementById('paneFrames').className='ctx-pane'+(name==='frames'?' on':'');
     const codePane=document.getElementById('paneCode');
     if(codePane){codePane.style.display=name==='code'?'flex':'none';codePane.className='ctx-pane'+(name==='code'?' on':'');}
+    if(name==='code') _artifactsRefresh();
     if(name==='memgraph')memGraphLoad();
     if(name==='daggraph')_renderDagGraph();
     if(name==='daghistory')renderDagHistory();
@@ -7038,7 +7949,10 @@ Your task: decide what to do next to advance toward the goal.
       if(ag&&!map[sid].agent)map[sid].agent=ag;
     });
     SESSIONS=Object.values(map).filter(s=>s.session_id).sort((a,b)=>b.first_ts.localeCompare(a.first_ts));
-    SESSIONS.forEach(s=>{s.displayName=s.name||s.session_id.slice(-12);});
+    // Merge the localStorage name cache so locally-named sessions show their
+    // name even if the server-side name record isn't in the search window yet.
+    const _nc=_cachedSessionNames();
+    SESSIONS.forEach(s=>{ if(!s.name&&_nc[s.session_id]) s.name=_nc[s.session_id]; s.displayName=s.name||s.session_id.slice(-12); });
     renderHistList(SESSIONS);
   }
 
@@ -7212,6 +8126,7 @@ Your task: decide what to do next to advance toward the goal.
   }
 
   async function _storeSessionName(sid,name){
+    _cacheSessionName(sid,name);
     await api('/memory/store','POST',{
       text:name, session_id:sid, record_type:'event', source_type:'system',
       category:'session', tags:'session,name', summary:name,
@@ -7995,18 +8910,53 @@ Your task: decide what to do next to advance toward the goal.
     return bestScore>0?best:null;
   }
 
+  /* Confidence thresholds for the fuzzy fallback in _llmOpenPanel.
+     _findRelevantPanels scores an exact id/label word at 30 and an id/label
+     substring at 12–14, so MIN=14 demands at least a solid id-substring hit
+     and MARGIN=6 demands the winner be clearly ahead of the runner-up. */
+  const _LLM_PANEL_MIN_SCORE=14, _LLM_PANEL_MARGIN=6;
+
   /* Called by the cap-placeholder parser when the LLM emits [[panel:name]] —
      opens the matching panel without confirmation. The agent can also pass
      hints in the form `[[panel:name reason="…"]]` which we ignore for now
      but accept silently so the schema stays forward-compatible. */
   async function _llmOpenPanel(name){
     await _loadUiPanels();
+    // 1. Precise resolution — exact/normalised id or label, or the panel that
+    //    OWNS the named cap (the model often passes a cap name like
+    //    "exec.bash.run" or its namespace "exec" instead of a panel id).
+    //    These are unambiguous, so open them directly.
     const direct=_resolvePanel(name);
     if(direct) return panelOpen(direct.id);
-    const matched=_matchPanelByIntent(name);
-    if(matched) return panelOpen(matched.id);
-    appendSys(`<span style="color:var(--dim2)">LLM tried to open panel "${esc(name)}" but no match found.</span>`);
+    const owner=_panelOwningCap(name);
+    if(owner) return panelOpen(owner.id);
+    // 2. No precise match. The old code fell back to _matchPanelByIntent, which
+    //    returned ANY panel sharing a single word — that is exactly the "opens
+    //    the wrong panel" bug. Instead only accept a fuzzy match when it is a
+    //    confident, clear winner; otherwise open NOTHING (better than wrong).
+    const ranked=_findRelevantPanels(name,2);
+    const best=ranked[0];
+    if(best && best.score>=_LLM_PANEL_MIN_SCORE
+       && (!ranked[1] || best.score-ranked[1].score>=_LLM_PANEL_MARGIN)){
+      return panelOpen(best.panel.id);
+    }
+    appendSys(`<span style="color:var(--dim2)">Agent referenced panel "${esc(name)}" but there was no confident match — leaving the view as-is.</span>`);
     return false;
+  }
+
+  /* Find the panel whose ui_caps include `name` — either the exact cap
+     ("exec.bash.run") or any cap in its namespace ("exec" → exec.*). */
+  function _panelOwningCap(name){
+    const n=String(name||'').toLowerCase().trim();
+    if(!n) return null;
+    let p=UI_PANELS.find(x=>(x.ui_caps||[]).some(c=>String(c).toLowerCase()===n));
+    if(p) return p;
+    const ns=n.split('.')[0];
+    if(ns){
+      p=UI_PANELS.find(x=>(x.ui_caps||[]).some(c=>String(c).toLowerCase().split('.')[0]===ns));
+      if(p) return p;
+    }
+    return null;
   }
 
   /* Get the currently-effective ui_caps that should be added to the
@@ -8060,26 +9010,40 @@ Your task: decide what to do next to advance toward the goal.
     return scored.slice(0,maxN);
   }
 
-  /* When the Auto-panels toggle is on, proactively open the single most
-     relevant panel for this message so the agent can read its state and
-     dispatch actions to it on THIS turn (buildCapHint runs after this, so
-     the freshly-mounted panel's ui_caps and interaction guidance make it
-     into the same prompt). Conservative on purpose:
-       - only fires on a clear winner (score over threshold AND meaningfully
-         ahead of the runner-up — ambiguous intent is left to the agent's
-         own [[panel:id]] choice),
-       - never closes or replaces a panel the user already has open. */
-  const _AUTO_PANEL_MIN_SCORE=18;
-  async function _maybeAutoOpenPanel(query){
-    if(!document.getElementById('cfgAutoPanel')?.checked) return;
-    if(_activePanelId) return;            // respect whatever's already mounted
+  /* Pull the panel name out of an explicit open request like
+     "open the exec panel", "show me the memory graph panel",
+     "switch to fabric". Returns the bare name (no article / "panel"
+     suffix) or '' if the message isn't an open request. */
+  function _detectPanelOpenRequest(msg){
+    const s=String(msg||'');
+    if(!/\b(open|show|bring up|pull up|go to|launch|display|reveal|switch to)\b/i.test(s)) return '';
+    // "<verb> … <name> panel" — non-greedy so we grab the name nearest "panel".
+    let m=s.match(/\b(?:open|show|bring up|pull up|go to|launch|display|reveal|switch to)\b[^.?!]*?\b([a-z0-9][a-z0-9 _\/\-]*?)\s+panel\b/i);
+    let name=m?m[1]:'';
+    if(!name){
+      // "<verb> the <name>" with no literal "panel" (e.g. "open the ui builder")
+      m=s.match(/\b(?:open|show|bring up|pull up|go to|launch|switch to)\s+(?:the\s+)?([a-z0-9][a-z0-9 _\/\-]{1,40})$/i);
+      name=m?m[1]:'';
+    }
+    name=name.replace(/^\s*(the|a|an|my|me|up)\s+/i,'')
+             .replace(/\s+(view|tab|interface|ui|window)$/i,'').trim();
+    return name;
+  }
+
+  /* Deterministically open the panel the user EXPLICITLY asked for, in code,
+     before the model runs. The model can't be trusted to pick the right
+     panel id (it passes cap names, fixates on one "hub" panel, etc.), so when
+     the message is a clear "open the X panel" we resolve X ourselves and mount
+     it. Runs regardless of the Auto-panels toggle. */
+  async function _maybeExplicitOpenPanel(msg){
+    const name=_detectPanelOpenRequest(msg);
+    if(!name) return false;
     await _loadUiPanels();
-    const ranked=_findRelevantPanels(query,3);
-    if(!ranked.length) return;
-    const best=ranked[0];
-    if(best.score < _AUTO_PANEL_MIN_SCORE) return;
-    if(ranked[1] && (best.score - ranked[1].score) < 6) return;  // too close to call
-    try{ await panelOpen(best.panel.id); }catch(_){}
+    const p=_resolvePanel(name) || _panelOwningCap(name) || _matchPanelByIntent(name);
+    if(!p) return false;
+    if(p.id===_activePanelId) return true;   // already showing it
+    try{ await panelOpen(p.id); }catch(_){}
+    return true;
   }
 
   /* ═══════════════════════════════════════════════════════════════════
@@ -8122,6 +9086,34 @@ Your task: decide what to do next to advance toward the goal.
         else if(Date.now()>deadline){ clearInterval(iv); resolve(false); }
       },150);
     });
+  }
+
+  /* Resolve once a non-null panel state snapshot is available (the shim has
+     published at least once), or after `timeoutMs`. Used by the query path so
+     a snapshot read issued the same turn the panel opened waits for the first
+     state instead of returning a spurious "no panel mounted". */
+  function _awaitPanelState(timeoutMs){
+    return new Promise(function(resolve){
+      if(getActivePanelState()) return resolve(true);
+      const deadline=Date.now()+(timeoutMs||2500);
+      const iv=setInterval(function(){
+        if(getActivePanelState()){ clearInterval(iv); resolve(true); }
+        else if(Date.now()>deadline){ clearInterval(iv); resolve(false); }
+      },100);
+    });
+  }
+
+  /* True if a panel is mounted. Recovers a desynced _activePanelId from the
+     DOM: panelOpen sets body.dataset.uiPanel + a real iframe src and panelClose
+     clears both, so the DOM is the ground truth — this stops a dispatch being
+     wrongly rejected as "no panel mounted" when a panel is in fact on screen. */
+  function _ensureMountedPanel(){
+    if(_activePanelId) return true;
+    const dom=document.body.dataset.uiPanel;
+    const frame=document.getElementById('chatPanelFrame');
+    const live=frame && frame.src && !/^about:blank/i.test(frame.src);
+    if(dom && live){ _activePanelId=dom; return true; }
+    return false;
   }
 
   /* Public: return the current panel's state, or null. Used by the
@@ -8309,6 +9301,15 @@ Your task: decide what to do next to advance toward the goal.
     // (registers it as a default handler), but answering here is faster
     // and works even if the panel hasn't loaded the bridge shim.
     if(action==='__query__'){
+      // The panel may have JUST mounted this turn — its shim might not have
+      // published state yet, which made the first query spuriously return
+      // "no panel mounted". If a panel is mounted but we have no snapshot,
+      // wait for the shim to report in (and nudge it) before answering.
+      if(_ensureMountedPanel() && !getActivePanelState()){
+        if(!_panelReady) await _awaitPanelReady(6000);
+        requestPanelState();
+        await _awaitPanelState(2500);
+      }
       const state = getActivePanelState();
       const ackBody = {
         request_id: req.request_id,
@@ -8326,7 +9327,7 @@ Your task: decide what to do next to advance toward the goal.
     }
     // Real action — forward to the iframe and wait for the result message.
     const frame = document.getElementById('chatPanelFrame');
-    if(!frame || !_activePanelId){
+    if(!frame || !_ensureMountedPanel()){
       fetch(BASE+'/ui/panels/dispatch/ack',{
         method:'POST',
         headers:{'Content-Type':'application/json'},
@@ -8857,17 +9858,168 @@ Your task: decide what to do next to advance toward the goal.
     }catch(e){appendSys('Mic access denied');}
   }
 
+  /* ═══════════════════════════════════════════════════════════════════
+     SLASH COMMANDS — type "/" in the chat input to open panels, switch
+     agent, or toggle a setting without leaving the keyboard. Commands run
+     locally (in send()) and are NEVER sent to the agent. A message that
+     starts with "/" but doesn't match a known command is sent as normal
+     text, so file paths etc. aren't hijacked. ════════════════════════ */
+  const SLASH_COMMANDS=[
+    {name:'panel', alias:['open'], arg:'panel', desc:'Open a UI panel', run:_slashOpenPanel},
+    {name:'close', desc:'Close the open panel', run:()=>{ panelClose(); }},
+    {name:'agent', arg:'agent', desc:'Switch the active agent', run:_slashSetAgent},
+    {name:'toggle', alias:['set'], arg:'toggle', desc:'Flip a setting on/off', run:_slashToggle},
+    {name:'help', desc:'List slash commands', run:_slashHelp},
+  ];
+  // Toggleable checkbox controls, sourced from OPT_DESC (their canonical
+  // descriptions) — labels prefer the rendered card name when available.
+  function _toggleCatalog(){
+    return Object.keys(OPT_DESC).map(id=>{
+      const el=document.getElementById(id);
+      if(!el || el.type!=='checkbox') return null;
+      const nm=el.closest('.opt')?.querySelector('.opt-name')?.textContent;
+      return {id, label:(nm||id).trim(), desc:OPT_DESC[id]||'', checked:el.checked};
+    }).filter(Boolean);
+  }
+  async function _slashOpenPanel(arg){
+    if(!arg){ appendSys('Usage: <code>/panel &lt;name&gt;</code>'); return; }
+    await _loadUiPanels();
+    const p=_resolvePanel(arg)||_panelOwningCap(arg)||_matchPanelByIntent(arg);
+    if(p) panelOpen(p.id);
+    else appendSys(`<span style="color:var(--err)">No panel matches "${esc(arg)}".</span>`);
+  }
+  function _slashSetAgent(arg){
+    if(!arg){ appendSys('Usage: <code>/agent &lt;name&gt;</code>'); return; }
+    const sel=document.getElementById('agentBarSel'); if(!sel) return;
+    const vals=[...sel.options].map(o=>o.value).filter(Boolean);
+    const a=arg.toLowerCase();
+    const val=vals.find(v=>v.toLowerCase()===a)||vals.find(v=>v.toLowerCase().includes(a));
+    if(!val){ appendSys(`<span style="color:var(--err)">No agent matches "${esc(arg)}".</span>`); return; }
+    sel.value=val; try{ agentBarChanged(); }catch(_){}
+    appendSys(`Agent → <b>${esc(val)}</b>`);
+  }
+  function _slashToggle(arg){
+    if(!arg){ appendSys('Usage: <code>/toggle &lt;setting&gt;</code>'); return; }
+    const cat=_toggleCatalog(); const a=arg.toLowerCase();
+    const t=cat.find(x=>x.id.toLowerCase()===a)||cat.find(x=>x.label.toLowerCase()===a)
+          ||cat.find(x=>x.label.toLowerCase().includes(a))||cat.find(x=>x.id.toLowerCase().includes(a));
+    if(!t){ appendSys(`<span style="color:var(--err)">No setting matches "${esc(arg)}".</span>`); return; }
+    const el=document.getElementById(t.id); if(!el) return;
+    el.checked=!el.checked;
+    try{ el.dispatchEvent(new Event('change',{bubbles:true})); }catch(_){}
+    appendSys(`${esc(t.label)} → <b>${el.checked?'on':'off'}</b>`);
+  }
+  function _slashHelp(){
+    const lines=SLASH_COMMANDS.map(c=>`<div><code>/${c.name}${c.arg?' &lt;'+c.arg+'&gt;':''}</code> — ${esc(c.desc)}</div>`).join('');
+    appendSys('<b>Slash commands</b><div style="margin-top:3px;display:flex;flex-direction:column;gap:2px">'+lines+'</div>');
+  }
+  // Execute "/cmd args". Returns false (→ send as normal chat) when the first
+  // token isn't a known command, so non-command "/…" text passes through.
+  function _runSlash(raw){
+    const m=String(raw||'').match(/^\/(\S+)\s*([\s\S]*)$/);
+    if(!m) return false;
+    const cmd=SLASH_COMMANDS.find(c=>c.name===m[1].toLowerCase()||(c.alias||[]).includes(m[1].toLowerCase()));
+    if(!cmd) return false;
+    try{ cmd.run((m[2]||'').trim()); }
+    catch(e){ appendSys(`<span style="color:var(--err)">/${esc(m[1])} failed: ${esc(String(e))}</span>`); }
+    return true;
+  }
+
+  // ── Autocomplete menu ──────────────────────────────────────────────
+  let _slashCur=[], _slashSel=0, _slashVisible=false;
+  function _slashArgOptions(type,q){
+    q=(q||'').toLowerCase();
+    if(type==='panel'){
+      // List ALL registered panels (the menu scrolls). The previous slice(0,8)
+      // silently hid every panel past the eighth in registry order.
+      return (typeof UI_PANELS!=='undefined'?UI_PANELS:[])
+        .slice().sort((a,b)=>(a.tab_order||100)-(b.tab_order||100))
+        .filter(p=>!q||p.id.toLowerCase().includes(q)||(p.label||'').toLowerCase().includes(q))
+        .slice(0,50).map(p=>({label:p.label||p.id, hint:p.id, value:p.id}));
+    }
+    if(type==='agent'){
+      const sel=document.getElementById('agentBarSel');
+      return [...(sel?.options||[])].map(o=>o.value).filter(v=>v&&(!q||v.toLowerCase().includes(q)))
+        .slice(0,8).map(v=>({label:v, hint:'', value:v}));
+    }
+    if(type==='toggle'){
+      return _toggleCatalog().filter(t=>!q||t.label.toLowerCase().includes(q)||t.id.toLowerCase().includes(q))
+        .slice(0,8).map(t=>({label:t.label, hint:(t.checked?'✓ on':'off')+' · '+t.id, value:t.id}));
+    }
+    return [];
+  }
+  function _slashSuggest(v){
+    const m=v.match(/^\/(\S*)(\s+)?([\s\S]*)$/);
+    if(!m) return [];
+    const tok=(m[1]||'').toLowerCase(), hasSpace=!!m[2], argTok=m[3]||'';
+    if(!hasSpace){
+      return SLASH_COMMANDS
+        .filter(c=>c.name.startsWith(tok)||(c.alias||[]).some(a=>a.startsWith(tok)))
+        .map(c=>({label:'/'+c.name, hint:c.desc,
+                  complete:'/'+c.name+(c.arg?' ':''),
+                  exec:c.arg?null:'/'+c.name}));
+    }
+    const cmd=SLASH_COMMANDS.find(c=>c.name===tok||(c.alias||[]).includes(tok));
+    if(!cmd||!cmd.arg) return [];
+    return _slashArgOptions(cmd.arg,argTok).map(o=>({label:o.label, hint:o.hint,
+      complete:'/'+cmd.name+' '+o.value, exec:'/'+cmd.name+' '+o.value}));
+  }
+  function _slashRender(){
+    const menu=document.getElementById('slashMenu'); if(!menu) return;
+    menu.innerHTML=_slashCur.map((it,i)=>
+      `<div class="slash-item${i===_slashSel?' on':''}" data-i="${i}"><span class="slash-lbl">${esc(it.label)}</span>${it.hint?`<span class="slash-hint">${esc(it.hint)}</span>`:''}</div>`).join('');
+    menu.style.display='block'; _slashVisible=true;
+    [...menu.querySelectorAll('.slash-item')].forEach(el=>{
+      el.addEventListener('mousedown',ev=>{ ev.preventDefault(); _slashChoose(+el.dataset.i); });
+    });
+  }
+  function _slashHide(){ const menu=document.getElementById('slashMenu'); if(menu){menu.style.display='none';menu.innerHTML='';} _slashVisible=false; _slashSel=0; }
+  // Menu items use mousedown+preventDefault, so clicking one never blurs the
+  // input; a real blur means focus left the area, so dismiss the menu.
+  function _slashBlur(){ setTimeout(_slashHide,120); }
+  function _slashUpdate(){
+    const inp=document.getElementById('chatInput'); const v=inp?.value||'';
+    if(!v.startsWith('/')){ _slashHide(); return; }
+    _slashCur=_slashSuggest(v);
+    if(!_slashCur.length){ _slashHide(); return; }
+    if(_slashSel>=_slashCur.length) _slashSel=_slashCur.length-1;
+    if(_slashSel<0) _slashSel=0;
+    _slashRender();
+  }
+  // Accept a menu row: commands with an arg complete inline (so you can then
+  // pick the arg); everything else executes immediately and clears the input.
+  function _slashChoose(i){
+    const it=_slashCur[i]; if(!it) return;
+    const inp=document.getElementById('chatInput');
+    if(it.exec){ _runSlash(it.exec); if(inp) inp.value=''; _slashHide(); }
+    else if(inp){ inp.value=it.complete; inp.focus(); _slashSel=0; _slashUpdate(); }
+  }
+
   function onKD(event){
+    if(event.key==='Escape'&&_slashVisible){event.preventDefault();_slashHide();return false;}
+    if(_slashVisible&&_slashCur.length){
+      if(event.key==='ArrowDown'){event.preventDefault();_slashSel=(_slashSel+1)%_slashCur.length;_slashRender();return false;}
+      if(event.key==='ArrowUp'){event.preventDefault();_slashSel=(_slashSel-1+_slashCur.length)%_slashCur.length;_slashRender();return false;}
+      if(event.key==='Enter'||event.key==='Tab'){event.preventDefault();_slashChoose(_slashSel);return false;}
+    }
     if(event.key==='Escape'&&_STREAMING){event.preventDefault();stopAll();return false;}
     if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send();return false;}
   }
   function onInput(){
+    _slashUpdate();
     const v=document.getElementById('chatInput')?.value||'';
-    if(document.getElementById('ctxOnType')?.checked&&document.getElementById('ctxLive')?.checked&&v.trim().length>2){
+    if(v.startsWith('/')) return;   // slash command in progress — no context fetch
+    if(_ctxLiveOn()&&v.trim().length>2){
       // Always cancel any pending debounce and any running fetch
       clearTimeout(CTX_TIMER);
       if(_ctxAbort){_ctxAbort.abort();_ctxAbort=null;_ctxVersion++;}
       CTX_TIMER=setTimeout(()=>ctxFetch(false,v),600);
+    }else if(v.trim().length<=2){
+      // Input cleared or too short — cancel any pending/in-flight fetch so a
+      // late result can't land and leave CTX_NODES stamped for text the user
+      // already erased (the stale-context-on-resend bug).
+      clearTimeout(CTX_TIMER);
+      if(_ctxAbort){_ctxAbort.abort();_ctxAbort=null;_ctxVersion++;}
     }
   }
 
@@ -8982,8 +10134,10 @@ Your task: decide what to do next to advance toward the goal.
     if(msgs && msgs.children.length===1 && msgs.firstElementChild?.classList.contains('sys-msg')){
       msgs.innerHTML='<div class="min-welcome">What can I help with?</div>';
     }
-    initSid(opts.sessionId);setupResize();checkConn();
+    initSid(opts.sessionId);setupResize();checkConn();setInterval(checkConn,20000);
     _initStickListeners();
+    _initComposerReveal();
+    _initRailUX();
     // loadModels FIRST — populates cfgModel options before loadAgents calls updateAgentMeta
     await loadModels();
     loadFormats();
@@ -8995,7 +10149,17 @@ Your task: decide what to do next to advance toward the goal.
     // immediately on page load without needing a manual click.
     setTimeout(()=>{ try{ _ctxFcRefresh(); }catch(_){} }, 500);
     document.addEventListener('keydown',e=>{if(e.code==='Space'&&e.target===document.body){e.preventDefault();toggleMic();}});
-    if(window.ResizeObserver)new ResizeObserver(()=>renderCtxGraph()).observe(document.getElementById('ctxSvg'));
+    if(window.ResizeObserver){
+      // Redraw the context graph when its canvas resizes (rail drag / window
+      // resize). Debounced through rAF so a drag doesn't fire dozens of
+      // re-layouts per second; renderCtxGraph rescales positions to the new size.
+      let _ctxRORaf=0;
+      const _ctxSvgEl=document.getElementById('ctxSvg');
+      if(_ctxSvgEl) new ResizeObserver(()=>{
+        if(_ctxRORaf)cancelAnimationFrame(_ctxRORaf);
+        _ctxRORaf=requestAnimationFrame(()=>{_ctxRORaf=0;renderCtxGraph();});
+      }).observe(_ctxSvgEl);
+    }
     if(opts.agentFixed){['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el){el.value=opts.agentFixed;el.disabled=true;}});updateAgentMeta();}
     // Explicit harness override — these still win over the localStorage default
     if(opts.showHistory===false)document.getElementById('leftRail').classList.add('slim');
@@ -9108,7 +10272,7 @@ Your task: decide what to do next to advance toward the goal.
     _saveModalClose,_saveModalConfirm,_saveModalNbCellTypeChange,
     getActivePanelState,dispatchPanelAction,requestPanelState,
     _startDispatchListener,_stopDispatchListener,
-    _loopVariantChange,_loopVariantSync,_loopHitl,
+    _loopVariantChange,_loopVariantSync,_loopHitl,loopLoadAgentCaps,loopLoadDefaultCaps,
     _capToggleOverride,_capOvrToggle,_capOvrSelectDomain,_capOvrSelectAll,_capOvrSelectNone,_capOvrClear,_capOvrSaveToAgent,_capDomainToggle,
     _capOvrGroupOn,_capOvrGroupOff,
     _renderRailCaps,_railCapRunOpen,_railCapRunClose,_railCapRunInsert,_railCapRunExec,
@@ -9116,9 +10280,10 @@ Your task: decide what to do next to advance toward the goal.
     _onPaste,_pasteAccept,_pasteDismiss,
     _docEditorOpen,_docEditorClose,_docChipUpdate,_docChipRemove,_docChipRemoveCurrent,
     _browserGo,_browserNav,_browserNavigate,_browserCapture,_browserToggleMode,_browserSwitchToScreenshot,_renderBrowserCtxList,_switchToListTab,
-    _codeCopy,_codePreview,_codeRun,_codeViewMode,_codePreviewClose,
+    _codeCopy,_codePreview,_codeRun,_codeExec,_codeViewMode,_codePreviewClose,_autoPreviewToggle,
+    _artifactsRefresh,_artifactOpen,_codeSaveArtifact,
     councilChipClick,councilSelectAll,councilSelectNone,
-    cycleTheme,onKD,onInput,_execCapConfirmed,loadAllCaps,
+    cycleTheme,onKD,onInput,_slashBlur,_execCapConfirmed,loadAllCaps,
     toggleViewMode,setViewMode,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},
     setContext:txt=>{_parentCtx=txt;},

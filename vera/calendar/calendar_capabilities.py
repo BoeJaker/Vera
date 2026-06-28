@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as _dt
+import html as _html
 import json
 import logging
 import os
@@ -55,6 +56,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import quote, urlencode
 
 import httpx
+from fastapi import Request
 from fastapi.responses import HTMLResponse
 
 import Vera.vera.capability_orchestration as _orch
@@ -67,6 +69,7 @@ from Vera.vera.capability_orchestration import (
     register_ui,
     schedule,
 )
+from Vera.vera.config import cfg
 from Vera.vera.calendar import ical
 from Vera.vera.security import secrets as cal_secrets
 
@@ -104,7 +107,27 @@ GOOGLE_AUTH   = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN  = "https://oauth2.googleapis.com/token"
 GOOGLE_API    = "https://www.googleapis.com/calendar/v3"
 GOOGLE_SCOPE  = "https://www.googleapis.com/auth/calendar.readonly"
-GOOGLE_REDIRECT = "urn:ietf:wg:oauth:2.0:oob"   # installed-app / paste-code flow
+
+# Google OAuth uses a redirect flow: after the user approves, Google redirects
+# the browser back to the orchestrator's callback route (mounted below) which
+# captures the refresh token automatically. The redirect base lives in config
+# (cfg.GOOGLE_OAUTH_REDIRECT_BASE) — by default the address Vera is reached on
+# (BACKEND_HOST:port), which needs a Google "Web application" client with this
+# exact callback URI registered; a loopback base + "Desktop app" client also
+# works for same-host use. (The legacy urn:ietf:wg:oauth:2.0:oob paste-code flow
+# was retired by Google for clients created after Feb 2022.)
+GOOGLE_REDIRECT_PATH = "/cal/google/oauth_callback"
+
+# OAuth `state` → source-id handoff: CSRF guard, and tells the callback which
+# source to seal the token onto. Short-lived and consumed on first use.
+KEY_OAUTH_STATE  = "vera:cal:google:oauth_state:"   # + state token
+_OAUTH_STATE_TTL = 600   # seconds
+
+
+def _google_redirect_uri() -> str:
+    """The loopback callback URI registered with Google. The auth request and the
+    token exchange must send the *identical* value or Google rejects it."""
+    return cfg.GOOGLE_OAUTH_REDIRECT_BASE.rstrip("/") + GOOGLE_REDIRECT_PATH
 
 SOURCE_COLORS = {"local": "#4a9eff", "ics": "#28c28a",
                  "caldav": "#f5b341", "google": "#ef5b5b"}
@@ -584,15 +607,23 @@ _BRAINDUMP_SYSTEM = (
     "Return ONLY valid minified JSON, no prose, no code fences, with EXACTLY "
     "these keys:\n"
     '{"events":[{"title","start","end","all_day","location","description"}],'
-    '"todos":[{"title","due","priority","notes"}],'
+    '"todos":[{"title","due","priority","notes","for"}],'
     '"notes":[{"title","body","remind_at"}],'
     '"daily_plan":[{"time","item"}]}\n'
     "Rules:\n"
-    "- Anything with a date/time goes in events. Use ISO 8601 for start/end "
-    "(e.g. 2026-06-16T15:00:00). Resolve relative dates ('next Tuesday', "
-    "'tomorrow 1pm', 'Fri') against NOW given below. all_day=true for date-only.\n"
-    "- Actionable items with no fixed time go in todos. priority is 0-3 "
-    "(3=urgent). due is an ISO date if a deadline is implied, else \"\".\n"
+    "- EVERY meeting, appointment, call, class, booking, viewing, interview or "
+    "anything that HAPPENS AT a time goes in `events` — even when you also add a "
+    "prep or follow-up todo for it. NEVER represent a meeting as only a todo: the "
+    "meeting itself is always an event so it lands on the calendar.\n"
+    "- Use ISO 8601 for start/end (e.g. 2026-06-16T15:00:00). Resolve relative "
+    "dates ('next Tuesday', 'tomorrow 1pm', 'Fri') against NOW given below. If a "
+    "day is known but no clock time, set all_day=true and start to the date "
+    "(YYYY-MM-DD). If you genuinely cannot tell the day, still emit the event "
+    "with start=\"\" so the user can set the time — do not drop it.\n"
+    "- Preparation, follow-ups and other actions WITHOUT their own fixed time go "
+    "in `todos`. When a todo supports an event, set its `for` to that event's "
+    "exact title (else \"\"). due is an ISO date if a deadline is implied, else "
+    "\"\". priority is 0-3 (3=urgent).\n"
     "- Non-actionable thoughts/reminders go in notes.\n"
     "- daily_plan is a short suggested ordering for today's items (time as "
     "'HH:MM' or '' for flexible). Keep it realistic and brief.\n"
@@ -724,7 +755,9 @@ async def cap_braindump(text: str = "", apply: bool = False,
     http_tags=["calendar"], memory="on",
     description="Persist a reviewed/edited brain-dump proposal. "
                 "Input: proposal (object with events/todos/notes arrays). "
-                "Output: {ok, applied:{events,todos,notes}}.",
+                "Output: {ok, applied:{events,todos,notes,unscheduled}} — "
+                "`unscheduled` lists titles of events that had no time set and "
+                "were NOT added (the UI prompts the user to give them a time).",
 )
 async def cap_braindump_commit(proposal: Optional[Dict] = None, trace_id=None):
     if not proposal or not isinstance(proposal, dict):
@@ -735,10 +768,15 @@ async def cap_braindump_commit(proposal: Optional[Dict] = None, trace_id=None):
 
 
 async def _commit_proposal(proposal: Dict, cfg: Dict) -> Dict[str, Any]:
-    ev_ids, td_ids, nt_ids = [], [], []
+    ev_ids, td_ids, nt_ids, unscheduled = [], [], [], []
     fabric_recs = []
     for ev in proposal.get("events", []) or []:
-        if not ev.get("title") or not ev.get("start"):
+        if not ev.get("title"):
+            continue
+        # Never silently drop a meeting: an event with no resolvable time is
+        # reported back so the UI can ask the user to set one, not discarded.
+        if not ev.get("start"):
+            unscheduled.append(ev.get("title"))
             continue
         rec = {
             "id": ev.get("id") or str(uuid.uuid4()),
@@ -756,7 +794,8 @@ async def _commit_proposal(proposal: Dict, cfg: Dict) -> Dict[str, Any]:
         rec = await _hash_upsert(KEY_TODOS, {
             "id": td.get("id") or str(uuid.uuid4()), "title": td["title"],
             "due": td.get("due", ""), "priority": int(td.get("priority", 0) or 0),
-            "notes": td.get("notes", ""), "done": False, "tags": ["braindump"]})
+            "notes": td.get("notes", ""), "done": False, "tags": ["braindump"],
+            "for": td.get("for", "")})        # event this todo prepares, if any
         td_ids.append(rec["id"])
     for nt in proposal.get("notes", []) or []:
         body = nt.get("body") or nt.get("title")
@@ -769,7 +808,8 @@ async def _commit_proposal(proposal: Dict, cfg: Dict) -> Dict[str, Any]:
         nt_ids.append(rec["id"])
     if cfg.get("fabric_auto_persist") and fabric_recs:
         await _persist_records_to_fabric(fabric_recs, cfg)
-    return {"events": ev_ids, "todos": td_ids, "notes": nt_ids}
+    return {"events": ev_ids, "todos": td_ids, "notes": nt_ids,
+            "unscheduled": unscheduled}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -826,8 +866,10 @@ async def cap_sources_list(trace_id=None):
                 "calendar_id (str — legacy single calendar), "
                 "calendars (list of {id,summary,color} — google multi-select; "
                 "each becomes a colour-coded layer), "
-                "account_id (str — link a shared Accounts-tab account for CalDAV/ICS "
-                "credentials instead of embedding them). Output: {ok, source (redacted)}.",
+                "account_id (str — link a shared Accounts-tab account: CalDAV/ICS "
+                "credentials, or for type=google the account's OAuth grant "
+                "(Calendar scope) instead of embedding client_id/secret/refresh "
+                "token on the source). Output: {ok, source (redacted)}.",
     schema={"properties": {"type": {"enum": ["ics", "caldav", "google"]}}},
 )
 async def cap_source_upsert(
@@ -1009,7 +1051,28 @@ async def _sync_caldav(src: Dict) -> Dict[str, int]:
 
 
 async def _google_access_token(src: Dict) -> str:
-    """Refresh and return a Google access token from the stored refresh token."""
+    """Refresh and return a Google access token.
+
+    Prefers a linked Accounts-tab OAuth grant (the unified accounts OAuth) when
+    the source carries an ``account_id``; falls back to the source's own embedded
+    client/refresh token (legacy per-source Google credentials).
+    """
+    aid = src.get("account_id", "")
+    if aid:
+        am = _accounts()
+        if am and hasattr(am, "get_oauth_token"):
+            # Either calendar scope (read-only sync works under the broader
+            # manage grant too).
+            tok = (await am.get_oauth_token(aid, "calendar")
+                   or await am.get_oauth_token(aid, "calendar_manage"))
+            if tok:
+                return tok
+            # Linked account but no usable calendar grant, and no embedded
+            # creds to fall back on → surface a clear, actionable error.
+            if not src.get("refresh_token"):
+                raise RuntimeError(
+                    "linked account is not connected for Calendar — open the "
+                    "Accounts tab and grant the Calendar scope")
     client_id = src.get("client_id", "")
     client_secret = cal_secrets.open_secret(src.get("client_secret", ""))
     refresh_token = cal_secrets.open_secret(src.get("refresh_token", ""))
@@ -1163,37 +1226,33 @@ async def cap_sync_status(trace_id=None):
     return json.loads(raw) if raw else {"results": []}
 
 
-# ─── Google OAuth (installed-app / paste-code flow) ──────────────────────────
+# ─── Google OAuth (loopback-redirect flow) ───────────────────────────────────
 
-@capability(
-    "cal.google.auth_url", http_method="GET", http_path="/cal/google/auth_url",
-    http_tags=["calendar"], memory="off", silent=True,
-    description="Build the Google OAuth consent URL for a configured google "
-                "source. Input: source (source id!). Output: {url}. The user "
-                "visits it, approves, and pastes the code into cal.google.auth_complete.",
-)
-async def cap_google_auth_url(source: str = "", trace_id=None):
-    src = await _get_source(source)
-    if not src or src.get("type") != "google":
-        return {"error": "google source not found"}
-    if not src.get("client_id"):
-        return {"error": "source has no client_id configured"}
-    url = GOOGLE_AUTH + "?" + urlencode({
-        "client_id": src["client_id"], "redirect_uri": GOOGLE_REDIRECT,
-        "response_type": "code", "scope": GOOGLE_SCOPE,
-        "access_type": "offline", "prompt": "consent"})
-    return {"url": url}
+async def _store_oauth_state(state: str, source_id: str) -> None:
+    """Bind a one-shot OAuth `state` token to the source being authorised."""
+    r = _redis()
+    if r:
+        await r.set(KEY_OAUTH_STATE + state, source_id, ex=_OAUTH_STATE_TTL)
 
 
-@capability(
-    "cal.google.auth_complete", http_method="POST",
-    http_path="/cal/google/auth_complete", http_tags=["calendar"], memory="on",
-    description="Exchange a Google OAuth code for a refresh token and store it "
-                "(sealed) on the source. Input: source (id!), code (str!). "
-                "Output: {ok}.",
-)
-async def cap_google_auth_complete(source: str = "", code: str = "", trace_id=None):
-    src = await _get_source(source)
+async def _consume_oauth_state(state: str) -> Optional[str]:
+    """Return the source-id bound to `state` and invalidate it (single use)."""
+    r = _redis()
+    if not r or not state:
+        return None
+    key = KEY_OAUTH_STATE + state
+    raw = await r.get(key)
+    if raw is None:
+        return None
+    await r.delete(key)
+    return raw.decode() if isinstance(raw, (bytes, bytearray)) else raw
+
+
+async def _google_exchange_code(source_id: str, code: str) -> Dict[str, Any]:
+    """Exchange an authorisation `code` for a refresh token and seal it onto the
+    source. Shared by the auto loopback callback and the manual paste fallback.
+    The redirect_uri MUST match the one used to build the consent URL."""
+    src = await _get_source(source_id)
     if not src or src.get("type") != "google":
         return {"error": "google source not found"}
     if not code:
@@ -1206,7 +1265,7 @@ async def cap_google_auth_complete(source: str = "", code: str = "", trace_id=No
             resp = await c.post(GOOGLE_TOKEN, data={
                 "client_id": src["client_id"], "client_secret": client_secret,
                 "code": code.strip(), "grant_type": "authorization_code",
-                "redirect_uri": GOOGLE_REDIRECT})
+                "redirect_uri": _google_redirect_uri()})
             resp.raise_for_status()
             tok = resp.json()
     except Exception as e:
@@ -1218,6 +1277,90 @@ async def cap_google_auth_complete(source: str = "", code: str = "", trace_id=No
     src["updated"] = now_iso()
     await _save_source(src)
     return {"ok": True}
+
+
+def _oauth_result_page(ok: bool, msg: str) -> str:
+    """Minimal self-closing HTML page shown in the browser tab Google redirects
+    to once the loopback callback has run."""
+    accent = "#28c28a" if ok else "#ef5b5b"
+    title  = "Authorised ✓" if ok else "Authorisation failed"
+    return (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>Vera · Google Calendar</title></head>"
+        "<body style='background:#0d0f12;color:#e8eaed;margin:0;min-height:100vh;"
+        "display:flex;align-items:center;justify-content:center;font-family:"
+        "system-ui,-apple-system,Segoe UI,Roboto,sans-serif'>"
+        "<div style='text-align:center;max-width:440px;padding:32px'>"
+        f"<h2 style='color:{accent};margin:0 0 12px'>{title}</h2>"
+        f"<p style='color:#aab;line-height:1.5'>{_html.escape(str(msg))}</p>"
+        "<p style='color:#667;font-size:13px;margin-top:24px'>You can close this "
+        "tab and return to Vera.</p></div>"
+        "<script>setTimeout(function(){window.close()},2500)</script>"
+        "</body></html>")
+
+
+@capability(
+    "cal.google.auth_url", http_method="GET", http_path="/cal/google/auth_url",
+    http_tags=["calendar"], memory="off", silent=True,
+    description="Build the Google OAuth consent URL for a configured google "
+                "source (loopback flow). Input: source (source id!). Output: "
+                "{url}. The user visits it and approves; Google then redirects "
+                "the browser back to /cal/google/oauth_callback which stores the "
+                "refresh token automatically — no code-pasting needed.",
+)
+async def cap_google_auth_url(source: str = "", trace_id=None):
+    src = await _get_source(source)
+    if not src or src.get("type") != "google":
+        return {"error": "google source not found"}
+    if not src.get("client_id"):
+        return {"error": "source has no client_id configured"}
+    state = uuid.uuid4().hex
+    await _store_oauth_state(state, src["id"])
+    url = GOOGLE_AUTH + "?" + urlencode({
+        "client_id": src["client_id"], "redirect_uri": _google_redirect_uri(),
+        "response_type": "code", "scope": GOOGLE_SCOPE, "state": state,
+        "access_type": "offline", "prompt": "consent"})
+    return {"url": url}
+
+
+@capability(
+    "cal.google.auth_complete", http_method="POST",
+    http_path="/cal/google/auth_complete", http_tags=["calendar"], memory="on",
+    description="Manual fallback for the loopback flow: exchange a Google OAuth "
+                "code for a refresh token and store it (sealed) on the source. "
+                "Used when the auto callback can't reach Vera (e.g. remote "
+                "access) and the user pastes the code by hand. "
+                "Input: source (id!), code (str!). Output: {ok}.",
+)
+async def cap_google_auth_complete(source: str = "", code: str = "", trace_id=None):
+    return await _google_exchange_code(source, code)
+
+
+@APP.get("/cal/google/oauth_callback", include_in_schema=False)
+async def _google_oauth_callback(request: Request):
+    """Loopback redirect target for the Google OAuth flow. Google sends the
+    browser here with ?code=&state= after the user approves; we validate the
+    state, exchange the code, and seal the refresh token onto the matching
+    source — then show a small self-closing confirmation page."""
+    qp = request.query_params
+    if qp.get("error"):
+        return HTMLResponse(
+            _oauth_result_page(False, "Google returned: " + qp.get("error", "")),
+            status_code=400)
+    source_id = await _consume_oauth_state(qp.get("state", ""))
+    if not source_id:
+        return HTMLResponse(
+            _oauth_result_page(False, "Invalid or expired authorisation state — "
+                               "start the Connect flow again from Vera."),
+            status_code=400)
+    res = await _google_exchange_code(source_id, qp.get("code", ""))
+    if res.get("ok"):
+        return HTMLResponse(
+            _oauth_result_page(True, "Google Calendar is now connected."))
+    return HTMLResponse(
+        _oauth_result_page(False, res.get("error", "token exchange failed")),
+        status_code=400)
 
 
 @capability(
@@ -1441,6 +1584,6 @@ register_ui(
         "cal.google.auth_url", "cal.google.auth_complete", "cal.google.calendars",
         "cal.fabric.persist", "cal.config.get", "cal.config.set",
     ],
-    mode="tab",
+    mode="inject",          # now a sub-tab of the combined "Comms" tab
     tab_order=70,
 )

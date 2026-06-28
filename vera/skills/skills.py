@@ -317,6 +317,174 @@ async def _load_from_fabric(dataset_id: str, store: dict):
         return 0
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# BUILT-IN GUIDELINE SKILLS
+# ─────────────────────────────────────────────────────────────────────────────
+# Repo "how-to" guidance (DAG format, cap-call protocol, panel dispatch, fabric
+# query, terminal/file-IO, UI building) registered as first-class skills so the
+# v5 loop can inject the right one into an ephemeral specialist that needs it.
+# Each is keyed by a stable `sys-*` id and carries a `version`; bumping the
+# version re-seeds the content on next startup. They are normal skill records
+# (editable / `enabled` toggles work), just flagged `builtin: True`.
+_BUILTIN_SKILLS: list[dict] = [
+    {
+        "id": "sys-cap-usage", "version": 1,
+        "name": "Capability call protocol",
+        "description": "How to call a Vera capability: emit ONE compact JSON tool_use action with exact arg names from the schema.",
+        "type": "tool_hint", "tags": ["system", "caps"],
+        "applies_to_caps": [],
+        "content": (
+            "CALLING A CAPABILITY:\n"
+            "• Do your reasoning first (briefly), then emit EXACTLY ONE compact JSON action as the last thing:\n"
+            '    {"thought":"<one line>","tool_use":{"name":"<cap.name>","input":{ ...args... }}}\n'
+            "• Use the EXACT parameter names from the capability's schema. Required params are marked '!'.\n"
+            "• Enums must use one of the listed literal values. Pass numbers/booleans as real JSON types, not strings.\n"
+            "• Never invent arg names; never wrap the action in extra prose or markdown fences.\n"
+            "• A [tool_result <name>] message is YOUR prior observation — use it, do not echo it back.\n"
+            "• Never repeat the same (tool, args) pair — the result will be identical."
+        ),
+    },
+    {
+        "id": "sys-dag-creation", "version": 1,
+        "name": "DAG creation format",
+        "description": "How to build a Vera DAG execution plan: the 5-tuple node format, initial_state, input_map/output_map rules.",
+        "type": "system_prompt", "tags": ["system", "dag"],
+        "applies_to_caps": ["dag.register", "llm.plan"],
+        "content": (
+            "BUILDING A VERA DAG:\n"
+            "A DAG is a list of nodes. Each node is a 5-tuple (elements after [1] optional, use null):\n"
+            "  [cap_name, output_key, condition, input_map, output_map]\n"
+            "  • cap_name  : string — must be a real capability name.\n"
+            "  • output_key: string|null — state key for the full result dict (null if output_map covers it).\n"
+            "  • condition : null | \"CONDITION:state_key\" — skip the node if state[key] is falsy.\n"
+            "  • input_map : null | {\"param_name\":\"state_key\"} — RENAME ONLY (map a cap param to a DIFFERENT state key). "
+            "Never put literal values here — literals go in initial_state.\n"
+            "  • output_map: null | {\"state_key\":\"result_field\"} — extract named fields from the result into state.\n"
+            "RULES: every required (!) param must be reachable (in initial_state or a prior node's output). "
+            "Put ALL literal values in initial_state. Parallel nodes = an array of arrays. Keep it minimal (≤6 nodes).\n"
+            "EXAMPLES:\n"
+            "  [\"http.get\",\"page\"]  with initial_state {\"url\":\"https://example.com\"}\n"
+            "  [\"llm.generate\",\"llm_out\",null,{\"prompt\":\"article\"},{\"summary\":\"text\"}]\n"
+            "Respond with: {\"dag\":[...],\"initial_state\":{...},\"rationale\":\"...\"}"
+        ),
+    },
+    {
+        "id": "sys-fabric-query", "version": 1,
+        "name": "Data fabric querying",
+        "description": "How to discover datasets and run keyword/semantic searches over the Vera data fabric.",
+        "type": "tool_hint", "tags": ["system", "fabric"],
+        "applies_to_caps": ["fabric.query", "fabric.datasets", "fabric.ingest", "fabric.stats"],
+        "content": (
+            "DATA FABRIC:\n"
+            "• Call fabric.datasets first to see available datasets and record counts.\n"
+            "• Keyword search: fabric.query(text=\"your search\"). Semantic search: fabric.query(vector=\"your search\").\n"
+            "• Or pass query=\"plain text\" — it auto-converts to combined text+vector search.\n"
+            "• Add dataset_id=\"name\" to restrict to one dataset.\n"
+            "• Set include_data=True to get full record content, not just summaries."
+        ),
+    },
+    {
+        "id": "sys-exec-fileio", "version": 3,
+        "name": "Files & terminal I/O",
+        "description": "How to CREATE, read, edit and search files (and use the shell), persisting artifacts to the artifact directory so the user can iterate on them.",
+        "type": "tool_hint", "tags": ["system", "exec", "files"],
+        "applies_to_caps": ["ide.fs.write", "ide.fs.read", "ide.fs.list",
+                            "exec.bash.run", "exec.ps.run", "exec.code.run", "exec.python.run"],
+        "content": (
+            "CREATING & ITERATING ON FILES (artifacts):\n"
+            "• To CREATE or OVERWRITE a file, use ide.fs.write(path=\"<ARTIFACT_DIR>/<name.ext>\", "
+            "content=\"<full file content>\"). It creates parent dirs and persists the file so it can "
+            "be re-read and edited in later turns. ALWAYS write generated artifacts (scripts, docs, "
+            "configs) into the ARTIFACT DIRECTORY given in your context using an ABSOLUTE path — never "
+            "only to a temp path that vanishes.\n"
+            "• To READ a file: ide.fs.read(path=\"...\"). To LIST what exists: ide.fs.list(path=\"<dir>\").\n"
+            "• To EDIT a file: ide.fs.read it, apply your change to the content, then ide.fs.write the "
+            "FULL new content back to the same path. For a small in-place tweak you may instead use "
+            "exec.bash.run with sed -i 's/old/new/g' <path>.\n"
+            "• To RUN a saved script, pass its PATH (not its source): exec.python.run(path=\"<ARTIFACT_DIR>/app.py\") "
+            "— exec.code.run/exec.python.run/exec.node.run accept a `path` to run an existing file, inferring "
+            "the language from the extension. (exec.bash.run \"python <path>\" also works.) Do NOT put "
+            "\"python <path>\" in the `code` arg — `code` is source, not a shell command. Prefer saving the "
+            "file FIRST so the user keeps it and can iterate, rather than running throwaway code.\n"
+            "\nSEARCHING & INSPECTING (exec.bash.run is a real shell):\n"
+            "• grep / rg to FIND text + locations: grep -rn \"pattern\" path\n"
+            "• sed -n '10,40p' file to view ranges; awk for columns; head / tail / wc / find / ls / cat for cheap reads.\n"
+            "• Chain with pipes to get exactly what you need in ONE call.\n"
+            "• Read-only shell (grep/ls/find/head/tail/wc/cat/sed -n) is exploration; writes "
+            "(ide.fs.write, sed -i, >, mv, rm, mkdir, install) are actions — verify after with a read-only check."
+        ),
+    },
+    {
+        "id": "sys-panel-dispatch", "version": 1,
+        "name": "Panel query & dispatch",
+        "description": "How to read and drive the UI panel mounted in the user's chat session via panel.query / panel.dispatch.",
+        "type": "tool_hint", "tags": ["system", "panel", "ui"],
+        "applies_to_caps": ["panel.query", "panel.dispatch"],
+        "content": (
+            "DRIVING THE OPEN UI PANEL:\n"
+            "• panel.query(session_id=<chat session id / your trace_id>) → the panel's current state snapshot.\n"
+            "• panel.dispatch(session_id=<...>, action=\"<handler name>\", payload={...}) → runs the panel's "
+            "registered action handler and returns its result.\n"
+            "• `action` must be a handler the panel registered (via VeraPanelBridge.registerActionHandler); "
+            "some are keyed `handler:arg`. Inspect state via panel.query first to learn valid actions.\n"
+            "• On timeout or if no panel is mounted you get {ok:false, error:'…'} — don't retry blindly."
+        ),
+    },
+    {
+        "id": "sys-ui-building", "version": 1,
+        "name": "Building UI panels",
+        "description": "How to create a custom UI panel (HTML/JS) with ui.panel.create and grant it caps.",
+        "type": "system_prompt", "tags": ["system", "ui"],
+        "applies_to_caps": ["ui.panel.create", "ui.panel.update"],
+        "content": (
+            "BUILDING A UI PANEL:\n"
+            "• ui.panel.create(id, label, html, js, mode=\"tab\"|\"inject\", tab_order, ui_caps) registers a panel.\n"
+            "• `html` is the panel body; `js` runs on mount. Use VeraPanelBridge.registerActionHandler(name, fn) in `js` "
+            "so the panel can be driven by panel.dispatch.\n"
+            "• `ui_caps` (comma-sep) grants the panel/agent those caps while it is open.\n"
+            "• Use ui.panel.update to change an existing panel; ui.panel.list / ui.panel.get to inspect."
+        ),
+    },
+]
+
+
+def _seed_builtin_skills():
+    """Idempotently register/update the built-in guideline skills. Runs at
+    startup after the persistent stores are loaded. A skill is (re)written only
+    when missing or when its bundled `version` is newer than what's stored."""
+    seeded = 0
+    for spec in _BUILTIN_SKILLS:
+        sid = spec["id"]
+        existing = SKILLS.get(sid)
+        if existing and int(existing.get("builtin_version", 0)) >= int(spec["version"]):
+            continue
+        now = now_iso()
+        rec = {
+            "id": sid,
+            "name": spec["name"],
+            "description": spec["description"],
+            "type": spec.get("type", "system_prompt"),
+            "content": spec["content"],
+            "variables": _extract_variables(spec["content"]),
+            "tags": spec.get("tags", []),
+            "applies_to_caps": spec.get("applies_to_caps", []),
+            "enabled": existing.get("enabled", True) if existing else True,
+            "builtin": True,
+            "builtin_version": int(spec["version"]),
+            "created": existing.get("created", now) if existing else now,
+            "updated": now,
+        }
+        SKILLS[sid] = rec
+        # Persist (SQLite + Redis) — best-effort, fire-and-forget.
+        try:
+            asyncio.create_task(_save_async("skills", rec))
+        except Exception:
+            _sqlite_save("skills", rec)
+        seeded += 1
+    if seeded:
+        log.info("skills: seeded/updated %d built-in guideline skills", seeded)
+
+
 async def _startup_load():
     """Reload skills and ontologies. Order: fabric (primary) → SQLite → Redis."""
     loop = asyncio.get_event_loop()
@@ -361,6 +529,12 @@ async def _startup_load():
                         await loop.run_in_executor(None, _sqlite_save, "ontologies", rec)
         except Exception as e:
             log.debug("skills: Redis startup merge: %s", e)
+
+    # Register / refresh the built-in guideline skills (idempotent).
+    try:
+        _seed_builtin_skills()
+    except Exception as e:
+        log.warning("skills: builtin seed failed: %s", e)
 
     log.info("skills: loaded %d skills, %d ontologies (fabric:%d/%d)",
              len(SKILLS), len(ONTOLOGIES), fabric_skills, fabric_onts)
@@ -411,6 +585,7 @@ async def skills_create(
     type:        str  = "system_prompt",
     tags:        str  = "",          # comma-separated
     enabled:     bool = True,
+    applies_to_caps: str = "",       # comma-separated cap names this skill teaches
     session_id:  str  = "",   # caller's session for graph linking
     trace_id=None,
 ):
@@ -424,6 +599,7 @@ async def skills_create(
         "content":     content,
         "variables":   _extract_variables(content),
         "tags":        [t.strip() for t in tags.split(",") if t.strip()],
+        "applies_to_caps": [c.strip() for c in applies_to_caps.split(",") if c.strip()],
         "enabled":     enabled,
         "created":     now,
         "updated":     now,
@@ -450,6 +626,7 @@ async def skills_update(
     type:        str  = "",
     tags:        str  = "",
     enabled:     bool = None,
+    applies_to_caps: str = "",   # comma-separated; pass to replace the list
     trace_id=None,
 ):
     skill = SKILLS.get(id)
@@ -460,6 +637,8 @@ async def skills_update(
     if description: skill["description"] = description
     if type:        skill["type"]        = type
     if tags:        skill["tags"]        = [t.strip() for t in tags.split(",") if t.strip()]
+    if applies_to_caps:
+        skill["applies_to_caps"] = [c.strip() for c in applies_to_caps.split(",") if c.strip()]
     if enabled is not None: skill["enabled"] = enabled
     skill["updated"] = now_iso()
     await _save_async("skills", skill)
@@ -1179,6 +1358,7 @@ register_ui(
         </div>
         <div class="row"><label>Description</label><input id="seDesc" placeholder="What this skill does…" style="flex:1"></div>
         <div class="row"><label>Tags</label><input id="seTags" placeholder="comma, separated" style="flex:1"></div>
+        <div class="row"><label title="Caps this skill teaches. When a v5 step uses one of these caps, this skill is suggested for injection.">Applies to caps</label><input id="seCaps" placeholder="e.g. fabric.query, fabric.datasets" style="flex:1"></div>
         <div>
           <div style="font-size:9.5px;color:var(--dim);margin-bottom:4px;text-transform:uppercase;letter-spacing:.8px">
             Content <span style="color:var(--dim2)" id="seVarList"></span>
@@ -1250,6 +1430,7 @@ register_ui(
         <div style="display:flex;align-items:center;gap:7px;margin-bottom:3px">
           <span style="font-weight:600;font-size:12px;font-family:var(--mono)">${s.name}</span>
           <span style="font-size:9px;padding:1px 5px;background:rgba(79,142,247,.1);border:1px solid rgba(79,142,247,.25);border-radius:2px;color:var(--acc)">${s.type}</span>
+          ${s.builtin?'<span style="font-size:9px;padding:1px 5px;background:rgba(168,200,122,.12);border:1px solid rgba(168,200,122,.3);border-radius:2px;color:var(--acc3,#a8c87a)">system</span>':''}
           ${s.enabled?'':'<span style="font-size:9px;color:var(--dim)">disabled</span>'}
         </div>
         <div style="font-size:10.5px;color:var(--dim2);margin-bottom:4px">${s.description||'—'}</div>
@@ -1278,6 +1459,7 @@ register_ui(
       document.getElementById('seType').value    = s.type;
       document.getElementById('seDesc').value    = s.description||'';
       document.getElementById('seTags').value    = (s.tags||[]).join(', ');
+      document.getElementById('seCaps').value    = (s.applies_to_caps||[]).join(', ');
       document.getElementById('seContent').value = s.content;
       document.getElementById('seEnabled').checked = s.enabled!==false;
       document.getElementById('seDeleteBtn').style.display = 'inline-flex';
@@ -1288,7 +1470,7 @@ register_ui(
 
   window.skillsShowCreate = function() {
     selectedSkillId=null; window.selectedSkillId=null;
-    ['seId','seName','seDesc','seTags','seContent'].forEach(id=>document.getElementById(id).value='');
+    ['seId','seName','seDesc','seTags','seCaps','seContent'].forEach(id=>document.getElementById(id).value='');
     document.getElementById('seType').value='system_prompt';
     document.getElementById('seEnabled').checked=true;
     document.getElementById('seDeleteBtn').style.display='none';
@@ -1305,6 +1487,7 @@ register_ui(
       description: document.getElementById('seDesc').value,
       type:    document.getElementById('seType').value,
       tags:    document.getElementById('seTags').value,
+      applies_to_caps: document.getElementById('seCaps').value,
       enabled: document.getElementById('seEnabled').checked,
     };
     const url = id ? '/skills/update' : '/skills';

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Vera Comms</title>
+<style>
+:root{
+  --bg:#0d0f12; --bg1:#14181d; --bg2:#1a1f26; --border:#232a33; --border2:#2e3742;
+  --fg:#d8dde3; --fg2:#9aa3ad; --dim:#5f6975; --acc:#4a9eff;
+}
+*{ box-sizing:border-box; }
+html,body{ margin:0;padding:0;height:100%;background:var(--bg);color:var(--fg);overflow:hidden;
+  font:12px/1.5 -apple-system,BlinkMacSystemFont,"Inter",system-ui,sans-serif; }
+#root{ display:flex;flex-direction:column;height:100vh;min-height:0; }
+#subbar{ height:42px;flex-shrink:0;display:flex;align-items:center;gap:4px;
+  padding:0 10px;border-bottom:1px solid var(--border);background:var(--bg1); }
+.subtab{ display:flex;align-items:center;gap:7px;padding:7px 14px;border-radius:7px;cursor:pointer;
+  color:var(--fg2);font-size:12px;font-weight:500;border:1px solid transparent;transition:.12s; }
+.subtab:hover{ background:var(--bg2);color:var(--fg); }
+.subtab.active{ background:var(--bg2);border-color:var(--border2);color:var(--fg); }
+.subtab .gl{ font-size:14px; }
+#frames{ flex:1;position:relative;min-height:0; }
+#frames iframe{ position:absolute;inset:0;width:100%;height:100%;border:none;background:var(--bg);
+  opacity:0;pointer-events:none; }
+#frames iframe.active{ opacity:1;pointer-events:auto; }
+</style>
+</head>
+<body>
+<div id="root">
+  <div id="subbar">
+    <div class="subtab" data-k="accounts"><span class="gl">👤</span> Accounts</div>
+    <div class="subtab" data-k="calendar"><span class="gl">🗓</span> Calendar</div>
+    <div class="subtab" data-k="email"><span class="gl">✉</span> Email</div>
+    <div class="subtab" data-k="telegram"><span class="gl">✈</span> Telegram</div>
+  </div>
+  <div id="frames">
+    <iframe data-k="accounts" data-src="/accounts/panel" allow="clipboard-read; clipboard-write"></iframe>
+    <iframe data-k="calendar" data-src="/cal/panel" allow="clipboard-read; clipboard-write"></iframe>
+    <iframe data-k="email" data-src="/mail/panel" allow="clipboard-read; clipboard-write"></iframe>
+    <iframe data-k="telegram" data-src="/telegram/panel" allow="clipboard-read; clipboard-write"></iframe>
+  </div>
+</div>
+<script>
+const LS="vera.comms.tab";
+const tabs=[...document.querySelectorAll('.subtab')];
+const frames=[...document.querySelectorAll('#frames iframe')];
+function show(k){
+  tabs.forEach(t=>t.classList.toggle('active',t.dataset.k===k));
+  frames.forEach(f=>{
+    const on=f.dataset.k===k;
+    if(on && !f.src) f.src=f.dataset.src;   // lazy-load on first view
+    f.classList.toggle('active',on);
+  });
+  try{ localStorage.setItem(LS,k); }catch(e){}
+}
+tabs.forEach(t=>t.addEventListener('click',()=>show(t.dataset.k)));
+let start="calendar";
+try{ const s=localStorage.getItem(LS); if(s&&tabs.some(t=>t.dataset.k===s)) start=s; }catch(e){}
+show(start);
+</script>
+</body>
+</html>

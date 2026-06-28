@@ -1257,7 +1257,7 @@ html,body{
         <div class="cfg-section-body">
           <div class="cfg-field">
             <label class="cfg-label">Base URL</label>
-            <input class="cfg-input" id="cfg-vera-url" value="http://llm.int:8888" placeholder="http://llm.int:8888"/>
+            <input class="cfg-input" id="cfg-vera-url" value="" placeholder="http://host:8888"/>
           </div>
           <div class="cfg-field">
             <label class="cfg-label">Session ID
@@ -1441,8 +1441,8 @@ html,body{
           <div id="chroma-http-cfg">
             <div class="cfg-field">
               <label class="cfg-label">Chroma URL</label>
-              <input class="cfg-input" id="cfg-chroma-url" value="http://llm.int:8000"
-                placeholder="http://llm.int:8000"/>
+              <input class="cfg-input" id="cfg-chroma-url" value=""
+                placeholder="http://host:8000"/>
             </div>
             <div class="cfg-field">
               <label class="cfg-label">Collection</label>
@@ -1466,7 +1466,7 @@ html,body{
         <div class="cfg-section-body">
           <div class="cfg-field">
             <label class="cfg-label">WebSocket URL</label>
-            <input class="cfg-input" id="cfg-redis-ws" value="ws://llm.int:8999/ws/mcp" placeholder="ws://llm.int:8999/ws/mcp"/>
+            <input class="cfg-input" id="cfg-redis-ws" value="" placeholder="ws://host:8999/ws/mcp"/>
           </div>
           <div style="display:flex;gap:8px;margin-top:4px">
             <label style="font-size:10px;color:var(--text-muted);display:flex;align-items:center;gap:4px;cursor:pointer">
@@ -1489,7 +1489,7 @@ html,body{
         <div class="cfg-section-body">
           <div class="cfg-field">
             <label class="cfg-label">Fabric API Base URL</label>
-            <input class="cfg-input" id="cfg-fabric-url" value="http://llm.int:8999" placeholder="http://llm.int:8999"/>
+            <input class="cfg-input" id="cfg-fabric-url" value="" placeholder="http://host:8999"/>
           </div>
           <div style="font-size:9px;color:var(--text-muted);margin-bottom:6px;line-height:1.5">
             Load datasets, sources, entity graphs and named graphs from the Data Fabric into the galaxy.
@@ -2385,7 +2385,7 @@ function loadDemoData(){
 // VERA API — connects to your running FastAPI server
 // ===========================================================
 
-let _veraBase    = 'http://llm.int:8888';
+let _veraBase    = ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8888');
 let _veraSession = '';
 let _queryMode   = 'cypher';
 
@@ -2405,6 +2405,18 @@ document.addEventListener('click', e=>{
   const cc = document.getElementById('chunk-controls');
   if(cc) cc.style.display = _queryMode==='cypher' ? 'flex' : 'none';
 });
+
+// Populate connection defaults from the injected config (window.__VERA_*),
+// falling back to the host this page was served from. No hostname is hardcoded.
+(function _veraCfgDefaults(){
+  const dom  = window.__VERA_DOMAIN__ || location.hostname || 'localhost';
+  const orch = window.__VERA_BASE__   || ('http://'+dom+':8999');
+  const set  = (id,val)=>{ const el=document.getElementById(id); if(el && !el.value) el.value=val; };
+  set('cfg-vera-url',   'http://'+dom+':8888');
+  set('cfg-chroma-url', 'http://'+dom+':8000');
+  set('cfg-redis-ws',   orch.replace(/^http/,'ws')+'/ws/mcp');
+  set('cfg-fabric-url', orch);
+})();
 
 // ── Vera base URL helper ───────────────────────────────────
 function veraBase(){
@@ -2839,7 +2851,14 @@ function connectChroma() { _queryMode='memory'; veraRunMemory(); }
 // ── Redis live stream (unchanged) ─────────────────────────
 let redisWS = null;
 function connectRedis(){
-  const wsUrl = document.getElementById('cfg-redis-ws').value || 'ws://llm.int:8999/ws/mcp';
+  let wsUrl = document.getElementById('cfg-redis-ws').value || ((window.__VERA_BASE__||('http://'+location.hostname+':8999')).replace(/^http/,'ws')+'/ws/mcp');
+  // Avoid "insecure WebSocket from an HTTPS page": prefer this page's own origin
+  // (the panel is served by the orchestrator) and upgrade ws:// → wss:// on TLS.
+  try{
+    const origin = window.parent?._veraBase || window._veraBase || location.origin;
+    if(origin && /^https?:/.test(origin)) wsUrl = origin.replace(/^http/,'ws') + '/ws/mcp';
+  }catch(e){}
+  if(location.protocol === 'https:') wsUrl = wsUrl.replace(/^ws:\/\//,'wss://');
   if(redisWS){ try{redisWS.close();}catch(e){} }
   toast('Connecting to Vera event stream...');
   redisWS = new WebSocket(wsUrl);
@@ -7740,7 +7759,7 @@ async function listChromaCollections(){
     return;
   }
   // Direct HTTP to ChromaDB
-  const chromaUrl = document.getElementById('cfg-chroma-url')?.value.trim() || 'http://llm.int:8000';
+  const chromaUrl = document.getElementById('cfg-chroma-url')?.value.trim() || ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8000');
   try{
     const r = await fetch(chromaUrl+'/api/v1/collections');
     if(!r.ok) throw new Error('HTTP '+r.status);
@@ -7783,7 +7802,7 @@ async function connectChromaDirect(){
   }
 
   // Direct ChromaDB HTTP API
-  const chromaUrl = document.getElementById('cfg-chroma-url')?.value.trim() || 'http://llm.int:8000';
+  const chromaUrl = document.getElementById('cfg-chroma-url')?.value.trim() || ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8000');
   const collName  = document.getElementById('cfg-chroma-coll')?.value.trim();
   if(!collName){ listChromaCollections(); _chromaStatus('Enter a collection name', false); return; }
 
@@ -8441,7 +8460,7 @@ function openFabricModal(){
 // Helper: build a fabric URL (uses dedicated fabric base URL, NOT veraBase)
 function fabUrl(path){
   const el = document.getElementById('cfg-fabric-url');
-  const base = (el ? el.value.trim() : 'http://llm.int:8999').replace(/\/$/, '');
+  const base = (el ? el.value.trim() : (window.__VERA_BASE__||('http://'+location.hostname+':8999'))).replace(/\/$/, '');
   return base + path;
 }
 

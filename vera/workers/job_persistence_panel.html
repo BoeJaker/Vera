@@ -200,6 +200,7 @@
     background: var(--blue-dim); color: var(--blue);
   }
 </style>
+<link rel="stylesheet" href="/ui/vera-panel.css">
 </head>
 <body>
 
@@ -313,7 +314,7 @@ const BASE = (() => {
     const el = window.parent.document.getElementById('backendUrl');
     if (el && el.value) return el.value.replace(/\/$/, '');
   } catch (_) {}
-  return window._veraBase || 'http://llm.int:8999';
+  return window._veraBase || (window.__VERA_BASE__||('http://'+location.hostname+':8999'));
 })();
 
 let _refreshTimer = null;
@@ -603,6 +604,8 @@ window.addEventListener('message', e => {
 refresh();
 setAutoRefresh(5);
 </script>
+<script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>

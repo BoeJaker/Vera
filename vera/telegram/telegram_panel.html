@@ -334,13 +334,14 @@ textarea { font-family: var(--mono); resize: vertical; min-height: 80px; }
 .kv .k { color: var(--dim); }
 .kv .v { color: var(--fg); font-family: var(--mono); }
 </style>
+<link rel="stylesheet" href="/ui/vera-panel.css">
 </head>
 <body>
 
 <div id="root">
 
   <!-- ── Sidebar ───────────────────────────────────────────────────────── -->
-  <aside id="sidebar">
+  <aside id="sidebar" data-vera-lhm>
     <div id="side-head">
       <div class="ico">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
@@ -958,6 +959,7 @@ setInterval(loadCapsBadge, 30000);
 refreshAll();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>

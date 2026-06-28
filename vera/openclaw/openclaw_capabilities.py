@@ -288,22 +288,38 @@ async def _do_connect() -> None:
         await _ws_reader(ws)
 
     except Exception as exc:
+        prev_error = _STATE.last_error
         _STATE.last_error = str(exc)
         _STATE.connecting = False
         _STATE.connected = False
         _WS_CONN = None
         log.warning("openclaw: connection failed: %s", exc)
-        await emit_event("openclaw.error", {"error": str(exc), "ts": now_iso()})
+        # Only surface a *new* error to the event bus. A down gateway fails with
+        # the same "connection refused" every reconnect cycle — re-emitting it
+        # each time spammed the UI's event stream for no new information.
+        if str(exc) != prev_error:
+            await emit_event("openclaw.error", {"error": str(exc), "ts": now_iso()})
 
 
 async def _reconnect_loop() -> None:
-    """Background task: keep the OpenClaw connection alive."""
+    """Background task: keep the OpenClaw connection alive.
+
+    Uses exponential backoff (capped at 5 min) on consecutive failures so a
+    gateway that's down isn't re-dialed every `reconnect_interval` seconds
+    forever — the constant retry storm + error events were why this module
+    was muted. Backoff resets the moment a connection succeeds.
+    """
+    backoff = _CONFIG.reconnect_interval
     while True:
         if _CONFIG.enabled and not _STATE.connected and not _STATE.connecting:
-            await _do_connect()
+            await _do_connect()                 # blocks while connected
+            if _STATE.connected:
+                backoff = _CONFIG.reconnect_interval
         if _CONFIG.enabled and not _STATE.connected:
-            await asyncio.sleep(_CONFIG.reconnect_interval)
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 300)     # grow wait, cap at 5 minutes
         else:
+            backoff = _CONFIG.reconnect_interval
             await asyncio.sleep(5)
 
 
@@ -623,26 +639,12 @@ _OPENCLAW_MOUNT_JS = r"""
 })();
 """
  
-register_ui(
-    panel_id="openclaw",
-    label="OpenClaw",
-    icon="",
-    # Minimal mount point — the iframe is created by the JS above
-    html=_HTML,
-    js=_OPENCLAW_MOUNT_JS,
-    mode="tab",
-    tab_order=55,
-    ui_caps=[
-        "openclaw.status",
-        "openclaw.connect",
-        "openclaw.disconnect",
-        "openclaw.prompt",
-        "openclaw.config.get",
-        "openclaw.config.set",
-        "openclaw.sessions.list",
-        "openclaw.sessions.reset",
-    ],
-)
+# OpenClaw no longer registers its own top-level harness tab. It now lives as a
+# sub-tab inside the Workers & Ollama panel, which iframes the `/openclaw/panel`
+# route defined above. The standalone route + iframe pattern is unchanged; only
+# the top-level `register_ui(mode="tab")` registration was removed so the panel
+# isn't duplicated. `_OPENCLAW_MOUNT_JS` / `_HTML` are retained above in case the
+# top-level tab is ever reinstated.
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Auto-start

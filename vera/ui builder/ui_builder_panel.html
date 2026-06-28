@@ -19,18 +19,26 @@ button{cursor:pointer;font-family:var(--sans)}input,select,textarea{background:v
 .main{flex:1;overflow-y:auto;padding:14px 18px}.ps{display:none;flex-direction:column;gap:10px}.ps.a{display:flex}
 #toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--bg3);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:6px 16px;font-size:11px;z-index:999;opacity:0;transition:opacity .25s;pointer-events:none}#toast.show{opacity:1}
 </style>
+<link rel="stylesheet" href="/ui/vera-panel.css">
 </head>
 <body>
 <div class="layout">
-<div class="sb">
-  <div class="t">UI Builder</div>
-  <button class="nb a" data-s="themes" onclick="switchSec(this)">Themes</button>
-  <button class="nb" data-s="builder" onclick="switchSec(this)">Panel Builder</button>
-  <button class="nb" data-s="generate" onclick="switchSec(this)">Generate</button>
-  <button class="nb" data-s="panels" onclick="switchSec(this)">Panels</button>
-  <div style="flex:1"></div>
-  <div id="themePicker" style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px"></div>
-</div>
+<aside id="sidebar" data-vera-lhm>
+  <div id="side-head">
+    <div class="ico">🛠</div>
+    <div><h1>UI Builder</h1><div class="sub">Themes &amp; panels</div></div>
+  </div>
+  <nav id="nav">
+    <button class="nav-btn active" data-s="themes" onclick="switchSec(this)"><span class="gl">🎨</span> Themes</button>
+    <button class="nav-btn" data-s="builder" onclick="switchSec(this)"><span class="gl">▤</span> Panel Builder</button>
+    <button class="nav-btn" data-s="generate" onclick="switchSec(this)"><span class="gl">✦</span> Generate</button>
+    <button class="nav-btn" data-s="panels" onclick="switchSec(this)"><span class="gl">▦</span> Panels</button>
+  </nav>
+  <div id="status-tile">
+    <div class="lbl">Active Theme</div>
+    <div id="themePicker" style="margin-top:6px"></div>
+  </div>
+</aside>
 <div class="main">
 
 <!-- THEMES -->
@@ -246,12 +254,12 @@ function escH(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')
 function toast(m){var t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(function(){t.classList.remove('show')},2500)}
 function stEl(id,m,c){var e=document.getElementById(id);if(e){e.className='st '+(c||'');e.textContent=m}}
 function api(p,m,b){var o={method:m||'GET',headers:{'Content-Type':'application/json'}};if(b)o.body=JSON.stringify(b);return fetch(B+p,o).then(function(r){if(!r.ok)return r.text().then(function(t){try{return JSON.parse(t)}catch(e){return{error:'HTTP '+r.status}}});return r.json()}).catch(function(e){return{error:e.message}})}
-function switchSec(btn){document.querySelectorAll('.nb').forEach(function(b){b.classList.remove('a')});btn.classList.add('a');document.querySelectorAll('.ps').forEach(function(s){s.classList.remove('a')});var el=document.getElementById('s-'+btn.dataset.s);if(el)el.classList.add('a');if(btn.dataset.s==='themes')loadThemes();if(btn.dataset.s==='panels')loadPanelList()}
+function switchSec(btn){document.querySelectorAll('#nav .nav-btn').forEach(function(b){b.classList.remove('active')});btn.classList.add('active');document.querySelectorAll('.ps').forEach(function(s){s.classList.remove('a')});var el=document.getElementById('s-'+btn.dataset.s);if(el)el.classList.add('a');if(btn.dataset.s==='themes')loadThemes();if(btn.dataset.s==='panels')loadPanelList()}
 
 // ═══ THEMES ═══════════════════════════════════════════════════════════════
 var _themes={},_activeTheme='dusk';
-var THEME_VARS=['--bg','--s1','--s2','--s3','--bd','--bd2','--t1','--t2','--t3','--ac','--ac2','--ac3','--ac4','--ac5'];
-var THEME_LABELS={'--bg':'Background','--s1':'Surface 1','--s2':'Surface 2','--s3':'Surface 3','--bd':'Border','--bd2':'Border 2','--t1':'Text','--t2':'Text 2','--t3':'Text muted','--ac':'Accent','--ac2':'Success','--ac3':'Warning','--ac4':'Error','--ac5':'Decorative'};
+var THEME_VARS=['--bg','--s1','--s2','--s3','--bd','--bd2','--t1','--t2','--t3','--ac','--ac2','--ac3','--ac4','--ac5','--ui-radius','--lhm-width','--lhm-collapsed-width'];
+var THEME_LABELS={'--bg':'Background','--s1':'Surface 1','--s2':'Surface 2','--s3':'Surface 3','--bd':'Border','--bd2':'Border 2','--t1':'Text','--t2':'Text 2','--t3':'Text muted','--ac':'Accent','--ac2':'Success','--ac3':'Warning','--ac4':'Error','--ac5':'Decorative','--ui-radius':'Corner radius','--lhm-width':'Sidebar width','--lhm-collapsed-width':'Sidebar (collapsed)'};
 
 function loadThemes(){
   api('/ui/themes').then(function(r){
@@ -909,6 +917,7 @@ function pdDelete(){if(!_selPanel||!confirm('Delete "'+_selPanel+'"?'))return;ap
 // ═══ INIT ═════════════════════════════════════════════════════════════
 loadThemes();
 </script>
+<script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>
