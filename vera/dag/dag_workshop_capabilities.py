@@ -50,9 +50,13 @@ Dependencies
 from __future__ import annotations
 
 import asyncio
+import difflib
 import hashlib
 import json
 import logging
+import os
+import re
+import sqlite3
 import sys
 import time
 import uuid
@@ -6873,6 +6877,70 @@ _V5_CATALOG_MAX_DEFAULT = 40      # caps shown to the orchestrator (name+desc)
 # no file-write cap was offered.
 _V5_ESSENTIAL_ACTION_CAPS = ("exec.bash.run", "ide.fs.write", "ide.fs.read", "http.get")
 
+# Caps ALWAYS worth offering (run a command/script, persist/read a file, fetch a
+# URL, search data/caps). exec.python.run is here so a step can write+run a script.
+_V5_CORE_SEED_CAPS = ("exec.bash.run", "exec.python.run", "ide.fs.write", "ide.fs.read",
+                      "http.get", "caps.search", "fabric.query")
+# Live-web / external-research caps — seeded when the goal looks like it needs the
+# OUTSIDE world (vs the internal data fabric). This is the fix for "no proper web
+# crawling caps" + "uses fabric instead of the web lookup cap".
+_V5_WEB_RESEARCH_SEED_CAPS = ("web.search", "web.fetch", "browser.navigate",
+                              "research.quick_search", "fabric.discover.crawl")
+_V5_WEB_GOAL_HINTS = (
+    "info about", "who is", "research", "osint", "web", "site", "domain", "presence",
+    "lookup", "look up", "find out", "search", "investigate", "profile", "background",
+    "reconnais", "recon", "intel", "online", "social", "news", "latest", "current",
+    "company", "person", "people", "competitor",
+)
+# Infra/scan/host caps are IRRELEVANT to most goals — never auto-grant them as
+# recovery unless the step is itself in that domain (prevents the loop wandering
+# into netscan/ssh when a web fetch fails).
+_V5_INFRA_PREFIXES = ("netscan.", "exec.ssh", "proxmox.", "docker.", "k8s.", "kube.",
+                      "mesh.", "openclaw.")
+# Universal "other avenue" investigation caps — preferred recovery, in this order.
+_V5_INVESTIGATION_CAPS = ("web.search", "web.fetch", "http.get", "browser.navigate",
+                          "research.quick_search", "fabric.query",
+                          "fabric.entity_graph.query", "caps.search", "caps.describe",
+                          "context.search_caps", "ide.fs.read", "exec.bash.run",
+                          "exec.python.run")
+
+
+def _v5_goal_is_webby(goal: str) -> bool:
+    g = (goal or "").lower()
+    return any(h in g for h in _V5_WEB_GOAL_HINTS)
+
+
+def _v5_seed_caps_for(goal: str) -> List[str]:
+    """Caps to GUARANTEE in the v5 catalog (web research caps only when the goal
+    looks like it needs the live web). Keeps web/data/exec avenues always offered
+    so the orchestrator isn't stuck with whatever semantic search surfaced."""
+    seeds = list(_V5_CORE_SEED_CAPS)
+    if _v5_goal_is_webby(goal):
+        seeds += list(_V5_WEB_RESEARCH_SEED_CAPS)
+    out: List[str] = []
+    for c in seeds:
+        if c in CAPABILITY_REGISTRY and c not in out:
+            out.append(c)
+    return out
+
+
+def _v5_deflood_catalog(catalog: List[str], goal: str, *, per_ns_cap: int = 6) -> List[str]:
+    """Stop one big namespace (e.g. 20+ netscan.* caps) crowding out everything
+    else. Caps each namespace's representation UNLESS the goal explicitly names
+    that namespace. Order is preserved."""
+    g = (goal or "").lower()
+    counts: Dict[str, int] = {}
+    out: List[str] = []
+    for c in catalog:
+        ns = c.split(".")[0]
+        # If the goal mentions the namespace, don't trim it.
+        if ns and ns in g:
+            out.append(c); continue
+        counts[ns] = counts.get(ns, 0) + 1
+        if counts[ns] <= per_ns_cap:
+            out.append(c)
+    return out
+
 # Pre-plan recon + one-level sub-plan bounds.
 _V5_RECON_MAX = 3                  # max read-only recon actions run before planning
 _V5_SUBPLAN_MAX_STEPS = 6          # max sub-steps a single "complex" step may expand into
@@ -6991,6 +7059,443 @@ async def _v5_available_models(trace_id: str = "", *, limit: int = 40) -> List[s
             except Exception as e:
                 log.debug("v5 model list (ollama.instances) failed: %s", e)
     return names[:limit]
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# VERSIONED CODE STORE  (data-fabric versioning + optional Gitea push)
+# ─────────────────────────────────────────────────────────────────────────────
+# Generated/edited code is auto-saved here by the v5 loop (no orchestrator
+# ide.fs.write step needed). Every save is a NEW immutable VERSION keyed by
+# (scope, path); the LATEST is also mirrored to the run's artifact dir so it is
+# runnable (exec.python.run) and readable via ide.fs.read. The agent only ever
+# sees the latest unless it explicitly calls code.versions / code.version.read.
+#
+# Backend: a durable SQLite table (always available — the reliable source of
+# truth), with a best-effort fabric record per save and an OPTIONAL push to a
+# configured Gitea instance (one commit per version). Exposed as code.* caps.
+# ═════════════════════════════════════════════════════════════════════════════
+
+_CODE_DB_PATH: Optional[str] = None
+_CODE_LANG_BY_EXT = {
+    "py": "python", "js": "javascript", "ts": "typescript", "tsx": "tsx",
+    "jsx": "jsx", "rs": "rust", "go": "go", "rb": "ruby", "php": "php",
+    "java": "java", "c": "c", "h": "c", "cpp": "cpp", "cc": "cpp", "hpp": "cpp",
+    "cs": "csharp", "sh": "shell", "bash": "shell", "ps1": "powershell",
+    "html": "html", "css": "css", "scss": "scss", "json": "json",
+    "yaml": "yaml", "yml": "yaml", "toml": "toml", "md": "markdown",
+    "sql": "sql", "kt": "kotlin", "swift": "swift", "lua": "lua", "r": "r",
+}
+_CODE_EXT_BY_LANG = {v: k for k, v in reversed(list(_CODE_LANG_BY_EXT.items()))}
+# Fence-language token → file extension (handles aliases like bash→sh, yml→yaml).
+_CODE_FENCE_LANG_EXT = {
+    "python": "py", "py": "py", "javascript": "js", "js": "js", "node": "js",
+    "typescript": "ts", "ts": "ts", "tsx": "tsx", "jsx": "jsx", "ruby": "rb",
+    "go": "go", "golang": "go", "rust": "rs", "java": "java", "c": "c",
+    "cpp": "cpp", "c++": "cpp", "csharp": "cs", "cs": "cs", "bash": "sh",
+    "shell": "sh", "sh": "sh", "zsh": "sh", "powershell": "ps1", "ps1": "ps1",
+    "html": "html", "css": "css", "scss": "scss", "json": "json",
+    "yaml": "yaml", "yml": "yaml", "toml": "toml", "sql": "sql",
+    "markdown": "md", "md": "md", "kotlin": "kt", "swift": "swift",
+    "lua": "lua", "r": "r", "php": "php", "dockerfile": "dockerfile",
+}
+_CODE_MAX_INLINE = 600_000          # max chars stored inline per version
+
+
+def _code_db_path() -> str:
+    global _CODE_DB_PATH
+    if _CODE_DB_PATH:
+        return _CODE_DB_PATH
+    base = ""
+    try:
+        import importlib as _il
+        _exec = _il.import_module("Vera.vera.execution.exec_capabilities")
+        base = _exec._artifact_root()
+    except Exception:
+        base = os.path.join(os.path.expanduser("~"), ".vera_artifacts")
+    try:
+        os.makedirs(base, exist_ok=True)
+    except Exception:
+        pass
+    _CODE_DB_PATH = os.path.join(base, "code_versions.db")
+    return _CODE_DB_PATH
+
+
+def _code_conn() -> "sqlite3.Connection":
+    conn = sqlite3.connect(_code_db_path(), timeout=10)
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS code_versions(
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               scope TEXT NOT NULL, path TEXT NOT NULL, version INTEGER NOT NULL,
+               content TEXT NOT NULL, bytes INTEGER, lang TEXT, sha TEXT,
+               message TEXT, session_id TEXT, created_at TEXT,
+               UNIQUE(scope, path, version))""")
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_cv_scope_path ON code_versions(scope, path)")
+    return conn
+
+
+def _code_norm_path(path: str) -> str:
+    """Sanitise a logical file path: forward slashes, no leading slash, no '..'."""
+    p = (path or "").strip().replace("\\", "/").lstrip("/")
+    parts = [seg for seg in p.split("/") if seg not in ("", ".", "..")]
+    return "/".join(parts)[:300]
+
+
+def _code_scope(session_id: str = "", repo: str = "") -> str:
+    return (repo or session_id or "default").strip()[:120]
+
+
+def _code_lang_for(path: str) -> str:
+    ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+    return _CODE_LANG_BY_EXT.get(ext, ext or "text")
+
+
+def _code_save_sync(scope: str, path: str, content: str, *, lang: str,
+                    message: str, session_id: str) -> Dict[str, Any]:
+    sha = hashlib.sha256(content.encode("utf-8", "replace")).hexdigest()
+    conn = _code_conn()
+    try:
+        row = conn.execute(
+            "SELECT version, sha FROM code_versions WHERE scope=? AND path=? "
+            "ORDER BY version DESC LIMIT 1", (scope, path)).fetchone()
+        latest_v = row[0] if row else 0
+        if row and row[1] == sha:
+            # No change — don't create a redundant version.
+            return {"version": latest_v, "unchanged": True, "sha": sha}
+        version = latest_v + 1
+        conn.execute(
+            "INSERT INTO code_versions(scope,path,version,content,bytes,lang,sha,"
+            "message,session_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (scope, path, version, content[:_CODE_MAX_INLINE],
+             len(content.encode("utf-8", "replace")), lang, sha,
+             (message or "")[:300], session_id, now_iso()))
+        conn.commit()
+        return {"version": version, "unchanged": False, "sha": sha}
+    finally:
+        conn.close()
+
+
+def _code_get_sync(scope: str, path: str, version: Optional[int]) -> Optional[Dict[str, Any]]:
+    conn = _code_conn()
+    try:
+        if version:
+            row = conn.execute(
+                "SELECT version,content,bytes,lang,sha,message,created_at FROM code_versions "
+                "WHERE scope=? AND path=? AND version=?", (scope, path, version)).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT version,content,bytes,lang,sha,message,created_at FROM code_versions "
+                "WHERE scope=? AND path=? ORDER BY version DESC LIMIT 1", (scope, path)).fetchone()
+        if not row:
+            return None
+        return {"version": row[0], "content": row[1], "bytes": row[2], "lang": row[3],
+                "sha": row[4], "message": row[5], "created_at": row[6]}
+    finally:
+        conn.close()
+
+
+def _code_list_sync(scope: str, path: str) -> List[Dict[str, Any]]:
+    conn = _code_conn()
+    try:
+        rows = conn.execute(
+            "SELECT version,bytes,lang,sha,message,created_at,session_id FROM code_versions "
+            "WHERE scope=? AND path=? ORDER BY version DESC", (scope, path)).fetchall()
+        return [{"version": r[0], "bytes": r[1], "lang": r[2], "sha": (r[3] or "")[:12],
+                 "message": r[4], "created_at": r[5], "session_id": r[6]} for r in rows]
+    finally:
+        conn.close()
+
+
+async def _code_mirror_to_fs(session_id: str, path: str, content: str) -> str:
+    """Write the LATEST content to the run's artifact dir so it is runnable and
+    readable via ide.fs.read. Returns the absolute fs path (or '')."""
+    try:
+        import importlib as _il
+        _exec = _il.import_module("Vera.vera.execution.exec_capabilities")
+        base = _exec.artifact_dir(session_id=session_id)
+        fp = os.path.join(base, *path.split("/"))
+        os.makedirs(os.path.dirname(fp) or base, exist_ok=True)
+        with open(fp, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        return fp
+    except Exception as e:
+        log.debug("code mirror-to-fs failed for %s: %s", path, e)
+        return ""
+
+
+async def _code_gitea_push(scope: str, path: str, content: str, version: int,
+                           message: str) -> Dict[str, Any]:
+    """Optional: commit this version to a configured Gitea repo (one repo per
+    scope). Best-effort; returns {ok, url|error}. No-op if Gitea unconfigured."""
+    try:
+        from Vera.vera.config import cfg
+    except Exception:
+        try:
+            import importlib as _il
+            cfg = getattr(_il.import_module("Vera.vera.config"), "cfg", None)
+        except Exception:
+            cfg = None
+    base = (getattr(cfg, "GITEA_BASE_URL", "") or "").rstrip("/") if cfg else ""
+    token = getattr(cfg, "GITEA_TOKEN", "") if cfg else ""
+    owner = getattr(cfg, "GITEA_OWNER", "") if cfg else ""
+    if not (base and token and owner):
+        return {"ok": False, "error": "gitea_not_configured"}
+    repo = re.sub(r"[^A-Za-z0-9_.-]", "-", scope) or "vera-code"
+    import base64 as _b64
+    import httpx
+    headers = {"Authorization": f"token {token}", "Content-Type": "application/json"}
+    b64 = _b64.b64encode(content.encode("utf-8", "replace")).decode()
+    try:
+        async with httpx.AsyncClient(timeout=20) as c:
+            # Ensure the repo exists (idempotent).
+            await c.post(f"{base}/api/v1/orgs/{owner}/repos", headers=headers,
+                         json={"name": repo, "auto_init": True, "private": True})
+            await c.post(f"{base}/api/v1/user/repos", headers=headers,
+                         json={"name": repo, "auto_init": True, "private": True})
+            url = f"{base}/api/v1/repos/{owner}/{repo}/contents/{path}"
+            # Does the file already exist? (need its sha to update)
+            existing = await c.get(url, headers=headers)
+            payload = {"content": b64,
+                       "message": message or f"v{version}: update {path}"}
+            if existing.status_code == 200:
+                payload["sha"] = existing.json().get("sha", "")
+                r = await c.put(url, headers=headers, json=payload)
+            else:
+                r = await c.post(url, headers=headers, json=payload)
+            if r.status_code in (200, 201):
+                j = r.json()
+                return {"ok": True, "url": ((j.get("content") or {}).get("html_url") or
+                                            f"{base}/{owner}/{repo}")}
+            return {"ok": False, "error": f"gitea {r.status_code}: {r.text[:200]}"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+async def _code_fabric_record(scope: str, path: str, version: int, lang: str,
+                              bytes_: int, session_id: str) -> None:
+    """Best-effort fabric/memory record so a save shows up in the data fabric
+    timeline & search. Mirrors ide's _ide_record_file shape; never raises."""
+    try:
+        fabric = sys.modules.get("data_fabric")
+        if not fabric:
+            return
+        await fabric.ingest_dataset(
+            dataset_id="code.versions",
+            data=[{"text": f"code v{version}: {path} ({bytes_}b, {lang})",
+                   "scope": scope, "path": path, "version": version, "lang": lang,
+                   "bytes": bytes_, "session_id": session_id, "ts": now_iso()}],
+            source="code_store", source_id=session_id or scope,
+            tags=["code", "version", lang])
+    except Exception as e:
+        log.debug("code fabric record failed for %s: %s", path, e)
+
+
+async def code_store_save(path: str, content: str, *, session_id: str = "", repo: str = "",
+                          message: str = "", lang: str = "", push_gitea: bool = False,
+                          mirror_fs: bool = True) -> Dict[str, Any]:
+    """Core save used by both the code.save cap and the v5 auto-saver."""
+    path = _code_norm_path(path)
+    if not path:
+        return {"ok": False, "error": "path required"}
+    if content is None:
+        return {"ok": False, "error": "content required"}
+    content = _unescape_collapsed_code(content)
+    scope = _code_scope(session_id, repo)
+    lang = lang or _code_lang_for(path)
+    saved = await asyncio.to_thread(_code_save_sync, scope, path, content,
+                                    lang=lang, message=message, session_id=session_id)
+    fs_path = await _code_mirror_to_fs(session_id, path, content) if mirror_fs else ""
+    out = {"ok": True, "path": path, "scope": scope, "version": saved["version"],
+           "unchanged": saved.get("unchanged", False),
+           "bytes": len(content.encode("utf-8", "replace")), "lang": lang,
+           "fs_path": fs_path, "sha": saved["sha"][:12]}
+    if not saved.get("unchanged"):
+        await _code_fabric_record(scope, path, saved["version"], lang, out["bytes"], session_id)
+        if push_gitea:
+            out["gitea"] = await _code_gitea_push(scope, path, content,
+                                                  saved["version"], message)
+    try:
+        await emit_event({"type": "code.version.saved", "session_id": session_id,
+                          "path": path, "scope": scope, "version": saved["version"],
+                          "bytes": out["bytes"], "lang": lang})
+    except Exception:
+        pass
+    return out
+
+
+def _unescape_collapsed_code(content: str) -> str:
+    """Recover a file an LLM double-escaped (literal \\n collapsing it to one
+    line). Mirrors ide_capabilities._unescape_collapsed; conservative."""
+    if not content or "\n" in content:
+        return content
+    if content.count("\\n") < 2:
+        return content
+    return (content.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t"))
+
+
+@capability(
+    "code.save", memory="off",
+    http_method="POST", http_path="/code/save", http_tags=["code", "fabric"],
+    description="Save (version) a code/text file in the data-fabric code store. Creates a NEW "
+                "immutable version keyed by (scope, path); identical content is a no-op. The "
+                "LATEST is mirrored to the run's artifact dir (runnable + readable via "
+                "ide.fs.read). Input: path (str!), content (str!), session_id (str — scopes the "
+                "file set), repo (str — overrides scope), message (str), lang (str), push_gitea "
+                "(bool — also commit to the configured Gitea), mirror_fs (bool default True). "
+                "Output: {ok, path, scope, version, bytes, lang, fs_path, sha, gitea?}.",
+)
+async def cap_code_save(path: str, content: str, session_id: str = "", repo: str = "",
+                        message: str = "", lang: str = "", push_gitea: bool = False,
+                        mirror_fs: bool = True, trace_id=None) -> Dict[str, Any]:
+    return await code_store_save(path, content, session_id=session_id, repo=repo,
+                                 message=message, lang=lang, push_gitea=push_gitea,
+                                 mirror_fs=mirror_fs)
+
+
+@capability(
+    "code.read", memory="off", silent=True,
+    http_method="POST", http_path="/code/read", http_tags=["code", "fabric"],
+    description="Read a versioned file from the code store. Returns the LATEST version by "
+                "default (the agent should only see latest unless it explicitly asks for "
+                "history). Input: path (str!), session_id (str), repo (str), version (int — "
+                "omit/0 for latest). Output: {ok, path, version, content, bytes, lang, latest}.",
+)
+async def cap_code_read(path: str, session_id: str = "", repo: str = "", version: int = 0,
+                        trace_id=None) -> Dict[str, Any]:
+    path = _code_norm_path(path)
+    scope = _code_scope(session_id, repo)
+    rec = await asyncio.to_thread(_code_get_sync, scope, path, int(version) or None)
+    if not rec:
+        return {"ok": False, "error": "not found", "path": path}
+    latest = await asyncio.to_thread(_code_list_sync, scope, path)
+    return {"ok": True, "path": path, "version": rec["version"],
+            "content": rec["content"], "bytes": rec["bytes"], "lang": rec["lang"],
+            "latest": bool(latest) and rec["version"] == latest[0]["version"]}
+
+
+@capability(
+    "code.versions", memory="off", silent=True,
+    http_method="POST", http_path="/code/versions", http_tags=["code", "fabric"],
+    description="List the version history of a versioned file (newest first). Use this ONLY "
+                "when you explicitly need to look back at previous versions. Input: path (str!), "
+                "session_id (str), repo (str). "
+                "Output: {ok, path, scope, versions: [{version, bytes, lang, sha, message, created_at}]}.",
+)
+async def cap_code_versions(path: str, session_id: str = "", repo: str = "",
+                            trace_id=None) -> Dict[str, Any]:
+    path = _code_norm_path(path)
+    scope = _code_scope(session_id, repo)
+    versions = await asyncio.to_thread(_code_list_sync, scope, path)
+    return {"ok": True, "path": path, "scope": scope, "versions": versions}
+
+
+@capability(
+    "code.diff", memory="off", silent=True,
+    http_method="POST", http_path="/code/diff", http_tags=["code", "fabric"],
+    description="Unified diff between two versions of a file (defaults to previous→latest). "
+                "Input: path (str!), session_id (str), repo (str), v1 (int), v2 (int). "
+                "Output: {ok, path, v1, v2, diff}.",
+)
+async def cap_code_diff(path: str, session_id: str = "", repo: str = "",
+                        v1: int = 0, v2: int = 0, trace_id=None) -> Dict[str, Any]:
+    path = _code_norm_path(path)
+    scope = _code_scope(session_id, repo)
+    versions = await asyncio.to_thread(_code_list_sync, scope, path)
+    if not versions:
+        return {"ok": False, "error": "not found", "path": path}
+    nums = sorted(v["version"] for v in versions)
+    b = int(v2) or nums[-1]
+    a = int(v1) or (nums[-2] if len(nums) >= 2 else nums[-1])
+    ra = await asyncio.to_thread(_code_get_sync, scope, path, a)
+    rb = await asyncio.to_thread(_code_get_sync, scope, path, b)
+    if not ra or not rb:
+        return {"ok": False, "error": "version not found", "path": path}
+    diff = "\n".join(difflib.unified_diff(
+        (ra["content"] or "").splitlines(), (rb["content"] or "").splitlines(),
+        fromfile=f"{path}@v{a}", tofile=f"{path}@v{b}", lineterm=""))
+    return {"ok": True, "path": path, "v1": a, "v2": b, "diff": diff[:20000]}
+
+
+@capability(
+    "code.restore", memory="off",
+    http_method="POST", http_path="/code/restore", http_tags=["code", "fabric"],
+    description="Revert a file to a previous version by saving that content as a NEW latest "
+                "version (history is preserved). Input: path (str!), version (int!), "
+                "session_id (str), repo (str). Output: {ok, path, version, restored_from}.",
+)
+async def cap_code_restore(path: str, version: int, session_id: str = "", repo: str = "",
+                           trace_id=None) -> Dict[str, Any]:
+    path = _code_norm_path(path)
+    scope = _code_scope(session_id, repo)
+    rec = await asyncio.to_thread(_code_get_sync, scope, path, int(version))
+    if not rec:
+        return {"ok": False, "error": f"version {version} not found", "path": path}
+    out = await code_store_save(path, rec["content"], session_id=session_id, repo=repo,
+                                message=f"restore from v{version}", lang=rec["lang"])
+    out["restored_from"] = int(version)
+    return out
+
+
+# ── v5 auto-save: extract fenced code blocks from generative output ───────────
+# A fenced block's target file may be declared in the info string
+# (```python file=foo.py / title=foo.py / foo.py) or a leading `# file: foo.py`
+# comment; otherwise a name is derived. Editing the SAME path → a new version.
+_CODE_FENCE_RE = re.compile(r"```([^\n`]*)\n(.*?)```", re.DOTALL)
+_CODE_FILE_HINT_RE = re.compile(
+    r"(?:file|path|title)\s*[=:]\s*[\"']?([\w./\-]+\.[\w]+)[\"']?", re.IGNORECASE)
+_CODE_LEADING_FILE_RE = re.compile(
+    r"^\s*(?:#|//|--|/\*)\s*file\s*[:=]\s*([\w./\-]+\.[\w]+)", re.IGNORECASE)
+
+
+def _v5_gen_text(result: Any) -> str:
+    """Pull the generated text out of a generative cap's result dict."""
+    if isinstance(result, str):
+        return result
+    if isinstance(result, dict):
+        for k in ("text", "content", "output", "response", "code", "answer",
+                  "result", "message", "completion"):
+            v = result.get(k)
+            if isinstance(v, str) and v.strip():
+                return v
+    return ""
+
+
+def _v5_extract_code_blocks(text: str) -> List[Dict[str, str]]:
+    """Return [{lang, filename, code}] for each fenced block that looks like a
+    file. Blocks with no derivable filename get a sensible default name."""
+    if not text or "```" not in text:
+        return []
+    out: List[Dict[str, str]] = []
+    idx = 0
+    for m in _CODE_FENCE_RE.finditer(text):
+        info = (m.group(1) or "").strip()
+        code = m.group(2) or ""
+        if not code.strip():
+            continue
+        # language = first token of the info string that isn't a key=value hint
+        lang = ""
+        first = info.split()[0] if info else ""
+        if first and "=" not in first and "." not in first and ":" not in first:
+            lang = first.lower()
+        filename = ""
+        hint = _CODE_FILE_HINT_RE.search(info)
+        if hint:
+            filename = hint.group(1)
+        elif info and ("." in info) and (" " not in info.strip()):
+            filename = info.strip().strip("\"'")          # ```foo.py
+        if not filename:
+            lead = _CODE_LEADING_FILE_RE.search(code.splitlines()[0] if code.splitlines() else "")
+            if lead:
+                filename = lead.group(1)
+        if not filename:
+            # skip obvious non-file fences (plain output / logs)
+            if lang in ("", "text", "txt", "output", "console", "log", "plaintext"):
+                continue
+            ext = _CODE_FENCE_LANG_EXT.get(lang, _CODE_EXT_BY_LANG.get(lang, lang or "txt"))
+            idx += 1
+            filename = f"generated_{idx}.{ext}"
+        out.append({"lang": lang or _code_lang_for(filename),
+                    "filename": _code_norm_path(filename), "code": code.rstrip("\n") + "\n"})
+    return out
 
 
 # Global default skill-injection blacklist (mirrors context._AGENT_LOOP_BLACKLIST
@@ -7141,25 +7646,45 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         "llm.* or agent.chat to 'execute', 'run', 'fetch', or 'retrieve' — they will just "
         "make up an answer. Example: 'get the current bash user' → a step with "
         "caps:[\"exec.bash.run\"] running `whoami`, NOT agent.chat.\n"
-        "WRITING CODE / SCRIPTS / FILES / ARTIFACTS: generate the content with llm.generate and "
-        "SAVE it to a FILE with ide.fs.write (into the artifact directory, so it PERSISTS and the "
-        "user can read/edit/iterate on it later), then OPTIONALLY run it with "
-        "exec.python.run(path=\"<artifact_dir>/<file>\") / exec.bash.run. For a SMALL file one "
-        "step is fine; for a SUBSTANTIAL program use separate steps (e.g. implement → run/test → "
-        "refine). To EDIT an existing file, use ide.fs.read then ide.fs.write the updated content "
-        "(or sed -i via exec.bash.run). Do NOT just run throwaway code with no saved file — the "
-        "user must end up with an artifact. Do NOT use llm.plan to 'plan a DAG' for a coding task "
-        "(llm.plan builds a DAG WORKFLOW, only for when the user explicitly asks for a "
-        "DAG/pipeline).\n"
+        "INTERNAL DATA vs the LIVE WEB: fabric.query / fabric.entity_graph.query search only "
+        "data ALREADY STORED in Vera's fabric — they do NOT browse the internet. For ANY external "
+        "lookup (a person, company, domain, website, news, current/online info) use the WEB caps: "
+        "web.search (search engine results), web.fetch / http.get (fetch a page as text), "
+        "browser.navigate (JS-heavy or cert-broken sites), research.quick_search (broader managed "
+        "research), fabric.discover.crawl (crawl & ingest a site). A web/OSINT goal should LEAD "
+        "with web.search and only use fabric.query to check what Vera already knows — never rely "
+        "on fabric.query alone for web presence.\n"
+        "SCRIPTS: if a short bash or python SCRIPT would accomplish a step better than a chain of "
+        "individual cap calls (parsing, multi-command shell work, data wrangling, glue logic), "
+        "make the step GENERATE the script (it is auto-saved & versioned) and RUN it with "
+        "exec.python.run / exec.bash.run — give that step caps like "
+        "[\"llm.generate\",\"exec.python.run\"] (or exec.bash.run). Prefer this over forcing the "
+        "work through unsuitable caps.\n"
+        "WRITING CODE / SCRIPTS / FILES / ARTIFACTS: just GENERATE the content with llm.generate "
+        "— any fenced code it emits is AUTOMATICALLY saved to a file and VERSIONED for you, so do "
+        "NOT add an ide.fs.write step for code. Tell llm.generate to label each file (a fenced "
+        "```python file=path.ext or a leading `# file: path.ext` line) so it saves to the right "
+        "path; then OPTIONALLY run it with exec.python.run(path=\"<artifact_dir>/<file>\") / "
+        "exec.bash.run. For a SMALL file one step is fine; for a SUBSTANTIAL program use separate "
+        "steps (e.g. implement → run/test → refine). To EDIT a file, read its LATEST content "
+        "(ide.fs.read / code.read) then re-generate the FULL updated file with the SAME `# file:` "
+        "path — a NEW version is created automatically; the agent only ever sees the latest "
+        "(use code.versions / code.diff only if you explicitly need history). Do NOT use llm.plan "
+        "to 'plan a DAG' for a coding task (llm.plan builds a DAG WORKFLOW, only for when the user "
+        "explicitly asks for a DAG/pipeline).\n"
         "COMPLEX STEPS: if a single step is itself a big sub-project with several parts, mark it "
         "\"complex\": true and give it a clear `goal` plus the caps the whole sub-project may use "
         "— it will be expanded into its OWN sub-plan by a sub-orchestrator.\n"
-        "STEP PHASES (optional): a step may carry a `phases` list — any of "
+        "STEP PHASES (optional, use SPARINGLY): a step may carry a `phases` list — any of "
         "\"explore\",\"think\",\"act\",\"verify\" — and EACH phase runs as its own scoped sub-agent "
         "(explore = read-only recon, think = reasoning with no tools, act = do the work, verify = "
-        "read-only check of the result). Add phases to steps that benefit from gathering context "
-        "first and/or validating the outcome (e.g. [\"explore\",\"act\",\"verify\"]); OMIT `phases` "
-        "for simple, direct steps so they stay fast.\n"
+        "read-only check). ONLY add phases when the phases are genuinely DIFFERENT kinds of work. "
+        "A step that is ITSELF just a search/lookup/query (all read-only caps) must have NO phases "
+        "— it is already exploration; adding explore→act just repeats the same search and wastes "
+        "cycles. Use `explore` only before a step that will then ACT on what it finds (e.g. read "
+        "config → modify it); use `verify` ONLY for steps that CREATE or CHANGE something (write "
+        "files, run a build, deploy, configure). Most steps need NO `phases` at all — leave it "
+        "empty and they run as one fast specialist.\n"
         "RECON (optional, only when needed): if you cannot make a good plan without first "
         "inspecting the environment/data/web, put up to " + str(_V5_RECON_MAX) + " READ-ONLY "
         "actions in `recon` (e.g. caps.search, context.search_caps, fabric.query, http.get, "
@@ -7270,6 +7795,8 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                        available_models: Optional[List[str]] = None,
                        await_long_running: bool = True,
                        long_running_timeout_secs: int = 1800,
+                       enable_code_autosave: bool = True,
+                       code_push_gitea: bool = False,
                        phase: str = "") -> Dict[str, Any]:
     """Run ONE step as an ephemeral scoped sub-agent. Sees only: full schemas for
     its assigned caps, dynamically-loaded skill instructions, and the outputs of
@@ -7290,6 +7817,13 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
     # scoped sub-agent. Guarded by `not phase` so the phase sub-calls don't recurse.
     if not phase:
         valid_phases = [p for p in _V5_PHASES if p in set(step.get("phases") or [])]
+        # Collapse pointless phasing: a pure read-only/recon step (every cap is
+        # read-only, and no verify) gains nothing from separate explore/think/act
+        # sub-agents — they'd just repeat the same searches. Run it flat.
+        if valid_phases and "verify" not in valid_phases:
+            _caps0 = step.get("caps") or []
+            if _caps0 and all(_v5_is_read_only(c) for c in _caps0):
+                valid_phases = []
         if valid_phases:
             return await _v5_run_phased_step(
                 step, valid_phases, goal=goal, blackboard=blackboard, model=model,
@@ -7298,7 +7832,8 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                 cycle_offset=cycle_offset, artifact_dir_path=artifact_dir_path,
                 call_tool=call_tool, build_ctx=build_ctx, catalog_caps=catalog_caps,
                 available_models=available_models, await_long_running=await_long_running,
-                long_running_timeout_secs=long_running_timeout_secs)
+                long_running_timeout_secs=long_running_timeout_secs,
+                enable_code_autosave=enable_code_autosave, code_push_gitea=code_push_gitea)
 
     caps = list(dict.fromkeys(step.get("caps") or []))
     # Phase auto-scoping: explore/verify see only READ-ONLY caps; think has no
@@ -7317,14 +7852,35 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
     allowed = list(caps)
     catalog_set = set(catalog_caps or []) | set(caps)
     model_set = set(available_models or [])
-    # Recovery toolkit a failing step may escalate to (read-only/search caps +
-    # the essential action primitives, drawn only from the catalog). In a
-    # read-only phase (explore/verify) the mutating essentials are withheld; the
-    # think phase gets no recovery caps at all (it is tool-free by design).
+    # Recovery toolkit a failing step may escalate to — RELEVANT alternative
+    # avenues, NOT a generic dump. We exclude infra/scan caps (netscan/ssh/proxmox
+    # …) unless the step is already in that domain (stops the loop wandering into
+    # port scans when a web fetch fails), and prefer the universal investigation
+    # caps + caps sharing the step's namespace. read-only phases stay read-only;
+    # the think phase gets none (it is tool-free by design).
     _essentials = () if phase in ("explore", "verify", "think") else _V5_ESSENTIAL_ACTION_CAPS
-    recovery_caps = [] if phase == "think" else [
-        c for c in (catalog_caps or [])
-        if c not in allowed and (c in _essentials or _v5_is_read_only(c))][:_V5_RECOVERY_MAX]
+    _step_ns = {c.split(".")[0] for c in caps}
+
+    def _recovery_ok(c: str) -> bool:
+        if c in allowed:
+            return False
+        # Keep infra/scan caps out unless the step itself uses that domain.
+        for pref in _V5_INFRA_PREFIXES:
+            if c.startswith(pref) and not any(a.startswith(pref) for a in caps):
+                return False
+        # read-only phases may only escalate to read-only caps.
+        if phase in ("explore", "verify") and c not in _essentials and not _v5_is_read_only(c):
+            return False
+        return (c in _V5_INVESTIGATION_CAPS or c in _essentials
+                or _v5_is_read_only(c) or c.split(".")[0] in _step_ns)
+
+    if phase == "think":
+        recovery_caps: List[str] = []
+    else:
+        _pool = [c for c in (catalog_caps or []) if _recovery_ok(c)]
+        # universal investigation avenues first, then the rest (catalog order)
+        recovery_caps = ([c for c in _V5_INVESTIGATION_CAPS if c in _pool]
+                         + [c for c in _pool if c not in _V5_INVESTIGATION_CAPS])[:_V5_RECOVERY_MAX]
 
     # Full schemas — for this step's caps. Newly granted caps are appended to
     # `dynamic_caps_block` so the specialist learns their schemas mid-step.
@@ -7365,6 +7921,16 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                        "(recommended). NEVER invent a model name such as 'gpt-3.5-turbo' or 'gpt-4' "
                        "— use a name from this list or omit it.\n")
 
+    # Code autosave note — only when the step can generate code.
+    code_note = ""
+    if enable_code_autosave and any(_v5_is_generative(c) for c in caps):
+        code_note = ("\nCODE AUTOSAVE: any fenced code block you generate is AUTOMATICALLY saved "
+                     "to a file and VERSIONED — you do NOT need ide.fs.write. Label each file with "
+                     "a fenced ```lang file=relative/path.ext (or a leading `# file: path.ext` "
+                     "line) so it saves to the intended path; output the COMPLETE file, not a "
+                     "snippet. Regenerating the same path creates a new version and you always see "
+                     "the LATEST. To run a saved file use exec.python.run(path=...).\n")
+
     phase_guide = _V5_PHASE_GUIDE.get(phase, "")
     sys = (
         "You are a FOCUSED SPECIALIST sub-agent. Complete ONE step of a larger task and "
@@ -7372,7 +7938,7 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
         f"STEP GOAL: {step['goal']}\n\n"
         + ((phase_guide + "\n\n") if phase_guide else "")
         + "You may use these capabilities (full schemas):\n" + sig_block + "\n"
-        + model_block
+        + model_block + code_note
         + (("\nRELEVANT SKILLS (follow this guidance):\n" + skill_prompt + "\n") if skill_prompt else "")
         + (("\nCONTEXT FROM PRIOR STEPS:\n" + ctx_slice + "\n") if ctx_slice else "")
         + (("\nARTIFACT DIRECTORY for generated files: " + artifact_dir_path + "\n") if artifact_dir_path else "")
@@ -7606,6 +8172,48 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
             preview = "ERROR: " + str(invoke.get("error", "unknown error"))
             if coerce_notes:
                 preview += "\n\nNote: args auto-coerced: " + "; ".join(coerce_notes[:4])
+
+        # ── Auto-save generated code: any fenced code a generative cap produced
+        #    is versioned into the code store automatically (no ide.fs.write step
+        #    needed) and mirrored to the artifact dir so it's runnable. The agent
+        #    only ever sees the LATEST version. ────────────────────────────────
+        if invoke_ok and enable_code_autosave and _v5_is_generative(tool):
+            try:
+                blocks = _v5_extract_code_blocks(_v5_gen_text(invoke.get("result")))
+            except Exception:
+                blocks = []
+            saved: List[Dict[str, Any]] = []
+            for blk in blocks[:6]:
+                try:
+                    r = await code_store_save(
+                        blk["filename"], blk["code"], session_id=sid,
+                        message=f"v5 step {step_id}: {str(step.get('title',''))[:80]}",
+                        lang=blk["lang"], push_gitea=code_push_gitea)
+                    if r.get("ok"):
+                        saved.append(r)
+                except Exception as e:
+                    log.debug("v5 auto-save failed for %s: %s", blk.get("filename"), e)
+            if saved:
+                had_useful = True
+                ok = True
+                _slist = "; ".join(f"{s['path']} v{s['version']}"
+                                   + (" (unchanged)" if s.get("unchanged") else "") for s in saved)
+                preview = preview + f"\n\n[auto-saved & versioned: {_slist}]"
+                for s in saved:
+                    outputs[f"file:{s['path']}"] = f"saved v{s['version']} → {s.get('fs_path','')}"
+                await emit_event({"type": "agent_loop_v5.code_saved", "stream_id": stream_id,
+                                  "cycle": cur_cycle, "step_id": step_id, "session_id": sid,
+                                  "files": [{"path": s["path"], "version": s["version"],
+                                             "bytes": s["bytes"], "lang": s["lang"],
+                                             "fs_path": s.get("fs_path", ""),
+                                             "unchanged": s.get("unchanged", False),
+                                             "gitea": (s.get("gitea") or {}).get("url", "")}
+                                            for s in saved]})
+                _run_hint = (saved[0].get("fs_path") or saved[0]["path"])
+                pending_note = (f"Saved & versioned: {_slist}. These persist; you see the LATEST "
+                                f"version. To run, use exec.python.run(path='{_run_hint}'). Do NOT "
+                                "ide.fs.write them — that is automatic.")
+
         entry_ok = invoke_ok and not unhelpful
         history.append({"tool": tool, "ok": entry_ok, "preview": preview[:1200],
                         "args": args, "ms": elapsed})
@@ -7675,7 +8283,9 @@ async def _v5_run_phased_step(step: Dict[str, Any], phases: List[str], *, goal: 
                               call_tool, build_ctx, catalog_caps: Optional[List[str]] = None,
                               available_models: Optional[List[str]] = None,
                               await_long_running: bool = True,
-                              long_running_timeout_secs: int = 1800) -> Dict[str, Any]:
+                              long_running_timeout_secs: int = 1800,
+                              enable_code_autosave: bool = True,
+                              code_push_gitea: bool = False) -> Dict[str, Any]:
     """Run a step as a v4-style cadence: each chosen phase (explore/think/act/verify)
     is handed to its OWN scoped ephemeral sub-agent, in canonical order, threading
     each phase's output to the next. Aggregates into a single step result; a VERIFY
@@ -7704,7 +8314,8 @@ async def _v5_run_phased_step(step: Dict[str, Any], phases: List[str], *, goal: 
             cycle_budget=cycle_budget, cycle_offset=gc, artifact_dir_path=artifact_dir_path,
             call_tool=call_tool, build_ctx=build_ctx, catalog_caps=catalog_caps,
             available_models=available_models, await_long_running=await_long_running,
-            long_running_timeout_secs=long_running_timeout_secs, phase=ph)
+            long_running_timeout_secs=long_running_timeout_secs,
+            enable_code_autosave=enable_code_autosave, code_push_gitea=code_push_gitea, phase=ph)
         gc = r.get("cycle_end", gc)
         merged_bb[sub_id] = r
         phase_results.append(r)
@@ -7810,7 +8421,11 @@ async def _v5_synthesize_final(goal: str, results: List[Dict[str, Any]], *,
         "step a `phases` subset of explore/think/act/verify, each run as its own scoped sub-agent), "
         "enable_master_planner (bool default True — an EXTREME goal is first handed to a specialist "
         "long-form planner built on the fly, whose strategy the orchestrator then breaks into "
-        "steps), await_long_running (bool default True — when a cap returns a job_id, WS-stream/poll "
+        "steps), enable_code_autosave (bool default True — fenced code a generative cap emits is "
+        "auto-saved & versioned to the code store and mirrored to the artifact dir, so the "
+        "orchestrator never plans ide.fs.write for code; the agent sees only the latest version), "
+        "code_push_gitea (bool default False — also commit each version to the configured Gitea), "
+        "await_long_running (bool default True — when a cap returns a job_id, WS-stream/poll "
         "it to completion so the step gets the REAL result, not a {job_id,queued} blob), "
         "long_running_timeout_secs (int default 1800), handover (bool), "
         "handover_max_chars (int), plus model/instance_id/prefer_gpu/session_id. A specialist "
@@ -7846,6 +8461,8 @@ async def cap_dag_agent_loop_v5(
     enable_subplans:    bool = True,
     enable_phases:      bool = True,
     enable_master_planner: bool = True,
+    enable_code_autosave: bool = True,
+    code_push_gitea:    bool = False,
     await_long_running: bool = True,
     long_running_timeout_secs: int = 1800,
     trace_id=None,
@@ -7892,11 +8509,15 @@ async def cap_dag_agent_loop_v5(
     except Exception as e:
         log.debug("v5 catalog build failed: %s", e)
         catalog_names = list(base_caps[:8])
+    # Stop one big namespace (netscan.* etc.) crowding out web/data/exec caps
+    # unless the goal is about that domain.
+    catalog_names = _v5_deflood_catalog(catalog_names, goal)
     catalog_names = catalog_names[:catalog_size]
-    # Guarantee a real action tool is always offered (see _V5_ESSENTIAL_ACTION_CAPS).
-    for _ess in reversed(_V5_ESSENTIAL_ACTION_CAPS):
-        if _ess in CAPABILITY_REGISTRY and _ess not in catalog_names:
-            catalog_names.insert(0, _ess)
+    # Guarantee the right action/web/data avenues are ALWAYS offered (web research
+    # caps only when the goal needs the live web). Seeded at the FRONT.
+    for _seed in reversed(_v5_seed_caps_for(goal)):
+        if _seed not in catalog_names:
+            catalog_names.insert(0, _seed)
     if not catalog_names:
         return {"error": "No capabilities available to orchestrate"}
 
@@ -8037,7 +8658,8 @@ async def cap_dag_agent_loop_v5(
                 artifact_dir_path=artifact_dir_path, call_tool=_agent_loop_call_tool,
                 build_ctx=build_ctx, catalog_caps=sub_catalog, available_models=available_models,
                 await_long_running=await_long_running,
-                long_running_timeout_secs=long_running_timeout_secs)
+                long_running_timeout_secs=long_running_timeout_secs,
+                enable_code_autosave=enable_code_autosave, code_push_gitea=code_push_gitea)
         # Renumber sub-steps to collision-free display ids and remap their needs.
         idmap: Dict[int, int] = {}
         for j, ss in enumerate(sub_steps):
@@ -8067,7 +8689,8 @@ async def cap_dag_agent_loop_v5(
                 call_tool=_agent_loop_call_tool, build_ctx=build_ctx,
                 catalog_caps=sub_catalog, available_models=available_models,
                 await_long_running=await_long_running,
-                long_running_timeout_secs=long_running_timeout_secs)
+                long_running_timeout_secs=long_running_timeout_secs,
+                enable_code_autosave=enable_code_autosave, code_push_gitea=code_push_gitea)
             gc = r.get("cycle_end", gc)
             sub_bb[ss["id"]] = r
             sub_results.append(r)
@@ -8094,7 +8717,8 @@ async def cap_dag_agent_loop_v5(
                 artifact_dir_path=artifact_dir_path, call_tool=_agent_loop_call_tool,
                 build_ctx=build_ctx, catalog_caps=catalog_names, available_models=available_models,
                 await_long_running=await_long_running,
-                long_running_timeout_secs=long_running_timeout_secs)
+                long_running_timeout_secs=long_running_timeout_secs,
+                enable_code_autosave=enable_code_autosave, code_push_gitea=code_push_gitea)
         gcycle = res.get("cycle_end", gcycle)
         blackboard[step["id"]] = res
         results.append(res)
@@ -8268,6 +8892,8 @@ async def workshop_agent_loop_stream(request: Request):
     v5_enable_subplans  = bool(body.get("enable_subplans", True))
     v5_enable_phases    = bool(body.get("enable_phases", True))
     v5_enable_master_planner = bool(body.get("enable_master_planner", True))
+    v5_enable_code_autosave  = bool(body.get("enable_code_autosave", True))
+    v5_code_push_gitea  = bool(body.get("code_push_gitea", False))
 
     def _phase_kwargs():
         return dict(
@@ -8312,6 +8938,8 @@ async def workshop_agent_loop_stream(request: Request):
             enable_recon=v5_enable_recon, enable_subplans=v5_enable_subplans,
             enable_phases=v5_enable_phases,
             enable_master_planner=v5_enable_master_planner,
+            enable_code_autosave=v5_enable_code_autosave,
+            code_push_gitea=v5_code_push_gitea,
             await_long_running=await_long_running,
             long_running_timeout_secs=long_running_timeout_secs,
         )
@@ -8534,6 +9162,7 @@ async def workshop_agent_loop_stream(request: Request):
             "agent_loop_v5.cycle_planning",
             "agent_loop_v5.tool_call",
             "agent_loop_v5.tool_done",
+            "agent_loop_v5.code_saved",
             "agent_loop_v5.think",
             "agent_loop_v5.thinking",
             "agent_loop_v5.done",

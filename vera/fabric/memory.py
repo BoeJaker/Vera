@@ -2097,6 +2097,88 @@ async def memory_neo4j_diag(session_id: str = "", trace_id=None):
         return {"error": str(e), "connected": False}
 
 
+@capability(
+    "memory.reindex_embeddings",
+    http_method="POST", http_path="/memory/reindex_embeddings",
+    http_tags=["memory", "embed"], memory="off",
+    description=(
+        "Re-embed stored memory vectors (Chroma) with the CURRENT embedding "
+        "provider — run after switching VERA_EMBED_PROVIDER so existing vectors "
+        "match new ones. DRY-RUN by default. Input: confirm (bool — must be true "
+        "to write), limit (int, 0=all), batch (int). Output: {dry_run, total, "
+        "reembedded, provider, dim}."
+    ),
+)
+async def memory_reindex_embeddings(confirm: bool = False, limit: int = 0,
+                                    batch: int = 128, trace_id=None):
+    cb = MEMORY._backends.get("chroma")
+    coll = getattr(cb, "_collection", None) if cb else None
+    if coll is None:
+        return {"error": "chroma backend not connected"}
+
+    import Vera.vera.capability_orchestration as _o
+    provider = getattr(_o, "EMBED_PROVIDER", "ollama")
+
+    # Probe the live embedder (also confirms MEMORY_AUTO_EMBED is on).
+    probe = await embed_text("vector space probe")
+    if probe is None:
+        return {"error": "embedder unavailable (embed_text returned None) — "
+                         "check the provider/model and MEMORY_AUTO_EMBED"}
+    dim = len(probe)
+
+    try:
+        total = coll.count()
+    except Exception as e:
+        return {"error": f"chroma count failed: {e}"}
+    target = total if (not limit or limit <= 0) else min(int(limit), total)
+
+    if not confirm:
+        return {"ok": True, "dry_run": True, "provider": provider, "dim": dim,
+                "total": total, "would_reembed": target,
+                "note": "Re-run with confirm=true to write new embeddings in place "
+                        "(documents/metadata preserved)."}
+
+    await emit_event({"type": "memory.reindex", "stage": "start",
+                      "total": target, "provider": provider, "dim": dim})
+    done = errors = offset = 0
+    while offset < target:
+        n = min(batch, target - offset)
+        try:
+            res = coll.get(include=["documents", "metadatas"], limit=n, offset=offset)
+        except Exception as e:
+            return {"error": f"chroma get failed at offset {offset}: {e}",
+                    "reembedded": done}
+        ids = res.get("ids") or []
+        if not ids:
+            break
+        docs = res.get("documents") or []
+        metas = res.get("metadatas") or []
+        for i, rid in enumerate(ids):
+            doc = docs[i] if i < len(docs) else ""
+            if not (doc and doc.strip()):
+                continue
+            vec = await embed_text(doc)
+            if not vec:
+                errors += 1
+                continue
+            try:
+                coll.upsert(ids=[rid], documents=[doc],
+                            metadatas=[metas[i] if i < len(metas) else {}],
+                            embeddings=[vec])
+                done += 1
+            except Exception as e:
+                errors += 1
+                log.debug("reindex upsert %s: %s", rid, e)
+        offset += len(ids)
+        await emit_event({"type": "memory.reindex", "stage": "progress",
+                          "done": done, "of": target})
+
+    await emit_event({"type": "memory.reindex", "stage": "done",
+                      "reembedded": done, "errors": errors})
+    return {"ok": True, "dry_run": False, "provider": provider, "dim": dim,
+            "total": total, "reembedded": done, "errors": errors}
+
+
 async def _startup():
     await MEMORY.startup()
     # Start the Redis promoter background task

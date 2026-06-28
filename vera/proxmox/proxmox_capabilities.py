@@ -102,6 +102,12 @@ def _redis():
     return getattr(_orch, "REDIS", None)
 
 
+def _cap(name: str):
+    """Resolve another capability's function by name (decoupled cross-module calls)."""
+    c = _orch.CAPABILITY_REGISTRY.get(name)
+    return c.get("func") if c else None
+
+
 async def _all_raw() -> List[Dict]:
     r = _redis()
     if not r:
@@ -368,6 +374,443 @@ async def cap_guest_action(
     return {"ok": True, "upid": upid}
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+#  LIFECYCLE — clone / create / destroy + storage browse + SSH enrol
+#  (drives the Provision panel's Proxmox tab; all go through the PVE API)
+# ═════════════════════════════════════════════════════════════════════════════
+async def _nextid(rec: Dict) -> int:
+    data, _ = await _pve(rec, "GET", "/cluster/nextid")
+    try:
+        return int(data)
+    except Exception:
+        return 0
+
+
+async def _guest_ip(rec: Dict, node: str, gtype: str, vmid: int) -> str:
+    """Best-effort guest IPv4: LXC interfaces/config, QEMU guest agent."""
+    if gtype == "lxc":
+        data, _ = await _pve(rec, "GET", f"/nodes/{node}/lxc/{vmid}/interfaces")
+        for it in (data or []):
+            if it.get("name") in ("lo",):
+                continue
+            ip = (it.get("inet") or "").split("/")[0]
+            if ip and not ip.startswith("127."):
+                return ip
+        cfg, _ = await _pve(rec, "GET", f"/nodes/{node}/lxc/{vmid}/config")
+        for part in (cfg or {}).get("net0", "").split(","):
+            if part.startswith("ip=") and part[3:] not in ("dhcp", ""):
+                return part[3:].split("/")[0]
+    else:
+        data, _ = await _pve(
+            rec, "GET", f"/nodes/{node}/qemu/{vmid}/agent/network-get-interfaces")
+        result = data.get("result") if isinstance(data, dict) else data
+        for it in (result or []):
+            if it.get("name") in ("lo",):
+                continue
+            for a in it.get("ip-addresses", []) or []:
+                ip = a.get("ip-address", "")
+                if a.get("ip-address-type") == "ipv4" and ip and not ip.startswith("127."):
+                    return ip
+    return ""
+
+
+@capability(
+    "proxmox.guest.clone",
+    http_method="POST", http_path="/proxmox/guest/clone", http_tags=["proxmox"],
+    memory="off",
+    description="Clone a VM/CT or template. Inputs: cluster_id (str!), node (str!), "
+                "guest_type ('qemu'|'lxc'), vmid (int! — source), name (str — new "
+                "name/hostname), newid (int — 0=auto next free), full (bool=true), "
+                "storage (str — full-clone target). Output: {ok, newid} or {error}.",
+)
+async def cap_guest_clone(cluster_id: str = "", node: str = "", guest_type: str = "",
+                          vmid: int = 0, name: str = "", newid: int = 0,
+                          full: bool = True, storage: str = "", trace_id=None) -> Dict:
+    if guest_type not in ("qemu", "lxc"):
+        return {"error": "guest_type must be 'qemu' or 'lxc'"}
+    rec = await _get_cluster(cluster_id, opened=True)
+    if not rec:
+        return {"error": "cluster not found"}
+    newid = int(newid or 0) or await _nextid(rec)
+    if not newid:
+        return {"error": "could not allocate a VMID"}
+    body: Dict[str, Any] = {"newid": newid, "full": 1 if full else 0}
+    if name:
+        body["name" if guest_type == "qemu" else "hostname"] = name
+    if storage:
+        body["storage"] = storage
+    _, err = await _pve(rec, "POST", f"/nodes/{node}/{guest_type}/{vmid}/clone", data=body)
+    if err:
+        return {"error": err}
+    await emit_event({"type": "proxmox.guest.clone", "cluster": cluster_id,
+                      "vmid": vmid, "newid": newid})
+    return {"ok": True, "newid": newid}
+
+
+@capability(
+    "proxmox.guest.destroy",
+    http_method="POST", http_path="/proxmox/guest/destroy", http_tags=["proxmox"],
+    memory="off",
+    description="PERMANENTLY delete a STOPPED guest and its disks. Inputs: "
+                "cluster_id (str!), node (str!), guest_type ('qemu'|'lxc'), vmid "
+                "(int!), purge (bool=true — also drop it from backup/replication "
+                "jobs and remove unreferenced disks). Output: {ok} or {error}.",
+)
+async def cap_guest_destroy(cluster_id: str = "", node: str = "", guest_type: str = "",
+                            vmid: int = 0, purge: bool = True, trace_id=None) -> Dict:
+    if guest_type not in ("qemu", "lxc"):
+        return {"error": "guest_type must be 'qemu' or 'lxc'"}
+    rec = await _get_cluster(cluster_id, opened=True)
+    if not rec:
+        return {"error": "cluster not found"}
+    q = "?purge=1&destroy-unreferenced-disks=1" if purge else ""
+    _, err = await _pve(rec, "DELETE", f"/nodes/{node}/{guest_type}/{vmid}{q}")
+    if err:
+        return {"error": err}
+    await emit_event({"type": "proxmox.guest.destroy", "cluster": cluster_id, "vmid": vmid})
+    return {"ok": True}
+
+
+@capability(
+    "proxmox.lxc.create",
+    http_method="POST", http_path="/proxmox/lxc/create", http_tags=["proxmox"],
+    memory="off",
+    description="Create an LXC container. Inputs: cluster_id (str!), node (str!), "
+                "ostemplate (str! — volid, e.g. 'local:vztmpl/debian-12-…tar.zst'), "
+                "hostname (str), storage (str='local-lvm'), cores (int=1), memory "
+                "(int MB=512), disk (int GB=8), password (str), vmid (int 0=auto), "
+                "net (str — default 'name=eth0,bridge=vmbr0,ip=dhcp'), unprivileged "
+                "(bool=true), start (bool=true). Output: {ok, vmid} or {error}.",
+)
+async def cap_lxc_create(cluster_id: str = "", node: str = "", ostemplate: str = "",
+                         hostname: str = "", storage: str = "local-lvm", cores: int = 1,
+                         memory: int = 512, disk: int = 8, password: str = "",
+                         vmid: int = 0, net: str = "", unprivileged: bool = True,
+                         start: bool = True, trace_id=None) -> Dict:
+    if not ostemplate:
+        return {"error": "ostemplate (volid) required"}
+    rec = await _get_cluster(cluster_id, opened=True)
+    if not rec:
+        return {"error": "cluster not found"}
+    vmid = int(vmid or 0) or await _nextid(rec)
+    if not vmid:
+        return {"error": "could not allocate a VMID"}
+    body: Dict[str, Any] = {
+        "vmid": vmid, "ostemplate": ostemplate,
+        "hostname": hostname or f"ct-{vmid}", "storage": storage,
+        "cores": int(cores or 1), "memory": int(memory or 512),
+        "rootfs": f"{storage}:{int(disk or 8)}",
+        "net0": net or "name=eth0,bridge=vmbr0,ip=dhcp",
+        "unprivileged": 1 if unprivileged else 0,
+        "start": 1 if start else 0,
+    }
+    if password:
+        body["password"] = password
+    _, err = await _pve(rec, "POST", f"/nodes/{node}/lxc", data=body)
+    if err:
+        return {"error": err}
+    await emit_event({"type": "proxmox.lxc.create", "cluster": cluster_id, "vmid": vmid})
+    return {"ok": True, "vmid": vmid}
+
+
+@capability(
+    "proxmox.storage.content",
+    http_method="POST", http_path="/proxmox/storage/content", http_tags=["proxmox"],
+    memory="off", silent=True,
+    description="List a storage's content (e.g. browse CT templates / ISOs). "
+                "Inputs: cluster_id (str!), node (str!), storage (str!), content "
+                "(str — 'vztmpl'|'iso'|'images'|… optional filter). Output: "
+                "{items:[{volid,format,size,content}]} or {error}.",
+)
+async def cap_storage_content(cluster_id: str = "", node: str = "", storage: str = "",
+                              content: str = "", trace_id=None) -> Dict:
+    rec = await _get_cluster(cluster_id, opened=True)
+    if not rec:
+        return {"error": "cluster not found", "items": []}
+    if not (node and storage):
+        return {"error": "node and storage required", "items": []}
+    path = f"/nodes/{node}/storage/{storage}/content"
+    if content:
+        path += f"?content={quote(content)}"
+    data, err = await _pve(rec, "GET", path)
+    if data is None:
+        return {"error": err, "items": []}
+    return {"items": data}
+
+
+@capability(
+    "proxmox.guest.enroll",
+    http_method="POST", http_path="/proxmox/guest/enroll", http_tags=["proxmox"],
+    memory="off",
+    description="Register a guest as an SSH host in Vera's shared credential store "
+                "(used by remote exec, provisioning and SSH-managed Docker). "
+                "Auto-detects the guest IP (LXC interfaces/config, QEMU guest agent) "
+                "when not supplied. Inputs: cluster_id (str!), node (str!), "
+                "guest_type ('qemu'|'lxc'), vmid (int!), user (str='root'), ip "
+                "(str — blank=auto), password (str) OR key_path (str), port "
+                "(int=22). Output: {ok, ip, ssh_host_id} or {error}.",
+)
+async def cap_guest_enroll(cluster_id: str = "", node: str = "", guest_type: str = "",
+                           vmid: int = 0, user: str = "root", ip: str = "",
+                           password: str = "", key_path: str = "", port: int = 22,
+                           trace_id=None) -> Dict:
+    rec = await _get_cluster(cluster_id, opened=True)
+    if not rec:
+        return {"error": "cluster not found"}
+    if not ip:
+        ip = await _guest_ip(rec, node, guest_type, int(vmid or 0))
+    if not ip:
+        return {"error": "could not auto-detect the guest IP — enter it manually "
+                "(QEMU needs the guest agent running; LXC needs a reachable interface)."}
+    save = _cap("exec.ssh.hosts.save")
+    if not save:
+        return {"error": "exec.ssh.hosts.save unavailable (execution module not loaded)"}
+    res = await save(host=ip, user=user or "root", port=int(port or 22),
+                     label=f"pve-{vmid}", auth="key" if key_path else "password",
+                     password=password, key_path=key_path,
+                     tags=f"proxmox,{cluster_id}")
+    if not res.get("ok"):
+        return {"error": res.get("error", "saving SSH credential failed")}
+    hid = (res.get("host") or {}).get("id", "")
+    await emit_event({"type": "proxmox.guest.enroll", "cluster": cluster_id,
+                      "vmid": vmid, "ip": ip})
+    return {"ok": True, "ip": ip, "ssh_host_id": hid}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  CAPABILITIES — provisioning lifecycle (create / clone / destroy / enroll)
+# ═════════════════════════════════════════════════════════════════════════════
+import re as _re
+
+
+async def _guest_ip(rec: Dict, node: str, guest_type: str, vmid: int) -> str:
+    """Best-effort guest IP. LXC: parse net0 from config. QEMU: try the guest
+    agent's network interfaces (if installed). Returns '' when undeterminable."""
+    try:
+        if guest_type == "lxc":
+            cfg, err = await _pve(rec, "GET", f"/nodes/{node}/lxc/{vmid}/config")
+            if cfg and isinstance(cfg, dict):
+                net0 = cfg.get("net0", "")
+                m = _re.search(r"ip=([0-9.]+)", net0)
+                if m:
+                    return m.group(1)
+        else:
+            data, err = await _pve(
+                rec, "GET", f"/nodes/{node}/qemu/{vmid}/agent/network-get-interfaces")
+            ifaces = (data or {}).get("result", []) if isinstance(data, dict) else []
+            for iface in ifaces:
+                if iface.get("name") in ("lo", "lo0"):
+                    continue
+                for a in iface.get("ip-addresses", []) or []:
+                    ip = a.get("ip-address", "")
+                    if a.get("ip-address-type") == "ipv4" and not ip.startswith("127."):
+                        return ip
+    except Exception as e:
+        log.debug("guest_ip(%s/%s): %s", node, vmid, e)
+    return ""
+
+
+@capability(
+    "proxmox.nextid",
+    http_method="POST", http_path="/proxmox/nextid", http_tags=["proxmox"],
+    memory="off", silent=True,
+    description="Return the next free VMID in the cluster. Input: cluster_id "
+                "(str!). Output: {vmid}.",
+)
+async def cap_nextid(cluster_id: str = "", trace_id=None) -> Dict:
+    rec = await _get_cluster(cluster_id, opened=True)
+    if not rec:
+        return {"error": "cluster not found"}
+    data, err = await _pve(rec, "GET", "/cluster/nextid")
+    if err:
+        return {"error": err}
+    return {"vmid": int(data) if data else 0}
+
+
+@capability(
+    "proxmox.storage.content",
+    http_method="POST", http_path="/proxmox/storage/content", http_tags=["proxmox"],
+    memory="off", silent=True,
+    description="List storage content of a given type on a node (default "
+                "'vztmpl' = LXC templates). Inputs: cluster_id (str!), node (str!), "
+                "storage (str!), content (str='vztmpl'). Output: {items:[{volid,"
+                "format,size}]}.",
+)
+async def cap_storage_content(cluster_id: str = "", node: str = "",
+                              storage: str = "", content: str = "vztmpl",
+                              trace_id=None) -> Dict:
+    rec = await _get_cluster(cluster_id, opened=True)
+    if not rec:
+        return {"error": "cluster not found"}
+    data, err = await _pve(
+        rec, "GET",
+        f"/nodes/{node}/storage/{storage}/content?content={content}")
+    if err:
+        return {"error": err}
+    items = [{"volid": i.get("volid", ""), "format": i.get("format", ""),
+              "size": i.get("size", 0)} for i in (data or [])]
+    return {"items": items}
+
+
+@capability(
+    "proxmox.guest.clone",
+    http_method="POST", http_path="/proxmox/guest/clone", http_tags=["proxmox"],
+    memory="off",
+    description="Clone an existing guest or template to a new VMID. Inputs: "
+                "cluster_id (str!), node (str!), guest_type ('qemu'|'lxc'), vmid "
+                "(int! source), newid (int! — blank/0 = auto), name (str), full "
+                "(bool=True), storage (str), target (str — target node). "
+                "Output: {ok, newid, upid}.",
+)
+async def cap_guest_clone(cluster_id: str = "", node: str = "",
+                          guest_type: str = "", vmid: int = 0, newid: int = 0,
+                          name: str = "", full: bool = True, storage: str = "",
+                          target: str = "", trace_id=None) -> Dict:
+    if guest_type not in ("qemu", "lxc"):
+        return {"error": "guest_type must be 'qemu' or 'lxc'"}
+    rec = await _get_cluster(cluster_id, opened=True)
+    if not rec:
+        return {"error": "cluster not found"}
+    if not newid:
+        nid, err = await _pve(rec, "GET", "/cluster/nextid")
+        if err:
+            return {"error": f"nextid: {err}"}
+        newid = int(nid)
+    data: Dict = {"newid": int(newid), "full": 1 if full else 0}
+    if name:
+        data["hostname" if guest_type == "lxc" else "name"] = name
+    if storage:
+        data["storage"] = storage
+    if target:
+        data["target"] = target
+    upid, err = await _pve(
+        rec, "POST", f"/nodes/{node}/{guest_type}/{vmid}/clone", data)
+    if err:
+        return {"error": err}
+    await emit_event({"type": "proxmox.guest.clone", "cluster": cluster_id,
+                      "node": node, "source": vmid, "newid": newid})
+    return {"ok": True, "newid": int(newid), "upid": upid}
+
+
+@capability(
+    "proxmox.lxc.create",
+    http_method="POST", http_path="/proxmox/lxc/create", http_tags=["proxmox"],
+    memory="off",
+    description="Create a new LXC container from an OS template. Inputs: "
+                "cluster_id (str!), node (str!), vmid (int — blank/0 = auto), "
+                "ostemplate (str! volid, e.g. 'local:vztmpl/debian-12.tar.zst'), "
+                "hostname (str), storage (str='local-lvm'), cores (int=1), memory "
+                "(int=512 MB), disk (int=8 GB), password (str), ssh_public_keys "
+                "(str), net0 (str — default DHCP on vmbr0), unprivileged (bool=True), "
+                "start (bool=True). Output: {ok, vmid, upid}.",
+)
+async def cap_lxc_create(cluster_id: str = "", node: str = "", vmid: int = 0,
+                         ostemplate: str = "", hostname: str = "",
+                         storage: str = "local-lvm", cores: int = 1,
+                         memory: int = 512, disk: int = 8, password: str = "",
+                         ssh_public_keys: str = "", net0: str = "",
+                         unprivileged: bool = True, start: bool = True,
+                         trace_id=None) -> Dict:
+    if not ostemplate:
+        return {"error": "ostemplate required (a vztmpl volid)"}
+    rec = await _get_cluster(cluster_id, opened=True)
+    if not rec:
+        return {"error": "cluster not found"}
+    if not vmid:
+        nid, err = await _pve(rec, "GET", "/cluster/nextid")
+        if err:
+            return {"error": f"nextid: {err}"}
+        vmid = int(nid)
+    data: Dict = {
+        "vmid": int(vmid), "ostemplate": ostemplate,
+        "storage": storage, "cores": int(cores), "memory": int(memory),
+        "rootfs": f"{storage}:{int(disk)}",
+        "net0": net0 or "name=eth0,bridge=vmbr0,ip=dhcp",
+        "unprivileged": 1 if unprivileged else 0,
+        "start": 1 if start else 0,
+    }
+    if hostname:
+        data["hostname"] = hostname
+    if password:
+        data["password"] = password
+    if ssh_public_keys:
+        data["ssh-public-keys"] = ssh_public_keys
+    upid, err = await _pve(rec, "POST", f"/nodes/{node}/lxc", data)
+    if err:
+        return {"error": err}
+    await emit_event({"type": "proxmox.lxc.create", "cluster": cluster_id,
+                      "node": node, "vmid": vmid})
+    return {"ok": True, "vmid": int(vmid), "upid": upid}
+
+
+@capability(
+    "proxmox.guest.destroy",
+    http_method="POST", http_path="/proxmox/guest/destroy", http_tags=["proxmox"],
+    memory="off",
+    description="Destroy (permanently delete) a guest. Inputs: cluster_id (str!), "
+                "node (str!), guest_type ('qemu'|'lxc'), vmid (int!), purge "
+                "(bool=True — also remove from backup/HA configs). The guest "
+                "should be stopped first. Output: {ok, upid}.",
+)
+async def cap_guest_destroy(cluster_id: str = "", node: str = "",
+                            guest_type: str = "", vmid: int = 0,
+                            purge: bool = True, trace_id=None) -> Dict:
+    if guest_type not in ("qemu", "lxc"):
+        return {"error": "guest_type must be 'qemu' or 'lxc'"}
+    rec = await _get_cluster(cluster_id, opened=True)
+    if not rec:
+        return {"error": "cluster not found"}
+    path = f"/nodes/{node}/{guest_type}/{vmid}"
+    if purge:
+        path += "?purge=1&destroy-unreferenced-disks=1"
+    upid, err = await _pve(rec, "DELETE", path)
+    if err:
+        return {"error": err}
+    await emit_event({"type": "proxmox.guest.destroy", "cluster": cluster_id,
+                      "node": node, "vmid": vmid})
+    return {"ok": True, "upid": upid}
+
+
+@capability(
+    "proxmox.guest.enroll",
+    http_method="POST", http_path="/proxmox/guest/enroll", http_tags=["proxmox"],
+    memory="off",
+    description="Register a Proxmox guest as a managed SSH host (the same registry "
+                "the provisioning + terminal use), resolving its IP automatically "
+                "when possible. Inputs: cluster_id (str!), node (str!), guest_type "
+                "('qemu'|'lxc'), vmid (int!), user (str='root'), password (str), "
+                "key_path (str), ip (str — override auto-detect), port (int=22), "
+                "label (str). Output: {ok, ssh_host_id, ip, host}.",
+)
+async def cap_guest_enroll(cluster_id: str = "", node: str = "",
+                           guest_type: str = "", vmid: int = 0, user: str = "root",
+                           password: str = "", key_path: str = "", ip: str = "",
+                           port: int = 22, label: str = "", trace_id=None) -> Dict:
+    rec = await _get_cluster(cluster_id, opened=True)
+    if not rec:
+        return {"error": "cluster not found"}
+    addr = ip or await _guest_ip(rec, node, guest_type, int(vmid))
+    if not addr:
+        return {"error": "could not determine guest IP — pass `ip` explicitly "
+                         "(QEMU guests need the guest agent installed)"}
+    save = _orch.CAPABILITY_REGISTRY.get("exec.ssh.hosts.save")
+    if not save:
+        return {"error": "exec.ssh.hosts.save capability unavailable"}
+    res = await save["raw"](
+        host=addr, user=user or "root", port=int(port or 22),
+        label=label or f"pve:{vmid}@{node}",
+        auth="key" if key_path else "password",
+        password=password, key_path=key_path,
+        tags=f"proxmox,{guest_type},{node}", trace_id=None,
+    )
+    if not res.get("ok"):
+        return {"error": res.get("error", "save failed")}
+    sid = (res.get("host") or {}).get("id", "")
+    await emit_event({"type": "proxmox.guest.enroll", "cluster": cluster_id,
+                      "vmid": vmid, "ip": addr, "ssh_host_id": sid})
+    return {"ok": True, "ssh_host_id": sid, "ip": addr, "host": addr}
+
+
 @capability(
     "proxmox.console.ticket",
     http_method="POST", http_path="/proxmox/console/ticket", http_tags=["proxmox"],
@@ -406,8 +849,13 @@ async def cap_console_ticket(
     _prune_sessions()
     import time
     sid = uuid.uuid4().hex
+    # NOTE: `**info` carries the *proxy* port (termproxy/vncproxy, e.g. 5900) under
+    # the key "port". The browser-facing vncwebsocket, however, lives on the PVE
+    # *web* port (8006) and takes the proxy port only as the ?port= query arg. Keep
+    # them in distinct keys ("web_port" vs "port") so `**info` can't clobber the web
+    # port — doing so connected the WS to :5900 and produced ECONNREFUSED (errno 111).
     _CONSOLE_SESSIONS[sid] = {
-        "host": host, "port": port, "node": node, "kind": guest_type,
+        "host": host, "web_port": port, "node": node, "kind": guest_type,
         "vmid": str(vmid), "mode": mode, "verify_tls": bool(rec.get("verify_tls")),
         "ts": time.time(), **info,
     }
@@ -539,7 +987,7 @@ async def proxmox_console_ws(websocket: WebSocket, sid: str):
         vpath = f"/api2/json/nodes/{node}/{kind}/{vmid}/vncwebsocket"
     else:
         vpath = f"/api2/json/nodes/{node}/vncwebsocket"
-    uri = (f"wss://{sess['host']}:{sess['port']}{vpath}"
+    uri = (f"wss://{sess['host']}:{sess['web_port']}{vpath}"
            f"?port={sess['port']}&vncticket={quote(sess['vncticket'])}")
 
     sslctx = ssl.create_default_context()

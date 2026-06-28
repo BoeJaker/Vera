@@ -55,6 +55,7 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
 .snav[data-pane="vllm"].on{color:var(--acc2)}
 .snav[data-pane="openclaw"].on{color:#b07ad6}
 .snav[data-pane="api"].on{color:var(--acc4)}
+.snav[data-pane="provision"].on{color:var(--acc3)}
 .navdiv{width:24px;height:1px;background:var(--border);margin:3px 0;flex-shrink:0}
 #panes{flex:1;overflow:hidden;position:relative}
 .pane{position:absolute;inset:0;display:none;overflow-y:auto;padding:12px}
@@ -348,6 +349,7 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
     <div class="snav" data-pane="vllm" onclick="P.show('vllm',this)">vLLM</div>
     <div class="snav" data-pane="openclaw" onclick="P.show('openclaw',this)">OpenClaw</div>
     <div class="snav" data-pane="api" onclick="P.show('api',this)">API</div>
+    <div class="snav" data-pane="provision" onclick="P.show('provision',this)">Provision</div>
   </div>
 
   <div id="panes">
@@ -695,6 +697,45 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
           <span class="w-resize" data-resize></span>
         </div>
 
+        <!-- All jobs (jobs-by-worker style: one list the tabs filter) + breakdown.
+             Mirrors Workers › Jobs; the rich multi-view Job Queue stays below for
+             the Ollama-specific views (Ollama Log / Stream Health / History). -->
+        <div class="widget w-w12 w-h4" data-wid="olj-list">
+          <div class="w-head">
+            <span class="w-grip">⠿</span><span class="w-dot ok"></span>
+            <span class="w-title">All Jobs</span>
+            <span style="flex:1"></span>
+            <input id="olj-search" placeholder="Filter by cap, instance, state…" style="font-size:9px;background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:3px;width:160px;font-family:var(--mono)" oninput="P.oljFilter()">
+            <div style="display:flex;gap:2px;margin-left:6px">
+              <span class="j-tab active" id="oljt-all" onclick="P.oljTab('all')" style="padding:3px 8px;font-size:9px">All</span>
+              <span class="j-tab" id="oljt-running" onclick="P.oljTab('running')" style="padding:3px 8px;font-size:9px">Running</span>
+              <span class="j-tab" id="oljt-done" onclick="P.oljTab('done')" style="padding:3px 8px;font-size:9px">Done</span>
+              <span class="j-tab" id="oljt-failed" onclick="P.oljTab('failed')" style="padding:3px 8px;font-size:9px;color:var(--err)">Failed</span>
+            </div>
+            <span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('jobs','olj-list')">×</button></span>
+          </div>
+          <div class="w-body flush" style="padding:0;overflow-y:auto">
+            <table class="job-tbl" id="olj-table">
+              <thead><tr><th>Instance</th><th>Capability</th><th>State</th><th>Model</th><th>Elapsed</th><th>Tokens</th><th>Caller</th><th>Time</th></tr></thead>
+              <tbody id="olj-tbody"></tbody>
+            </table>
+            <div id="olj-empty" class="j-empty" style="display:none">No jobs tracked yet — jobs appear here as capabilities execute</div>
+          </div>
+          <span class="w-resize" data-resize></span>
+        </div>
+
+        <!-- Capability Breakdown (mirrors Workers › Jobs) -->
+        <div class="widget w-w12 w-h3" data-wid="olj-breakdown">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot ok"></span><span class="w-title">Capability Breakdown</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('jobs','olj-breakdown')">×</button></span></div>
+          <div class="w-body flush" style="padding:0;overflow-y:auto">
+            <table class="job-tbl" id="olj-cap-table">
+              <thead><tr><th>Capability</th><th>Total</th><th>Running</th><th>Done</th><th>Failed</th><th>Avg Duration</th></tr></thead>
+              <tbody id="olj-cap-tbody"></tbody>
+            </table>
+          </div>
+          <span class="w-resize" data-resize></span>
+        </div>
+
         <!-- Job list -->
         <div class="widget w-w12 w-h5" data-wid="j-list">
           <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot ok"></span><span class="w-title">Job Queue</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('jobs','j-list')">×</button></span></div>
@@ -904,6 +945,7 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
             <span class="j-tab" id="pmxs-identity" onclick="P.pmxSub('identity')" style="padding:3px 9px;font-size:9px">Identity</span>
             <span class="j-tab" id="pmxs-netpolicy" onclick="P.pmxSub('netpolicy')" style="padding:3px 9px;font-size:9px">Net Policy</span>
             <span class="j-tab" id="pmxs-enroll" onclick="P.pmxSub('enroll')" style="padding:3px 9px;font-size:9px">Enroll</span>
+            <span class="j-tab" id="pmxs-provision" onclick="P.pmxSub('provision')" style="padding:3px 9px;font-size:9px">Provision</span>
           </div>
         </div>
 
@@ -956,6 +998,7 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
         <iframe id="pmx-sub-identity" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
         <iframe id="pmx-sub-netpolicy" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
         <iframe id="pmx-sub-enroll" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
+        <iframe id="pmx-sub-provision" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)"></iframe>
 
         <!-- Cluster manager (add / edit / delete — sealed creds in Redis) -->
         <div id="pmx-mgr" style="display:none;position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.55)">
@@ -1125,6 +1168,9 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
     </div>
     <div class="pane" id="pane-api" style="padding:0;overflow:hidden">
       <iframe id="api-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
+    <div class="pane" id="pane-provision" style="padding:0;overflow:hidden">
+      <iframe id="provision-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
     </div>
 
   </div>
@@ -1340,6 +1386,7 @@ function _rebuildJobsFromTracker(){
   // flicker caused by rapid WS-driven rebuilds when viewing other panes
   if(_olSubCurrent==='jobs'||document.getElementById('pane-ollama')?.classList.contains('on')){
     renderJobs();
+    oljRender();
   }
   // Also refresh workers jobs sub-tab if active
   if(_wkSubCurrent==='jobs') wkjRender();
@@ -3470,6 +3517,7 @@ function olSubTab(name,btn){
   });
   const editBtn=$('ol-edit-btn');
   if(editBtn) editBtn.style.display=name==='wrapper'?'none':'';
+  if(name==='jobs') oljRender();
   // When switching to wrapper, init the selector and connect if needed
   if(name==='wrapper'){
     wrapperInit();
@@ -3714,6 +3762,104 @@ function wkjRender(){
   }
 }
 
+// ── Ollama Jobs: all-jobs list + capability breakdown (mirrors Workers › Jobs) ──
+// Shares the same _jobTracker source as wkjRender(); shown in the Ollama › Jobs
+// sub-tab alongside the existing multi-view Job Queue.
+let _oljSubTab='all';
+let _oljSearchQ='';
+
+function oljTab(t){
+  _oljSubTab=t;
+  ['all','running','done','failed'].forEach(k=>{
+    const el=$('oljt-'+k);
+    if(el) el.classList.toggle('active',k===t);
+  });
+  oljRender();
+}
+
+function oljFilter(){
+  _oljSearchQ=(($('olj-search')||{}).value||'').toLowerCase();
+  oljRender();
+}
+
+function oljRender(){
+  const all=Object.values(_jobTracker);
+  const running=all.filter(j=>j.state==='running');
+  const done=all.filter(j=>j.state==='done');
+  const failed=all.filter(j=>j.state==='failed');
+
+  // Filter for the table
+  let display=_oljSubTab==='all'?all
+    :_oljSubTab==='running'?running
+    :_oljSubTab==='done'?done
+    :failed;
+  if(_oljSearchQ){
+    display=display.filter(j=>{
+      const hay=(j.cap_name||j.capability||'')+' '+(j.worker_id||j.instance_id||'')+' '+(j.state||'')+' '+(j.model||'')+' '+(j.caller_file||'')+' '+(j.error||'');
+      return hay.toLowerCase().includes(_oljSearchQ);
+    });
+  }
+  display.sort((a,b)=>(b.last_update||b.first_seen||0)-(a.last_update||a.first_seen||0));
+
+  const tbody=$('olj-tbody'),empty=$('olj-empty');
+  if(tbody){
+    if(!display.length){
+      tbody.innerHTML='';
+      if(empty){empty.style.display='block';empty.textContent=all.length?'No jobs match filters':'No jobs tracked yet — jobs appear here as capabilities execute';}
+    }else{
+      if(empty) empty.style.display='none';
+      const badgeCls={pending:'j-pending',running:'j-running',done:'j-done',failed:'j-failed'};
+      tbody.innerHTML=display.slice(0,500).map(j=>{
+        const st=j.state||'pending';
+        const wid=j.worker_id||j.instance_id||'';
+        const isGpu=wid.includes('gpu')||wid.includes('250');
+        const widLabel=wid?'<span class="j-hist-instance '+(isGpu?'gpu':'cpu')+'">'+esc(wid.slice(-10))+'</span>':'<span style="color:var(--dim)">—</span>';
+        const elMs=j.elapsed_ms||0;
+        const elStr=elMs>0?(elMs<1000?elMs+'ms':(elMs/1000).toFixed(1)+'s'):'—';
+        const callerInfo=j.caller_file?esc(j.caller_file)+':'+esc(j.caller_func||'?'):'—';
+        return '<tr>'
+          +'<td>'+widLabel+'</td>'
+          +'<td style="font-family:var(--mono);font-size:9px">'+esc(j.cap_name||j.capability||'?')+'</td>'
+          +'<td><span class="j-badge '+(badgeCls[st]||'j-pending')+'">'+esc(st)+'</span>'+(j.error?'<span style="font-size:7.5px;color:var(--err);display:block;margin-top:1px">'+esc(j.error.slice(0,60))+'</span>':'')+'</td>'
+          +'<td style="font-size:9px;color:var(--acc3)">'+esc(j.model||'—')+'</td>'
+          +'<td>'+elStr+'</td>'
+          +'<td>'+esc(j.token_count||'—')+'</td>'
+          +'<td style="font-size:8.5px;color:var(--acc2)">'+callerInfo+'</td>'
+          +'<td style="font-size:7.5px;color:var(--dim2)">'+_fmtDateTime(j.ts)+'</td>'
+          +'</tr>';
+      }).join('');
+    }
+  }
+
+  // Capability breakdown
+  const capMap={};
+  all.forEach(j=>{
+    const cap=j.cap_name||j.capability||'unknown';
+    if(!capMap[cap]) capMap[cap]={total:0,running:0,done:0,failed:0,durTotal:0,durN:0};
+    capMap[cap].total++;
+    if(j.state==='running') capMap[cap].running++;
+    else if(j.state==='done') capMap[cap].done++;
+    else if(j.state==='failed') capMap[cap].failed++;
+    if(j.elapsed_ms>0){capMap[cap].durTotal+=j.elapsed_ms;capMap[cap].durN++;}
+  });
+  const capTbody=$('olj-cap-tbody');
+  if(capTbody){
+    const caps=Object.entries(capMap).sort((a,b)=>b[1].total-a[1].total);
+    capTbody.innerHTML=caps.map(([cap,s])=>{
+      const avgMs=s.durN>0?Math.round(s.durTotal/s.durN):0;
+      const avgStr=avgMs>0?(avgMs<1000?avgMs+'ms':(avgMs/1000).toFixed(1)+'s'):'—';
+      return '<tr>'
+        +'<td style="font-family:var(--mono);font-size:9px;color:var(--acc2)">'+esc(cap)+'</td>'
+        +'<td>'+s.total+'</td>'
+        +'<td style="color:var(--warn)">'+s.running+'</td>'
+        +'<td style="color:var(--ok)">'+s.done+'</td>'
+        +'<td style="color:'+(s.failed?'var(--err)':'var(--dim2)')+'">'+s.failed+'</td>'
+        +'<td>'+avgStr+'</td>'
+        +'</tr>';
+    }).join('');
+  }
+}
+
 // ── Proxmox monitoring ────────────────────────────────────────────────────────
 // ── Proxmox — server-side sealed-creds backend (multi-cluster) ────────────
 let _pmxClusters=[];      // [{id,label,api_url,has_token,...}] (redacted)
@@ -3725,7 +3871,7 @@ let _pmxVmTab='all';
 let _pmxVmSearch='';
 let _pmxInited=false;
 let _pmxSub='dash';
-const _pmxSubSrc={security:'/provisioning/panel',identity:'/identity/panel',netpolicy:'/netgraph/panel',enroll:'/enroll/panel'};
+const _pmxSubSrc={security:'/provisioning/panel',identity:'/identity/panel',netpolicy:'/netgraph/panel',enroll:'/enroll/panel',provision:'/provision/panel'};
 
 async function _pmxApi(path,method,body){
   const o={method:method||'GET',headers:{'Content-Type':'application/json'}};
@@ -3771,9 +3917,9 @@ async function pmxRefresh(){
 // ── Sub-tabs: Dashboard / Security / Identity / Net Policy ────────────────
 function pmxSub(name){
   _pmxSub=name;
-  ['dash','security','identity','netpolicy','enroll'].forEach(k=>{ const t=$('pmxs-'+k); if(t) t.classList.toggle('active',k===name); });
+  ['dash','security','identity','netpolicy','enroll','provision'].forEach(k=>{ const t=$('pmxs-'+k); if(t) t.classList.toggle('active',k===name); });
   const dash=$('pmx-sub-dash'); if(dash) dash.style.display=(name==='dash')?'':'none';
-  ['security','identity','netpolicy','enroll'].forEach(k=>{
+  ['security','identity','netpolicy','enroll','provision'].forEach(k=>{
     const f=$('pmx-sub-'+k); if(!f) return;
     if(k===name){ if(!f.src||/blank/.test(f.src)) f.src=_pmxSubSrc[k]; f.style.display='flex'; }
     else f.style.display='none';
@@ -3805,8 +3951,9 @@ function pmxMgrEdit(id){
     +fld('API URL','<input id="pmxf-url" value="'+esc(c.api_url||'')+'" placeholder="https://192.168.0.10:8006" style="'+ip+'">','Host root or full /api2/json.')
     +fld('API token'+(c.has_token?' · stored':''),'<input id="pmxf-token" placeholder="'+(c.has_token?'****** (blank = keep)':'user@pam!tokenid=secret-uuid')+'" style="'+ip+'">','Sealed (Fernet) in Redis; never shown again.')
     +'<label style="display:flex;gap:7px;align-items:center;font-size:11px;color:var(--text)"><input type="checkbox" id="pmxf-verify" '+(c.verify_tls?'checked':'')+'> Verify TLS (off for self-signed)</label>'
-    +fld('Console user (optional)','<input id="pmxf-cuser" value="'+esc(c.console_user||'')+'" placeholder="root@pam" style="'+ip+'">','Enables embedded terminal/desktop; else consoles deep-link to Proxmox.')
-    +fld('Console password'+(c.has_console_password?' · stored':''),'<input id="pmxf-cpass" type="password" placeholder="'+(c.has_console_password?'****** (blank = keep)':'password')+'" style="'+ip+'">')
+    +'<div style="font-size:9px;color:#e36b2d;text-transform:uppercase;letter-spacing:.5px;margin-top:4px;border-top:1px solid var(--border);padding-top:8px">Console login — terminal &amp; remote desktop</div>'
+    +fld('Console / terminal user','<input id="pmxf-cuser" value="'+esc(c.console_user||'')+'" placeholder="root@pam" style="'+ip+'">','A Proxmox login (PAM realm, e.g. root@pam) — NOT the API token. Required for the in-Vera terminal &amp; remote desktop; without it consoles deep-link to Proxmox.')
+    +fld('Console password'+(c.has_console_password?' · stored':''),'<input id="pmxf-cpass" type="password" placeholder="'+(c.has_console_password?'****** (blank = keep)':'password')+'" style="'+ip+'">','Sealed (Fernet) in Redis; never shown again.')
     +'<div style="display:flex;gap:8px;margin-top:4px"><button class="btn sm" style="border-color:#e36b2d;color:#e36b2d" onclick="P.pmxMgrSave(\''+esc(id)+'\')">Save</button>'
     +'<button class="btn sm" onclick="P.pmxMgrList()">Cancel</button>'
     +(id?'<span style="flex:1"></span><button class="btn sm err-btn" onclick="P.pmxMgrDelete(\''+esc(id)+'\')">Delete</button>':'')+'</div>';
@@ -4330,13 +4477,14 @@ function showPane(name, el){
   const pane=$('pane-'+name);
   if(pane) pane.classList.add('on');
   if(name==='ollama'){ loadRouting(); loadEmbedCfg(); }
-  if(name==='docker'){ if(!Object.keys(_dkrHosts||{}).length) _dkrInitHosts(); dkrWorkerList(); }
-  if(name==='proxmox'){ pmxInit(); }
+  if(name==='docker'){ if(!Object.keys(_dkrHosts||{}).length) _dkrInitHosts(); dkrWorkerList(); if(_dkrHostId) dkrRefresh(); }
+  if(name==='proxmox'){ if(_pmxInited){ if(_pmxCur) pmxRefresh(); } else pmxInit(); }
   if(name==='sandbox'){ const el=$('wk-sandbox-ctl'); if(el&&el.refresh) el.refresh(); }
   if(name==='mimic'){ _mountFrame('mimic-frame', BASE+'/cluster/mimic/panel'); }
   if(name==='vllm'){ _mountFrame('vllm-frame', BASE+'/vllm/panel'); }
   if(name==='openclaw'){ _mountFrame('openclaw-frame', BASE+'/openclaw/panel'); }
   if(name==='api'){ _mountFrame('api-frame', BASE+'/providers/panel'); }
+  if(name==='provision'){ _mountFrame('provision-frame', BASE+'/provision/panel'); }
 }
 
 // ── Theme relay ──────────────────────────────────────────────────────────────
@@ -4386,17 +4534,18 @@ setTimeout(()=>{refresh();autoToggle();},120);
 // Load embed config once (after first refresh populates selects)
 setTimeout(loadEmbedCfg, 600);
 
-// Load Proxmox config from localStorage
-// Proxmox loads lazily when its pane is first shown (pmxInit in showPane).
-
-// Init Docker host list (from the backend registry; merges cluster hosts)
-setTimeout(()=>{ _dkrInitHosts(); }, 1500);
+// Connect Proxmox + Docker eagerly at startup so their panes already have data
+// when first opened. Subsequent updates remain lazy (on tab open / Refresh / Auto).
+// pmxInit loads the cluster list and refreshes the selected one; _dkrInitHosts
+// builds the host list and we kick one refresh of the default (or local) host.
+setTimeout(()=>{ pmxInit(); }, 1400);
+setTimeout(()=>{ _dkrInitHosts().then(()=>{ if(_dkrHostId) dkrRefresh(); }); }, 1500);
 
 // ── Public API ───────────────────────────────────────────────────────────────
 return {
   show: showPane, refresh, autoToggle,
   wkFilter, wkSel, wkDrain, wkRemoveStale,
-  wkSubTab, wkjTab, wkjFilter,
+  wkSubTab, wkjTab, wkjFilter, oljTab, oljFilter,
   setStrat, olPing, olPingAll, olTogglePin, olTestGenerate,
   openPullModal, closePullModal, pullModelGo,
   openDeleteModel, closeDeleteModel, deleteModelGo,

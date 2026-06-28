@@ -80,14 +80,24 @@ DEFAULT_STATES = ["neutral", "talking", "thinking", "happy"]
 ALL_STATES     = ["neutral", "talking", "thinking", "happy",
                   "working", "error", "listening"]
 
+# Verbose, emotionally DISTINCT per-state descriptions. Vague/short suffixes all
+# came out looking the same; these push exaggerated face + body language so each
+# state reads clearly (the user found "emotional" especially effective).
 DEFAULT_EXPRESSION_SUFFIX = {
-    "neutral":   "neutral calm expression, mouth closed, facing forward",
-    "talking":   "mouth open mid-speech, talking, expressive eyes",
-    "thinking":  "thoughtful expression, looking slightly up, curious",
-    "happy":     "big cheerful smile, bright eyes, delighted",
-    "working":   "focused determined expression, concentrating",
-    "error":     "worried concerned expression, slight frown",
-    "listening": "attentive friendly expression, head tilted, listening",
+    "neutral":   "calm resting expression, relaxed neutral face, mouth closed, "
+                 "soft steady forward gaze, composed and still",
+    "talking":   "mouth wide open mid-sentence, actively talking and gesturing, "
+                 "eyebrows raised, animated lively chatter, engaged and expressive",
+    "thinking":  "deep in thought, eyes glancing upward, one hand to the chin, "
+                 "furrowed brow, pensive curious pondering look",
+    "happy":     "huge joyful open grin, beaming radiant smile, eyes squeezed bright "
+                 "and crinkled, cheeks raised, overflowing with delight and excitement",
+    "working":   "intense focused concentration, narrowed determined eyes, jaw set, "
+                 "leaning forward hard at work, absorbed and busy",
+    "error":     "alarmed and worried, wide anxious eyes, mouth open in dismay, "
+                 "frowning, flustered panicked expression, hands up in concern",
+    "listening": "attentive and curious, head tilted to one side, eyebrows raised "
+                 "with interest, warm open inviting gaze, leaning in to listen",
 }
 
 STYLE_DESCRIPTOR = {
@@ -121,6 +131,8 @@ class CharacterRecord:
     render_mode:     str = "procedural"   # procedural | spritesheet | talkinghead | auto
     style:           str = "pixel"        # pixel | painted | anime | cartoon | 3d
     palette:         str = ""
+    transparent:     bool = False         # chroma-key the background out to alpha
+    bg_color:        str = ""             # chroma-key colour (hex); "" = default green
 
     # Generation config
     base_prompt:     str = ""
@@ -307,15 +319,17 @@ def _safe(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9_-]", "", s or "")
 
 
-async def _call_cap(name: str, **kwargs) -> dict:
-    cap = CAPABILITY_REGISTRY.get(name)
+async def _call_cap(cap_name: str, **kwargs) -> dict:
+    # NB: first arg is `cap_name`, not `name` — callers pass a `name=` kwarg
+    # through to caps like agent.get, which would collide with a `name` param.
+    cap = CAPABILITY_REGISTRY.get(cap_name)
     if not cap:
-        return {"error": f"capability {name} not available"}
+        return {"error": f"capability {cap_name} not available"}
     try:
         res = await cap["func"](**kwargs)
         return res if isinstance(res, dict) else {"result": res}
     except Exception as e:
-        log.warning("character: call %s failed: %s", name, e)
+        log.warning("character: call %s failed: %s", cap_name, e)
         return {"error": str(e)}
 
 
@@ -326,14 +340,33 @@ async def _get_agent(agent_id: str = "", name: str = "") -> dict:
     return {}
 
 
-def _build_prompt(rec: CharacterRecord, state: str) -> str:
+_CHROMA_DEFAULT = "#1bd12a"   # bright green key colour for transparent sprites
+
+
+def _color_word(bg_color: str) -> str:
+    h = (bg_color or _CHROMA_DEFAULT).strip().lower()
+    return {
+        "#1bd12a": "bright chroma green", "#00ff00": "bright green",
+        "#ff00ff": "magenta", "#0000ff": "deep blue",
+    }.get(h, "bright solid green")
+
+
+def _build_prompt(rec: CharacterRecord, state: str, *,
+                  transparent: bool = False, bg_color: str = "") -> str:
     suffix = (rec.expression_prompts.get(state)
               or DEFAULT_EXPRESSION_SUFFIX.get(state)
               or DEFAULT_EXPRESSION_SUFFIX["neutral"])
     style = STYLE_DESCRIPTOR.get(rec.style, rec.style or "")
-    parts = [rec.base_prompt.strip(), suffix, style]
+    # Foreground the expression and push for a strong, clearly-readable emotion
+    # so seed-/img2img-locked frames don't all collapse to the same neutral look.
+    parts = [rec.base_prompt.strip(), suffix,
+             "strongly expressive emotional face, exaggerated clear distinct expression",
+             style]
     if rec.palette:
         parts.append(f"{rec.palette} color palette")
+    if transparent:
+        parts.append(f"isolated full subject on a plain solid flat {_color_word(bg_color)} "
+                     "background, clean chroma-key backdrop, no scenery")
     parts.append(_FRAMING)
     return ", ".join(p for p in parts if p)
 
@@ -408,8 +441,10 @@ async def character_describe(description: str = "", style: str = "pixel", trace_
         '  "palette": short color-palette phrase;\n'
         '  "negative_prompt": things to avoid;\n'
         f'  "expression_prompts": an object mapping each of these states '
-        f"[{states_csv}] to a SHORT facial-expression/pose phrase for that mood.\n"
-        "Keep every value under 25 words."
+        f"[{states_csv}] to a VIVID, EXAGGERATED description of that emotion — "
+        "include BOTH the facial expression AND body language (eyes, brow, mouth, "
+        "hands, posture). Make each state clearly and obviously DIFFERENT from the "
+        "others and lean hard into the emotion. 12-25 words each."
     )
     try:
         raw = await ollama_generate(prompt=prompt, system=sys_prompt,
@@ -482,6 +517,9 @@ async def character_generate(
     height:       int = 512,
     loras:        str = "",
     consistency:  str = "auto",      # auto | img2img | txt2img
+    transparent:  bool = False,      # chroma-key the background out to alpha
+    bg_color:     str = "",          # chroma-key colour (hex); "" = default green
+    expr_strength: float = 0.62,     # img2img strength for non-neutral frames
     keep_existing: bool = True,
     trace_id=None,
 ):
@@ -504,6 +542,8 @@ async def character_generate(
     rec.width        = int(width)
     rec.height       = int(height)
     rec.loras        = loras or rec.loras
+    rec.transparent  = bool(transparent)
+    rec.bg_color     = bg_color or rec.bg_color
     if not rec.voice:
         rec.voice = agent.get("voice", "") or ""
 
@@ -547,9 +587,10 @@ async def character_generate(
 
     base_b64 = None          # neutral frame bytes, reused as img2img init
     tier_used = "txt2img"
+    render_device = ""       # 'cuda' | 'cpu' — device the GPU node actually used
 
     for i, state in enumerate(want):
-        prompt = _build_prompt(rec, state)
+        prompt = _build_prompt(rec, state, transparent=rec.transparent, bg_color=rec.bg_color)
         await emit_event({"type": "character.generate.progress", "agent_id": agent_id,
                           "state": state, "index": i, "total": total})
         try:
@@ -559,15 +600,18 @@ async def character_generate(
                     prompt=prompt, negative_prompt=rec.negative_prompt,
                     width=rec.width, height=rec.height, steps=rec.steps,
                     guidance=rec.guidance, seed=rec.seed, loras=rec.loras,
+                    transparent=rec.transparent, bg_color=rec.bg_color,
                 )
             else:
-                # Derive this expression from the neutral frame for consistency.
+                # Derive this expression from the neutral frame for consistency,
+                # but at higher strength so the expression actually changes.
                 res = await _call_cap(
                     "image.img2img",
-                    prompt=prompt, init_image_b64=base_b64, strength=0.5,
+                    prompt=prompt, init_image_b64=base_b64, strength=float(expr_strength),
                     negative_prompt=rec.negative_prompt,
                     width=rec.width, height=rec.height, steps=rec.steps,
                     guidance=rec.guidance, seed=rec.seed, loras=rec.loras,
+                    transparent=rec.transparent, bg_color=rec.bg_color,
                 )
                 tier_used = "img2img"
         except Exception as e:
@@ -578,6 +622,7 @@ async def character_generate(
             await emit_event({"type": "character.generate.error", "agent_id": agent_id,
                               "state": state, "error": (res or {}).get("error", "no image")})
             continue
+        render_device = (res or {}).get("device") or render_device
         if state == "neutral":
             base_b64 = b64
         fname = _write_frame(agent_id, state, b64)
@@ -590,9 +635,11 @@ async def character_generate(
         rec.sd_tier_used = tier_used
     await STORE.save(rec)
     await emit_event({"type": "character.generate.done", "agent_id": agent_id,
-                      "frames": list(rec.frames.keys()), "tier": tier_used})
+                      "frames": list(rec.frames.keys()), "tier": tier_used,
+                      "device": render_device})
 
     out = _record_with_urls(rec)
+    out["render_device"] = render_device
     if not rec.frames:
         # Generation ran but the image endpoint returned nothing for every state.
         # Surface it instead of pretending success — almost always means SD isn't
@@ -612,6 +659,140 @@ def _record_with_urls(rec: CharacterRecord) -> dict:
         for st in rec.frames.keys()
     }
     return d
+
+
+@capability(
+    "character.preview", memory="off",
+    http_method="POST", http_path="/character/preview", http_tags=["character", "gpu"],
+    description="Generate ONE expression as a preview WITHOUT saving it — for the "
+                "regenerate/accept/reject loop. Inputs: agent_id (str!), state, "
+                "prompt_override (per-state expression text), base_prompt (identity "
+                "override), style, seed, steps, guidance, width, height, transparent, "
+                "bg_color, edit (bool: img2img-from-current for prompt-edits), strength. "
+                "Output: {image_b64, state, prompt, device}. Not archived to the fabric.",
+)
+async def character_preview(
+    agent_id:        str = "",
+    state:           str = "neutral",
+    prompt_override: str = "",
+    base_prompt:     str = "",
+    style:           str = "",
+    seed:            int = -1,
+    steps:           int = 22,
+    guidance:        float = 7.5,
+    width:           int = 512,
+    height:          int = 512,
+    transparent:     bool = False,
+    bg_color:        str = "",
+    edit:            bool = False,
+    strength:        float = 0.6,
+    trace_id=None,
+):
+    if not agent_id:
+        return {"error": "agent_id required"}
+    rec = await STORE.get(agent_id) or CharacterRecord(agent_id=agent_id)
+
+    # Build an effective prompt from a throwaway record so nothing is persisted.
+    base = base_prompt or rec.base_prompt or rec.description or rec.display_name \
+        or "a friendly original character"
+    tmp = CharacterRecord(
+        agent_id=agent_id, base_prompt=base, style=(style or rec.style),
+        palette=rec.palette, negative_prompt=rec.negative_prompt,
+        expression_prompts=dict(rec.expression_prompts),
+    )
+    if prompt_override:
+        tmp.expression_prompts[state] = prompt_override
+    prompt = _build_prompt(tmp, state, transparent=transparent, bg_color=bg_color)
+
+    # `edit` derives from the current frame (img2img) so prompt tweaks refine the
+    # existing look; otherwise a fresh txt2img gives the expression the most room.
+    init_b64 = None
+    if edit:
+        cur = rec.frames.get(state) or rec.frames.get("neutral")
+        if cur:
+            try:
+                init_b64 = base64.b64encode(
+                    (_CHARS_DIR / _safe(agent_id) / cur).read_bytes()).decode()
+            except Exception:
+                init_b64 = None
+
+    common = dict(prompt=prompt, negative_prompt=tmp.negative_prompt,
+                  width=int(width), height=int(height), steps=int(steps),
+                  guidance=float(guidance), seed=int(seed), loras=rec.loras,
+                  transparent=transparent, bg_color=bg_color, store=False)
+    if init_b64:
+        res = await _call_cap("image.img2img", init_image_b64=init_b64,
+                              strength=float(strength), **common)
+    else:
+        res = await _call_cap("image.generate", **common)
+
+    b64 = (res or {}).get("image_b64", "")
+    if not b64:
+        return {"error": (res or {}).get("error", "generation failed"), "state": state}
+    return {"image_b64": b64, "state": state, "prompt": prompt,
+            "device": (res or {}).get("device", "")}
+
+
+@capability(
+    "character.commit_frame", memory="off",
+    http_method="POST", http_path="/character/commit_frame", http_tags=["character"],
+    description="Accept a previewed image as an agent's frame for a state: writes it, "
+                "saves the per-state prompt, and archives it to the fabric. Inputs: "
+                "agent_id (str!), state, image_b64 (str!), prompt_override, base_prompt, "
+                "style, transparent, bg_color. Output: the updated character record.",
+)
+async def character_commit_frame(
+    agent_id:        str = "",
+    state:           str = "neutral",
+    image_b64:       str = "",
+    prompt_override: str = "",
+    base_prompt:     str = "",
+    style:           str = "",
+    transparent:     Optional[bool] = None,
+    bg_color:        str = "",
+    trace_id=None,
+):
+    if not agent_id or not image_b64:
+        return {"error": "agent_id and image_b64 required"}
+    rec = await STORE.get(agent_id) or CharacterRecord(agent_id=agent_id)
+    if not rec.display_name:
+        agent = await _get_agent(agent_id=agent_id)
+        rec.display_name = agent.get("label") or agent.get("name") or rec.display_name
+    if base_prompt:
+        rec.base_prompt = base_prompt
+    if style:
+        rec.style = style
+    if prompt_override:
+        rec.expression_prompts = {**rec.expression_prompts, state: prompt_override}
+    if transparent is not None:
+        rec.transparent = bool(transparent)
+    if bg_color:
+        rec.bg_color = bg_color
+
+    fname = _write_frame(agent_id, state, image_b64)
+    if not fname:
+        return {"error": "failed to write frame"}
+    rec.frames[state] = fname
+    if state not in rec.states:
+        rec.states.append(state)
+    await STORE.save(rec)
+
+    # Archive the accepted frame to the fabric history (rich metadata).
+    store_cap = CAPABILITY_REGISTRY.get("images.store")
+    if store_cap:
+        try:
+            asyncio.ensure_future(store_cap["func"](
+                image_b64=image_b64,
+                prompt=_build_prompt(rec, state, transparent=rec.transparent,
+                                     bg_color=rec.bg_color),
+                source="character", agent_id=agent_id, state=state,
+                width=rec.width, height=rec.height, seed=rec.seed))
+        except Exception as e:
+            log.debug("commit_frame archive: %s", e)
+
+    await emit_event({"type": "character.frame.committed",
+                      "agent_id": agent_id, "state": state})
+    return _record_with_urls(rec)
 
 
 @capability(

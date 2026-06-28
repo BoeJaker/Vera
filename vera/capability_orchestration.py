@@ -81,6 +81,7 @@ POSTGRES_URL = cfg.POSTGRES_URL
 OLLAMA_MODEL       = cfg.OLLAMA_MODEL
 OLLAMA_EMBED_URL   = cfg.OLLAMA_EMBED_URL
 OLLAMA_EMBED_MODEL = cfg.OLLAMA_EMBED_MODEL
+EMBED_PROVIDER     = getattr(cfg, "EMBED_PROVIDER", "ollama")
 
 TASK_STREAM   = "vera:tasks"
 RESULT_STREAM = "vera:results"
@@ -749,7 +750,8 @@ async def ollama_embed(text: str, model: Optional[str] = None,
                        instance_id: Optional[str] = None,
                        prefer_gpu: bool = False,
                        timeout: float = 30.0,
-                       normalize: bool = False) -> Optional[List[float]]:
+                       normalize: bool = False,
+                       provider: Optional[str] = None) -> Optional[List[float]]:
     """Generate a text embedding via Ollama, with full job logging.
 
     Tries /api/embed (Ollama ≥0.4) first, then /api/embeddings (older).
@@ -771,6 +773,26 @@ async def ollama_embed(text: str, model: Optional[str] = None,
     """
     if not text or not text.strip():
         return None
+
+    # §1: opt-in fastembed (ONNX Runtime CPU) backend. Off by default — taken
+    # when the effective provider (per-call `provider` override or the global
+    # EMBED_PROVIDER) is "fastembed". Any failure (lib missing, model download
+    # error, …) falls through to the Ollama path below, so this is fully
+    # back-compatible. provider="ollama" forces the Ollama path even when the
+    # global default is fastembed (used by the embed.provider.check migration guard).
+    if (provider or EMBED_PROVIDER) == "fastembed":
+        try:
+            import Vera.vera.fabric.fastembed_provider as _fe
+            if _fe.available():
+                vec = await asyncio.get_event_loop().run_in_executor(
+                    None, _fe.embed, text[:4096])
+                if vec:
+                    if normalize:
+                        _n = (sum(v * v for v in vec)) ** 0.5 or 1.0
+                        vec = [v / _n for v in vec]
+                    return vec
+        except Exception as _fe_err:
+            log.debug("fastembed provider failed, falling back to Ollama: %s", _fe_err)
 
     mdl = model or OLLAMA_EMBED_MODEL
     # Apply runtime embed config: prefer_gpu / pinned_instance from UI settings
@@ -3688,6 +3710,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "fabric/memory_hooks.py"),
         os.path.join(_here, "fabric/data_fabric_collectors.py"),
         os.path.join(_here, "fabric/data_fabric.py"),
+        os.path.join(_here, "fabric/embed_provider_capabilities.py"),
         os.path.join(_here, "fabric/fabric_web_acquisition.py"),
         os.path.join(_here, "fabric/memory_second_order.py"),
         os.path.join(_here, "fabric/context.py"),
@@ -3719,6 +3742,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "provisioning/provisioning_capabilities.py"),
         os.path.join(_here, "provisioning/identity_capabilities.py"),
         os.path.join(_here, "provisioning/enroll_capabilities.py"),
+        os.path.join(_here, "provisioning/software_capabilities.py"),
         os.path.join(_here, "networking/netgraph_capabilities.py"),
         os.path.join(_here, "workers/docker_capabilities.py"),
         os.path.join(_here, "workers/workers.py"),
@@ -3738,12 +3762,14 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "agent_loop_output_capabilities.py"),
         os.path.join(_here, "worldview/worldview_jepa.py"),
         os.path.join(_here, "research/researcher_api.py"),
+        os.path.join(_here, "research/nlp_capabilities.py"),
         os.path.join(_here, "vector browser/vector_browser_capabilites.py"),
         os.path.join(_here, "workers/job_persistance.py"),
         os.path.join(_here, "accounts/accounts_capabilities.py"),
         os.path.join(_here, "calendar/calendar_capabilities.py"),
         os.path.join(_here, "email/email_capabilities.py"),
         os.path.join(_here, "render/render_capabilities.py"),
+        os.path.join(_here, "images/image_fabric.py"),
         os.path.join(_here, "character/character_capabilities.py"),
         os.path.join(_here, "vera_graph_panels.py")
 

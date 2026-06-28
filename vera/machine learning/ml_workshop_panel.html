@@ -237,6 +237,7 @@ select.param-input option{background:var(--bg2)}
     <button class="tb-btn primary" onclick="saveModule()">Save</button>
     <button class="tb-btn teal" onclick="runForward()">▶ Run</button>
     <button class="tb-btn amber" onclick="openLLMGenerate()">⬡ Generate</button>
+    <button class="tb-btn" onclick="exportOnnx()" title="Export the trained module to a portable ONNX artifact">⬇ ONNX</button>
     <button class="tb-btn" onclick="fitView()">Fit</button>
     <button class="tb-btn" onclick="clearCanvas()">Clear</button>
     <span id="save-status">ready</span>
@@ -305,6 +306,7 @@ select.param-input option{background:var(--bg2)}
     <div class="stab" id="rtab-graph" onclick="switchRight('graph')">Graph</div>
     <div class="stab" id="rtab-run" onclick="switchRight('run')">Output</div>
     <div class="stab" id="rtab-llm" onclick="switchRight('llm')">AI</div>
+    <div class="stab" id="rtab-onnx" onclick="switchRight('onnx')">ONNX</div>
   </div>
 
   <div id="rpanel-node" class="panel-body" style="padding:0">
@@ -384,6 +386,26 @@ select.param-input option{background:var(--bg2)}
       <input class="param-input" id="llm-suggest-goal" placeholder="Goal: e.g. reduce params, add regularisation…" style="width:100%;margin-bottom:5px">
       <button class="tb-btn teal" onclick="suggestImprovements()" style="width:100%;font-size:9px">Get Suggestions</button>
       <div id="llm-suggestions" style="margin-top:8px"></div>
+    </div>
+  </div>
+
+  <div id="rpanel-onnx" class="panel-body" style="display:none;padding:0">
+    <div class="section">
+      <div class="section-hdr">Export to ONNX</div>
+      <div style="font-size:9px;color:var(--dim2);line-height:1.5;margin-bottom:6px">
+        Export the current trained module to a portable ONNX artifact served via
+        ONNX Runtime. Feed-forward modules only — recurrent/attention/conv nodes
+        are refused. Verify checks numeric parity vs the NumPy forward pass.
+      </div>
+      <div style="display:flex;gap:5px;margin-bottom:6px">
+        <button class="tb-btn primary" onclick="exportOnnx()" style="flex:1;font-size:9px">⬇ Export current</button>
+        <button class="tb-btn" onclick="loadOnnxArtifacts()" style="font-size:9px">Refresh</button>
+      </div>
+      <div id="onnx-status" style="font-size:9px;color:var(--dim2)"></div>
+    </div>
+    <div class="section" style="border-bottom:none">
+      <div class="section-hdr">Artifacts</div>
+      <div id="onnx-artifacts"><div class="empty">No ONNX artifacts yet</div></div>
     </div>
   </div>
 </div>
@@ -1328,6 +1350,67 @@ function renderRunOutput(summary){
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ONNX EXPORT
+// ═══════════════════════════════════════════════════════════════════════════
+async function exportOnnx(){
+  if(!_currentModuleId){ await saveModule(); if(!_currentModuleId) return; }
+  switchRight('onnx');
+  const st=document.getElementById('onnx-status');
+  st.textContent='Exporting…'; st.style.color='var(--amber,#f5a623)';
+  const r=await callCap('ml.export.onnx',{module_id:_currentModuleId});
+  if(r?.error){
+    st.textContent='✗ '+r.error+(r.unsupported?(' ['+r.unsupported.join(', ')+']'):'');
+    st.style.color='#e05a6b';
+    return;
+  }
+  st.innerHTML=`✓ exported <b>${esc(r.artifact)}</b> — ${r.node_count} nodes, ${esc(r.dtype)}`
+    +(r.cap_name?` · cap <code>${esc(r.cap_name)}</code>`:'')
+    +(r.checker_warning?` <span style="color:#f5a623">(checker: ${esc(r.checker_warning)})</span>`:'');
+  st.style.color='#00d4aa';
+  loadOnnxArtifacts();
+}
+
+async function loadOnnxArtifacts(){
+  const r=await callCap('ml.onnx.list');
+  const el=document.getElementById('onnx-artifacts');
+  if(!el) return;
+  const items=r?.artifacts||[];
+  if(!items.length){
+    const note=(r&&r.onnx===false)?'onnx not installed on the server':'No ONNX artifacts yet';
+    el.innerHTML=`<div class="empty">${esc(note)}</div>`; return;
+  }
+  el.innerHTML=items.map(a=>`
+    <div class="run-node-row">
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <span class="run-node-id">${esc(a.module_id||a.slug)}</span>
+        <span style="font-size:8px;color:var(--dim2)">${esc(a.dtype||'')} · ${a.size_kb??'?'}kb</span>
+      </div>
+      <div class="run-node-stats">${a.cap_name?esc(a.cap_name):'(no cap)'} · ${a.node_count??'?'} nodes</div>
+      <div style="display:flex;gap:5px;margin-top:4px">
+        <button class="tb-btn teal" onclick="verifyOnnx('${esc(a.module_id||a.slug)}','${esc(a.slug)}')" style="font-size:8.5px">Verify</button>
+        <button class="tb-btn rose" onclick="deleteOnnx('${esc(a.slug)}')" style="font-size:8.5px">Delete</button>
+      </div>
+      <div id="onnx-verify-${esc(a.slug)}" style="font-size:8.5px;color:var(--dim2);margin-top:3px"></div>
+    </div>`).join('');
+}
+
+async function verifyOnnx(moduleId, slug){
+  const el=document.getElementById('onnx-verify-'+slug);
+  if(el){ el.textContent='verifying…'; el.style.color='var(--dim2)'; }
+  const r=await callCap('ml.onnx.verify',{module_id:moduleId});
+  if(!el) return;
+  if(r?.error){ el.textContent='✗ '+r.error; el.style.color='#e05a6b'; return; }
+  const d=(r.max_abs_diff==null)?'n/a':r.max_abs_diff.toExponential(2);
+  el.textContent=`${r.passed?'✓ PASS':'✗ FAIL'} · max|Δ|=${d} · ${r.provider||''}`;
+  el.style.color=r.passed?'#00d4aa':'#e05a6b';
+}
+
+async function deleteOnnx(slug){
+  await callCap('ml.onnx.delete',{artifact:slug});
+  loadOnnxArtifacts();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // LLM / AI PANEL
 // ═══════════════════════════════════════════════════════════════════════════
 async function generateModule(){
@@ -1414,10 +1497,11 @@ function switchLeft(tab){
 }
 
 function switchRight(tab){
-  ['node','graph','run','llm'].forEach(t=>{
+  ['node','graph','run','llm','onnx'].forEach(t=>{
     document.getElementById('rpanel-'+t).style.display=t===tab?'':'none';
     document.getElementById('rtab-'+t).classList.toggle('active',t===tab);
   });
+  if(tab==='onnx') loadOnnxArtifacts();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,20 @@
+vera\accounts\accounts_capabilities.py:722 | ['0x1f464'] | register_ui( /     "accounts-panel", /     "Accounts",
+vera\accounts\accounts_capabilities.py:744 | ['0x1f6f0'] | register_ui( /     "comms-panel", /     "Comms",
+vera\calendar\calendar_capabilities.py:1566 | ['0x1f5d3'] | register_ui( /     "calendar-panel", /     "Calendar",
+vera\character\character_capabilities.py:954 | ['0x1f9da'] | register_ui( /     panel_id="character-studio", /     label="Companion",
+vera\dream\dream_capabilities.py:13437 | ['0x263e'] | register_ui( /     "dream-panel", /     "Dream",
+vera\elements\flow_builder_capabilities.py:124 | ['0x1f578'] | register_ui( /     panel_id="flow-builder", /     label="Flow Builder",
+vera\elements\general_widgets_capabilities.py:76 | ['0x1f4ac'] | register_ui( /     panel_id="chat-with-data", /     label="Chat with Data",
+vera\email\email_capabilities.py:707 | ['0x2709'] | register_ui( /     "email-panel", /     "Email",
+vera\ide\ide_inspect_capabilities.py:1582 | ['0x1f50d'] | register_ui( /     "ide-inspect-panel", "Source Inspection", "🔍", /     """<div style="height:100%;display:fle
+vera\images\image_fabric.py:193 | ['0x1f5bc'] | register_ui( /     panel_id="thumbnail-studio", /     label="Thumbnails",
+vera\markets\markets_capabilities.py:725 | ['0x1f4c8'] | register_ui( /         "markets", "Markets", "📈", /         """<div id="markets-mount" style="height:100%;disp
+vera\mesh\mesh_capabilities.py:1615 | ['0xfe0f', '0x1f6f0'] | register_ui( /         "mesh", "Mesh", "🛰️", /         """<div id="mesh-mount" style="height:100%;display:flex
+vera\networking\netgraph_capabilities.py:351 | ['0x1f578'] | register_ui( /     "netgraph-panel", /     "Net Policy",
+vera\provisioning\identity_capabilities.py:435 | ['0x1f194'] | register_ui( /     "identity-panel", /     "Identity",
+vera\provisioning\provisioning_capabilities.py:614 | ['0x1f6e1'] | register_ui( /     "provisioning-panel", /     "Security",
+vera\skills\skills.py:1311 | ['0x1f9e0'] | register_ui( /     "skills-editor", /     "Skills",
+vera\skills\skills.py:1654 | ['0x1f5c2'] | register_ui( /     "ontologies-browser", /     "Ontologies",
+vera\telegram\telegram_capabilities.py:1138 | ['0x2708'] | register_ui( /     "telegram-panel", /     "Telegram",
+vera\workers\observe_elements_capabilities.py:83 | ['0x26a1'] | register_ui( /     panel_id="live-event-stream", /     label="Live Event Stream",
+vera\workers\observe_elements_capabilities.py:141 | ['0x1f4cb'] | register_ui( /     panel_id="system-log", /     label="System Log",

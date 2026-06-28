@@ -67,7 +67,7 @@ tr:hover td{background:rgba(201,122,90,.05)}
 <div class="banner" id="banner">Loading proxy status…</div>
 
 <div class="kpi-row">
-  <div class="kpi"><div class="kpi-val" id="k-state">—</div><div class="kpi-sub">state</div></div>
+  <div class="kpi"><div class="kpi-val" id="k-state">—</div><div class="kpi-sub">routes to</div></div>
   <div class="kpi"><div class="kpi-val" id="k-active">0</div><div class="kpi-sub">active</div></div>
   <div class="kpi"><div class="kpi-val" id="k-queue">0</div><div class="kpi-sub">queued</div></div>
   <div class="kpi"><div class="kpi-val" id="k-conc">0</div><div class="kpi-sub">max concurrency</div></div>
@@ -78,6 +78,9 @@ tr:hover td{background:rgba(201,122,90,.05)}
 <div class="ctl">
   <button class="btn warn-btn" id="pause-btn" onclick="M.togglePause()">Pause</button>
   <span class="tb-sep"></span>
+  <label>Routing</label>
+  <button class="btn" id="gpu-btn" onclick="M.toggleGpu()" title="GPU-pinned: prefer GPU nodes. Load-aware: balance across all nodes.">—</button>
+  <span class="tb-sep"></span>
   <label>Max concurrency</label>
   <input id="conc-input" type="number" min="1" value="3">
   <button class="btn primary" onclick="M.applyConc()">Apply</button>
@@ -85,14 +88,15 @@ tr:hover td{background:rgba(201,122,90,.05)}
   <button class="btn err-btn" onclick="M.clearLog()">Clear log</button>
 </div>
 
-<div class="sec-title">Prompts &amp; jobs through the mimic</div>
+<div class="sec-title">Requests through the mimic proxy</div>
+<div class="banner" style="border-left-color:var(--acc);margin-bottom:8px">Shows only traffic that came through the <code>/ollama/api/*</code> proxy from external Ollama clients. Vera's own internal generation/embedding calls go direct to the cluster and are tracked in the <b>Ollama → Jobs</b> tab, not here.</div>
 <div class="tbl-wrap">
   <div class="inner">
     <table>
-      <thead><tr><th>Time</th><th>Model</th><th>Caller</th><th>Prompt</th><th>Elapsed</th><th>Status</th></tr></thead>
+      <thead><tr><th>Time</th><th>Model</th><th>Endpoint</th><th>Prompt</th></tr></thead>
       <tbody id="log-tbody"></tbody>
     </table>
-    <div class="empty" id="log-empty" style="display:none">No requests logged yet. Point an Ollama client at <code>/ollama</code> on this host, or run a capability that calls the cluster.</div>
+    <div class="empty" id="log-empty" style="display:none">No external proxy requests yet. Point an Ollama client at <code>http://&lt;this-host&gt;:8999/ollama</code> (instead of <code>:11434</code>) and its calls appear here.</div>
   </div>
 </div>
 
@@ -102,7 +106,7 @@ const M = (function(){
 const $ = id => document.getElementById(id);
 const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const fmt = n => (n||0).toLocaleString();
-let _paused=false, _timer=null, _auto=true;
+let _paused=false, _preferGpu=true, _timer=null, _auto=true;
 
 async function api(path, method='GET', body=null){
   const opts={method, headers:{'Content-Type':'application/json'}};
@@ -115,19 +119,22 @@ async function refresh(){
   try{
     const s=await api('/cluster/mimic/status');
     _paused=!!s.paused;
+    _preferGpu=!!s.prefer_gpu;
     const banner=$('banner');
-    if(!s.mounted){
+    const tgt=s.current_target||'(none)';
+    const nodes=(s.online_nodes||[]);
+    if(!nodes.length){
       banner.className='banner off';
-      banner.innerHTML='⛔ Mimic proxy <b>not mounted</b> — set the <code>LOCAL_OLLAMA_INSTANCE</code> env var (e.g. <code>gpu-250</code>) and restart Vera to expose <code>/ollama/*</code>.';
-      $('k-state').textContent='off'; $('k-state').style.color='var(--err)';
+      banner.innerHTML='⛔ No Ollama nodes online — the mimic is mounted but has nowhere to route. Check the cluster nodes.';
+      $('k-state').textContent='no node'; $('k-state').style.color='var(--err)';
     }else if(_paused){
       banner.className='banner paused';
-      banner.innerHTML='⏸ Mimic proxy is <b>paused</b> — incoming <code>/ollama/*</code> requests get 503. Targeting <b>'+esc(s.local_instance)+'</b>.';
+      banner.innerHTML='⏸ Mimic <b>paused</b> — incoming <code>/ollama/api/*</code> requests get 503.';
       $('k-state').textContent='paused'; $('k-state').style.color='var(--warn)';
     }else{
       banner.className='banner on';
-      banner.innerHTML='✓ Mimic proxy <b>active</b> on <code>/ollama/*</code> → <b>'+esc(s.local_instance)+'</b>. Clients use this host instead of :11434; every prompt is logged below.';
-      $('k-state').textContent='active'; $('k-state').style.color='var(--ok)';
+      banner.innerHTML='✓ Mimic <b>active</b> on <code>/ollama/api/*</code> · routing <b>'+esc(s.routing)+'</b> → would route to <b>'+esc(tgt)+'</b>. Online: '+esc(nodes.join(', '))+'. Clients use <code>http://&lt;host&gt;:8999/ollama</code> instead of <code>:11434</code>.';
+      $('k-state').textContent=tgt; $('k-state').style.color='var(--ok)';
     }
     $('k-active').textContent=fmt(s.active);
     $('k-queue').textContent=fmt(s.queue_depth)+' / '+fmt(s.queue_max);
@@ -136,6 +143,9 @@ async function refresh(){
     pb.textContent=_paused?'Resume':'Pause';
     pb.className='btn '+(_paused?'primary':'warn-btn');
     if(document.activeElement!==$('conc-input')) $('conc-input').value=s.max_concurrency;
+    const gb=$('gpu-btn');
+    gb.textContent=_preferGpu?'GPU-pinned':'Load-aware';
+    gb.className='btn '+(_preferGpu?'primary':'');
   }catch(e){ $('banner').className='banner off'; $('banner').textContent='Error: '+e.message; }
   await loadLog();
   $('ts').textContent='updated '+new Date().toLocaleTimeString();
@@ -148,23 +158,24 @@ async function loadLog(){
     const rows=j.entries||[];
     $('log-empty').style.display=rows.length?'none':'block';
     $('log-tbody').innerHTML=rows.map(r=>{
-      const st=(r.status||'').toLowerCase();
-      const cls=st==='ok'||st==='done'?'b-ok':(st==='error'||st==='timeout'?'b-err':'b-run');
       const t=(r.ts||'').replace('T',' ').slice(11,19);
-      const el=r.elapsed_s!=null?r.elapsed_s+'s':(r.duration!=null?r.duration+'s':'…');
+      const path=r.path?('/'+String(r.path).replace(/^\/+/,'')):'';
+      const prompt=r.prompt||r.prompt_preview||'';
       return `<tr>
         <td>${esc(t)}</td>
         <td>${esc(r.model||'')}</td>
-        <td>${esc(r.caller_file||r.caller||'')}</td>
-        <td class="prompt" title="${esc(r.prompt_preview||r.prompt||'')}">${esc(r.prompt_preview||r.prompt||'')}</td>
-        <td>${esc(el)}</td>
-        <td><span class="badge ${cls}">${esc(r.status||'?')}</span></td>
+        <td>${esc(path)}</td>
+        <td class="prompt" title="${esc(prompt)}">${esc(prompt)}</td>
       </tr>`;}).join('');
   }catch(e){ /* leave */ }
 }
 
 async function togglePause(){
   await api('/cluster/mimic/config','POST',{paused:!_paused});
+  refresh();
+}
+async function toggleGpu(){
+  await api('/cluster/mimic/config','POST',{prefer_gpu:!_preferGpu});
   refresh();
 }
 async function applyConc(){
@@ -186,8 +197,9 @@ function toggleAuto(){
 }
 
 window.addEventListener('DOMContentLoaded', ()=>{ refresh(); _timer=setInterval(refresh,5000); });
-return { refresh, togglePause, applyConc, clearLog, toggleAuto };
+return { refresh, togglePause, toggleGpu, applyConc, clearLog, toggleAuto };
 })();
 </script>
+<script src="/ui/vera-ui.js"></script>
 </body>
 </html>

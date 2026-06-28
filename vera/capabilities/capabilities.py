@@ -199,6 +199,20 @@ async def list_tts_voices(trace_id=None):
 
 # ── Stable Diffusion ──────────────────────────────────────────────────────────
 
+def _archive_image(image_b64: str, **meta):
+    """Fire-and-forget: persist a generated image into the data fabric via the
+    images.store cap (if that module is loaded). Never raises into the caller."""
+    if not image_b64:
+        return
+    try:
+        import Vera.vera.capability_orchestration as _orch
+        cap = _orch.CAPABILITY_REGISTRY.get("images.store")
+        if cap:
+            asyncio.ensure_future(cap["func"](image_b64=image_b64, **meta))
+    except Exception as e:
+        log.debug("image archive skipped: %s", e)
+
+
 @capability(
     "image.generate",
     http_method="POST", http_path="/image/generate", http_tags=["gpu", "sd", "image"],
@@ -218,6 +232,9 @@ async def image_generate(
     guidance:        float = 7.5,
     seed:            int   = -1,
     loras:           str   = "",   # e.g. "add_detail:0.8,skin_texture:0.6"
+    transparent:     bool  = False,# chroma-key the background out to alpha
+    bg_color:        str   = "",   # hex key colour; "" = default green
+    store:           bool  = True, # archive the result to the data fabric
     trace_id=None,
 ):
     # Parse loras string → list of {name, weight} dicts
@@ -237,6 +254,7 @@ async def image_generate(
         "width": width, "height": height,
         "steps": steps, "guidance": guidance,
         "loras": lora_list,
+        "transparent": transparent, "bg_color": bg_color,
     }
     if seed >= 0: body["seed"] = seed
 
@@ -245,11 +263,18 @@ async def image_generate(
             r = await c.post(f"{GPU_INFER_URL}/imagine", json=body)
             r.raise_for_status()
             data = r.json()
+        img_b64 = data.get("image_b64", "")
+        if store:
+            _archive_image(img_b64, prompt=prompt, negative_prompt=negative_prompt,
+                           seed=int(data.get("seed") or -1), device=data.get("device") or "",
+                           steps=steps, guidance=guidance, width=width, height=height,
+                           source="txt2img")
         return {
-            "image_b64": data.get("image_b64", ""),
+            "image_b64": img_b64,
             "mime_type": "image/png",
             "format":    data.get("format", "png"),
             "seed":      data.get("seed"),
+            "device":    data.get("device"),   # 'cuda' | 'cpu' (OOM fallback)
             "steps":     steps,
             "width":     width,
             "height":    height,
@@ -299,6 +324,9 @@ async def image_img2img(
     guidance:        float = 7.5,
     seed:            int   = -1,
     loras:           str   = "",
+    transparent:     bool  = False,# chroma-key the background out to alpha
+    bg_color:        str   = "",   # hex key colour; "" = default green
+    store:           bool  = True, # archive the result to the data fabric
     trace_id=None,
 ):
     lora_list = []
@@ -320,6 +348,7 @@ async def image_img2img(
         "width": width, "height": height,
         "steps": steps, "guidance": guidance,
         "loras": lora_list,
+        "transparent": transparent, "bg_color": bg_color,
     }
     if seed >= 0:
         body["seed"] = seed
@@ -329,11 +358,18 @@ async def image_img2img(
             r = await c.post(f"{GPU_INFER_URL}/img2img", json=body)
             r.raise_for_status()
             data = r.json()
+        img_b64 = data.get("image_b64", "")
+        if store:
+            _archive_image(img_b64, prompt=prompt, negative_prompt=negative_prompt,
+                           seed=int(data.get("seed") or -1), device=data.get("device") or "",
+                           steps=steps, guidance=guidance, width=width, height=height,
+                           source="img2img")
         return {
-            "image_b64": data.get("image_b64", ""),
+            "image_b64": img_b64,
             "mime_type": "image/png",
             "format":    data.get("format", "png"),
             "seed":      data.get("seed"),
+            "device":    data.get("device"),   # 'cuda' | 'cpu' (OOM fallback)
             "strength":  strength,
         }
     except Exception as e:
@@ -362,6 +398,76 @@ async def image_sd_capabilities(trace_id=None):
             "txt2img": True, "img2img": False, "controlnet": False,
             "talking_head": False, "error": str(e),
         }
+
+
+@capability(
+    "image.thumbnail",
+    http_method="POST", http_path="/image/thumbnail", http_tags=["gpu", "sd", "image"],
+    memory="on",
+    description="Generate a video-thumbnail-sized image with a text title/subtitle "
+                "overlaid (text is drawn with PIL on the GPU node, NOT by SD which can't "
+                "spell). Inputs: prompt, negative_prompt, preset "
+                "(youtube|youtube_hd|shorts|square|twitter|og) or width/height, steps, "
+                "guidance, seed, loras, title, subtitle, position (top|center|bottom), "
+                "text_color, stroke_color. Output: {image_b64, width, height, device}. "
+                "Archived to the data fabric (source=thumbnail).",
+)
+async def image_thumbnail(
+    prompt:          str,
+    negative_prompt: str   = "blurry, low quality, distorted",
+    preset:          str   = "youtube",
+    width:           int   = 0,
+    height:          int   = 0,
+    steps:           int   = 24,
+    guidance:        float = 7.5,
+    seed:            int   = -1,
+    loras:           str   = "",
+    title:           str   = "",
+    subtitle:        str   = "",
+    position:        str   = "bottom",
+    text_color:      str   = "#ffffff",
+    stroke_color:    str   = "#000000",
+    store:           bool  = True,
+    trace_id=None,
+):
+    lora_list = []
+    for part in (loras or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if ":" in part:
+            name, _, weight = part.partition(":")
+            lora_list.append({"name": name.strip(), "weight": float(weight.strip() or 1.0)})
+        else:
+            lora_list.append({"name": part, "weight": 1.0})
+
+    body = {
+        "prompt": prompt, "negative_prompt": negative_prompt,
+        "preset": preset, "width": width, "height": height,
+        "steps": steps, "guidance": guidance, "loras": lora_list,
+        "title": title, "subtitle": subtitle, "position": position,
+        "text_color": text_color, "stroke_color": stroke_color,
+    }
+    if seed >= 0:
+        body["seed"] = seed
+    try:
+        async with httpx.AsyncClient(timeout=300) as c:
+            r = await c.post(f"{GPU_INFER_URL}/thumbnail", json=body)
+            r.raise_for_status()
+            data = r.json()
+        img_b64 = data.get("image_b64", "")
+        if store and img_b64:
+            _archive_image(img_b64, prompt=(title + " — " + prompt).strip(" —"),
+                           negative_prompt=negative_prompt, seed=seed,
+                           device=data.get("device") or "",
+                           width=data.get("width") or width,
+                           height=data.get("height") or height, source="thumbnail")
+        return {"image_b64": img_b64, "mime_type": "image/png",
+                "width": data.get("width"), "height": data.get("height"),
+                "device": data.get("device"), "format": "png"}
+    except Exception as e:
+        log.error("image.thumbnail: %s", e)
+        return {"error": str(e), "image_b64": ""}
 
 
 # ── Chat + Speak (LLM → TTS fan-out) ─────────────────────────────────────────

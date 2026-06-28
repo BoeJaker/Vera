@@ -100,3 +100,31 @@ log.info(
     "agent-loop-output: registered as injectable element "
     "(<vera-agent-loop-output>); JS at /ui/elements/agent_loop_output.js"
 )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Companion: <vera-loop-graph> — a LIVE activity graph of the agentic loop.
+# Same event diet as <vera-agent-loop-output> (feed it appendEvent(ev)); it
+# streams run → step → phase/sub-step → cap → result nodes (+ skill/file
+# satellites) as the loop runs. JS served at /ui/elements/loop_graph.js
+# (ui_capabilities.py). Registered injectable so any panel can drop it in.
+# ─────────────────────────────────────────────────────────────────────────────
+_LOOP_GRAPH_INJECT_HTML = (
+    '<script id="vera-loop-graph-js-include" src="/ui/elements/loop_graph.js"></script>\n'
+    '<vera-loop-graph style="display:block;width:100%;height:100%"></vera-loop-graph>'
+)
+
+register_ui(
+    panel_id="loop-graph",
+    label="Loop Activity Graph",
+    icon="◫",
+    mode="inject",
+    tab_order=205,
+    html=_LOOP_GRAPH_INJECT_HTML,
+    ui_caps=[],
+)
+
+log.info(
+    "loop-graph: registered as injectable element "
+    "(<vera-loop-graph>); JS at /ui/elements/loop_graph.js"
+)

@@ -1876,6 +1876,10 @@ function fabRenderFieldVal(k,v){
   if(v===null||v===undefined)return'<em style="color:var(--dim2)">null</em>';
   if(typeof v==='boolean')return'<code style="color:var(--acc3)">'+v+'</code>';
   if(typeof v==='number')return'<code style="font-family:var(--mono);color:var(--acc3)">'+v+'</code>';
+  // Image URLs (absolute OR root-relative like /images/file/x.png) → inline preview
+  if(typeof v==='string'&&/^(https?:\/\/|\/)\S+\.(jpg|jpeg|png|gif|webp|svg)(\?.*)?$/i.test(v)){
+    return'<a href="'+esc(v)+'" target="_blank" class="lbadge">&#8599; image</a><br><img src="'+esc(v)+'" alt="" onerror="this.style.display=\'none\'" style="max-width:100%;max-height:180px;margin-top:4px;border-radius:3px">';
+  }
   if(typeof v==='string'&&/^https?:\/\/\S+/i.test(v)){
     var lbl=v.length>60?v.slice(0,57)+'…':v;
     if(/\.(jpg|jpeg|png|gif|webp|svg)(\?.*)?$/i.test(v))return'<a href="'+esc(v)+'" target="_blank" class="lbadge">&#8599; image</a><br><img src="'+esc(v)+'" alt="" onerror="this.style.display=\'none\'" style="max-width:100%;max-height:180px;margin-top:4px;border-radius:3px">';

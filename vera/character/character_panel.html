@@ -147,6 +147,10 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}
         <label style="min-width:auto">Steps</label>
         <input type="number" id="stepsIn" value="22" style="width:70px">
       </div>
+      <div class="row">
+        <label style="min-width:auto"><input type="checkbox" id="transpIn"> transparent bg (sprite)</label>
+        <input id="bgColorIn" placeholder="#1bd12a" style="width:90px" title="chroma-key colour (hex)">
+      </div>
       <button class="btn primary" style="width:100%" id="genBtn" onclick="generate()">⚡ Generate frames</button>
       <div class="status" id="genStatus"></div>
       <div class="muted" style="margin-top:4px">SD runs on CPU here — expect ~30–60s per frame.</div>
@@ -176,6 +180,35 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}
         <button class="btn" onclick="speakTest()">🔊 Speak</button>
       </div>
     </div>
+
+    <div class="card" style="max-width:420px">
+      <h2>Refine a state</h2>
+      <div class="muted" style="margin-bottom:6px">Regenerate one expression, preview it, then accept or reject. Edit the prompt to make each emotion distinct.</div>
+      <div class="row"><label>State</label>
+        <select id="refStateSel" onchange="loadRefinePrompt()"></select>
+        <label style="min-width:auto" title="img2img from the current frame — refine the existing look instead of a fresh take"><input type="checkbox" id="refEdit"> edit current</label>
+      </div>
+      <label>Expression prompt</label>
+      <textarea id="refPrompt" placeholder="vivid, exaggerated description of THIS emotion (face + body language)…"></textarea>
+      <div class="row" style="margin-top:6px">
+        <label style="min-width:auto">Seed</label>
+        <input type="number" id="refSeed" value="-1" style="width:80px">
+        <button class="btn" id="refBtn" onclick="regenPreview()">🎲 Regenerate</button>
+      </div>
+      <div class="status" id="refStatus"></div>
+      <div id="refCandidate" style="display:none;text-align:center;margin-top:6px">
+        <img id="refImg" alt="candidate" style="max-width:100%;max-height:240px;border:1px solid var(--border);border-radius:4px;background:repeating-conic-gradient(#2a2622 0% 25%,#1f1d1a 0% 50%) 0/16px 16px">
+        <div class="row" style="justify-content:center;margin-top:6px">
+          <button class="btn primary" onclick="acceptPreview()">✓ Accept</button>
+          <button class="btn danger" onclick="rejectPreview()">✗ Reject</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="max-width:420px">
+      <h2>History <span class="muted" style="font-weight:400">— saved to the fabric</span></h2>
+      <div id="historyStrip" style="display:flex;flex-wrap:wrap;gap:5px"><span class="muted">none yet</span></div>
+    </div>
   </div>
 </div>
 
@@ -185,7 +218,7 @@ const BASE=(window._veraBase||(window.parent&&window.parent._veraBase)||location
 const $=id=>document.getElementById(id);
 async function api(p,o){try{const r=await fetch(BASE+p,o);return await r.json();}catch(e){return{error:String(e)};}}
 const post=(p,b)=>api(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
-let CAPS=null, AGENTS=[];
+let CAPS=null, AGENTS=[], STUD_CHAR=null, REF_CAND=null;
 
 function showView(v){
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.view===v));
@@ -208,6 +241,7 @@ async function init(){
   }).join('');
   $('stateBtns').innerHTML=states.map(s=>`<button class="btn sm" onclick="prevState('${s}')">${s}</button>`).join('')
     +`<button class="btn sm" onclick="prevState('idle')">idle</button>`;
+  $('refStateSel').innerHTML=states.map(s=>`<option value="${s}">${s}</option>`).join('');
   // greyed render modes
   if(CAPS&&CAPS.render_modes){
     const live={}; CAPS.render_modes.forEach(m=>live[m.id]=m.live);
@@ -256,7 +290,8 @@ async function loadStudio(){
   const id=$('studAgent').value; if(!id)return;
   $('preview').setAgent(id);
   const c=await api('/character/get?agent_id='+encodeURIComponent(id));
-  if(c&&!c.error){
+  STUD_CHAR=(c&&!c.error)?c:null;
+  if(STUD_CHAR){
     $('studHasChar').textContent='✓ has a character ('+(c.states||[]).join(', ')+') · tier: '+(c.sd_tier_used||'—');
     if(c.base_prompt)$('baseIn').value=c.base_prompt;
     if(c.style)$('styleIn').value=c.style;
@@ -264,9 +299,11 @@ async function loadStudio(){
     if(c.voice)$('voiceIn').value=c.voice;
     $('bobIn').checked=c.idle_bob!==false; $('blinkIn').checked=c.idle_blink!==false;
     if(typeof c.seed==='number')$('seedIn').value=c.seed;
+    $('transpIn').checked=!!c.transparent; if(c.bg_color)$('bgColorIn').value=c.bg_color;
   }else{
     $('studHasChar').textContent='no character yet — describe & generate below';
   }
+  loadRefinePrompt(); loadHistory();
 }
 async function designLLM(){
   const d=$('descIn').value.trim(); if(!d){$('descStatus').textContent='Enter a description first.';return;}
@@ -289,6 +326,7 @@ async function generate(){
     agent_id:id, description:$('descIn').value, base_prompt:$('baseIn').value,
     style:$('styleIn').value, render_mode:$('modeIn').value, states:states.join(','),
     seed:parseInt($('seedIn').value||'-1',10), steps:parseInt($('stepsIn').value||'22',10),
+    transparent:$('transpIn').checked, bg_color:$('bgColorIn').value.trim(),
   };
   const r=await post('/character/generate',body);
   $('genBtn').disabled=false;
@@ -300,7 +338,8 @@ async function generate(){
     return;
   }
   $('genStatus').className='status ok';
-  $('genStatus').textContent='done — frames: '+frames.join(', ')+' (tier '+(r.sd_tier_used||'?')+')';
+  $('genStatus').textContent='done — frames: '+frames.join(', ')+' (tier '+(r.sd_tier_used||'?')
+    +(r.render_device?' · '+(r.render_device==='cpu'?'on CPU':r.render_device):'')+')';
   $('preview').reload(); loadStudio();
 }
 // Live progress via the event WS while the long generate request runs.
@@ -336,7 +375,62 @@ async function deleteChar(){
   $('behStatus').textContent=r.deleted?'deleted.':'nothing to delete';
   $('preview').reload(); loadStudio();
 }
+
+/* ── Per-state refine: regenerate → preview → accept/reject ── */
+function _esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function loadRefinePrompt(){
+  const st=$('refStateSel').value; if(!st)return;
+  const ep=(STUD_CHAR&&STUD_CHAR.expression_prompts)||{};
+  $('refPrompt').value=ep[st]||'';
+  rejectPreview();
+}
+async function regenPreview(){
+  const id=$('studAgent').value; const st=$('refStateSel').value;
+  if(!id){$('refStatus').className='status err';$('refStatus').textContent='Pick an agent.';return;}
+  $('refBtn').disabled=true; $('refCandidate').style.display='none';
+  $('refStatus').className='status warn'; $('refStatus').textContent='generating preview…';
+  const r=await post('/character/preview',{
+    agent_id:id, state:st, prompt_override:$('refPrompt').value.trim(),
+    base_prompt:$('baseIn').value, style:$('styleIn').value,
+    seed:parseInt($('refSeed').value||'-1',10), steps:parseInt($('stepsIn').value||'22',10),
+    transparent:$('transpIn').checked, bg_color:$('bgColorIn').value.trim(),
+    edit:$('refEdit').checked,
+  });
+  $('refBtn').disabled=false;
+  const err=r.error||r.detail;
+  if(err||!r.image_b64){$('refStatus').className='status err';$('refStatus').textContent=err||'no image (is SD loaded?)';return;}
+  REF_CAND={state:st, image_b64:r.image_b64};
+  $('refImg').src='data:image/png;base64,'+r.image_b64;
+  $('refCandidate').style.display='';
+  $('refStatus').className='status'; $('refStatus').textContent='preview '+st+(r.device?(' · '+r.device):'')+' — accept or reject';
+}
+async function acceptPreview(){
+  if(!REF_CAND)return;
+  const id=$('studAgent').value;
+  $('refStatus').className='status warn'; $('refStatus').textContent='saving…';
+  const r=await post('/character/commit_frame',{
+    agent_id:id, state:REF_CAND.state, image_b64:REF_CAND.image_b64,
+    prompt_override:$('refPrompt').value.trim(), base_prompt:$('baseIn').value,
+    style:$('styleIn').value, transparent:$('transpIn').checked, bg_color:$('bgColorIn').value.trim(),
+  });
+  if(r.error||r.detail){$('refStatus').className='status err';$('refStatus').textContent=r.error||r.detail;return;}
+  $('refStatus').className='status ok'; $('refStatus').textContent='saved '+REF_CAND.state+'.';
+  rejectPreview(); $('preview').reload(); loadStudio();
+}
+function rejectPreview(){ REF_CAND=null; $('refCandidate').style.display='none'; }
+async function loadHistory(){
+  const id=$('studAgent').value; if(!id)return;
+  const r=await api('/images/list?limit=24&agent_id='+encodeURIComponent(id));
+  const imgs=(r&&r.images)||[]; const strip=$('historyStrip');
+  if(!imgs.length){strip.innerHTML='<span class="muted">none yet</span>';return;}
+  strip.innerHTML=imgs.map(im=>{
+    const u=BASE+im.url;
+    const t=_esc((im.state||im.source||'')+' · '+(im.device||'')+' · '+(im.created_at||'').slice(0,19));
+    return `<a href="${u}" target="_blank" title="${t}"><img src="${u}" alt="" style="width:56px;height:56px;object-fit:cover;border:1px solid var(--border);border-radius:3px;background:repeating-conic-gradient(#2a2622 0% 25%,#1f1d1a 0% 50%) 0/10px 10px"></a>`;
+  }).join('');
+}
 init();
 </script>
+<script src="/ui/vera-ui.js"></script>
 </body>
 </html>

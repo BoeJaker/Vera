@@ -714,6 +714,62 @@ async def cap_docker_worker_spawn(
 
 
 @capability(
+    "docker.run",
+    http_method="POST", http_path="/workers/docker/run", http_tags=["docker"],
+    description="Deploy (docker run -d) an arbitrary container on a registered "
+                "Docker host. Sandbox-gated. Inputs: host_id (str!), image (str!), "
+                "name (str), ports (str — 'host:container,…' comma-sep), env (dict), "
+                "volumes (str — 'src:dst,…' comma-sep), network (str), restart "
+                "(str='unless-stopped'), extra_args (str), pull (bool=False — pull "
+                "the image first). Output: {ok, container_id, name, image, host_id}.",
+)
+async def cap_docker_run(
+    host_id: str = "", image: str = "", name: str = "", ports: str = "",
+    env: Optional[Dict[str, str]] = None, volumes: str = "", network: str = "",
+    restart: str = "unless-stopped", extra_args: str = "", pull: bool = False,
+    trace_id=None,
+) -> Dict:
+    rec = _get_host(host_id)
+    if not rec:
+        return {"ok": False, "error": f"unknown host: {host_id}"}
+    if not image:
+        return {"ok": False, "error": "image required"}
+    args = ["run", "-d"]
+    if name:
+        args += ["--name", name]
+    if restart:
+        args += ["--restart", restart]
+    for p in [x.strip() for x in (ports or "").split(",") if x.strip()]:
+        args += ["-p", p]
+    for v in [x.strip() for x in (volumes or "").split(",") if x.strip()]:
+        args += ["-v", v]
+    for k, val in (env or {}).items():
+        args += ["-e", f"{k}={val}"]
+    if network:
+        args += ["--network", network]
+    if extra_args:
+        args += shlex.split(extra_args)
+    args += [image]
+
+    argv = await _docker_argv(rec, args)
+    ok, reason = _sandbox_gate(" ".join(argv))
+    if not ok:
+        await emit_event({"type": "exec.sandbox.blocked", "shell": "docker.run", "reason": reason})
+        return {"ok": False, "blocked": True, "error": f"sandbox: {reason}"}
+
+    if pull:
+        await _run_local(await _docker_argv(rec, ["pull", image]), timeout=300)
+    res = await _run_local(argv, timeout=180)
+    if not res.get("ok"):
+        return {"ok": False, "error": res.get("stderr") or res.get("error") or "docker run failed",
+                "rc": res.get("rc"), "host_id": rec["id"]}
+    cid = (res.get("stdout", "") or "").strip().splitlines()[-1] if res.get("stdout") else ""
+    await emit_event({"type": "docker.container.run", "name": name, "image": image,
+                      "container_id": cid[:12], "host_id": rec["id"]})
+    return {"ok": True, "container_id": cid, "name": name, "image": image, "host_id": rec["id"]}
+
+
+@capability(
     "docker.worker.list",
     http_method="GET", http_path="/workers/docker/worker/list", http_tags=["docker", "workers"],
     memory="off",

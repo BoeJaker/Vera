@@ -33,6 +33,11 @@ onnx>=1.16               # graph builder for ml.export.onnx
 onnxruntime>=1.18        # CPU inference engine for ml.onnx.run / per-model caps
 # onnxruntime-gpu>=1.18  # use instead of onnxruntime on the CUDA GPU node
 # onnxruntime-directml>=1.18  # use instead on the Windows host (DirectML EP)
+# fastembed>=0.3         # §1 ONNX-Runtime embeddings (VERA_EMBED_PROVIDER=fastembed)
+#                        #  + §5 cross-encoder rerankers (nlp.rerank). Opt-in:
+#                        #  downloads model weights on first use; off by default.
+# optimum[onnxruntime]>=1.20  # §5 nlp.classify / nlp.ner (ONNX text/token classification)
+# transformers>=4.40          #  tokenizers + pipelines for the above (one-time torch export)
 
 # ── Optional (uncomment as needed) ──────────────────────
 # asyncssh>=2.14          # remote worker SSH provisioning

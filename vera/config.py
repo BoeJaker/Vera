@@ -156,9 +156,17 @@ class VeraConfig:
     OLLAMA_KEEP_ALIVE : str = os.getenv("OLLAMA_KEEP_ALIVE", "30m")
     OLLAMA_EMBED_URL  : str = os.getenv("OLLAMA_EMBED_URL","http://192.168.0.246:11435")
     OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL","nomic-embed-text")
+    # Embedding backend: "ollama" (default) or "fastembed" (ONNX Runtime, local
+    # CPU — §1 of ONNX_TODO.md). fastembed is opt-in: switching backends changes
+    # the vector space, so re-index before enabling it on populated stores.
+    EMBED_PROVIDER    : str = os.getenv("VERA_EMBED_PROVIDER", "ollama")
+    FASTEMBED_MODEL   : str = os.getenv("VERA_FASTEMBED_MODEL", "nomic-ai/nomic-embed-text-v1.5")
 
     # ── GPU inference server (Whisper / TTS / SD) ─────────────────────────────
     GPU_INFER_URL     : str = os.getenv("GPU_INFER_URL", "http://192.168.0.250:8765")
+    # Comma-separated edge ONNX Runtime servers (edge/onnx_runtime.py) — when set,
+    # the /cluster view advertises each node's providers + hosted ORT models.
+    ONNX_RUNTIME_URLS : str = os.getenv("ONNX_RUNTIME_URLS", "")
 
     # ── IDE / Projects ────────────────────────────────────────────────────────
     # Root directory where IDE workspaces/projects are stored.

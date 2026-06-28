@@ -393,13 +393,19 @@ def _build_model(module: dict, weights: dict, dtype: str) -> Tuple[Any, dict]:
         raise ValueError("module has no exportable output-producing node")
 
     inp = helper.make_tensor_value_info("input", onnx_dtype, ["batch", "features"])
-    out = helper.make_tensor_value_info(onnx_output, onnx_dtype, None)
+    # Supported subset always yields a rank-2 (batch, features) output; a
+    # symbolic shape keeps the checker happy without constraining batch size.
+    out = helper.make_tensor_value_info(onnx_output, onnx_dtype, ["batch", "out"])
     graph = helper.make_graph(b.nodes, _safe(module.get("id", "vera_module")),
                               [inp], [out], b.inits)
     model = helper.make_model(
         graph, opset_imports=[helper.make_operatorsetid("", OPSET)],
         producer_name="vera-ml-onnx",
     )
+    # Newer onnx stamps a higher IR version than older onnxruntime builds accept
+    # (e.g. onnx 1.22 → IR 13, but ORT <1.18 maxes at IR 10). Pin a conservative
+    # IR so artifacts load across the cluster's mixed ORT versions.
+    model.ir_version = int(os.getenv("ML_ONNX_IR_VERSION", "10"))
 
     checker_warning = None
     try:

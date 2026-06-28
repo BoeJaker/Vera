@@ -182,14 +182,20 @@ _SSH_STORE_PATH = Path(os.getenv(
     os.path.join(os.path.expanduser("~"), ".vera_ssh_hosts.json"),
 ))
 
-# Obfuscation key — NOT strong encryption. The store file should have 0600 perms.
-# For real secrets, use an env var or a proper secret manager.
+# SSH host credentials are sealed with Fernet (the shared vault used by Proxmox /
+# accounts / email — keyed by VERA_SECRET_KEY, never stored next to ciphertext).
+# Legacy records used a weak XOR "obfuscation"; the `_deobfuscate` reader still
+# decodes those transparently, and they upgrade to Fernet on the next save. The
+# field names (`password_obf` / `passphrase_obf`) are unchanged so every existing
+# call site keeps working — only the on-disk encoding changed.
+from Vera.vera.security import secrets as vsecrets
+
+# Legacy XOR key — retained ONLY to decode records written before the Fernet
+# migration. Never used for new writes.
 _OBF = "vera-exec-host-store-v1"
 
 
-def _obfuscate(s: str) -> str:
-    if not s:
-        return ""
+def _xor_obfuscate(s: str) -> str:
     import base64
     b = s.encode("utf-8")
     k = _OBF.encode("utf-8")
@@ -197,9 +203,7 @@ def _obfuscate(s: str) -> str:
     return base64.b64encode(out).decode("ascii")
 
 
-def _deobfuscate(s: str) -> str:
-    if not s:
-        return ""
+def _xor_deobfuscate(s: str) -> str:
     import base64
     try:
         raw = base64.b64decode(s.encode("ascii"))
@@ -207,11 +211,35 @@ def _deobfuscate(s: str) -> str:
         return bytes(c ^ k[i % len(k)] for i, c in enumerate(raw)).decode("utf-8")
     except Exception as _obf_err:
         log.warning(
-            "_deobfuscate: stored credential is corrupt or was saved with a "
+            "_xor_deobfuscate: stored credential is corrupt or was saved with a "
             "different key — returning empty string. Re-save the host "
             "credential to fix this. (%s)", _obf_err
         )
         return ""
+
+
+def _obfuscate(s: str) -> str:
+    """Seal a secret for storage (Fernet). Falls back to legacy XOR only if the
+    Fernet vault is unavailable, so saving a host never hard-fails."""
+    if not s:
+        return ""
+    try:
+        return vsecrets.seal(s)            # -> "fernet:…"
+    except Exception as e:
+        log.warning("SSH cred: Fernet seal unavailable (%s) — using legacy XOR. "
+                    "Install 'cryptography' / set VERA_SECRET_KEY for real "
+                    "encryption.", e)
+        return _xor_obfuscate(s)
+
+
+def _deobfuscate(s: str) -> str:
+    """Open a stored secret. Fernet tokens are decrypted; legacy XOR values are
+    decoded for backward compatibility."""
+    if not s:
+        return ""
+    if vsecrets.is_sealed(s):
+        return vsecrets.open_secret(s)
+    return _xor_deobfuscate(s)
 
 
 def _load_hosts_file() -> Dict[str, dict]:

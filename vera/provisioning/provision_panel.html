@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dusk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Vera / Provision</title>
+<style>
+:root{--bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;--border:#3a3530;--border2:#4a4540;--acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--acc4:#9e8fa0;--ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;--gpu:#c97a5a;--pmx:#e36b2d;--dkr:#2496ed;--text:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;--mono:'JetBrains Mono','Fira Mono',monospace;--sans:'Inter',system-ui,sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg0);color:var(--text);font:13px/1.45 'ui-monospace','Menlo',monospace}
+body{overflow:hidden}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,select{font:inherit;color:inherit;background:var(--bg0);border:1px solid var(--border);border-radius:5px;padding:7px 9px;outline:none;width:100%}
+input:focus,select:focus{border-color:var(--acc)}
+::-webkit-scrollbar{width:7px;height:7px}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px}
+#shell{display:flex;flex-direction:column;height:100vh;height:100dvh;overflow:hidden}
+#top{display:flex;align-items:center;gap:6px;padding:8px 12px 0;background:var(--bg1);border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap}
+.logo{color:var(--acc);font-weight:700;white-space:nowrap;margin-right:6px}
+.tab{padding:7px 14px;border:1px solid transparent;border-bottom:none;border-radius:6px 6px 0 0;color:var(--dim2);font-size:12px;font-weight:600;background:transparent}
+.tab:hover{color:var(--text)}
+.tab.on{color:var(--text);background:var(--bg0);border-color:var(--border)}
+.tab[data-t="proxmox"].on{color:var(--pmx)}.tab[data-t="docker"].on{color:var(--dkr)}.tab[data-t="creds"].on{color:var(--acc4)}
+.spacer{flex:1}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border-radius:6px;background:var(--bg3);border:1px solid var(--border2);color:var(--text);font-size:12px;white-space:nowrap;flex:0 0 auto}
+.btn:hover{border-color:var(--acc)}.btn.pri{background:var(--acc);border-color:var(--acc);color:#06121c;font-weight:700}
+.btn.sm{padding:5px 8px;font-size:11px}.btn.danger,.btn.err-btn{color:var(--err);border-color:var(--err)}.btn.warn-btn{color:var(--warn);border-color:var(--warn)}.btn:disabled{opacity:.4;cursor:not-allowed}
+#body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px;padding-bottom:60px}
+.pane{display:none}.pane.on{display:block}
+.wrap{max-width:1040px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:11px}
+.card h3{font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--dim2);display:flex;align-items:center;gap:8px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.row>input,.row>select{flex:1;min-width:120px}
+.field{display:flex;flex-direction:column;gap:4px}.field label{font-size:10px;color:var(--dim2);text-transform:uppercase}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.targ{background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:10px;cursor:pointer;display:flex;flex-direction:column;gap:4px}
+.targ:hover{border-color:var(--acc)}.targ.on{border-color:var(--acc);background:rgba(90,158,143,.08)}
+.targ .t{font-weight:700;color:var(--text)}.targ .d{font-size:10px;color:var(--dim2);line-height:1.35}
+.det{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:6px}
+.det .k{font-size:9px;color:var(--dim);text-transform:uppercase}.det .v{font-size:12px;color:var(--text);word-break:break-word}
+.det .v.ok{color:var(--ok)}.det .v.no{color:var(--dim2)}.det .v.gpu{color:var(--gpu)}
+.chk{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text)}.chk input{width:auto}
+.mono,.out{background:#000;border:1px solid var(--border);border-radius:6px;padding:9px;font-size:10.5px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow:auto;display:none}
+.hint{font-size:10.5px;color:var(--dim2);line-height:1.5}
+table{width:100%;border-collapse:collapse;font-size:11px}
+th{font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);padding:6px 8px;text-align:left;border-bottom:1px solid var(--border);font-weight:700;position:sticky;top:0;background:var(--bg2)}
+td{padding:6px 8px;border-bottom:1px solid rgba(58,53,48,.4);color:var(--text);vertical-align:middle}
+tr:hover td{background:rgba(255,255,255,.02)}
+.tbl{background:var(--bg1);border:1px solid var(--border);border-radius:8px;overflow:hidden}.tbl .inner{max-height:360px;overflow:auto}
+.badge{font-size:8.5px;padding:1px 7px;border-radius:8px;font-weight:700}
+.b-run{background:rgba(109,184,122,.12);color:var(--ok)}.b-stop{background:rgba(201,107,107,.12);color:var(--err)}
+.b-tpl{background:rgba(158,143,160,.14);color:var(--acc4)}.b-lxc{background:rgba(143,184,122,.12);color:var(--acc2)}.b-qemu{background:rgba(201,122,90,.14);color:var(--gpu)}
+.rowact{display:flex;gap:3px;flex-wrap:wrap}
+.empty{padding:16px;text-align:center;color:var(--dim);font-size:11px}
+#modal,#gmodal{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.55);display:none}
+#modal .sheet,#gmodal .sheet{position:absolute;top:0;right:0;height:100%;width:430px;max-width:94%;background:var(--bg1);border-left:1px solid var(--border2);display:flex;flex-direction:column}
+#modal .hd,#gmodal .hd{display:flex;align-items:center;gap:8px;padding:13px;border-bottom:1px solid var(--border);font-weight:700}
+#modal .bd,#gmodal .bd{padding:14px;overflow-y:auto;display:flex;flex-direction:column;gap:11px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:60;background:var(--bg3);border:1px solid var(--border2);padding:10px 16px;border-radius:8px;font-size:12px;opacity:0;transition:.2s;pointer-events:none}
+.toast.on{opacity:1}.toast.err{border-color:var(--err);color:var(--err)}.toast.ok{border-color:var(--ok)}
+</style>
+<script src="/ui/vera-ui.js"></script>
+</head>
+<body>
+<div id="shell">
+  <div id="top">
+    <span class="logo">⤓ Provision</span>
+    <button class="tab on" data-t="install" onclick="showTab('install')">Install</button>
+    <button class="tab" data-t="proxmox" onclick="showTab('proxmox')">Proxmox</button>
+    <button class="tab" data-t="creds" onclick="showTab('creds')">Credentials</button>
+    <button class="tab" data-t="docker" onclick="showTab('docker')">Docker</button>
+    <span class="spacer"></span>
+    <span id="ts" class="hint" style="margin-right:6px"></span>
+  </div>
+
+  <div id="body">
+
+    <!-- ══ INSTALL ════════════════════════════════════════════════════════ -->
+    <div class="pane on" id="pane-install"><div class="wrap">
+      <div class="card">
+        <h3>Install runtime over SSH</h3>
+        <div class="row">
+          <select id="hostSel" onchange="onHost()" style="flex:2"></select>
+          <button class="btn sm" onclick="refresh()">⟳</button>
+          <button class="btn sm" onclick="detect()" id="detectBtn" disabled>Detect</button>
+          <button class="btn sm pri" onclick="hostOpen()">+ SSH host</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Host detection <span id="det-host" class="hint" style="margin-left:auto;text-transform:none"></span></h3>
+        <div class="det" id="det"><span class="hint">Pick a host and press <b>Detect</b> to probe its OS, GPU and installed runtimes.</span></div>
+      </div>
+      <div class="card">
+        <h3>Install a runtime</h3>
+        <div class="grid" id="targets"><span class="hint">loading targets…</span></div>
+        <div class="row">
+          <div class="field" style="max-width:120px"><label>Port</label><input id="port" type="number" placeholder="auto"></div>
+          <div class="field" id="modelField" style="display:none;flex:2"><label>vLLM model (HF id or path)</label><input id="model" placeholder="e.g. Qwen/Qwen2.5-7B-Instruct"></div>
+          <div style="display:flex;flex-direction:column;gap:6px;justify-content:flex-end;padding-bottom:2px">
+            <label class="chk"><input type="checkbox" id="sudo" checked> use sudo</label>
+            <label class="chk"><input type="checkbox" id="gpu"> GPU node</label>
+            <label class="chk"><input type="checkbox" id="connect" checked> connect after install</label>
+          </div>
+        </div>
+        <div class="row"><button class="btn pri" id="goBtn" onclick="go()" disabled>Install &amp; Connect</button><span id="goNote" class="hint"></span></div>
+        <div class="hint">Installs run over SSH on the selected host using its stored credentials. Ollama binds to <b>0.0.0.0</b> and registers as a cluster node; Docker registers as an SSH-managed host; vLLM installs into <b>~/.vera/vllm</b>.</div>
+        <pre class="mono" id="log"></pre>
+      </div>
+    </div></div>
+
+    <!-- ══ PROXMOX ════════════════════════════════════════════════════════ -->
+    <div class="pane" id="pane-proxmox"><div class="wrap">
+      <div class="card">
+        <h3 style="color:var(--pmx)">Proxmox CTs &amp; VMs
+          <span class="spacer"></span>
+          <select id="px-cluster" onchange="pxLoad()" style="width:auto;min-width:130px"></select>
+          <button class="btn sm" onclick="pxLoad()">⟳</button>
+          <button class="btn sm pri" onclick="pxOpenCreate()">+ Create</button>
+        </h3>
+        <span id="px-counts" class="hint"></span>
+        <div class="tbl"><div class="inner">
+          <table><thead><tr><th>VMID</th><th>Name</th><th>Type</th><th>Node</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody id="px-tbody"><tr><td colspan="6" class="empty">Select a cluster…</td></tr></tbody></table>
+        </div></div>
+        <pre class="out" id="px-out"></pre>
+      </div>
+    </div></div>
+
+    <!-- ══ CREDENTIALS ════════════════════════════════════════════════════ -->
+    <div class="pane" id="pane-creds"><div class="wrap">
+      <div class="card">
+        <h3 style="color:var(--acc4)">Host credentials
+          <span class="spacer"></span>
+          <button class="btn sm" onclick="credLoad()">⟳</button>
+          <button class="btn sm pri" onclick="hostOpen()">+ Add host</button>
+        </h3>
+        <span class="hint">User/password (or key) per host — sealed with Fernet, shared by provisioning, install &amp; terminal. Enroll Proxmox guests from the Proxmox tab to add them here automatically.</span>
+        <div class="tbl"><div class="inner">
+          <table><thead><tr><th>Label</th><th>Host</th><th>User</th><th>Auth</th><th>Secret</th><th>Tags</th><th>Actions</th></tr></thead>
+          <tbody id="cred-tbody"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody></table>
+        </div></div>
+        <pre class="out" id="cred-out"></pre>
+      </div>
+    </div></div>
+
+    <!-- ══ DOCKER ═════════════════════════════════════════════════════════ -->
+    <div class="pane" id="pane-docker"><div class="wrap">
+      <div class="card">
+        <h3 style="color:var(--dkr)">Docker connections
+          <span class="spacer"></span>
+          <button class="btn sm" onclick="dkLoad()">⟳</button>
+          <button class="btn sm pri" onclick="dkOpenConn()">+ Add connection</button>
+        </h3>
+        <span class="hint">Multiple connections: local · tcp · ssh (Kubernetes coming later).</span>
+        <div class="tbl"><div class="inner">
+          <table><thead><tr><th>Label</th><th>Kind</th><th>Endpoint</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody id="dk-conn-tbody"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody></table>
+        </div></div>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--dkr)">Containers <span id="dk-host-label" class="hint" style="text-transform:none"></span>
+          <span class="spacer"></span>
+          <button class="btn sm pri" onclick="dkOpenRun()">+ Deploy</button>
+        </h3>
+        <div class="tbl"><div class="inner">
+          <table><thead><tr><th>Name</th><th>Image</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody id="dk-ps-tbody"><tr><td colspan="4" class="empty">Select a connection above.</td></tr></tbody></table>
+        </div></div>
+        <pre class="out" id="dk-out"></pre>
+      </div>
+    </div></div>
+
+  </div>
+</div>
+
+<!-- Add SSH host (shared by Install + Credentials) -->
+<div id="modal"><div class="sheet">
+  <div class="hd"><b style="color:var(--acc)">Add SSH host</b><span class="spacer"></span><button class="btn sm" onclick="hostClose()">✕</button></div>
+  <div class="bd">
+    <div class="field"><label>Label</label><input id="h-label" placeholder="gpu-node-01"></div>
+    <div class="row"><div class="field" style="flex:2"><label>Host / IP</label><input id="h-host" placeholder="192.168.0.20"></div>
+      <div class="field" style="max-width:90px"><label>Port</label><input id="h-port" type="number" value="22"></div></div>
+    <div class="field"><label>User</label><input id="h-user" placeholder="root"></div>
+    <div class="field"><label>Auth</label><select id="h-auth" onchange="hostAuth()">
+      <option value="password">password</option><option value="key">private key (path on Vera host)</option></select></div>
+    <div class="field" id="h-pw-field"><label>Password</label><input id="h-pw" type="password" placeholder="••••••"></div>
+    <div class="field" id="h-key-field" style="display:none"><label>Key path</label><input id="h-key" placeholder="/home/vera/.ssh/id_ed25519"></div>
+    <div class="row"><button class="btn pri" onclick="hostSave()">Save host</button><button class="btn" onclick="hostClose()">Cancel</button></div>
+    <div class="hint">Stored in Vera's SSH host registry (shared with remote exec &amp; SSH-managed Docker). Passwords are sealed with Fernet at rest.</div>
+  </div>
+</div></div>
+
+<!-- Generic dialog (Proxmox / Docker) -->
+<div id="gmodal"><div class="sheet">
+  <div class="hd"><b id="gm-title" style="color:var(--acc)">—</b><span class="spacer"></span><button class="btn sm" onclick="gmClose()">✕</button></div>
+  <div class="bd" id="gm-body"></div>
+</div></div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const BASE=location.origin;
+let _hosts=[], _targets=[], _target='';
+let _cluster='', _guests=[], _nodes=[], _storage=[], _dkHost='', _dkLabel='', _creds=[];
+
+async function api(path,method,body){
+  const o={method:method||'GET',headers:{'Content-Type':'application/json'}};
+  if(body) o.body=JSON.stringify(body);
+  let r,j={};
+  try{ r=await fetch(BASE+path,o); }catch(e){ return {error:String(e)}; }
+  try{ j=await r.json(); }catch(e){}
+  if(r && !r.ok && !j.error) j.error='HTTP '+r.status;
+  return j;
+}
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function toast(msg,kind){const t=document.getElementById('toast');t.textContent=msg;t.className='toast on'+(kind?' '+kind:'');setTimeout(()=>t.className='toast',2600);}
+function $(id){return document.getElementById(id);}
+function out(id,text){const o=$(id);o.style.display='block';o.textContent=text;}
+function showTab(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.t===name));
+  document.querySelectorAll('.pane').forEach(p=>p.classList.toggle('on',p.id==='pane-'+name));
+  if(name==='proxmox' && !_cluster) pxInit();
+  if(name==='creds') credLoad();
+  if(name==='docker') dkLoad();
+}
+function gm(title,html){ $('gm-title').textContent=title; $('gm-body').innerHTML=html; $('gmodal').style.display='block'; }
+function gmClose(){ $('gmodal').style.display='none'; }
+
+// ── INSTALL (existing) ───────────────────────────────────────────────────────
+async function refresh(){
+  const j=await api('/exec/ssh/hosts');
+  _hosts=(j&&j.hosts)||[];
+  const sel=$('hostSel');
+  sel.innerHTML=_hosts.length
+    ? _hosts.map(h=>'<option value="'+esc(h.id)+'">'+esc(h.label||(h.user+'@'+h.host))+'</option>').join('')
+    : '<option value="">no SSH hosts — add one →</option>';
+  onHost();
+  if(!_targets.length){ const t=await api('/provision/targets'); _targets=(t&&t.targets)||[]; renderTargets(); }
+}
+function curHost(){ return _hosts.find(h=>h.id===$('hostSel').value); }
+function onHost(){
+  const h=curHost();
+  $('detectBtn').disabled=!h; $('goBtn').disabled=!h||!_target;
+  $('det').innerHTML='<span class="hint">Press <b>Detect</b> to probe '+(h?esc(h.label||h.host):'this host')+'.</span>';
+  $('det-host').textContent=h?(h.user+'@'+h.host+':'+(h.port||22)):'';
+}
+function renderTargets(){
+  $('targets').innerHTML=_targets.map(t=>
+    '<div class="targ" data-k="'+esc(t.key)+'" onclick="pickTarget(\''+esc(t.key)+'\')"><div class="t">'+esc(t.label)+'</div><div class="d">'+esc(t.desc)+'</div></div>').join('');
+}
+function pickTarget(k){
+  _target=k;
+  document.querySelectorAll('.targ').forEach(e=>e.classList.toggle('on',e.dataset.k===k));
+  $('modelField').style.display=(k==='vllm')?'':'none';
+  $('goBtn').disabled=!curHost()||!k;
+  const t=_targets.find(x=>x.key===k)||{};
+  $('goBtn').textContent=(t.register?'Install & Connect':'Install');
+  $('goNote').textContent=t.register?'':'(this target has nothing to register)';
+}
+async function detect(){
+  const h=curHost(); if(!h) return;
+  $('det').innerHTML='<span class="hint">probing '+esc(h.host)+'…</span>';
+  const r=await api('/provision/detect','POST',{host_id:h.id});
+  if(!r.ok){ $('det').innerHTML='<span class="hint" style="color:var(--err)">'+esc(r.error||'probe failed')+'</span>'; return; }
+  const i=r.info||{};
+  const cell=(k,v,cls)=>'<div><div class="k">'+k+'</div><div class="v '+(cls||'')+'">'+esc(v||'—')+'</div></div>';
+  const yn=v=>(v&&v!=='no'&&v!=='none')?'ok':'no';
+  $('det').innerHTML=cell('OS',i.os)+cell('Kernel',i.kernel)+cell('Arch',i.arch)+cell('Pkg mgr',i.pkg)
+    +cell('sudo',i.sudo,yn(i.sudo))+cell('GPU',i.gpu,i.gpu&&i.gpu!=='none'?'gpu':'no')
+    +cell('Docker',i.docker,yn(i.docker))+cell('Ollama',i.ollama,yn(i.ollama))
+    +cell('vLLM',i.vllm,yn(i.vllm))+cell('Python',i.python,yn(i.python));
+}
+async function go(){
+  const h=curHost(); if(!h||!_target) return;
+  const body={host_id:h.id,target:_target,sudo:$('sudo').checked,has_gpu:$('gpu').checked,connect:$('connect').checked};
+  const p=parseInt($('port').value,10); if(p) body.port=p;
+  if(_target==='vllm' && $('model').value.trim()) body.serve_model=$('model').value.trim();
+  const log=$('log'); log.style.display='block';
+  log.textContent='▶ Installing '+_target+' on '+h.host+' …\n(this can take several minutes)\n';
+  $('goBtn').disabled=true;
+  const r=await api('/provision/run','POST',body);
+  let o='';
+  if(r.install){ o+='── install ──\nrc='+r.install.rc+'  done='+r.install.done+'\n'+(r.install.log||r.install.error||'')+'\n\n'; }
+  if(r.serve){ o+='── vllm serve ──\n'+(r.serve.ok?'started on :'+r.serve.port:('failed: '+(r.serve.error||'')))+'\n\n'; }
+  if(r.connect){ o+='── connect ──\n'+(r.connect.ok?('registered '+r.connect.kind+' → '+(r.connect.url||r.connect.id)):('failed: '+(r.connect.error||'')))+'\n'; }
+  if(r.error) o+='\nERROR: '+r.error+'\n';
+  log.textContent=o||JSON.stringify(r,null,2);
+  $('goBtn').disabled=false;
+  toast(r.ok?('Provisioned '+_target):'Provision incomplete — see log', r.ok?'ok':'err');
+}
+// Add SSH host modal (shared)
+function hostOpen(){ $('h-label').value='';$('h-host').value='';$('h-user').value='';$('h-pw').value='';$('h-key').value=''; $('modal').style.display='block'; }
+function hostClose(){ $('modal').style.display='none'; }
+function hostAuth(){ const k=$('h-auth').value==='key'; $('h-key-field').style.display=k?'':'none'; $('h-pw-field').style.display=k?'none':''; }
+async function hostSave(){
+  const body={host:$('h-host').value.trim(),user:$('h-user').value.trim(),port:parseInt($('h-port').value,10)||22,
+    label:$('h-label').value.trim(),auth:$('h-auth').value};
+  if($('h-auth').value==='key') body.key_path=$('h-key').value.trim(); else body.password=$('h-pw').value;
+  if(!body.host||!body.user){ toast('host and user required','err'); return; }
+  const r=await api('/exec/ssh/hosts/save','POST',body);
+  if(r&&r.ok){ toast('Host saved','ok'); hostClose(); await refresh(); credLoad();
+    const id=(r.host||{}).id; if(id){ $('hostSel').value=id; onHost(); } }
+  else toast(r.error||'save failed','err');
+}
+
+// ── PROXMOX ──────────────────────────────────────────────────────────────────
+async function pxInit(){
+  const j=await api('/proxmox/cluster/list'); const cs=j.clusters||[];
+  const sel=$('px-cluster');
+  sel.innerHTML=cs.map(c=>'<option value="'+esc(c.id)+'">'+esc(c.label||c.id)+'</option>').join('')||'<option value="">(none)</option>';
+  if(cs.length){ _cluster=sel.value; pxLoad(); }
+  else $('px-tbody').innerHTML='<tr><td colspan="6" class="empty">No Proxmox clusters configured — add one in the Proxmox panel first.</td></tr>';
+}
+async function pxLoad(){
+  _cluster=$('px-cluster').value; if(!_cluster) return;
+  $('ts').textContent='loading…';
+  const s=await api('/proxmox/status','POST',{cluster_id:_cluster});
+  if(s.error){ $('px-tbody').innerHTML='<tr><td colspan="6" class="empty">'+esc(s.error)+'</td></tr>'; $('ts').textContent=''; return; }
+  _guests=s.guests||[]; _nodes=s.nodes||[]; _storage=s.storage||[];
+  const c=s.counts||{}; $('px-counts').textContent=(c.nodes||0)+' nodes · '+(c.guests||0)+' guests · '+(c.running||0)+' running';
+  $('px-tbody').innerHTML=_guests.map(g=>{
+    const tpl=g.template?' <span class="badge b-tpl">TPL</span>':'';
+    const st=g.status==='running'?'<span class="badge b-run">running</span>':'<span class="badge b-stop">'+esc(g.status)+'</span>';
+    const tcls=g.type==='lxc'?'b-lxc':'b-qemu';
+    const A=[];
+    if(g.status==='running'){
+      A.push(B("pxAct('"+g.node+"','"+g.type+"',"+g.vmid+",'shutdown')",'warn-btn','Stop'));
+      A.push(B("pxAct('"+g.node+"','"+g.type+"',"+g.vmid+",'reboot')",'','Reboot'));
+      A.push(B("pxEnroll('"+g.node+"','"+g.type+"',"+g.vmid+",'"+esc(g.name)+"')",'','Enroll'));
+    }else{
+      A.push(B("pxAct('"+g.node+"','"+g.type+"',"+g.vmid+",'start')",'','Start'));
+      A.push(B("pxClone('"+g.node+"','"+g.type+"',"+g.vmid+",'"+esc(g.name)+"')",'','Clone'));
+      A.push(B("pxDestroy('"+g.node+"','"+g.type+"',"+g.vmid+",'"+esc(g.name)+"')",'err-btn','Destroy'));
+    }
+    return '<tr><td>'+g.vmid+'</td><td>'+esc(g.name)+tpl+'</td><td><span class="badge '+tcls+'">'+esc(g.type)+'</span></td><td>'+esc(g.node)+'</td><td>'+st+'</td><td><div class="rowact">'+A.join('')+'</div></td></tr>';
+  }).join('')||'<tr><td colspan="6" class="empty">No guests.</td></tr>';
+  $('ts').textContent='updated '+new Date().toLocaleTimeString();
+}
+function B(onclick,cls,label){ return '<button class="btn sm '+cls+'" onclick="'+onclick+'">'+label+'</button>'; }
+async function pxAct(node,type,vmid,action){
+  out('px-out',action+' '+type+' '+vmid+'…');
+  const r=await api('/proxmox/guest/action','POST',{cluster_id:_cluster,node,guest_type:type,vmid,action});
+  out('px-out',r.error?('✗ '+r.error):('✓ '+action+' queued')); if(!r.error) setTimeout(pxLoad,1500);
+}
+async function pxDestroy(node,type,vmid,name){
+  if(!confirm('PERMANENTLY destroy '+type+' '+vmid+' ('+name+')? Deletes the guest and its disks.')) return;
+  out('px-out','destroying '+vmid+'…');
+  const r=await api('/proxmox/guest/destroy','POST',{cluster_id:_cluster,node,guest_type:type,vmid,purge:true});
+  out('px-out',r.error?('✗ '+r.error):'✓ destroy queued'); if(!r.error) setTimeout(pxLoad,1500);
+}
+function pxClone(node,type,vmid,name){
+  gm('Clone '+type+' '+vmid,
+    '<div class="field"><label>New name</label><input id="m-name" value="'+esc(name)+'-clone"></div>'
+    +'<div class="grid2"><div class="field"><label>New VMID (blank=auto)</label><input id="m-newid" placeholder="auto"></div>'
+    +'<div class="field"><label>Full clone</label><select id="m-full"><option value="1">Full</option><option value="0">Linked</option></select></div></div>'
+    +'<div class="row"><button class="btn pri" onclick="pxCloneGo(\''+node+'\',\''+type+'\','+vmid+')">Clone</button><button class="btn" onclick="gmClose()">Cancel</button></div>');
+}
+async function pxCloneGo(node,type,vmid){
+  const body={cluster_id:_cluster,node,guest_type:type,vmid,name:$('m-name').value.trim(),newid:parseInt($('m-newid').value)||0,full:$('m-full').value==='1'};
+  gmClose(); out('px-out','cloning…');
+  const r=await api('/proxmox/guest/clone','POST',body);
+  out('px-out',r.error?('✗ '+r.error):('✓ clone → VMID '+r.newid)); if(!r.error) setTimeout(pxLoad,2000);
+}
+function pxOpenCreate(){
+  const nodeOpts=_nodes.map(n=>'<option value="'+esc(n.node)+'">'+esc(n.node)+'</option>').join('');
+  const tplOpts=_guests.filter(g=>g.template).map(g=>'<option value="'+g.node+'|'+g.type+'|'+g.vmid+'">'+esc(g.name)+' ('+g.vmid+', '+g.node+')</option>').join('');
+  const stOpts=[...new Set(_storage.map(s=>s.storage))].map(s=>'<option value="'+esc(s)+'">'+esc(s)+'</option>').join('');
+  gm('Create CT / VM',
+    '<div class="field"><label>Method</label><select id="m-method" onchange="pxMethodSwap()"><option value="clone">Clone a template</option><option value="lxc">New LXC from OS template</option></select></div>'
+    +'<div id="m-clone-box"><div class="field"><label>Template</label><select id="m-tpl">'+(tplOpts||'<option value="">— no templates found —</option>')+'</select></div>'
+    +'<div class="grid2"><div class="field"><label>New name</label><input id="m-cname" placeholder="my-ct"></div><div class="field"><label>New VMID</label><input id="m-cnewid" placeholder="auto"></div></div></div>'
+    +'<div id="m-lxc-box" style="display:none"><div class="grid2"><div class="field"><label>Node</label><select id="m-node">'+nodeOpts+'</select></div><div class="field"><label>Storage</label><select id="m-storage">'+stOpts+'</select></div></div>'
+    +'<div class="field"><label>OS template (volid)</label><div class="row"><input id="m-ostpl" placeholder="local:vztmpl/debian-12-…tar.zst" style="flex:1"><button class="btn sm" onclick="pxListTpl()">List</button></div></div>'
+    +'<select id="m-ostpl-sel" style="display:none" onchange="$(\'m-ostpl\').value=this.value"></select>'
+    +'<div class="grid2"><div class="field"><label>Hostname</label><input id="m-host" placeholder="my-ct"></div><div class="field"><label>Root password</label><input id="m-pass" type="password"></div></div>'
+    +'<div class="grid3"><div class="field"><label>Cores</label><input id="m-cores" value="1"></div><div class="field"><label>Memory MB</label><input id="m-mem" value="512"></div><div class="field"><label>Disk GB</label><input id="m-disk" value="8"></div></div></div>'
+    +'<div class="row"><button class="btn pri" onclick="pxCreateGo()">Create</button><button class="btn" onclick="gmClose()">Cancel</button></div>');
+}
+function pxMethodSwap(){ const m=$('m-method').value; $('m-clone-box').style.display=m==='clone'?'block':'none'; $('m-lxc-box').style.display=m==='lxc'?'block':'none'; }
+async function pxListTpl(){
+  const r=await api('/proxmox/storage/content','POST',{cluster_id:_cluster,node:$('m-node').value,storage:$('m-storage').value,content:'vztmpl'});
+  const items=r.items||[]; if(!items.length){ toast('No templates on that storage','err'); return; }
+  const sel=$('m-ostpl-sel'); sel.style.display='block';
+  sel.innerHTML='<option value="">— pick template —</option>'+items.map(i=>'<option value="'+esc(i.volid)+'">'+esc(i.volid)+'</option>').join('');
+}
+async function pxCreateGo(){
+  const m=$('m-method').value; out('px-out','creating…'); gmClose(); let r;
+  if(m==='clone'){
+    const parts=$('m-tpl').value.split('|'); if(!parts[0]) return out('px-out','✗ no template selected');
+    r=await api('/proxmox/guest/clone','POST',{cluster_id:_cluster,node:parts[0],guest_type:parts[1],vmid:parseInt(parts[2]),name:$('m-cname').value.trim(),newid:parseInt($('m-cnewid').value)||0,full:true});
+  }else{
+    r=await api('/proxmox/lxc/create','POST',{cluster_id:_cluster,node:$('m-node').value,ostemplate:$('m-ostpl').value.trim(),hostname:$('m-host').value.trim(),storage:$('m-storage').value,cores:parseInt($('m-cores').value)||1,memory:parseInt($('m-mem').value)||512,disk:parseInt($('m-disk').value)||8,password:$('m-pass').value,start:true});
+  }
+  out('px-out',r.error?('✗ '+r.error):('✓ created VMID '+(r.newid||r.vmid))); if(!r.error) setTimeout(pxLoad,2500);
+}
+function pxEnroll(node,type,vmid,name){
+  gm('Enroll '+type+' '+vmid+' as SSH host',
+    '<div class="hint">Registers this guest in the shared host-credential store (used by provisioning + terminal). Vera auto-detects the IP where possible.</div>'
+    +'<div class="grid2"><div class="field"><label>User</label><input id="m-euser" value="root"></div><div class="field"><label>IP (blank=auto)</label><input id="m-eip" placeholder="auto-detect"></div></div>'
+    +'<div class="field"><label>Password</label><input id="m-epass" type="password" placeholder="(or use a key path below)"></div>'
+    +'<div class="field"><label>Key path (optional)</label><input id="m-ekey" placeholder="~/.ssh/id_ed25519"></div>'
+    +'<div class="row"><button class="btn pri" onclick="pxEnrollGo(\''+node+'\',\''+type+'\','+vmid+')">Enroll</button><button class="btn" onclick="gmClose()">Cancel</button></div>');
+}
+async function pxEnrollGo(node,type,vmid){
+  const body={cluster_id:_cluster,node,guest_type:type,vmid,user:$('m-euser').value.trim()||'root',ip:$('m-eip').value.trim(),password:$('m-epass').value,key_path:$('m-ekey').value.trim()};
+  gmClose(); out('px-out','enrolling…');
+  const r=await api('/proxmox/guest/enroll','POST',body);
+  if(r.error) return out('px-out','✗ '+r.error);
+  out('px-out','✓ enrolled '+r.ip+' (host '+r.ssh_host_id+') — see Credentials tab'); toast('Enrolled '+r.ip,'ok'); credLoad();
+}
+
+// ── CREDENTIALS ──────────────────────────────────────────────────────────────
+async function credLoad(){
+  const j=await api('/exec/ssh/hosts'); _creds=j.hosts||[];
+  $('cred-tbody').innerHTML=_creds.map(h=>{
+    const secret=h.has_password?'<span class="badge b-run">password</span>':(h.key_path?'<span class="badge b-lxc">key</span>':'<span class="badge b-stop">none</span>');
+    return '<tr><td>'+esc(h.label)+'</td><td>'+esc(h.host)+':'+h.port+'</td><td>'+esc(h.user)+'</td><td>'+esc(h.auth)+'</td><td>'+secret+'</td><td>'+(h.tags||[]).map(esc).join(', ')+'</td>'
+      +'<td><div class="rowact"><button class="btn sm" onclick="credEdit(\''+esc(h.id)+'\')">Edit</button><button class="btn sm" onclick="credTest(\''+esc(h.id)+'\')">Test</button><button class="btn sm err-btn" onclick="credDel(\''+esc(h.id)+'\',\''+esc(h.label)+'\')">✕</button></div></td></tr>';
+  }).join('')||'<tr><td colspan="7" class="empty">No hosts yet — add one, or enroll guests from the Proxmox tab.</td></tr>';
+}
+function credEdit(id){
+  const h=_creds.find(x=>x.id===id)||{};
+  gm('Edit host credential',
+    '<div class="grid2"><div class="field"><label>Host / IP</label><input id="m-h" value="'+esc(h.host||'')+'"></div><div class="field"><label>Port</label><input id="m-port" value="'+(h.port||22)+'"></div></div>'
+    +'<div class="grid2"><div class="field"><label>User</label><input id="m-user" value="'+esc(h.user||'root')+'"></div><div class="field"><label>Label</label><input id="m-label" value="'+esc(h.label||'')+'"></div></div>'
+    +'<div class="field"><label>Auth</label><select id="m-auth" onchange="credAuthSwap()"><option value="password"'+(h.auth!=='key'?' selected':'')+'>Password</option><option value="key"'+(h.auth==='key'?' selected':'')+'>SSH key</option></select></div>'
+    +'<div class="field" id="m-pw-box"><label>Password '+(h.has_password?'(blank=keep)':'')+'</label><input id="m-pw" type="password"></div>'
+    +'<div class="field" id="m-key-box" style="display:'+(h.auth==='key'?'block':'none')+'"><label>Key path</label><input id="m-keyp" value="'+esc(h.key_path||'')+'"></div>'
+    +'<div class="field"><label>Tags</label><input id="m-tags" value="'+(h.tags||[]).join(', ')+'"></div>'
+    +'<div class="row"><button class="btn pri" onclick="credSave(\''+esc(h.id)+'\')">Save</button><button class="btn" onclick="gmClose()">Cancel</button></div>');
+}
+function credAuthSwap(){ $('m-key-box').style.display=$('m-auth').value==='key'?'block':'none'; }
+async function credSave(id){
+  const body={id,host:$('m-h').value.trim(),port:parseInt($('m-port').value)||22,user:$('m-user').value.trim(),label:$('m-label').value.trim(),auth:$('m-auth').value,password:$('m-pw').value,key_path:$('m-keyp')?$('m-keyp').value.trim():'',tags:$('m-tags').value};
+  if(!body.host||!body.user) return toast('host and user required','err');
+  gmClose(); const r=await api('/exec/ssh/hosts/save','POST',body);
+  if(!r.ok) return toast(r.error||'save failed','err');
+  toast('Saved','ok'); credLoad(); refresh();
+}
+async function credDel(id,label){ if(!confirm('Delete credential '+label+'?'))return; await api('/exec/ssh/hosts/delete','POST',{id}); credLoad(); refresh(); }
+async function credTest(id){
+  out('cred-out','testing '+id+'…');
+  const r=await api('/exec/ssh/run','POST',{host_id:id,command:'echo vera-ok && hostname',timeout:12});
+  out('cred-out',(r.ok&&(r.stdout||'').includes('vera-ok'))?('✓ connected — '+(r.stdout||'').trim()):('✗ '+(r.stderr||r.error||'failed')));
+}
+
+// ── DOCKER ───────────────────────────────────────────────────────────────────
+async function dkLoad(){
+  if(!_creds.length){ const j0=await api('/exec/ssh/hosts'); _creds=j0.hosts||[]; }
+  const j=await api('/workers/docker/hosts'); const hosts=j.hosts||[];
+  $('dk-conn-tbody').innerHTML=hosts.map(h=>{
+    const ep=h.kind==='ssh'?('ssh:'+(h.ssh_host_id||'')):(h.kind==='tcp'?esc(h.url||''):'local socket');
+    return '<tr><td>'+esc(h.label||h.id)+'</td><td>'+esc(h.kind)+'</td><td>'+ep+'</td><td><span id="dk-st-'+esc(h.id)+'" class="badge">—</span></td>'
+      +'<td><div class="rowact"><button class="btn sm" onclick="dkPing(\''+esc(h.id)+'\')">Ping</button><button class="btn sm pri" onclick="dkSelect(\''+esc(h.id)+'\',\''+esc(h.label||h.id)+'\')">Containers</button><button class="btn sm err-btn" onclick="dkConnDel(\''+esc(h.id)+'\')">✕</button></div></td></tr>';
+  }).join('')||'<tr><td colspan="5" class="empty">No connections — add one (local / tcp / ssh).</td></tr>';
+  hosts.forEach(h=>dkPing(h.id));
+}
+async function dkPing(id){
+  const r=await api('/workers/docker/ping','POST',{host_id:id}); const el=$('dk-st-'+id); if(!el) return;
+  if(r.ok){ el.className='badge b-run'; el.textContent='v'+(r.version||'?'); } else { el.className='badge b-stop'; el.textContent='offline'; }
+}
+function dkConnDel(id){ if(!confirm('Delete connection '+id+'?'))return; api('/workers/docker/hosts/delete','POST',{id}).then(dkLoad); }
+function dkOpenConn(){
+  const credOpts=_creds.map(h=>'<option value="'+esc(h.id)+'">'+esc(h.label)+' ('+esc(h.host)+')</option>').join('');
+  gm('Add Docker connection',
+    '<div class="field"><label>Kind</label><select id="m-kind" onchange="dkKindSwap()"><option value="tcp">TCP (http://host:2375)</option><option value="ssh">SSH (via a stored host)</option><option value="local">Local socket</option></select></div>'
+    +'<div class="field"><label>Label</label><input id="m-dlabel" placeholder="optional"></div>'
+    +'<div class="field" id="m-url-box"><label>URL</label><input id="m-durl" placeholder="http://host:2375"></div>'
+    +'<div class="field" id="m-ssh-box" style="display:none"><label>SSH host (from Credentials)</label><select id="m-dssh">'+(credOpts||'<option value="">— add a credential first —</option>')+'</select></div>'
+    +'<div class="row"><button class="btn pri" onclick="dkConnSave()">Save</button><button class="btn" onclick="gmClose()">Cancel</button></div>');
+}
+function dkKindSwap(){ const k=$('m-kind').value; $('m-url-box').style.display=k==='tcp'?'block':'none'; $('m-ssh-box').style.display=k==='ssh'?'block':'none'; }
+async function dkConnSave(){
+  const kind=$('m-kind').value;
+  const body={kind,label:$('m-dlabel').value.trim(),url:kind==='tcp'?$('m-durl').value.trim():'',ssh_host_id:kind==='ssh'?$('m-dssh').value:''};
+  gmClose(); const r=await api('/workers/docker/hosts/save','POST',body);
+  if(!r.ok) return toast(r.error||'save failed','err');
+  toast('Connection added','ok'); dkLoad();
+}
+async function dkSelect(id,label){
+  _dkHost=id; _dkLabel=label; $('dk-host-label').textContent='· '+label;
+  const r=await api('/workers/docker/ps','POST',{host_id:id,all:true});
+  const cs=(r.containers||r.items||[]);
+  $('dk-ps-tbody').innerHTML=(Array.isArray(cs)?cs:[]).map(c=>{
+    const name=(c.Names?(Array.isArray(c.Names)?c.Names[0]:c.Names):c.name||'').replace(/^\//,'');
+    const img=c.Image||c.image||''; const state=c.State||c.state||c.Status||''; const run=/up|running/i.test(state); const cid=c.Id||c.id||name;
+    return '<tr><td>'+esc(name)+'</td><td>'+esc(img)+'</td><td><span class="badge '+(run?'b-run':'b-stop')+'">'+esc(state)+'</span></td>'
+      +'<td><div class="rowact"><button class="btn sm warn-btn" onclick="dkStop(\''+esc(cid)+'\')">Stop</button><button class="btn sm err-btn" onclick="dkRm(\''+esc(cid)+'\')">Rm</button></div></td></tr>';
+  }).join('')||'<tr><td colspan="4" class="empty">No containers'+(r.error?': '+esc(r.error):'')+'.</td></tr>';
+}
+async function dkStop(cid){ out('dk-out','stopping…'); const r=await api('/workers/docker/stop','POST',{host_id:_dkHost,container:cid}); out('dk-out',r.ok?'✓ stopped':'✗ '+(r.error||'')); setTimeout(()=>dkSelect(_dkHost,_dkLabel),1200); }
+async function dkRm(cid){ if(!confirm('Remove container '+cid.slice(0,12)+'?'))return; out('dk-out','removing…'); const r=await api('/workers/docker/rm','POST',{host_id:_dkHost,container:cid,force:true}); out('dk-out',r.ok?'✓ removed':'✗ '+(r.error||'')); setTimeout(()=>dkSelect(_dkHost,_dkLabel),1000); }
+function dkOpenRun(){
+  if(!_dkHost) return toast('Select a connection first','err');
+  gm('Deploy container',
+    '<div class="field"><label>Image</label><input id="m-img" placeholder="nginx:latest"></div>'
+    +'<div class="grid2"><div class="field"><label>Name</label><input id="m-cn" placeholder="optional"></div><div class="field"><label>Restart</label><select id="m-restart"><option>unless-stopped</option><option>always</option><option>no</option></select></div></div>'
+    +'<div class="field"><label>Ports (host:container, comma-sep)</label><input id="m-ports" placeholder="8080:80"></div>'
+    +'<div class="field"><label>Volumes (src:dst, comma-sep)</label><input id="m-vols" placeholder="/data:/data"></div>'
+    +'<div class="field"><label>Env (KEY=val, comma-sep)</label><input id="m-env" placeholder="TZ=UTC"></div>'
+    +'<label class="chk"><input type="checkbox" id="m-pull"> pull image first</label>'
+    +'<div class="row"><button class="btn pri" onclick="dkRunGo()">Deploy</button><button class="btn" onclick="gmClose()">Cancel</button></div>');
+}
+async function dkRunGo(){
+  const env={}; ($('m-env').value||'').split(',').forEach(p=>{const i=p.indexOf('=');if(i>0)env[p.slice(0,i).trim()]=p.slice(i+1).trim();});
+  const body={host_id:_dkHost,image:$('m-img').value.trim(),name:$('m-cn').value.trim(),ports:$('m-ports').value.trim(),volumes:$('m-vols').value.trim(),env,restart:$('m-restart').value,pull:$('m-pull').checked};
+  if(!body.image) return toast('image required','err');
+  gmClose(); out('dk-out','deploying…');
+  const r=await api('/workers/docker/run','POST',body);
+  out('dk-out',r.ok?('✓ deployed '+(r.container_id||'').slice(0,12)):('✗ '+(r.error||'failed'))); if(r.ok) setTimeout(()=>dkSelect(_dkHost,_dkLabel),1500);
+}
+
+refresh();
+</script>
+</body>
+</html>

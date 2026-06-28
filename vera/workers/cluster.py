@@ -71,6 +71,12 @@ _proxy_active = 0
 # control page without restarting Vera (the routes stay mounted). PROXY_MAX_-
 # CONCURRENCY is likewise mutable at runtime via ollama.proxy.config.
 _proxy_paused = False
+# Routing mode for the mimic. True (default) = pin to GPU: each proxied request
+# flows through the cluster's load-aware pick_instance with prefer_gpu, so GPU
+# nodes are preferred (and load-balanced if there are several), falling back to
+# any online node. False = pure load-aware routing across all nodes. Toggle at
+# runtime via cluster.mimic.config.
+_PROXY_PREFER_GPU = True
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -357,10 +363,11 @@ async def _worker_affinity_loop():
 # OLLAMA PROXY
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def _record_proxy_request(path: str, body: dict) -> str:
+async def _record_proxy_request(target: str, path: str, body: dict) -> str:
     """Fire-and-forget: log request to Redis stream + emit events for Jobs panel.
 
-    Returns the req_id so callers can emit done/error events later.
+    `target` is the node the request was routed to. Returns the req_id so callers
+    can emit done/error events later.
     """
     import uuid as _uuid
     req_id = str(_uuid.uuid4())[:12]
@@ -381,7 +388,7 @@ async def _record_proxy_request(path: str, body: dict) -> str:
                 "path":     path,
                 "model":    model,
                 "prompt":   prompt,
-                "instance": LOCAL_OLLAMA_ID,
+                "instance": target,
                 "ts":       now_iso(),
             })
         }, maxlen=1000)
@@ -396,12 +403,12 @@ async def _record_proxy_request(path: str, body: dict) -> str:
             "importance": 0.25,
         })
         # Also emit ollama.request so the Jobs panel tracks this as a job
-        inst = OLLAMA_INSTANCES.get(LOCAL_OLLAMA_ID, {})
+        inst = OLLAMA_INSTANCES.get(target, {})
         await emit_event({
             "type":         "ollama.request",
             "req_id":       req_id,
             "model":        model,
-            "instance_id":  LOCAL_OLLAMA_ID,
+            "instance_id":  target,
             "instance_url": inst.get("url", ""),
             "caller_file":  "cluster.py",
             "caller_func":  "ollama_proxy",
@@ -417,33 +424,74 @@ async def _record_proxy_request(path: str, body: dict) -> str:
     return req_id
 
 
-async def _forward(path: str, body: dict, stream: bool):
-    """Forward to local Ollama; return FastAPI response."""
-    global _proxy_active
-    if LOCAL_OLLAMA_ID not in OLLAMA_INSTANCES:
-        return JSONResponse({"error": "No local Ollama configured"}, 503)
+def _online_nodes() -> List[str]:
+    return [iid for iid, i in OLLAMA_INSTANCES.items()
+            if i.get("status") == "online" and i.get("enabled", True)]
 
-    target = f"{OLLAMA_INSTANCES[LOCAL_OLLAMA_ID]['url']}/{path}"
-    inst   = OLLAMA_INSTANCES[LOCAL_OLLAMA_ID]
+
+def _gpu_nodes_online() -> List[str]:
+    return [iid for iid in _online_nodes() if OLLAMA_INSTANCES[iid].get("has_gpu")]
+
+
+def _pick_proxy_target(body: dict) -> Optional[str]:
+    """Choose the Ollama node for a proxied request.
+
+    Flows through the cluster's load-aware pick_instance (multiple GPU nodes
+    load-balance; disabled/offline nodes are skipped). With _PROXY_PREFER_GPU the
+    selection is pinned to GPU nodes. Falls back to a GPU node, then any online
+    node, then LOCAL_OLLAMA_ID.
+    """
+    model = (body or {}).get("model") or None
+    pick = getattr(_orch, "pick_instance", None)
+    if pick:
+        try:
+            t = pick(prefer_gpu=_PROXY_PREFER_GPU, model=model, job_type="proxy")
+            if t and t in OLLAMA_INSTANCES:
+                return t
+        except Exception as e:
+            log.debug("proxy pick_instance: %s", e)
+    gpu = _gpu_nodes_online()
+    if gpu:
+        return gpu[0]
+    online = _online_nodes()
+    if online:
+        return online[0]
+    return LOCAL_OLLAMA_ID or None
+
+
+async def _forward(target_id: str, path: str, body: dict, stream: bool):
+    """Forward a proxied request to the routed Ollama node; return FastAPI response."""
+    global _proxy_active
+    if not target_id or target_id not in OLLAMA_INSTANCES:
+        return JSONResponse({"error": "No online Ollama node to route to"}, 503)
+
+    inst   = OLLAMA_INSTANCES[target_id]
+    target = f"{inst['url']}/{path}"
     inst["in_use"] = inst.get("in_use", 0) + 1
     _proxy_active += 1
     _t0 = time.time()
-    _req_id_task = asyncio.create_task(_record_proxy_request(path, body))
+    _req_id_task = asyncio.create_task(_record_proxy_request(target_id, path, body))
 
     try:
         if stream:
             async def _gen():
-                async with httpx.AsyncClient(timeout=300) as c:
-                    async with c.stream("POST", target, json=body) as resp:
-                        async for chunk in resp.aiter_bytes():
-                            yield chunk
+                try:
+                    async with httpx.AsyncClient(timeout=300) as c:
+                        async with c.stream("POST", target, json=body) as resp:
+                            async for chunk in resp.aiter_bytes():
+                                yield chunk
+                except Exception as _se:
+                    # Yield an Ollama-style error line rather than abruptly closing
+                    # the socket (which surfaces to clients as "socket hang up").
+                    log.error("proxy stream error [%s→%s]: %s", path, target_id, _se)
+                    yield (json.dumps({"error": str(_se), "done": True}) + "\n").encode()
                 # Emit done event after stream completes
                 try:
                     _req_id = _req_id_task.result() if _req_id_task.done() else ""
                     if _req_id:
                         await emit_event({
                             "type": "ollama.request_done", "req_id": _req_id,
-                            "model": body.get("model", ""), "instance_id": LOCAL_OLLAMA_ID,
+                            "model": body.get("model", ""), "instance_id": target_id,
                             "caller_file": "cluster.py", "caller_func": "ollama_proxy",
                             "elapsed_s": round(time.time() - _t0, 2),
                         })
@@ -460,14 +508,14 @@ async def _forward(path: str, body: dict, stream: bool):
                 if r.status_code == 200:
                     await emit_event({
                         "type": "ollama.request_done", "req_id": _req_id,
-                        "model": body.get("model", ""), "instance_id": LOCAL_OLLAMA_ID,
+                        "model": body.get("model", ""), "instance_id": target_id,
                         "caller_file": "cluster.py", "caller_func": "ollama_proxy",
                         "elapsed_s": elapsed,
                     })
                 else:
                     await emit_event({
                         "type": "ollama.request_error", "req_id": _req_id,
-                        "model": body.get("model", ""), "instance_id": LOCAL_OLLAMA_ID,
+                        "model": body.get("model", ""), "instance_id": target_id,
                         "caller_file": "cluster.py", "caller_func": "ollama_proxy",
                         "elapsed_s": elapsed, "error": f"http_{r.status_code}",
                     })
@@ -475,13 +523,13 @@ async def _forward(path: str, body: dict, stream: bool):
                 pass
             return JSONResponse(r.json(), status_code=r.status_code)
     except Exception as e:
-        log.error("Proxy forward error [%s]: %s", path, e)
+        log.error("Proxy forward error [%s→%s]: %s", path, target_id, e)
         # Emit error event
         try:
             _req_id = await _req_id_task
             await emit_event({
                 "type": "ollama.request_error", "req_id": _req_id,
-                "model": body.get("model", ""), "instance_id": LOCAL_OLLAMA_ID,
+                "model": body.get("model", ""), "instance_id": target_id,
                 "caller_file": "cluster.py", "caller_func": "ollama_proxy",
                 "elapsed_s": round(time.time() - _t0, 2), "error": str(e)[:200],
             })
@@ -494,11 +542,6 @@ async def _forward(path: str, body: dict, stream: bool):
 
 
 async def _proxy_handler(path: str, req: Request):
-    if not LOCAL_OLLAMA_ID:
-        return JSONResponse({
-            "error": "Proxy inactive — set LOCAL_OLLAMA_INSTANCE env var"
-        }, status_code=503)
-
     if _proxy_paused:
         return JSONResponse({
             "error": "Ollama mimic proxy is paused"
@@ -509,18 +552,24 @@ async def _proxy_handler(path: str, req: Request):
     except Exception:
         body = {}
 
+    target = _pick_proxy_target(body)
+    if not target:
+        return JSONResponse({
+            "error": "No online Ollama node to route to"
+        }, status_code=503)
+
     stream  = body.get("stream", False)
-    in_use  = OLLAMA_INSTANCES.get(LOCAL_OLLAMA_ID, {}).get("in_use", 0)
+    in_use  = OLLAMA_INSTANCES.get(target, {}).get("in_use", 0)
 
     if in_use < PROXY_MAX_CONCURRENCY:
-        return await _forward(path, body, stream)
+        return await _forward(target, path, body, stream)
 
-    # Queue
-    log.info("Ollama proxy: queuing (in_use=%d)", in_use)
+    # Queue — remember the routed node so the worker forwards to the same one.
+    log.info("Ollama proxy: queuing for %s (in_use=%d)", target, in_use)
     loop   = asyncio.get_event_loop()
     future: asyncio.Future = loop.create_future()
     try:
-        PROXY_QUEUE.put_nowait((path, body, stream, future))
+        PROXY_QUEUE.put_nowait((target, path, body, stream, future))
     except asyncio.QueueFull:
         return JSONResponse({"error": "Proxy queue full"}, status_code=429)
 
@@ -534,7 +583,7 @@ async def _proxy_queue_worker():
     """Drain the proxy queue as capacity becomes available."""
     while True:
         try:
-            path, body, stream, future = await asyncio.wait_for(
+            target, path, body, stream, future = await asyncio.wait_for(
                 PROXY_QUEUE.get(), timeout=5
             )
         except asyncio.TimeoutError:
@@ -543,13 +592,17 @@ async def _proxy_queue_worker():
             await asyncio.sleep(1)
             continue
 
-        # Wait for a free slot
-        while (OLLAMA_INSTANCES.get(LOCAL_OLLAMA_ID, {}).get("in_use", 0)
+        # Wait for a free slot on the routed node (bounded by the queue timeout)
+        waited = 0.0
+        while (OLLAMA_INSTANCES.get(target, {}).get("in_use", 0)
                >= PROXY_MAX_CONCURRENCY):
             await asyncio.sleep(0.25)
+            waited += 0.25
+            if waited >= PROXY_QUEUE_TIMEOUT:
+                break
 
         try:
-            result = await _forward(path, body, stream)
+            result = await _forward(target, path, body, stream)
             if not future.done():
                 future.set_result(result)
         except Exception as e:
@@ -559,27 +612,51 @@ async def _proxy_queue_worker():
             PROXY_QUEUE.task_done()
 
 
-# Mount proxy routes (only when LOCAL_OLLAMA_ID is set)
-if LOCAL_OLLAMA_ID:
-    log.info("Mounting Ollama proxy /ollama/* → %s (%s)",
-             LOCAL_OLLAMA_ID,
-             OLLAMA_INSTANCES.get(LOCAL_OLLAMA_ID, {}).get("url", "?"))
+# Mount the Ollama mimic proxy. Scoped to /ollama/api/* and /ollama/v1/* (the only
+# paths real Ollama / OpenAI-compatible clients use) so it does NOT shadow Vera's
+# own /ollama/* control endpoints (routing, request_log, ping, pull, …). Mounted
+# unconditionally and routes each request through the cluster (pick_instance,
+# GPU-preferred), so external clients (e.g. Continue) get cluster routing without
+# needing LOCAL_OLLAMA_INSTANCE pinned.
+log.info("Mounting Ollama mimic proxy /ollama/{api,v1}/* (routing=%s, local=%s)",
+         "gpu-preferred" if _PROXY_PREFER_GPU else "load-aware",
+         LOCAL_OLLAMA_ID or "none")
 
-    @APP.post("/ollama/{path:path}")
-    async def _ollama_proxy_post(path: str, req: Request):
-        return await _proxy_handler(path, req)
 
-    @APP.get("/ollama/{path:path}")
-    async def _ollama_proxy_get(path: str, req: Request):
-        if not LOCAL_OLLAMA_ID:
-            return JSONResponse({"error": "Proxy not configured"}, 503)
-        target = f"{OLLAMA_INSTANCES[LOCAL_OLLAMA_ID]['url']}/{path}"
-        try:
-            async with httpx.AsyncClient(timeout=10) as c:
-                r = await c.get(target)
-            return JSONResponse(r.json(), status_code=r.status_code)
-        except Exception as e:
-            return JSONResponse({"error": str(e)}, status_code=502)
+async def _proxy_get(full_path: str):
+    """GET passthrough (e.g. /api/tags, /api/version, /api/ps) to a routed node."""
+    if _proxy_paused:
+        return JSONResponse({"error": "Ollama mimic proxy is paused"}, 503)
+    target_id = _pick_proxy_target({})
+    if not target_id or target_id not in OLLAMA_INSTANCES:
+        return JSONResponse({"error": "No online Ollama node to route to"}, 503)
+    url = f"{OLLAMA_INSTANCES[target_id]['url']}/{full_path}"
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(url)
+        return JSONResponse(r.json(), status_code=r.status_code)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+
+@APP.post("/ollama/api/{path:path}")
+async def _ollama_proxy_post_api(path: str, req: Request):
+    return await _proxy_handler("api/" + path, req)
+
+
+@APP.get("/ollama/api/{path:path}")
+async def _ollama_proxy_get_api(path: str, req: Request):
+    return await _proxy_get("api/" + path)
+
+
+@APP.post("/ollama/v1/{path:path}")
+async def _ollama_proxy_post_v1(path: str, req: Request):
+    return await _proxy_handler("v1/" + path, req)
+
+
+@APP.get("/ollama/v1/{path:path}")
+async def _ollama_proxy_get_v1(path: str, req: Request):
+    return await _proxy_get("v1/" + path)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -590,25 +667,29 @@ if LOCAL_OLLAMA_ID:
 # ollama.request event so prompts/jobs submitted this way are observable. These
 # capabilities back the "Mimic" page in the Workers & Ollama panel.
 #
-# NOTE on paths: when the mimic is active, the catch-all `/ollama/{path:path}`
-# proxy routes (registered at import) shadow any exact `/ollama/...` route mounted
-# later by _mount_all_http_routes. So the monitor/control endpoints deliberately
-# live under `/cluster/mimic/*` (no catch-all there) — they keep working whether
-# or not the mimic is forwarding traffic. The cap names mirror the paths so the
-# auto-POST fallback doesn't also mount a shadowed `/ollama/...` alias.
+# NOTE on paths: the proxy itself is scoped to /ollama/api/* and /ollama/v1/* so
+# it doesn't shadow Vera's own /ollama/* control routes. The monitor/control
+# endpoints below live under /cluster/mimic/* (cap names mirror the paths so the
+# auto-POST fallback doesn't mount a duplicate).
 
 @capability(
     "cluster.mimic.status", memory="off", silent=True,
     http_method="GET", http_path="/cluster/mimic/status", http_tags=["cluster"],
-    description="Live status of the Ollama mimic proxy: whether it's mounted, "
-                "paused, the local instance it targets, queue depth, active "
-                "in-flight requests and the concurrency cap. Output: {mounted, "
-                "paused, local_instance, active, queue_depth, queue_max, "
+    description="Live status of the Ollama mimic proxy: routing mode, the node a "
+                "request would route to right now, online nodes, paused state, "
+                "queue depth, active in-flight requests and the concurrency cap. "
+                "Output: {mounted, paused, prefer_gpu, routing, current_target, "
+                "online_nodes, local_instance, active, queue_depth, queue_max, "
                 "max_concurrency, queue_timeout}.")
 async def cap_mimic_status(trace_id=None) -> Dict:
+    online = _online_nodes()
     return {
-        "mounted":         bool(LOCAL_OLLAMA_ID),
+        "mounted":         True,   # always mounted now (cluster-routed)
         "paused":          _proxy_paused,
+        "prefer_gpu":      _PROXY_PREFER_GPU,
+        "routing":         "gpu-preferred" if _PROXY_PREFER_GPU else "load-aware",
+        "current_target":  _pick_proxy_target({}) or "",
+        "online_nodes":    online,
         "local_instance":  LOCAL_OLLAMA_ID,
         "active":          _proxy_active,
         "queue_depth":     PROXY_QUEUE.qsize(),
@@ -623,14 +704,19 @@ async def cap_mimic_status(trace_id=None) -> Dict:
     http_method="POST", http_path="/cluster/mimic/config", http_tags=["cluster"],
     description="Control the Ollama mimic proxy at runtime. Inputs: paused (bool "
                 "— stop/resume forwarding without restart), max_concurrency (int "
-                ">=1, simultaneous forwards before queuing). Omitted fields are "
-                "left unchanged. Output: the same shape as cluster.mimic.status.")
+                ">=1, simultaneous forwards before queuing), prefer_gpu (bool — "
+                "True pins routing to GPU nodes, False = load-aware across all "
+                "nodes). Omitted fields are left unchanged. Output: same shape as "
+                "cluster.mimic.status.")
 async def cap_mimic_config(paused: Optional[bool] = None,
                            max_concurrency: Optional[int] = None,
+                           prefer_gpu: Optional[bool] = None,
                            trace_id=None) -> Dict:
-    global _proxy_paused, PROXY_MAX_CONCURRENCY
+    global _proxy_paused, PROXY_MAX_CONCURRENCY, _PROXY_PREFER_GPU
     if paused is not None:
         _proxy_paused = bool(paused)
+    if prefer_gpu is not None:
+        _PROXY_PREFER_GPU = bool(prefer_gpu)
     if max_concurrency is not None:
         try:
             PROXY_MAX_CONCURRENCY = max(1, int(max_concurrency))
@@ -638,32 +724,57 @@ async def cap_mimic_config(paused: Optional[bool] = None,
             return {"error": "max_concurrency must be an integer >= 1"}
     await emit_event({"type": "ollama.proxy.config",
                       "paused": _proxy_paused,
+                      "prefer_gpu": _PROXY_PREFER_GPU,
                       "max_concurrency": PROXY_MAX_CONCURRENCY})
     return await cap_mimic_status()
+
+
+_PROXY_LOG_STREAM = "vera:ollama_proxy_log"
 
 
 @capability(
     "cluster.mimic.requests", memory="off", silent=True,
     http_method="GET", http_path="/cluster/mimic/requests", http_tags=["cluster"],
-    description="Recent prompts/jobs submitted through the mimic (newest first) "
-                "from the in-memory Ollama request log. Query: limit (int, default "
-                "100). Output: {entries:[...], total}. A non-shadowed mirror of "
-                "/ollama/request_log that keeps working while the mimic forwards.")
+    description="Requests that actually came through the Ollama mimic proxy "
+                "(the /ollama/* endpoint), newest first, from the dedicated "
+                "vera:ollama_proxy_log stream — NOT Vera's own internal "
+                "generate/embed traffic. Query: limit (int, default 100). "
+                "Output: {entries:[{path,model,prompt,instance,ts}], total}.")
 async def cap_mimic_requests(limit: int = 100, trace_id=None) -> Dict:
-    rl = getattr(_orch, "_OLLAMA_REQUEST_LOG", [])
-    entries = list(reversed(rl))
-    return {"entries": entries[:max(1, limit)], "total": len(rl)}
+    r = _redis()
+    if not r:
+        return {"entries": [], "total": 0}
+    entries: List[dict] = []
+    try:
+        rows = await r.xrevrange(_PROXY_LOG_STREAM, count=max(1, limit))  # newest first
+        for _id, fields in rows:
+            raw = fields.get(b"data") or fields.get("data")
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8", "replace")
+            if not raw:
+                continue
+            try:
+                entries.append(json.loads(raw))
+            except Exception:
+                continue
+        total = await r.xlen(_PROXY_LOG_STREAM)
+    except Exception as e:
+        return {"entries": [], "total": 0, "error": str(e)}
+    return {"entries": entries, "total": total}
 
 
 @capability(
     "cluster.mimic.requests.clear", memory="off",
     http_method="POST", http_path="/cluster/mimic/requests/clear", http_tags=["cluster"],
-    description="Clear the in-memory Ollama request log (prompts/jobs submitted "
-                "through the mimic + ollama_generate). Output: {ok, cleared}.")
+    description="Clear the mimic proxy request stream (vera:ollama_proxy_log). "
+                "Output: {ok, cleared}.")
 async def cap_mimic_requests_clear(trace_id=None) -> Dict:
-    n = len(getattr(_orch, "_OLLAMA_REQUEST_LOG", []))
+    r = _redis()
+    if not r:
+        return {"error": "redis unavailable"}
     try:
-        _orch._OLLAMA_REQUEST_LOG.clear()
+        n = await r.xlen(_PROXY_LOG_STREAM)
+        await r.delete(_PROXY_LOG_STREAM)
     except Exception as e:
         return {"error": str(e)}
     return {"ok": True, "cleared": n}
@@ -682,6 +793,70 @@ async def _ollama_mimic_panel():
             return HTMLResponse(fh.read())
     return HTMLResponse("<p style='color:#c96b6b'>ollama_mimic_panel.html not found</p>",
                         status_code=404)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ONNX RUNTIME ADVERTISE  (§4 of ONNX_TODO.md)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _onnx_models_dir() -> str:
+    """Shared ONNX artifact dir (prefer ml_onnx's resolved path)."""
+    import sys
+    mo = sys.modules.get("ml_onnx")
+    d = getattr(mo, "ONNX_DIR", None)
+    if d:
+        return d
+    _repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.getenv("ML_ONNX_DIR", os.path.join(_repo, "edge", "models"))
+
+
+def _scan_onnx_artifacts() -> list:
+    out = []
+    d = _onnx_models_dir()
+    if not os.path.isdir(d):
+        return out
+    for fn in sorted(os.listdir(d)):
+        if not fn.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(d, fn), encoding="utf-8") as f:
+                m = json.load(f)
+            out.append({"slug": m.get("slug"), "module_id": m.get("module_id"),
+                        "dtype": m.get("dtype"), "cap_name": m.get("cap_name")})
+        except Exception:
+            pass
+    return out
+
+
+async def _gather_onnx_runtimes() -> dict:
+    """Advertise ONNX Runtime availability across the cluster:
+      • shared artifacts in the (network-shared) models dir — any edge node can serve them
+      • per-node edge ORT servers in ONNX_RUNTIME_URLS (GET /health)
+    Best-effort and additive; never raises into the cluster view."""
+    artifacts = _scan_onnx_artifacts()
+    info = {"shared_dir": _onnx_models_dir(),
+            "shared_artifacts": artifacts, "count": len(artifacts),
+            "runtimes": []}
+    urls = [u.strip() for u in os.getenv("ONNX_RUNTIME_URLS", "").split(",") if u.strip()]
+    if urls:
+        import httpx as _httpx
+
+        async def _ping(u):
+            try:
+                async with _httpx.AsyncClient(timeout=3.0) as c:
+                    r = await c.get(u.rstrip("/") + "/health")
+                if r.status_code == 200:
+                    h = r.json()
+                    return {"url": u, "status": "online",
+                            "selected": h.get("selected"),
+                            "providers": h.get("providers", []),
+                            "models": h.get("models", 0)}
+                return {"url": u, "status": f"http_{r.status_code}"}
+            except Exception as e:
+                return {"url": u, "status": "offline", "error": str(e)[:80]}
+
+        info["runtimes"] = list(await asyncio.gather(*[_ping(u) for u in urls]))
+    return info
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -776,6 +951,7 @@ async def obs_cluster(trace_id=None):
     return {
         "workers":  workers_enriched,
         "ollama":   ollama_snapshot,
+        "onnx":     await _gather_onnx_runtimes(),
         "queues":   queue_info,
         "proxy":    proxy_info,
         "local_ollama_id": LOCAL_OLLAMA_ID,
@@ -857,12 +1033,12 @@ async def cap_cluster_job_stop(task_id: str = "", trace_id=None):
 async def _startup():
     asyncio.create_task(cluster_poll_loop())
     asyncio.create_task(_worker_affinity_loop())
-    if LOCAL_OLLAMA_ID:
-        asyncio.create_task(_proxy_queue_worker())
-        log.info("Ollama proxy queue worker started")
-    log.info("vera_cluster ready — local_ollama=%s  proxy=%s",
+    # The mimic proxy is always mounted now (cluster-routed), so its queue worker
+    # always runs regardless of LOCAL_OLLAMA_INSTANCE.
+    asyncio.create_task(_proxy_queue_worker())
+    log.info("vera_cluster ready — local_ollama=%s  mimic=mounted (routing=%s)",
              LOCAL_OLLAMA_ID or "none",
-             "enabled" if LOCAL_OLLAMA_ID else "disabled")
+             "gpu-preferred" if _PROXY_PREFER_GPU else "load-aware")
 
 
 schedule(_startup, interval=999999, name="cluster_startup")

@@ -387,6 +387,8 @@ body.composer-focus #ctxStrip{display:flex}
 /* Memory graph pane */
 #paneMemGraph{display:none;flex:1;flex-direction:column;min-height:0}
 #paneMemGraph.on{display:flex}
+#paneLoopGraph{display:none;flex:1;flex-direction:column;min-height:0}
+#paneLoopGraph.on{display:flex}
 #memGraphCtrl{flex-shrink:0;display:flex;gap:4px;padding:4px 7px;border-bottom:1px solid var(--border);flex-wrap:wrap;align-items:center}
 #memGraphSvg{flex:1;width:100%;display:block;background:var(--bg0);min-height:0}
 #memLegend{flex-shrink:0;display:flex;gap:10px;padding:4px 8px;border-top:1px solid var(--border);background:var(--bg1);font-size:9px;font-family:var(--mono);align-items:center;flex-wrap:wrap}
@@ -1212,6 +1214,31 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
         <input type="checkbox" id="loopAutoSuggestSkills" checked>
         Auto-suggest skills from caps
       </label>
+      <div class="sec" style="margin-top:6px;font-size:8.5px;color:var(--dim)">Planning &amp; execution</div>
+      <label class="row" style="font-size:9.5px" title="Let the planner give a step explore/think/act/verify phases, each run as its own scoped sub-agent. Turn OFF to force every step to run as one flat specialist (no phase sub-agents).">
+        <input type="checkbox" id="loopEnablePhases" checked>
+        Step phases (explore/think/act/verify)
+      </label>
+      <label class="row" style="font-size:9.5px" title="Before finalising the plan, let the orchestrator run a few READ-ONLY recon calls when it needs grounding (simple goals stay one LLM call)">
+        <input type="checkbox" id="loopEnableRecon" checked>
+        Pre-plan recon
+      </label>
+      <label class="row" style="font-size:9.5px" title="A step the planner marks 'complex' expands into its own one-level sub-plan">
+        <input type="checkbox" id="loopEnableSubplans" checked>
+        Sub-plans for complex steps
+      </label>
+      <label class="row" style="font-size:9.5px" title="For an EXTREME goal, build a specialist long-form planner on the fly, then break its strategy into steps">
+        <input type="checkbox" id="loopEnableMasterPlanner" checked>
+        Master planner (extreme goals)
+      </label>
+      <label class="row" style="font-size:9.5px" title="Fenced code a generative cap emits is auto-saved &amp; versioned to the code store (no ide.fs.write step); the agent sees only the latest version">
+        <input type="checkbox" id="loopCodeAutosave" checked>
+        Auto-save &amp; version generated code
+      </label>
+      <label class="row" style="font-size:9.5px" title="Also commit each saved code version to the configured Gitea instance (needs GITEA_BASE_URL/TOKEN/OWNER)">
+        <input type="checkbox" id="loopCodePushGitea">
+        Push code versions to Gitea
+      </label>
       <div style="font-size:8.5px;color:var(--dim);margin:4px 0 1px">Skill allow-list (only these skill ids are eligible; empty = all):</div>
       <textarea id="loopSkillAllow" rows="1" style="width:100%;font-size:9.5px;font-family:var(--mono,monospace);resize:vertical" placeholder="sys-dag-creation sys-fabric-query" title="Whitelist: if non-empty, ONLY these skill ids may be injected (space/comma separated)."></textarea>
       <div style="font-size:8.5px;color:var(--dim);margin:4px 0 1px">Skill deny-list (never inject these skill ids):</div>
@@ -1487,6 +1514,7 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
 <div id="rightRail">
   <div class="ctx-tab-bar">
     <div class="ctab on" onclick="CH.ctxTab('ctx',this)">Context</div>
+    <div class="ctab" onclick="CH.ctxTab('loop',this)" title="Live activity graph of the running agentic loop">Loop</div>
     <div class="ctab" onclick="CH.ctxTab('memgraph',this)">Mem Graph</div>
     <div class="ctab" onclick="CH.ctxTab('daggraph',this)">DAG Graph</div>
     <div class="ctab" onclick="CH.ctxTab('daghistory',this)">DAG Log</div>
@@ -1555,6 +1583,12 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
 
   <!-- Raw system prompt view -->
   <pre id="ctxRawPre" class="ctx-pane" style="display:none;margin:0;padding:8px;overflow:auto;font-family:var(--mono);font-size:10.5px;white-space:pre-wrap;color:var(--text);background:var(--bg0);flex:1"></pre>
+
+  <!-- Live agentic-loop activity graph (fed the same SSE events as the loop output) -->
+  <div id="paneLoopGraph" class="ctx-pane">
+    <script id="vera-loop-graph-js-include" src="/ui/elements/loop_graph.js"></script>
+    <vera-loop-graph id="loopGraphEl" style="flex:1;min-height:0"></vera-loop-graph>
+  </div>
 
   <!-- Memory graph -->
   <div id="paneMemGraph">
@@ -5418,6 +5452,14 @@ Your task: decide what to do next to advance toward the goal.
     aloEl.setAttribute('compact', 'true');           // slimmer chat-message styling
     aloEl.setAttribute('max-height', '380');         // cycles list scroll cap
     statusCard.body.appendChild(aloEl);
+    // Surface the live activity graph: if the right rail is still on its default
+    // Context tab, switch to the Loop graph so the run is visible as it streams.
+    try{
+      if(typeof CTX_TAB==='undefined' || CTX_TAB==='ctx'){
+        const lb=document.querySelector('.ctab[onclick*="\'loop\'"]');
+        if(lb) ctxTab('loop', lb);
+      }
+    }catch(_){}
     // Wire the element to talk to the same backend / session as the chat
     aloEl.setApiBase(BASE);
     aloEl.setSessionId(SID || '');
@@ -5516,6 +5558,12 @@ Your task: decide what to do next to advance toward the goal.
       enable_replan:           document.getElementById('loopEnableReplan')?.checked!==false,
       enable_dynamic_skills:   document.getElementById('loopDynSkills')?.checked!==false,
       auto_suggest_skills:     document.getElementById('loopAutoSuggestSkills')?.checked!==false,
+      enable_phases:           document.getElementById('loopEnablePhases')?.checked!==false,
+      enable_recon:            document.getElementById('loopEnableRecon')?.checked!==false,
+      enable_subplans:         document.getElementById('loopEnableSubplans')?.checked!==false,
+      enable_master_planner:   document.getElementById('loopEnableMasterPlanner')?.checked!==false,
+      enable_code_autosave:    document.getElementById('loopCodeAutosave')?.checked!==false,
+      code_push_gitea:         document.getElementById('loopCodePushGitea')?.checked===true,
       skill_allow:             (document.getElementById('loopSkillAllow')?.value||'').trim(),
       skill_deny:              (document.getElementById('loopSkillDeny')?.value||'').trim(),
     };
@@ -5580,6 +5628,8 @@ Your task: decide what to do next to advance toward the goal.
           // a previous run that share the same session_id.
           if(ev.run_id && ev.run_id !== runId) continue;
           aloEl.appendEvent(ev);
+          // Tee the same live stream into the right-rail activity graph.
+          try{ document.getElementById('loopGraphEl')?.appendEvent(ev); }catch(_){}
         }
       }
     }
@@ -7438,6 +7488,7 @@ Your task: decide what to do next to advance toward the goal.
       if(amEl) amEl.style.display='none';
     }
     document.getElementById('paneMemGraph').style.display=name==='memgraph'?'flex':'none';document.getElementById('paneMemGraph').className='ctx-pane'+(name==='memgraph'?' on':'');
+    {const lp=document.getElementById('paneLoopGraph');if(lp){lp.style.display=name==='loop'?'flex':'none';lp.className='ctx-pane'+(name==='loop'?' on':'');}}
     document.getElementById('paneDagGraph').style.display=name==='daggraph'?'flex':'none';document.getElementById('paneDagGraph').className='ctx-pane'+(name==='daggraph'?' on':'');
     document.getElementById('paneDagHistory').style.display=name==='daghistory'?'flex':'none';document.getElementById('paneDagHistory').className='ctx-pane'+(name==='daghistory'?' on':'');
     document.getElementById('paneBrowser').style.display=name==='browser'?'flex':'none';document.getElementById('paneBrowser').className='ctx-pane'+(name==='browser'?' on':'');
@@ -7446,6 +7497,7 @@ Your task: decide what to do next to advance toward the goal.
     const codePane=document.getElementById('paneCode');
     if(codePane){codePane.style.display=name==='code'?'flex':'none';codePane.className='ctx-pane'+(name==='code'?' on':'');}
     if(name==='code') _artifactsRefresh();
+    if(name==='loop'){try{document.getElementById('loopGraphEl')?.fit();}catch(_){}}
     if(name==='memgraph')memGraphLoad();
     if(name==='daggraph')_renderDagGraph();
     if(name==='daghistory')renderDagHistory();
@@ -10349,6 +10401,29 @@ window.addEventListener('DOMContentLoaded',()=>{
       _tryLoad(_urls(), 0);
     }
   }, 2000);
+})();
+</script>
+<!-- <vera-loop-graph> — live agentic-loop activity graph for the Loop tab.
+     Loaded the same resilient way as the agent-loop-output element. -->
+<script>
+(function(){
+  if(window.customElements && window.customElements.get('vera-loop-graph')) return;
+  function _base(){ try{ return window._veraBase || window.parent?._veraBase || localStorage.getItem('vera_base') || ''; }catch(e){ return ''; } }
+  function _urls(){
+    const b=(_base()||'').replace(/\/$/,''); const u=[];
+    if(b) u.push(b+'/ui/elements/loop_graph.js');
+    u.push('/ui/elements/loop_graph.js');
+    return u;
+  }
+  function _try(urls,idx){
+    if(idx>=urls.length) return;
+    var s=document.createElement('script'); s.src=urls[idx];
+    s.onload=function(){ if(!(window.customElements&&window.customElements.get('vera-loop-graph'))) _try(urls,idx+1); };
+    s.onerror=function(){ _try(urls,idx+1); };
+    document.head.appendChild(s);
+  }
+  _try(_urls(),0);
+  setTimeout(function(){ if(!(window.customElements&&window.customElements.get('vera-loop-graph'))) _try(_urls(),0); }, 2000);
 })();
 </script>
 </body>

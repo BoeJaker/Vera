@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Vera — Thumbnails</title>
+<style>
+:root{
+  --bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;
+  --border:#3a3530;--border2:#4a4540;
+  --acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--acc4:#9e8fa0;
+  --ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;
+  --text:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;
+  --sans:'Inter','IBM Plex Sans',system-ui,sans-serif;
+  --radius:5px;--radius-sm:3px;color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:13px}
+body{display:flex;flex-direction:column;overflow:hidden}
+.hdr{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--bg1);flex-shrink:0}
+.hdr h1{font-size:14px;font-weight:600;color:var(--acc)}
+.hdr .sub{font-size:10px;color:var(--dim2)}
+.wrap{flex:1;display:flex;min-height:0}
+.side{width:340px;flex-shrink:0;border-right:1px solid var(--border);overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:10px}
+.main{flex:1;min-width:0;overflow:auto;padding:14px;display:flex;flex-direction:column;align-items:center;gap:10px}
+.card{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);padding:10px;width:100%}
+.card h2{font-size:11px;font-weight:600;color:var(--acc2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px}
+label{font-size:10px;color:var(--dim2);display:block;margin-bottom:3px}
+.row{display:flex;align-items:center;gap:6px;margin-bottom:7px}
+.row label{margin-bottom:0;min-width:74px}
+input,select,textarea{background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:5px 7px;border-radius:var(--radius-sm);font-family:var(--sans);font-size:11px;width:100%}
+textarea{resize:vertical;min-height:56px;line-height:1.45}
+input[type=color]{padding:0;height:26px;width:38px}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;padding:5px 11px;border-radius:var(--radius-sm);background:var(--bg2);border:1px solid var(--border2);color:var(--text);font-size:11px;cursor:pointer;font-family:var(--sans)}
+.btn:hover{border-color:var(--acc);color:var(--acc)}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:#10201c;font-weight:600}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.status{font-size:10px;color:var(--dim2);margin-top:6px;min-height:13px;word-break:break-word}
+.status.ok{color:var(--ok)}.status.err{color:var(--err)}.status.warn{color:var(--warn)}
+.muted{color:var(--dim2);font-size:10px}
+</style>
+<link rel="stylesheet" href="/ui/vera-panel.css">
+</head>
+<body>
+<div class="hdr"><h1>🖼 Thumbnails</h1>
+  <span class="sub">Stable Diffusion image + text overlay (text drawn with PIL, not SD)</span></div>
+<div class="wrap">
+  <div class="side">
+    <div class="card">
+      <h2>Image</h2>
+      <label>Prompt</label>
+      <textarea id="prompt" placeholder="dramatic mountain landscape at sunset, cinematic"></textarea>
+      <div class="row" style="margin-top:7px"><label>Preset</label>
+        <select id="preset">
+          <option value="youtube">YouTube 1280×720</option>
+          <option value="youtube_hd">YouTube HD 1920×1080</option>
+          <option value="shorts">Shorts 1080×1920</option>
+          <option value="square">Square 1080×1080</option>
+          <option value="twitter">Twitter 1200×675</option>
+          <option value="og">OpenGraph 1200×630</option>
+        </select>
+      </div>
+      <div class="row"><label>Seed</label>
+        <input type="number" id="seed" value="-1" title="-1 random">
+        <label style="min-width:auto">Steps</label>
+        <input type="number" id="steps" value="24" style="width:64px">
+      </div>
+    </div>
+    <div class="card">
+      <h2>Text overlay</h2>
+      <label>Title</label>
+      <input id="title" placeholder="BIG BOLD TITLE">
+      <label style="margin-top:6px">Subtitle</label>
+      <input id="subtitle" placeholder="optional smaller line">
+      <div class="row" style="margin-top:7px"><label>Position</label>
+        <select id="position"><option value="bottom">bottom</option>
+          <option value="center">center</option><option value="top">top</option></select>
+      </div>
+      <div class="row"><label>Text</label><input type="color" id="textColor" value="#ffffff">
+        <label style="min-width:auto">Outline</label><input type="color" id="strokeColor" value="#000000"></div>
+    </div>
+    <button class="btn primary" id="genBtn" style="width:100%" onclick="gen()">⚡ Generate thumbnail</button>
+    <div class="status" id="status"></div>
+    <div class="muted">Generated thumbnails are archived to the data fabric (Images dataset).</div>
+  </div>
+  <div class="main">
+    <div id="previewBox" style="width:100%;max-width:1100px;min-height:260px;display:flex;align-items:center;justify-content:center;border:1px dashed var(--border2);border-radius:6px;background:var(--bg1);padding:10px;text-align:center">
+      <span class="muted" id="phText">Your thumbnail preview will appear here.</span>
+      <img id="thumb" alt="thumbnail" style="max-width:100%;max-height:72vh;border-radius:4px;display:none">
+    </div>
+    <a id="dl" class="btn" style="display:none" download="thumbnail.png">⤓ Download PNG</a>
+  </div>
+</div>
+<script src="/ui/vera-panel.js"></script>
+<script>
+const BASE=(window._veraBase||(window.parent&&window.parent._veraBase)||location.origin).toString().replace(/\/$/,'');
+const $=id=>document.getElementById(id);
+async function gen(){
+  const prompt=$('prompt').value.trim();
+  if(!prompt){$('status').className='status err';$('status').textContent='Enter a prompt.';return;}
+  $('genBtn').disabled=true;
+  $('status').className='status warn';$('status').textContent='generating…';
+  $('thumb').style.display='none';$('dl').style.display='none';
+  $('phText').style.display='';$('phText').textContent='generating… (a few seconds on GPU, longer on CPU)';
+  let r;
+  try{
+    r=await (await fetch(BASE+'/image/thumbnail',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({prompt,preset:$('preset').value,
+        seed:parseInt($('seed').value||'-1',10),steps:parseInt($('steps').value||'24',10),
+        title:$('title').value,subtitle:$('subtitle').value,position:$('position').value,
+        text_color:$('textColor').value,stroke_color:$('strokeColor').value})})).json();
+  }catch(e){r={error:String(e)};}
+  $('genBtn').disabled=false;
+  const err=r.error||r.detail;
+  if(err||!r.image_b64){
+    $('status').className='status err';$('status').textContent=err||'no image (is Stable Diffusion loaded?)';
+    $('phText').textContent=err||'No image — is Stable Diffusion loaded on the GPU node?';
+    return;
+  }
+  const src='data:image/png;base64,'+r.image_b64;
+  const im=$('thumb');
+  im.onload=()=>{ $('phText').style.display='none'; im.style.display='block'; };
+  im.onerror=()=>{ $('phText').style.display='';$('phText').textContent='Preview failed to render.'; im.style.display='none'; };
+  im.src=src;
+  $('dl').href=src;$('dl').style.display='';
+  $('status').className='status ok';
+  $('status').textContent='done — '+(r.width||'?')+'×'+(r.height||'?')+(r.device?(' · '+r.device):'')+' · saved to fabric';
+}
+</script>
+</body>
+</html>

@@ -311,6 +311,22 @@ async def _serve_agent_loop_output_js():
     )
 
 
+# Serve loop_graph.js — the <vera-loop-graph> live agentic-loop activity graph.
+@APP.get("/ui/elements/loop_graph.js", include_in_schema=False)
+async def _serve_loop_graph_js():
+    from fastapi.responses import Response
+    from pathlib import Path
+    p = Path(__file__).parent.parent / "loop_graph_element.js"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
+    return Response(
+        content="console.warn('loop_graph element JS not found');",
+        media_type="application/javascript"
+    )
+
+
 # Serve sandbox_controls.js — the <vera-sandbox-controls> exec-sandbox editor.
 # Shared by the Exec panel and the IDE panel; both edit the one server-side
 # policy (exec.sandbox.get/set), so the controls stay linked.

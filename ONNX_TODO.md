@@ -14,7 +14,13 @@ Priority order below reflects interest, not difficulty. **Item 3 is the lead spi
 
 ---
 
-## ⭐ 3. ML Workshop → ONNX export → callable caps  (LEAD)
+## ⭐ 3. ML Workshop → ONNX export → callable caps  (LEAD) — ✅ DONE
+
+**Status:** implemented in [vera/machine learning/ml_onnx.py](vera/machine%20learning/ml_onnx.py),
+registered after `ml_training` in the loader. Parity verified offline on the
+edge node: dense + gelu + layer_norm + softmax reproduced with **max abs diff
+1.3e-7 (float32) / 4.9e-10 (float64)** vs `_forward_with_weights`; unsupported
+node types (rnn/attention/conv/embedding) are refused, not mis-exported.
 
 **Goal:** turn a trained Vera ML module into a portable `.onnx` artifact served
 by ONNX Runtime, exposed as a first-class capability — so inference no longer
@@ -59,14 +65,25 @@ artifact list). Follows the @capability decorator pattern in
 `torch` already optional-present.
 
 **Acceptance:**
-- [ ] Train a workshop module, `ml.export.onnx`, get a validated `.onnx`.
-- [ ] `ml.onnx.run` reproduces `ml.run` outputs within tolerance (parity check passes).
-- [ ] Exported model callable as an auto-registered `ml.onnx.<name>` cap with no torch loaded.
-- [ ] Panel: export button + artifact browser.
+- [x] Train a workshop module, `ml.export.onnx`, get a validated `.onnx`.
+- [x] `ml.onnx.run` reproduces the reference forward within tolerance (`ml.onnx.verify` passes).
+- [x] Exported model callable as an auto-registered `ml.onnx.model.<slug>` cap with no torch loaded.
+- [x] Panel: export button + artifact browser — ⬇ ONNX toolbar button + an **ONNX**
+      right-tab in [ml_workshop_panel.html](vera/machine%20learning/ml_workshop_panel.html)
+      (export / list / verify / delete).
 
 ---
 
-## 4. Edge inference — ORT as the edge runtime
+## 4. Edge inference — ORT as the edge runtime — ✅ DONE
+
+**Status:** implemented in [edge/onnx_runtime.py](edge/onnx_runtime.py) and
+verified on the edge node — EP auto-selection (CUDA→DirectML→CPU), cached
+sessions, `edge/models/` registry (shares `ML_ONNX_DIR` with the exporter),
+int8 dynamic quantization, benchmark, and an optional FastAPI server
+(`/health`, `/models`, `/run/{slug}`, `/quantize/{slug}`) + CLI. fp32 parity vs
+the reference forward = 8e-8; int8 round-trips correctly. Cluster advertising
+now lands in `obs.cluster` (`/cluster`): shared `edge/models/` artifacts always,
+plus per-node provider/model counts when `ONNX_RUNTIME_URLS` is set.
 
 **Goal:** make `edge/` a home for small, quantized ONNX models that run on the
 CPU nodes (and the Windows host via DirectML), not just the GPU box.
@@ -79,20 +96,29 @@ CPU nodes (and the Windows host via DirectML), not just the GPU box.
 - Natural consumer of the §3 artifacts and the §1/§5 models.
 
 **Tasks:**
-- [ ] Add an ORT serving entrypoint under `edge/` (sibling to
+- [x] Add an ORT serving entrypoint under `edge/` (sibling to
       [GPU_inference.py](edge/GPU_inference.py)) with EP auto-selection
       (CUDA → DML → CPU) and a model registry/cache.
-- [ ] int8 dynamic-quantization helper (`onnxruntime.quantization`) + a
+- [x] int8 dynamic-quantization helper (`onnxruntime.quantization`) + a
       size/latency benchmark vs the fp32 model.
-- [ ] `edge/models/` layout + manifest; wire to the cluster so CPU nodes can
-      advertise which ORT models they host.
-- [ ] Health/capabilities endpoint reporting active EP + loaded models.
+- [x] `edge/models/` layout + manifest (shared `ML_ONNX_DIR`). *(cluster
+      advertise of hosted ORT models still TODO)*
+- [x] Health/capabilities endpoint reporting active EP + loaded models.
 
 **Deps:** `onnxruntime` (CPU), `onnxruntime-directml` (Windows host).
 
 ---
 
-## 5. NLP rerankers / classifiers on ORT CPU
+## 5. NLP rerankers / classifiers on ORT CPU — ✅ mostly DONE
+
+**Status:** `nlp.rerank` (+ `nlp.models`) implemented in
+[vera/research/nlp_capabilities.py](vera/research/nlp_capabilities.py), backed by
+fastembed's ONNX cross-encoder on ORT CPU, registered in the loader. Additive &
+opt-in. **Wired into research retrieval** ([researcher_api.py](vera/research/researcher_api.py))
+behind `VERA_RERANK_ENABLED` (default off): the merged citation pool is
+re-ranked by query relevance before context assembly, falling back to source
+order on any failure. **Classifier caps** `nlp.classify` (sentiment) + `nlp.ner`
+added (optimum + transformers ORT pipelines, guarded optional).
 
 **Goal:** serve small NLP models (cross-encoder rerankers, sentiment, NER,
 classification) on ONNX Runtime CPU — no heavyweight serving process.
@@ -112,7 +138,18 @@ ONNX models from the hub.
 
 ---
 
-## 1. Embeddings via fastembed (ONNX Runtime CPU)
+## 1. Embeddings via fastembed (ONNX Runtime CPU) — ✅ DONE (opt-in)
+
+**Status:** implemented as a back-compat, opt-in provider.
+[vera/fabric/fastembed_provider.py](vera/fabric/fastembed_provider.py) wraps
+fastembed; `ollama_embed()` in
+[capability_orchestration.py](vera/capability_orchestration.py#L772) takes the
+fastembed fast-path **only** when `cfg.EMBED_PROVIDER == "fastembed"`
+(`VERA_EMBED_PROVIDER` env), and falls through to Ollama on any failure. Default
+is unchanged (`ollama`). Because every embed call funnels through `ollama_embed`,
+one switch flips the whole fabric/memory/DAG hot path. `fastembed` is an optional
+dep (commented in requirements). Couldn't be runtime-exercised from the edge
+shell (fastembed not installed, embed path runs on the server).
 
 **Goal:** serve `nomic-embed-text` embeddings on ORT CPU instead of Ollama,
 removing Ollama from the embedding hot path the data fabric + memory system hit.
@@ -121,13 +158,15 @@ removing Ollama from the embedding hot path the data fabric + memory system hit.
 ([04-ollama-cluster.md:187-189](documentation/04-ollama-cluster.md#L187-L189)).
 
 **Tasks:**
-- [ ] Add a `fastembed`-backed embedding provider (ONNX `nomic-embed-text`),
-      selectable behind the existing `llm.embed` cap (config flag /
-      provider switch — keep Ollama as fallback).
-- [ ] Benchmark batched throughput + memory vs the Ollama CPU path.
-- [ ] Confirm vector dimensionality matches existing stored embeddings (avoid a
-      re-index); plan a migration if dims differ.
-- [ ] Roll out to data fabric + memory once parity is confirmed.
+- [x] Add a `fastembed`-backed embedding provider, selectable via
+      `VERA_EMBED_PROVIDER` at the `ollama_embed()` choke-point (Ollama fallback).
+- [x] Benchmark throughput vs the Ollama path — `embed.provider.benchmark`.
+- [x] Confirm vector dimensionality matches existing stored embeddings — migration
+      guard `embed.provider.check` ([embed_provider_capabilities.py](vera/fabric/embed_provider_capabilities.py))
+      reports dim match + cosine + re-index guidance.
+- [x] Re-index path — `memory.reindex_embeddings` ([memory.py](vera/fabric/memory.py))
+      re-embeds the Chroma store with the current provider (dry-run by default,
+      `confirm=true` to write). Data-fabric stores can follow the same pattern.
 
 **Deps:** `fastembed` (bundles `onnxruntime`).
 
@@ -138,10 +177,9 @@ model produces compatible embeddings before switching the default.
 
 ## Cross-cutting
 
-- [ ] Pin `onnx` / `onnxruntime` versions in `requirements.txt`; add
+- [x] Pin `onnx` / `onnxruntime` versions in `requirements.txt`; add
       `onnxruntime-gpu` (GPU node) and `onnxruntime-directml` (Windows host) as
-      environment-specific extras.
-- [ ] Standardize an artifact store + naming (`module_id` + weights hash) shared
-      by §3/§4.
-- [ ] Document an "ONNX" section (new `documentation/30-onnx.md` or fold into
-      [16-machine-learning.md](documentation/16-machine-learning.md)).
+      environment-specific extras (commented).
+- [x] Standardize an artifact store + naming — `ML_ONNX_DIR` (default
+      `edge/models/`), `<slug>.onnx` + `<slug>.json` manifest, shared by §3/§4.
+- [x] Document an "ONNX" section — [documentation/30-onnx.md](documentation/30-onnx.md).

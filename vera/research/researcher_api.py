@@ -3583,6 +3583,15 @@ async def gather_all_sources(
     if not all_cits:
         return all_cits, ""
 
+    # §5 (opt-in): re-rank the merged citation pool by relevance to the query with
+    # an ONNX cross-encoder (nlp.rerank). Off by default — set VERA_RERANK_ENABLED=1.
+    # Best-effort; any failure leaves the original order unchanged.
+    if os.getenv("VERA_RERANK_ENABLED", "0").lower() in ("1", "true", "yes") and len(all_cits) > 1:
+        try:
+            all_cits = await _rerank_citations(query, all_cits)
+        except Exception as e:
+            log.debug("citation rerank skipped: %s", e)
+
     ctx_lines = ["## Retrieved Sources\n"]
     for i, c in enumerate(all_cits, 1):
         ctx_lines.append(f"[{i}] **{c.title}** ({c.domain})")
@@ -3591,6 +3600,28 @@ async def gather_all_sources(
         ctx_lines.append(f"    URL: {c.url}\n")
 
     return all_cits, "\n".join(ctx_lines)
+
+
+async def _rerank_citations(query: str, cits: "list[Citation]") -> "list[Citation]":
+    """§5: reorder citations by query relevance via the nlp.rerank ONNX cross-encoder.
+    Returns the input unchanged if the cap is unavailable or errors (e.g. fastembed
+    not installed), so callers are never worse off than the source-order baseline."""
+    try:
+        from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY
+    except Exception:
+        return cits
+    cap = CAPABILITY_REGISTRY.get("nlp.rerank")
+    if not cap:
+        return cits
+    docs = [((getattr(c, "snippet", "") or getattr(c, "full_text", "")
+              or getattr(c, "title", "") or ""))[:512] for c in cits]
+    r = await cap["raw"](query=query, documents=docs)
+    if not isinstance(r, dict) or r.get("error") or not r.get("ranked"):
+        return cits
+    order = [it["index"] for it in r["ranked"] if isinstance(it.get("index"), int)]
+    seen = set(order)
+    order += [i for i in range(len(cits)) if i not in seen]
+    return [cits[i] for i in order if 0 <= i < len(cits)]
 
 
 # ══════════════════════════════════════════════════════════════════════════════

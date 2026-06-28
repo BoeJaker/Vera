@@ -955,6 +955,23 @@
         return;
       }
 
+      // ── v5-only: generated code auto-saved & versioned to the code store ──
+      if(t === 'agent_loop_v5.code_saved'){
+        const files = ev.files||[];
+        const rows = files.map(f => {
+          const g = f.gitea ? ` <a href="${_esc(f.gitea)}" target="_blank" style="color:var(--acc,#5a9e8f)">gitea↗</a>` : '';
+          const u = f.unchanged ? ` <span style="color:var(--dim,#a89f92)">(unchanged)</span>` : '';
+          return `<div style="font-family:var(--mono,monospace);font-size:10px;color:var(--text2,#bfb6a8);margin:1px 0">`
+            + `💾 ${_esc(f.path||'')} <b>v${_esc(String(f.version||'?'))}</b> `
+            + `<span style="color:var(--dim,#a89f92)">${f.bytes||0}b ${_esc(f.lang||'')}</span>${u}${g}</div>`;
+        }).join('');
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">💾 Saved &amp; versioned</span>
+          <span class="alo-cycle-status">${files.length} file${files.length===1?'':'s'}</span>
+        </div><div class="alo-cycle-preview">${rows||'(none)'}</div>`, 'expand');
+        return;
+      }
+
       // handover synthesis
       if(t === 'agent_loop.handover_start'){
         this._cycleEl(`<div class="alo-cycle-h">
