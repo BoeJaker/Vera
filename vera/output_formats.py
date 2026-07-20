@@ -227,13 +227,67 @@ FORMAT_PROFILES: Dict[str, Dict[str, Any]] = {
 }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# DYNAMIC PROFILES — runtime contributions (the skills system feeds these in).
+#
+# The in-code FORMAT_PROFILES above is the immutable baseline; it is never
+# mutated. The skills module (vera/skills/skills.py) registers every
+# `output_format`-type skill here via register_profile(), which is how the
+# Skills library becomes the single authoring surface for output styles:
+# whatever a user (or a built-in format skill) defines shows up in chat's
+# Output-format picker (llm.formats → list_profiles) and is honoured by
+# apply_format() — and therefore by llm.generate, the agent runner and render —
+# without any of those callers needing to know about skills. A dynamic profile
+# overrides a baseline profile of the same id, so editing the built-in "docs"
+# format skill re-shapes that format everywhere.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_DYNAMIC_PROFILES: Dict[str, Dict[str, Any]] = {}
+
+
+def _merged_profiles() -> Dict[str, Dict[str, Any]]:
+    """Baseline profiles overlaid with runtime (skill-contributed) ones."""
+    return {**FORMAT_PROFILES, **_DYNAMIC_PROFILES}
+
+
+def register_profile(profile_id: str, *, label: str, system_suffix: str,
+                     kind: str = "deliverable", target_file_format: str = "md",
+                     source: str = "skill") -> None:
+    """Add or replace a runtime output-format profile.
+
+    Used by the skills system to surface `output_format` skills as first-class
+    formats. Re-registering the same id overwrites; a dynamic profile shadows a
+    baseline profile of the same id in every public view.
+    """
+    pid = (profile_id or "").strip()
+    if not pid:
+        return
+    _DYNAMIC_PROFILES[pid] = {
+        "label":              (label or pid).strip() or pid,
+        "kind":               (kind or "deliverable").strip() or "deliverable",
+        "system_suffix":      system_suffix or "",
+        "target_file_format": (target_file_format or "md").strip() or "md",
+        "source":             source or "skill",
+    }
+
+
+def unregister_profile(profile_id: str) -> None:
+    """Remove a previously registered runtime profile (no-op if absent)."""
+    _DYNAMIC_PROFILES.pop((profile_id or "").strip(), None)
+
+
+def get_profile(profile_id: str) -> Dict[str, Any] | None:
+    """Look up one profile (dynamic first, then baseline). Returns None if unknown."""
+    return _merged_profiles().get((profile_id or "").strip())
+
+
 def apply_format(system: str, profile: str) -> str:
     """Return `system` with the named format profile's directive appended.
 
     Unknown / empty `profile` returns `system` unchanged, so callers can pass an
     optional output_format through unconditionally.
     """
-    prof = FORMAT_PROFILES.get((profile or "").strip())
+    prof = get_profile(profile)
     if not prof:
         return system or ""
     suffix = prof.get("system_suffix", "").strip()
@@ -244,9 +298,14 @@ def apply_format(system: str, profile: str) -> str:
 
 
 def list_profiles() -> List[Dict[str, Any]]:
-    """Public, picker-friendly view of the registry (no behaviour-bearing text)."""
+    """Public, picker-friendly view of the registry (no behaviour-bearing text).
+
+    Includes both the in-code baseline and any skill-contributed profiles, with
+    a `source` flag ('builtin' | 'skill') so pickers can group/badge them.
+    """
     return [
         {"id": pid, "label": p["label"], "kind": p["kind"],
-         "target_file_format": p["target_file_format"]}
-        for pid, p in FORMAT_PROFILES.items()
+         "target_file_format": p["target_file_format"],
+         "source": p.get("source", "builtin")}
+        for pid, p in _merged_profiles().items()
     ]

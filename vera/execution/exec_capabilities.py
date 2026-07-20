@@ -367,8 +367,128 @@ def _public_host_record(h: dict) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # LOCAL EXEC
 # ─────────────────────────────────────────────────────────────────────────────
-_DEFAULT_TIMEOUT = 60          # seconds
+_DEFAULT_TIMEOUT = 60          # seconds — short probes (ssh reach, port/banner, ping)
+# Interactive shell/code execution (bash/ps/python/…) routinely runs things that
+# legitimately take minutes: a network scan, a package install, a build, a long
+# query. 60 s was far too tight and produced spurious "timeout after 60s" (and,
+# once clamped, 120 s) failures on perfectly healthy commands. Give these caps a
+# generous default and let the agent raise it further per-call. Env-tunable.
+_EXEC_DEFAULT_TIMEOUT = int(os.getenv("VERA_EXEC_TIMEOUT", "600") or 600)   # 10 min
 _MAX_OUTPUT     = 1_000_000    # 1 MB captured output per stream
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Opt-in per-session sandbox routing (Phase 6). When a session has an ACTIVE
+# sandbox (session_sandbox_capabilities), its shell/code runs INSIDE the
+# container instead of on this host. These are no-ops (return None) whenever the
+# module isn't loaded, no session_id is supplied, or the session has no sandbox.
+# ─────────────────────────────────────────────────────────────────────────────
+def _sandbox_mod():
+    m = sys.modules.get("session_sandbox_capabilities")
+    if m is not None and hasattr(m, "route_shell"):
+        return m
+    for name, mod in list(sys.modules.items()):
+        if mod is not None and name.endswith("session_sandbox_capabilities") \
+                and hasattr(mod, "route_shell"):
+            return mod
+    return None
+
+
+def _trigger_session_id() -> str:
+    """Session id from the syslog trigger chain (set by chat.stream / the agentic
+    loop). This is why a cap invoked from chat WITHOUT an explicit session_id still
+    routes into that session's sandbox — the same mechanism ide.fs.* uses. Callers
+    that HAVE a session_id should still pass it; this is the safety net."""
+    try:
+        sl = sys.modules.get("syslog")
+        if sl is not None:
+            return (sl.get_trigger_chain() or {}).get("session_id", "") or ""
+    except Exception:
+        pass
+    return ""
+
+
+async def _route_session_shell(session_id: str, command: str, timeout: int):
+    session_id = session_id or _trigger_session_id()
+    if not session_id:
+        return None
+    sb = _sandbox_mod()
+    if sb is None:
+        return None
+    try:
+        return await sb.route_shell(session_id, command, timeout)
+    except Exception as e:
+        log.debug("session sandbox route_shell failed (running on host): %s", e)
+        return None
+
+
+async def _route_session_code(session_id: str, language: str, code: str,
+                              path: str, stdin: str, timeout: int, args):
+    # NOTE: path-based runs ARE routed now — a file written into the container
+    # (via routed ide.fs.write / write_artifact / code.save) must be run there
+    # too, not on a host that can't see it. The sandbox module resolves path.
+    session_id = session_id or _trigger_session_id()
+    if not session_id:
+        return None
+    sb = _sandbox_mod()
+    if sb is None:
+        return None
+    try:
+        return await sb.route_code(session_id, language, code, path=path,
+                                   stdin=stdin, timeout=timeout, args=args)
+    except Exception as e:
+        log.debug("session sandbox route_code failed (running on host): %s", e)
+        return None
+
+
+async def _route_session_shell_argv(session_id: str, command: str, shell: str = "sh"):
+    """Streaming twin of _route_session_shell: returns the host-side argv that
+    runs `command` INSIDE the session sandbox (docker exec …), or None → host.
+    `shell` picks the in-container interpreter ("sh" or "pwsh" for PowerShell)."""
+    session_id = session_id or _trigger_session_id()
+    if not session_id:
+        return None
+    sb = _sandbox_mod()
+    if sb is None or not hasattr(sb, "route_shell_argv"):
+        return None
+    try:
+        return await sb.route_shell_argv(session_id, command, shell=shell)
+    except Exception as e:
+        log.debug("session sandbox route_shell_argv failed (host): %s", e)
+        return None
+
+
+async def _route_session_shell_ps(session_id: str, command: str, timeout: int):
+    """PowerShell twin of _route_session_shell — runs `command` via pwsh INSIDE the
+    session sandbox (needs a pwsh-capable base image), or None → host."""
+    session_id = session_id or _trigger_session_id()
+    if not session_id:
+        return None
+    sb = _sandbox_mod()
+    if sb is None or not hasattr(sb, "route_shell"):
+        return None
+    try:
+        return await sb.route_shell(session_id, command, timeout, shell="pwsh")
+    except Exception as e:
+        log.debug("session sandbox route_shell(pwsh) failed (host): %s", e)
+        return None
+
+
+async def _route_session_code_argv(session_id: str, language: str, code: str,
+                                   args=None):
+    """Streaming twin of _route_session_code: returns the host-side argv that
+    runs `code` INSIDE the session sandbox, or None → host."""
+    session_id = session_id or _trigger_session_id()
+    if not session_id:
+        return None
+    sb = _sandbox_mod()
+    if sb is None or not hasattr(sb, "route_code_argv"):
+        return None
+    try:
+        return await sb.route_code_argv(session_id, language, code, args=args)
+    except Exception as e:
+        log.debug("session sandbox route_code_argv failed (host): %s", e)
+        return None
 
 
 async def _run_local(argv: List[str], stdin_data: str = "",
@@ -423,16 +543,24 @@ async def _run_local(argv: List[str], stdin_data: str = "",
                 "installing packages, checking disk/process/network state on the local host. "
                 "Returns immediately when complete (not LONG-RUNNING). "
                 "Check ok and rc in response — if ok=False, stderr contains the error. "
-                "Input: command (str!), timeout (int sec, default 30), cwd (str — working directory). "
+                "Input: command (str!), timeout (int sec, default 600 = 10 min), cwd (str — working "
+                "directory). Pass a GENEROUS timeout for commands that legitimately take a while "
+                "(network scans like nmap, package installs, builds, big greps) — don't let a slow "
+                "-but-healthy command trip the timeout. "
                 "Output: {ok, rc, stdout, stderr, elapsed_ms}. "
                 "Use exec.bash.stream for live streaming output of long-running commands.",
 )
-async def cap_bash_run(command: str, timeout: int = _DEFAULT_TIMEOUT,
-                       cwd: str = "", trace_id=None) -> Dict:
+async def cap_bash_run(command: str, timeout: int = _EXEC_DEFAULT_TIMEOUT,
+                       cwd: str = "", session_id: str = "", trace_id=None) -> Dict:
     timeout = parse_timeout(timeout)
     if not command.strip():
         return {"ok": False, "error": "empty command", "rc": -1,
                 "stdout": "", "stderr": ""}
+    # Opt-in per-session sandbox: if this session has an ACTIVE sandbox, the
+    # command runs INSIDE its container instead of on the host (no-op otherwise).
+    routed = await _route_session_shell(session_id, command, timeout)
+    if routed is not None:
+        return routed
     ok, reason = _sandbox_check(command, cwd=cwd)
     if not ok:
         await emit_event({"type": "exec.sandbox.blocked", "shell": "bash",
@@ -450,17 +578,23 @@ async def cap_bash_run(command: str, timeout: int = _DEFAULT_TIMEOUT,
 @capability(
     "exec.ps.run",
     http_method="POST", http_path="/exec/ps/run", http_tags=["exec"],
-    description="Run a PowerShell command locally (captured). "
-                "Uses 'pwsh' if available, falls back to 'powershell'. "
-                "Input: command (str!), timeout (int sec), cwd (str). "
+    description="Run a PowerShell command (captured). Uses 'pwsh' if available, "
+                "falls back to 'powershell'. If the session has an ACTIVE sandbox it "
+                "runs via pwsh INSIDE the container (needs a pwsh-capable base image). "
+                "Input: command (str!), timeout (int sec, default 600 = 10 min), cwd (str), "
+                "session_id (str). Pass a larger timeout for long commands (installs, builds). "
                 "Output: {ok, rc, stdout, stderr, elapsed_ms}.",
 )
-async def cap_ps_run(command: str, timeout: int = _DEFAULT_TIMEOUT,
-                     cwd: str = "", trace_id=None) -> Dict:
+async def cap_ps_run(command: str, timeout: int = _EXEC_DEFAULT_TIMEOUT,
+                     cwd: str = "", session_id: str = "", trace_id=None) -> Dict:
     timeout = parse_timeout(timeout)
     if not command.strip():
         return {"ok": False, "error": "empty command", "rc": -1,
                 "stdout": "", "stderr": ""}
+    # Opt-in per-session sandbox: run via pwsh inside the container when active.
+    routed = await _route_session_shell_ps(session_id, command, timeout)
+    if routed is not None:
+        return routed
     ok, reason = _sandbox_check(command, cwd=cwd)
     if not ok:
         await emit_event({"type": "exec.sandbox.blocked", "shell": "powershell",
@@ -711,6 +845,108 @@ def artifact_dir(*, session_id: str = "", project: str = "", workspace: str = ""
     return path
 
 
+async def artifact_dir_async(*, session_id: str = "", project: str = "",
+                             workspace: str = "", artifact: str = "",
+                             create: bool = True) -> str:
+    """Sandbox-aware artifact dir. When the session has an ACTIVE sandbox the
+    artifact area IS the container's /workspace — where routed exec/code runs land
+    and the per-session volume persists — so the path the agent is told to use, its
+    forced run cwd, its code.save mirror, and its by-path runs all cohere in one
+    place. Otherwise falls back to the host `artifact_dir()`. Prefer this over the
+    sync `artifact_dir()` anywhere a session_id is in play."""
+    session_id = session_id or _trigger_session_id()
+    sb = _sandbox_mod()
+    if session_id and sb is not None and hasattr(sb, "route_artifact_dir"):
+        try:
+            d = await sb.route_artifact_dir(session_id, create=create)
+            if d:
+                return d
+        except Exception as e:
+            log.debug("sandbox artifact_dir route failed (host): %s", e)
+    return artifact_dir(session_id=session_id, project=project,
+                        workspace=workspace, artifact=artifact, create=create)
+
+
+async def write_artifact_file(*, relpath: str, content: str, session_id: str = "",
+                              project: str = "", workspace: str = "") -> str:
+    """Write `relpath` under the (sandbox-aware) artifact dir — INTO the container
+    when the session is sandboxed (so the file is where its runs execute), else on
+    the host. Returns the absolute path (container or host). Segments are
+    sanitised; traversal outside the artifact dir is rejected (host path only)."""
+    session_id = session_id or _trigger_session_id()
+    rel = str(relpath or "").strip().strip("/\\")
+    parts = [_safe_seg(p) for p in re.split(r"[\\/]+", rel)
+             if p and p not in (".", "..")]
+    if not parts:
+        raise ValueError("invalid artifact filename")
+
+    sb = _sandbox_mod()
+    if session_id and sb is not None and hasattr(sb, "route_artifact_dir") \
+            and hasattr(sb, "route_fs_write"):
+        try:
+            base = await sb.route_artifact_dir(session_id, create=True)
+            if base:
+                full = base.rstrip("/") + "/" + "/".join(parts)
+                res = await sb.route_fs_write(session_id, full, content)
+                if res is not None and not res.get("error"):
+                    return full
+        except Exception as e:
+            log.debug("sandbox artifact write failed (host): %s", e)
+
+    base = artifact_dir(session_id=session_id, project=project, workspace=workspace)
+    target = _norm_path(os.path.join(base, *parts))
+    if not _path_within(target, base):
+        raise ValueError("path escapes the artifact directory")
+    os.makedirs(os.path.dirname(target) or base, exist_ok=True)
+    with open(target, "w", encoding="utf-8") as fh:
+        fh.write(content)
+    return target
+
+
+@APP.get("/exec/artifacts/download", include_in_schema=False)
+async def artifact_download(session_id: str = "", rel: str = ""):
+    """Download one file from a session's artifact directory as an attachment.
+    `rel` is the path relative to the artifact dir; traversal outside it is
+    rejected. Lets the chat UI (and loop final cards) deliver generated files
+    (reports, documents, code, archives) as real downloads."""
+    from fastapi.responses import FileResponse, JSONResponse, Response
+    rel = str(rel or "").strip().strip("/\\")
+    if not rel:
+        return JSONResponse({"error": "rel required"}, status_code=400)
+    safe_parts = [p for p in re.split(r"[\\/]+", rel) if p and p not in (".", "..")]
+    base = await artifact_dir_async(session_id=session_id, create=False)
+
+    # Sandboxed session → stream the file OUT of the container (its /workspace is
+    # not on this host, so os.path can't see it).
+    sb = _sandbox_mod()
+    if base and base.startswith("/workspace") and sb is not None \
+            and hasattr(sb, "route_fs_read"):
+        cpath = base.rstrip("/") + "/" + "/".join(safe_parts)
+        try:
+            res = await sb.route_fs_read(session_id, cpath)
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+        if res is None or res.get("error"):
+            return JSONResponse({"error": (res or {}).get("error") or f"not found: {rel}"},
+                                status_code=404)
+        data = (res.get("content") or "").encode("utf-8", "replace")
+        return Response(content=data, media_type="application/octet-stream",
+                        headers={"Content-Disposition":
+                                 f'attachment; filename="{os.path.basename(rel)}"'})
+
+    if not base or not os.path.isdir(base):
+        return JSONResponse({"error": "no artifact directory for this session"},
+                            status_code=404)
+    target = _norm_path(os.path.join(base, *safe_parts))
+    if not _path_within(target, base):
+        return JSONResponse({"error": "path escapes the artifact directory"},
+                            status_code=400)
+    if not os.path.isfile(target):
+        return JSONResponse({"error": f"not found: {rel}"}, status_code=404)
+    return FileResponse(target, filename=os.path.basename(target),
+                        media_type="application/octet-stream")
+
+
 @capability(
     "exec.sandbox.get",
     http_method="GET", http_path="/exec/sandbox", http_tags=["exec"],
@@ -815,9 +1051,15 @@ async def cap_sandbox_artifact_dir(
     artifact: str = "", create: bool = True, trace_id=None,
 ) -> Dict:
     pol = _load_sandbox()
-    d = artifact_dir(session_id=session_id, project=project, workspace=workspace,
-                     artifact=artifact, create=bool(create))
-    return {"dir": d, "root": _artifact_root(pol), "scope": pol.get("artifact_scope", "session")}
+    # Sandbox-aware: when the session has an active sandbox the artifact dir is the
+    # container's /workspace (where its files actually live), so the chat artifacts
+    # panel resolves — and then lists/reads — the right place.
+    d = await artifact_dir_async(session_id=session_id, project=project,
+                                 workspace=workspace, artifact=artifact,
+                                 create=bool(create))
+    sandboxed = d.startswith("/workspace")
+    return {"dir": d, "root": ("/workspace" if sandboxed else _artifact_root(pol)),
+            "scope": pol.get("artifact_scope", "session"), "sandboxed": sandboxed}
 
 
 def _unescape_collapsed(content: str) -> str:
@@ -852,24 +1094,24 @@ async def cap_sandbox_write_artifact(
 ) -> Dict:
     if not filename or not str(filename).strip():
         return {"ok": False, "error": "filename required"}
-    base = artifact_dir(session_id=session_id, project=project, workspace=workspace)
-    # Sanitize each path segment (allow subdirs, block traversal / separators).
-    parts = [_safe_seg(p) for p in re.split(r"[\\/]+", str(filename).strip("/\\"))
-             if p and p not in (".", "..")]
-    if not parts:
-        return {"ok": False, "error": "invalid filename"}
-    target = _norm_path(os.path.join(base, *parts))
-    if not _path_within(target, base):
-        return {"ok": False, "error": "path escapes the artifact directory"}
+    # Sandbox-aware: when the session has an active sandbox this lands in the
+    # container's /workspace (where its runs execute), else in the host dir.
     try:
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        with open(target, "w", encoding="utf-8") as fh:
-            fh.write(_unescape_collapsed(content or ""))
+        target = await write_artifact_file(
+            relpath=filename, content=_unescape_collapsed(content or ""),
+            session_id=session_id, project=project, workspace=workspace)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+    sandboxed = target.startswith("/workspace")
     await emit_event({"type": "exec.sandbox.artifact_written",
-                      "path": target, "session_id": session_id})
-    return {"ok": True, "path": target, "rel": os.path.relpath(target, base)}
+                      "path": target, "session_id": session_id,
+                      "sandboxed": sandboxed})
+    rel = target.split("/workspace/", 1)[-1] if sandboxed else \
+        os.path.relpath(target, artifact_dir(session_id=session_id, project=project,
+                                              workspace=workspace, create=False))
+    return {"ok": True, "path": target, "rel": rel, "sandboxed": sandboxed}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -969,7 +1211,7 @@ def _invocation_path(code: str) -> str:
 
 
 async def _run_code(language: str, code: str, *, stdin: str = "",
-                    timeout: int = _DEFAULT_TIMEOUT, cwd: str = "",
+                    timeout: int = _EXEC_DEFAULT_TIMEOUT, cwd: str = "",
                     args: Optional[List[str]] = None, path: str = "") -> Dict[str, Any]:
     import tempfile
     lang = _canon_lang(language)
@@ -1064,7 +1306,8 @@ async def _run_code(language: str, code: str, *, stdin: str = "",
                 "aliases py/js/ts accepted; optional when `path` is given — inferred from the "
                 "file extension), code (str — inline snippet), path (str — run an EXISTING saved "
                 "file instead of a snippet; use this to run a script you wrote to the artifact "
-                "dir), stdin (str), timeout (int sec, default 60), cwd (str — working dir, "
+                "dir), stdin (str), timeout (int sec, default 600 = 10 min; raise it for long "
+                "runs), cwd (str — working dir, "
                 "defaults to the file's dir when running by path), args (list[str] — passed to "
                 "the script). Provide EITHER code OR path. "
                 "Output: {ok, rc, stdout, stderr, elapsed_ms, language, bin}. "
@@ -1075,12 +1318,16 @@ async def _run_code(language: str, code: str, *, stdin: str = "",
     }},
 )
 async def cap_code_run(language: str = "", code: str = "", stdin: str = "",
-                       timeout: int = _DEFAULT_TIMEOUT, cwd: str = "",
+                       timeout: int = _EXEC_DEFAULT_TIMEOUT, cwd: str = "",
                        args: Optional[List[str]] = None, path: str = "",
-                       trace_id=None) -> Dict:
+                       session_id: str = "", trace_id=None) -> Dict:
     if not language and not str(path or "").strip():
         return {"ok": False, "error": "language required (or pass a file `path`)",
                 "rc": -1, "stdout": "", "stderr": ""}
+    routed = await _route_session_code(session_id, language, code, path, stdin,
+                                       timeout, args)
+    if routed is not None:
+        return routed
     return await _run_code(language, code, stdin=stdin, timeout=timeout,
                            cwd=cwd, args=args, path=path)
 
@@ -1088,9 +1335,13 @@ async def cap_code_run(language: str = "", code: str = "", stdin: str = "",
 def _make_lang_cap(lang_id: str, label: str):
     """Build a thin per-language @capability that delegates to _run_code."""
     async def _runner(code: str = "", stdin: str = "",
-                      timeout: int = _DEFAULT_TIMEOUT, cwd: str = "",
+                      timeout: int = _EXEC_DEFAULT_TIMEOUT, cwd: str = "",
                       args: Optional[List[str]] = None, path: str = "",
-                      trace_id=None) -> Dict:
+                      session_id: str = "", trace_id=None) -> Dict:
+        routed = await _route_session_code(session_id, lang_id, code, path, stdin,
+                                           timeout, args)
+        if routed is not None:
+            return routed
         return await _run_code(lang_id, code, stdin=stdin, timeout=timeout,
                                cwd=cwd, args=args, path=path)
     _runner.__name__ = f"cap_{lang_id}_run"
@@ -1174,6 +1425,32 @@ async def exec_code_stream(request: Request):
 
     if not code.strip():
         return _err_stream("empty code")
+
+    # Opt-in per-session sandbox: if this session has an ACTIVE sandbox, stream
+    # the run from INSIDE its container (no host temp file, no host interpreter).
+    # Falls through to the host path for inactive sandboxes / unsupported langs.
+    sbx_argv = await _route_session_code_argv(session_id, lang, code)
+    if sbx_argv is not None:
+        if session_id:
+            _syslog = sys.modules.get("syslog")
+            if _syslog:
+                try:
+                    _syslog.set_trigger(str(uuid.uuid4()), "exec.code.stream", session_id)
+                except Exception:
+                    pass
+
+        async def _sbx_gen():
+            async for chunk in _stream_subprocess_recorded(
+                sbx_argv, cap_name="exec.code.stream", session_id=session_id,
+                params={"language": lang, "sandboxed": True, "timeout": timeout},
+                cwd=None, timeout=timeout,
+            ):
+                yield chunk
+
+        return StreamingResponse(
+            _sbx_gen(), media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     # Shell langs reuse the existing stream endpoints' machinery via argv
     if lang == "bash":
@@ -1694,6 +1971,23 @@ async def exec_bash_stream(request: Request):
             yield _sse("error", {"error": "empty command"})
             yield _sse("done", {"rc": -1})
         return StreamingResponse(_err(), media_type="text/event-stream")
+
+    # Opt-in per-session sandbox: stream from INSIDE the session's container when
+    # it has an ACTIVE sandbox (mirrors exec.bash.run's route_shell). The host
+    # exec-sandbox policy check below is bypassed — isolation is the container.
+    sbx_argv = await _route_session_shell_argv(session_id, command)
+    if sbx_argv is not None:
+        return StreamingResponse(
+            _stream_subprocess_recorded(
+                sbx_argv, cap_name="exec.bash.stream", session_id=session_id,
+                params={"command": command, "sandboxed": True,
+                        "timeout": _sandbox_clamp_timeout(timeout)},
+                cwd=None, timeout=_sandbox_clamp_timeout(timeout),
+            ),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     _ok, _reason = _sandbox_check(command, cwd=cwd or "")
     if not _ok:
         async def _blocked():
@@ -1740,6 +2034,22 @@ async def exec_ps_stream(request: Request):
             yield _sse("error", {"error": "empty command"})
             yield _sse("done", {"rc": -1})
         return StreamingResponse(_err(), media_type="text/event-stream")
+
+    # Opt-in per-session sandbox: stream PowerShell from INSIDE the container via
+    # pwsh when this session has an ACTIVE sandbox (needs a pwsh-capable base).
+    sbx_argv = await _route_session_shell_argv(session_id, command, shell="pwsh")
+    if sbx_argv is not None:
+        return StreamingResponse(
+            _stream_subprocess_recorded(
+                sbx_argv, cap_name="exec.ps.stream", session_id=session_id,
+                params={"command": command, "sandboxed": True,
+                        "timeout": _sandbox_clamp_timeout(timeout)},
+                cwd=None, timeout=_sandbox_clamp_timeout(timeout),
+            ),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     _ok, _reason = _sandbox_check(command, cwd=cwd or "")
     if not _ok:
         async def _blocked():
@@ -3099,7 +3409,13 @@ _NETSCAN_LABELS = (
     "PVECluster", "PVENode", "PVEGuest",
     "K8sCluster", "K8sNode", "K8sPod",
     "Website", "WebEndpoint",
-    "NetPort",
+    "NetPort", "NetHop",
+    # OSINT / boundary model
+    "Domain", "ASN", "NetBlock", "GeoRegion",
+    # WiFi (ingested from ESP32 mesh)
+    "WifiAP",
+    # Encrypted overlay mesh (netsec WireGuard/Nebula) — see netmap.mesh.ingest
+    "MeshNet", "MeshNode",
 )
 _NETSCAN_LABEL_SET = "|".join(_NETSCAN_LABELS)
 
@@ -3187,6 +3503,110 @@ async def cap_netscan_graph(trace_id=None) -> Dict:
             }
     except Exception as e:
         return {"error": str(e), "nodes": [], "edges": []}
+
+
+@capability(
+    "netmap.mesh.ingest",
+    http_method="POST", http_path="/netmap/mesh/ingest", http_tags=["netscan", "netsec"],
+    memory="off",
+    description="Map the encrypted overlay mesh (netsec WireGuard/Nebula) into the "
+                "network graph: a :MeshNet overlay node, a :MeshNode per member "
+                "(overlay IP + enrolment + bring-up state), :IN_MESH membership "
+                "edges, :MESH_PEER edges for the peer topology, and :SAME_IP "
+                "cross-links to the matching :NetHost by underlay IP. Run it after "
+                "a mesh join/apply (or any time) to keep the map current. "
+                "Output: {ok, provider, members, peers, error?}.",
+)
+async def cap_netmap_mesh_ingest(trace_id=None) -> Dict:
+    from Vera.vera import capability_orchestration as _co
+    mc = _co.CAPABILITY_REGISTRY.get("netsec.mesh.members")
+    if not mc or not mc.get("func"):
+        return {"ok": False, "error": "netsec.mesh.members capability unavailable"}
+    try:
+        data = await mc["func"](trace_id=trace_id) or {}
+    except Exception as e:
+        return {"ok": False, "error": f"could not read mesh members: {e}"}
+    members = data.get("members") or []
+    provider = data.get("provider") or "wireguard"
+    subnet   = data.get("subnet") or ""
+    if not members:
+        return {"ok": True, "provider": provider, "members": 0, "peers": 0,
+                "note": "no mesh members to map"}
+
+    fn = _fabric_neo()
+    if not fn or not getattr(fn, "available", False):
+        return {"ok": False, "error": "Neo4j not connected", "members": len(members)}
+
+    ts = now_iso()
+    net_id = f"mesh:{provider}:{subnet or 'overlay'}"
+    # Overlay node
+    await _aux_run(
+        """
+        MERGE (m:MeshNet {id:$id})
+        SET m.provider=$provider, m.subnet=$subnet, m.label=$label,
+            m.member_count=$n, m.updated_at=$ts, m.source='netsec'
+        """,
+        id=net_id, provider=provider, subnet=subnet,
+        label=f"{provider} mesh", n=len(members), ts=ts,
+    )
+
+    ingested = 0
+    for m in members:
+        hid = m.get("host_id") or m.get("host") or ""
+        if not hid:
+            continue
+        node_id = f"meshnode:{provider}:{hid}"
+        await _aux_run(
+            """
+            MERGE (n:MeshNode {id:$id})
+            SET n.host_id=$hid, n.label=$label, n.host=$host, n.overlay_ip=$ip,
+                n.pubkey=$pubkey, n.endpoint=$endpoint, n.state=$state,
+                n.enrolled=$enrolled, n.provider=$provider, n.updated_at=$ts,
+                n.source='netsec'
+            WITH n
+            MATCH (mn:MeshNet {id:$nid})
+            MERGE (n)-[:IN_MESH]->(mn)
+            """,
+            id=node_id, hid=hid, label=(m.get("label") or hid),
+            host=(m.get("host") or ""), ip=(m.get("ip") or ""),
+            pubkey=(m.get("pubkey") or ""), endpoint=(m.get("endpoint") or ""),
+            state=(m.get("state") or ""), enrolled=bool(m.get("enrolled")),
+            provider=provider, ts=ts, nid=net_id,
+        )
+        ingested += 1
+        # Cross-link to the underlay NetHost by IP (best-effort — the node may
+        # not have been discovered by a LAN scan yet).
+        under_ip = str(m.get("host") or "").strip()
+        if under_ip and under_ip.count(".") == 3:
+            await _aux_run(
+                """
+                MATCH (mn:MeshNode {id:$id}), (h:NetHost {id:$nid})
+                MERGE (h)-[:SAME_IP]->(mn)
+                """,
+                id=node_id, nid=f"net:{under_ip}",
+            )
+
+    # Peer topology: WireGuard/Nebula overlays are full-mesh between members
+    # that carry a pubkey — draw an (undirected-style) MESH_PEER for each pair.
+    peers = 0
+    keyed = [m for m in members if (m.get("host_id") or m.get("host")) and m.get("pubkey")]
+    for i in range(len(keyed)):
+        for j in range(i + 1, len(keyed)):
+            a = f"meshnode:{provider}:{keyed[i].get('host_id') or keyed[i].get('host')}"
+            b = f"meshnode:{provider}:{keyed[j].get('host_id') or keyed[j].get('host')}"
+            await _aux_run(
+                """
+                MATCH (x:MeshNode {id:$a}), (y:MeshNode {id:$b})
+                MERGE (x)-[:MESH_PEER]->(y)
+                """,
+                a=a, b=b,
+            )
+            peers += 1
+
+    await emit_event({"type": "netmap.mesh.ingested", "provider": provider,
+                      "members": ingested, "peers": peers})
+    return {"ok": True, "provider": provider, "subnet": subnet,
+            "members": ingested, "peers": peers}
 
 
 @capability(
@@ -3724,7 +4144,7 @@ async def _scoped_stepwise_run(_co, goal: str, state: dict, hitl: bool,
         props = cap.get("schema", {}).get("properties", {})
         req  = set(cap.get("schema", {}).get("required", []))
         params = ", ".join(
-            f"{p}:{v.get('type','str')}{'!' if p in req else ''}"
+            _co._format_param_sig(p, v, req)
             for p, v in props.items() if p not in ("trace_id",)
         )
         desc = (cap.get("description") or "")[:80]
@@ -3908,18 +4328,68 @@ async def _research_panel():
 # ─────────────────────────────────────────────────────────────────────────────
 # REGISTER UI PANELS
 # ─────────────────────────────────────────────────────────────────────────────
+# Exec + Network are one tab with CSS-only sub-tabs. The shell mounts panel
+# HTML via innerHTML (inline <script> would not run), so <style> + :checked
+# sibling selectors switch the two iframes with no JS. The old standalone
+# "Network" tab is no longer registered; /exec/panel and /netmap/panel are both
+# still served and iframed by the sub-tabs.
 register_ui(
     "exec-panel",
     "Exec",
     "▷_",
-    """<div id="exec-panel-mount" style="height:100%;display:flex;flex-direction:column;">
-  <iframe src="/exec/panel"
-          style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"
-          allow="clipboard-read; clipboard-write">
-  </iframe>
+    """<div class="vera-subtab-panel" style="height:100%;display:flex;flex-direction:column;background:var(--bg0,#0d0f12)">
+  <style>
+    .vera-subtab-panel>input[type=radio]{position:absolute;left:-9999px;opacity:0}
+    .vera-subtab-panel>.st-bar{display:flex;gap:2px;padding:5px 6px 0;border-bottom:1px solid var(--border,#333);flex-shrink:0}
+    .vera-subtab-panel>.st-bar>label{padding:5px 14px;font-size:12px;font-weight:600;cursor:pointer;color:var(--dim2,#8a8a8a);border:1px solid transparent;border-bottom:none;border-radius:5px 5px 0 0;user-select:none;line-height:1.2}
+    .vera-subtab-panel>.st-bar>label:hover{color:var(--fg,#eee)}
+    .vera-subtab-panel>.st-frames{position:relative;flex:1;min-height:0}
+    .vera-subtab-panel>.st-frames>iframe{position:absolute;inset:0;width:100%;height:100%;border:none;visibility:hidden}
+    #exmg-exec:checked~.st-frames>.f-exec{visibility:visible}
+    #exmg-net:checked~.st-frames>.f-net{visibility:visible}
+    #exmg-exec:checked~.st-bar>label[for=exmg-exec],
+    #exmg-net:checked~.st-bar>label[for=exmg-net]{color:var(--fg,#fff);background:var(--bg2,#1c1c1c);border-color:var(--border,#333)}
+  </style>
+  <input type="radio" name="exmg" id="exmg-exec" checked>
+  <input type="radio" name="exmg" id="exmg-net">
+  <div class="st-bar">
+    <label for="exmg-exec">Exec</label>
+    <label for="exmg-net">Network</label>
+  </div>
+  <div class="st-frames">
+    <iframe class="f-exec" src="/exec/panel"   allow="clipboard-read; clipboard-write"></iframe>
+    <iframe class="f-net"  src="/netmap/panel" allow="clipboard-read; clipboard-write"></iframe>
+  </div>
 </div>""",
-    "",
+    # Injected as a real <script> in the shell (register_ui `js`). Bridges the
+    # exec<->netmap cross-links now that they're sub-tabs of one panel: an
+    # Exec-side "recon in Network" / a Network-side "ssh in Exec" click posts to
+    # the shell (window.parent); we catch it here, flip the sub-tab radio, and
+    # forward the deep-link into the target iframe.
+    """(function(){
+      function sub(id){ var r=document.getElementById(id); if(r) r.checked=true; }
+      function frame(sel){ return document.querySelector(sel); }
+      window.addEventListener('message', function(ev){
+        var d = ev.data; if(!d || typeof d!=='object') return;
+        if(d.action==='vera-netmap-recon' && d.target){
+          sub('exmg-net');
+          var f=frame('.f-net');
+          try{ f && f.contentWindow && f.contentWindow.postMessage({action:'vera-netmap-recon', target:d.target}, '*'); }catch(e){}
+          return;
+        }
+        if(d.action==='vera-open-panel'){
+          if(d.panel_id==='netmap-panel'){
+            sub('exmg-net');
+            if(d.hash){ var fn=frame('.f-net'); try{ if(fn&&fn.contentWindow) fn.contentWindow.location.hash=d.hash; }catch(e){} }
+          } else if(d.panel_id==='exec-panel'){
+            sub('exmg-exec');
+            if(d.hash){ var fe=frame('.f-exec'); try{ if(fe&&fe.contentWindow) fe.contentWindow.location.hash=d.hash; }catch(e){} }
+          }
+        }
+      });
+    })();""",
     ui_caps=[
+        # ── Exec (shell / code / ssh) ──
         "exec.bash.run", "exec.ps.run", "exec.ssh.run",
         "exec.code.run", "exec.code.langs",
         "exec.python.run", "exec.node.run", "exec.ruby.run",
@@ -3929,36 +4399,34 @@ register_ui(
         "exec.ssh.hosts.delete", "exec.ssh.probe",
         "exec.llm.models",
         "dag.plan", "dag.plan_and_run",
-    ],
-    mode="tab",
-    tab_order=53,
-)
-
-register_ui(
-    "netmap-panel",
-    "Network",
-    "⬢",
-    """<div id="netmap-panel-mount" style="height:100%;display:flex;flex-direction:column;">
-  <iframe src="/netmap/panel"
-          style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"
-          allow="clipboard-read; clipboard-write">
-  </iframe>
-</div>""",
-    "",
-    ui_caps=[
+        # ── Network (netscan / netmon — folded in as the Network sub-tab) ──
         "netscan.lan.scan", "netscan.docker.scan",
         "netscan.proxmox.scan", "netscan.k8s.scan", "netscan.web.scan",
         "netscan.target.ports", "netscan.target.tech", "netscan.target.traffic",
         "netscan.target.cert_scrape",
+        "netscan.target.fingerprint", "netscan.target.banner",
+        "netscan.target.tls", "netscan.target.traceroute",
+        "netscan.recon.run",
+        "netscan.proxmox.import", "netscan.docker.import",
+        "netscan.dork.search", "netscan.dork.targeted",
+        "netscan.osint.run",
+        "netscan.osint.campaign.list", "netscan.osint.campaign.create",
+        "netscan.osint.campaign.get", "netscan.osint.campaign.add",
+        "netscan.osint.campaign.delete",
+        "netscan.enrich.host", "netscan.enrich.bulk",
+        "netscan.graph.relink", "netscan.map.aggregate", "netscan.asn.expand",
+        "netmon.config.get", "netmon.config.set",
+        "netmon.target.list", "netmon.target.save", "netmon.target.delete",
+        "netmon.target.watch", "netmon.device.name",
+        "netmon.alerts.list", "netmon.alerts.clear", "netmon.test",
+        "netmon.scan_now", "netscan.wifi.ingest",
         "netscan.graph", "netscan.node.get", "netscan.nodes.clear",
+        "netscan.graph.clear_all",
         "netscan.map.save", "netscan.map.list", "netscan.map.load", "netscan.map.delete",
         "netscan.fabric.load_web",
-        "exec.ssh.hosts.list", "exec.ssh.probe", "exec.ssh.run",
-        "exec.llm.models",
-        "dag.plan", "dag.plan_and_run",
     ],
     mode="tab",
-    tab_order=54,
+    tab_order=53,
 )
 
 
@@ -5095,11 +5563,13 @@ def _parse_traceroute(text: str) -> List[Dict]:
                 "persist each hop as a :NetHop node connected with "
                 ":ROUTES_TO edges, plus :NetHost stubs for any responding "
                 "hop IP. "
-                "Input: target (str!), max_hops (int=20), timeout (int=30). "
-                "Output: {target, hops:[{hop,ip,latency_ms}], elapsed_ms}.",
+                "Input: target (str!), max_hops (int=20), timeout (int=30), "
+                "tag_asn (bool=false — look up the ASN of each responding hop and "
+                "link :NetHop-[:IN_ASN]->:ASN so the path's network boundaries "
+                "show). Output: {target, hops:[{hop,ip,latency_ms,asn}], elapsed_ms}.",
 )
 async def cap_netscan_traceroute(target: str, max_hops: int = 20,
-                                  timeout: int = 30,
+                                  timeout: int = 30, tag_asn: bool = False,
                                   trace_id=None) -> Dict:
     if not target:
         return {"error": "target required"}
@@ -5169,6 +5639,26 @@ async def cap_netscan_traceroute(target: str, max_hops: int = 20,
                 "MERGE (n)-[:RESOLVED_TO]->(h)",
                 hid=hop_id, nid=f"net:{h['ip']}",
             )
+            # Optionally tag the hop with its ASN so network boundaries show
+            if tag_asn and not (ipaddress.ip_address(h["ip"]).is_private
+                                if _looks_like_ip(h["ip"]) else True):
+                try:
+                    _enr = await _enrich_ip(h["ip"])
+                    _asn = _enr.get("asn")
+                    h["asn"] = _asn
+                    h["as_name"] = _enr.get("as_name", "")
+                    if _asn:
+                        await _aux_run(
+                            "MERGE (a:ASN {id:$aid}) SET a.asn=$asn, a.label=$lbl, "
+                            "a.source=coalesce(a.source,'traceroute'), a.updated_at=$ts",
+                            aid=f"asn:{_asn}", asn=str(_asn), lbl=f"AS{_asn}", ts=now_iso())
+                        await _aux_run(
+                            "MATCH (n:NetHop {id:$hid}),(a:ASN {id:$aid}) "
+                            "MERGE (n)-[:IN_ASN]->(a)",
+                            hid=hop_id, aid=f"asn:{_asn}")
+                        await _write_enrichment_to_graph(h["ip"], _enr)
+                except Exception:
+                    pass
         if prev_id:
             await _aux_run(
                 "MATCH (a:NetHop {id:$a}), (b:NetHop {id:$b}) "
@@ -5228,21 +5718,55 @@ async def cap_netscan_traceroute(target: str, max_hops: int = 20,
 # 8.  GOOGLE-DORK SEARCH (DuckDuckGo HTML, no API key)
 # ═════════════════════════════════════════════════════════════════════════════
 DORK_PRESETS = {
+    # ── Exposed files / directories ──────────────────────────────────────────
     "exposed_files":     'intext:"index of /" "parent directory"',
     "config_files":      'ext:env OR ext:conf OR ext:cnf OR ext:ini',
     "sql_dumps":         'ext:sql intext:"INSERT INTO" -github.com',
     "open_directories":  'intitle:"index of" -intext:"github"',
-    "login_pages":       'inurl:login OR inurl:signin OR inurl:admin',
+    "backup_files":      'ext:bak OR ext:old OR ext:backup OR ext:swp OR inurl:backup',
+    "log_files":         'ext:log intext:password OR intext:error',
     "phpinfo":           'intitle:"phpinfo()" "PHP Version"',
+    # ── Secrets / credentials / VCS ──────────────────────────────────────────
+    "exposed_git":       'inurl:/.git/HEAD OR inurl:/.git/config',
+    "exposed_svn":       'inurl:/.svn/entries',
+    "exposed_env":       'inurl:/.env intext:DB_PASSWORD OR intext:APP_KEY OR intext:SECRET',
+    "dotfiles":          'inurl:/.npmrc OR inurl:/.dockercfg OR inurl:/.aws/credentials',
+    "private_keys":      'intext:"BEGIN RSA PRIVATE KEY" OR intext:"BEGIN OPENSSH PRIVATE KEY" ext:key OR ext:pem',
+    "secrets_files":     'filetype:json intext:api_key OR intext:client_secret',
+    # ── Login / admin / panels ───────────────────────────────────────────────
+    "login_pages":       'inurl:login OR inurl:signin OR inurl:admin',
     "wordpress_admin":   'inurl:/wp-admin/ OR inurl:/wp-login.php',
-    "exposed_git":       'inurl:/.git/HEAD',
-    "exposed_env":       'inurl:/.env intext:DB_PASSWORD',
-    "swagger_docs":      'inurl:swagger OR inurl:api-docs',
-    "open_s3":           'site:s3.amazonaws.com',
+    "admin_panels":      'intitle:"admin" inurl:admin intext:login -site:github.com',
+    "phpmyadmin":        'intitle:phpMyAdmin "Welcome to phpMyAdmin" inurl:index.php',
+    # ── API / dev surfaces ───────────────────────────────────────────────────
+    "swagger_docs":      'inurl:swagger OR inurl:api-docs OR inurl:swagger-ui.html',
+    "graphql":           'inurl:/graphql intext:"__schema" OR intext:"query"',
+    "api_endpoints":     'inurl:/api/ ext:json OR intitle:"API" inurl:v1 OR inurl:v2',
+    # ── Dashboards / CI / observability ──────────────────────────────────────
     "jenkins":           'intitle:"Dashboard [Jenkins]"',
     "grafana":           'intitle:"Grafana" inurl:/login',
     "kibana":            'intitle:"Kibana" "kbn-version"',
+    "prometheus":        'intitle:"Prometheus Time Series" inurl:/graph',
+    "gitlab":            'intitle:"GitLab" inurl:/users/sign_in',
+    "sonarqube":         'intitle:"SonarQube" inurl:/sessions/new',
+    "argocd":            'intitle:"Argo CD" inurl:/login',
+    "portainer":         'intitle:"Portainer" inurl:/#!/auth',
+    # ── Cloud storage / buckets ──────────────────────────────────────────────
+    "open_s3":           'site:s3.amazonaws.com',
+    "azure_blobs":       'site:blob.core.windows.net',
+    "gcs_buckets":       'site:storage.googleapis.com',
+    "do_spaces":         'site:digitaloceanspaces.com',
+    # ── Documents / data leaks ───────────────────────────────────────────────
+    "document_leaks":    'ext:pdf OR ext:docx OR ext:xlsx intext:confidential OR intext:"internal use only"',
+    "csv_leaks":         'ext:csv intext:email OR intext:password OR intext:phone',
+    # ── Subdomain / takeover hints ───────────────────────────────────────────
+    "subdomains":        'site:*.{domain} -www',
+    "takeover_hints":    'intext:"NoSuchBucket" OR intext:"There isn\'t a GitHub Pages site here" OR intext:"Domain not found"',
+    # ── IoT / devices ────────────────────────────────────────────────────────
     "iot_cameras":       'intitle:"Network Camera" inurl:view/index',
+    "webcamxp":          'intitle:"webcamXP" inurl:8080',
+    "printers":          'intitle:"HP LaserJet" OR intitle:"PRINTER" inurl:hp/device',
+    "routers":           'intitle:"router" intext:"login" inurl:cgi-bin',
 }
 
 
@@ -5325,6 +5849,12 @@ async def cap_netscan_dork(query: str = "", preset: str = "",
     if not q:
         return {"error": f"unknown preset: {preset}",
                 "available": list(DORK_PRESETS.keys())}
+    # Presets may carry a {domain} placeholder (e.g. subdomain enum). Fill it
+    # from the site filter when given, else drop it. When the placeholder is
+    # used we don't ALSO prepend a site: operator.
+    if "{domain}" in q:
+        q = q.replace("{domain}", (site or "").strip())
+        site = ""
     if site:
         q = f"site:{site} {q}"
     results = await _ddg_search(q, max_results=int(max_results))
@@ -5400,6 +5930,8 @@ async def cap_netscan_dork_targeted(query: str = "", preset: str = "",
                         sn=(r.get("snippet") or "")[:200],
                         ts=now_iso(),
                     )
+                    # Attach the hit to its registrable :Domain so it doesn't float
+                    await _link_website_domain(sid, parsed.netloc)
                 else:
                     rec["error"] = p.get("error", "probe failed")
             except Exception as e:
@@ -5412,6 +5944,1499 @@ async def cap_netscan_dork_targeted(query: str = "", preset: str = "",
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# 8b.  OSINT CAMPAIGNS  — additive/iterative result collection across sessions
+#
+# Dork / Agent-OSINT runs are fire-and-forget today. A "campaign" is a durable,
+# named bucket of de-duplicated hits (keyed by URL) that accumulates across many
+# searches and sessions. Stored in the same SQLite db as the map snapshots, and
+# (optionally) forwarded to the fabric `osint_dork` dataset so cross-tool query
+# keeps working. Each hit tracks first_seen / last_seen / seen_count + which
+# queries surfaced it, so re-running a search enriches rather than duplicates.
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _ensure_osint_table() -> None:
+    conn = _netmap_db()
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS osint_campaigns (
+                campaign_id  TEXT PRIMARY KEY,
+                name         TEXT NOT NULL,
+                description  TEXT,
+                queries_json TEXT,
+                hits_json    TEXT,
+                meta_json    TEXT,
+                created_at   TEXT,
+                updated_at   TEXT
+            )
+        """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+try:
+    _ensure_osint_table()
+except Exception as _e:
+    log.debug("osint_campaigns table init: %s", _e)
+
+
+def _osint_host_of(url: str) -> str:
+    try:
+        return _urlparse.urlparse(url).netloc
+    except Exception:
+        return ""
+
+
+def _osint_merge_hits(existing: List[Dict], new_results: List[Dict],
+                      query_label: str, ts: str) -> Tuple[List[Dict], int, int]:
+    """Merge a batch of search results into the campaign's hit list, de-duped by
+    URL. Returns (hits, added, updated)."""
+    by_url = {h.get("url"): h for h in existing if h.get("url")}
+    added = updated = 0
+    for r in new_results or []:
+        url = (r.get("url") or "").strip()
+        if not url:
+            continue
+        if url in by_url:
+            h = by_url[url]
+            h["last_seen"] = ts
+            h["seen_count"] = int(h.get("seen_count", 1)) + 1
+            for k in ("title", "host", "snippet", "status"):
+                if not h.get(k) and r.get(k):
+                    h[k] = r.get(k)
+            if r.get("tech"):
+                h["tech"] = sorted(set(h.get("tech") or []) | set(r.get("tech") or []))
+            if query_label and query_label not in (h.get("queries") or []):
+                h.setdefault("queries", []).append(query_label)
+            updated += 1
+        else:
+            hit = {
+                "url":        url,
+                "title":      r.get("title", ""),
+                "host":       r.get("host", "") or _osint_host_of(url),
+                "snippet":    (r.get("snippet", "") or "")[:500],
+                "tech":       r.get("tech") or [],
+                "status":     r.get("status", ""),
+                "query":      query_label,
+                "queries":    [query_label] if query_label else [],
+                "first_seen": ts, "last_seen": ts, "seen_count": 1,
+            }
+            by_url[url] = hit
+            existing.append(hit)
+            added += 1
+    return existing, added, updated
+
+
+async def _osint_forward_fabric(campaign_name: str, results: List[Dict]) -> None:
+    """Best-effort: also push results into the fabric `osint_dork` dataset so the
+    research / fabric tools can query them. Never raises."""
+    mod = (sys.modules.get("data_fabric")
+           or sys.modules.get("Vera.vera.data_fabric"))
+    fn = getattr(mod, "ingest_dataset", None) if mod else None
+    if not fn:
+        return
+    records = [{
+        "url": r.get("url", ""), "title": r.get("title", ""),
+        "host": r.get("host", "") or _osint_host_of(r.get("url", "")),
+        "snippet": (r.get("snippet", "") or "")[:500],
+        "tech": r.get("tech") or [], "status": r.get("status", ""),
+        "campaign": campaign_name, "discovered_at": now_iso(),
+    } for r in results if r.get("url")]
+    if not records:
+        return
+    try:
+        await fn("osint_dork", records, source="osint_campaign",
+                 tags=["osint", "dork", (campaign_name or "")[:40]])
+    except Exception as e:
+        log.debug("osint fabric forward failed: %s", e)
+
+
+async def _osint_read_campaign(campaign_id: str) -> Optional[Dict]:
+    loop = asyncio.get_running_loop()
+    def _read():
+        conn = _netmap_db()
+        try:
+            return conn.execute(
+                "SELECT campaign_id, name, description, queries_json, hits_json, "
+                "meta_json, created_at, updated_at FROM osint_campaigns "
+                "WHERE campaign_id=?", (campaign_id,)
+            ).fetchone()
+        finally:
+            conn.close()
+    row = await loop.run_in_executor(None, _read)
+    if not row:
+        return None
+    return {
+        "campaign_id": row[0], "name": row[1], "description": row[2] or "",
+        "queries": json.loads(row[3] or "[]"),
+        "hits":    json.loads(row[4] or "[]"),
+        "meta":    json.loads(row[5] or "{}"),
+        "created_at": row[6], "updated_at": row[7],
+    }
+
+
+async def _osint_write_campaign(rec: Dict) -> None:
+    loop = asyncio.get_running_loop()
+    ts = now_iso()
+    def _write():
+        conn = _netmap_db()
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO osint_campaigns "
+                "(campaign_id, name, description, queries_json, hits_json, "
+                " meta_json, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,"
+                "  COALESCE((SELECT created_at FROM osint_campaigns WHERE campaign_id=?),?),?)",
+                (rec["campaign_id"], rec.get("name", ""), rec.get("description", ""),
+                 json.dumps(rec.get("queries", [])), json.dumps(rec.get("hits", [])),
+                 json.dumps(rec.get("meta", {})),
+                 rec["campaign_id"], ts, ts),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    await loop.run_in_executor(None, _write)
+
+
+@capability(
+    "netscan.osint.campaign.list",
+    http_method="GET", http_path="/netscan/osint/campaign/list",
+    http_tags=["netscan", "osint"], memory="off", silent=True,
+    description="List saved OSINT campaigns (durable, additive buckets of "
+                "de-duplicated dork/OSINT hits). "
+                "Output: {campaigns: [{campaign_id, name, description, hit_count, "
+                "query_count, created_at, updated_at}]}.",
+)
+async def cap_osint_campaign_list(trace_id=None) -> Dict:
+    loop = asyncio.get_running_loop()
+    def _read():
+        conn = _netmap_db()
+        try:
+            rows = conn.execute(
+                "SELECT campaign_id, name, description, queries_json, "
+                "meta_json, created_at, updated_at FROM osint_campaigns "
+                "ORDER BY updated_at DESC"
+            ).fetchall()
+            out = []
+            for r in rows:
+                meta = {}
+                try: meta = json.loads(r[4] or "{}")
+                except Exception: pass
+                try: qn = len(json.loads(r[3] or "[]"))
+                except Exception: qn = 0
+                out.append({
+                    "campaign_id": r[0], "name": r[1],
+                    "description": r[2] or "",
+                    "hit_count":   meta.get("hit_count", 0),
+                    "query_count": qn,
+                    "created_at":  r[5], "updated_at": r[6],
+                })
+            return out
+        finally:
+            conn.close()
+    return {"campaigns": await loop.run_in_executor(None, _read)}
+
+
+@capability(
+    "netscan.osint.campaign.create",
+    http_method="POST", http_path="/netscan/osint/campaign/create",
+    http_tags=["netscan", "osint"],
+    description="Create a new (empty) OSINT campaign. "
+                "Input: name (str!), description (str). "
+                "Output: {ok, campaign_id, name}.",
+)
+async def cap_osint_campaign_create(name: str = "", description: str = "",
+                                    trace_id=None) -> Dict:
+    if not (name or "").strip():
+        return {"error": "name required"}
+    cid = str(uuid.uuid4())
+    rec = {"campaign_id": cid, "name": name.strip(), "description": description,
+           "queries": [], "hits": [], "meta": {"hit_count": 0}}
+    await _osint_write_campaign(rec)
+    await emit_event({"type": "netscan.osint.campaign.created",
+                      "campaign_id": cid, "name": name})
+    return {"ok": True, "campaign_id": cid, "name": name.strip()}
+
+
+@capability(
+    "netscan.osint.campaign.get",
+    http_method="POST", http_path="/netscan/osint/campaign/get",
+    http_tags=["netscan", "osint"], memory="off",
+    description="Fetch one OSINT campaign with its accumulated, de-duplicated "
+                "hits. Input: campaign_id (str!). "
+                "Output: {campaign_id, name, queries, hits:[{url,title,host,"
+                "snippet,tech,status,first_seen,last_seen,seen_count}], counts}.",
+)
+async def cap_osint_campaign_get(campaign_id: str = "", trace_id=None) -> Dict:
+    rec = await _osint_read_campaign(campaign_id)
+    if not rec:
+        return {"error": f"campaign not found: {campaign_id}"}
+    rec["counts"] = {"hits": len(rec.get("hits", [])),
+                     "queries": len(rec.get("queries", []))}
+    return rec
+
+
+@capability(
+    "netscan.osint.campaign.delete",
+    http_method="POST", http_path="/netscan/osint/campaign/delete",
+    http_tags=["netscan", "osint"],
+    description="Delete an OSINT campaign. Input: campaign_id (str!). Output: {ok}.",
+)
+async def cap_osint_campaign_delete(campaign_id: str = "", trace_id=None) -> Dict:
+    loop = asyncio.get_running_loop()
+    def _del():
+        conn = _netmap_db()
+        try:
+            conn.execute("DELETE FROM osint_campaigns WHERE campaign_id=?",
+                         (campaign_id,))
+            conn.commit()
+        finally:
+            conn.close()
+    await loop.run_in_executor(None, _del)
+    return {"ok": True, "campaign_id": campaign_id}
+
+
+@capability(
+    "netscan.osint.campaign.add",
+    http_method="POST", http_path="/netscan/osint/campaign/add",
+    http_tags=["netscan", "osint"],
+    description="Merge a batch of OSINT/dork results into a campaign, de-duped "
+                "by URL (existing hits bump seen_count + last_seen). Also forwards "
+                "to the fabric `osint_dork` dataset. "
+                "Input: campaign_id (str!), results (list[{url,title,host,snippet,"
+                "tech,status}]), query (str — label for this batch), "
+                "fabric (bool=true). "
+                "Output: {ok, added, updated, hit_count}.",
+)
+async def cap_osint_campaign_add(campaign_id: str = "",
+                                 results: Optional[List[Dict]] = None,
+                                 query: str = "", fabric: bool = True,
+                                 trace_id=None) -> Dict:
+    rec = await _osint_read_campaign(campaign_id)
+    if not rec:
+        return {"error": f"campaign not found: {campaign_id}"}
+    results = results or []
+    ts = now_iso()
+    hits, added, updated = _osint_merge_hits(
+        rec.get("hits", []), results, (query or "").strip(), ts)
+    rec["hits"] = hits
+    if query and query.strip() and query.strip() not in rec.get("queries", []):
+        rec.setdefault("queries", []).append(query.strip())
+    rec["meta"] = {"hit_count": len(hits)}
+    await _osint_write_campaign(rec)
+    if fabric and results:
+        await _osint_forward_fabric(rec.get("name", ""), results)
+    await emit_event({"type": "netscan.osint.campaign.updated",
+                      "campaign_id": campaign_id,
+                      "added": added, "updated": updated,
+                      "hit_count": len(hits)})
+    return {"ok": True, "added": added, "updated": updated,
+            "hit_count": len(hits)}
+
+
+@capability(
+    "netscan.osint.run",
+    http_method="POST", http_path="/netscan/osint/run",
+    http_tags=["netscan", "osint"],
+    description="Run a dork search (optionally HTTP-fingerprinting each hit) and "
+                "merge the results straight into a named campaign — the one-call "
+                "additive OSINT path. Creates the campaign if campaign_id is "
+                "omitted but campaign_name is given. "
+                "Input: query (str) | preset (str), site (str), max_results "
+                "(int=25), fingerprint (bool=false), campaign_id (str), "
+                "campaign_name (str — used when no id), fabric (bool=true). "
+                "Output: {ok, campaign_id, query, found, added, updated, hit_count}.",
+)
+async def cap_osint_run(query: str = "", preset: str = "", site: str = "",
+                        max_results: int = 25, fingerprint: bool = False,
+                        campaign_id: str = "", campaign_name: str = "",
+                        fabric: bool = True, trace_id=None) -> Dict:
+    # Resolve / create the campaign
+    if not campaign_id:
+        if not (campaign_name or "").strip():
+            return {"error": "campaign_id or campaign_name required"}
+        created = await cap_osint_campaign_create(name=campaign_name)
+        if created.get("error"):
+            return created
+        campaign_id = created["campaign_id"]
+    # Run the search
+    if fingerprint:
+        base = await cap_netscan_dork_targeted(
+            query=query, preset=preset, site=site, max_results=max_results)
+        results = base.get("sites", [])
+        eff_q = base.get("query", query or preset)
+    else:
+        base = await cap_netscan_dork(
+            query=query, preset=preset, site=site, max_results=max_results)
+        if base.get("error"):
+            return base
+        results = base.get("results", [])
+        eff_q = base.get("query", query or preset)
+    merged = await cap_osint_campaign_add(
+        campaign_id=campaign_id, results=results, query=eff_q, fabric=fabric)
+    if merged.get("error"):
+        return merged
+    return {"ok": True, "campaign_id": campaign_id, "query": eff_q,
+            "found": len(results), "added": merged.get("added", 0),
+            "updated": merged.get("updated", 0),
+            "hit_count": merged.get("hit_count", 0)}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 8c.  IMPORT FROM REGISTERED PROXMOX / DOCKER STORES
+#
+# The workers/ollama panel already manages Proxmox clusters (sealed creds, via
+# proxmox.cluster.list + proxmox.status) and Docker hosts (docker.hosts.list +
+# docker.ps over the engine API). Rather than re-typing credentials in the
+# netmap, these caps pull from those registries and write the same
+# :PVE*/:DockerHost/:Container nodes the manual scans produce — so the network
+# map shows exactly what the workers panel manages, in one graph.
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _sibling_mod(*names: str):
+    for n in names:
+        m = sys.modules.get(n)
+        if m:
+            return m
+    return None
+
+
+async def _import_pve_status_to_graph(cluster_key: str, cname: str,
+                                      st: Dict) -> Tuple[int, int]:
+    """Write a proxmox.status snapshot into the aux graph using the same node id
+    scheme as cap_netscan_proxmox (so manual + imported scans de-dup)."""
+    cluster_id = f"pve_cluster:{cname or cluster_key}"
+    await _aux_run(
+        """
+        MERGE (c:PVECluster {id:$id})
+        SET c.name=$name, c.updated_at=$ts, c.source='proxmox'
+        """,
+        id=cluster_id, name=cname or cluster_key, ts=now_iso(),
+    )
+    n_nodes = n_guests = 0
+    for n in st.get("nodes", []) or []:
+        nname = n.get("node", "") or n.get("name", "")
+        if not nname:
+            continue
+        nid = f"pve_node:{nname}"
+        n_nodes += 1
+        await _aux_run(
+            """
+            MERGE (n:PVENode {id:$id})
+            SET n.name=$name, n.status=$status, n.cpu=$cpu, n.mem=$mem,
+                n.maxmem=$maxmem, n.uptime=$uptime, n.updated_at=$ts,
+                n.source='proxmox'
+            WITH n
+            MATCH (c:PVECluster {id:$cid})
+            MERGE (n)-[:IN_CLUSTER]->(c)
+            """,
+            id=nid, name=nname, status=n.get("status", ""),
+            cpu=n.get("cpu", 0), mem=n.get("mem", 0),
+            maxmem=n.get("maxmem", 0), uptime=n.get("uptime", 0),
+            ts=now_iso(), cid=cluster_id,
+        )
+        try:
+            ip = socket.gethostbyname(nname)
+            if ip:
+                await _aux_run(
+                    "MATCH (p:PVENode {id:$pid}), (h:NetHost {id:$nid}) "
+                    "MERGE (h)-[:SAME_IP]->(p)",
+                    pid=nid, nid=f"net:{ip}",
+                )
+        except Exception:
+            pass
+    for g in st.get("guests", []) or []:
+        nname = g.get("node", "")
+        vmid = g.get("vmid", 0)
+        if not nname:
+            continue
+        gid = f"pve_guest:{nname}:{vmid}"
+        info = {
+            "vmid": vmid, "name": g.get("name", ""),
+            "type": g.get("type", ""), "status": g.get("status", ""),
+            "node": nname, "cpu": g.get("cpu", 0), "mem": g.get("mem", 0),
+            "maxmem": g.get("maxmem", 0),
+        }
+        n_guests += 1
+        await _aux_run(
+            """
+            MERGE (g:PVEGuest {id:$id})
+            SET g += $props, g.updated_at=$ts, g.source='proxmox'
+            WITH g
+            MATCH (n:PVENode {id:$nid})
+            MERGE (n)-[:RUNS]->(g)
+            """,
+            id=gid, props=info, ts=now_iso(), nid=f"pve_node:{nname}",
+        )
+    return n_nodes, n_guests
+
+
+@capability(
+    "netscan.proxmox.import",
+    http_method="POST", http_path="/netscan/proxmox/import",
+    http_tags=["netscan"],
+    description="Import Proxmox clusters already registered in the workers/Proxmox "
+                "panel (sealed creds) straight into the network graph — no manual "
+                "credentials needed. Creates :PVECluster/:PVENode/:PVEGuest with "
+                "SAME_IP cross-links. Input: cluster_id (str — one registered "
+                "cluster, omit for ALL). Output: {ok, imported:[{cluster,nodes,"
+                "guests}], count}.",
+)
+async def cap_netscan_proxmox_import(cluster_id: str = "", trace_id=None) -> Dict:
+    pmod = _sibling_mod("proxmox_capabilities", "Vera.vera.proxmox_capabilities")
+    if not pmod:
+        return {"error": "proxmox module not loaded — register a cluster in the "
+                         "Proxmox panel first", "imported": []}
+    list_fn = getattr(pmod, "cap_cluster_list", None)
+    status_fn = getattr(pmod, "cap_status", None)
+    if not (list_fn and status_fn):
+        return {"error": "proxmox capabilities unavailable", "imported": []}
+    clusters = (await list_fn()).get("clusters", []) or []
+    if cluster_id:
+        clusters = [c for c in clusters if c.get("id") == cluster_id]
+        if not clusters:
+            return {"error": f"registered cluster not found: {cluster_id}",
+                    "imported": []}
+    imported: List[Dict] = []
+    for c in clusters:
+        cid = c.get("id")
+        if not cid:
+            continue
+        st = await status_fn(cluster_id=cid)
+        if st.get("error"):
+            imported.append({"cluster": c.get("label") or c.get("name") or cid,
+                             "error": st["error"]})
+            continue
+        cname = ((st.get("cluster") or {}).get("name")
+                 or c.get("label") or c.get("name") or cid)
+        nn, ng = await _import_pve_status_to_graph(cid, cname, st)
+        imported.append({"cluster": cname, "nodes": nn, "guests": ng})
+    await emit_event({"type": "netscan.proxmox.imported",
+                      "count": len(imported)})
+    return {"ok": True, "imported": imported, "count": len(imported)}
+
+
+def _fmt_engine_ports(ports: Any) -> str:
+    out = []
+    for p in ports or []:
+        if not isinstance(p, dict):
+            continue
+        pub = p.get("PublicPort")
+        priv = p.get("PrivatePort")
+        typ = p.get("Type", "tcp")
+        ip = p.get("IP", "")
+        if pub:
+            out.append(f"{(ip + ':') if ip else ''}{pub}->{priv}/{typ}")
+        elif priv:
+            out.append(f"{priv}/{typ}")
+    # de-dup while preserving order
+    seen, uniq = set(), []
+    for s in out:
+        if s not in seen:
+            seen.add(s); uniq.append(s)
+    return ", ".join(uniq)
+
+
+async def _import_docker_engine_to_graph(disp_host: str,
+                                         rows: List[Dict]) -> int:
+    """Write Docker engine /containers/json rows into the aux graph using the
+    same node id scheme as cap_netscan_docker."""
+    docker_host_id = f"docker:{disp_host}"
+    await _aux_run(
+        """
+        MERGE (h:DockerHost {id:$id})
+        SET h.host=$host, h.label=$label, h.updated_at=$ts, h.source='docker'
+        """,
+        id=docker_host_id, host=disp_host, label=disp_host, ts=now_iso(),
+    )
+    count = 0
+    for row in rows or []:
+        cid = row.get("Id") or row.get("ID") or ""
+        names = row.get("Names") or []
+        name = (names[0] if isinstance(names, list) and names
+                else row.get("Name") or "").lstrip("/")
+        image = row.get("Image", "")
+        status = row.get("Status", "")
+        state = row.get("State", "")
+        ports = _fmt_engine_ports(row.get("Ports"))
+        if not cid:
+            continue
+        count += 1
+        await _aux_run(
+            """
+            MERGE (c:Container {id:$id})
+            SET c.name=$name, c.image=$image, c.status=$status,
+                c.state=$state, c.ports=$ports, c.updated_at=$ts,
+                c.source='docker', c.host=$host
+            WITH c
+            MATCH (h:DockerHost {id:$hid})
+            MERGE (h)-[:HOSTS]->(c)
+            """,
+            id=f"container:{disp_host}:{cid[:12]}",
+            name=name, image=image, status=status, state=state,
+            ports=ports, ts=now_iso(), hid=docker_host_id, host=disp_host,
+        )
+    return count
+
+
+@capability(
+    "netscan.docker.import",
+    http_method="POST", http_path="/netscan/docker/import",
+    http_tags=["netscan"],
+    description="Import Docker hosts already registered in the workers/Docker "
+                "panel (engine API, no SSH re-entry) into the network graph. "
+                "Creates :DockerHost/:Container nodes. Input: host_id (str — one "
+                "registered host, omit for ALL). Output: {ok, imported:[{host,"
+                "containers}], count}.",
+)
+async def cap_netscan_docker_import(host_id: str = "", trace_id=None) -> Dict:
+    dmod = _sibling_mod("docker_capabilities", "Vera.vera.docker_capabilities")
+    if not dmod:
+        return {"error": "docker module not loaded — register a host in the "
+                         "Docker panel first", "imported": []}
+    list_fn = getattr(dmod, "cap_docker_hosts_list", None)
+    ps_fn = getattr(dmod, "cap_docker_ps", None)
+    if not (list_fn and ps_fn):
+        return {"error": "docker capabilities unavailable", "imported": []}
+    hosts = (await list_fn()).get("hosts", []) or []
+    if host_id:
+        hosts = [h for h in hosts if h.get("id") == host_id]
+        if not hosts:
+            return {"error": f"registered docker host not found: {host_id}",
+                    "imported": []}
+    imported: List[Dict] = []
+    for h in hosts:
+        hid = h.get("id")
+        disp = h.get("label") or h.get("url") or hid
+        ps = await ps_fn(host_id=hid, all=True)
+        if ps.get("error"):
+            imported.append({"host": disp, "error": ps["error"]})
+            continue
+        n = await _import_docker_engine_to_graph(disp, ps.get("containers", []))
+        imported.append({"host": disp, "containers": n})
+    await emit_event({"type": "netscan.docker.imported",
+                      "count": len(imported)})
+    return {"ok": True, "imported": imported, "count": len(imported)}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 8d.  RECON ORCHESTRATOR — deterministic multi-stage pipeline
+#
+# Chains the existing scan caps into a staged recon run:
+#   sweep/ports → fingerprint live hosts → OSINT enrich domains → infra link.
+# Exposed two ways:
+#   • netscan.recon.run   — @capability (one tool call the planner / V5 agent
+#                           loop can invoke; returns a summary)
+#   • POST /netscan/recon/stream — SSE for the panel button (live stage events;
+#                           nodes are written to the graph by the underlying caps)
+# ═════════════════════════════════════════════════════════════════════════════
+async def _recon_stages(
+    *, target: str, profile: str = "quick",
+    fingerprint: bool = True, osint: bool = False, osint_preset: str = "",
+    osint_campaign_id: str = "", osint_campaign_name: str = "",
+    osint_max: int = 15, max_hosts: int = 20, link_infra: bool = False,
+    enrich: bool = False, map_boundaries: bool = False,
+) -> "AsyncGenerator[Tuple[str, Dict], None]":
+    target = (target or "").strip()
+    if not target:
+        yield ("error", {"error": "target required (CIDR, host, IP, or domain)"})
+        return
+    is_cidr = "/" in target
+    yield ("start", {"target": target, "profile": profile,
+                     "cidr": is_cidr, "ts": now_iso()})
+
+    hosts: List[Dict] = []
+    # ── Stage 1 — discovery ──────────────────────────────────────────────────
+    if is_cidr:
+        yield ("stage", {"stage": "sweep", "status": "running",
+                         "msg": f"LAN sweep {target}"})
+        r = await cap_netscan_lan(cidr=target, ping=True, port_nodes=True,
+                                  save_to_fabric=False)
+        if r.get("error"):
+            yield ("error", {"error": r["error"]}); return
+        hosts = [{"ip": h["ip"], "hostname": h.get("hostname", ""),
+                  "open_ports": h.get("open_ports", [])}
+                 for h in r.get("alive", [])]
+        yield ("stage", {"stage": "sweep", "status": "done",
+                         "live": len(hosts), "msg": f"{len(hosts)} live hosts"})
+        for h in hosts:
+            yield ("host", h)
+    else:
+        yield ("stage", {"stage": "ports", "status": "running",
+                         "msg": f"port scan {target}"})
+        pr = await cap_netscan_target_ports(host=target,
+                                            ports=profile or "common")
+        if pr.get("error"):
+            yield ("stage", {"stage": "ports", "status": "error",
+                             "msg": pr.get("error")})
+        else:
+            op = [p["port"] for p in pr.get("open", [])]
+            ip = target
+            try: ip = socket.gethostbyname(target)
+            except Exception: pass
+            hosts = [{"ip": ip, "hostname": (target if target != ip else ""),
+                      "open_ports": op}]
+            yield ("stage", {"stage": "ports", "status": "done",
+                             "open": len(op), "msg": f"{len(op)} open ports"})
+            for h in hosts:
+                yield ("host", h)
+
+    # ── Stage 2 — fingerprint live hosts ─────────────────────────────────────
+    if fingerprint:
+        fp_targets = [h for h in hosts if h.get("open_ports")][:max_hosts]
+        if fp_targets:
+            yield ("stage", {"stage": "fingerprint", "status": "running",
+                             "msg": f"fingerprint {len(fp_targets)} host(s)"})
+            for h in fp_targets:
+                tgt = h.get("hostname") or h.get("ip")
+                try:
+                    f = await cap_netscan_fingerprint(host=tgt,
+                                                      profile=profile or "quick")
+                    yield ("fingerprint", {"host": tgt,
+                                           "open": f.get("open_count", 0),
+                                           "ports": f.get("ports", [])[:20]})
+                except Exception as e:
+                    yield ("fingerprint", {"host": tgt, "error": str(e)})
+            yield ("stage", {"stage": "fingerprint", "status": "done"})
+
+    # ── Link discovered hosts to their registrable :Domain (cheap, always) ───
+    for h in hosts:
+        hn = h.get("hostname", "")
+        if hn and h.get("ip"):
+            try: await _link_host_domain(h["ip"], hn)
+            except Exception: pass
+
+    # ── Stage 2b — deep OSINT enrichment (geo / ASN / CVEs) ──────────────────
+    if enrich and hosts:
+        yield ("stage", {"stage": "enrich", "status": "running",
+                         "msg": f"enriching {len(hosts)} host(s)"})
+        try:
+            res = await cap_netscan_enrich_bulk(
+                hosts=[h["ip"] for h in hosts if h.get("ip")][:max_hosts])
+            yield ("stage", {"stage": "enrich", "status": "done",
+                             "enriched": res.get("enriched", 0)})
+        except Exception as e:
+            yield ("stage", {"stage": "enrich", "status": "error", "msg": str(e)})
+
+    # ── Stage 3 — OSINT enrich resolvable domains ────────────────────────────
+    cid = osint_campaign_id
+    if osint:
+        domains: List[str] = []
+        seen = set()
+        def _add_dom(d: str):
+            d = (d or "").strip().lower()
+            if d and "." in d and re.search(r"[a-z]", d) and d not in seen:
+                seen.add(d); domains.append(d)
+        if not is_cidr and ":" not in target:
+            _add_dom(target)
+        for h in hosts:
+            _add_dom(h.get("hostname", ""))
+        domains = domains[:max(1, min(max_hosts, 8))]
+        if domains:
+            yield ("stage", {"stage": "osint", "status": "running",
+                             "msg": f"OSINT {len(domains)} domain(s)"})
+            for dom in domains:
+                try:
+                    res = await cap_osint_run(
+                        preset=osint_preset or "",
+                        query=("" if osint_preset else "login OR admin OR api OR portal"),
+                        site=dom, max_results=osint_max,
+                        campaign_id=cid,
+                        campaign_name=osint_campaign_name or f"recon:{target}",
+                        fingerprint=True)
+                    cid = res.get("campaign_id", cid)
+                    yield ("osint", {"domain": dom, "found": res.get("found", 0),
+                                     "added": res.get("added", 0),
+                                     "campaign_id": cid})
+                except Exception as e:
+                    yield ("osint", {"domain": dom, "error": str(e)})
+            yield ("stage", {"stage": "osint", "status": "done",
+                             "campaign_id": cid})
+        else:
+            yield ("stage", {"stage": "osint", "status": "skipped",
+                             "msg": "no resolvable domains in scope"})
+
+    # ── Stage 4 — infra cross-link (import registered Proxmox/Docker) ─────────
+    if link_infra:
+        yield ("stage", {"stage": "link", "status": "running",
+                         "msg": "importing registered Proxmox/Docker"})
+        p = await cap_netscan_proxmox_import()
+        d = await cap_netscan_docker_import()
+        yield ("stage", {"stage": "link", "status": "done",
+                         "proxmox": p.get("count", 0),
+                         "docker": d.get("count", 0)})
+
+    # ── Stage 5 — aggregate hosts into network-boundary (:NetBlock) nodes ─────
+    if map_boundaries:
+        yield ("stage", {"stage": "boundary", "status": "running",
+                         "msg": "aggregating network boundaries"})
+        try:
+            agg = await cap_netscan_map_aggregate()
+            yield ("stage", {"stage": "boundary", "status": "done",
+                             "blocks": agg.get("blocks", 0)})
+        except Exception as e:
+            yield ("stage", {"stage": "boundary", "status": "error", "msg": str(e)})
+
+    yield ("done", {"hosts": len(hosts), "campaign_id": cid, "ts": now_iso()})
+
+
+@capability(
+    "netscan.recon.run",
+    http_method="POST", http_path="/netscan/recon/run",
+    http_tags=["netscan"],
+    description="Run a multi-stage network recon pipeline and write everything to "
+                "the graph: sweep/port-scan → fingerprint live hosts → (optional) "
+                "OSINT enrich resolvable domains into a campaign → (optional) link "
+                "registered Proxmox/Docker infra. One tool the planner / agentic "
+                "loop can call. Use netscan.recon.stream for live UI progress. "
+                "Input: target (str! — CIDR like 10.0.0.0/24, or a host/IP/domain), "
+                "profile (str='quick'|common|web|database|iot|ms), fingerprint "
+                "(bool=true), osint (bool=false), osint_preset (str), "
+                "osint_campaign_name (str), osint_campaign_id (str), max_hosts "
+                "(int=20), link_infra (bool=false), enrich (bool=false — deep "
+                "geo/ASN/CVE enrichment of discovered hosts), map_boundaries "
+                "(bool=false — aggregate hosts into :NetBlock boundary nodes). "
+                "Output: {ok, target, stages, hosts, osint, host_count, campaign_id}.",
+)
+async def cap_netscan_recon_run(
+    target: str = "", profile: str = "quick",
+    fingerprint: bool = True, osint: bool = False, osint_preset: str = "",
+    osint_campaign_id: str = "", osint_campaign_name: str = "",
+    max_hosts: int = 20, link_infra: bool = False,
+    enrich: bool = False, map_boundaries: bool = False, trace_id=None,
+) -> Dict:
+    summary: Dict[str, Any] = {"target": target, "stages": [], "hosts": [],
+                               "osint": [], "fingerprints": []}
+    campaign_id = osint_campaign_id
+    async for ev, data in _recon_stages(
+        target=target, profile=profile, fingerprint=fingerprint, osint=osint,
+        osint_preset=osint_preset, osint_campaign_id=osint_campaign_id,
+        osint_campaign_name=osint_campaign_name, max_hosts=max_hosts,
+        link_infra=link_infra, enrich=enrich, map_boundaries=map_boundaries,
+    ):
+        if ev == "error":
+            return {"error": data.get("error"), **summary}
+        elif ev == "stage":
+            summary["stages"].append(data)
+        elif ev == "host":
+            summary["hosts"].append(data)
+        elif ev == "fingerprint":
+            summary["fingerprints"].append(data)
+        elif ev == "osint":
+            summary["osint"].append(data)
+        elif ev == "done":
+            campaign_id = data.get("campaign_id", campaign_id)
+    return {"ok": True, **summary, "host_count": len(summary["hosts"]),
+            "campaign_id": campaign_id}
+
+
+@APP.post("/netscan/recon/stream", tags=["netscan"], include_in_schema=True,
+          summary="SSE-stream a multi-stage recon run (sweep → fingerprint → "
+                  "OSINT → link); nodes appear in the graph as caps write them.")
+async def recon_stream(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    async def _gen() -> AsyncGenerator[bytes, None]:
+        try:
+            async for ev, data in _recon_stages(
+                target=(body.get("target") or "").strip(),
+                profile=body.get("profile") or "quick",
+                fingerprint=bool(body.get("fingerprint", True)),
+                osint=bool(body.get("osint", False)),
+                osint_preset=body.get("osint_preset") or "",
+                osint_campaign_id=body.get("osint_campaign_id") or "",
+                osint_campaign_name=body.get("osint_campaign_name") or "",
+                osint_max=int(body.get("osint_max", 15) or 15),
+                max_hosts=int(body.get("max_hosts", 20) or 20),
+                link_infra=bool(body.get("link_infra", False)),
+                enrich=bool(body.get("enrich", False)),
+                map_boundaries=bool(body.get("map_boundaries", False)),
+            ):
+                if await request.is_disconnected():
+                    return
+                yield _sse(ev, data)
+        except Exception as e:
+            yield _sse("error", {"error": f"{type(e).__name__}: {e}"})
+
+    return StreamingResponse(_gen(), media_type="text/event-stream",
+                             headers={"X-Accel-Buffering": "no",
+                                      "Cache-Control": "no-cache"})
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 8e.  ADDRESS / HOST OSINT ENRICHMENT  +  DOMAIN MODEL  +  NETWORK BOUNDARIES
+#
+# Enrich an IP/host with geo, ASN, ISP/org, allocation CIDR and open-ports/CVE
+# intel from free, no-key sources (cached locally so repeat lookups are free and
+# accumulate across sessions). Roll hosts up into :NetBlock → :ASN → :GeoRegion
+# boundary nodes, and attach :Website / :NetHost to a :Domain so OSINT/recon hits
+# stop floating. Optional opt-in ASN/prefix/peering expansion via RIPEstat.
+#
+# Sources: ip-api.com (geo+ASN, 100-IP batch), Shodan InternetDB
+# (internetdb.shodan.io — ports/CVEs/tags), RDAP (rdap.org — allocation CIDR),
+# RIPEstat (stat.ripe.net — announced prefixes + AS neighbours).
+# ═════════════════════════════════════════════════════════════════════════════
+ENRICH_TTL = int(os.getenv("VERA_ENRICH_TTL", str(7 * 86400)))   # 7 days
+
+
+def _looks_like_ip(s: str) -> bool:
+    try:
+        ipaddress.ip_address((s or "").strip())
+        return True
+    except Exception:
+        return False
+
+
+def _ensure_ipcache_table() -> None:
+    conn = _netmap_db()
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS osint_ip_cache (
+                ip         TEXT PRIMARY KEY,
+                json       TEXT,
+                fetched_at TEXT
+            )
+        """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+try:
+    _ensure_ipcache_table()
+except Exception as _e:
+    log.debug("osint_ip_cache table init: %s", _e)
+
+
+def _ip_cache_get(ip: str, ttl: int = ENRICH_TTL) -> Optional[Dict]:
+    try:
+        conn = _netmap_db()
+        try:
+            row = conn.execute(
+                "SELECT json, fetched_at FROM osint_ip_cache WHERE ip=?", (ip,)
+            ).fetchone()
+        finally:
+            conn.close()
+        if not row:
+            return None
+        data = json.loads(row[0] or "{}")
+        # TTL check
+        try:
+            from datetime import datetime, timezone
+            ts = datetime.fromisoformat((row[1] or "").replace("Z", "+00:00"))
+            age = (datetime.now(timezone.utc) - ts).total_seconds()
+            if ttl and age > ttl:
+                return None
+        except Exception:
+            pass
+        return data
+    except Exception:
+        return None
+
+
+def _ip_cache_put(ip: str, data: Dict) -> None:
+    try:
+        conn = _netmap_db()
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO osint_ip_cache (ip, json, fetched_at) "
+                "VALUES (?,?,?)",
+                (ip, json.dumps(data), now_iso()),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.debug("ip cache put failed: %s", e)
+
+
+def _parse_ipapi(j: Dict) -> Dict:
+    """Normalise an ip-api.com record (single or batch item)."""
+    if not isinstance(j, dict) or j.get("status") != "success":
+        return {}
+    asn, asname = "", j.get("asname", "") or ""
+    m = re.match(r"AS(\d+)\s*(.*)", str(j.get("as", "") or ""))
+    if m:
+        asn = m.group(1)
+        asname = asname or m.group(2)
+    return {
+        "country":      j.get("country", ""),
+        "country_code": j.get("countryCode", ""),
+        "city":         j.get("city", ""),
+        "region":       j.get("regionName", ""),
+        "lat":          j.get("lat"),
+        "lon":          j.get("lon"),
+        "isp":          j.get("isp", ""),
+        "org":          j.get("org", ""),
+        "asn":          asn,
+        "as_name":      asname,
+        "rdns":         j.get("reverse", "") or "",
+    }
+
+
+_IPAPI_FIELDS = ("status,message,country,countryCode,city,regionName,lat,lon,"
+                 "isp,org,as,asname,reverse,query")
+
+
+async def _fetch_ipapi(ip: str) -> Dict:
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as c:
+            r = await c.get(f"http://ip-api.com/json/{ip}?fields={_IPAPI_FIELDS}")
+            return _parse_ipapi(r.json())
+    except Exception:
+        return {}
+
+
+async def _fetch_ipapi_batch(ips: List[str]) -> Dict[str, Dict]:
+    """ip-api batch endpoint — up to 100 IPs in one request. Returns {ip: enr}."""
+    if not ips:
+        return {}
+    payload = [{"query": ip, "fields": _IPAPI_FIELDS} for ip in ips]
+    out: Dict[str, Dict] = {}
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as c:
+            r = await c.post("http://ip-api.com/batch", json=payload)
+            data = r.json()
+        if isinstance(data, list):
+            for item in data:
+                q = item.get("query")
+                if q:
+                    out[q] = _parse_ipapi(item)
+    except Exception:
+        return out
+    return out
+
+
+async def _fetch_internetdb(ip: str) -> Dict:
+    """Shodan InternetDB — free, no key. 404 = nothing known for this IP."""
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as c:
+            r = await c.get(f"https://internetdb.shodan.io/{ip}")
+            if r.status_code == 404:
+                return {}
+            if r.status_code >= 400:
+                return {}
+            j = r.json()
+    except Exception:
+        return {}
+    if not isinstance(j, dict):
+        return {}
+    return {
+        "shodan_ports":     [p for p in (j.get("ports") or []) if isinstance(p, int)],
+        "shodan_hostnames": [h for h in (j.get("hostnames") or []) if isinstance(h, str)],
+        "shodan_cpes":      [c for c in (j.get("cpes") or []) if isinstance(c, str)],
+        "shodan_tags":      [t for t in (j.get("tags") or []) if isinstance(t, str)],
+        "shodan_vulns":     [v for v in (j.get("vulns") or []) if isinstance(v, str)],
+    }
+
+
+def _range_to_cidr(start: str, end: str) -> str:
+    """Smallest single CIDR covering an IP range (the allocation boundary)."""
+    try:
+        a = ipaddress.ip_address(start)
+        b = ipaddress.ip_address(end)
+        plen = a.max_prefixlen
+        while plen >= 0:
+            cand = ipaddress.ip_network(f"{a}/{plen}", strict=False)
+            if b in cand:
+                return str(cand)
+            plen -= 1
+    except Exception:
+        pass
+    return ""
+
+
+def _vcard_fn(vcard: Any) -> str:
+    try:
+        for item in vcard[1]:
+            if item and item[0] == "fn":
+                return str(item[3])
+    except Exception:
+        pass
+    return ""
+
+
+def _rdap_org(j: Dict) -> str:
+    for ent in j.get("entities") or []:
+        name = _vcard_fn(ent.get("vcardArray"))
+        if name:
+            return name
+    return ""
+
+
+async def _fetch_rdap(ip: str) -> Dict:
+    """RDAP — allocation CIDR boundary + netname + org + country (no key)."""
+    try:
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as c:
+            r = await c.get(f"https://rdap.org/ip/{ip}",
+                            headers={"Accept": "application/rdap+json"})
+            if r.status_code >= 400:
+                return {}
+            j = r.json()
+    except Exception:
+        return {}
+    if not isinstance(j, dict):
+        return {}
+    cidr = ""
+    for blk in j.get("cidr0_cidrs") or []:
+        pfx = blk.get("v4prefix") or blk.get("v6prefix")
+        ln = blk.get("length")
+        if pfx and ln is not None:
+            cidr = f"{pfx}/{ln}"
+            break
+    if not cidr and j.get("startAddress") and j.get("endAddress"):
+        cidr = _range_to_cidr(j["startAddress"], j["endAddress"])
+    return {
+        "netblock_cidr": cidr,
+        "netname":       j.get("name", "") or "",
+        "rir_country":   j.get("country", "") or "",
+        "rir_org":       _rdap_org(j),
+    }
+
+
+async def _enrich_ip(ip: str, force: bool = False) -> Dict:
+    """Full per-IP enrichment (cached). Never raises."""
+    if not force:
+        cached = _ip_cache_get(ip, ENRICH_TTL)
+        if cached is not None:
+            return cached
+    ipapi, idb, rdap = await asyncio.gather(
+        _fetch_ipapi(ip), _fetch_internetdb(ip), _fetch_rdap(ip),
+        return_exceptions=False,
+    )
+    enr: Dict[str, Any] = {"ip": ip}
+    enr.update(ipapi or {})
+    enr.update(idb or {})
+    enr.update(rdap or {})
+    if not enr.get("rdns"):
+        enr["rdns"] = await _reverse_dns(ip)
+    if not enr.get("org"):
+        enr["org"] = enr.get("rir_org", "") or enr.get("netname", "")
+    enr["fetched_at"] = now_iso()
+    _ip_cache_put(ip, enr)
+    return enr
+
+
+async def _write_enrichment_to_graph(ip: str, enr: Dict) -> None:
+    """Persist enrichment as NetHost props + :ASN/:NetBlock/:GeoRegion boundaries."""
+    host_id = f"net:{ip}"
+    scalar_keys = ("country", "country_code", "city", "region", "lat", "lon",
+                   "isp", "org", "asn", "as_name", "netblock_cidr", "netname",
+                   "rdns")
+    props = {k: enr.get(k) for k in scalar_keys
+             if enr.get(k) not in (None, "")}
+    # Frontend grouping reads geo_country / geo_city directly
+    if enr.get("country"):
+        props["geo_country"] = enr["country"]
+    if enr.get("city"):
+        props["geo_city"] = enr["city"]
+    for k in ("shodan_ports", "shodan_vulns", "shodan_tags", "shodan_hostnames"):
+        v = enr.get(k)
+        if isinstance(v, list) and v:
+            props[k] = [x for x in v if isinstance(x, (str, int, float, bool))]
+    await _aux_run(
+        "MERGE (h:NetHost {id:$id}) SET h += $props, h.enriched_at=$ts, "
+        "h.ip=coalesce(h.ip,$ip)",
+        id=host_id, props=props, ts=now_iso(), ip=ip,
+    )
+    asn = enr.get("asn")
+    cidr = enr.get("netblock_cidr")
+    country = enr.get("country")
+    if asn:
+        await _aux_run(
+            "MERGE (a:ASN {id:$id}) SET a.asn=$asn, a.name=$name, "
+            "a.label=$lbl, a.source=coalesce(a.source,'enrich'), a.updated_at=$ts",
+            id=f"asn:{asn}", asn=str(asn),
+            name=enr.get("as_name", "") or enr.get("org", ""),
+            lbl=f"AS{asn}", ts=now_iso(),
+        )
+        if cidr:
+            await _aux_run(
+                """
+                MERGE (b:NetBlock {id:$bid})
+                SET b.cidr=$cidr, b.label=$cidr, b.name=$name,
+                    b.source=coalesce(b.source,'enrich'), b.updated_at=$ts
+                WITH b
+                MATCH (h:NetHost {id:$hid}) MERGE (h)-[:IN_PREFIX]->(b)
+                WITH b
+                MATCH (a:ASN {id:$aid}) MERGE (b)-[:ANNOUNCED_BY]->(a)
+                """,
+                bid=f"block:{cidr}", cidr=cidr, name=enr.get("netname", ""),
+                ts=now_iso(), hid=host_id, aid=f"asn:{asn}",
+            )
+        else:
+            await _aux_run(
+                "MATCH (h:NetHost {id:$hid}),(a:ASN {id:$aid}) "
+                "MERGE (h)-[:IN_ASN]->(a)",
+                hid=host_id, aid=f"asn:{asn}",
+            )
+    elif cidr:
+        await _aux_run(
+            """
+            MERGE (b:NetBlock {id:$bid})
+            SET b.cidr=$cidr, b.label=$cidr,
+                b.source=coalesce(b.source,'enrich'), b.updated_at=$ts
+            WITH b MATCH (h:NetHost {id:$hid}) MERGE (h)-[:IN_PREFIX]->(b)
+            """,
+            bid=f"block:{cidr}", cidr=cidr, ts=now_iso(), hid=host_id,
+        )
+    if country:
+        await _aux_run(
+            """
+            MERGE (g:GeoRegion {id:$gid})
+            SET g.country=$country, g.code=$cc, g.label=$country,
+                g.source=coalesce(g.source,'enrich'), g.updated_at=$ts
+            WITH g MATCH (h:NetHost {id:$hid}) MERGE (h)-[:LOCATED_IN]->(g)
+            """,
+            gid=f"geo:{country}", country=country,
+            cc=enr.get("country_code", ""), ts=now_iso(), hid=host_id,
+        )
+
+
+# ── Domain model ─────────────────────────────────────────────────────────────
+# A small public-suffix set so we group by the *registrable* domain (so
+# a.example.co.uk and b.example.co.uk roll up to example.co.uk, not co.uk).
+_MULTI_TLDS = {
+    "co.uk", "org.uk", "gov.uk", "ac.uk", "me.uk", "ltd.uk", "plc.uk", "net.uk",
+    "com.au", "net.au", "org.au", "edu.au", "gov.au", "co.nz", "net.nz", "org.nz",
+    "co.za", "org.za", "com.br", "net.br", "co.jp", "or.jp", "ne.jp", "co.in",
+    "co.kr", "com.cn", "net.cn", "org.cn", "com.mx", "com.sg", "com.tr", "com.tw",
+    "co.il", "com.hk", "com.ua", "co.id", "com.my", "com.ph", "com.ar",
+}
+
+
+def _registrable_domain(host: str) -> str:
+    host = (host or "").strip().strip(".").lower()
+    if not host or _looks_like_ip(host):
+        return ""
+    parts = host.split(".")
+    if len(parts) < 2:
+        return ""
+    last2 = ".".join(parts[-2:])
+    if last2 in _MULTI_TLDS and len(parts) >= 3:
+        return ".".join(parts[-3:])
+    return last2
+
+
+async def _upsert_domain(domain: str) -> None:
+    if not domain:
+        return
+    await _aux_run(
+        "MERGE (d:Domain {id:$id}) SET d.domain=$d, d.label=$d, "
+        "d.source=coalesce(d.source,'osint'), d.updated_at=$ts",
+        id=f"domain:{domain}", d=domain, ts=now_iso(),
+    )
+
+
+async def _link_website_domain(website_id: str, netloc: str) -> None:
+    host = (netloc or "").split("@")[-1].split(":")[0]
+    dom = _registrable_domain(host)
+    if not dom:
+        return
+    await _upsert_domain(dom)
+    await _aux_run(
+        "MATCH (d:Domain {id:$did}),(s:Website {id:$sid}) "
+        "MERGE (d)-[:HAS_SITE]->(s)",
+        did=f"domain:{dom}", sid=website_id,
+    )
+    # Attach the site to any host already known by this exact hostname
+    await _aux_run(
+        "MATCH (h:NetHost) WHERE h.hostname=$host "
+        "MERGE (h)-[:SERVES]->(s:Website {id:$sid})",
+        host=host, sid=website_id,
+    )
+
+
+async def _link_host_domain(ip: str, hostname: str) -> None:
+    dom = _registrable_domain(hostname)
+    if not dom:
+        return
+    await _upsert_domain(dom)
+    await _aux_run(
+        "MATCH (d:Domain {id:$did}),(h:NetHost {id:$hid}) "
+        "MERGE (d)-[:HAS_SUBDOMAIN]->(h)",
+        did=f"domain:{dom}", hid=f"net:{ip}",
+    )
+
+
+@capability(
+    "netscan.enrich.host",
+    http_method="POST", http_path="/netscan/enrich/host",
+    http_tags=["netscan", "osint"],
+    description="Deep-enrich a single host/IP with geo (country/city/lat/lon), "
+                "ASN + ISP/org, RDAP allocation CIDR (network boundary), reverse "
+                "DNS, and Shodan InternetDB open ports / CVEs / tags. Writes "
+                "properties onto the :NetHost and creates :ASN/:NetBlock/:GeoRegion "
+                "boundary nodes. Results cached locally. "
+                "Input: host (str! — IP or hostname), force (bool=false — bypass "
+                "cache), write_graph (bool=true). "
+                "Output: {ok, ip, country, city, asn, as_name, org, netblock_cidr, "
+                "shodan_ports, shodan_vulns, ...}.",
+)
+async def cap_netscan_enrich_host(host: str = "", force: bool = False,
+                                  write_graph: bool = True, trace_id=None) -> Dict:
+    if not (host or "").strip():
+        return {"error": "host required"}
+    ip = host.strip()
+    if not _looks_like_ip(ip):
+        try:
+            ip = socket.gethostbyname(host.strip())
+        except Exception:
+            return {"error": f"could not resolve host: {host}"}
+    enr = await _enrich_ip(ip, force=force)
+    enr = {**enr, "host": host, "ip": ip}
+    if write_graph:
+        await _aux_upsert_nethost(ip, hostname=(host if host != ip else ""),
+                                  source="enrich")
+        await _write_enrichment_to_graph(ip, enr)
+        if host != ip:
+            await _link_host_domain(ip, host)
+    await emit_event({"type": "netscan.enrich.done", "ip": ip,
+                      "asn": enr.get("asn"), "country": enr.get("country")})
+    return {"ok": True, **enr}
+
+
+@capability(
+    "netscan.enrich.bulk",
+    http_method="POST", http_path="/netscan/enrich/bulk",
+    http_tags=["netscan", "osint"],
+    description="Enrich many hosts/IPs at once (geo + ASN via ip-api batch, plus "
+                "Shodan InternetDB ports/CVEs), writing props + boundary nodes for "
+                "each. Use after a sweep to roll a whole subnet up into ASN/geo "
+                "boundaries. Input: hosts (list[str]!), force (bool=false), "
+                "max_hosts (int=128). Output: {ok, enriched, hosts:[{ip,asn,"
+                "country,ports}]}.",
+)
+async def cap_netscan_enrich_bulk(hosts: Optional[List[str]] = None,
+                                  force: bool = False, max_hosts: int = 128,
+                                  trace_id=None) -> Dict:
+    hosts = hosts or []
+    ipmap: Dict[str, str] = {}
+    for h in hosts[:max_hosts]:
+        ip = (h or "").strip()
+        if not ip:
+            continue
+        if not _looks_like_ip(ip):
+            try:
+                ip = socket.gethostbyname(ip)
+            except Exception:
+                continue
+        ipmap.setdefault(ip, h)
+    ips = list(ipmap.keys())
+    uncached = [ip for ip in ips
+                if force or _ip_cache_get(ip, ENRICH_TTL) is None]
+    # Batch geo/ASN
+    batch: Dict[str, Dict] = {}
+    for i in range(0, len(uncached), 100):
+        batch.update(await _fetch_ipapi_batch(uncached[i:i + 100]))
+    # InternetDB (concurrency-limited)
+    idb_map: Dict[str, Dict] = {}
+    if uncached:
+        sem = asyncio.Semaphore(8)
+        async def _one(ip):
+            async with sem:
+                return ip, await _fetch_internetdb(ip)
+        for ip, d in await asyncio.gather(*[_one(ip) for ip in uncached]):
+            idb_map[ip] = d
+    out: List[Dict] = []
+    for ip in ips:
+        enr = None if force else _ip_cache_get(ip, ENRICH_TTL)
+        if enr is None:
+            enr = {"ip": ip}
+            enr.update(batch.get(ip, {}))
+            enr.update(idb_map.get(ip, {}))
+            if not enr.get("rdns"):
+                enr["rdns"] = await _reverse_dns(ip)
+            enr["fetched_at"] = now_iso()
+            _ip_cache_put(ip, enr)
+        hostname = ipmap[ip] if ipmap[ip] != ip else ""
+        await _aux_upsert_nethost(ip, hostname=hostname, source="enrich")
+        await _write_enrichment_to_graph(ip, enr)
+        if hostname:
+            await _link_host_domain(ip, hostname)
+        out.append({"ip": ip, "asn": enr.get("asn"),
+                    "country": enr.get("country"),
+                    "ports": enr.get("shodan_ports", [])})
+    await emit_event({"type": "netscan.enrich.bulk.done", "count": len(out)})
+    return {"ok": True, "enriched": len(out), "hosts": out}
+
+
+@capability(
+    "netscan.graph.relink",
+    http_method="POST", http_path="/netscan/graph/relink",
+    http_tags=["netscan", "osint"],
+    description="Repair the graph: attach every existing :Website and hostname-"
+                "bearing :NetHost to its registrable :Domain (HAS_SITE / "
+                "HAS_SUBDOMAIN), and link sites to the hosts that serve them "
+                "(SERVES). Fixes OSINT/recon nodes that were left floating. "
+                "Input: none. Output: {ok, domains_linked, sites_linked, served}.",
+)
+async def cap_netscan_graph_relink(trace_id=None) -> Dict:
+    sites = await _aux_read(
+        "MATCH (s:Website) RETURN s.id AS id, "
+        "coalesce(s.origin, s.url, '') AS origin")
+    sites_linked = 0
+    for r in sites:
+        origin = r.get("origin") or ""
+        netloc = ""
+        try:
+            netloc = _urlparse.urlparse(origin).netloc or origin.split("//")[-1]
+        except Exception:
+            netloc = origin
+        if netloc:
+            await _link_website_domain(r["id"], netloc)
+            sites_linked += 1
+    hosts = await _aux_read(
+        "MATCH (h:NetHost) WHERE h.hostname IS NOT NULL AND h.hostname <> '' "
+        "RETURN h.id AS id, h.hostname AS hn, h.ip AS ip")
+    hosts_linked = 0
+    for r in hosts:
+        ip = r.get("ip") or str(r.get("id", "")).split("net:")[-1]
+        await _link_host_domain(ip, r.get("hn", ""))
+        hosts_linked += 1
+    await emit_event({"type": "netscan.graph.relinked",
+                      "sites": sites_linked, "hosts": hosts_linked})
+    return {"ok": True, "sites_linked": sites_linked,
+            "hosts_linked": hosts_linked}
+
+
+# ── Network boundary mapping (passive aggregate + opt-in RIPEstat expansion) ──
+@capability(
+    "netscan.map.aggregate",
+    http_method="POST", http_path="/netscan/map/aggregate",
+    http_tags=["netscan"],
+    description="Group every discovered :NetHost into its network boundary: use "
+                "the RDAP allocation CIDR when enriched, else a /N prefix. Creates "
+                ":NetBlock nodes with IN_PREFIX edges (and ANNOUNCED_BY to :ASN "
+                "when known). No external calls. Input: prefix_bits (int=24). "
+                "Output: {ok, hosts, blocks}.",
+)
+async def cap_netscan_map_aggregate(prefix_bits: int = 24, trace_id=None) -> Dict:
+    rows = await _aux_read(
+        "MATCH (h:NetHost) RETURN h.id AS id, h.ip AS ip, "
+        "h.netblock_cidr AS cidr, h.asn AS asn")
+    blocks = set()
+    n = 0
+    for r in rows:
+        ip = r.get("ip")
+        if not ip:
+            continue
+        cidr = r.get("cidr")
+        if not cidr:
+            try:
+                cidr = str(ipaddress.ip_network(f"{ip}/{int(prefix_bits)}",
+                                                strict=False))
+            except Exception:
+                continue
+        blocks.add(cidr)
+        await _aux_run(
+            """
+            MERGE (b:NetBlock {id:$bid})
+            SET b.cidr=$cidr, b.label=$cidr,
+                b.source=coalesce(b.source,'aggregate'), b.updated_at=$ts
+            WITH b MATCH (h:NetHost {id:$hid}) MERGE (h)-[:IN_PREFIX]->(b)
+            """,
+            bid=f"block:{cidr}", cidr=cidr, ts=now_iso(), hid=r["id"],
+        )
+        if r.get("asn"):
+            await _aux_run(
+                "MATCH (b:NetBlock {id:$bid}),(a:ASN {id:$aid}) "
+                "MERGE (b)-[:ANNOUNCED_BY]->(a)",
+                bid=f"block:{cidr}", aid=f"asn:{r['asn']}",
+            )
+        n += 1
+    await emit_event({"type": "netscan.map.aggregated",
+                      "hosts": n, "blocks": len(blocks)})
+    return {"ok": True, "hosts": n, "blocks": len(blocks)}
+
+
+async def _ripe_get(path: str, asn: str) -> Optional[Dict]:
+    try:
+        async with httpx.AsyncClient(timeout=12.0) as c:
+            r = await c.get(f"https://stat.ripe.net/data/{path}/data.json",
+                            params={"resource": f"AS{asn}"})
+            if r.status_code >= 400:
+                return None
+            return r.json()
+    except Exception:
+        return None
+
+
+@capability(
+    "netscan.asn.expand",
+    http_method="POST", http_path="/netscan/asn/expand",
+    http_tags=["netscan"],
+    description="Map an ASN's footprint: pull its BGP announced prefixes (and "
+                "optionally its peer ASNs) from RIPEstat and graph them as "
+                ":NetBlock under the :ASN with PEERS_WITH links. Reveals the "
+                "boundaries of a whole network. Input: asn (str — e.g. 15169 or "
+                "AS15169) OR host (str — resolve its ASN), peering (bool=true), "
+                "max_prefixes (int=200). Output: {ok, asn, prefixes, peers}.",
+)
+async def cap_netscan_asn_expand(asn: str = "", host: str = "",
+                                 peering: bool = True, max_prefixes: int = 200,
+                                 trace_id=None) -> Dict:
+    if not asn and host:
+        ip = host.strip()
+        if not _looks_like_ip(ip):
+            try:
+                ip = socket.gethostbyname(host.strip())
+            except Exception:
+                ip = ""
+        if ip:
+            asn = (await _enrich_ip(ip)).get("asn", "")
+    asn = str(asn).upper().replace("AS", "").strip()
+    if not asn.isdigit():
+        return {"error": "valid asn (or resolvable host) required"}
+    await _aux_run(
+        "MERGE (a:ASN {id:$id}) SET a.asn=$asn, a.label=$lbl, "
+        "a.source=coalesce(a.source,'expand'), a.updated_at=$ts",
+        id=f"asn:{asn}", asn=asn, lbl=f"AS{asn}", ts=now_iso(),
+    )
+    prefixes = 0
+    ap = await _ripe_get("announced-prefixes", asn)
+    for item in (((ap or {}).get("data") or {}).get("prefixes") or []):
+        cidr = item.get("prefix")
+        if not cidr:
+            continue
+        await _aux_run(
+            """
+            MERGE (b:NetBlock {id:$bid})
+            SET b.cidr=$cidr, b.label=$cidr, b.source='expand', b.updated_at=$ts
+            WITH b MATCH (a:ASN {id:$aid}) MERGE (b)-[:ANNOUNCED_BY]->(a)
+            """,
+            bid=f"block:{cidr}", cidr=cidr, ts=now_iso(), aid=f"asn:{asn}",
+        )
+        prefixes += 1
+        if prefixes >= int(max_prefixes):
+            break
+    peers = 0
+    if peering:
+        nb = await _ripe_get("asn-neighbours", asn)
+        for item in (((nb or {}).get("data") or {}).get("neighbours") or []):
+            pasn = str(item.get("asn", "")).strip()
+            if not pasn.isdigit():
+                continue
+            await _aux_run(
+                """
+                MERGE (p:ASN {id:$pid})
+                SET p.asn=$pasn, p.label=$lbl,
+                    p.source=coalesce(p.source,'peer'), p.updated_at=$ts
+                WITH p MATCH (a:ASN {id:$aid}) MERGE (a)-[:PEERS_WITH]->(p)
+                """,
+                pid=f"asn:{pasn}", pasn=pasn, lbl=f"AS{pasn}",
+                ts=now_iso(), aid=f"asn:{asn}",
+            )
+            peers += 1
+    await emit_event({"type": "netscan.asn.expanded", "asn": asn,
+                      "prefixes": prefixes, "peers": peers})
+    return {"ok": True, "asn": asn, "prefixes": prefixes, "peers": peers}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # 9.  CLEAR-ALL / NEW-GRAPH BUTTON
 # ═════════════════════════════════════════════════════════════════════════════
 _NETSCAN_LABELS_FALLBACK = (
@@ -5420,6 +7445,8 @@ _NETSCAN_LABELS_FALLBACK = (
     "K8sCluster", "K8sNode", "K8sPod",
     "Website", "WebEndpoint",
     "NetPort", "NetHop",
+    "Domain", "ASN", "NetBlock", "GeoRegion",
+    "WifiAP",
 )
 
 
@@ -5527,3 +7554,175 @@ _maybe_install_patches()
 log.info("netscan_extras loaded — added: lan/stream, ports/stream, web/stream, "
          "banner, tls, fingerprint, traceroute, dork.search, dork.targeted, "
          "graph.clear_all")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# CODE ITERATE — write → run → read the failure → fix → run again
+# ═════════════════════════════════════════════════════════════════════════════
+# The self-correcting twin of exec.code.run: Vera (chat, the V5 loop, a dream
+# stage) hands over a snippet plus success criteria, and this cap drives the
+# test-and-iterate loop server-side — run, and on failure ask the LLM for a
+# fixed version (full-file rewrite), re-run, up to max_iterations. Every run
+# and fix is reported via exec.iterate events so the chat/loop UI can show a
+# live ticker.
+
+_ITERATE_FENCE_RE = re.compile(r"```[a-zA-Z0-9_+-]*[^\n]*\n([\s\S]*?)```")
+
+
+def _iterate_extract_code(text: str, fallback: str) -> str:
+    """First fenced block of an LLM fix reply; whole reply if it looks like
+    bare code; otherwise the previous version (no change)."""
+    if not text:
+        return fallback
+    m = _ITERATE_FENCE_RE.search(text)
+    if m and m.group(1).strip():
+        return m.group(1).strip("\n") + "\n"
+    # Bare-code heuristic: no prose lead-in before the first line of code
+    t = text.strip()
+    if t and not t.lower().startswith(("here", "the ", "i ", "sure", "okay", "ok")):
+        return t + "\n"
+    return fallback
+
+
+def _iterate_llm():
+    """llm.generate callable via the registry (None if not loaded)."""
+    import Vera.vera.capability_orchestration as _o
+    entry = _o.CAPABILITY_REGISTRY.get("llm.generate")
+    return entry.get("func") if isinstance(entry, dict) else None
+
+
+@capability(
+    "exec.code.iterate",
+    http_method="POST", http_path="/exec/code/iterate", http_tags=["exec", "code"],
+    description="Run a code snippet and AUTOMATICALLY fix-and-retry until it passes "
+                "or the iteration budget runs out — the self-correcting version of "
+                "exec.code.run. Pass criteria via `expect` (substring that must "
+                "appear in stdout) and/or `test_code` (a separate snippet run after "
+                "the main code; its rc!=0 fails the round). With neither, rc==0 "
+                "passes. On failure the LLM rewrites the code (guided by `goal`) and "
+                "it re-runs. Subject to the exec sandbox policy. "
+                "Input: language (str!), code (str!), goal (str — what the code "
+                "should do; strongly recommended), expect (str), test_code (str), "
+                "max_iterations (int 1-6, default 3), timeout (int sec per run), "
+                "model (str — fixer model, blank = default), session_id (str — for "
+                "live event routing). "
+                "Output: {ok, passed, runs, final_code, iterations:[{n, rc, "
+                "stdout, stderr, fixed}], last_stdout, last_stderr}.",
+)
+async def cap_code_iterate(
+    language:       str = "",
+    code:           str = "",
+    goal:           str = "",
+    expect:         str = "",
+    test_code:      str = "",
+    max_iterations: int = 3,
+    timeout:        int = _DEFAULT_TIMEOUT,
+    model:          str = "",
+    session_id:     str = "",
+    trace_id=None,
+) -> Dict[str, Any]:
+    if not (language or "").strip():
+        return {"ok": False, "error": "language required"}
+    if not (code or "").strip():
+        return {"ok": False, "error": "code required"}
+    max_iterations = max(1, min(6, int(max_iterations or 3)))
+    llm = _iterate_llm()
+
+    # Opt-in per-session sandbox: every run (and test run) executes INSIDE the
+    # session's container when it has an ACTIVE sandbox — same routing as
+    # exec.code.run. Falls back to the host otherwise.
+    async def _iter_run(snippet: str) -> Dict[str, Any]:
+        routed = await _route_session_code(session_id, language, snippet,
+                                           "", "", timeout, None)
+        if routed is not None:
+            return routed
+        return await _run_code(language, snippet, timeout=timeout)
+
+    cur = code
+    iterations: List[Dict[str, Any]] = []
+    passed = False
+    last: Dict[str, Any] = {}
+
+    for n in range(1, max_iterations + 1):
+        await emit_event({"type": "exec.iterate", "stage": "run", "n": n,
+                          "session_id": session_id,
+                          "message": f"iteration {n}/{max_iterations}: running "
+                                     f"{language} ({len(cur)} chars)"})
+        last = await _iter_run(cur)
+        rc_ok = bool(last.get("ok")) and int(last.get("rc", 1) or 0) == 0
+        exp_ok = (expect in (last.get("stdout") or "")) if expect else True
+
+        test_res: Optional[Dict[str, Any]] = None
+        test_ok = True
+        if rc_ok and test_code.strip():
+            test_res = await _iter_run(test_code)
+            test_ok = bool(test_res.get("ok")) and int(test_res.get("rc", 1) or 0) == 0
+
+        entry: Dict[str, Any] = {
+            "n": n, "rc": last.get("rc"), "fixed": False,
+            "stdout": (last.get("stdout") or "")[:4000],
+            "stderr": (last.get("stderr") or "")[:4000],
+        }
+        if test_res is not None:
+            entry["test_rc"] = test_res.get("rc")
+            entry["test_stderr"] = (test_res.get("stderr") or "")[:2000]
+        iterations.append(entry)
+
+        if rc_ok and exp_ok and test_ok:
+            passed = True
+            await emit_event({"type": "exec.iterate", "stage": "pass", "n": n,
+                              "session_id": session_id,
+                              "message": f"passed on iteration {n}"})
+            break
+
+        if n == max_iterations or llm is None:
+            break
+
+        # ── Ask the LLM for a fixed full version ────────────────────────
+        failure = []
+        if not rc_ok:
+            failure.append(f"exit code {last.get('rc')}")
+        if expect and not exp_ok:
+            failure.append(f"stdout did not contain the expected text {expect!r}")
+        if test_res is not None and not test_ok:
+            failure.append(f"the test snippet failed (rc {test_res.get('rc')}): "
+                           f"{(test_res.get('stderr') or test_res.get('stdout') or '')[:800]}")
+        await emit_event({"type": "exec.iterate", "stage": "fix", "n": n,
+                          "session_id": session_id,
+                          "message": f"iteration {n} failed ({'; '.join(failure)}) "
+                                     f"— asking for a fix"})
+        fix_prompt = (
+            f"This {language} program failed. Fix it and reply with ONLY the "
+            f"complete corrected program in a single fenced code block — no "
+            f"explanation.\n\n"
+            + (f"GOAL: {goal}\n\n" if goal else "")
+            + f"FAILURE: {'; '.join(failure)}\n\n"
+            + f"CODE:\n```{language}\n{cur}\n```\n\n"
+            + f"STDOUT:\n{(last.get('stdout') or '')[:2000]}\n\n"
+            + f"STDERR:\n{(last.get('stderr') or '')[:3000]}\n"
+        )
+        try:
+            fix = await llm(prompt=fix_prompt, model=(model or None),
+                            system="You are an expert debugger. Output only the "
+                                   "corrected code in one fenced block.",
+                            caller="exec.code.iterate")
+            new_code = _iterate_extract_code((fix or {}).get("text", ""), cur)
+        except Exception as e:
+            log.warning("exec.code.iterate fix call failed: %s", e)
+            break
+        if new_code.strip() == cur.strip():
+            await emit_event({"type": "exec.iterate", "stage": "stuck", "n": n,
+                              "session_id": session_id,
+                              "message": "fixer returned an identical program — stopping"})
+            break
+        cur = new_code
+        iterations[-1]["fixed"] = True
+
+    await emit_event({"type": "exec.iterate", "stage": "done",
+                      "session_id": session_id, "passed": passed,
+                      "message": f"{'passed' if passed else 'did not pass'} "
+                                 f"after {len(iterations)} run(s)"})
+    return {"ok": True, "passed": passed, "runs": len(iterations),
+            "final_code": cur, "iterations": iterations,
+            "last_stdout": (last.get("stdout") or "")[:8000],
+            "last_stderr": (last.get("stderr") or "")[:8000]}

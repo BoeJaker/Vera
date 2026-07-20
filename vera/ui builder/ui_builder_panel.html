@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="utf-8">
 <title>Vera UI Builder</title>
 <style>
@@ -30,6 +35,7 @@ button{cursor:pointer;font-family:var(--sans)}input,select,textarea{background:v
   </div>
   <nav id="nav">
     <button class="nav-btn active" data-s="themes" onclick="switchSec(this)"><span class="gl">🎨</span> Themes</button>
+    <button class="nav-btn" data-s="loader" onclick="switchSec(this)"><span class="gl">◴</span> Loading</button>
     <button class="nav-btn" data-s="builder" onclick="switchSec(this)"><span class="gl">▤</span> Panel Builder</button>
     <button class="nav-btn" data-s="generate" onclick="switchSec(this)"><span class="gl">✦</span> Generate</button>
     <button class="nav-btn" data-s="panels" onclick="switchSec(this)"><span class="gl">▦</span> Panels</button>
@@ -55,6 +61,7 @@ button{cursor:pointer;font-family:var(--sans)}input,select,textarea{background:v
     <div id="themeVarGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:6px"></div>
     <div style="display:flex;gap:6px;margin-top:8px">
       <button class="btn p" onclick="saveThemeVars()">Save &amp; Apply</button>
+      <button class="btn t" onclick="autoContrast()" title="Fix text-on-accent + low-contrast text">Auto-contrast</button>
       <button class="btn" onclick="fabricStoreTheme()">Store in Fabric</button>
     </div>
     <div class="st" id="teStatus"></div>
@@ -71,6 +78,53 @@ button{cursor:pointer;font-family:var(--sans)}input,select,textarea{background:v
   <div class="card">
     <div style="font-size:10px;font-weight:600;margin-bottom:6px">Full Preview</div>
     <div id="themePreview"></div>
+  </div>
+</div>
+
+<!-- LOADING ANIMATION -->
+<div class="ps" id="s-loader">
+  <div class="sec">Loading Animation</div>
+  <div class="card">
+    <div style="font-size:10px;color:var(--dim2);line-height:1.6;margin-bottom:10px">
+      The animation shown while panels and iframes load, across the whole UI.
+      Applies live to every panel. The default is an evolving graph of nodes and
+      edges that drift, connect and fade in and out.
+    </div>
+    <div class="row"><label>Animation</label>
+      <select id="ld_type" style="flex:1" onchange="ldPreview()">
+        <option value="graph">Evolving graph (default)</option>
+        <option value="pulse">Pulse rings</option>
+        <option value="orbit">Orbit</option>
+        <option value="spinner">Plain spinner</option>
+        <option value="sprite">Sprite sheet…</option>
+      </select>
+    </div>
+    <div class="row"><label>Speed</label>
+      <input id="ld_speed" type="range" min="0.3" max="3" step="0.1" value="1" style="flex:1" oninput="ldPreview()"></div>
+    <div class="row"><label>Density</label>
+      <input id="ld_density" type="range" min="0.4" max="2.5" step="0.1" value="1" style="flex:1" oninput="ldPreview()">
+      <span class="sub" style="font-size:9px">graph only</span></div>
+    <div id="ld_sprite_box" style="display:none">
+      <div class="row"><label>Sheet</label><input id="ld_sprite_url" placeholder="data:image/png;base64,… (CSP-safe)" style="flex:1" oninput="ldPreview()"></div>
+      <div class="row">
+        <label>Frames</label><input id="ld_sprite_frames" type="number" value="4" style="width:64px" oninput="ldPreview()">
+        <label style="margin-left:6px">fps</label><input id="ld_sprite_fps" type="number" value="10" style="width:56px" oninput="ldPreview()">
+        <label style="margin-left:6px">w×h</label>
+        <input id="ld_sprite_w" type="number" value="48" style="width:56px" oninput="ldPreview()">
+        <input id="ld_sprite_h" type="number" value="48" style="width:56px" oninput="ldPreview()">
+      </div>
+    </div>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <button class="btn p" onclick="ldSave()">Save &amp; Apply everywhere</button>
+      <button class="btn" onclick="ldReset()">Reset to default</button>
+    </div>
+    <div class="st" id="ldStatus"></div>
+  </div>
+  <div class="card">
+    <div style="font-size:10px;font-weight:600;margin-bottom:8px">Live preview</div>
+    <div id="ld_preview" style="position:relative;height:150px;border:1px solid var(--border);border-radius:var(--r);overflow:hidden;background:var(--bg2)">
+      <div class="vera-loading"><span class="lbl">loading…</span></div>
+    </div>
   </div>
 </div>
 
@@ -254,20 +308,102 @@ function escH(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')
 function toast(m){var t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(function(){t.classList.remove('show')},2500)}
 function stEl(id,m,c){var e=document.getElementById(id);if(e){e.className='st '+(c||'');e.textContent=m}}
 function api(p,m,b){var o={method:m||'GET',headers:{'Content-Type':'application/json'}};if(b)o.body=JSON.stringify(b);return fetch(B+p,o).then(function(r){if(!r.ok)return r.text().then(function(t){try{return JSON.parse(t)}catch(e){return{error:'HTTP '+r.status}}});return r.json()}).catch(function(e){return{error:e.message}})}
-function switchSec(btn){document.querySelectorAll('#nav .nav-btn').forEach(function(b){b.classList.remove('active')});btn.classList.add('active');document.querySelectorAll('.ps').forEach(function(s){s.classList.remove('a')});var el=document.getElementById('s-'+btn.dataset.s);if(el)el.classList.add('a');if(btn.dataset.s==='themes')loadThemes();if(btn.dataset.s==='panels')loadPanelList()}
+function switchSec(btn){document.querySelectorAll('#nav .nav-btn').forEach(function(b){b.classList.remove('active')});btn.classList.add('active');document.querySelectorAll('.ps').forEach(function(s){s.classList.remove('a')});var el=document.getElementById('s-'+btn.dataset.s);if(el)el.classList.add('a');if(btn.dataset.s==='themes')loadThemes();if(btn.dataset.s==='panels')loadPanelList();if(btn.dataset.s==='loader')ldInit()}
+
+// ── Loading-animation config ────────────────────────────────────────────────
+var _ldPrev=null, _ldInited=false;
+function _ldReady(cb,n){ if(window.VeraLoader)return cb(); if((n||0)>40)return; setTimeout(function(){_ldReady(cb,(n||0)+1)},80); }
+function ldInit(){
+  _ldReady(function(){
+    if(!_ldInited){
+      _ldInited=true;
+      var c=VeraLoader.getConfig();
+      document.getElementById('ld_type').value=c.type||'graph';
+      document.getElementById('ld_speed').value=c.speed||1;
+      document.getElementById('ld_density').value=c.density||1;
+      if(c.sprite){var s=c.sprite;
+        (document.getElementById('ld_sprite_url')||{}).value=s.url||'';
+        (document.getElementById('ld_sprite_frames')||{}).value=s.frames||4;
+        (document.getElementById('ld_sprite_fps')||{}).value=s.fps||10;
+        (document.getElementById('ld_sprite_w')||{}).value=s.w||48;
+        (document.getElementById('ld_sprite_h')||{}).value=s.h||48;
+      }
+    }
+    ldPreview();
+  });
+}
+function _ldFormCfg(){
+  var type=document.getElementById('ld_type').value;
+  var cfg={type:type,
+    speed:parseFloat(document.getElementById('ld_speed').value)||1,
+    density:parseFloat(document.getElementById('ld_density').value)||1,
+    sprite:null};
+  if(type==='sprite'){
+    cfg.sprite={url:document.getElementById('ld_sprite_url').value.trim(),
+      frames:parseInt(document.getElementById('ld_sprite_frames').value)||1,
+      fps:parseInt(document.getElementById('ld_sprite_fps').value)||10,
+      w:parseInt(document.getElementById('ld_sprite_w').value)||48,
+      h:parseInt(document.getElementById('ld_sprite_h').value)||48};
+  }
+  return cfg;
+}
+function ldPreview(){
+  _ldReady(function(){
+    document.getElementById('ld_sprite_box').style.display=
+      document.getElementById('ld_type').value==='sprite'?'':'none';
+    var host=document.querySelector('#ld_preview .vera-loading');
+    if(!host)return;
+    // clear any prior canvas/host, keep the label
+    host.querySelectorAll('.vera-loader-host,canvas,.vera-spinner').forEach(function(n){n.remove()});
+    if(_ldPrev&&_ldPrev.stop){try{_ldPrev.stop();}catch(e){}}
+    var cfg=_ldFormCfg();
+    if(cfg.type==='spinner'){
+      var sp=document.createElement('div');sp.className='vera-spinner';
+      host.insertBefore(sp,host.firstChild);_ldPrev=null;return;
+    }
+    var h=document.createElement('div');h.className='vera-loader-host';
+    host.insertBefore(h,host.firstChild);
+    _ldPrev=VeraLoader.mount(h,cfg);
+  });
+}
+function ldSave(){
+  _ldReady(function(){
+    VeraLoader.setConfig(_ldFormCfg());
+    stEl('ldStatus','Saved — applies to every panel as it next shows a loader.','ok');
+  });
+}
+function ldReset(){
+  document.getElementById('ld_type').value='graph';
+  document.getElementById('ld_speed').value=1;
+  document.getElementById('ld_density').value=1;
+  ldPreview(); ldSave();
+}
 
 // ═══ THEMES ═══════════════════════════════════════════════════════════════
 var _themes={},_activeTheme='dusk';
-var THEME_VARS=['--bg','--s1','--s2','--s3','--bd','--bd2','--t1','--t2','--t3','--ac','--ac2','--ac3','--ac4','--ac5','--ui-radius','--lhm-width','--lhm-collapsed-width'];
-var THEME_LABELS={'--bg':'Background','--s1':'Surface 1','--s2':'Surface 2','--s3':'Surface 3','--bd':'Border','--bd2':'Border 2','--t1':'Text','--t2':'Text 2','--t3':'Text muted','--ac':'Accent','--ac2':'Success','--ac3':'Warning','--ac4':'Error','--ac5':'Decorative','--ui-radius':'Corner radius','--lhm-width':'Sidebar width','--lhm-collapsed-width':'Sidebar (collapsed)'};
+var THEME_VARS=['--bg','--s1','--s2','--s3','--bd','--bd2','--t1','--t2','--t3','--ac','--on-ac','--ac2','--ac3','--ac4','--ac5','--ui-radius','--lhm-width','--lhm-collapsed-width'];
+var THEME_LABELS={'--bg':'Background','--s1':'Surface 1','--s2':'Surface 2','--s3':'Surface 3','--bd':'Border','--bd2':'Border 2','--t1':'Text','--t2':'Text 2','--t3':'Text muted','--ac':'Accent','--on-ac':'Text on accent','--ac2':'Success','--ac3':'Warning','--ac4':'Error','--ac5':'Decorative','--ui-radius':'Corner radius','--lhm-width':'Sidebar width','--lhm-collapsed-width':'Sidebar (collapsed)'};
+
+// ── Contrast helpers (mirror server-side Vera.vera.theme_defs) ──────────────
+function _thLum(hex){
+  if(typeof hex!=='string')return 0.5;
+  var h=hex.trim().replace('#','');
+  if(h.length===3)h=h.replace(/(.)/g,'$1$1');
+  if(h.length<6)return 0.5;
+  var r=parseInt(h.slice(0,2),16)/255,g=parseInt(h.slice(2,4),16)/255,b=parseInt(h.slice(4,6),16)/255;
+  if([r,g,b].some(isNaN))return 0.5;
+  function lin(c){return c<=0.03928?c/12.92:Math.pow((c+0.055)/1.055,2.4);}
+  return 0.2126*lin(r)+0.7152*lin(g)+0.0722*lin(b);
+}
+function _thContrast(a,b){var la=_thLum(a),lb=_thLum(b),hi=Math.max(la,lb),lo=Math.min(la,lb);return (hi+0.05)/(lo+0.05);}
+function _thOnAccent(ac){return ac?(_thLum(ac)>0.45?'#0c0d10':'#f6f4ef'):'';}
 
 function loadThemes(){
   api('/ui/themes').then(function(r){
     if(!r||r.error)return;
     _themes=r.themes||{};_activeTheme=r.active||'dusk';
-    var BUILTIN=new Set(['ash','dusk','void','chalk','ice']);
     var el=document.getElementById('themeButtons');
-    var h='';for(var id in _themes){var t=_themes[id];var isBuiltin=BUILTIN.has(id);
+    var h='';for(var id in _themes){var t=_themes[id];var isBuiltin=!!t.builtin;
       h+='<div style="display:inline-flex;align-items:center;gap:0;border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin:2px">';
       h+='<button class="btn '+(id===_activeTheme?'p':'')+'" onclick="applyTheme(\''+esc(id)+'\')" style="border:none;border-radius:0;display:flex;align-items:center;gap:5px;padding:3px 8px"><div style="width:10px;height:10px;border-radius:50%;background:'+esc(t.accent||'#888')+';flex-shrink:0"></div>'+esc(t.label)+'</button>';
       if(!isBuiltin){
@@ -295,13 +431,39 @@ function loadThemeVars(){
   var id=document.getElementById('te_which').value;var t=_themes[id];if(!t)return;
   var vars=t.vars||{};var grid=document.getElementById('themeVarGrid');var h='';
   for(var i=0;i<THEME_VARS.length;i++){
-    var k=THEME_VARS[i];var v=vars[k]||'';var isC=v.charAt(0)==='#';
+    var k=THEME_VARS[i];var v=vars[k]||'';
+    // Older/custom themes may lack --on-ac; seed it from the accent so it's editable.
+    if(k==='--on-ac'&&!v)v=_thOnAccent(vars['--ac']);
+    var isC=v.charAt(0)==='#';
     h+='<div style="display:flex;align-items:center;gap:4px">';
     if(isC)h+='<input type="color" value="'+v+'" data-var="'+esc(k)+'" oninput="teVC(this)">';
     h+='<input type="text" value="'+esc(v)+'" data-var="'+esc(k)+'" class="tv" oninput="teTC(this)" style="width:90px;font-family:var(--mono);font-size:10px">';
     h+='<span style="font-size:8px;color:var(--dim);font-family:var(--mono)">'+esc(THEME_LABELS[k]||k)+'</span></div>';
   }
   grid.innerHTML=h;renderFullPreview(vars);
+}
+// Set an editor field (text + colour input) by var name, if present.
+function _setThemeField(name,val){
+  document.querySelectorAll('.tv').forEach(function(el){
+    if(el.dataset.var===name){
+      el.value=val;
+      var c=el.parentElement.querySelector('[type=color]');
+      if(c&&val.charAt(0)==='#')c.value=val;
+    }
+  });
+}
+// One-click legibility repair: derive a readable text-on-accent, and lift the
+// primary/secondary text off the background if they blend in. Mirrors the
+// server-side guard so what you preview is what gets saved.
+function autoContrast(){
+  var v={};document.querySelectorAll('.tv').forEach(function(el){v[el.dataset.var]=el.value});
+  var bg=v['--bg']||'#111';var dark=_thLum(bg)<0.5;var fixes=[];
+  var onAc=_thOnAccent(v['--ac']||'#888');
+  if(!v['--on-ac']||_thContrast(v['--on-ac'],v['--ac']||'#888')<3.0){_setThemeField('--on-ac',onAc);fixes.push('on-accent');}
+  if(!v['--t1']||_thContrast(v['--t1'],bg)<4.5){_setThemeField('--t1',dark?'#f6f4ef':'#0c0d10');fixes.push('text');}
+  if(v['--t2']&&_thContrast(v['--t2'],bg)<2.6){_setThemeField('--t2',dark?'#9aa3b2':'#5a5f6a');fixes.push('2nd text');}
+  updPI();
+  stEl('teStatus',fixes.length?('Adjusted: '+fixes.join(', ')):'Already legible — no change','ok');
 }
 function teVC(el){var t=el.parentElement.querySelector('.tv');if(t)t.value=el.value;updPI()}
 function teTC(el){var c=el.parentElement.querySelector('[type=color]');if(c&&el.value.charAt(0)==='#')c.value=el.value;updPI()}
@@ -312,6 +474,14 @@ function renderFullPreview(v){
   var bg=v['--bg']||'#111';var s1=v['--s1']||'#1a1a1a';var s2=v['--s2']||'#222';var s3=v['--s3']||'#2a2a2a';
   var bd=v['--bd']||'rgba(255,255,255,.07)';var t1=v['--t1']||'#ddd';var t2=v['--t2']||'#888';var t3=v['--t3']||'#555';
   var ac=v['--ac']||'#5a9e8f';var ac2=v['--ac2']||'#6db87a';var ac3=v['--ac3']||'#c9955a';var ac4=v['--ac4']||'#c96b6b';var ac5=v['--ac5']||'#9e8fa0';
+  var onAc=v['--on-ac']||_thOnAccent(ac);
+  // Live contrast ratios — text/bg wants ≥4.5 (WCAG AA body), on-accent wants
+  // ≥3 (large/bold button label). Flag anything below.
+  function chip(label,val,floor){
+    var ok=val>=floor;var c=ok?'#5ec9a0':(val>=floor*0.72?'#e0b060':'#e06060');
+    return '<span style="font-family:var(--mono);font-size:9px;color:'+c+'">'+label+' '+val.toFixed(1)+(ok?'':'⚠')+'</span>';
+  }
+  var cT1=_thContrast(t1,bg),cT2=_thContrast(t2,bg),cOn=_thContrast(onAc,ac);
   el.innerHTML=
     '<div style="background:'+bg+';padding:12px;border-radius:6px;border:1px solid '+bd+'">'+
     '  <div style="color:'+t1+';font-size:13px;font-weight:600;margin-bottom:4px">Heading (t1)</div>'+
@@ -322,12 +492,20 @@ function renderFullPreview(v){
     '    <div style="flex:1;background:'+s2+';border:1px solid '+bd+';border-radius:4px;padding:6px;font-size:9px;color:'+t2+'">s2</div>'+
     '    <div style="flex:1;background:'+s3+';border:1px solid '+bd+';border-radius:4px;padding:6px;font-size:9px;color:'+t2+'">s3</div>'+
     '  </div>'+
-    '  <div style="display:flex;gap:4px;flex-wrap:wrap">'+
+    '  <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">'+
+    '    <button style="background:'+ac+';color:'+onAc+';border:1px solid '+ac+';border-radius:4px;padding:5px 12px;font-size:11px;font-weight:600;cursor:default">Primary button</button>'+
+    '    <span style="padding:4px 10px;border-radius:4px;font-size:10px;font-weight:600;background:'+ac+';color:'+onAc+'">Active tab</span>'+
+    '  </div>'+
+    '  <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">'+
     '    <span style="padding:3px 8px;border-radius:3px;font-size:10px;background:'+ac+'22;color:'+ac+';border:1px solid '+ac+'44">Accent</span>'+
     '    <span style="padding:3px 8px;border-radius:3px;font-size:10px;background:'+ac2+'22;color:'+ac2+';border:1px solid '+ac2+'44">Success</span>'+
     '    <span style="padding:3px 8px;border-radius:3px;font-size:10px;background:'+ac3+'22;color:'+ac3+';border:1px solid '+ac3+'44">Warning</span>'+
     '    <span style="padding:3px 8px;border-radius:3px;font-size:10px;background:'+ac4+'22;color:'+ac4+';border:1px solid '+ac4+'44">Error</span>'+
     '    <span style="padding:3px 8px;border-radius:3px;font-size:10px;background:'+ac5+'22;color:'+ac5+';border:1px solid '+ac5+'44">Decorative</span>'+
+    '  </div>'+
+    '  <div style="display:flex;gap:10px;flex-wrap:wrap;border-top:1px solid '+bd+';padding-top:6px">'+
+    '    <span style="font-family:var(--mono);font-size:8px;color:'+t3+'">contrast</span>'+
+    chip('text/bg',cT1,4.5)+chip('2nd/bg',cT2,2.6)+chip('on-acc/acc',cOn,3.0)+
     '  </div>'+
     '</div>';
 }

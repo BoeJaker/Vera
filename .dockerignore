@@ -20,3 +20,21 @@ venv
 docker-compose*.yml
 Dockerfile
 .dockerignore
+# Repo assets never needed inside the runtime image
+images/
+notebooks/
+deprecated/
+docs/
+documentation/
+ansible/
+welcome/
+garage/
+# Never bake key material into the image
+certs/
+# Local fabric/session databases — fresh containers must not inherit them
+*.db
+*.db-wal
+*.db-shm
+# Runtime-generated media stores (re-created on demand; ~350MB combined)
+vera/images/_store/
+vera/spritegen/_chars/

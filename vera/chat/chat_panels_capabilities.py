@@ -45,19 +45,19 @@ def _redis():
 # THEME SYSTEM
 # ─────────────────────────────────────────────────────────────────────────────
 
-BUILTIN_THEMES = {
-    "ash":   {"label":"Ash",   "type":"light", "accent":"#2e6da4", "vars":{"--bg":"#f0ede8","--s1":"#e8e5df","--s2":"#dedbd4","--s3":"#d4d1c8","--bd":"rgba(0,0,0,.08)","--bd2":"rgba(0,0,0,.15)","--t1":"#1a1a18","--t2":"#6a6860","--t3":"#a8a69e","--ac":"#2e6da4","--ac2":"#228060","--ac3":"#c47020","--ac4":"#c03030","--ac5":"#6040a0"}},
-    "dusk":  {"label":"Dusk",  "type":"dark",  "accent":"#6ea8d8", "vars":{"--bg":"#0e0f12","--s1":"#13151a","--s2":"#1a1d24","--s3":"#222630","--bd":"rgba(255,255,255,.07)","--bd2":"rgba(255,255,255,.14)","--t1":"#d4dae4","--t2":"#6b7585","--t3":"#3b4252","--ac":"#6ea8d8","--ac2":"#5ec9a0","--ac3":"#e09a55","--ac4":"#e06060","--ac5":"#a78bfa"}},
-    "void":  {"label":"Void",  "type":"dark",  "accent":"#9b8dfa", "vars":{"--bg":"#000","--s1":"#070707","--s2":"#0d0d0d","--s3":"#141414","--bd":"rgba(255,255,255,.05)","--bd2":"rgba(255,255,255,.1)","--t1":"#e0e0e0","--t2":"#929292","--t3":"#636363","--ac":"#9b8dfa","--ac2":"#5ecab0","--ac3":"#dba355","--ac4":"#e06060","--ac5":"#f472b6"}},
-    "chalk": {"label":"Chalk", "type":"dark",  "accent":"#d4a96a", "vars":{"--bg":"#1c1c1e","--s1":"#242428","--s2":"#2c2c32","--s3":"#34343c","--bd":"rgba(255,255,255,.08)","--bd2":"rgba(255,255,255,.16)","--t1":"#e8e4d8","--t2":"#b6ac97","--t3":"#6e6b5b","--ac":"#d4a96a","--ac2":"#80c090","--ac3":"#c08878","--ac4":"#e07070","--ac5":"#9080c0"}},
-    "ice":   {"label":"Ice",   "type":"dark",  "accent":"#5ab0f0", "vars":{"--bg":"#090f18","--s1":"#0d1620","--s2":"#121e2c","--s3":"#182638","--bd":"rgba(80,160,255,.1)","--bd2":"rgba(80,160,255,.2)","--t1":"#c0d8f0","--t2":"#406880","--t3":"#1e3850","--ac":"#5ab0f0","--ac2":"#38d0b0","--ac3":"#e0b060","--ac4":"#e06868","--ac5":"#8070e0"}},
-}
+# Theme tables are defined once in Vera.vera.theme_defs so the CSS stylesheet
+# (served by ui_capabilities) and this JSON API can never drift apart. This
+# revision adds --on-ac (text-on-accent) plus a library of themes modelled on
+# famous computing colour schemes, and a contrast guard for custom themes.
+from Vera.vera.theme_defs import (
+    BUILTIN_THEMES, DEFAULT_THEME, ensure_contrast,
+)
 
 # Custom themes stored at runtime (persisted to Redis if available)
 CUSTOM_THEMES: Dict[str, dict] = {}
 
 # Current active theme
-_ACTIVE_THEME = "dusk"
+_ACTIVE_THEME = DEFAULT_THEME
 
 
 def _all_themes() -> Dict[str, dict]:
@@ -167,6 +167,10 @@ async def cap_theme_create(id: str, label: str = "", type: str = "dark",
         return {"error": "vars must be valid JSON object"}
     if not id or not id.isalnum():
         return {"error": "id must be alphanumeric"}
+    # Guard against unreadable themes: text that blends into the background, a
+    # missing/low-contrast on-accent colour, etc. ensure_contrast repairs these
+    # in place so a saved custom theme is always legible.
+    var_dict = ensure_contrast(var_dict)
     CUSTOM_THEMES[id] = {
         "label": label or id,
         "type": type,
@@ -235,7 +239,11 @@ async def cap_theme_css(trace_id=None):
 async def _serve_theme_css():
     from fastapi.responses import Response
     css = _all_themes_css()
-    return Response(content=css, media_type="text/css")
+    # Off the critical path (active theme is painted from the inline var cache),
+    # so a short shared cache is safe and spares every iframe a fresh fetch.
+    # Custom-theme edits reflect within the window; the picker reads /ui/themes.
+    return Response(content=css, media_type="text/css",
+                    headers={"Cache-Control": "public, max-age=300"})
 
 
 # Serve vera-ui.js — the universal theme integration script
@@ -248,6 +256,20 @@ async def _serve_vera_ui_js():
         return Response(content=p.read_text(encoding="utf-8"),
                         media_type="application/javascript")
     return Response(content="console.warn('vera-ui.js not found');",
+                    media_type="application/javascript")
+
+
+# Serve vera-dashboard.js — the shared VeraDash widget-grid framework (drag/
+# resize/hide in edit mode + widget loader + pop-out) used by every dashboard.
+@APP.get("/ui/vera-dashboard.js", include_in_schema=False)
+async def _serve_vera_dashboard_js():
+    from fastapi.responses import Response
+    from pathlib import Path
+    p = Path(__file__).parent / "vera-dashboard.js"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"),
+                        media_type="application/javascript")
+    return Response(content="console.warn('vera-dashboard.js not found');",
                     media_type="application/javascript")
 
 
@@ -286,7 +308,7 @@ async def _serve_vera_panel_bridge_js():
         "ok:!!ok,result:(res===undefined?null:res),error:err||null},'*');}catch(e){}}"
         "window.addEventListener('message',function(ev){var d=ev.data;if(!d||typeof d!=='object')return;var t=d.type||'';"
         "if(t==='vera:panel:init'){_pid=d.panel_id||_pid;_sid=d.session_id||_sid;setTimeout(pub,50);}"
-        "else if(t==='vera:panel:query'){pub();}"
+        "else if(t==='vera:panel:query'){_last=null;pub();}"
         "else if(t==='vera:panel:action'){var act=String(d.action||''),aid=d.action_id||'',pl=d.payload||{};"
         "if(act==='__query__'){pubR(aid,true,_build(),null,act);pubD();return;}"
         "var h=_ah[act]||_ah['*'];"
@@ -824,6 +846,49 @@ async def cap_panel_query(
     )
 
 
+@capability(
+    "chat.deliver",
+    http_method="POST", http_path="/chat/deliver", http_tags=["ui", "chat"],
+    memory="off",
+    description=(
+        "Deliver a finished report into a chat conversation as an assistant "
+        "message. The chat panel handles the __chat_deliver__ pseudo-action "
+        "directly (no embedded panel required) and renders the markdown. This is "
+        "the 'chat' delivery channel in vera.delivery, so the dream deliver stage "
+        "(or any caller) can route output back to a chat session. "
+        "Inputs: session_id (str — target chat session; falls back to the calling "
+        "turn's trace_id when blank), report (str! — markdown body), "
+        "title (str — header line, default 'Delivered'), "
+        "speak (bool — the chat panel also synthesises the report via TTS and "
+        "plays it aloud), "
+        "timeout_secs (number — max wait for the panel ack, default 8). "
+        "Returns {ok, delivered} or {ok:false, error} when no chat session is "
+        "listening."
+    ),
+)
+async def cap_chat_deliver(
+    session_id: str = "",
+    report: str = "",
+    title: str = "Delivered",
+    speak: bool = False,
+    timeout_secs: float = 8.0,
+    trace_id=None,
+):
+    if not (report or "").strip():
+        return {"ok": False, "error": "report is required"}
+    reply = await cap_panel_dispatch(
+        session_id=session_id,
+        action="__chat_deliver__",
+        payload={"title": title or "Delivered", "report": report,
+                 "speak": bool(speak)},
+        timeout_secs=float(timeout_secs),
+        trace_id=trace_id,
+    )
+    ok = bool(reply.get("ok")) if isinstance(reply, dict) else False
+    return {"ok": ok, "delivered": ok,
+            **({"error": reply.get("error")} if isinstance(reply, dict) and reply.get("error") else {})}
+
+
 # ── HTTP routes the chat panel uses to participate in the bridge ────────────
 
 @APP.get("/ui/panels/dispatch/stream", include_in_schema=False)
@@ -920,6 +985,116 @@ async def _panel_dispatch_ack(request: _BridgeRequest):
     except Exception as e:
         return JSONResponse({"ok": False, "error": f"publish failed: {e}"}, status_code=500)
     return JSONResponse({"ok": True})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PANEL ACTION-CATALOG REGISTRY
+# ─────────────────────────────────────────────────────────────────────────────
+# Whenever a panel is mounted in a chat session, the chat throttled-POSTs the
+# panel's discovered action catalog (curated panel_actions + the auto-derived
+# ui button/input catalog) here. Stored per panel id in Redis, it gives agents
+# a way to learn HOW to drive any panel — via the panel.actions cap — without
+# needing the panel open and freshly published first. This is the missing
+# discovery step that made panel.dispatch a guessing game outside exec/netmap.
+# NOTE: keyed under vera:ui:panelactions:* — NOT vera:ui:panel:* which the
+# startup loader globs for dynamic panel records.
+
+_PANEL_ACTIONS_KEY = "vera:ui:panelactions:{pid}"
+
+
+@APP.post("/ui/panels/actions/publish", include_in_schema=False)
+async def _panel_actions_publish(request: _BridgeRequest):
+    """Chat panel POSTs the mounted panel's action catalog (throttled)."""
+    from fastapi.responses import JSONResponse
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid json"}, status_code=400)
+    pid = str((body or {}).get("panel_id", "")).strip()
+    if not pid:
+        return JSONResponse({"ok": False, "error": "panel_id required"}, status_code=400)
+    r = _redis()
+    if not r:
+        return JSONResponse({"ok": False, "error": "redis unavailable"}, status_code=503)
+    rec = {
+        "panel_id": pid,
+        "actions": (body or {}).get("actions") or {},
+        "buttons": ((body or {}).get("buttons") or [])[:40],
+        "inputs":  ((body or {}).get("inputs") or [])[:50],
+        "ts": now_iso(),
+    }
+    try:
+        await r.set(_PANEL_ACTIONS_KEY.format(pid=pid), json.dumps(rec))
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    return JSONResponse({"ok": True})
+
+
+_GENERIC_PANEL_ACTIONS = {
+    "click":      "Click a control. payload: {id|label|selector}",
+    "set_field":  "Set one input. payload: {id, value}",
+    "set_fields": "Set several inputs. payload: {fields:{id:value,…}}",
+    "submit":     "Fill inputs then click. payload: {fields:{…}, click:'<button-id>'}",
+    "describe":   "Return the panel's control catalog + action list. payload: {}",
+}
+
+
+@capability(
+    "panel.actions",
+    http_method="GET", http_path="/panel/actions", http_tags=["ui", "panel"],
+    memory="off", silent=True,
+    description=(
+        "Discover how to DRIVE a UI panel: the semantic panel.dispatch actions "
+        "it publishes (name + usage doc), its buttons/inputs, and the universal "
+        "generic actions (click/set_field/set_fields/submit/describe) that work "
+        "on every panel. Catalogs are captured automatically whenever a panel "
+        "is open in a chat session. Input: panel_id (str — id from "
+        "ui.panel.list; empty = list every panel with a stored catalog). Call "
+        "this BEFORE panel.dispatch when unsure what actions a panel supports. "
+        "Reminder: to just get RESULTS call the panel's own caps directly — "
+        "they mirror live into the open panel; dispatch is for driving the UI."
+    ),
+)
+async def cap_panel_actions(panel_id: str = "", trace_id=None):
+    r = _redis()
+    stored: Dict[str, dict] = {}
+    if r:
+        try:
+            keys = await r.keys("vera:ui:panelactions:*")
+            for key in (keys or []):
+                raw = await r.get(key)
+                if not raw:
+                    continue
+                try:
+                    rec = json.loads(raw)
+                    if isinstance(rec, dict) and rec.get("panel_id"):
+                        stored[rec["panel_id"]] = rec
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    if panel_id:
+        rec = stored.get(panel_id)
+        meta = UI_PANELS.get(panel_id) or DYNAMIC_PANELS.get(panel_id) or {}
+        return {
+            "panel_id": panel_id,
+            "known": bool(rec),
+            "actions": (rec or {}).get("actions") or {},
+            "buttons": (rec or {}).get("buttons") or [],
+            "inputs": (rec or {}).get("inputs") or [],
+            "generic_actions": _GENERIC_PANEL_ACTIONS,
+            "ui_caps": meta.get("ui_caps", []),
+            "captured": (rec or {}).get("ts", ""),
+            "hint": "Run actions with panel.dispatch(session_id, action, "
+                    "payload). The panel must be open in the chat session.",
+        }
+    return {
+        "panels": {pid: {"actions": list((rec.get("actions") or {}).keys()),
+                         "captured": rec.get("ts", "")}
+                   for pid, rec in stored.items()},
+        "generic_actions": _GENERIC_PANEL_ACTIONS,
+        "hint": "Pass panel_id for the full catalog of one panel.",
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────

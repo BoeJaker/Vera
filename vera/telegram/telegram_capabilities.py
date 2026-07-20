@@ -50,6 +50,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -411,6 +412,56 @@ async def _ingest_message_to_fabric(chat_rec: Dict[str, Any], msg: Dict[str, Any
         log.debug("tg fabric ingest: %s", e)
 
 
+async def _resolve_pending_loop_question(chat_id: str, text: str) -> bool:
+    """If this chat has a pending agentic-loop question (registered when a loop
+    routed a clarify/steer question here), consume it and resolve the loop's
+    waiting future with this reply. Returns True if a question was answered.
+
+    Both the loop engine and this poller run in the same process, so we resolve
+    the loop's HITL future directly via the loop module's resolver. Best-effort;
+    any import/resolve failure just falls through to normal agent routing."""
+    try:
+        import Vera.vera.comms_inbox as _inbox
+    except Exception:
+        return False
+    pending = _inbox.take(str(chat_id))
+    if not pending:
+        return False
+    # Long-term-scheduler notifications route the reply to the scheduler, not a
+    # loop HITL future.
+    if pending.get("kind") == "schedule":
+        try:
+            sched_mod = (sys.modules.get("longterm_scheduler")
+                         or sys.modules.get("Vera.vera.calendar.longterm_scheduler"))
+            if sched_mod is None:
+                import importlib
+                sched_mod = importlib.import_module(
+                    "Vera.vera.calendar.longterm_scheduler")
+            action_id = (pending.get("meta") or {}).get("action_id", "")
+            resolver = getattr(sched_mod, "resolve_schedule_reply", None)
+            if resolver and action_id:
+                return bool(await resolver(action_id, text))
+        except Exception as e:
+            log.debug("tg resolve pending schedule reply failed: %s", e)
+        return False
+    try:
+        loop_mod = (sys.modules.get("Vera.vera.dag.dag_workshop_capabilities")
+                    or sys.modules.get("dag_workshop_capabilities"))
+        if loop_mod is None:
+            try:
+                import importlib
+                loop_mod = importlib.import_module("Vera.vera.dag.dag_workshop_capabilities")
+            except Exception:
+                loop_mod = None
+        resolver = getattr(loop_mod, "resolve_comms_reply", None) if loop_mod else None
+        if resolver and resolver(pending.get("session_id", ""),
+                                 int(pending.get("step", 0)), text):
+            return True
+    except Exception as e:
+        log.debug("tg resolve pending loop question failed: %s", e)
+    return False
+
+
 async def _route_to_agent(chat_id: str, text: str, cfg_data: Dict[str, Any]) -> str:
     """Call agent.chat through the capability registry — full memory + tracing."""
     agent_name = _PER_CHAT_AGENT.get(chat_id) or cfg_data.get("default_agent", "assistant")
@@ -624,6 +675,20 @@ async def _handle_update(update: Dict[str, Any], cfg_data: Dict[str, Any]):
                 f"Your chat_id: {chat_id}",
             )
         return
+
+    # ── Pending agentic-loop question? An agent loop can route a clarifying /
+    #    steering question OUT to this chat (via _v7_route_question_to_comms) and
+    #    block on the answer. If this chat has such a question waiting and the
+    #    message isn't a slash command, treat it as the ANSWER: resolve the loop's
+    #    HITL future and don't route it to the agent as a fresh request. ─────────
+    if text and not text.startswith("/"):
+        answered = await _resolve_pending_loop_question(chat_id, text)
+        if answered:
+            reply = "✅ Thanks — passing that back to the agent working on your task."
+            sent = await _send_message(chat_id, reply)
+            await _push_history(chat_id, {"ts": now_iso(), "from": "bot",
+                                          "text": reply, "ok": bool(sent.get("ok"))})
+            return
 
     # Dispatch
     if text.startswith("/"):

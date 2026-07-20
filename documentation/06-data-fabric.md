@@ -228,6 +228,50 @@ The "Loom" pipeline finds relationships between datasets — pairs of datasets w
 | `fabric.aux_graph.*` | Query the auxiliary graph (dataset relationships, lineage) |
 | `fabric.ai_analyse_links` | LLM-driven Loom suggestion |
 | `fabric.ai_stitch` | LLM-driven stitch execution |
+| `fabric.chroma_reset` | Delete + recreate the vector collection (embed-model change) |
+| `fabric.backfill_vectors` | Re-encode records present in Postgres but missing from Chroma (post-reset / embedder-outage repair; dry-run by default) |
+| `fabric.objects.*` | Blob store: status / buckets / list / stat / get / put / delete |
+
+### Vector performance
+
+Bulk ingests and backfills **batch-embed**: one Ollama `/api/embed` call per
+~64 records (`_embed_many`, routed via `pick_instance` like single embeds)
+instead of one HTTP roundtrip per record, and the ingest pipeline fans records
+out with bounded concurrency (8). Chroma's synchronous HTTP client is kept off
+the event loop (executor) on both the ingest and query paths, and collection
+`count()` is cached for 30 s instead of being re-fetched on every search.
+
+**FAISS is OFF by default** (`FABRIC_FAISS=0`): it had no persistence — empty
+after every restart, only ever holding records ingested by the current process
+— while duplicating Chroma's cosine search over the same vectors at >1 GB RAM
+at current scale (each vector stored twice: global shard + per-dataset index).
+Chroma (HNSW, persistent) serves all fabric vector search. Set `FABRIC_FAISS=1`
+to enable the in-RAM tier — it then **hydrates from Chroma in the background at
+startup** so it is actually populated. `fabric.query` max-combines the FAISS and
+Chroma scores (they index the same vectors; the old additive merge double-scored
+whatever happened to be in FAISS). The worldview's latent-space FAISS index
+(`WV_INDEX`) is separate and unaffected.
+
+### Vector hygiene
+
+Vectors are only ever written with an **explicit embedding** — if the embedder
+is down, the vector write is skipped (the record still lands in Postgres/SQLite)
+rather than letting Chroma fall back to its built-in 384-dim default embedder,
+which dimension-mismatches the nomic 768-dim collections. The embed
+circuit-breaker cools down after 5 minutes instead of latching for the process
+lifetime. Repair gaps with `fabric.backfill_vectors` (Postgres-sourced) or
+`worldview.reembed_missing` (SQLite-sourced, concurrent); the memory system's
+twin is `memory.backfill_vectors`.
+
+### Blob store (Garage)
+
+`fabric.objects.status` reports `last_error` when the store is enabled but
+unavailable. `AccessDenied` / `No such key` means the garage node has no
+layout/key/bucket yet — the compose `garage-init` sidecar bootstraps it via the
+**admin API** (`:3903`), and `provision.store.garage.bootstrap` does the same
+from inside Vera (idempotent, then reconnects the ObjectStore). Garage can also
+be provisioned onto any Docker host with `provision.store.deploy` (see
+[Docker](./13-docker.md)).
 
 ---
 

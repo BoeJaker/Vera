@@ -228,6 +228,98 @@ async def _delete_async(prefix: str, item_id: str):
     await _redis_delete(prefix, item_id)
 
 
+# ── Output-format bridge ──────────────────────────────────────────────────────
+# A skill of type "output_format" IS an entry in the shared output-format
+# palette (vera/output_formats.py). Bridging it there is what unifies the two
+# systems: an `output_format` skill authored/edited in the Skills library shows
+# up in chat's Output-format picker (llm.formats) and is honoured by
+# apply_format() everywhere (llm.generate, the agent runner, render) — no other
+# module needs to know skills exist.
+
+def _output_formats():
+    """Lazy import of the shared output-format registry (no hard dependency)."""
+    try:
+        import Vera.vera.output_formats as _of
+        return _of
+    except Exception as e:        # pragma: no cover - import guard
+        log.debug("skills: output_formats unavailable: %s", e)
+        return None
+
+
+def _sync_output_format(skill: dict, removed: bool = False):
+    """Push (or pull) one skill into the shared output-format palette.
+
+    Registers when the skill is an enabled `output_format`; unregisters when it
+    is deleted, disabled, or its type changed away from `output_format`.
+    """
+    of = _output_formats()
+    if not of:
+        return
+    pid = (skill.get("output_format_id") or skill.get("id") or "").strip()
+    if not pid:
+        return
+    is_fmt = skill.get("type") == "output_format"
+    if removed or not is_fmt or not skill.get("enabled", True):
+        of.unregister_profile(pid)
+        return
+    of.register_profile(
+        pid,
+        label              = skill.get("name") or pid,
+        system_suffix      = skill.get("content", ""),
+        kind               = skill.get("format_kind") or "deliverable",
+        target_file_format = skill.get("target_file_format") or "md",
+        source             = "skill",
+    )
+
+
+# ── Delivery-channel bridge ───────────────────────────────────────────────────
+# The routing twin of the output-format bridge: a skill of type
+# "delivery_channel" IS an entry in the shared delivery registry
+# (vera/delivery.py). Bridging it there means a channel authored in the Skills
+# library shows up in the dream deliver UI (delivery.channels) and is honoured by
+# the deliver stage — no other module needs to know skills exist. Use it for
+# channel presets, e.g. an "email-to-me" channel over mail.send with a fixed
+# recipient, or a "telegram-admin" channel.
+
+def _delivery_registry():
+    """Lazy import of the shared delivery-channel registry (no hard dependency)."""
+    try:
+        import Vera.vera.delivery as _dl
+        return _dl
+    except Exception as e:        # pragma: no cover - import guard
+        log.debug("skills: delivery registry unavailable: %s", e)
+        return None
+
+
+def _sync_delivery_channel(skill: dict, removed: bool = False):
+    """Push (or pull) one skill into the shared delivery-channel registry.
+
+    Registers when the skill is an enabled `delivery_channel`; unregisters when
+    it is deleted, disabled, or its type changed away from `delivery_channel`.
+    """
+    dl = _delivery_registry()
+    if not dl:
+        return
+    cid = (skill.get("delivery_channel_id") or skill.get("id") or "").strip()
+    if not cid:
+        return
+    is_ch = skill.get("type") == "delivery_channel"
+    if removed or not is_ch or not skill.get("enabled", True):
+        dl.unregister_channel(cid)
+        return
+    dl.register_channel(
+        cid,
+        label          = skill.get("name") or cid,
+        cap            = skill.get("channel_cap", ""),
+        default_format = skill.get("channel_format", ""),
+        needs_target   = bool(skill.get("channel_needs_target")),
+        target_field   = skill.get("channel_target_field", ""),
+        target_label   = skill.get("channel_target_label", "") or skill.get("description", ""),
+        fixed_target   = skill.get("channel_fixed_target", ""),
+        source         = "skill",
+    )
+
+
 # ── Graph + Fabric helpers ────────────────────────────────────────────────────
 
 def _get_session_id() -> str:
@@ -345,6 +437,43 @@ _BUILTIN_SKILLS: list[dict] = [
         ),
     },
     {
+        "id": "sys-quant-visuals", "version": 1,
+        "name": "Quant Studio visuals & workflow",
+        "description": "How to compose live infographics (markets.infographic.save panel "
+                       "schema), draw on charts (markets.annotate.add), and run the "
+                       "honest quant workflow (library→backtest→analyze→autotune→OOS).",
+        "type": "system_prompt", "tags": ["system", "markets", "quant"],
+        "applies_to_caps": ["markets.infographic.save", "markets.annotate.add",
+                            "markets.backtest.run", "markets.backtest.autotune",
+                            "markets.strategy.from_template", "markets.project.portfolio"],
+        "content": (
+            "QUANT STUDIO VISUALS & WORKFLOW:\n"
+            "• INFOGRAPHICS — markets.infographic.save renders LIVE in the Pulse tab. "
+            "spec = {title, subtitle, panels:[≤12]}. Panel types & required fields:\n"
+            '    {"type":"stat","label":"Sharpe","value":"1.42","delta":12.3}\n'
+            '    {"type":"spark","label":"BTC 90d","data":[…numbers…]}\n'
+            '    {"type":"bars","label":"sector 1m %","data":[2.1,-0.8],"labels":["XLK","XLF"]}\n'
+            '    {"type":"donut","label":"allocation","data":[40,30,30],"labels":["BTC","ETH","cash"]}\n'
+            '    {"type":"gauge","label":"win rate","value":62}   (0-100)\n'
+            '    {"type":"heatmap","label":"monthly %","data":[[1.2,-0.4],[0.7,2.1]]}\n'
+            '    {"type":"text","label":"read","text":"one-paragraph takeaway"}\n'
+            "  Use wide:true for big panels. EVERY number must come from a capability result "
+            "(markets.overview, markets.backtest.analyze, markets.sim.list, markets.bars…) — "
+            "never invent data. Update the same id to refresh in place.\n"
+            "• DRAWING ON CHARTS — markets.annotate.add(symbol_key='provider:symbol', kind, "
+            "points, text, author='vera'): trendline/ray/rect need two {t:unix_sec,p:price} "
+            "points; hline just [{p}]; vline (key date) just [{t}]; label one {t,p}. Drawings "
+            "appear live on any open chart of that asset.\n"
+            "• HONEST QUANT WORKFLOW — start from markets.strategy.library + from_template "
+            "(never hand-write rule JSON when a template fits); backtest with "
+            "markets.backtest.run then READ markets.backtest.analyze; optimise with "
+            "markets.backtest.autotune and QUOTE its stats_oos (out-of-sample) verdict, not "
+            "just in-sample gains; screen broadly with markets.backtest.batch; judge ML only "
+            "via markets.ml.walkforward; paper-trade winners with markets.sim.*. Finish by "
+            "composing ONE infographic summarising what you did."
+        ),
+    },
+    {
         "id": "sys-dag-creation", "version": 1,
         "name": "DAG creation format",
         "description": "How to build a Vera DAG execution plan: the 5-tuple node format, initial_state, input_map/output_map rules.",
@@ -415,18 +544,25 @@ _BUILTIN_SKILLS: list[dict] = [
         ),
     },
     {
-        "id": "sys-panel-dispatch", "version": 1,
+        "id": "sys-panel-dispatch", "version": 2,
         "name": "Panel query & dispatch",
-        "description": "How to read and drive the UI panel mounted in the user's chat session via panel.query / panel.dispatch.",
+        "description": "How to read and drive the UI panel mounted in the user's chat session via panel.query / panel.dispatch / panel.actions.",
         "type": "tool_hint", "tags": ["system", "panel", "ui"],
-        "applies_to_caps": ["panel.query", "panel.dispatch"],
+        "applies_to_caps": ["panel.query", "panel.dispatch", "panel.actions"],
         "content": (
-            "DRIVING THE OPEN UI PANEL:\n"
-            "• panel.query(session_id=<chat session id / your trace_id>) → the panel's current state snapshot.\n"
-            "• panel.dispatch(session_id=<...>, action=\"<handler name>\", payload={...}) → runs the panel's "
-            "registered action handler and returns its result.\n"
-            "• `action` must be a handler the panel registered (via VeraPanelBridge.registerActionHandler); "
-            "some are keyed `handler:arg`. Inspect state via panel.query first to learn valid actions.\n"
+            "USING THE OPEN UI PANEL:\n"
+            "• EASIEST PATH: call the panel's own caps directly (fabric.query, netscan.*, exec.run…). Every "
+            "non-silent cap you run is mirrored LIVE into the open panel that owns it — the user sees your "
+            "actions appear in the panel automatically. You do NOT need panel.dispatch just to show results.\n"
+            "• panel.dispatch is for driving the panel's UI itself (switching sections, filling forms, clicking "
+            "buttons): panel.dispatch(session_id=<chat session id>, action=\"<name>\", payload={...}).\n"
+            "• DISCOVER actions first: panel.actions(panel_id=\"<id>\") → the panel's semantic actions with "
+            "usage docs plus its buttons/inputs. panel.query(session_id) → live state snapshot (includes "
+            "panel_actions when mounted).\n"
+            "• Universal actions work on EVERY panel: click {id|label}, set_field {id,value}, "
+            "set_fields {fields}, submit {fields, click}, describe {}.\n"
+            "• Some semantic actions are keyed `handler:arg` (e.g. \"fabSection:discover\") — use the exact "
+            "key; extra args go inside payload, never as an `arg` parameter.\n"
             "• On timeout or if no panel is mounted you get {ok:false, error:'…'} — don't retry blindly."
         ),
     },
@@ -445,7 +581,207 @@ _BUILTIN_SKILLS: list[dict] = [
             "• Use ui.panel.update to change an existing panel; ui.panel.list / ui.panel.get to inspect."
         ),
     },
+    {
+        "id": "sys-doc-writing", "version": 1,
+        "name": "Documentation writing",
+        "description": "How to write clear, well-structured developer/user documentation in Markdown.",
+        "type": "system_prompt", "tags": ["system", "docs", "writing"],
+        "applies_to_caps": ["llm.generate", "render.export", "ide.fs.write"],
+        "content": (
+            "WRITING DOCUMENTATION:\n"
+            "• Lead with a one-line statement of WHAT the thing is and WHO it is for, then a short "
+            "overview paragraph — never open with throat-clearing or a restatement of the request.\n"
+            "• Structure with a single H1 title and ## sections in a predictable order: Overview, "
+            "Prerequisites/Setup, Usage, Reference (APIs/params/flags as tables), Examples, "
+            "Troubleshooting/FAQ. Omit sections that do not apply rather than padding them.\n"
+            "• Be concrete and grounded: document only what actually exists. Use real signatures, "
+            "exact parameter names, real file paths and command lines. Never invent options or behaviour.\n"
+            "• Show, don't tell: every non-trivial feature gets a minimal, runnable example in a fenced "
+            "code block with the correct language tag. Prefer a copy-pasteable command over prose.\n"
+            "• Use tables for parameter/return/option references (name · type · default · description). "
+            "Use bullets for short enumerations, numbered lists only for ordered steps.\n"
+            "• Write in plain, active voice, present tense, second person ('you'). Keep sentences short. "
+            "Define a term once on first use. No marketing adjectives.\n"
+            "• Call out gotchas with a short '> Note:' / '> Warning:' blockquote rather than burying them.\n"
+            "• End with next steps or links to related docs when helpful. Do not add a generic conclusion."
+        ),
+    },
+    {
+        "id": "sys-output-formatting", "version": 1,
+        "name": "Output formatting & deliverables",
+        "description": "How to shape the final answer: pick and honour a shared output-format profile "
+                       "(quick/short/long, markdown/report/json/email/slides/docs…) consistently.",
+        "type": "tool_hint", "tags": ["system", "output", "formatting"],
+        "applies_to_caps": ["llm.generate", "llm.formats", "render.export"],
+        "content": (
+            "SHAPING YOUR OUTPUT:\n"
+            "• Vera has ONE shared palette of output-format profiles (see the llm.formats capability and "
+            "the chat 'Output format' picker). They come in three kinds:\n"
+            "    – length/voice: quick · short · standard · long · exhaustive · audio\n"
+            "    – structure:    docs · critique · improvement · integration · architecture\n"
+            "    – deliverable:  markdown · report · json · email · slides · plain\n"
+            "• When a profile has been selected its directive is appended to your system prompt — FOLLOW IT "
+            "EXACTLY (length bounds, headings-or-not, prose-vs-bullets, file shape). The directive wins over "
+            "your default style.\n"
+            "• If NO profile is set, match the format to the task: a one-line answer for a quick question; "
+            "clean Markdown with ## sections for anything substantial; STRICT JSON (no prose, no code fences) "
+            "when a machine will parse it; speech-friendly prose with no markup when the answer will be read aloud.\n"
+            "• Never wrap a whole reply in a ``` fence unless it is a single code/file artifact. Never mix a "
+            "'plain text' or 'audio' directive with markdown headers or bullet symbols.\n"
+            "• To PRODUCE A FILE in the requested shape, pair the profile with render.export using its "
+            "target_file_format (e.g. report→docx, slides→pptx, json→json). New output styles can be added as "
+            "`output_format` skills — they appear in this same palette automatically."
+        ),
+    },
 ]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BUILT-IN SYSTEM ONTOLOGIES
+# ─────────────────────────────────────────────────────────────────────────────
+# A meta-ontology: Vera's own knowledge-representation architecture described
+# IN the ontology format it defines. Injectable like any other ontology (agent
+# ontology_ids, context.assemble attach_ontologies) so an agent can reason
+# about how Vera's ontology layers, skills, cap-mesh and memory fit together.
+_BUILTIN_ONTOLOGIES: list[dict] = [
+    {
+        "id": "sys-vera-meta", "version": 1,
+        "name": "vera_system_ontology",
+        "domain": "vera_system",
+        "description": (
+            "Meta-ontology describing Vera's own ontology & knowledge system: "
+            "domain ontologies, the capability mesh (cap_ontology), skills, "
+            "agents, DAGs, session memory notes, and how context is assembled "
+            "into an agent's system prompt."
+        ),
+        "context_hints": (
+            "Vera has TWO ontology layers. (1) Domain ontologies (ontologies.*): "
+            "user/LLM-authored records of entities, relationships, processing "
+            "rules and memory slots, applied to text via ontologies.apply and "
+            "injected into prompts via context.assemble. (2) The capability "
+            "mesh (cap_ontology.*): a directed caps×caps grid of composition "
+            "relations (feeds_into, alternative_to, prerequisite_of, …) stored "
+            "per (from_cap, to_cap) pair, LLM-inferable, and injectable into "
+            "planners via cap_ontology.context_for / agent_context. The mesh "
+            "can be exported AS a domain ontology via "
+            "cap_ontology.export_to_ontologies. Skills are reusable prompt "
+            "fragments (guidelines, output formats); session memory notes "
+            "(notes.*) are small agent-maintained files that steer a session."
+        ),
+        "tags": ["system", "meta", "vera"],
+        "entities": [
+            {"name": "DomainOntology",
+             "description": "A record in the ontologies.* store: named set of entities, relationships, processing rules and memory slots for a domain; has OWL/SKOS fields (iri, pref_label, imports).",
+             "attributes": ["id", "name", "domain", "entities", "relationships", "processing_rules", "memory_slots", "iri", "enabled"]},
+            {"name": "OntologyEntity",
+             "description": "An entity type defined inside a DomainOntology (name, description, attributes).",
+             "attributes": ["name", "description", "attributes"]},
+            {"name": "OntologyRelationship",
+             "description": "A labelled from→to edge between entity types inside a DomainOntology.",
+             "attributes": ["from", "to", "label", "description"]},
+            {"name": "ProcessingRule",
+             "description": "A trigger→action rule inside a DomainOntology, applied by ontologies.apply in priority order.",
+             "attributes": ["trigger", "action", "priority"]},
+            {"name": "Capability",
+             "description": "A callable Vera tool registered via @capability: name (group.verb), JSON input schema, HTTP route, tags, mode.",
+             "attributes": ["name", "description", "schema", "http_path", "tags", "mode"]},
+            {"name": "CapRelation",
+             "description": "One cell of the capability mesh (cap_ontology store): a directed composition relation between two capabilities with label, strength, confidence and an optional field-to-param wire.",
+             "attributes": ["from_cap", "to_cap", "relation", "strength", "confidence", "wire", "direction", "auto"]},
+            {"name": "Skill",
+             "description": "A reusable prompt fragment in the skills.* store (guideline, tool hint, output format, system prompt), optionally associated to caps via applies_to_caps.",
+             "attributes": ["id", "name", "type", "content", "applies_to_caps", "enabled", "builtin"]},
+            {"name": "Agent",
+             "description": "A configured persona (AgentRecord): model + sampling options, system prompt, allowed domain_caps, attached skill_ids and ontology_ids, memory settings.",
+             "attributes": ["name", "model", "system_prompt", "domain_caps", "skill_ids", "ontology_ids", "tool_mode"]},
+            {"name": "DAG",
+             "description": "A stored executable plan: list of capability nodes with input/output maps, run by the DAG engine.",
+             "attributes": ["id", "name", "nodes", "initial_state"]},
+            {"name": "SessionMemoryNote",
+             "description": "A small structured markdown file (notes.* store) maintained by the agent/user per scope (chat session, agent, project, notebook, workspace, dream) holding goals, instructions, key facts, mistakes to avoid and next steps.",
+             "attributes": ["scope", "ref_id", "content", "sections", "updated_by"]},
+            {"name": "AssembledContext",
+             "description": "The system-prompt fragment produced by context.assemble: selected skills + ontologies + cap signatures + DAG summaries + memory + related-QA + cap-mesh + session notes.",
+             "attributes": ["system_prompt", "skills", "ontologies", "caps", "dags"]},
+            {"name": "FabricRecord",
+             "description": "A durable record in the data fabric (SQLite/PG/Chroma/Neo4j) — the persistence layer under skills, ontologies, agents and memory.",
+             "attributes": ["id", "dataset_id", "text", "data", "tags"]},
+        ],
+        "relationships": [
+            {"from": "DomainOntology", "to": "OntologyEntity",       "label": "defines",       "description": "An ontology declares its entity types."},
+            {"from": "DomainOntology", "to": "OntologyRelationship", "label": "defines",       "description": "An ontology declares labelled edges between its entity types."},
+            {"from": "DomainOntology", "to": "ProcessingRule",       "label": "defines",       "description": "An ontology carries trigger→action rules used by ontologies.apply."},
+            {"from": "CapRelation",    "to": "Capability",           "label": "connects",      "description": "Each mesh cell links a from_cap to a to_cap with a composition label (feeds_into, alternative_to, prerequisite_of, post_processes, validates, observes, configures, indexes, triggers)."},
+            {"from": "CapRelation",    "to": "DomainOntology",       "label": "exports_to",    "description": "cap_ontology.export_to_ontologies snapshots the whole mesh as a DomainOntology (one entity per cap, one relationship per relation)."},
+            {"from": "Agent",          "to": "DomainOntology",       "label": "injects",       "description": "Agents attach ontologies via ontology_ids; context.assemble folds them into the system prompt."},
+            {"from": "Agent",          "to": "Skill",                "label": "injects",       "description": "Agents attach skills via skill_ids; the v5 loop also injects sys-* guideline skills dynamically by cap association."},
+            {"from": "Agent",          "to": "Capability",           "label": "may_call",      "description": "domain_caps allow-lists the capabilities an agent can invoke as tools."},
+            {"from": "Agent",          "to": "CapRelation",          "label": "consults",      "description": "Planner prompts include cap_ontology.context_for output: relations among allowed caps plus edges to hidden adjacent caps (described by relation only)."},
+            {"from": "Agent",          "to": "SessionMemoryNote",    "label": "maintains",     "description": "The agent reads its injected note and updates it via notes.append / notes.section_set to steer future turns."},
+            {"from": "SessionMemoryNote", "to": "AssembledContext",  "label": "steers",        "description": "Non-empty notes are injected into the assembled context each turn."},
+            {"from": "AssembledContext", "to": "Agent",              "label": "prefixes",      "description": "The assembled block is prepended to the agent's system prompt (system_prefix) on each chat turn."},
+            {"from": "DAG",            "to": "Capability",           "label": "orchestrates",  "description": "DAG nodes are capability invocations wired output→input."},
+            {"from": "Skill",          "to": "Capability",           "label": "guides",        "description": "applies_to_caps associates a guideline skill with the caps it teaches."},
+            {"from": "DomainOntology", "to": "FabricRecord",         "label": "persisted_as",  "description": "Ontologies (like skills and agents) are mirrored into the data fabric for durability."},
+            {"from": "Capability",     "to": "AssembledContext",     "label": "signature_in",  "description": "context.assemble can include ranked cap signatures (attach_caps) for tool discovery."},
+        ],
+        "processing_rules": [
+            {"trigger": "question about how Vera stores or relates knowledge",
+             "action": "answer using this meta-ontology's entities/relations; name the concrete capability groups (ontologies.*, cap_ontology.*, skills.*, notes.*, context.assemble)", "priority": 5},
+            {"trigger": "planning a multi-cap workflow",
+             "action": "consult CapRelation edges (feeds_into/prerequisite_of) to order steps and wire outputs to inputs", "priority": 4},
+            {"trigger": "durable fact, user instruction, or mistake discovered mid-session",
+             "action": "record it in the SessionMemoryNote via notes.append instead of relying on chat history", "priority": 3},
+        ],
+        "memory_slots": [
+            {"key": "relevant_caps",      "type": "list"},
+            {"key": "relevant_ontologies","type": "list"},
+            {"key": "session_note_ref",   "type": "string"},
+        ],
+    },
+]
+
+
+def _seed_builtin_ontologies():
+    """Idempotently register/update built-in ontologies (same version-gated
+    pattern as _seed_builtin_skills; user edits to `enabled` are preserved)."""
+    seeded = 0
+    for spec in _BUILTIN_ONTOLOGIES:
+        oid = spec["id"]
+        existing = ONTOLOGIES.get(oid)
+        if existing and int(existing.get("builtin_version", 0)) >= int(spec["version"]):
+            continue
+        now = now_iso()
+        rec = {
+            "id":               oid,
+            "name":             spec["name"],
+            "description":      spec.get("description", ""),
+            "domain":           spec.get("domain", "general"),
+            "context_hints":    spec.get("context_hints", ""),
+            "entities":         spec.get("entities", []),
+            "relationships":    spec.get("relationships", []),
+            "processing_rules": spec.get("processing_rules", []),
+            "memory_slots":     spec.get("memory_slots", []),
+            "tags":             spec.get("tags", []),
+            "enabled":          existing.get("enabled", True) if existing else True,
+            "builtin":          True,
+            "builtin_version":  int(spec["version"]),
+            "created":          existing.get("created", now) if existing else now,
+            "updated":          now,
+            "iri":              f"https://vera.local/ontology/{oid}#",
+            "pref_label":       spec["name"].replace("_", " ").title(),
+            "alt_labels":       [],
+            "imports":          [],
+            "annotations":      {},
+        }
+        ONTOLOGIES[oid] = rec
+        try:
+            asyncio.create_task(_save_async("ontologies", rec))
+        except Exception:
+            _sqlite_save("ontologies", rec)
+        seeded += 1
+    if seeded:
+        log.info("skills: seeded/updated %d built-in ontologies", seeded)
 
 
 def _seed_builtin_skills():
@@ -483,6 +819,66 @@ def _seed_builtin_skills():
         seeded += 1
     if seeded:
         log.info("skills: seeded/updated %d built-in guideline skills", seeded)
+
+
+# Bump to re-seed the format skills from the shared palette on next startup.
+_FORMAT_SKILL_VERSION = 1
+
+
+def _seed_format_skills():
+    """Mirror the shared output-format palette into the Skills library.
+
+    Every baseline profile in vera.output_formats becomes an editable
+    `output_format` skill (id ``fmt-<profile>``). This is the unification: the
+    Skills library is the authoring surface, and each format skill is bridged
+    back into the palette via _sync_output_format so chat's picker and
+    apply_format see exactly what the library holds. Editing or disabling a
+    format skill re-shapes (or hides) that format everywhere. Idempotent and
+    version-gated like the guideline skills."""
+    of = _output_formats()
+    if not of:
+        return
+    seeded = 0
+    for pid, prof in of.FORMAT_PROFILES.items():
+        sid = f"fmt-{pid}"
+        existing = SKILLS.get(sid)
+        if existing and int(existing.get("builtin_version", 0)) >= _FORMAT_SKILL_VERSION:
+            _sync_output_format(existing)   # keep palette in sync with stored edits
+            continue
+        now = now_iso()
+        suffix = prof.get("system_suffix", "")
+        rec = {
+            "id": sid,
+            "name": prof.get("label", pid),
+            "description": f"Output format ({prof.get('kind', 'deliverable')}) — shapes how the "
+                           f"answer is written. Appears in chat's Output-format picker.",
+            "type": "output_format",
+            "content": suffix,
+            "variables": _extract_variables(suffix),
+            "tags": ["system", "output-format", prof.get("kind", "deliverable")],
+            "applies_to_caps": ["llm.generate", "render.export"],
+            "output_format_id": pid,
+            "format_kind": prof.get("kind", "deliverable"),
+            "target_file_format": prof.get("target_file_format", "md"),
+            "enabled": existing.get("enabled", True) if existing else True,
+            "builtin": True,
+            "builtin_version": _FORMAT_SKILL_VERSION,
+            "created": existing.get("created", now) if existing else now,
+            "updated": now,
+        }
+        SKILLS[sid] = rec
+        _sync_output_format(rec)
+        try:
+            asyncio.create_task(_save_async("skills", rec))
+        except Exception:
+            _sqlite_save("skills", rec)
+        seeded += 1
+    # Bridge any user-authored output_format skills loaded from persistence.
+    for s in SKILLS.values():
+        if s.get("type") == "output_format" and not str(s.get("id", "")).startswith("fmt-"):
+            _sync_output_format(s)
+    if seeded:
+        log.info("skills: seeded/updated %d output-format skills", seeded)
 
 
 async def _startup_load():
@@ -536,6 +932,28 @@ async def _startup_load():
     except Exception as e:
         log.warning("skills: builtin seed failed: %s", e)
 
+    # Register / refresh the built-in ontologies (system meta-ontology).
+    try:
+        _seed_builtin_ontologies()
+    except Exception as e:
+        log.warning("skills: builtin ontology seed failed: %s", e)
+
+    # Mirror the shared output-format palette into the Skills library and bridge
+    # every output_format skill back into the palette (chat picker + apply_format).
+    try:
+        _seed_format_skills()
+    except Exception as e:
+        log.warning("skills: format-skill seed failed: %s", e)
+
+    # Bridge any user-authored delivery_channel skills loaded from persistence
+    # back into the shared delivery registry (dream deliver UI + deliver stage).
+    try:
+        for s in SKILLS.values():
+            if s.get("type") == "delivery_channel":
+                _sync_delivery_channel(s)
+    except Exception as e:
+        log.warning("skills: delivery-channel bridge failed: %s", e)
+
     log.info("skills: loaded %d skills, %d ontologies (fabric:%d/%d)",
              len(SKILLS), len(ONTOLOGIES), fabric_skills, fabric_onts)
 
@@ -577,7 +995,12 @@ async def skills_get(id: str, trace_id=None):
 
 @capability("skills.create", memory="off",
             http_method="POST", http_path="/skills", http_tags=["skills"],
-            description="Create a new skill. Returns the created record with generated id.")
+            description="Create a new skill. Returns the created record with generated id. "
+                        "type=output_format makes the skill a selectable entry in the shared "
+                        "output-format palette (chat's Output-format picker + apply_format); for "
+                        "those, content is the format directive and format_kind "
+                        "(length|structure|deliverable) + target_file_format (md|docx|json|…) "
+                        "control grouping and export.")
 async def skills_create(
     name:        str,
     content:     str,
@@ -587,6 +1010,16 @@ async def skills_create(
     enabled:     bool = True,
     applies_to_caps: str = "",       # comma-separated cap names this skill teaches
     session_id:  str  = "",   # caller's session for graph linking
+    # ── output_format extras (only meaningful when type == "output_format") ──
+    format_kind:        str = "deliverable",   # length | structure | deliverable
+    target_file_format: str = "md",            # render/export default (md|docx|json|…)
+    # ── delivery_channel extras (only meaningful when type=="delivery_channel") ─
+    channel_cap:          str = "",     # cap to call to send (mail.send, tg.notify, …)
+    channel_format:       str = "",     # default output-format profile id to shape through
+    channel_needs_target: bool = False, # whether the channel needs a per-use target
+    channel_target_field: str = "",     # cap kwarg the target maps to (to / session_id)
+    channel_target_label: str = "",     # UI hint for the target input
+    channel_fixed_target: str = "",     # preset target baked into the channel
     trace_id=None,
 ):
     sid = str(uuid.uuid4())[:8]
@@ -604,6 +1037,24 @@ async def skills_create(
         "created":     now,
         "updated":     now,
     }
+    if type == "output_format":
+        # An output_format skill is also a palette entry; carry the picker/export
+        # metadata and use its own id as the profile id.
+        skill["output_format_id"]   = sid
+        skill["format_kind"]        = (format_kind or "deliverable").strip()
+        skill["target_file_format"] = (target_file_format or "md").strip()
+        _sync_output_format(skill)   # register it in the shared palette
+    elif type == "delivery_channel":
+        # A delivery_channel skill is also a registry entry; carry the routing
+        # metadata and use its own id as the channel id.
+        skill["delivery_channel_id"]  = sid
+        skill["channel_cap"]          = (channel_cap or "").strip()
+        skill["channel_format"]       = (channel_format or "").strip()
+        skill["channel_needs_target"] = bool(channel_needs_target)
+        skill["channel_target_field"] = (channel_target_field or "").strip()
+        skill["channel_target_label"] = (channel_target_label or "").strip()
+        skill["channel_fixed_target"] = (channel_fixed_target or "").strip()
+        _sync_delivery_channel(skill)   # register it in the shared delivery registry
     SKILLS[sid] = skill
     await _save_async("skills", skill)
     await emit_event({"type": "skills.created", "id": sid, "name": name})
@@ -627,6 +1078,16 @@ async def skills_update(
     tags:        str  = "",
     enabled:     bool = None,
     applies_to_caps: str = "",   # comma-separated; pass to replace the list
+    # ── output_format extras (only meaningful when type == "output_format") ──
+    format_kind:        str = "",
+    target_file_format: str = "",
+    # ── delivery_channel extras (only meaningful when type=="delivery_channel") ─
+    channel_cap:          str = "",
+    channel_format:       str = "",
+    channel_needs_target: bool = None,
+    channel_target_field: str = "",
+    channel_target_label: str = "",
+    channel_fixed_target: str = "",
     trace_id=None,
 ):
     skill = SKILLS.get(id)
@@ -640,7 +1101,25 @@ async def skills_update(
     if applies_to_caps:
         skill["applies_to_caps"] = [c.strip() for c in applies_to_caps.split(",") if c.strip()]
     if enabled is not None: skill["enabled"] = enabled
+    if format_kind:        skill["format_kind"]        = format_kind.strip()
+    if target_file_format: skill["target_file_format"] = target_file_format.strip()
+    if channel_cap:          skill["channel_cap"]          = channel_cap.strip()
+    if channel_format:       skill["channel_format"]       = channel_format.strip()
+    if channel_needs_target is not None: skill["channel_needs_target"] = bool(channel_needs_target)
+    if channel_target_field: skill["channel_target_field"] = channel_target_field.strip()
+    if channel_target_label: skill["channel_target_label"] = channel_target_label.strip()
+    if channel_fixed_target: skill["channel_fixed_target"] = channel_fixed_target.strip()
+    # Ensure an output_format skill always carries a profile id to bridge on.
+    if skill.get("type") == "output_format" and not skill.get("output_format_id"):
+        skill["output_format_id"] = skill["id"]
+    if skill.get("type") == "delivery_channel" and not skill.get("delivery_channel_id"):
+        skill["delivery_channel_id"] = skill["id"]
     skill["updated"] = now_iso()
+    # Re-sync into the shared palettes: registers/updates if it's an enabled
+    # output_format / delivery_channel, unregisters if its type changed or it was
+    # disabled.
+    _sync_output_format(skill)
+    _sync_delivery_channel(skill)
     await _save_async("skills", skill)
     await emit_event({"type": "skills.updated", "id": id})
     return skill
@@ -652,7 +1131,10 @@ async def skills_update(
 async def skills_delete(id: str, trace_id=None):
     if id not in SKILLS:
         return {"error": f"Skill not found: {id}"}
-    SKILLS.pop(id)
+    removed = SKILLS.pop(id)
+    # Pull it from the shared palettes if it was a bridged skill.
+    _sync_output_format(removed, removed=True)
+    _sync_delivery_channel(removed, removed=True)
     await _delete_async("skills", id)
     await emit_event({"type": "skills.deleted", "id": id})
     return {"deleted": id}
@@ -698,6 +1180,8 @@ async def skills_apply(
             system_parts.append(f"## Examples\n{rendered}")
         elif stype == "tool_hint":
             system_parts.append(f"## Available tools / capabilities\n{rendered}")
+        elif stype == "output_format":
+            system_parts.append(f"## Output format\n{rendered}")
         else:
             system_parts.append(rendered)
 
@@ -1324,6 +1808,7 @@ register_ui(
       <option value="few_shot">Few-Shot</option>
       <option value="chain_of_thought">Chain of Thought</option>
       <option value="tool_hint">Tool Hint</option>
+      <option value="output_format">Output Format</option>
       <option value="custom">Custom</option>
     </select>
     <input id="skillTagFilter" placeholder="Filter by tag…" style="width:130px" oninput="skillsLoad()">
@@ -1353,6 +1838,7 @@ register_ui(
             <option value="few_shot">Few-Shot Examples</option>
             <option value="chain_of_thought">Chain of Thought</option>
             <option value="tool_hint">Tool Hint</option>
+            <option value="output_format">Output Format</option>
             <option value="custom">Custom</option>
           </select>
         </div>

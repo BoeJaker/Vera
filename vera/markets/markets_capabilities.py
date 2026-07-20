@@ -29,6 +29,7 @@ import asyncio
 import json
 import logging
 import re
+import sys
 import time
 import uuid
 from datetime import datetime, timezone
@@ -216,9 +217,9 @@ def _bar_counts_sync() -> Dict[str, int]:
 def _watchlist_rows_sync() -> List[dict]:
     conn = _sqlite_conn()
     try:
-        rows = conn.execute(
-            "SELECT id, exchange, symbol, timeframes, auto_update, update_interval_min, "
-            "last_update, last_status, created_at FROM mkt_watchlist ORDER BY created_at").fetchall()
+        # SELECT * so later-added columns (e.g. live_track from the data module)
+        # flow through without another touch here.
+        rows = conn.execute("SELECT * FROM mkt_watchlist ORDER BY created_at").fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()
@@ -313,9 +314,26 @@ def _fetch_page_sync(ex_id: str, symbol: str, tf: str, since: Optional[int], lim
     ex = _get_exchange(ex_id)
     return ex.fetch_ohlcv(symbol, timeframe=tf, since=since, limit=limit)
 
+def _routed_ingestor(ex_id: str):
+    """Non-CCXT providers (yahoo stocks/ETFs, custom price series) register
+    ingestors in markets_data_capabilities.PROVIDER_INGESTORS so this module's
+    job runner + auto-update scheduler serve every asset class."""
+    md = sys.modules.get("markets_data_capabilities")
+    return (getattr(md, "PROVIDER_INGESTORS", {}) or {}).get((ex_id or "").lower())
+
 async def _ingest_timeframe(job: dict, ex_id: str, symbol: str, tf: str, full: bool) -> int:
     """Backfill or incrementally update one (asset, timeframe). Returns # new bars."""
     ds = _dataset_id(ex_id, symbol, tf)
+    routed = _routed_ingestor(ex_id)
+    if routed is not None:
+        if ds in _MKT_INFLIGHT:
+            job["errors"][tf] = "already updating"
+            return 0
+        _MKT_INFLIGHT.add(ds)
+        try:
+            return await routed(job, symbol, tf, full)
+        finally:
+            _MKT_INFLIGHT.discard(ds)
     if ds in _MKT_INFLIGHT:
         job["errors"][tf] = "already updating"
         return 0
@@ -549,11 +567,11 @@ if _CAP_AVAILABLE:
     )
     async def cap_markets_fetch(exchange: str = "binance", symbol: str = "",
                                 timeframes=None, full: bool = True, trace_id=None) -> dict:
-        if not HAS_CCXT:
+        ex_id = (exchange or "binance").lower()
+        if not HAS_CCXT and _routed_ingestor(ex_id) is None:
             return {"error": "ccxt not installed — run: pip install ccxt"}
         if not symbol:
             return {"error": "symbol required (e.g. 'BTC/USDT')"}
-        ex_id = (exchange or "binance").lower()
         tfs = _as_list(timeframes, DEFAULT_TIMEFRAMES)
         job = _new_job(ex_id, symbol, tfs, bool(full))
         asyncio.create_task(_ingest_job(job["job_id"], ex_id, symbol, tfs, bool(full)))
@@ -596,6 +614,7 @@ if _CAP_AVAILABLE:
                 "auto_update": bool(r.get("auto_update", 1)),
                 "update_interval_min": r.get("update_interval_min", 60),
                 "last_update": r.get("last_update"), "last_status": r.get("last_status"),
+                "live_track": bool(r.get("live_track", 0)),
                 "counts": {tf: counts.get(_dataset_id(r["exchange"], r["symbol"], tf), 0) for tf in tfs},
             })
         return {"watchlist": out, "count": len(out)}
@@ -692,7 +711,7 @@ if _CAP_AVAILABLE:
                     "Output: {ok, job_ids:[...]}.",
     )
     async def cap_markets_update_now(exchange: str = "", symbol: str = "", trace_id=None) -> dict:
-        if not HAS_CCXT:
+        if not HAS_CCXT and not sys.modules.get("markets_data_capabilities"):
             return {"error": "ccxt not installed"}
         await _ensure_table()
         loop = asyncio.get_running_loop()
@@ -722,10 +741,14 @@ if _CAP_AVAILABLE:
             return HTMLResponse(p.read_text(encoding="utf-8"))
         return HTMLResponse("<p style='color:red'>markets_panel.html not found</p>")
 
+    # ONE Markets panel: the Quant Studio is the whole tab (single left-rail
+    # navigation — no sub-tab bar). The classic panel is no longer navigable
+    # on its own; it stays served at /markets/panel solely so the studio can
+    # open its node-graph pipeline builder in an overlay (?pipe=1).
     register_ui(
-        "markets", "Markets", "📈",
+        "markets", "Markets", "⟁",
         """<div id="markets-mount" style="height:100%;display:flex;flex-direction:column;">
-            <iframe src="/markets/panel"
+            <iframe src="/markets/studio/panel"
                     style="flex:1;border:none;width:100%;height:100%"
                     allow="clipboard-read; clipboard-write"></iframe>
         </div>""",
@@ -733,7 +756,60 @@ if _CAP_AVAILABLE:
         ui_caps=["markets.exchanges", "markets.symbols", "markets.timeframes",
                  "markets.fetch", "markets.jobs", "markets.watchlist.list",
                  "markets.watchlist.add", "markets.watchlist.config",
-                 "markets.watchlist.remove", "markets.update_now"],
+                 "markets.watchlist.remove", "markets.update_now",
+                 # data layer (markets_data_capabilities.py)
+                 "markets.lookup", "markets.asset.add", "markets.bars", "markets.quotes",
+                 "markets.custom.create", "markets.custom.add_price",
+                 "markets.custom.import_csv", "markets.custom.list", "markets.custom.delete",
+                 "markets.live.set", "markets.live.ticks",
+                 "markets.history.audit", "markets.history.repair",
+                 # analysis layer (markets_analysis_capabilities.py)
+                 "markets.indicators", "markets.indicator_config.get",
+                 "markets.indicator_config.set",
+                 "markets.indicator.custom.save", "markets.indicator.custom.list",
+                 "markets.indicator.custom.delete", "markets.indicator.custom.test",
+                 "markets.annotate.add",
+                 "markets.annotate.list", "markets.annotate.update", "markets.annotate.remove",
+                 "markets.sentiment.analyze", "markets.sentiment.map",
+                 "markets.sentiment.refresh", "markets.sentiment.history",
+                 # lab layer (markets_lab_capabilities.py)
+                 "markets.ml.create", "markets.ml.list", "markets.ml.update",
+                 "markets.ml.train", "markets.ml.predict", "markets.ml.delete",
+                 "markets.strategy.save", "markets.strategy.list", "markets.strategy.delete",
+                 "markets.strategy.accept", "markets.strategy.archive",
+                 "markets.monitor.status", "markets.alerts.list", "markets.alerts.ack",
+                 "markets.backtest.run", "markets.backtest.list", "markets.backtest.get",
+                 "markets.backtest.engines", "markets.backtest.signals",
+                 "markets.backtest.sweep", "markets.backtest.sweep_status",
+                 "markets.portfolio.tx_add", "markets.portfolio.tx_list",
+                 "markets.portfolio.tx_remove", "markets.portfolio.positions",
+                 "markets.portfolio.history",
+                 # studio layer (markets_studio_capabilities.py — merged sub-tab)
+                 "markets.strategy.library", "markets.strategy.from_template",
+                 "markets.analysis.trendfit", "markets.analysis.pivots",
+                 "markets.backtest.analyze", "markets.backtest.autotune",
+                 "markets.backtest.autotune_status", "markets.backtest.batch",
+                 "markets.backtest.batch_status", "markets.ml.walkforward",
+                 "markets.ml.series",
+                 "markets.infographic.save", "markets.infographic.list",
+                 "markets.infographic.delete",
+                 "markets.project.asset", "markets.project.portfolio",
+                 "markets.portfolio.optimize", "markets.rotation.scan",
+                 "markets.dynamics.fetch", "markets.dynamics.snapshot",
+                 "markets.wsb.scan", "markets.news.feed",
+                 "markets.sentiment.to_series", "markets.sim.templates",
+                 "markets.strategy.versions", "markets.strategy.revert",
+                 "markets.trader.status", "markets.trader.config.set",
+                 "markets.trader.tick",
+                 "markets.evolve.start", "markets.evolve.stop",
+                 "markets.evolve.status", "markets.evolve.history",
+                 "markets.evolve.config.set", "markets.evolve.tick",
+                 "markets.baseline.list", "markets.baseline.ensure",
+                 "markets.overview", "markets.events.detect", "markets.events.apply",
+                 "markets.macro.catalog", "markets.macro.fetch",
+                 "markets.sim.create", "markets.sim.list", "markets.sim.order",
+                 "markets.sim.equity", "markets.sim.reset", "markets.sim.delete",
+                 "markets.layout.save", "markets.layout.list", "markets.layout.delete"],
         mode="tab", tab_order=67,
     )
 
@@ -741,7 +817,7 @@ if _CAP_AVAILABLE:
 
     async def _mkt_autoupdate_tick():
         """Every minute: refresh any watched asset whose interval has elapsed."""
-        if not HAS_CCXT:
+        if not HAS_CCXT and not sys.modules.get("markets_data_capabilities"):
             return
         try:
             await _ensure_table()

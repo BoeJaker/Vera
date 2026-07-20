@@ -40,6 +40,7 @@ import asyncio
 import json
 import logging
 import os
+import ssl
 import time
 from typing import Dict, List, Optional
 
@@ -55,6 +56,18 @@ from Vera.vera.capability_orchestration import (
 
 log = logging.getLogger("vera.cluster")
 
+# One shared SSL context reused by every httpx.AsyncClient() in this module.
+# Without it, httpx calls ssl.create_default_context(cafile=certifi.where()) on
+# EVERY client construction — that cafile read is blocking disk I/O, and on the
+# event loop it surfaces as multi-hundred-ms watchdog hangs (ssl.py:770
+# load_verify_locations), multiplied across every polled node. Build it once at
+# import; pass verify=_SSL_CTX to each AsyncClient so the read never recurs.
+try:
+    import certifi
+    _SSL_CTX: Optional[ssl.SSLContext] = ssl.create_default_context(cafile=certifi.where())
+except Exception:  # pragma: no cover - fall back to httpx's per-call default
+    _SSL_CTX = None
+
 # ── Config ────────────────────────────────────────────────────────────────────
 LOCAL_OLLAMA_INSTANCE = os.getenv("LOCAL_OLLAMA_INSTANCE", "")
 PROXY_MAX_CONCURRENCY = int(os.getenv("PROXY_MAX_CONCURRENCY", "3"))
@@ -63,9 +76,36 @@ CLUSTER_POLL_INTERVAL = float(os.getenv("CLUSTER_POLL_INTERVAL", "10"))
 
 def _redis(): return _orch.REDIS
 
-# Proxy state
-PROXY_QUEUE: asyncio.Queue = asyncio.Queue(maxsize=50)
+# Proxy state — PER-NODE queues. A single global queue head-of-line-blocked the
+# whole proxy: its one worker polled up to PROXY_QUEUE_TIMEOUT for a busy CPU
+# node's slot while requests routed to the (free) GPU node sat behind it. Each
+# node now has its own queue + drain worker (created lazily), and
+# PROXY_MAX_CONCURRENCY gates each NODE's in-flight count independently.
+PROXY_QUEUE_MAX = int(os.getenv("PROXY_QUEUE_MAX", "50"))
+PROXY_QUEUES: Dict[str, asyncio.Queue] = {}
+_PROXY_QUEUE_WORKERS: Dict[str, "asyncio.Task"] = {}
 _proxy_active = 0
+
+
+def _proxy_queue(target: str) -> asyncio.Queue:
+    """This node's proxy queue, creating it (and its drain worker) on first use.
+    The worker is also restarted here if it ever crashed."""
+    q = PROXY_QUEUES.get(target)
+    if q is None:
+        q = PROXY_QUEUES[target] = asyncio.Queue(maxsize=PROXY_QUEUE_MAX)
+    t = _PROXY_QUEUE_WORKERS.get(target)
+    if t is None or t.done():
+        _PROXY_QUEUE_WORKERS[target] = asyncio.create_task(_proxy_queue_worker(target))
+    return q
+
+
+def _proxy_queue_depth(target: str) -> int:
+    q = PROXY_QUEUES.get(target)
+    return q.qsize() if q is not None else 0
+
+
+def _proxy_qsize_total() -> int:
+    return sum(q.qsize() for q in PROXY_QUEUES.values())
 # Runtime soft-pause for the Ollama mimic proxy. When True, the proxy returns 503
 # without forwarding — lets the operator stop accepting mimic traffic from the
 # control page without restarting Vera (the routes stay mounted). PROXY_MAX_-
@@ -91,7 +131,7 @@ async def _fetch_instance_detail(iid: str, inst: dict):
 
     # /api/version
     try:
-        async with httpx.AsyncClient(timeout=4) as c:
+        async with httpx.AsyncClient(timeout=4, verify=_SSL_CTX or True) as c:
             r = await c.get(f"{url}/api/version")
             if r.status_code == 200:
                 inst["version"] = r.json().get("version", "")
@@ -105,7 +145,7 @@ async def _fetch_instance_detail(iid: str, inst: dict):
         model = next(iter(inst.get("models") or []), "")
         if model:
             try:
-                async with httpx.AsyncClient(timeout=6) as c:
+                async with httpx.AsyncClient(timeout=6, verify=_SSL_CTX or True) as c:
                     r = await c.post(f"{url}/api/show", json={"model": model})
                     if r.status_code == 200:
                         ctx = _orch._extract_ctx_from_show(
@@ -117,7 +157,7 @@ async def _fetch_instance_detail(iid: str, inst: dict):
 
     # /api/ps — running models + VRAM (Ollama ≥ 0.3)
     try:
-        async with httpx.AsyncClient(timeout=4) as c:
+        async with httpx.AsyncClient(timeout=4, verify=_SSL_CTX or True) as c:
             r = await c.get(f"{url}/api/ps")
             if r.status_code == 200:
                 running = r.json().get("models", [])
@@ -179,8 +219,7 @@ async def cluster_poll_loop():
                         "errors":       inst.get("errors", 0),
                         "version":      inst.get("version", ""),
                         "last_check":   inst.get("last_check", ""),
-                        "proxy_queued": PROXY_QUEUE.qsize()
-                                        if LOCAL_OLLAMA_INSTANCE == iid else 0,
+                        "proxy_queued": _proxy_queue_depth(iid),
                     }
                 await r.set("vera:cluster:ollama",
                              json.dumps(snapshot), ex=60)
@@ -229,6 +268,9 @@ def _pick_instance_load_aware(
     instance_id: Optional[str] = None,
     model:       Optional[str] = None,
     job_type:    Optional[str] = None,
+    rule_override: Optional[dict] = None,
+    explain:     Optional[dict] = None,
+    **_kw,
 ) -> Optional[str]:
     """
     Load-aware pick_instance.
@@ -242,60 +284,136 @@ def _pick_instance_load_aware(
     profile's rule for `job_type` constrains the candidate set (pin / deny_gpu
     / allow / deny / prefer_gpu) before load-aware scoring runs.
     """
+    # Decision trail — populated into `explain` so the ollama_req log line shows
+    # WHY a node was chosen (the base pick_instance does this; this patch
+    # REPLACES it, so it must too or every route reason is blank in the logs).
+    trail = []
+    def _note(m): trail.append(m)
+    def _out(chosen):
+        if explain is not None:
+            explain["reason"] = trail
+            explain["chosen"] = chosen
+        return chosen
+
     # Only online AND enabled nodes are routable.
     online = {iid: i for iid, i in OLLAMA_INSTANCES.items()
               if i.get("status") == "online" and i.get("enabled", True)}
     if not online:
-        return None
+        _note("no online nodes")
+        return _out(None)
     if instance_id and instance_id in online:
-        return instance_id
+        _note(f"caller pinned '{instance_id}'")
+        return _out(instance_id)
 
     # ── Job-type routing rule (reuse the orchestrator's resolver) ──────────────
+    # Honour a caller-supplied per-cap rule override (as the base pick_instance
+    # does), else fall back to the active profile's job-type rule. `explain` and
+    # any future kwargs are accepted so this monkey-patch stays signature-
+    # compatible with pick_instance (a prior drift here crashed EVERY LLM call).
     _resolve_rule = getattr(_orch, "_resolve_rule", None)
     _match_glob   = getattr(_orch, "_match_glob", None)
-    rule = _resolve_rule(job_type) if (job_type and _resolve_rule) else None
+    rule = rule_override if rule_override else (
+        _resolve_rule(job_type) if (job_type and _resolve_rule) else None)
     if rule:
+        _note(f"job-type rule '{job_type}' "
+              f"(deny_gpu={bool(rule.get('deny_gpu'))}, "
+              f"avoid_embed={bool(rule.get('avoid_embed'))}, "
+              f"pin={rule.get('pin') or '-'})")
         pin = rule.get("pin") or ""
         if pin and pin in online:
-            return pin
+            _note(f"rule pin → {pin}")
+            return _out(pin)
         if rule.get("deny_gpu"):
-            online = {iid: i for iid, i in online.items() if not i.get("has_gpu")} or online
+            nong = {iid: i for iid, i in online.items() if not i.get("has_gpu")}
+            if nong:
+                online = nong; _note(f"deny_gpu → {sorted(online)}")
+            else:
+                _note("deny_gpu: no non-GPU node online — keeping GPU nodes")
         allow = rule.get("allow") or []
         if allow and _match_glob:
             filt = {iid: i for iid, i in online.items()
                     if any(_match_glob(iid, p) for p in allow)}
             if filt:
-                online = filt
+                online = filt; _note(f"allow {allow} → {sorted(online)}")
         deny = rule.get("deny") or []
         if deny and _match_glob:
             filt = {iid: i for iid, i in online.items()
                     if not any(_match_glob(iid, p) for p in deny)}
             if filt:
-                online = filt
+                online = filt; _note(f"deny {deny} → {sorted(online)}")
+        # avoid_embed: keep this job type off the live embedding node (mirrors
+        # the base pick_instance — this patch REPLACES it, so the flag must be
+        # honoured here too or rules like dream_director's silently lose it).
+        if rule.get("avoid_embed"):
+            _embed_id = ""
+            try:
+                _embed_id = getattr(_orch, "_embed_node_id", lambda: "")()
+            except Exception:
+                pass
+            if not _embed_id:
+                _note("avoid_embed: embed node UNRESOLVED (no pin / no "
+                      "OLLAMA_EMBED_URL match) — cannot exclude, staying put")
+            elif _embed_id not in online:
+                _note(f"avoid_embed: embed node '{_embed_id}' not a candidate — noop")
+            elif len(online) <= 1:
+                _note(f"avoid_embed: '{_embed_id}' is the ONLY candidate — "
+                      "keeping it (nothing else to route to)")
+            else:
+                online = {iid: i for iid, i in online.items() if iid != _embed_id}
+                _note(f"avoid_embed: excluded '{_embed_id}' → {sorted(online)}")
         prefer_gpu = prefer_gpu or bool(rule.get("prefer_gpu"))
+    elif job_type:
+        _note(f"no rule for job-type '{job_type}'")
 
     colocated = _colocated_worker_load()
 
     def _score(iid: str, inst: dict) -> float:
         s  = inst.get("in_use", 0)
         s += colocated.get(iid, 0) * 0.5
-        if iid == LOCAL_OLLAMA_INSTANCE:
-            s += PROXY_QUEUE.qsize() * 0.2
+        s += _proxy_queue_depth(iid) * 0.2   # this node's own proxy backlog
         s += inst.get("priority", 0) * 0.01
         return s
 
+    def _has_model(inst: dict) -> bool:
+        # Flexible name match (mirrors the base pick_instance): exact, tag
+        # prefix, or same base name.
+        if not model:
+            return True
+        base = model.split(":")[0]
+        for m in (inst.get("models") or []):
+            if m == model or m.startswith(model + ":") or m.split(":")[0] == base:
+                return True
+        return False
+
+    def _best(cands, why):
+        chosen = min(cands, key=lambda k: _score(k, cands[k]))
+        _note(f"{why}: picked '{chosen}' (in_use={cands[chosen].get('in_use',0)}) "
+              f"from {sorted(cands)}")
+        return _out(chosen)
+
     if prefer_gpu:
         gpu = {iid: i for iid, i in online.items() if i.get("has_gpu")}
+        gpu_model = {iid: i for iid, i in gpu.items() if _has_model(i)}
+        if gpu_model:
+            return _best(gpu_model, "prefer_gpu + model")
+        # No GPU node has this model: a node that HAS it beats a GPU node that
+        # must cold-pull/load it — routing a chat to a modelless GPU node used
+        # to stall the request for minutes while Ollama fetched the model.
+        if model:
+            has = {iid: i for iid, i in online.items() if _has_model(i)}
+            if has:
+                return _best(has, "prefer_gpu: no GPU has model — node with model")
         if gpu:
-            return min(gpu, key=lambda k: _score(k, gpu[k]))
+            return _best(gpu, "prefer_gpu: model nowhere — any GPU")
 
     if model:
-        has = {iid: i for iid, i in online.items()
-               if model in (i.get("models") or [])}
+        has = {iid: i for iid, i in online.items() if _has_model(i)}
         if has:
-            return min(has, key=lambda k: _score(k, has[k]))
+            return _best(has, "node with model")
+        _note(f"model '{model}' on NONE of {sorted(online)} — least-busy fallback "
+              "(node will cold-pull the model)")
 
-    return min(online, key=lambda k: _score(k, online[k]))
+    return _best(online, "least busy")
 
 
 # Patch the orchestrator
@@ -377,10 +495,11 @@ async def _record_proxy_request(target: str, path: str, body: dict) -> str:
     try:
         model  = body.get("model", "")
         msgs   = body.get("messages", [])
-        prompt = (
+        prompt_full = (
             body.get("prompt") or
             (msgs[-1].get("content", "") if msgs else "")
-        )[:400]
+        )
+        prompt = prompt_full[:400]
         prompt_preview = prompt[:120].replace("\n", " ")
         await r.xadd("vera:ollama_proxy_log", {
             "data": json.dumps({
@@ -415,6 +534,7 @@ async def _record_proxy_request(target: str, path: str, body: dict) -> str:
             "caller_module": "cluster",
             "cap_name":     "ollama.proxy",
             "prompt_preview": f"[proxy] {prompt_preview}",
+            "prompt_full":  prompt_full[:16000],
             "json_mode":    False,
             "prefer_gpu":   False,
             "streaming":    body.get("stream", False),
@@ -433,19 +553,35 @@ def _gpu_nodes_online() -> List[str]:
     return [iid for iid in _online_nodes() if OLLAMA_INSTANCES[iid].get("has_gpu")]
 
 
+def _mimic_rule() -> Optional[dict]:
+    """The mimic's routing-table rule ('mimic.proxy' — user rules win over the
+    declared baseline), so proxied traffic is governed by the Model Routing
+    page like every other caller: pin/allow/deny/prefer_gpu/model."""
+    try:
+        return _orch._resolve_cap_routing("mimic.proxy")
+    except Exception:
+        return None
+
+
 def _pick_proxy_target(body: dict) -> Optional[str]:
     """Choose the Ollama node for a proxied request.
 
-    Flows through the cluster's load-aware pick_instance (multiple GPU nodes
-    load-balance; disabled/offline nodes are skipped). With _PROXY_PREFER_GPU the
-    selection is pinned to GPU nodes. Falls back to a GPU node, then any online
-    node, then LOCAL_OLLAMA_ID.
+    Resolves the 'mimic.proxy' rule from the Model Routing table (pin / allow /
+    deny / prefer_gpu / model apply), then flows through the cluster's
+    load-aware pick_instance (multiple GPU nodes load-balance; disabled/offline
+    nodes are skipped). With _PROXY_PREFER_GPU the selection is pinned to GPU
+    nodes. Falls back to a GPU node, then any online node, then LOCAL_OLLAMA_ID.
     """
     model = (body or {}).get("model") or None
+    rule = _mimic_rule()
+    if rule and not model:
+        model = rule.get("model") or None
     pick = getattr(_orch, "pick_instance", None)
     if pick:
         try:
-            t = pick(prefer_gpu=_PROXY_PREFER_GPU, model=model, job_type="proxy")
+            t = pick(prefer_gpu=_PROXY_PREFER_GPU, model=model,
+                     job_type=(rule or {}).get("job_type") or "proxy",
+                     rule_override=rule)
             if t and t in OLLAMA_INSTANCES:
                 return t
         except Exception as e:
@@ -467,24 +603,46 @@ async def _forward(target_id: str, path: str, body: dict, stream: bool):
 
     inst   = OLLAMA_INSTANCES[target_id]
     target = f"{inst['url']}/{path}"
+    # Keep upstream in lockstep with the branch we take: if we picked the
+    # non-streaming path (we'll call r.json()), the upstream MUST return a
+    # single JSON object. Ollama defaults a missing "stream" to True, so we
+    # set it explicitly to avoid getting NDJSON back and failing r.json().
+    body = {**body, "stream": stream}
     inst["in_use"] = inst.get("in_use", 0) + 1
     _proxy_active += 1
     _t0 = time.time()
     _req_id_task = asyncio.create_task(_record_proxy_request(target_id, path, body))
 
+    # Release the node slot exactly once. For STREAMING responses the actual
+    # work happens after this function returns (the generator runs during ASGI
+    # send) — releasing in the finally below would free the slot while the node
+    # is still generating, letting PROXY_MAX_CONCURRENCY over-admit. The stream
+    # generator owns the release in that case; every other path releases here.
+    _released = {"v": False}
+    def _release_slot():
+        global _proxy_active
+        if not _released["v"]:
+            _released["v"] = True
+            _proxy_active = max(0, _proxy_active - 1)
+            inst["in_use"] = max(0, inst.get("in_use", 1) - 1)
+
+    _stream_owns_release = False
     try:
         if stream:
             async def _gen():
                 try:
-                    async with httpx.AsyncClient(timeout=300) as c:
-                        async with c.stream("POST", target, json=body) as resp:
-                            async for chunk in resp.aiter_bytes():
-                                yield chunk
-                except Exception as _se:
-                    # Yield an Ollama-style error line rather than abruptly closing
-                    # the socket (which surfaces to clients as "socket hang up").
-                    log.error("proxy stream error [%s→%s]: %s", path, target_id, _se)
-                    yield (json.dumps({"error": str(_se), "done": True}) + "\n").encode()
+                    try:
+                        async with httpx.AsyncClient(timeout=300, verify=_SSL_CTX or True) as c:
+                            async with c.stream("POST", target, json=body) as resp:
+                                async for chunk in resp.aiter_bytes():
+                                    yield chunk
+                    except Exception as _se:
+                        # Yield an Ollama-style error line rather than abruptly closing
+                        # the socket (which surfaces to clients as "socket hang up").
+                        log.error("proxy stream error [%s→%s]: %s", path, target_id, _se)
+                        yield (json.dumps({"error": str(_se), "done": True}) + "\n").encode()
+                finally:
+                    _release_slot()
                 # Emit done event after stream completes
                 try:
                     _req_id = _req_id_task.result() if _req_id_task.done() else ""
@@ -497,9 +655,11 @@ async def _forward(target_id: str, path: str, body: dict, stream: bool):
                         })
                 except Exception:
                     pass
-            return StreamingResponse(_gen(), media_type="application/x-ndjson")
+            resp_obj = StreamingResponse(_gen(), media_type="application/x-ndjson")
+            _stream_owns_release = True
+            return resp_obj
         else:
-            async with httpx.AsyncClient(timeout=300) as c:
+            async with httpx.AsyncClient(timeout=300, verify=_SSL_CTX or True) as c:
                 r = await c.post(target, json=body)
             # Emit done event for non-streaming
             try:
@@ -537,8 +697,8 @@ async def _forward(target_id: str, path: str, body: dict, stream: bool):
             pass
         return JSONResponse({"error": str(e)}, status_code=502)
     finally:
-        _proxy_active -= 1
-        inst["in_use"] = max(0, inst.get("in_use", 1) - 1)
+        if not _stream_owns_release:
+            _release_slot()
 
 
 async def _proxy_handler(path: str, req: Request):
@@ -552,26 +712,37 @@ async def _proxy_handler(path: str, req: Request):
     except Exception:
         body = {}
 
+    # Routing-table integration: the 'mimic.proxy' rule's model pin fills in
+    # when the client didn't name a model (the client's explicit model wins).
+    _rule = _mimic_rule()
+    if _rule and _rule.get("model") and not body.get("model"):
+        body["model"] = _rule["model"]
+
     target = _pick_proxy_target(body)
     if not target:
         return JSONResponse({
             "error": "No online Ollama node to route to"
         }, status_code=503)
 
-    stream  = body.get("stream", False)
+    # Ollama's API treats a missing "stream" as True. Mirror that so a client
+    # (e.g. Continue) that omits the flag gets real streaming instead of the
+    # proxy taking the non-stream path and trying to r.json() an NDJSON body.
+    stream  = body.get("stream", True)
     in_use  = OLLAMA_INSTANCES.get(target, {}).get("in_use", 0)
 
     if in_use < PROXY_MAX_CONCURRENCY:
         return await _forward(target, path, body, stream)
 
-    # Queue — remember the routed node so the worker forwards to the same one.
-    log.info("Ollama proxy: queuing for %s (in_use=%d)", target, in_use)
+    # Queue on the routed NODE's own queue — other nodes' traffic is unaffected.
+    log.info("Ollama proxy: queuing for %s (in_use=%d, node queue=%d)",
+             target, in_use, _proxy_queue_depth(target))
     loop   = asyncio.get_event_loop()
     future: asyncio.Future = loop.create_future()
     try:
-        PROXY_QUEUE.put_nowait((target, path, body, stream, future))
+        _proxy_queue(target).put_nowait((path, body, stream, future))
     except asyncio.QueueFull:
-        return JSONResponse({"error": "Proxy queue full"}, status_code=429)
+        return JSONResponse({"error": f"Proxy queue full for node {target}"},
+                            status_code=429)
 
     try:
         return await asyncio.wait_for(future, timeout=PROXY_QUEUE_TIMEOUT)
@@ -579,38 +750,63 @@ async def _proxy_handler(path: str, req: Request):
         return JSONResponse({"error": "Proxy queue timeout"}, status_code=504)
 
 
-async def _proxy_queue_worker():
-    """Drain the proxy queue as capacity becomes available."""
+async def _proxy_dispatch(target: str, path: str, body: dict, stream: bool,
+                          future: "asyncio.Future"):
+    """Forward one queued request and resolve its waiter."""
+    try:
+        result = await _forward(target, path, body, stream)
+        if not future.done():
+            future.set_result(result)
+    except Exception as e:
+        if not future.done():
+            future.set_exception(e)
+
+
+async def _proxy_queue_worker(target: str):
+    """Drain ONE node's proxy queue. Each node has its own worker, so a slow
+    node only ever delays its own backlog. Requests are dispatched as
+    concurrent tasks up to PROXY_MAX_CONCURRENCY per node (the node's in_use
+    is raised synchronously inside _forward, so the capacity check below sees
+    each dispatch immediately) — the cap is genuinely per-node concurrency,
+    not a limit on how fast this loop can shuttle jobs."""
+    q = PROXY_QUEUES[target]
     while True:
         try:
-            target, path, body, stream, future = await asyncio.wait_for(
-                PROXY_QUEUE.get(), timeout=5
-            )
+            path, body, stream, future = await asyncio.wait_for(q.get(), timeout=5)
         except asyncio.TimeoutError:
             continue
         except Exception:
             await asyncio.sleep(1)
             continue
 
-        # Wait for a free slot on the routed node (bounded by the queue timeout)
-        waited = 0.0
-        while (OLLAMA_INSTANCES.get(target, {}).get("in_use", 0)
-               >= PROXY_MAX_CONCURRENCY):
-            await asyncio.sleep(0.25)
-            waited += 0.25
-            if waited >= PROXY_QUEUE_TIMEOUT:
-                break
-
         try:
-            result = await _forward(target, path, body, stream)
-            if not future.done():
-                future.set_result(result)
-        except Exception as e:
-            if not future.done():
-                future.set_exception(e)
+            # Wait for a free slot on THIS node (bounded by the queue timeout —
+            # the waiter's future times out at the same bound anyway).
+            waited = 0.0
+            while (OLLAMA_INSTANCES.get(target, {}).get("in_use", 0)
+                   >= PROXY_MAX_CONCURRENCY):
+                await asyncio.sleep(0.25)
+                waited += 0.25
+                if waited >= PROXY_QUEUE_TIMEOUT or future.done():
+                    break
+            if future.done():   # waiter already timed out — don't forward
+                continue
+            asyncio.create_task(_proxy_dispatch(target, path, body, stream, future))
+            # Let the dispatch task reach _forward's synchronous in_use
+            # increment before we examine capacity for the next item.
+            await asyncio.sleep(0)
         finally:
-            PROXY_QUEUE.task_done()
+            q.task_done()
 
+
+# The mimic is a first-class caller in the Model Routing table: this declared
+# baseline makes 'mimic.proxy' show up there, and a USER rule on the same
+# pattern (pin / allow / deny / model / prefer_gpu) overrides it.
+try:
+    _orch.register_cap_routing("mimic.proxy", label="Ollama mimic proxy",
+                               declared_by="mimic", job_type="proxy")
+except Exception as _e:
+    log.debug("register mimic routing: %s", _e)
 
 # Mount the Ollama mimic proxy. Scoped to /ollama/api/* and /ollama/v1/* (the only
 # paths real Ollama / OpenAI-compatible clients use) so it does NOT shadow Vera's
@@ -632,7 +828,7 @@ async def _proxy_get(full_path: str):
         return JSONResponse({"error": "No online Ollama node to route to"}, 503)
     url = f"{OLLAMA_INSTANCES[target_id]['url']}/{full_path}"
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
+        async with httpx.AsyncClient(timeout=10, verify=_SSL_CTX or True) as c:
             r = await c.get(url)
         return JSONResponse(r.json(), status_code=r.status_code)
     except Exception as e:
@@ -692,8 +888,9 @@ async def cap_mimic_status(trace_id=None) -> Dict:
         "online_nodes":    online,
         "local_instance":  LOCAL_OLLAMA_ID,
         "active":          _proxy_active,
-        "queue_depth":     PROXY_QUEUE.qsize(),
-        "queue_max":       PROXY_QUEUE.maxsize,
+        "queue_depth":     _proxy_qsize_total(),
+        "queue_per_node":  {iid: q.qsize() for iid, q in PROXY_QUEUES.items()},
+        "queue_max":       PROXY_QUEUE_MAX,
         "max_concurrency": PROXY_MAX_CONCURRENCY,
         "queue_timeout":   PROXY_QUEUE_TIMEOUT,
     }
@@ -843,7 +1040,7 @@ async def _gather_onnx_runtimes() -> dict:
 
         async def _ping(u):
             try:
-                async with _httpx.AsyncClient(timeout=3.0) as c:
+                async with _httpx.AsyncClient(timeout=3.0, verify=_SSL_CTX or True) as c:
                     r = await c.get(u.rstrip("/") + "/health")
                 if r.status_code == 200:
                     h = r.json()
@@ -908,14 +1105,26 @@ async def obs_cluster(trace_id=None):
     queue_info = {"task_queue_len": 0, "result_queue_len": 0, "pending": 0}
     if r:
         try:
-            tlen = await r.xlen(_orch.TASK_STREAM)
             rlen = await r.xlen(_orch.RESULT_STREAM)
-            # Pending (delivered but not acked)
-            pinfo = await r.xpending(_orch.TASK_STREAM, _orch.GROUP_WORKERS)
+            # Backlog = not-yet-delivered (lag) + delivered-but-unacked (pending).
+            # XLEN counts the whole stream including acked history, so it is
+            # NOT the backlog — see monitor_capabilities._queue_len.
+            pending = 0
+            backlog = None
+            for g in await r.xinfo_groups(_orch.TASK_STREAM):
+                gname = g.get("name")
+                if isinstance(gname, bytes):
+                    gname = gname.decode()
+                if gname == _orch.GROUP_WORKERS:
+                    pending = int(g.get("pending") or 0)
+                    backlog = int(g.get("lag") or 0) + pending
+                    break
+            if backlog is None:   # no group yet → nothing consumes the stream
+                backlog = await r.xlen(_orch.TASK_STREAM)
             queue_info = {
-                "task_queue_len":   tlen,
+                "task_queue_len":   backlog,
                 "result_queue_len": rlen,
-                "pending_tasks":    pinfo.get("pending", 0) if isinstance(pinfo, dict) else 0,
+                "pending_tasks":    pending,
             }
         except Exception as e:
             log.debug("queue_info: %s", e)
@@ -924,7 +1133,8 @@ async def obs_cluster(trace_id=None):
     proxy_info = {
         "active":         _proxy_active,
         "local_instance": LOCAL_OLLAMA_ID,
-        "queue_depth":    PROXY_QUEUE.qsize(),
+        "queue_depth":    _proxy_qsize_total(),
+        "queue_per_node": {iid: q.qsize() for iid, q in PROXY_QUEUES.items()},
         "max_concurrency": PROXY_MAX_CONCURRENCY,
         "enabled":        bool(LOCAL_OLLAMA_ID),
     }
@@ -1033,9 +1243,8 @@ async def cap_cluster_job_stop(task_id: str = "", trace_id=None):
 async def _startup():
     asyncio.create_task(cluster_poll_loop())
     asyncio.create_task(_worker_affinity_loop())
-    # The mimic proxy is always mounted now (cluster-routed), so its queue worker
-    # always runs regardless of LOCAL_OLLAMA_INSTANCE.
-    asyncio.create_task(_proxy_queue_worker())
+    # Per-node proxy queue workers start lazily on each node's first queued
+    # request (see _proxy_queue) — no global worker to start here.
     log.info("vera_cluster ready — local_ollama=%s  mimic=mounted (routing=%s)",
              LOCAL_OLLAMA_ID or "none",
              "gpu-preferred" if _PROXY_PREFER_GPU else "load-aware")

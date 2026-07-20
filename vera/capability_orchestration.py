@@ -23,16 +23,28 @@ Endpoints:
   Postgres: postgresql://postgres:password@<BACKEND_HOST>:5432/llm
 """
 
-import asyncio, contextvars, functools, inspect, json, logging, os, sys, time, uuid
+import asyncio, contextvars, copy, functools, hashlib, inspect, json, logging, os, sys, time, uuid
+import logging.handlers  # noqa: E402  (submodule; `import logging` alone won't load it)
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Union
 
 import httpx
 import uvicorn
+
+# One SSL context shared by every ad-hoc AsyncClient below (verify=_SSL_CTX).
+# Without it each client construction loads + parses the whole certifi CA
+# bundle — pure CPU on the event loop, and the health loop builds one client
+# per node per heartbeat, which alone shows up as >1s loop stalls.
+import ssl as _ssl
+try:
+    import certifi as _certifi
+    _SSL_CTX = _ssl.create_default_context(cafile=_certifi.where())
+except Exception:
+    _SSL_CTX = _ssl.create_default_context()
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, Response
 
 from pathlib import Path 
 _HERE = Path(__file__).parent
@@ -68,6 +80,71 @@ log = logging.getLogger("vera.orch")
 # its UI (which Ollama node served the request). Defaults to "" (unscoped).
 OLLAMA_EVENT_SESSION: "contextvars.ContextVar[str]" = contextvars.ContextVar(
     "ollama_event_session", default="")
+
+# ── Background-work marking + interactive priority ───────────────────────────
+# BACKGROUND_LLM is set (to a short label like "dream:<cycle>" / "v8:<pid>" /
+# "fabric:ingest") by autonomous drivers — the dream scheduler, the V8 program
+# orchestrator, fabric post-ingest NLP — for the duration of their run. Every
+# ollama_generate issued inside that context is then treated as BACKGROUND
+# work: while a human has been interactive recently (see note_interactive),
+# background requests are demoted off the GPU pool onto CPU nodes so the GPU
+# stays free for the person actually using the system. contextvars propagate
+# through create_task, so one set() at the driver's entry covers its whole tree.
+BACKGROUND_LLM: "contextvars.ContextVar[str]" = contextvars.ContextVar(
+    "vera_background_llm", default="")
+
+# The capability currently being served over HTTP (set by the REST handler
+# factories). Lets a cap distinguish a DIRECT human/UI HTTP invocation of
+# itself from an internal (agentic / pipeline) call — used e.g. by the fabric
+# LLM-NLP gate, where only the human UI toggle may enable LLM extraction.
+CURRENT_HTTP_CAP: "contextvars.ContextVar[str]" = contextvars.ContextVar(
+    "vera_current_http_cap", default="")
+
+# Last time a human was interactive (chat generation, or an explicit UI ping).
+LAST_INTERACTIVE_TS: float = 0.0
+
+# Runtime config, hydrated from Redis (KEY_OLLAMA_INTERACTIVE) on startup and
+# editable via ollama.interactive.set / the routing panel.
+#   enabled              — demote background LLM work off GPUs while human active
+#   window_s             — how long after the last interaction the human counts as active
+#   defer_background     — additionally SKIP STARTING new background runs
+#                          (dream scheduler fires, v8 program ticks) in that window
+#   background_always_cpu— ALWAYS keep background LLM work (dream/v8/fabric NLP)
+#                          off the GPU, whether or not a human is active. The
+#                          deterministic control: the GPU is reserved for
+#                          foreground/chat work, full stop.
+INTERACTIVE_PRIORITY: Dict[str, Any] = {
+    "enabled": True, "window_s": 180, "defer_background": True,
+    "background_always_cpu": False,
+}
+KEY_OLLAMA_INTERACTIVE = "vera:ollama:interactive_priority"
+
+# Job types that mark the human as interactive when NOT inside a background ctx.
+_INTERACTIVE_JOB_TYPES = {"chat", "vision", "code"}
+
+
+def note_interactive(source: str = "") -> None:
+    """Stamp 'a human is actively using the system now'. Called from the chat
+    generation path automatically and from POST /activity/ping by UIs."""
+    global LAST_INTERACTIVE_TS
+    LAST_INTERACTIVE_TS = time.time()
+
+
+def interactive_recent(window_s: Optional[float] = None) -> bool:
+    """True when a human interacted within the configured window."""
+    w = float(window_s if window_s is not None
+              else INTERACTIVE_PRIORITY.get("window_s", 180) or 180)
+    return (time.time() - LAST_INTERACTIVE_TS) < w
+
+
+def defer_background_now() -> bool:
+    """True when autonomous drivers should HOLD OFF starting new background
+    runs because a human is active (interactive-priority defer switch)."""
+    return bool(INTERACTIVE_PRIORITY.get("enabled", True)
+                and INTERACTIVE_PRIORITY.get("defer_background", True)
+                and interactive_recent())
+
+
 if not HAS_NEO:
     log.warning("neo4j driver NOT installed (%s) — Neo4j backend will stay down. "
                 "Fix: pip install 'neo4j>=5.19,<6.0'", _NEO_IMPORT_ERR)
@@ -82,6 +159,34 @@ OLLAMA_MODEL       = cfg.OLLAMA_MODEL
 OLLAMA_EMBED_URL   = cfg.OLLAMA_EMBED_URL
 OLLAMA_EMBED_MODEL = cfg.OLLAMA_EMBED_MODEL
 EMBED_PROVIDER     = getattr(cfg, "EMBED_PROVIDER", "ollama")
+# Generation HTTP timeout (seconds) and model keep-alive. The old hardcoded 120s
+# ceiling silently failed slow planner-scale generations (a cold 9b doing
+# structured JSON over a large catalog routinely exceeds 120s → ReadTimeout →
+# empty output → "Planning failed"). Make it configurable and default generously.
+# 300s proved too tight in practice: big-context jobs queued behind a node's
+# semaphore on slow CPU nodes routinely blew through it, mass-failing calls
+# ("stale_timeout" storms in the Jobs panel). Default 900s; override via env.
+# keep_alive keeps the model resident so the next call skips cold-load latency.
+OLLAMA_GEN_TIMEOUT = float(os.environ.get("OLLAMA_GEN_TIMEOUT", "900"))
+# Embedding HTTP timeout. Embeds are quick to COMPUTE but Ollama serialises
+# requests per node, so an embed sent while a big generation runs waits
+# server-side inside this budget — the old 30s default failed embeds that were
+# merely queued behind a large job. Waiting is not failure: default generously.
+OLLAMA_EMBED_TIMEOUT = float(os.environ.get("OLLAMA_EMBED_TIMEOUT", "300"))
+# Embed de-duplication (shared by EVERY caller of ollama_embed — fabric _embed,
+# memory embed_text, etc). The same query text was being embedded 2×+ by
+# concurrent callers and retries; each duplicate is a full /api/embed on the
+# serialised embed node, jamming it. _EMBED_INFLIGHT collapses concurrent
+# identical embeds onto one request; _EMBED_RESULT_CACHE reuses a recent vector.
+# Keyed by (model, normalize, provider, text) since those change the vector.
+_EMBED_INFLIGHT: Dict[str, "asyncio.Future"] = {}
+_EMBED_RESULT_CACHE: "Dict[str, tuple]" = {}   # key → (vec, monotonic_ts)
+_EMBED_CACHE_MAX = int(os.environ.get("OLLAMA_EMBED_CACHE_MAX", "512") or 512)
+_EMBED_CACHE_TTL = float(os.environ.get("OLLAMA_EMBED_CACHE_TTL", "120") or 120)
+# Moderate keep-alive: keeps a model warm across a loop's sequential generations
+# (and short bursts of iterative use) without holding VRAM as long as a big value
+# would on a shared GPU. Fully overridable via env.
+OLLAMA_KEEP_ALIVE  = os.environ.get("OLLAMA_KEEP_ALIVE", "10m")
 
 TASK_STREAM   = "vera:tasks"
 RESULT_STREAM = "vera:results"
@@ -121,6 +226,9 @@ def register_ui(panel_id: str, label: str, icon: str, html: str, js: str = "",
       "inject"  — panel HTML is injected into the Media sub-switcher (default)
       "tab"     — panel gets its own top-level tab in the harness, auto-created on load
       "mount"   — panel is injected into a pre-declared mount point (skills, ontologies, etc.)
+      "element" — registered + listed (dashboard widget loader, custom top-level
+                  tabs) but NOT auto-rendered anywhere; for panels that live
+                  inside another panel's sub-tabs (e.g. memory graph in Fabric)
 
     tab_order: integer sort key for auto-tabs (lower = further left); default 100.
     ui_caps: list of capability names this panel uses.
@@ -160,16 +268,32 @@ OLLAMA_INSTANCES: Dict[str, dict] = {
 # active profile's rule for a job type overrides the built-in DEFAULT below.
 OLLAMA_JOB_TYPES: List[str] = [
     "embedding", "naming", "summarize", "chat", "dream", "vision", "code", "default",
+    # Named research roles (PoC for cap-declared routing styles): the research
+    # subsystem runs three distinct LLM workloads with different needs —
+    #   planner: strategic, big-context, benefits from GPU;
+    #   reader:  bulk page digestion/summarising, fine on CPU nodes;
+    #   writer:  long-form report generation, GPU + big context.
+    "research_planner", "research_reader", "research_writer",
+    # The dream DIRECTOR (ambient thought orchestrator) runs continuously on
+    # CPU nodes — it must never contend with user-facing GPU work.
+    "dream_director",
+    # Media services served by the GPU inference server(s) (edge/GPU_inference.py):
+    # routed across MEDIA_INSTANCES by resolve_media(), not pick_instance().
+    "stt", "tts", "imagegen",
 ]
 
 def _rule(job_type: str, *, prefer_gpu: bool = False, deny_gpu: bool = False,
           pin: str = "", allow: Optional[List[str]] = None,
-          deny: Optional[List[str]] = None, model: str = "") -> dict:
+          deny: Optional[List[str]] = None, model: str = "",
+          avoid_embed: bool = False) -> dict:
     # `model` (optional) pins a specific model for this job type — lets light
     # work (naming, summarisation) run a smaller/faster model than chat/code.
+    # `avoid_embed` steers this job type OFF whichever node currently serves
+    # embeddings (resolved dynamically at pick time — the embed node can be
+    # re-pinned at runtime), so long generations don't starve the embed path.
     return {"job_type": job_type, "prefer_gpu": prefer_gpu, "deny_gpu": deny_gpu,
             "pin": pin, "allow": list(allow or []), "deny": list(deny or []),
-            "model": model or ""}
+            "model": model or "", "avoid_embed": bool(avoid_embed)}
 
 # Built-in default routing — always shown in the UI as the baseline. Embeddings
 # are CPU-only (light, should never tie up a GPU); generative work prefers GPU.
@@ -178,13 +302,36 @@ def _rule(job_type: str, *, prefer_gpu: bool = False, deny_gpu: bool = False,
 # the Workers & Ollama tab's routing editor.
 DEFAULT_ROUTING_RULES: Dict[str, dict] = {
     "embedding": _rule("embedding", deny_gpu=True),
-    "naming":    _rule("naming",    deny_gpu=True),
-    "summarize": _rule("summarize", deny_gpu=True),
+    # naming + summarize are light utility LLM ops that run INLINE in latency-
+    # sensitive paths (chat title generation; history compaction before a reply).
+    # Keep them off the embedding node (avoid_embed) so they land on an idle CPU
+    # node instead of queueing behind embedding traffic — a summarize stuck
+    # behind embeds on the same node stalled every message in a long chat.
+    "naming":    _rule("naming",    deny_gpu=True, avoid_embed=True),
+    "summarize": _rule("summarize", deny_gpu=True, avoid_embed=True),
     "chat":      _rule("chat",      prefer_gpu=True),
     "dream":     _rule("dream",     prefer_gpu=True),
     "vision":    _rule("vision",    prefer_gpu=True),
     "code":      _rule("code",      prefer_gpu=True),
-    "default":   _rule("default"),
+    # Baseline for untyped work: least-busy with GPU preference (GPU-first).
+    # pick_instance always load-balances; any explicit rule/profile that says
+    # otherwise (deny_gpu, pin, allow/deny) overrides this default.
+    "default":   _rule("default",   prefer_gpu=True),
+    # Research role defaults (see OLLAMA_JOB_TYPES note).
+    "research_planner": _rule("research_planner", prefer_gpu=True),
+    "research_reader":  _rule("research_reader",  deny_gpu=True),
+    "research_writer":  _rule("research_writer",  prefer_gpu=True),
+    # Ambient thought orchestrator — CPU only, so it can run during user
+    # activity without touching the GPU pool. avoid_embed keeps its long
+    # generations off the embedding node: a multi-minute director thought
+    # holding that node's single generation slot starved every embed call
+    # (and vice versa — director thoughts queued behind embedding bursts).
+    "dream_director":   _rule("dream_director",   deny_gpu=True, avoid_embed=True),
+    # Media services — GPU-first across the media nodes that actually have the
+    # service installed (resolve_media checks each node's /health service list).
+    "stt":      _rule("stt",      prefer_gpu=True),
+    "tts":      _rule("tts",      prefer_gpu=True),
+    "imagegen": _rule("imagegen", prefer_gpu=True),
 }
 
 # In-memory routing state (hydrated from Redis on startup, see
@@ -242,6 +389,306 @@ def _infer_job_type(caller: Optional[dict], model: Optional[str]) -> str:
         if sub in hay:
             return jt
     return "default"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PER-CAPABILITY / GROUP ROUTING — routing rules keyed by cap name or glob
+# ─────────────────────────────────────────────────────────────────────────────
+# The job-type profiles above route by KIND of work; these rules route by WHO is
+# asking — a specific capability ("fabric.summarize") or a whole group
+# ("research.*"). Two layers:
+#   • USER rules      — configured in the routing UI, persisted, always win.
+#   • DECLARED rules  — registered in code by subsystems that know what routing
+#     style suits their operations (register_cap_routing). Shown in the UI as
+#     the baseline; a USER rule for the same pattern overrides it.
+# A rule may force a job_type, apply node filters (pin/allow/deny/prefer_gpu/
+# deny_gpu), pin a model, and ESCALATE on prompt length: when the prompt exceeds
+# `escalate_chars`, the overrides in `escalate` are merged in (e.g. big prompts
+# jump to the GPU node / a larger-context model).
+KEY_OLLAMA_CAP_ROUTING = "vera:ollama:cap_routing"   # JSON: {pattern: rule}
+KEY_OLLAMA_ROUTE_STATS = "vera:ollama:route_stats"   # JSON: {stat_key: stats}
+
+CAP_ROUTING_USER: Dict[str, dict] = {}
+CAP_ROUTING_DECLARED: Dict[str, dict] = {}
+
+
+def _cap_rule(pattern: str, *, job_type: str = "", label: str = "",
+              declared_by: str = "", prefer_gpu: bool = False,
+              deny_gpu: bool = False, pin: str = "", allow: Optional[List[str]] = None,
+              deny: Optional[List[str]] = None, model: str = "",
+              escalate_chars: int = 0, escalate: Optional[dict] = None) -> dict:
+    return {"pattern": pattern, "job_type": job_type or "", "label": label or pattern,
+            "declared_by": declared_by or "", "prefer_gpu": bool(prefer_gpu),
+            "deny_gpu": bool(deny_gpu), "pin": pin or "", "allow": list(allow or []),
+            "deny": list(deny or []), "model": model or "",
+            "escalate_chars": int(escalate_chars or 0),
+            "escalate": dict(escalate or {})}
+
+
+def register_cap_routing(pattern: str, **kw) -> dict:
+    """Subsystems DECLARE the routing style that best suits a capability or
+    group (e.g. the researcher registering its planner/reader/writer roles).
+    Declared rules are live immediately, visible in the routing UI, and can be
+    overridden there (a USER rule with the same pattern wins)."""
+    rule = _cap_rule(pattern, **kw)
+    CAP_ROUTING_DECLARED[pattern] = rule
+    return rule
+
+
+def _resolve_cap_routing(cap_name: str) -> Optional[dict]:
+    """Longest-pattern match for a caller cap: USER rules first, then DECLARED."""
+    if not cap_name:
+        return None
+    best: Optional[dict] = None
+    best_len = -1
+    for layer in (CAP_ROUTING_USER, CAP_ROUTING_DECLARED):
+        for pat, rule in layer.items():
+            if _match_glob(cap_name, pat) and len(pat) > best_len:
+                best, best_len = rule, len(pat)
+        if best is not None:
+            return best      # user layer wins outright when any pattern matched
+    return best
+
+
+# ── Declared routing styles — PoC: the researcher's three named roles ────────
+# The research subsystem's LLM traffic falls into three distinct workloads, so
+# it declares a routing style per role. These are live defaults, visible and
+# overridable in the routing UI (a USER rule on the same pattern wins).
+register_cap_routing("research.plan*", job_type="research_planner",
+                     label="Researcher · planner", declared_by="research",
+                     prefer_gpu=True)
+register_cap_routing("research.write*", job_type="research_writer",
+                     label="Researcher · writer", declared_by="research",
+                     prefer_gpu=True)
+register_cap_routing("research.report*", job_type="research_writer",
+                     label="Researcher · report writer", declared_by="research",
+                     prefer_gpu=True)
+# Bulk reading stays on CPU nodes, but big digests escalate to GPU.
+register_cap_routing("research.*", job_type="research_reader",
+                     label="Researcher · reader", declared_by="research",
+                     deny_gpu=True, escalate_chars=12000,
+                     escalate={"deny_gpu": False, "prefer_gpu": True})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ROLE-BASED ROUTING PROFILES — named roles (thinker / writer / verifier / …)
+# ─────────────────────────────────────────────────────────────────────────────
+# Subsystems that run several distinct LLM personas (the researcher and the IDE
+# both use a thinker/writer/verifier trio) REGISTER a routing profile mapping
+# each role to a routing rule (job_type, prefer_gpu/deny_gpu, pin, allow/deny,
+# model, length escalation). Callers then RESOLVE a role instead of picking an
+# Ollama node themselves, so all their traffic flows through the cluster
+# router. Two layers, same precedence model as per-cap rules:
+#   • DECLARED — registered in code (register_routing_profile), live defaults.
+#   • USER     — edited in the Model Routing page, persisted, wins per role.
+KEY_OLLAMA_ROLE_PROFILES = "vera:ollama:role_profiles"   # JSON: {profile: {label, owner, roles}}
+
+ROLE_PROFILES_DECLARED: Dict[str, dict] = {}
+ROLE_PROFILES_USER: Dict[str, dict] = {}
+
+
+def _role_rule(profile: str, role: str, r: Optional[dict] = None) -> dict:
+    """Normalise a role's routing rule (same shape as a per-cap rule; the
+    pattern slot carries 'profile/role' so shared merge/logging code works)."""
+    r = r or {}
+    rule = _cap_rule(f"{profile}/{role}",
+                     job_type=r.get("job_type", "") or "",
+                     label=r.get("label") or f"{profile} · {role}",
+                     declared_by=r.get("declared_by", profile),
+                     prefer_gpu=bool(r.get("prefer_gpu")),
+                     deny_gpu=bool(r.get("deny_gpu")),
+                     pin=r.get("pin", "") or "", allow=r.get("allow") or [],
+                     deny=r.get("deny") or [], model=r.get("model", "") or "",
+                     escalate_chars=int(r.get("escalate_chars") or 0),
+                     escalate=r.get("escalate") or {})
+    rule["role"] = role
+    return rule
+
+
+def register_routing_profile(name: str, *, label: str = "", owner: str = "",
+                             roles: Optional[Dict[str, dict]] = None) -> dict:
+    """Subsystems DECLARE a routing profile: a named set of roles, each with
+    the routing rule that suits it (e.g. research → thinker/writer/verifier).
+    The profile is live immediately, shown in the Model Routing page, and any
+    role can be overridden there (a USER role for the same profile wins)."""
+    prof = {"name": name, "label": label or name, "owner": owner or name,
+            "roles": {r: _role_rule(name, r, spec)
+                      for r, spec in (roles or {}).items()}}
+    ROLE_PROFILES_DECLARED[name] = prof
+    return prof
+
+
+def _effective_role_profiles() -> Dict[str, dict]:
+    """Merged view: declared profiles with USER role overrides applied on top;
+    user-only profiles included as-is."""
+    out: Dict[str, dict] = {}
+    for name, prof in ROLE_PROFILES_DECLARED.items():
+        merged = {"name": name, "label": prof.get("label", name),
+                  "owner": prof.get("owner", ""),
+                  "roles": dict(prof.get("roles", {}))}
+        user = ROLE_PROFILES_USER.get(name) or {}
+        for role, r in (user.get("roles") or {}).items():
+            merged["roles"][role] = r
+        out[name] = merged
+    for name, prof in ROLE_PROFILES_USER.items():
+        if name not in out:
+            out[name] = {"name": name, "label": prof.get("label", name),
+                         "owner": prof.get("owner", "user"),
+                         "roles": dict(prof.get("roles") or {})}
+    return out
+
+
+def resolve_role_rule(profile: str, role: str) -> Optional[dict]:
+    """Effective rule for a profile role: USER override, else DECLARED."""
+    user = (ROLE_PROFILES_USER.get(profile) or {}).get("roles") or {}
+    if role in user:
+        return user[role]
+    return ((ROLE_PROFILES_DECLARED.get(profile) or {}).get("roles") or {}).get(role)
+
+
+def _merge_rule_over_base(rule: Optional[dict], base: dict,
+                          prompt_chars: int = 0) -> dict:
+    """Merge a cap/role rule over its job-type base rule, applying the rule's
+    length-based escalation when prompt_chars crosses the threshold."""
+    eff = dict(base or {})
+    if not rule:
+        return eff
+    for k in ("prefer_gpu", "deny_gpu", "pin", "allow", "deny", "model"):
+        v = rule.get(k)
+        if v:
+            eff[k] = v
+    esc_at = int(rule.get("escalate_chars") or 0)
+    if esc_at > 0 and prompt_chars >= esc_at and rule.get("escalate"):
+        for k, v in (rule.get("escalate") or {}).items():
+            # Booleans apply even when False — an escalation must be able to
+            # LIFT a base deny_gpu (e.g. reader jumps to GPU on big digests).
+            if k in ("prefer_gpu", "deny_gpu"):
+                eff[k] = bool(v)
+            elif k in ("pin", "allow", "deny", "model") and v:
+                eff[k] = v
+    return eff
+
+
+def resolve_role(profile: str, role: str, *, model: str = "",
+                 prompt_chars: int = 0,
+                 explain: Optional[dict] = None) -> Optional[dict]:
+    """Resolve a profile role to a concrete Ollama node through the cluster
+    router — the front door for subsystems that used to pick nodes themselves.
+    Merges the role's rule over its job-type rule (plus length escalation),
+    then runs pick_instance. Returns {instance_id, url, label, model, job_type,
+    rule, reason} or None when no node is routable."""
+    rule = resolve_role_rule(profile, role)
+    jt = (rule or {}).get("job_type") or "default"
+    eff = _merge_rule_over_base(rule, _resolve_rule(jt) or {}, prompt_chars)
+    eff_model = model or eff.get("model") or ""
+    exp = explain if explain is not None else {}
+    chosen = pick_instance(model=eff_model or None, job_type=jt,
+                           rule_override=eff, explain=exp)
+    if not chosen:
+        return None
+    inst = OLLAMA_INSTANCES.get(chosen, {})
+    return {"instance_id": chosen, "url": inst.get("url", ""),
+            "label": inst.get("label", chosen),
+            "has_gpu": bool(inst.get("has_gpu")),
+            "model": eff_model or "", "job_type": jt, "profile": profile,
+            "role": role, "rule": eff, "reason": exp.get("reason") or []}
+
+
+async def _save_role_profiles() -> None:
+    if not REDIS:
+        return
+    try:
+        await REDIS.set(KEY_OLLAMA_ROLE_PROFILES, json.dumps(ROLE_PROFILES_USER))
+    except Exception as e:
+        log.warning("save role profiles: %s", e)
+
+
+# ── Routing/request statistics — layout, models, tokens and time per request ──
+# EMA per (model | instance | job_type): request count, elapsed, output tokens,
+# tokens/sec and prompt size. Used to (a) show real throughput in the routing
+# UI, (b) estimate how long a request will take on a node, which feeds the
+# instance picker's tie-break. Persisted to Redis (debounced).
+_ROUTE_STATS: Dict[str, dict] = {}
+_ROUTE_STATS_DIRTY = {"n": 0}
+_ROUTE_STATS_EMA = 0.3
+
+
+def _route_stats_key(model: str, iid: str, job_type: str) -> str:
+    return f"{model or '?'}|{iid or '?'}|{job_type or 'default'}"
+
+
+def _route_stats_update(model: str, iid: str, job_type: str,
+                        elapsed_s: float, tokens: int, prompt_chars: int) -> None:
+    key = _route_stats_key(model, iid, job_type)
+    s = _ROUTE_STATS.get(key)
+    tps = (tokens / elapsed_s) if (elapsed_s and elapsed_s > 0 and tokens) else 0.0
+    if not s:
+        s = {"model": model, "instance": iid, "job_type": job_type, "n": 0,
+             "ema_elapsed_s": elapsed_s, "ema_tokens": float(tokens or 0),
+             "ema_tps": tps, "ema_prompt_chars": float(prompt_chars or 0)}
+        _ROUTE_STATS[key] = s
+    a = _ROUTE_STATS_EMA
+    s["n"] += 1
+    s["ema_elapsed_s"] = round((1 - a) * s["ema_elapsed_s"] + a * elapsed_s, 3)
+    s["ema_tokens"] = round((1 - a) * s["ema_tokens"] + a * float(tokens or 0), 1)
+    if tps > 0:
+        s["ema_tps"] = round((1 - a) * (s["ema_tps"] or tps) + a * tps, 2)
+    if prompt_chars:
+        s["ema_prompt_chars"] = round((1 - a) * (s["ema_prompt_chars"] or prompt_chars)
+                                      + a * float(prompt_chars), 0)
+    s["last_ts"] = now_iso()
+    _ROUTE_STATS_DIRTY["n"] += 1
+    if _ROUTE_STATS_DIRTY["n"] >= 10:
+        _ROUTE_STATS_DIRTY["n"] = 0
+        try:
+            asyncio.get_running_loop().create_task(_save_route_stats())
+        except Exception:
+            pass
+
+
+def _route_tps(model: str, iid: str) -> float:
+    """Best observed tokens/sec for a model on a node, across job types."""
+    best = 0.0
+    prefix = f"{model or '?'}|{iid or '?'}|"
+    for k, s in _ROUTE_STATS.items():
+        if k.startswith(prefix):
+            best = max(best, float(s.get("ema_tps") or 0.0))
+    return best
+
+
+def estimate_request_seconds(model: str, iid: str, job_type: str,
+                             prompt_chars: int) -> Optional[float]:
+    """Predicted wall time for a request from the rolling stats — scaled by how
+    the prompt compares to the typical prompt seen for this (model, node, job)."""
+    s = _ROUTE_STATS.get(_route_stats_key(model, iid, job_type))
+    if not s or not s.get("n"):
+        return None
+    base = float(s.get("ema_elapsed_s") or 0.0)
+    if base <= 0:
+        return None
+    typical = float(s.get("ema_prompt_chars") or 0.0)
+    if typical > 0 and prompt_chars > 0:
+        scale = max(0.5, min(3.0, prompt_chars / typical))
+        return round(base * scale, 2)
+    return round(base, 2)
+
+
+async def _save_route_stats() -> None:
+    if not REDIS:
+        return
+    try:
+        await REDIS.set(KEY_OLLAMA_ROUTE_STATS, json.dumps(_ROUTE_STATS))
+    except Exception as e:
+        log.debug("save route stats: %s", e)
+
+
+async def _save_cap_routing() -> None:
+    if not REDIS:
+        return
+    try:
+        await REDIS.set(KEY_OLLAMA_CAP_ROUTING, json.dumps(CAP_ROUTING_USER))
+    except Exception as e:
+        log.warning("save cap routing: %s", e)
 
 
 async def _save_routing() -> None:
@@ -323,8 +770,85 @@ async def _load_ollama_persistence() -> None:
             _EMBED_INSTANCE_ID = ec.get("pinned_instance") or None
     except Exception as e:
         log.warning("load embed config: %s", e)
-    log.info("ollama persistence: hydrated (profile=%s, %d nodes)",
-             ROUTING.get("active_profile"), len(OLLAMA_INSTANCES))
+    try:
+        raw = await REDIS.get(KEY_OLLAMA_CAP_ROUTING)
+        if raw:
+            doc = json.loads(raw)
+            if isinstance(doc, dict):
+                CAP_ROUTING_USER.clear()
+                for pat, r in doc.items():
+                    if isinstance(r, dict):
+                        CAP_ROUTING_USER[pat] = _cap_rule(pat, **{
+                            k: r.get(k) for k in ("job_type", "label", "prefer_gpu",
+                                                  "deny_gpu", "pin", "allow", "deny",
+                                                  "model", "escalate_chars", "escalate")
+                            if r.get(k) is not None})
+    except Exception as e:
+        log.warning("load cap routing: %s", e)
+    try:
+        raw = await REDIS.get(KEY_OLLAMA_ROLE_PROFILES)
+        if raw:
+            doc = json.loads(raw)
+            if isinstance(doc, dict):
+                ROLE_PROFILES_USER.clear()
+                for name, prof in doc.items():
+                    if not isinstance(prof, dict):
+                        continue
+                    ROLE_PROFILES_USER[name] = {
+                        "label": prof.get("label", name),
+                        "owner": prof.get("owner", "user"),
+                        "roles": {r: _role_rule(name, r, v)
+                                  for r, v in (prof.get("roles") or {}).items()
+                                  if isinstance(v, dict)},
+                    }
+    except Exception as e:
+        log.warning("load role profiles: %s", e)
+    try:
+        raw = await REDIS.get(KEY_MEDIA_NODES)
+        if raw:
+            nodes = json.loads(raw)
+            for iid, cfg_ in (nodes or {}).items():
+                if not isinstance(cfg_, dict):
+                    continue
+                if iid in MEDIA_INSTANCES:
+                    MEDIA_INSTANCES[iid].update({
+                        "enabled": cfg_.get("enabled", True),
+                        "priority": cfg_.get("priority", MEDIA_INSTANCES[iid].get("priority", 0)),
+                        "label": cfg_.get("label", MEDIA_INSTANCES[iid].get("label", iid)),
+                    })
+                elif cfg_.get("url"):
+                    # Restore a user-added media node that isn't in the seeds.
+                    add_media_instance(iid, cfg_["url"],
+                                       label=cfg_.get("label", iid),
+                                       has_gpu=cfg_.get("has_gpu", False),
+                                       enabled=cfg_.get("enabled", True),
+                                       priority=cfg_.get("priority", 0))
+    except Exception as e:
+        log.warning("load media nodes: %s", e)
+    try:
+        raw = await REDIS.get(KEY_OLLAMA_ROUTE_STATS)
+        if raw:
+            doc = json.loads(raw)
+            if isinstance(doc, dict):
+                _ROUTE_STATS.update({k: v for k, v in doc.items() if isinstance(v, dict)})
+    except Exception as e:
+        log.debug("load route stats: %s", e)
+    try:
+        raw = await REDIS.get(KEY_OLLAMA_INTERACTIVE)
+        if raw:
+            doc = json.loads(raw)
+            if isinstance(doc, dict):
+                INTERACTIVE_PRIORITY.update({
+                    "enabled": bool(doc.get("enabled", True)),
+                    "window_s": max(10, int(doc.get("window_s", 180) or 180)),
+                    "defer_background": bool(doc.get("defer_background", True)),
+                    "background_always_cpu": bool(doc.get("background_always_cpu", False)),
+                })
+    except Exception as e:
+        log.debug("load interactive priority: %s", e)
+    log.info("ollama persistence: hydrated (profile=%s, %d nodes, %d cap rules, %d stat keys)",
+             ROUTING.get("active_profile"), len(OLLAMA_INSTANCES),
+             len(CAP_ROUTING_USER), len(_ROUTE_STATS))
 
 # Per-instance concurrency semaphores for Ollama — limits simultaneous
 # in-flight requests per node to 1 (Ollama queues internally but multiple
@@ -341,6 +865,66 @@ def _ollama_sem(iid: str) -> asyncio.Semaphore:
     return _OLLAMA_SEMAPHORES[iid]
 
 
+# Optional bound on how long a request may WAIT for a free generation slot on
+# its routed node. Default 0 = wait as long as it takes: queueing behind a
+# large job (or many jobs) is legitimate progress, not a failure — timeouts are
+# reserved for a request that is actually running and producing nothing. While
+# queued, _ollama_liveness_heartbeat keeps the job's records fresh so the panel
+# stale-check and the stuck-running sweeper know it is alive.
+OLLAMA_QUEUE_TIMEOUT = float(os.environ.get("OLLAMA_QUEUE_TIMEOUT", "0") or 0)
+
+
+async def _ollama_liveness_heartbeat(req_id: str, iid: str, mdl: str,
+                                     caller: dict, prompt_preview: str,
+                                     stop_evt: "asyncio.Event",
+                                     interval: float = 120.0) -> None:
+    """Re-emit a lightweight ollama.request while a request waits for its
+    node's generation slot. Each emission refreshes updated_ts in the job
+    store, the K_OLLAMA log entry and the panel's tracker — so a request that
+    is legitimately QUEUED never trips the stale detector or the stuck-running
+    sweeper. Stops the moment the slot is acquired (stop_evt set)."""
+    waited = 0.0
+    while not stop_evt.is_set():
+        try:
+            await asyncio.wait_for(stop_evt.wait(), timeout=interval)
+            return
+        except asyncio.TimeoutError:
+            waited += interval
+            try:
+                await emit_event({
+                    "type": "ollama.request", "req_id": req_id,
+                    "model": mdl, "instance_id": iid,
+                    "phase": "queued", "queued_s": int(waited),
+                    "caller_file": caller.get("caller_file", ""),
+                    "caller_func": caller.get("caller_func", ""),
+                    "cap_name": caller.get("cap_name", ""),
+                    "prompt_preview": prompt_preview,
+                })
+            except Exception:
+                pass
+
+@asynccontextmanager
+async def _ollama_slot(iid: str, timeout: Optional[float] = None):
+    """`async with _ollama_sem(iid)` with a bounded acquisition wait. Raises a
+    plain Exception on queue timeout so ollama_generate's normal error path
+    (request_error event + node fallback) handles it like any other failure."""
+    wait = OLLAMA_QUEUE_TIMEOUT if timeout is None else timeout
+    sem = _ollama_sem(iid)
+    if wait and wait > 0:
+        try:
+            await asyncio.wait_for(sem.acquire(), timeout=wait)
+        except asyncio.TimeoutError:
+            raise Exception(
+                f"queue timeout on {iid}: no free generation slot after "
+                f"{int(wait)}s (node busy with earlier requests)")
+    else:
+        await sem.acquire()
+    try:
+        yield
+    finally:
+        sem.release()
+
+
 def add_ollama_instance(iid: str, url: str, has_gpu: bool = False, label: str = ""):
     OLLAMA_INSTANCES[iid] = {"url":url,"label":label or iid,"has_gpu":has_gpu,"enabled":True,
                               "priority":len(OLLAMA_INSTANCES),"status":"unknown",
@@ -349,7 +933,7 @@ def add_ollama_instance(iid: str, url: str, has_gpu: bool = False, label: str = 
 async def _ping_instance(iid: str, inst: dict):
     t0 = time.monotonic()
     try:
-        async with httpx.AsyncClient(timeout=5) as c:
+        async with httpx.AsyncClient(verify=_SSL_CTX, timeout=5) as c:
             r = await c.get(f"{inst['url']}/api/tags"); r.raise_for_status()
             ms     = round((time.monotonic()-t0)*1000)
             models = [m["name"] for m in r.json().get("models",[])]
@@ -362,40 +946,303 @@ async def instance_health_loop(interval: float = 20.0):
     while True:
         await asyncio.gather(*[_ping_instance(iid,inst) for iid,inst in OLLAMA_INSTANCES.items()],return_exceptions=True)
         await emit_event({"type":"ollama.health","instances":{iid:{"status":i["status"],"latency_ms":i["latency_ms"]} for iid,i in OLLAMA_INSTANCES.items()}})
+        # Media nodes (GPU inference servers) ride the same heartbeat.
+        try:
+            await asyncio.gather(*[_ping_media_instance(iid, inst)
+                                   for iid, inst in MEDIA_INSTANCES.items()],
+                                 return_exceptions=True)
+        except Exception:
+            pass
         await asyncio.sleep(interval)
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MEDIA NODES — STT / TTS / image-gen servers, routed like LLM nodes
+# ─────────────────────────────────────────────────────────────────────────────
+# The GPU inference server (edge/GPU_inference.py) serves Whisper STT, TTS and
+# Stable Diffusion on port 8765. Historically every caller hit cfg.GPU_INFER_URL
+# directly; now the servers are ROUTABLE NODES: each is health-probed for which
+# services it actually has installed, and resolve_media() picks a node per
+# service through the same rule machinery (job types stt / tts / imagegen —
+# GPU-first by default, pin/allow/deny/deny_gpu editable in the Model Routing
+# page). Candidate nodes are seeded on every Ollama host, so installing the
+# server on a CPU node makes it routable automatically on the next heartbeat.
+MEDIA_SERVICES = ("stt", "tts", "imagegen")
+# /health payload key → service name
+_MEDIA_SERVICE_KEYS = {"whisper": "stt", "tts": "tts", "stable_diffusion": "imagegen"}
+MEDIA_INSTANCES: Dict[str, dict] = {}
+KEY_MEDIA_NODES = "vera:media:nodes"
+_MEDIA_FALLBACK_URL = os.environ.get("GPU_INFER_URL", "http://192.168.0.250:8765")
+
+
+def add_media_instance(iid: str, url: str, label: str = "", has_gpu: bool = False,
+                       enabled: bool = True, priority: int = 0,
+                       seeded: bool = False) -> dict:
+    MEDIA_INSTANCES[iid] = {
+        "url": url.rstrip("/"), "label": label or iid, "has_gpu": has_gpu,
+        "enabled": enabled, "priority": priority, "status": "unknown",
+        "services": [], "detail": {}, "in_use": 0, "errors": 0,
+        "last_check": None, "seeded": seeded,
+    }
+    return MEDIA_INSTANCES[iid]
+
+
+def _seed_media_instances() -> None:
+    """Primary node from GPU_INFER_URL + a candidate on every other Ollama
+    host (same port) — candidates stay 'offline' until the inference server is
+    actually installed there, at which point the heartbeat lights them up."""
+    from urllib.parse import urlparse
+    global _MEDIA_FALLBACK_URL
+    try:
+        from Vera.vera.config import cfg as _cfg
+        _MEDIA_FALLBACK_URL = getattr(_cfg, "GPU_INFER_URL", _MEDIA_FALLBACK_URL)
+    except Exception:
+        pass
+    pu = urlparse(_MEDIA_FALLBACK_URL)
+    port = pu.port or 8765
+    seen = {pu.hostname}
+    add_media_instance("media-gpu", _MEDIA_FALLBACK_URL, label="Media · GPU server",
+                       has_gpu=True, priority=0, seeded=True)
+    for iid, inst in OLLAMA_INSTANCES.items():
+        h = urlparse(inst.get("url", "")).hostname
+        if not h or h in seen:
+            continue
+        seen.add(h)
+        add_media_instance(f"media-{iid}", f"http://{h}:{port}",
+                           label=f"Media · {inst.get('label', iid)}",
+                           has_gpu=inst.get("has_gpu", False),
+                           priority=1 + int(inst.get("priority", 0)), seeded=True)
+
+
+_seed_media_instances()
+
+
+async def _ping_media_instance(iid: str, inst: dict) -> None:
+    """GET /health on a media node; record which services it serves."""
+    try:
+        async with httpx.AsyncClient(verify=_SSL_CTX, timeout=4) as c:
+            r = await c.get(f"{inst['url']}/health")
+            r.raise_for_status()
+            d = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+        inst.update(
+            status="online", errors=0, last_check=now_iso(),
+            services=[svc for key, svc in _MEDIA_SERVICE_KEYS.items() if d.get(key)],
+            detail={k: d.get(k) for k in ("tts_engine", "gpu", "cuda", "device",
+                                          "sample_rate") if k in d},
+        )
+    except Exception as e:
+        inst.update(status="offline", last_check=now_iso(),
+                    errors=inst.get("errors", 0) + 1)
+        log.debug("media ping [%s] failed: %s", iid, e)
+
+
+async def _save_media_nodes() -> None:
+    if not REDIS:
+        return
+    try:
+        snapshot = {iid: {"url": i.get("url", ""), "label": i.get("label", iid),
+                          "has_gpu": i.get("has_gpu", False),
+                          "enabled": i.get("enabled", True),
+                          "priority": i.get("priority", 0),
+                          "seeded": i.get("seeded", False)}
+                    for iid, i in MEDIA_INSTANCES.items()}
+        await REDIS.set(KEY_MEDIA_NODES, json.dumps(snapshot))
+    except Exception as e:
+        log.warning("save media nodes: %s", e)
+
+
+def resolve_media(service: str = "", explain: Optional[dict] = None) -> Optional[dict]:
+    """Pick the media node for a service (stt / tts / imagegen) through the
+    routing rules — the media analogue of pick_instance. Only online+enabled
+    nodes that report the service are candidates (any online node when the
+    service is unknown/blank). The service's job-type rule applies: pin wins,
+    deny_gpu/allow/deny filter, prefer_gpu (default) selects GPU nodes first,
+    then least busy → priority. Returns {instance_id, url, label, has_gpu,
+    services, reason} or None."""
+    trail: List[str] = []
+    cands = {iid: i for iid, i in MEDIA_INSTANCES.items()
+             if i.get("status") == "online" and i.get("enabled", True)}
+    if not cands:
+        trail.append("no online media nodes")
+        if explain is not None:
+            explain["reason"] = trail
+        return None
+    if service:
+        with_svc = {iid: i for iid, i in cands.items()
+                    if service in (i.get("services") or [])}
+        if with_svc:
+            cands = with_svc
+            trail.append(f"nodes serving '{service}': {list(with_svc)}")
+        else:
+            trail.append(f"no node reports '{service}' — trying any online node")
+    rule = _resolve_rule(service) if service in MEDIA_SERVICES else {}
+    if rule:
+        pin = rule.get("pin") or ""
+        if pin and pin in cands:
+            trail.append(f"rule pin → {pin}")
+            cands = {pin: cands[pin]}
+        else:
+            if rule.get("deny_gpu"):
+                nong = {iid: i for iid, i in cands.items() if not i.get("has_gpu")}
+                if nong:
+                    cands = nong; trail.append("deny_gpu: GPU nodes excluded")
+            allow = rule.get("allow") or []
+            if allow:
+                filt = {iid: i for iid, i in cands.items()
+                        if any(_match_glob(iid, p) for p in allow)}
+                if filt:
+                    cands = filt; trail.append(f"allow filter {allow}")
+            deny = rule.get("deny") or []
+            if deny:
+                filt = {iid: i for iid, i in cands.items()
+                        if not any(_match_glob(iid, p) for p in deny)}
+                if filt:
+                    cands = filt; trail.append(f"deny filter {deny}")
+    prefer_gpu = rule.get("prefer_gpu", True) if rule else True
+    if prefer_gpu and not (rule or {}).get("deny_gpu"):
+        gpu = {iid: i for iid, i in cands.items() if i.get("has_gpu")}
+        if gpu:
+            cands = gpu; trail.append("prefer_gpu: GPU media nodes")
+    chosen = min(cands, key=lambda k: (cands[k].get("in_use", 0),
+                                       cands[k].get("priority", 0)))
+    trail.append(f"picked '{chosen}' (in_use={cands[chosen].get('in_use', 0)}, "
+                 f"prio={cands[chosen].get('priority', 0)})")
+    if explain is not None:
+        explain["reason"] = trail
+        explain["chosen"] = chosen
+    i = MEDIA_INSTANCES[chosen]
+    return {"instance_id": chosen, "url": i.get("url", ""),
+            "label": i.get("label", chosen), "has_gpu": bool(i.get("has_gpu")),
+            "services": list(i.get("services") or []), "job_type": service or "media",
+            "reason": trail}
+
+
+def media_base(service: str = "") -> str:
+    """Resolved base URL for a media service; falls back to the configured
+    GPU_INFER_URL when no media node is routable (e.g. before the first
+    heartbeat), so callers always get a target."""
+    res = resolve_media(service)
+    return res["url"] if res and res.get("url") else _MEDIA_FALLBACK_URL
+
+
+from contextlib import asynccontextmanager as _asynccontextmanager
+
+
+@_asynccontextmanager
+async def media_slot(service: str = ""):
+    """Resolve a media node for `service` and hold a routing slot on it for
+    the duration — heavy callers (STT/TTS/image-gen) use this so concurrent
+    media work spreads across nodes by least-busy. Yields the resolved node
+    dict (a fallback stub pointing at GPU_INFER_URL when nothing is routable)."""
+    res = resolve_media(service)
+    if not res:
+        yield {"instance_id": "", "url": _MEDIA_FALLBACK_URL,
+               "label": "fallback", "has_gpu": True, "services": [],
+               "job_type": service or "media", "reason": ["fallback: no routable media node"]}
+        return
+    node = MEDIA_INSTANCES.get(res["instance_id"])
+    if node is not None:
+        node["in_use"] = node.get("in_use", 0) + 1
+    try:
+        yield res
+    finally:
+        if node is not None:
+            node["in_use"] = max(0, node.get("in_use", 1) - 1)
+
+def _embed_node_id() -> str:
+    """The instance id embeddings currently route to, or "" if indeterminate.
+    Resolution: runtime pinned instance (embed config UI) → embedding rule's
+    pin → the node whose URL matches OLLAMA_EMBED_URL."""
+    pinned = globals().get("_EMBED_INSTANCE_ID")
+    if pinned and pinned in OLLAMA_INSTANCES:
+        return pinned
+    try:
+        rule_pin = (_resolve_rule("embedding") or {}).get("pin") or ""
+        if rule_pin and rule_pin in OLLAMA_INSTANCES:
+            return rule_pin
+    except Exception:
+        pass
+    embed_url = (OLLAMA_EMBED_URL or "").rstrip("/")
+    if embed_url:
+        # Exact match first, then a looser host:port match so a trivial format
+        # difference (scheme, trailing slash, host vs IP) doesn't silently
+        # defeat avoid_embed. _hostport strips scheme + path.
+        def _hostport(u: str) -> str:
+            u = (u or "").split("://", 1)[-1]
+            return u.split("/", 1)[0].strip().lower()
+        for iid, inst in OLLAMA_INSTANCES.items():
+            if (inst.get("url") or "").rstrip("/") == embed_url:
+                return iid
+        want = _hostport(embed_url)
+        for iid, inst in OLLAMA_INSTANCES.items():
+            if want and _hostport(inst.get("url") or "") == want:
+                return iid
+    return ""
+
+
 def pick_instance(prefer_gpu: bool = False, instance_id: Optional[str] = None,
-                  model: Optional[str] = None, job_type: Optional[str] = None) -> Optional[str]:
+                  model: Optional[str] = None, job_type: Optional[str] = None,
+                  rule_override: Optional[dict] = None,
+                  explain: Optional[dict] = None) -> Optional[str]:
+    # `explain`, when passed, is filled with the decision trail so callers can
+    # log/emit WHY a node was chosen (rule applied, filters, tie-break).
+    trail: List[str] = []
+    def _note(msg): trail.append(msg)
+    def _out(chosen):
+        if explain is not None:
+            explain["reason"] = trail
+            explain["chosen"] = chosen
+        return chosen
     # Only online AND enabled nodes are routable. Disabling a node (enabled=False)
     # removes it from all routing while leaving it pingable in the panel.
     online = {iid:i for iid,i in OLLAMA_INSTANCES.items()
               if i.get("status")=="online" and i.get("enabled", True)}
-    if not online: return None
+    if not online:
+        _note("no online nodes")
+        return _out(None)
     # An explicit pin always wins (as long as it's online+enabled).
-    if instance_id and instance_id in online: return instance_id
+    if instance_id and instance_id in online:
+        _note(f"caller pinned instance '{instance_id}'")
+        return _out(instance_id)
 
-    # ── Job-type routing rule (active profile override, else built-in default) ──
-    rule = _resolve_rule(job_type) if job_type else None
+    # ── Routing rule: caller-supplied override (per-cap rule), else the active
+    #    profile's job-type rule, else the built-in default. ──────────────────
+    rule = rule_override if rule_override else (_resolve_rule(job_type) if job_type else None)
     if rule:
+        if rule_override:
+            _note(f"cap rule '{rule.get('pattern', '?')}' applied")
+        else:
+            _note(f"job-type rule '{job_type}' applied")
         pin = rule.get("pin") or ""
         if pin and pin in online:
-            return pin
+            _note(f"rule pin → {pin}")
+            return _out(pin)
         if rule.get("deny_gpu"):
-            online = {iid:i for iid,i in online.items() if not i.get("has_gpu")} or online
+            nong = {iid:i for iid,i in online.items() if not i.get("has_gpu")}
+            if nong:
+                online = nong; _note("deny_gpu: GPU nodes excluded")
         allow = rule.get("allow") or []
         if allow:
             filt = {iid:i for iid,i in online.items()
                     if any(_match_glob(iid, p) for p in allow)}
             if filt:
-                online = filt
+                online = filt; _note(f"allow filter {allow} → {list(filt)}")
         deny = rule.get("deny") or []
         if deny:
             filt = {iid:i for iid,i in online.items()
                     if not any(_match_glob(iid, p) for p in deny)}
             if filt:
-                online = filt
+                online = filt; _note(f"deny filter {deny} → {list(filt)}")
+        # avoid_embed: steer off the node embeddings route to — but only when
+        # another candidate remains (sharing beats failing on a 1-node pool).
+        if rule.get("avoid_embed"):
+            emb = _embed_node_id()
+            if emb and emb in online and len(online) > 1:
+                online = {iid:i for iid,i in online.items() if iid != emb}
+                _note(f"avoid_embed: '{emb}' excluded (embedding node)")
         # Rule's prefer_gpu augments the caller's preference.
-        prefer_gpu = prefer_gpu or bool(rule.get("prefer_gpu"))
+        if rule.get("prefer_gpu") and not prefer_gpu:
+            prefer_gpu = True; _note("rule prefers GPU")
 
     def _has_model(inst, mdl):
         """Check if an instance has a model — flexible name matching."""
@@ -408,7 +1255,18 @@ def pick_instance(prefer_gpu: bool = False, instance_id: Optional[str] = None,
         return False
 
     def _pick_best(candidates):
-        return min(candidates, key=lambda k: (candidates[k]["in_use"], candidates[k]["priority"]))
+        # Least busy first, then configured priority, then OBSERVED throughput
+        # for this model (rolling tokens/sec stats) so equally-idle nodes route
+        # to the one that has actually served this model fastest.
+        chosen = min(candidates,
+                     key=lambda k: (candidates[k]["in_use"], candidates[k]["priority"],
+                                    -_route_tps(model or "", k)))
+        others = [k for k in candidates if k != chosen]
+        _note(f"picked '{chosen}' (in_use={candidates[chosen]['in_use']}, "
+              f"prio={candidates[chosen]['priority']}, "
+              f"tps={_route_tps(model or '', chosen) or 'n/a'})"
+              + (f" over {others}" if others else ""))
+        return chosen
 
     # Build model-aware candidate sets
     has_model = {iid:i for iid,i in online.items() if _has_model(i, model)} if model else online
@@ -416,20 +1274,28 @@ def pick_instance(prefer_gpu: bool = False, instance_id: Optional[str] = None,
     if prefer_gpu:
         # Best: GPU node that has the model
         gpu_with_model = {iid:i for iid,i in has_model.items() if i["has_gpu"]}
-        if gpu_with_model: return _pick_best(gpu_with_model)
+        if gpu_with_model:
+            _note("prefer_gpu: GPU node with model")
+            return _out(_pick_best(gpu_with_model))
         # Next: any node that has the model
-        if has_model: return _pick_best(has_model)
+        if has_model:
+            _note("prefer_gpu: no GPU has the model — any node with model")
+            return _out(_pick_best(has_model))
         # Last resort: any GPU node (will likely 404 but may auto-pull)
         gpu_any = {iid:i for iid,i in online.items() if i["has_gpu"]}
-        if gpu_any: return _pick_best(gpu_any)
+        if gpu_any:
+            _note("prefer_gpu: model nowhere — any GPU node")
+            return _out(_pick_best(gpu_any))
 
     # Non-GPU preference: prefer nodes with the model
-    if has_model: return _pick_best(has_model)
+    if has_model:
+        return _out(_pick_best(has_model))
 
     # No node has the model — pick least busy, log a warning
     if model:
         log.warning("pick_instance: model '%s' not found on any online node — routing to least busy", model)
-    return _pick_best(online)
+        _note(f"model '{model}' on no node — least busy fallback")
+    return _out(_pick_best(online))
 
 
 # ── Context-window detection ────────────────────────────────────────────────
@@ -477,7 +1343,7 @@ async def ollama_model_ctx(model: str, instance_id: Optional[str] = None,
         return _MODEL_CTX_CACHE[key] or None
     ctx = None
     try:
-        async with httpx.AsyncClient(timeout=8) as c:
+        async with httpx.AsyncClient(verify=_SSL_CTX, timeout=8) as c:
             r = await c.post(f"{url}/api/show", json={"model": model})
             if r.status_code == 200:
                 ctx = _extract_ctx_from_show(r.json().get("model_info", {}) or {})
@@ -537,33 +1403,319 @@ _OLLAMA_REQUEST_LOG: List[dict] = []      # ring buffer, max 500
 _OLLAMA_REQUEST_LOG_MAX = 500
 
 
+def _err_text(e: Exception, limit: int = 300) -> str:
+    """Human-readable error string that is never empty.
+
+    httpx timeout/transport exceptions stringify to '' — that empty string is
+    what surfaced as 'unknown' in the jobs panel. Always lead with the
+    exception class so even a message-less error identifies itself.
+    """
+    msg = str(e).strip()
+    if not msg:
+        if isinstance(e, httpx.ConnectTimeout):
+            msg = "connection timed out"
+        elif isinstance(e, (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout)):
+            msg = "timed out waiting for response (generation exceeded the request timeout)"
+        elif isinstance(e, httpx.ConnectError):
+            msg = "connection failed (node down or unreachable)"
+        elif isinstance(e, httpx.RemoteProtocolError):
+            msg = "connection dropped mid-response"
+        else:
+            msg = repr(e)
+    return f"{type(e).__name__}: {msg}"[:limit]
+
+
+_ARGS_SECRET_RE = None  # compiled lazily
+
+
+def _args_preview(kw: dict, limit: int = 600) -> str:
+    """Compact single-line `k=v` preview of a capability's arguments for the
+    jobs/observe panels. Values are truncated per-key, secrets masked, and the
+    whole string capped so events stay small."""
+    global _ARGS_SECRET_RE
+    if _ARGS_SECRET_RE is None:
+        import re as _re
+        _ARGS_SECRET_RE = _re.compile(r"(pass(word)?|token|secret|api_?key|credential|auth)", _re.I)
+    try:
+        parts = []
+        for k, v in kw.items():
+            if k in ("trace_id",):
+                continue
+            if _ARGS_SECRET_RE.search(str(k)):
+                parts.append(f"{k}=***")
+                continue
+            try:
+                s = v if isinstance(v, str) else json.dumps(v, default=str)
+            except Exception:
+                s = str(v)
+            s = " ".join(str(s).split())
+            if len(s) > 160:
+                s = s[:160] + "…"
+            parts.append(f"{k}={s}")
+        out = ", ".join(parts)
+        return out[:limit] + ("…" if len(out) > limit else "")
+    except Exception:
+        return ""
+
+
+def _args_compact(kw: dict, max_keys: int = 10, max_val: int = 160) -> dict:
+    """Structured (masked, truncated) argument snapshot of a capability call.
+    Same masking rules as _args_preview but returned as a dict so panel-side
+    consumers (the live cap-activity mirror) can map args onto UI fields."""
+    global _ARGS_SECRET_RE
+    if _ARGS_SECRET_RE is None:
+        _args_preview({})  # compiles the shared secret-mask regex
+    out: dict = {}
+    try:
+        for k, v in kw.items():
+            if k in ("trace_id",):
+                continue
+            if len(out) >= max_keys:
+                break
+            if _ARGS_SECRET_RE.search(str(k)):
+                out[k] = "***"
+                continue
+            try:
+                s = v if isinstance(v, str) else json.dumps(v, default=str)
+            except Exception:
+                s = str(v)
+            s = str(s)
+            out[k] = s[:max_val] + ("…" if len(s) > max_val else "")
+    except Exception:
+        pass
+    return out
+
+
+# ── Live panel mirroring of capability activity ──────────────────────────────
+# Every non-silent cap execution that carries a session id is mirrored onto the
+# session's panel-dispatch channel (vera:panel:dispatch:{sid}) as a
+# __cap_activity__ pseudo-action. The chat panel forwards it to the mounted
+# panel iframe when the cap belongs to that panel, where vera-panel-bridge.js
+# renders a live agent-activity feed (and panels can natively mirror the call).
+# Fire-and-forget: nothing awaits a reply and failures never affect the cap.
+_PANEL_MIRROR_ENABLED = os.getenv("PANEL_CAP_MIRROR", "1").lower() not in ("0", "false", "off")
+# Groups that would be noise (or feedback loops) in a panel activity feed.
+_PANEL_MIRROR_SKIP_GROUPS = {"panel", "chat", "obs", "health"}
+
+
+async def _mirror_cap_activity(phase: str, name: str, sid: str, tid: str,
+                               group: str, **extra):
+    if not (_PANEL_MIRROR_ENABLED and REDIS and sid):
+        return
+    if group in _PANEL_MIRROR_SKIP_GROUPS:
+        return
+    try:
+        await REDIS.publish(
+            f"vera:panel:dispatch:{sid}",
+            json.dumps({"request_id": new_id(), "session_id": sid,
+                        "no_ack": True, "action": "__cap_activity__",
+                        "ts": now_iso(),
+                        "payload": {"phase": phase, "cap": name, "group": group,
+                                    "trace_id": tid, **extra}}, default=str))
+    except Exception:
+        pass
+
+
 async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False,
                            model: Optional[str] = None, instance_id: Optional[str] = None,
                            prefer_gpu: bool = False, stream_cb: Optional[Callable] = None,
                            caller_override: Optional[dict] = None,
                            job_type: Optional[str] = None,
-                           think: Optional[bool] = None) -> str:
+                           think: Optional[bool] = None,
+                           options: Optional[dict] = None,
+                           keep_alive: Optional[str] = None,
+                           timeout: Optional[float] = None,
+                           profile: Optional[str] = None,
+                           role: Optional[str] = None) -> str:
     # ── Identify caller and log the request ──────────────────────────────────
     # caller_override lets an intermediary cap (e.g. llm.generate) pass
     # through the true upstream caller rather than appearing as the caller.
     caller   = caller_override if caller_override else _ollama_caller_info()
-    # Job-type routing: explicit job_type wins; otherwise infer from the caller.
-    eff_job_type = (job_type or "").strip() or _infer_job_type(caller, model)
+    # Job-type routing: explicit job_type wins; otherwise a per-cap rule may
+    # force one; otherwise infer from the caller. A role-profile role
+    # (profile= + role=, e.g. ide/thinker) outranks per-cap rules and rides
+    # the same merge path below.
+    role_rule = resolve_role_rule(profile, role) if (profile and role) else None
+    cap_rule = role_rule or _resolve_cap_routing(str(caller.get("cap_name") or ""))
+    eff_job_type = ((job_type or "").strip()
+                    or (cap_rule or {}).get("job_type", "")
+                    or _infer_job_type(caller, model))
+    prompt_chars = len(prompt or "") + len(system or "")
+    # Effective rule: the per-cap rule (if any) is merged OVER the job-type
+    # rule, and its length-based ESCALATION merged over that when the prompt
+    # crosses the configured threshold.
+    escalated = False
+    try:
+        base_rule = dict(_resolve_rule(eff_job_type) or {})
+    except Exception:
+        base_rule = {}
+    eff_rule = base_rule
+    rule_source = f"profile:{eff_job_type}"
+    if cap_rule:
+        eff_rule = _merge_rule_over_base(cap_rule, base_rule, prompt_chars)
+        eff_rule["pattern"] = cap_rule.get("pattern", "")
+        rule_source = (f"role:{cap_rule.get('pattern', '')}" if role_rule
+                       else f"cap:{cap_rule.get('pattern', '')}")
+        esc_at = int(cap_rule.get("escalate_chars") or 0)
+        escalated = bool(esc_at > 0 and prompt_chars >= esc_at
+                         and cap_rule.get("escalate"))
     # A routing rule may pin a lighter model for this job type (e.g. naming /
     # summarize). The caller's explicit model always wins over the rule's.
-    rule_model = ""
-    try:
-        rule_model = (_resolve_rule(eff_job_type) or {}).get("model") or ""
-    except Exception:
-        rule_model = ""
-    eff_model = model or rule_model or None
+    eff_model = model or (eff_rule or {}).get("model") or None
+    # ── vLLM delegation: a rule/profile pin of "vllm:<id>" (or "vllm:*" for
+    # any node) sends this request to the vLLM backend instead of Ollama — the
+    # router treats vLLM servers as routable targets. A caller-explicit
+    # instance_id still wins (it names an Ollama node). If no vLLM node is
+    # online the request falls through to normal Ollama routing.
+    _pin = str((eff_rule or {}).get("pin") or "")
+    if _pin.startswith("vllm:") and not instance_id:
+        try:
+            from Vera.vera.vllm.vllm_capabilities import (
+                vllm_generate as _vllm_gen, pick_vllm_instance as _vllm_pick)
+            _vid = _pin.split(":", 1)[1]
+            _vid = None if _vid in ("", "*") else _vid
+            if _vllm_pick(instance_id=_vid) is None:
+                raise RuntimeError("no online vLLM instance")
+            _opts = options or {}
+            _np = int(_opts.get("num_predict") or 0)
+            return await _vllm_gen(
+                (f"{system}\n\n{prompt}" if system else prompt),
+                model=eff_model or None,
+                instance_id=_vid,
+                prefer_gpu=prefer_gpu or bool((eff_rule or {}).get("prefer_gpu")),
+                max_tokens=(_np if _np > 0 else 1024),
+                temperature=float(_opts.get("temperature", 0.7)),
+                top_p=float(_opts.get("top_p", 0.9)),
+                guided_json=({"type": "object"} if json_mode else None),
+                stream_cb=stream_cb,
+                caller_override=caller,
+            )
+        except Exception as _ve:
+            log.warning("vllm delegation for pin '%s' failed (%s) — "
+                        "falling back to Ollama routing", _pin, _ve)
+    # ── API-provider delegation: a rule/profile pin of "provider:<id>" (or a
+    # model ref "provider:<id>/<model>") sends this request to an external API
+    # provider via providers.chat — the routing table can route any caller to
+    # OpenAI/Anthropic/custom endpoints, with usage + cost recorded by the
+    # providers module. A caller-explicit instance_id (an Ollama node) still
+    # wins; failures fall through to normal Ollama routing.
+    _prov_id = _prov_model = ""
+    if not instance_id:
+        if _pin.startswith("provider:"):
+            _pp = _pin.split(":", 1)[1]
+            _prov_id, _, _pm = _pp.partition("/")
+            _prov_model = _pm or str(eff_model or "")
+        elif str(eff_model or "").startswith("provider:"):
+            _pp = str(eff_model).split(":", 1)[1]
+            _prov_id, _, _prov_model = _pp.partition("/")
+    if _prov_id:
+        try:
+            _pc = CAPABILITY_REGISTRY.get("providers.chat")
+            _pfn = (_pc.get("raw") or _pc.get("func")) if _pc else None
+            if not _pfn:
+                raise RuntimeError("providers module not loaded")
+            _opts = options or {}
+            _np = int(_opts.get("num_predict") or 0)
+            _sys = system or ""
+            if json_mode:
+                _sys = (_sys + "\n\nRespond with a single valid JSON object "
+                               "and nothing else.").strip()
+            _res = await _pfn(provider=_prov_id, model=_prov_model,
+                              prompt=prompt, system=_sys,
+                              max_tokens=(_np if _np > 0 else 1024),
+                              caller=str(caller.get("cap_name") or "ollama_generate"))
+            if not isinstance(_res, dict) or _res.get("error"):
+                raise RuntimeError(str((_res or {}).get("error", "no response"))[:200])
+            _txt = _res.get("text", "") or ""
+            if stream_cb:
+                try:
+                    _maybe = stream_cb(_txt)
+                    if inspect.isawaitable(_maybe):
+                        await _maybe
+                except Exception:
+                    pass
+            await emit_event({"type": "ollama.request_done",
+                              "req_id": str(uuid.uuid4())[:12],
+                              "model": f"provider:{_prov_id}/{_res.get('model', _prov_model)}",
+                              "instance_id": f"provider:{_prov_id}",
+                              "job_type": eff_job_type, "rule_source": rule_source,
+                              "caller_file": caller.get("file", ""),
+                              "caller_func": caller.get("func", ""),
+                              "cost_usd": _res.get("cost_usd")})
+            return _txt
+        except Exception as _pe:
+            log.warning("provider delegation '%s' failed (%s) — "
+                        "falling back to Ollama routing", _prov_id, _pe)
+            if str(eff_model or "").startswith("provider:"):
+                eff_model = None   # a provider ref is meaningless to Ollama
+    # ── Interactive priority ────────────────────────────────────────────────
+    # A human-facing generation stamps "human active now"; a BACKGROUND one
+    # (dream cycles, V8 programs, fabric NLP — anything inside a BACKGROUND_LLM
+    # context) is demoted off the GPU pool while the human is active, provided
+    # a CPU node is online to take it. The GPU stays free for the person.
+    bg_label = BACKGROUND_LLM.get("")
+    if not bg_label and eff_job_type in _INTERACTIVE_JOB_TYPES:
+        note_interactive(eff_job_type)
+    bg_demoted = False
+    if bg_label and INTERACTIVE_PRIORITY.get("enabled", True):
+        # Demote background work off the GPU when the human is active OR when
+        # background_always_cpu pins ALL background work to CPU deterministically.
+        _always = bool(INTERACTIVE_PRIORITY.get("background_always_cpu"))
+        if _always or interactive_recent():
+            _cpu_up = any(i.get("status") == "online" and i.get("enabled", True)
+                          and not i.get("has_gpu")
+                          for i in OLLAMA_INSTANCES.values())
+            if _cpu_up and not instance_id:
+                # Route background work exactly like the dream orchestrator's own
+                # LLM (dream_director rule): CPU-only AND off the embedding node,
+                # so long generations never tie up the GPU or the embed slot.
+                eff_rule = {**(eff_rule or {}), "deny_gpu": True, "prefer_gpu": False,
+                            "avoid_embed": True, "pin": ""}
+                prefer_gpu = False
+                bg_demoted = True
+                rule_source += ("+bg-cpu" if _always else "+interactive-backoff")
+    route_explain: dict = {}
     chosen = pick_instance(prefer_gpu=prefer_gpu, instance_id=instance_id,
-                           model=eff_model, job_type=eff_job_type) or "cpu-246"
+                           model=eff_model, job_type=eff_job_type,
+                           rule_override=(eff_rule if (cap_rule or bg_demoted) else None),
+                           explain=route_explain) or "cpu-246"
+    if bg_demoted:
+        route_explain.setdefault("reason", []).append(
+            f"background '{bg_label}' demoted off GPU (human active)")
+    routing_info = {
+        "job_type":     eff_job_type,
+        "rule_source":  rule_source,
+        "escalated":    escalated,
+        "prompt_chars": prompt_chars,
+        "background":   bg_label,
+        "interactive_backoff": bg_demoted,
+        "reason":       route_explain.get("reason") or [],
+        "est_seconds":  estimate_request_seconds(eff_model or OLLAMA_MODEL, chosen,
+                                                 eff_job_type, prompt_chars),
+    }
     inst   = OLLAMA_INSTANCES[chosen]
+    # RESERVE the slot on the chosen node NOW — synchronously, before the first
+    # `await` below (emit_event). pick_instance sorts by `in_use`, so if we defer
+    # the increment until after an await, several concurrent LLM calls (e.g. many
+    # parallel loop steps) all see the same node as "least busy" and stampede onto
+    # it, then serialise behind its concurrency semaphore while other nodes sit
+    # idle — on a slow CPU node that reads as a lockup. Reserving here closes that
+    # race so the next picker sees this node's raised load and spreads out. The
+    # single `finally` at the end releases it exactly once.
+    inst["in_use"] = inst.get("in_use", 0) + 1
     mdl    = eff_model or OLLAMA_MODEL
     body   = {"model":mdl,"prompt":prompt,"stream":stream_cb is not None}
     if system:    body["system"]  = system
     if json_mode: body["format"]  = "json"
+    # keep_alive keeps the model resident between calls (avoids cold-reload
+    # latency that dominates slow single-call planning). Per-call override wins.
+    body["keep_alive"] = keep_alive if keep_alive is not None else OLLAMA_KEEP_ALIVE
+    # Tuning options (temperature, num_ctx, num_predict, …) — e.g. an agent's
+    # ollama_options(). A large num_ctx here is what stops a big planner prompt
+    # being silently truncated to the model's default window.
+    if options:
+        body["options"] = dict(options)
+    gen_timeout = float(timeout) if timeout else OLLAMA_GEN_TIMEOUT
     # Reasoning models (e.g. Qwen3) route their <think> output into a separate
     # `thinking` field under native-thinking Ollama, leaving `response` empty if
     # the answer never lands — which silently breaks JSON callers. Default such
@@ -578,116 +1730,174 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     prompt_preview = (prompt or "")[:120].replace("\n", " ")
 
     log.info(
-        "ollama_req [%s] model=%s inst=%s caller=%s:%s prompt=%s",
-        req_id, mdl, chosen,
+        "ollama_req [%s] model=%s inst=%s job=%s rule=%s%s est=%ss chars=%d caller=%s:%s route=%s prompt=%s",
+        req_id, mdl, chosen, eff_job_type, rule_source,
+        " ESCALATED" if escalated else "",
+        routing_info.get("est_seconds") if routing_info.get("est_seconds") is not None else "?",
+        prompt_chars,
         caller["caller_file"], caller["caller_func"],
+        "; ".join(routing_info.get("reason") or [])[:300],
         prompt_preview,
     )
-
-    # Emit structured event so syslog + Jobs panel can track it
-    try:
-        await emit_event({
-            "type":        "ollama.request",
-            "req_id":      req_id,
-            "model":       mdl,
-            "instance_id": chosen,
-            "instance_url": inst.get("url", ""),
-            "session_id":  OLLAMA_EVENT_SESSION.get(""),
-            "job_type":    eff_job_type,
-            "caller_file": caller["caller_file"],
-            "caller_func": caller["caller_func"],
-            "caller_module": caller["caller_module"],
-            "cap_name":    caller["cap_name"],
-            "prompt_preview": prompt_preview,
-            "json_mode":   json_mode,
-            "prefer_gpu":  prefer_gpu,
-            "streaming":   stream_cb is not None,
-        })
-    except Exception:
-        pass  # never let logging break generation
 
     req_entry = {
         "req_id": req_id, "model": mdl, "instance": chosen,
         "caller_file": caller["caller_file"], "caller_func": caller["caller_func"],
         "prompt_preview": prompt_preview, "ts": now_iso(),
         "status": "running",
+        "job_type": eff_job_type, "rule_source": rule_source,
+        "escalated": escalated, "prompt_chars": prompt_chars,
+        "route_reason": "; ".join(routing_info.get("reason") or [])[:400],
+        "est_seconds": routing_info.get("est_seconds"),
     }
 
-    inst["in_use"] += 1
-    # Acquire per-instance semaphore — prevents concurrent request pile-ups on
-    # the same Ollama node. OLLAMA_CONCURRENCY env var sets the limit (default 1).
+    # NOTE: in_use is already reserved above (right after pick_instance) to close
+    # the concurrent-routing race — do NOT increment it again here.
+    # Acquire per-instance semaphore — serialises to one in-flight request per
+    # node (OLLAMA_CONCURRENCY env, default 1) so the rest queue until it frees.
     try:
-        async with _ollama_sem(chosen):
-            async with httpx.AsyncClient(timeout=120) as c:
-                if stream_cb:
+        # Emit inside the try so a caller cancelling us at this await still runs
+        # the finally below that releases the in_use slot. Before this move a
+        # CancelledError here leaked the reservation permanently, and leaked
+        # slots accumulated until the header meter showed dozens of phantom
+        # "active" requests (and routing saw every node as busy).
+        try:
+            await emit_event({
+                "type":        "ollama.request",
+                "req_id":      req_id,
+                "model":       mdl,
+                "instance_id": chosen,
+                "instance_url": inst.get("url", ""),
+                "session_id":  OLLAMA_EVENT_SESSION.get(""),
+                "job_type":    eff_job_type,
+                "caller_file": caller["caller_file"],
+                "caller_func": caller["caller_func"],
+                "caller_module": caller["caller_module"],
+                "cap_name":    caller["cap_name"],
+                "prompt_preview": prompt_preview,
+                "prompt_full": (prompt or "")[:16000],
+                "json_mode":   json_mode,
+                "prefer_gpu":  prefer_gpu,
+                "streaming":   stream_cb is not None,
+                "routing":     routing_info,
+                # Submitted but not yet holding the node's generation slot —
+                # the panel shows this as QUEUED until the 'generating' phase
+                # event below (or a queue heartbeat) supersedes it.
+                "phase":       "queued",
+            })
+        except Exception:
+            pass  # never let logging break generation
+        # ── Timeout semantics: fail only when NOTHING is happening ──────────
+        #  • connect (15s): a dead node fails fast.
+        #  • read (gen_timeout): the request below ALWAYS streams from Ollama
+        #    (even when the caller wants a single string), so the read timeout
+        #    applies BETWEEN chunks — it is a stall detector, not a cap on
+        #    total generation time. A generation actively producing tokens can
+        #    run as long as it needs.
+        #  • queue wait: unbounded by default (OLLAMA_QUEUE_TIMEOUT bounds it).
+        #    Waiting behind a large job or a busy node is progress, not
+        #    failure; a liveness heartbeat below refreshes the job's records
+        #    while it waits so nothing mistakes it for dead.
+        _gto = httpx.Timeout(gen_timeout, connect=15.0)
+        _hb_stop = asyncio.Event()
+        _hb_task = asyncio.create_task(_ollama_liveness_heartbeat(
+            req_id, chosen, mdl, caller, prompt_preview, _hb_stop))
+        try:
+            async with _ollama_slot(chosen):
+                _hb_stop.set()   # slot acquired — the queue heartbeat can stop
+                # Phase transition: queued → generating (panel moves the job
+                # from the Queued tab to Running the moment the node starts).
+                try:
+                    await emit_event({
+                        "type": "ollama.request", "req_id": req_id,
+                        "model": mdl, "instance_id": chosen,
+                        "phase": "generating",
+                        "caller_file": caller["caller_file"],
+                        "caller_func": caller["caller_func"],
+                        "cap_name": caller["cap_name"],
+                        "prompt_preview": prompt_preview,
+                        "queued_s": round(time.time() - t_start, 1),
+                    })
+                except Exception:
+                    pass
+                body["stream"] = True   # always stream so silence == stall
+                async with httpx.AsyncClient(verify=_SSL_CTX, timeout=_gto) as c:
                     async with c.stream("POST",f"{inst['url']}/api/generate",json=body) as resp:
                         if resp.status_code != 200:
                             err_body = ""
                             async for chunk in resp.aiter_bytes():
                                 err_body += chunk.decode("utf-8", errors="replace")
                             raise Exception(f"ollama returned {resp.status_code}: {err_body[:500]}")
-                        buf=[]
+                        buf=[]; tbuf=[]; meta={}
+                        _last_beat = time.time()
                         async for line in resp.aiter_lines():
                             if not line: continue
                             try:
-                                tok=json.loads(line).get("response","")
-                                if tok: buf.append(tok); await stream_cb(tok)
-                            except: pass
-                        result = "".join(buf)
+                                d=json.loads(line)
+                                tok=d.get("response","")
+                                if tok:
+                                    buf.append(tok)
+                                    if stream_cb: await stream_cb(tok)
+                                # Reasoning models may emit only `thinking` tokens;
+                                # collect them (without streaming) as a fallback.
+                                elif d.get("thinking"): tbuf.append(d["thinking"])
+                                if d.get("done"): meta = d
+                            except Exception: pass
+                            # A long but actively-progressing generation emits no
+                            # events of its own — refresh the job records every
+                            # ~2.5 min so the panel's stale detector and the
+                            # stuck-running sweeper never flag a request that is
+                            # visibly producing tokens.
+                            if time.time() - _last_beat > 150:
+                                _last_beat = time.time()
+                                try:
+                                    await emit_event({
+                                        "type": "ollama.request", "req_id": req_id,
+                                        "model": mdl, "instance_id": chosen,
+                                        "phase": "generating",
+                                        "caller_file": caller["caller_file"],
+                                        "caller_func": caller["caller_func"],
+                                        "cap_name": caller["cap_name"],
+                                        "prompt_preview": prompt_preview,
+                                        "tokens_so_far": len(buf) + len(tbuf),
+                                        "elapsed_s": round(time.time() - t_start, 1),
+                                    })
+                                except Exception:
+                                    pass
+                        result = "".join(buf) or "".join(tbuf)
                         elapsed = round(time.time() - t_start, 2)
-                        log.info("ollama_done [%s] %.2fs tokens=%d caller=%s:%s",
-                                 req_id, elapsed, len(buf),
+                        eval_count = int(meta.get("eval_count") or len(buf))
+                        log.info("ollama_done [%s] %.2fs eval_count=%s caller=%s:%s",
+                                 req_id, elapsed, eval_count,
                                  caller["caller_file"], caller["caller_func"])
                         req_entry.update({"status": "done", "elapsed_s": elapsed,
-                                          "tokens": len(buf)})
+                                          "eval_count": eval_count, "tokens": len(buf)})
                         _ollama_log_append(req_entry)
+                        _route_stats_update(mdl, chosen, eff_job_type,
+                                            elapsed, eval_count, prompt_chars)
                         try:
                             await emit_event({
                                 "type": "ollama.request_done", "req_id": req_id,
                                 "model": mdl, "instance_id": chosen,
                                 "caller_file": caller["caller_file"],
                                 "caller_func": caller["caller_func"],
-                                "elapsed_s": elapsed, "token_count": len(buf),
+                                "elapsed_s": elapsed, "eval_count": eval_count,
+                                "token_count": len(buf),
+                                "job_type": eff_job_type,
+                                "est_seconds": routing_info.get("est_seconds"),
                             })
                         except Exception:
                             pass
                         return result
-                else:
-                    r=await c.post(f"{inst['url']}/api/generate",json=body)
-                    if r.status_code != 200:
-                        err_detail = r.text[:500] if r.text else f"HTTP {r.status_code}"
-                        log.error("ollama_generate [%s] HTTP %d from %s: %s",
-                                  req_id, r.status_code, chosen, err_detail)
-                        raise Exception(f"ollama {r.status_code} on {chosen}: {err_detail}")
-                    d = r.json()
-                    # Fall back to `thinking` if a reasoning model left `response`
-                    # empty (think=False ignored) — the answer may be in there for
-                    # _strip_json to recover rather than failing on an empty string.
-                    result = d.get("response","") or d.get("thinking","") or ""
-                    elapsed = round(time.time() - t_start, 2)
-                    eval_count = d.get("eval_count", 0)
-                    log.info("ollama_done [%s] %.2fs eval_count=%s caller=%s:%s",
-                             req_id, elapsed, eval_count,
-                             caller["caller_file"], caller["caller_func"])
-                    req_entry.update({"status": "done", "elapsed_s": elapsed,
-                                      "eval_count": eval_count})
-                    _ollama_log_append(req_entry)
-                    try:
-                        await emit_event({
-                            "type": "ollama.request_done", "req_id": req_id,
-                            "model": mdl, "instance_id": chosen,
-                            "caller_file": caller["caller_file"],
-                            "caller_func": caller["caller_func"],
-                            "elapsed_s": elapsed, "eval_count": eval_count,
-                        })
-                    except Exception:
-                        pass
-                    return result
+        finally:
+            _hb_stop.set()
+            _hb_task.cancel()
     except Exception as e:
         elapsed = round(time.time() - t_start, 2)
+        err_str = _err_text(e)
         log.error("ollama_generate [%s] FAILED after %.2fs inst=%s caller=%s:%s err=%s",
                   req_id, elapsed, chosen,
-                  caller["caller_file"], caller["caller_func"], e)
+                  caller["caller_file"], caller["caller_func"], err_str)
         # Don't flip a node offline on a single error — a slow generation that
         # exceeds the HTTP timeout (common for large-context jobs on CPU nodes)
         # would otherwise cascade the whole node out of rotation and starve
@@ -697,7 +1907,7 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         if inst["errors"] >= 3:
             inst["status"] = "offline"
         req_entry.update({"status": "error", "elapsed_s": elapsed,
-                          "error": str(e)[:200] or repr(e)[:200] or "timeout/no-response"})
+                          "error": err_str})
         _ollama_log_append(req_entry)
         try:
             await emit_event({
@@ -705,7 +1915,8 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                 "model": mdl, "instance_id": chosen,
                 "caller_file": caller["caller_file"],
                 "caller_func": caller["caller_func"],
-                "elapsed_s": elapsed, "error": str(e)[:200],
+                "elapsed_s": elapsed, "error": err_str,
+                "error_type": type(e).__name__,
             })
         except Exception:
             pass
@@ -719,22 +1930,62 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                 continue
             try:
                 log.info("ollama_fallback [%s] trying %s", req_id, fb_id)
-                async with httpx.AsyncClient(timeout=120) as c:
-                    r=await c.post(f"{fb_inst['url']}/api/generate",json={**body,"stream":False})
-                    if r.status_code != 200:
-                        err_detail = r.text[:300] if r.text else f"HTTP {r.status_code}"
-                        log.warning("ollama_fallback [%s] %s returned %d: %s", req_id, fb_id, r.status_code, err_detail)
-                        continue
-                    fb_elapsed = round(time.time() - t_start, 2)
-                    log.info("ollama_fallback [%s] OK on %s after %.2fs",
-                             req_id, fb_id, fb_elapsed)
-                    req_entry.update({"status": "done_fallback",
-                                      "fallback_instance": fb_id,
-                                      "elapsed_s": fb_elapsed})
-                    fb = r.json()
-                    return fb.get("response","") or fb.get("thinking","") or ""
-            except: pass
+                # Route the fallback through the SAME per-instance semaphore +
+                # in_use accounting as a primary request, so it honours the
+                # "one in-flight request per node" contract instead of piling an
+                # extra concurrent generation onto the fallback node.
+                fb_inst["in_use"] = fb_inst.get("in_use", 0) + 1
+                try:
+                    # Same only-fail-when-idle semantics as the primary path:
+                    # unbounded queue wait, streamed response so the read
+                    # timeout is a stall detector rather than a total cap.
+                    async with _ollama_slot(fb_id):
+                        async with httpx.AsyncClient(verify=_SSL_CTX, timeout=httpx.Timeout(gen_timeout, connect=15.0)) as c:
+                            async with c.stream("POST", f"{fb_inst['url']}/api/generate",
+                                                json={**body, "stream": True}) as r:
+                                if r.status_code != 200:
+                                    err_detail = (await r.aread()).decode("utf-8", errors="replace")[:300]
+                                    log.warning("ollama_fallback [%s] %s returned %d: %s", req_id, fb_id, r.status_code, err_detail)
+                                    continue
+                                fbuf=[]; ftbuf=[]
+                                async for line in r.aiter_lines():
+                                    if not line: continue
+                                    try:
+                                        d=json.loads(line)
+                                        if d.get("response"): fbuf.append(d["response"])
+                                        elif d.get("thinking"): ftbuf.append(d["thinking"])
+                                    except Exception: pass
+                        fb_elapsed = round(time.time() - t_start, 2)
+                        log.info("ollama_fallback [%s] OK on %s after %.2fs",
+                                 req_id, fb_id, fb_elapsed)
+                        req_entry.update({"status": "done_fallback",
+                                          "fallback_instance": fb_id,
+                                          "elapsed_s": fb_elapsed})
+                        return "".join(fbuf) or "".join(ftbuf)
+                finally:
+                    fb_inst["in_use"] = max(0, fb_inst.get("in_use", 1) - 1)
+            except Exception: pass
         return ""
+    except asyncio.CancelledError:
+        # Caller cancelled us (loop/dream preemption, client abort, a wrapping
+        # wait_for). `except Exception` doesn't catch this, so emit a terminal
+        # event to avoid a stuck-"running" zombie, then re-raise.
+        elapsed = round(time.time() - t_start, 2)
+        req_entry.update({"status": "error", "elapsed_s": elapsed,
+                          "error": "cancelled by caller (timeout/abort)"})
+        _ollama_log_append(req_entry)
+        try:
+            await emit_event({
+                "type": "ollama.request_error", "req_id": req_id,
+                "model": mdl, "instance_id": chosen,
+                "caller_file": caller["caller_file"],
+                "caller_func": caller["caller_func"],
+                "elapsed_s": elapsed, "error": "cancelled by caller",
+                "error_type": "CancelledError",
+            })
+        except Exception:
+            pass
+        raise
     finally:
         inst["in_use"]=max(0,inst["in_use"]-1)
 
@@ -749,7 +2000,74 @@ def _ollama_log_append(entry: dict):
 async def ollama_embed(text: str, model: Optional[str] = None,
                        instance_id: Optional[str] = None,
                        prefer_gpu: bool = False,
-                       timeout: float = 30.0,
+                       timeout: Optional[float] = None,
+                       normalize: bool = False,
+                       provider: Optional[str] = None) -> Optional[List[float]]:
+    """De-duplicating wrapper around the real embed (_ollama_embed_impl).
+
+    The same text was being embedded 2×+ by concurrent callers / retries; each
+    duplicate is a full /api/embed on the serialised embed node. This collapses
+    them: a fresh cached vector is reused; an identical embed already in flight
+    is awaited instead of firing a second request. A caller pinning a specific
+    instance bypasses the cache (it wants that node's exact result). Key
+    includes model/normalize/provider since those change the vector.
+    """
+    if not text or not text.strip():
+        return None
+    if instance_id:
+        # Explicit pin — don't serve from a cache that may hold another node's
+        # vector; run it directly.
+        return await _ollama_embed_impl(text, model, instance_id, prefer_gpu,
+                                        timeout, normalize, provider)
+
+    _mdl = model or OLLAMA_EMBED_MODEL
+    _key = (f"{_mdl}|{int(bool(normalize))}|{provider or ''}|"
+            + hashlib.sha256(text.encode("utf-8", "ignore")).hexdigest()[:24])
+
+    hit = _EMBED_RESULT_CACHE.get(_key)
+    if hit is not None:
+        _vec, _ts = hit
+        if (time.monotonic() - _ts) < _EMBED_CACHE_TTL:
+            return list(_vec) if _vec is not None else None
+        _EMBED_RESULT_CACHE.pop(_key, None)
+
+    inflight = _EMBED_INFLIGHT.get(_key)
+    if inflight is not None:
+        try:
+            _vec = await asyncio.shield(inflight)   # our cancel ≠ shared cancel
+            return list(_vec) if _vec is not None else None
+        except Exception:
+            return None
+
+    loop = asyncio.get_event_loop()
+    fut: "asyncio.Future" = loop.create_future()
+    _EMBED_INFLIGHT[_key] = fut
+    try:
+        vec = await _ollama_embed_impl(text, model, instance_id, prefer_gpu,
+                                       timeout, normalize, provider)
+        if vec is not None:
+            _EMBED_RESULT_CACHE[_key] = (list(vec), time.monotonic())
+            if len(_EMBED_RESULT_CACHE) > _EMBED_CACHE_MAX:
+                # Evict the oldest ~10% by timestamp (cheap, infrequent).
+                for _k, _ in sorted(_EMBED_RESULT_CACHE.items(),
+                                    key=lambda kv: kv[1][1])[:_EMBED_CACHE_MAX // 10 + 1]:
+                    _EMBED_RESULT_CACHE.pop(_k, None)
+        if not fut.done():
+            fut.set_result(vec)
+        return vec
+    finally:
+        if _EMBED_INFLIGHT.get(_key) is fut:
+            _EMBED_INFLIGHT.pop(_key, None)
+        # ALWAYS resolve so shielded waiters never hang (incl. cancellation,
+        # which skips the normal return path above).
+        if not fut.done():
+            fut.set_result(None)
+
+
+async def _ollama_embed_impl(text: str, model: Optional[str] = None,
+                       instance_id: Optional[str] = None,
+                       prefer_gpu: bool = False,
+                       timeout: Optional[float] = None,
                        normalize: bool = False,
                        provider: Optional[str] = None) -> Optional[List[float]]:
     """Generate a text embedding via Ollama, with full job logging.
@@ -764,7 +2082,9 @@ async def ollama_embed(text: str, model: Optional[str] = None,
     model        : str   — embedding model (default: OLLAMA_EMBED_MODEL)
     instance_id  : str   — pin to a specific Ollama instance
     prefer_gpu   : bool  — prefer GPU instances for routing
-    timeout      : float — HTTP timeout in seconds (default 30)
+    timeout      : float — HTTP timeout in seconds (default OLLAMA_EMBED_TIMEOUT,
+                           generous because Ollama may queue the embed behind a
+                           running generation on the same node)
     normalize    : bool  — L2-normalise the returned vector
 
     Returns
@@ -804,6 +2124,10 @@ async def ollama_embed(text: str, model: Optional[str] = None,
     if not inst:
         return None
     url = inst.get("url", "")
+    # Reserve the routing slot synchronously (before the emit_event await below)
+    # so concurrent embed calls see this node's raised load and spread out,
+    # rather than all picking the same "least busy" node across the await gap.
+    inst["in_use"] = inst.get("in_use", 0) + 1
 
     caller = _ollama_caller_info()
     req_id = str(uuid.uuid4())[:12]
@@ -817,26 +2141,6 @@ async def ollama_embed(text: str, model: Optional[str] = None,
         text_preview,
     )
 
-    # Emit start event for Jobs panel
-    try:
-        await emit_event({
-            "type":         "ollama.request",
-            "req_id":       req_id,
-            "model":        mdl,
-            "instance_id":  chosen,
-            "instance_url": url,
-            "caller_file":  caller["caller_file"],
-            "caller_func":  caller["caller_func"],
-            "caller_module": caller["caller_module"],
-            "cap_name":     caller["cap_name"] or "ollama.embed",
-            "prompt_preview": f"[embed] {text_preview}",
-            "json_mode":    False,
-            "prefer_gpu":   prefer_gpu,
-            "streaming":    False,
-        })
-    except Exception:
-        pass
-
     req_entry = {
         "req_id": req_id, "model": mdl, "instance": chosen,
         "caller_file": caller["caller_file"], "caller_func": caller["caller_func"],
@@ -844,9 +2148,36 @@ async def ollama_embed(text: str, model: Optional[str] = None,
         "status": "running",
     }
 
-    inst["in_use"] = inst.get("in_use", 0) + 1
+    # NOTE: in_use already reserved above (right after pick_instance).
+    # Resolve the effective timeout: caller override wins, else the generous
+    # env default — an embed queued server-side behind a generation must WAIT,
+    # not fail; only a truly unresponsive node should trip this.
+    _emb_timeout = httpx.Timeout(float(timeout) if timeout else OLLAMA_EMBED_TIMEOUT,
+                                 connect=10.0)
+
     try:
-        async with httpx.AsyncClient(timeout=timeout) as c:
+        # Emit inside the try so a cancellation at this await still releases the
+        # in_use slot in the finally below (same leak fix as ollama_generate).
+        try:
+            await emit_event({
+                "type":         "ollama.request",
+                "req_id":       req_id,
+                "model":        mdl,
+                "instance_id":  chosen,
+                "instance_url": url,
+                "caller_file":  caller["caller_file"],
+                "caller_func":  caller["caller_func"],
+                "caller_module": caller["caller_module"],
+                "cap_name":     caller["cap_name"] or "ollama.embed",
+                "prompt_preview": f"[embed] {text_preview}",
+                "prompt_full":  f"[embed] {(text or '')[:16000]}",
+                "json_mode":    False,
+                "prefer_gpu":   prefer_gpu,
+                "streaming":    False,
+            })
+        except Exception:
+            pass
+        async with httpx.AsyncClient(verify=_SSL_CTX, timeout=_emb_timeout) as c:
             # Try new endpoint first (Ollama ≥0.4)
             r = await c.post(f"{url}/api/embed",
                              json={"model": mdl, "input": text[:4096]})
@@ -856,10 +2187,13 @@ async def ollama_embed(text: str, model: Optional[str] = None,
                                  json={"model": mdl, "prompt": text[:4096]})
             if r.status_code != 200:
                 elapsed = round(time.time() - t_start, 2)
+                err_str = f"HTTP {r.status_code} from {chosen}"
+                if r.text:
+                    err_str += f": {r.text[:200]}"
                 log.warning("ollama_embed [%s] FAILED status=%d inst=%s",
                             req_id, r.status_code, chosen)
                 req_entry.update({"status": "error", "elapsed_s": elapsed,
-                                  "error": f"http_{r.status_code}"})
+                                  "error": err_str})
                 _ollama_log_append(req_entry)
                 try:
                     await emit_event({
@@ -868,7 +2202,7 @@ async def ollama_embed(text: str, model: Optional[str] = None,
                         "caller_file": caller["caller_file"],
                         "caller_func": caller["caller_func"],
                         "elapsed_s": elapsed,
-                        "error": f"http_{r.status_code}",
+                        "error": err_str,
                     })
                 except Exception:
                     pass
@@ -930,11 +2264,12 @@ async def ollama_embed(text: str, model: Optional[str] = None,
 
     except Exception as e:
         elapsed = round(time.time() - t_start, 2)
+        err_str = _err_text(e)
         log.error("ollama_embed [%s] FAILED after %.2fs inst=%s err=%s",
-                  req_id, elapsed, chosen, e)
+                  req_id, elapsed, chosen, err_str)
         inst["errors"] = inst.get("errors", 0) + 1
         req_entry.update({"status": "error", "elapsed_s": elapsed,
-                          "error": str(e)[:200]})
+                          "error": err_str})
         _ollama_log_append(req_entry)
         try:
             await emit_event({
@@ -942,7 +2277,8 @@ async def ollama_embed(text: str, model: Optional[str] = None,
                 "model": mdl, "instance_id": chosen,
                 "caller_file": caller["caller_file"],
                 "caller_func": caller["caller_func"],
-                "elapsed_s": elapsed, "error": str(e)[:200],
+                "elapsed_s": elapsed, "error": err_str,
+                "error_type": type(e).__name__,
             })
         except Exception:
             pass
@@ -953,7 +2289,7 @@ async def ollama_embed(text: str, model: Optional[str] = None,
                 continue
             try:
                 log.info("ollama_embed_fallback [%s] trying %s", req_id, fb_id)
-                async with httpx.AsyncClient(timeout=timeout) as c:
+                async with httpx.AsyncClient(verify=_SSL_CTX, timeout=_emb_timeout) as c:
                     r = await c.post(f"{fb_inst['url']}/api/embed",
                                      json={"model": mdl, "input": text[:4096]})
                     if r.status_code != 200:
@@ -980,6 +2316,28 @@ async def ollama_embed(text: str, model: Optional[str] = None,
             except Exception:
                 pass
         return None
+    except asyncio.CancelledError:
+        # A caller cancelled us (e.g. execute_query wraps _embed in a 10s
+        # wait_for). `except Exception` above does NOT catch CancelledError, so
+        # without this the job stayed "running" forever → 1200s stale_timeout
+        # zombies in the Ollama log. Emit a terminal event, then re-raise so the
+        # cancellation still propagates.
+        elapsed = round(time.time() - t_start, 2)
+        req_entry.update({"status": "error", "elapsed_s": elapsed,
+                          "error": "cancelled by caller (timeout/abort)"})
+        _ollama_log_append(req_entry)
+        try:
+            await emit_event({
+                "type": "ollama.request_error", "req_id": req_id,
+                "model": mdl, "instance_id": chosen,
+                "caller_file": caller["caller_file"],
+                "caller_func": caller["caller_func"],
+                "elapsed_s": elapsed, "error": "cancelled by caller",
+                "error_type": "CancelledError",
+            })
+        except Exception:
+            pass
+        raise
     finally:
         inst["in_use"] = max(0, inst.get("in_use", 1) - 1)
 
@@ -1283,6 +2641,84 @@ def _merge_schema(auto: dict, override: dict) -> dict:
     return {**override, "type": "object",
             "properties": merged_props, "required": merged_req}
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ENUM / MULTIPLE-CHOICE HELPERS
+#
+# Options for a multiple-choice arg used to live only in prose descriptions, so
+# neither UIs nor the LLM planner could see the allowed set. These build the
+# `schema=` override that declares real JSON-Schema `enum`s, which then flow to
+# every consumer: /mcp/tools, the cap-hub auto-form (renders a <select>), and
+# the LLM-facing capability signatures (see _format_param_sig).
+# ─────────────────────────────────────────────────────────────────────────────
+def enum_schema(**choices) -> dict:
+    """Build a `schema=` override declaring single-select option lists.
+
+        @capability("tts.synthesize", ...,
+            schema=enum_schema(engine=["", "kokoro", "coqui"]))
+
+    Each value is either a plain list of options, or a dict to add more
+    per-field keys alongside the enum:
+
+        enum_schema(mode={"enum": ["a", "b"], "description": "..."})
+
+    The auto-generated type/default from the Python signature is preserved by
+    _merge_schema; you only supply the choices.
+    """
+    props: dict = {}
+    for name, opts in choices.items():
+        props[name] = dict(opts) if isinstance(opts, dict) else {"enum": list(opts)}
+    return {"properties": props}
+
+
+def multi_enum_schema(**choices) -> dict:
+    """Build a `schema=` override declaring multi-select (array-of-enum) args.
+    Use for a param the caller may pick SEVERAL of — annotate it ``List[str]``:
+
+        @capability("dream.render", ...,
+            schema=multi_enum_schema(channels=["email", "chat", "project"]))
+
+    Renders as a <select multiple> in the cap-hub form and as ``name:[str]=a|b``
+    in the LLM signature.
+    """
+    props: dict = {}
+    for name, opts in choices.items():
+        props[name] = {"type": "array", "items": {"enum": list(opts)}}
+    return {"properties": props}
+
+
+def enum_options(prop: dict) -> list:
+    """Return a param's declared option list — single-select (``enum``) or
+    multi-select (``items.enum`` on an array) — or ``[]`` if it has none.
+    One accessor so every consumer (LLM signatures, correction prompts, UIs)
+    reads choices the same way."""
+    items = prop.get("items") or {}
+    return list(prop.get("enum") or items.get("enum") or [])
+
+
+def _format_param_sig(pname: str, prop: dict, required: set) -> str:
+    """Render one parameter for an LLM-facing capability signature, surfacing
+    enum choices so the model picks from the allowed set instead of guessing.
+
+        name:type            plain
+        name:type!           required (no default)
+        name:type=a|b|c      single-select enum
+        name:[str]=a|b|c     multi-select (array of enum)
+    """
+    is_multi = prop.get("type") == "array"
+    items    = prop.get("items") or {}
+    tag      = f"[{items.get('type', 'str')}]" if is_multi else prop.get("type", "str")
+    star     = "!" if pname in required else ""
+    opts     = enum_options(prop)
+    choices  = ""
+    if opts:
+        shown = "|".join(str(o) for o in opts[:12])
+        if len(opts) > 12:
+            shown += "|…"
+        choices = f"={shown}"
+    return f"{pname}:{tag}{star}{choices}"
+
+
 def _remove_ws(ws,stream):
     try: WS_CONNECTIONS.remove((ws,stream))
     except ValueError: pass
@@ -1290,6 +2726,130 @@ def _remove_ws(ws,stream):
 # ─────────────────────────────────────────────────────────────────────────────
 # EVENTS  (before capability decorator — it references emit_event)
 # ─────────────────────────────────────────────────────────────────────────────
+# ── Single-writer outbound queues ────────────────────────────────────────────
+# A Starlette/uvicorn WebSocket allows exactly ONE concurrent writer. Vera
+# writes to each socket from many tasks at once — the emit_event broadcast, the
+# per-`call` result tasks, dag/plan tasks, and the receive-loop's own replies.
+# Two overlapping send_json() calls (or, worse, a send_json cancelled mid-frame
+# by asyncio.wait_for on timeout) desync the WebSocket framing, and uvicorn
+# then aborts the connection — surfacing to the browser as code 1006 and the
+# whole-UI reconnect storm. THE FIX: every outbound frame for a connection goes
+# through its own bounded queue, drained by a single writer task that awaits
+# each send to completion (never cancelled). One socket ⇒ one writer ⇒ no
+# interleaving, no half-written frames. A slow client only backs up its OWN
+# queue; when that fills we drop oldest (state is re-sent on the next event /
+# poll) so one stuck tab can never stall the loop or another tab.
+WS_OUT: Dict[int, asyncio.Queue] = {}   # id(ws) → outbound frame queue
+_WS_OUT_MAX = int(os.environ.get("WS_OUT_QUEUE_MAX", "2000") or 2000)
+_WS_CLOSE = object()                     # sentinel: tells a writer to stop
+
+
+def _ws_enqueue(ws, payload: dict) -> None:
+    """Queue one frame for a connection's writer (non-blocking, lossy on
+    overflow). Safe to call from any task without awaiting."""
+    q = WS_OUT.get(id(ws))
+    if q is None:
+        return   # connection has no writer (already torn down)
+    try:
+        q.put_nowait(payload)
+    except asyncio.QueueFull:
+        # Client isn't draining fast enough — drop the OLDEST frame to make
+        # room for this newer one (latest state matters most; panels also poll).
+        try:
+            q.get_nowait()
+            q.put_nowait(payload)
+        except Exception:
+            pass
+
+
+async def _ws_writer(ws) -> None:
+    """Drain one connection's outbound queue, sending each frame to completion.
+    This is the ONLY coroutine that writes to `ws`. On any send failure the
+    connection is unsubscribed and the writer exits."""
+    q = WS_OUT.get(id(ws))
+    if q is None:
+        return
+    try:
+        while True:
+            item = await q.get()
+            if item is _WS_CLOSE:
+                return
+            try:
+                await ws.send_json(item)
+            except Exception:
+                # Socket is gone/broken — stop writing and drop the connection
+                # from every subscription so the broadcast loop skips it.
+                WS_CONNECTIONS[:] = [p for p in WS_CONNECTIONS if p[0] is not ws]
+                return
+    finally:
+        WS_OUT.pop(id(ws), None)
+
+
+def _ws_start_writer(ws) -> None:
+    if id(ws) not in WS_OUT:
+        WS_OUT[id(ws)] = asyncio.Queue(maxsize=_WS_OUT_MAX)
+        asyncio.create_task(_ws_writer(ws))
+
+
+def _ws_stop_writer(ws) -> None:
+    q = WS_OUT.get(id(ws))
+    if q is not None:
+        try:
+            q.put_nowait(_WS_CLOSE)
+        except Exception:
+            WS_OUT.pop(id(ws), None)
+
+
+# Back-compat shim: some call sites still reference _ws_send_bounded. It now
+# just enqueues (the queue's writer performs the actual, uncancelled send).
+async def _ws_send_bounded(ws, sub, payload: dict, timeout: float = 5.0):
+    _ws_enqueue(ws, payload)
+
+# ── Loop RESUME persistence ───────────────────────────────────────────────────
+# A per-session replay buffer + run-state hash so a client that reloaded the page
+# — or the app that RESTARTED (Redis outlives it, per the deployment) — can
+# reconstruct an in-progress or finished agentic-loop run and re-attach to its
+# live event stream. Keyed by session_id, which chat/loop runs already thread
+# through. See /workshop/agent_loop/session_state + /reattach in dag_workshop.
+_RESUME_TTL        = int(os.getenv("VERA_RESUME_TTL", "604800") or 604800)   # 7 days
+_RESUME_MAX_EVENTS = int(os.getenv("VERA_RESUME_MAX_EVENTS", "4000") or 4000)
+
+async def _persist_loop_event(event: dict, ev_json: str):
+    """Best-effort append of an agent-loop event to its session's replay list +
+    keep the run-state current. Skips transient high-frequency token events (the
+    final cards carry the result); unrelated events (no session_id / not a loop
+    event) are ignored."""
+    if not REDIS:
+        return
+    sid   = event.get("session_id") or ""
+    etype = event.get("type") or ""
+    if not sid or not etype.startswith("agent_loop") or etype.endswith("_token"):
+        return
+    try:
+        lkey, rkey = f"vera:loop:events:{sid}", f"vera:loop:run:{sid}"
+        upd = {"updated_at": event.get("ts", now_iso())}
+        if etype.endswith(".triage_start"):
+            upd["status"] = "running"
+            upd["started_at"] = event.get("ts", now_iso())
+            if event.get("goal"):
+                upd["goal"] = str(event.get("goal"))[:800]
+        elif etype.endswith(".done"):
+            upd["status"] = "done"
+        elif etype.endswith(".error"):
+            upd["status"] = "error"
+        pipe = REDIS.pipeline()
+        pipe.rpush(lkey, ev_json)
+        pipe.ltrim(lkey, -_RESUME_MAX_EVENTS, -1)
+        pipe.expire(lkey, _RESUME_TTL)
+        pipe.hset(rkey, mapping=upd)
+        pipe.expire(rkey, _RESUME_TTL)
+        pipe.zadd("vera:loop:sessions", {sid: time.time()})
+        await pipe.execute()
+    except Exception as e:
+        if "MISCONF" not in str(e):
+            log.debug("resume persist: %s", e)
+
+
 async def emit_event(event: dict):
     event.setdefault("ts", now_iso())
     ev_json = json.dumps(event)
@@ -1302,10 +2862,17 @@ async def emit_event(event: dict):
         except Exception as _re:
             if "MISCONF" not in str(_re):
                 log.debug("emit_event Redis: %s", _re)
+        await _persist_loop_event(event, ev_json)
+    # Fan out to live subscribers by enqueueing to each connection's writer —
+    # a non-blocking put, so a slow/stuck client can't stall this producer (or,
+    # via a cancelled send, corrupt its socket). One writer per connection does
+    # the actual sending.
+    _seen = set()
+    payload = {"type": "event", "data": event}
     for ws, sub in list(WS_CONNECTIONS):
-        if sub == "__events__":
-            try: await ws.send_json({"type": "event", "data": event})
-            except: _remove_ws(ws, sub)
+        if sub == "__events__" and id(ws) not in _seen:
+            _seen.add(id(ws))
+            _ws_enqueue(ws, payload)
 
 async def emit_stream(name: str, trace_id: str, payload: Any, capability: str):
     msg={"stream":name,"trace_id":trace_id,"capability":capability,"payload":payload,"ts":now_iso()}
@@ -1329,10 +2896,12 @@ async def emit_stream(name: str, trace_id: str, payload: Any, capability: str):
                   "source": "llm", "ts": now_iso()}
             await REDIS.publish("vera:events:live", json.dumps(ev))
         except: pass
-    for ws,sub in list(WS_CONNECTIONS):
-        if sub==name:
-            try: await ws.send_json({"type":"stream","data":msg})
-            except: _remove_ws(ws,sub)
+    _sseen = set()
+    _payload = {"type": "stream", "data": msg}
+    for ws, sub in list(WS_CONNECTIONS):
+        if sub == name and id(ws) not in _sseen:
+            _sseen.add(id(ws))
+            _ws_enqueue(ws, _payload)
     for cb in STREAM_SUBS.get(name,[]):
         asyncio.create_task(cb(msg))
 
@@ -1345,7 +2914,7 @@ def subscribe_stream(name: str, cb: Callable):
 async def dispatch_task(cap_name: str, payload: dict, trace_id: str) -> str:
     task_id=new_id()
     rec={"id":task_id,"capability":cap_name,"payload":json.dumps(payload),"trace_id":trace_id,"ts":now_iso()}
-    if REDIS: await REDIS.xadd(TASK_STREAM,rec)
+    if REDIS: await REDIS.xadd(TASK_STREAM,rec,maxlen=5000,approximate=True)
     else:
         cap=CAPABILITY_REGISTRY.get(cap_name)
         if cap: asyncio.create_task(_run_local(cap,task_id,payload,trace_id))
@@ -1617,6 +3186,7 @@ async def worker_loop(worker_id: str):
                 # picked it up, ack + discard it instead of running.
                 if await _is_task_cancelled(task_id):
                     await REDIS.xack(TASK_STREAM, GROUP_WORKERS, msg_id)
+                    await REDIS.xdel(TASK_STREAM, msg_id)
                     await REDIS.xadd(RESULT_STREAM, {
                         "id": task_id, "error": "cancelled", "trace_id": trace_id,
                     })
@@ -1662,17 +3232,19 @@ async def worker_loop(worker_id: str):
                         log.debug("Worker %s: skipping %s — another worker has it", worker_id, cap_name)
                         await asyncio.sleep(0.1)
                         await REDIS.xack(TASK_STREAM, GROUP_WORKERS, msg_id)
+                        await REDIS.xdel(TASK_STREAM, msg_id)
                         # Re-add so another consumer picks it up
                         await REDIS.xadd(TASK_STREAM, {
                             "id": task_id, "capability": cap_name,
                             "payload": json.dumps(payload), "trace_id": trace_id, "ts": now_iso(),
-                        })
+                        }, maxlen=5000, approximate=True)
                     else:
                         log.warning("Worker %s: no handler for %s on any worker", worker_id, cap_name)
                         await REDIS.xadd(RESULT_STREAM, {
                             "id": task_id, "error": f"no_worker_for:{cap_name}", "trace_id": trace_id,
                         })
                         await REDIS.xack(TASK_STREAM, GROUP_WORKERS, msg_id)
+                        await REDIS.xdel(TASK_STREAM, msg_id)
                 else:
                     # Run the cap as a separate task so cluster.job.stop can
                     # cancel it cooperatively (cancel() interrupts at next await).
@@ -1705,6 +3277,7 @@ async def worker_loop(worker_id: str):
                     finally:
                         RUNNING_TASKS.pop(task_id, None)
                         await REDIS.xack(TASK_STREAM, GROUP_WORKERS, msg_id)
+                        await REDIS.xdel(TASK_STREAM, msg_id)
 
                 WORKER_REGISTRY[worker_id]["status"] = "idle"
                 WORKER_REGISTRY[worker_id]["current_task"] = ""
@@ -2391,7 +3964,10 @@ def capability(
                             "trigger_id":  chain.get("trigger_id",""),
                             "trigger_cap": chain.get("trigger_cap",""),
                             "group":       group,
+                            "args_preview": _args_preview(kw),
                         })
+                        await _mirror_cap_activity("call", name, _sid, tid, group,
+                                                   args=_args_compact(kw))
                     if mode=="distributed" and REDIS:
                         task_id=await dispatch_task(name,kw,tid)
                         # Per-cap timeout: LLM caps need 240-300s, research
@@ -2458,6 +4034,9 @@ def capability(
                             "elapsed_ms":  _elapsed_ms,
                             "preview":     _preview,
                         })
+                        await _mirror_cap_activity("ok", name, _sid, tid, group,
+                                                   elapsed_ms=_elapsed_ms,
+                                                   preview=_preview)
                     # Unified activity recording. memory="off" opts out;
                     # everything else (default "on", legacy "auto") records
                     # richly via the activity worker. silent=True caps still
@@ -2474,7 +4053,9 @@ def capability(
                 except Exception as e:
                     last_err=e; attempt+=1
                     _elapsed_ms = round((time.monotonic()-_t0)*1000)
-                    _err_str = str(e)
+                    # Never empty — message-less exceptions (httpx timeouts etc.)
+                    # otherwise surface as "unknown" in the jobs panels.
+                    _err_str = str(e).strip() or _err_text(e)
                     # Capture the FULL traceback here, inside the except, where
                     # sys.exc_info() still points at the original failure (down to
                     # the real failing line). Carried on the event so the syslog
@@ -2498,6 +4079,8 @@ def capability(
                         "type":        "cap.error",
                         "name":        name,
                         "error":       _err_str,
+                        "error_type":  type(e).__name__,
+                        "args_preview": _args_preview(kw),
                         "traceback":   _err_tb,
                         "attempt":     attempt,
                         "trace_id":    tid,
@@ -2507,6 +4090,10 @@ def capability(
                         "group":       group,
                         "elapsed_ms":  _elapsed_ms,
                     })
+                    await _mirror_cap_activity(
+                        "error", name,
+                        kw.get("session_id","") or chain.get("session_id","") or _CURRENT_SESSION,
+                        tid, group, error=_err_str[:300], elapsed_ms=_elapsed_ms)
                     if attempt<=retries: await asyncio.sleep(0.5*attempt)
             raise last_err
 
@@ -2537,7 +4124,7 @@ def capability(
 # ─────────────────────────────────────────────────────────────────────────────
 async def register_mcp_server(base_url: str, server_name: str) -> List[str]:
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
+        async with httpx.AsyncClient(verify=_SSL_CTX, timeout=10) as c:
             r=await c.get(f"{base_url}/mcp/tools"); r.raise_for_status(); tools=r.json()
     except Exception as e:
         log.error("register_mcp_server %s: %s",server_name,e); return []
@@ -2546,7 +4133,7 @@ async def register_mcp_server(base_url: str, server_name: str) -> List[str]:
         tool_name=f"{server_name}.{tool['name']}"
         async def _proxy(_url=base_url,_tool=tool["name"],**kwargs):
             tid=kwargs.pop("trace_id",new_id())
-            async with httpx.AsyncClient(timeout=60) as c:
+            async with httpx.AsyncClient(verify=_SSL_CTX, timeout=60) as c:
                 r=await c.post(f"{_url}/mcp/call",json={"name":_tool,"arguments":kwargs,"trace_id":tid})
                 r.raise_for_status(); return r.json()
         CAPABILITY_REGISTRY[tool_name]={
@@ -2679,7 +4266,7 @@ async def plan_dag(goal: str, available_caps: Optional[List[str]] = None) -> dic
         props = cap.get("schema", {}).get("properties", {})
         req   = set(cap.get("schema", {}).get("required", []))
         params = ", ".join(
-            f"{p}:{v.get('type','str')}{'!' if p in req else ''}"
+            _format_param_sig(p, v, req)
             for p, v in props.items()
             if p not in ("trace_id",)
         )
@@ -2953,11 +4540,33 @@ def _make_mcp_call_handler():
                     pass  # keep original if coercion fails
 
         tid = body.get("trace_id") or new_id()
+
+        # Session plumb-through — the chat panel (and other UIs) execute caps via
+        # this endpoint, and per-session routing (sandbox containers, event
+        # scoping) needs to know WHICH session is calling. Accept a top-level
+        # session_id (or one inside arguments), inject it into the cap call when
+        # the cap accepts it, and set the syslog trigger chain so NESTED cap
+        # calls made by this cap inherit the session too (same mechanism
+        # chat.stream uses).
+        _raw_args = body.get("arguments")
+        session_id = str(body.get("session_id") or "").strip()
+        if not session_id and isinstance(_raw_args, dict):
+            session_id = str(_raw_args.get("session_id") or "").strip()
+        if session_id:
+            if "session_id" in accepted:
+                args.setdefault("session_id", session_id)
+            try:
+                _vera_syslog = sys.modules.get("syslog")
+                if _vera_syslog and hasattr(_vera_syslog, "set_trigger"):
+                    _vera_syslog.set_trigger(tid, "mcp.call", session_id)
+            except Exception:
+                pass
+
         try:
             result = await cap["func"](**args, trace_id=tid)
-            return JSONResponse(content=_json_safe(
+            return await _json_response(
                 {"type": "tool_result", "tool_name": name, "trace_id": tid, "content": result}
-            ))
+            )
         except HTTPException:
             raise
         except asyncio.CancelledError:
@@ -3273,6 +4882,70 @@ async def cap_ollama_node_config(id: str, enabled: Optional[bool] = None,
             "priority": inst.get("priority"), "label": inst.get("label")}
 
 
+@capability("ollama.interactive.get", memory="off", silent=True,
+            http_method="GET", http_path="/ollama/interactive", http_tags=["ollama"],
+            description="Get the interactive-priority config: whether BACKGROUND LLM "
+                        "work (dream cycles, V8 programs, fabric NLP) is demoted off "
+                        "the GPU while a human is active, the activity window, and "
+                        "whether new background runs are deferred entirely. Output: "
+                        "{enabled, window_s, defer_background, human_active, "
+                        "seconds_since_interactive}.")
+async def cap_ollama_interactive_get(trace_id=None):
+    since = (time.time() - LAST_INTERACTIVE_TS) if LAST_INTERACTIVE_TS else None
+    return {**INTERACTIVE_PRIORITY,
+            "human_active": interactive_recent(),
+            "background_on_cpu": bool(INTERACTIVE_PRIORITY.get("background_always_cpu")
+                                      or (INTERACTIVE_PRIORITY.get("enabled", True)
+                                          and interactive_recent())),
+            "seconds_since_interactive": round(since, 1) if since is not None else None}
+
+
+@capability("ollama.interactive.set", memory="off",
+            http_method="POST", http_path="/ollama/interactive/set", http_tags=["ollama"],
+            description="Set the interactive-priority config (persisted). Fields: "
+                        "enabled (bool — demote background LLM work off GPUs while a "
+                        "human is active), window_s (int seconds the human counts as "
+                        "active after their last interaction), defer_background (bool — "
+                        "also hold off STARTING new background runs — dream scheduler "
+                        "fires / V8 program ticks — in that window), background_always_cpu "
+                        "(bool — keep ALL background LLM work off the GPU at all times, "
+                        "not just while a human is active). Output: {ok, config}.")
+async def cap_ollama_interactive_set(enabled: Optional[bool] = None,
+                                     window_s: Optional[int] = None,
+                                     defer_background: Optional[bool] = None,
+                                     background_always_cpu: Optional[bool] = None,
+                                     trace_id=None):
+    if enabled is not None:
+        INTERACTIVE_PRIORITY["enabled"] = bool(enabled)
+    if window_s is not None:
+        try:
+            INTERACTIVE_PRIORITY["window_s"] = max(10, int(window_s))
+        except Exception:
+            return {"ok": False, "error": "window_s must be an integer"}
+    if defer_background is not None:
+        INTERACTIVE_PRIORITY["defer_background"] = bool(defer_background)
+    if background_always_cpu is not None:
+        INTERACTIVE_PRIORITY["background_always_cpu"] = bool(background_always_cpu)
+    if REDIS:
+        try:
+            await REDIS.set(KEY_OLLAMA_INTERACTIVE, json.dumps(INTERACTIVE_PRIORITY))
+        except Exception as e:
+            log.debug("save interactive priority: %s", e)
+    await emit_event({"type": "ollama.interactive.config", **INTERACTIVE_PRIORITY})
+    return {"ok": True, "config": dict(INTERACTIVE_PRIORITY)}
+
+
+@capability("activity.ping", memory="off", silent=True,
+            http_method="POST", http_path="/activity/ping", http_tags=["obs"],
+            description="Mark the human as ACTIVE now (UIs call this on real user "
+                        "interactions — sending a chat message, clicking run). Feeds "
+                        "the interactive-priority GPU backoff for background work. "
+                        "Input: source (str, optional). Output: {ok}.")
+async def cap_activity_ping(source: str = "", trace_id=None):
+    note_interactive(source)
+    return {"ok": True, "window_s": INTERACTIVE_PRIORITY.get("window_s", 180)}
+
+
 def _profile_rules_full(prof: dict) -> Dict[str, dict]:
     """A profile's rules merged over the built-in defaults (for display)."""
     merged = {jt: dict(r) for jt, r in DEFAULT_ROUTING_RULES.items()}
@@ -3332,7 +5005,8 @@ async def cap_ollama_routing_save(profile: str, label: str = "",
         clean[jt] = _rule(jt, prefer_gpu=bool(r.get("prefer_gpu")),
                           deny_gpu=bool(r.get("deny_gpu")), pin=r.get("pin", "") or "",
                           allow=r.get("allow") or [], deny=r.get("deny") or [],
-                          model=r.get("model", "") or "")
+                          model=r.get("model", "") or "",
+                          avoid_embed=bool(r.get("avoid_embed")))
     profs[profile] = {"label": label or existing.get("label", profile), "rules": clean}
     if activate or ROUTING.get("active_profile") not in profs:
         ROUTING["active_profile"] = profile
@@ -3371,6 +5045,360 @@ async def cap_ollama_profile_delete(profile: str, trace_id=None):
     await emit_event({"type": "ollama.routing.deleted", "profile": profile})
     return {"ok": True, "active_profile": ROUTING.get("active_profile")}
 
+# ── Model purpose tags — user-maintained {model: [purposes]} ─────────────────
+# Lets the operator tag models by what they're good at (planning, code, chat,
+# summarise, fast, big-context, vision, …). Shown in the routing editors so
+# picking a model for a job type / cap rule is informed; also consumable by
+# anything that wants "a model tagged X".
+KEY_OLLAMA_MODEL_TAGS = "vera:ollama:model_tags"
+MODEL_TAGS: Dict[str, List[str]] = {}
+_MODEL_TAGS_LOADED = {"v": False}
+
+
+async def _model_tags_hydrate() -> None:
+    if _MODEL_TAGS_LOADED["v"]:
+        return
+    _MODEL_TAGS_LOADED["v"] = True
+    if not REDIS:
+        return
+    try:
+        raw = await REDIS.get(KEY_OLLAMA_MODEL_TAGS)
+        if raw:
+            doc = json.loads(raw)
+            if isinstance(doc, dict):
+                MODEL_TAGS.update({str(k): [str(t) for t in v][:12]
+                                   for k, v in doc.items() if isinstance(v, list)})
+    except Exception as e:
+        log.debug("load model tags: %s", e)
+
+
+@capability("ollama.model_tags.get", memory="off", silent=True,
+            http_method="GET", http_path="/ollama/model_tags", http_tags=["ollama"],
+            description="User-maintained model PURPOSE tags {model: [tags]} — e.g. "
+                        "planning, code, chat, summarise, fast, big-context, vision. "
+                        "Query: tag (str — filter to models carrying that tag).")
+async def cap_ollama_model_tags_get(tag: str = "", trace_id=None):
+    await _model_tags_hydrate()
+    tags = dict(MODEL_TAGS)
+    if tag:
+        tags = {m: ts for m, ts in tags.items() if tag in ts}
+    return {"tags": tags}
+
+
+@capability("ollama.model_tags.set", memory="off",
+            http_method="POST", http_path="/ollama/model_tags/set", http_tags=["ollama"],
+            description="Set the purpose tags for one model (replaces its list; empty "
+                        "clears). Inputs: model (str!), tags (csv or JSON list). Persists.")
+async def cap_ollama_model_tags_set(model: str, tags: Any = "", trace_id=None):
+    await _model_tags_hydrate()
+    if not (model or "").strip():
+        return {"error": "model required"}
+    if isinstance(tags, str):
+        try:
+            parsed = json.loads(tags) if tags.strip().startswith("[") else None
+        except Exception:
+            parsed = None
+        tag_list = ([str(t) for t in parsed] if isinstance(parsed, list)
+                    else [t.strip() for t in tags.split(",") if t.strip()])
+    elif isinstance(tags, list):
+        tag_list = [str(t).strip() for t in tags if str(t).strip()]
+    else:
+        tag_list = []
+    model = model.strip()
+    if tag_list:
+        MODEL_TAGS[model] = tag_list[:12]
+    else:
+        MODEL_TAGS.pop(model, None)
+    if REDIS:
+        try:
+            await REDIS.set(KEY_OLLAMA_MODEL_TAGS, json.dumps(MODEL_TAGS))
+        except Exception as e:
+            log.warning("save model tags: %s", e)
+    await emit_event({"type": "ollama.model_tags.saved", "model": model, "tags": tag_list})
+    return {"ok": True, "model": model, "tags": tag_list}
+
+
+@capability("ollama.cap_routing.get", memory="off", silent=True,
+            http_method="GET", http_path="/ollama/cap_routing", http_tags=["ollama"],
+            description="Per-capability/group LLM routing rules. Output: {user, declared, "
+                        "job_types, nodes}. USER rules (editable) override DECLARED rules "
+                        "(registered in code by subsystems, e.g. the researcher's roles).")
+async def cap_ollama_cap_routing_get(trace_id=None):
+    return {
+        "user":      CAP_ROUTING_USER,
+        "declared":  CAP_ROUTING_DECLARED,
+        "job_types": OLLAMA_JOB_TYPES,
+        "nodes":     {iid: {"label": i.get("label", iid), "has_gpu": i.get("has_gpu", False),
+                            "enabled": i.get("enabled", True), "status": i.get("status", "")}
+                      for iid, i in OLLAMA_INSTANCES.items()},
+    }
+
+
+@capability("ollama.cap_routing.save", memory="off",
+            http_method="POST", http_path="/ollama/cap_routing/save", http_tags=["ollama"],
+            description="Create/update a per-capability routing rule. Fields: pattern "
+                        "(str! — cap name or 'prefix.*' glob), job_type (str), label (str), "
+                        "prefer_gpu/deny_gpu (bool), pin (str — instance id), allow/deny "
+                        "(list[str] — instance globs), model (str), escalate_chars (int — "
+                        "prompt-length threshold), escalate (dict — overrides applied above "
+                        "the threshold, e.g. {\"prefer_gpu\": true, \"model\": \"...\"}). "
+                        "Persists; overrides any code-declared rule for the same pattern.")
+async def cap_ollama_cap_routing_save(pattern: str, job_type: str = "", label: str = "",
+                                      prefer_gpu: bool = False, deny_gpu: bool = False,
+                                      pin: str = "", allow: Optional[List[str]] = None,
+                                      deny: Optional[List[str]] = None, model: str = "",
+                                      escalate_chars: int = 0,
+                                      escalate: Optional[dict] = None, trace_id=None):
+    if not (pattern or "").strip():
+        return {"error": "pattern required"}
+    if isinstance(escalate, str):
+        try:
+            escalate = json.loads(escalate) if escalate.strip() else {}
+        except Exception:
+            return {"error": "escalate must be a JSON object"}
+    rule = _cap_rule(pattern.strip(), job_type=job_type, label=label,
+                     prefer_gpu=prefer_gpu, deny_gpu=deny_gpu, pin=pin,
+                     allow=allow, deny=deny, model=model,
+                     escalate_chars=escalate_chars, escalate=escalate)
+    CAP_ROUTING_USER[pattern.strip()] = rule
+    await _save_cap_routing()
+    await emit_event({"type": "ollama.cap_routing.saved", "pattern": pattern.strip()})
+    return {"ok": True, "rule": rule}
+
+
+@capability("ollama.cap_routing.delete", memory="off",
+            http_method="POST", http_path="/ollama/cap_routing/delete", http_tags=["ollama"],
+            description="Delete a per-capability routing rule (USER layer only — a "
+                        "code-declared rule for the pattern, if any, becomes active again). "
+                        "Field: pattern (str!).")
+async def cap_ollama_cap_routing_delete(pattern: str, trace_id=None):
+    if pattern not in CAP_ROUTING_USER:
+        return {"error": f"no user rule for pattern: {pattern}",
+                "declared": pattern in CAP_ROUTING_DECLARED}
+    CAP_ROUTING_USER.pop(pattern, None)
+    await _save_cap_routing()
+    await emit_event({"type": "ollama.cap_routing.deleted", "pattern": pattern})
+    return {"ok": True}
+
+
+# ── Role-profile routing (research / ide / …) ────────────────────────────────
+
+@capability("ollama.role_profiles.get", memory="off", silent=True,
+            http_method="GET", http_path="/ollama/role_profiles", http_tags=["ollama"],
+            description="Role-based routing profiles (research/ide/…): each maps named "
+                        "roles (thinker/writer/verifier/…) to routing rules. Output: "
+                        "{declared, user, effective, job_types, nodes}. USER roles "
+                        "(editable) override DECLARED ones per role.")
+async def cap_ollama_role_profiles_get(trace_id=None):
+    return {
+        "declared":  ROLE_PROFILES_DECLARED,
+        "user":      ROLE_PROFILES_USER,
+        "effective": _effective_role_profiles(),
+        "job_types": OLLAMA_JOB_TYPES,
+        "nodes": {iid: {"label": i.get("label", iid), "has_gpu": i.get("has_gpu", False),
+                        "enabled": i.get("enabled", True), "status": i.get("status", ""),
+                        "priority": i.get("priority", 0), "in_use": i.get("in_use", 0),
+                        "models": i.get("models", [])}
+                  for iid, i in OLLAMA_INSTANCES.items()},
+    }
+
+
+@capability("ollama.role_profiles.save", memory="off",
+            http_method="POST", http_path="/ollama/role_profiles/save", http_tags=["ollama"],
+            description="Create or override a role-routing profile (USER layer — wins over "
+                        "the code-declared profile per role). Fields: profile (str!), "
+                        "label (str), roles (dict role -> {job_type, prefer_gpu, deny_gpu, "
+                        "pin, allow, deny, model, escalate_chars, escalate}). Persists.")
+async def cap_ollama_role_profiles_save(profile: str, label: str = "",
+                                        roles: Optional[Dict[str, Any]] = None,
+                                        trace_id=None):
+    name = (profile or "").strip()
+    if not name:
+        return {"error": "profile name required"}
+    if isinstance(roles, str):
+        try:
+            roles = json.loads(roles) if roles.strip() else {}
+        except Exception:
+            return {"error": "roles must be a JSON object"}
+    existing = ROLE_PROFILES_USER.get(name) or {}
+    declared = ROLE_PROFILES_DECLARED.get(name) or {}
+    clean = {r: _role_rule(name, r, v)
+             for r, v in (roles or {}).items() if isinstance(v, dict)}
+    ROLE_PROFILES_USER[name] = {
+        "label": label or existing.get("label") or declared.get("label", name),
+        "owner": existing.get("owner") or declared.get("owner", "user"),
+        "roles": clean or (existing.get("roles") or {}),
+    }
+    await _save_role_profiles()
+    await emit_event({"type": "ollama.role_profiles.saved", "profile": name})
+    return {"ok": True, "profile": name,
+            "effective": _effective_role_profiles().get(name)}
+
+
+@capability("ollama.role_profiles.delete", memory="off",
+            http_method="POST", http_path="/ollama/role_profiles/delete", http_tags=["ollama"],
+            description="Delete a role-profile USER override — the whole profile, or a "
+                        "single role via the optional `role` field. The code-declared "
+                        "profile, if any, becomes active again. Fields: profile (str!), "
+                        "role (str).")
+async def cap_ollama_role_profiles_delete(profile: str, role: str = "", trace_id=None):
+    prof = ROLE_PROFILES_USER.get(profile)
+    if not prof:
+        return {"error": f"no user override for profile: {profile}",
+                "declared": profile in ROLE_PROFILES_DECLARED}
+    if role:
+        (prof.get("roles") or {}).pop(role, None)
+        if not prof.get("roles"):
+            ROLE_PROFILES_USER.pop(profile, None)
+    else:
+        ROLE_PROFILES_USER.pop(profile, None)
+    await _save_role_profiles()
+    await emit_event({"type": "ollama.role_profiles.deleted",
+                      "profile": profile, "role": role})
+    return {"ok": True}
+
+
+@capability("llm.route.resolve", memory="off", silent=True,
+            http_method="GET", http_path="/llm/route/resolve", http_tags=["ollama"],
+            description="Preview/resolve a routing decision WITHOUT generating: which node "
+                        "would serve a request and why. Query: profile+role (resolve a "
+                        "role-profile role), or service (stt|tts|imagegen — resolve a media "
+                        "node), or job_type, or cap_name; plus model (str) and "
+                        "prompt_chars (int — triggers length escalation). Output: "
+                        "{instance_id, url, label, model, job_type, rule, reason}.")
+async def cap_llm_route_resolve(profile: str = "", role: str = "", job_type: str = "",
+                                cap_name: str = "", model: str = "", service: str = "",
+                                prompt_chars: int = 0, trace_id=None):
+    chars = int(prompt_chars or 0)
+    if service:
+        res = resolve_media(service)
+        return res or {"error": "no routable media node", "service": service,
+                       "fallback": _MEDIA_FALLBACK_URL}
+    if profile and role:
+        res = resolve_role(profile, role, model=model, prompt_chars=chars)
+        return res or {"error": "no routable node", "profile": profile, "role": role}
+    rule = _resolve_cap_routing(cap_name) if cap_name else None
+    jt = (job_type or (rule or {}).get("job_type") or "default")
+    eff = _merge_rule_over_base(rule, _resolve_rule(jt) or {}, chars)
+    exp: dict = {}
+    chosen = pick_instance(model=(model or eff.get("model") or None), job_type=jt,
+                           rule_override=eff, explain=exp)
+    if not chosen:
+        return {"error": "no routable node", "job_type": jt, "rule": eff,
+                "reason": exp.get("reason") or []}
+    inst = OLLAMA_INSTANCES.get(chosen, {})
+    return {"instance_id": chosen, "url": inst.get("url", ""),
+            "label": inst.get("label", chosen), "has_gpu": bool(inst.get("has_gpu")),
+            "model": model or eff.get("model") or "", "job_type": jt,
+            "rule_source": (f"cap:{rule.get('pattern', '')}" if rule
+                            else f"profile:{jt}"),
+            "rule": eff, "reason": exp.get("reason") or []}
+
+
+# ── Media node routing caps (STT / TTS / image-gen servers) ──────────────────
+
+@capability("media.nodes", memory="off", silent=True,
+            http_method="GET", http_path="/media/nodes", http_tags=["media", "ollama"],
+            description="Media (GPU-inference) nodes and the services each one serves "
+                        "(stt / tts / imagegen, detected via /health). Output: {nodes, "
+                        "services, fallback_url}. Candidates are seeded on every cluster "
+                        "host — install the inference server there and the node goes "
+                        "online on the next heartbeat.")
+async def cap_media_nodes(trace_id=None):
+    return {"nodes": MEDIA_INSTANCES, "services": list(MEDIA_SERVICES),
+            "fallback_url": _MEDIA_FALLBACK_URL}
+
+
+@capability("media.node.add", memory="off",
+            http_method="POST", http_path="/media/node/add", http_tags=["media"],
+            description="Register a media (GPU-inference) node. Fields: id (str!), "
+                        "url (str! — e.g. http://host:8765), label (str), has_gpu (bool), "
+                        "priority (int). Persists; health-probed on the next heartbeat.")
+async def cap_media_node_add(id: str, url: str, label: str = "",
+                             has_gpu: bool = False, priority: int = 0, trace_id=None):
+    iid = (id or "").strip()
+    if not iid or not (url or "").strip():
+        return {"error": "id and url required"}
+    inst = add_media_instance(iid, url.strip(), label=label, has_gpu=has_gpu,
+                              priority=int(priority or 0))
+    await _ping_media_instance(iid, inst)
+    await _save_media_nodes()
+    await emit_event({"type": "media.node.added", "id": iid, "url": url})
+    return {"ok": True, "id": iid, "node": inst}
+
+
+@capability("media.node.remove", memory="off",
+            http_method="POST", http_path="/media/node/remove", http_tags=["media"],
+            description="Remove a media node from routing. Field: id (str!). Seeded "
+                        "candidates reappear (disabled state persists via config instead).")
+async def cap_media_node_remove(id: str, trace_id=None):
+    if id not in MEDIA_INSTANCES:
+        return {"error": f"unknown media node: {id}"}
+    MEDIA_INSTANCES.pop(id, None)
+    await _save_media_nodes()
+    await emit_event({"type": "media.node.removed", "id": id})
+    return {"ok": True}
+
+
+@capability("media.node.config", memory="off",
+            http_method="POST", http_path="/media/node/config", http_tags=["media"],
+            description="Update a media node's routing config: enabled (bool — false "
+                        "removes it from routing), priority (int), label (str). "
+                        "Field: id (str!). Persists.")
+async def cap_media_node_config(id: str, enabled: Optional[bool] = None,
+                                priority: Optional[int] = None, label: str = "",
+                                trace_id=None):
+    inst = MEDIA_INSTANCES.get(id)
+    if not inst:
+        return {"error": f"unknown media node: {id}"}
+    if enabled is not None:
+        inst["enabled"] = bool(enabled)
+    if priority is not None:
+        inst["priority"] = int(priority)
+    if label:
+        inst["label"] = label
+    await _save_media_nodes()
+    await emit_event({"type": "media.node.config", "id": id})
+    return {"ok": True, "node": inst}
+
+
+@capability("media.ping", memory="off",
+            http_method="POST", http_path="/media/ping", http_tags=["media"],
+            description="Ping a media node now and refresh its status + service list. "
+                        "Field: id (str!).")
+async def cap_media_ping(id: str, trace_id=None):
+    inst = MEDIA_INSTANCES.get(id)
+    if not inst:
+        return {"error": f"unknown media node: {id}"}
+    await _ping_media_instance(id, inst)
+    return inst
+
+
+@capability("ollama.route_stats", memory="off", silent=True,
+            http_method="GET", http_path="/ollama/route_stats", http_tags=["ollama"],
+            description="Rolling per-(model,instance,job_type) request statistics: count, "
+                        "EMA elapsed seconds, output tokens, tokens/sec and prompt size — "
+                        "the data the router uses to gauge how long a request will take. "
+                        "Query: model (str, filter), instance (str, filter), "
+                        "estimate_prompt_chars (int — include a per-key duration estimate).")
+async def cap_ollama_route_stats(model: str = "", instance: str = "",
+                                 estimate_prompt_chars: int = 0, trace_id=None):
+    out = []
+    for k, s in _ROUTE_STATS.items():
+        if model and s.get("model") != model:
+            continue
+        if instance and s.get("instance") != instance:
+            continue
+        row = dict(s)
+        if estimate_prompt_chars > 0:
+            row["est_seconds"] = estimate_request_seconds(
+                s.get("model", ""), s.get("instance", ""), s.get("job_type", ""),
+                int(estimate_prompt_chars))
+        out.append(row)
+    out.sort(key=lambda r: (-int(r.get("n") or 0)))
+    return {"stats": out, "keys": len(_ROUTE_STATS)}
+
+
 @capability("ollama.ping_instance", memory="off",
             http_method="POST", http_path="/ollama/ping", http_tags=["ollama"],
             description="Ping a specific Ollama instance and update its status.")
@@ -3386,7 +5414,7 @@ async def cap_ollama_pull(model: str, instance_id: str, trace_id=None):
     inst=OLLAMA_INSTANCES.get(instance_id)
     if not inst: return {"error":f"Unknown instance: {instance_id}"}
     try:
-        async with httpx.AsyncClient(timeout=600) as c:
+        async with httpx.AsyncClient(verify=_SSL_CTX, timeout=600) as c:
             r=await c.post(f"{inst['url']}/api/pull",json={"name":model,"stream":False})
             r.raise_for_status(); return {"model":model,"instance":instance_id,"status":"pulled",**r.json()}
     except Exception as e: return {"model":model,"instance":instance_id,"error":str(e)}
@@ -3576,9 +5604,273 @@ schedule(_heartbeat,30,"heartbeat")
 # APP + LIFESPAN
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Heartbeat the async watchdog bumps every tick; a separate daemon thread reads
+# it to catch a stall WHILE it's happening (the async watchdog only runs AFTER
+# the loop frees, by which point the blocker is gone).
+_LOOP_HEARTBEAT = [0.0]
+
+# Structured record of loop stalls/hangs so the Perf monitor UI (perf_capabilities)
+# can display them without scraping logs. Bounded ring buffer; newest last.
+from collections import deque as _deque
+PERF_EVENTS: "_deque" = _deque(maxlen=int(os.getenv("VERA_PERF_EVENTS_MAX", "300") or 300))
+
+def record_perf_event(kind: str, **fields) -> None:
+    """Append a performance event (loop stall / hang / note). Best-effort, never
+    raises. `kind`: 'stall' | 'hang' | 'note'. Consumed by perf.stalls cap."""
+    try:
+        ev = {"kind": kind, "ts": now_iso(), "mono": time.monotonic()}
+        ev.update(fields)
+        PERF_EVENTS.append(ev)
+    except Exception:
+        pass
+# Stack-dump threshold: a stall lasting at least this long gets the main-thread
+# stack dumped (naming the exact blocking call). Must be ≤ what you want to
+# diagnose. The dumper thread polls fast enough to catch stalls near this bound.
+_LOOP_HANG_DUMP_S = float(os.getenv("VERA_LOOP_HANG_DUMP_S", "1") or 1)
+
+def _start_stall_stack_dumper():
+    """Daemon thread that dumps the MAIN thread's stack when the event loop goes
+    unresponsive — i.e. catches the exact synchronous call blocking the loop
+    (sync SQLite/subprocess/requests/CPU) in the act. The async watchdog can
+    only report the DURATION after the fact; this names the offending line."""
+    import threading, sys as _sys, traceback as _tb
+    main_tid = threading.main_thread().ident
+    # Poll well under the threshold so a stall of ~_LOOP_HANG_DUMP_S is caught
+    # while it's still blocking (not after it clears).
+    poll = max(0.1, min(0.25, _LOOP_HANG_DUMP_S / 3.0))
+
+    def _run():
+        last_dumped = 0.0
+        while True:
+            time.sleep(poll)
+            hb = _LOOP_HEARTBEAT[0]
+            if hb <= 0:
+                continue
+            stalled = time.monotonic() - hb
+            if stalled >= _LOOP_HANG_DUMP_S and hb != last_dumped:
+                last_dumped = hb
+                frame = _sys._current_frames().get(main_tid)
+                stack = "".join(_tb.format_stack(frame)) if frame else "(no frame)"
+                log.error("EVENT LOOP HUNG >%.1fs — main thread is stuck HERE "
+                          "(this is the blocking call starving WebSockets):\n%s",
+                          stalled, stack)
+                # Record for the Perf monitor UI (best-effort). Extract the
+                # deepest Vera/app frame as a compact "where" for the table.
+                try:
+                    _where = ""
+                    for _ln in reversed((stack or "").splitlines()):
+                        _s = _ln.strip()
+                        if _s.startswith("File \"") and "/site-packages/" not in _s:
+                            _where = _s.replace("File \"", "").split("\"")[0]
+                            _lno = _s.split("line ", 1)[1].split(",")[0] if "line " in _s else ""
+                            _where = f"{_where.split('/')[-1]}:{_lno}"
+                            break
+                    record_perf_event("hang", stalled_ms=round(stalled * 1000),
+                                      where=_where, stack=stack[-4000:])
+                except Exception:
+                    pass
+
+    t = threading.Thread(target=_run, name="loop-stall-dumper", daemon=True)
+    t.start()
+    log.info("loop-stall stack dumper active (dumps the blocking call after >%.1fs)",
+             _LOOP_HANG_DUMP_S)
+
+
+def _busy_thread_stacks(max_threads: int = 6, tail_frames: int = 6) -> str:
+    """Compact stacks of non-idle worker threads. Used when a loop stall had no
+    in-the-act 'EVENT LOOP HUNG' dump: a GIL-holding C call in a worker thread
+    starves the dumper thread exactly like it starves the loop, so nothing gets
+    captured — but right after the loop resumes, that worker is usually still
+    inside the call, so sampling all threads NOW often names it."""
+    import sys as _sys, traceback as _tb, threading as _th, os.path as _osp
+    idle_basenames = {"threading.py", "queue.py", "selectors.py", "socket.py",
+                      "thread.py", "connection.py"}
+    main_tid = _th.main_thread().ident
+    names = {t.ident: t.name for t in _th.enumerate()}
+    out = []
+    for tid, frame in _sys._current_frames().items():
+        name = names.get(tid, str(tid))
+        if tid == main_tid or str(name).startswith("loop-stall"):
+            continue
+        stack = _tb.extract_stack(frame)
+        if not stack:
+            continue
+        if _osp.basename(stack[-1].filename) in idle_basenames:
+            continue  # parked in a lock/queue/select wait — not a GIL suspect
+        out.append("— thread %s:\n%s" % (
+            name, "".join(_tb.format_list(stack[-tail_frames:]))))
+        if len(out) >= max_threads:
+            break
+    return "\n".join(out) or "(all worker threads idle/waiting)"
+
+
+async def _loop_lag_watchdog(interval: float = 0.5):
+    """Detect event-loop stalls — the prime suspect for WS 1005/1006 flapping.
+
+    Sleeps `interval` in a tight loop and measures how much LONGER than that it
+    actually took to wake. Extra time == the loop was blocked by synchronous
+    work (a cap doing CPU/blocking IO on the loop thread, a giant json.dumps in
+    emit_event, a tight non-awaiting loop). While the loop is blocked, uvicorn
+    can't service WebSocket frames or ping/pong, and connections drop. This logs
+    the stall duration; the companion stack-dumper thread names the exact call
+    (for stalls ≥ _LOOP_HANG_DUMP_S — shorter ones warn but can't be captured
+    after the fact, so the message says so).
+    """
+    log.info("loop-lag watchdog active (warns when the event loop stalls)")
+    warn_ms = float(os.getenv("VERA_LOOP_LAG_WARN_MS", "500") or 500)
+    dump_ms = _LOOP_HANG_DUMP_S * 1000.0
+    _LOOP_HEARTBEAT[0] = time.monotonic()
+    _start_stall_stack_dumper()
+    while True:
+        t0 = time.monotonic()
+        try:
+            await asyncio.sleep(interval)
+        except asyncio.CancelledError:
+            return
+        _LOOP_HEARTBEAT[0] = time.monotonic()   # loop is alive
+        lag_ms = (time.monotonic() - t0 - interval) * 1000.0
+        if lag_ms >= warn_ms:
+            dumped = False
+            _threads_txt = ""
+            if lag_ms >= dump_ms:
+                # Did the dumper thread actually catch this one in the act?
+                # It misses when a worker thread holds the GIL in a long C call
+                # (the dumper is starved too) or the stall was many short
+                # callbacks rather than one contiguous block.
+                try:
+                    _now = time.monotonic()
+                    dumped = any(ev.get("kind") == "hang" and
+                                 (_now - ev.get("mono", 0.0)) < (lag_ms / 1000.0 + 2.0)
+                                 for ev in list(PERF_EVENTS)[-6:])
+                except Exception:
+                    dumped = False
+                if dumped:
+                    _hint = ("A separate 'EVENT LOOP HUNG' line with the exact "
+                             "blocking call's stack should accompany this.")
+                else:
+                    _threads_txt = _busy_thread_stacks()
+                    _hint = ("The stack dumper did NOT catch it in the act — "
+                             "typical of a GIL-holding C call in a worker thread "
+                             "or a burst of short callbacks. Busy worker-thread "
+                             "stacks sampled now (culprit may still be running):\n"
+                             + _threads_txt)
+            else:
+                _hint = (f"Too brief for a stack dump (< {_LOOP_HANG_DUMP_S:.1f}s "
+                         "threshold); lower VERA_LOOP_HANG_DUMP_S to capture its "
+                         "stack, or ignore — a sub-second blip rarely drops a WS.")
+            log.warning("EVENT LOOP STALLED for %.0fms — WS frames/ping were "
+                        "blocked this whole time (sync/CPU-bound cap, a large "
+                        "emit_event payload, or a non-awaiting loop). %s",
+                        lag_ms, _hint)
+            try:
+                extra = {"threads": _threads_txt[-4000:]} if _threads_txt else {}
+                record_perf_event("stall", stalled_ms=round(lag_ms),
+                                  dumped=dumped, **extra)
+            except Exception:
+                pass
+
+
+_LOG_QLISTENERS: list = []
+
+
+class _PassthroughQueueHandler(logging.handlers.QueueHandler):
+    """QueueHandler that keeps record.args intact for the downstream listener.
+
+    The stdlib QueueHandler.prepare() pre-renders the message and nulls
+    record.args (so records survive cross-process pickling). That breaks any
+    downstream handler with a custom formatter that re-reads args — notably
+    uvicorn's AccessFormatter, which does
+    `(client, method, path, version, status) = record.args` and blows up with
+    'cannot unpack non-iterable NoneType' once args is None. Our QueueListener
+    runs in-process on a thread, so there's nothing to pickle: pass a shallow
+    copy of the record through with args preserved and let the real handler's
+    formatter do its job."""
+    def prepare(self, record):
+        return copy.copy(record)
+
+
+def _offload_blocking_log_handlers():
+    """Move plain StreamHandlers (root basicConfig stderr + uvicorn's stdout
+    access/error loggers) behind QueueHandler→QueueListener pairs. A blocked
+    console (paused terminal, SSH backpressure, journald stall) otherwise
+    blocks the event loop — a captured 1.5s stall was uvicorn's access logger
+    inside stream.write. One queue PER logger so records keep their original
+    handler routing (no cross-logger duplication)."""
+    if _LOG_QLISTENERS:
+        return
+    import logging.handlers as _lh  # noqa: F401  (ensures logging.handlers loaded)
+    import queue as _q
+    for name in (None, "uvicorn", "uvicorn.access", "uvicorn.error"):
+        lg = logging.getLogger(name)
+        # Exact type only — leave RotatingFileHandler/QueueHandler/etc alone.
+        plain = [h for h in lg.handlers if type(h) is logging.StreamHandler]
+        if not plain:
+            continue
+        q = _q.SimpleQueue()
+        for h in plain:
+            lg.removeHandler(h)
+        listener = _lh.QueueListener(q, *plain, respect_handler_level=True)
+        listener.start()
+        _LOG_QLISTENERS.append(listener)
+        lg.addHandler(_PassthroughQueueHandler(q))
+    if _LOG_QLISTENERS:
+        log.info("logging: console writes moved off-loop for %d logger(s)",
+                 len(_LOG_QLISTENERS))
+
+
+_GC_T0 = [0.0]
+
+def _gc_pause_timer(phase, info):
+    """gc callback — times every collection and records slow ones as perf
+    events. The hang dumper samples whatever Python frame GC happened to be
+    in (often a neo4j __del__ finalizer), which makes GC pauses masquerade
+    as unrelated code; this names them explicitly in the stall feed."""
+    if phase == "start":
+        _GC_T0[0] = time.monotonic()
+        return
+    dt_ms = (time.monotonic() - _GC_T0[0]) * 1000.0
+    if dt_ms >= float(os.getenv("VERA_GC_WARN_MS", "200") or 200):
+        record_perf_event("gc", gen=info.get("generation"),
+                          collected=info.get("collected"),
+                          uncollectable=info.get("uncollectable"),
+                          stalled_ms=round(dt_ms))
+
+
+async def _gc_pacer():
+    """Run full collections on OUR schedule instead of CPython's. Thresholds
+    are raised at startup so automatic gen-2 passes (1-2s loop stalls on this
+    heap — the hang traces bottoming out in neo4j workspace __del__ were GC
+    finalizer sweeps) essentially never fire mid-request; this task does the
+    equivalent work at a paced, observable moment so cyclic garbage (neo4j
+    session/result graphs, parsed LLM JSON) can't accumulate unbounded."""
+    import gc
+    interval = float(os.getenv("VERA_GC_PACE_S", "120") or 120)
+    while True:
+        try:
+            await asyncio.sleep(interval)
+        except asyncio.CancelledError:
+            return
+        t0 = time.monotonic()
+        try:
+            n = gc.collect()
+        except Exception:
+            continue
+        dt_ms = (time.monotonic() - t0) * 1000.0
+        if dt_ms >= 200:
+            log.info("gc pacer: full collect freed %d objects in %.0fms "
+                     "(paced — would otherwise have hit mid-request)", n, dt_ms)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global REDIS, PG_POOL, CHROMA, NEO
+
+    # uvicorn has configured its loggers by now — detach console writes from
+    # the loop thread before any traffic arrives.
+    try:
+        _offload_blocking_log_handlers()
+    except Exception as _e:
+        log.warning("log-handler offload failed: %s", _e)
 
     # ── DB connections run in background so the server is available immediately ──
     # On reboot, Redis/Postgres may take 10-30s to start. Running them in lifespan
@@ -3713,12 +6005,17 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "fabric/embed_provider_capabilities.py"),
         os.path.join(_here, "fabric/fabric_web_acquisition.py"),
         os.path.join(_here, "fabric/memory_second_order.py"),
+        os.path.join(_here, "fabric/session_notes.py"),
         os.path.join(_here, "fabric/context.py"),
+        os.path.join(_here, "fabric/memory_retrieval.py"),
         os.path.join(_here, "fabric/discovery.py"),
+        os.path.join(_here, "fabric/knowledgebase.py"),
         os.path.join(_here, "skills/skills.py"),
         os.path.join(_here, "skills/skills_owl.py"),
         os.path.join(_here, "dag/dag_store.py"),
         os.path.join(_here, "dag/dag_workshop_capabilities.py"),
+        os.path.join(_here, "dag/loop_profiles.py"),
+        os.path.join(_here, "dag/loop_orchestrator.py"),
         os.path.join(_here, "agents/agents.py"),
         os.path.join(_here, "workers/cluster.py"),
         os.path.join(_here, "workers/syslog.py"),
@@ -3728,31 +6025,62 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "ui builder/ui_capabilities.py"),
         os.path.join(_here, "ide/ide_capabilities.py"),
         os.path.join(_here, "ide/ide_code_capabilities.py"),
+        os.path.join(_here, "ide/ide_remote_capabilities.py"),
+        os.path.join(_here, "ide/vscode_capabilities.py"),
         os.path.join(_here, "ide/ide_inspect_capabilities.py"),
         os.path.join(_here, "research/research_fabric.py"),        
         # os.path.join(_here, "research_capabilities.py"),
         # os.path.join(_here, "research_recall_capabilities.py"),
         # os.path.join(_here, "research_activity_capabilities.py"),
         os.path.join(_here, "web/web_capabilities.py"),
+        os.path.join(_here, "web/web_api_capabilities.py"),
         os.path.join(_here, "telegram/telegram_capabilities.py"),
         os.path.join(_here, "dream/dream_capabilities.py"),
         os.path.join(_here, "dream/project_capabilities.py"),
         os.path.join(_here, "execution/exec_capabilities.py"),
         os.path.join(_here, "proxmox/proxmox_capabilities.py"),
+        os.path.join(_here, "proxmox/pxstore_capabilities.py"),
+        os.path.join(_here, "monitor/monitor_capabilities.py"),
+        os.path.join(_here, "monitor/perf_capabilities.py"),
+        os.path.join(_here, "babblefish/babblefish_capabilities.py"),
+        os.path.join(_here, "netmon/netmon_capabilities.py"),
         os.path.join(_here, "provisioning/provisioning_capabilities.py"),
         os.path.join(_here, "provisioning/identity_capabilities.py"),
+        os.path.join(_here, "provisioning/lldap_capabilities.py"),
         os.path.join(_here, "provisioning/enroll_capabilities.py"),
         os.path.join(_here, "provisioning/software_capabilities.py"),
+        os.path.join(_here, "provisioning/components_capabilities.py"),
+        os.path.join(_here, "provisioning/stores_capabilities.py"),
+        os.path.join(_here, "provisioning/security_provision_capabilities.py"),
+        os.path.join(_here, "provisioning/autoenroll_capabilities.py"),
         os.path.join(_here, "networking/netgraph_capabilities.py"),
+        os.path.join(_here, "networking/netsec_capabilities.py"),
         os.path.join(_here, "workers/docker_capabilities.py"),
         os.path.join(_here, "workers/workers.py"),
+        os.path.join(_here, "workers/nodes_capabilities.py"),
+        os.path.join(_here, "remote/remote_capabilities.py"),
+        os.path.join(_here, "remote/workspace_capabilities.py"),
+        os.path.join(_here, "remote/operator_capabilities.py"),
+        os.path.join(_here, "remote/portainer_capabilities.py"),
+        os.path.join(_here, "remote/metrics_capabilities.py"),
+        os.path.join(_here, "remote/session_sandbox_capabilities.py"),
         os.path.join(_here, "web/browser_capabilities.py"),
         os.path.join(_here, "vllm/vllm_capabilities.py"),
+        os.path.join(_here, "catalog/catalog_capabilities.py"),
         os.path.join(_here, "machine learning/ml_workshop.py"),
         os.path.join(_here, "machine learning/ml_training.py"),
         os.path.join(_here, "machine learning/ml_onnx.py"),
         os.path.join(_here, "markets/markets_capabilities.py"),
+        os.path.join(_here, "markets/markets_data_capabilities.py"),
+        os.path.join(_here, "markets/markets_analysis_capabilities.py"),
+        os.path.join(_here, "markets/markets_lab_capabilities.py"),
+        os.path.join(_here, "markets/markets_studio_capabilities.py"),
+        os.path.join(_here, "markets/markets_evolve_capabilities.py"),
         os.path.join(_here, "mesh/mesh_capabilities.py"),
+        os.path.join(_here, "mesh/mesh_toolkit_capabilities.py"),
+        os.path.join(_here, "mesh/mesh_ui_capabilities.py"),
+        os.path.join(_here, "mesh/mesh_boards_capabilities.py"),
+        os.path.join(_here, "build/build_capabilities.py"),
         os.path.join(_here, "openclaw/openclaw_capabilities.py"),
         os.path.join(_here, "providers/providers_capabilities.py"),
         # os.path.join(_here, "dream/dream_research_integration.py"),
@@ -3760,6 +6088,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "ontologies/cap_ontology.py"),
         os.path.join(_here, "chat/chat_panels_capabilities.py"),
         os.path.join(_here, "agent_loop_output_capabilities.py"),
+        os.path.join(_here, "activity/activity_capabilities.py"),
         os.path.join(_here, "worldview/worldview_jepa.py"),
         os.path.join(_here, "research/researcher_api.py"),
         os.path.join(_here, "research/nlp_capabilities.py"),
@@ -3767,10 +6096,29 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "workers/job_persistance.py"),
         os.path.join(_here, "accounts/accounts_capabilities.py"),
         os.path.join(_here, "calendar/calendar_capabilities.py"),
+        os.path.join(_here, "calendar/longterm_scheduler.py"),
         os.path.join(_here, "email/email_capabilities.py"),
         os.path.join(_here, "render/render_capabilities.py"),
+        os.path.join(_here, "render/chat_render_capabilities.py"),
+        os.path.join(_here, "media/media_capabilities.py"),
         os.path.join(_here, "images/image_fabric.py"),
         os.path.join(_here, "character/character_capabilities.py"),
+        os.path.join(_here, "spritegen/spritegen_capabilities.py"),
+        os.path.join(_here, "podcast/podcast_capabilities.py"),
+        os.path.join(_here, "commerce/commerce_capabilities.py"),
+        os.path.join(_here, "commerce/commerce_platforms.py"),
+        os.path.join(_here, "commerce/commerce_vinted.py"),
+        os.path.join(_here, "commerce/commerce_pricing_capabilities.py"),
+        os.path.join(_here, "commerce/commerce_uk_tax.py"),
+        os.path.join(_here, "commerce/commerce_fulfilment.py"),
+        os.path.join(_here, "commerce/commerce_listing.py"),
+        os.path.join(_here, "commerce/commerce_market.py"),
+        os.path.join(_here, "commerce/commerce_stores.py"),
+        os.path.join(_here, "business/business_capabilities.py"),
+        os.path.join(_here, "business/business_sim.py"),
+        os.path.join(_here, "business/thermal_printer_capabilities.py"),
+        os.path.join(_here, "mcp/mcp_catalog_capabilities.py"),
+        os.path.join(_here, "evolve/evolve_capabilities.py"),
         os.path.join(_here, "vera_graph_panels.py")
 
     ]
@@ -3831,8 +6179,31 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+    # Pre-warm + pin the default executor. run_in_executor spawns pool threads
+    # LAZILY: a submit that finds no idle worker calls Thread.start(), which
+    # blocks until the new thread's bootstrap gets the GIL — under load that
+    # wait alone stalls the loop >1s (hang dumps ending in threading.py
+    # _started.wait inside run_in_executor). Spawning the whole pool once at
+    # startup makes every later submit enqueue-only.
+    try:
+        from concurrent.futures import ThreadPoolExecutor as _TPE
+        import threading as _thr
+        _n_exec = min(32, (os.cpu_count() or 8) + 4)
+        _default_exec = _TPE(max_workers=_n_exec, thread_name_prefix="vera-exec")
+        _release = _thr.Event()
+        # Each submit sees every worker busy (all parked on the event), so the
+        # pool is forced to spawn all _n_exec threads right here.
+        for _ in range(_n_exec):
+            _default_exec.submit(_release.wait, 10)
+        _release.set()
+        asyncio.get_running_loop().set_default_executor(_default_exec)
+        log.info("default executor pre-warmed: %d threads", _n_exec)
+    except Exception as _e:
+        log.debug("executor pre-warm skipped: %s", _e)
+
     # Background tasks — start before yield so they run immediately
     worker_id=f"worker-{new_id()[:8]}"
+    asyncio.create_task(_loop_lag_watchdog())      # detect event-loop stalls (WS-flap diag)
     asyncio.create_task(_connect_backends())       # DB connections with retry — non-blocking
     asyncio.create_task(worker_loop(worker_id))
     asyncio.create_task(result_listener())
@@ -3846,6 +6217,36 @@ async def lifespan(app: FastAPI):
         log.info("activity_worker: started (VERA_ACTIVITY_RECORDING=1)")
     else:
         log.debug("activity_worker: disabled (set VERA_ACTIVITY_RECORDING=1 to enable)")
+
+    # Full-GC pauses were stalling the loop >1s (hang traces bottoming out in
+    # weakref callbacks / SSLContext.__new__ / bare run_until_complete = a
+    # gen-2 collection caught mid-allocation). This process carries a huge
+    # permanent object graph — every module, the cap registry, panel HTML —
+    # that each gen-2 collection rescans on the loop thread. Collect once now,
+    # then freeze() the startup graph into the permanent generation so future
+    # collections only scan objects allocated after startup.
+    try:
+        import gc as _gc
+        _gc.collect()
+        _gc.freeze()
+        # freeze() alone wasn't enough: post-startup survivors (neo4j
+        # session/result cycles, cap results, parsed JSON) keep growing, and
+        # automatic gen-2 passes over them still stalled the loop 1-2s (hang
+        # traces ending in neo4j workspace.__del__ = the finalizer sweep of
+        # such a pass). Raise thresholds so automatic full collections are
+        # rare, and let _gc_pacer do the equivalent work on a schedule.
+        _gc.set_threshold(int(os.getenv("VERA_GC_GEN0", "10000") or 10000),
+                          int(os.getenv("VERA_GC_GEN1", "25") or 25),
+                          int(os.getenv("VERA_GC_GEN2", "25") or 25))
+        if _gc_pause_timer not in _gc.callbacks:
+            _gc.callbacks.append(_gc_pause_timer)
+        asyncio.create_task(_gc_pacer())
+        log.info("gc: froze %d startup objects out of gen-2 scans; "
+                 "thresholds %s, paced full collect every %ss",
+                 _gc.get_freeze_count(), _gc.get_threshold(),
+                 os.getenv("VERA_GC_PACE_S", "120"))
+    except Exception:
+        pass
 
     log.info("Vera Orchestrator v3 ready — %d caps, %d Ollama nodes",len(CAPABILITY_REGISTRY),len(OLLAMA_INSTANCES))
     yield
@@ -3877,14 +6278,23 @@ def _make_get_handler(cap: dict, cap_name: str):
                 else:                    coerced[k] = v
             except (ValueError, TypeError):
                 coerced[k] = v
+        # Mark this cap as directly HTTP-invoked for the duration of the call
+        # (lets caps distinguish a human/UI request from an internal one).
+        _tok = CURRENT_HTTP_CAP.set(cap_name)
         try:
             result = await cap["func"](**coerced, trace_id=new_id())
-            return JSONResponse(content=_json_safe(result))
+            # Caps may return a Response directly (HTMLResponse panels,
+            # PlainTextResponse sources, StreamingResponse) — pass through.
+            if isinstance(result, Response):
+                return result
+            return await _json_response(result)
         except HTTPException:
             raise
         except Exception as e:
             log.error("GET cap %s: %s", cap_name, e)
             raise HTTPException(500, str(e))
+        finally:
+            CURRENT_HTTP_CAP.reset(_tok)
 
     _handler.__name__ = f"_get_{cap_name.replace('.','_')}"
     return _handler
@@ -3919,9 +6329,12 @@ def _make_post_handler(cap: dict, cap_name: str):
         if _accepted:
             body = {k: v for k, v in body.items() if k in _accepted}
 
+        _tok = CURRENT_HTTP_CAP.set(cap_name)
         try:
             result = await cap["func"](**body, trace_id=tid)
-            return JSONResponse(content=_json_safe(result))
+            if isinstance(result, Response):
+                return result
+            return await _json_response(result)
         except HTTPException:
             raise
         except (asyncio.CancelledError, RuntimeError) as e:
@@ -3933,22 +6346,61 @@ def _make_post_handler(cap: dict, cap_name: str):
         except Exception as e:
             log.error("POST cap %s: %s", cap_name, e)
             raise HTTPException(500, str(e))
+        finally:
+            CURRENT_HTTP_CAP.reset(_tok)
 
     _handler.__name__ = f"_post_{cap_name.replace('.','_')}"
     return _handler
 
 
 def _json_safe(obj: Any) -> Any:
-    """Recursively make an object JSON-serialisable, replacing unserializable values."""
+    """Recursively make an object JSON-serialisable, replacing unserializable
+    values. Scalars are returned AS-IS: the old code called json.dumps() on
+    every leaf to 'test' it, so a large result did millions of tiny json.dumps
+    calls and blocked the event loop >1s (WS flap). A str/int/float/bool/None is
+    always JSON-safe — never re-encode it."""
+    # Fast path: the overwhelming majority of leaves are plain scalars.
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
     if isinstance(obj, dict):
-        return {k: _json_safe(v) for k, v in obj.items()}
+        return {(k if isinstance(k, str) else str(k)): _json_safe(v)
+                for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [_json_safe(v) for v in obj]
+    if isinstance(obj, bytes):
+        try: return obj.decode("utf-8", "replace")
+        except Exception: return str(obj)
+    # Unknown/complex type (rare) — only NOW pay for a serializability probe.
     try:
         json.dumps(obj)
         return obj
     except (TypeError, ValueError):
         return str(obj)
+
+
+async def _json_response(result: Any) -> Response:
+    """Sanitize + JSON-encode a capability result off the event loop. On large
+    results (e.g. 50k-bar indicator series) the _json_safe walk plus
+    JSONResponse's own json.dumps are >1s of pure CPU — enough to stall the
+    loop and flap every WebSocket. Encoding matches JSONResponse.render()."""
+    def _render() -> bytes:
+        return json.dumps(
+            _json_safe(result), ensure_ascii=False, allow_nan=False,
+            indent=None, separators=(",", ":"),
+        ).encode("utf-8")
+    body = await asyncio.to_thread(_render)
+    # A single Response body reaches uvicorn as ONE transport.write(); over
+    # TLS that's one synchronous _sslobj.write() encrypting the whole thing
+    # (a captured >1s loop stall on multi-MB results). Stream large bodies in
+    # chunks so each write is bounded and the loop breathes between them.
+    if len(body) <= 1 << 20:
+        return Response(content=body, media_type="application/json")
+    async def _chunks(b=body, step=256 * 1024):
+        view = memoryview(b)
+        for i in range(0, len(b), step):
+            yield bytes(view[i:i + step])
+    return StreamingResponse(_chunks(), media_type="application/json",
+                             headers={"Content-Length": str(len(body))})
 
 
 def _mount_all_http_routes(app: FastAPI):
@@ -4082,10 +6534,49 @@ try:
         "", ui_caps=["memory.graph_full","memory.session_nodes","memory.session_edges",
                      "memory.all_nodes","memory.all_edges","memory.traverse",
                      "memory.label","memory.label_session","cap_tracking.set_session"],
-        mode="tab", tab_order=72,
+        # Folded into the Fabric panel's "Memory" sub-tab (fabric_panel.html).
+        # mode="element" keeps it in the registry so it can still be added as a
+        # dashboard widget or promoted back to a top-level tab from the tab bar's
+        # "+" picker.
+        mode="element", tab_order=72,
     )
 except Exception as _mge:
     log.warning("memgraph register_ui: %s", _mge)
+
+# ── Model Routing — top-level page for ALL LLM routing control ────────────────
+# Default policy (least-busy, GPU-first), job-type profiles, role profiles
+# (research / IDE thinker-writer-verifier), per-capability rules, live activity.
+try:
+    register_ui(
+        "model-routing", "Model Routing", "⇶",
+        '<div id="panel-model-routing" style="height:100%;overflow:hidden;background:var(--bg0)"></div>',
+        r"""
+(function mountModelRoutingPanel() {
+  var mount = document.getElementById('panel-model-routing');
+  if (!mount || mount._mrMounted) return;
+  mount._mrMounted = true;
+  var frame = document.createElement('iframe');
+  var backendBase = (document.getElementById('backendUrl') || {}).value || '';
+  backendBase = backendBase.replace(/\/$/, '') || window._veraBase || (window.__VERA_BASE__||('http://'+location.hostname+':8999'));
+  frame.src = backendBase + '/ui/panels/model-routing';
+  frame.style.cssText = 'width:100%;height:100%;border:none;display:block;background:var(--bg0,#181614)';
+  frame.allow = 'clipboard-read; clipboard-write';
+  mount.appendChild(frame);
+})();
+""",
+        ui_caps=[
+            "ollama.routing.get", "ollama.routing.save", "ollama.profile.activate",
+            "ollama.profile.delete", "ollama.cap_routing.get", "ollama.cap_routing.save",
+            "ollama.cap_routing.delete", "ollama.role_profiles.get",
+            "ollama.role_profiles.save", "ollama.role_profiles.delete",
+            "llm.route.resolve", "ollama.route_stats", "ollama.request_log",
+            "media.nodes", "media.node.add", "media.node.remove",
+            "media.node.config", "media.ping", "vllm.status",
+        ],
+        mode="tab", tab_order=2,
+    )
+except Exception as _mre:
+    log.warning("model-routing register_ui: %s", _mre)
 
 
 # ── Global exception capture → syslog WS feed ─────────────────────────────────
@@ -4448,7 +6939,7 @@ async def _stepwise_run(goal: str, state: dict, hitl: bool, auto_approve_secs: i
         props = cap.get("schema", {}).get("properties", {})
         req  = set(cap.get("schema", {}).get("required", []))
         params = ", ".join(
-            f"{p}:{v.get('type','str')}{'!' if p in req else ''}"
+            _format_param_sig(p, v, req)
             for p, v in props.items() if p not in ("trace_id",)
         )
         return f"  {k}({params})"
@@ -4616,6 +7107,16 @@ async def _workers_ollama_panel():
                         else "<p style='color:red'>workers_ollama_panel.html not found</p>")
 
 
+@APP.get("/ui/panels/model-routing", include_in_schema=False)
+async def _model_routing_panel():
+    """Top-level Model Routing page: nodes, job-type profiles, role profiles
+    (research/ide thinker-writer-verifier), per-cap rules and live activity."""
+    from fastapi.responses import HTMLResponse
+    p = _HERE / "routing_panel.html"
+    return HTMLResponse(p.read_text(encoding="utf-8") if p.exists()
+                        else "<p style='color:red'>routing_panel.html not found</p>")
+
+
 # Generic catch-all panel server. Lets the chat panel embed any registered
 # UI panel by id (e.g. /ui/panels/file/dag_workshop_panel.html) without
 # every panel needing its own hand-written endpoint. Strict suffix check
@@ -4633,6 +7134,43 @@ async def _serve_panel_file(panel_filename: str):
         return HTMLResponse(f"<p style='color:red'>{panel_filename} not found</p>",
                             status_code=404)
     return HTMLResponse(p.read_text(encoding="utf-8"))
+
+
+@APP.get("/ui/panel/window", include_in_schema=False)
+async def _ui_panel_window(id: str = ""):
+    """Render any registered UI panel as a standalone, self-contained page so a
+    dashboard widget can be "popped out" into its own browser window. Wraps the
+    panel's fragment html+js exactly like the dashboard widget loader's srcdoc
+    (theme via /ui/vera-ui.js + the same api(path,method,body) shim), so panels
+    that only ever ran inside a widget iframe work identically in a real window."""
+    from fastapi.responses import HTMLResponse
+    p = UI_PANELS.get(id)
+    if not p:
+        return HTMLResponse(f"<p style='color:#c96b6b'>Panel not found: {id}</p>",
+                            status_code=404)
+    body = p.get("html") or "<div style='padding:10px;color:#888'>No content</div>"
+    js = p.get("js") or ""
+    label = (p.get("label") or id).replace("<", "&lt;")
+    doc = (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        f"<title>Vera — {label}</title>"
+        "<script src='/ui/vera-ui.js'></script>"
+        "<style>html,body{height:100%;margin:0;background:var(--bg0,#181614);"
+        "color:var(--text,#d6d9df);font-family:var(--mono,ui-monospace,monospace);"
+        "font-size:11px}*{box-sizing:border-box}</style>"
+        "<script>window.BASE=window.location.origin;"
+        "window.base=function(){return window.location.origin;};"
+        "window.api=async function(path,method,body){method=method||'GET';"
+        "var opts={method:method,headers:{'Content-Type':'application/json'}};"
+        "if(body!=null)opts.body=JSON.stringify(body);"
+        "try{var r=await fetch(window.location.origin+path,opts);var t=await r.text();"
+        "return t&&t.trim()?JSON.parse(t):null;}catch(e){return null;}};</script>"
+        "</head><body>" + body +
+        ("<script>try{" + js + "\n}catch(e){console.error('[panel]',e);}</script>" if js else "") +
+        "</body></html>"
+    )
+    return HTMLResponse(doc)
 
 
 @APP.get("/ui/panels/agents-panel", include_in_schema=False)
@@ -4736,17 +7274,19 @@ async def _ontologies_panel():
 @APP.websocket("/ws/mcp")
 async def ws_mcp(ws: WebSocket):
     await ws.accept(); client_id=new_id()[:8]
-    try:
-        await ws.send_json({
-            "type":"connected","client_id":client_id,
-            "capabilities":list(CAPABILITY_REGISTRY.keys()),
-            "servers":list(MCP_SERVERS.keys()),
-            "ollama_instances":{iid:{"label":i["label"],"has_gpu":i["has_gpu"],"status":i["status"]}
-                                for iid,i in OLLAMA_INSTANCES.items()},
-            "mode":"distributed" if REDIS else "local",
-        })
-    except Exception:
-        return  # client disconnected before we could greet them
+    # Start this connection's single writer task, then route EVERY outbound
+    # frame (greeting, per-call results, broadcasts, replies) through its queue
+    # so nothing ever writes the socket concurrently. The receive loop below is
+    # the sole reader — one reader + one writer is the only safe arrangement.
+    _ws_start_writer(ws)
+    _ws_enqueue(ws, {
+        "type":"connected","client_id":client_id,
+        "capabilities":list(CAPABILITY_REGISTRY.keys()),
+        "servers":list(MCP_SERVERS.keys()),
+        "ollama_instances":{iid:{"label":i["label"],"has_gpu":i["has_gpu"],"status":i["status"]}
+                            for iid,i in OLLAMA_INSTANCES.items()},
+        "mode":"distributed" if REDIS else "local",
+    })
     try:
         while True:
             msg=await ws.receive_json(); action=msg.get("action")
@@ -4760,37 +7300,27 @@ async def ws_mcp(ws: WebSocket):
                 if _ws_sid:
                     _CURRENT_SESSION = _ws_sid
                 if not cap:
-                    await ws.send_json({"type":"error","trace_id":tid,"message":f"Unknown: {cap_name}"}); continue
+                    _ws_enqueue(ws, {"type":"error","trace_id":tid,"message":f"Unknown: {cap_name}"}); continue
                 # Snapshot args now — avoid capturing loop variable in closure
                 _args = dict(msg.get("arguments") or {})
                 async def _call(_cap=cap, _name=cap_name, _tid=tid, _args=_args, _ws=ws):
                     try:
                         result = await _cap["func"](**_args, trace_id=_tid)
                         safe   = _json_safe(result)
-                        await _ws.send_json({"type":"tool_result","tool_name":_name,"trace_id":_tid,"content":safe})
-                    except WebSocketDisconnect:
-                        pass
-                    except RuntimeError as e:
-                        if "closed" in str(e).lower() or "transport" in str(e).lower():
-                            log.debug("WS send failed (client gone) for %s", _name)
-                        else:
-                            log.error("WS cap %s RuntimeError: %s", _name, e)
+                        _ws_enqueue(_ws, {"type":"tool_result","tool_name":_name,"trace_id":_tid,"content":safe})
                     except Exception as e:
-                        try:
-                            await _ws.send_json({"type":"error","tool_name":_name,"trace_id":_tid,"message":str(e)})
-                        except Exception:
-                            pass
+                        _ws_enqueue(_ws, {"type":"error","tool_name":_name,"trace_id":_tid,"message":str(e)})
                 asyncio.create_task(_call())
 
             elif action=="subscribe":
                 WS_CONNECTIONS.append((ws,msg.get("stream")))
-                await ws.send_json({"type":"subscribed","stream":msg.get("stream")})
+                _ws_enqueue(ws, {"type":"subscribed","stream":msg.get("stream")})
             elif action=="subscribe_events":
                 WS_CONNECTIONS.append((ws,"__events__"))
-                await ws.send_json({"type":"subscribed","stream":"__events__"})
+                _ws_enqueue(ws, {"type":"subscribed","stream":"__events__"})
             elif action=="unsubscribe":
                 _remove_ws(ws,msg.get("stream"))
-                await ws.send_json({"type":"unsubscribed","stream":msg.get("stream")})
+                _ws_enqueue(ws, {"type":"unsubscribed","stream":msg.get("stream")})
 
             elif action=="dag_run":
                 tid=new_id(); graph=list(msg.get("dag",[])); state=dict(msg.get("state",{}))
@@ -4799,40 +7329,37 @@ async def ws_mcp(ws: WebSocket):
                     try:
                         fn=supervised_run_graph if _sup else run_graph
                         result=await fn(_g,_s)
-                        await _ws.send_json({"type":"dag_result","trace_id":_tid,"result":_json_safe(result)})
-                    except (WebSocketDisconnect,RuntimeError): pass
+                        _ws_enqueue(_ws, {"type":"dag_result","trace_id":_tid,"result":_json_safe(result)})
                     except Exception as e: log.error("WS dag_run: %s",e)
                 asyncio.create_task(_dag())
 
             elif action=="plan_and_run":
                 goal=str(msg.get("goal","")); tid=new_id()
                 async def _par(_goal=goal,_tid=tid,_ws=ws):
-                    async def _send(obj):
-                        try: await _ws.send_json(obj)
-                        except (WebSocketDisconnect,RuntimeError): pass
-                    await _send({"type":"planning","trace_id":_tid,"goal":_goal})
+                    _ws_enqueue(_ws, {"type":"planning","trace_id":_tid,"goal":_goal})
                     plan=await plan_dag(_goal)
-                    await _send({"type":"plan_ready","trace_id":_tid,"plan":_json_safe(plan)})
+                    _ws_enqueue(_ws, {"type":"plan_ready","trace_id":_tid,"plan":_json_safe(plan)})
                     result=await supervised_run_graph(plan.get("dag",[]),plan.get("initial_state",{}))
-                    await _send({"type":"dag_result","trace_id":_tid,"result":_json_safe(result)})
+                    _ws_enqueue(_ws, {"type":"dag_result","trace_id":_tid,"result":_json_safe(result)})
                 asyncio.create_task(_par())
 
             elif action=="register_server":
                 url=msg.get("url")
                 if url:
                     registered=await register_mcp_server(url,msg.get("name") or url)
-                    await ws.send_json({"type":"server_registered","name":msg.get("name"),"capabilities":registered})
+                    _ws_enqueue(ws, {"type":"server_registered","name":msg.get("name"),"capabilities":registered})
 
             elif action=="ollama_instances":
-                await ws.send_json({"type":"ollama_instances","instances":OLLAMA_INSTANCES})
+                _ws_enqueue(ws, {"type":"ollama_instances","instances":OLLAMA_INSTANCES})
 
             elif action=="ping":
-                await ws.send_json({"type":"pong","ts":now_iso()})
+                _ws_enqueue(ws, {"type":"pong","ts":now_iso()})
 
     except WebSocketDisconnect: log.info("WS disconnected: %s",client_id)
     except Exception as e: log.error("WS error [%s]: %s",client_id,e)
     finally:
         WS_CONNECTIONS[:]=[p for p in WS_CONNECTIONS if p[0] is not ws]
+        _ws_stop_writer(ws)
 
 
 def _ensure_self_signed_cert(certfile: str, keyfile: str) -> None:
@@ -4898,6 +7425,17 @@ if __name__=="__main__":
         ssl_kwargs = {"ssl_certfile": cfg.TLS_CERTFILE, "ssl_keyfile": cfg.TLS_KEYFILE}
         log.info("HTTPS enabled — serving on https://%s:%s",
                  cfg.ORCHESTRATOR_HOST, cfg.ORCHESTRATOR_PORT)
+    # WebSocket keepalive tuning. Defaults (ping every 20s, drop if no pong in
+    # 20s) are too tight when a dream/loop burst briefly stalls the event loop:
+    # the pong is delayed and uvicorn drops the socket → the whole-UI reconnect
+    # flap. Ping more often but tolerate a much longer pong delay so a transient
+    # stall no longer kills the connection. Both env-overridable.
+    _ws_ping_interval = float(os.getenv("VERA_WS_PING_INTERVAL", "20") or 20)
+    _ws_ping_timeout  = float(os.getenv("VERA_WS_PING_TIMEOUT", "75") or 75)
     uvicorn.run("Vera.vera.capability_orchestration:APP",
                 host=cfg.ORCHESTRATOR_HOST, port=cfg.ORCHESTRATOR_PORT,
-                reload=False, **ssl_kwargs)
+                reload=False,
+                ws_ping_interval=_ws_ping_interval,
+                ws_ping_timeout=_ws_ping_timeout,
+                timeout_keep_alive=int(os.getenv("VERA_HTTP_KEEPALIVE", "75") or 75),
+                **ssl_kwargs)

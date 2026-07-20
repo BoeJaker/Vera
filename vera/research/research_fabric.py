@@ -1061,6 +1061,7 @@ class DB:
         for c in cells:
             c["thread"]    = _jload(c.get("thread", "[]"))
             c["citations"] = _jload(c.get("citations", "[]"))
+            c["props"]     = _jload(c.get("props", "{}"))
         nb["cells"] = cells
         pages = await _query_by_filter(DATASET_NOTEBOOK_PAGES, {"notebook_id": nb_id}, limit=100)
         pages.sort(key=lambda x: _int_key(x.get("sort_order")))
@@ -1092,6 +1093,7 @@ class DB:
             "citations":   _j(cell.get("citations", [])),
             "parse_mode":  cell.get("parse_mode", "whole"),
             "agent_mode":  cell.get("agent_mode", "single"),
+            "props":       _j(cell.get("props", {})),
             "created_at":  cell.get("created_at", _now_ts()),
             "updated_at":  cell.get("updated_at", _now_ts()),
         }
@@ -1117,6 +1119,7 @@ class DB:
         if row:
             row["thread"]    = _jload(row.get("thread", "[]"))
             row["citations"] = _jload(row.get("citations", "[]"))
+            row["props"]     = _jload(row.get("props", "{}"))
         return row
 
     # ── pages ─────────────────────────────────────────────────────────────────

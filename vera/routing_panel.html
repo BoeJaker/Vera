@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<meta charset="UTF-8">
+<title>Vera — Model Routing</title>
+<style>
+:root{
+  --bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;
+  --border:#3a3530;--border2:#4a4540;
+  --acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--acc4:#9e8fa0;
+  --ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;--gpu:#c97a5a;
+  --text:#ddd5c8;--fg:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;
+  --mono:'JetBrains Mono','Fira Mono','Space Mono',monospace;
+  --sans:'Inter','IBM Plex Sans',system-ui,sans-serif;
+  --radius:5px;--radius-sm:3px;--radius-lg:8px;
+  --shadow:0 1px 4px rgba(0,0,0,.35);
+  color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:12px;-webkit-font-smoothing:antialiased}
+html,body,button,input,select,span,div{font-variant-emoji:text}
+body{overflow-y:auto;padding:14px 18px 40px}
+h1{font-size:15px;font-weight:700;display:flex;align-items:center;gap:8px}
+h1 small{font-size:10px;color:var(--dim2);font-weight:400}
+h2{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--dim2);margin:0 0 8px}
+.section{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px 14px;margin-top:14px;box-shadow:var(--shadow)}
+.hint{font-size:10px;color:var(--dim2);line-height:1.5;margin:4px 0 8px}
+.hint b{color:var(--text)}
+table{border-collapse:collapse;width:100%;font-size:10.5px}
+th{font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:var(--dim);text-align:left;padding:4px 8px;border-bottom:1px solid var(--border)}
+td{padding:4px 8px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:last-child td{border-bottom:none}
+select,input[type=text],input[type=number]{
+  background:var(--bg2);color:var(--text);border:1px solid var(--border);
+  border-radius:var(--radius-sm);padding:3px 6px;font-size:10.5px;font-family:var(--mono);
+  max-width:170px;
+}
+input[type=number]{width:74px}
+select:focus,input:focus{outline:none;border-color:var(--acc)}
+button{
+  background:var(--bg2);color:var(--text);border:1px solid var(--border);
+  border-radius:var(--radius-sm);padding:3px 10px;font-size:10.5px;cursor:pointer;
+}
+button:hover{border-color:var(--acc);color:var(--acc)}
+button.primary{border-color:var(--acc);color:var(--acc);font-weight:600}
+button.danger:hover{border-color:var(--err);color:var(--err)}
+.badge{display:inline-block;font-size:8.5px;font-family:var(--mono);border:1px solid var(--border2);
+  border-radius:8px;padding:1px 7px;color:var(--dim2);text-transform:uppercase;letter-spacing:.5px}
+.badge.gpu{color:var(--gpu);border-color:var(--gpu)}
+.badge.user{color:var(--acc3);border-color:var(--acc3)}
+.badge.declared{color:var(--acc);border-color:var(--acc)}
+.badge.on{color:var(--ok);border-color:var(--ok)}
+.badge.off{color:var(--err);border-color:var(--err)}
+.nodes{display:flex;flex-wrap:wrap;gap:8px}
+.node{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);
+  padding:8px 12px;min-width:170px}
+.node .nm{font-weight:700;font-size:11.5px;display:flex;gap:6px;align-items:center}
+.node .meta{font-size:9.5px;color:var(--dim2);font-family:var(--mono);margin-top:4px;line-height:1.6}
+.profcard{border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;margin-top:10px;background:var(--bg2)}
+.profhead{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.profhead .nm{font-weight:700;font-size:12px}
+.profhead .sp{flex:1}
+.rowbtns{display:flex;gap:6px}
+.status{font-size:9.5px;font-family:var(--mono);color:var(--dim2);margin-left:8px}
+.status.ok{color:var(--ok)}
+.status.err{color:var(--err)}
+.resolvebox{font-size:9.5px;font-family:var(--mono);color:var(--acc2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:340px}
+.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.mono{font-family:var(--mono)}
+.dim{color:var(--dim2)}
+.scroll-x{overflow-x:auto}
+#activity td{font-family:var(--mono);font-size:9.5px;white-space:nowrap}
+#activity td.reason{white-space:normal;max-width:420px;color:var(--dim2)}
+.pill{display:inline-block;border-radius:8px;padding:0 7px;font-size:9px;font-family:var(--mono)}
+.pill.done{color:var(--ok)}
+.pill.error{color:var(--err)}
+.pill.running{color:var(--warn)}
+</style>
+</head>
+<body>
+
+<h1>⇶ Model Routing
+  <small>default policy: <b style="color:var(--gpu)">least-busy · GPU-first</b> — every request load-balances
+  across online nodes, preferring GPUs, unless a rule or profile below says otherwise (rules always win).</small>
+  <span style="flex:1"></span>
+  <button onclick="loadAll()">↻ Refresh</button>
+</h1>
+
+<!-- ── Interactive priority ──────────────────────────────────────────────── -->
+<div class="section">
+  <h2>Interactive priority <span class="status" id="ip-status"></span></h2>
+  <div class="hint">Keep the GPU free for <b>you</b>. While a human is active (a chat generation, or
+    a UI activity ping), <b>background</b> LLM work — dream cycles, V8 loop programs, fabric NLP —
+    is demoted off the GPU pool onto CPU nodes, and (optionally) new background runs are held off
+    entirely. Nothing stops; it just yields. <span id="ip-live" class="badge"></span></div>
+  <div class="toolbar" style="margin-top:8px">
+    <label class="dim"><input type="checkbox" id="ip-enabled" onchange="saveInteractive()"> Demote background work off GPU while active</label>
+    <label class="dim"><input type="checkbox" id="ip-always" onchange="saveInteractive()"> <b>Always</b> keep background off GPU (deterministic)</label>
+    <span style="flex:1"></span>
+    <label class="dim">Active window (s) <input type="number" id="ip-window" min="10" max="3600" style="width:70px" onchange="saveInteractive()"></label>
+    <label class="dim"><input type="checkbox" id="ip-defer" onchange="saveInteractive()"> Also defer starting new background runs</label>
+  </div>
+  <div class="hint" style="margin-top:10px"><b>Background loops (V8 / orchestrated)</b> — the model / agent / engine
+    ALL long-horizon loops run on. Set here to steer every program; leave blank to let each loop choose.</div>
+  <div class="toolbar" style="margin-top:6px">
+    <label class="dim">Model <input type="text" id="v8-model" placeholder="(per-loop)" style="width:150px" onchange="saveV8Config()"></label>
+    <label class="dim">Agent <input type="text" id="v8-agent" placeholder="(per-loop)" style="width:140px" onchange="saveV8Config()"></label>
+    <label class="dim">Engine
+      <select id="v8-engine" onchange="saveV8Config()">
+        <option value="">per-loop</option><option value="v5">v5</option>
+        <option value="v6">v6</option><option value="v7">v7</option>
+      </select></label>
+    <span class="status" id="v8-status"></span>
+  </div>
+  <div class="toolbar" style="margin-top:6px">
+    <label class="dim"><input type="checkbox" id="v8-gate" onchange="saveV8Config()"> Respect the dream activity gate (only run when idle / human away / system free)</label>
+    <span style="flex:1"></span>
+    <label class="dim">Max concurrent <input type="number" id="v8-conc" min="1" max="8" style="width:56px" onchange="saveV8Config()"></label>
+    <label class="dim">Max loops / program <input type="number" id="v8-maxloops" min="1" max="24" style="width:56px" onchange="saveV8Config()"></label>
+  </div>
+</div>
+
+<!-- ── Nodes ─────────────────────────────────────────────────────────────── -->
+<div class="section">
+  <h2>Cluster nodes</h2>
+  <div class="hint">Routable LLM targets — Ollama nodes, <b>vLLM</b> servers and external
+    <b>API providers</b>. Node admin (enable/disable, priority) lives in the <b>Workers &amp;
+    Ollama</b> tab — this page controls <b>where requests go</b>. Pin any rule to a vLLM server
+    with a <span class="mono">vllm:&lt;id&gt;</span> pin (or <span class="mono">vllm:*</span>),
+    or to an API provider with a <span class="mono">provider:&lt;id&gt;</span> pin / a
+    <span class="mono">provider:&lt;id&gt;/&lt;model&gt;</span> model ref (usage + cost recorded
+    in the API pane; falls back to Ollama on failure). The <b>Ollama mimic proxy</b> is a caller
+    here too — its traffic follows the <span class="mono">mimic.proxy</span> per-capability rule
+    below.</div>
+  <div class="nodes" id="nodes"><span class="dim">Loading…</span></div>
+</div>
+
+<!-- ── Media nodes ───────────────────────────────────────────────────────── -->
+<div class="section">
+  <h2>Media routing — STT · TTS · image-gen <span class="status" id="md-status"></span></h2>
+  <div class="hint">GPU inference servers (<span class="mono">edge/GPU_inference.py</span>, port 8765) serving
+    <b>Whisper STT</b>, <b>TTS</b> and <b>Stable Diffusion</b>. Every STT/TTS/image call now resolves through the
+    router: only nodes whose <span class="mono">/health</span> reports the service are candidates, GPU-first,
+    least-busy, then the <span class="mono">stt / tts / imagegen</span> job-type rules below (pin, deny GPU, …).
+    A candidate is pre-seeded on <b>every cluster host</b> — install the server on a CPU node and it goes
+    online on the next heartbeat.</div>
+  <div class="nodes" id="medianodes"><span class="dim">Loading…</span></div>
+  <div class="toolbar" style="margin-top:10px">
+    <span class="dim">Test resolve:</span>
+    <button onclick="testMedia('stt',this)">STT</button>
+    <button onclick="testMedia('tts',this)">TTS</button>
+    <button onclick="testMedia('imagegen',this)">Image</button>
+    <span class="resolvebox" id="md-test" style="max-width:520px"></span>
+    <span style="flex:1"></span>
+    <input type="text" id="md-id" placeholder="id" style="width:90px">
+    <input type="text" id="md-url" placeholder="http://host:8765" style="width:170px">
+    <input type="text" id="md-label" placeholder="label" style="width:110px">
+    <label class="dim" style="font-size:10px"><input type="checkbox" id="md-gpu"> GPU</label>
+    <button class="primary" onclick="addMediaNode()">＋ Add node</button>
+  </div>
+</div>
+
+<!-- ── Role profiles ─────────────────────────────────────────────────────── -->
+<div class="section">
+  <h2>Role profiles <span class="status" id="rp-status"></span></h2>
+  <div class="hint">Subsystems (the <b>researcher</b> and the <b>IDE</b>) register a profile of named roles —
+    <b>thinker / writer / verifier</b> — and resolve every LLM call through it instead of picking nodes themselves.
+    Rows marked <span class="badge declared">declared</span> are the subsystem's code defaults; editing a row saves a
+    <span class="badge user">user</span> override that wins. <b>GPU</b>: auto = inherit default policy · prefer · deny.
+    <b>Escalate&nbsp;≥</b>: prompt size (chars) above which the escalation overrides kick in (e.g. jump to GPU).</div>
+  <div id="roleprofiles"><span class="dim">Loading…</span></div>
+  <div class="toolbar" style="margin-top:10px">
+    <input type="text" id="rp-new-name" placeholder="new profile name" style="width:150px">
+    <button onclick="newRoleProfile()">＋ New profile</button>
+  </div>
+</div>
+
+<!-- ── Job-type rules ────────────────────────────────────────────────────── -->
+<div class="section">
+  <h2>Job-type routing <span class="status" id="jt-status"></span></h2>
+  <div class="hint">Routes by <b>kind of work</b> (chat, code, embedding, research_writer, …). The active profile's
+    rule for a job type overrides the built-in default. Role profiles and per-capability rules merge <b>over</b> these.</div>
+  <div class="toolbar">
+    <span class="dim">Profile</span>
+    <select id="jt-profile" onchange="switchJtProfile()"></select>
+    <button onclick="activateJtProfile()">Activate</button>
+    <button onclick="newJtProfile()">＋ New</button>
+    <button class="danger" onclick="deleteJtProfile()">🗑 Delete</button>
+    <span style="flex:1"></span>
+    <button class="primary" onclick="saveJtRules()">💾 Save rules</button>
+  </div>
+  <div class="scroll-x"><table id="jt-table">
+    <thead><tr><th>Job type</th><th>GPU</th><th>Pin node</th><th>Model override</th><th>Source</th></tr></thead>
+    <tbody id="jt-body"><tr><td class="dim">Loading…</td></tr></tbody>
+  </table></div>
+</div>
+
+<!-- ── Per-capability rules ──────────────────────────────────────────────── -->
+<div class="section">
+  <h2>Per-capability rules <span class="status" id="cr-status"></span></h2>
+  <div class="hint">Routes by <b>who is asking</b> — a capability name or <span class="mono">prefix.*</span> glob.
+    User rules override code-declared ones for the same pattern.</div>
+  <div class="scroll-x"><table>
+    <thead><tr><th>Pattern</th><th>Job type</th><th>GPU</th><th>Pin</th><th>Model</th><th>Escalate ≥</th><th>Layer</th><th></th></tr></thead>
+    <tbody id="cr-body"><tr><td class="dim">Loading…</td></tr></tbody>
+  </table></div>
+  <div class="toolbar" style="margin-top:8px">
+    <input type="text" id="cr-pattern" placeholder="pattern e.g. fabric.*" style="width:140px">
+    <select id="cr-jt"></select>
+    <select id="cr-gpu"><option value="">GPU: auto</option><option value="prefer">GPU: prefer</option><option value="deny">GPU: deny</option></select>
+    <select id="cr-pin"><option value="">pin: none</option></select>
+    <input type="text" id="cr-model" placeholder="model (optional)" style="width:150px">
+    <input type="number" id="cr-esc" placeholder="esc chars" title="escalate_chars — 0 = off">
+    <button class="primary" onclick="saveCapRule()">＋ Add / update</button>
+  </div>
+</div>
+
+<!-- ── Activity ──────────────────────────────────────────────────────────── -->
+<div class="section">
+  <h2>Routing activity <span class="status" id="act-status"></span></h2>
+  <div class="hint">Recent LLM requests with the routing decision that placed them (auto-refreshes).</div>
+  <div class="scroll-x"><table id="activity">
+    <thead><tr><th>When</th><th>Caller</th><th>Job type</th><th>Rule</th><th>Node</th><th>Model</th><th>Status</th><th>⏱</th><th class="reason">Why</th></tr></thead>
+    <tbody id="act-body"><tr><td class="dim">Loading…</td></tr></tbody>
+  </table></div>
+</div>
+
+<script>
+const BASE = window.location.origin;
+function api(path, method, body){
+  const opts = {method: method||'GET', headers:{'Content-Type':'application/json'}};
+  if(body) opts.body = JSON.stringify(body);
+  return fetch(BASE + path, opts).then(r=>r.json()).catch(()=>null);
+}
+function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function $(id){return document.getElementById(id);}
+function setStatus(id, msg, ok){const el=$(id);if(!el)return;el.textContent=msg||'';el.className='status '+(ok===true?'ok':ok===false?'err':'');
+  if(msg) setTimeout(()=>{if(el.textContent===msg)el.textContent='';},4000);}
+
+let NODES = {};       // iid -> Ollama node info
+let VLLM = {};        // iid -> vLLM node info (pin as "vllm:<id>")
+let PROVIDERS = [];   // external API providers (pin "provider:<id>", model "provider:<id>/<model>")
+let MEDIA = null;     // /media/nodes payload {nodes, services, fallback_url}
+let JOB_TYPES = [];
+let ROLES = null;     // /ollama/role_profiles payload
+let ROUTING = null;   // /ollama/routing payload
+const MEDIA_JTS = ['stt','tts','imagegen'];
+
+// ── GPU tri-state helpers ────────────────────────────────────────────────────
+function gpuVal(rule){return rule&&rule.deny_gpu?'deny':(rule&&rule.prefer_gpu?'prefer':'');}
+function gpuSel(cls, val){
+  return `<select class="${cls}">
+    <option value=""${val===''?' selected':''}>auto</option>
+    <option value="prefer"${val==='prefer'?' selected':''}>prefer</option>
+    <option value="deny"${val==='deny'?' selected':''}>deny</option></select>`;
+}
+function gpuFields(v){return {prefer_gpu: v==='prefer', deny_gpu: v==='deny'};}
+function pinSel(cls, val, kind){
+  // kind: 'llm' (ollama + vllm pins), 'media' (media node pins), 'all'
+  const opts = ['<option value="">none</option>'];
+  const add = (id,label)=>opts.push(`<option value="${esc(id)}"${val===id?' selected':''}>${esc(label||id)}</option>`);
+  if(kind!=='media'){
+    Object.keys(NODES).forEach(iid=>add(iid));
+    const vids=Object.keys(VLLM);
+    if(vids.length){ add('vllm:*','vllm:* (any)'); vids.forEach(v=>add('vllm:'+v)); }
+    PROVIDERS.filter(p=>p.enabled!==false).forEach(p=>
+      add('provider:'+p.id,'provider:'+p.id+' (API'+(p.default_model?' · '+p.default_model:'')+')'));
+  }
+  if(kind==='media'||kind==='all'){
+    Object.keys((MEDIA&&MEDIA.nodes)||{}).forEach(iid=>add(iid));
+  }
+  return `<select class="${cls}">${opts.join('')}</select>`;
+}
+function jtSel(cls, val){
+  const opts = ['<option value="">(default)</option>'].concat(JOB_TYPES.map(jt=>
+    `<option value="${esc(jt)}"${val===jt?' selected':''}>${esc(jt)}</option>`));
+  return `<select class="${cls}">${opts.join('')}</select>`;
+}
+
+// ── Nodes ────────────────────────────────────────────────────────────────────
+function renderNodes(){
+  const box=$('nodes');
+  const ids=Object.keys(NODES), vids=Object.keys(VLLM);
+  if(!ids.length&&!vids.length){box.innerHTML='<span class="dim">No nodes.</span>';return;}
+  const cards=ids.map(iid=>{
+    const n=NODES[iid];
+    return `<div class="node">
+      <div class="nm">${esc(n.label||iid)}
+        ${n.has_gpu?'<span class="badge gpu">GPU</span>':''}
+        <span class="badge ${n.status==='online'?'on':'off'}">${esc(n.status||'?')}</span>
+        ${n.enabled===false?'<span class="badge off">disabled</span>':''}</div>
+      <div class="meta">${esc(iid)} · in-use ${n.in_use||0} · prio ${n.priority||0}<br>
+        ${(n.models||[]).length} models</div>
+    </div>`;
+  });
+  vids.forEach(vid=>{
+    const n=VLLM[vid];
+    cards.push(`<div class="node">
+      <div class="nm">${esc(n.label||vid)}
+        <span class="badge user">vLLM</span>
+        ${n.has_gpu?'<span class="badge gpu">GPU</span>':''}
+        <span class="badge ${n.status==='online'?'on':'off'}">${esc(n.status||'?')}</span></div>
+      <div class="meta">pin: vllm:${esc(vid)} · in-use ${n.in_use||0}<br>
+        ${(n.models||[]).length} models${n.waiting_requests?` · queue ${n.waiting_requests}`:''}</div>
+    </div>`);
+  });
+  // External API providers are routable targets too: pin a rule/role to
+  // "provider:<id>" (uses its default model) or set the rule's MODEL to
+  // "provider:<id>/<model>". Usage + cost are recorded by the providers module.
+  PROVIDERS.forEach(p=>{
+    cards.push(`<div class="node">
+      <div class="nm">${esc(p.label||p.id)}
+        <span class="badge user">API</span>
+        <span class="badge ${p.enabled!==false?'on':'off'}">${p.enabled!==false?'enabled':'disabled'}</span>
+        ${p.has_key||p.env_key?'':'<span class="badge off">no key</span>'}</div>
+      <div class="meta">pin: provider:${esc(p.id)}${p.default_model?' · default '+esc(p.default_model):''}<br>
+        model ref: <span class="mono">provider:${esc(p.id)}/&lt;model&gt;</span></div>
+    </div>`);
+  });
+  box.innerHTML=cards.join('');
+}
+async function loadVllm(){
+  const r=await api('/vllm/status');
+  VLLM=(r&&r.instances&&typeof r.instances==='object')?r.instances:{};
+}
+async function loadProviders(){
+  const r=await api('/providers/list');
+  PROVIDERS=(r&&r.providers)||[];
+}
+
+// ── Media nodes ──────────────────────────────────────────────────────────────
+const SVC_BADGE={stt:'STT',tts:'TTS',imagegen:'IMG'};
+async function loadMedia(){
+  MEDIA=await api('/media/nodes');
+  renderMedia();
+}
+function renderMedia(){
+  const box=$('medianodes');
+  const nodes=(MEDIA&&MEDIA.nodes)||{};
+  const ids=Object.keys(nodes);
+  if(!ids.length){box.innerHTML='<span class="dim">No media nodes.</span>';return;}
+  box.innerHTML=ids.map(iid=>{
+    const n=nodes[iid];
+    const svcs=(n.services||[]).map(s=>`<span class="badge on">${SVC_BADGE[s]||s}</span>`).join(' ')
+      || (n.status==='online'?'<span class="badge">no services</span>':'<span class="dim" style="font-size:9px">not installed / offline</span>');
+    return `<div class="node">
+      <div class="nm">${esc(n.label||iid)}
+        ${n.has_gpu?'<span class="badge gpu">GPU</span>':''}
+        <span class="badge ${n.status==='online'?'on':'off'}">${esc(n.status||'?')}</span></div>
+      <div class="meta">${esc(iid)} · <span class="mono">${esc(n.url||'')}</span><br>${svcs}</div>
+      <div class="meta" style="display:flex;gap:6px;align-items:center;margin-top:6px">
+        <label><input type="checkbox" ${n.enabled!==false?'checked':''}
+          onchange="mediaCfg('${esc(iid)}',{enabled:this.checked})"> route</label>
+        prio <input type="number" value="${n.priority||0}" style="width:48px"
+          onchange="mediaCfg('${esc(iid)}',{priority:parseInt(this.value||'0',10)})">
+        <button onclick="mediaPing('${esc(iid)}')" title="probe /health now">↻</button>
+        ${n.seeded?'':`<button class="danger" onclick="mediaRemove('${esc(iid)}')">🗑</button>`}
+      </div>
+    </div>`;
+  }).join('');
+}
+async function mediaCfg(id,changes){
+  const res=await api('/media/node/config','POST',Object.assign({id},changes));
+  setStatus('md-status',res&&res.ok?'Saved ✓':((res&&res.error)||'failed'),!!(res&&res.ok));
+  loadMedia();
+}
+async function mediaPing(id){
+  await api('/media/ping','POST',{id});
+  loadMedia();
+}
+async function mediaRemove(id){
+  if(!confirm('Remove media node "'+id+'"?'))return;
+  await api('/media/node/remove','POST',{id});
+  loadMedia();
+}
+async function addMediaNode(){
+  const id=($('md-id').value||'').trim(), url=($('md-url').value||'').trim();
+  if(!id||!url){setStatus('md-status','id + url required',false);return;}
+  const res=await api('/media/node/add','POST',{id,url,label:$('md-label').value.trim(),
+    has_gpu:$('md-gpu').checked});
+  setStatus('md-status',res&&res.ok?'Added ✓':((res&&res.error)||'failed'),!!(res&&res.ok));
+  if(res&&res.ok){$('md-id').value='';$('md-url').value='';$('md-label').value='';}
+  loadMedia();
+}
+async function testMedia(service){
+  const res=await api('/llm/route/resolve?service='+encodeURIComponent(service));
+  $('md-test').textContent = res&&res.instance_id
+    ? `${service} → ${res.instance_id} (${res.label||''}${res.has_gpu?' · GPU':''}) — ${(res.reason||[]).join('; ')}`
+    : `${service} ✗ ${((res&&res.error)||'no result')}${res&&res.fallback?' — falling back to '+res.fallback:''}`;
+}
+
+// ── Role profiles ────────────────────────────────────────────────────────────
+async function loadRoleProfiles(){
+  const r = await api('/ollama/role_profiles');
+  if(!r || r.error){$('roleprofiles').innerHTML='<span class="dim">Unavailable.</span>';return;}
+  ROLES = r;
+  NODES = r.nodes || NODES;
+  JOB_TYPES = r.job_types || JOB_TYPES;
+  renderNodes();
+  renderRoleProfiles();
+}
+function renderRoleProfiles(){
+  const box=$('roleprofiles');
+  const eff=(ROLES&&ROLES.effective)||{};
+  const names=Object.keys(eff);
+  if(!names.length){box.innerHTML='<span class="dim">No role profiles registered yet.</span>';return;}
+  box.innerHTML=names.map(name=>{
+    const prof=eff[name];
+    const userRoles=((ROLES.user||{})[name]||{}).roles||{};
+    const declared=(ROLES.declared||{})[name];
+    const rows=Object.keys(prof.roles||{}).map(role=>{
+      const rule=prof.roles[role]||{};
+      const isUser=role in userRoles;
+      const escd=rule.escalate||{};
+      return `<tr data-prof="${esc(name)}" data-role="${esc(role)}">
+        <td><b>${esc(role)}</b><br><span class="dim mono" style="font-size:8.5px">${esc(rule.label||'')}</span></td>
+        <td>${jtSel('f-jt', rule.job_type||'')}</td>
+        <td>${gpuSel('f-gpu', gpuVal(rule))}</td>
+        <td>${pinSel('f-pin', rule.pin||'')}</td>
+        <td><input type="text" class="f-model" value="${esc(rule.model||'')}" placeholder="(node default)"></td>
+        <td><input type="number" class="f-esc" value="${rule.escalate_chars||0}" title="escalate_chars">
+            ${gpuSel('f-escgpu', gpuVal(escd))}</td>
+        <td><span class="badge ${isUser?'user':'declared'}">${isUser?'user':'declared'}</span></td>
+        <td class="rowbtns">
+          <button onclick="testRole('${esc(name)}','${esc(role)}',this)">Test</button>
+          ${isUser?`<button class="danger" title="revert to declared" onclick="resetRole('${esc(name)}','${esc(role)}')">↩</button>`:''}
+        </td>
+      </tr>
+      <tr data-resolve="${esc(name)}/${esc(role)}" style="display:none"><td colspan="8" class="resolvebox"></td></tr>`;
+    }).join('');
+    return `<div class="profcard" data-profcard="${esc(name)}">
+      <div class="profhead">
+        <span class="nm">${esc(prof.label||name)}</span>
+        <span class="badge">${esc(prof.owner||'')}</span>
+        ${declared?'':'<span class="badge user">user-defined</span>'}
+        <span class="sp"></span>
+        <input type="text" class="f-newrole" placeholder="add role…" style="width:100px">
+        <button onclick="addRole('${esc(name)}',this)">＋ Role</button>
+        <button class="primary" onclick="saveRoleProfile('${esc(name)}')">💾 Save</button>
+        ${(ROLES.user||{})[name]?`<button class="danger" onclick="resetRoleProfile('${esc(name)}')">↩ Reset all</button>`:''}
+      </div>
+      <div class="scroll-x"><table>
+        <thead><tr><th>Role</th><th>Job type</th><th>GPU</th><th>Pin node</th><th>Model</th><th>Escalate ≥ chars → GPU</th><th>Layer</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </div>`;
+  }).join('');
+}
+function _collectProfileRoles(name){
+  const roles={};
+  document.querySelectorAll(`tr[data-prof="${CSS.escape(name)}"]`).forEach(tr=>{
+    const role=tr.dataset.role;
+    const g=gpuFields(tr.querySelector('.f-gpu').value);
+    const eg=tr.querySelector('.f-escgpu').value;
+    const escChars=parseInt(tr.querySelector('.f-esc').value||'0',10)||0;
+    const rule={
+      job_type: tr.querySelector('.f-jt').value||'',
+      prefer_gpu: g.prefer_gpu, deny_gpu: g.deny_gpu,
+      pin: tr.querySelector('.f-pin').value||'',
+      model: tr.querySelector('.f-model').value.trim(),
+      escalate_chars: escChars,
+    };
+    if(escChars>0&&eg) rule.escalate=Object.assign({}, gpuFields(eg));
+    roles[role]=rule;
+  });
+  return roles;
+}
+async function saveRoleProfile(name){
+  setStatus('rp-status','Saving…');
+  const res=await api('/ollama/role_profiles/save','POST',{profile:name,roles:_collectProfileRoles(name)});
+  setStatus('rp-status',res&&res.ok?'Saved ✓':'Save failed: '+((res&&res.error)||'?'),!!(res&&res.ok));
+  loadRoleProfiles();
+}
+async function resetRole(name,role){
+  const res=await api('/ollama/role_profiles/delete','POST',{profile:name,role});
+  setStatus('rp-status',res&&res.ok?'Reverted ✓':((res&&res.error)||'failed'),!!(res&&res.ok));
+  loadRoleProfiles();
+}
+async function resetRoleProfile(name){
+  if(!confirm('Remove ALL user overrides for profile "'+name+'"?'))return;
+  const res=await api('/ollama/role_profiles/delete','POST',{profile:name});
+  setStatus('rp-status',res&&res.ok?'Reset ✓':((res&&res.error)||'failed'),!!(res&&res.ok));
+  loadRoleProfiles();
+}
+function addRole(name,btn){
+  const card=btn.closest('[data-profcard]');
+  const role=(card.querySelector('.f-newrole').value||'').trim().toLowerCase().replace(/[^a-z0-9_-]/g,'');
+  if(!role)return;
+  const roles=_collectProfileRoles(name);
+  if(roles[role])return;
+  roles[role]={job_type:'',prefer_gpu:false,deny_gpu:false,pin:'',model:'',escalate_chars:0};
+  api('/ollama/role_profiles/save','POST',{profile:name,roles}).then(loadRoleProfiles);
+}
+async function newRoleProfile(){
+  const name=($('rp-new-name').value||'').trim().toLowerCase().replace(/[^a-z0-9_-]/g,'');
+  if(!name){setStatus('rp-status','name required',false);return;}
+  const res=await api('/ollama/role_profiles/save','POST',{profile:name,roles:{
+    thinker:{job_type:'',prefer_gpu:true,deny_gpu:false},
+    writer:{job_type:'',prefer_gpu:false,deny_gpu:false},
+    verifier:{job_type:'',prefer_gpu:false,deny_gpu:false},
+  }});
+  setStatus('rp-status',res&&res.ok?'Created ✓':((res&&res.error)||'failed'),!!(res&&res.ok));
+  $('rp-new-name').value='';
+  loadRoleProfiles();
+}
+async function testRole(name,role,btn){
+  const tr=document.querySelector(`tr[data-resolve="${CSS.escape(name+'/'+role)}"]`);
+  const res=await api('/llm/route/resolve?profile='+encodeURIComponent(name)+'&role='+encodeURIComponent(role));
+  if(tr){
+    tr.style.display='';
+    tr.firstElementChild.textContent = res&&res.instance_id
+      ? `→ ${res.instance_id} (${res.label||''}${res.has_gpu?' · GPU':''})  model=${res.model||'(node default)'}  jt=${res.job_type}  —  ${(res.reason||[]).join('; ')}`
+      : '✗ '+((res&&res.error)||'no result');
+  }
+}
+
+// ── Job-type rules (profiles) ────────────────────────────────────────────────
+let _jtViewProfile = null;   // profile currently shown in the editor
+async function loadJtRouting(){
+  const r=await api('/ollama/routing');
+  if(!r||r.error){$('jt-body').innerHTML='<tr><td class="dim">Unavailable.</td></tr>';return;}
+  ROUTING=r;
+  NODES=r.nodes||NODES;
+  JOB_TYPES=r.job_types||JOB_TYPES;
+  renderNodes();
+  if(!_jtViewProfile||!(r.profiles||{})[_jtViewProfile]) _jtViewProfile=r.active_profile;
+  const sel=$('jt-profile');
+  sel.innerHTML=Object.keys(r.profiles||{}).map(p=>
+    `<option value="${esc(p)}"${p===_jtViewProfile?' selected':''}>${esc(p)}${p===r.active_profile?' ● active':''}</option>`).join('');
+  renderJtRules();
+  fillCapRuleForm();
+}
+function renderJtRules(){
+  const prof=(ROUTING.profiles||{})[_jtViewProfile]||{rules:{}};
+  const overrides=prof.rules||{};
+  const defaults=ROUTING.defaults||{};
+  const jts=ROUTING.job_types||Object.keys(defaults);
+  $('jt-body').innerHTML=jts.map(jt=>{
+    const ov=overrides[jt];
+    const rule=ov||defaults[jt]||{};
+    return `<tr data-jt="${esc(jt)}">
+      <td class="mono"><b>${esc(jt)}</b>${MEDIA_JTS.includes(jt)?' <span class="badge">media</span>':''}</td>
+      <td>${gpuSel('f-gpu', gpuVal(rule))}</td>
+      <td>${pinSel('f-pin', rule.pin||'', MEDIA_JTS.includes(jt)?'media':'llm')}</td>
+      <td><input type="text" class="f-model" value="${esc(rule.model||'')}" placeholder="(caller's)"></td>
+      <td><span class="badge ${ov?'user':'declared'}">${ov?'profile':'default'}</span></td>
+    </tr>`;
+  }).join('');
+}
+function _collectJtRules(){
+  const rules={};
+  const defaults=ROUTING.defaults||{};
+  document.querySelectorAll('#jt-body tr[data-jt]').forEach(tr=>{
+    const jt=tr.dataset.jt;
+    const g=gpuFields(tr.querySelector('.f-gpu').value);
+    const rule={job_type:jt,prefer_gpu:g.prefer_gpu,deny_gpu:g.deny_gpu,
+      pin:tr.querySelector('.f-pin').value||'',
+      model:tr.querySelector('.f-model').value.trim(),allow:[],deny:[]};
+    const d=defaults[jt]||{};
+    const same = !!d && rule.prefer_gpu===!!d.prefer_gpu && rule.deny_gpu===!!d.deny_gpu
+      && rule.pin===(d.pin||'') && rule.model===(d.model||'');
+    if(!same) rules[jt]=rule;   // only persist deviations from the default
+  });
+  return rules;
+}
+async function saveJtRules(){
+  setStatus('jt-status','Saving…');
+  const res=await api('/ollama/routing/save','POST',{profile:_jtViewProfile,rules:_collectJtRules()});
+  setStatus('jt-status',res&&res.ok?'Saved ✓':'Save failed',!!(res&&res.ok));
+  loadJtRouting();
+}
+function switchJtProfile(){_jtViewProfile=$('jt-profile').value;renderJtRules();}
+async function activateJtProfile(){
+  const res=await api('/ollama/profile/activate','POST',{profile:$('jt-profile').value});
+  setStatus('jt-status',res&&res.ok?'Activated ✓':((res&&res.error)||'failed'),!!(res&&res.ok));
+  loadJtRouting();
+}
+async function newJtProfile(){
+  const name=(prompt('New routing profile name')||'').trim();
+  if(!name)return;
+  const res=await api('/ollama/routing/save','POST',{profile:name,rules:{},activate:true});
+  if(res&&!res.error)_jtViewProfile=name;
+  loadJtRouting();
+}
+async function deleteJtProfile(){
+  const name=$('jt-profile').value;
+  if(name==='default'){setStatus('jt-status','cannot delete default',false);return;}
+  if(!confirm('Delete routing profile "'+name+'"?'))return;
+  await api('/ollama/profile/delete','POST',{profile:name});
+  _jtViewProfile=null;
+  loadJtRouting();
+}
+
+// ── Per-capability rules ─────────────────────────────────────────────────────
+async function loadCapRules(){
+  const r=await api('/ollama/cap_routing');
+  if(!r||r.error){$('cr-body').innerHTML='<tr><td class="dim">Unavailable.</td></tr>';return;}
+  NODES=r.nodes&&Object.keys(r.nodes).length?Object.assign({},NODES,r.nodes):NODES;
+  const rows=[];
+  const mk=(pat,rule,layer)=>{
+    rows.push(`<tr>
+      <td class="mono"><b>${esc(pat)}</b><br><span class="dim" style="font-size:8.5px">${esc(rule.label||'')}</span></td>
+      <td class="mono">${esc(rule.job_type||'—')}</td>
+      <td>${rule.deny_gpu?'<span class="badge">deny</span>':rule.prefer_gpu?'<span class="badge gpu">prefer</span>':'<span class="dim">auto</span>'}</td>
+      <td class="mono">${esc(rule.pin||'—')}</td>
+      <td class="mono">${esc(rule.model||'—')}</td>
+      <td class="mono">${rule.escalate_chars?rule.escalate_chars+' → '+esc(JSON.stringify(rule.escalate||{})):'—'}</td>
+      <td><span class="badge ${layer}">${layer}</span></td>
+      <td>${layer==='user'?`<button class="danger" onclick="deleteCapRule('${esc(pat)}')">🗑</button>`
+           :`<button title="copy to editable user rule" onclick="editDeclared('${esc(pat)}')">✎</button>`}</td>
+    </tr>`);
+  };
+  Object.entries(r.user||{}).forEach(([p,rule])=>mk(p,rule,'user'));
+  Object.entries(r.declared||{}).forEach(([p,rule])=>{if(!(r.user||{})[p])mk(p,rule,'declared');});
+  $('cr-body').innerHTML=rows.join('')||'<tr><td class="dim" colspan="8">No rules.</td></tr>';
+  window._capRouting=r;
+}
+function fillCapRuleForm(){
+  $('cr-jt').innerHTML='<option value="">job type: auto</option>'+JOB_TYPES.map(jt=>
+    `<option value="${esc(jt)}">${esc(jt)}</option>`).join('');
+  const pins=Object.keys(NODES).slice();
+  if(Object.keys(VLLM).length) pins.push('vllm:*', ...Object.keys(VLLM).map(v=>'vllm:'+v));
+  $('cr-pin').innerHTML='<option value="">pin: none</option>'+pins.map(iid=>
+    `<option value="${esc(iid)}">${esc(iid)}</option>`).join('');
+}
+async function saveCapRule(){
+  const pattern=($('cr-pattern').value||'').trim();
+  if(!pattern){setStatus('cr-status','pattern required',false);return;}
+  const g=gpuFields($('cr-gpu').value);
+  const escChars=parseInt($('cr-esc').value||'0',10)||0;
+  const body={pattern,job_type:$('cr-jt').value||'',prefer_gpu:g.prefer_gpu,deny_gpu:g.deny_gpu,
+    pin:$('cr-pin').value||'',model:$('cr-model').value.trim(),escalate_chars:escChars};
+  if(escChars>0) body.escalate={prefer_gpu:true,deny_gpu:false};
+  const res=await api('/ollama/cap_routing/save','POST',body);
+  setStatus('cr-status',res&&res.ok?'Saved ✓':((res&&res.error)||'failed'),!!(res&&res.ok));
+  $('cr-pattern').value='';
+  loadCapRules();
+}
+function editDeclared(pat){
+  const rule=((window._capRouting||{}).declared||{})[pat]||{};
+  $('cr-pattern').value=pat;
+  $('cr-jt').value=rule.job_type||'';
+  $('cr-gpu').value=rule.deny_gpu?'deny':rule.prefer_gpu?'prefer':'';
+  $('cr-pin').value=rule.pin||'';
+  $('cr-model').value=rule.model||'';
+  $('cr-esc').value=rule.escalate_chars||0;
+}
+async function deleteCapRule(pat){
+  if(!confirm('Delete user rule "'+pat+'"?'))return;
+  await api('/ollama/cap_routing/delete','POST',{pattern:pat});
+  loadCapRules();
+}
+
+// ── Activity ─────────────────────────────────────────────────────────────────
+async function loadActivity(){
+  const r=await api('/ollama/request_log?limit=40');
+  if(!r||!r.entries){$('act-body').innerHTML='<tr><td class="dim">Unavailable.</td></tr>';return;}
+  $('act-body').innerHTML=r.entries.map(e=>{
+    const st=e.status||'running';
+    return `<tr>
+      <td>${esc((e.ts||'').replace('T',' ').slice(5,19))}</td>
+      <td title="${esc(e.caller_file||'')}">${esc(e.caller_file?e.caller_file.replace('.py',''):'')}: ${esc(e.caller_func||'')}</td>
+      <td>${esc(e.job_type||'—')}</td>
+      <td>${esc(e.rule_source||'—')}${e.escalated?' ⚡':''}</td>
+      <td><b>${esc(e.instance||'—')}</b></td>
+      <td>${esc(e.model||'')}</td>
+      <td><span class="pill ${esc(st)}">${esc(st)}</span></td>
+      <td>${e.elapsed_s!=null?e.elapsed_s+'s':(e.est_seconds!=null?'~'+e.est_seconds+'s':'—')}</td>
+      <td class="reason">${esc(e.route_reason||'')}</td>
+    </tr>`;
+  }).join('')||'<tr><td class="dim" colspan="9">No requests yet.</td></tr>';
+}
+
+// ── Boot ─────────────────────────────────────────────────────────────────────
+async function loadInteractive(){
+  const r=await api('/ollama/interactive');
+  if(!r)return;
+  const en=$('ip-enabled'),win=$('ip-window'),df=$('ip-defer'),al=$('ip-always'),live=$('ip-live');
+  if(en)en.checked=!!r.enabled;
+  if(win)win.value=r.window_s||180;
+  if(df)df.checked=!!r.defer_background;
+  if(al)al.checked=!!r.background_always_cpu;
+  if(live){
+    const onCpu=!!r.background_on_cpu;
+    live.textContent=r.background_always_cpu?'background pinned to CPU (always)'
+      :(r.human_active?'human active — background demoted to CPU':'idle — background can use GPU');
+    live.className='badge '+(onCpu?'on':'');
+  }
+}
+async function saveInteractive(){
+  const body={enabled:$('ip-enabled').checked,
+    window_s:parseInt($('ip-window').value,10)||180,
+    defer_background:$('ip-defer').checked,
+    background_always_cpu:$('ip-always').checked};
+  const r=await api('/ollama/interactive/set','POST',body);
+  setStatus('ip-status',(r&&r.ok)?'saved':'failed',!!(r&&r.ok));
+  loadInteractive();
+}
+async function loadV8Config(){
+  const r=await api('/loops/config');
+  if(!r)return;
+  if($('v8-model'))$('v8-model').value=r.model||'';
+  if($('v8-agent'))$('v8-agent').value=r.agent||'';
+  if($('v8-engine'))$('v8-engine').value=r.engine||'';
+  if($('v8-gate'))$('v8-gate').checked=r.respect_dream_gate!==false;
+  if($('v8-conc'))$('v8-conc').value=r.max_concurrent||1;
+  if($('v8-maxloops'))$('v8-maxloops').value=r.max_loops_per_program||8;
+}
+async function saveV8Config(){
+  const body={model:$('v8-model').value.trim(),agent:$('v8-agent').value.trim(),engine:$('v8-engine').value,
+    respect_dream_gate:$('v8-gate').checked,
+    max_concurrent:parseInt($('v8-conc').value,10)||1,
+    max_loops_per_program:parseInt($('v8-maxloops').value,10)||8};
+  const r=await api('/loops/config/set','POST',body);
+  setStatus('v8-status',(r&&r.ok)?'saved':'failed',!!(r&&r.ok));
+}
+
+async function loadAll(){
+  await loadInteractive();
+  await loadV8Config();
+  await loadVllm();            // vLLM nodes feed the nodes strip + pin options
+  await loadProviders();       // API providers are routable targets too
+  await loadJtRouting();       // fills NODES + JOB_TYPES first
+  await loadMedia();
+  await loadRoleProfiles();
+  await loadCapRules();
+  fillCapRuleForm();
+  await loadActivity();
+}
+loadAll();
+setInterval(()=>{ if(!document.hidden){ loadActivity(); loadInteractive(); } }, 6000);
+let _vllmTick=0;
+setInterval(async()=>{
+  if(document.hidden) return;
+  // Back off vllm.status to ~5 min while no vLLM instance is configured —
+  // otherwise this fires every 15s forever on installs that never use vLLM.
+  _vllmTick++;
+  if(Object.keys(VLLM).length || _vllmTick%20===0) await loadVllm();
+  const r=await api('/ollama/routing');
+  if(r&&r.nodes){NODES=r.nodes;}
+  renderNodes();
+  loadMedia();
+}, 15000);
+
+// Theme relay from the parent harness (same convention as other iframe panels)
+window.addEventListener('message', e=>{
+  if(e.data&&e.data.type==='vera:theme'&&e.data.vars){
+    const root=document.documentElement;
+    const map={'--bg':'--bg0','--s1':'--bg1','--s2':'--bg2','--s3':'--bg3',
+      '--bd':'--border','--bd2':'--border2','--t1':'--text','--t2':'--dim2',
+      '--t3':'--dim','--ac':'--acc','--ac2':'--acc2','--ac3':'--acc3','--ac4':'--err','--ac5':'--acc4'};
+    for(const k in map){if(e.data.vars[k])root.style.setProperty(map[k],e.data.vars[k]);}
+  }
+});
+</script>
+</body>
+</html>

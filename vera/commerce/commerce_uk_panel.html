@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script>/* vera theme boot */
+(function(){try{var d=document.documentElement,S=window.localStorage;
+var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Vera — Reselling</title>
+<style>
+:root{
+  --bg0:#141312;--bg1:#1b1917;--bg2:#242120;--bg3:#2e2a28;
+  --border:#38332f;--border2:#4a4540;
+  --acc:#5a9e8f;--acc2:#8fb87a;
+  --up:#3fd0a4;--dn:#e0705a;
+  --s1:#7aa2f7;--s2:#e8b34d;--s3:#b48ead;--s4:#5ec9b8;
+  --ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;--deal:#e8b34d;
+  --text:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;
+  --mono:'JetBrains Mono','Fira Mono',monospace;
+  --sans:'Inter','IBM Plex Sans',system-ui,sans-serif;
+  --radius:6px;--radius-sm:4px;color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:13px}
+body{display:flex;flex-direction:column;overflow:hidden}
+button{font-family:var(--sans);cursor:pointer}
+a{color:var(--acc);text-decoration:none}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:5px}
+::-webkit-scrollbar-track{background:transparent}
+.hdr{display:flex;align-items:center;gap:12px;padding:8px 14px;border-bottom:1px solid var(--border);background:var(--bg1);flex-shrink:0}
+.hdr .brand{font-size:14px;font-weight:700;color:var(--acc);letter-spacing:.3px;white-space:nowrap}
+.hdr .chips{display:flex;gap:7px;flex-wrap:wrap;margin-left:auto}
+.chip{background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:3px 10px;font-size:11px;color:var(--dim2);white-space:nowrap}
+.chip b{color:var(--text);font-family:var(--mono)}
+.chip.deal b{color:var(--deal)} .chip.good b{color:var(--up)} .chip.bad b{color:var(--dn)}
+.layout{flex:1;display:flex;min-height:0}
+nav.side{width:158px;flex-shrink:0;border-right:1px solid var(--border);background:var(--bg1);padding:8px;display:flex;flex-direction:column;gap:2px;overflow:auto}
+nav.side button{background:none;border:none;color:var(--dim2);text-align:left;padding:8px 10px;border-radius:var(--radius);font-size:13px;display:flex;align-items:center;gap:8px}
+nav.side button:hover{background:var(--bg2);color:var(--text)}
+nav.side button.active{background:var(--bg2);color:var(--acc);font-weight:600}
+nav.side .ico{width:16px;text-align:center}
+nav.side .badge{margin-left:auto;background:var(--deal);color:#221c10;border-radius:10px;font-size:10px;padding:0 6px;font-weight:700;display:none}
+main.content{flex:1;overflow:auto;padding:16px 18px}
+h2{font-size:16px;font-weight:600;margin-bottom:2px}
+.sub{color:var(--dim2);font-size:11px;margin-bottom:14px}
+.toolbar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+input,select,textarea{background:var(--bg2);border:1px solid var(--border);color:var(--text);border-radius:var(--radius-sm);padding:6px 9px;font-family:var(--sans);font-size:13px;outline:none}
+input:focus,select:focus,textarea:focus{border-color:var(--acc)}
+textarea{width:100%;resize:vertical;font-family:var(--mono);font-size:12px}
+label.fld{display:block;font-size:11px;color:var(--dim2);margin:8px 0 3px}
+.btn{background:var(--bg2);border:1px solid var(--border2);color:var(--text);border-radius:var(--radius-sm);padding:6px 12px;font-size:12px}
+.btn:hover{background:var(--bg3)}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#0d0f12);font-weight:600}
+.btn.pri:hover{filter:brightness(1.08)}
+.btn.sm{padding:3px 8px;font-size:11px}
+.btn.warn{border-color:var(--warn);color:var(--warn)}
+.btn.danger{border-color:var(--err);color:var(--err)}
+.grid{display:grid;gap:12px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px}
+.kpi{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px}
+.kpi .lbl{font-size:11px;color:var(--dim2);text-transform:uppercase;letter-spacing:.4px}
+.kpi .val{font-size:22px;font-weight:700;font-family:var(--mono);margin-top:4px}
+.kpi .val.up{color:var(--up)} .kpi .val.dn{color:var(--dn)} .kpi .val.deal{color:var(--deal)}
+.kpi .foot{font-size:10px;color:var(--dim);margin-top:3px}
+.card{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);padding:14px}
+.card h3{font-size:13px;margin-bottom:10px;color:var(--text);display:flex;align-items:center;gap:8px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;color:var(--dim2);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.3px;padding:6px 8px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg0)}
+td{padding:7px 8px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:hover td{background:var(--bg1)}
+.mono{font-family:var(--mono)}
+.pill{display:inline-block;padding:1px 8px;border-radius:20px;font-size:10px;border:1px solid var(--border2);color:var(--dim2)}
+.pill.ok{color:var(--ok);border-color:var(--ok)} .pill.warn{color:var(--warn);border-color:var(--warn)}
+.pill.err{color:var(--err);border-color:var(--err)} .pill.deal{color:var(--deal);border-color:var(--deal)}
+.pill.ebay{color:#e8b34d;border-color:#8a6d2a} .pill.vinted{color:#5ec9b8;border-color:#357;}
+.muted{color:var(--dim2)} .right{text-align:right} .center{text-align:center}
+.thumb{width:38px;height:38px;object-fit:cover;border-radius:4px;background:var(--bg3);border:1px solid var(--border)}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+.col{flex:1;min-width:220px}
+.empty{color:var(--dim);text-align:center;padding:30px;font-size:12px}
+.deal-card{display:flex;gap:10px;background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);padding:10px;align-items:center}
+.deal-card img{width:56px;height:56px;object-fit:cover;border-radius:5px;background:var(--bg3)}
+.deal-card .t{font-weight:600;font-size:12px} .deal-card .r{font-size:11px;color:var(--deal)}
+#toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%) translateY(60px);background:var(--bg3);border:1px solid var(--border2);color:var(--text);padding:9px 16px;border-radius:20px;font-size:12px;transition:.25s;opacity:0;z-index:50}
+#toast.on{transform:translateX(-50%) translateY(0);opacity:1}
+#toast.err{border-color:var(--err);color:var(--err)} #toast.ok{border-color:var(--ok);color:var(--ok)}
+#modalBg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:40}
+#modalBg.on{display:flex}
+#modal{background:var(--bg1);border:1px solid var(--border2);border-radius:8px;padding:18px;width:min(560px,94vw);max-height:90vh;overflow:auto}
+#modal h3{margin-bottom:12px}
+#modal .field{margin-bottom:8px} #modal .field label{display:block;font-size:11px;color:var(--dim2);margin-bottom:3px}
+#modal .field input,#modal .field select,#modal .field textarea{width:100%}
+#modal .foot{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+.spin{display:inline-block;width:13px;height:13px;border:2px solid var(--border2);border-top-color:var(--acc);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.scanbox{display:flex;gap:8px;align-items:center;background:var(--bg1);border:1px dashed var(--acc);border-radius:var(--radius);padding:12px}
+.scanbox input{flex:1;font-family:var(--mono);font-size:15px}
+.photowrap{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.photowrap img{width:80px;height:80px;object-fit:cover;border-radius:5px;border:1px solid var(--border)}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <span class="brand">◆ STORE</span>
+  <span class="muted" style="font-size:11px">UK · eBay + Vinted</span>
+  <div class="chips" id="hdrChips"></div>
+</div>
+<div class="layout">
+  <nav class="side" id="nav"></nav>
+  <main class="content" id="main"><div class="empty"><span class="spin"></span> loading…</div></main>
+</div>
+<div id="toast"></div>
+<div id="modalBg"><div id="modal"></div></div>
+
+<script>
+// ── helpers ──────────────────────────────────────────────────────────────────
+const $ = s => document.querySelector(s);
+const el = (t,a={},...k)=>{const e=document.createElement(t);for(const K in a){if(K==='html')e.innerHTML=a[K];
+  else if(K.startsWith('on'))e.addEventListener(K.slice(2),a[K]);else if(a[K]!=null)e.setAttribute(K,a[K]);}
+  for(const c of k){if(c==null)continue;e.append(c.nodeType?c:document.createTextNode(c));}return e;};
+const esc = s=>(s==null?'':String(s)).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+const money = (v,c='GBP')=>v==null?'—':(c==='GBP'?'£':c==='USD'?'$':'')+Number(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const pct = v=>v==null?'—':Number(v).toFixed(1)+'%';
+const qs = o=>{const p=new URLSearchParams();for(const k in o)if(o[k]!==''&&o[k]!=null)p.set(k,o[k]);const s=p.toString();return s?'?'+s:'';};
+// When embedded from the Stores master (?store=<id>), scope everything to it.
+const _SP=new URLSearchParams(location.search);
+const STORE=_SP.get('store')||'';
+const STORE_NAME=_SP.get('store_name')||'';
+// ?embed=1 — the Business panel hosts us: it owns the header + tabs, we hide
+// our own chrome and are driven by postMessage {type:'store.nav', id}.
+const EMBED=_SP.get('embed')==='1';
+function withStore(o){o=o||{};if(STORE)o.store_id=STORE;return o;}
+async function api(path,body){const opt=body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{};
+  const r=await fetch(path,opt);return r.json().catch(()=>({error:'bad response'}));}
+let toastT;function toast(m,k=''){const t=$('#toast');t.textContent=m;t.className='on '+k;clearTimeout(toastT);toastT=setTimeout(()=>t.className='',2800);}
+function closeModal(){$('#modalBg').classList.remove('on');$('#modal').innerHTML='';}
+$('#modalBg').addEventListener('click',e=>{if(e.target.id==='modalBg')closeModal();});
+function form(title,fields,values,onSubmit){
+  const m=$('#modal');m.innerHTML='';m.append(el('h3',{},title));const inp={};
+  for(const f of fields){const w=el('div',{class:'field'});w.append(el('label',{},f.label));let i;
+    if(f.type==='select'){i=el('select');for(const o of f.options){const op=el('option',{value:o.value!=null?o.value:o});op.textContent=o.label!=null?o.label:o;i.append(op);}}
+    else if(f.type==='textarea'){i=el('textarea',{rows:f.rows||3});}
+    else if(f.type==='checkbox'){i=el('input',{type:'checkbox'});}
+    else{i=el('input',{type:f.type||'text'});if(f.step)i.step=f.step;if(f.placeholder)i.placeholder=f.placeholder;}
+    const v=values&&values[f.name]!=null?values[f.name]:(f.default!=null?f.default:'');
+    if(f.type==='checkbox')i.checked=!!v;else if(f.type==='textarea'&&typeof v==='object')i.value=JSON.stringify(v,null,2);else i.value=v;
+    inp[f.name]=i;w.append(i);m.append(w);}
+  const foot=el('div',{class:'foot'});foot.append(el('button',{class:'btn',onclick:closeModal},'Cancel'));
+  const save=el('button',{class:'btn pri'},'Save');
+  save.addEventListener('click',async()=>{const out={};for(const f of fields){const i=inp[f.name];
+    out[f.name]=f.type==='checkbox'?i.checked:(f.type==='number'?(i.value===''?null:parseFloat(i.value)):i.value);}
+    save.disabled=true;save.innerHTML='<span class="spin"></span>';await onSubmit(out);});
+  foot.append(save);m.append(foot);$('#modalBg').classList.add('on');}
+
+// ── nav ──────────────────────────────────────────────────────────────────────
+const SECTIONS=[
+  ['dashboard','▦','Dashboard'],['inventory','▤','Inventory'],['quicklist','↯','Quick List'],
+  ['listings','❖','Listings'],['orders','▥','Orders'],['customers','◎','Customers'],
+  ['shipping','➤','Shipping'],['market','⌕','Market & Deals'],['tax','£','Tax & Profit'],
+  ['settings','⚙','Settings']];
+let CUR='dashboard';
+function buildNav(){const n=$('#nav');n.innerHTML='';for(const [id,ico,label] of SECTIONS){
+  const b=el('button',{onclick:()=>go(id)},el('span',{class:'ico'},ico),el('span',{},label));
+  if(id==='market')b.append(el('span',{class:'badge',id:'dealBadge'}));
+  b.dataset.id=id;if(id===CUR)b.classList.add('active');n.append(b);}}
+function go(id){CUR=id;document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.id===id));
+  if(EMBED)try{parent.postMessage({type:'store.nav.state',id},'*');}catch(_){}
+  RENDER[id]&&RENDER[id]();}
+
+// ── header chips + dashboard ─────────────────────────────────────────────────
+async function refreshChips(){
+  const [d,ship,alerts]=await Promise.all([
+    api('/business/store/dashboard'),api('/business/ship/list'+qs({status:''})),
+    api('/business/market/alerts'+qs({unseen_only:true,kind:'deal',limit:50}))]);
+  const c=$('#hdrChips');c.innerHTML='';
+  const CH=[];
+  const add=(l,v,cls='')=>{CH.push([l,String(v),cls]);c.append(el('span',{class:'chip '+cls,html:`${l} <b>${v}</b>`}));};
+  add('Revenue 30d',money(d.revenue_30d));
+  add('Inventory',money(d.inventory_retail_value));
+  add('Open orders',d.open_orders);
+  add('To post',(ship.to_post||0));
+  const nd=(alerts.alerts||[]).length;add('Deals',nd,nd?'deal':'');
+  const bd=$('#dealBadge');if(bd){bd.textContent=nd;bd.style.display=nd?'inline-block':'none';}
+  if(EMBED)try{parent.postMessage({type:'store.chips',chips:CH},'*');}catch(_){}
+}
+
+const RENDER={};
+RENDER.dashboard=async()=>{
+  const scope=STORE?(' · '+esc(STORE_NAME||'store')):'';
+  const m=$('#main');m.innerHTML='<h2>Dashboard</h2><div class="sub">State of the shop'+scope+' · '+new Date().toLocaleDateString()+'</div><div id="dbBody"><span class="spin"></span></div>';
+  const [d0,tax,report,alerts]=await Promise.all([
+    api('/business/store/dashboard'),api('/business/tax/summary'+qs(withStore({}))),
+    api('/business/profit/report'+qs(withStore({period:'month',month:new Date().toISOString().slice(0,7)}))),
+    api('/business/market/alerts'+qs({unseen_only:true,limit:6}))]);
+  let d=d0;
+  if(STORE){ const sg=await api('/business/store/get'+qs({id:STORE})); const s=(sg&&sg.store)||{};
+    d=Object.assign({},d0,{inventory_retail_value:s.inventory_retail,inventory_cost_value:s.inventory_cost,open_orders:s.open_orders,low_stock:d0.low_stock}); }
+  const t=report.totals||{};
+  const b=$('#dbBody');b.innerHTML='';
+  const cards=el('div',{class:'cards'});
+  const kpi=(l,v,cls='',foot='')=>cards.append(el('div',{class:'kpi'},el('div',{class:'lbl'},l),el('div',{class:'val '+cls},v),foot?el('div',{class:'foot'},foot):null));
+  kpi('Revenue (mo)',money(t.revenue),'',`${t.orders||0} orders`);
+  kpi('Net profit (mo)',money(t.net_profit),(t.net_profit>=0?'up':'dn'),'margin '+pct(t.margin_pct));
+  kpi('Inventory value',money(d.inventory_retail_value),'',`cost ${money(d.inventory_cost_value)}`);
+  kpi('Low stock',d.low_stock||0,(d.low_stock?'dn':''));
+  kpi('Tax set-aside',money(tax.set_aside),'deal',(tax.tax_year_label||'')+' est.');
+  kpi('Est. liability',money(tax.total_liability),'',`IT ${money((tax.income_tax||{}).on_trade)} · NIC ${money(tax.class4_nic)}`);
+  b.append(cards);
+  // quick actions
+  const qa=el('div',{class:'card',style:'margin-top:14px'});qa.append(el('h3',{},'Quick actions'));
+  const qrow=el('div',{class:'row'});
+  qrow.append(el('button',{class:'btn pri',onclick:()=>go('quicklist')},'↯ New listing'));
+  qrow.append(el('button',{class:'btn',onclick:()=>go('shipping')},'➤ Plan Post Office run'));
+  qrow.append(el('button',{class:'btn',onclick:async()=>{toast('Scanning market…');const r=await api('/business/watch/scan',{});toast(`${r.new_alerts||0} new deal(s)`, r.new_alerts?'ok':'');refreshChips();}},'⌕ Scan deals now'));
+  qrow.append(el('button',{class:'btn',onclick:()=>go('tax')},'£ Tax summary'));
+  qa.append(qrow);b.append(qa);
+  // deals + platform split
+  const split=el('div',{class:'row',style:'margin-top:14px'});
+  const dealCard=el('div',{class:'card col'});dealCard.append(el('h3',{},'◆ Latest buy opportunities'));
+  if((alerts.alerts||[]).length){for(const a of alerts.alerts){dealCard.append(el('div',{class:'deal-card',style:'margin-bottom:6px'},
+    a.photo?el('img',{src:a.photo}):el('div',{class:'thumb'}),
+    el('div',{style:'flex:1'},el('div',{class:'t'},esc(a.title||'').slice(0,60)),el('div',{class:'r'},esc(a.reason||'')),
+      a.url?el('a',{href:a.url,target:'_blank',style:'font-size:11px'},'view →'):null),
+    el('div',{class:'mono'},money(a.price,a.currency))));}}
+  else dealCard.append(el('div',{class:'empty'},'No new deals. Add watches in Market & Deals.'));
+  split.append(dealCard);
+  const pf=el('div',{class:'card col'});pf.append(el('h3',{},'By platform (month)'));
+  const tb=el('table');tb.append(el('tr',{},el('th',{},'Platform'),el('th',{class:'right'},'Orders'),el('th',{class:'right'},'Revenue'),el('th',{class:'right'},'Profit')));
+  const bp=report.by_platform||{};if(Object.keys(bp).length)for(const k in bp){const p=bp[k];
+    tb.append(el('tr',{},el('td',{},el('span',{class:'pill '+k},k)),el('td',{class:'right'},p.orders),el('td',{class:'right mono'},money(p.revenue)),el('td',{class:'right mono'},money(p.net_profit))));}
+  else tb.append(el('tr',{},el('td',{colspan:4,class:'empty'},'No sales this month yet')));
+  pf.append(tb);split.append(pf);b.append(split);
+};
+
+// ── inventory ────────────────────────────────────────────────────────────────
+RENDER.inventory=async()=>{
+  const m=$('#main');m.innerHTML='<h2>Inventory</h2><div class="sub">Video games · consoles · merch · accessories</div>';
+  const tb=el('div',{class:'toolbar'});
+  const q=el('input',{placeholder:'search sku / name / barcode',style:'flex:1;min-width:200px'});
+  q.addEventListener('keydown',e=>{if(e.key==='Enter')load();});
+  tb.append(q,el('button',{class:'btn',onclick:()=>load()},'Search'),
+    el('button',{class:'btn pri',onclick:()=>editProduct({})},'+ Add product'),
+    el('button',{class:'btn',onclick:()=>go('quicklist')},'↯ Scan in'));
+  m.append(tb);const wrap=el('div',{id:'invWrap'});m.append(wrap);
+  async function load(){wrap.innerHTML='<span class="spin"></span>';
+    const r=await api('/business/product/list'+qs(withStore({q:q.value,limit:400})));
+    const t=el('table');t.append(el('tr',{},el('th',{},''),el('th',{},'SKU / Name'),el('th',{},'Cat'),el('th',{class:'right'},'Qty'),el('th',{class:'right'},'Cost'),el('th',{class:'right'},'Price'),el('th',{class:'right'},'Actions')));
+    for(const p of (r.products||[])){const img=(p.attributes&&(p.attributes.images||[])[0])||'';
+      t.append(el('tr',{},
+        el('td',{},img?el('img',{class:'thumb',src:img}):el('div',{class:'thumb'})),
+        el('td',{},el('div',{style:'font-weight:600'},esc(p.name||'')),el('div',{class:'muted mono',style:'font-size:10px'},esc(p.sku||'')+(p.upc?(' · '+p.upc):''))),
+        el('td',{},el('span',{class:'muted'},esc(p.category||'—'))),
+        el('td',{class:'right mono'},p.qty_on_hand),
+        el('td',{class:'right mono'},money(p.cost,p.currency)),
+        el('td',{class:'right mono'},money(p.price,p.currency)),
+        el('td',{class:'right'},
+          el('button',{class:'btn sm',onclick:()=>editProduct(p)},'edit'),' ',
+          el('button',{class:'btn sm',onclick:()=>repriceOne(p)},'reprice'),' ',
+          el('button',{class:'btn sm pri',onclick:()=>draftFrom(p)},'list'))));}
+    if(!(r.products||[]).length)t.append(el('tr',{},el('td',{colspan:7,class:'empty'},'No products. Scan or add one.')));
+    wrap.innerHTML='';wrap.append(t);}
+  load();
+};
+function editProduct(p){form(p.id?'Edit product':'Add product',[
+  {name:'sku',label:'SKU'},{name:'name',label:'Name'},{name:'category',label:'Category'},
+  {name:'upc',label:'Barcode / UPC'},{name:'qty_on_hand',label:'Qty',type:'number'},
+  {name:'cost',label:'Cost £',type:'number',step:'0.01'},{name:'price',label:'Price £',type:'number',step:'0.01'},
+  {name:'location',label:'Location / bin'},{name:'description',label:'Description',type:'textarea'}],
+  {...p,currency:'GBP'},async o=>{o.id=p.id||'';o.currency='GBP';const r=await api('/business/product/upsert',withStore(o));
+    closeModal();toast(r.ok?'Saved':'Error: '+(r.error||''),r.ok?'ok':'err');RENDER.inventory();});}
+async function repriceOne(p){toast('Checking market…');const r=await api('/business/market/reprice',{product_id:p.id});
+  if(r.error){toast(r.error,'err');return;}
+  form('Reprice — '+p.name,[{name:'suggested',label:`Suggested (market median ${money(r.market_median)})`,type:'number',step:'0.01',default:r.suggested_price}],
+    {suggested:r.suggested_price},async o=>{await api('/business/product/upsert',{id:p.id,price:o.suggested,currency:'GBP'});closeModal();toast('Price updated','ok');RENDER.inventory&&RENDER.inventory();});}
+
+// ── quick list (scan + vision + draft + publish) ─────────────────────────────
+let QL={product:null,photos:[]};
+RENDER.quicklist=async()=>{
+  const m=$('#main');m.innerHTML='<h2>Quick List</h2><div class="sub">Scan → identify → photograph → price → list</div>';
+  // 1 scan
+  const c1=el('div',{class:'card'});c1.append(el('h3',{},'1 · Scan or enter barcode'));
+  const sb=el('div',{class:'scanbox'});const bc=el('input',{placeholder:'scan barcode (or type + Enter)',autofocus:true});
+  bc.addEventListener('keydown',e=>{if(e.key==='Enter')intake();});
+  const cost=el('input',{type:'number',step:'0.01',placeholder:'cost £',style:'width:90px'});
+  const qty=el('input',{type:'number',placeholder:'qty',value:'1',style:'width:60px'});
+  sb.append(bc,cost,qty,el('button',{class:'btn pri',onclick:()=>intake()},'Intake'));
+  c1.append(sb,el('div',{class:'muted',style:'font-size:11px;margin-top:6px'},'USB scanners act as a keyboard — just scan while this box is focused.'));
+  m.append(c1);
+  async function intake(){const code=bc.value.trim();if(!code){toast('Scan a barcode');return;}
+    toast('Looking up '+code+'…');
+    const r=await api('/business/scan/intake',withStore({code,qty:parseInt(qty.value)||1,cost:parseFloat(cost.value)||0,currency:'GBP'}));
+    if(r.error){toast(r.error,'err');return;}
+    QL.product=r.product;QL.photos=(r.product.attributes&&r.product.attributes.images)||[];
+    toast(r.matched?'Bumped stock ✓':'Added to inventory ✓','ok');bc.value='';cost.value='';renderQL();refreshChips();}
+  m.append(el('div',{id:'qlBody'}));renderQL();
+};
+function renderQL(){const b=$('#qlBody');if(!b)return;b.innerHTML='';
+  if(!QL.product){b.append(el('div',{class:'card',style:'margin-top:12px'},el('div',{class:'empty'},'Scan an item to begin, or pick one from Inventory → “list”.')));return;}
+  const p=QL.product;
+  // 2 photos + vision
+  const c2=el('div',{class:'card',style:'margin-top:12px'});c2.append(el('h3',{},'2 · Photos & AI describe — '+esc(p.name||'')));
+  const fi=el('input',{type:'file',accept:'image/*',capture:'environment',multiple:true});
+  fi.addEventListener('change',async e=>{for(const f of e.target.files){const dataUrl=await fileToDataURL(f);QL.photos.push(dataUrl);}renderQL();});
+  const vbtn=el('button',{class:'btn pri',onclick:()=>visionDescribe()},'✦ Describe with AI');
+  c2.append(el('div',{class:'row'},fi,vbtn));
+  const pw=el('div',{class:'photowrap'});for(const src of QL.photos)pw.append(el('img',{src}));c2.append(pw);
+  b.append(c2);
+  // 3 draft
+  const c3=el('div',{class:'card',style:'margin-top:12px'});c3.append(el('h3',{},'3 · Listing draft'));
+  const title=el('input',{value:p.name||'',placeholder:'title (max 80)',maxlength:80,style:'width:100%'});
+  const desc=el('textarea',{rows:4},p.description||'');
+  const plat=el('select');['ebay','vinted'].forEach(x=>plat.append(el('option',{value:x},x)));
+  const cond=el('select');['new','like_new','very_good','good','acceptable','for_parts'].forEach(x=>cond.append(el('option',{value:x},x)));cond.value='good';
+  const price=el('input',{type:'number',step:'0.01',placeholder:'auto',style:'width:110px'});
+  c3.append(el('label',{class:'fld'},'Title'),title,el('label',{class:'fld'},'Description'),desc,
+    el('div',{class:'row',style:'margin-top:8px;align-items:flex-end'},
+      el('div',{},el('label',{class:'fld'},'Platform'),plat),
+      el('div',{},el('label',{class:'fld'},'Condition'),cond),
+      el('div',{},el('label',{class:'fld'},'Price £ (blank=auto)'),price),
+      el('button',{class:'btn',onclick:()=>suggestPrice()},'£ suggest'),
+      el('button',{class:'btn pri',onclick:()=>makeDraft()},'Create draft & publish')));
+  b.append(c3);
+  QL._els={title,desc,plat,cond,price};
+
+  async function visionDescribe(){if(!QL.photos.length){toast('Add a photo first');return;}toast('Looking…');
+    const r=await api('/business/vision/describe_item',{image_b64:QL.photos[0]});
+    if(r.error){toast(r.error,'err');return;}
+    const d=r.draft||{};if(d.title)title.value=String(d.title).slice(0,80);
+    if(d.description)desc.value=d.description;if(d.condition)cond.value=d.condition;
+    toast('Described ✓','ok');}
+  async function suggestPrice(){toast('Pricing…');const r=await api('/business/market/reprice',{product_id:p.id});
+    if(r.suggested_price){price.value=r.suggested_price;toast('Market median '+money(r.market_median));}else toast(r.error||'no comps','err');}
+  async function makeDraft(){
+    await api('/business/product/upsert',withStore({id:p.id,name:title.value,description:desc.value,currency:'GBP',attributes:Object.assign({},p.attributes,{images:QL.photos})}));
+    const dr=await api('/business/listing/draft',{product_id:p.id,platform:plat.value,condition:cond.value,
+      title:title.value,description:desc.value,price:price.value?parseFloat(price.value):null});
+    if(dr.error){toast(dr.error,'err');return;}
+    toast('Draft ready — publishing…');
+    const pub=await api('/business/listing/publish',{listing_id:dr.listing.id});
+    if(pub.ok){toast('Published live ✓','ok');QL.product=null;QL.photos=[];go('listings');}
+    else{toast('Draft saved. Publish issue: '+((pub.result&&pub.result.error)||pub.error||''),'err');go('listings');}
+  }
+}
+function fileToDataURL(f){return new Promise(res=>{const r=new FileReader();r.onload=()=>res(r.result);r.readAsDataURL(f);});}
+async function draftFrom(p){QL.product=p;QL.photos=(p.attributes&&p.attributes.images)||[];go('quicklist');}
+
+// ── listings ─────────────────────────────────────────────────────────────────
+RENDER.listings=async()=>{
+  const m=$('#main');m.innerHTML='<h2>Listings</h2><div class="sub">Drafts & live listings on eBay + Vinted</div>';
+  const tb=el('div',{class:'toolbar'});const st=el('select');[['','all'],['draft','draft'],['published','live'],['archived','archived'],['error','error']].forEach(o=>st.append(el('option',{value:o[0]},o[1])));
+  st.addEventListener('change',load);tb.append(el('span',{class:'muted'},'Status:'),st);m.append(tb);
+  const wrap=el('div');m.append(wrap);
+  async function load(){wrap.innerHTML='<span class="spin"></span>';const r=await api('/business/listing/list'+qs(withStore({status:st.value,limit:300})));
+    const t=el('table');t.append(el('tr',{},el('th',{},'Title'),el('th',{},'Platform'),el('th',{},'Status'),el('th',{class:'right'},'Price'),el('th',{class:'right'},'Actions')));
+    for(const l of (r.listings||[])){t.append(el('tr',{},
+      el('td',{},el('div',{style:'font-weight:600'},esc(l.title||'')),l.last_error?el('div',{class:'muted',style:'font-size:10px;color:var(--err)'},esc(l.last_error).slice(0,80)):null,l.url?el('a',{href:l.url,target:'_blank',style:'font-size:11px'},'view live →'):null),
+      el('td',{},el('span',{class:'pill '+l.platform},l.platform)),
+      el('td',{},el('span',{class:'pill '+(l.status==='published'?'ok':l.status==='error'?'err':l.status==='archived'?'':'warn')},l.status)),
+      el('td',{class:'right mono'},money(l.price,l.currency)),
+      el('td',{class:'right'},
+        l.status==='draft'?el('button',{class:'btn sm pri',onclick:()=>publish(l)},'publish'):null,' ',
+        l.status!=='archived'?el('button',{class:'btn sm danger',onclick:()=>archive(l)},'end'):null)));}
+    if(!(r.listings||[]).length)t.append(el('tr',{},el('td',{colspan:5,class:'empty'},'No listings yet')));
+    wrap.innerHTML='';wrap.append(t);}
+  async function publish(l){toast('Publishing…');const r=await api('/business/listing/publish',{listing_id:l.id});
+    toast(r.ok?'Live ✓':'Issue: '+((r.result&&r.result.error)||r.error||''),r.ok?'ok':'err');load();}
+  async function archive(l){if(!confirm('End / archive this listing?'))return;const r=await api('/business/listing/archive',{listing_id:l.id});toast(r.ok?'Archived':'Error','ok');load();}
+  load();
+};
+
+// ── orders ───────────────────────────────────────────────────────────────────
+RENDER.orders=async()=>{
+  const m=$('#main');m.innerHTML='<h2>Orders</h2><div class="sub">Sales, per-order profit, dispatch</div>';
+  const tb=el('div',{class:'toolbar'});
+  const src=el('select');[['','all'],['ebay','eBay'],['vinted','Vinted'],['manual','manual']].forEach(o=>src.append(el('option',{value:o[0]},o[1])));src.addEventListener('change',load);
+  tb.append(el('span',{class:'muted'},'Source:'),src,
+    el('button',{class:'btn',onclick:()=>syncOrders('ebay')},'⟳ Sync eBay'),
+    el('button',{class:'btn',onclick:()=>syncOrders('vinted')},'⟳ Sync Vinted'),
+    el('button',{class:'btn pri',onclick:()=>editOrder()},'+ Manual sale'));
+  m.append(tb);const wrap=el('div');m.append(wrap);
+  async function load(){wrap.innerHTML='<span class="spin"></span>';const r=await api('/business/order/list'+qs(withStore({source:src.value,limit:200})));
+    const t=el('table');t.append(el('tr',{},el('th',{},'Order'),el('th',{},'Src'),el('th',{},'Status'),el('th',{class:'right'},'Total'),el('th',{class:'right'},'Profit'),el('th',{class:'right'},'Actions')));
+    for(const o of (r.orders||[])){const fin=await api('/business/profit/order'+qs({order_id:o.id}));const f=fin.finance||{};
+      t.append(el('tr',{},
+        el('td',{},el('div',{class:'mono',style:'font-size:11px'},esc(o.external_id||o.id)),el('div',{class:'muted',style:'font-size:10px'},(o.items||[]).map(i=>esc(i.name||i.sku)).join(', ').slice(0,50))),
+        el('td',{},el('span',{class:'pill '+(o.source||'manual')},o.source||'manual')),
+        el('td',{},el('span',{class:'pill '+(['delivered','shipped'].includes(o.status)?'ok':'warn')},o.status)),
+        el('td',{class:'right mono'},money(o.total,o.currency)),
+        el('td',{class:'right mono '+((f.net_profit||0)>=0?'':'')},el('span',{style:'color:'+((f.net_profit||0)>=0?'var(--up)':'var(--dn)')},money(f.net_profit))),
+        el('td',{class:'right'},
+          el('button',{class:'btn sm',onclick:()=>costModal(o,f)},'costs'),' ',
+          el('button',{class:'btn sm',onclick:()=>shipModal(o)},'ship'),' ',
+          el('button',{class:'btn sm',onclick:()=>label(o)},'label'))));}
+    if(!(r.orders||[]).length)t.append(el('tr',{},el('td',{colspan:6,class:'empty'},'No orders. Sync a platform or add a manual sale.')));
+    wrap.innerHTML='';wrap.append(t);}
+  async function syncOrders(conn){toast('Syncing '+conn+'…');const acc=await api('/business/platform/accounts');
+    const a=(acc.accounts||[]).find(x=>x.connector===conn);if(!a){toast('Connect '+conn+' first','err');go('settings');return;}
+    const r=await api('/business/platform/orders/sync',{account_id:a.id});toast(r.error?r.error:`${r.imported||0} new / ${r.updated||0} updated`,r.error?'err':'ok');load();refreshChips();}
+  function editOrder(){form('Manual sale',[
+    {name:'source',label:'Source',type:'select',options:['manual','ebay','vinted'],default:'manual'},
+    {name:'name',label:'Item name'},{name:'sku',label:'SKU (draws stock)'},
+    {name:'unit_price',label:'Sale price £',type:'number',step:'0.01'},{name:'shipping',label:'Postage charged £',type:'number',step:'0.01'},
+    {name:'status',label:'Status',type:'select',options:['paid','packed','shipped','delivered'],default:'paid'}],{},
+    async o=>{const items=[{name:o.name,sku:o.sku,qty:1,unit_price:o.unit_price||0,product_id:o.sku}];
+      const r=await api('/business/order/upsert',withStore({source:o.source,status:o.status,items,shipping:o.shipping||0,currency:'GBP'}));
+      closeModal();toast(r.ok?'Sale recorded':'Error','ok');load();refreshChips();});}
+  function costModal(o,f){form('Order costs — profit '+money(f.net_profit),[
+    {name:'cogs',label:`Item cost (COGS) — auto ${money(f.cogs)}`,type:'number',step:'0.01',default:f.cogs},
+    {name:'platform_fee',label:`Platform fee — auto ${money(f.platform_fee)}`,type:'number',step:'0.01',default:f.platform_fee},
+    {name:'postage_cost',label:`Postage cost — auto ${money(f.postage_cost)}`,type:'number',step:'0.01',default:f.postage_cost},
+    {name:'packaging_cost',label:'Packaging',type:'number',step:'0.01',default:f.packaging_cost},
+    {name:'other_cost',label:'Other',type:'number',step:'0.01',default:f.other_cost}],{},
+    async v=>{v.order_id=o.id;const r=await api('/business/profit/record',v);closeModal();
+      toast(r.ok?('Net £'+((r.finance||{}).net_profit)):'Error',r.ok?'ok':'err');load();});}
+  async function shipModal(o){const rates=await api('/business/ship/rates'+qs({weight_g:250,order_id:o.id}));
+    const opts=(rates.rates||[]).map(x=>({value:x.service_id,label:`${x.carrier} ${x.service} — ${money(x.price)}`}));
+    form('Book shipment — '+esc(o.external_id||o.id),[
+      {name:'weight_g',label:'Weight (g)',type:'number',default:250},
+      {name:'service_id',label:'Service',type:'select',options:opts},
+      {name:'tracking',label:'Tracking number'},
+      {name:'set_order_shipped',label:'Mark order shipped',type:'checkbox',default:true}],{},
+      async v=>{v.order_id=o.id;const r=await api('/business/ship/book',v);closeModal();
+        toast(r.ok?'Shipment booked':'Error','ok');load();refreshChips();});}
+  async function label(o){toast('Printing label…');const r=await api('/business/ship/label',{order_id:o.id,ref:o.external_id||o.id});
+    toast(r.ok?('Label sent → '+(r.transport||'printer')):(r.error||'Error'),r.ok?'ok':'err');}
+  load();
+};
+
+// ── customers (light CRM, folded in from the old Shop panel) ─────────────────
+RENDER.customers=async()=>{
+  const m=$('#main');m.innerHTML='<h2>Customers</h2><div class="sub">Buyers &amp; delivery addresses</div>';
+  const tb=el('div',{class:'toolbar'});const q=el('input',{placeholder:'search name / email',style:'flex:1;min-width:200px'});
+  q.addEventListener('keydown',e=>{if(e.key==='Enter')load();});
+  tb.append(q,el('button',{class:'btn',onclick:()=>load()},'Search'),el('button',{class:'btn pri',onclick:()=>edit({})},'+ Add customer'));
+  m.append(tb);const wrap=el('div');m.append(wrap);
+  async function load(){wrap.innerHTML='<span class="spin"></span>';const r=await api('/business/customer/list'+qs({q:q.value,limit:400}));
+    const t=el('table');t.append(el('tr',{},el('th',{},'Name'),el('th',{},'Email'),el('th',{},'Phone'),el('th',{},'Address'),el('th',{class:'right'},'')));
+    for(const c of (r.customers||[])){const addr=(c.address&&(c.address.lines||[]).join(', '))||'';
+      t.append(el('tr',{},el('td',{style:'font-weight:600'},esc(c.name||'')),el('td',{},esc(c.email||'')),el('td',{},esc(c.phone||'')),
+        el('td',{class:'muted',style:'font-size:11px'},esc(addr).slice(0,50)),
+        el('td',{class:'right'},el('button',{class:'btn sm',onclick:()=>edit(c)},'edit'),' ',el('button',{class:'btn sm danger',onclick:()=>del(c)},'✕'))));}
+    if(!(r.customers||[]).length)t.append(el('tr',{},el('td',{colspan:5,class:'empty'},'No customers yet — they are created automatically when platform orders sync.')));
+    wrap.innerHTML='';wrap.append(t);}
+  function edit(c){const addr=(c.address&&(c.address.lines||[]).join('\n'))||'';
+    form(c.id?'Edit customer':'Add customer',[
+      {name:'name',label:'Name'},{name:'email',label:'Email'},{name:'phone',label:'Phone'},
+      {name:'address',label:'Delivery address (one line each)',type:'textarea',rows:4,default:addr}],
+      {name:c.name,email:c.email,phone:c.phone},
+      async o=>{o.id=c.id||'';o.address={lines:(o.address||'').split('\n').map(s=>s.trim()).filter(Boolean)};
+        const r=await api('/business/customer/upsert',o);closeModal();toast(r.ok?'Saved':'Error','ok');load();});}
+  async function del(c){if(!confirm('Delete customer?'))return;await api('/business/customer/delete',{id:c.id});load();}
+  load();
+};
+
+// ── shipping ─────────────────────────────────────────────────────────────────
+RENDER.shipping=async()=>{
+  const m=$('#main');m.innerHTML='<h2>Shipping & Dispatch</h2><div class="sub">Rates · labels · Post Office runs · pickups</div>';
+  const row=el('div',{class:'row'});
+  // rate calculator
+  const rc=el('div',{class:'card col'});rc.append(el('h3',{},'∑ Rate calculator'));
+  const w=el('input',{type:'number',placeholder:'weight g',value:'250',style:'width:110px'});
+  const fmt=el('select');[['','any format'],['large_letter','Large Letter'],['small_parcel','Small Parcel'],['medium_parcel','Medium Parcel'],['parcel','Parcel']].forEach(o=>fmt.append(el('option',{value:o[0]},o[1])));
+  const out=el('div',{style:'margin-top:8px'});
+  rc.append(el('div',{class:'row'},w,fmt,el('button',{class:'btn pri',onclick:quote},'Quote')),out);
+  async function quote(){out.innerHTML='<span class="spin"></span>';const r=await api('/business/ship/rates'+qs({weight_g:w.value,format:fmt.value}));
+    const t=el('table');t.append(el('tr',{},el('th',{},'Carrier'),el('th',{},'Service'),el('th',{},'Tracked'),el('th',{class:'right'},'Price')));
+    for(const x of (r.rates||[]))t.append(el('tr',{},el('td',{},x.carrier),el('td',{},x.service),el('td',{},x.tracked?'✓':''),el('td',{class:'right mono'},money(x.price))));
+    out.innerHTML='';out.append(t);}
+  row.append(rc);
+  // post office run
+  const po=el('div',{class:'card col'});po.append(el('h3',{},'➤ Post Office run'));
+  po.append(el('div',{class:'muted',style:'font-size:11px;margin-bottom:8px'},'Batch everything waiting to post into one trip on your Calendar.'));
+  const when=el('input',{type:'datetime-local'});const loc=el('input',{placeholder:'Post Office location'});
+  po.append(el('label',{class:'fld'},'When (blank = to-do)'),when,el('label',{class:'fld'},'Where'),loc,
+    el('button',{class:'btn pri',style:'margin-top:8px',onclick:async()=>{const r=await api('/business/ship/postrun',{when:when.value?new Date(when.value).toISOString():'',location:loc.value});
+      toast(r.ok?`${r.count} parcel(s), ${money(r.total_postage)} · ${r.cal_event_id?'on Calendar':'to-do added'}`:'Error',r.ok?'ok':'err');load();}},'Plan run'),
+    el('button',{class:'btn',style:'margin-top:8px',onclick:()=>pickupModal()},'⇪ Arrange pickup'));
+  row.append(po);m.append(row);
+  function pickupModal(){form('Arrange collection',[
+    {name:'carrier',label:'Carrier',type:'select',options:['Royal Mail','Evri','Yodel','InPost']},
+    {name:'date',label:'Date',type:'date'},{name:'window',label:'Window',default:'09:00-17:00'},
+    {name:'notes',label:'Notes',type:'textarea'}],{},
+    async v=>{const r=await api('/business/ship/pickup',v);closeModal();toast(r.ok?'Pickup booked + on Calendar':'Error','ok');load();});}
+  // shipments table
+  const wrap=el('div',{style:'margin-top:14px'});m.append(wrap);
+  async function load(){wrap.innerHTML='<span class="spin"></span>';const r=await api('/business/ship/list'+qs({limit:200}));
+    const head=el('div',{class:'toolbar'},el('h3',{style:'font-size:13px'},`Shipments — ${r.to_post||0} to post · ${money(r.total_postage)} postage`));
+    const t=el('table');t.append(el('tr',{},el('th',{},'Order'),el('th',{},'Carrier / Service'),el('th',{},'Status'),el('th',{class:'right'},'Postage'),el('th',{class:'right'},'Actions')));
+    for(const s of (r.shipments||[])){t.append(el('tr',{},
+      el('td',{class:'mono',style:'font-size:11px'},esc(s.order_id||'')),
+      el('td',{},esc((s.carrier||'')+' '+(s.service_label||''))),
+      el('td',{},el('span',{class:'pill '+(['posted','collected','delivered'].includes(s.status)?'ok':'warn')},s.status)),
+      el('td',{class:'right mono'},money(s.postage_cost)),
+      el('td',{class:'right'},
+        el('button',{class:'btn sm',onclick:async()=>{const x=await api('/business/ship/label',{shipment_id:s.id,order_id:s.order_id});toast(x.ok?'Label sent':'No address / err','ok');}},'label'),' ',
+        s.status!=='posted'?el('button',{class:'btn sm pri',onclick:async()=>{await api('/business/ship/mark',{id:s.id,status:'posted'});toast('Marked posted','ok');load();refreshChips();}},'posted'):null)));}
+    if(!(r.shipments||[]).length)t.append(el('tr',{},el('td',{colspan:5,class:'empty'},'No shipments booked. Book from an order.')));
+    wrap.innerHTML='';wrap.append(head);wrap.append(t);}
+  load();
+};
+
+// ── market & deals ───────────────────────────────────────────────────────────
+RENDER.market=async()=>{
+  const m=$('#main');m.innerHTML='<h2>Market &amp; Deals</h2><div class="sub">Live eBay + Vinted OSINT, watchlists & buy alerts</div>';
+  // search
+  const sc=el('div',{class:'card'});sc.append(el('h3',{},'⌕ Market search'));
+  const q=el('input',{placeholder:'e.g. Zelda amiibo, PS2 slim boxed',style:'flex:1;min-width:220px'});
+  q.addEventListener('keydown',e=>{if(e.key==='Enter')search();});
+  const plat=el('select');['any','ebay','vinted'].forEach(x=>plat.append(el('option',{value:x},x)));
+  sc.append(el('div',{class:'row'},q,plat,el('button',{class:'btn pri',onclick:search},'Search'),
+    el('button',{class:'btn',onclick:()=>watchModal({name:q.value,query:q.value})},'+ Watch this')));
+  const sres=el('div',{style:'margin-top:10px'});sc.append(sres);m.append(sc);
+  async function search(){if(!q.value.trim())return;sres.innerHTML='<span class="spin"></span>';
+    const r=await api('/business/market/search',{query:q.value,platform:plat.value,limit:40});
+    const cb=r.combined||{};const bp=r.by_platform||{};
+    sres.innerHTML='';sres.append(el('div',{class:'row',style:'margin-bottom:8px'},
+      el('span',{class:'chip'},'Median ',el('b',{},money(cb.median))),el('span',{class:'chip'},'Low ',el('b',{},money(cb.low))),
+      el('span',{class:'chip'},'High ',el('b',{},money(cb.high))),el('span',{class:'chip'},'Samples ',el('b',{},cb.sample_size||0)),
+      bp.ebay?el('span',{class:'chip ebay'},'eBay med ',el('b',{},money((bp.ebay||{}).median))):null,
+      bp.vinted?el('span',{class:'chip vinted'},'Vinted med ',el('b',{},money((bp.vinted||{}).median))):null));
+    const t=el('table');t.append(el('tr',{},el('th',{},''),el('th',{},'Title'),el('th',{},'Src'),el('th',{class:'right'},'Price')));
+    for(const it of (r.items||[]).slice(0,60))t.append(el('tr',{},el('td',{},it.photo?el('img',{class:'thumb',src:it.photo}):el('div',{class:'thumb'})),
+      el('td',{},el('a',{href:it.url,target:'_blank'},esc(it.title||'').slice(0,70))),el('td',{},el('span',{class:'pill '+it.platform},it.platform)),el('td',{class:'right mono'},money(it.price,it.currency))));
+    sres.append(t);}
+  // watches + alerts side by side
+  const row=el('div',{class:'row',style:'margin-top:14px'});
+  const wc=el('div',{class:'card col'});wc.append(el('h3',{},'◉ Watchlists',el('button',{class:'btn sm',style:'margin-left:auto',onclick:async()=>{toast('Scanning…');const r=await api('/business/watch/scan',{});toast(`${r.new_alerts||0} new deals`,'ok');loadWatch();loadAlerts();refreshChips();}},'Scan all')));
+  const wl=el('div');wc.append(wl);wc.append(el('button',{class:'btn pri sm',style:'margin-top:8px',onclick:()=>watchModal({})},'+ New watch'));
+  row.append(wc);
+  const ac=el('div',{class:'card col'});ac.append(el('h3',{},'◆ Buy opportunities',el('button',{class:'btn sm',style:'margin-left:auto',onclick:async()=>{await api('/business/market/alert/seen',{all:true});loadAlerts();refreshChips();}},'Clear')));
+  const al=el('div');ac.append(al);row.append(ac);m.append(row);
+  async function loadWatch(){wl.innerHTML='<span class="spin"></span>';const r=await api('/business/watch/list');wl.innerHTML='';
+    for(const w of (r.watches||[])){wl.append(el('div',{class:'row',style:'align-items:center;padding:6px 0;border-bottom:1px solid var(--border)'},
+      el('div',{style:'flex:1'},el('div',{style:'font-weight:600'},esc(w.name)),el('div',{class:'muted',style:'font-size:11px'},esc(w.query||'')+(w.max_price?(' · ≤'+money(w.max_price)):'')+' · '+(w.last_hits||0)+' hits')),
+      el('button',{class:'btn sm',onclick:async()=>{toast('Scanning…');const x=await api('/business/watch/scan',{id:w.id});toast(`${x.new_alerts||0} deals`,'ok');loadAlerts();refreshChips();}},'scan'),
+      el('button',{class:'btn sm danger',onclick:async()=>{await api('/business/watch/delete',{id:w.id});loadWatch();}},'✕')));}
+    if(!(r.watches||[]).length)wl.append(el('div',{class:'empty'},'No watches yet'));}
+  async function loadAlerts(){al.innerHTML='<span class="spin"></span>';const r=await api('/business/market/alerts'+qs({kind:'deal',limit:40}));al.innerHTML='';
+    for(const a of (r.alerts||[])){al.append(el('div',{class:'deal-card',style:'margin-bottom:6px'+(a.seen?';opacity:.55':'')},
+      a.photo?el('img',{src:a.photo}):el('div',{class:'thumb'}),
+      el('div',{style:'flex:1'},el('div',{class:'t'},esc(a.title||'').slice(0,56)),el('div',{class:'r'},esc(a.reason||'')),a.url?el('a',{href:a.url,target:'_blank',style:'font-size:11px'},'view →'):null),
+      el('div',{class:'mono'},money(a.price,a.currency))));}
+    if(!(r.alerts||[]).length)al.append(el('div',{class:'empty'},'No deals yet — add watches and Scan.'));}
+  function watchModal(w){form(w.id?'Edit watch':'New watch',[
+    {name:'name',label:'Name'},{name:'query',label:'Search terms',default:w.query||w.name||''},
+    {name:'platform',label:'Platform',type:'select',options:['any','ebay','vinted']},
+    {name:'max_price',label:'Target buy price £ (blank = auto vs median)',type:'number',step:'0.01'},
+    {name:'deal_discount',label:'…or flag this % below median (0.25 = 25%)',type:'number',step:'0.05',default:0.25}],
+    w,async o=>{o.id=w.id||'';const r=await api('/business/watch/upsert',o);closeModal();toast(r.ok?'Watch saved':'Error','ok');loadWatch();});}
+  loadWatch();loadAlerts();
+};
+
+// ── tax & profit ─────────────────────────────────────────────────────────────
+RENDER.tax=async()=>{
+  const m=$('#main');m.innerHTML='<h2>Tax &amp; Profit</h2><div class="sub">P&amp;L and UK Self-Assessment / VAT estimate</div>';
+  const tb=el('div',{class:'toolbar'});
+  const period=el('select');[['tax_year','This tax year'],['month','This month'],['all','All time']].forEach(o=>period.append(el('option',{value:o[0]},o[1])));
+  period.addEventListener('change',load);tb.append(el('span',{class:'muted'},'Period:'),period,
+    el('button',{class:'btn',onclick:()=>settingsModal()},'⚙ Tax settings'));
+  m.append(tb);const body=el('div',{id:'taxBody'});m.append(body);
+  async function load(){body.innerHTML='<span class="spin"></span>';
+    let p={period:period.value};if(period.value==='month')p.month=new Date().toISOString().slice(0,7);
+    const [rep,tax]=await Promise.all([api('/business/profit/report'+qs(withStore(Object.assign({detail:true},p)))),api('/business/tax/summary'+qs(withStore({})))]);
+    const t=rep.totals||{};body.innerHTML='';
+    const cards=el('div',{class:'cards'});const kpi=(l,v,cls='',f='')=>cards.append(el('div',{class:'kpi'},el('div',{class:'lbl'},l),el('div',{class:'val '+cls},v),f?el('div',{class:'foot'},f):null));
+    kpi('Revenue',money(t.revenue),'',`${t.orders||0} orders · ${t.units||0} units`);
+    kpi('Costs',money(t.cost_total),'',`COGS ${money(t.cogs)} · fees ${money(t.platform_fee)} · post ${money(t.postage_cost)}`);
+    kpi('Net profit',money(t.net_profit),(t.net_profit>=0?'up':'dn'),'margin '+pct(t.margin_pct));
+    body.append(cards);
+    // tax card
+    const tc=el('div',{class:'card',style:'margin-top:14px'});tc.append(el('h3',{},'£ UK tax estimate — '+esc(tax.tax_year_label||'')));
+    const g=el('table');const r2=(l,v)=>g.append(el('tr',{},el('td',{},l),el('td',{class:'right mono'},v)));
+    r2('Gross trading income',money((tax.income||{}).gross_trading));
+    r2('Allowable expenses',money((tax.expenses||{}).total));
+    r2(tax.used_trading_allowance?'Using £1,000 trading allowance':'Net profit after expenses',money(tax.net_profit_after_expenses));
+    r2('Taxable profit',money(tax.taxable_profit));
+    r2('Income Tax (on trade)',money((tax.income_tax||{}).on_trade));
+    r2('Class 4 NIC',money(tax.class4_nic));
+    if((tax.vat||{}).registered)r2('VAT estimate ('+((tax.vat||{}).scheme)+')',money((tax.vat||{}).due_estimate));
+    g.append(el('tr',{},el('td',{},el('b',{},'Estimated liability')),el('td',{class:'right mono'},el('b',{},money(tax.total_liability)))));
+    g.append(el('tr',{},el('td',{},el('b',{style:'color:var(--deal)'},'Set aside')),el('td',{class:'right mono'},el('b',{style:'color:var(--deal)'},money(tax.set_aside)))));
+    tc.append(g);
+    const vw=tax.vat_threshold_watch||{};
+    tc.append(el('div',{class:'muted',style:'font-size:11px;margin-top:8px'},`VAT threshold ${money(vw.threshold)} · turnover ${money(vw.turnover)} · headroom ${money(vw.headroom)}`));
+    for(const n of (tax.notes||[]))tc.append(el('div',{style:'font-size:11px;margin-top:6px;color:var(--warn)'},'• '+esc(n)));
+    tc.append(el('div',{class:'muted',style:'font-size:10px;margin-top:8px'},esc(tax.disclaimer||'')));
+    body.append(tc);
+    // per-order detail
+    if((rep.orders||[]).length){const dc=el('div',{class:'card',style:'margin-top:14px'});dc.append(el('h3',{},'Per-order profit'));
+      const tt=el('table');tt.append(el('tr',{},el('th',{},'Order'),el('th',{},'Src'),el('th',{class:'right'},'Rev'),el('th',{class:'right'},'COGS'),el('th',{class:'right'},'Fee'),el('th',{class:'right'},'Post'),el('th',{class:'right'},'Net'),el('th',{class:'right'},'Margin')));
+      for(const o of rep.orders){tt.append(el('tr',{},el('td',{class:'mono',style:'font-size:10px'},esc(o.order_id).slice(-8)),el('td',{},el('span',{class:'pill '+o.source},o.source)),
+        el('td',{class:'right mono'},money(o.revenue)),el('td',{class:'right mono'},money(o.cogs)),el('td',{class:'right mono'},money(o.platform_fee)),el('td',{class:'right mono'},money(o.postage_cost)),
+        el('td',{class:'right mono',style:'color:'+((o.net_profit>=0)?'var(--up)':'var(--dn)')},money(o.net_profit)),el('td',{class:'right'},pct(o.margin_pct))));}
+      dc.append(tt);body.append(dc);}
+  }
+  function settingsModal(){api('/business/tax/settings').then(s=>{const cfg=s.settings||{};
+    form('Tax settings',[
+      {name:'vat_registered',label:'VAT registered',type:'checkbox',default:cfg.vat_registered},
+      {name:'vat_scheme',label:'VAT scheme',type:'select',options:['standard','flat_rate','margin'],default:cfg.vat_scheme},
+      {name:'use_trading_allowance',label:'£1,000 trading allowance',type:'select',options:['auto','yes','no'],default:cfg.use_trading_allowance},
+      {name:'other_taxable_income',label:'Other taxable income this year £',type:'number',step:'0.01',default:cfg.other_taxable_income},
+      {name:'packaging_default',label:'Default packaging cost £',type:'number',step:'0.01',default:cfg.packaging_default},
+      {name:'ebay_fee_pct',label:'eBay fee % (0.128 = 12.8%)',type:'number',step:'0.001',default:(cfg.platform_fees&&cfg.platform_fees.ebay||{}).pct}],{},
+      async o=>{const patch={vat_registered:o.vat_registered,vat_scheme:o.vat_scheme,use_trading_allowance:o.use_trading_allowance,
+        other_taxable_income:o.other_taxable_income,packaging_default:o.packaging_default,
+        platform_fees:{ebay:{pct:o.ebay_fee_pct,fixed:(cfg.platform_fees&&cfg.platform_fees.ebay||{}).fixed||0.30}}};
+        const r=await api('/business/tax/settings/set',patch);closeModal();toast(r.ok?'Saved':'Error','ok');load();});});}
+  load();
+};
+
+// ── settings ─────────────────────────────────────────────────────────────────
+RENDER.settings=async()=>{
+  const m=$('#main');m.innerHTML='<h2>Settings</h2><div class="sub">Connect eBay & Vinted, eBay listing defaults, printer</div>';
+  const [conns,accs,pr]=await Promise.all([api('/business/platform/connectors'),api('/business/platform/accounts'),api('/print/status').catch(()=>({}))]);
+  // connections
+  const cc=el('div',{class:'card'});cc.append(el('h3',{},'⋈ Marketplace connections'));
+  const t=el('table');t.append(el('tr',{},el('th',{},'Platform'),el('th',{},'Status'),el('th',{class:'right'},'Actions')));
+  const accByConn={};for(const a of (accs.accounts||[]))accByConn[a.connector]=a;
+  for(const c of (conns.connectors||[])){const a=accByConn[c.id];
+    t.append(el('tr',{},el('td',{},el('span',{class:'pill '+(c.id)},c.label),c.real?'':el('span',{class:'muted',style:'font-size:10px'},' (stub)')),
+      el('td',{},a?el('span',{class:'pill '+(a.connected?'ok':'warn')},a.connected?'connected':'configured'):el('span',{class:'muted'},'—')),
+      el('td',{class:'right'},c.id==='ebay'?el('button',{class:'btn sm pri',onclick:connectEbay},a?'reconnect':'connect'):
+        c.id==='vinted'?el('button',{class:'btn sm pri',onclick:connectVinted},a?'update':'connect'):
+        el('span',{class:'muted'},'—'),
+        (c.id==='ebay'&&a)?el('button',{class:'btn sm',style:'margin-left:6px',onclick:()=>ebayDefaults(a)},'listing defaults'):null)));}
+  cc.append(t);m.append(cc);
+  // printer
+  const pc=el('div',{class:'card',style:'margin-top:14px'});pc.append(el('h3',{},'⎙ Thermal printer'));
+  pc.append(el('div',{class:'muted',style:'font-size:12px'},pr&&pr.printers!=null?`${pr.printers} printer(s) · default transport: ${pr.default_transport||pr.transport||'—'}`:'Printer status in the Business panel (USB/serial).'));
+  pc.append(el('div',{class:'muted',style:'font-size:11px;margin-top:6px'},'Labels print from Orders → “label” and Shipping. Configure the USB/WebSerial printer in the Business tab.'));
+  m.append(pc);
+
+  function connectEbay(){form('Connect eBay',[
+    {name:'label',label:'Label',default:'eBay UK'},{name:'env',label:'Environment',type:'select',options:['production','sandbox']},
+    {name:'client_id',label:'App ID (Client ID)'},{name:'client_secret',label:'Cert ID (Client Secret)',type:'password'},
+    {name:'ru_name',label:'RuName (redirect URL name)'}],{},
+    async o=>{o.connector='ebay';const r=await api('/business/platform/connect',o);closeModal();
+      if(r.auth_url){toast('Opening eBay consent…','ok');window.open(r.auth_url,'_blank');}else toast(r.note||r.error||'Saved',r.error?'err':'ok');RENDER.settings();});}
+  function connectVinted(){form('Connect Vinted',[
+    {name:'label',label:'Label',default:'Vinted UK'},{name:'domain',label:'Region',type:'select',options:['uk','ie','de','fr','es','it','nl','us'],default:'uk'},
+    {name:'access_token_web',label:'access_token_web cookie',type:'textarea'},
+    {name:'session_cookie',label:'_vinted_fr_session cookie (optional)'},
+    {name:'user_id',label:'Your numeric user id (optional)'}],{},
+    async o=>{const r=await api('/business/vinted/connect',o);closeModal();toast(r.ok?'Vinted saved':'Error','ok');RENDER.settings();});}
+  function ebayDefaults(a){form('eBay listing defaults (for publishing)',[
+    {name:'fulfillment_policy_id',label:'Fulfillment (postage) policy id'},
+    {name:'payment_policy_id',label:'Payment policy id'},{name:'return_policy_id',label:'Return policy id'},
+    {name:'merchant_location_key',label:'Merchant location key'},{name:'category_id',label:'Default leaf category id'},
+    {name:'marketplace',label:'Marketplace',default:'EBAY_GB'}],{},
+    async o=>{o.account_id=a.id;const r=await api('/business/ebay/defaults',o);closeModal();toast(r.ok?'Saved':'Error','ok');});}
+};
+
+// ── boot ─────────────────────────────────────────────────────────────────────
+if(STORE){const b=document.querySelector('.brand');if(b)b.textContent='◆ '+(STORE_NAME||'STORE');}
+if(EMBED){
+  document.querySelector('.hdr').style.display='none';
+  document.querySelector('nav.side').style.display='none';
+  window.addEventListener('message',e=>{const d=e.data||{};
+    if(d.type==='store.nav'&&RENDER[d.id])go(d.id);});
+}
+buildNav();refreshChips();RENDER.dashboard();
+setInterval(refreshChips,60000);
+</script>
+</body>
+</html>

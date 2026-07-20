@@ -54,8 +54,16 @@ log = logging.getLogger("vera.job_persist")
 # ── Config ────────────────────────────────────────────────────────────────────
 JOB_TTL          = int(os.getenv("VERA_JOB_TTL", 86400 * 7))        # 7 days
 JOB_IDX_MAX      = int(os.getenv("VERA_JOB_IDX_MAX", 5000))
+PROMPT_FULL_MAX  = int(os.getenv("VERA_JOB_PROMPT_FULL_MAX", 16000))  # full-prompt cap
 RECOVERY_IDLE_MS = int(os.getenv("VERA_RECOVERY_IDLE_MS", 120_000))  # 2 min
 ARCHIVE_TO_PG    = os.getenv("VERA_JOB_ARCHIVE_PG", "1") == "1"
+# Above this many consumers, /jobs/stats skips enumerating them (the redis
+# client parses the whole reply on the event loop — thousands of stale
+# consumers blocked it >1s). The periodic prune keeps the real count low.
+CONSUMER_DETAIL_MAX = int(os.getenv("VERA_CONSUMER_DETAIL_MAX", 200))
+# A consumer idle at least this long with NO pending messages is dead (a worker
+# from a previous process life) and gets removed by the prune sweep.
+CONSUMER_STALE_IDLE_MS = int(os.getenv("VERA_CONSUMER_STALE_IDLE_MS", 600_000))  # 10 min
 
 # Redis keys
 K_JOB     = "vera:jobs:"        # hash per job
@@ -89,6 +97,7 @@ async def _persist(
     caller_func: str = "",
     cap_name: str = "",
     prompt_preview: str = "",
+    prompt_full: str = "",
     error: str = "",
     elapsed_s: float = 0.0,
     extra: Optional[dict] = None,
@@ -106,6 +115,7 @@ async def _persist(
         "caller_func":    caller_func,
         "cap_name":       cap_name,
         "prompt_preview": (prompt_preview or "")[:300],
+        "prompt_full":    (prompt_full or "")[:PROMPT_FULL_MAX],
         "error":          (error or "")[:500],
         "elapsed_s":      str(round(elapsed_s, 2)),
         "updated_at":     now_iso(),
@@ -138,7 +148,7 @@ async def _persist(
             # Preserve caller info if the current record doesn't have it
             # (the done/error events don't always carry caller info)
             for field in (b"caller_file", b"caller_func", b"cap_name",
-                          b"prompt_preview", b"instance_id", b"model"):
+                          b"prompt_preview", b"prompt_full", b"instance_id", b"model"):
                 fname = field.decode() if isinstance(field, bytes) else field
                 if not rec.get(fname):
                     val = existing.get(field, b"")
@@ -229,7 +239,12 @@ async def _event_listener():
             elif etype == "ollama.request":
                 rid = ev.get("req_id", "")
                 if rid:
-                    _RUNNING[rid] = {"start": time.time()}
+                    # ollama.request fires more than once per request now:
+                    # once at submission and again as a liveness heartbeat
+                    # while queued/generating (ev.phase set). Don't reset the
+                    # start clock, and MERGE the log entry so a sparse
+                    # heartbeat doesn't blank fields the first event carried.
+                    _RUNNING.setdefault(rid, {"start": time.time()})
                     await _persist(
                         rid, "ollama.generate", "running",
                         instance_id=ev.get("instance_id", ""),
@@ -238,12 +253,22 @@ async def _event_listener():
                         caller_func=ev.get("caller_func", ""),
                         cap_name=ev.get("cap_name", ""),
                         prompt_preview=ev.get("prompt_preview", ""),
+                        prompt_full=ev.get("prompt_full", ""),
                         extra={"prefer_gpu": str(ev.get("prefer_gpu", "")),
-                               "streaming": str(ev.get("streaming", ""))},
+                               "streaming": str(ev.get("streaming", "")),
+                               **({"phase": str(ev.get("phase"))}
+                                  if ev.get("phase") else {})},
                     )
                     # Also persist to the dedicated ollama log hash
                     try:
-                        await r.hset(K_OLLAMA, rid, json.dumps({
+                        entry = {}
+                        try:
+                            prev = await r.hget(K_OLLAMA, rid)
+                            if prev:
+                                entry = json.loads(prev)
+                        except Exception:
+                            entry = {}
+                        fresh = {
                             "req_id": rid,
                             "model": ev.get("model", ""),
                             "instance_id": ev.get("instance_id", ""),
@@ -252,10 +277,16 @@ async def _event_listener():
                             "caller_func": ev.get("caller_func", ""),
                             "cap_name": ev.get("cap_name", ""),
                             "prompt_preview": ev.get("prompt_preview", ""),
+                            "prompt_full": (ev.get("prompt_full", "") or "")[:PROMPT_FULL_MAX],
                             "prefer_gpu": ev.get("prefer_gpu", False),
-                            "ts": time.time(),
-                            "status": "running",
-                        }))
+                            "phase": ev.get("phase", ""),
+                        }
+                        for k, v in fresh.items():
+                            if v or k not in entry:
+                                entry[k] = v
+                        entry["ts"] = time.time()   # refreshed by heartbeats too
+                        entry["status"] = "running"
+                        await r.hset(K_OLLAMA, rid, json.dumps(entry))
                     except Exception:
                         pass
 
@@ -288,15 +319,28 @@ async def _event_listener():
                 rid = ev.get("req_id", "")
                 run = _RUNNING.pop(rid, {})
                 elapsed = ev.get("elapsed_s", time.time() - run.get("start", time.time()))
+                err = ev.get("error", "") or ev.get("error_type", "") or "failed (no error detail)"
                 await _persist(
                     rid, "ollama.generate", "failed",
                     instance_id=ev.get("instance_id", ""),
                     model=ev.get("model", ""),
                     caller_file=ev.get("caller_file", ""),
                     caller_func=ev.get("caller_func", ""),
-                    error=ev.get("error", ""),
+                    error=err,
                     elapsed_s=float(elapsed),
                 )
+                # Update the ollama log entry too — previously errors left it
+                # stuck in "running" forever (the Ollama Log's zombie rows).
+                try:
+                    raw = await r.hget(K_OLLAMA, rid)
+                    if raw:
+                        entry = json.loads(raw)
+                        entry.update({"status": "failed", "error": err,
+                                      "elapsed_s": elapsed,
+                                      "finished_ts": time.time()})
+                        await r.hset(K_OLLAMA, rid, json.dumps(entry))
+                except Exception:
+                    pass
 
             # ── Capability calls (cap.call / cap.ok / cap.error) ──
             # These catch direct HTTP calls that don't go through the stream
@@ -306,7 +350,8 @@ async def _event_listener():
                 if tid and cname:
                     _RUNNING[tid] = {"start": time.time(), "cap": cname}
                     await _persist(tid, cname, "running",
-                                   extra={"source": "direct_call"})
+                                   extra={"source": "direct_call",
+                                          "args_preview": ev.get("args_preview", "")})
 
             elif etype == "cap.ok":
                 tid = ev.get("trace_id", ev.get("id", ""))
@@ -322,7 +367,9 @@ async def _event_listener():
                 if tid:
                     elapsed = time.time() - run.get("start", time.time())
                     await _persist(tid, run.get("cap", ev.get("name", "")), "failed",
-                                   error=ev.get("error", ""), elapsed_s=elapsed)
+                                   error=ev.get("error", "") or ev.get("error_type", ""),
+                                   elapsed_s=elapsed,
+                                   extra={"args_preview": ev.get("args_preview", "")})
 
         except Exception as e:
             log.debug("event_listener: %s (event=%s)", e, etype)
@@ -544,6 +591,82 @@ async def _cleanup():
         log.debug("cleanup: %s", e)
 
 
+async def _sweep_stuck_running():
+    """Fail-mark ollama.generate records stuck in status=running.
+
+    A process restart (or a lost terminal event) leaves job records "running"
+    forever — the panel then shows dozens of phantom running jobs that flip to
+    stale/failed client-side, flickering against every fresh poll. An
+    ollama.generate can never legitimately outlive OLLAMA_GEN_TIMEOUT (the HTTP
+    client aborts it), so anything running for 2× that is dead. Scoped to
+    ollama.generate only: long-horizon caps (agent loops) legitimately stay
+    running for hours.
+    """
+    r = _orch.REDIS
+    if not r:
+        return
+    gen_timeout = float(getattr(_orch, "OLLAMA_GEN_TIMEOUT", 900.0) or 900.0)
+    threshold = max(2 * gen_timeout, 1800.0)
+    now = time.time()
+    swept = 0
+    # ── vera:jobs:* records (what /jobs/history serves) ──
+    try:
+        ids = await r.zrevrange(K_IDX, 0, 1999)
+        pipe = r.pipeline()
+        for jid in ids:
+            jid = jid.decode() if isinstance(jid, bytes) else jid
+            pipe.hgetall(f"{K_JOB}{jid}")
+        for raw in await pipe.execute():
+            if not raw:
+                continue
+            rec = {(k.decode() if isinstance(k, bytes) else k):
+                   (v.decode() if isinstance(v, bytes) else v)
+                   for k, v in raw.items()}
+            if rec.get("status") != "running":
+                continue
+            if rec.get("capability") != "ollama.generate":
+                continue
+            try:
+                age = now - float(rec.get("updated_ts") or 0)
+            except ValueError:
+                continue
+            if age < threshold:
+                continue
+            await _persist(
+                rec.get("id", ""), "ollama.generate", "failed",
+                error=(f"stale: still 'running' after {int(age)}s with no "
+                       f"terminal event (process restart or lost event)"),
+                elapsed_s=age,
+            )
+            _RUNNING.pop(rec.get("id", ""), None)
+            swept += 1
+    except Exception as e:
+        log.debug("sweep_stuck jobs: %s", e)
+    # ── vera:ollama_log entries (the Ollama Log tab's zombie rows) ──
+    try:
+        raw = await r.hgetall(K_OLLAMA)
+        for k, v in raw.items():
+            try:
+                entry = json.loads(v)
+            except Exception:
+                continue
+            if entry.get("status") != "running":
+                continue
+            age = now - float(entry.get("ts") or 0)
+            if age < threshold:
+                continue
+            entry.update({"status": "failed",
+                          "error": f"stale: no terminal event after {int(age)}s",
+                          "elapsed_s": round(age, 1),
+                          "finished_ts": now})
+            await r.hset(K_OLLAMA, k, json.dumps(entry))
+            swept += 1
+    except Exception as e:
+        log.debug("sweep_stuck ollama_log: %s", e)
+    if swept:
+        log.info("sweep_stuck: fail-marked %d zombie 'running' record(s)", swept)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  CAPABILITIES: query endpoints for the existing panel
 # ─────────────────────────────────────────────────────────────────────────────
@@ -651,19 +774,44 @@ async def jobs_stats(trace_id: str = ""):
                 "length":        sinfo.get("length", 0),
                 "pending_total": pinfo.get("pending", 0) if pinfo else 0,
             }
-            # Consumer details — critical for finding dead consumers
+            # Consumer details — but xinfo_consumers returns EVERY consumer and
+            # the redis client parses the whole reply SYNCHRONOUSLY on the event
+            # loop. With thousands of never-pruned stale consumers that parse
+            # blocked the loop >1s on every /jobs/stats poll (WS flap). Get the
+            # count cheaply from xinfo_groups first (one row per group, no
+            # enumeration) and only fetch the full list when it's small enough.
             try:
-                consumers = await r.xinfo_consumers(TASK_STREAM, GROUP_WORKERS)
-                out["stream"]["consumers"] = []
-                for c in consumers:
-                    name = c.get("name", b"")
-                    if isinstance(name, bytes):
-                        name = name.decode()
-                    out["stream"]["consumers"].append({
-                        "name":    name,
-                        "pending": c.get("pending", 0),
-                        "idle":    c.get("idle", 0),
-                    })
+                n_consumers = None
+                try:
+                    ginfo = await r.xinfo_groups(TASK_STREAM)
+                    for g in (ginfo or []):
+                        gname = g.get("name", b"")
+                        if isinstance(gname, bytes):
+                            gname = gname.decode()
+                        if gname == GROUP_WORKERS:
+                            n_consumers = int(g.get("consumers", 0) or 0)
+                            break
+                except Exception:
+                    n_consumers = None
+                if n_consumers is not None:
+                    out["stream"]["consumer_count"] = n_consumers
+                if n_consumers is not None and n_consumers > CONSUMER_DETAIL_MAX:
+                    # Too many to enumerate without stalling the loop — report the
+                    # count and let the periodic prune shrink it.
+                    out["stream"]["consumers"] = []
+                    out["stream"]["consumers_truncated"] = True
+                else:
+                    consumers = await r.xinfo_consumers(TASK_STREAM, GROUP_WORKERS)
+                    out["stream"]["consumers"] = []
+                    for c in consumers:
+                        name = c.get("name", b"")
+                        if isinstance(name, bytes):
+                            name = name.decode()
+                        out["stream"]["consumers"].append({
+                            "name":    name,
+                            "pending": c.get("pending", 0),
+                            "idle":    c.get("idle", 0),
+                        })
             except Exception:
                 pass
         except Exception:
@@ -918,6 +1066,39 @@ async def jobs_purge_pending(
 #  STARTUP SEQUENCE
 # ─────────────────────────────────────────────────────────────────────────────
 
+async def _prune_stale_consumers():
+    """Remove dead consumers from the worker stream group. Each process life
+    registers a consumer (worker-<id>) and they are NEVER otherwise removed;
+    once in the thousands, xinfo_consumers' synchronous reply-parse stalls the
+    event loop (WS flap). Deleting a consumer with pending==0 is safe (nothing
+    to reclaim). The one enumeration this does can briefly cost while a backlog
+    exists, but it runs infrequently and OFF the hot /jobs/stats poll path —
+    once it shrinks the set, everything stays cheap."""
+    r = _orch.REDIS
+    if not r:
+        return
+    try:
+        consumers = await r.xinfo_consumers(TASK_STREAM, GROUP_WORKERS)
+    except Exception:
+        return
+    removed = 0
+    for c in (consumers or []):
+        try:
+            name = c.get("name", b"")
+            if isinstance(name, bytes):
+                name = name.decode()
+            pending = int(c.get("pending", 0) or 0)
+            idle = int(c.get("idle", 0) or 0)
+            if pending == 0 and idle >= CONSUMER_STALE_IDLE_MS:
+                await r.xgroup_delconsumer(TASK_STREAM, GROUP_WORKERS, name)
+                removed += 1
+        except Exception:
+            continue
+    if removed:
+        log.info("prune_consumers: removed %d stale consumer(s) (idle>%dms, no pending)",
+                 removed, CONSUMER_STALE_IDLE_MS)
+
+
 async def _startup():
     while not _orch.REDIS:
         await asyncio.sleep(1)
@@ -927,10 +1108,14 @@ async def _startup():
     # 1. Recovery: reclaim orphaned stream entries
     await _recover_orphans()
 
-    # 2. Hydrate: load historical jobs into workers.py COMPLETED_JOBS
+    # 2. Prune the accumulated dead consumers left by previous process lives,
+    #    up front, so the very first /jobs/stats poll isn't the expensive one.
+    await _prune_stale_consumers()
+
+    # 3. Hydrate: load historical jobs into workers.py COMPLETED_JOBS
     await _hydrate_completed_jobs()
 
-    # 3. Start the persistent event listener
+    # 4. Start the persistent event listener
     asyncio.create_task(_event_listener())
 
     log.info("job_persist fully initialized (boot=%s)", _boot_id)
@@ -938,6 +1123,8 @@ async def _startup():
 
 schedule(_startup, interval=999999, name="job_persist_startup")
 schedule(_cleanup, interval=3600, name="job_persist_cleanup")
+schedule(_sweep_stuck_running, interval=600, name="job_persist_sweep_stuck")
+schedule(_prune_stale_consumers, interval=900, name="job_persist_prune_consumers")
 
 try:
     _loop = asyncio.get_event_loop()

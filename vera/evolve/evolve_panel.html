@@ -1,0 +1,2181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script>/* vera theme boot */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<meta charset="UTF-8">
+<title>Vera — Loop Lab</title>
+<style>
+:root{
+  --bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;
+  --border:#3a3530;--border2:#4a4540;
+  --acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--acc4:#9e8fa0;
+  --ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;
+  --text:#ddd5c8;--fg:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;
+  --mono:'JetBrains Mono','Fira Mono',monospace;
+  --sans:'Inter','IBM Plex Sans',system-ui,sans-serif;
+  --radius:5px;--radius-sm:3px;--radius-lg:8px;color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:12px}
+body{overflow-y:auto;padding:12px}
+a{color:var(--acc)}
+.tb{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.tb-title{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:2px;color:var(--acc4)}
+.hint{font-size:9px;color:var(--dim2);font-family:var(--mono)}
+.btn{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg2);color:var(--dim2);cursor:pointer;font-family:var(--sans);font-size:10.5px;font-weight:500;transition:all .14s}
+.btn:hover{border-color:var(--acc);color:var(--acc)}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#12100e);font-weight:600}
+.btn.primary:hover{filter:brightness(1.1)}
+.btn.sm{padding:2px 7px;font-size:9.5px}
+.btn.warn-btn{border-color:var(--warn);color:var(--warn)}
+.btn.err-btn{border-color:var(--err);color:var(--err)}
+.btn.ok-btn{border-color:var(--ok);color:var(--ok)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.nav{display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:8px}
+.nav .btn.on{border-color:var(--acc);color:var(--acc);background:var(--bg3)}
+.card{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius-lg);padding:11px 13px;margin-bottom:12px}
+.card-h{display:flex;align-items:center;gap:7px;margin-bottom:8px}
+.card-t{font-family:var(--mono);font-size:11.5px;font-weight:700;flex:1;letter-spacing:.5px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px}
+input,select,textarea{background:var(--bg2);border:1px solid var(--border);color:var(--text);border-radius:var(--radius-sm);padding:4px 7px;font-family:var(--sans);font-size:11px}
+textarea{font-family:var(--mono);font-size:10px;width:100%;resize:vertical}
+label.fld{font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--dim2);display:block;margin-bottom:2px}
+table{width:100%;border-collapse:collapse;font-size:10.5px}
+th{text-align:left;color:var(--dim2);font-size:9px;text-transform:uppercase;letter-spacing:.5px;padding:5px 6px;border-bottom:1px solid var(--border)}
+td{padding:5px 6px;border-bottom:1px solid var(--border);vertical-align:top}
+tr.clk{cursor:pointer}
+tr.clk:hover td{background:var(--bg2)}
+.pill{display:inline-block;padding:1px 7px;border-radius:10px;font-size:9px;font-family:var(--mono);border:1px solid var(--border2)}
+.sc{display:inline-block;min-width:34px;text-align:center;padding:1px 6px;border-radius:4px;font-family:var(--mono);font-weight:700;font-size:11px}
+.empty{color:var(--dim);font-size:10.5px;padding:14px;text-align:center}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.kv{display:flex;gap:6px;align-items:baseline}
+.kv .k{font-size:9px;color:var(--dim2);text-transform:uppercase;letter-spacing:.5px}
+.kv .v{font-size:14px;font-weight:700;font-family:var(--mono)}
+.tag{font-size:8.5px;padding:0 5px;border-radius:3px;background:var(--bg3);color:var(--dim2);font-family:var(--mono)}
+.sbd-pre{max-height:420px;overflow:auto;font-size:10.5px;line-height:1.45;white-space:pre;background:var(--bg2);border-radius:5px;padding:8px;margin:0}
+.dl{display:block}
+.dl.add{color:var(--ok);background:rgba(109,184,122,.08)}
+.dl.del{color:var(--err);background:rgba(201,107,107,.08)}
+.dl.hunk{color:var(--warn)}
+.dl.h,.dl.file{opacity:.65}
+.sbd-f{padding:2px 5px;border-radius:4px;cursor:pointer;font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sbd-f:hover,.sbd-f.on{background:var(--bg2)}
+.bar{height:8px;border-radius:3px;background:var(--bg3);overflow:hidden;flex:1;min-width:60px}
+.bar>span{display:block;height:100%;background:var(--acc);transition:width .3s}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:900}
+.modal-bg.on{display:flex}
+.modal{background:var(--bg1);border:1px solid var(--border2);border-radius:var(--radius-lg);width:760px;max-width:94vw;max-height:88vh;overflow:auto;padding:16px}
+.mono{font-family:var(--mono);font-size:10px}
+pre{white-space:pre-wrap;background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:8px;font-size:10px;overflow-x:auto}
+.toast{position:fixed;bottom:14px;left:14px;background:var(--bg2);border:1px solid var(--border2);border-left:3px solid var(--acc);border-radius:6px;padding:8px 12px;font-size:10.5px;z-index:950;box-shadow:0 6px 20px rgba(0,0,0,.45)}
+details>summary{cursor:pointer;font-size:10.5px;color:var(--acc);font-family:var(--mono)}
+/* phase stepper */
+.phase-step{flex:1;display:flex;gap:8px;align-items:center;padding:8px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;opacity:.55;transition:all .2s}
+.phase-step.active{opacity:1;border-color:var(--acc);background:rgba(90,158,143,.08);box-shadow:0 0 0 1px var(--acc) inset}
+.phase-step.done{opacity:1;border-color:var(--ok)}
+.phase-step .ps-ic{width:22px;height:22px;border-radius:50%;background:var(--bg3);color:var(--dim2);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;flex-shrink:0}
+.phase-step.active .ps-ic{background:var(--acc);color:var(--on-acc,#12100e)}
+.phase-step.done .ps-ic{background:var(--ok);color:var(--on-acc,#12100e)}
+.phase-step .ps-lbl{font-size:11.5px;font-weight:600}
+.phase-step .ps-sub{font-size:8.5px;color:var(--dim2);font-weight:400}
+.phase-arrow{display:flex;align-items:center;padding:0 6px;color:var(--dim2)}
+.watch-grid{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:8px}
+@media(max-width:900px){.watch-grid{grid-template-columns:1fr}}
+.watch-col{display:flex;flex-direction:column;background:var(--bg2);border:1px solid var(--border);border-radius:6px;overflow:hidden;min-height:300px}
+.watch-col.active{border-color:var(--acc)}
+.wc-head{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--dim2);padding:6px 9px;border-bottom:1px solid var(--border);background:var(--bg1)}
+.wc-body{flex:1;overflow:auto;padding:8px 9px;font-size:10.5px;line-height:1.5}
+/* live strip */
+#live{display:none;margin-bottom:10px;background:linear-gradient(90deg,rgba(90,158,143,.10),transparent);border:1px solid var(--border);border-left:3px solid var(--acc);border-radius:6px;padding:8px 12px}
+#live.on{display:block}
+.spin{display:inline-block;width:9px;height:9px;border:2px solid var(--acc);border-top-color:transparent;border-radius:50%;animation:sp .8s linear infinite;vertical-align:middle}
+@keyframes sp{to{transform:rotate(360deg)}}
+/* ── v2 left icon rail ── */
+body{padding-left:158px}
+.tb{padding-left:6px}
+#nav.rail{position:fixed;left:0;top:0;bottom:0;width:146px;background:var(--bg1);border-right:1px solid var(--border);padding:10px 8px;display:flex;flex-direction:column;gap:2px;overflow-y:auto;z-index:50}
+#nav.rail .rail-logo{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:1px;color:var(--acc4);padding:2px 6px 8px}
+#nav.rail .rail-grp{font-size:8px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim);padding:8px 6px 2px}
+#nav.rail .btn{display:flex;align-items:center;gap:7px;justify-content:flex-start;width:100%;border:none;background:transparent;padding:5px 8px;border-radius:5px;font-size:11px;color:var(--dim2)}
+#nav.rail .btn:hover{background:var(--bg2);color:var(--text)}
+#nav.rail .btn.on{background:var(--bg3);color:var(--acc);border:none}
+#nav.rail .btn .ic{width:15px;text-align:center;font-size:12px}
+/* ── dynamic workflow diagram (Bun-style) ── */
+.wf{display:flex;align-items:stretch;gap:0;overflow-x:auto;padding:6px 2px}
+.wf-node{flex:1;min-width:130px;display:flex;flex-direction:column;background:var(--bg2);border:1px solid var(--border);border-radius:7px;padding:8px 10px;opacity:.5;transition:all .25s}
+.wf-node.on{opacity:1;border-color:var(--acc);box-shadow:0 0 0 1px var(--acc) inset}
+.wf-node.done{opacity:1;border-color:var(--ok)}
+.wf-node.found{opacity:1;border-color:var(--warn)}
+.wf-node.err{opacity:1;border-color:var(--err)}
+.wf-node .wf-t{font-size:10.5px;font-weight:700;display:flex;align-items:center;gap:5px}
+.wf-node .wf-s{font-size:8.5px;color:var(--dim2);margin-top:1px}
+.wf-node .wf-m{font-size:9.5px;color:var(--dim2);margin-top:6px;min-height:14px}
+.wf-arrow{display:flex;align-items:center;padding:0 4px;color:var(--dim2);font-size:16px}
+.wf-arrow.flow{color:var(--acc);animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+.seg button{border:none;background:var(--bg2);color:var(--dim2);padding:5px 12px;font-size:11px;cursor:pointer}
+.seg button.on{background:var(--acc);color:var(--on-acc,#12100e);font-weight:600}
+/* ── errors work-queue kanban (errors → suggested → approved → applied) ── */
+.err-board{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+@media(max-width:900px){.err-board{grid-template-columns:1fr 1fr}}
+.err-lane{background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:8px;min-height:120px}
+.err-lane-h{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--dim2);display:flex;align-items:center;gap:6px;margin-bottom:7px}
+.err-lane-h .n{margin-left:auto;background:var(--bg3);border-radius:10px;padding:0 7px;font-size:9.5px}
+.err-card{background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--dim2);border-radius:6px;padding:7px 8px;margin-bottom:6px;font-size:10px}
+.err-card.s-new{border-left-color:var(--err)}
+.err-card.s-suggested{border-left-color:var(--warn)}
+.err-card.s-approved{border-left-color:var(--acc2)}
+.err-card.s-applied{border-left-color:var(--ok)}
+.err-card .et{font-weight:600;line-height:1.35;word-break:break-word}
+.err-card .em{color:var(--dim2);font-size:9px;margin-top:3px;line-height:1.4}
+.err-card .ea{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap}
+.err-src{background:var(--bg3);border-radius:3px;padding:0 5px;font-size:8.5px;color:var(--dim2)}
+</style>
+</head>
+<body>
+<div class="tb">
+  <span class="tb-title">🧪 LOOP LAB</span>
+  <span class="hint">CI/CD for the agent loops — test · evaluate · edit-on-a-branch · re-test · promote / rollback</span>
+  <span style="flex:1"></span>
+  <span class="pill" id="safe-pill" title="Where tests run — sandbox-first keeps them off real Vera" style="cursor:pointer" onclick="nav('sandbox')">🛡 —</span>
+  <span class="hint" id="cfg-line">—</span>
+  <button class="btn sm" onclick="selftest()" title="Pre-flight: is anything actually going to run?">✓ Self-test</button>
+  <button class="btn sm" onclick="loadAll()">&#8635;</button>
+</div>
+
+<!-- live activity strip (event + poll driven) -->
+<div id="live"></div>
+
+<div class="nav rail" id="nav">
+  <div class="rail-logo">🧪 LOOP LAB</div>
+  <div class="rail-grp">Run</div>
+  <button class="btn on" data-sec="test" onclick="nav('test')"><span class="ic">▶</span>Test</button>
+  <button class="btn" data-sec="improve" onclick="nav('improve')"><span class="ic">✦</span>Improve</button>
+  <button class="btn" data-sec="watch" onclick="nav('watch')"><span class="ic">◉</span>Watch</button>
+  <div class="rail-grp">Insight</div>
+  <button class="btn" data-sec="overview" onclick="nav('overview')"><span class="ic">▦</span>Suite</button>
+  <button class="btn" data-sec="errors" onclick="nav('errors')"><span class="ic">⚠</span>Errors</button>
+  <button class="btn" data-sec="variants" onclick="nav('variants')"><span class="ic">⑂</span>Variants</button>
+  <button class="btn" data-sec="activity" onclick="nav('activity')"><span class="ic">≣</span>Activity</button>
+  <div class="rail-grp">Ship</div>
+  <button class="btn" data-sec="pipelines" onclick="nav('pipelines')"><span class="ic">⎇</span>CI / CD</button>
+  <button class="btn" data-sec="sources" onclick="nav('sources')"><span class="ic">⌥</span>Sources</button>
+  <button class="btn" data-sec="sandbox" onclick="nav('sandbox')"><span class="ic">🛡</span>Sandbox</button>
+  <div class="rail-grp">Library</div>
+  <button class="btn" data-sec="tasks" onclick="nav('tasks')"><span class="ic">☰</span>Tasks</button>
+  <button class="btn" data-sec="runs" onclick="nav('runs')"><span class="ic">↻</span>Runs</button>
+  <button class="btn" data-sec="settings" onclick="nav('settings')"><span class="ic">⚙</span>Settings</button>
+</div>
+
+<!-- ── TEST (home): compose a run → watch the workflow ── -->
+<div class="sec" id="sec-test">
+  <div class="card">
+    <div class="card-h"><span class="card-t">Run a test</span>
+      <span class="hint">pick what to improve, run it, watch every stage &amp; tool live — no timeouts</span>
+    </div>
+    <div class="row" style="margin-bottom:8px">
+      <div class="seg" id="tc-kind">
+        <button class="on" data-kind="loop" onclick="tcKind('loop')">Loop goal</button>
+        <button data-kind="cap" onclick="tcKind('cap')">Capability</button>
+        <button data-kind="task" onclick="tcKind('task')">Saved task</button>
+        <button data-kind="suite" onclick="tcKind('suite')">Suite</button>
+      </div>
+      <span style="flex:1"></span>
+      <button class="btn primary" id="tc-run" onclick="tcRun()">▶ Run &amp; watch</button>
+    </div>
+    <!-- target selector (category → target) -->
+    <div class="row" id="tc-target-row" style="margin-bottom:8px">
+      <label class="fld" style="margin:0">Improve / test</label>
+      <select id="tc-cat" style="width:170px" onchange="tcCatCh()"></select>
+      <select id="tc-target" style="min-width:200px" onchange="tcCatCh()"></select>
+      <button class="btn sm" id="tc-info-btn" onclick="tcInfoToggle()" title="Show the description + config of the thing being tested">ℹ</button>
+      <label class="row" id="tc-ide-opts" style="gap:4px;display:none" title="Off = diagnose only (proposes edits, no changes). On = let the IDE agent make the changes."><input type="checkbox" id="tc-ide-apply" style="width:auto"> apply changes</label>
+      <select id="tc-ide-engine" style="width:120px;display:none"><option value="claude">Claude Code</option><option value="vera-agent">Vera agent</option></select>
+      <span class="hint" id="tc-target-hint"></span>
+    </div>
+    <!-- what exactly is being tested: description + config -->
+    <div id="tc-info" style="display:none;background:var(--bg1);border:1px solid var(--border);border-radius:6px;padding:9px 11px;margin-bottom:8px;font-size:10.5px;line-height:1.55"></div>
+    <!-- kind-specific inputs -->
+    <div id="tc-loop"><input id="tc-goal" placeholder="Goal for the agent loop, e.g. 'list the 3 largest fabric datasets and summarise each'" style="width:100%"></div>
+    <div id="tc-cap-in" style="display:none" class="row"><input id="tc-cap" placeholder="cap name, e.g. fabric.datasets" style="min-width:200px"><input id="tc-args" placeholder='args JSON (optional)' style="flex:1"></div>
+    <div id="tc-task-in" style="display:none" class="row"><select id="tc-task" style="min-width:260px"></select></div>
+    <div id="tc-suite-in" style="display:none" class="row"><select id="tc-tag" style="width:150px"><option value="core">core</option><option value="loop">loop</option><option value="smoke">smoke</option></select><label class="row" style="gap:4px"><input type="checkbox" id="tc-assess" checked style="width:auto"> assess</label></div>
+  </div>
+
+  <!-- the dynamic workflow diagram + flywheel -->
+  <div class="card">
+    <div class="card-h"><span class="card-t">✻ dynamic workflow</span>
+      <span class="hint" id="wf-status">idle — implementer → adversarial reviewers → fixer</span>
+    </div>
+    <div style="display:flex;gap:14px;align-items:center">
+      <div id="wf-fly" style="flex-shrink:0"></div>
+      <div class="wf" id="wf-diagram" style="flex:1"></div>
+    </div>
+  </div>
+
+  <!-- live theatre: agent loop element + result -->
+  <div class="watch-grid" style="margin-bottom:12px">
+    <div class="watch-col active" data-phase="test">
+      <div class="wc-head">① Implementer — agent loop (every stage + tool)</div>
+      <div id="test-impl-note" style="display:none;font-size:10px;line-height:1.5;color:var(--warn);background:var(--bg1);border:1px solid var(--border);border-radius:5px;padding:7px 9px;margin-bottom:6px"></div>
+      <!-- show-final=false: the big final-answer pane used to render INSIDE this
+           360px viewport right when the loop ended (= review start) and, with the
+           sticky bottom-scroll, shoved the whole timeline out of view — "the
+           timeline disappeared". The final answer lives in ③ Result instead. -->
+      <vera-agent-loop-output id="evolve-alo" compact="true" show-toolkit="true" show-triage="true" show-final="false" style="height:360px;overflow:auto"></vera-agent-loop-output>
+    </div>
+    <div class="watch-col" data-phase="evaluate">
+      <div class="wc-head">② Adversarial review — failures found</div>
+      <div id="test-eval" class="wc-body"><div class="empty">Reviewers' findings appear here.</div></div>
+    </div>
+    <div class="watch-col" data-phase="synthesize">
+      <div class="wc-head">③ Result</div>
+      <div id="test-result" class="wc-body"><div class="empty">Score + checks appear here when the run finishes.</div></div>
+    </div>
+  </div>
+  <!-- suite results (shown only while running/after a Suite run from here) -->
+  <div class="card" id="test-suite-card" style="display:none">
+    <div class="card-h"><span class="card-t">🏁 suite</span><span class="hint" id="test-suite-hd">—</span><span style="flex:1"></span>
+      <div class="bar" style="max-width:180px"><span id="test-suite-bar" style="width:0%"></span></div>
+      <span class="mono" id="test-suite-count">0/0</span></div>
+    <div id="test-suite-log" style="max-height:220px;overflow:auto"><div class="empty">Per-task results stream here as the suite runs.</div></div>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">Recent runs</span><span style="flex:1"></span><button class="btn sm" onclick="loadRuns()">&#8635;</button></div>
+    <div id="test-runs"></div>
+  </div>
+</div>
+
+<!-- ── OVERVIEW ── -->
+<div class="sec" id="sec-overview" style="display:none">
+  <div class="card">
+    <div class="card-h"><span class="card-t">Benchmark suite</span>
+      <span class="hint">runs every task · critic scores loop runs · stores a scoreboard</span>
+      <span style="flex:1"></span>
+      <select id="ov-tag" style="width:110px"><option value="">all tags</option><option value="core" selected>core</option><option value="loop">loop</option><option value="smoke">smoke</option><option value="dream">dream</option><option value="markets">markets</option><option value="sim">sim</option><option value="generated">generated</option></select>
+      <label class="row" style="gap:4px"><input type="checkbox" id="ov-assess" checked style="width:auto"> assess</label>
+      <button class="btn" onclick="runQuickSmoke()" title="Run only the fast cap smoke-tests (seconds) to prove the plumbing works">⚡ Quick smoke</button>
+      <button class="btn primary" id="ov-run" onclick="runSuite()">&#9654; Run suite</button>
+    </div>
+    <div class="row" style="margin-bottom:8px">
+      <input id="ov-goal" placeholder="Set a goal for the loop and analyse it… (e.g. 'find the 3 largest fabric datasets and summarise each')" style="flex:1">
+      <select id="ov-goal-profile" style="width:130px"></select>
+      <button class="btn" onclick="runGoal()">▶ Run &amp; analyse</button>
+      <button class="btn" onclick="openGenerate()" title="LLM-generate benchmark tasks from a goal/subsystem and save them">✎ Generate tests</button>
+    </div>
+    <div id="ov-scoreboard"><div class="empty">No suites yet — press Run suite (or Self-test / Quick smoke first).</div></div>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">🏁 race to green</span><span class="hint">each task's score across recent suites — watch it converge</span></div>
+    <div id="ov-board"><div class="empty">—</div></div>
+  </div>
+  <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:12px">
+    <div class="card">
+      <div class="card-h"><span class="card-t">▦ activity</span><span class="hint">runs &amp; edits per hour</span></div>
+      <div id="ov-activity"><div class="empty">—</div></div>
+    </div>
+    <div class="card">
+      <div class="card-h"><span class="card-t">Score trend</span></div>
+      <div id="ov-trend"><div class="empty">—</div></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">🗺 component map</span><span class="hint">everything Loop Lab can self-improve — click to improve</span></div>
+    <div id="ov-map"><div class="empty">—</div></div>
+  </div>
+</div>
+
+<!-- ── ERRORS (work-queue: errors → suggested edit → approve → commit) ── -->
+<div class="sec" id="sec-errors" style="display:none">
+  <div class="card">
+    <div class="card-h"><span class="card-t">⚠ errors → edits → commits</span>
+      <span class="hint">observability + ollama/workers errors flow in · a fix is suggested · you approve · it becomes a commit</span>
+      <span style="flex:1"></span>
+      <label class="row" style="gap:4px" title="Periodically pull perf/syslog errors in and suggest fixes automatically"><input type="checkbox" id="err-autosync" onchange="errToggleAutosync()" style="width:auto"> auto-sync</label>
+      <button class="btn" onclick="errSync()" title="Pull ONLY real problems (perf crit/warn findings, event-loop stalls/hangs, syslog errors) into the queue and suggest fixes">⟲ Sync now</button>
+      <button class="btn" onclick="errClear()" title="Purge the queue (reset)">🗑 Clear</button>
+    </div>
+    <div class="hint" style="margin-top:4px">Only real problems land here — healthy perf statuses (severity <b>ok</b>/<b>info</b>, e.g. "no loop stall") are ignored.</div>
+    <!-- Bun-style flow diagram -->
+    <div id="err-flow" style="margin-bottom:6px"></div>
+  </div>
+  <!-- kanban lanes -->
+  <div class="err-board" id="err-board"><div class="empty">Loading…</div></div>
+</div>
+
+<!-- ── TASKS ── -->
+<div class="sec" id="sec-tasks" style="display:none">
+  <div class="card">
+    <div class="card-h"><span class="card-t">Quick tests</span>
+      <span class="hint">test any capability · unit-test any part of Vera</span>
+    </div>
+    <div class="row">
+      <input id="ct-cap" placeholder="cap name, e.g. fabric.datasets" style="min-width:190px">
+      <input id="ct-args" placeholder='args JSON (optional)' style="flex:1;min-width:150px">
+      <button class="btn" onclick="capTest()">▶ Test cap</button>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <input id="ut-path" placeholder="path (e.g. vera/evolve)" value="vera/evolve" style="min-width:190px">
+      <select id="ut-mode" style="width:150px"><option value="compile">compile check (safe)</option><option value="pytest">pytest</option></select>
+      <button class="btn" onclick="unitTest()">▶ Unit test</button>
+      <div id="qt-out" class="hint" style="flex:1"></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">Benchmark tasks</span>
+      <span class="hint">loop · cap · sim — all run sandbox-first when a sandbox is up</span>
+      <span style="flex:1"></span>
+      <button class="btn" onclick="openTask({})">+ New task</button>
+    </div>
+    <div id="tasks-body"><div class="empty">Loading…</div></div>
+  </div>
+</div>
+
+<!-- ── RUNS ── -->
+<div class="sec" id="sec-runs" style="display:none">
+  <div class="card">
+    <div class="card-h"><span class="card-t">Recent runs</span><span style="flex:1"></span>
+      <button class="btn sm" onclick="loadRuns()">&#8635;</button></div>
+    <div id="runs-body"><div class="empty">Loading…</div></div>
+  </div>
+</div>
+
+<!-- ── IMPROVE ── -->
+<div class="sec" id="sec-improve" style="display:none">
+  <div class="card">
+    <div class="card-h"><span class="card-t">Start improvement session</span>
+      <span class="hint">run → critic scores → editor proposes a better variant → rerun</span></div>
+    <div class="grid">
+      <div><label class="fld">Improve (category)</label><select id="im-cat" style="width:100%" onchange="fillTargets('im-cat','im-profile')"></select></div>
+      <div><label class="fld">Target</label><select id="im-profile" style="width:100%"></select></div>
+      <div><label class="fld">Goals from</label><select id="im-source" style="width:100%" onchange="imSourceCh()">
+        <option value="tasks">existing benchmark tasks</option>
+        <option value="goals">existing long-term goals</option>
+        <option value="generate">generate new goals</option>
+      </select></div>
+      <div><label class="fld">Task tag (optional)</label><input id="im-tag" placeholder="e.g. loop" style="width:100%"></div>
+      <div><label class="fld">Critic (scores runs)</label><select id="im-critic" style="width:100%"></select></div>
+      <div><label class="fld">Editor (proposes variant)</label><select id="im-editor" style="width:100%"></select></div>
+      <div><label class="fld">Max rounds</label><input id="im-rounds" type="number" min="1" max="12" value="4" style="width:100%"></div>
+      <div><label class="fld">Target score</label><input id="im-target" type="number" min="0" max="10" step="0.5" value="8" style="width:100%"></div>
+    </div>
+    <div id="im-goals-row" style="display:none;margin-top:8px"><label class="fld">Goals (one per line, blank = pull the system's long-term goals)</label><textarea id="im-goals" style="min-height:52px" placeholder="e.g. keep the memory graph free of orphan nodes"></textarea></div>
+    <div id="im-gen-row" style="display:none;margin-top:8px"><label class="fld">Generate goals to test</label><input id="im-gen" style="width:100%" placeholder="a subsystem or objective, e.g. the fabric discovery system"></div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn primary" onclick="startImprove()">&#9654; Start &amp; watch</button>
+      <span class="hint">Synthesis runs in the background on <b id="im-editq-lbl">gpt-oss:20b</b> (CPU node). Watch it live in the Watch tab.</span>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">Sessions</span><span style="flex:1"></span><button class="btn sm" onclick="loadSessions()">&#8635;</button></div>
+    <div id="sessions-body"><div class="empty">Loading…</div></div>
+  </div>
+</div>
+
+<!-- ── WATCH (live test → evaluate → synthesize) ── -->
+<div class="sec" id="sec-watch" style="display:none">
+  <div class="card">
+    <div class="card-h"><span class="card-t">Live improvement</span>
+      <span class="hint" id="watch-sub">watch a session go test → evaluate → synthesize</span>
+      <span style="flex:1"></span>
+      <select id="watch-sel" style="min-width:160px" onchange="watchSelect()"></select>
+    </div>
+    <!-- phase stepper -->
+    <div id="phase-steps" style="display:flex;gap:0;align-items:stretch;margin-bottom:10px">
+      <div class="phase-step" data-phase="test"><div class="ps-ic">1</div><div class="ps-lbl">Test<div class="ps-sub">run the agent loop</div></div></div>
+      <div class="phase-arrow">→</div>
+      <div class="phase-step" data-phase="evaluate"><div class="ps-ic">2</div><div class="ps-lbl">Evaluate<div class="ps-sub">critic scores it</div></div></div>
+      <div class="phase-arrow">→</div>
+      <div class="phase-step" data-phase="synthesize"><div class="ps-ic">3</div><div class="ps-lbl">Synthesize<div class="ps-sub">propose next variant · CPU</div></div></div>
+    </div>
+    <div class="row" style="margin-bottom:6px"><span class="hint" id="watch-status">No live session — start one from Improve, or pick a past session.</span></div>
+    <!-- 3-column live panels -->
+    <div class="watch-grid">
+      <div class="watch-col" data-phase="test">
+        <div class="wc-head">① Test — agent loop</div>
+        <vera-agent-loop-output id="evolve-alo-watch" compact="true" show-toolkit="true" show-triage="true" style="height:340px;overflow:auto"></vera-agent-loop-output>
+      </div>
+      <div class="watch-col" data-phase="evaluate">
+        <div class="wc-head">② Evaluate — critique</div>
+        <div id="watch-eval" class="wc-body"><div class="empty">Critic scores appear here as each run finishes.</div></div>
+      </div>
+      <div class="watch-col" data-phase="synthesize">
+        <div class="wc-head">③ Synthesize — edit queue (background CPU)</div>
+        <div id="watch-synth" class="wc-body"><div class="empty">Proposed variants appear here, synthesised on the CPU node.</div></div>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">🚀 fleet</span>
+      <span class="hint">every improvement loop &amp; CPU editor running in parallel</span>
+      <span style="flex:1"></span><button class="btn sm" onclick="loadFleet()">&#8635;</button>
+    </div>
+    <div id="fleet-body"><div class="empty">—</div></div>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">Edit queue · work grid</span>
+      <span class="hint">actions synthesised on <b id="editq-model-lbl">gpt-oss:20b</b> — click to view/edit before it runs</span>
+      <span style="flex:1"></span>
+      <span class="pill" id="editq-worker">worker —</span>
+      <button class="btn sm" onclick="loadEditq()">&#8635;</button>
+    </div>
+    <div id="editq-grid" style="margin-bottom:8px"></div>
+    <div id="editq-body"><div class="empty">Loading…</div></div>
+  </div>
+</div>
+
+<!-- ── CI / CD ── -->
+<div class="sec" id="sec-pipelines" style="display:none">
+  <div class="card">
+    <div class="card-h"><span class="card-t">Repository</span><span style="flex:1"></span><button class="btn sm" onclick="loadGit()">&#8635;</button></div>
+    <div id="git-body"><div class="empty">Loading…</div></div>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">Pipeline runs</span>
+      <span class="hint">baseline → apply → test → gate → promote / rollback</span>
+      <span style="flex:1"></span>
+      <button class="btn" onclick="loadPipelines()">&#8635;</button>
+    </div>
+    <div id="pipes-body"><div class="empty">No pipelines yet. Promote a variant through CI from the Variants tab, or run a code pipeline from a session's code suggestion.</div></div>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">git log · loop-lab</span><span class="hint">every change, promote, merge-to-source &amp; rollback</span></div>
+    <div id="gitlog-body"><div class="empty">—</div></div>
+  </div>
+</div>
+
+<!-- ── SOURCES (improvements from review + observability) ── -->
+<div class="sec" id="sec-sources" style="display:none">
+  <div class="card">
+    <div class="card-h"><span class="card-t">From dream source review</span>
+      <span class="hint">turn technical recommendations for a subsystem into a gated code pipeline</span>
+    </div>
+    <div class="row">
+      <select id="src-area" style="min-width:200px"><option value="">— review area —</option></select>
+      <select id="src-profile" style="width:130px"></select>
+      <button class="btn primary" onclick="fromReview()">Distil → code pipeline</button>
+      <button class="btn sm" onclick="loadReviewAreas()">&#8635;</button>
+    </div>
+    <div id="src-review-out" class="hint" style="margin-top:8px">Pick an area that has a dream source-review report (Dream → Dream Review).</div>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">From performance &amp; observability</span>
+      <span class="hint">perf findings · event-loop stalls · errors → suggested fixes (self-improve the platform)</span>
+      <span style="flex:1"></span>
+      <button class="btn" onclick="observeScan(false)">Scan &amp; suggest</button>
+      <button class="btn warn-btn" onclick="observeScan(true)" title="Also launch gated code pipelines for the suggestions">Scan &amp; launch</button>
+    </div>
+    <div id="src-obs-out"><div class="empty">Run a scan to surface fixable perf/error patterns.</div></div>
+  </div>
+</div>
+
+<!-- ── SANDBOX ── -->
+<div class="sec" id="sec-sandbox" style="display:none">
+  <div class="card">
+    <div class="card-h"><span class="card-t">Dev sandbox</span>
+      <span class="hint">an isolated Vera on another port running a branch's code, with a data snapshot</span>
+      <span style="flex:1"></span><button class="btn sm" onclick="loadSandbox()">&#8635;</button>
+    </div>
+    <div id="sandbox-body"><div class="empty">Loading…</div></div>
+    <div class="row" style="margin-top:10px">
+      <label class="fld" style="margin:0">Test execution</label>
+      <select id="sb-mode" onchange="saveMode()" title="Where benchmark loops run">
+        <option value="prefer">prefer sandbox (use it when up)</option>
+        <option value="require">require sandbox (refuse in-process)</option>
+        <option value="off">off (run in-process — can touch real Vera)</option>
+      </select>
+      <button class="btn primary" onclick="sandboxEnsure()" title="Bring up an isolation sandbox so tests run safely">🛡 Ensure sandbox</button>
+    </div>
+    <div class="hint" style="margin-top:6px">Default posture is <b>sandbox-first</b>: agent-loop tests run in an isolated Vera on another port (isolated Redis DB) so they can't act on real Vera; write/exec/comms/deploy caps are stripped from test loops as defence in depth. Set <b>require</b> for hard isolation.</div>
+    <div class="row" style="margin-top:10px">
+      <select id="sb-branch" style="min-width:200px"><option value="">— pick a loop-lab branch —</option></select>
+      <button class="btn" onclick="sandboxUp()">▲ Bring up on branch</button>
+      <button class="btn err-btn" onclick="sandboxDown()">▼ Tear down</button>
+      <button class="btn sm" onclick="sandboxSnapshot()">Snapshot data</button>
+    </div>
+    <div class="row" style="margin-top:10px;align-items:center">
+      <label class="fld" style="margin:0" title="Host port the isolated dev-sandbox Vera binds. MUST differ from prod's port or 'Bring up' collides ('port already in use').">Sandbox host port</label>
+      <input id="sb-port" type="number" min="1024" max="65535" style="width:100px" placeholder="8998">
+      <button class="btn sm" onclick="savePort()">Save port</button>
+      <span class="hint" id="sb-port-hint">must differ from prod's port</span>
+    </div>
+    <div class="hint" style="margin-top:8px">Requires docker on the orchestrator host. Prod's working tree stays on main (the branch runs in a git worktree).</div>
+  </div>
+
+  <div class="card" style="margin-top:10px">
+    <div class="card-h"><span class="card-t">Changes on the branch</span>
+      <span class="hint">git diff of the worktree vs <b>main</b> — committed + uncommitted pipeline edits</span>
+      <span style="flex:1"></span><button class="btn sm" onclick="loadSbxDiff('')">&#8635;</button>
+    </div>
+    <div class="row" style="align-items:flex-start;gap:10px">
+      <div id="sbd-files" style="min-width:200px;max-width:300px;max-height:420px;overflow:auto"><div class="empty">—</div></div>
+      <div style="flex:1;min-width:0">
+        <pre id="sbd-view" class="sbd-pre"><span class="hint">Bring up a sandbox, then pick a file (or ↻ for the full diff).</span></pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:10px">
+    <div class="card-h"><span class="card-t">VS Code on the branch</span>
+      <span class="hint">a code-server sidecar on the worktree — watch edits land live</span>
+      <span style="flex:1"></span><span id="sbc-state" class="pill">—</span>
+    </div>
+    <div class="row">
+      <button class="btn" onclick="sbxCodeAttach()">⧉ Attach VS Code</button>
+      <button class="btn" id="sbc-open" onclick="sbxCodeToggle()" style="display:none">Open here</button>
+      <button class="btn err-btn" onclick="sbxCodeDetach()">Detach</button>
+      <span id="sbc-pw" class="hint" style="cursor:pointer" title="click to copy the login password" onclick="if(window._sbcPw){navigator.clipboard.writeText(window._sbcPw);toast('password copied')}"></span>
+    </div>
+    <div id="sbc-frame-wrap" style="display:none;margin-top:8px;height:64vh;border:1px solid var(--bg3);border-radius:6px;overflow:hidden">
+      <iframe id="sbc-frame" style="width:100%;height:100%;border:none;background:#1e1e1e" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:10px">
+    <div class="card-h"><span class="card-t">▮ Terminal</span>
+      <span class="hint">runs inside the vera-dev container (or the branch worktree) — never the real source</span>
+      <span style="flex:1"></span>
+      <select id="sbt-where" style="width:120px"><option value="container">container</option><option value="worktree">worktree</option></select>
+      <button class="btn sm" onclick="$('sbt-out').textContent=''">clear</button>
+    </div>
+    <pre id="sbt-out" class="sbd-pre" style="max-height:260px;min-height:80px;overflow:auto"><span class="hint">e.g.  ls vera/evolve   ·   python -m py_compile vera/evolve/evolve_capabilities.py   ·   redis-cli -n 3 keys 'vera:evolve:*'</span></pre>
+    <div class="row" style="margin-top:6px">
+      <span class="mono" style="color:var(--acc)">$</span>
+      <input id="sbt-cmd" class="mono" style="flex:1" placeholder="command…" onkeydown="if(event.key==='Enter')sbxTermRun();if(event.key==='ArrowUp'){this.value=window._sbtLast||this.value}">
+      <button class="btn primary sm" onclick="sbxTermRun()">Run</button>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:10px">
+    <div class="card-h"><span class="card-t">🗀 Files</span>
+      <span class="hint">the branch worktree — edits here land on the branch, reach main only via promote</span>
+      <span style="flex:1"></span><span id="sbf-path" class="mono hint">/</span>
+      <button class="btn sm" onclick="sbxFsList('')">⌂</button><button class="btn sm" onclick="sbxFsUp()">↑</button>
+    </div>
+    <div class="row" style="align-items:flex-start;gap:10px">
+      <div id="sbf-tree" style="min-width:220px;max-width:320px;max-height:380px;overflow:auto"><div class="empty">Bring up a sandbox first.</div></div>
+      <div style="flex:1;min-width:0">
+        <div class="row" style="margin-bottom:4px"><span id="sbf-file" class="mono hint">— no file open —</span><span style="flex:1"></span><button class="btn sm primary" id="sbf-save" style="display:none" onclick="sbxFsSave()">💾 Save to branch</button></div>
+        <textarea id="sbf-edit" class="mono" style="width:100%;min-height:320px;display:none;font-size:11px;line-height:1.5;background:var(--bg1);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:8px" spellcheck="false"></textarea>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── ACTIVITY (audit log) ── -->
+<div class="sec" id="sec-activity" style="display:none">
+  <div class="card">
+    <div class="card-h"><span class="card-t">Change &amp; rollback log</span>
+      <span class="hint">every promote · rollback · merge-to-source · branch · sandbox · config change</span>
+      <span style="flex:1"></span>
+      <input id="aud-filter" placeholder="filter action…" style="width:150px" oninput="loadAudit()">
+      <button class="btn sm" onclick="loadAudit()">&#8635;</button>
+    </div>
+    <div id="audit-body"><div class="empty">Loading…</div></div>
+  </div>
+</div>
+
+<!-- ── VARIANTS ── -->
+<div class="sec" id="sec-variants" style="display:none">
+  <div class="card">
+    <div class="card-h"><span class="card-t">Tuning variants &amp; overlay</span>
+      <span style="flex:1"></span>
+      <select id="var-profile" style="width:160px" onchange="loadVariants()"></select>
+      <button class="btn sm" onclick="loadVariants()">&#8635;</button>
+    </div>
+    <div id="overlay-box" style="margin-bottom:10px"></div>
+    <div id="variants-body"><div class="empty">Pick a profile.</div></div>
+  </div>
+</div>
+
+<!-- ── SETTINGS ── -->
+<div class="sec" id="sec-settings" style="display:none">
+  <div class="card">
+    <div class="card-h"><span class="card-t">Loop Lab configuration</span></div>
+    <div class="grid">
+      <div><label class="fld">Critic provider</label><select id="st-critic" style="width:100%"></select></div>
+      <div><label class="fld">Editor provider</label><select id="st-editor" style="width:100%"></select></div>
+      <div><label class="fld">Default profile</label><select id="st-profile" style="width:100%"></select></div>
+      <div><label class="fld">Target score</label><input id="st-target" type="number" min="0" max="10" step="0.5" style="width:100%"></div>
+      <div><label class="fld">Max rounds</label><input id="st-rounds" type="number" min="1" max="12" style="width:100%"></div>
+      <div><label class="row" style="gap:6px;margin-top:16px"><input type="checkbox" id="st-code" style="width:auto"> Queue code-edit suggestions to Claude Code</label></div>
+    </div>
+    <div class="card-h" style="margin-top:10px"><span class="card-t" style="font-size:10.5px">Background synthesis (edit queue)</span></div>
+    <div class="grid">
+      <div><label class="row" style="gap:6px;margin-top:6px"><input type="checkbox" id="st-editq" style="width:auto"> Synthesise on background CPU queue</label></div>
+      <div><label class="fld">Edit model</label><input id="st-editq-model" placeholder="gpt-oss:20b" style="width:100%"></div>
+      <div><label class="fld">CPU node (instance)</label><select id="st-editq-inst" style="width:100%"><option value="">auto (any CPU node)</option></select></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn primary" onclick="saveConfig()">Save</button>
+      <span class="hint">Synthesis (proposing the next variant) runs here — on gpt-oss:20b on a CPU node — so it stays off the GPU/API. Add Anthropic/OpenAI keys under Workers &amp; Ollama → API.</span>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" id="modal"></div></div>
+
+<script src="/ui/elements/agent_loop_output.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+let _providers=[],_profiles=[],_cfg={};
+async function api(p,o){try{const r=await fetch(p,Object.assign({headers:{'Content-Type':'application/json'}},o||{}));return await r.json()}catch(e){toast('err: '+e.message);return null}}
+async function post(p,b){return api(p,{method:'POST',body:JSON.stringify(b||{})})}
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function toast(m){const t=document.createElement('div');t.className='toast';t.textContent=m;document.body.appendChild(t);setTimeout(()=>{t.style.opacity=0;t.style.transition='opacity .3s';setTimeout(()=>t.remove(),300)},3400)}
+function openModal(h){$('modal').innerHTML=h;$('modal-bg').classList.add('on')}
+function closeModal(){$('modal-bg').classList.remove('on')}
+function scColor(v){if(v==null)return'var(--dim2)';v=+v;return v>=8?'var(--ok)':v>=6?'var(--acc2)':v>=4?'var(--warn)':'var(--err)'}
+function scBg(v){if(v==null)return'var(--bg3)';v=+v;return v>=8?'rgba(109,184,122,.16)':v>=6?'rgba(143,184,122,.14)':v>=4?'rgba(201,163,90,.14)':'rgba(201,107,107,.14)'}
+function scChip(v){return '<span class="sc" style="color:'+scColor(v)+';background:'+scBg(v)+'">'+(v==null?'—':(+v).toFixed(1))+'</span>'}
+
+function nav(sec){
+  document.querySelectorAll('#nav .btn').forEach(b=>b.classList.toggle('on',b.dataset.sec===sec));
+  document.querySelectorAll('.sec').forEach(s=>s.style.display=s.id==='sec-'+sec?'':'none');
+  const f={test:loadTest,tasks:loadTasks,runs:loadRuns,improve:loadSessions,watch:loadWatch,pipelines:()=>{loadGit();loadPipelines()},
+    sources:loadSources,sandbox:loadSandbox,activity:loadAudit,variants:loadVariants,settings:fillSettings,overview:loadOverview,errors:loadErrors}[sec];
+  if(f)f();
+}
+
+/* ═══ TARGET SELECTOR (categorised: what am I improving?) ═══ */
+let _targets=null;
+async function loadTargets(){
+  if(_targets)return _targets;
+  const r=await api('/evolve/targets');_targets=(r&&r.categories)||[];
+  return _targets;
+}
+function fillTargetSelectors(catSel,tgtSel,pref){
+  const cs=$(catSel),ts=$(tgtSel);if(!cs)return;
+  cs.innerHTML=(_targets||[]).map(c=>'<option value="'+esc(c.key)+'">'+esc(c.icon||'')+' '+esc(c.label)+'</option>').join('');
+  cs.value=pref||'specialist';
+  fillTargets(catSel,tgtSel);
+}
+function fillTargets(catSel,tgtSel){
+  const cs=$(catSel),ts=$(tgtSel);if(!cs||!ts)return;
+  const c=(_targets||[]).find(x=>x.key===cs.value)||{targets:[]};
+  ts.innerHTML=(c.targets||[]).map(t=>{
+    const strategic=(t.streams===false&&t.tunable);   // v7+ specialist: piecewise sub-sessions
+    return '<option value="'+esc(t.id)+'"'+(t.tunable?'':' data-code="1"')+(strategic?' data-strategic="1"':'')+(t.engine?(' data-engine="'+esc(t.engine)+'"'):'')+'>'
+      +esc(t.label)+(t.tunable?'':' (code-edit)')+(strategic?' — strategic':'')+'</option>';
+  }).join('')||'<option value="">— none —</option>';
+  // Default the TEST loop target to a profile that streams its step timeline
+  // inline (v5/v6). Strategic v7 loops (planning…) run per-piece in sub-sessions
+  // so the implementer timeline stays empty — a bad default for "watch it run".
+  if(tgtSel==='tc-target'&&cs.value==='specialist'){
+    const opts=[...ts.options];
+    const good=opts.find(o=>!o.dataset.strategic);
+    if(good)ts.value=good.value;
+  }
+}
+
+/* ═══ TEST HOME — compose a run, watch the workflow ═══ */
+let _tcKind='loop',_testRunId='';
+function tcKind(k){_tcKind=k;document.querySelectorAll('#tc-kind button').forEach(b=>b.classList.toggle('on',b.dataset.kind===k));
+  $('tc-loop').style.display=k==='loop'?'':'none';
+  $('tc-cap-in').style.display=k==='cap'?'':'none';
+  $('tc-task-in').style.display=k==='task'?'':'none';
+  $('tc-suite-in').style.display=k==='suite'?'':'none';
+  $('tc-target-row').style.display=k==='suite'?'none':'';
+}
+function tcCatCh(){
+  // fillTargets only when the category changed; tc-target onchange also calls us
+  if(document.activeElement!==$('tc-target'))fillTargets('tc-cat','tc-target');
+  const isIde=$('tc-cat').value==='ide';
+  $('tc-ide-opts').style.display=isIde?'':'none';
+  $('tc-ide-engine').style.display=isIde?'':'none';
+  const opt=$('tc-target').selectedOptions[0];
+  let hint='';
+  if(isIde)hint='runs the goal over this IDE workspace (diagnose, or apply)';
+  else if(opt&&opt.dataset.strategic)hint='⚠ strategic loop ('+(opt.dataset.engine||'v7')+') — it plans then runs each piece in a SUB-session; the timeline follows the sub-session when it starts.';
+  else if(opt&&opt.dataset.code)hint='code-edit target → improve via a CI pipeline';
+  const h=$('tc-target-hint');h.textContent=hint;h.style.color=(opt&&opt.dataset.strategic)?'var(--warn)':'';
+  if($('tc-info').style.display!=='none')tcInfoLoad();   // keep the open info card current
+}
+/* ── target info: description + config of the thing being tested ── */
+function tcInfoToggle(){
+  const el=$('tc-info');
+  if(el.style.display==='none'){el.style.display='';tcInfoLoad()}
+  else el.style.display='none';
+}
+async function tcInfoLoad(){
+  const el=$('tc-info');if(!el)return;
+  el.innerHTML='<span class="spin"></span> loading target info…';
+  const r=await api('/evolve/target/info?target='+encodeURIComponent($('tc-target').value));
+  if(!r||r.error){el.innerHTML='<span style="color:var(--err)">'+esc((r&&r.error)||'failed')+'</span>';return}
+  const t=r.target||{};
+  let h='<div class="row" style="margin-bottom:5px"><b>'+esc(t.label||t.id||'')+'</b><span class="tag">'+esc(t.category||'')+'</span>'
+    +(r.tunable?'<span class="tag" style="color:var(--ok)">tunable</span>':'<span class="tag">code-edit</span>')
+    +(r.overlay?'<span class="tag" style="color:var(--acc2)" title="a promoted tuning variant is active for this profile">overlay active</span>':'')
+    +'<span style="flex:1"></span>'+(r.code_file?'<span class="mono hint">'+esc(r.code_file)+'</span>':'')+'</div>';
+  if(r.description)h+='<div style="margin-bottom:6px">'+esc(r.description)+'</div>';
+  const p=r.profile;
+  if(p){
+    h+='<div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:4px">'
+      +(p.engine?'<span class="tag">engine '+esc(p.engine)+'</span>':'')
+      +(p.agent?'<span class="tag">agent '+esc(p.agent)+'</span>':'')
+      +((p.family||[]).map(f=>'<span class="tag">'+esc(f)+'</span>').join(''))+'</div>';
+    if(p.caps&&p.caps.length)h+='<div class="hint" style="margin-bottom:3px">caps: <span class="mono">'+p.caps.map(esc).join(' · ')+'</span></div>';
+    if(p.skills)h+='<div class="hint" style="margin-bottom:3px">skills: <span class="mono">'+esc(Array.isArray(p.skills)?p.skills.join(', '):p.skills)+'</span></div>';
+    if(p.defaults&&Object.keys(p.defaults).length)h+='<div class="hint">defaults: <span class="mono">'+esc(JSON.stringify(p.defaults))+'</span></div>';
+  }
+  if(r.overlay){
+    h+='<div class="hint" style="margin-top:4px">overlay: <span class="mono">'+esc(JSON.stringify({overrides:r.overlay.overrides||{},prompt_preamble:(r.overlay.prompt_preamble||'').slice(0,120)}))+'</span></div>';
+  }
+  if(r.agent){
+    h+='<div class="row" style="gap:6px;margin-top:4px"><span class="tag">model '+esc(r.agent.model||'default')+'</span><span class="tag">'+((r.agent.domain_caps||[]).length)+' domain caps</span></div>';
+    if(r.agent.system_prompt)h+='<details style="margin-top:4px"><summary class="hint" style="cursor:pointer">system prompt</summary><pre class="mono" style="white-space:pre-wrap;font-size:9.5px;max-height:160px;overflow:auto;background:var(--bg2);border-radius:4px;padding:6px">'+esc(r.agent.system_prompt)+'</pre></details>';
+  }
+  if(r.knobs)h+='<div class="hint" style="margin-top:4px">tunable knobs: <span class="mono">'+r.knobs.map(esc).join(', ')+'</span></div>';
+  if(r.ide)h+='<div class="hint" style="margin-top:4px"><span class="mono">'+esc(JSON.stringify(r.ide))+'</span></div>';
+  el.innerHTML=h;
+}
+async function loadTest(){
+  await loadTargets();
+  fillTargetSelectors('tc-cat','tc-target',$('tc-cat')&&$('tc-cat').value);
+  tcCatCh();
+  // saved-task dropdown
+  const r=await api('/evolve/tasks');const ts=(r&&r.tasks)||[];
+  if($('tc-task'))$('tc-task').innerHTML=ts.map(t=>'<option value="'+esc(t.id)+'">'+esc(t.id)+' · '+esc(t.type||'')+'</option>').join('');
+  wfInit();
+  refreshTestRuns();
+  restoreTestRun();   // if a run is in-flight/last, re-attach + restore its view
+}
+// Refresh ONLY the recent-runs table (used after a run completes — does not wipe
+// the workflow diagram, so the final animated state stays on screen).
+async function refreshTestRuns(){
+  if(!$('test-runs'))return;
+  const rr=await api('/evolve/runs?limit=12');const runs=(rr&&rr.runs)||[];
+  $('test-runs').innerHTML=runs.length?('<table><tr><th>time</th><th>task</th><th>where</th><th>combined</th></tr>'
+    +runs.map(x=>'<tr class="clk" onclick="openRun(\''+esc(x.run_id)+'\')"><td class="mono">'+esc((x.ts||'').slice(11,19))+'</td><td>'+esc(x.task)+'</td><td>'+(x.where==='sandbox'?'🛡':'')+esc(x.where||'')+'</td><td>'+scChip(x.combined)+'</td></tr>').join('')+'</table>'):'<div class="empty">No runs yet.</div>';
+}
+// The Test section's OWN agent-loop element (avoids the duplicate #evolve-alo id
+// which also lives in Watch — getElementById would return the wrong one).
+function _testAlo(){return document.querySelector('#sec-test vera-agent-loop-output')}
+function _watchAlo(){return document.querySelector('#sec-watch vera-agent-loop-output')}
+// Drive the implementer timeline the ROBUST way the workshop panel does: REATTACH
+// to the run's persisted agent-loop session over SSE (replay + tail-live). This
+// populates the timeline reliably (not via the flaky global bus) AND survives
+// navigating away and back — reattach replays the whole session from scratch.
+// The implementer timeline is fed by POLLING the run's persisted event log
+// (/workshop/agent_loop/session_state?since=N — plain JSON, index-exact).
+// No SSE, no event-bus dependency: it cannot silently miss events, it survives
+// navigating away and back (full replay from 0), and a status line always
+// shows what it's following so it never sits on a dead "Waiting for events…".
+let _implSid='',_implSince=0,_implTimer=null,_implGoal='',_implT0=0,
+    _implMode='primary',_implTicks=0,_implRunDone=false,_implTotal=0,_implExact=false,
+    // The session that ACTUALLY carried events (may be a discovered child, not
+    // evolve:<run_id>). Persisted across nav so returning to Test re-binds
+    // straight to it instead of re-running time-windowed child discovery — the
+    // root cause of "swap tabs → implementer timeline empties and won't reload".
+    _implResolvedSid='',
+    // The finished run's persisted tool trace (evolve/run/get → steps). Replayed
+    // as a fallback when the live session's events have expired/were never under
+    // the session we can see, so a completed run's timeline is never blank.
+    _implFallbackSteps=null;
+function implStat(msg,warn){const n=$('test-impl-note');if(!n)return;
+  n.style.display='';n.style.color=warn?'var(--warn)':'var(--dim2)';n.textContent=msg}
+// opts (all optional): {anchorMs, knownSid, steps}
+//   anchorMs — the run's REAL start epoch (Date.parse(run.ts)); child discovery
+//              anchors its "started since" window here, so restore after nav (or
+//              a reload) can still rediscover a sub-session that began minutes
+//              ago. Without it the window is Date.now() and discovery always
+//              fails on restore.
+//   knownSid — bind DIRECTLY to this session (the previously-resolved one) and
+//              skip discovery entirely — the fast, exact restore path.
+//   steps    — the run's saved tool trace, replayed if no live events surface.
+function bindImplementer(runId,goal,opts){
+  opts=opts||{};
+  const alo=_testAlo();if(!alo)return;
+  const startSid=opts.knownSid||('evolve:'+runId);
+  _implSid=startSid;_implSince=0;_implGoal=(goal||'').trim();
+  _implT0=opts.anchorMs||Date.now();
+  _implMode=(startSid.indexOf('evolve:')===0)?'primary':'child';
+  _implTicks=0;_implRunDone=false;_implTotal=0;
+  _implResolvedSid=opts.knownSid||'';   // fresh bind clears; restore seeds it
+  _implExact=!!opts.knownSid;           // exact restore → don't chase further children
+  _implFallbackSteps=(opts.steps&&opts.steps.length)?opts.steps:null;
+  try{alo.reset&&alo.reset()}catch(_){}
+  try{alo.setSessionId&&alo.setSessionId(startSid)}catch(_){}
+  try{alo.setHitlEndpoint&&alo.setHitlEndpoint('/workshop/agent_loop/hitl/respond')}catch(_){}
+  implStat('▶ following '+startSid+' — waiting for the loop to start…');
+  stopImplPoll();
+  implPoll();
+  _implTimer=setInterval(implPoll,2000);
+}
+// Replay a finished run's saved tool trace as synthetic tool_call/tool_done
+// cycles — the last-resort restore when the live session events are gone.
+function _renderStepsFallback(steps){
+  const alo=_testAlo();if(!alo||!alo.appendEvent||!steps||!steps.length)return;
+  steps.forEach((s,i)=>{
+    const cyc=i+1;
+    try{
+      alo.appendEvent({type:'agent_loop_v6.tool_call',cycle:cyc,tool:s.cap||'?',
+        thought:s.thought||'',args:s.args||''});
+      alo.appendEvent({type:'agent_loop_v6.tool_done',cycle:cyc,tool:s.cap||'?',
+        ok:s.ok!==false,preview:s.preview||''});
+    }catch(_){}
+  });
+}
+async function implPoll(){
+  if(!_implSid)return;
+  const st=await api('/workshop/agent_loop/session_state?session_id='+encodeURIComponent(_implSid)+'&since='+_implSince);
+  if(!st)return;
+  const evs=st.events||[];
+  if(evs.length){
+    const alo=_testAlo();
+    if(alo){
+      if(alo.appendEvents){try{alo.appendEvents(evs)}catch(_){}}
+      else if(alo.appendEvent){evs.forEach(e=>{try{alo.appendEvent(e)}catch(_){}})}
+    }
+    _implSince=(typeof st.count==='number'&&st.count>=_implSince+evs.length)?st.count:(_implSince+evs.length);
+    _implTotal+=evs.length;
+    _implResolvedSid=_implSid;   // remember the session actually carrying events
+    implStat('● live · '+_implTotal+' events · '+(_implMode==='child'?('sub-session '+_implSid.slice(0,8)+'… (strategic loop)'):_implSid));
+  }
+  _implTicks++;
+  const status=(st.run&&st.run.status)||'';
+  // Exact restore of a run whose live session events have EXPIRED (7-day TTL):
+  // the session is empty AND the run hash is gone (no status), so the terminal
+  // branch below never fires. After a couple of ticks, replay the saved trace
+  // and stop rather than polling an empty session forever.
+  if(_implExact&&_implFallbackSteps&&_implTotal===0&&_implTicks>=3&&!status){
+    stopImplPoll();
+    _renderStepsFallback(_implFallbackSteps);
+    implStat('↺ replayed '+_implFallbackSteps.length+' saved step(s) — live events for this run have expired',true);
+    return;
+  }
+  // Strategic engines (v7 planning etc.) run the ACTUAL work under their OWN
+  // generated session id — the evolve:<run_id> session stays empty. Discover
+  // the child by goal + start-time and follow it so the timeline ALWAYS shows
+  // the thing being tested. NB: v7 spends ~1-3 min in its strategic-planning
+  // phase BEFORE the execution sub-session exists — keep looking and say so.
+  if(_implMode==='primary'&&_implSince===0&&_implTicks>=2){
+    const child=await implFindChild('');
+    if(child){
+      _implSid=child;_implSince=0;_implMode='child';
+      implStat('↳ strategic loop — following its sub-session '+child.slice(0,8)+'…');
+      return;
+    }
+    if(_implTicks>=10&&!_implRunDone)
+      implStat('▶ following '+('evolve:'+(_testRunId||''))+' — no inline events yet. If this is a strategic (v7) loop it is master-planning first (~1-3 min); its execution sub-session will be picked up the moment it starts.');
+  }
+  if(status==='done'||status==='error'||status==='interrupted'){
+    // a strategic loop may run MULTIPLE pieces as successive sub-sessions —
+    // when one finishes and the evolve run itself hasn't, look for the next.
+    if(_implMode==='child'&&!_implRunDone&&!_implExact){
+      const nxt=await implFindChild(_implSid);
+      if(nxt&&nxt!==_implSid){_implSid=nxt;_implSince=0;return}
+    }
+    stopImplPoll();
+    // Finished but the live session is empty (events expired, or the run's work
+    // ran under a session we can no longer see): replay the saved trace so the
+    // timeline shows the run instead of an empty pane.
+    if(_implTotal===0&&_implFallbackSteps){
+      _renderStepsFallback(_implFallbackSteps);
+      implStat('↺ replayed '+_implFallbackSteps.length+' saved step(s) — live events for this run have expired',true);
+      return;
+    }
+    implStat((status==='done'?'✓ loop finished':'⚠ '+status)+' · '+_implTotal+' events'+(_implMode==='child'?' (strategic sub-session)':''));
+    if(_implTotal===0&&_testRunId)checkImplEmpty(_testRunId);
+  }
+}
+async function implFindChild(excl){
+  if(!_implGoal)return null;
+  const r=await api('/workshop/agent_loop/sessions?limit=15');
+  let best=null,bestT=0;
+  for(const s of (r&&r.sessions)||[]){
+    const sid=s.session_id||'';
+    if(!sid||sid===excl||sid.indexOf('evolve:')===0)continue;
+    if(String(s.goal||'').trim()!==_implGoal)continue;
+    const t=Date.parse(s.started_at||'')||0;
+    if(t>=_implT0-30000&&t>bestT){best=sid;bestT=t}
+  }
+  return best;
+}
+function stopImplPoll(){if(_implTimer){clearInterval(_implTimer);_implTimer=null}}
+// When a finished run left NO live steps in the session, the implementer stays
+// blank — explain why (timeout / strategic sub-sessions) instead of a void.
+async function checkImplEmpty(runId){
+  const note=$('test-impl-note');if(!note)return;
+  try{
+    const r=await api('/workshop/agent_loop/session_state?session_id='+encodeURIComponent('evolve:'+runId));
+    const cnt=(r&&r.count)||0;
+    if(cnt>0)return;
+    const gr=await api('/evolve/run/get?run_id='+encodeURIComponent(runId));
+    const d=gr&&gr.run;if(!d)return;
+    let msg;
+    if(d.where==='sandbox')msg='🛡 This run executed INSIDE the dev sandbox — its live events go to the sandbox\'s own Redis, so the inline timeline stays empty here. The full tool trace is in the Result → full detail.';
+    else if((d.error||'').indexOf('timeout')>=0)msg='⏱ The loop timed out ('+esc(d.error)+') before emitting any steps — the model/cluster was likely busy. Try again, or use a lighter goal.';
+    else msg='This loop produced no inline step events (it may be a strategic loop that runs each piece in a sub-session, or it finished in one shot). Its result is on the right → · pick a v6 loop (coding / operator) to watch the step-by-step timeline.';
+    implStat(msg,true);
+  }catch(_){}
+}
+// persisted so nav away/back can restore the live view
+let _testRunKind='',_testRunLabel='',_testRunGoal='';
+async function tcRun(){
+  $('test-eval').innerHTML='<div class="empty">running…</div>';
+  $('test-result').innerHTML='<div class="empty"><span class="spin"></span> running…</div>';
+  wfInit(); wfSet('input','done');
+  if(_tcKind==='suite'){
+    const r=await post('/evolve/suite/start',{tag:$('tc-tag').value,assess:$('tc-assess').checked});
+    if(r&&r.error){$('test-result').innerHTML='<div style="color:var(--err)">'+esc(r.error)+'</div>';return}
+    _suiteActive=true;_testRunId='';_testRunKind='suite';
+    stopImplPoll();_implSid='';
+    {const a=_testAlo();if(a&&a.reset)try{a.reset()}catch(_){}}
+    implStat('▶ suite running — each task\'s loop streams here as it starts');
+    $('test-suite-card').style.display='';
+    $('test-suite-log').innerHTML='<div class="empty"><span class="spin"></span> suite starting…</div>';
+    $('wf-status').textContent='suite running…';pollSuite();testSuiteRefresh();return;
+  }
+  const tgt=$('tc-target').value;
+  // IDE-code target: test / loop over the code in a remote IDE workspace.
+  if(_tcKind==='loop'&&tgt.indexOf('ide:')===0){
+    const g=$('tc-goal').value.trim();if(!g){toast('type a goal');wfInit();return}
+    wfInit();wfSet('input','done');wfSet('implementer','running');
+    const r=await post('/evolve/ide/improve',{instance_id:tgt.slice(4),goal:g,apply:$('tc-ide-apply').checked,engine:$('tc-ide-engine').value});
+    if(!r||r.error){$('test-result').innerHTML='<div style="color:var(--err)">'+esc((r&&r.error)||'failed')+'</div>';wfInit();return}
+    _testRunId=r.run_id;_testRunKind='ide';_testRunLabel=tgt.slice(4);_testRunGoal=g;
+    bindImplementer(_testRunId,g);
+    $('wf-status').textContent=($('tc-ide-apply').checked?'applying on ':'diagnosing on ')+esc(tgt.slice(4));
+    return;
+  }
+  const body={kind:_tcKind,target:tgt,assess:true};
+  if(_tcKind==='loop'){body.goal=$('tc-goal').value.trim();if(!body.goal){toast('type a goal');wfInit();return}}
+  if(_tcKind==='cap'){body.cap=$('tc-cap').value.trim();try{body.args=$('tc-args').value.trim()?JSON.parse($('tc-args').value):{}}catch(e){toast('args JSON invalid');return}if(!body.cap){toast('cap name');return}}
+  if(_tcKind==='task'){body.task_id=$('tc-task').value;if(!body.task_id){toast('pick a task');return}}
+  const r=await post('/evolve/run/start',body);
+  if(!r||r.error){$('test-result').innerHTML='<div style="color:var(--err)">'+esc((r&&r.error)||'failed to start')+'</div>';wfInit();return}
+  _testRunId=r.run_id;_testRunKind=_tcKind;_testRunLabel=(r.target||'');
+  _testRunGoal=body.goal||'';
+  if(_tcKind==='task'&&!_testRunGoal){
+    // saved task — look up its goal so the strategic child-session match works
+    const tr=await api('/evolve/tasks');
+    const tt=((tr&&tr.tasks)||[]).find(x=>x.id===body.task_id);
+    _testRunGoal=(tt&&tt.goal)||'';
+  }
+  bindImplementer(_testRunId,_testRunGoal);
+  wfSet('implementer','running');
+  $('wf-status').textContent='running '+esc(r.type||'')+' · '+esc(r.target||'');
+}
+// Restore the live/last test view when returning to the Test tab.
+async function restoreTestRun(){
+  if(_suiteActive){testSuiteRefresh()}
+  if(!_testRunId)return;
+  const gr=await api('/evolve/run/get?run_id='+encodeURIComponent(_testRunId));
+  const d=gr&&gr.run;
+  // Replay the implementer timeline. Restore is where the timeline used to go
+  // blank: bind straight back to the session that carried events last time
+  // (_implResolvedSid), anchor child discovery to the run's REAL start (d.ts) so
+  // a sub-session that began earlier can still be found, and hand over the saved
+  // step trace as a last-resort replay (goal still enables child-session match).
+  bindImplementer(_testRunId,_testRunGoal||(d&&d.goal)||'',{
+    anchorMs:(d&&d.ts)?(Date.parse(d.ts)||0)||undefined:undefined,
+    knownSid:_implResolvedSid||undefined,
+    steps:(d&&d.steps)||null,
+  });
+  if(d&&(d.combined!=null||d.error)){                // finished
+    _renderTestResult(d,_testRunId);
+    if(d.assessment){_renderTestEval(d.assessment);wfSet('reviewers','done');wfSet('output','done',{score:d.combined})}
+    else wfSet('output','done',{score:d.combined});
+    wfSet('implementer',d.error?'error':'done');
+    $('wf-status').textContent='done · combined '+(d.combined==null?'—':d.combined);
+    checkImplEmpty(_testRunId);
+    return;
+  }
+  // still running — show it as running (this is the "swap tabs → looks idle" fix)
+  wfSet('input','done');wfSet('implementer','running');
+  $('test-result').innerHTML='<div class="empty"><span class="spin"></span> running…</div>';
+  $('test-eval').innerHTML='<div class="empty">running…</div>';
+  $('wf-status').textContent='running '+esc(_testRunKind||'')+(_testRunLabel?(' · '+esc(_testRunLabel)):'');
+}
+/* workflow diagram */
+const WF_NODES=[
+  {id:'input',t:'Input',s:'goal / task'},
+  {id:'implementer',t:'Implementer',s:'the agent loop'},
+  {id:'reviewers',t:'Reviewers',s:'adversarial ×N'},
+  {id:'fixer',t:'Fixer',s:'CPU edit queue'},
+  {id:'output',t:'Output',s:'variant / result'},
+];
+function wfInit(){
+  const el=$('wf-diagram');if(!el)return;
+  el.innerHTML=WF_NODES.map((n,i)=>
+    '<div class="wf-node" id="wf-'+n.id+'"><div class="wf-t">'+(i+1)+'. '+esc(n.t)+'</div><div class="wf-s">'+esc(n.s)+'</div><div class="wf-m" id="wfm-'+n.id+'"></div></div>'
+    +(i<WF_NODES.length-1?'<div class="wf-arrow" id="wfa-'+i+'">→</div>':'')).join('');
+  if($('wf-fly'))$('wf-fly').innerHTML=svgFlywheel('');
+}
+const _flyMap={implementer:'test',reviewers:'evaluate',fixer:'synthesize',output:'apply'};
+function wfSet(node,state,meta){
+  // map reviewer-N events onto the single reviewers node
+  const id=String(node||'').startsWith('reviewer-')?'reviewers':node;
+  const el=$('wf-'+id);if(!el)return;
+  el.classList.remove('on','done','found','err');
+  if(state==='running')el.classList.add('on');
+  else if(state==='done')el.classList.add('done');
+  else if(state==='found')el.classList.add('found');
+  else if(state==='error')el.classList.add('err');
+  const m=$('wfm-'+id);
+  if(m&&meta){
+    if(id==='reviewers'&&meta.failures!=null)m.textContent=meta.failures+' failure(s)';
+    else if(id==='fixer'&&meta.model)m.textContent=meta.model;
+    else if(meta.score!=null)m.textContent='score '+meta.score;
+  }
+  // animate the arrow leading into the running node
+  const idx=WF_NODES.findIndex(n=>n.id===id);
+  document.querySelectorAll('.wf-arrow').forEach(a=>a.classList.remove('flow'));
+  if(state==='running'&&idx>0){const a=$('wfa-'+(idx-1));if(a)a.classList.add('flow')}
+  // flywheel: spin on a running phase, settle to idle when output/terminal
+  if($('wf-fly')){
+    if(state==='running')$('wf-fly').innerHTML=svgFlywheel(_flyMap[id]||'');
+    else if(id==='output'&&(state==='done'||state==='error'))$('wf-fly').innerHTML=svgFlywheel('');
+  }
+}
+function _renderTestResult(d,run_id){
+  let h='<div class="row" style="margin-bottom:6px">'+scChip(d.combined)+' <span class="hint">combined</span>'+(d.where?' <span class="tag">'+(d.where==='sandbox'?'🛡 sandbox':d.where)+'</span>':'')+' <span class="tag">'+(d.elapsed_s||0)+'s</span></div>';
+  for(const c of d.checks||[])h+='<div class="mono" style="font-size:10px;color:'+(c.ok?'var(--ok)':'var(--err)')+'">'+(c.ok?'✓':'✗')+' '+esc(c.type)+'</div>';
+  if(d.blocked)h+='<div class="pill" style="color:var(--warn);margin-top:6px">🛡 '+esc(d.error)+'</div>'
+    +'<div class="hint" style="margin-top:4px">environment not ready — not a defect in the thing under test. <a class="clk" onclick="nav(\'sandbox\')">bring up the sandbox →</a></div>';
+  else if(d.error)h+='<div class="pill" style="color:var(--err);margin-top:6px">'+esc(d.error)+'</div>'
+    +'<div style="margin-top:5px"><a class="clk" style="color:var(--warn)" onclick="nav(\'errors\')" title="This failure is tracked in the errors work-queue — suggest a fix there and approve it into a remediation pipeline">⚠ tracked in Errors → suggest fix</a></div>';
+  h+='<button class="btn sm" style="margin-top:8px" onclick="openRun(\''+esc(run_id)+'\')">full detail</button>';
+  $('test-result').innerHTML=h;
+}
+function _renderTestEval(a){
+  // ALWAYS surface the critique (the evaluate → critique the run produced) plus
+  // any adversarial failures — this is what was previously "not visible".
+  let h='';
+  if(a.score!=null)h+='<div style="margin-bottom:6px">'+scChip(a.score)+' <span class="hint">reviewer score'+(a.adversarial_scores&&a.adversarial_scores.length>1?(' · '+a.adversarial_scores.length+' reviewers'):'')+'</span></div>';
+  if(a.critique)h+='<div style="background:var(--bg1);border-left:2px solid '+scColor(a.score)+';border-radius:4px;padding:6px 8px;margin-bottom:8px;font-size:10.5px;line-height:1.5">'+esc(a.critique.slice(0,700))+'</div>';
+  if(a.failures&&a.failures.length)h+='<div class="hint" style="margin-bottom:3px">adversarial failures</div>'+a.failures.map(f=>'<div style="padding:3px 0;border-bottom:1px solid var(--border);color:var(--warn)">• '+esc(f)+'</div>').join('');
+  else if(!a.critique)h='<div class="empty">no failures found</div>';
+  $('test-eval').innerHTML=h;
+}
+function testOnRunDone(ev){
+  if(ev.run_id!==_testRunId)return;
+  _implRunDone=true;    // stop the strategic child-chaining from seeking more pieces
+  wfSet('implementer', ev.error?'error':'done');
+  api('/evolve/run/get?run_id='+encodeURIComponent(ev.run_id)).then(r=>{
+    const d=r&&r.run;if(!d)return;
+    _renderTestResult(d,ev.run_id);
+    // The assessment may not be stored yet (review runs AFTER the run finishes).
+    // Show what we have; the eval column fills on evolve.run.reviewed.
+    if(d.assessment){_renderTestEval(d.assessment);wfSet('output','done',{score:d.combined})}
+    else{$('test-eval').innerHTML='<div class="empty"><span class="spin"></span> adversarial review running…</div>';wfSet('reviewers','running')}
+    $('wf-status').textContent='done · combined '+(d.combined==null?'—':d.combined)+(d.assessment?'':' · reviewing…');
+    _refreshInsightCharts();
+  });
+}
+function testOnRunReviewed(ev){
+  if(ev.run_id!==_testRunId)return;
+  wfSet('reviewers','done',{failures:ev.failures,score:ev.score});
+  api('/evolve/run/get?run_id='+encodeURIComponent(ev.run_id)).then(r=>{
+    const d=r&&r.run;if(!d)return;
+    _renderTestResult(d,ev.run_id);
+    _renderTestEval(d.assessment||{});
+    wfSet('output','done',{score:d.combined});
+    $('wf-status').textContent='reviewed · combined '+(d.combined==null?'—':d.combined);
+    refreshTestRuns();
+    implPoll();setTimeout(stopImplPoll,4000);   // final catch-up, then stop
+    checkImplEmpty(ev.run_id);
+    _refreshInsightCharts();
+  });
+}
+// Keep the Insight charts (activity/board) current the moment a test finishes,
+// even while you're on the Test home — "activity wasn't displaying my tests".
+function _refreshInsightCharts(){
+  if($('ov-activity'))loadActivityChart();
+  if($('ov-board'))loadBoard();
+}
+/* Suite runs launched from Test home — show progress + each task's result here,
+   so "you can see the output of the steps of the suite run + the results". */
+let _suiteActive=false;
+function testSuiteOnRunDone(ev){
+  // during a suite, every per-TASK run finishing emits evolve.run.done with its
+  // own run_id (≠ the single test run) — stream each into the suite log.
+  if(!_suiteActive||ev.run_id===_testRunId)return;
+  const log=$('test-suite-log');if(!log)return;
+  if(log.querySelector('.empty'))log.innerHTML='';
+  const ok=(ev.combined||0)>=6&&!ev.error;
+  log.insertAdjacentHTML('afterbegin',
+    '<div class="row clk" onclick="openRun(\''+esc(ev.run_id)+'\')" style="padding:4px 0;border-bottom:1px solid var(--border)">'
+    +'<span style="color:'+(ok?'var(--ok)':'var(--err)')+'">'+(ok?'✓':'✗')+'</span>'
+    +'<span class="mono" style="flex:1">'+esc(ev.task||ev.run_id)+'</span>'
+    +(ev.error?'<span class="tag" style="color:var(--err)">err</span>':'')
+    +scChip(ev.combined)+'<span class="hint">'+(ev.elapsed_s||0)+'s</span></div>');
+}
+async function testSuiteRefresh(){
+  const r=await api('/evolve/suite/status');const s=(r&&r.status)||{};const running=!!(r&&r.running);
+  if(!s.total&&!running&&!_suiteActive)return;
+  $('test-suite-card').style.display='';
+  const pct=s.total?Math.round((s.done/s.total)*100):(running?0:100);
+  $('test-suite-bar').style.width=pct+'%';
+  $('test-suite-count').textContent=(s.done||0)+'/'+(s.total||'?');
+  $('test-suite-hd').textContent=running?('running '+esc(s.current||'')):('done · tag '+esc(s.tag||''));
+  if(!running&&_suiteActive){
+    _suiteActive=false;
+    // pull the finished suite's scoreboard into the log header
+    const sr=await api('/evolve/suites?limit=1');const suite=((sr&&sr.suites)||[])[0];
+    if(suite){
+      $('test-suite-hd').textContent='done · avg '+(suite.avg_combined==null?'—':suite.avg_combined)+' · '+((suite.results||[]).length)+' tasks';
+      $('wf-status').textContent='suite done · avg '+(suite.avg_combined==null?'—':suite.avg_combined);
+      wfSet('output','done',{score:suite.avg_combined});
+    }
+    _refreshInsightCharts();
+  }
+}
+
+async function loadAll(){
+  const [pv,pr,cf]=await Promise.all([api('/evolve/providers'),api('/loops/profiles'),api('/evolve/config')]);
+  _providers=(pv&&pv.providers)||[];_profiles=(pr&&pr.profiles)||[];_cfg=(cf&&cf.config)||{};
+  $('cfg-line').textContent='critic: '+(_cfg.critic_provider||'?')+' · editor: '+(_cfg.editor_provider||'?')+' · target '+(_cfg.target_score||'?');
+  renderSafePill();
+  const em=_cfg.editq_model||'gpt-oss:20b';
+  if($('editq-model-lbl'))$('editq-model-lbl').textContent=em;
+  if($('im-editq-lbl'))$('im-editq-lbl').textContent=em;
+  const provOpts=_providers.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.label)+'</option>').join('');
+  const profOpts=_profiles.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.label||p.id)+'</option>').join('');
+  ['im-critic','st-critic','im-editor','st-editor'].forEach(id=>{if($(id))$(id).innerHTML=provOpts});
+  ['st-profile','var-profile','ov-goal-profile'].forEach(id=>{if($(id))$(id).innerHTML=profOpts});
+  if($('ov-goal-profile'))$('ov-goal-profile').value=_cfg.default_profile||'';
+  if($('im-critic'))$('im-critic').value=_cfg.critic_provider||'ollama';
+  if($('im-editor'))$('im-editor').value=_cfg.editor_provider||'anthropic';
+  await loadTargets();
+  fillTargetSelectors('im-cat','im-profile','specialist');   // Improve target
+  nav('test');       // Test is the home
+  pollSuite();       // reflect any in-flight suite immediately
+  loadSessions(true);
+}
+
+/* ═══ LIVE STRIP — event bus + polling ═══ */
+function liveShow(html){const el=$('live');el.innerHTML=html;el.classList.add('on')}
+function liveHide(){$('live').classList.remove('on')}
+function _elapsed(iso){if(!iso)return'';const s=Math.max(0,Math.round((Date.now()-Date.parse(iso))/1000));return s<60?(s+'s'):(Math.floor(s/60)+'m'+(s%60)+'s')}
+function _loopLine(){return _loopStep.tool?('<span class="hint mono">↳ '+esc(_loopStep.tool)+(_loopStep.ok===false?' ✗':'')+'</span>'):''}
+function renderLive(){
+  // Priority: running suite > running session > running pipeline
+  if(_suite&&_suite.running){
+    const pct=_suite.total?Math.round((_suite.done/_suite.total)*100):0;
+    const el=_elapsed(_suite.current_started_at);
+    liveShow('<div class="row"><span class="spin"></span><b>Suite running</b>'
+      +'<span class="hint">'+esc(_suite.current||('task '+(_suite.done||0)+'/'+(_suite.total||'?')))+(el?(' · '+el):'')+'</span>'
+      +_loopLine()
+      +'<div class="bar" style="max-width:200px"><span style="width:'+pct+'%"></span></div>'
+      +'<span class="mono">'+(_suite.done||0)+'/'+(_suite.total||'?')+'</span></div>');
+    return;
+  }
+  const s=_liveSession;
+  if(s&&(s.live||s.status==='running')){
+    liveShow('<div class="row"><span class="spin"></span><b>Improve · '+esc(s.profile||'')+'</b>'
+      +'<span class="hint">'+esc(s.current||'starting…')+'</span>'+_loopLine()
+      +'<span class="mono">round '+(s.rounds_done||0)+'/'+(s.max_rounds||'?')+'</span>'
+      +'<span style="flex:1"></span><button class="btn sm err-btn" onclick="cancelSession(\''+esc(s.id)+'\')">Stop</button></div>');
+    return;
+  }
+  const p=_livePipe;
+  if(p&&p.live){
+    liveShow('<div class="row"><span class="spin"></span><b>Pipeline '+esc(p.id)+' · '+esc(p.kind)+'</b>'
+      +'<span class="hint">'+esc(p.current||p.status||'')+'</span>'+_loopLine()+'</div>');
+    return;
+  }
+  liveHide();
+}
+let _liveSession=null,_livePipe=null,_loopStep={},_watchSession='';
+function onEvent(ev){
+  if(!ev||!ev.type)return;
+  const t=String(ev.type);
+  // Agent-loop events for an evolve run carry session_id 'evolve:<run_id>'.
+  const sid=String(ev.session_id||ev.trace_id||'');
+  if(sid.startsWith('evolve:')){
+    // Forward to agentic-loop elements. The Test element is driven by a dedicated
+    // reattach SSE stream for SINGLE runs (bindImplementer) — forwarding there too
+    // would double-render — so skip it then. During a SUITE (no single reattach)
+    // we DO bus-feed it so the current task's loop streams live, as before.
+    document.querySelectorAll('vera-agent-loop-output').forEach(alo=>{
+      if(alo.closest&&alo.closest('#sec-test')&&!_suiteActive)return;
+      if(alo.appendEvent){try{alo.appendEvent(ev)}catch(_){}}
+    });
+    if(t.endsWith('.tool_call')){_loopStep={tool:ev.tool||ev.cap||'?',ok:null};renderLive()}
+    else if(t.endsWith('.tool_done')){_loopStep={tool:ev.tool||ev.cap||'?',ok:ev.ok!==false};renderLive()}
+  }
+  if(!t.startsWith('evolve.')&&!t.startsWith('markets.evolve.'))return;
+  if(t.startsWith('evolve.suite.')){pollSuite();if(_curSec()==='test')testSuiteRefresh()}
+  if(t==='evolve.run.started'){_loopStep={};renderLive()}
+  if(t==='evolve.run.done'){testOnRunDone(ev);testSuiteOnRunDone(ev);if(_curSec()==='runs')loadRuns()}
+  if(t==='evolve.run.reviewed'){testOnRunReviewed(ev)}
+  if(t.startsWith('evolve.run.')||t==='evolve.assessed'){if(_curSec()==='runs')loadRuns()}
+  if(t==='evolve.workflow'){wfSet(ev.node,ev.state,ev)}
+  if(t==='evolve.assessed')watchOnAssessed(ev);
+  if(t==='evolve.phase')watchOnPhase(ev);
+  if(t.startsWith('evolve.editq.')){watchOnEditq(ev);if(_curSec()==='watch')loadEditq()}
+  if(t.startsWith('evolve.errors.')){if(_curSec()==='errors')loadErrors()}
+  if(t==='evolve.suite.done'){loadOverview();if(_curSec()==='test')testSuiteRefresh()}
+  if(t.startsWith('evolve.improve.')){
+    if(t==='evolve.improve.started'&&ev.session){_watchSession=ev.session;const wa=_watchAlo();if(wa&&wa.reset)try{wa.reset()}catch(_){}}
+    pollSessionLive(ev.session);
+    if(_curSec()==='improve')loadSessions(true);
+    if(_curSec()==='watch')watchRefresh();
+  }
+  if(t.startsWith('evolve.pipeline.')){if(_curSec()==='pipelines')loadPipelines();pollPipeLive(ev.id)}
+}
+
+/* ═══ WATCH — live test → evaluate → synthesize ═══ */
+function watchSetPhase(phase,status){
+  document.querySelectorAll('#phase-steps .phase-step').forEach(el=>{
+    const p=el.dataset.phase;
+    el.classList.toggle('active',p===phase&&status!=='done');
+    if(p===phase&&status==='done')el.classList.add('done');
+  });
+  document.querySelectorAll('.watch-col').forEach(el=>el.classList.toggle('active',el.dataset.phase===phase));
+}
+function watchOnPhase(ev){
+  if(_watchSession&&ev.session&&ev.session!==_watchSession)return;
+  watchSetPhase(ev.phase,ev.status);
+  const st=$('watch-status');
+  if(st){const names={test:'Testing',evaluate:'Evaluating',synthesize:'Synthesising'};
+    st.innerHTML='<span class="spin"></span> '+esc(names[ev.phase]||ev.phase)+(ev.task?(' · '+esc(ev.task)):'')+(ev.round?(' · round '+ev.round):'')
+      +(ev.phase==='synthesize'?' · on the CPU edit queue':'');}
+  if(ev.phase==='test'&&ev.status==='start'){const alo=_watchAlo();if(alo&&alo.reset)try{alo.reset()}catch(_){}}
+}
+function watchOnAssessed(ev){
+  const b=$('watch-eval');if(!b)return;
+  const row='<div style="padding:6px 0;border-bottom:1px solid var(--border)"><div class="row"><span class="mono" style="flex:1">'+esc(ev.task||ev.run_id||'')+'</span>'+scChip(ev.combined)+'</div></div>';
+  if(b.querySelector('.empty'))b.innerHTML='';
+  b.insertAdjacentHTML('afterbegin',row);
+  // fetch the critique for the newest run
+  if(ev.run_id)api('/evolve/run/get?run_id='+encodeURIComponent(ev.run_id)).then(r=>{
+    const a=(r&&r.run&&r.run.assessment)||{};
+    if(a.critique){b.insertAdjacentHTML('afterbegin','<div style="background:var(--bg1);border-left:2px solid '+scColor(a.score)+';border-radius:4px;padding:6px 8px;margin-bottom:6px;font-size:10px;line-height:1.45">'+esc(a.critique.slice(0,400))+'</div>')}
+  });
+}
+function watchOnEditq(ev){
+  const b=$('watch-synth');if(!b)return;
+  if(ev.type==='evolve.editq.running'){
+    if(b.querySelector('.empty'))b.innerHTML='';
+    b.insertAdjacentHTML('afterbegin','<div id="synth-'+esc(ev.id)+'" class="row" style="padding:5px 0;border-bottom:1px solid var(--border)"><span class="spin"></span><span class="hint">synthesising on '+esc(ev.model||'')+(ev.instance?(' @'+esc(ev.instance)):'')+'…</span></div>');
+  } else if(ev.type==='evolve.editq.done'){
+    const el=$('synth-'+ev.id);
+    if(el)el.innerHTML='<span style="color:'+(ev.status==='done'?'var(--ok)':'var(--err)')+'">'+(ev.status==='done'?'✓':'✗')+'</span> <span class="hint">variant synthesised'+(ev.ran_on?(' on '+esc(ev.ran_on)):'')+'</span> <button class="btn sm" onclick="openEditq(\''+esc(ev.id)+'\')">view</button>';
+  }
+}
+async function loadWatch(){
+  // populate the session selector (running first)
+  const r=await api('/evolve/improve/list?limit=25');const ss=(r&&r.sessions)||[];
+  const sel=$('watch-sel');
+  if(sel){const live=ss.filter(s=>s.live||s.status==='running');
+    sel.innerHTML=ss.map(s=>'<option value="'+esc(s.id)+'">'+(s.live||s.status==='running'?'● ':'')+esc(s.id)+' · '+esc(s.profile||'')+'</option>').join('')||'<option value="">no sessions</option>';
+    if(!_watchSession){const cur=(live[0]||ss[0]);if(cur){_watchSession=cur.id;sel.value=cur.id}}
+    else sel.value=_watchSession;
+  }
+  watchRefresh(); loadEditq(); loadFleet();
+}
+async function loadFleet(){
+  const el=$('fleet-body');if(!el)return;
+  const [sr,er]=await Promise.all([api('/evolve/improve/list?limit=20'),api('/evolve/editq?limit=60')]);
+  const ss=((sr&&sr.sessions)||[]).filter(s=>s.live||s.status==='running');
+  const eq=((er&&er.queue)||[]).filter(a=>a.status==='running'||a.status==='queued');
+  if(!ss.length&&!eq.length){el.innerHTML='<div class="empty">No loops running. Start an improve session to see the fleet.</div>';return}
+  let h='';
+  for(const s of ss){
+    const ph=s.phase||'';const w=s.max_rounds?Math.round(((s.rounds_done||0)/s.max_rounds)*100):0;
+    h+='<div class="row" style="gap:8px;padding:4px 0;border-bottom:1px solid var(--border)"><span class="spin"></span>'
+      +'<span class="mono" style="width:70px">'+esc(s.id)+'</span>'
+      +'<span class="tag">'+esc(s.profile||'')+'</span>'
+      +'<span class="hint" style="width:90px">'+esc(ph||s.status||'')+'</span>'
+      +'<div class="bar" style="max-width:160px"><span style="width:'+w+'%"></span></div>'
+      +'<span class="mono" style="font-size:9px">r'+(s.rounds_done||0)+'/'+(s.max_rounds||'?')+'</span></div>';
+  }
+  for(const a of eq){
+    h+='<div class="row" style="gap:8px;padding:4px 0;border-bottom:1px solid var(--border);opacity:.85">'
+      +(a.status==='running'?'<span class="spin"></span>':'<span style="width:9px"></span>')
+      +'<span class="mono" style="width:70px">'+esc(a.id.slice(0,8))+'</span>'
+      +'<span class="tag" style="color:var(--acc4)">editor</span>'
+      +'<span class="hint">'+esc(a.model||'')+(a.instance?(' @'+esc(a.instance)):'')+' · '+esc(a.status)+'</span></div>';
+  }
+  el.innerHTML=h;
+  if(ss.length||eq.length){clearTimeout(window._fleetT);window._fleetT=setTimeout(loadFleet,4000)}
+}
+function watchSelect(){_watchSession=$('watch-sel').value;document.querySelectorAll('vera-agent-loop-output').forEach(a=>{if(a.reset)try{a.reset()}catch(_){}});watchRefresh()}
+async function watchRefresh(){
+  if(!_watchSession){$('watch-status').textContent='No session selected.';return}
+  const r=await api('/evolve/improve/status?session_id='+encodeURIComponent(_watchSession));
+  const s=r&&r.session;if(!s)return;
+  $('watch-sub').textContent=s.profile+' · '+(s.goal_source||'tasks')+' · '+(s.status||'');
+  if(s.phase)watchSetPhase(s.phase,'');
+  if(!(s.live||s.status==='running')){
+    $('watch-status').innerHTML='Session '+esc(s.id)+' — <b>'+esc(s.status||'')+'</b> · best '+((s.best_score==null)?'—':s.best_score);
+  }
+}
+async function loadEditq(){
+  const r=await api('/evolve/editq?limit=60');const q=(r&&r.queue)||[];
+  const w=$('editq-worker');if(w){w.textContent='worker '+((r&&r.worker_running)?'running':'idle');w.style.color=(r&&r.worker_running)?'var(--ok)':'var(--dim2)'}
+  // work-grid: one cell per action, coloured by status (errors-as-work-queue)
+  const g=$('editq-grid');
+  if(g){const cc={queued:'var(--dim2)',running:'var(--warn)',done:'var(--ok)',error:'var(--err)',cancelled:'var(--dim)'};
+    const cnt={queued:0,running:0,done:0,error:0};q.forEach(a=>{if(cnt[a.status]!=null)cnt[a.status]++});
+    g.innerHTML='<div style="display:flex;flex-wrap:wrap;gap:2px;margin-bottom:4px">'+q.slice(0,120).map(a=>'<span title="'+esc(a.label||'')+' · '+esc(a.status)+'" style="width:11px;height:11px;border-radius:2px;background:'+(cc[a.status]||'var(--dim2)')+';'+(a.status==='running'?'animation:pulse 1s infinite;':'')+'"></span>').join('')
+      +'</div><div class="hint">'+cnt.done+' done · '+cnt.running+' running · '+cnt.queued+' queued'+(cnt.error?' · '+cnt.error+' error':'')+'</div>';}
+  const b=$('editq-body');if(!b)return;
+  if(!q.length){b.innerHTML='<div class="empty">Queue empty — start an improve session (synthesis lands here).</div>';return}
+  b.innerHTML='<table><tr><th>when</th><th>action</th><th>model</th><th>status</th><th></th></tr>'+q.map(a=>{
+    const col={queued:'var(--dim2)',running:'var(--warn)',done:'var(--ok)',error:'var(--err)',cancelled:'var(--dim)'}[a.status]||'var(--dim2)';
+    return '<tr class="clk" onclick="openEditq(\''+esc(a.id)+'\')"><td class="mono">'+esc((a.created_at||'').slice(11,19))+'</td>'
+      +'<td>'+esc(a.label||a.kind)+'</td><td class="mono" style="font-size:9.5px">'+esc(a.model||'')+(a.instance?(' @'+esc(a.instance)):'')+'</td>'
+      +'<td><span class="pill" style="color:'+col+'">'+esc(a.status)+'</span></td>'
+      +'<td>'+(a.status==='queued'?'<button class="btn sm err-btn" onclick="event.stopPropagation();editqCancel(\''+esc(a.id)+'\')">cancel</button>':'')+'</td></tr>';
+  }).join('')+'</table>';
+}
+async function openEditq(id){
+  const r=await api('/evolve/editq/get?id='+encodeURIComponent(id));const a=r&&r.action;if(!a){toast('not found');return}
+  const editable=a.status==='queued';
+  let h='<div class="card-h"><span class="card-t">Edit action '+esc(id)+'</span><span class="hint">'+esc(a.status)+' · '+esc(a.model||'')+(a.instance?(' @'+esc(a.instance)):'')+'</span></div>';
+  h+='<label class="fld">prompt'+(editable?' (editable while queued)':'')+'</label><textarea id="eq-prompt" style="min-height:120px" '+(editable?'':'readonly')+'>'+esc(a.prompt||'')+'</textarea>';
+  if(a.result_text)h+='<label class="fld" style="margin-top:6px">result</label><pre>'+esc(a.result_text.slice(0,4000))+'</pre>';
+  if(a.error)h+='<div class="pill" style="color:var(--err);margin-top:6px">'+esc(a.error)+'</div>';
+  h+='<div class="row" style="margin-top:10px">'+(editable?'<button class="btn primary" onclick="editqSave(\''+esc(id)+'\')">Save edit</button><button class="btn err-btn" onclick="editqCancel(\''+esc(id)+'\')">Cancel action</button>':'')+'<span style="flex:1"></span><button class="btn" onclick="closeModal()">Close</button></div>';
+  openModal(h);
+}
+async function editqSave(id){const r=await post('/evolve/editq/update',{id,prompt:$('eq-prompt').value});if(r&&r.ok){toast('Saved');closeModal();loadEditq()}else toast((r&&r.error)||'failed')}
+async function editqCancel(id){const r=await post('/evolve/editq/cancel',{id});toast(r&&r.ok?'Cancelled':(r&&r.error)||'failed');closeModal&&closeModal();loadEditq()}
+function _curSec(){const b=document.querySelector('#nav .btn.on');return b?b.dataset.sec:'overview'}
+// subscribe: parent bus if available, else own WS to /ws/mcp
+(function subscribe(){
+  try{const par=window.parent;if(par&&par!==window&&typeof par._veraSubscribe==='function'){par._veraSubscribe(onEvent);return}}catch(e){}
+  try{const pr=location.protocol==='https:'?'wss:':'ws:';const u=pr+'//'+location.host+'/ws/mcp';
+    const ws=new WebSocket(u);
+    ws.onmessage=e=>{try{const m=JSON.parse(e.data);if(m.type==='event'&&m.data)onEvent(m.data)}catch(_){}};
+    ws.onopen=()=>{try{ws.send(JSON.stringify({action:'subscribe',stream:'__events__'}))}catch(_){}};
+    ws.onclose=()=>setTimeout(subscribe,5000);
+  }catch(e){}
+})();
+
+/* ═══ ERRORS WORK-QUEUE (errors → suggested edit → approve → commit) ═══ */
+const ERR_LANES=[['new','⚠ new','var(--err)'],['suggested','✎ suggested','var(--warn)'],['approved','⎇ approved','var(--acc2)'],['applied','✓ committed','var(--ok)']];
+async function loadErrors(){
+  if($('err-autosync'))$('err-autosync').checked=!!(_cfg&&_cfg.errors_autosync);
+  const r=await api('/evolve/errors?limit=200');const items=(r&&r.items)||[];const counts=(r&&r.counts)||{};
+  const bySource={};items.forEach(i=>{if(i.state!=='dismissed'){bySource[i.source]=(bySource[i.source]||0)+1}});
+  $('err-flow').innerHTML=svgErrorFlow(counts,bySource);
+  const board=$('err-board');
+  board.innerHTML=ERR_LANES.map(([st,lbl,col])=>{
+    const lane=items.filter(i=>i.state===st);
+    return '<div class="err-lane"><div class="err-lane-h"><span style="color:'+col+'">'+esc(lbl)+'</span><span class="n">'+lane.length+'</span></div>'
+      +(lane.length?lane.map(errCard).join(''):'<div class="empty" style="font-size:9px">—</div>')+'</div>';
+  }).join('');
+}
+function errCard(it){
+  const sug=it.suggestion||{};
+  const sev=(it.meta&&it.meta.severity)||'';
+  const isRem=!!(sug.remediation_id||(it.meta&&it.meta.remediation_id));
+  const approveLbl=isRem?'apply safe fix':'approve → commit';
+  const approveTitle=isRem?'Apply the built-in safe remediation (perf.remediate) immediately':'Approve → launch a gated code pipeline that commits the fix';
+  let acts='';
+  if(it.state==='new')acts='<button class="btn sm" onclick="errSuggest(\''+esc(it.id)+'\')">suggest fix</button><button class="btn sm" onclick="errDismiss(\''+esc(it.id)+'\')">dismiss</button>';
+  else if(it.state==='suggested')acts='<button class="btn sm primary" onclick="errApprove(\''+esc(it.id)+'\')" title="'+approveTitle+'">'+approveLbl+'</button><button class="btn sm" onclick="errDismiss(\''+esc(it.id)+'\')">dismiss</button>';
+  else if(it.state==='approved')acts='<button class="btn sm" onclick="nav(\'pipelines\')">view pipeline '+esc(it.pipeline_id||'')+'</button>';
+  else if(it.state==='applied'&&it.remediation_result)acts='<span class="hint">'+esc(String(it.remediation_result).slice(0,120))+'</span>';
+  const sevChip=sev?('<span class="err-src" style="color:'+(sev==='crit'?'var(--err)':'var(--warn)')+'">'+esc(sev)+'</span>'):'';
+  const runChip=(it.meta&&it.meta.run_id)?'<span class="err-src clk" style="color:var(--acc)" onclick="openRun(\''+esc(it.meta.run_id)+'\')" title="open the test run this error came from">run '+esc(String(it.meta.run_id).slice(0,8))+'</span>':'';
+  return '<div class="err-card s-'+esc(it.state)+'">'
+    +'<div class="et">'+esc((it.title||'').slice(0,180))+'</div>'
+    +'<div class="ea">'+sevChip+'<span class="err-src">'+esc(it.source)+'</span>'+(it.count>1?'<span class="err-src">×'+it.count+'</span>':'')+(isRem?'<span class="err-src" style="color:var(--ok)">safe fix</span>':'')+runChip+'</div>'
+    +(sug.suggestion?'<div class="em"><b>fix:</b> '+esc(sug.suggestion.slice(0,240))+'</div>':'')
+    +'<div class="ea">'+acts+'</div></div>';
+}
+/* Bun-style flow: error SOURCES fan into a queue → fixer worker → commits.
+   (à la the article's "errors being sent to workers and flowing to commits") */
+function svgErrorFlow(counts,bySource){
+  const totalIn=(counts.new||0)+(counts.suggested||0)+(counts.approved||0)+(counts.applied||0);
+  const srcs=Object.entries(bySource||{}).filter(([,v])=>v>0);
+  const W=620,H=150;
+  // stage columns: queue → fixer → committed
+  const stages=[['queue',(counts.new||0)+(counts.suggested||0),'var(--warn)',360],
+                ['fixer',counts.approved||0,'var(--acc2)',470],
+                ['commits',counts.applied||0,'var(--ok)',560]];
+  let s='';
+  // left: source inputs feeding in
+  const sy=srcs.length?(H-2*20)/(srcs.length):0;
+  (srcs.length?srcs:[['—',0]]).forEach(([name,v],i)=>{
+    const y=20+sy*i+sy/2;
+    s+='<rect x="8" y="'+(y-12)+'" width="120" height="24" rx="6" fill="var(--bg2)" stroke="var(--err)" opacity=".9"/>'
+      +'<text x="16" y="'+(y+4)+'" font-size="10" fill="var(--text,#ccc)">⚠ '+esc(String(name).slice(0,10))+'</text>'
+      +'<text x="118" y="'+(y+4)+'" font-size="10" text-anchor="end" font-weight="700" fill="var(--err)">'+v+'</text>'
+      // flowing particle from source → queue
+      +(v>0?'<circle r="2.5" fill="var(--err)"><animateMotion dur="'+(2+i*0.4)+'s" repeatCount="indefinite" path="M128 '+y+' Q 250 '+y+' 360 '+(H/2)+'"/></circle>':'')
+      +'<path d="M128 '+y+' Q 250 '+y+' 360 '+(H/2)+'" fill="none" stroke="var(--border)" stroke-width="1" opacity=".5"/>';
+  });
+  // stage nodes
+  stages.forEach((st,i)=>{
+    const cx=st[3],cy=H/2;
+    s+='<circle cx="'+cx+'" cy="'+cy+'" r="26" fill="'+st[2]+'" opacity=".16" stroke="'+st[2]+'" stroke-width="1.5"/>'
+      +'<text x="'+cx+'" y="'+(cy-1)+'" text-anchor="middle" font-size="14" font-weight="700" fill="'+st[2]+'">'+st[1]+'</text>'
+      +'<text x="'+cx+'" y="'+(cy+12)+'" text-anchor="middle" font-size="8" fill="var(--dim2)">'+esc(st[0])+'</text>';
+    if(i<stages.length-1){const ax=cx+26,axe=stages[i+1][3]-26;
+      s+='<line x1="'+ax+'" y1="'+cy+'" x2="'+axe+'" y2="'+cy+'" stroke="var(--dim2)" stroke-width="1.5" marker-end="url(#efa)"/>'
+        +(st[1]>0?'<circle r="3" fill="'+st[2]+'"><animateMotion dur="1.5s" repeatCount="indefinite" path="M'+ax+' '+cy+' L'+axe+' '+cy+'"/></circle>':'');}
+  });
+  s+='<text x="360" y="26" text-anchor="middle" font-size="8.5" fill="var(--dim2)">'+totalIn+' in queue → suggest → approve → commit</text>';
+  return '<svg viewBox="0 0 '+W+' '+H+'" width="100%" height="'+H+'"><defs><marker id="efa" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="var(--dim2)"/></marker></defs>'+s+'</svg>';
+}
+async function errSync(){toast('pulling real problems…');const r=await post('/evolve/errors/sync',{suggest:true});if(r&&r.ok)toast('ingested '+(r.ingested||0)+' · suggested '+(r.suggested||0));loadErrors()}
+async function errClear(){if(!confirm('Purge the whole errors queue?'))return;const r=await post('/evolve/errors/clear',{});if(r&&r.ok)toast('cleared '+(r.removed||0));loadErrors()}
+async function errSuggest(id){await post('/evolve/errors/suggest',{id});loadErrors()}
+async function errApprove(id){const r=await post('/evolve/errors/approve',{id});if(r&&r.ok)toast('approved → pipeline '+(r.pipeline_id||''));else toast((r&&r.error)||'failed');loadErrors()}
+async function errDismiss(id){await post('/evolve/errors/dismiss',{id});loadErrors()}
+async function errToggleAutosync(){const on=$('err-autosync').checked;const r=await post('/evolve/config/set',{errors_autosync:on});if(r&&r.config)_cfg=r.config;toast('auto-sync '+(on?'on':'off'))}
+
+/* ═══ SELF-TEST ═══ */
+async function selftest(){
+  openModal('<div class="card-h"><span class="card-t">Self-test</span></div><div id="stx"><span class="spin"></span> pre-flighting redis · tasks · loops.run · critic · editor…</div>');
+  const r=await post('/evolve/selftest',{});
+  if(!r){$('stx').innerHTML='request failed';return}
+  let h='<div class="row" style="margin-bottom:8px">'+(r.ok?'<span class="pill" style="color:var(--ok)">ALL GREEN</span>':'<span class="pill" style="color:var(--err)">problems found</span>')+'</div><table>';
+  for(const c of r.checks||[])h+='<tr><td>'+(c.ok?'<span style="color:var(--ok)">✓</span>':'<span style="color:var(--err)">✗</span>')+'</td><td class="mono">'+esc(c.name)+'</td><td style="font-size:10px">'+esc(c.detail)+'</td></tr>';
+  h+='</table>'+(r.hint?'<div class="hint" style="margin-top:8px;color:var(--warn)">'+esc(r.hint)+'</div>':'');
+  h+='<div class="row" style="margin-top:10px"><span style="flex:1"></span><button class="btn" onclick="closeModal()">Close</button></div>';
+  $('stx').outerHTML='<div id="stx">'+h+'</div>';
+}
+
+/* ═══ VISUALS (inline SVG — no external libs, theme-aware) ═══ */
+function svgTrend(suites){
+  const pts=suites.slice().reverse().map(s=>+(s.avg_combined||0));
+  if(pts.length<1)return '<div class="empty">—</div>';
+  const W=520,H=90,pad=8,n=pts.length,maxY=10;
+  const x=i=>pad+(n<=1?W/2:(i*(W-2*pad)/(n-1)));
+  const y=v=>H-pad-(v/maxY)*(H-2*pad);
+  let path='',area='';
+  pts.forEach((v,i)=>{path+=(i?'L':'M')+x(i).toFixed(1)+' '+y(v).toFixed(1)+' '});
+  area='M'+x(0).toFixed(1)+' '+(H-pad)+' '+pts.map((v,i)=>'L'+x(i).toFixed(1)+' '+y(v).toFixed(1)).join(' ')+' L'+x(n-1).toFixed(1)+' '+(H-pad)+' Z';
+  let dots=pts.map((v,i)=>'<circle cx="'+x(i).toFixed(1)+'" cy="'+y(v).toFixed(1)+'" r="2.5" fill="'+scColor(v)+'"><title>'+v.toFixed(1)+'</title></circle>').join('');
+  let grid='';[0,5,10].forEach(g=>{grid+='<line x1="'+pad+'" y1="'+y(g)+'" x2="'+(W-pad)+'" y2="'+y(g)+'" stroke="var(--border)" stroke-width="1" stroke-dasharray="2 3"/><text x="0" y="'+(y(g)+3)+'" fill="var(--dim2)" font-size="8">'+g+'</text>'});
+  return '<svg viewBox="0 0 '+W+' '+H+'" width="100%" height="'+H+'" preserveAspectRatio="none" style="overflow:visible">'
+    +grid+'<path d="'+area+'" fill="var(--acc)" opacity="0.08"/>'
+    +'<path d="'+path+'" fill="none" stroke="var(--acc)" stroke-width="1.6"/>'+dots+'</svg>';
+}
+function svgTaskBars(results){
+  if(!results||!results.length)return '';
+  const rows=results.slice().sort((a,b)=>(a.combined||0)-(b.combined||0));
+  return '<div style="display:flex;flex-direction:column;gap:3px;margin-top:6px">'+rows.map(r=>{
+    const v=r.combined==null?0:+r.combined,w=Math.round(v/10*100);
+    return '<div class="row" style="gap:6px" onclick="openRun(\''+esc(r.run_id)+'\')" style="cursor:pointer" title="'+esc(r.task)+'">'
+      +'<span class="mono" style="width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9.5px;cursor:pointer">'+esc(r.task)+'</span>'
+      +'<div class="bar"><span style="width:'+w+'%;background:'+scColor(v)+'"></span></div>'
+      +'<span class="mono" style="width:28px;text-align:right;color:'+scColor(v)+'">'+(r.combined==null?'—':v.toFixed(1))+'</span></div>';
+  }).join('')+'</div>';
+}
+/* Race-to-green board (buildkite-style): lanes=tasks, cells=suites over time */
+function svgBoard(d){
+  const lanes=(d&&d.lanes)||[];if(!lanes.length)return '<div class="empty">Run the suite a few times to see convergence.</div>';
+  const n=(d.suites||[]).length||1,cw=Math.max(10,Math.min(22,Math.floor(360/n))),LBL=140;
+  let h='<div style="overflow-x:auto"><div style="display:inline-block">';
+  for(const ln of lanes){
+    h+='<div style="display:flex;align-items:center;gap:1px;margin-bottom:2px">'
+      +'<span class="mono" style="width:'+LBL+'px;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0" title="'+esc(ln.task)+'">'+esc(ln.task)+'</span>';
+    for(const c of ln.cells){
+      const v=c&&c.score;const bg=v==null?'var(--bg3)':c.err?'var(--err)':scColor(v);
+      const op=v==null?'.4':(v>=8?'1':'.75');
+      h+='<span title="'+(v==null?'—':(+v).toFixed(1))+' · '+esc((c&&c.ts||'').slice(0,16))+'" style="width:'+cw+'px;height:13px;background:'+bg+';opacity:'+op+';border-radius:2px;display:inline-block"></span>';
+    }
+    h+='</div>';
+  }
+  h+='</div></div><div class="hint" style="margin-top:6px">← older suites · newer → · green = passing, red = failed</div>';
+  return h;
+}
+/* Commit chart (bun-style): hourly pass/fail bars */
+function svgActivity(buckets){
+  if(!buckets||!buckets.length)return '<div class="empty">No activity yet.</div>';
+  const W=560,H=90,pad=6,n=buckets.length,bw=Math.max(1,(W-2*pad)/n);
+  const mx=Math.max(1,...buckets.map(b=>(b.pass||0)+(b.fail||0)+(b.edits||0)));
+  let bars='';
+  buckets.forEach((b,i)=>{
+    const x=pad+i*bw;let y=H-pad;
+    [['pass','var(--ok)'],['fail','var(--err)'],['edits','var(--acc4)']].forEach(([k,col])=>{
+      const hh=((b[k]||0)/mx)*(H-2*pad);if(hh>0){y-=hh;bars+='<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+Math.max(1,bw-0.5).toFixed(1)+'" height="'+hh.toFixed(1)+'" fill="'+col+'"/>'}
+    });
+  });
+  return '<svg viewBox="0 0 '+W+' '+H+'" width="100%" height="'+H+'" preserveAspectRatio="none">'+bars+'</svg>'
+    +'<div class="hint" style="display:flex;gap:12px;margin-top:4px"><span style="color:var(--ok)">■ pass</span><span style="color:var(--err)">■ fail</span><span style="color:var(--acc4)">■ edits</span><span style="margin-left:auto">last '+buckets.length+'h</span></div>';
+}
+/* Self-improvement flywheel — the closed loop; SPINS while a phase is active */
+function svgFlywheel(active){
+  const steps=[['Test','▶'],['Evaluate','⊙'],['Synthesize','✎'],['Apply','⎇'],['Re-test','↻']];
+  const cx=90,cy=90,rr=62;const spin=!!active;
+  let nodes='';let idx=-1;
+  steps.forEach((s,i)=>{
+    const ang=(-90+i*(360/steps.length))*Math.PI/180,x=cx+rr*Math.cos(ang),y=cy+rr*Math.sin(ang);
+    const on=active===s[0].toLowerCase();if(on)idx=i;
+    nodes+='<circle cx="'+x.toFixed(0)+'" cy="'+y.toFixed(0)+'" r="16" fill="'+(on?'var(--acc)':'var(--bg3)')+'" stroke="'+(on?'var(--acc)':'var(--border)')+'">'
+      +(on?'<animate attributeName="r" values="16;18;16" dur="1.1s" repeatCount="indefinite"/>':'')+'</circle>'
+      +'<text x="'+x.toFixed(0)+'" y="'+(y+3).toFixed(0)+'" text-anchor="middle" font-size="10" fill="'+(on?'var(--on-acc,#12100e)':'var(--dim2)')+'">'+s[1]+'</text>';
+  });
+  // a rotating dashed ring + sweeping arc gives constant visible motion while active
+  const ring='<g><circle cx="90" cy="90" r="62" fill="none" stroke="var(--border)" stroke-dasharray="3 4"/>'
+    +(spin?'<circle cx="90" cy="90" r="62" fill="none" stroke="var(--acc)" stroke-width="2" stroke-linecap="round" stroke-dasharray="26 363" opacity=".9"/>':'')
+    +(spin?'<animateTransform attributeName="transform" type="rotate" from="0 90 90" to="360 90 90" dur="2.4s" repeatCount="indefinite"/>':'')
+    +'</g>';
+  const lbl=idx>=0?steps[idx][0]:'idle';
+  return '<svg viewBox="0 0 180 180" width="180" height="180">'+ring
+    +'<circle cx="90" cy="90" r="30" fill="none" stroke="var(--acc)" stroke-width="1.5" opacity="'+(spin?'.8':'.4')+'">'
+    +(spin?'<animate attributeName="opacity" values="0.35;0.85;0.35" dur="1.6s" repeatCount="indefinite"/>':'')+'</circle>'
+    +'<text x="90" y="86" text-anchor="middle" font-size="9" fill="var(--dim2)">self-improve</text>'
+    +'<text x="90" y="98" text-anchor="middle" font-size="8" fill="'+(spin?'var(--acc)':'var(--dim2)')+'">'+esc(lbl)+'</text>'
+    +nodes+'</svg>';
+}
+
+/* ═══ OVERVIEW / SUITE ═══ */
+async function loadOverview(){
+  loadBoard(); loadActivityChart(); loadComponentMap();
+  const r=await api('/evolve/suites?limit=12');const suites=(r&&r.suites)||[];
+  const cur=suites[0];
+  if(!cur){$('ov-scoreboard').innerHTML='<div class="empty">No suites yet — press Run suite (or Quick smoke first).</div>';$('ov-trend').innerHTML='<div class="empty">—</div>';return}
+  renderScoreboard(cur,suites[1]);
+  $('ov-trend').innerHTML=svgTrend(suites)
+    +'<div class="row" style="margin-top:4px;justify-content:space-between"><span class="hint">'+esc((suites[suites.length-1]||{}).ts||'').slice(0,10)+'</span><span class="hint">latest '+esc((cur.ts||'').slice(0,16))+'</span></div>';
+}
+async function loadBoard(){const el=$('ov-board');if(!el)return;const r=await api('/evolve/board?limit=24');el.innerHTML=svgBoard(r)}
+async function loadActivityChart(){const el=$('ov-activity');if(!el)return;const r=await api('/evolve/activity?hours=72');el.innerHTML=svgActivity((r&&r.buckets)||[])}
+async function loadComponentMap(){
+  const el=$('ov-map');if(!el)return;
+  await loadTargets();
+  // overlays per specialist profile (badge tuned targets)
+  let h='<div style="display:flex;gap:10px;overflow-x:auto">';
+  for(const c of (_targets||[])){
+    h+='<div style="min-width:150px;flex:1"><div class="rail-grp" style="padding:0 0 4px">'+esc(c.icon||'')+' '+esc(c.label)+'</div>';
+    for(const t of (c.targets||[]).slice(0,12)){
+      h+='<div class="row" style="gap:5px;padding:2px 0;cursor:pointer" onclick="improveTarget(\''+esc(c.key)+'\',\''+esc(t.id)+'\')" title="improve this">'
+        +'<span style="width:6px;height:6px;border-radius:50%;background:'+(t.tunable?'var(--acc2)':'var(--dim)')+';flex-shrink:0"></span>'
+        +'<span class="mono" style="font-size:9.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(t.label)+'</span></div>';
+    }
+    h+='</div>';
+  }
+  h+='</div><div class="hint" style="margin-top:6px">● tunable · click a component to improve it</div>';
+  el.innerHTML=h;
+}
+function improveTarget(cat,id){nav('improve');setTimeout(()=>{if($('im-cat')){$('im-cat').value=cat;fillTargets('im-cat','im-profile');$('im-profile').value=id}},60)}
+function renderScoreboard(cur,prev){
+  const prevBy={};((prev||{}).results||[]).forEach(r=>prevBy[r.task]=r);
+  let h='<div class="row" style="margin-bottom:8px">'
+    +'<div class="kv"><span class="k">avg combined</span><span class="v" style="color:'+scColor(cur.avg_combined)+'">'+(cur.avg_combined||0).toFixed(1)+'</span></div>'
+    +'<div class="kv"><span class="k">check pass</span><span class="v">'+Math.round((cur.pass_rate||0)*100)+'%</span></div>'
+    +'<div class="kv"><span class="k">tasks</span><span class="v">'+(cur.tasks_n||0)+'</span></div>'
+    +'<span class="hint">critic: '+esc(cur.critic||'checks only')+' · '+esc((cur.ts||'').slice(0,16))+'</span></div>';
+  h+=svgTaskBars(cur.results);
+  h+='<table style="margin-top:8px"><tr><th>task</th><th>type</th><th>checks</th><th>score</th><th>combined</th><th>Δ</th><th>time</th></tr>';
+  for(const row of cur.results||[]){
+    const p=prevBy[row.task];let d='';
+    if(p&&p.combined!=null&&row.combined!=null){const dv=+(row.combined-p.combined).toFixed(1);d=dv===0?'0':(dv>0?'<span style="color:var(--ok)">+'+dv+'</span>':'<span style="color:var(--err)">'+dv+'</span>')}
+    h+='<tr class="clk" onclick="openRun(\''+esc(row.run_id)+'\')"><td>'+esc(row.task)+(row.error?' <span class="tag" style="color:var(--err)">err</span>':'')+'</td>'
+      +'<td><span class="tag">'+esc(row.type)+'</span></td><td class="mono">'+esc(row.checks)+'</td>'
+      +'<td>'+scChip(row.score)+'</td><td>'+scChip(row.combined)+'</td><td>'+d+'</td><td class="mono">'+(row.elapsed_s||0)+'s</td></tr>';
+  }
+  h+='</table>';$('ov-scoreboard').innerHTML=h;
+}
+let _suite=null,_suitePoll=null;
+async function runSuite(){
+  const r=await post('/evolve/suite/start',{tag:$('ov-tag').value,assess:$('ov-assess').checked});
+  if(r&&r.error){toast(r.error);return}
+  toast('Suite started');pollSuite();
+}
+async function runQuickSmoke(){
+  const r=await post('/evolve/suite/start',{tag:'smoke',assess:false});
+  if(r&&r.error){toast(r.error);return}
+  toast('Quick smoke started (cap tests only)');pollSuite();
+}
+async function runGoal(){
+  const g=$('ov-goal').value.trim();if(!g){toast('type a goal');return}
+  const r=await post('/evolve/run/start',{kind:'loop',goal:g,target:'specialist:'+($('ov-goal-profile').value||'planning')});
+  if(r&&r.ok){_testRunId=r.run_id;_testRunKind='loop';_testRunLabel=(r.target||'');_testRunGoal=g;_suiteActive=false;$('tc-goal').value=g;nav('test')}else toast((r&&r.error)||'failed');
+}
+function openGenerate(){
+  openModal('<div class="card-h"><span class="card-t">Generate tests</span><span class="hint">LLM designs benchmark tasks + checks, saved for comparative runs</span></div>'
+    +'<label class="fld">Goal / subsystem to test</label><textarea id="gen-goal" style="min-height:52px" placeholder="e.g. the dream pipeline system, or: verify web.search returns grounded citations"></textarea>'
+    +'<div class="grid" style="margin-top:8px">'
+    +'<div><label class="fld">count</label><input id="gen-count" type="number" value="3" min="1" max="8" style="width:100%"></div>'
+    +'<div><label class="fld">loop profile</label><select id="gen-profile" style="width:100%">'+_profiles.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.label||p.id)+'</option>').join('')+'</select></div>'
+    +'<div><label class="fld">cap prefix (optional)</label><input id="gen-prefix" placeholder="e.g. dream." style="width:100%"></div>'
+    +'<div><label class="fld">tag</label><input id="gen-tag" value="generated" style="width:100%"></div>'
+    +'</div>'
+    +'<div id="gen-out" style="margin-top:8px"></div>'
+    +'<div class="row" style="margin-top:10px"><button class="btn primary" onclick="doGenerate()">Generate &amp; save</button><span style="flex:1"></span><button class="btn" onclick="closeModal()">Close</button></div>');
+  if($('gen-profile'))$('gen-profile').value=_cfg.default_profile||'';
+}
+async function doGenerate(){
+  const goal=$('gen-goal').value.trim();if(!goal){toast('goal required');return}
+  $('gen-out').innerHTML='<span class="spin"></span> asking the editor LLM to design tests…';
+  const r=await post('/evolve/tasks/generate',{goal,count:+$('gen-count').value,profile:$('gen-profile').value,cap_prefix:$('gen-prefix').value.trim(),tag:$('gen-tag').value.trim()||'generated'});
+  if(!r||r.error){$('gen-out').innerHTML='<span style="color:var(--err)">'+esc((r&&r.error)||'failed')+'</span>'+((r&&r.raw)?'<pre>'+esc(r.raw)+'</pre>':'');return}
+  $('gen-out').innerHTML='<div class="pill" style="color:var(--ok)">saved '+(r.tasks||[]).length+' task(s), tag "'+esc(r.tag)+'"</div>'
+    +(r.tasks||[]).map(t=>'<div style="background:var(--bg2);border-radius:5px;padding:6px 9px;margin-top:5px;font-size:10.5px"><b class="mono">'+esc(t.id)+'</b> <span class="tag">'+esc(t.type)+'</span><div class="hint">'+esc(t.goal||t.cap||'')+'</div><div class="mono" style="font-size:9px;color:var(--dim2)">checks: '+(t.checks||[]).map(c=>esc(c.type)).join(', ')+'</div></div>').join('');
+  loadTasks();
+}
+async function pollSuite(){
+  const r=await api('/evolve/suite/status');const s=(r&&r.status)||{};_suite=s;_suite.running=!!(r&&r.running);
+  renderLive();
+  if(_suite.running){$('ov-run').disabled=true;if(!_suitePoll)_suitePoll=setInterval(pollSuite,2500)}
+  else{$('ov-run').disabled=false;if(_suitePoll){clearInterval(_suitePoll);_suitePoll=null}if(_curSec()==='overview')loadOverview()}
+}
+
+/* ═══ TASKS ═══ */
+async function loadTasks(){
+  const r=await api('/evolve/tasks');const tasks=(r&&r.tasks)||[];
+  if(!tasks.length){$('tasks-body').innerHTML='<div class="empty">No tasks.</div>';return}
+  let h='<table><tr><th>id</th><th>type</th><th>profile / cap</th><th>checks</th><th>tags</th><th></th></tr>';
+  for(const t of tasks){
+    h+='<tr><td><b>'+esc(t.id)+'</b><div class="hint">'+esc(t.label||'')+'</div></td>'
+      +'<td><span class="tag">'+esc(t.type||'loop')+'</span>'+(t.enabled===false?' <span class="tag" style="color:var(--dim)">off</span>':'')+'</td>'
+      +'<td class="mono">'+esc(t.type==='cap'?(t.cap||''):(t.profile||''))+'</td>'
+      +'<td class="mono">'+((t.checks||[]).length)+'</td>'
+      +'<td>'+((t.tags||[]).map(x=>'<span class="tag">'+esc(x)+'</span>').join(' '))+'</td>'
+      +'<td class="row" style="gap:4px"><button class="btn sm" onclick="runTask(\''+esc(t.id)+'\')">&#9654;</button>'
+      +'<button class="btn sm" onclick=\'openTask('+JSON.stringify(t).replace(/'/g,"&#39;")+')\'>edit</button></td></tr>';
+  }
+  h+='</table>';$('tasks-body').innerHTML=h;
+}
+async function runTask(id){
+  const r=await post('/evolve/run/start',{kind:'task',task_id:id});
+  if(!r||!r.ok){toast((r&&r.error)||'failed');return}
+  _testRunId=r.run_id;_testRunKind='task';_testRunLabel=id;_suiteActive=false;
+  const tr=await api('/evolve/tasks');
+  const tt=((tr&&tr.tasks)||[]).find(x=>x.id===id);
+  _testRunGoal=(tt&&tt.goal)||'';
+  nav('test');
+}
+function openTask(t){
+  t=t||{};
+  const h='<div class="card-h"><span class="card-t">'+(t.id?'Edit task':'New task')+'</span></div>'
+    +'<div class="grid">'
+    +'<div><label class="fld">id</label><input id="tk-id" value="'+esc(t.id||'')+'" '+(t.id?'readonly':'')+' style="width:100%"></div>'
+    +'<div><label class="fld">label</label><input id="tk-label" value="'+esc(t.label||'')+'" style="width:100%"></div>'
+    +'<div><label class="fld">type</label><select id="tk-type" style="width:100%" onchange="tkTypeCh()"><option value="loop"'+(t.type!=='cap'?' selected':'')+'>loop</option><option value="cap"'+(t.type==='cap'?' selected':'')+'>cap</option></select></div>'
+    +'<div><label class="fld">tags (csv)</label><input id="tk-tags" value="'+esc((t.tags||[]).join(','))+'" style="width:100%"></div>'
+    +'<div id="tk-loop1"><label class="fld">profile</label><select id="tk-profile" style="width:100%">'+_profiles.map(p=>'<option value="'+esc(p.id)+'"'+(t.profile===p.id?' selected':'')+'>'+esc(p.label||p.id)+'</option>').join('')+'</select></div>'
+    +'<div id="tk-loop2"><label class="fld">allowed_caps (csv)</label><input id="tk-caps" value="'+esc(t.allowed_caps||'')+'" style="width:100%"></div>'
+    +'<div id="tk-cap1" style="display:none"><label class="fld">cap</label><input id="tk-cap" value="'+esc(t.cap||'')+'" style="width:100%"></div>'
+    +'<div id="tk-cap2" style="display:none"><label class="fld">args (JSON)</label><input id="tk-args" value="'+esc(JSON.stringify(t.args||{}))+'" style="width:100%"></div>'
+    +'<div><label class="fld">max steps</label><input id="tk-steps" type="number" value="'+(t.max_steps||6)+'" style="width:100%"></div>'
+    +'<div><label class="fld">timeout (s)</label><input id="tk-timeout" type="number" value="'+(t.timeout_s||480)+'" style="width:100%"></div>'
+    +'</div>'
+    +'<label class="fld" style="margin-top:8px">goal (loop tasks)</label><textarea id="tk-goal" style="min-height:54px">'+esc(t.goal||'')+'</textarea>'
+    +'<label class="fld" style="margin-top:6px">checks (JSON: [{"type":"cap_called","value":"echo"}])</label><textarea id="tk-checks" style="min-height:54px">'+esc(JSON.stringify(t.checks||[],null,1))+'</textarea>'
+    +'<label class="fld" style="margin-top:6px">rubric</label><textarea id="tk-rubric" style="min-height:40px">'+esc(t.rubric||'')+'</textarea>'
+    +'<div class="row" style="margin-top:10px"><label class="row" style="gap:5px"><input type="checkbox" id="tk-en" '+(t.enabled!==false?'checked':'')+' style="width:auto"> enabled</label>'
+    +'<span style="flex:1"></span>'+(t.id?'<button class="btn err-btn" onclick="delTask(\''+esc(t.id)+'\')">Delete</button>':'')
+    +'<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveTask()">Save</button></div>';
+  openModal(h);tkTypeCh();
+}
+function tkTypeCh(){const cap=$('tk-type').value==='cap';['tk-loop1','tk-loop2'].forEach(i=>$(i).style.display=cap?'none':'');['tk-cap1','tk-cap2'].forEach(i=>$(i).style.display=cap?'':'none')}
+async function saveTask(){
+  let checks,args;try{checks=JSON.parse($('tk-checks').value||'[]')}catch(e){toast('checks JSON invalid');return}
+  try{args=JSON.parse($('tk-args').value||'{}')}catch(e){toast('args JSON invalid');return}
+  const task={id:$('tk-id').value.trim(),label:$('tk-label').value,type:$('tk-type').value,
+    tags:$('tk-tags').value.split(',').map(s=>s.trim()).filter(Boolean),
+    profile:$('tk-profile').value,allowed_caps:$('tk-caps').value,cap:$('tk-cap').value,args,
+    goal:$('tk-goal').value,checks,rubric:$('tk-rubric').value,
+    max_steps:+$('tk-steps').value,timeout_s:+$('tk-timeout').value,enabled:$('tk-en').checked};
+  if(!task.id){toast('id required');return}
+  const r=await post('/evolve/task/upsert',{task});
+  if(r&&!r.error){toast('Saved');closeModal();loadTasks()}else toast((r&&r.error)||'failed')
+}
+async function delTask(id){if(!confirm('Delete task '+id+'?'))return;await post('/evolve/task/delete',{id});closeModal();loadTasks()}
+
+/* ═══ RUNS ═══ */
+async function loadRuns(){
+  const r=await api('/evolve/runs?limit=60');const runs=(r&&r.runs)||[];
+  if(!runs.length){$('runs-body').innerHTML='<div class="empty">No runs yet.</div>';return}
+  let h='<table><tr><th>time</th><th>task</th><th>where</th><th>src</th><th>checks</th><th>score</th><th>combined</th><th>time</th><th></th></tr>';
+  for(const r2 of runs){
+    const wh=r2.where==='sandbox'?'<span class="tag" style="color:var(--ok)">🛡 sandbox</span>':(r2.where?'<span class="tag" style="color:var(--warn)">in-proc</span>':'');
+    h+='<tr class="clk" onclick="openRun(\''+esc(r2.run_id)+'\')"><td class="mono">'+esc((r2.ts||'').slice(11,19))+'</td>'
+      +'<td>'+esc(r2.task)+(r2.error?' <span class="tag" style="color:var(--err)">err</span>':'')+(r2.variant?' <span class="tag">'+esc(r2.variant)+'</span>':'')+'</td>'
+      +'<td>'+wh+'</td>'
+      +'<td><span class="tag">'+esc(r2.source||'')+'</span></td><td class="mono">'+esc(r2.checks_ok)+'/'+esc(r2.checks_n)+'</td>'
+      +'<td>'+scChip(r2.score)+'</td><td>'+scChip(r2.combined)+'</td><td class="mono">'+(r2.elapsed_s||0)+'s</td>'
+      +'<td><button class="btn sm" onclick="event.stopPropagation();compareRun(\''+esc(r2.run_id)+'\')" title="Score with both critics">⇄</button></td></tr>';
+  }
+  h+='</table>';$('runs-body').innerHTML=h;
+}
+async function openRun(id){const r=await api('/evolve/run/get?run_id='+encodeURIComponent(id));if(r&&r.run)openRunDetail(r.run);else toast('run not found')}
+function openRunDetail(d){
+  const a=d.assessment||{};
+  let h='<div class="card-h"><span class="card-t">'+esc(d.task)+'</span><span class="hint">'+esc(d.run_id)+' · '+(d.elapsed_s||0)+'s</span></div>'
+    +'<div class="row" style="margin-bottom:8px">'+scChip(d.combined)+' <span class="hint">combined</span>'
+    +(d.score!=null?(' '+scChip(d.score)+' <span class="hint">critic</span>'):'')
+    +' <span class="pill">checks '+esc(d.checks_ok)+'/'+esc(d.checks_n)+'</span>'
+    +(d.error?' <span class="pill" style="color:var(--err)">'+esc(d.error)+'</span>':'')+'</div>';
+  if(a.critique)h+='<div style="background:var(--bg2);border-left:3px solid '+scColor(a.score)+';border-radius:5px;padding:8px 10px;margin-bottom:8px;font-size:11px;line-height:1.5">'+esc(a.critique)+(a.failures&&a.failures.length?('<ul style="margin:6px 0 0 16px;color:var(--warn)">'+a.failures.map(f=>'<li>'+esc(f)+'</li>').join('')+'</ul>'):'')+'</div>';
+  h+='<label class="fld">goal</label><pre>'+esc(d.goal||'')+'</pre>';
+  if((d.checks||[]).length){h+='<label class="fld" style="margin-top:8px">checks</label>';for(const c of d.checks)h+='<div class="mono" style="font-size:10px;color:'+(c.ok?'var(--ok)':'var(--err)')+'">'+(c.ok?'✓':'✗')+' '+esc(c.type)+'('+esc(String(c.value||'').slice(0,40))+')'+(c.note?' — '+esc(c.note):'')+'</div>'}
+  if((d.steps||[]).length){h+='<details style="margin-top:8px"><summary>tool trace ('+d.steps.length+' steps)</summary><div style="margin-top:6px">';for(const s of d.steps)h+='<div class="mono" style="font-size:10px;padding:2px 0;border-bottom:1px solid var(--border)"><span style="color:'+(s.ok?'var(--ok)':'var(--err)')+'">'+(s.ok?'✓':'✗')+'</span> <span style="color:var(--acc)">'+esc(s.cap)+'</span> '+esc((s.preview||'').slice(0,140))+'</div>';h+='</div></details>'}
+  h+='<label class="fld" style="margin-top:8px">final output</label><pre>'+esc((d.final||'(empty)').slice(0,4000))+'</pre>';
+  h+='<div class="row" style="margin-top:10px"><button class="btn" onclick="assessRun(\''+esc(d.run_id)+'\')">Re-assess</button><button class="btn" onclick="compareRun(\''+esc(d.run_id)+'\')">Compare critics</button><span style="flex:1"></span><button class="btn" onclick="closeModal()">Close</button></div>';
+  openModal(h);
+}
+async function assessRun(id){toast('Assessing…');const r=await post('/evolve/assess',{run_id:id});if(r&&!r.error){openRun(id);loadRuns()}else toast((r&&r.error)||'failed')}
+async function compareRun(id){
+  toast('Scoring with both critics…');
+  const r=await post('/evolve/assess/compare',{run_id:id,providers:'ollama,'+(_cfg.editor_provider||'anthropic')});
+  if(!r||r.error){toast((r&&r.error)||'failed');return}
+  let h='<div class="card-h"><span class="card-t">Critic agreement — '+esc(id)+'</span></div>';
+  h+='<div class="row" style="margin-bottom:8px"><span class="pill">Δ '+(r.score_delta==null?'—':r.score_delta)+'</span> <span class="pill" style="color:'+(r.agree_pass?'var(--ok)':'var(--warn)')+'">'+(r.agree_pass?'agree on pass/fail':'disagree')+'</span></div>';
+  h+='<table><tr><th>critic</th><th>score</th><th>passed</th><th>critique</th></tr>';
+  for(const k in (r.assessments||{})){const a=r.assessments[k];h+='<tr><td class="mono">'+esc(k)+'</td><td>'+scChip(a.score)+'</td><td>'+(a.passed?'✓':'✗')+'</td><td style="font-size:10px">'+esc((a.critique||'').slice(0,300))+'</td></tr>'}
+  h+='</table><div class="hint" style="margin-top:8px">Small Δ + agreement → the local critic is ready to take over from '+esc(_cfg.editor_provider||'the API critic')+'.</div>';
+  h+='<div class="row" style="margin-top:10px"><span style="flex:1"></span><button class="btn" onclick="closeModal()">Close</button></div>';
+  openModal(h);
+}
+
+/* ═══ IMPROVE ═══ */
+function imSourceCh(){const s=$('im-source').value;$('im-goals-row').style.display=s==='goals'?'':'none';$('im-gen-row').style.display=s==='generate'?'':'none'}
+async function startImprove(){
+  const src=$('im-source').value;
+  const body={target:$('im-profile').value,tag:$('im-tag').value.trim(),goal_source:src,
+    critic:$('im-critic').value,editor:$('im-editor').value,max_rounds:+$('im-rounds').value,target_score:+$('im-target').value};
+  if(src==='goals'){body.goals=$('im-goals').value.split('\n').map(x=>x.trim()).filter(Boolean)}
+  if(src==='generate'){body.generate_from=$('im-gen').value.trim();if(!body.generate_from){toast('describe what to generate goals for');return}}
+  const r=await post('/evolve/improve/start',body);
+  if(r&&r.ok){toast('Session '+r.session_id+' started ('+((r.tasks||[]).length)+' tasks)');_watchSession=r.session_id;pollSessionLive(r.session_id);loadSessions(true);nav('watch')}else toast((r&&r.error)||'failed')
+}
+async function loadSessions(quiet){
+  const r=await api('/evolve/improve/list?limit=25');const ss=(r&&r.sessions)||[];
+  const live=ss.find(s=>s.live||s.status==='running');_liveSession=live||_liveSession;renderLive();
+  if($('sec-improve').style.display!=='none'){
+    if(!ss.length){$('sessions-body').innerHTML='<div class="empty">No sessions yet.</div>'}
+    else{
+      let h='<table><tr><th>id</th><th>profile</th><th>status</th><th>round</th><th>current</th><th>best</th><th></th></tr>';
+      for(const s of ss){const isLive=s.live||s.status==='running';
+        h+='<tr class="clk" onclick="openSession(\''+esc(s.id)+'\')"><td class="mono">'+esc(s.id)+'</td><td>'+esc(s.profile)+'</td>'
+          +'<td>'+(isLive?'<span class="pill" style="color:var(--warn)">●&nbsp;'+esc(s.status||'running')+'</span>':'<span class="pill">'+esc(s.status||'')+'</span>')+'</td>'
+          +'<td class="mono">'+(s.rounds_done||0)+'/'+(s.max_rounds||'?')+'</td>'
+          +'<td class="hint" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.current||(s.error?('⚠ '+s.error):''))+'</td>'
+          +'<td>'+scChip(s.best_score)+'</td>'
+          +'<td>'+(isLive?'<button class="btn sm err-btn" onclick="event.stopPropagation();cancelSession(\''+esc(s.id)+'\')">stop</button>':'')+'</td></tr>';
+      }
+      h+='</table>';$('sessions-body').innerHTML=h;
+    }
+  }
+  if(ss.some(s=>s.live||s.status==='running')){clearTimeout(window._sesT);window._sesT=setTimeout(()=>loadSessions(true),3500)}
+}
+async function pollSessionLive(sid){
+  if(!sid)return;
+  const r=await api('/evolve/improve/status?session_id='+encodeURIComponent(sid));
+  if(r&&r.session){_liveSession=r.session;renderLive();
+    if(r.session.live||r.session.status==='running'){clearTimeout(window._sesLiveT);window._sesLiveT=setTimeout(()=>pollSessionLive(sid),3000)}}
+}
+async function cancelSession(id){const r=await post('/evolve/improve/cancel',{session_id:id});toast(r&&r.ok?'Stopping…':'not running');loadSessions(true)}
+async function openSession(id){
+  const r=await api('/evolve/improve/status?session_id='+encodeURIComponent(id));
+  if(!r||!r.session){toast('not found');return}
+  const s=r.session;
+  let h='<div class="card-h"><span class="card-t">Session '+esc(id)+' — '+esc(s.profile)+'</span>'
+    +'<span class="hint">'+esc(s.status||'')+' · critic '+esc(s.critic)+' · editor '+esc(s.editor)+'</span></div>';
+  if(s.current)h+='<div class="row" style="margin-bottom:6px"><span class="spin"></span><span class="hint">'+esc(s.current)+'</span></div>';
+  if(s.error)h+='<div class="pill" style="color:var(--err);margin-bottom:8px">'+esc(s.error)+'</div>';
+  h+='<div class="row" style="margin-bottom:8px"><span class="pill">best '+scChip(s.best_score)+' '+esc(s.best_variant||'')+'</span> <span class="pill">target '+esc(s.target_score)+'</span> <span class="pill">round '+(s.rounds_done||0)+'/'+(s.max_rounds||'?')+'</span></div>';
+  h+='<table><tr><th>round</th><th>variant</th><th>avg</th><th>tasks</th></tr>';
+  for(const rd of s.rounds||[])h+='<tr><td class="mono">'+rd.round+'</td><td class="mono">'+esc(rd.variant||'base')+'</td><td>'+scChip(rd.avg)+'</td><td class="mono">'+(rd.results||[]).map(x=>esc(x.task)+' '+(x.combined!=null?(+x.combined).toFixed(1):'—')).join(', ')+'</td></tr>';
+  h+='</table>';
+  if(s.best_variant)h+='<div class="row" style="margin-top:10px"><button class="btn primary" onclick="promoteVar(\''+esc(s.profile)+'\',\''+esc(s.best_variant)+'\')">Promote best → overlay</button><button class="btn" onclick="ciVariant(\''+esc(s.profile)+'\',\''+esc(s.best_variant)+'\')">Promote via CI (gated)</button></div>';
+  const cs=s.code_suggestions||[];
+  _sessSug=cs;_sessProfile=s.profile;
+  if(cs.length){h+='<label class="fld" style="margin-top:10px">Code suggestions ('+cs.length+') — the "Claude edits" half</label>';
+    cs.forEach((c,i)=>{h+='<div style="background:var(--bg2);border-radius:5px;padding:7px 9px;margin-bottom:5px;font-size:10.5px"><b class="mono">'+esc(c.area||'')+'</b><div>'+esc(c.suggestion||'')+'</div><div class="row" style="margin-top:4px"><button class="btn sm" onclick="queueCode(\''+esc(id)+'\','+i+')">Queue to Claude Code</button><button class="btn sm" onclick="ciCode('+i+')">Run code pipeline (branch)</button></div></div>'})}
+  if(s.notes&&s.notes.length)h+='<div class="hint" style="margin-top:8px">'+s.notes.map(esc).join('<br>')+'</div>';
+  h+='<div class="row" style="margin-top:10px"><span style="flex:1"></span><button class="btn" onclick="closeModal()">Close</button></div>';
+  openModal(h);
+}
+async function queueCode(id,i){const r=await post('/evolve/code/queue',{session_id:id,index:i});toast(r&&r.ok?'Queued to Claude Code':(r&&r.error)||'failed')}
+async function promoteVar(profile,vid){const r=await post('/evolve/variant/promote',{profile,variant_id:vid});if(r&&r.ok){toast('Promoted — loops.run now uses it');closeModal();}else toast((r&&r.error)||'failed')}
+
+/* ═══ CI / CD ═══ */
+async function loadGit(){
+  const r=await api('/evolve/git/status');
+  if(!r||r.error){$('git-body').innerHTML='<div class="empty">'+esc((r&&r.error)||'git status failed')+'</div>';return}
+  let h='<div class="row"><span class="kv"><span class="k">branch</span><span class="v" style="font-size:12px">'+esc(r.branch)+'</span></span>'
+    +'<span class="pill" style="color:'+(r.dirty?'var(--warn)':'var(--ok)')+'">'+(r.dirty?(r.dirty_files.length+' uncommitted'):'clean')+'</span>'
+    +'<span class="hint">'+esc(r.repo)+'</span></div>';
+  if((r.branches||[]).length){h+='<div style="margin-top:8px"><label class="fld">loop-lab branches</label>'+r.branches.map(b=>'<span class="tag" style="margin:2px">'+esc(b)+'</span>').join(' ')+'</div>'}
+  $('git-body').innerHTML=h;
+  // fill sandbox branch select too
+  const sel=$('sb-branch');if(sel){sel.innerHTML='<option value="">— pick a loop-lab branch —</option>'+(r.branches||[]).map(b=>'<option value="'+esc(b)+'">'+esc(b)+'</option>').join('')}
+}
+async function loadGitLog(){
+  const el=$('gitlog-body');if(!el)return;
+  const r=await api('/evolve/audit?limit=40');const rows=(r&&r.audit)||[];
+  if(!rows.length){el.innerHTML='<div class="empty">No changes logged yet.</div>';return}
+  const col=a=>a.indexOf('promote')>=0?'var(--ok)':a.indexOf('rollback')>=0||a.indexOf('delete')>=0||a.indexOf('clear')>=0?'var(--warn)':a.indexOf('branch')>=0?'var(--acc4)':'var(--dim2)';
+  el.innerHTML='<div style="font-family:var(--mono);font-size:10px;line-height:1.7">'+rows.map(a=>
+    '<div style="display:flex;gap:8px"><span style="color:'+col(a.action||'')+'">●</span>'
+    +'<span style="color:var(--acc3);flex-shrink:0">'+esc((a.action||'').slice(0,16))+'</span>'
+    +'<span style="color:var(--dim);flex-shrink:0">'+esc((a.ts||'').slice(5,16).replace('T',' '))+'</span>'
+    +'<span style="color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(a.summary||'')+'</span></div>').join('')+'</div>';
+}
+async function loadPipelines(){
+  loadGitLog();
+  const r=await api('/evolve/pipeline/list?limit=30');const ps=(r&&r.pipelines)||[];
+  if(!ps.length){$('pipes-body').innerHTML='<div class="empty">No pipelines yet.</div>';return}
+  let h='<table><tr><th>id</th><th>kind</th><th>profile</th><th>status</th><th>base→cand</th><th>gate</th><th>decision</th><th></th></tr>';
+  for(const p of ps){
+    const gate=p.gate_passed==null?'':(p.gate_passed?'<span style="color:var(--ok)">PASS '+(p.gate_delta>0?'+':'')+p.gate_delta+'</span>':'<span style="color:var(--err)">FAIL '+p.gate_delta+'</span>');
+    h+='<tr class="clk" onclick="openPipe(\''+esc(p.id)+'\')"><td class="mono">'+esc(p.id)+(p.live?' <span class="spin"></span>':'')+'</td>'
+      +'<td><span class="tag">'+esc(p.kind)+'</span></td><td>'+esc(p.profile)+'</td>'
+      +'<td>'+esc(p.status||'')+'</td>'
+      +'<td class="mono">'+(p.baseline_score==null?'—':p.baseline_score)+'→'+(p.candidate_score==null?'—':p.candidate_score)+'</td>'
+      +'<td>'+gate+'</td><td>'+pipeDecision(p.decision)+'</td>'
+      +'<td class="row" style="gap:3px">'+pipeActions(p)+'</td></tr>';
+  }
+  h+='</table>';$('pipes-body').innerHTML=h;
+  if(ps.some(p=>p.live)){clearTimeout(window._pipeT);window._pipeT=setTimeout(loadPipelines,3500)}
+}
+function pipeDecision(d){const c={promoted:'var(--ok)',rolled_back:'var(--dim2)',held:'var(--warn)',pending:'var(--acc3)'}[d]||'var(--dim2)';return '<span class="pill" style="color:'+c+'">'+esc(d||'')+'</span>'}
+function pipeActions(p){
+  if(p.live)return '';
+  let h='';
+  if(p.decision==='pending'||p.decision==='held'){
+    h+='<button class="btn sm ok-btn" onclick="event.stopPropagation();pipePromote(\''+esc(p.id)+'\')">promote</button>';
+    h+='<button class="btn sm err-btn" onclick="event.stopPropagation();pipeRollback(\''+esc(p.id)+'\')">rollback</button>';
+  }
+  return h;
+}
+async function openPipe(id){
+  const r=await api('/evolve/pipeline/get?id='+encodeURIComponent(id));if(!r||!r.pipeline){toast('not found');return}
+  const p=r.pipeline;
+  let h='<div class="card-h"><span class="card-t">Pipeline '+esc(id)+' · '+esc(p.kind)+'</span><span class="hint">'+esc(p.profile)+'</span></div>';
+  h+='<div class="row" style="margin-bottom:8px">'+pipeDecision(p.decision)+' <span class="pill">'+esc(p.status||'')+'</span>'
+    +(p.baseline_score!=null?' <span class="pill">baseline '+p.baseline_score+'</span>':'')
+    +(p.candidate_score!=null?' <span class="pill">candidate '+p.candidate_score+'</span>':'')
+    +(p.gate_delta!=null?' <span class="pill" style="color:'+(p.gate_passed?'var(--ok)':'var(--err)')+'">Δ '+(p.gate_delta>0?'+':'')+p.gate_delta+'</span>':'')
+    +(p.branch?' <span class="tag">'+esc(p.branch)+'</span>':'')+'</div>';
+  if(p.current)h+='<div class="row" style="margin-bottom:6px"><span class="spin"></span><span class="hint">'+esc(p.current)+'</span></div>';
+  h+='<label class="fld">stages</label>';
+  for(const st of p.steps||[])h+='<div class="mono" style="font-size:10px;padding:2px 0;color:'+(st.ok?'var(--ok)':'var(--err)')+'">'+(st.ok?'✓':'✗')+' '+esc(st.stage)+' — <span style="color:var(--dim2)">'+esc(st.detail)+'</span></div>';
+  h+='<div class="row" style="margin-top:12px">';
+  if(p.decision==='pending'||p.decision==='held'){
+    h+='<button class="btn primary" onclick="pipePromote(\''+esc(id)+'\')">Promote'+(p.kind==='code'?' (merge branch)':' (set overlay)')+'</button>';
+    h+='<button class="btn err-btn" onclick="pipeRollback(\''+esc(id)+'\')">Rollback'+(p.kind==='code'?' (delete branch)':' (clear overlay)')+'</button>';
+  }
+  h+='<span style="flex:1"></span><button class="btn" onclick="closeModal()">Close</button></div>';
+  openModal(h);
+}
+async function pipePromote(id){const r=await post('/evolve/pipeline/promote',{id});toast(r&&r.ok?'Promoted':(r&&r.error)||'failed');closeModal();loadPipelines()}
+async function pipeRollback(id){const r=await post('/evolve/pipeline/rollback',{id});toast(r&&r.ok?'Rolled back':(r&&r.error)||'failed');closeModal();loadPipelines()}
+async function pollPipeLive(id){if(!id)return;const r=await api('/evolve/pipeline/get?id='+encodeURIComponent(id));if(r&&r.pipeline){_livePipe=r.pipeline;renderLive();if(r.pipeline.live){clearTimeout(window._pipeLiveT);window._pipeLiveT=setTimeout(()=>pollPipeLive(id),3000)}}}
+let _sessSug=[],_sessProfile='';
+async function ciVariant(profile,vid){const r=await post('/evolve/pipeline/run',{kind:'variant',profile,variant_id:vid});if(r&&r.ok){toast('CI pipeline '+r.id+' started');closeModal();nav('pipelines');pollPipeLive(r.id)}else toast((r&&r.error)||'failed')}
+async function ciCode(i){const cs=_sessSug[i];if(!cs){toast('suggestion not found');return}const r=await post('/evolve/pipeline/run',{kind:'code',profile:_sessProfile,edits:[cs]});if(r&&r.ok){toast('Code pipeline '+r.id+' started (branch)');closeModal();nav('pipelines');pollPipeLive(r.id)}else toast((r&&r.error)||'failed')}
+
+/* ═══ SOURCES ═══ */
+async function loadSources(){
+  if($('src-profile'))$('src-profile').innerHTML=_profiles.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.label||p.id)+'</option>').join('');
+  if($('src-profile'))$('src-profile').value=_cfg.default_profile||'';
+  loadReviewAreas();
+}
+async function loadReviewAreas(){
+  const r=await api('/dream/review/areas');const areas=(r&&r.areas)||[];
+  const sel=$('src-area');if(!sel)return;
+  const withReports=areas.filter(a=>(a.reports||0)>0);
+  sel.innerHTML='<option value="">— review area —</option>'+withReports.map(a=>'<option value="'+esc(a.area)+'">'+esc(a.area)+' ('+(a.reports||0)+' reports)</option>').join('');
+  $('src-review-out').innerHTML=withReports.length?('Areas with reports: '+withReports.length):'No review reports yet — run a dream source review (Dream → Dream Review) first.';
+}
+async function fromReview(){
+  const area=$('src-area').value;if(!area){toast('pick an area');return}
+  $('src-review-out').innerHTML='<span class="spin"></span> distilling recommendations into edits…';
+  const r=await post('/evolve/pipeline/from_review',{area,profile:$('src-profile').value});
+  if(!r||r.error){$('src-review-out').innerHTML='<span style="color:var(--err)">'+esc((r&&r.error)||'failed')+'</span>';return}
+  $('src-review-out').innerHTML='<div class="pill" style="color:var(--ok)">'+(r.edits||[]).length+' edit(s)'+(r.pipeline_id?(' → pipeline '+esc(r.pipeline_id)):'')+'</div>'
+    +(r.edits||[]).map(e=>'<div style="background:var(--bg2);border-radius:5px;padding:6px 9px;margin-top:5px;font-size:10.5px"><b class="mono">'+esc(e.area||'')+'</b><div>'+esc(e.suggestion||'')+'</div></div>').join('');
+  if(r.pipeline_id){setTimeout(()=>{nav('pipelines');pollPipeLive(r.pipeline_id)},1200)}
+}
+async function observeScan(launch){
+  $('src-obs-out').innerHTML='<span class="spin"></span> scanning perf findings · stalls · errors…';
+  const r=await post('/evolve/observe/scan',{launch:!!launch});
+  if(!r||r.error){$('src-obs-out').innerHTML='<div class="empty">'+esc((r&&r.error)||'failed')+'</div>';return}
+  const s=r.findings_summary||{};
+  let h='<div class="row" style="margin-bottom:8px">';
+  ['crit','warn','info','ok'].forEach(k=>{if(s[k]!=null)h+='<span class="pill" style="color:'+(k==='crit'?'var(--err)':k==='warn'?'var(--warn)':'var(--dim2)')+'">'+s[k]+' '+k+'</span>'});
+  h+=(r.pipeline_id?' <span class="pill" style="color:var(--ok)">→ pipeline '+esc(r.pipeline_id)+'</span>':'')+'</div>';
+  if(!(r.edits||[]).length)h+='<div class="hint">'+esc(r.note||'No actionable code fixes suggested.')+'</div>';
+  else h+=(r.edits||[]).map((e,i)=>'<div style="background:var(--bg2);border-radius:5px;padding:6px 9px;margin-bottom:5px;font-size:10.5px"><b class="mono">'+esc(e.area||'')+'</b><div>'+esc(e.suggestion||'')+'</div></div>').join('');
+  $('src-obs-out').innerHTML=h;
+  if(r.pipeline_id){setTimeout(()=>{nav('pipelines');pollPipeLive(r.pipeline_id)},1200)}
+}
+
+/* ═══ SAFE-MODE / QUICK TESTS / AUDIT ═══ */
+function renderSafePill(){
+  const el=$('safe-pill'); if(!el)return;
+  const m=_cfg.sandbox_mode||'prefer';
+  const label={require:'🛡 sandbox required',prefer:'🛡 sandbox-first',off:'⚠ in-process'}[m]||m;
+  el.textContent=label;
+  el.style.color=m==='off'?'var(--warn)':'var(--ok)';
+}
+async function capTest(){
+  const cap=$('ct-cap').value.trim(); if(!cap){toast('cap name required');return}
+  let args={}; try{args=$('ct-args').value.trim()?JSON.parse($('ct-args').value):{}}catch(e){toast('args JSON invalid');return}
+  const r=await post('/evolve/run/start',{kind:'cap',cap,args});
+  if(r&&r.ok){_testRunId=r.run_id;$('qt-out').textContent=cap+' → running in Test…';nav('test')}
+  else{$('qt-out').textContent=(r&&r.error)||'failed'}
+}
+async function unitTest(){
+  const path=$('ut-path').value.trim()||'vera';
+  $('qt-out').innerHTML='<span class="spin"></span> '+$('ut-mode').value+' '+path+'…';
+  const r=await post('/evolve/unittest/run',{path,mode:$('ut-mode').value});
+  if(!r){$('qt-out').textContent='failed';return}
+  if(r.error){$('qt-out').innerHTML='<span style="color:var(--err)">'+esc(r.error)+'</span>';return}
+  $('qt-out').innerHTML='<span style="color:'+(r.passed?'var(--ok)':'var(--err)')+'">'+(r.passed?'✓ ':'✗ ')+esc(r.summary)+'</span> (rc '+r.rc+')';
+  if(!r.passed)openModal('<div class="card-h"><span class="card-t">Unit test — '+esc(path)+'</span></div><pre>'+esc(r.output||'')+'</pre><div class="row" style="margin-top:8px"><span style="flex:1"></span><button class="btn" onclick="closeModal()">Close</button></div>');
+}
+async function saveMode(){
+  const r=await post('/evolve/config/set',{sandbox_mode:$('sb-mode').value});
+  if(r&&r.ok){_cfg=r.config;renderSafePill();toast('Test execution: '+_cfg.sandbox_mode)}
+}
+async function savePort(){
+  const p=parseInt($('sb-port').value,10);
+  if(!p||p<1024||p>65535){toast('port must be 1024-65535');return}
+  const r=await post('/evolve/config/set',{dev_port:p});
+  if(r&&r.ok){_cfg=r.config;toast('Sandbox host port → '+p+' (applies on next Bring up)');loadSandbox()}
+  else toast((r&&r.error)||'failed');
+}
+async function sandboxEnsure(){
+  toast('Ensuring an isolation sandbox is up… (first boot ~1 min)');
+  const r=await post('/evolve/sandbox/ensure',{});
+  if(r&&r.ok)toast(r.already_up?'Sandbox already up':(r.healthy?'Sandbox up + healthy':'Sandbox starting'));
+  else toast((r&&r.error)||'failed'); loadSandbox();
+}
+async function loadAudit(){
+  const r=await api('/evolve/audit?limit=120'+($('aud-filter')&&$('aud-filter').value?('&action='+encodeURIComponent($('aud-filter').value)):''));
+  const rows=(r&&r.audit)||[];
+  if(!rows.length){$('audit-body').innerHTML='<div class="empty">No activity yet.</div>';return}
+  const col=a=>a.indexOf('rollback')>=0||a.indexOf('clear')>=0||a.indexOf('delete')>=0?'var(--warn)':a.indexOf('promote')>=0||a.indexOf('up')>=0?'var(--ok)':'var(--dim2)';
+  $('audit-body').innerHTML='<table><tr><th>when</th><th>action</th><th>detail</th></tr>'+rows.map(a=>
+    '<tr><td class="mono" style="white-space:nowrap">'+esc((a.ts||'').slice(0,19).replace('T',' '))+'</td>'
+    +'<td><span class="tag" style="color:'+col(a.action||'')+'">'+esc(a.action||'')+'</span></td>'
+    +'<td>'+esc(a.summary||'')+'</td></tr>').join('')+'</table>';
+}
+
+/* ═══ SANDBOX ═══ */
+async function loadSandbox(){
+  if($('sb-mode')&&_cfg.sandbox_mode)$('sb-mode').value=_cfg.sandbox_mode;
+  loadGit();
+  const r=await api('/evolve/sandbox/status');
+  if(!r){$('sandbox-body').innerHTML='<div class="empty">status failed</div>';return}
+  const sb=r.sandbox||{};const up=r.up;
+  // Reflect the configured port (leave alone while the user is editing it)
+  if($('sb-port')&&document.activeElement!==$('sb-port')&&r.dev_port!=null)$('sb-port').value=r.dev_port;
+  if($('sb-port-hint')&&r.prod_port!=null)$('sb-port-hint').textContent='prod is on '+r.prod_port+' — pick a different free port';
+  const stale=!!(r.probe&&r.probe.stale);
+  let h='<div class="row"><span class="pill" style="color:'+(up?'var(--ok)':(stale?'var(--warn)':'var(--dim2)'))+'">'+(up?'● UP':(stale?'▲ STALE':'○ down'))+'</span>';
+  if(sb.branch)h+=' <span class="tag">'+esc(sb.branch)+'</span>';
+  h+=' <span class="hint">port '+esc(r.dev_port)+' · redis db '+esc(r.dev_redis_db)+(r.probe&&r.probe.tool_count?(' · '+r.probe.tool_count+' caps'):'')+'</span>';
+  if(up)h+=' <a href="http://localhost:'+esc(r.dev_port)+'/" target="_blank">open dev →</a>';
+  h+='</div>';
+  if(stale){
+    h+='<div class="hint" style="margin-top:5px;color:var(--warn)">▲ The sandbox is running a <b>stale image</b> — it is missing newer capabilities (e.g. <code>loops.run</code>), so runs routed into it 404. Rebuild the image and recreate the container:</div>'
+      +'<div class="row" style="margin-top:5px"><button class="btn primary" onclick="sandboxRebuild()" title="Force-rebuild vera:latest from source, then recreate the sandbox container on it (a few minutes)">🛠 Rebuild image &amp; recreate</button></div>';
+  } else if(r.probe&&r.probe.error&&sb.branch){
+    h+='<div class="hint" style="margin-top:4px;color:var(--warn)">probe: '+esc(r.probe.error)+'</div>';
+  }
+  $('sandbox-body').innerHTML=h;
+  renderSbxCode(sb.code||null);
+  loadSbxDiff('');
+  if(sb.worktree)sbxFsList(_sbfCur||'');
+}
+
+/* ── sandbox TERMINAL (container / worktree — never the real source) ── */
+async function sbxTermRun(){
+  const cmd=$('sbt-cmd').value.trim();if(!cmd)return;
+  window._sbtLast=cmd;$('sbt-cmd').value='';
+  const out=$('sbt-out');
+  if(out.querySelector('.hint'))out.textContent='';
+  out.textContent+='$ '+cmd+'\n';
+  const r=await post('/evolve/sandbox/exec',{cmd,where:$('sbt-where').value});
+  if(!r){out.textContent+='(request failed)\n';return}
+  if(r.error){out.textContent+='! '+r.error+'\n'}
+  else{
+    if(r.out)out.textContent+=r.out+'\n';
+    if(r.err)out.textContent+='[stderr] '+r.err+'\n';
+    if(r.code)out.textContent+='(exit '+r.code+')\n';
+  }
+  out.scrollTop=out.scrollHeight;
+}
+
+/* ── sandbox FILE EXPLORER (worktree-jailed) ── */
+let _sbfCur='',_sbfOpen='';
+async function sbxFsList(path){
+  const r=await api('/evolve/sandbox/fs/list?path='+encodeURIComponent(path||''));
+  const t=$('sbf-tree');if(!t)return;
+  if(!r||r.error){t.innerHTML='<div class="empty">'+esc((r&&r.error)||'failed')+'</div>';return}
+  _sbfCur=r.path||'';
+  $('sbf-path').textContent='/'+_sbfCur;
+  let h='';
+  for(const d of r.dirs||[])h+='<div class="clk row" style="padding:2px 4px" onclick="sbxFsList(\''+esc((_sbfCur?_sbfCur+'/':'')+d)+'\')">🗀 <span>'+esc(d)+'</span></div>';
+  for(const f of r.files||[])h+='<div class="clk row" style="padding:2px 4px" onclick="sbxFsOpen(\''+esc((_sbfCur?_sbfCur+'/':'')+f.name)+'\')">🗎 <span style="flex:1">'+esc(f.name)+'</span><span class="hint">'+(f.size>=1024?((f.size/1024).toFixed(1)+'k'):f.size)+'</span></div>';
+  t.innerHTML=h||'<div class="empty">(empty)</div>';
+}
+function sbxFsUp(){if(!_sbfCur)return;const i=_sbfCur.lastIndexOf('/');sbxFsList(i<0?'':_sbfCur.slice(0,i))}
+async function sbxFsOpen(path){
+  const r=await api('/evolve/sandbox/fs/read?path='+encodeURIComponent(path));
+  if(!r||r.error){toast((r&&r.error)||'read failed');return}
+  _sbfOpen=path;
+  $('sbf-file').textContent=path+(r.truncated?' (truncated — too large to edit safely)':'');
+  const ed=$('sbf-edit');ed.style.display='';ed.value=r.content||'';
+  $('sbf-save').style.display=r.truncated?'none':'';
+}
+async function sbxFsSave(){
+  if(!_sbfOpen)return;
+  const r=await post('/evolve/sandbox/fs/write',{path:_sbfOpen,content:$('sbf-edit').value});
+  toast(r&&r.ok?('saved '+_sbfOpen+' → branch'):((r&&r.error)||'save failed'));
+  if(r&&r.ok)loadSbxDiff('');
+}
+async function sandboxUp(){const b=$('sb-branch').value;if(!b){toast('pick a branch');return}toast('Bringing up sandbox on '+b+'… (first boot ~1 min)');const r=await post('/evolve/sandbox/up',{branch:b});if(r&&r.ok){toast(r.healthy?'Sandbox up + healthy':'Sandbox starting — re-check status shortly')}else toast((r&&r.error)||'failed');loadSandbox()}
+async function sandboxDown(){const r=await post('/evolve/sandbox/down',{});toast(r&&r.ok?'Torn down':(r&&r.detail)||'failed');loadSandbox()}
+async function sandboxRebuild(){
+  const sb=(await api('/evolve/sandbox/status'))||{};
+  const branch=(sb.sandbox&&sb.sandbox.branch)||'';
+  if(!confirm('Force-rebuild '+((sb.sandbox&&sb.sandbox.branch)?('the sandbox image and recreate the container on '+branch):'the sandbox image')+'? This runs a full docker build from source (several minutes).'))return;
+  toast('Rebuilding vera:latest from source + recreating container… (several minutes)');
+  const body=branch?{branch:branch,rebuild_image:true}:{rebuild_image:true};
+  const r=await post(branch?'/evolve/sandbox/up':'/evolve/sandbox/ensure',body);
+  if(r&&(r.ok||r.healthy))toast(r.healthy?'Rebuilt — sandbox up + healthy':(r.stale?'Still stale — check the build log':'Rebuilt — starting, re-check status'));
+  else toast((r&&(r.error||r.note))||'rebuild failed');
+  loadSandbox();
+}
+async function sandboxSnapshot(){const r=await post('/evolve/sandbox/snapshot',{});toast(r&&r.ok?('Snapshotted '+r.copied+' keys'):(r&&r.error)||'failed')}
+
+/* ── sandbox branch diff + VS Code sidecar ── */
+function diffHtml(t){
+  return (t||'').split('\n').map(l=>{
+    const e=esc(l);
+    if(l.startsWith('+++')||l.startsWith('---'))return '<span class="dl h">'+e+'</span>';
+    if(l.startsWith('@@'))return '<span class="dl hunk">'+e+'</span>';
+    if(l.startsWith('diff --git'))return '<span class="dl file">'+e+'</span>';
+    if(l.startsWith('+'))return '<span class="dl add">'+e+'</span>';
+    if(l.startsWith('-'))return '<span class="dl del">'+e+'</span>';
+    return '<span class="dl">'+e+'</span>';
+  }).join('');
+}
+async function loadSbxDiff(file){
+  const fl=$('sbd-files'),v=$('sbd-view');if(!fl)return;
+  const r=await api('/evolve/sandbox/diff'+(file?'?file='+encodeURIComponent(file):''));
+  if(!r||r.error){fl.innerHTML='<div class="empty">'+esc((r&&r.error)||'diff failed')+'</div>';return}
+  const rows=(r.files||[]).map(f=>'<div class="sbd-f'+(file===f.path?' on':'')+'" onclick="loadSbxDiff(\''+esc(f.path)+'\')" title="'+esc(f.path)+'"><span class="tag">'+esc(f.status)+'</span> '+esc(f.path)+' <span class="hint">+'+esc(f.adds)+' −'+esc(f.dels)+'</span></div>').join('');
+  const un=(r.untracked||[]).map(p=>'<div class="sbd-f'+(file===p?' on':'')+'" onclick="loadSbxDiff(\''+esc(p)+'\')" title="'+esc(p)+'"><span class="tag" style="color:var(--warn)">new</span> '+esc(p)+'</div>').join('');
+  fl.innerHTML=(rows+un)||'<div class="empty">no changes vs '+esc(r.base||'main')+'</div>';
+  v.innerHTML=(diffHtml(r.diff)||'<span class="hint">no diff</span>')+(r.truncated?'<span class="hint">… truncated</span>':'');
+}
+function renderSbxCode(c){
+  const on=!!(c&&c.container);
+  const st=$('sbc-state');if(!st)return;
+  st.textContent=on?('● attached :'+(c.port||'')):'○ not attached';
+  st.style.color=on?'var(--ok)':'var(--dim2)';
+  $('sbc-open').style.display=on?'':'none';
+  window._sbcProxy=(c&&c.proxy)||'/vscode/loop-lab-dev/';
+  if(!on){$('sbc-frame-wrap').style.display='none';$('sbc-frame').src='about:blank';$('sbc-pw').textContent='';window._sbcPw=''}
+}
+async function sbxCodeAttach(){
+  toast('Starting VS Code sidecar…');
+  const r=await post('/evolve/sandbox/code/attach',{});
+  if(r&&r.ok){
+    window._sbcPw=r.password||'';
+    toast('VS Code up on :'+r.port);
+    renderSbxCode({container:r.container,port:r.port,proxy:r.proxy});
+    if(window._sbcPw)$('sbc-pw').textContent='pw: '+window._sbcPw+' ⧉';
+  } else toast((r&&r.error)||'failed');
+}
+async function sbxCodeDetach(){
+  const r=await post('/evolve/sandbox/code/detach',{});
+  toast(r&&r.ok?'Detached':(r&&r.error)||'failed');
+  renderSbxCode(null);
+}
+function sbxCodeToggle(){
+  const w=$('sbc-frame-wrap'),f=$('sbc-frame');
+  if(w.style.display==='none'){
+    f.src=window._sbcProxy||'/vscode/loop-lab-dev/';w.style.display='';
+    $('sbc-open').textContent='Hide';
+    if(window._sbcPw)toast('login password: '+window._sbcPw+' (click pw to copy)');  // pragma: allowlist secret
+  } else {w.style.display='none';f.src='about:blank';$('sbc-open').textContent='Open here'}
+}
+
+/* ═══ VARIANTS ═══ */
+async function loadVariants(){
+  const prof=$('var-profile').value;if(!prof){$('variants-body').innerHTML='<div class="empty">Pick a profile.</div>';return}
+  const r=await api('/evolve/variants?profile='+encodeURIComponent(prof));
+  const ov=r&&r.overlay;
+  $('overlay-box').innerHTML=ov
+    ?('<div style="background:var(--bg2);border-left:3px solid var(--ok);border-radius:5px;padding:8px 10px"><b>Active overlay:</b> <span class="mono">'+esc(ov.variant_id)+'</span> '+scChip(ov.score)+' · applied to every <span class="mono">'+esc(prof)+'</span> run <button class="btn sm err-btn" style="margin-left:8px" onclick="clearOverlay(\''+esc(prof)+'\')">Clear</button><div class="mono" style="margin-top:5px;font-size:9.5px;color:var(--dim2)">'+esc(JSON.stringify(ov.overrides||{}))+'</div></div>')
+    :'<div class="hint">No overlay — this profile runs stock.</div>';
+  const vs=(r&&r.variants)||[];
+  if(!vs.length){$('variants-body').innerHTML='<div class="empty">No variants yet — run an improve session on this profile.</div>';return}
+  let h='<table><tr><th>variant</th><th>score</th><th>overrides</th><th>parent</th><th></th></tr>';
+  for(const v of vs){
+    h+='<tr><td class="mono">'+esc(v.id)+'</td><td>'+scChip(v.score)+'</td>'
+      +'<td class="mono" style="font-size:9.5px">'+esc(JSON.stringify(v.overrides||{}))+(v.prompt_preamble?' <span class="tag">+preamble</span>':'')+'</td>'
+      +'<td class="mono" style="font-size:9.5px">'+esc(v.parent||'')+'</td>'
+      +'<td class="row" style="gap:4px"><button class="btn sm" onclick=\'showVariant('+JSON.stringify(v).replace(/'/g,"&#39;")+')\'>view</button>'
+      +'<button class="btn sm ok-btn" onclick="promoteVar(\''+esc(prof)+'\',\''+esc(v.id)+'\')">promote</button>'
+      +'<button class="btn sm" onclick="ciVariant(\''+esc(prof)+'\',\''+esc(v.id)+'\')" title="Gated CI promote">CI</button></td></tr>';
+  }
+  h+='</table>';
+  h+=svgLineage(vs,prof,(ov||{}).variant_id);
+  $('variants-body').innerHTML=h;
+}
+/* Variant lineage tree — parent → child provenance (who improved what) */
+function svgLineage(vs,prof,promoted){
+  if(!vs||vs.length<1)return '';
+  const byId={};vs.forEach(v=>byId[v.id]=v);
+  const kids={};const roots=[];
+  vs.forEach(v=>{if(v.parent&&byId[v.parent]){(kids[v.parent]=kids[v.parent]||[]).push(v)}else roots.push(v)});
+  function node(v,depth){
+    const on=v.id===promoted;
+    let s='<div style="display:flex;align-items:center;gap:6px;padding:2px 0;margin-left:'+(depth*18)+'px">'
+      +(depth?'<span style="color:var(--dim2)">└</span>':'')
+      +'<span style="width:8px;height:8px;border-radius:50%;background:'+scColor(v.score)+';flex-shrink:0"></span>'
+      +'<span class="mono" style="font-size:9.5px'+(on?';color:var(--ok);font-weight:700':'')+'">'+esc(v.id)+'</span>'
+      +scChip(v.score)+(on?' <span class="tag" style="color:var(--ok)">◆ live</span>':'')
+      +'<button class="btn sm" onclick=\'showVariant('+JSON.stringify(v).replace(/'/g,"&#39;")+')\' style="padding:0 6px">view</button></div>';
+    (kids[v.id]||[]).forEach(c=>{s+=node(c,depth+1)});
+    return s;
+  }
+  return '<div style="margin-top:10px"><div class="rail-grp" style="padding:0 0 4px">lineage — how variants descend &amp; which is promoted</div>'
+    +roots.map(r=>node(r,0)).join('')+'</div>';
+}
+function showVariant(v){
+  let h='<div class="card-h"><span class="card-t">Variant '+esc(v.id)+'</span>'+scChip(v.score)+'</div>';
+  if(v.rationale)h+='<div style="background:var(--bg2);border-radius:5px;padding:8px 10px;margin-bottom:8px;font-size:11px;line-height:1.5">'+esc(v.rationale)+'</div>';
+  h+='<label class="fld">overrides</label><pre>'+esc(JSON.stringify(v.overrides||{},null,2))+'</pre>';
+  if(v.prompt_preamble)h+='<label class="fld" style="margin-top:6px">prompt preamble</label><pre>'+esc(v.prompt_preamble)+'</pre>';
+  h+='<div class="row" style="margin-top:10px"><button class="btn primary" onclick="promoteVar(\''+esc(v.profile)+'\',\''+esc(v.id)+'\')">Promote</button><button class="btn" onclick="ciVariant(\''+esc(v.profile)+'\',\''+esc(v.id)+'\')">Promote via CI</button><span style="flex:1"></span><button class="btn" onclick="closeModal()">Close</button></div>';
+  openModal(h);
+}
+async function clearOverlay(prof){await post('/evolve/variant/clear',{profile:prof});loadVariants()}
+
+/* ═══ SETTINGS ═══ */
+async function fillSettings(){
+  if($('st-critic'))$('st-critic').value=_cfg.critic_provider||'ollama';
+  if($('st-editor'))$('st-editor').value=_cfg.editor_provider||'anthropic';
+  if($('st-profile'))$('st-profile').value=_cfg.default_profile||'';
+  if($('st-target'))$('st-target').value=_cfg.target_score||8;
+  if($('st-rounds'))$('st-rounds').value=_cfg.max_rounds||4;
+  if($('st-code'))$('st-code').checked=!!_cfg.allow_code_edits;
+  if($('st-editq'))$('st-editq').checked=_cfg.editq_enabled!==false;
+  if($('st-editq-model'))$('st-editq-model').value=_cfg.editq_model||'gpt-oss:20b';
+  // populate CPU instance dropdown
+  const sel=$('st-editq-inst');
+  if(sel){const r=await api('/evolve/instances');const inst=(r&&r.instances)||[];
+    sel.innerHTML='<option value="">auto (any CPU node)</option>'+inst.filter(i=>!i.has_gpu).map(i=>'<option value="'+esc(i.id)+'">'+esc(i.label||i.id)+' ('+esc(i.id)+')</option>').join('');
+    sel.value=_cfg.editq_instance||'';}
+}
+async function saveConfig(){
+  const r=await post('/evolve/config/set',{critic_provider:$('st-critic').value,editor_provider:$('st-editor').value,
+    default_profile:$('st-profile').value,target_score:+$('st-target').value,max_rounds:+$('st-rounds').value,allow_code_edits:$('st-code').checked,
+    editq_enabled:$('st-editq').checked,editq_model:$('st-editq-model').value.trim()||'gpt-oss:20b',editq_instance:$('st-editq-inst').value});
+  if(r&&r.ok){_cfg=r.config;toast('Saved');$('cfg-line').textContent='critic: '+_cfg.critic_provider+' · editor: '+_cfg.editor_provider+' · target '+_cfg.target_score;
+    if($('editq-model-lbl'))$('editq-model-lbl').textContent=_cfg.editq_model;if($('im-editq-lbl'))$('im-editq-lbl').textContent=_cfg.editq_model}else toast('failed')
+}
+
+loadAll();
+</script>
+</body>
+</html>

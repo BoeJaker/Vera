@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <title>Vera Skills</title>
 <style>
@@ -21,7 +26,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc)}
 textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.55}
 .btn{display:inline-flex;align-items:center;gap:3px;padding:3px 10px;border-radius:3px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);font-size:11px;font-weight:500;cursor:pointer;transition:all .14s;white-space:nowrap}
 .btn:hover{border-color:var(--acc);color:var(--acc)}
-.btn.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#fff)}
 .btn.pri:hover{filter:brightness(1.1)}
 .btn.teal{background:rgba(143,184,122,.1);border-color:var(--acc2);color:var(--acc2)}
 .btn.danger{border-color:var(--err);color:var(--err)}
@@ -46,6 +51,8 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
 .sk-badge.t-few_shot{background:rgba(56,189,248,.1);color:#38bdf8;border:1px solid rgba(56,189,248,.26)}
 .sk-badge.t-chain_of_thought{background:rgba(201,149,90,.12);color:var(--acc3);border:1px solid rgba(201,149,90,.3)}
 .sk-badge.t-tool_hint{background:rgba(143,184,122,.12);color:var(--acc2);border:1px solid rgba(143,184,122,.3)}
+.sk-badge.t-output_format{background:rgba(232,170,90,.12);color:#e8aa5a;border:1px solid rgba(232,170,90,.3)}
+.sk-badge.t-delivery_channel{background:rgba(90,158,143,.12);color:var(--acc);border:1px solid rgba(90,158,143,.3)}
 .sk-badge.t-custom{background:rgba(138,126,112,.14);color:var(--dim2);border:1px solid var(--border2)}
 .cnt-pill{font-size:8.5px;font-family:var(--mono);color:var(--acc);background:rgba(90,158,143,.1);border:1px solid rgba(90,158,143,.25);border-radius:9px;padding:0 6px;line-height:15px}
 .empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;padding:30px 14px;text-align:center;color:var(--dim)}
@@ -115,6 +122,8 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
         <option value="few_shot">Few-Shot</option>
         <option value="chain_of_thought">Chain of Thought</option>
         <option value="tool_hint">Tool Hint</option>
+        <option value="output_format">Output Format</option>
+        <option value="delivery_channel">Delivery Channel</option>
         <option value="custom">Custom</option>
       </select>
     </div>
@@ -151,14 +160,49 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
               </div>
               <div class="field-group">
                 <div class="field-label">Type</div>
-                <select id="f-type">
+                <select id="f-type" onchange="SP.typeChanged()">
                   <option value="system_prompt">System Prompt</option>
                   <option value="persona">Persona</option>
                   <option value="few_shot">Few-Shot</option>
                   <option value="chain_of_thought">Chain of Thought</option>
                   <option value="tool_hint">Tool Hint</option>
+                  <option value="output_format">Output Format</option>
+                  <option value="delivery_channel">Delivery Channel</option>
                   <option value="custom">Custom</option>
                 </select>
+              </div>
+              <!-- Output-format extras: only shown for type=output_format.
+                   These make the skill a selectable entry in chat's Output-format
+                   picker (shared vera.output_formats palette). -->
+              <div class="field-group" id="f-fmt-group" style="display:none">
+                <div class="field-label">Format group / Export</div>
+                <div class="row" style="gap:6px">
+                  <select id="f-fmt-kind" style="flex:1">
+                    <option value="deliverable">Deliverable</option>
+                    <option value="length">Length / voice</option>
+                    <option value="structure">Structure</option>
+                  </select>
+                  <input id="f-fmt-file" placeholder="md" title="Default export file format (md|docx|pdf|json|pptx|txt…)" style="width:70px">
+                </div>
+              </div>
+              <!-- Delivery-channel extras: only shown for type=delivery_channel.
+                   These register the skill as a channel in the shared
+                   vera.delivery registry (dream deliver UI + deliver stage). -->
+              <div class="field-group" id="f-chan-group" style="display:none">
+                <div class="field-label">Delivery routing</div>
+                <div class="row" style="gap:6px">
+                  <input id="f-chan-cap" placeholder="cap to send (mail.send, tg.notify, chat.deliver…)" style="flex:1">
+                  <input id="f-chan-format" placeholder="format" title="Default output-format profile id (e.g. short, email)" style="width:90px">
+                </div>
+                <div class="row" style="gap:6px;margin-top:6px;align-items:center">
+                  <label class="label">Needs target</label>
+                  <input type="checkbox" id="f-chan-needs">
+                  <input id="f-chan-tfield" placeholder="target field (to / session_id)" style="flex:1">
+                </div>
+                <div class="row" style="gap:6px;margin-top:6px">
+                  <input id="f-chan-tlabel" placeholder="target label (UI hint)" style="flex:1">
+                  <input id="f-chan-fixed" placeholder="fixed target (optional preset)" style="flex:1">
+                </div>
               </div>
               <div class="field-group">
                 <div class="field-label">Description</div>
@@ -347,7 +391,7 @@ const SP = (() => {
   }
 
   // Compact labels for the colour-coded type badge in the sidebar.
-  const TYPE_ABBR = { system_prompt:'SYS', persona:'PRSN', few_shot:'SHOT', chain_of_thought:'COT', tool_hint:'TOOL', custom:'CSTM' };
+  const TYPE_ABBR = { system_prompt:'SYS', persona:'PRSN', few_shot:'SHOT', chain_of_thought:'COT', tool_hint:'TOOL', output_format:'FMT', delivery_channel:'CHAN', custom:'CSTM' };
 
   function renderList() {
     const el = document.getElementById('skill-list');
@@ -395,8 +439,24 @@ const SP = (() => {
     document.getElementById('f-tags').value = (s.tags || []).join(', ');
     document.getElementById('f-content').value = s.content || '';
     document.getElementById('f-enabled').checked = s.enabled !== false;
+    document.getElementById('f-fmt-kind').value = s.format_kind || 'deliverable';
+    document.getElementById('f-fmt-file').value = s.target_file_format || 'md';
+    document.getElementById('f-chan-cap').value = s.channel_cap || '';
+    document.getElementById('f-chan-format').value = s.channel_format || '';
+    document.getElementById('f-chan-needs').checked = !!s.channel_needs_target;
+    document.getElementById('f-chan-tfield').value = s.channel_target_field || '';
+    document.getElementById('f-chan-tlabel').value = s.channel_target_label || '';
+    document.getElementById('f-chan-fixed').value = s.channel_fixed_target || '';
     document.getElementById('del-btn').style.display = s.id ? 'inline-flex' : 'none';
+    typeChanged();
     detectVars();
+  }
+
+  // Show the format / channel extras only for the matching type.
+  function typeChanged() {
+    const t = document.getElementById('f-type').value;
+    document.getElementById('f-fmt-group').style.display = (t === 'output_format') ? 'block' : 'none';
+    document.getElementById('f-chan-group').style.display = (t === 'delivery_channel') ? 'block' : 'none';
   }
 
   function newSkill() {
@@ -433,6 +493,21 @@ const SP = (() => {
       tags: document.getElementById('f-tags').value,
       enabled: document.getElementById('f-enabled').checked,
     };
+    // Carry output-format metadata so the skill registers in the shared palette.
+    if (body.type === 'output_format') {
+      body.format_kind = document.getElementById('f-fmt-kind').value;
+      body.target_file_format = document.getElementById('f-fmt-file').value || 'md';
+    }
+    // Carry delivery-channel metadata so the skill registers in the shared
+    // delivery registry (dream deliver UI + deliver stage).
+    if (body.type === 'delivery_channel') {
+      body.channel_cap = document.getElementById('f-chan-cap').value;
+      body.channel_format = document.getElementById('f-chan-format').value;
+      body.channel_needs_target = document.getElementById('f-chan-needs').checked;
+      body.channel_target_field = document.getElementById('f-chan-tfield').value;
+      body.channel_target_label = document.getElementById('f-chan-tlabel').value;
+      body.channel_fixed_target = document.getElementById('f-chan-fixed').value;
+    }
     const st = document.getElementById('save-status');
     st.textContent = '⟳ Saving…'; st.className = 'status';
     const url = id ? '/skills/update' : '/skills';
@@ -645,7 +720,7 @@ const SP = (() => {
   window.addEventListener('DOMContentLoaded', () => { load(); });
   window.addEventListener('load', () => { if (!skills.length) load(); });
 
-  return { load, filterList, select, newSkill, cancel, save, del, detectVars, applySkills, loadContext, compose, tab,
+  return { load, filterList, select, newSkill, cancel, save, del, detectVars, typeChanged, applySkills, loadContext, compose, tab,
            build, buildLoadDatasets };
 })();
 </script>

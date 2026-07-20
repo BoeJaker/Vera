@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="dusk">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Vera / Provision</title>
@@ -19,10 +24,10 @@ input:focus,select:focus{border-color:var(--acc)}
 .tab{padding:7px 14px;border:1px solid transparent;border-bottom:none;border-radius:6px 6px 0 0;color:var(--dim2);font-size:12px;font-weight:600;background:transparent}
 .tab:hover{color:var(--text)}
 .tab.on{color:var(--text);background:var(--bg0);border-color:var(--border)}
-.tab[data-t="proxmox"].on{color:var(--pmx)}.tab[data-t="docker"].on{color:var(--dkr)}.tab[data-t="creds"].on{color:var(--acc4)}
+.tab[data-t="proxmox"].on{color:var(--pmx)}.tab[data-t="docker"].on{color:var(--dkr)}
 .spacer{flex:1}
 .btn{display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border-radius:6px;background:var(--bg3);border:1px solid var(--border2);color:var(--text);font-size:12px;white-space:nowrap;flex:0 0 auto}
-.btn:hover{border-color:var(--acc)}.btn.pri{background:var(--acc);border-color:var(--acc);color:#06121c;font-weight:700}
+.btn:hover{border-color:var(--acc)}.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#06121c);font-weight:700}
 .btn.sm{padding:5px 8px;font-size:11px}.btn.danger,.btn.err-btn{color:var(--err);border-color:var(--err)}.btn.warn-btn{color:var(--warn);border-color:var(--warn)}.btn:disabled{opacity:.4;cursor:not-allowed}
 #body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px;padding-bottom:60px}
 .pane{display:none}.pane.on{display:block}
@@ -40,7 +45,7 @@ input:focus,select:focus{border-color:var(--acc)}
 .det .k{font-size:9px;color:var(--dim);text-transform:uppercase}.det .v{font-size:12px;color:var(--text);word-break:break-word}
 .det .v.ok{color:var(--ok)}.det .v.no{color:var(--dim2)}.det .v.gpu{color:var(--gpu)}
 .chk{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text)}.chk input{width:auto}
-.mono,.out{background:#000;border:1px solid var(--border);border-radius:6px;padding:9px;font-size:10.5px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow:auto;display:none}
+.mono,.out{background:var(--bg0);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:9px;font-size:10.5px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow:auto;display:none}
 .hint{font-size:10.5px;color:var(--dim2);line-height:1.5}
 table{width:100%;border-collapse:collapse;font-size:11px}
 th{font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);padding:6px 8px;text-align:left;border-bottom:1px solid var(--border);font-weight:700;position:sticky;top:0;background:var(--bg2)}
@@ -65,9 +70,9 @@ tr:hover td{background:rgba(255,255,255,.02)}
 <div id="shell">
   <div id="top">
     <span class="logo">⤓ Provision</span>
-    <button class="tab on" data-t="install" onclick="showTab('install')">Install</button>
-    <button class="tab" data-t="proxmox" onclick="showTab('proxmox')">Proxmox</button>
-    <button class="tab" data-t="creds" onclick="showTab('creds')">Credentials</button>
+    <button class="tab on" data-t="deploy" onclick="showTab('deploy')">Deploy</button>
+    <button class="tab" data-t="install" onclick="showTab('install')">Install</button>
+    <button class="tab" data-t="proxmox" onclick="showTab('proxmox')">Create CT/VM</button>
     <button class="tab" data-t="docker" onclick="showTab('docker')">Docker</button>
     <span class="spacer"></span>
     <span id="ts" class="hint" style="margin-right:6px"></span>
@@ -75,8 +80,57 @@ tr:hover td{background:rgba(255,255,255,.02)}
 
   <div id="body">
 
+    <!-- ══ DEPLOY — uniform provisioning (provision.overview × provision.apply)
+         One flow: pick ANY target (estate node, Docker engine, or a brand-new
+         Proxmox CT) × ANY payloads (ollama/vllm/vera-worker components, backing
+         stores, security services, arbitrary images, the whole Vera stack). ══ -->
+    <div class="pane on" id="pane-deploy"><div class="wrap">
+      <div class="card">
+        <h3>1 · Target
+          <span class="hint" style="margin-left:auto;text-transform:none">existing node · docker engine · new CT</span>
+          <button class="btn sm" onclick="dpLoad()">⟳</button>
+        </h3>
+        <div class="grid" id="dp-targets"><span class="hint">loading targets…</span></div>
+        <div id="dp-ct-box" style="display:none">
+          <div class="hint" style="margin:4px 0 6px">New LXC on cluster <b id="dp-ct-where"></b> — created, started, auto-enrolled as a node, then provisioned.</div>
+          <div class="grid3">
+            <div class="field"><label>PVE node</label><select id="dp-ct-node"></select></div>
+            <div class="field"><label>Hostname</label><input id="dp-ct-host" placeholder="vera-ct"></div>
+            <div class="field"><label>Root password</label><input id="dp-ct-pass" type="password"></div>
+          </div>
+          <div class="grid3" style="margin-top:6px">
+            <div class="field"><label>Cores</label><input id="dp-ct-cores" value="2"></div>
+            <div class="field"><label>Memory MB</label><input id="dp-ct-mem" value="2048"></div>
+            <div class="field"><label>Disk GB</label><input id="dp-ct-disk" value="16"></div>
+          </div>
+          <div class="field" style="margin-top:6px"><label>OS template (volid)</label>
+            <div class="row"><input id="dp-ct-tpl" placeholder="local:vztmpl/debian-12-…tar.zst" style="flex:1"><button class="btn sm" onclick="dpListTpl()">List</button></div>
+          </div>
+          <select id="dp-ct-tpl-sel" style="display:none" onchange="$('dp-ct-tpl').value=this.value"></select>
+        </div>
+      </div>
+      <div class="card">
+        <h3>2 · Payloads <span class="hint" style="margin-left:auto;text-transform:none">pick one or more</span></h3>
+        <div id="dp-payloads"><span class="hint">loading payload catalog…</span></div>
+        <div class="row" id="dp-image-box" style="display:none">
+          <div class="field" style="flex:2"><label>Image ref</label><input id="dp-img-ref" placeholder="nginx:latest"></div>
+          <div class="field"><label>Name</label><input id="dp-img-name" placeholder="optional"></div>
+          <div class="field"><label>Ports</label><input id="dp-img-ports" placeholder="8080:80"></div>
+          <div class="field" style="flex:2"><label>Env (K=V, comma-sep)</label><input id="dp-img-env" placeholder="TZ=UTC"></div>
+        </div>
+        <div class="row">
+          <div class="field" style="max-width:110px"><label>GPUs</label><input id="dp-gpus" placeholder="e.g. all"></div>
+          <div class="field" id="dp-model-box" style="display:none;flex:2"><label>vLLM model (HF id)</label><input id="dp-model" placeholder="Qwen/Qwen2.5-7B-Instruct"></div>
+          <div class="field" style="max-width:130px"><label>Backend</label><select id="dp-backend"><option value="auto">auto</option><option value="docker">docker</option><option value="proxmox">proxmox</option><option value="ssh">ssh</option></select></div>
+        </div>
+        <div class="row"><button class="btn pri" id="dp-go" onclick="dpApply()" disabled>Provision</button><span id="dp-note" class="hint">pick a target</span></div>
+        <div class="hint">One call to <b>provision.apply</b>: components resolve docker → proxmox → ssh (auto-installing Docker over SSH when needed) and register every new endpoint (ollama/vLLM instances, docker hosts, workers) into the cluster. New-CT targets are created + enrolled first. Agents can run the same flow headlessly with the <b>provision.overview</b> / <b>provision.apply</b> caps — their calls appear live in the log below.</div>
+        <pre class="mono" id="dp-log"></pre>
+      </div>
+    </div></div>
+
     <!-- ══ INSTALL ════════════════════════════════════════════════════════ -->
-    <div class="pane on" id="pane-install"><div class="wrap">
+    <div class="pane" id="pane-install"><div class="wrap">
       <div class="card">
         <h3>Install runtime over SSH</h3>
         <div class="row">
@@ -106,42 +160,72 @@ tr:hover td{background:rgba(255,255,255,.02)}
         <div class="hint">Installs run over SSH on the selected host using its stored credentials. Ollama binds to <b>0.0.0.0</b> and registers as a cluster node; Docker registers as an SSH-managed host; vLLM installs into <b>~/.vera/vllm</b>.</div>
         <pre class="mono" id="log"></pre>
       </div>
+
+      <!-- Deploy a bundled Vera component -->
+      <div class="card">
+        <h3>Deploy a Vera component <span class="hint" style="margin-left:auto;text-transform:none">pushes bundled files over SSH → ~/.vera/edge</span></h3>
+        <div class="grid" id="components"><span class="hint">loading components…</span></div>
+        <div class="row">
+          <div class="field" style="max-width:120px"><label>Port</label><input id="cport" type="number" placeholder="default"></div>
+          <div class="field" id="veraUrlField" style="display:none;flex:2"><label>Vera URL (reachable from target)</label><input id="veraUrl" placeholder="http://vera-host:8999"></div>
+          <div style="display:flex;flex-direction:column;gap:6px;justify-content:flex-end;padding-bottom:2px">
+            <label class="chk"><input type="checkbox" id="cdeps"> install deps</label>
+            <label class="chk"><input type="checkbox" id="claunch" checked> launch after deploy</label>
+            <label class="chk"><input type="checkbox" id="csystemd"> as systemd service (needs sudo)</label>
+          </div>
+        </div>
+        <div class="row">
+          <button class="btn pri" id="cgoBtn" onclick="cdeploy()" disabled>Deploy</button>
+          <button class="btn sm" id="cstatusBtn" onclick="cstatus()" disabled>Status</button>
+          <button class="btn sm" id="cstopBtn" onclick="cstop()" disabled>Stop</button>
+          <span id="cgoNote" class="hint"></span>
+        </div>
+        <div class="hint">gpu_inference pulls heavy GPU deps (tick <b>install deps</b>; first run is slow). onnx_runtime / mesh_gateway are light. Launches with nohup by default; tick <b>systemd</b> to survive reboots.</div>
+        <pre class="mono" id="clog"></pre>
+      </div>
+
+      <!-- Provision a Vera worker -->
+      <div class="card">
+        <h3>Provision a Vera worker <span class="hint" style="margin-left:auto;text-transform:none">joins the cluster via shared REDIS_URL</span></h3>
+        <div class="row">
+          <div class="field" style="max-width:150px"><label>Mode</label>
+            <select id="wmode" onchange="onWmode()"><option value="docker">Docker container</option><option value="native">Native (SSH process)</option></select></div>
+          <div class="field" id="wnameField"><label>Name</label><input id="wname" placeholder="auto"></div>
+          <div class="field" id="wimageField"><label>Image</label><input id="wimage" placeholder="vera:latest"></div>
+          <div class="field" id="wgpusField" style="max-width:90px"><label>GPUs</label><input id="wgpus" placeholder="all"></div>
+          <div class="field" id="wrepoField" style="display:none;flex:2"><label>Repo URL (git)</label><input id="wrepo" placeholder="defaults to VERA_REPO_URL"></div>
+          <div class="field" id="wportField" style="display:none;max-width:100px"><label>Port</label><input id="wport" type="number" placeholder="8990"></div>
+        </div>
+        <div class="row"><button class="btn pri" id="wgoBtn" onclick="wprovision()" disabled>Provision worker</button><span id="wgoNote" class="hint"></span></div>
+        <div class="hint"><b>Docker</b> runs the Vera image on the host (registers it as an SSH Docker host first, then docker.worker.spawn). The image is <b>local-only</b> — if the host doesn't have it, it is built from this repo's Dockerfile or transferred from the local daemon (docker.image.ensure), never pulled from Docker Hub. <b>Native</b> git-clones Vera into ~/.vera/app, builds a venv and runs the orchestrator pointed at the shared Redis.</div>
+        <pre class="mono" id="wlog"></pre>
+      </div>
     </div></div>
 
-    <!-- ══ PROXMOX ════════════════════════════════════════════════════════ -->
+    <!-- ══ CREATE CT / VM ═══════════════════════════════════════════════════
+         Creating guests is unique to this tab (the top-level Proxmox pane only
+         lists/manages). Guest start/stop/console/enrol live there and in
+         Provision → Enroll — not duplicated here. ═══════════════════════════ -->
     <div class="pane" id="pane-proxmox"><div class="wrap">
       <div class="card">
-        <h3 style="color:var(--pmx)">Proxmox CTs &amp; VMs
+        <h3 style="color:var(--pmx)">Create a CT / VM
           <span class="spacer"></span>
           <select id="px-cluster" onchange="pxLoad()" style="width:auto;min-width:130px"></select>
           <button class="btn sm" onclick="pxLoad()">⟳</button>
           <button class="btn sm pri" onclick="pxOpenCreate()">+ Create</button>
         </h3>
+        <span class="hint">Make a container/VM here (e.g. to install Docker + the security/identity services on). <b>Manage</b> existing guests — start/stop, console, enrol — in the top-level <b>Proxmox</b> pane and <b>Provision → Enroll</b>.</span>
         <span id="px-counts" class="hint"></span>
         <div class="tbl"><div class="inner">
-          <table><thead><tr><th>VMID</th><th>Name</th><th>Type</th><th>Node</th><th>Status</th><th>Actions</th></tr></thead>
+          <table><thead><tr><th>VMID</th><th>Name</th><th>Type</th><th>Node</th><th>Status</th><th></th></tr></thead>
           <tbody id="px-tbody"><tr><td colspan="6" class="empty">Select a cluster…</td></tr></tbody></table>
         </div></div>
         <pre class="out" id="px-out"></pre>
       </div>
     </div></div>
 
-    <!-- ══ CREDENTIALS ════════════════════════════════════════════════════ -->
-    <div class="pane" id="pane-creds"><div class="wrap">
-      <div class="card">
-        <h3 style="color:var(--acc4)">Host credentials
-          <span class="spacer"></span>
-          <button class="btn sm" onclick="credLoad()">⟳</button>
-          <button class="btn sm pri" onclick="hostOpen()">+ Add host</button>
-        </h3>
-        <span class="hint">User/password (or key) per host — sealed with Fernet, shared by provisioning, install &amp; terminal. Enroll Proxmox guests from the Proxmox tab to add them here automatically.</span>
-        <div class="tbl"><div class="inner">
-          <table><thead><tr><th>Label</th><th>Host</th><th>User</th><th>Auth</th><th>Secret</th><th>Tags</th><th>Actions</th></tr></thead>
-          <tbody id="cred-tbody"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody></table>
-        </div></div>
-        <pre class="out" id="cred-out"></pre>
-      </div>
-    </div></div>
+    <!-- (Backends tab removed — ollama ⇄ vLLM switching now lives in
+         Workers & Ollama → Nodes; the idle-worker policy was retired.) -->
 
     <!-- ══ DOCKER ═════════════════════════════════════════════════════════ -->
     <div class="pane" id="pane-docker"><div class="wrap">
@@ -168,12 +252,26 @@ tr:hover td{background:rgba(255,255,255,.02)}
         </div></div>
         <pre class="out" id="dk-out"></pre>
       </div>
+      <div class="card">
+        <h3 style="color:var(--dkr)">Vera backing stores <span id="st-host-label" class="hint" style="text-transform:none"></span>
+          <span class="spacer"></span>
+          <button class="btn sm" onclick="stLoad()">⟳</button>
+          <button class="btn sm pri" onclick="stDeployAll()">Deploy all</button>
+        </h3>
+        <span class="hint">Provision the compose stack's stores (redis · postgres · chromadb · neo4j · garage blob store) onto Vera's own Docker host — the configured local connection (DOCKER_SOCK / DOCKER_HOST), shown next to the title — regardless of which connection is selected above. Data lives in named volumes so redeploys keep it; garage also gets a generated config and an automatic layout/key/bucket bootstrap via its admin API. <b>Bootstrap garage</b> repairs an existing node whose init never completed (fabric.objects.status → AccessDenied / "No such key").</span>
+        <div class="tbl"><div class="inner">
+          <table><thead><tr><th>Store</th><th>Image</th><th>Ports</th><th>State</th><th>Reachable</th><th>Actions</th></tr></thead>
+          <tbody id="st-tbody"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody></table>
+        </div></div>
+        <div class="row"><button class="btn sm" onclick="stGarageBootstrap()">Bootstrap garage (admin API)</button></div>
+        <pre class="out" id="st-out"></pre>
+      </div>
     </div></div>
 
   </div>
 </div>
 
-<!-- Add SSH host (shared by Install + Credentials) -->
+<!-- Add SSH host (writes to the canonical store — manage in Workers → Connections) -->
 <div id="modal"><div class="sheet">
   <div class="hd"><b style="color:var(--acc)">Add SSH host</b><span class="spacer"></span><button class="btn sm" onclick="hostClose()">✕</button></div>
   <div class="bd">
@@ -202,6 +300,10 @@ tr:hover td{background:rgba(255,255,255,.02)}
 const BASE=location.origin;
 let _hosts=[], _targets=[], _target='';
 let _cluster='', _guests=[], _nodes=[], _storage=[], _dkHost='', _dkLabel='', _creds=[];
+// Vera's OWN stack — the configured local Docker (DOCKER_SOCK / DOCKER_HOST).
+// The backing-stores card always targets this, independent of whichever
+// connection is being browsed for containers above. Populated in dkLoad().
+let _veraStackId='local', _veraStackAddr='';
 
 async function api(path,method,body){
   const o={method:method||'GET',headers:{'Content-Type':'application/json'}};
@@ -219,8 +321,8 @@ function out(id,text){const o=$(id);o.style.display='block';o.textContent=text;}
 function showTab(name){
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.t===name));
   document.querySelectorAll('.pane').forEach(p=>p.classList.toggle('on',p.id==='pane-'+name));
+  if(name==='deploy' && !_dpOverview) dpLoad();
   if(name==='proxmox' && !_cluster) pxInit();
-  if(name==='creds') credLoad();
   if(name==='docker') dkLoad();
 }
 function gm(title,html){ $('gm-title').textContent=title; $('gm-body').innerHTML=html; $('gmodal').style.display='block'; }
@@ -236,6 +338,8 @@ async function refresh(){
     : '<option value="">no SSH hosts — add one →</option>';
   onHost();
   if(!_targets.length){ const t=await api('/provision/targets'); _targets=(t&&t.targets)||[]; renderTargets(); }
+  if(!_components.length){ await loadComponents(); }
+  onWmode();
 }
 function curHost(){ return _hosts.find(h=>h.id===$('hostSel').value); }
 function onHost(){
@@ -243,6 +347,8 @@ function onHost(){
   $('detectBtn').disabled=!h; $('goBtn').disabled=!h||!_target;
   $('det').innerHTML='<span class="hint">Press <b>Detect</b> to probe '+(h?esc(h.label||h.host):'this host')+'.</span>';
   $('det-host').textContent=h?(h.user+'@'+h.host+':'+(h.port||22)):'';
+  $('wgoBtn').disabled=!h;
+  if(typeof cBtns==='function') cBtns();
 }
 function renderTargets(){
   $('targets').innerHTML=_targets.map(t=>
@@ -303,6 +409,89 @@ async function hostSave(){
   else toast(r.error||'save failed','err');
 }
 
+// ── VERA COMPONENTS (deploy bundled edge artifacts over SSH) ──────────────────
+let _components=[], _component='';
+async function loadComponents(){
+  const j=await api('/provision/components'); _components=(j&&j.components)||[];
+  $('components').innerHTML=_components.length
+    ? _components.map(c=>'<div class="targ" data-k="'+esc(c.key)+'" onclick="pickComponent(\''+esc(c.key)+'\')"><div class="t">'+esc(c.label)+(c.heavy?' ⚠':'')+'</div><div class="d">'+esc(c.desc)+'</div></div>').join('')
+    : '<span class="hint">no components</span>';
+}
+function pickComponent(k){
+  _component=k;
+  document.querySelectorAll('#components .targ').forEach(e=>e.classList.toggle('on',e.dataset.k===k));
+  const c=_components.find(x=>x.key===k)||{};
+  $('veraUrlField').style.display=c.needs_vera_url?'':'none';
+  if(c.heavy && !$('cdeps').checked) $('cdeps').checked=true;   // heavy comps need deps
+  cBtns();
+}
+function cBtns(){ const h=curHost(), on=!!h&&!!_component;
+  $('cgoBtn').disabled=!on; $('cstatusBtn').disabled=!on; $('cstopBtn').disabled=!on; }
+async function cdeploy(){
+  const h=curHost(); if(!h||!_component) return;
+  const body={host_id:h.id,component:_component,install_deps:$('cdeps').checked,
+              launch:$('claunch').checked,systemd:$('csystemd').checked,sudo:$('sudo').checked};
+  const p=parseInt($('cport').value,10); if(p) body.port=p;
+  if($('veraUrl').value.trim()) body.vera_url=$('veraUrl').value.trim();
+  const log=$('clog'); log.style.display='block';
+  log.textContent='▶ Deploying '+_component+' to '+h.host+' …\n'+($('cdeps').checked?'(installing deps — can take a while)\n':'');
+  $('cgoBtn').disabled=true;
+  const r=await api('/provision/deploy','POST',body);
+  let o='pushed: '+((r.pushed||[]).join(', ')||'—')+'\n';
+  if('installed' in r) o+='deps installed: '+r.installed+'\n';
+  if(r.install_log) o+='\n── deps ──\n'+r.install_log+'\n';
+  if('launched' in r) o+='\nlaunched: '+r.launched+' ('+(r.mode||'')+')'+(r.url?'  → '+r.url:'')+'\n';
+  if(r.launch_log) o+=r.launch_log+'\n';
+  if(r.error) o+='\nERROR: '+r.error+'\n';
+  log.textContent=o||JSON.stringify(r,null,2);
+  cBtns();
+  toast(r.ok?('Deployed '+_component):'Deploy incomplete — see log', r.ok?'ok':'err');
+}
+async function cstatus(){
+  const h=curHost(); if(!h||!_component) return;
+  const r=await api('/provision/component/status','POST',{host_id:h.id,component:_component,systemd:$('csystemd').checked});
+  out('clog','status: '+(r.running?'RUNNING':'stopped')+'   ('+esc(r.detail||r.error||'')+')');
+}
+async function cstop(){
+  const h=curHost(); if(!h||!_component) return;
+  const r=await api('/provision/component/stop','POST',{host_id:h.id,component:_component,systemd:$('csystemd').checked,sudo:$('sudo').checked});
+  out('clog', r.ok?'stopped.':'stop failed: '+esc(r.detail||r.error||''));
+  toast(r.ok?'Stopped':'Stop failed', r.ok?'ok':'err');
+}
+
+// ── VERA WORKER (docker container | native SSH process) ───────────────────────
+function onWmode(){
+  const dk=$('wmode').value==='docker';
+  $('wimageField').style.display=dk?'':'none';
+  $('wgpusField').style.display=dk?'':'none';
+  $('wrepoField').style.display=dk?'none':'';
+  $('wportField').style.display=dk?'none':'';
+}
+async function wprovision(){
+  const h=curHost(); if(!h) return;
+  const m=$('wmode').value, body={host_id:h.id,mode:m};
+  if($('wname').value.trim()) body.name=$('wname').value.trim();
+  if(m==='docker'){
+    if($('wimage').value.trim()) body.image=$('wimage').value.trim();
+    if($('wgpus').value.trim())  body.gpus=$('wgpus').value.trim();
+  }else{
+    if($('wrepo').value.trim())  body.repo_url=$('wrepo').value.trim();
+    const p=parseInt($('wport').value,10); if(p) body.port=p;
+  }
+  const log=$('wlog'); log.style.display='block';
+  log.textContent='▶ Provisioning '+m+' worker on '+h.host+' …\n';
+  $('wgoBtn').disabled=true;
+  const r=await api('/provision/worker','POST',body);
+  let o='';
+  if(m==='docker' && r.spawn){ o+='docker host: '+(r.docker_host||'—')+'\nspawn: '+
+      (r.spawn.ok?('container '+String(r.spawn.container_id||'').slice(0,12)):('failed: '+(r.spawn.error||'')))+'\n'; }
+  if(m==='native'){ o+=(r.log||'')+'\n'; }
+  if(r.error) o+='\nERROR: '+r.error+'\n';
+  log.textContent=o||JSON.stringify(r,null,2);
+  $('wgoBtn').disabled=false;
+  toast(r.ok?'Worker provisioned':'Worker incomplete — see log', r.ok?'ok':'err');
+}
+
 // ── PROXMOX ──────────────────────────────────────────────────────────────────
 async function pxInit(){
   const j=await api('/proxmox/cluster/list'); const cs=j.clusters||[];
@@ -322,16 +511,11 @@ async function pxLoad(){
     const tpl=g.template?' <span class="badge b-tpl">TPL</span>':'';
     const st=g.status==='running'?'<span class="badge b-run">running</span>':'<span class="badge b-stop">'+esc(g.status)+'</span>';
     const tcls=g.type==='lxc'?'b-lxc':'b-qemu';
+    // Management (start/stop/reboot/enrol/destroy) lives in the top-level
+    // Proxmox pane + Provision → Enroll — this tab only clones/creates.
     const A=[];
-    if(g.status==='running'){
-      A.push(B("pxAct('"+g.node+"','"+g.type+"',"+g.vmid+",'shutdown')",'warn-btn','Stop'));
-      A.push(B("pxAct('"+g.node+"','"+g.type+"',"+g.vmid+",'reboot')",'','Reboot'));
-      A.push(B("pxEnroll('"+g.node+"','"+g.type+"',"+g.vmid+",'"+esc(g.name)+"')",'','Enroll'));
-    }else{
-      A.push(B("pxAct('"+g.node+"','"+g.type+"',"+g.vmid+",'start')",'','Start'));
+    if(g.template || g.status!=='running')
       A.push(B("pxClone('"+g.node+"','"+g.type+"',"+g.vmid+",'"+esc(g.name)+"')",'','Clone'));
-      A.push(B("pxDestroy('"+g.node+"','"+g.type+"',"+g.vmid+",'"+esc(g.name)+"')",'err-btn','Destroy'));
-    }
     return '<tr><td>'+g.vmid+'</td><td>'+esc(g.name)+tpl+'</td><td><span class="badge '+tcls+'">'+esc(g.type)+'</span></td><td>'+esc(g.node)+'</td><td>'+st+'</td><td><div class="rowact">'+A.join('')+'</div></td></tr>';
   }).join('')||'<tr><td colspan="6" class="empty">No guests.</td></tr>';
   $('ts').textContent='updated '+new Date().toLocaleTimeString();
@@ -406,54 +590,37 @@ async function pxEnrollGo(node,type,vmid){
   gmClose(); out('px-out','enrolling…');
   const r=await api('/proxmox/guest/enroll','POST',body);
   if(r.error) return out('px-out','✗ '+r.error);
-  out('px-out','✓ enrolled '+r.ip+' (host '+r.ssh_host_id+') — see Credentials tab'); toast('Enrolled '+r.ip,'ok'); credLoad();
+  out('px-out','✓ enrolled '+r.ip+' (host '+r.ssh_host_id+') — manage creds in Workers & Ollama → Connections'); toast('Enrolled '+r.ip,'ok'); credLoad();
 }
 
-// ── CREDENTIALS ──────────────────────────────────────────────────────────────
+// ── CREDENTIALS — managed centrally in Workers & Ollama → Connections ────────
+// The duplicated Credentials tab was removed; this just refreshes the cached
+// host list used by the docker-connection picker + enroll flows.
 async function credLoad(){
   const j=await api('/exec/ssh/hosts'); _creds=j.hosts||[];
-  $('cred-tbody').innerHTML=_creds.map(h=>{
-    const secret=h.has_password?'<span class="badge b-run">password</span>':(h.key_path?'<span class="badge b-lxc">key</span>':'<span class="badge b-stop">none</span>');
-    return '<tr><td>'+esc(h.label)+'</td><td>'+esc(h.host)+':'+h.port+'</td><td>'+esc(h.user)+'</td><td>'+esc(h.auth)+'</td><td>'+secret+'</td><td>'+(h.tags||[]).map(esc).join(', ')+'</td>'
-      +'<td><div class="rowact"><button class="btn sm" onclick="credEdit(\''+esc(h.id)+'\')">Edit</button><button class="btn sm" onclick="credTest(\''+esc(h.id)+'\')">Test</button><button class="btn sm err-btn" onclick="credDel(\''+esc(h.id)+'\',\''+esc(h.label)+'\')">✕</button></div></td></tr>';
-  }).join('')||'<tr><td colspan="7" class="empty">No hosts yet — add one, or enroll guests from the Proxmox tab.</td></tr>';
 }
-function credEdit(id){
-  const h=_creds.find(x=>x.id===id)||{};
-  gm('Edit host credential',
-    '<div class="grid2"><div class="field"><label>Host / IP</label><input id="m-h" value="'+esc(h.host||'')+'"></div><div class="field"><label>Port</label><input id="m-port" value="'+(h.port||22)+'"></div></div>'
-    +'<div class="grid2"><div class="field"><label>User</label><input id="m-user" value="'+esc(h.user||'root')+'"></div><div class="field"><label>Label</label><input id="m-label" value="'+esc(h.label||'')+'"></div></div>'
-    +'<div class="field"><label>Auth</label><select id="m-auth" onchange="credAuthSwap()"><option value="password"'+(h.auth!=='key'?' selected':'')+'>Password</option><option value="key"'+(h.auth==='key'?' selected':'')+'>SSH key</option></select></div>'
-    +'<div class="field" id="m-pw-box"><label>Password '+(h.has_password?'(blank=keep)':'')+'</label><input id="m-pw" type="password"></div>'
-    +'<div class="field" id="m-key-box" style="display:'+(h.auth==='key'?'block':'none')+'"><label>Key path</label><input id="m-keyp" value="'+esc(h.key_path||'')+'"></div>'
-    +'<div class="field"><label>Tags</label><input id="m-tags" value="'+(h.tags||[]).join(', ')+'"></div>'
-    +'<div class="row"><button class="btn pri" onclick="credSave(\''+esc(h.id)+'\')">Save</button><button class="btn" onclick="gmClose()">Cancel</button></div>');
-}
-function credAuthSwap(){ $('m-key-box').style.display=$('m-auth').value==='key'?'block':'none'; }
-async function credSave(id){
-  const body={id,host:$('m-h').value.trim(),port:parseInt($('m-port').value)||22,user:$('m-user').value.trim(),label:$('m-label').value.trim(),auth:$('m-auth').value,password:$('m-pw').value,key_path:$('m-keyp')?$('m-keyp').value.trim():'',tags:$('m-tags').value};
-  if(!body.host||!body.user) return toast('host and user required','err');
-  gmClose(); const r=await api('/exec/ssh/hosts/save','POST',body);
-  if(!r.ok) return toast(r.error||'save failed','err');
-  toast('Saved','ok'); credLoad(); refresh();
-}
-async function credDel(id,label){ if(!confirm('Delete credential '+label+'?'))return; await api('/exec/ssh/hosts/delete','POST',{id}); credLoad(); refresh(); }
-async function credTest(id){
-  out('cred-out','testing '+id+'…');
-  const r=await api('/exec/ssh/run','POST',{host_id:id,command:'echo vera-ok && hostname',timeout:12});
-  out('cred-out',(r.ok&&(r.stdout||'').includes('vera-ok'))?('✓ connected — '+(r.stdout||'').trim()):('✗ '+(r.stderr||r.error||'failed')));
-}
+
+// (Backends + idle-worker JS removed — ollama ⇄ vLLM switching lives in
+//  Workers & Ollama → Nodes now, and the idle-worker policy was retired.)
 
 // ── DOCKER ───────────────────────────────────────────────────────────────────
 async function dkLoad(){
   if(!_creds.length){ const j0=await api('/exec/ssh/hosts'); _creds=j0.hosts||[]; }
   const j=await api('/workers/docker/hosts'); const hosts=j.hosts||[];
+  // Resolve Vera's own stack: the configured local Docker (or the default host).
+  // Its real address comes straight from the host record — url for tcp/DOCKER_HOST,
+  // else the unix socket path (DOCKER_SOCK) — so the label reflects what's actually
+  // configured rather than a hardcoded '/var/run/docker.sock'.
+  const _loc=hosts.find(h=>h.id==='local')||hosts.find(h=>h.kind==='local')||hosts.find(h=>h.default);
+  _veraStackId=_loc?(_loc.id||'local'):'local';
+  _veraStackAddr=_loc?(_loc.url||_loc.socket||'local socket'):'local socket';
   $('dk-conn-tbody').innerHTML=hosts.map(h=>{
     const ep=h.kind==='ssh'?('ssh:'+(h.ssh_host_id||'')):(h.kind==='tcp'?esc(h.url||''):'local socket');
     return '<tr><td>'+esc(h.label||h.id)+'</td><td>'+esc(h.kind)+'</td><td>'+ep+'</td><td><span id="dk-st-'+esc(h.id)+'" class="badge">—</span></td>'
       +'<td><div class="rowact"><button class="btn sm" onclick="dkPing(\''+esc(h.id)+'\')">Ping</button><button class="btn sm pri" onclick="dkSelect(\''+esc(h.id)+'\',\''+esc(h.label||h.id)+'\')">Containers</button><button class="btn sm err-btn" onclick="dkConnDel(\''+esc(h.id)+'\')">✕</button></div></td></tr>';
   }).join('')||'<tr><td colspan="5" class="empty">No connections — add one (local / tcp / ssh).</td></tr>';
   hosts.forEach(h=>dkPing(h.id));
+  stLoad();
 }
 async function dkPing(id){
   const r=await api('/workers/docker/ping','POST',{host_id:id}); const el=$('dk-st-'+id); if(!el) return;
@@ -466,7 +633,7 @@ function dkOpenConn(){
     '<div class="field"><label>Kind</label><select id="m-kind" onchange="dkKindSwap()"><option value="tcp">TCP (http://host:2375)</option><option value="ssh">SSH (via a stored host)</option><option value="local">Local socket</option></select></div>'
     +'<div class="field"><label>Label</label><input id="m-dlabel" placeholder="optional"></div>'
     +'<div class="field" id="m-url-box"><label>URL</label><input id="m-durl" placeholder="http://host:2375"></div>'
-    +'<div class="field" id="m-ssh-box" style="display:none"><label>SSH host (from Credentials)</label><select id="m-dssh">'+(credOpts||'<option value="">— add a credential first —</option>')+'</select></div>'
+    +'<div class="field" id="m-ssh-box" style="display:none"><label>SSH host (from Connections)</label><select id="m-dssh">'+(credOpts||'<option value="">— add a credential first —</option>')+'</select></div>'
     +'<div class="row"><button class="btn pri" onclick="dkConnSave()">Save</button><button class="btn" onclick="gmClose()">Cancel</button></div>');
 }
 function dkKindSwap(){ const k=$('m-kind').value; $('m-url-box').style.display=k==='tcp'?'block':'none'; $('m-ssh-box').style.display=k==='ssh'?'block':'none'; }
@@ -479,6 +646,7 @@ async function dkConnSave(){
 }
 async function dkSelect(id,label){
   _dkHost=id; _dkLabel=label; $('dk-host-label').textContent='· '+label;
+  stLoad();
   const r=await api('/workers/docker/ps','POST',{host_id:id,all:true});
   const cs=(r.containers||r.items||[]);
   $('dk-ps-tbody').innerHTML=(Array.isArray(cs)?cs:[]).map(c=>{
@@ -510,7 +678,250 @@ async function dkRunGo(){
   out('dk-out',r.ok?('✓ deployed '+(r.container_id||'').slice(0,12)):('✗ '+(r.error||'failed'))); if(r.ok) setTimeout(()=>dkSelect(_dkHost,_dkLabel),1500);
 }
 
+// ── VERA BACKING STORES (provision.store.*) ──────────────────────────────────
+let _storeCat=[];
+// Backing stores always live on Vera's own configured Docker, NOT whichever
+// connection is selected for container browsing above.
+function _stHost(){ return _veraStackId||'local'; }
+async function stLoad(){
+  if(!_storeCat.length){ const c=await api('/provision/stores'); _storeCat=c.stores||[]; }
+  $('st-host-label').textContent='· '+(_veraStackAddr||_stHost());
+  const s=await api('/provision/store/status','POST',{host_id:_stHost()});
+  const st={}; (s.stores||[]).forEach(x=>st[x.store]=x);
+  $('st-tbody').innerHTML=_storeCat.map(c=>{
+    const cur=st[c.key]||{}; const run=/running/i.test(cur.state||'');
+    const ports=Object.entries(c.ports||{}).map(([h,p])=>h+'→'+p).join(', ');
+    const reach=cur.reachable==null?'—':(cur.reachable?'✓':'✗');
+    return '<tr><td title="'+esc(c.desc||'')+'">'+esc(c.label)+'</td><td>'+esc(c.image)+'</td><td>'+esc(ports)+'</td>'
+      +'<td><span class="badge '+(run?'b-run':'b-stop')+'">'+esc(cur.state||'absent')+'</span></td><td>'+reach+'</td>'
+      +'<td><div class="rowact"><button class="btn sm pri" onclick="stDeploy(\''+esc(c.key)+'\')">Deploy</button>'
+      +'<button class="btn sm err-btn" onclick="stRemove(\''+esc(c.key)+'\')">Rm</button></div></td></tr>';
+  }).join('')||'<tr><td colspan="6" class="empty">store catalog unavailable (backend restart needed?)</td></tr>';
+}
+async function stDeploy(key){
+  out('st-out','deploying '+key+' on '+_stHost()+'… (image pull can take a while)');
+  const r=await api('/provision/store/deploy','POST',{host_id:_stHost(),store:key});
+  out('st-out',JSON.stringify(r,null,2));
+  if(r.stores&&r.stores[key]&&r.stores[key].secrets) toast('Secrets shown ONCE in output — save them','warn');
+  stLoad();
+}
+async function stDeployAll(){
+  if(!confirm('Deploy ALL backing stores (redis, postgres, chromadb, neo4j, garage) on '+_stHost()+'?')) return;
+  out('st-out','deploying all stores on '+_stHost()+'… (image pulls can take a while)');
+  const r=await api('/provision/store/deploy','POST',{host_id:_stHost(),store:'all'});
+  out('st-out',JSON.stringify(r,null,2)); stLoad();
+}
+async function stRemove(key){
+  if(!confirm('Remove store container vera-'+key+'? (data volumes are kept)')) return;
+  out('st-out','removing '+key+'…');
+  const r=await api('/provision/store/remove','POST',{host_id:_stHost(),store:key});
+  out('st-out',JSON.stringify(r,null,2)); stLoad();
+}
+async function stGarageBootstrap(){
+  out('st-out','bootstrapping garage via admin API (layout → key → bucket)…');
+  const r=await api('/provision/store/garage/bootstrap','POST',{});
+  out('st-out',JSON.stringify(r,null,2));
+  toast(r.ok?'garage bootstrapped — object store '+((r.object_store||{}).available?'AVAILABLE':'still unavailable'):(r.error||'bootstrap failed'),r.ok?'ok':'err');
+}
+
+// ── UNIFIED DEPLOY (provision.overview × provision.apply) ────────────────────
+let _dpOverview=null, _dpTarget='', _dpSel=new Set();
+function _dpCard(kind,key,t,d,on){
+  return '<div class="targ'+(on?' on':'')+'" data-'+kind+'="'+esc(key)+'" onclick="'
+    +(kind==='t'?'dpPickTarget':'dpTogglePayload')+'(\''+esc(key)+'\')"><div class="t">'+t
+    +'</div><div class="d">'+esc(d)+'</div></div>';
+}
+async function dpLoad(){
+  const j=await api('/provision/overview');
+  if(!j||!j.ok){ $('dp-targets').innerHTML='<span class="hint" style="color:var(--err)">'+esc((j&&j.error)||'overview unavailable — backend restart needed?')+'</span>'; return; }
+  _dpOverview=j;
+  const T=j.targets||{};
+  let h='';
+  (T.nodes||[]).forEach(n=>{ h+=_dpCard('t',n.target,'🖥 '+esc(n.label||n.id),
+    (n.addr||'')+' · '+(n.backends||[]).join('+')+(n.gpu?' · GPU':''), _dpTarget===n.target); });
+  (T.docker_engines||[]).forEach(d=>{ h+=_dpCard('t',d.target,'🐳 '+esc(d.label||d.id),
+    'docker engine · '+(d.kind||''), _dpTarget===d.target); });
+  (T.proxmox_clusters||[]).forEach(c=>{ h+=_dpCard('t','new-ct:'+c.cluster_id,
+    '⬒ New CT on '+esc(c.label||c.cluster_id),
+    'create + enroll a fresh LXC, then provision onto it', _dpTarget==='new-ct:'+c.cluster_id); });
+  $('dp-targets').innerHTML=h||'<span class="hint">no targets — enroll a node (Install → + SSH host) or add a Docker connection first</span>';
+  dpRenderPayloads();
+  dpBtn();
+}
+function dpPickTarget(k){
+  _dpTarget=k;
+  document.querySelectorAll('#dp-targets .targ').forEach(e=>e.classList.toggle('on',e.dataset.t===k));
+  const isCT=k.indexOf('new-ct:')===0;
+  $('dp-ct-box').style.display=isCT?'':'none';
+  if(isCT){
+    const cid=k.split(':')[1];
+    $('dp-ct-where').textContent=cid;
+    dpLoadPveNodes(cid);
+  }
+  dpBtn();
+}
+async function dpLoadPveNodes(cid){
+  const s=await api('/proxmox/status','POST',{cluster_id:cid});
+  const ns=(s&&s.nodes)||[];
+  $('dp-ct-node').innerHTML=ns.map(n=>'<option value="'+esc(n.node)+'">'+esc(n.node)+'</option>').join('')||'<option value="">(none)</option>';
+}
+async function dpListTpl(){
+  const cid=(_dpTarget.split(':')[1])||'';
+  if(!cid) return;
+  const s=await api('/proxmox/status','POST',{cluster_id:cid});
+  const stors=[...new Set((s.storage||[]).map(x=>x.storage))];
+  let items=[];
+  for(const st of stors){
+    const r=await api('/proxmox/storage/content','POST',{cluster_id:cid,node:$('dp-ct-node').value,storage:st,content:'vztmpl'});
+    items=items.concat(r.items||[]);
+    if(items.length>40) break;
+  }
+  if(!items.length){ toast('No CT templates found on this cluster','err'); return; }
+  const sel=$('dp-ct-tpl-sel'); sel.style.display='block';
+  sel.innerHTML='<option value="">— pick template —</option>'+items.map(i=>'<option value="'+esc(i.volid)+'">'+esc(i.volid)+'</option>').join('');
+}
+function dpRenderPayloads(){
+  const P=(_dpOverview&&_dpOverview.payloads)||{};
+  const sec=(title,arr,fmt)=>arr&&arr.length
+    ?'<div class="hint" style="margin:6px 0 3px;text-transform:uppercase;font-size:9px;letter-spacing:.06em">'+title+'</div><div class="grid">'+arr.map(fmt).join('')+'</div>':'';
+  let h='';
+  h+=sec('Workers & platform (components)',(P.components||[]),
+    c=>_dpCard('p',c.key,esc(c.label)+(c.needs_model?' ⚙':''),String(c.desc||'').slice(0,90),_dpSel.has(c.key)));
+  h+=sec('Vera backing stores',(P.stacks||[]),
+    s=>_dpCard('p',s.key,esc(s.label),String(s.desc||s.image||'').slice(0,90),_dpSel.has(s.key)));
+  h+=sec('Security & identity',(P.security||[]),
+    s=>_dpCard('p',s.key,esc(s.label),String(s.desc||'').slice(0,90),_dpSel.has(s.key)));
+  h+=sec('Bundles & custom',[
+      {key:'vera-stack',label:'Vera stack (all stores)',desc:'redis + postgres + chromadb + neo4j + garage in one go'},
+      {key:'image:custom',label:'Custom image…',desc:'any docker image — set ref/name/ports/env below'}],
+    x=>_dpCard('p',x.key,esc(x.label),x.desc,_dpSel.has(x.key)));
+  $('dp-payloads').innerHTML=h||'<span class="hint">payload catalog unavailable</span>';
+}
+function dpTogglePayload(k){
+  if(_dpSel.has(k)) _dpSel.delete(k); else _dpSel.add(k);
+  document.querySelectorAll('#dp-payloads .targ').forEach(e=>e.classList.toggle('on',_dpSel.has(e.dataset.p)));
+  $('dp-image-box').style.display=_dpSel.has('image:custom')?'':'none';
+  $('dp-model-box').style.display=_dpSel.has('vllm')?'':'none';
+  dpBtn();
+}
+function dpBtn(){
+  $('dp-go').disabled=!_dpTarget||!_dpSel.size;
+  $('dp-note').textContent=_dpTarget
+    ? (_dpSel.size? _dpSel.size+' payload'+(_dpSel.size===1?'':'s')+' → '+_dpTarget : 'pick payloads → '+_dpTarget)
+    : 'pick a target';
+}
+function dpLog(line){
+  const log=$('dp-log'); log.style.display='block';
+  log.textContent+=line+'\n'; log.scrollTop=log.scrollHeight;
+}
+async function dpApply(){
+  if(!_dpTarget||!_dpSel.size) return;
+  let target=_dpTarget;
+  const payloads=[]; const options={};
+  for(const k of _dpSel){
+    if(k==='image:custom'){
+      const ref=$('dp-img-ref').value.trim();
+      if(!ref){ toast('image ref required','err'); return; }
+      payloads.push('image:'+ref);
+      const env={}; ($('dp-img-env').value||'').split(',').forEach(p=>{const i=p.indexOf('=');if(i>0)env[p.slice(0,i).trim()]=p.slice(i+1).trim();});
+      options.image={name:$('dp-img-name').value.trim(),ports:$('dp-img-ports').value.trim(),env};
+    } else payloads.push(k);
+  }
+  if($('dp-gpus').value.trim()) options.gpus=$('dp-gpus').value.trim();
+  if($('dp-backend').value!=='auto') options.backend=$('dp-backend').value;
+  if(_dpSel.has('vllm')){
+    const m=$('dp-model').value.trim();
+    if(!m){ toast('vLLM needs a model (HF id)','err'); return; }
+    options.model=m;
+  }
+  if(target.indexOf('new-ct:')===0){
+    const node=$('dp-ct-node').value;
+    if(!node){ toast('pick a PVE node','err'); return; }
+    if(!$('dp-ct-tpl').value.trim()){ toast('pick an OS template (volid)','err'); return; }
+    target=target+':'+node;
+    options.ct={ostemplate:$('dp-ct-tpl').value.trim(),hostname:$('dp-ct-host').value.trim(),
+                cores:parseInt($('dp-ct-cores').value)||2,memory_mb:parseInt($('dp-ct-mem').value)||2048,
+                disk_gb:parseInt($('dp-ct-disk').value)||16,password:$('dp-ct-pass').value};
+  }
+  $('dp-log').textContent='';
+  dpLog('▶ provision.apply '+target);
+  dpLog('  payloads: '+payloads.join(', '));
+  dpLog('  (new CTs, image pulls and heavy installs can take several minutes)');
+  $('dp-go').disabled=true;
+  const r=await api('/provision/apply','POST',{target,payloads,options});
+  (r.results||[]).forEach(x=>{
+    dpLog((x.ok?'✓':'✗')+' '+(x.payload||'')+(x.vmid?(' vmid='+x.vmid):'')+(x.ip?(' ip='+x.ip):'')+(x.error?('  — '+x.error):''));
+    (x.results||[]).forEach(s=>{ dpLog('   '+(s.ok?'✓':(s.skipped?'−':'✗'))+' '+(s.component||'')+' via '+(s.backend||'')+(s.error?(' — '+s.error):'')); });
+    (x.warnings||[]).forEach(w=>dpLog('   ⚠ '+w));
+  });
+  if(r.error) dpLog('ERROR: '+r.error);
+  dpLog(r.ok?'DONE':'INCOMPLETE');
+  $('dp-go').disabled=false; dpBtn();
+  toast(r.ok?'Provisioned':'Provision incomplete — see log', r.ok?'ok':'err');
+  if(r.ok) dpLoad();   // refresh targets — new nodes/engines may exist now
+}
+
 refresh();
+dpLoad();
+</script>
+<script src="/ui/vera-panel-bridge.js"></script>
+<script>
+/* ── Chat ↔ panel bridge: curated Provision actions + live agent mirror ──────
+ * Lets a chat agent drive the unified Deploy flow (panel.dispatch) and shows
+ * agent-run provisioning caps (provision.* / nodes.*) live in the Deploy log. */
+(function(){
+  if(!window.VeraPanelBridge) return;
+  var B=window.VeraPanelBridge;
+
+  B.registerActionHandler('overview', function(){ dpLoad(); return {loading:true}; });
+
+  // Select target/payloads and (optionally) run — payload:
+  //   {target:"node:<id>"|"docker:<id>", payloads:["ollama","stack:redis",…],
+  //    options?:{gpus,model,backend}, run?:true}
+  B.registerActionHandler('provision', async function(p){
+    p=p||{};
+    showTab('deploy');
+    if(!_dpOverview) await dpLoad();
+    if(p.target) dpPickTarget(String(p.target));
+    if(Array.isArray(p.payloads)&&p.payloads.length){
+      _dpSel=new Set(p.payloads.map(String)); dpRenderPayloads(); dpBtn();
+    }
+    var o=p.options||{};
+    if(o.model) $('dp-model').value=String(o.model);
+    if(o.gpus)  $('dp-gpus').value=String(o.gpus);
+    if(o.backend) $('dp-backend').value=String(o.backend);
+    if(p.run===false) return {selected:true,target:_dpTarget,payloads:Array.from(_dpSel)};
+    if(!_dpTarget||!_dpSel.size)
+      return {ok:false,error:'target and payloads required — see provision.overview',
+              target:_dpTarget,payloads:Array.from(_dpSel)};
+    dpApply();
+    return {started:true,target:_dpTarget,payloads:Array.from(_dpSel)};
+  });
+
+  B.registerStateProvider(function(){
+    var tab=document.querySelector('.tab.on');
+    return {panel:'provision',
+      tab:(tab&&tab.dataset.t)||'',
+      target:_dpTarget, payloads:Array.from(_dpSel),
+      panel_actions:{
+        overview:  'Reload the target + payload catalog (provision.overview). payload: {}',
+        provision: 'Uniform deploy: select and run. payload: {target:"node:<id>"|"docker:<id>", payloads:["ollama","vllm","vera-stack","stack:redis","security:openbao","image:custom",…], options?:{gpus,model,backend}, run?:true}. Prefer calling the provision.apply cap directly — it mirrors here live.',
+        'showTab': 'Switch tab. Use keys showTab:deploy | showTab:install | showTab:proxmox | showTab:docker',
+      }};
+  });
+
+  // Agent-run provisioning caps appear live in the Deploy log.
+  function _mirror(a){
+    try{
+      if(a.phase==='call') dpLog('▸ agent '+a.cap+(a.args?(' '+JSON.stringify(a.args).slice(0,160)):''));
+      else if(a.phase==='ok') dpLog('✓ agent '+a.cap+((a.preview?(' — '+String(a.preview).slice(0,120)):'')));
+      else dpLog('✗ agent '+a.cap+' — '+(a.error||'failed'));
+    }catch(e){}
+  }
+  B.registerCapActivityHandler('provision.*', _mirror);
+  B.registerCapActivityHandler('nodes.*', _mirror);
+  B.registerCapActivityHandler('secprov.*', _mirror);
+})();
 </script>
 </body>
 </html>

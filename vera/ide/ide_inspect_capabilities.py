@@ -138,6 +138,7 @@ async def _ollama_with_options(
     _req_id = str(uuid.uuid4())[:12]
     _t0 = _time.time()
     _prompt_preview = (prompt or "")[:120].replace("\n", " ")
+    _prompt_full = (prompt or "")[:16000]
     log.info("ollama_req [%s] model=%s inst=%s caller=ide_inspect:%s prompt=%s",
              _req_id, use_model, chosen, _caller_func, _prompt_preview)
     try:
@@ -147,7 +148,7 @@ async def _ollama_with_options(
             "caller_file": "ide_inspect_capabilities.py", "caller_func": _caller_func,
             "caller_module": "ide_inspect_capabilities",
             "cap_name": f"ide.inspect.{_caller_func}",
-            "prompt_preview": _prompt_preview, "json_mode": False,
+            "prompt_preview": _prompt_preview, "prompt_full": _prompt_full, "json_mode": False,
             "prefer_gpu": prefer_gpu, "streaming": True,
         })
     except Exception:
@@ -463,7 +464,11 @@ async def ide_inspect_snapshot(
     session_id: str = "",
     trace_id=None,
 ):
-    try:
+    # Heavy blocking FS work — copytree of the WHOLE source tree, whole-tree
+    # hash, and a walk — must not run on the event loop (it would freeze every
+    # WebSocket for the copy's duration). Do it in a thread; keep the async
+    # _record scheduling on the loop.
+    def _build():
         SNAPSHOT_ROOT.mkdir(parents=True, exist_ok=True)
         sid = _snapshot_id(label)
         dst = SNAPSHOT_ROOT / sid
@@ -493,6 +498,11 @@ async def ide_inspect_snapshot(
                 file_count += 1
                 try: total_bytes += p.stat().st_size
                 except Exception: pass
+        return sid, dst, meta, file_count, total_bytes
+
+    try:
+        loop = asyncio.get_event_loop()
+        sid, dst, meta, file_count, total_bytes = await loop.run_in_executor(None, _build)
 
         sess = session_id or _ide_get_session_id()
         asyncio.ensure_future(_record(
@@ -552,6 +562,67 @@ def _tree_hash(root: Path) -> str:
 # ide.inspect.list_snapshots
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _scandir_count_bytes(root: str) -> tuple:
+    """Single recursive os.scandir walk → (file_count, total_bytes). One walk +
+    one stat per entry (via DirEntry), vs pathlib rglob's two walks and extra
+    stat syscalls. Purely synchronous — call from a thread."""
+    count = 0
+    total = 0
+    stack = [root]
+    while stack:
+        cur = stack.pop()
+        try:
+            with os.scandir(cur) as it:
+                for e in it:
+                    try:
+                        if e.is_dir(follow_symlinks=False):
+                            stack.append(e.path)
+                        elif e.is_file(follow_symlinks=False):
+                            count += 1
+                            total += e.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+    return count, total
+
+
+def _list_snapshots_sync() -> dict:
+    """Blocking snapshot enumeration (filesystem walks + hashing). Runs in a
+    thread — doing this on the event loop hung it for seconds and flapped every
+    WebSocket (rglob + per-file stat over a large snapshot tree)."""
+    cur_hash = _tree_hash(SOURCE_ROOT)
+    out = []
+    if not SNAPSHOT_ROOT.exists():
+        return {"snapshots": [], "snapshot_root": str(SNAPSHOT_ROOT),
+                "current_source_hash": cur_hash, "count": 0}
+    for d in sorted(SNAPSHOT_ROOT.iterdir(), reverse=True):
+        if not d.is_dir():
+            continue
+        meta_f = d / ".vera_inspect.json"
+        meta = {}
+        if meta_f.exists():
+            try: meta = json.loads(meta_f.read_text())
+            except Exception: meta = {}
+        file_count, total_bytes = _scandir_count_bytes(str(d))
+        out.append({
+            "id":          d.name,
+            "path":        str(d),
+            "created_at":  meta.get("created_at", ""),
+            "label":       meta.get("label", ""),
+            "source_hash": meta.get("source_hash", ""),
+            "file_count":  file_count,
+            "bytes":       total_bytes,
+            "is_fresh":    meta.get("source_hash") == cur_hash,
+        })
+    return {
+        "snapshots":           out,
+        "snapshot_root":       str(SNAPSHOT_ROOT),
+        "current_source_hash": cur_hash,
+        "count":               len(out),
+    }
+
+
 @capability(
     "ide.inspect.list_snapshots",
     http_method="GET", http_path="/ide/inspect/snapshots",
@@ -563,36 +634,10 @@ def _tree_hash(root: Path) -> str:
 )
 async def ide_inspect_list_snapshots(trace_id=None):
     try:
-        cur_hash = _tree_hash(SOURCE_ROOT)
-        out = []
-        if not SNAPSHOT_ROOT.exists():
-            return {"snapshots": [], "snapshot_root": str(SNAPSHOT_ROOT),
-                    "current_source_hash": cur_hash}
-        for d in sorted(SNAPSHOT_ROOT.iterdir(), reverse=True):
-            if not d.is_dir(): continue
-            meta_f = d / ".vera_inspect.json"
-            meta = {}
-            if meta_f.exists():
-                try: meta = json.loads(meta_f.read_text())
-                except Exception: meta = {}
-            file_count = sum(1 for p in d.rglob("*") if p.is_file())
-            total_bytes = sum(p.stat().st_size for p in d.rglob("*") if p.is_file())
-            out.append({
-                "id":          d.name,
-                "path":        str(d),
-                "created_at":  meta.get("created_at", ""),
-                "label":       meta.get("label", ""),
-                "source_hash": meta.get("source_hash", ""),
-                "file_count":  file_count,
-                "bytes":       total_bytes,
-                "is_fresh":    meta.get("source_hash") == cur_hash,
-            })
-        return {
-            "snapshots":           out,
-            "snapshot_root":       str(SNAPSHOT_ROOT),
-            "current_source_hash": cur_hash,
-            "count":               len(out),
-        }
+        # Offload the blocking filesystem work to a thread so it never stalls
+        # the event loop (WS-flap fix).
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, _list_snapshots_sync)
     except Exception as e:
         return {"error": str(e), "snapshots": []}
 
@@ -617,7 +662,11 @@ async def ide_inspect_diff_snapshot(
     max_chars_per_file: int = 20000,
     trace_id=None,
 ):
-    try:
+    # The body walks TWO full trees (snapshot + live source) and reads/diffs
+    # every file — pure blocking FS work. Run it in a thread so it never stalls
+    # the event loop (WS-flap fix); confirmed same class of hang as
+    # list_snapshots (the loop-stall stack dumper caught rglob on the loop).
+    def _compute():
         snap = SNAPSHOT_ROOT / snapshot_id
         if not snap.exists() or not snap.is_dir():
             return {"error": f"Snapshot not found: {snapshot_id}"}
@@ -703,6 +752,10 @@ async def ide_inspect_diff_snapshot(
             "diffs":       diffs,
             "total_changes": len(modified) + len(added) + len(removed),
         }
+
+    try:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, _compute)
     except Exception as e:
         log.exception("diff_snapshot failed")
         return {"error": str(e)}
@@ -732,7 +785,10 @@ async def ide_inspect_delete_snapshot(snapshot_id: str, trace_id=None):
             resolved.relative_to(SNAPSHOT_ROOT.resolve())
         except ValueError:
             return {"ok": False, "error": "Refusing to delete outside snapshot_root"}
-        shutil.rmtree(str(snap))
+        # rmtree of a whole snapshot tree is blocking — offload so a large
+        # delete doesn't stall the event loop (WS-flap fix).
+        await asyncio.get_event_loop().run_in_executor(
+            None, shutil.rmtree, str(snap))
         await emit_event({"type": "ide.inspect.deleted",
                           "snapshot_id": snapshot_id, "ts": now_iso()})
         return {"ok": True, "snapshot_id": snapshot_id, "deleted": True}
@@ -1072,24 +1128,27 @@ async def ide_inspect_plan_improvement(
         if not snap.exists():
             return {"ok": False, "error": f"Snapshot not found: {snapshot_id}"}
 
-        # Collect an outline of the snapshot
-        outline_lines = []
-        for p in sorted(snap.rglob("*.py")):
-            if any(part in _IGNORE_PATTERNS for part in p.parts): continue
-            rel = str(p.relative_to(snap))
-            outline_lines.append(f"=== {rel} ===")
-            try:
-                text = p.read_text(encoding="utf-8", errors="replace")
-                for i, line in enumerate(text.splitlines(), 1):
-                    if re.match(r"^\s*(class |def |async def |@capability\()", line):
-                        outline_lines.append(f"  {i:>4}: {line.strip()[:120]}")
-            except Exception:
-                pass
-            if len(outline_lines) > 1200:
-                outline_lines.append("  … (outline truncated)")
-                break
+        # Collect an outline of the snapshot — walks + reads every .py, so run
+        # it in a thread rather than blocking the event loop (WS-flap fix).
+        def _build_outline():
+            outline_lines = []
+            for p in sorted(snap.rglob("*.py")):
+                if any(part in _IGNORE_PATTERNS for part in p.parts): continue
+                rel = str(p.relative_to(snap))
+                outline_lines.append(f"=== {rel} ===")
+                try:
+                    text = p.read_text(encoding="utf-8", errors="replace")
+                    for i, line in enumerate(text.splitlines(), 1):
+                        if re.match(r"^\s*(class |def |async def |@capability\()", line):
+                            outline_lines.append(f"  {i:>4}: {line.strip()[:120]}")
+                except Exception:
+                    pass
+                if len(outline_lines) > 1200:
+                    outline_lines.append("  … (outline truncated)")
+                    break
+            return "\n".join(outline_lines)[:40000]
 
-        outline = "\n".join(outline_lines)[:40000]
+        outline = await asyncio.get_event_loop().run_in_executor(None, _build_outline)
 
         try:
             requested = json.loads(files) if files else []

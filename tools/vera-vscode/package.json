@@ -1,0 +1,78 @@
+{
+  "name": "vera-vscode",
+  "displayName": "Vera",
+  "description": "Bring Vera's IDE features into VS Code / code-server: a Vera sidebar (memory search, enqueue Claude Code tasks) and a one-click command that wires Vera into this workspace's Claude Code as an MCP server.",
+  "version": "0.1.0",
+  "publisher": "vera",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Machine Learning",
+    "Other"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "configuration": {
+      "title": "Vera",
+      "properties": {
+        "vera.baseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8000",
+          "description": "Base URL of the Vera server (its HTTP / MCP endpoint)."
+        },
+        "vera.allow": {
+          "type": "string",
+          "default": "ide.,fabric.,memory.,dream.,project.,web.",
+          "description": "CSV of Vera capability-name prefixes the MCP bridge exposes to Claude Code."
+        },
+        "vera.askCapability": {
+          "type": "string",
+          "default": "",
+          "description": "Capability name the 'Ask Vera' box invokes with {query} (e.g. a memory/search cap). Leave blank to disable."
+        },
+        "vera.clientMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Register this VS Code window with Vera as a controllable client (kind=vscode-client): Vera can open files, run commands, drive the terminal and run Claude Code tasks here — Claude uses THIS machine's sign-in."
+        },
+        "vera.clientLabel": {
+          "type": "string",
+          "default": "",
+          "description": "Label shown for this window in Vera's instance list (default: hostname · workspace folder)."
+        },
+        "vera.clientToken": {
+          "type": "string",
+          "default": "",
+          "description": "Optional shared secret for the client channel. Sent on register; Vera then requires it on every poll/result."
+        }
+      }
+    },
+    "commands": [
+      { "command": "vera.connectWorkspace", "title": "Vera: Connect this workspace (install MCP bridge)" },
+      { "command": "vera.enqueueTask",     "title": "Vera: Enqueue a Claude Code task for this workspace" },
+      { "command": "vera.toggleClientMode","title": "Vera: Toggle client mode (let Vera control this window)" },
+      { "command": "vera.refresh",         "title": "Vera: Refresh", "icon": "$(refresh)" }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "veraContainer", "title": "Vera", "icon": "media/vera.svg" }
+      ]
+    },
+    "views": {
+      "veraContainer": [
+        { "type": "webview", "id": "vera.sidebar", "name": "Vera" }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        { "command": "vera.refresh", "when": "view == vera.sidebar", "group": "navigation" }
+      ]
+    }
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0"
+  }
+}

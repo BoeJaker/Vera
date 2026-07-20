@@ -54,6 +54,18 @@
  * * deserialize(doc) -> graph           — host document → model
  *   nodeCard(node, schema) -> {title,sub,line}  — node card text override
  *   onChange(graph)                     — called after any edit
+ *   insertIndex(node, graph) -> int     — where _addNode splices the new node
+ *                                          (default: append). Lets dataflow
+ *                                          domains keep sources→logic→sinks
+ *                                          ordering so state-ref pickers work.
+ *   stateKeysBefore(idx, graph) -> [str] — override the keys offered by the
+ *                                          from-state pickers (default: outs +
+ *                                          output_map keys + literal param
+ *                                          names of earlier nodes).
+ *   sequenceEdges: false                — suppress the implicit row→row
+ *                                          sequence edges; only data wires
+ *                                          (state refs) are drawn. For pure
+ *                                          dataflow domains.
  *
  *   `ctx` passed to hooks: {el, graph, schema, esc, update(), select(id)}
  *
@@ -99,6 +111,17 @@
   font:12px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
 :host([hidden]){display:none}
 *{box-sizing:border-box}
+/* Theme-consistent scrollbars — every scroll area in the builder (palette,
+   canvas, inspector, state pane, dock tips) used the browser default, which
+   reads as a bright out-of-theme bar on the dark panels. Match the panel
+   surface + border tokens so they blend in, on WebKit and Firefox. */
+*{scrollbar-width:thin;scrollbar-color:var(--border2,#384151) transparent}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2,#384151);border-radius:6px;
+  border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:var(--acc,#5a9e8f);background-clip:padding-box}
+::-webkit-scrollbar-corner{background:transparent}
 button{cursor:pointer;font:inherit;color:inherit}
 input,select,textarea{font:inherit;color:var(--text,#e6e9ef);background:var(--bg1,#161a22);
   border:1px solid var(--border,#2a313e);border-radius:3px;padding:4px 7px;outline:none}
@@ -543,6 +566,9 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc,#5a9e8f)}
       this._nextId = max + 1;
     }
     _stateKeysBefore(idx){
+      if(this._provider && this._provider.stateKeysBefore){
+        try{ return new Set(this._provider.stateKeysBefore(idx, this._graph)||[]); }catch(_){}
+      }
       const keys = new Set(Object.keys(this._graph.meta&&this._graph.meta.initial_state||{}));
       for(const n of this._graph.nodes.slice(0, idx)){
         if(n.out) keys.add(n.out);
@@ -572,7 +598,12 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc,#5a9e8f)}
         : this._defaultNode(item);
       if(!node.id) node.id = 'n'+(this._nextId++);
       if(node.pos===undefined) node.pos = null;
-      this._graph.nodes.push(node);
+      let at = this._graph.nodes.length;
+      if(this._provider && this._provider.insertIndex){
+        try{ const i = this._provider.insertIndex(node, this._graph);
+          if(Number.isInteger(i) && i>=0 && i<=at) at = i; }catch(_){}
+      }
+      this._graph.nodes.splice(at, 0, node);
       this._sel = node.id;
       this._renderCanvas(); this._renderInspector();
       this._emit('flow:node-add', { node });
@@ -730,9 +761,10 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc,#5a9e8f)}
         </g>`);
       });
 
-      // Edges: row → next row
+      // Edges: row → next row (providers with sequenceEdges:false draw only wires)
       const edges = [];
-      for(let i=0;i<rows.length-1;i++){
+      const wantSeq = !(this._provider && this._provider.sequenceEdges===false);
+      for(let i=0; wantSeq && i<rows.length-1;i++){
         for(const a of rows[i]) for(const b of rows[i+1]){
           const A=nodeXY[a.id], B=nodeXY[b.id]; if(!A||!B) continue;
           const x1=A.cx, y1=A.y+NODE_H, x2=B.cx, y2=B.y, my=(y1+y2)/2;
@@ -753,7 +785,9 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc,#5a9e8f)}
           const Pp = nodeXY[prodId]; if(!Pp) continue;
           const cRow = rows.findIndex(r=>r.find(x=>x.id===consumer.id));
           const pRow = rows.findIndex(r=>r.find(x=>x.id===prodId));
-          if(cRow-pRow===1 && rows[pRow].length===1 && rows[cRow].length===1) continue;
+          // adjacent singleton rows are already joined by a sequence edge —
+          // but only when sequence edges are actually drawn
+          if(wantSeq && cRow-pRow===1 && rows[pRow].length===1 && rows[cRow].length===1) continue;
           const x1=Pp.x+NODE_W-6, y1=Pp.cy, x2=C.x+6, y2=C.cy, dx=Math.abs(x2-x1)*0.4+30;
           wires.push(`<path class="gwire" d="M${x1},${y1} C${x1+dx},${y1} ${x2-dx},${y2} ${x2},${y2}"/>
             <text class="gwire-label" x="${(x1+x2)/2}" y="${(y1+y2)/2-3}">${_esc(ps.value)}</text>`);
@@ -932,8 +966,11 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc,#5a9e8f)}
         if(providerHtml != null){
           // Append the generic wiring + control section after the provider's
           // domain config, so wiring/conditions/output-keys are available on
-          // every node. Providers opt out with `wiring === false`.
-          const wiring = (this._provider.wiring===false) ? ''
+          // every node. Providers opt out wholesale with `wiring === false`, or
+          // per node by supplying `wiring` as a function (node) => boolean.
+          const wp = this._provider.wiring;
+          const wantWiring = (typeof wp === 'function') ? !!wp(node) : (wp !== false);
+          const wiring = !wantWiring ? ''
             : `<div class="insp-section-h" style="margin-top:8px;border-top:1px solid var(--border,#2a313e);padding-top:8px">⇄ Wiring &amp; control</div>${this._wiringHtml(node)}`;
           host.innerHTML = providerHtml + wiring + this._actionsHtml(node);
           if(r && r.bind){ try{ r.bind(host); }catch(_){} }

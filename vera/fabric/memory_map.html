@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <title>Knowledge Graph Galaxy</title>
 <style>
@@ -1092,7 +1097,7 @@ html,body{
 
   <!-- TOP BAR -->
   <div id="topbar">
-    <div id="logo"><span> MEMORY </span>GALAXY</div>
+    <div id="logo"><span> VERA </span>GALAXY</div>
     <div class="tb-sep"></div>
     <div id="stats-row">
       <div class="stat-item"><span class="stat-val" id="s-nodes">0</span><span>NODES</span></div>
@@ -1155,10 +1160,24 @@ html,body{
         <button class="cluster-btn" data-mode="spiral">
           <span class="cb-icon" style="background:#ff6b9d"></span>Spiral (degree)
         </button>
+        <button class="cluster-btn" data-mode="galaxy">
+          <span class="cb-icon" style="background:#b46fff"></span>Galaxy (spiral arms)
+        </button>
+        <button class="cluster-btn" data-mode="shells">
+          <span class="cb-icon" style="background:#4a9eff"></span>Orbit Shells
+        </button>
         <button class="cluster-btn" data-mode="temporal">
           <span class="cb-icon" style="background:#4aeaff"></span>Timeline
         </button>
       </div>
+    </div>
+
+    <!-- Controls / key bindings (collapsible drawer) -->
+    <div class="panel">
+      <div class="panel-hdr" style="cursor:pointer;user-select:none" onclick="let b=this.nextElementSibling;b.style.display=b.style.display==='none'?'block':'none';this.querySelector('.drawer-arrow').textContent=b.style.display==='none'?'▸':'▾'">
+        <div class="dot" style="background:var(--accent-amber);box-shadow:0 0 6px var(--accent-amber)"></div>CONTROLS <span class="drawer-arrow" style="margin-left:auto;font-size:8px;opacity:0.5">▸</span>
+      </div>
+      <div class="panel-body" id="keybind-body" style="display:none"></div>
     </div>
 
     <!-- Legend -->
@@ -1800,19 +1819,49 @@ const RELATION_LABELS = [
 const TYPE_ORDER = ['concept','entity','event','session','memory','tool','dataset','source','category','skill','ontology'];
 
 // ===========================================================
+// KEY BINDINGS — every movement key is remappable
+// Stored per-browser in localStorage('gg_keybinds'); the CONTROLS
+// drawer in the left panel does click-to-rebind.
+// ===========================================================
+
+const KEYBIND_DEFAULTS = {
+  // camera (free look / orbit)
+  lookUp:'w', lookDown:'s', lookLeft:'a', lookRight:'d',
+  flyFwd:'arrowup', flyBack:'arrowdown', strafeLeft:'arrowleft', strafeRight:'arrowright',
+  rise:'e', sink:'q', boost:'shift',
+  // starfighter
+  throttleUp:'w', throttleDown:'s',
+  pitchUp:'arrowup', pitchDown:'arrowdown', yawLeft:'arrowleft', yawRight:'arrowright',
+  rollLeft:'a', rollRight:'d', fire:' ', afterburner:'shift',
+  // general
+  home:'h',
+};
+let KEYBINDS = { ...KEYBIND_DEFAULTS };
+try{ Object.assign(KEYBINDS, JSON.parse(localStorage.getItem('gg_keybinds')||'{}')); }catch(_){}
+function _saveKeybinds(){ try{ localStorage.setItem('gg_keybinds', JSON.stringify(KEYBINDS)); }catch(_){} }
+function kbLabel(k){
+  return ({' ':'SPACE','arrowup':'↑','arrowdown':'↓','arrowleft':'←','arrowright':'→',
+           'shift':'SHIFT','control':'CTRL','alt':'ALT'})[k] || String(k).toUpperCase();
+}
+
+// ===========================================================
 // SCENE SETUP
 // ===========================================================
 
 const host = document.getElementById('canvas-host');
 
 const scene  = new THREE.Scene();
-scene.fog    = new THREE.FogExp2(0x050810, 0.0018);
+// 0.0018 blacked out anything past ~1000u — from the rim you couldn't see
+// the far side of the galaxy, which is how you get lost. Halved.
+scene.fog    = new THREE.FogExp2(0x050810, 0.0009);
 
 const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 3000);
 camera.position.set(0, 0, 200);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-renderer.setPixelRatio(devicePixelRatio);
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
+// Full devicePixelRatio on hi-DPI screens quadruples the fill cost for no
+// visible gain on a starfield — cap it. Biggest single fps win on 4K panels.
+renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5));
 renderer.setSize(innerWidth, innerHeight);
 renderer.setClearColor(0x050810, 1);
 document.body.appendChild(renderer.domElement);
@@ -1834,15 +1883,20 @@ ptLight2.position.set(-200, -100, -100);
 scene.add(ptLight2);
 
 // Starfield
-(function buildStars(){
+const _starfield = (function buildStars(){
   const geo = new THREE.BufferGeometry();
   const verts = [];
   for(let i=0;i<3000;i++){
     verts.push((Math.random()-0.5)*2000,(Math.random()-0.5)*2000,(Math.random()-0.5)*2000);
   }
   geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
-  const mat = new THREE.PointsMaterial({ color:0xffffff, size:0.4, transparent:true, opacity:0.45 });
-  scene.add(new THREE.Points(geo, mat));
+  // fog:false — the background starfield is the horizon reference; it must
+  // stay visible however far you fly, or empty space has no orientation cues
+  const mat = new THREE.PointsMaterial({ color:0xffffff, size:0.4, transparent:true, opacity:0.45, fog:false });
+  const pts = new THREE.Points(geo, mat);
+  pts.frustumCulled = false;
+  scene.add(pts);
+  return pts;
 })();
 
 // ===========================================================
@@ -1875,17 +1929,122 @@ function getSphereGeo(r){
   return sphereGeos[r];
 }
 
+// ── Instanced node renderer — every node sphere in ONE draw call ────
+// makeNodeMesh() returns a lightweight proxy (real Vector3 position +
+// real THREE.Color material fields) instead of a THREE.Mesh, so all
+// existing code that reads/writes .mesh.position / .mesh.material.color
+// keeps working. NODE_INST.sync() folds every proxy into a single
+// InstancedMesh once per frame: n draw calls collapse to 1.
+const NODE_INST = {
+  cap: 0, count: 0,
+  mesh: null,
+  slots: [],                       // instanceId -> proxy
+  _bg: new THREE.Color(0x050810),  // fade target for "transparent" nodes
+  _m: new THREE.Matrix4(),
+  _q: new THREE.Quaternion(),
+  _s: new THREE.Vector3(),
+  _c: new THREE.Color(),
+
+  _rebuild(newCap){
+    const old = this.mesh;
+    const im = new THREE.InstancedMesh(
+      new THREE.SphereGeometry(1, 10, 7),
+      new THREE.MeshBasicMaterial({ color: 0xffffff }),
+      newCap
+    );
+    im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(newCap*3), 3);
+    im.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    im.frustumCulled = false;
+    im.count = this.count;
+    scene.add(im);
+    this.mesh = im;
+    this.cap  = newCap;
+    if(old){ scene.remove(old); old.geometry.dispose(); old.material.dispose(); }
+  },
+
+  alloc(proxy){
+    if(this.count >= this.cap) this._rebuild(Math.max(2048, this.cap*2));
+    const id = this.count++;
+    this.slots[id] = proxy;
+    proxy._instId = id;
+    this.mesh.count = this.count;
+  },
+
+  free(proxy){
+    const id = proxy._instId;
+    if(id === undefined || id < 0 || this.slots[id] !== proxy) return;
+    const lastId = this.count - 1;
+    const last   = this.slots[lastId];
+    this.slots[id] = last;
+    if(last) last._instId = id;
+    this.slots.length = lastId;
+    this.count = lastId;
+    proxy._instId = -1;
+    if(this.mesh) this.mesh.count = this.count;
+  },
+
+  clear(){
+    this.slots.length = 0;
+    this.count = 0;
+    if(this.mesh) this.mesh.count = 0;
+  },
+
+  // Fold every proxy's position/visibility/colour into the instance
+  // buffers. Plain O(n) math per frame — cheap even at 20k nodes.
+  sync(){
+    if(!this.mesh || !this.count) return;
+    const im = this.mesh;
+    for(let i=0;i<this.count;i++){
+      const p = this.slots[i];
+      const s = p._visible ? p._r : 0;   // hidden = zero-scale instance
+      this._s.set(s, s, s);
+      this._m.compose(p.position, this._q, this._s);
+      im.setMatrixAt(i, this._m);
+      const m = p.material;
+      this._c.copy(m.color).multiplyScalar(0.55 + m._emisI*0.85);
+      const em = m._emissive;
+      if(em.r||em.g||em.b){ this._c.r+=em.r*0.9; this._c.g+=em.g*0.9; this._c.b+=em.b*0.9; }
+      // MeshBasicMaterial instancing has no per-instance opacity — fading
+      // toward the background colour is visually identical on a dark scene.
+      if(m.transparent && m.opacity < 1) this._c.lerp(this._bg, 1 - Math.max(0, m.opacity));
+      im.setColorAt(i, this._c);
+    }
+    im.instanceMatrix.needsUpdate = true;
+    if(im.instanceColor) im.instanceColor.needsUpdate = true;
+  },
+};
+
+const NODE_RADII = { dataset:3.2, source:2.6, memory:2.4, session:2.8, skill:2.5 };
+
 function makeNodeMesh(node){
-  const r = node.type==='dataset'?3.2 : node.type==='source'?2.6 : node.type==='memory'?2.4 : node.type==='session'?2.8 : node.type==='skill'?2.5 : 1.8;
-  const geo = getSphereGeo(r);
+  const r   = node._radius || NODE_RADII[node.type] || 1.8;
   const col = NODE_COLORS[node.type] || 0xaaaaaa;
-  const mat = new THREE.MeshBasicMaterial({ color: col });
-  mat._baseCol = col;
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.set(...node.pos);
-  mesh.userData.nodeId = node.id;
-  scene.add(mesh);
-  return mesh;
+  const proxy = {
+    isNodeProxy: true,
+    position: new THREE.Vector3(node.pos[0], node.pos[1], node.pos[2]),
+    userData: { nodeId: node.id },
+    _r: r,
+    _visible: true,
+    _instId: -1,
+    geometry: { dispose(){} },     // instanced geometry is shared — nothing to free
+    get visible(){ return this._visible; },
+    set visible(v){ this._visible = !!v; },
+  };
+  proxy.material = {
+    _baseCol: col,
+    color: new THREE.Color(col),
+    _emissive: new THREE.Color(0x000000),
+    get emissive(){ return this._emissive; },
+    _emisI: 0.35,
+    get emissiveIntensity(){ return this._emisI; },
+    set emissiveIntensity(v){ this._emisI = v; },
+    opacity: 1,
+    transparent: false,
+    dispose(){ NODE_INST.free(proxy); },   // every node-removal path calls this
+  };
+  NODE_INST.alloc(proxy);
+  return proxy;
 }
 
 // ── Merged edge renderer — 1 draw call for all edges ────────────────
@@ -1903,7 +2062,14 @@ _edgeMesh.frustumCulled = false;
 scene.add(_edgeMesh);
 let _edgeSlot = 0;
 
+let _edgeCompacting = false;
 function makeEdgeLine(nodeA, nodeB){
+  // Slots are append-only; after unload/reload cycles the buffer can fill
+  // while few edges are actually alive — compact instead of refusing.
+  if(_edgeSlot >= _MAX_EDGES && !_edgeCompacting && EDGES.length < _MAX_EDGES){
+    _edgeCompacting = true;
+    try{ compactEdgeBuffer(); } finally{ _edgeCompacting = false; }
+  }
   const slot = _edgeSlot++;
   if(slot >= _MAX_EDGES){ console.warn('[EDGE] buffer full'); return { _slot:-1, _hidden:false, get visible(){return true;}, set visible(_v){}, material:_edgeMat }; }
   const o = slot * _EDGE_SLOT_SIZE;
@@ -2270,6 +2436,7 @@ function clearGraph(){
     if(n.mesh){ scene.remove(n.mesh); n.mesh.geometry.dispose(); n.mesh.material.dispose(); }
     if(n.labelEl && n.labelEl.parentNode) n.labelEl.parentNode.removeChild(n.labelEl);
   });
+  NODE_INST.clear();
   // Reset merged edge buffer (no scene.remove needed — edges share one LineSegments)
   _edgeSlot = 0;
   if(_edgeBuf) _edgeBuf.fill(0);
@@ -2279,6 +2446,43 @@ function clearGraph(){
   selectedNode=null; focusedSubgraph=null;
   document.getElementById('inspector').classList.remove('visible');
   document.getElementById('focus-badge').classList.remove('visible');
+}
+
+// Remove one node + its edges without confirms/toasts/server calls.
+// Used by the spatial streamer to unload far-away regions.
+function removeNodeQuiet(nodeId){
+  const n = nodeMap[nodeId];
+  if(!n) return false;
+  if(n === selectedNode || n === _hoverNode3d) return false;
+  if(n.mesh){ scene.remove(n.mesh); n.mesh.geometry?.dispose(); n.mesh.material?.dispose(); }
+  if(n.labelEl?.parentNode) n.labelEl.parentNode.removeChild(n.labelEl);
+  const ni = NODES.indexOf(n);
+  if(ni >= 0) NODES.splice(ni, 1);
+  delete nodeMap[nodeId];
+  for(let i=EDGES.length-1;i>=0;i--){
+    const e = EDGES[i];
+    if(e.from===nodeId || e.to===nodeId){
+      if(e.line) e.line.visible = false;   // zero the merged-buffer slot
+      EDGES.splice(i,1);
+      delete edgeMap[e.id];
+    }
+  }
+  return true;
+}
+
+// The merged edge buffer only ever allocates new slots; after many
+// unload/reload cycles the freed slots would exhaust it. Rebuild all
+// slots from the surviving EDGES to reclaim the space.
+function compactEdgeBuffer(){
+  _edgeSlot = 0;
+  _edgeBuf.fill(0);
+  EDGES.forEach(e=>{
+    const a=nodeMap[e.from], b=nodeMap[e.to];
+    if(a && b && a.mesh && b.mesh) e.line = makeEdgeLine(a, b);
+  });
+  _edgeGeo.setDrawRange(0, _edgeSlot*2);
+  _edgeAttr.needsUpdate = true;
+  applyTypeFilter();   // re-hide edges the user filtered out
 }
 
 function ingestGraph(rawNodes, rawEdges){
@@ -2360,6 +2564,7 @@ function makeLabelEl(node){
 // ===========================================================
 
 function loadDemoData(){
+  window._demoMode = true;
   const rawNodes = buildDemoNodes(400);
   const rawEdges = buildDemoEdges(rawNodes, 700);
   ingestGraph(rawNodes, rawEdges);
@@ -2695,6 +2900,7 @@ function veraRunMemory(){
 
 // ── Shared ingest: converts Vera GraphNode schema -> viewer ─
 function ingestVeraGraph(apiNodes, apiEdges, sourceTag, appendMode){
+  window._demoMode = false;   // real data now — stop the fake demo ticker
   const TYPE_MAP = {
     // Memory
     thought:'memory', memory:'memory', observation:'memory',
@@ -2991,10 +3197,20 @@ function handleLiveEvent(msg){
     return;
   }
 
-  // ── Generic cap events (optional) ──────────────────────
-  if(showCaps && t.startsWith('cap.')){
-    document.getElementById('ticker-text').innerText =
-      'LIVE ── '+t+' at '+new Date().toLocaleTimeString();
+  // ── Capability activity: pulse that star in the capability galaxy ──
+  if(t.startsWith('cap.')){
+    const capName = msg.name || msg.cap || msg.capability;
+    const capNode = capName && nodeMap['cap:'+capName];
+    if(capNode && capNode.mesh && capNode.mesh.visible){
+      if(t==='cap.call') spawnPulse(capNode.mesh.position, 0x22d3ee, 6);
+      pulseMesh(capNode.mesh, t.startsWith('cap.err') ? 0xff4455 : 0x22d3ee);
+      const modNode = capNode.props?.module && nodeMap['mod:'+capNode.props.module];
+      if(modNode && modNode.mesh) pulseMesh(modNode.mesh, 0x4a9eff);
+    }
+    if(showCaps){
+      document.getElementById('ticker-text').innerText =
+        'LIVE ── '+t+(capName?' '+capName:'')+' at '+new Date().toLocaleTimeString();
+    }
     return;
   }
 
@@ -3052,8 +3268,93 @@ const CLUSTER_LAYOUTS = {
   source:    clusterBySource,
   spiral:    clusterBySpiral,
   temporal:  clusterByTemporal,
+  galaxy:    clusterByGalaxy,
+  shells:    clusterByShells,
   none:      clusterNone,
 };
+
+// ── Galaxy layout: spiral arms ──────────────────────────────────────
+// One arm per group (module for the capability galaxy, else data
+// source, else node type). Hub nodes lead their arm out of the core.
+function clusterByGalaxy(){
+  // Pick the first grouping that yields a sane number of arms (2–32):
+  // module (capability galaxy) → data source → community → node type.
+  const keyFns = [
+    n => n.props && (n.props.module || n.props.group) || null,
+    n => n.source || null,
+    n => (n.community!==undefined && n.community!==null) ? 'c'+n.community : null,
+    n => n.type,
+  ];
+  let key = keyFns[keyFns.length-1];
+  for(const f of keyFns){
+    const distinct = new Set();
+    for(const n of NODES){
+      if(n.id==='vera') continue;
+      const v = f(n);
+      if(v!=null) distinct.add(v);
+      if(distinct.size > 32) break;
+    }
+    if(distinct.size >= 2 && distinct.size <= 32){
+      key = n => { const v = f(n); return v!=null ? v : '~'+n.type; };
+      break;
+    }
+  }
+  const groups = {};
+  NODES.forEach(n=>{
+    if(n.id==='vera'){ n.targetPos=[0,0,0]; return; }   // orchestrator core
+    const k = key(n);
+    (groups[k] = groups[k]||[]).push(n);
+  });
+  const keys = Object.keys(groups).sort((a,b)=>groups[b].length-groups[a].length);
+  const K = Math.max(1, keys.length);
+  const TWIST = 2.4;                    // radians of curl per arm
+  keys.forEach((k, ki)=>{
+    const members = groups[k];
+    // Module hubs ('mod:' ids) lead their arm; rest alphabetical for stability
+    members.sort((a,b)=>
+      ((String(b.id).startsWith('mod:')?1:0) - (String(a.id).startsWith('mod:')?1:0)) ||
+      String(a.label).localeCompare(String(b.label)));
+    const baseA  = (ki/K)*Math.PI*2;
+    const armLen = 90 + Math.sqrt(members.length)*46;
+    members.forEach((n,i)=>{
+      const t = members.length>1 ? i/(members.length-1) : 0;
+      const r = 26 + t*armLen;
+      const a = baseA + t*TWIST;
+      const spread = 4 + t*16;          // arms fan out toward the rim
+      n.targetPos = [
+        Math.cos(a)*r + (Math.random()-0.5)*spread,
+        Math.sin(a)*r + (Math.random()-0.5)*spread,
+        (Math.random()-0.5)*(6+t*22),
+      ];
+    });
+  });
+  clusterCentres = {};
+  document.getElementById('s-clusters').innerText = keys.length;
+}
+
+// ── Shell layout: concentric orbital spheres, one per node type ─────
+function clusterByShells(){
+  const byType = {};
+  NODES.forEach(n=>{
+    if(n.id==='vera'){ n.targetPos=[0,0,0]; return; }
+    (byType[n.type] = byType[n.type]||[]).push(n);
+  });
+  const keys = Object.keys(byType).sort((a,b)=>byType[a].length-byType[b].length);
+  keys.forEach((k,ki)=>{
+    const members = byType[k];
+    const R = 55 + ki*48 + Math.sqrt(members.length)*3;
+    const GOLDEN = Math.PI*(3-Math.sqrt(5));
+    members.forEach((n,i)=>{
+      // Fibonacci sphere — even shell coverage
+      const y   = 1 - ((i+0.5)/members.length)*2;
+      const rXZ = Math.sqrt(Math.max(0, 1-y*y));
+      const a   = i * GOLDEN;
+      n.targetPos = [Math.cos(a)*rXZ*R, y*R, Math.sin(a)*rXZ*R];
+    });
+  });
+  clusterCentres = {};
+  document.getElementById('s-clusters').innerText = keys.length;
+}
 
 function refreshClusterMode(){ CLUSTER_LAYOUTS[clusterMode]?.(); }
 
@@ -3502,7 +3803,10 @@ function _inputFocused(){
 document.addEventListener('keydown', e=>{
   if(window.MEMEX && MEMEX._checkKey(e)) return;
   const k=e.key.toLowerCase();
-  if(k==='escape'){ deselectNode(); clearSubgraphFocus(); closeCtxMenu(); }
+  if(k==='escape'){
+    if(window.SHIP && SHIP.active) SHIP.toggle(false);
+    deselectNode(); clearSubgraphFocus(); closeCtxMenu();
+  }
 
   // Block camera keys when an input is focused
   if(_inputFocused()){
@@ -3512,6 +3816,7 @@ document.addEventListener('keydown', e=>{
   }
 
   keys[k]=true;
+  if(k===KEYBINDS.home && !e.repeat) goHome();
   if(k==='arrowup'||k==='arrowdown'||k==='arrowleft'||k==='arrowright'){
     e.preventDefault();
     if(is2DActive){
@@ -3577,6 +3882,12 @@ document.addEventListener('mouseup', ()=>{
 
 document.addEventListener('mousemove', e=>{
   if(isPointerLocked && mouseLookEnabled){
+    if(window.SHIP && SHIP.active){
+      // Pointer-locked mouse steers the starfighter
+      SHIP.yawV   -= e.movementX * 0.00045;
+      SHIP.pitchV -= e.movementY * 0.0004;
+      return;
+    }
     camYaw   -= e.movementX * 0.0018;
     camPitch -= e.movementY * 0.0018;
     camPitch  = Math.max(-Math.PI/2+0.01, Math.min(Math.PI/2-0.01, camPitch));
@@ -3634,6 +3945,9 @@ window.addEventListener('wheel', e=>{
 }, {passive:true});
 
 function updateCamera(dt){
+  // Starfighter mode: the chase cam owns the camera (SHIP.update already ran)
+  if(window.SHIP && SHIP.active){ SHIP.updateChaseCam(dt); return; }
+
   // ── flyTarget: smooth camera pan to destination ──────────────────────
   if(flyTarget){
     const dest = new THREE.Vector3(flyTarget.x,flyTarget.y,flyTarget.z);
@@ -3671,8 +3985,8 @@ function updateCamera(dt){
     }
   }
 
-  const speed    = keys['shift'] ? 4.5 : 1.2;
-  const turnRate = keys['shift'] ? 0.052 : 0.028;
+  const speed    = keys[KEYBINDS.boost] ? 4.5 : 1.2;
+  const turnRate = keys[KEYBINDS.boost] ? 0.052 : 0.028;
   const dir      = new THREE.Vector3();
   camera.getWorldDirection(dir);
   const right = new THREE.Vector3().crossVectors(dir, camera.up).normalize();
@@ -3698,13 +4012,13 @@ function updateCamera(dt){
   }
 
   if(_orbitPivot && !flyTarget){
-    // ── ORBIT MODE: WASD/mouse look orbits around _orbitPivot ──
-    if(keys['a']) camYaw   += turnRate;
-    if(keys['d']) camYaw   -= turnRate;
-    if(keys['w']){ camPitch += turnRate; camPitch=Math.min(Math.PI/2-0.01,camPitch); }
-    if(keys['s']){ camPitch -= turnRate; camPitch=Math.max(-Math.PI/2+0.01,camPitch); }
-    if(keys['q']) _orbitDist = Math.max(4,  _orbitDist - speed*2.0);
-    if(keys['e']) _orbitDist = Math.min(600, _orbitDist + speed*2.0);
+    // ── ORBIT MODE: look keys/mouse orbit around _orbitPivot ──
+    if(keys[KEYBINDS.lookLeft])  camYaw += turnRate;
+    if(keys[KEYBINDS.lookRight]) camYaw -= turnRate;
+    if(keys[KEYBINDS.lookUp]){   camPitch += turnRate; camPitch=Math.min(Math.PI/2-0.01,camPitch); }
+    if(keys[KEYBINDS.lookDown]){ camPitch -= turnRate; camPitch=Math.max(-Math.PI/2+0.01,camPitch); }
+    if(keys[KEYBINDS.sink]) _orbitDist = Math.max(4,  _orbitDist - speed*2.0);
+    if(keys[KEYBINDS.rise]) _orbitDist = Math.min(600, _orbitDist + speed*2.0);
 
     // Arrow keys pan the pivot itself so you can traverse the graph
     const pivotRight = new THREE.Vector3().crossVectors(
@@ -3712,12 +4026,12 @@ function updateCamera(dt){
       new THREE.Vector3(0,1,0)
     ).normalize();
     const pivotUp = new THREE.Vector3(0,1,0);
-    const _arrowSpd = speed * 3.0; // arrows are primary traversal — match WASD feel
+    const _arrowSpd = speed * 3.0; // fly keys are primary traversal — match look-key feel
     const _fwdVec = new THREE.Vector3(Math.cos(camPitch)*Math.sin(camYaw),Math.sin(camPitch),Math.cos(camPitch)*Math.cos(camYaw));
-    if(keys['arrowup'])    _orbitPivot.addScaledVector(_fwdVec,  _arrowSpd);
-    if(keys['arrowdown'])  _orbitPivot.addScaledVector(_fwdVec, -_arrowSpd);
-    if(keys['arrowleft'])  _orbitPivot.addScaledVector(pivotRight,-_arrowSpd);
-    if(keys['arrowright']) _orbitPivot.addScaledVector(pivotRight, _arrowSpd);
+    if(keys[KEYBINDS.flyFwd])      _orbitPivot.addScaledVector(_fwdVec,  _arrowSpd);
+    if(keys[KEYBINDS.flyBack])     _orbitPivot.addScaledVector(_fwdVec, -_arrowSpd);
+    if(keys[KEYBINDS.strafeLeft])  _orbitPivot.addScaledVector(pivotRight,-_arrowSpd);
+    if(keys[KEYBINDS.strafeRight]) _orbitPivot.addScaledVector(pivotRight, _arrowSpd);
 
     camera.position.set(
       _orbitPivot.x + _orbitDist*Math.cos(camPitch)*Math.sin(camYaw),
@@ -3727,18 +4041,18 @@ function updateCamera(dt){
     camera.lookAt(_orbitPivot);
 
   } else if(!flyTarget){
-    // ── FREE LOOK: WASD rotates view, arrows translate ──
-    if(keys['a']) { camYaw   += turnRate; }
-    if(keys['d']) { camYaw   -= turnRate; }
-    if(keys['w']) { camPitch += turnRate; camPitch=Math.min(Math.PI/2-0.01,camPitch); }
-    if(keys['s']) { camPitch -= turnRate; camPitch=Math.max(-Math.PI/2+0.01,camPitch); }
-    if(keys['q']) camera.position.addScaledVector(up,-speed);
-    if(keys['e']) camera.position.addScaledVector(up, speed);
+    // ── FREE LOOK: look keys rotate view, fly keys translate ──
+    if(keys[KEYBINDS.lookLeft])  { camYaw += turnRate; }
+    if(keys[KEYBINDS.lookRight]) { camYaw -= turnRate; }
+    if(keys[KEYBINDS.lookUp])    { camPitch += turnRate; camPitch=Math.min(Math.PI/2-0.01,camPitch); }
+    if(keys[KEYBINDS.lookDown])  { camPitch -= turnRate; camPitch=Math.max(-Math.PI/2+0.01,camPitch); }
+    if(keys[KEYBINDS.sink]) camera.position.addScaledVector(up,-speed);
+    if(keys[KEYBINDS.rise]) camera.position.addScaledVector(up, speed);
     const _as = speed * 3.0;
-    if(keys['arrowup'])    camera.position.addScaledVector(dir,  _as);
-    if(keys['arrowdown'])  camera.position.addScaledVector(dir, -_as);
-    if(keys['arrowleft'])  camera.position.addScaledVector(right,-_as);
-    if(keys['arrowright']) camera.position.addScaledVector(right, _as);
+    if(keys[KEYBINDS.flyFwd])      camera.position.addScaledVector(dir,  _as);
+    if(keys[KEYBINDS.flyBack])     camera.position.addScaledVector(dir, -_as);
+    if(keys[KEYBINDS.strafeLeft])  camera.position.addScaledVector(right,-_as);
+    if(keys[KEYBINDS.strafeRight]) camera.position.addScaledVector(right, _as);
 
     const camTarget = new THREE.Vector3(
       camera.position.x + Math.cos(camPitch)*Math.sin(camYaw),
@@ -3755,6 +4069,31 @@ function updateCamera(dt){
 
 const raycaster = new THREE.Raycaster();
 
+// ── Screen-space node picking ───────────────────────────────────────
+// Projects node centres to screen and picks the nearest within its
+// projected radius. Allocation-free and orders of magnitude cheaper
+// than raycasting thousands of sphere meshes on every mousemove.
+const _pickVec = new THREE.Vector3();
+const _pickDir = new THREE.Vector3();
+function pickNodeAt(cx, cy){
+  camera.getWorldDirection(_pickDir);
+  const fovScale = (innerHeight/2) / Math.tan((camera.fov*Math.PI/180)/2);
+  let best = null, bestDepth = Infinity;
+  for(let i=0;i<NODES.length;i++){
+    const n = NODES[i], mesh = n.mesh;
+    if(!mesh || !mesh.visible) continue;
+    _pickVec.copy(mesh.position).sub(camera.position);
+    const depth = _pickVec.dot(_pickDir);
+    if(depth <= 0.5) continue;                       // behind camera
+    _pickVec.copy(mesh.position).project(camera);
+    const sx = ( _pickVec.x*0.5+0.5)*innerWidth;
+    const sy = (-_pickVec.y*0.5+0.5)*innerHeight;
+    const rPx = Math.max(7, (mesh._r||2) * fovScale / depth * 1.6);  // generous halo
+    if(Math.hypot(sx-cx, sy-cy) < rPx && depth < bestDepth){ best = n; bestDepth = depth; }
+  }
+  return best;
+}
+
 let _mouseDownPos = {x:0,y:0};
 renderer.domElement.addEventListener('mousedown', e=>{ _mouseDownPos={x:e.clientX,y:e.clientY}; }, true);
 renderer.domElement.addEventListener('click', e=>{
@@ -3762,16 +4101,9 @@ renderer.domElement.addEventListener('click', e=>{
   // Don't fire select if mouse dragged more than 4px (was a drag, not a click)
   if(Math.hypot(e.clientX-_mouseDownPos.x, e.clientY-_mouseDownPos.y) > 4) return;
   _canvasDragOrbit=false; _canvasDragFree=false; _canvasDragPan=false;
-  const mouse = new THREE.Vector2(
-    (e.clientX/innerWidth)*2-1,
-    -(e.clientY/innerHeight)*2+1
-  );
-  raycaster.setFromCamera(mouse, camera);
-  const meshes = NODES.filter(n=>n.mesh&&n.mesh.visible).map(n=>n.mesh);
-  const hits   = raycaster.intersectObjects(meshes);
-  if(!hits.length){ deselectNode(); return; }
-  const nodeId = hits[0].object.userData.nodeId;
-  (window.selectNode||selectNode)(nodeId);
+  const hit = pickNodeAt(e.clientX, e.clientY);
+  if(!hit){ deselectNode(); return; }
+  (window.selectNode||selectNode)(hit.id);
 });
 
 function selectNode(id){
@@ -4002,11 +4334,13 @@ function _refreshTraversalChart(nodeId){
 // ===========================================================
 
 const pulsePool=[];
+const _pulseGeo = new THREE.SphereGeometry(1,12,12);   // shared — one per page, not per pulse
+const _PULSE_MAX = 48;
 
 function spawnPulse(pos, color=0xffffff, maxR=8){
-  const geo=new THREE.SphereGeometry(1,12,12);
+  if(pulsePool.length >= _PULSE_MAX) return;   // event storms shouldn't flood the scene
   const mat=new THREE.MeshBasicMaterial({color,transparent:true,opacity:0.6,wireframe:true});
-  const mesh=new THREE.Mesh(geo,mat);
+  const mesh=new THREE.Mesh(_pulseGeo,mat);
   mesh.position.copy(pos);
   scene.add(mesh);
   pulsePool.push({mesh,scale:1,maxR,alive:true});
@@ -4020,6 +4354,7 @@ function updatePulses(){
     p.mesh.material.opacity-=0.025;
     if(p.mesh.material.opacity<=0){
       scene.remove(p.mesh);
+      p.mesh.material.dispose();
       pulsePool.splice(i,1);
     }
   }
@@ -4036,7 +4371,9 @@ function pulseMesh(mesh, color){
 // ===========================================================
 
 function demoLiveEvent(){
-  if(!NODES.length) return;
+  // Only fake activity while showing demo data — real connections get
+  // real pulses from the event stream.
+  if(!window._demoMode || !NODES.length) return;
   const n = NODES[Math.floor(Math.random()*NODES.length)];
   spawnPulse(n.mesh.position, NODE_COLORS[n.type]||0xffffff);
   n.props.score = (Math.random()*0.4+0.6).toFixed(3);
@@ -4175,7 +4512,7 @@ function applyTypeFilter(){
   NODES.forEach(n=>{
     const hidden = hiddenTypes.has(n.type);
     n.mesh.visible = !hidden;
-    if(n.labelEl) n.labelEl.style.display = hidden ? 'none' : 'block';
+    if(n.labelEl){ n.labelEl.style.display = hidden ? 'none' : 'block'; n._lblOn = !hidden; }
   });
   EDGES.forEach(e=>{
     const a=nodeMap[e.from],b=nodeMap[e.to];
@@ -4200,20 +4537,23 @@ const LABEL_FADE_START = 20;  // start fading in at this distance
 
 function updateLabels(){
   camera.getWorldDirection(camDir_);
+  // _lblOn caches shown/hidden state so hidden labels (the vast majority
+  // at any moment) cost zero DOM writes per pass.
+  const hide = n => { if(n._lblOn !== false){ n._lblOn=false; n.labelEl.style.display='none'; } };
   NODES.forEach(n=>{
-    if(!n.labelEl || !n.mesh.visible){ if(n.labelEl) n.labelEl.style.display='none'; return; }
+    if(!n.labelEl) return;
+    if(!n.mesh.visible){ hide(n); return; }
     const pos  = n.mesh.position;
     const dist = camera.position.distanceTo(pos);
     // Only show within close range — tooltip handles further inspection
-    if(dist > LABEL_SHOW_DIST){ n.labelEl.style.display='none'; return; }
+    if(dist > LABEL_SHOW_DIST){ hide(n); return; }
     _vec.copy(pos).sub(camera.position).normalize();
-    if(camDir_.dot(_vec)<=0.1){ n.labelEl.style.display='none'; return; }
+    if(camDir_.dot(_vec)<=0.1){ hide(n); return; }
     _projVec.copy(pos).project(camera); const proj = _projVec;
-    if(proj.x<-1.05||proj.x>1.05||proj.y<-1.05||proj.y>1.05){ n.labelEl.style.display='none'; return; }
-    n.labelEl.style.display='block';
+    if(proj.x<-1.05||proj.x>1.05||proj.y<-1.05||proj.y>1.05){ hide(n); return; }
+    if(!n._lblOn){ n._lblOn=true; n.labelEl.style.display='block'; n.labelEl.style.fontSize='11px'; }
     n.labelEl.style.left = ((proj.x*0.5+0.5)*innerWidth+10)+'px';
     n.labelEl.style.top  = ((-proj.y*0.5+0.5)*innerHeight-7)+'px';
-    n.labelEl.style.fontSize='11px';
     // Fade in as you approach
     const fadeT = Math.min(1, (LABEL_SHOW_DIST-dist) / (LABEL_SHOW_DIST-LABEL_FADE_START));
     n.labelEl.style.opacity = Math.max(0, fadeT)+'';
@@ -4263,6 +4603,167 @@ document.getElementById('cluster-btns').addEventListener('click', e=>{
 });
 
 // ===========================================================
+// NAV BEACON — never get lost in the dark
+// When the galaxy is off-screen, an edge-of-screen arrow points
+// back at it with the distance. Click it (or press Home key) to
+// fly back; in the starfighter it sets course instead.
+// ===========================================================
+
+const _beaconEl = (()=>{
+  const el = document.createElement('div');
+  el.id = 'nav-beacon';
+  el.style.cssText = 'position:fixed;z-index:35;display:none;cursor:pointer;user-select:none;'+
+    "font-family:'Space Mono',monospace;font-size:9px;letter-spacing:.08em;color:#4aeaff;"+
+    'text-align:center;text-shadow:0 0 8px rgba(74,234,255,.9);pointer-events:auto';
+  el.innerHTML = '<div id="nav-beacon-arrow" style="font-size:20px;line-height:1">➤</div>'+
+                 '<div id="nav-beacon-dist"></div>';
+  el.addEventListener('click', ()=>goHome());
+  document.body.appendChild(el);
+  return el;
+})();
+
+const _centroidVec = new THREE.Vector3();
+let _centroidFrame = -999;
+function graphCentroid(){
+  if(frame - _centroidFrame > 60){       // refresh ~1/s — layouts move slowly
+    _centroidFrame = frame;
+    let x=0,y=0,z=0,c=0;
+    NODES.forEach(n=>{ if(n.mesh){ x+=n.mesh.position.x; y+=n.mesh.position.y; z+=n.mesh.position.z; c++; } });
+    if(c) _centroidVec.set(x/c, y/c, z/c);
+  }
+  return _centroidVec;
+}
+
+const _bcnVec = new THREE.Vector3();
+const _bcnDir = new THREE.Vector3();
+function updateBeacon(){
+  if(!NODES.length || (typeof is2DActive!=='undefined' && is2DActive)){ _beaconEl.style.display='none'; return; }
+  const c = graphCentroid();
+  camera.getWorldDirection(_bcnDir);
+  _bcnVec.copy(c).sub(camera.position);
+  const dist   = _bcnVec.length();
+  const behind = _bcnVec.dot(_bcnDir) <= 0;
+  _bcnVec.copy(c).project(camera);
+  if(!behind && Math.abs(_bcnVec.x) < 0.92 && Math.abs(_bcnVec.y) < 0.9){
+    _beaconEl.style.display='none';       // galaxy is on screen — no beacon
+    return;
+  }
+  let sx = ( _bcnVec.x*0.5+0.5)*innerWidth;
+  let sy = (-_bcnVec.y*0.5+0.5)*innerHeight;
+  if(behind){ sx = innerWidth-sx; sy = innerHeight-sy; }
+  const cx = innerWidth/2, cy = innerHeight/2;
+  let dx = sx-cx, dy = sy-cy;
+  const len = Math.hypot(dx,dy) || 1; dx/=len; dy/=len;
+  // clamp to a margin inset from the viewport edges
+  const t  = Math.min((cx-72)/Math.max(Math.abs(dx),1e-6), (cy-72)/Math.max(Math.abs(dy),1e-6));
+  _beaconEl.style.display = 'block';
+  _beaconEl.style.left = (cx + dx*t - 20)+'px';
+  _beaconEl.style.top  = (cy + dy*t - 14)+'px';
+  document.getElementById('nav-beacon-arrow').style.transform =
+    'rotate('+(Math.atan2(dy,dx)*180/Math.PI)+'deg)';
+  document.getElementById('nav-beacon-dist').innerText = 'GALAXY '+Math.round(dist)+'u';
+}
+
+function goHome(){
+  if(!NODES.length) return;
+  const c = graphCentroid();
+  if(window.SHIP && SHIP.active && SHIP.group){
+    // Autopilot: point the nose at the galaxy core (ship forward = -Z,
+    // which is exactly Matrix4.lookAt's camera convention)
+    const m = new THREE.Matrix4().lookAt(SHIP.group.position, c, SHIP.group.up);
+    SHIP.group.quaternion.setFromRotationMatrix(m);
+    SHIP.yawV = 0; SHIP.pitchV = 0; SHIP.rollV = 0;
+    SHIP.vel.set(0,0,0);
+    toast('Course set for the galaxy core — punch it');
+    return;
+  }
+  deselectNode();
+  fitCameraToGraph();
+  toast('Returning to the galaxy');
+}
+
+// ===========================================================
+// CONTROLS PANEL — click-to-rebind every movement key
+// ===========================================================
+
+const KEYBIND_GROUPS = [
+  ['CAMERA', [
+    ['lookUp','Pitch up'], ['lookDown','Pitch down'], ['lookLeft','Yaw left'], ['lookRight','Yaw right'],
+    ['flyFwd','Fly forward'], ['flyBack','Fly back'], ['strafeLeft','Strafe left'], ['strafeRight','Strafe right'],
+    ['rise','Rise / zoom out'], ['sink','Sink / zoom in'], ['boost','Boost'],
+  ]],
+  ['STARFIGHTER', [
+    ['throttleUp','Throttle up'], ['throttleDown','Throttle down'],
+    ['pitchUp','Pitch up'], ['pitchDown','Pitch down'], ['yawLeft','Yaw left'], ['yawRight','Yaw right'],
+    ['rollLeft','Roll left'], ['rollRight','Roll right'], ['fire','Fire lasers'], ['afterburner','Afterburner'],
+  ]],
+  ['GENERAL', [
+    ['home','Return to galaxy'],
+  ]],
+];
+
+let _kbListening = null;
+
+function buildKeybindPanel(){
+  const body = document.getElementById('keybind-body');
+  if(!body) return;
+  body.innerHTML = '';
+  // Flag duplicate bindings within the same group so clashes are visible
+  KEYBIND_GROUPS.forEach(([title, rows])=>{
+    const used = {};
+    rows.forEach(([a])=>{ const k=KEYBINDS[a]; used[k]=(used[k]||0)+1; });
+    const h = document.createElement('div');
+    h.style.cssText = 'font-size:8px;letter-spacing:.12em;color:var(--text-muted);padding:6px 0 3px';
+    h.textContent = title;
+    body.appendChild(h);
+    rows.forEach(([action, label])=>{
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:2px 0;font-size:10px;color:var(--text-muted)';
+      const lbl = document.createElement('span');
+      lbl.textContent = label;
+      const chip = document.createElement('span');
+      const listening = _kbListening === action;
+      const dup = used[KEYBINDS[action]] > 1;
+      chip.textContent = listening ? 'press…' : kbLabel(KEYBINDS[action]);
+      chip.title = listening ? 'Press the new key (Esc cancels)' : 'Click, then press a key';
+      chip.style.cssText = 'margin-left:auto;min-width:38px;text-align:center;padding:1px 6px;border-radius:2px;cursor:pointer;'+
+        "font-family:'Space Mono',monospace;font-size:9px;border:1px solid "+
+        (listening ? 'var(--accent-amber);color:var(--accent-amber)'
+         : dup     ? 'var(--accent-pink);color:var(--accent-pink)'
+                   : 'var(--panel-border);color:var(--accent-blue)');
+      chip.addEventListener('click', ()=>{ _kbListening = listening ? null : action; buildKeybindPanel(); });
+      row.append(lbl, chip);
+      body.appendChild(row);
+    });
+  });
+  const foot = document.createElement('div');
+  foot.style.cssText = 'padding-top:7px';
+  const rst = document.createElement('button');
+  rst.className = 'cfg-btn cfg-btn-secondary';
+  rst.style.cssText = 'padding:2px 8px;font-size:9px';
+  rst.textContent = 'RESET DEFAULTS';
+  rst.addEventListener('click', ()=>{ KEYBINDS = {...KEYBIND_DEFAULTS}; _saveKeybinds(); buildKeybindPanel(); toast('Controls reset to defaults'); });
+  foot.appendChild(rst);
+  body.appendChild(foot);
+}
+
+// Capture phase so the camera/ship never react to the key being assigned
+document.addEventListener('keydown', e=>{
+  if(!_kbListening) return;
+  e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+  const k = e.key.toLowerCase();
+  if(k !== 'escape'){
+    KEYBINDS[_kbListening] = k;
+    _saveKeybinds();
+    toast('Bound: '+kbLabel(k));
+  }
+  _kbListening = null;
+  buildKeybindPanel();
+}, true);
+
+buildKeybindPanel();
+
+// ===========================================================
 // UI HELPERS
 // ===========================================================
 
@@ -4307,15 +4808,21 @@ function animate(){
   const dt  = Math.min((now-lastT)/16, 3);
   lastT=now; frame++;
 
+  if(window.SHIP && SHIP.active) SHIP.update(dt);
   updateCamera(dt);
+  // Starfield rides with the camera: you can never fly out of the sky,
+  // and stationary-relative stars read as infinitely distant
+  _starfield.position.copy(camera.position);
   springStep(dt);
   updatePulses();
   if(window.MEMEX) MEMEX._runTickers(dt);
 
   if(frame%4===0) updateLabels();
   if(frame%4===0) drawMinimap();
+  if(frame%6===0) updateBeacon();
   if(frame%3===0) updateFPS();
 
+  NODE_INST.sync();
   _edgeAttr.needsUpdate=true;
   renderer.render(scene,camera);
 }
@@ -5231,18 +5738,22 @@ function getEdgeMidpoints(){
 }
 
 let _lastMouseX=0, _lastMouseY=0;
+let _lastHoverT=0;
+const _edgeHoverVec = new THREE.Vector3();
+const _EDGE_HOVER_MAX = 2500;   // skip edge-midpoint hover on huge graphs
 renderer.domElement.addEventListener('mousemove', e=>{
   if(isPointerLocked){ hideTooltip(); return; }
   _lastMouseX=e.clientX; _lastMouseY=e.clientY;
 
-  _mouse3d.set((e.clientX/innerWidth)*2-1, -(e.clientY/innerHeight)*2+1);
-  raycaster.setFromCamera(_mouse3d, camera);
-  const meshes = NODES.filter(n=>n.mesh&&n.mesh.visible).map(n=>n.mesh);
-  const hits   = raycaster.intersectObjects(meshes);
+  // Hover picking every mousemove event tanks the framerate while the
+  // pointer is over the canvas — 25Hz is indistinguishable to the user.
+  const now = performance.now();
+  if(now - _lastHoverT < 40) return;
+  _lastHoverT = now;
 
-  if(hits.length){
-    const hitNode = nodeMap[hits[0].object.userData.nodeId];
-    if(!hitNode) return;
+  const hitNode = pickNodeAt(e.clientX, e.clientY);
+
+  if(hitNode){
     // Reset glow on previous hover node
     if(_hoverNode3d && _hoverNode3d !== hitNode && _hoverNode3d !== selectedNode){
       _hoverNode3d.mesh.material.emissiveIntensity = 0.35;
@@ -5253,26 +5764,36 @@ renderer.domElement.addEventListener('mousemove', e=>{
     showTooltip(e.clientX, e.clientY, nodeTooltipHTML(hitNode));
     document.body.style.cursor='pointer';
   } else {
-    // Check edge midpoints
     if(_hoverNode3d && _hoverNode3d !== selectedNode){
       _hoverNode3d.mesh.material.emissiveIntensity = 0.35;
     }
     _hoverNode3d = null;
 
-    // Edge hover: find nearest edge midpoint within screen threshold
-    const mids = getEdgeMidpoints();
+    // Edge hover: nearest edge midpoint within screen threshold.
+    // Allocation-free (single scratch vector) and capped by edge count.
     let nearest=null, nearestDist=18; // px threshold
-    mids.forEach(m=>{
-      const proj = m.mid.clone().project(camera);
-      const sx=(proj.x*0.5+0.5)*innerWidth;
-      const sy=(-proj.y*0.5+0.5)*innerHeight;
-      const d=Math.hypot(sx-e.clientX, sy-e.clientY);
-      if(d<nearestDist){ nearestDist=d; nearest=m; }
-    });
+    if(EDGES.length <= _EDGE_HOVER_MAX){
+      for(let i=0;i<EDGES.length;i++){
+        const ed=EDGES[i];
+        if(ed.line && ed.line._hidden) continue;
+        const a=nodeMap[ed.from], b=nodeMap[ed.to];
+        if(!a||!b||!a.mesh||!b.mesh||!a.mesh.visible||!b.mesh.visible) continue;
+        _edgeHoverVec.set(
+          (a.mesh.position.x+b.mesh.position.x)/2,
+          (a.mesh.position.y+b.mesh.position.y)/2,
+          (a.mesh.position.z+b.mesh.position.z)/2
+        ).project(camera);
+        if(_edgeHoverVec.z>1) continue;   // behind camera
+        const sx=( _edgeHoverVec.x*0.5+0.5)*innerWidth;
+        const sy=(-_edgeHoverVec.y*0.5+0.5)*innerHeight;
+        const d=Math.hypot(sx-e.clientX, sy-e.clientY);
+        if(d<nearestDist){ nearestDist=d; nearest=ed; }
+      }
+    }
 
     if(nearest){
-      _hoverEdge3d = nearest.edge;
-      showTooltip(e.clientX, e.clientY, edgeTooltipHTML(nearest.edge));
+      _hoverEdge3d = nearest;
+      showTooltip(e.clientX, e.clientY, edgeTooltipHTML(nearest));
       document.body.style.cursor='crosshair';
     } else {
       _hoverEdge3d = null;
@@ -5292,13 +5813,8 @@ renderer.domElement.addEventListener('contextmenu', e=>{
   e.preventDefault();
   if(isPointerLocked) return;
 
-  _mouse3d.set((e.clientX/innerWidth)*2-1, -(e.clientY/innerHeight)*2+1);
-  raycaster.setFromCamera(_mouse3d, camera);
-  const meshes = NODES.filter(n=>n.mesh&&n.mesh.visible).map(n=>n.mesh);
-  const hits   = raycaster.intersectObjects(meshes);
-
-  if(hits.length){
-    const node = nodeMap[hits[0].object.userData.nodeId];
+  const node = pickNodeAt(e.clientX, e.clientY);
+  if(node){
     openCtxMenu(e.clientX, e.clientY, 'node', { node });
   } else if(_hoverEdge3d){
     openCtxMenu(e.clientX, e.clientY, 'edge', { edge:_hoverEdge3d });
@@ -7352,7 +7868,8 @@ const GT = window.GraphTools = {
     if(ni>=0) NODES.splice(ni,1);
     delete nodeMap[nodeId];
     const dead=EDGES.filter(e=>e.from===nodeId||e.to===nodeId);
-    dead.forEach(e=>{ if(e.line) scene.remove(e.line); delete edgeMap[e.id]; });
+    dead.forEach(e=>{ if(e.line) e.line.visible=false; delete edgeMap[e.id]; });
+    if(_edgeAttr) _edgeAttr.needsUpdate=true;
     EDGES.splice(0,EDGES.length,...EDGES.filter(e=>e.from!==nodeId&&e.to!==nodeId));
     updateStats();
     try{ await fetch(`${veraBase()}/api/graph/cypher`,{method:'POST',headers:{'Content-Type':'application/json'},
@@ -7362,7 +7879,7 @@ const GT = window.GraphTools = {
 
   async deleteEdge(edge){
     if(!confirm(`Delete edge "${edge.rel||edge.label||edge.id}"?`)) return;
-    if(edge.line) scene.remove(edge.line);
+    if(edge.line){ edge.line.visible=false; if(_edgeAttr) _edgeAttr.needsUpdate=true; }
     const ei=EDGES.findIndex(e=>e.id===edge.id);
     if(ei>=0) EDGES.splice(ei,1);
     delete edgeMap[edge.id];
@@ -8111,8 +8628,22 @@ const SPATIAL = {
       if(this._tickN===1) this._repositionAll();
       return;
     }
-    if(this._exhausted) return;
+    // Load out: drop regions the camera has left far behind
+    this._unloadDistant(camera.position);
     if(this._loading.size > 0) return;
+    // Load in: a previously-unloaded region the camera is approaching
+    // takes priority over fresh sequential batches
+    let reload = null;
+    this._batches.forEach((b,key)=>{
+      if(reload || b.loaded || !b.centroid) return;
+      if(camera.position.distanceTo(b.centroid) < this.unloadRadius*0.6) reload = { key, skip:b.skip };
+    });
+    if(reload){
+      this._batches.delete(reload.key);
+      this._loadBatch(reload.skip);
+      return;
+    }
+    if(this._exhausted) return;
     const key = this.batchKey(this._nextSkip);
     if(this._batches.has(key)) return;
     this._loadBatch(this._nextSkip);
@@ -8167,8 +8698,14 @@ const SPATIAL = {
         if(n && n.mesh) n.mesh.position.set(...apiN._spatialPos);
       });
       if(_edgeAttr) _edgeAttr.needsUpdate = true;
-      this._batches.set(key, { loaded:true, nodeIds: nodes.map(n=>n.id) });
-      this._nextSkip = skip + batchSize;
+      // Batch centroid = anchor for distance-based unload/reload
+      let bcx=0,bcy=0,bcz=0,bn=0;
+      nodes.forEach(apiN=>{
+        if(apiN._spatialPos){ bcx+=apiN._spatialPos[0]; bcy+=apiN._spatialPos[1]; bcz+=apiN._spatialPos[2]; bn++; }
+      });
+      const centroid = bn ? new THREE.Vector3(bcx/bn, bcy/bn, bcz/bn) : null;
+      this._batches.set(key, { loaded:true, skip, centroid, nodeIds: nodes.map(n=>n.id) });
+      this._nextSkip = Math.max(this._nextSkip, skip + batchSize);
       this.calibrateTimeSpan();
       if(added > 0){
         console.log('[SPATIAL] +'+added+' nodes (batch '+key+')');
@@ -8260,7 +8797,27 @@ const SPATIAL = {
     EDGES.forEach(e=>{ if(e.line) updateEdgeLine(e); });
   },
 
-  _unloadDistant(cam){ },
+  // Drop batches whose region is far behind the camera. The batch entry
+  // stays (loaded:false + centroid) so approaching it again reloads it.
+  _unloadDistant(cam){
+    let removed = 0;
+    this._batches.forEach((b,key)=>{
+      if(!b.loaded || !b.centroid || !b.nodeIds?.length) return;
+      const d = cam.distanceTo(b.centroid);
+      if(d < this.unloadRadius) return;
+      let n = 0;
+      b.nodeIds.forEach(id=>{ if(removeNodeQuiet(id)) n++; });
+      b.loaded  = false;
+      b.nodeIds = [];
+      removed += n;
+      if(n) console.log('[SPATIAL] unloaded '+n+' nodes ('+key+', '+Math.round(d)+'u away)');
+    });
+    if(removed){
+      compactEdgeBuffer();   // reclaim merged-buffer slots
+      updateStats(); updateLegendCounts();
+      toast('[SPATIAL] unloaded '+removed+' distant nodes');
+    }
+  },
 
   // ── Loading zone markers ──────────────────────────────
   _zoneMarkers: [],
@@ -8841,13 +9398,288 @@ async function fabricLoadChatHistory(statusEl){
   closeModal();
 }
 
-// Boot
-loadDemoData();
-animate();
-toast('WASD: look  |  Arrows: fly  |  Q/E: up/down  |  Shift: boost');
+// ===========================================================
+// CAPABILITY GALAXY — default view: the live Vera orchestrator
+// Every registered capability is a star, modules are spiral arms,
+// the orchestrator core sits at the centre. Live cap.call events
+// pulse the star that just ran (see handleLiveEvent).
+// ===========================================================
 
-// Init Vera theme picker after vera-ui.js loads
-setTimeout(_initVeraThemePicker, 500);
+function orchBase(){
+  // This panel is served by the orchestrator itself, so its own origin
+  // is the natural default; __VERA_BASE__ / the config field override.
+  const el = document.getElementById('cfg-fabric-url');
+  const v  = el && el.value && el.value.trim();
+  return (window.__VERA_BASE__ || v || location.origin).replace(/\/$/, '');
+}
+
+async function connectCapabilityGalaxy(){
+  const base = orchBase();
+  const r = await fetch(base+'/mcp/tools', { signal: AbortSignal.timeout(6000) });
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  const tools = await r.json();
+  if(!Array.isArray(tools) || !tools.length) throw new Error('no capabilities returned');
+
+  const nodes = [{
+    id:'vera', label:'VERA', type:'session', pos:[0,0,0], _radius:7,
+    props:{ role:'capability orchestrator', capabilities:tools.length, base },
+  }];
+  const edges = [];
+  const mods  = {};
+  tools.forEach(t=>{
+    const name = String(t.name||'');
+    if(!name) return;
+    const mod = name.includes('.') ? name.split('.')[0] : 'core';
+    if(!(mod in mods)){
+      mods[mod] = 0;
+      nodes.push({ id:'mod:'+mod, label:mod, type:'source',
+        pos:[randRange(-150,150), randRange(-150,150), randRange(-80,80)],
+        props:{ module:mod } });
+      edges.push({ id:'vera->'+mod, from:'vera', to:'mod:'+mod, rel:'MODULE' });
+    }
+    mods[mod]++;
+    nodes.push({ id:'cap:'+name, label:name, type:'tool',
+      pos:[randRange(-250,250), randRange(-250,250), randRange(-120,120)],
+      props:{ module:mod, description:t.description||'', tags:(t.tags||[]).join(', '),
+              mode:t.mode||'local', source:t.source||'local' } });
+    edges.push({ id:mod+'->'+name, from:'mod:'+mod, to:'cap:'+name, rel:'CAPABILITY' });
+  });
+
+  window._demoMode = false;
+  ingestGraph(nodes, edges);
+  setDataSourceStatus('fabric','live');
+  clusterMode = 'galaxy';
+  refreshClusterMode();
+  syncClusterBtns();
+  document.getElementById('ticker-text').innerText =
+    'VERA ONLINE ── '+tools.length+' capabilities · '+Object.keys(mods).length+' modules';
+  toast('Vera online — '+tools.length+' capabilities across '+Object.keys(mods).length+' modules');
+  // Live event stream: cap.call pulses light up the galaxy
+  try{ connectRedis(); }catch(_){}
+  return tools.length;
+}
+window.connectCapabilityGalaxy = connectCapabilityGalaxy;
+
+// ===========================================================
+// 🚀 EASTER EGG — VERA STARFIGHTER
+// Type  s h i p  (outside an input) to take the helm.
+//   W/S throttle · arrows steer · A/D roll · SHIFT afterburner
+//   SPACE lasers (3 hits scans the star) · ESC or "ship" to eject
+// ===========================================================
+
+const SHIP = {
+  active:false, group:null, engine:null,
+  vel:new THREE.Vector3(), throttle:0,
+  yawV:0, pitchV:0, rollV:0,
+  lasers:[], _cd:0, _hud:null, _hudT:0,
+  _v1:new THREE.Vector3(), _v2:new THREE.Vector3(),
+  _v3:new THREE.Vector3(), _v4:new THREE.Vector3(),
+  _upWorld:new THREE.Vector3(0,1,0),
+
+  _build(){
+    const g = new THREE.Group();
+    const hullMat = new THREE.MeshBasicMaterial({ color:0x9fb2d8 });
+    const darkMat = new THREE.MeshBasicMaterial({ color:0x51628c });
+    const glowMat = new THREE.MeshBasicMaterial({ color:0x33e0ff, transparent:true, opacity:0.9,
+                                                  blending:THREE.AdditiveBlending, depthWrite:false });
+    const hullGeo = new THREE.ConeGeometry(1.1, 4.4, 6);
+    hullGeo.rotateX(-Math.PI/2);                       // apex points -Z (ship forward)
+    g.add(new THREE.Mesh(hullGeo, hullMat));
+    const wingGeo = new THREE.BoxGeometry(3.4, 0.14, 1.5);
+    const wl = new THREE.Mesh(wingGeo, darkMat); wl.position.set(-1.7,-0.15,0.9); wl.rotation.z= 0.12; g.add(wl);
+    const wr = new THREE.Mesh(wingGeo, darkMat); wr.position.set( 1.7,-0.15,0.9); wr.rotation.z=-0.12; g.add(wr);
+    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.12,1.3,1.2), darkMat);
+    fin.position.set(0,0.7,1.2); g.add(fin);
+    this.engine = new THREE.Mesh(new THREE.SphereGeometry(0.5,8,6), glowMat);
+    this.engine.position.set(0,0,2.4); g.add(this.engine);
+    g.visible = false;
+    scene.add(g);
+    this.group = g;
+  },
+
+  _buildHUD(){
+    if(this._hud) return;
+    const wrap = document.createElement('div');
+    wrap.id = 'ship-hud';
+    wrap.innerHTML =
+      '<div id="ship-cross" style="position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);'+
+        'width:26px;height:26px;pointer-events:none;z-index:40;opacity:.85">'+
+        '<div style="position:absolute;left:50%;top:0;width:1px;height:7px;background:#33e0ff"></div>'+
+        '<div style="position:absolute;left:50%;bottom:0;width:1px;height:7px;background:#33e0ff"></div>'+
+        '<div style="position:absolute;top:50%;left:0;height:1px;width:7px;background:#33e0ff"></div>'+
+        '<div style="position:absolute;top:50%;right:0;height:1px;width:7px;background:#33e0ff"></div></div>'+
+      '<div id="ship-stat" style="position:fixed;left:50%;bottom:26px;transform:translateX(-50%);'+
+        'font-family:\'Space Mono\',monospace;font-size:10px;letter-spacing:.12em;color:#33e0ff;'+
+        'background:rgba(5,10,22,.7);border:1px solid rgba(51,224,255,.3);padding:5px 14px;'+
+        'border-radius:3px;pointer-events:none;z-index:40;white-space:nowrap"></div>';
+    document.body.appendChild(wrap);
+    this._hud = wrap;
+  },
+
+  _removeHUD(){ if(this._hud){ this._hud.remove(); this._hud=null; } },
+
+  toggle(force){
+    const on = force!==undefined ? !!force : !this.active;
+    if(on === this.active) return;
+    if(on){
+      if(typeof is2DActive!=='undefined' && is2DActive){ toast('Return to the 3D view to launch'); return; }
+      if(!this.group) this._build();
+      const fwd = this._v1; camera.getWorldDirection(fwd);
+      this.group.position.copy(camera.position).addScaledVector(fwd, 34);
+      this.group.quaternion.copy(camera.quaternion);
+      this.vel.set(0,0,0); this.throttle = 0.25;
+      this.yawV=0; this.pitchV=0; this.rollV=0;
+      this.group.visible = true;
+      this.active = true;
+      deselectNode();
+      _orbitPivot=null; _orbitPivotTarget=null; flyTarget=null;
+      this._buildHUD();
+      toast('🚀 VERA STARFIGHTER — '+kbLabel(KEYBINDS.throttleUp)+'/'+kbLabel(KEYBINDS.throttleDown)+
+            ' throttle · '+kbLabel(KEYBINDS.pitchUp)+kbLabel(KEYBINDS.pitchDown)+kbLabel(KEYBINDS.yawLeft)+kbLabel(KEYBINDS.yawRight)+
+            ' steer · '+kbLabel(KEYBINDS.rollLeft)+'/'+kbLabel(KEYBINDS.rollRight)+' roll · '+
+            kbLabel(KEYBINDS.fire)+' lasers · ESC eject');
+    } else {
+      this.active = false;
+      if(this.group) this.group.visible = false;
+      this.lasers.forEach(l=>{ scene.remove(l.line); l.line.geometry.dispose(); l.line.material.dispose(); });
+      this.lasers.length = 0;
+      this._removeHUD();
+      camera.up.set(0,1,0);
+      // Hand free-look the ship's final heading so the view doesn't snap
+      const dir = this._v1; camera.getWorldDirection(dir);
+      camYaw   = Math.atan2(dir.x, dir.z);
+      camPitch = Math.asin(Math.max(-1, Math.min(1, dir.y)));
+      toast('Docked — helm released');
+    }
+  },
+
+  update(dt){
+    const g = this.group;
+    if(!g) return;
+    // ── Throttle & steering ──
+    if(keys[KEYBINDS.throttleUp])   this.throttle = Math.min(1, this.throttle + 0.012*dt);
+    if(keys[KEYBINDS.throttleDown]) this.throttle = Math.max(0, this.throttle - 0.02*dt);
+    const steer = 0.0045*dt;
+    if(keys[KEYBINDS.pitchUp])   this.pitchV += steer;
+    if(keys[KEYBINDS.pitchDown]) this.pitchV -= steer;
+    if(keys[KEYBINDS.yawLeft])   this.yawV   += steer;
+    if(keys[KEYBINDS.yawRight])  this.yawV   -= steer;
+    if(keys[KEYBINDS.rollLeft])  this.rollV += steer*1.4;
+    if(keys[KEYBINDS.rollRight]) this.rollV -= steer*1.4;
+    this.rollV -= this.yawV*0.06;             // auto-bank into turns
+    this.yawV*=0.9; this.pitchV*=0.9; this.rollV*=0.9;
+    g.rotateY(this.yawV); g.rotateX(this.pitchV); g.rotateZ(this.rollV);
+    // ── Thrust with momentum ──
+    const boost = keys[KEYBINDS.afterburner] ? 2.8 : 1;
+    this._v1.set(0,0,-1).applyQuaternion(g.quaternion);
+    this._v2.copy(this._v1).multiplyScalar(this.throttle * 2.6 * boost);
+    this.vel.lerp(this._v2, Math.min(1, 0.05*dt));
+    g.position.addScaledVector(this.vel, dt);
+    // ── Engine glow ──
+    const burn = 0.55 + this.throttle*1.1 + (keys[KEYBINDS.afterburner]?0.7:0);
+    this.engine.scale.setScalar(burn);
+    // ── Lasers ──
+    if(this._cd > 0) this._cd -= dt;
+    if(keys[KEYBINDS.fire] && this._cd <= 0) this.fire();
+    for(let i=this.lasers.length-1;i>=0;i--){
+      const l = this.lasers[i];
+      l.ttl -= dt;
+      l.line.material.opacity = Math.max(0, l.ttl/10);
+      if(l.ttl <= 0){
+        scene.remove(l.line); l.line.geometry.dispose(); l.line.material.dispose();
+        this.lasers.splice(i,1);
+      }
+    }
+    // ── HUD ──
+    this._hudT += dt;
+    if(this._hud && this._hudT > 6){
+      this._hudT = 0;
+      const stat = this._hud.querySelector('#ship-stat');
+      const bars = '▮'.repeat(Math.round(this.throttle*5)).padEnd(5,'▯');
+      if(stat) stat.innerText = 'THR '+bars+'  ·  SPD '+(this.vel.length()*60/16).toFixed(0)+'u/s'+
+                                (keys[KEYBINDS.afterburner]?'  ·  AFTERBURN':'')+'  ·  STARS '+NODES.length;
+    }
+  },
+
+  fire(){
+    this._cd = 9;
+    const g = this.group;
+    g.updateMatrixWorld();
+    const target = pickNodeAt(innerWidth/2, innerHeight/2);
+    const tp = target
+      ? this._v3.copy(target.mesh.position)
+      : this._v3.set(0,0,-260).applyMatrix4(g.matrixWorld);
+    [[-1.9,-0.15,0.5],[1.9,-0.15,0.5]].forEach(off=>{
+      const from = new THREE.Vector3(off[0],off[1],off[2]).applyMatrix4(g.matrixWorld);
+      const geo  = new THREE.BufferGeometry().setFromPoints([from, tp.clone()]);
+      const mat  = new THREE.LineBasicMaterial({ color:0xff3366, transparent:true, opacity:0.95,
+                                                 blending:THREE.AdditiveBlending, depthWrite:false });
+      const line = new THREE.Line(geo, mat);
+      scene.add(line);
+      this.lasers.push({ line, ttl:10 });
+    });
+    if(target){
+      spawnPulse(target.mesh.position, 0xff3366, 10);
+      pulseMesh(target.mesh, 0xff3366);
+      target._scanHits = (target._scanHits||0)+1;
+      if(target._scanHits >= 3){
+        target._scanHits = 0;
+        showInspector(target);
+        toast('⨯ '+target.label+' scanned');
+      }
+    }
+  },
+
+  // Chase camera — replaces updateCamera() while piloting
+  updateChaseCam(dt){
+    const g = this.group;
+    this._v1.set(0,0,-1).applyQuaternion(g.quaternion);   // fwd
+    this._v2.set(0,1,0).applyQuaternion(g.quaternion);    // ship up
+    this._v3.copy(g.position).addScaledVector(this._v1,-26).addScaledVector(this._v2, 8);
+    // Framerate-independent smoothing (0.18/frame at 60fps)
+    camera.position.lerp(this._v3, 1 - Math.pow(0.82, dt||1));
+    // Hard lag cap: at full afterburner the ship outruns a pure lerp, the
+    // camera ends up ON the ship and lookAt degenerates (view dir ≈ up) —
+    // that was the "flick in a semicircle". Never trail more than 12u.
+    this._v4.copy(camera.position).sub(this._v3);
+    const lag = this._v4.length();
+    if(lag > 12) camera.position.copy(this._v3).addScaledVector(this._v4.multiplyScalar(1/lag), 12);
+    camera.up.copy(this._v2).lerp(this._upWorld, 0.5).normalize();
+    this._v4.copy(g.position).addScaledVector(this._v1, 60);
+    camera.lookAt(this._v4);
+  },
+};
+window.SHIP = SHIP;
+
+// Secret activation: type "ship" anywhere outside an input
+let _shipSeq = '';
+document.addEventListener('keydown', e=>{
+  if(_inputFocused()) return;
+  if(SHIP.active && e.key.toLowerCase()===KEYBINDS.fire) e.preventDefault();   // lasers, not scroll
+  if(e.key.length !== 1) return;
+  _shipSeq = (_shipSeq + e.key.toLowerCase()).slice(-4);
+  if(_shipSeq === 'ship'){ _shipSeq=''; SHIP.toggle(); }
+});
+
+// Boot — try the live Vera orchestrator first, fall back to demo data
+function controlsToast(){
+  toast('Look: '+['lookUp','lookLeft','lookDown','lookRight'].map(a=>kbLabel(KEYBINDS[a])).join('')+
+        '  |  Fly: '+['flyFwd','strafeLeft','flyBack','strafeRight'].map(a=>kbLabel(KEYBINDS[a])).join(' ')+
+        '  |  '+kbLabel(KEYBINDS.sink)+'/'+kbLabel(KEYBINDS.rise)+': down/up'+
+        '  |  '+kbLabel(KEYBINDS.boost)+': boost'+
+        '  |  '+kbLabel(KEYBINDS.home)+': find galaxy');
+}
+animate();
+setTimeout(_initVeraThemePicker, 500);   // init Vera theme picker after vera-ui.js loads
+(async function _boot(){
+  try{
+    await connectCapabilityGalaxy();
+  }catch(e){
+    console.warn('[BOOT] orchestrator unreachable ('+(e&&e.message)+') — loading demo data');
+    loadDemoData();
+  }
+  controlsToast();
+})();
 
 </script>
 <script src="/ui/vera-ui.js"></script>

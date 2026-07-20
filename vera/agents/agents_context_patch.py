@@ -40,6 +40,7 @@ Usage
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 from typing import Any, Dict, List, Optional
@@ -58,6 +59,155 @@ def _ctx():
 
 def _agents_module():
     return sys.modules.get("vera_agents")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DOMAIN-CONTEXT ENRICHMENT
+# ─────────────────────────────────────────────────────────────────────────────
+# When the user's message is clearly ABOUT a domain (diary / email / Telegram)
+# AND the agent actually owns that domain's briefing/list capability, we fetch a
+# compact LIVE snapshot and fold it into the system prompt. This mirrors what
+# already happens when the matching UI panel is open (its state is injected into
+# the prompt) — but here it is triggered by the TOPIC, so the agent is grounded
+# in real data (today's date, existing events, recent mail) without the user
+# having to open anything. It is the reason the same request works when the
+# calendar panel is open and flails when it isn't.
+#
+# Auto-scoped by capability: enrichment for a domain only runs if the agent has
+# that domain's cap in domain_caps — so no new AgentRecord field is needed and a
+# calendar-less agent never pays for a briefing. Keyword-gated so ordinary chat
+# turns skip it entirely. Each fetch is time-boxed and best-effort: any failure
+# just omits that block.
+
+_ENRICH_KW_CAL = (
+    "calendar", "diary", "schedul", "meeting", "event", "appointment", "reschedul",
+    "remind", "todo", "to-do", "agenda", "tomorrow", "today", "tonight",
+    "next week", "this week", "next month", "book a", "booking", "free time",
+    "busy", "availab", "plan my", "what's on", "whats on", "my day", "my week",
+)
+_ENRICH_KW_MAIL = (
+    "email", "e-mail", "inbox", "mailbox", " mail", "unread", "sender",
+    "reply to", "respond to", "forward the",
+)
+_ENRICH_KW_TG = ("telegram", " tg ", "direct message", "dm ")
+
+
+def _has(msg: str, words) -> bool:
+    return any(w in msg for w in words)
+
+
+def _fmt_cal(b: Dict[str, Any]) -> str:
+    if not isinstance(b, dict) or b.get("error"):
+        return ""
+    def _evline(e):
+        t = e.get("start") or e.get("start_time") or e.get("when") or ""
+        ttl = e.get("title") or e.get("summary") or "(untitled)"
+        loc = e.get("location") or ""
+        return f"  · {t} {ttl}" + (f" @ {loc}" if loc else "")
+    lines = [f"Now: {b.get('today_human') or b.get('now','')} (tz {b.get('tz','?')})"]
+    today = b.get("today") or []
+    tomorrow = b.get("tomorrow") or []
+    upcoming = b.get("upcoming") or []
+    lines.append(f"Today ({len(today)}):" + (" none" if not today else ""))
+    lines += [_evline(e) for e in today[:8]]
+    lines.append(f"Tomorrow ({len(tomorrow)}):" + (" none" if not tomorrow else ""))
+    lines += [_evline(e) for e in tomorrow[:8]]
+    if upcoming:
+        lines.append(f"Upcoming this week ({len(upcoming)}):")
+        lines += [_evline(e) for e in upcoming[:6]]
+    todos = (b.get("todos") or {})
+    oc = todos.get("open_count", 0)
+    if oc:
+        od = todos.get("overdue") or []
+        dt = todos.get("due_today") or []
+        tl = [f"{len(od)} overdue" if od else "", f"{len(dt)} due today" if dt else "",
+              f"{oc} open"]
+        lines.append("Todos: " + ", ".join(x for x in tl if x))
+    return "\n".join(lines)
+
+
+def _fmt_mail(b: Dict[str, Any]) -> str:
+    if not isinstance(b, dict) or b.get("error") or b.get("disabled"):
+        return ""
+    msgs = b.get("messages") or b.get("inbox") or b.get("items") or []
+    if not isinstance(msgs, list) or not msgs:
+        return "Inbox reachable, no recent messages."
+    out = [f"{len(msgs)} recent (newest first):"]
+    for m in msgs[:8]:
+        if not isinstance(m, dict):
+            continue
+        frm = m.get("from") or m.get("sender") or m.get("from_addr") or "?"
+        subj = m.get("subject") or m.get("title") or "(no subject)"
+        unread = "" if (m.get("seen") or m.get("read")) else "[unread] "
+        when = m.get("date") or m.get("when") or ""
+        out.append(f"  · {unread}{str(frm)[:40]} — {str(subj)[:60]} {when}".rstrip())
+    return "\n".join(out)
+
+
+def _fmt_tg(b: Dict[str, Any]) -> str:
+    if not isinstance(b, dict) or b.get("error"):
+        return ""
+    chats = b.get("chats") or b.get("items") or []
+    if not isinstance(chats, list) or not chats:
+        return ""
+    out = [f"Known chats ({len(chats)}):"]
+    for c in chats[:10]:
+        if not isinstance(c, dict):
+            continue
+        name = c.get("title") or c.get("name") or c.get("chat_id") or "?"
+        allowed = "allowed" if c.get("allowed") else "not-allowed"
+        seen = c.get("last_seen") or c.get("last") or ""
+        out.append(f"  · {str(name)[:40]} ({allowed}) {seen}".rstrip())
+    return "\n".join(out)
+
+
+# (message-keyword tuple, cap name, call kwargs, formatter, human label)
+_ENRICH_SOURCES = [
+    (_ENRICH_KW_CAL,  "cal.assistant.briefing", {"days_ahead": 7}, _fmt_cal, "calendar / diary"),
+    (_ENRICH_KW_MAIL, "mail.inbox.list",        {"limit": 8},      _fmt_mail, "email inbox"),
+    (_ENRICH_KW_TG,   "tg.chats.list",          {},                _fmt_tg,   "Telegram chats"),
+]
+
+
+async def _enrich_domain_context(agent, message: str) -> str:
+    """Fetch compact live snapshots for whichever domains the message is about
+    AND the agent owns the cap for. Returns a single markdown block or ''."""
+    caps = set(getattr(agent, "domain_caps", []) or [])
+    if not caps:
+        return ""
+    msg = (message or "")[:400].lower()   # user text leads the message; caps hint trails
+    am = _agents_module()
+    call = getattr(am, "_call_registered_cap", None) if am else None
+    if not call:
+        return ""
+
+    async def _one(cap, kwargs, fmt, label):
+        try:
+            res = await asyncio.wait_for(call(cap, **kwargs), timeout=8.0)
+            body = fmt(res)
+            return (label, body) if body else None
+        except Exception as e:
+            log.debug("enrich %s: %s", cap, e)
+            return None
+
+    jobs = [_one(cap, kwargs, fmt, label)
+            for (kw, cap, kwargs, fmt, label) in _ENRICH_SOURCES
+            if cap in caps and _has(msg, kw)]
+    if not jobs:
+        return ""
+
+    results = await asyncio.gather(*jobs, return_exceptions=True)
+    blocks = [r for r in results if isinstance(r, tuple) and r]
+    if not blocks:
+        return ""
+
+    parts = ["## Live context (auto-loaded — AUTHORITATIVE, use these real values)"]
+    for label, body in blocks:
+        parts.append(f"### {label}\n{body}")
+    parts.append("Use the real dates/ids/titles above; do not invent them. If an "
+                 "action is needed, perform it with the matching capability and "
+                 "report the actual result.")
+    return "\n\n".join(parts)
 
 
 def _build_attach_specs(agent) -> Dict[str, str]:
@@ -129,6 +279,16 @@ async def build_agent_system_prompt(agent, message: str, session_id: str = "") -
             dags_loaded   = ctx.get("dags") or []
         except Exception as e:
             log.warning("agent context build failed for %s: %s", agent.name, e)
+
+    # Domain-context enrichment — live diary/mail/telegram snapshot when the
+    # message is about that domain and the agent owns the cap. Grounds the model
+    # in real data (today's date, existing events) the way an open panel does.
+    try:
+        enrich = await _enrich_domain_context(agent, message)
+        if enrich:
+            base += "\n\n" + enrich
+    except Exception as e:
+        log.debug("domain enrich failed for %s: %s", getattr(agent, "name", "?"), e)
 
     # Memory injection — preserved from original
     if getattr(agent, "memory_inject", False) and session_id:

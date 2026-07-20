@@ -1,0 +1,62 @@
+[
+  {
+    "id": "b698894c-2064-47b1-9a5e-f5cedd250205",
+    "created_at": "2026-07-12T15:33:06.049332Z",
+    "label": "http://192.168.0.138:8077",
+    "kind": "code-server",
+    "host_id": "79ecc619-f4c1-4f75-8953-54f8ed498ff1",
+    "url": "http://192.168.0.138:8077",
+    "port": 8077,
+    "workdir": "",
+    "status": "running",
+    "updated_at": "2026-07-20T00:29:58.725700Z",
+    "token_sealed": "fernet:gAAAAABqU7OyLYhXVYsMczuar_1Pp9ddUb0QPmEYtoY0j-riw4p4WOtUfGG9g4qwZew7T0zqz8KptDTrWEf_PeXGcg3EdEJ71hL2Cs_3zxWkzOE9bY3UX54rg34W17GvdqU6JLm0M0ti",
+    "claude_installed": false,
+    "bridge_installed": false,
+    "bridge_url": "http://127.0.0.1:8000"
+  },
+  {
+    "id": "sbxw-chat-1784077499972",
+    "label": "Sandbox worker \u00b7 chat-1784077499972",
+    "kind": "sandbox-worker",
+    "session_id": "chat-1784077499972",
+    "url": "http://127.0.0.1:8860",
+    "port": 8860,
+    "container": "vera-sbx-chat-1784077499972-code",
+    "docker_host_id": "local",
+    "workdir": "/home/coder/workspace",
+    "status": "running",
+    "token_sealed": "fernet:gAAAAABqV-yFZVZy3V1QaOpGb1O6Xxm8W-Z78fIlfDuvn6QLlEl8Gxp2yqHm37326APYdkIDl3G1b_iLoNCP_L_xDMJc6LjxDF3iFoZ3ti-waVDWZZSK5L3FA6BhXsA9CunMySEeeJ2M",
+    "created_at": "2026-07-15T20:24:37.895656Z",
+    "updated_at": "2026-07-15T20:24:37.895664Z"
+  },
+  {
+    "id": "sbxw-step10_verify",
+    "label": "Sandbox worker \u00b7 step10_verify",
+    "kind": "sandbox-worker",
+    "session_id": "step10_verify",
+    "url": "http://127.0.0.1:8861",
+    "port": 8861,
+    "container": "vera-sbx-step10_verify-code",
+    "docker_host_id": "local",
+    "workdir": "/home/coder/workspace",
+    "status": "running",
+    "token_sealed": "fernet:gAAAAABqWpC7W5KsZ_gZVDUSOTz8g2yVpOlOsR0Mj85Fde6Y_81JpuSrGuMzjESIMf7GA6FSJVOS-yuPtzl13CHUvrYpleJoPMyBROu4YCiW5sNzgkcqCkon2-U7agWP9w6vZYBfydkn",
+    "created_at": "2026-07-17T20:29:47.297665Z",
+    "updated_at": "2026-07-17T20:29:47.297694Z"
+  },
+  {
+    "id": "loop-lab-dev",
+    "label": "Loop Lab \u00b7 loop-lab/sandbox",
+    "kind": "sandbox-worker",
+    "url": "http://127.0.0.1:8996",
+    "port": 8996,
+    "container": "vera-dev-code",
+    "docker_host_id": "local",
+    "workdir": "/home/coder/workspace",
+    "status": "running",
+    "token_sealed": "fernet:gAAAAABqXWuCvDt7FjnwIwPN_QEa2dhBvCkTQuV4yef8dZnTGr4FFdtLTaqAgbs8By9Zcyx99a8SS9MiUhguL-hQKLf1VRZG7CH9ZOzuBhVBNov5ON4yDL9eHEPXhOwHQhf3KP7Oz7VR",
+    "created_at": "2026-07-19T19:16:09.160943Z",
+    "updated_at": "2026-07-20T00:28:54.759430Z"
+  }
+]

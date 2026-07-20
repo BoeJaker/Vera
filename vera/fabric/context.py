@@ -447,7 +447,14 @@ async def _resolve_skills_block(spec: str) -> Tuple[str, List[str]]:
     if cap:
         try:
             res = await cap["func"](skill_ids=",".join(ids))
-            text = res.get("combined") or res.get("system_prompt") or ""
+            # SKILLS ONLY. `combined` also carries every enabled ontology (the
+            # cap renders all ontologies when no ontology_ids filter is given),
+            # which would leak unrelated ontologies (test/threat-intel/…) into
+            # any prompt that asked for skills but not ontologies. Ontologies
+            # come exclusively through _resolve_ontologies_block(attach_ontologies).
+            text = res.get("skill_context")
+            if text is None:
+                text = res.get("combined") or res.get("system_prompt") or ""
             names = [SKILLS[i].get("name", i) for i in ids if i in SKILLS]
             return text, names
         except Exception as e:
@@ -561,7 +568,7 @@ def _inline_cap_sig(name: str) -> str:
     props = cap.get("schema", {}).get("properties", {}) or {}
     req   = set(cap.get("schema", {}).get("required", []))
     params = ", ".join(
-        f"{p}:{v.get('type','str')}{'!' if p in req else ''}"
+        _orch._format_param_sig(p, v, req)
         for p, v in props.items() if p not in ("trace_id",)
     )
     desc = (cap.get("description") or "")[:120]
@@ -702,6 +709,47 @@ async def _resolve_related_qa_block(
     return block, pairs
 
 
+async def _resolve_cap_ontology_block(spec: str) -> str:
+    """Cap-mesh (cap_ontology) planner fragment.
+
+    spec: '' (skip) | '*' / 'auto' (all caps) | CSV of cap names — normally
+    the agent's domain_caps, so the fragment covers relations between the
+    caps the agent can call plus edges to adjacent hidden caps."""
+    if not spec:
+        return ""
+    co = sys.modules.get("cap_ontology")
+    if not co or not hasattr(co, "build_ontology_system_prompt_fragment"):
+        return ""
+    caps = ["*"] if spec.strip() in ("*", "auto") else _split_ids(spec)
+    if not caps:
+        return ""
+    try:
+        return await co.build_ontology_system_prompt_fragment(caps) or ""
+    except Exception as e:
+        log.debug("context cap_ontology block: %s", e)
+        return ""
+
+
+def _resolve_session_notes_block(session_id: str, agent_name: str) -> str:
+    """Session-memory notes fragment: the chat-session note plus (when an
+    agent is named) the agent-level note. Empty when neither has content."""
+    sn = sys.modules.get("session_notes")
+    if not sn or not hasattr(sn, "build_notes_context"):
+        return ""
+    pairs = []
+    if session_id:
+        pairs.append(("chat", session_id))
+    if agent_name:
+        pairs.append(("agent", agent_name))
+    if not pairs:
+        return ""
+    try:
+        return sn.build_notes_context(pairs) or ""
+    except Exception as e:
+        log.debug("context session_notes block: %s", e)
+        return ""
+
+
 async def build_context_prompt(
     message:            str,
     *,
@@ -711,6 +759,8 @@ async def build_context_prompt(
     attach_dags:        str = "",
     attach_memory:      bool = False,
     attach_related_qa:  str  = "",
+    attach_cap_ontology: str = "",
+    attach_session_notes: bool = False,
     session_id:         str  = "",
     memory_limit:       int  = 5,
     memory_tags:        str  = "",
@@ -758,8 +808,16 @@ async def build_context_prompt(
         attach_related_qa, message, session_id, agent_name,
     )
 
+    # Optional capability-mesh relations (cap_ontology) for the agent's caps
+    cap_ont_block = await _resolve_cap_ontology_block(attach_cap_ontology)
+
+    # Optional session-memory notes (chat session + agent scoped)
+    notes_block = ""
+    if attach_session_notes:
+        notes_block = _resolve_session_notes_block(session_id, agent_name)
+
     parts = [p for p in [skills_block, onts_block, caps_block, dags_block,
-                          mem_block, qa_block] if p]
+                          cap_ont_block, notes_block, mem_block, qa_block] if p]
     combined = "\n\n".join(parts)
 
     return {
@@ -769,6 +827,8 @@ async def build_context_prompt(
         "caps":              cap_names,
         "dags":              dag_summaries,
         "memory_block":      mem_block,
+        "cap_ontology_block": cap_ont_block,
+        "session_notes_block": notes_block,
         "related_qa":        qa_pairs,
         "related_qa_count":  len(qa_pairs),
     }
@@ -784,7 +844,11 @@ async def build_context_prompt(
         "second-order related-QA recall. Each attach_* argument accepts: '' "
         "(skip), 'auto' (semantic search by message), '*' (include all where "
         "applicable), or a comma-separated explicit list of ids/names. "
-        "attach_related_qa accepts '' (off), 'auto' (4 pairs), or a digit."
+        "attach_related_qa accepts '' (off), 'auto' (4 pairs), or a digit. "
+        "attach_cap_ontology accepts '' (off), '*' (all caps) or a CSV of cap "
+        "names (usually the agent's domain_caps) — injects capability-mesh "
+        "relations from cap_ontology. attach_session_notes (bool) injects the "
+        "agent-maintained session memory notes for session_id/agent_name."
     ),
 )
 async def cap_context_assemble(
@@ -795,6 +859,8 @@ async def cap_context_assemble(
     attach_dags:        str  = "",
     attach_memory:      bool = False,
     attach_related_qa:  str  = "",
+    attach_cap_ontology: str = "",
+    attach_session_notes: bool = False,
     session_id:         str  = "",
     memory_limit:       int  = 5,
     memory_tags:        str  = "",
@@ -809,6 +875,8 @@ async def cap_context_assemble(
         attach_dags       = attach_dags,
         attach_memory     = attach_memory,
         attach_related_qa = attach_related_qa,
+        attach_cap_ontology = attach_cap_ontology,
+        attach_session_notes = bool(attach_session_notes),
         session_id        = session_id,
         memory_limit      = memory_limit,
         memory_tags       = memory_tags,
@@ -1698,28 +1766,56 @@ async def cap_stream_complete(stream_id: str, final_text: str = "", trace_id=Non
 
 _AGENT_LOOP_BLACKLIST = {
     # Never let the loop call itself or anything that would cause recursion
-    "dag.agent_loop", "dag.plan", "dag.plan_and_run", "dag.run",
+    "dag.agent_loop", "dag.agent_loop_v2", "dag.agent_loop_v3",
+    "dag.agent_loop_v4", "dag.agent_loop_v5", "dag.agent_loop_v6",
+    # Planning/DAG handover caps — the loop must decompose and execute goals
+    # ITSELF; delegating planning (or plan execution) to a capability derails
+    # the run into "planning a plan" instead of acting.
+    "dag.plan", "dag.plan_and_run", "dag.run", "dag.from_goal",
+    "dag.store_run", "llm.plan",
     # Skip ultra-low-level meta caps
     "ui.panel.create", "ui.panel.update", "ui.panel.delete",
 }
 
 
+def _gated_read_caps() -> set:
+    """Caps the canonical-retrieval gate (fabric/memory_retrieval.py) hides
+    from agent discovery. Soft gate — explicit calls still work. Empty set
+    when the module isn't loaded or tooling mode is 'full'."""
+    mr = (sys.modules.get("memory_retrieval")
+          or sys.modules.get("Vera.vera.fabric.memory_retrieval"))
+    try:
+        return mr.gated_discovery_caps() if mr else set()
+    except Exception:
+        return set()
+
+
 def _fabric_usage_hints(toolkit) -> str:
-    """Return a DATA FABRIC TIPS block if fabric tools are in the toolkit."""
+    """Return a retrieval-tips block matched to the tools in the toolkit."""
+    parts = []
+    if "memory.seek" in toolkit:
+        parts.append(
+            "MEMORY RETRIEVAL TIPS:\n"
+            "• memory.seek(query=\"…\") is THE way to search stored knowledge — "
+            "hybrid search with duplicates collapsed, sized to max_chars.\n"
+            "• Narrow with scope=\"<dataset or prefix>\" and since=\"7d\"; "
+            "read the returned `text` field.\n"
+            "• Expand any hit IN FULL with memory.read(record_id=\"<id>\").\n"
+            "• Browse what data exists with memory.map() / memory.map(prefix=\"caps\").\n\n"
+        )
     fabric_tools = {"fabric.query", "fabric.datasets", "fabric.ingest",
                     "fabric.skills.list", "fabric.skills.get", "fabric.stats"}
-    has_fabric = any(t in fabric_tools for t in toolkit)
-    if not has_fabric:
-        return ""
-    return (
-        "DATA FABRIC TIPS:\n"
-        "• Call fabric.datasets first to see available datasets and record counts.\n"
-        "• Search with: fabric.query(text=\"your search\") for keyword search,\n"
-        "  or fabric.query(vector=\"your search\") for semantic search.\n"
-        "• Add dataset_id=\"name\" to restrict to a specific dataset.\n"
-        "• Set include_data=True to get full record content, not just summaries.\n"
-        "• You can also pass query=\"plain text\" — it auto-converts to text+vector search.\n\n"
-    )
+    if any(t in fabric_tools for t in toolkit):
+        parts.append(
+            "DATA FABRIC TIPS:\n"
+            "• Search with: fabric.query(text=\"your search\") for keyword search,\n"
+            "  or fabric.query(vector=\"your search\") for semantic search.\n"
+            "• Add dataset_id=\"name\" to restrict to a specific dataset.\n"
+            "• Set include_data=True to get full record content, not just summaries.\n"
+            "• fabric.datasets can return THOUSANDS of rows — always pass parent=\"<namespace>\".\n"
+            "• You can also pass query=\"plain text\" — it auto-converts to text+vector search.\n\n"
+        )
+    return "".join(parts)
 
 
 def _agent_loop_cap_signature(name: str) -> str:
@@ -1793,11 +1889,104 @@ def _coerce_arg_types(cap_name: str, args: Dict) -> Tuple[Dict, List[str]]:
     return out, notes
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Session capability guards — a HARD sandbox for an agent-loop run.
+#
+# While a guard is registered for a session, every tool call the loop makes is
+# checked at EXECUTION time (allowed_caps alone only shapes the catalog — it
+# was never enforced). A guard makes two promises the prompt cannot:
+#   • caps outside `allow` (or matching `deny`) are refused, so toolkit
+#     expansion / need_caps grants / discovery can never escape the sandbox;
+#   • `pin_args` are force-applied AFTER the LLM's args, so the agent cannot
+#     amend e.g. is_sim=0 to reach the real business from a simulation run.
+# Patterns are exact cap names or prefix globs ("business.*"). Deny beats allow.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SESSION_CAP_GUARDS: Dict[str, Dict[str, Any]] = {}
+
+
+def _guard_match(patterns, cap_name: str) -> bool:
+    for p in patterns or []:
+        p = str(p).strip()
+        if not p:
+            continue
+        if p == "*" or p == cap_name:
+            return True
+        if p.endswith("*") and cap_name.startswith(p[:-1]):
+            return True
+    return False
+
+
+def set_session_cap_guard(session_id: str, guard: Dict[str, Any]) -> Dict[str, Any]:
+    """Register (replace) the cap guard for a session. Guard keys:
+    label (str), allow (list of cap names/globs — empty = allow all),
+    deny (list of names/globs — beats allow), pin_args ({pattern: {arg: val}}).
+    The returned dict carries a `token` — pass it to clear_session_cap_guard so
+    a superseded run's cleanup can never strip a NEWER run's guard."""
+    g = {
+        "label":    str((guard or {}).get("label") or "sandbox"),
+        "allow":    [str(c).strip() for c in (guard or {}).get("allow") or [] if str(c).strip()],
+        "deny":     [str(c).strip() for c in (guard or {}).get("deny") or [] if str(c).strip()],
+        "pin_args": {str(k): dict(v) for k, v in ((guard or {}).get("pin_args") or {}).items()
+                     if isinstance(v, dict)},
+        "token":    uuid.uuid4().hex,
+    }
+    _SESSION_CAP_GUARDS[session_id] = g
+    return g
+
+
+def get_session_cap_guard(session_id: str) -> Optional[Dict[str, Any]]:
+    return _SESSION_CAP_GUARDS.get(session_id or "")
+
+
+def clear_session_cap_guard(session_id: str, token: str = "") -> None:
+    cur = _SESSION_CAP_GUARDS.get(session_id or "")
+    if cur is None:
+        return
+    if token and cur.get("token") != token:
+        return    # a newer run re-guarded this session — leave its guard alone
+    _SESSION_CAP_GUARDS.pop(session_id or "", None)
+
+
+def _guard_blocks(guard: Dict[str, Any], cap_name: str) -> str:
+    """Return a refusal message when the guard blocks cap_name, else ''."""
+    if _guard_match(guard.get("deny"), cap_name):
+        return (f"'{cap_name}' is blocked by the '{guard.get('label')}' sandbox. "
+                f"Pick a different capability from your approved toolkit.")
+    allow = guard.get("allow") or []
+    if allow and not _guard_match(allow, cap_name):
+        sample = ", ".join(allow[:8]) + ("…" if len(allow) > 8 else "")
+        return (f"'{cap_name}' is outside the '{guard.get('label')}' sandbox — this run "
+                f"may ONLY use its approved toolkit ({sample}). Do not retry this "
+                f"capability; achieve the step with an approved one instead.")
+    return ""
+
+
+def _guard_pin_kwargs(guard: Dict[str, Any], cap_name: str,
+                      kwargs: Dict, accepted: set) -> List[str]:
+    """Force-apply pinned args for every matching pattern. Returns notes."""
+    notes: List[str] = []
+    for pattern, pins in (guard.get("pin_args") or {}).items():
+        if not _guard_match([pattern], cap_name):
+            continue
+        for k, v in (pins or {}).items():
+            if k in accepted and kwargs.get(k) != v:
+                kwargs[k] = v
+                notes.append(f"{k} pinned to {v!r} by '{guard.get('label')}' sandbox")
+    return notes
+
+
 async def _agent_loop_call_tool(cap_name: str, args: Dict, *,
                                  session_id: str = "", trace_id: str = "") -> Dict:
     cap = CAPABILITY_REGISTRY.get(cap_name)
     if not cap:
         return {"ok": False, "error": f"Unknown capability: {cap_name}"}
+
+    guard = _SESSION_CAP_GUARDS.get(session_id) if session_id else None
+    if guard:
+        blocked = _guard_blocks(guard, cap_name)
+        if blocked:
+            return {"ok": False, "error": blocked, "guard": guard.get("label")}
 
     # Type-coerce args BEFORE filtering — this fixes the common LLM mistake
     # of passing ints/floats/bools as strings (e.g. "64" instead of 64).
@@ -1807,6 +1996,9 @@ async def _agent_loop_call_tool(cap_name: str, args: Dict, *,
     kwargs = {k: v for k, v in coerced.items() if k in accepted}
     if session_id and "session_id" in accepted:
         kwargs.setdefault("session_id", session_id)
+    if guard:
+        _coerce_notes = list(_coerce_notes) + _guard_pin_kwargs(
+            guard, cap_name, kwargs, accepted)
     try:
         result = await cap["func"](**kwargs, trace_id=trace_id)
         return {"ok": True, "result": result, "_coerce_notes": _coerce_notes,
@@ -1816,7 +2008,15 @@ async def _agent_loop_call_tool(cap_name: str, args: Dict, *,
                 "_coerced_args": coerced}
 
 
-def _preview_for_loop(result: Any, max_len: int = 1500) -> str:
+# Caps whose output is already sized to the caller's budget (memory.seek's
+# max_chars) or is inherently a document — don't re-truncate them at 1500.
+_LOOP_PREVIEW_LONGFORM = {"memory.seek", "memory.read", "memory.map",
+                          "web.fetch", "llm.summarize"}
+
+
+def _preview_for_loop(result: Any, max_len: int = 1500, tool: str = "") -> str:
+    if tool in _LOOP_PREVIEW_LONGFORM:
+        max_len = max(max_len, 8000)
     if result is None:
         return "null"
     if isinstance(result, str):
@@ -1869,13 +2069,16 @@ async def cap_dag_agent_loop(
     max_cycles = max(1, min(40, int(max_cycles)))
 
     # ── Resolve tool list ─────────────────────────────────────────────────
+    _gated = _gated_read_caps()
     if allowed_caps and allowed_caps != "*":
+        # Explicit list — the caller decides; the soft gate never blocks these.
         tool_names = [c for c in _split_ids(allowed_caps) if c in CAPABILITY_REGISTRY]
     elif allowed_caps == "*":
         tool_names = [
             n for n in CAPABILITY_REGISTRY.keys()
             if n.split(".")[0] not in _CONTEXT_CAP_BLACKLIST_GROUPS
             and n not in _AGENT_LOOP_BLACKLIST
+            and n not in _gated
         ][:30]
     else:
         # Auto: top-K via relevance search
@@ -1887,6 +2090,7 @@ async def cap_dag_agent_loop(
                     n for n, _s in hits
                     if n.split(".")[0] not in _CONTEXT_CAP_BLACKLIST_GROUPS
                     and n not in _AGENT_LOOP_BLACKLIST
+                    and n not in _gated
                 ][:context_top_k]
             except Exception:
                 tool_names = []
@@ -2178,7 +2382,7 @@ async def cap_dag_agent_loop(
             elapsed = round((time.monotonic() - t0) * 1000)
 
             if invoke.get("ok"):
-                preview = _preview_for_loop(invoke["result"])
+                preview = _preview_for_loop(invoke["result"], tool=tool)
             else:
                 preview = "ERROR: " + invoke.get("error", "unknown error")
 
@@ -2295,6 +2499,9 @@ _BASE_DISCOVERY_CAPS = [
     "caps.describe",        # see a cap's I/O contract
     "context.search_caps",  # alternate cap search (if dag_store route differs)
     "context.search_dags",  # find prebuilt DAGs that might already do this
+    "memory.seek",          # canonical stored-knowledge search
+    "memory.read",          # full record by id
+    "memory.map",           # dataset namespace browser
 ]
 _BASE_ESSENTIAL_CAPS = [
     "http.get",
@@ -2450,8 +2657,10 @@ def _build_v2_toolkit(*, allowed_caps: str, triage_keywords: List[str],
             toolkit.append(c)
 
     # Triage-discovered extras
+    _gated = _gated_read_caps()
     for c in extra_caps:
-        if c in CAPABILITY_REGISTRY and c not in toolkit and c not in _AGENT_LOOP_BLACKLIST:
+        if (c in CAPABILITY_REGISTRY and c not in toolkit
+                and c not in _AGENT_LOOP_BLACKLIST and c not in _gated):
             toolkit.append(c)
 
     return toolkit
@@ -3158,7 +3367,7 @@ async def cap_dag_agent_loop_v2(
 
             elapsed = round((time.monotonic() - t0) * 1000)
 
-            preview = (_preview_for_loop(invoke["result"])
+            preview = (_preview_for_loop(invoke["result"], tool=tool)
                         if invoke.get("ok")
                         else "ERROR: " + invoke.get("error", "unknown error"))
 

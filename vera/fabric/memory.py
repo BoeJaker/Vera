@@ -291,7 +291,10 @@ class MemoryRecord:
             "summary":      self.summary[:500],
             "parent_id":    self.parent_id,
         }
-        doc_text = self.text or self.summary or self.full_text[:500]
+        # Truncate, never skip: an oversized doc would trip chroma's request-
+        # size limit (413) and silently lose the vector. full_text stays whole
+        # in Postgres; embeddings are computed from ≤4096 chars regardless.
+        doc_text = (self.text or self.summary or self.full_text[:500])[:4000]
         return self.id, doc_text, meta
 
 
@@ -754,18 +757,33 @@ class ChromaBackend(MemoryBackend):
     def __init__(self):
         self._client     = None
         self._collection = None
+        self._skipped_no_embedding = 0
+        self._count_cache: Tuple[float, int] = (0.0, 0)
+
+    def _cached_count(self) -> int:
+        """count() with a 30s TTL — search() needed it on every call purely to
+        clamp n_results, which cost an extra HTTP roundtrip per query."""
+        ts, n = self._count_cache
+        now = time.monotonic()
+        if now - ts > 30.0:
+            n = self._collection.count()
+            self._count_cache = (now, n)
+        return n
 
     async def connect(self) -> bool:
         if not HAS_CHROMA:
             log.warning("chromadb not installed — ChromaBackend unavailable")
             return False
         try:
-            self._client = _chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
-            self._collection = self._client.get_or_create_collection(
-                name=CHROMA_COLLECTION,
-                metadata={"hnsw:space": "cosine"},
-            )
-            count = self._collection.count()
+            def _connect_sync():
+                client = _chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
+                coll = client.get_or_create_collection(
+                    name=CHROMA_COLLECTION,
+                    metadata={"hnsw:space": "cosine"},
+                )
+                return client, coll, coll.count()
+            self._client, self._collection, count = \
+                await asyncio.to_thread(_connect_sync)
             log.info("✓ ChromaBackend connected — %d documents", count)
             return True
         except Exception as e:
@@ -777,15 +795,29 @@ class ChromaBackend(MemoryBackend):
 
     async def store(self, record: MemoryRecord) -> bool:
         if not self._collection: return False
+        if not record.embedding:
+            # NEVER upsert without an explicit vector: Chroma falls back to its
+            # built-in default embedder (MiniLM, 384-dim), which either raises
+            # "expecting embedding with dimension of N, got M" against this
+            # model-versioned collection or quietly poisons it with vectors from
+            # a different space. The record is safe in Postgres — re-encode it
+            # later with memory.backfill_vectors.
+            self._skipped_no_embedding += 1
+            n = self._skipped_no_embedding
+            if n == 1 or n % 100 == 0:
+                log.warning("Chroma store: %d record(s) skipped (no embedding — "
+                            "embedder offline?). Run memory.backfill_vectors once "
+                            "the embedder is back.", n)
+            return False
         try:
             rid, doc, meta = record.to_chroma_doc()
-            if record.embedding:
-                self._collection.upsert(
-                    ids=[rid], documents=[doc], metadatas=[meta],
-                    embeddings=[record.embedding],
-                )
-            else:
-                self._collection.upsert(ids=[rid], documents=[doc], metadatas=[meta])
+            # chromadb HttpClient is synchronous — keep its network round-trips
+            # off the event loop (same for every call site in this class).
+            await asyncio.to_thread(
+                self._collection.upsert,
+                ids=[rid], documents=[doc], metadatas=[meta],
+                embeddings=[record.embedding],
+            )
             return True
         except Exception as e:
             log.error("Chroma store: %s", e); return False
@@ -793,7 +825,9 @@ class ChromaBackend(MemoryBackend):
     async def get(self, record_id: str) -> Optional[MemoryRecord]:
         if not self._collection: return None
         try:
-            res = self._collection.get(ids=[record_id], include=["documents","metadatas"])
+            res = await asyncio.to_thread(
+                self._collection.get,
+                ids=[record_id], include=["documents","metadatas"])
             if not res["ids"]: return None
             return self._chroma_to_record(
                 res["ids"][0], res["documents"][0], res["metadatas"][0]
@@ -822,16 +856,23 @@ class ChromaBackend(MemoryBackend):
             else:
                 where_arg = {"$and": clauses}
 
+            if not embedding:
+                # No query vector (embedder offline / circuit-breaker cooling).
+                # query_texts would embed with Chroma's default 384-dim function
+                # and dim-mismatch against the model-versioned collection — skip
+                # vector search; Postgres full-text + Neo4j still serve the query.
+                log.debug("Chroma search skipped — no query embedding available")
+                return []
             kwargs: dict = {
-                "n_results": min(int(limit), self._collection.count() or 1),
+                "n_results": min(int(limit),
+                                 await asyncio.to_thread(self._cached_count) or 1),
                 "where":     where_arg,
                 "include":   ["documents","metadatas","distances"],
+                "query_embeddings": [embedding],
             }
-            if embedding:
-                kwargs["query_embeddings"] = [embedding]
-            else:
-                kwargs["query_texts"] = [query] if query.strip() else [""]
-            res = self._collection.query(**{k:v for k,v in kwargs.items() if v is not None})
+            res = await asyncio.to_thread(
+                lambda: self._collection.query(
+                    **{k: v for k, v in kwargs.items() if v is not None}))
             results = []
             for rid, doc, meta, dist in zip(
                 res["ids"][0], res["documents"][0],
@@ -850,7 +891,14 @@ class ChromaBackend(MemoryBackend):
             if not current: return False
             for k, v in updates.items():
                 if hasattr(current, k): setattr(current, k, v)
-            return await self.store(current)
+            rid, _doc, meta = current.to_chroma_doc()
+            # Metadata-only update: passing documents (or routing through
+            # store(), which now requires an embedding) would re-embed via the
+            # collection's default 384-dim function. update() with metadatas
+            # alone preserves the stored vector and document.
+            await asyncio.to_thread(
+                self._collection.update, ids=[rid], metadatas=[meta])
+            return True
         except Exception as e:
             log.error("Chroma update: %s", e); return False
 
@@ -859,7 +907,7 @@ class ChromaBackend(MemoryBackend):
             return {"connected": False}
         try:
             return {"connected": True, "collection": CHROMA_COLLECTION,
-                    "count": self._collection.count()}
+                    "count": await asyncio.to_thread(self._collection.count)}
         except Exception as e:
             return {"connected": False, "error": str(e)}
 
@@ -1001,12 +1049,10 @@ class Neo4jBackend(MemoryBackend):
                 "graph_id":     record.id,  # use record id as graph node identity
             }
             async with self._driver.session() as s:
-                result = await s.run(
-                    "MERGE (m:Memory {id:$id}) SET m += $props RETURN id(m) AS nid",
+                await s.run(
+                    "MERGE (m:Memory {id:$id}) SET m += $props",
                     id=record.id, props=props,
                 )
-                rec = await result.single()
-                graph_node_id = str(rec["nid"]) if rec else ""
 
                 # Create parent relationship if parent_id set
                 if record.parent_id:
@@ -1269,28 +1315,42 @@ class Neo4jBackend(MemoryBackend):
 # EMBEDDING  —  Ollama text embeddings
 # ─────────────────────────────────────────────────────────────────────────────
 
-_EMBED_FAILED = False   # set True after first 404 on both endpoints to stop spamming
+_EMBED_FAILED_AT  = 0.0     # monotonic ts of the last hard failure (0 = healthy)
+_EMBED_RETRY_SECS = 300.0   # circuit-breaker cooldown before probing the cluster again
 
 async def embed_text(text: str) -> Optional[List[float]]:
     """Generate a text embedding via the centralized ollama_embed (logged to Jobs).
 
-    Preserves the circuit-breaker and MEMORY_AUTO_EMBED gate.
+    Circuit-breaker with COOLDOWN: after a hard failure we stop hammering the
+    cluster, but only for _EMBED_RETRY_SECS. A permanently-latched breaker meant
+    one bad window (embed node rebooting, boot race before the cluster monitor
+    marks nodes online) silently disabled vectors for the whole process lifetime
+    — records piled up in Postgres with no Chroma vector.
     """
-    global _EMBED_FAILED
-    if _EMBED_FAILED or not MEMORY_AUTO_EMBED or not text.strip():
+    global _EMBED_FAILED_AT
+    if not MEMORY_AUTO_EMBED or not text.strip():
+        return None
+    if _EMBED_FAILED_AT and (time.monotonic() - _EMBED_FAILED_AT) < _EMBED_RETRY_SECS:
         return None
     try:
         from Vera.vera.capability_orchestration import ollama_embed
         vec = await ollama_embed(text, model=OLLAMA_EMBED_MODEL)
         if vec is None:
-            _EMBED_FAILED = True
-            log.warning(
-                "Embedding unavailable — model '%s' may not be pulled. "
-                "Run: ollama pull %s  OR set MEMORY_AUTO_EMBED=0 to disable.",
-                OLLAMA_EMBED_MODEL, OLLAMA_EMBED_MODEL
-            )
+            first = not _EMBED_FAILED_AT
+            _EMBED_FAILED_AT = time.monotonic()
+            if first:
+                log.warning(
+                    "Embedding unavailable — model '%s' may not be pulled or no "
+                    "Ollama node is online. Retrying every %ds. Run: ollama pull %s "
+                    "OR set MEMORY_AUTO_EMBED=0 to disable. Backfill skipped "
+                    "vectors later with memory.backfill_vectors.",
+                    OLLAMA_EMBED_MODEL, int(_EMBED_RETRY_SECS), OLLAMA_EMBED_MODEL
+                )
+        else:
+            _EMBED_FAILED_AT = 0.0
         return vec
     except Exception as e:
+        _EMBED_FAILED_AT = _EMBED_FAILED_AT or time.monotonic()
         log.debug("embed_text: %s", e)
         return None
 
@@ -2177,6 +2237,123 @@ async def memory_reindex_embeddings(confirm: bool = False, limit: int = 0,
                       "reembedded": done, "errors": errors})
     return {"ok": True, "dry_run": False, "provider": provider, "dim": dim,
             "total": total, "reembedded": done, "errors": errors}
+
+
+@capability(
+    "memory.backfill_vectors",
+    http_method="POST", http_path="/memory/backfill_vectors",
+    http_tags=["memory", "embed"], memory="off",
+    description=(
+        "Re-encode memory records that exist in Postgres (the source of truth) "
+        "but have NO vector in the CURRENT Chroma collection — use after a "
+        "Chroma reset, an embed-model switch (collections are versioned per "
+        "model), or an embedder outage that skipped vectors. Embeds with the "
+        "current provider and upserts explicit vectors; also stamps "
+        "embedding_model on the Postgres rows. DRY-RUN by default. Inputs: "
+        "confirm (bool — must be true to write), limit (int, 0=all missing), "
+        "batch (int=64), include_archived (bool=false). Output: {dry_run, "
+        "pg_total, chroma_count, missing, backfilled, errors, provider, dim, "
+        "collection}."
+    ),
+)
+async def memory_backfill_vectors(confirm: bool = False, limit: int = 0,
+                                  batch: int = 64, include_archived: bool = False,
+                                  trace_id=None):
+    cb   = MEMORY._backends.get("chroma")
+    coll = getattr(cb, "_collection", None) if cb else None
+    pg   = MEMORY._backends.get("postgres")
+    pool = getattr(pg, "_pool", None) if pg else None
+    if coll is None:
+        return {"error": "chroma backend not connected"}
+    if pool is None:
+        return {"error": "postgres backend not connected"}
+
+    import Vera.vera.capability_orchestration as _o
+    provider = getattr(_o, "EMBED_PROVIDER", "ollama")
+    probe = await embed_text("vector space probe")
+    if probe is None:
+        return {"error": "embedder unavailable (embed_text returned None) — "
+                         "check the provider/model and MEMORY_AUTO_EMBED"}
+    dim = len(probe)
+
+    cond = "TRUE" if include_archived else "archived=false"
+    async with pool.acquire() as conn:
+        pg_total = await conn.fetchval(f"SELECT COUNT(*) FROM vera_memories WHERE {cond}")
+    try:
+        chroma_count = coll.count()
+    except Exception as e:
+        return {"error": f"chroma count failed: {e}"}
+
+    # Keyset-scan Postgres ids and diff against the collection in chunks.
+    missing: List[str] = []
+    last_id = ""
+    while True:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT id FROM vera_memories WHERE {cond} AND id > $1 "
+                f"ORDER BY id LIMIT 500", last_id)
+        if not rows:
+            break
+        ids = [r["id"] for r in rows]
+        last_id = ids[-1]
+        try:
+            got = set((coll.get(ids=ids) or {}).get("ids") or [])
+        except Exception as e:
+            return {"error": f"chroma get failed: {e}", "checked_up_to": last_id}
+        missing.extend(i for i in ids if i not in got)
+
+    target = missing if (not limit or limit <= 0) else missing[:int(limit)]
+    base = {"provider": provider, "dim": dim, "collection": CHROMA_COLLECTION,
+            "pg_total": pg_total, "chroma_count": chroma_count,
+            "missing": len(missing)}
+    if not confirm:
+        return {"ok": True, "dry_run": True, **base,
+                "would_backfill": len(target),
+                "note": "Re-run with confirm=true to embed + upsert the missing "
+                        "records into the current collection."}
+
+    await emit_event({"type": "memory.backfill", "stage": "start",
+                      "missing": len(target), **{k: base[k] for k in
+                                                 ("provider", "dim", "collection")}})
+    done = errors = 0
+    for i in range(0, len(target), max(1, int(batch))):
+        chunk = target[i:i + max(1, int(batch))]
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM vera_memories WHERE id = ANY($1::text[])", chunk)
+        stamped: List[str] = []
+        for row in rows:
+            rec = pg._row_to_record(row)
+            rid, doc, meta = rec.to_chroma_doc()
+            if not (doc and doc.strip()):
+                continue
+            vec = await embed_text(doc)
+            if not vec:
+                errors += 1
+                continue
+            try:
+                coll.upsert(ids=[rid], documents=[doc], metadatas=[meta],
+                            embeddings=[vec])
+                stamped.append(rid)
+                done += 1
+            except Exception as e:
+                errors += 1
+                log.debug("backfill upsert %s: %s", rid, e)
+        if stamped:
+            try:
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "UPDATE vera_memories SET embedding_model=$2 "
+                        "WHERE id = ANY($1::text[])", stamped, OLLAMA_EMBED_MODEL)
+            except Exception as e:
+                log.debug("backfill pg stamp: %s", e)
+        await emit_event({"type": "memory.backfill", "stage": "progress",
+                          "done": done, "of": len(target), "errors": errors})
+
+    await emit_event({"type": "memory.backfill", "stage": "done",
+                      "backfilled": done, "errors": errors})
+    return {"ok": True, "dry_run": False, **base,
+            "backfilled": done, "errors": errors}
 
 
 async def _startup():

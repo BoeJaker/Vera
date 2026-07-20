@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Vera — Image Studio</title>
+<style>
+:root{
+  --bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;
+  --border:#3a3530;--border2:#4a4540;
+  --acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--acc4:#9e8fa0;
+  --ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;
+  --text:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;
+  --fg:#ddd5c8;
+  --mono:'JetBrains Mono','Fira Mono',monospace;--sans:'Inter','IBM Plex Sans',system-ui,sans-serif;
+  --radius:5px;--radius-sm:3px;color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:13px}
+body{display:flex;overflow:hidden}
+
+.content{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0}
+.pane{flex:1;min-height:0;display:none}
+.pane.active{display:flex}
+.pane.iframe{position:relative}
+.pane iframe{flex:1;border:none;width:100%;height:100%}
+.scroll{flex:1;overflow-y:auto;padding:12px;display:flex;gap:12px}
+.col{display:flex;flex-direction:column;gap:10px}
+.col.side{width:340px;flex-shrink:0}
+.col.main{flex:1;min-width:0}
+.card{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);padding:10px}
+.card h2{font-size:11px;font-weight:600;color:var(--acc2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px}
+label{font-size:10px;color:var(--dim2);display:block;margin-bottom:3px}
+.row{display:flex;align-items:center;gap:6px;margin-bottom:7px}
+.row label{margin-bottom:0;min-width:64px}
+.row.two>*{flex:1}
+.grid4{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+input,select,textarea{background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:5px 7px;border-radius:var(--radius-sm);font-family:var(--sans);font-size:11px;width:100%}
+textarea{resize:vertical;min-height:60px;line-height:1.45}
+input[type=checkbox]{width:auto}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;padding:5px 11px;border-radius:var(--radius-sm);background:var(--bg2);border:1px solid var(--border2);color:var(--text);font-size:11px;cursor:pointer;font-family:var(--sans)}
+.btn:hover{border-color:var(--acc);color:var(--acc)}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#10201c);font-weight:600}
+.btn.primary:hover{filter:brightness(1.1);color:var(--on-acc,#10201c)}
+.btn.sm{padding:3px 7px;font-size:10px}
+.btn.danger:hover{border-color:var(--err);color:var(--err)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.status{font-size:10px;color:var(--dim2);margin-top:6px;min-height:13px;word-break:break-word}
+.status.ok{color:var(--ok)}.status.err{color:var(--err)}.status.warn{color:var(--warn)}
+.muted{color:var(--dim2);font-size:10px}
+.imgwrap{background:var(--bg0);border:1px solid var(--border);border-radius:6px;min-height:300px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.imgwrap img{max-width:100%;max-height:460px;object-fit:contain;image-rendering:auto}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:10px;background:var(--bg0);border:1px solid var(--border);border-radius:12px;padding:2px 8px;cursor:pointer}
+.chip.on{border-color:var(--acc);color:var(--acc)}
+.chip input{width:42px;padding:1px 3px;font-size:10px}
+.mkt{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.mcard{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column}
+.mcard .thumb{height:120px;background:var(--bg0) center/cover no-repeat;border-bottom:1px solid var(--border)}
+.mcard .body{padding:6px;display:flex;flex-direction:column;gap:4px;flex:1}
+.mcard .nm{font-size:11px;font-weight:600;line-height:1.2;max-height:28px;overflow:hidden}
+.mcard .meta{font-size:9px;color:var(--dim2)}
+.gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
+.gal .g{border:1px solid var(--border);border-radius:5px;overflow:hidden;cursor:pointer;background:var(--bg0);position:relative}
+.gal .g img{width:100%;height:120px;object-fit:cover;display:block}
+.gal .g .cap{font-size:9px;color:var(--dim2);padding:3px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gal .g:hover{border-color:var(--acc)}
+.tag{display:inline-block;font-size:8.5px;color:var(--dim2);border:1px solid var(--border);border-radius:8px;padding:0 5px;margin-right:3px}
+</style>
+<link rel="stylesheet" href="/ui/vera-panel.css">
+</head>
+<body>
+
+<!-- ══ collapsible LHM (canonical vera-panel chrome) ══ -->
+<aside id="sidebar" data-vera-lhm>
+  <div id="side-head">
+    <div class="ico">◨</div>
+    <div><h1>Image Studio</h1><div class="sub">Visual Suite</div></div>
+  </div>
+  <nav id="nav">
+    <button class="nav-btn active" data-go="generate" onclick="go('generate')"><span class="gl">✦</span>Generate</button>
+    <button class="nav-btn" data-go="gallery" onclick="go('gallery')"><span class="gl">▣</span>Gallery</button>
+    <button class="nav-btn" data-go="loras" onclick="go('loras')"><span class="gl">★</span>LoRAs</button>
+    <button class="nav-btn" data-go="thumbnails" onclick="go('thumbnails')"><span class="gl">▤</span>Thumbnails</button>
+    <button class="nav-btn" data-go="sprites" onclick="go('sprites')"><span class="gl">◳</span>Sprites</button>
+    <button class="nav-btn" data-go="companion" onclick="go('companion')"><span class="gl">☺</span>Companion</button>
+  </nav>
+  <div id="status-tile">
+    <div class="lbl">GPU tiers</div>
+    <div id="tierRows"><div class="row"><span class="dot"></span><span class="muted">probing…</span></div></div>
+  </div>
+</aside>
+
+<div class="content">
+
+  <!-- GENERATE -->
+  <div class="pane active" id="pane-generate">
+    <div class="scroll">
+      <div class="col side">
+        <div class="card">
+          <h2>Pipeline</h2>
+          <div class="row"><select id="pipe" onchange="onPipe()">
+            <option value="txt2img">txt2img — text → image</option>
+            <option value="img2img">img2img — image → image</option>
+            <option value="ipadapter">IP-Adapter — identity from a reference</option>
+            <option value="pose">ControlNet pose — skeleton/reference</option>
+            <option value="upscale">Upscale — Real-ESRGAN</option>
+            <option value="rembg">Remove background — rembg</option>
+          </select></div>
+          <div id="initRow" style="display:none">
+            <label id="initLbl">Init / reference image</label>
+            <div class="row"><input type="file" id="initFile" accept="image/*" onchange="loadInit(this)"></div>
+            <div class="row" id="strengthRow"><label>Strength</label><input id="strength" type="range" min="0.1" max="1" step="0.05" value="0.55" oninput="$('sv').textContent=this.value"><span id="sv" class="muted">0.55</span></div>
+            <div class="row" id="scaleRow" style="display:none"><label>Scale</label><select id="scale"><option>2</option><option selected>4</option></select></div>
+            <div id="initThumb" class="muted" style="font-size:10px"></div>
+          </div>
+        </div>
+
+        <div class="card" id="promptCard">
+          <h2>Prompt</h2>
+          <textarea id="prompt" placeholder="A cinematic photo of…"></textarea>
+          <label style="margin-top:6px">Negative</label>
+          <textarea id="neg" style="min-height:40px">blurry, low quality, distorted, watermark</textarea>
+          <div class="grid4" style="margin-top:6px">
+            <div class="row"><label style="min-width:0">W</label><input id="w" type="number" value="768" step="64" min="256" max="1536"></div>
+            <div class="row"><label style="min-width:0">H</label><input id="h" type="number" value="768" step="64" min="256" max="1536"></div>
+            <div class="row"><label style="min-width:0">Steps</label><input id="steps" type="number" value="24" min="5" max="60"></div>
+            <div class="row"><label style="min-width:0">CFG</label><input id="cfg" type="number" value="7.5" step="0.5" min="1" max="20"></div>
+          </div>
+          <div class="row"><label>Sampler</label>
+            <select id="sched">
+              <option value="">model default</option>
+              <option value="dpmpp">DPM++ 2M Karras</option>
+              <option value="euler">Euler</option>
+              <option value="euler_a">Euler Ancestral</option>
+              <option value="unipc">UniPC</option>
+              <option value="ddim">DDIM</option>
+              <option value="lcm">LCM (few-step)</option>
+            </select></div>
+          <div class="row"><label>Seed</label><input id="seed" value="-1"><button class="btn sm" onclick="$('seed').value=Math.floor(Math.random()*99999999)">⚄</button></div>
+          <div class="row"><label><input type="checkbox" id="transparent"> transparent</label>
+            <input id="bg_color" placeholder="#1bd12a" style="flex:1">
+            <input id="chroma_tol" type="number" value="80" title="chroma tolerance" style="width:60px"></div>
+        </div>
+
+        <div class="card" id="loraCard">
+          <h2>LoRAs <span class="muted" style="font-weight:400">— click to toggle, set weight</span></h2>
+          <div class="chips" id="loraChips"><span class="muted">none installed — see the LoRAs tab</span></div>
+          <div class="row" style="margin-top:6px"><button class="btn sm" onclick="loadLoras()">↻ refresh</button>
+            <button class="btn sm" onclick="go('loras')">browse marketplace →</button></div>
+        </div>
+
+        <button class="btn primary" onclick="generate()">✦ Generate</button>
+        <div class="status" id="genStatus"></div>
+      </div>
+
+      <div class="col main">
+        <div class="card" style="display:flex;flex-direction:column;gap:8px">
+          <div class="imgwrap" id="out"><span class="muted">result appears here</span></div>
+          <div class="row" style="margin:0;flex-wrap:wrap">
+            <button class="btn sm" onclick="download()">⬇ download</button>
+            <button class="btn sm" onclick="sendToInit()">→ use as init</button>
+            <button class="btn sm" onclick="sendToSprite()" title="remove the background, pixelize and register the result as a sprite character (Sprites tab)">◳ → sprite</button>
+            <span id="outMeta" class="muted"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LORAS / MARKETPLACE -->
+  <div class="pane" id="pane-loras">
+    <div class="scroll">
+      <div class="col side">
+        <div class="card">
+          <h2>Marketplace <span class="muted" style="font-weight:400">— Civitai + HuggingFace</span></h2>
+          <div class="row"><input id="mq" placeholder="search LoRAs…" onkeydown="if(event.key==='Enter')mktSearch()"></div>
+          <div class="row two"><select id="msort"><option>Most Downloaded</option><option>Highest Rated</option><option>Newest</option></select>
+            <select id="mbase"><option value="">any base</option><option>SD 1.5</option><option>SDXL 1.0</option><option>Pony</option><option>Flux.1 D</option></select></div>
+          <div class="row two"><select id="mprov" title="auto = your blob store first, then Civitai, then HuggingFace (fallback when Civitai is geo-blocked/unreachable)">
+              <option value="auto">auto (store → Civitai → HF)</option><option value="blob">My store (blob)</option><option value="civitai">Civitai only</option><option value="huggingface">HuggingFace only</option></select>
+            <label style="align-self:center"><input type="checkbox" id="mnsfw"> NSFW</label></div>
+          <div class="row"><button class="btn sm primary" onclick="mktSearch()" style="margin-left:auto">Search</button></div>
+          <div class="status" id="mktStatus"></div>
+          <div class="status warn" id="mktWarn" style="white-space:normal"></div>
+        </div>
+        <div class="card">
+          <h2>Install by URL</h2>
+          <div class="row"><input id="iurl" placeholder=".safetensors URL (Civitai/HF)"></div>
+          <div class="row"><input id="iname" placeholder="filename (optional)"></div>
+          <div class="row"><input id="itoken" placeholder="token (Civitai, optional)"></div>
+          <label style="display:block;margin:2px 0"><input type="checkbox" id="istore"> also save a durable copy to the blob store</label>
+          <div class="row"><button class="btn sm" onclick="installUrl()">⬇ Install</button>
+            <button class="btn sm" onclick="storeUrl()" title="save to the object store without installing on a GPU node">★ Save to store</button></div>
+          <div class="status" id="urlStatus"></div>
+        </div>
+        <div class="card">
+          <h2>Installed</h2>
+          <div id="installed" class="muted">—</div>
+        </div>
+      </div>
+      <div class="col main">
+        <div class="card" style="flex:1">
+          <div class="mkt" id="mktResults"><span class="muted">search the marketplace to find LoRAs, then Install to the GPU node.</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GALLERY -->
+  <div class="pane" id="pane-gallery">
+    <div class="scroll"><div class="col main">
+      <div class="card">
+        <h2>Gallery <span class="muted" style="font-weight:400">— every stored generation, durable on disk</span>
+          <button class="btn sm" style="float:right" onclick="loadGallery()">↻ refresh</button></h2>
+        <div class="gal" id="gal"><span class="muted">loading…</span></div>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- IFRAME PANES (lazy, with loading spinner) -->
+  <div class="pane iframe" id="pane-thumbnails"><iframe data-src="/images/thumbnail_panel"></iframe></div>
+  <div class="pane iframe" id="pane-sprites"><iframe data-src="/spritegen/panel" allow="clipboard-read; clipboard-write"></iframe></div>
+  <div class="pane iframe" id="pane-companion"><iframe data-src="/character/panel" allow="microphone; autoplay; clipboard-read; clipboard-write"></iframe></div>
+
+</div>
+
+<script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel.js"></script>
+<script>
+const BASE=(window._veraBase||(window.parent&&window.parent._veraBase)||location.origin).toString().replace(/\/$/,'');
+const $=id=>document.getElementById(id);
+async function api(p,o){try{const r=await fetch(BASE+p,o);return await r.json();}catch(e){return{error:String(e)};}}
+const post=(p,b)=>api(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+function st(el,m,c){el.className='status '+(c||'');el.textContent=m||'';}
+
+let CAPS={}, LORAS=[], SELECTED={}, lastB64='', initB64='';
+
+function go(id){
+  document.querySelectorAll('#nav .nav-btn').forEach(t=>t.classList.toggle('active',t.dataset.go===id));
+  document.querySelectorAll('.pane').forEach(p=>p.classList.remove('active'));
+  $('pane-'+id).classList.add('active');
+  // lazy-load iframes on first show, with a loading overlay until they render
+  const pane=$('pane-'+id), ifr=pane.querySelector('iframe[data-src]');
+  if(ifr&&!ifr.src){
+    const ov=document.createElement('div');
+    ov.className='vera-loading solid';
+    ov.innerHTML='<div class="vera-spinner"></div><span class="lbl">loading…</span>';
+    pane.appendChild(ov);
+    ifr.addEventListener('load',()=>ov.remove(),{once:true});
+    ifr.src=BASE+ifr.dataset.src;
+  }
+  if(id==='gallery') loadGallery();
+  if(id==='loras'){ loadLoras(); }
+}
+
+async function init(){
+  CAPS=await api('/image/sd_capabilities'); renderCaps();
+  // disable pipeline options whose tier is off
+  const t=CAPS||{};
+  const off={img2img:!t.img2img, ipadapter:!t.ipadapter, pose:!t.controlnet, upscale:!t.upscale, rembg:!t.rembg};
+  [...$('pipe').options].forEach(o=>{ if(off[o.value]){o.disabled=true;o.text+=' (n/a)';} });
+  await loadLoras();
+}
+function renderCaps(){
+  const t=CAPS||{};
+  const row=(k,on)=>`<div class="row"><span class="dot ${on?'on':'off'}"></span><span>${k}</span></div>`;
+  $('tierRows').innerHTML=
+    row('txt2img',t.txt2img!==false)+row('img2img',!!t.img2img)
+    +row('ip-adapter',!!t.ipadapter)+row('controlnet',!!t.controlnet)
+    +row('rembg',!!t.rembg)+row('esrgan',!!t.upscale)
+    +row('long prompts',!!t.long_prompts)
+    +(t.device?`<div class="row"><span class="muted">${t.device}${t.model?' · '+t.model:''}</span></div>`:'');
+}
+
+// ── pipeline form ──
+function onPipe(){
+  const p=$('pipe').value;
+  const needsInit=['img2img','ipadapter','pose','upscale','rembg'].includes(p);
+  $('initRow').style.display=needsInit?'':'none';
+  $('promptCard').style.display=['upscale','rembg'].includes(p)?'none':'';
+  $('loraCard').style.display=['upscale','rembg'].includes(p)?'none':'';
+  $('strengthRow').style.display=(p==='img2img')?'':'none';
+  $('scaleRow').style.display=(p==='upscale')?'':'none';
+  $('initLbl').textContent = p==='pose'?'Pose / reference image' : p==='ipadapter'?'Identity reference image' : (p==='upscale'||p==='rembg')?'Source image':'Init image';
+}
+function loadInit(inp){
+  const f=inp.files&&inp.files[0]; if(!f)return;
+  const rd=new FileReader(); rd.onload=()=>{initB64=String(rd.result).split(',')[1]||'';$('initThumb').innerHTML='<img src="'+rd.result+'" style="max-width:120px;border-radius:4px;margin-top:4px">';}; rd.readAsDataURL(f);
+}
+function loraStr(){return Object.entries(SELECTED).map(([n,w])=>n+':'+w).join(',');}
+function commonBody(){
+  return {prompt:$('prompt').value,negative_prompt:$('neg').value,width:+$('w').value,height:+$('h').value,
+    steps:+$('steps').value,guidance:+$('cfg').value,seed:+$('seed').value,loras:loraStr(),
+    scheduler:$('sched').value,
+    transparent:$('transparent').checked,bg_color:$('bg_color').value,chroma_tol:+$('chroma_tol').value};
+}
+async function generate(){
+  const p=$('pipe').value;
+  if(['img2img','ipadapter','pose','upscale','rembg'].includes(p)&&!initB64){st($('genStatus'),'choose an init/source image first','warn');return;}
+  st($('genStatus'),'⟳ generating…',''); $('out').innerHTML='<span class="muted">⟳ working…</span>';
+  let ep,body;
+  if(p==='txt2img'){ep='/image/generate';body=commonBody();}
+  else if(p==='img2img'){ep='/image/img2img';body={...commonBody(),init_image_b64:initB64,strength:+$('strength').value};}
+  else if(p==='ipadapter'){ep='/image/ipadapter';body={...commonBody(),ref_image_b64:initB64,scale:0.6};}
+  else if(p==='pose'){ep='/image/pose';body={...commonBody(),ref_image_b64:initB64};}
+  else if(p==='upscale'){ep='/image/upscale';body={image_b64:initB64,scale:+$('scale').value};}
+  else if(p==='rembg'){ep='/image/rembg';body={image_b64:initB64,alpha_matting:true};}
+  const r=await post(ep,body);
+  if(r.error||!r.image_b64){st($('genStatus'),'✗ '+(r.error||'no image'),'err');$('out').innerHTML='<span class="muted">failed</span>';return;}
+  lastB64=r.image_b64;
+  $('out').innerHTML='<img src="data:image/png;base64,'+lastB64+'">';
+  st($('genStatus'),'✓ done'+(r.device?' · '+r.device:''),'ok');
+  $('outMeta').textContent=(r.seed!=null?'seed '+r.seed:'')+(r.device?' · '+r.device:'');
+}
+function download(){if(!lastB64)return;const a=document.createElement('a');a.download='vera_image.png';a.href='data:image/png;base64,'+lastB64;a.click();}
+function sendToInit(){if(!lastB64)return;initB64=lastB64;$('initThumb').innerHTML='<img src="data:image/png;base64,'+lastB64+'" style="max-width:120px;border-radius:4px;margin-top:4px">';if($('pipe').value==='txt2img'){$('pipe').value='img2img';onPipe();}st($('genStatus'),'sent result to init image','ok');}
+async function sendToSprite(){
+  if(!lastB64){st($('genStatus'),'generate an image first','warn');return;}
+  st($('genStatus'),'⟳ converting to sprite (bg removal + pixelize)…','');
+  const name=($('prompt').value||'sprite').split(',')[0].trim().slice(0,40);
+  const r=await post('/spritegen/from_image',{image_b64:lastB64,name,anim:'idle'});
+  if(r.error){st($('genStatus'),'✗ '+r.error,'err');return;}
+  st($('genStatus'),'✓ sprite created — “'+(r.name||name)+'” in the Sprites tab','ok');
+  go('sprites');
+}
+
+// ── LoRAs ──
+async function loadLoras(){
+  const r=await api('/sd/loras'); LORAS=(r&&r.loras)||[];
+  $('loraChips').innerHTML = LORAS.length? LORAS.map(l=>{
+    const n=l.name||l; const on=SELECTED[n]!=null;
+    return `<span class="chip ${on?'on':''}" onclick="toggleLora('${n}')">${n}${on?` <input type="number" min="0" max="2" step="0.1" value="${SELECTED[n]}" onclick="event.stopPropagation()" onchange="SELECTED['${n}']=+this.value;">`:''}</span>`;
+  }).join('') : '<span class="muted">none installed — browse the marketplace</span>';
+  $('installed').innerHTML = LORAS.length? LORAS.map(l=>{
+    const n=l.name||l; return `<div class="row" style="margin-bottom:4px"><span style="flex:1">${n} <span class="muted">${l.size_mb?l.size_mb+'MB':''}</span></span><button class="btn sm" onclick="useLora('${n}')">use</button><button class="btn sm danger" onclick="delLora('${n}')">✕</button></div>`;
+  }).join('') : '<span class="muted">none</span>';
+}
+function toggleLora(n){ if(SELECTED[n]!=null) delete SELECTED[n]; else SELECTED[n]=0.8; loadLoras(); }
+function useLora(n){ if(SELECTED[n]==null)SELECTED[n]=0.8; go('generate'); loadLoras(); }
+async function delLora(n){ if(!confirm('Delete LoRA '+n+'?'))return; await post('/sd/lora_delete',{name:n}); delete SELECTED[n]; loadLoras(); }
+
+async function mktSearch(){
+  const prov=$('mprov')?$('mprov').value:'auto';
+  st($('mktStatus'),'searching '+(prov==='auto'?'marketplaces':prov)+'…','');
+  $('mktWarn').textContent='';
+  const q=encodeURIComponent($('mq').value), sort=encodeURIComponent($('msort').value),
+        base=encodeURIComponent($('mbase').value), nsfw=$('mnsfw').checked;
+  const r=await api(`/sd/lora_search?query=${q}&sort=${sort}&base_model=${base}&nsfw=${nsfw}&limit=30&provider=${prov}`);
+  if(r.error){
+    st($('mktStatus'),r.error,'err');
+    if(r.geo_blocked)$('mktWarn').textContent='Civitai looks geo-restricted from the Vera server. Options: switch provider to HuggingFace, set CIVITAI_PROXY / HTTPS_PROXY in .env, or point CIVITAI_API_BASE at a reachable mirror.';
+    return;
+  }
+  const res=r.results||[];
+  st($('mktStatus'),res.length+' results'+(r.provider_used?' · '+r.provider_used:''),'ok');
+  if((r.warnings||[]).length)$('mktWarn').textContent=r.warnings.join(' ');
+  $('mktResults').innerHTML=res.length? res.map((m,i)=>{
+    window['_M'+i]=m;
+    const thumb=(m.thumb||'').replace(/'/g,'');
+    const isBlob=m.provider==='blob';
+    const badge=isBlob?'★ ':(m.provider==='huggingface'?'HF ':'');
+    const actions=isBlob
+      ? `<button class="btn sm primary" onclick="installCard(${i})">⬇ Install</button>`
+        +`<button class="btn sm danger" title="remove from store" onclick="removeBlob(${i})">✕</button>`
+      : `<button class="btn sm primary" onclick="installCard(${i})">⬇ Install</button>`
+        +`<button class="btn sm" title="save a durable copy to the blob store" onclick="storeCard(${i})">★ Save</button>`;
+    return `<div class="mcard"><div class="thumb" style="${thumb?`background-image:url('${thumb}')`:'display:flex;align-items:center;justify-content:center;font-size:26px'}">${thumb?'':(isBlob?'★':'✦')}</div>
+      <div class="body"><div class="nm">${m.name||''}</div>
+      <div class="meta">${badge}${m.base_model||''}${isBlob?' · in store':' · ⬇'+(m.downloads||0)}${m.size_mb?' · '+m.size_mb+'MB':''}${m.nsfw?' · <span style="color:var(--warn)">NSFW</span>':''}</div>
+      <div>${(m.tags||[]).slice(0,3).map(t=>'<span class="tag">'+t+'</span>').join('')}</div>
+      <div class="row" style="margin-top:auto;gap:4px">${actions}</div></div></div>`;
+  }).join('') : '<span class="muted">no results</span>';
+}
+async function installCard(i){
+  const m=window['_M'+i]; if(!m)return;
+  st($('mktStatus'),'installing '+(m.name||'')+'… (large files take a while)','');
+  const body=m.provider==='blob'
+    ? {blob_key:m.blob_key,filename:m.filename,token:$('itoken').value}
+    : {url:m.download_url,filename:m.filename,token:$('itoken').value,store_blob:$('istore').checked};
+  const r=await post('/sd/lora_install',body);
+  if(r.error){
+    st($('mktStatus'),'✗ '+r.error,'err');
+    if(/401|403|451/.test(String(r.error)))
+      $('mktWarn').textContent = m.provider==='huggingface'
+        ? 'HuggingFace refused the download — gated repo? Set HF_TOKEN on the GPU node or paste a token above.'
+        : 'Civitai refused the download — it usually needs an API token (paste one above or set CIVITAI_TOKEN on the GPU node). If the region is geo-blocked, set HTTPS_PROXY on the GPU node too.';
+    return;
+  }
+  const blobNote=(r.blob&&r.blob.stored)?' · ★ saved to store':(r.blob&&r.blob.error?' · store: '+r.blob.error:'');
+  st($('mktStatus'),'✓ installed '+(r.filename||'')+' ('+(r.size_mb||0)+'MB)'+blobNote,'ok');
+  loadLoras();
+}
+async function storeCard(i){
+  const m=window['_M'+i]; if(!m||!m.download_url)return;
+  st($('mktStatus'),'saving '+(m.name||'')+' to the blob store…','');
+  const r=await post('/sd/lora_store',{url:m.download_url,filename:m.filename,name:m.name,
+    base_model:m.base_model,tags:(m.tags||[]).join(','),thumb:m.thumb,nsfw:!!m.nsfw,
+    source:m.provider,token:$('itoken').value});
+  st($('mktStatus'), r.error?('✗ '+r.error):('★ saved '+(r.filename||'')+' ('+(r.size_mb||0)+'MB) to store'),
+     r.error?'err':'ok');
+}
+async function removeBlob(i){
+  const m=window['_M'+i]; if(!m||!m.blob_key)return;
+  if(!confirm('Remove '+(m.name||m.blob_key)+' from the blob store?'))return;
+  const r=await post('/sd/lora_store_delete',{key:m.blob_key});
+  st($('mktStatus'), r.error?('✗ '+r.error):'removed from store','ok'); mktSearch();
+}
+async function installUrl(){
+  const url=$('iurl').value.trim(); if(!url){st($('urlStatus'),'enter a URL','warn');return;}
+  st($('urlStatus'),'downloading…','');
+  const r=await post('/sd/lora_install',{url,filename:$('iname').value,token:$('itoken').value,store_blob:$('istore').checked});
+  if(r.error){st($('urlStatus'),'✗ '+r.error,'err');return;}
+  const blobNote=(r.blob&&r.blob.stored)?' · ★ saved to store':(r.blob&&r.blob.error?' · store: '+r.blob.error:'');
+  st($('urlStatus'),'✓ '+(r.filename||'')+' ('+(r.size_mb||0)+'MB)'+blobNote,'ok'); loadLoras();
+}
+async function storeUrl(){
+  const url=$('iurl').value.trim(); if(!url){st($('urlStatus'),'enter a URL','warn');return;}
+  st($('urlStatus'),'saving to the blob store…','');
+  const r=await post('/sd/lora_store',{url,filename:$('iname').value,token:$('itoken').value,source:'url'});
+  st($('urlStatus'), r.error?('✗ '+r.error):('★ saved '+(r.filename||'')+' ('+(r.size_mb||0)+'MB) to store'),
+     r.error?'err':'ok');
+}
+
+// ── Gallery ──
+async function loadGallery(){
+  const r=await api('/images/list?limit=120'); const imgs=(r&&r.images)||[];
+  $('gal').innerHTML=imgs.length? imgs.map(im=>{
+    const cap=(im.prompt||'').replace(/"/g,'&quot;');
+    return `<div class="g" title="${cap}" onclick="galPick('${im.url}')">`
+      +`<img src="${BASE+im.url}" loading="lazy">`
+      +(im.prompt?`<div class="cap">${im.prompt}</div>`:'')
+      +`</div>`;
+  }).join('') : '<span class="muted">no images yet — generate some.</span>';
+}
+async function galPick(url){
+  // fetch the image and load it as the init image, switch to Generate
+  try{const r=await fetch(BASE+url);const b=await r.blob();const rd=new FileReader();
+    rd.onload=()=>{initB64=String(rd.result).split(',')[1]||'';$('initThumb').innerHTML='<img src="'+rd.result+'" style="max-width:120px;border-radius:4px;margin-top:4px">';$('pipe').value='img2img';onPipe();go('generate');st($('genStatus'),'loaded from gallery as init','ok');};
+    rd.readAsDataURL(b);}catch(e){}
+}
+
+onPipe(); init();
+</script>
+</body>
+</html>

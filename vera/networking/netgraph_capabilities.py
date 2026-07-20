@@ -110,12 +110,16 @@ async def _engine_post(host_id: str, path: str, body: Dict) -> Tuple[int, Any]:
     memory="off", silent=True,
     description="Aggregate a Cytoscape topology of Proxmox + Docker. Inputs: "
                 "cluster_id (str — defaults to first cluster), docker_host_id "
-                "(str), with_fw (bool=true — include guest firewall rules as "
-                "policy edges, capped). Output: {nodes:[{id,label,kind,parent}], "
+                "(str — ONE docker host; blank = ALL registered docker hosts "
+                "when all_docker is true), all_docker (bool=true), with_fw "
+                "(bool=true — include guest firewall rules as policy edges, "
+                "capped). Docker nodes carry host_id so edge ops route to the "
+                "right engine. Output: {nodes:[{id,label,kind,parent,host_id}], "
                 "edges:[{id,source,target,rel,policy,meta}], clusters, docker_hosts}.",
 )
 async def cap_topology(cluster_id: str = "", docker_host_id: str = "",
-                       with_fw: bool = True, trace_id=None) -> Dict:
+                       all_docker: bool = True, with_fw: bool = True,
+                       trace_id=None) -> Dict:
     nodes: List[Dict] = []
     edges: List[Dict] = []
 
@@ -163,29 +167,6 @@ async def cap_topology(cluster_id: str = "", docker_host_id: str = "",
                     })
 
     # ── Docker ───────────────────────────────────────────────────────────────
-    if docker_host_id:
-        st, nets = await _engine_get(docker_host_id, "/networks")
-        if st == 200 and isinstance(nets, list):
-            for net in nets:
-                nid = f"dn:{net.get('Id','')[:12]}"
-                nodes.append({"id": nid, "label": net.get("Name", ""),
-                              "kind": "dnet", "driver": net.get("Driver", ""),
-                              "net_id": net.get("Id", "")})
-        st, conts = await _engine_get(docker_host_id, "/containers/json?all=false")
-        if st == 200 and isinstance(conts, list):
-            for ct in conts:
-                cid2 = ct.get("Id", "")[:12]
-                cnid = f"dc:{cid2}"
-                name = (ct.get("Names") or ["/?"])[0].lstrip("/")
-                nodes.append({"id": cnid, "label": name, "kind": "container",
-                              "container_id": ct.get("Id", "")})
-                for nname, ninfo in ((ct.get("NetworkSettings") or {}).get("Networks") or {}).items():
-                    tnid = f"dn:{(ninfo.get('NetworkID') or '')[:12]}"
-                    if any(n["id"] == tnid for n in nodes):
-                        edges.append({"id": f"{cnid}-{tnid}", "source": cnid,
-                                      "target": tnid, "rel": "member",
-                                      "meta": {"network": nname}})
-
     clusters, dhosts = [], []
     clst = _cap("proxmox.cluster.list")
     if clst:
@@ -199,6 +180,50 @@ async def cap_topology(cluster_id: str = "", docker_host_id: str = "",
                 dhosts.append({"id": h.get("id"), "label": h.get("label") or h.get("id")})
         except Exception:
             pass
+
+    # One explicit host, or ALL registered hosts (each engine gets its own
+    # docker_host anchor node; every docker node carries host_id so the edge
+    # ops — connect/disconnect — route to the right engine).
+    if docker_host_id:
+        target_hosts = [h for h in dhosts if h["id"] == docker_host_id] \
+            or [{"id": docker_host_id, "label": docker_host_id}]
+    elif all_docker:
+        target_hosts = dhosts
+    else:
+        target_hosts = []
+
+    multi = len(target_hosts) > 1
+    for th in target_hosts:
+        hid = th["id"]
+        pfx = f"{hid[:8]}:" if multi else ""      # id-collision guard across engines
+        hnode = f"dh:{hid}"
+        st, nets = await _engine_get(hid, "/networks")
+        if st != 200 or not isinstance(nets, list):
+            continue                               # unreachable engine — skip quietly
+        nodes.append({"id": hnode, "label": th.get("label") or hid,
+                      "kind": "docker_host", "host_id": hid})
+        for net in nets:
+            nid = f"dn:{pfx}{net.get('Id','')[:12]}"
+            nodes.append({"id": nid, "label": net.get("Name", ""),
+                          "kind": "dnet", "driver": net.get("Driver", ""),
+                          "net_id": net.get("Id", ""), "host_id": hid})
+            edges.append({"id": f"{nid}-{hnode}", "source": nid,
+                          "target": hnode, "rel": "on_host"})
+        st, conts = await _engine_get(hid, "/containers/json?all=false")
+        if st == 200 and isinstance(conts, list):
+            for ct in conts:
+                cid2 = ct.get("Id", "")[:12]
+                cnid = f"dc:{pfx}{cid2}"
+                name = (ct.get("Names") or ["/?"])[0].lstrip("/")
+                nodes.append({"id": cnid, "label": name, "kind": "container",
+                              "container_id": ct.get("Id", ""), "host_id": hid})
+                for nname, ninfo in ((ct.get("NetworkSettings") or {}).get("Networks") or {}).items():
+                    tnid = f"dn:{pfx}{(ninfo.get('NetworkID') or '')[:12]}"
+                    if any(n["id"] == tnid for n in nodes):
+                        edges.append({"id": f"{cnid}-{tnid}", "source": cnid,
+                                      "target": tnid, "rel": "member",
+                                      "meta": {"network": nname}})
+
     return {"nodes": nodes, "edges": edges, "clusters": clusters,
             "docker_hosts": dhosts, "cluster_id": cid}
 

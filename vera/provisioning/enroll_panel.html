@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="dusk">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Vera / Enroll</title>
@@ -18,7 +23,7 @@ input:focus,select:focus{border-color:var(--acc)}
 .logo{color:var(--acc);font-weight:700;white-space:nowrap}
 .spacer{flex:1}
 .btn{display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border-radius:6px;background:var(--bg3);border:1px solid var(--border2);color:var(--text);font-size:12px;white-space:nowrap;flex:0 0 auto}
-.btn:hover{border-color:var(--acc)}.btn.pri{background:var(--acc);border-color:var(--acc);color:#06121c;font-weight:700}
+.btn:hover{border-color:var(--acc)}.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#06121c);font-weight:700}
 .btn.sm{padding:5px 8px;font-size:11px}.btn.danger{color:var(--err);border-color:var(--err)}.btn:disabled{opacity:.4}
 #body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px;padding-bottom:60px}
 .wrap{max-width:1050px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
@@ -35,7 +40,7 @@ input:focus,select:focus{border-color:var(--acc)}
 .tbl td{padding:6px 8px;border-bottom:1px solid var(--border)}
 .pill{font-size:9.5px;padding:1px 7px;border-radius:12px;border:1px solid var(--dim);color:var(--dim2);white-space:nowrap}
 .pill.ok{color:var(--ok);border-color:var(--ok)}.pill.run{color:var(--ok)}.pill.stop{color:var(--dim2)}
-.mono{background:#000;border:1px solid var(--border);border-radius:6px;padding:8px;font-size:10.5px;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto;display:none}
+.mono{background:var(--bg0);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:10.5px;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto;display:none}
 .field{display:flex;flex-direction:column;gap:4px}.field label{font-size:10px;color:var(--dim2);text-transform:uppercase}
 #modal{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.55);display:none}
 #modal .sheet{position:absolute;top:0;right:0;height:100%;width:420px;max-width:94%;background:var(--bg1);border-left:1px solid var(--border2);display:flex;flex-direction:column}

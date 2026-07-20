@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <title>Vera Accounts</title>
 <style>
@@ -29,7 +34,7 @@ html,body{ margin:0;padding:0;background:var(--bg);color:var(--fg);
 .btn{ background:var(--bg2);border:1px solid var(--border2);color:var(--fg);border-radius:5px;
   padding:7px 13px;font:inherit;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:.12s; }
 .btn:hover{ background:var(--bg3);border-color:var(--acc); }
-.btn.primary{ background:var(--acc);border-color:var(--acc);color:#04121f;font-weight:600; }
+.btn.primary{ background:var(--acc);border-color:var(--acc);color:var(--on-acc,#04121f);font-weight:600; }
 .btn.primary:hover{ filter:brightness(1.1); }
 .btn.ghost{ background:transparent; }
 .btn.sm{ padding:4px 9px;font-size:10px; }

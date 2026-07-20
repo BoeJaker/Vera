@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dream Review</title>
@@ -12,8 +17,8 @@
   *{box-sizing:border-box}html,body{height:100%}
   body{margin:0;background:var(--bg0);color:var(--fg1);font:13px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;display:flex;flex-direction:column}
   .btn{background:var(--bg2);color:var(--fg1);border:1px solid var(--border);border-radius:7px;padding:6px 11px;font-size:12px;cursor:pointer}
-  .btn:hover{background:var(--bg3);border-color:var(--acc)}.btn.pri{background:var(--acc);color:#08121f;border-color:var(--acc);font-weight:600}
-  .btn.sm{padding:3px 8px;font-size:11px}.btn.on{background:var(--acc);color:#08121f;border-color:var(--acc)}
+  .btn:hover{background:var(--bg3);border-color:var(--acc)}.btn.pri{background:var(--acc);color:var(--on-acc,#08121f);border-color:var(--acc);font-weight:600}
+  .btn.sm{padding:3px 8px;font-size:11px}.btn.on{background:var(--acc);color:var(--on-acc,#08121f);border-color:var(--acc)}
   .prog{font-size:11px;color:var(--amber);text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .bar{height:3px;background:var(--bg3);border-radius:2px;overflow:hidden;display:none;margin:4px 8px 0}.bar.show{display:block}.bar>i{display:block;height:100%;width:0;background:var(--acc);transition:width .25s}
   .body{flex:1;display:flex;min-height:0}
@@ -21,7 +26,7 @@
   .leftnav{width:250px;flex:none;border-right:1px solid var(--border);background:var(--bg1);display:flex;flex-direction:column;min-height:0}
   .views{display:flex;flex-direction:column;padding:8px;gap:3px;border-bottom:1px solid var(--border)}
   .vbtn{font-size:12.5px;padding:7px 10px;border-radius:7px;cursor:pointer;color:var(--fg2);display:flex;align-items:center;gap:8px}
-  .vbtn:hover{background:var(--bg2)}.vbtn.on{background:var(--acc);color:#08121f;font-weight:600}
+  .vbtn:hover{background:var(--bg2)}.vbtn.on{background:var(--acc);color:var(--on-acc,#08121f);font-weight:600}
   .navctx{flex:1;overflow:auto;min-height:0}
   .colhdr{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--fg3);padding:9px 12px 5px}
   .node{cursor:pointer;font-size:12.5px;display:flex;justify-content:space-between;gap:6px;align-items:center;padding:5px 10px;border-left:2px solid transparent}

@@ -40,5 +40,19 @@
     "created_at": "2026-06-27T16:49:27.550521Z",
     "template": "python",
     "opened": false
+  },
+  {
+    "name": "Tic Tac Toe",
+    "path": "/home/boejaker/vera_projects/Tic Tac Toe",
+    "created_at": "2026-07-11T22:22:35.828679Z",
+    "template": "blank",
+    "opened": false
+  },
+  {
+    "name": "test",
+    "path": "/home/boejaker/vera_projects/test",
+    "created_at": "2026-07-15T01:25:01.979436Z",
+    "template": "blank",
+    "opened": false
   }
 ]

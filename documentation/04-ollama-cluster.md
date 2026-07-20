@@ -86,6 +86,21 @@ Calls that fail (timeout, connection error, model not loaded) are retried automa
 
 The transparent failover means a request to `llm.generate` against the GPU node that goes down mid-stream will silently complete on a CPU node — the caller never sees the failure unless every node fails.
 
+### Routing layers and the Model Routing page
+
+All routing control lives in the top-level **Model Routing** tab (`/ui/panels/model-routing`). The layers, from baseline to most specific — a more specific layer always wins:
+
+1. **Default policy** — *least-busy, GPU-first*: every untyped request load-balances across online nodes, preferring GPU nodes (`DEFAULT_ROUTING_RULES["default"]`).
+2. **Job-type rules** — route by *kind* of work (`chat`, `code`, `embedding`, `research_writer`, …), organised into named, activatable profiles (`ollama.routing.*`). e.g. embeddings/naming are `deny_gpu` so they never tie up a GPU.
+3. **Per-capability rules** — route by *who* is asking, keyed on cap name or `prefix.*` glob (`ollama.cap_routing.*`). Two sub-layers: rules **declared** in code by subsystems (`register_cap_routing`) and **user** rules edited in the UI, which win.
+4. **Role profiles** — subsystems that run several LLM personas register a profile of named roles and resolve every call through it (`register_routing_profile` / `resolve_role`, caps `ollama.role_profiles.*`, preview via `llm.route.resolve`). The **research** system registers `thinker`/`writer`/`verifier`, the **IDE** registers the same trio (its analyser is the verifier role). Per-role user overrides from the Model Routing page win over the declared defaults. Roles support length escalation (`escalate_chars` + overrides, e.g. "verifier jumps to GPU above 12k chars").
+
+`ollama_generate(profile=…, role=…)` resolves a role inline; out-of-process or pre-flight callers use `GET /llm/route/resolve`. The research system's `get_instance(tier)` resolves its role through Vera on every call (falling back to its static instance list only in standalone mode), so research traffic obeys cluster routing and shows up in the router's load accounting.
+
+**Media routing (STT / TTS / image-gen)** — the GPU inference servers (`edge/GPU_inference.py`, port 8765) are routable nodes too (`MEDIA_INSTANCES`). Each is health-probed for which services it actually serves (`/health` → whisper/tts/stable_diffusion), and every STT/TTS/image call resolves through `resolve_media(service)` / `media_base(service)` / `media_slot(service)` — GPU-first, least-busy, honouring the `stt` / `tts` / `imagegen` job-type rules (pin, deny GPU, allow/deny). A candidate node is pre-seeded on every cluster host, so installing the inference server on a CPU node makes it routable automatically. Manage nodes via `media.nodes` / `media.node.add|remove|config` / `media.ping`. Stateful flows stay sticky: duplex voice sessions and image progress polls remember the node they started on.
+
+**vLLM** — vLLM servers appear in the Model Routing page alongside Ollama nodes. Any job-type rule, per-cap rule, or role-profile role pinned to `vllm:<id>` (or `vllm:*` for the best one) makes `ollama_generate` delegate that traffic to `vllm_generate`, falling back to normal Ollama routing when no vLLM node is online.
+
 ---
 
 ## 4. Transparent proxy
@@ -203,4 +218,4 @@ A separate process (the GPU node's `:8765` `gpu_infer` server) handles Whisper S
 - [Docker](./13-docker.md) — `docker.worker.*` spawn containers that join this cluster
 - [Workers, Jobs & Syslog](./22-workers-jobs-syslog.md) — worker registry, job persistence, the proxy log
 - [Configuration](./10-configuration.md) — all env vars in one place
-- [Research System](./07-research.md) — uses tier-based routing (THINKER→GPU, WRITER+ANALYST→CPU)
+- [Research System](./07-research.md) — resolves its thinker/writer/verifier roles through the `research` role profile

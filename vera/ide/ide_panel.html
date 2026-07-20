@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Vera IDE</title>
@@ -800,6 +805,8 @@ svg.fic { width: 14px; height: 14px; flex-shrink: 0; vertical-align: -2px; }
         </div>
       </div>
       <div id="sidebar-bottom">
+        <script src="/ui/vera-notes.js"></script>
+        <vera-session-notes id="ws-notes-el" scope="workspace" title="Workspace memory" style="display:block;margin-bottom:6px"></vera-session-notes>
         <div class="ctx-info" id="ctx-info-text">Context: 0 / ~128k tokens</div>
         <div class="ctx-bar"><div class="ctx-bar-fill" id="ctx-bar-fill" style="width:0%"></div></div>
       </div>
@@ -1601,6 +1608,8 @@ async function loadProjectFromPath(serverPath) {
   IDE.contextFiles.clear();
   renderContextChips();
   document.getElementById('project-name').textContent = name;
+  // Point the workspace memory note at this workspace (ref = server path)
+  try { document.getElementById('ws-notes-el')?.setAttribute('ref-id', serverPath); } catch(e) {}
   await buildFileTree(serverPath);
   renderTabs();
   loadTab(null);

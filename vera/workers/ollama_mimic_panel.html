@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <title>Vera — Ollama Mimic</title>
 <style>
@@ -22,7 +27,7 @@ body{overflow-y:auto;padding:12px}
 .status-hint{font-size:9px;color:var(--dim2);font-family:var(--mono);margin-left:auto}
 .btn{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:3px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);cursor:pointer;font-size:10.5px;font-weight:500;transition:all .14s}
 .btn:hover{border-color:var(--acc);color:var(--acc)}
-.btn.primary{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#fff);font-weight:600}
 .btn.warn-btn{border-color:var(--warn);color:var(--warn)}
 .btn.err-btn{border-color:var(--err);color:var(--err)}
 .btn.sm{padding:2px 7px;font-size:9.5px}
@@ -87,6 +92,9 @@ tr:hover td{background:rgba(201,122,90,.05)}
   <span style="flex:1"></span>
   <button class="btn err-btn" onclick="M.clearLog()">Clear log</button>
 </div>
+<div class="banner" style="border-left-color:var(--acc);margin-top:6px">Mimic traffic follows the
+  <b>Model Routing</b> table: edit the <code>mimic.proxy</code> per-capability rule there to pin a
+  node, restrict with allow/deny, set a default model for clients that don't name one, or prefer GPU.</div>
 
 <div class="sec-title">Requests through the mimic proxy</div>
 <div class="banner" style="border-left-color:var(--acc);margin-bottom:8px">Shows only traffic that came through the <code>/ollama/api/*</code> proxy from external Ollama clients. Vera's own internal generation/embedding calls go direct to the cluster and are tracked in the <b>Ollama → Jobs</b> tab, not here.</div>

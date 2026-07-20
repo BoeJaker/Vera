@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<meta charset="UTF-8">
+<title>Vera · MCP Servers</title>
+<style>
+:root {
+  --bg:#0d0f12; --bg1:#14181d; --bg2:#1a1f26; --bg3:#20262e;
+  --border:#232a33; --border2:#2e3742;
+  --fg:#d8dde3; --fg2:#9aa3ad; --dim:#5f6975;
+  --acc:#4a9eff; --acc2:#28c28a; --warn:#f5b341; --err:#ef5b5b; --purple:#a78bfa;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+* { box-sizing:border-box; }
+html,body{ margin:0;padding:0;background:var(--bg);color:var(--fg);
+  font:12px/1.5 -apple-system,BlinkMacSystemFont,"Inter",system-ui,sans-serif;height:100%;overflow:hidden; }
+#root{ display:flex;flex-direction:column;height:100vh;min-height:0; }
+#topbar{ height:46px;flex-shrink:0;border-bottom:1px solid var(--border);background:var(--bg1);
+  padding:0 18px;display:flex;align-items:center;gap:10px; }
+#topbar .ico{ width:24px;height:24px;background:var(--bg2);border:1px solid var(--border2);
+  border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--acc);font-size:14px; }
+#topbar h1{ margin:0;font-size:13px;font-weight:600; }
+#topbar .sub{ font-size:10px;color:var(--dim); }
+#topbar .right{ margin-left:auto;display:flex;gap:8px;align-items:center; }
+#search{ width:190px; }
+#content{ flex:1;overflow-y:auto;padding:16px 20px;min-height:0; }
+.wrap{ max-width:940px;margin:0 auto; }
+
+.btn{ background:var(--bg2);border:1px solid var(--border2);color:var(--fg);border-radius:5px;
+  padding:7px 13px;font:inherit;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:.12s;white-space:nowrap; }
+.btn:hover{ background:var(--bg3);border-color:var(--acc); }
+.btn.primary{ background:var(--acc);border-color:var(--acc);color:var(--on-acc,#04121f);font-weight:600; }
+.btn.primary:hover{ filter:brightness(1.1); }
+.btn.ok{ background:var(--acc2);border-color:var(--acc2);color:var(--on-acc,#04121f);font-weight:600; }
+.btn.ghost{ background:transparent; }
+.btn.sm{ padding:4px 9px;font-size:10px; }
+.btn.danger:hover{ border-color:var(--err);color:var(--err); }
+input,select,textarea{ width:100%;background:var(--bg1);border:1px solid var(--border);border-radius:5px;
+  color:var(--fg);padding:8px 10px;font:inherit;font-size:12px;outline:none;transition:border-color .12s; }
+input:focus,select:focus,textarea:focus{ border-color:var(--acc); }
+label.fl{ display:block;font-size:10px;color:var(--fg2);text-transform:uppercase;letter-spacing:.07em;margin-bottom:5px;font-weight:500; }
+.field{ margin-bottom:13px; }
+.hint{ font-size:10px;color:var(--dim);margin-top:4px;line-height:1.5; }
+.muted{ color:var(--dim); }
+.mono{ font-family:var(--mono); }
+
+.cat{ margin:18px 0 8px;font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:var(--dim);
+  display:flex;align-items:center;gap:8px; }
+.cat::after{ content:"";flex:1;height:1px;background:var(--border); }
+.grid{ display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:9px; }
+.srv{ display:flex;align-items:flex-start;gap:11px;padding:11px 13px;background:var(--bg1);
+  border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:.12s; }
+.srv:hover{ border-color:var(--acc);background:var(--bg2); }
+.srv .em{ font-size:19px;line-height:1;flex-shrink:0;margin-top:1px; }
+.srv .meta{ flex:1;min-width:0; }
+.srv .t{ font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px; }
+.srv .d{ font-size:10.5px;color:var(--dim);margin-top:3px;line-height:1.45;
+  overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical; }
+.dot{ width:7px;height:7px;border-radius:50%;background:var(--dim);flex-shrink:0; }
+.dot.connected{ background:var(--acc2);box-shadow:0 0 6px var(--acc2); }
+.dot.configured{ background:var(--acc); }
+.dot.error{ background:var(--err); }
+.badge{ display:inline-block;font-size:8.5px;padding:1px 7px;border-radius:10px;background:var(--bg2);
+  border:1px solid var(--border2);color:var(--fg2);text-transform:uppercase;letter-spacing:.05em; }
+.tp{ font-family:var(--mono);font-size:9px;color:var(--purple); }
+.empty{ text-align:center;color:var(--dim);padding:46px 0;font-size:12px; }
+
+.modal-bg{ position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:50; }
+.modal-bg.show{ display:flex; }
+.modal{ background:var(--bg1);border:1px solid var(--border2);border-radius:11px;width:600px;max-width:94vw;
+  max-height:90vh;overflow:auto;padding:20px 22px; }
+.modal h3{ margin:0;font-size:15px;display:flex;align-items:center;gap:9px; }
+.modal .sub{ font-size:11px;color:var(--dim);margin:5px 0 16px;line-height:1.5; }
+.row2{ display:grid;grid-template-columns:1fr 1fr;gap:12px; }
+.cmdbox{ background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:9px 11px;
+  font-family:var(--mono);font-size:11px;color:var(--acc2);word-break:break-all;line-height:1.6; }
+.modal-actions{ display:flex;gap:8px;margin-top:18px;padding-top:16px;border-top:1px solid var(--border); }
+.modal-actions .right{ margin-left:auto;display:flex;gap:8px; }
+.status-line{ font-size:11px;margin-top:10px;min-height:16px; }
+.status-line.ok{ color:var(--acc2); } .status-line.err{ color:var(--err); }
+.sec-tag{ font-size:8.5px;color:var(--warn);margin-left:5px;text-transform:uppercase;letter-spacing:.05em; }
+</style>
+</head>
+<body>
+<div id="root">
+  <div id="topbar">
+    <div class="ico">🔌</div>
+    <div>
+      <h1>MCP Servers</h1>
+      <div class="sub" id="subtitle">catalog of Model Context Protocol services</div>
+    </div>
+    <div class="right">
+      <input id="search" placeholder="filter…" oninput="render()">
+      <button class="btn sm" onclick="reseed()" title="Re-add any missing built-in records">↻ Reseed</button>
+      <button class="btn primary sm" onclick="openEditor()">+ Add server</button>
+    </div>
+  </div>
+  <div id="content"><div class="wrap" id="list"><div class="empty">loading…</div></div></div>
+</div>
+
+<!-- Config / edit modal -->
+<div class="modal-bg" id="modalBg" onclick="if(event.target===this)closeModal()">
+  <div class="modal" id="modal"></div>
+</div>
+
+<script>
+const api = async (path, method='GET', body=null) => {
+  const opt = { method, headers:{'Content-Type':'application/json'} };
+  if (body) opt.body = JSON.stringify(body);
+  const r = await fetch(path, opt);
+  const j = await r.json().catch(()=>({error:'bad response'}));
+  return j;
+};
+const esc = s => String(s??'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+let SERVERS = [];
+let EDITING = null;   // current record id in modal, or '' for new
+
+async function load(){
+  const j = await api('/mcp/catalog/list');
+  SERVERS = j.servers || [];
+  document.getElementById('subtitle').textContent =
+    SERVERS.length + ' services · ' + (j.categories||[]).length + ' categories';
+  render();
+}
+
+function render(){
+  const q = (document.getElementById('search').value||'').toLowerCase();
+  const el = document.getElementById('list');
+  let list = SERVERS;
+  if (q) list = list.filter(s =>
+    (s.label+' '+s.description+' '+s.category+' '+s.id).toLowerCase().includes(q));
+  if (!list.length){ el.innerHTML = '<div class="empty">no servers match.</div>'; return; }
+  const byCat = {};
+  list.forEach(s => (byCat[s.category||'Custom'] ||= []).push(s));
+  let html = '';
+  Object.keys(byCat).sort().forEach(cat => {
+    html += `<div class="cat">${esc(cat)} <span class="muted">${byCat[cat].length}</span></div><div class="grid">`;
+    byCat[cat].forEach(s => {
+      const st = s.status||'unconfigured';
+      html += `<div class="srv" onclick="openEditor('${esc(s.id)}')">
+        <div class="em">${esc(s.icon||'🔌')}</div>
+        <div class="meta">
+          <div class="t"><span class="dot ${esc(st)}" title="${esc(st)}"></span>${esc(s.label)}</div>
+          <div class="d">${esc(s.description||'')}</div>
+          <div style="margin-top:6px;display:flex;gap:6px;align-items:center">
+            <span class="tp">${esc(s.transport)}</span>
+            ${s.enabled?'<span class="badge" style="color:var(--acc2);border-color:var(--acc2)">enabled</span>':''}
+          </div>
+        </div></div>`;
+    });
+    html += '</div>';
+  });
+  el.innerHTML = html;
+}
+
+function findRec(id){ return SERVERS.find(s=>s.id===id); }
+
+function openEditor(id){
+  EDITING = id || '';
+  const s = id ? findRec(id) : {
+    id:'', label:'', category:'Custom', icon:'🔌', description:'', docs_url:'',
+    transport:'stdio', command:'', args:[], url:'', env:{}, headers:{},
+    arg_values:{}, config_fields:[], enabled:false, status:'unconfigured', seeded:false
+  };
+  const isNew = !id;
+  const cmd = [s.command, ...(s.args||[])].filter(Boolean).join(' ');
+
+  // Build config-field inputs from the record's config_fields.
+  let cfgHtml = '';
+  (s.config_fields||[]).forEach(f => {
+    const bag = f.target==='header'?'headers':f.target==='arg'?'arg_values':f.target==='url'?null:'env';
+    let cur;
+    if (f.target==='url') cur = s.url||'';
+    else cur = (s[bag]||{})[f.key] || '';
+    const isSecretSet = f.secret && cur==='••••••••';
+    cfgHtml += `<div class="field">
+      <label class="fl">${esc(f.label||f.key)}${f.secret?'<span class="sec-tag">secret</span>':''}${f.required?'':' <span class="muted">(optional)</span>'}</label>
+      <input data-cfg="${esc(f.key)}" data-target="${esc(f.target)}" data-secret="${f.secret?1:0}"
+        type="${f.secret?'password':'text'}"
+        placeholder="${esc(f.placeholder|| (isSecretSet?'•••• stored — leave blank to keep':''))}"
+        value="${esc(isSecretSet?'':cur)}">
+      ${f.hint?`<div class="hint">${esc(f.hint)}</div>`:''}
+    </div>`;
+  });
+
+  // Custom (user-added) records get raw command/url editors.
+  const rawEditors = (isNew || !s.seeded) ? `
+    <div class="row2">
+      <div class="field"><label class="fl">Label</label><input id="f-label" value="${esc(s.label)}"></div>
+      <div class="field"><label class="fl">Category</label><input id="f-category" value="${esc(s.category)}"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label class="fl">Icon</label><input id="f-icon" value="${esc(s.icon)}"></div>
+      <div class="field"><label class="fl">Transport</label>
+        <select id="f-transport" onchange="toggleTransport()">
+          ${['stdio','sse','http','vera_proxy'].map(t=>`<option ${s.transport===t?'selected':''}>${t}</option>`).join('')}
+        </select></div>
+    </div>
+    <div class="field"><label class="fl">Description</label><input id="f-description" value="${esc(s.description)}"></div>
+    <div class="field" id="wrap-command"><label class="fl">Command</label><input id="f-command" value="${esc(s.command)}" placeholder="npx"></div>
+    <div class="field" id="wrap-args"><label class="fl">Args (space-separated)</label><input id="f-args" value="${esc((s.args||[]).join(' '))}" placeholder="-y @scope/server"></div>
+    <div class="field" id="wrap-url"><label class="fl">URL</label><input id="f-url" value="${esc(s.url)}" placeholder="https://…"></div>
+  ` : `
+    <div class="field"><label class="fl">Launch command</label>
+      <div class="cmdbox">${cmd?esc(cmd):'<span class="muted">— sse/http endpoint —</span>'}${s.url?'<br>'+esc(s.url):''}</div>
+      ${s.docs_url?`<div class="hint">Docs: <a href="${esc(s.docs_url)}" target="_blank" style="color:var(--acc)">${esc(s.docs_url)}</a></div>`:''}
+    </div>`;
+
+  const connectLabel = s.transport==='vera_proxy' ? 'Register peer'
+    : (s.status==='connected'||s.status==='configured') ? 'Re-check' : 'Connect';
+
+  document.getElementById('modal').innerHTML = `
+    <h3>${esc(s.icon||'🔌')} ${isNew?'New MCP server':esc(s.label)}
+      <span class="tp" style="font-size:11px">${esc(s.transport)}</span></h3>
+    <div class="sub">${isNew?'Add a custom MCP server config.':esc(s.description||'')}</div>
+    ${rawEditors}
+    ${cfgHtml ? '<div style="margin:6px 0 4px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim)">Configuration</div>'+cfgHtml : ''}
+    <label class="fl" style="display:flex;align-items:center;gap:8px;text-transform:none;font-size:12px;margin-top:6px">
+      <input type="checkbox" id="f-enabled" ${s.enabled?'checked':''} style="width:auto"> Enabled
+    </label>
+    <div class="status-line" id="mstatus"></div>
+    <div class="modal-actions">
+      ${(!isNew && !s.seeded)?'<button class="btn danger sm" onclick="delServer()">Delete</button>':''}
+      <div class="right">
+        <button class="btn ghost sm" onclick="closeModal()">Cancel</button>
+        <button class="btn sm" onclick="saveServer(false)">Save</button>
+        ${!isNew?`<button class="btn ok sm" onclick="saveServer(true)">${connectLabel}</button>`:''}
+      </div>
+    </div>`;
+  document.getElementById('modalBg').classList.add('show');
+  if (isNew || !s.seeded) toggleTransport();
+}
+
+function toggleTransport(){
+  const t = (document.getElementById('f-transport')||{}).value;
+  if (!t) return;
+  const stdio = t==='stdio';
+  const wc=document.getElementById('wrap-command'), wa=document.getElementById('wrap-args'), wu=document.getElementById('wrap-url');
+  if(wc) wc.style.display = stdio?'':'none';
+  if(wa) wa.style.display = stdio?'':'none';
+  if(wu) wu.style.display = stdio?'none':'';
+}
+
+function gatherPayload(){
+  const s = EDITING ? findRec(EDITING) : null;
+  const payload = { id: EDITING || '' };
+  // Raw editors present for new/custom records.
+  const g = id => (document.getElementById(id)||{}).value;
+  if (document.getElementById('f-label')){
+    payload.label = g('f-label'); payload.category = g('f-category');
+    payload.icon = g('f-icon'); payload.description = g('f-description');
+    payload.transport = g('f-transport');
+    payload.command = g('f-command')||'';
+    payload.args = (g('f-args')||'').trim() ? g('f-args').trim().split(/\s+/) : [];
+    payload.url = g('f-url')||'';
+  }
+  payload.enabled = document.getElementById('f-enabled').checked;
+  // Config-field inputs → env / headers / arg_values / url bags.
+  const env={}, headers={}, arg_values={};
+  document.querySelectorAll('[data-cfg]').forEach(inp => {
+    const key = inp.getAttribute('data-cfg'), target = inp.getAttribute('data-target');
+    const val = inp.value;
+    if (target==='url'){ if(val) payload.url = val; return; }
+    if (val==='') return;                       // blank → keep existing (esp. secrets)
+    if (target==='header') headers[key]=val;
+    else if (target==='arg') arg_values[key]=val;
+    else env[key]=val;
+  });
+  if (Object.keys(env).length) payload.env = env;
+  if (Object.keys(headers).length) payload.headers = headers;
+  if (Object.keys(arg_values).length) payload.arg_values = arg_values;
+  return payload;
+}
+
+async function saveServer(connect){
+  const st = document.getElementById('mstatus');
+  st.className='status-line'; st.textContent='saving…';
+  const res = await api('/mcp/catalog/upsert', 'POST', gatherPayload());
+  if (res.error){ st.className='status-line err'; st.textContent=res.error; return; }
+  EDITING = res.server ? res.server.id : EDITING;
+  await load();
+  if (connect){
+    st.textContent='connecting…';
+    const c = await api('/mcp/catalog/connect','POST',{ id: EDITING });
+    if (c.error){ st.className='status-line err'; st.textContent=c.error; return; }
+    st.className='status-line ok';
+    st.textContent = (c.status==='connected')
+      ? `connected · ${c.count||0} tools registered`
+      : (c.note || ('status: '+(c.status||'ok')));
+    await load();
+    return;
+  }
+  st.className='status-line ok'; st.textContent='saved.';
+  setTimeout(closeModal, 500);
+}
+
+async function delServer(){
+  if (!EDITING) return;
+  if (!confirm('Delete this server record? Built-ins can be restored with Reseed.')) return;
+  await api('/mcp/catalog/delete','POST',{ id: EDITING });
+  closeModal(); await load();
+}
+
+async function reseed(){
+  const r = await api('/mcp/catalog/reseed','POST',{});
+  await load();
+}
+
+function closeModal(){ document.getElementById('modalBg').classList.remove('show'); EDITING=null; }
+document.addEventListener('keydown', e => { if(e.key==='Escape') closeModal(); });
+
+load();
+</script>
+</body>
+</html>

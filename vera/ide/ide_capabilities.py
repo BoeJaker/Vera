@@ -53,6 +53,7 @@ import json
 import logging
 import os
 import subprocess
+import sys
 import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -67,7 +68,7 @@ from Vera.vera.capability_orchestration import (
     UI_PANELS,
     capability, emit_event, now_iso, ollama_generate, pick_instance,
     record_stream_activity,
-    register_ui, schedule,
+    register_routing_profile, register_ui, resolve_role, schedule,
 )
 
 _HERE = Path(__file__).parent
@@ -86,6 +87,40 @@ def _ide_session_id() -> str:
     except Exception:
         pass
     return ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SESSION-SANDBOX ROUTING (Phase 6)
+# When a session has an ACTIVE sandbox (session_sandbox_capabilities), its
+# ide.fs.* operations touch the CONTAINER's filesystem, never the host. These
+# helpers are no-ops (return None) when the module isn't loaded or the session
+# has no active sandbox — the ide.fs cap then runs on the host as before.
+# ─────────────────────────────────────────────────────────────────────────────
+def _sandbox_mod():
+    m = sys.modules.get("session_sandbox_capabilities")
+    if m is not None and hasattr(m, "route_fs_read"):
+        return m
+    for name, mod in list(sys.modules.items()):
+        if mod is not None and name.endswith("session_sandbox_capabilities") \
+                and hasattr(mod, "route_fs_read"):
+            return mod
+    return None
+
+
+async def _route_fs(fn: str, session_id: str, *args, **kwargs):
+    """Call session_sandbox_capabilities.<fn> for `session_id`; returns its dict
+    (operation ran in the container) or None (no active sandbox → run on host)."""
+    sid = session_id or _ide_session_id()
+    if not sid:
+        return None
+    sb = _sandbox_mod()
+    if sb is None or not hasattr(sb, fn):
+        return None
+    try:
+        return await getattr(sb, fn)(sid, *args, **kwargs)
+    except Exception as e:
+        log.debug("ide.fs sandbox route %s failed (host): %s", fn, e)
+        return None
 
 
 
@@ -393,6 +428,26 @@ _AGENT_PRESETS = {
     },
 }
 
+# ── Role-routing profile — the IDE trio resolves through the cluster router ──
+# Instead of ad-hoc label matching, the three IDE agents map to the roles of
+# the "ide" routing profile (editable in the Model Routing page): thinker /
+# writer / verifier (the analyser IS the verifier role). Thinker prefers GPU;
+# writer + verifier stay off it by default so reviews/completions never queue
+# behind reasoning work — override per role in the routing UI.
+IDE_ROLE_BY_AGENT = {
+    IDE_AGENT_THINKER:  "thinker",
+    IDE_AGENT_WRITER:   "writer",
+    IDE_AGENT_ANALYSER: "verifier",
+}
+try:
+    register_routing_profile("ide", label="IDE", owner="ide", roles={
+        "thinker":  {"job_type": "code", "prefer_gpu": True,  "label": "IDE · thinker"},
+        "writer":   {"job_type": "code", "prefer_gpu": False, "label": "IDE · writer"},
+        "verifier": {"job_type": "code", "prefer_gpu": False, "label": "IDE · verifier"},
+    })
+except Exception as _rp_err:
+    log.warning("ide routing profile registration failed: %s", _rp_err)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # AGENT REGISTRY (lazy import to avoid circular import at load time)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -466,24 +521,27 @@ async def _ensure_ide_agents():
 # HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _ide_role(agent_role: str) -> str:
+    """Normalise an agent name/role ('ide-thinker', 'analyser', …) to its
+    routing-profile role: thinker | writer | verifier."""
+    r = (agent_role or "").lower().replace("ide-", "").strip()
+    return {"thinker": "thinker", "writer": "writer",
+            "analyser": "verifier", "analyzer": "verifier",
+            "verifier": "verifier"}.get(r, "writer")
+
+
 def _pick_ide_instance(agent_role: str) -> Optional[str]:
-    """
-    Try to pick a suitable Ollama instance for the given IDE agent role.
-    Thinker → GPU preferred; Writer / Analyser → CPU preferred but any will do.
-    Falls back to any online instance.
-    """
-    role_lower = agent_role.lower()
-    prefer_gpu = role_lower == "thinker"
-
-    # First try to match by tier label in instance label field
-    for iid, inst in OLLAMA_INSTANCES.items():
-        if inst.get("status") != "online":
-            continue
-        lbl = inst.get("label", "").lower()
-        if role_lower in lbl:
-            return iid
-
-    return pick_instance(prefer_gpu=prefer_gpu)
+    """Pick the Ollama node for an IDE agent role through the cluster router
+    (role profile 'ide' — rules editable in the Model Routing page). Falls
+    back to the plain least-busy picker when the profile can't resolve."""
+    role = _ide_role(agent_role)
+    try:
+        res = resolve_role("ide", role)
+        if res and res.get("instance_id"):
+            return res["instance_id"]
+    except Exception as e:
+        log.debug("ide role route %s: %s", role, e)
+    return pick_instance(prefer_gpu=(role == "thinker"))
 
 
 async def _agent_generate(agent_name: str, prompt: str, system: str = "",
@@ -504,16 +562,15 @@ async def _agent_generate(agent_name: str, prompt: str, system: str = "",
             result = await runner.run(ag, prompt, history or [], "")
             return result.get("text", "") if isinstance(result, dict) else str(result)
 
-    # Fallback — use the preset config to call ollama directly
+    # Fallback — use the preset config; node choice flows through the cluster
+    # router via the 'ide' role profile (profile+role kwargs).
     preset = _AGENT_PRESETS.get(agent_name, {})
-    iid = _pick_ide_instance(agent_name)
     full_system = (preset.get("system_prompt", "") + "\n\n" + system).strip() if system else preset.get("system_prompt", "")
     return await ollama_generate(
         prompt,
         system=full_system,
         model=model or preset.get("model") or OLLAMA_MODEL,
-        instance_id=iid,
-        prefer_gpu=preset.get("prefer_gpu", False),
+        profile="ide", role=IDE_ROLE_BY_AGENT.get(agent_name, "writer"),
         stream_cb=stream_cb,
     )
 
@@ -730,6 +787,7 @@ async def ide_generate(
     _req_id = str(uuid.uuid4())[:12]
     _t0 = _time.time()
     _prompt_preview = (prompt or "")[:120].replace("\n", " ")
+    _prompt_full = (prompt or "")[:16000]
     log.info("ollama_req [%s] model=%s inst=%s caller=ide_capabilities:ide_generate agent=%s prompt=%s",
              _req_id, mdl, chosen, agent_name, _prompt_preview)
     try:
@@ -738,7 +796,7 @@ async def ide_generate(
             "model": mdl, "instance_id": chosen, "instance_url": url,
             "caller_file": "ide_capabilities.py", "caller_func": "ide_generate",
             "caller_module": "ide_capabilities", "cap_name": "ide.generate",
-            "prompt_preview": _prompt_preview, "json_mode": False,
+            "prompt_preview": _prompt_preview, "prompt_full": _prompt_full, "json_mode": False,
             "prefer_gpu": preset.get("prefer_gpu", False), "streaming": False,
         })
     except Exception:
@@ -785,25 +843,28 @@ async def ide_generate(
         ))
         return {"text": text, "agent": agent_name, "model": mdl, "instance": chosen}
     except Exception as e:
+        from Vera.vera.capability_orchestration import _err_text
         _elapsed = round(_time.time() - _t0, 2)
+        _err = _err_text(e)
         log.error("ollama_generate [%s] FAILED after %.2fs inst=%s caller=ide_capabilities:ide_generate err=%s",
-                  _req_id, _elapsed, chosen, e)
+                  _req_id, _elapsed, chosen, _err)
         _ollama_log_append({
             "req_id": _req_id, "model": mdl, "instance": chosen,
             "caller_file": "ide_capabilities.py", "caller_func": "ide_generate",
             "prompt_preview": _prompt_preview, "ts": now_iso(),
-            "status": "error", "elapsed_s": _elapsed, "error": str(e)[:200],
+            "status": "error", "elapsed_s": _elapsed, "error": _err,
         })
         try:
             await emit_event({
                 "type": "ollama.request_error", "req_id": _req_id,
                 "model": mdl, "instance_id": chosen,
                 "caller_file": "ide_capabilities.py", "caller_func": "ide_generate",
-                "elapsed_s": _elapsed, "error": str(e)[:200],
+                "elapsed_s": _elapsed, "error": _err,
+                "error_type": type(e).__name__,
             })
         except Exception:
             pass
-        return {"error": str(e), "text": "", "agent": agent_name}
+        return {"error": _err, "text": "", "agent": agent_name}
     finally:
         inst["in_use"] = max(0, inst.get("in_use", 1) - 1)
 
@@ -876,6 +937,7 @@ async def ide_stream_endpoint(request: Request):
         _req_id = str(uuid.uuid4())[:12]
         _t0_stream = _time.monotonic()
         _prompt_preview = (prompt or "")[:120].replace("\n", " ")
+        _prompt_full = (prompt or "")[:16000]
         log.info("ollama_req [%s] model=%s inst=%s caller=ide_capabilities:ide_stream agent=%s prompt=%s",
                  _req_id, model, chosen, agent_name_short, _prompt_preview)
         try:
@@ -884,7 +946,7 @@ async def ide_stream_endpoint(request: Request):
                 "model": model, "instance_id": chosen, "instance_url": url,
                 "caller_file": "ide_capabilities.py", "caller_func": "ide_stream_endpoint",
                 "caller_module": "ide_capabilities", "cap_name": "ide.stream",
-                "prompt_preview": _prompt_preview, "json_mode": False,
+                "prompt_preview": _prompt_preview, "prompt_full": _prompt_full, "json_mode": False,
                 "prefer_gpu": preset.get("prefer_gpu", False), "streaming": True,
             })
         except Exception:
@@ -912,51 +974,55 @@ async def ide_stream_endpoint(request: Request):
                             full.append(token)
                             yield f"data: {json.dumps({'type':'token','text':token})}\n\n".encode()
         except Exception as e:
-            error_text = str(e)
+            from Vera.vera.capability_orchestration import _err_text
+            error_text = _err_text(e)
             yield f"data: {json.dumps({'type':'error','text':error_text})}\n\n".encode()
             return
         finally:
             inst["in_use"] = max(0, inst.get("in_use", 1) - 1)
+            # ── Log completion of the Ollama request ─────────────────────────
+            # Must live in the finally: the error paths above `return` out of
+            # the generator, so code after this block never runs for them —
+            # previously errors left the request dangling as "running" forever.
+            _elapsed_s = round((_time.monotonic() - _t0_stream), 2)
+            if error_text:
+                log.error("ollama_generate [%s] FAILED after %.2fs caller=ide_capabilities:ide_stream err=%s",
+                          _req_id, _elapsed_s, error_text[:120])
+                _ollama_log_append({
+                    "req_id": _req_id, "model": model, "instance": chosen,
+                    "caller_file": "ide_capabilities.py", "caller_func": "ide_stream_endpoint",
+                    "prompt_preview": _prompt_preview, "ts": now_iso(),
+                    "status": "error", "elapsed_s": _elapsed_s, "error": error_text[:300],
+                })
+                try:
+                    await _emit_event({
+                        "type": "ollama.request_error", "req_id": _req_id,
+                        "model": model, "instance_id": chosen,
+                        "caller_file": "ide_capabilities.py", "caller_func": "ide_stream_endpoint",
+                        "elapsed_s": _elapsed_s, "error": error_text[:300],
+                    })
+                except Exception:
+                    pass
+            else:
+                log.info("ollama_done [%s] %.2fs tokens=%d caller=ide_capabilities:ide_stream",
+                         _req_id, _elapsed_s, len(full))
+                _ollama_log_append({
+                    "req_id": _req_id, "model": model, "instance": chosen,
+                    "caller_file": "ide_capabilities.py", "caller_func": "ide_stream_endpoint",
+                    "prompt_preview": _prompt_preview, "ts": now_iso(),
+                    "status": "done", "elapsed_s": _elapsed_s, "tokens": len(full),
+                })
+                try:
+                    await _emit_event({
+                        "type": "ollama.request_done", "req_id": _req_id,
+                        "model": model, "instance_id": chosen,
+                        "caller_file": "ide_capabilities.py", "caller_func": "ide_stream_endpoint",
+                        "elapsed_s": _elapsed_s, "token_count": len(full),
+                    })
+                except Exception:
+                    pass
 
         full_text = "".join(full)
-        # ── Log completion of the Ollama request ────────────────────────────
-        _elapsed_s = round((_time.monotonic() - _t0_stream), 2)
-        if error_text:
-            log.error("ollama_generate [%s] FAILED after %.2fs caller=ide_capabilities:ide_stream err=%s",
-                      _req_id, _elapsed_s, error_text[:120])
-            _ollama_log_append({
-                "req_id": _req_id, "model": model, "instance": chosen,
-                "caller_file": "ide_capabilities.py", "caller_func": "ide_stream_endpoint",
-                "prompt_preview": _prompt_preview, "ts": now_iso(),
-                "status": "error", "elapsed_s": _elapsed_s, "error": error_text[:200],
-            })
-            try:
-                await _emit_event({
-                    "type": "ollama.request_error", "req_id": _req_id,
-                    "model": model, "instance_id": chosen,
-                    "caller_file": "ide_capabilities.py", "caller_func": "ide_stream_endpoint",
-                    "elapsed_s": _elapsed_s, "error": error_text[:200],
-                })
-            except Exception:
-                pass
-        else:
-            log.info("ollama_done [%s] %.2fs tokens=%d caller=ide_capabilities:ide_stream",
-                     _req_id, _elapsed_s, len(full))
-            _ollama_log_append({
-                "req_id": _req_id, "model": model, "instance": chosen,
-                "caller_file": "ide_capabilities.py", "caller_func": "ide_stream_endpoint",
-                "prompt_preview": _prompt_preview, "ts": now_iso(),
-                "status": "done", "elapsed_s": _elapsed_s, "tokens": len(full),
-            })
-            try:
-                await _emit_event({
-                    "type": "ollama.request_done", "req_id": _req_id,
-                    "model": model, "instance_id": chosen,
-                    "caller_file": "ide_capabilities.py", "caller_func": "ide_stream_endpoint",
-                    "elapsed_s": _elapsed_s, "token_count": len(full),
-                })
-            except Exception:
-                pass
         _sid = body.get("session_id", "") or _ide_get_session_id()
         # 1) IDE-domain event recording — keeps the IDE module's own
         #    FOLLOWS_ACTIVITY chain (used by the IDE panel's history view)
@@ -1178,7 +1244,11 @@ async def ide_sandbox_clear(session_id: str, trace_id=None):
     description="Read a file from the real filesystem. GET with ?path=... "
                 "Output: {path, content, size, truncated}.",
 )
-async def ide_fs_read(path: str, max_bytes: int = 1_048_576, trace_id=None):
+async def ide_fs_read(path: str, max_bytes: int = 1_048_576,
+                      session_id: str = "", trace_id=None):
+    routed = await _route_fs("route_fs_read", session_id, path, max_bytes=max_bytes)
+    if routed is not None:
+        return routed
     try:
         p = Path(path)
         if not p.exists():
@@ -1216,8 +1286,15 @@ def _unescape_collapsed(content: str) -> str:
                 "Output: {path, bytes, created}.",
 )
 async def ide_fs_write(path: str, content: str, agent: str = "", session_id: str = "", trace_id=None):
+    content = _unescape_collapsed(content)
+    routed = await _route_fs("route_fs_write", session_id, path, content)
+    if routed is not None:
+        # Record the write to the graph/fabric even when it lands in the container.
+        if not routed.get("error"):
+            asyncio.ensure_future(_ide_record_file(
+                path, content, agent, session_id or _ide_session_id()))
+        return routed
     try:
-        content = _unescape_collapsed(content)
         p = Path(path)
         created = not p.exists()
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -1238,7 +1315,10 @@ async def ide_fs_write(path: str, content: str, agent: str = "", session_id: str
     description="Delete a file from the real filesystem. "
                 "Input: path (str!). Output: {path, deleted}.",
 )
-async def ide_fs_delete(path: str, trace_id=None):
+async def ide_fs_delete(path: str, session_id: str = "", trace_id=None):
+    routed = await _route_fs("route_fs_delete", session_id, path)
+    if routed is not None:
+        return routed
     try:
         p = Path(path)
         if not p.exists():
@@ -1313,7 +1393,10 @@ async def ide_fs_roots(trace_id=None):
                 "Output: {path, parent, crumbs: [{name,path}], "
                 "entries: [{name, path, kind, size, mtime, readable}]}",
 )
-async def ide_fs_browse(path: str = "", trace_id=None):
+async def ide_fs_browse(path: str = "", session_id: str = "", trace_id=None):
+    routed = await _route_fs("route_fs_browse", session_id, path)
+    if routed is not None:
+        return routed
     target = Path(path) if path else Path.home()
     try:
         if not target.exists():
@@ -1369,7 +1452,11 @@ async def ide_fs_browse(path: str = "", trace_id=None):
     description="List a directory. GET with ?path=... query param. "
                 "Output: {path, entries: [{name, path, kind, size, mtime, readable}]}",
 )
-async def ide_fs_list_v2(path: str = "", recursive: bool = False, trace_id=None):
+async def ide_fs_list_v2(path: str = "", recursive: bool = False,
+                         session_id: str = "", trace_id=None):
+    routed = await _route_fs("route_fs_list", session_id, path)
+    if routed is not None:
+        return routed
     target = Path(path) if path else Path.home()
     try:
         if not target.exists():
@@ -1550,6 +1637,18 @@ async def ide_workspace_create(
     # Record to graph + fabric — prefer explicit session_id, fall back to chain
     sid = session_id or _ide_session_id()
     asyncio.ensure_future(_ide_record_workspace(str(ws_path), name, sid))
+
+    # Per-workspace sandbox: link the opening session to a SHARED `ws-<name>`
+    # container so every session working in this workspace shares one confined
+    # environment (auto-created on first exec when auto_create is on).
+    if sid:
+        try:
+            sb = _sandbox_mod()
+            if sb is not None and hasattr(sb, "link_session"):
+                await sb.link_session(sid, f"ws-{name}", kind="workspace", label=name)
+                rec["sandbox"] = f"ws-{name}"
+        except Exception as e:
+            log.debug("workspace sandbox link failed for %s: %s", name, e)
     return rec
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1866,18 +1965,26 @@ async def _research_panel():
 # REGISTER UI PANEL
 # ─────────────────────────────────────────────────────────────────────────────
 
+# The IDE tab now mounts the merged wrapper (vscode_capabilities.py serves
+# /ide/vscode/panel): central VS Code (code-server, same-origin proxied) first,
+# with the classic workbench (/ide/panel, everything below unchanged) and the
+# old Remote-IDE panel as sibling views inside the same tab.
 register_ui(
     "ide-panel",
     "IDE",
     "",
     """<div id="ide-panel-mount" style="height:100%;display:flex;flex-direction:column;">
-  <iframe src="/ide/panel"
+  <iframe src="/ide/vscode/panel"
           style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"
           allow="clipboard-read; clipboard-write">
   </iframe>
 </div>""",
     "",
         ui_caps=[
+            "ide.vscode.instances", "ide.vscode.central.ensure",
+            "ide.vscode.central.status", "ide.vscode.password.set",
+            "ide.vscode.password.reveal", "ide.vscode.sandbox.workers",
+            "ide.vscode.sandbox.attach", "ide.vscode.sandbox.detach",
             "ide.agent.list", "ide.agent.chat",
             "ide.instances", "ide.models", "ide.generate",
             "ide.sandbox.load", "ide.sandbox.read", "ide.sandbox.write",
@@ -1962,41 +2069,65 @@ async def ide_exec_run(request: Request):
     if not cmd:
         return _err_stream("sandbox: empty command")
 
-    # Gate through the shared exec sandbox (identical rules to exec.* runs).
-    sb = _exec_sandbox_mod()
-    timeout = 0
-    if sb is not None:
+    # Opt-in per-session sandbox: when this session (e.g. a notebook cell's
+    # `notebook:<id>` session, or an IDE session) has an ACTIVE sandbox, run the
+    # command INSIDE the container — the same routing the exec.* streams use —
+    # instead of on the host. Falls through to the host path otherwise.
+    sbx_argv = None
+    _sbx = _sandbox_mod()
+    if _sbx is not None and hasattr(_sbx, "route_shell_argv"):
         try:
-            ok, reason = sb._sandbox_check(cmd, cwd=cwd)
+            sbx_argv = await _sbx.route_shell_argv(session_id, cmd)
         except Exception as e:
-            ok, reason = True, ""
-            log.warning("ide run sandbox check errored (allowing): %s", e)
-        if not ok:
-            await emit_event({"type": "exec.sandbox.blocked", "shell": "ide.run",
-                              "reason": reason, "session_id": session_id})
-            return _err_stream(f"⛔ sandbox blocked: {reason}")
-        try:
-            cwd = sb._sandbox_effective_cwd(cwd)
-            # Pass a large sentinel so the policy's max_timeout (if any) caps it;
-            # an unset cap leaves it effectively uncapped.
-            timeout = sb._sandbox_clamp_timeout(10 ** 9)
-            if timeout >= 10 ** 9:
-                timeout = 0
-        except Exception:
-            timeout = 0
-    else:
-        log.warning("ide run: exec sandbox module not loaded — running ungated")
+            log.debug("ide run sandbox route failed (host): %s", e)
+            sbx_argv = None
 
-    run_cwd = cwd or None
+    timeout = 0
+    if sbx_argv is None:
+        # Host path — gate through the shared exec sandbox policy (identical rules
+        # to exec.* runs). The sandboxed path is isolated by the container instead.
+        sb = _exec_sandbox_mod()
+        if sb is not None:
+            try:
+                ok, reason = sb._sandbox_check(cmd, cwd=cwd)
+            except Exception as e:
+                ok, reason = True, ""
+                log.warning("ide run sandbox check errored (allowing): %s", e)
+            if not ok:
+                await emit_event({"type": "exec.sandbox.blocked", "shell": "ide.run",
+                                  "reason": reason, "session_id": session_id})
+                return _err_stream(f"⛔ sandbox blocked: {reason}")
+            try:
+                cwd = sb._sandbox_effective_cwd(cwd)
+                # Pass a large sentinel so the policy's max_timeout (if any) caps it;
+                # an unset cap leaves it effectively uncapped.
+                timeout = sb._sandbox_clamp_timeout(10 ** 9)
+                if timeout >= 10 ** 9:
+                    timeout = 0
+            except Exception:
+                timeout = 0
+        else:
+            log.warning("ide run: exec sandbox module not loaded — running ungated")
+
+    run_cwd = (cwd or None) if sbx_argv is None else None
 
     async def _gen():
         try:
-            proc = await asyncio.create_subprocess_shell(
-                cmd, cwd=run_cwd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                stdin=asyncio.subprocess.PIPE,
-            )
+            if sbx_argv is not None:
+                # docker exec … sh -lc <cmd> — streamed from inside the container.
+                proc = await asyncio.create_subprocess_exec(
+                    *sbx_argv,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    stdin=asyncio.subprocess.PIPE,
+                )
+            else:
+                proc = await asyncio.create_subprocess_shell(
+                    cmd, cwd=run_cwd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    stdin=asyncio.subprocess.PIPE,
+                )
         except Exception as e:
             yield _ide_run_sse("stderr", f"spawn failed: {e}")
             yield _ide_run_sse("exit", "-1")
@@ -2006,7 +2137,8 @@ async def ide_exec_run(request: Request):
         _IDE_RUN_PROCS[pid] = proc
         yield _ide_run_sse("pid", str(pid))
         await emit_event({"type": "ide.run.started", "pid": pid, "cmd": cmd[:200],
-                          "cwd": run_cwd or "", "session_id": session_id})
+                          "cwd": run_cwd or "", "session_id": session_id,
+                          "sandboxed": sbx_argv is not None})
 
         q: "asyncio.Queue" = asyncio.Queue()
 

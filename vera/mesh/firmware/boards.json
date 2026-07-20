@@ -1,0 +1,44 @@
+[
+  {
+    "id": "s3-uno-ili9488",
+    "label": "ESP32-S3 Uno + ILI9488 parallel shield (hardware-verified)",
+    "chip": "esp32s3",
+    "bus": "parallel8",
+    "controller": "ili9488",
+    "io": {
+      "tft": { "rst": 5, "cs": 6, "dc": 7, "wr": 1, "rd": 2, "d": [21, 46, 18, 17, 19, 20, 3, 14] },
+      "sd":  { "clk": 12, "miso": 13, "mosi": 11, "cs": 10 },
+      "neopixel": 48
+    },
+    "kiosk": { "rotation": 1 },
+    "note": "Verified on hardware (control RST5/CS6/DC7/WR1/RD2). CRITICAL: LCD_D4=GPIO19 and LCD_D5=GPIO20 are the S3's native USB-Serial-JTAG lines. The display ONLY works under the Arduino build with 'USB CDC On Boot: Disabled' (console on UART0), which lets the sketch reclaim 19/20 as GPIO. MicroPython's REPL sits on those USB pins and can never drive this display."
+  },
+  {
+    "id": "esp32-d1r32-ili9488",
+    "label": "Classic ESP32 'D1 R32' Uno + ILI9488 parallel shield",
+    "chip": "esp32",
+    "bus": "parallel8",
+    "controller": "ili9488",
+    "io": {
+      "tft": { "rst": 36, "cs": 34, "dc": 35, "wr": 4, "rd": 2, "d": [12, 13, 26, 25, 17, 16, 27, 14] },
+      "sd":  { "clk": 18, "miso": 19, "mosi": 23, "cs": 5 },
+      "neopixel": -1
+    },
+    "kiosk": { "rotation": 1 },
+    "note": "A D1 R32 maps the shield's LCD control lines (RST/CS/RS/WR/RD = A4/A3/A2/A1/A0) onto GPIO36/34/35/4/2. WARNING: GPIO34-36 are INPUT-ONLY on the classic ESP32 — if the panel stays white you must bodge CS/DC/RST to output-capable GPIOs. Verify with the Test Pattern before trusting this map."
+  },
+  {
+    "id": "manual",
+    "label": "Manual / custom pins",
+    "chip": "any",
+    "bus": "parallel8",
+    "controller": "ili9488",
+    "io": {
+      "tft": { "rst": 4, "cs": 5, "dc": 6, "wr": 7, "rd": 1, "d": [21, 46, 18, 17, 19, 20, 3, 14] },
+      "sd":  { "clk": 12, "miso": 13, "mosi": 11, "cs": 10 },
+      "neopixel": 48
+    },
+    "kiosk": { "rotation": 1 },
+    "note": "Blank starting point: edit every pin by hand in the Board / Pins card, push, and run the Test Pattern until the bars render. Save as a named board when it works so you never have to rediscover it."
+  }
+]

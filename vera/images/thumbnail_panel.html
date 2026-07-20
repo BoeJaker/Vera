@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Vera — Thumbnails</title>
@@ -34,7 +39,7 @@ input[type=color]{padding:0;height:26px;width:38px}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;padding:5px 11px;border-radius:var(--radius-sm);background:var(--bg2);border:1px solid var(--border2);color:var(--text);font-size:11px;cursor:pointer;font-family:var(--sans)}
 .btn:hover{border-color:var(--acc);color:var(--acc)}
-.btn.primary{background:var(--acc);border-color:var(--acc);color:#10201c;font-weight:600}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#10201c);font-weight:600}
 .btn:disabled{opacity:.5;cursor:not-allowed}
 .status{font-size:10px;color:var(--dim2);margin-top:6px;min-height:13px;word-break:break-word}
 .status.ok{color:var(--ok)}.status.err{color:var(--err)}.status.warn{color:var(--warn)}
@@ -93,6 +98,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}
   </div>
 </div>
 <script src="/ui/vera-panel.js"></script>
+<script src="/ui/vera-ui.js"></script>
 <script>
 const BASE=(window._veraBase||(window.parent&&window.parent._veraBase)||location.origin).toString().replace(/\/$/,'');
 const $=id=>document.getElementById(id);

@@ -429,6 +429,7 @@ async def vllm_generate(
             "caller_module":  _caller_file.replace(".py", ""),
             "cap_name":       _cap_name,
             "prompt_preview": _prompt_preview,
+            "prompt_full":    (prompt or "")[:16000],
             "backend":        "vllm",
             "prefer_gpu":     prefer_gpu,
             "streaming":      stream_cb is not None,

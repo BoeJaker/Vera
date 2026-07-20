@@ -105,6 +105,36 @@
     Session:     '#facc15',
     Activity:    '#94a3b8',
     Entity:      '#c97a5a',
+    // Distinct colours for the other structural / informational node types so
+    // they don't all collapse onto the '#6a8fa0' default (entities already have
+    // a broad per-subtype palette; this gives the rest of the graph the same).
+    Page:        '#7bb0c9',
+    Concept:     '#d98cff',   // worldview concepts — bright violet, plus diamond shape
+    WorldviewPoint:'#8a7ec0',
+    TopicModel:  '#c77dff',
+    CapResult:   '#e0b055',
+    Activity_:   '#94a3b8',
+    OntologyEntity:'#b0a06a',
+    Ontology:    '#d0b45a',
+    Skill:       '#7ac9b0',
+    Agent:       '#e08a5a',
+    DAG:         '#a78bfa',
+    Concept_:    '#d98cff',
+    Container:   '#5aa9c9',
+    DockerHost:  '#4a8fb0',
+    NetHost:     '#7ab8a0',
+    SshHost:     '#8fb87a',
+    Subnet:      '#9e8fa0',
+    NetService:  '#c98f7a',
+    PveNode:     '#c9a05a',
+    PveGuest:    '#c9b87a',
+    K8sNode:     '#5a9ec9',
+    K8sPod:      '#7ab0d8',
+    Work:        '#9e8fa0',
+    Surface:     '#8f9eb0',
+    Subtable:    '#7a8fb0',
+    Context:     '#8fb0a0',
+    Record:      '#6b9bd2',
     person:        '#8fb87a',
     organisation:  '#c9955a',
     technology:    '#5a9e8f',
@@ -166,8 +196,47 @@
     return COL[node.type] || COL[node.label] || '#6a8fa0';
   }
 
+  // Per-type node SHAPE so different kinds are distinguishable at a glance even
+  // when colours are close. Concepts/topic models get a diamond so worldview
+  // output stands out against the round record/entity cloud; datasets a
+  // rounded square; the rest stay circles.
+  var _SHAPE = {
+    Concept: 'diamond', TopicModel: 'diamond', WorldviewPoint: 'diamond',
+    Dataset: 'square', Source: 'square', Category: 'square',
+    Skill: 'hex', Ontology: 'hex', Agent: 'hex',
+  };
+  function nodeShape(node){ return (node && _SHAPE[node.type]) || 'circle'; }
+  // Trace a node outline of the given shape at (x,y) radius r. Leaves the path
+  // open so the caller can fill+stroke (matches the old ctx.arc contract).
+  function _shapePath(ctx, shape, x, y, r){
+    if (shape === 'diamond') {
+      ctx.moveTo(x, y - r * 1.15); ctx.lineTo(x + r * 1.15, y);
+      ctx.lineTo(x, y + r * 1.15); ctx.lineTo(x - r * 1.15, y); ctx.closePath();
+    } else if (shape === 'square') {
+      var s = r * 0.92;
+      ctx.moveTo(x - s, y - s); ctx.lineTo(x + s, y - s);
+      ctx.lineTo(x + s, y + s); ctx.lineTo(x - s, y + s); ctx.closePath();
+    } else if (shape === 'hex') {
+      for (var i = 0; i < 6; i++) {
+        var a = Math.PI / 6 + i * Math.PI / 3;
+        var px = x + Math.cos(a) * r * 1.08, py = y + Math.sin(a) * r * 1.08;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+    } else {
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+    }
+  }
+
+  var _edgeColorCache = {};
   function edgeColor(rel){
     if (!rel) return COL._edge_default;
+    // Memoised — the regex chain below ran per edge per frame on big graphs.
+    var hit = _edgeColorCache[rel];
+    if (hit) return hit;
+    return (_edgeColorCache[rel] = _edgeColorUncached(rel));
+  }
+  function _edgeColorUncached(rel){
     var key = '_edge_' + rel;
     if (COL[key]) return COL[key];
     if (/HAS_ENTITY/i.test(rel))     return COL._edge_HAS_ENTITY;
@@ -205,6 +274,73 @@
   }
 
   function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+
+  // ── Rich content rendering (bottom Content panel) ─────────────────────────
+  // Strip active content so stored HTML (crawled pages, record bodies) can be
+  // shown rendered without executing anything.
+  function _sanitizeHtml(html){
+    var t = String(html == null ? '' : html);
+    t = t.replace(/<script[\s\S]*?<\/script\s*>/gi, '')
+         .replace(/<style[\s\S]*?<\/style\s*>/gi, '')
+         .replace(/<(iframe|object|embed|form|link|meta)[\s\S]*?(\/>|<\/\1\s*>|>)/gi, '')
+         .replace(/\son\w+\s*=\s*"[^"]*"/gi, '')
+         .replace(/\son\w+\s*=\s*'[^']*'/gi, '')
+         .replace(/\son\w+\s*=\s*[^\s>]+/gi, '')
+         .replace(/javascript\s*:/gi, '');
+    return t;
+  }
+  // Minimal markdown → HTML: fenced code, headings, bold/italic, inline code,
+  // links, images, lists, quotes, hr. Enough for record bodies and summaries
+  // without pulling in a library.
+  function _mdToHtml(md){
+    var src = String(md == null ? '' : md).replace(/\r\n?/g, '\n');
+    var blocks = [];
+    src = src.replace(/```(\w*)\n?([\s\S]*?)```/g, function(_, lang, code){
+      blocks.push('<pre style="background:var(--bg2,#272421);border:1px solid var(--border,#3a3530);border-radius:3px;padding:6px 8px;overflow-x:auto;font-size:9.5px"><code>' + esc(code) + '</code></pre>');
+      return '\u0000B' + (blocks.length - 1) + '\u0000';
+    });
+    function inline(s){
+      s = esc(s);
+      s = s.replace(/`([^`]+)`/g, '<code style="background:var(--bg2,#272421);padding:0 3px;border-radius:2px;font-size:10px">$1</code>');
+      s = s.replace(/!\[([^\]]*)\]\((https?:[^)\s]+)\)/g, '<img src="$2" alt="$1" style="max-width:100%;border-radius:3px">');
+      s = s.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener" style="color:var(--acc,#5a9e8f)">$1</a>');
+      s = s.replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
+      s = s.replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g, '$1<i>$2</i>');
+      return s;
+    }
+    var out = [], listOpen = false;
+    src.split('\n').forEach(function(line){
+      var m;
+      function closeList(){ if (listOpen) { out.push('</ul>'); listOpen = false; } }
+      if ((m = line.match(/^(#{1,6})\s+(.*)$/))) {
+        closeList();
+        out.push('<div style="font-weight:700;font-size:' + Math.max(11, 16 - m[1].length) + 'px;margin:8px 0 4px;color:var(--acc2,#8fb87a)">' + inline(m[2]) + '</div>');
+      } else if (/^\s*[-*]\s+\S/.test(line)) {
+        if (!listOpen) { out.push('<ul style="margin:2px 0 2px 16px;padding:0">'); listOpen = true; }
+        out.push('<li>' + inline(line.replace(/^\s*[-*]\s+/, '')) + '</li>');
+      } else if (/^\s*(---+|\*\*\*+)\s*$/.test(line)) {
+        closeList();
+        out.push('<hr style="border:none;border-top:1px solid var(--border,#3a3530);margin:6px 0">');
+      } else if (/^>\s?/.test(line)) {
+        closeList();
+        out.push('<div style="border-left:2px solid var(--border2,#4a4540);padding-left:8px;color:var(--dim2,#8a7e70)">' + inline(line.replace(/^>\s?/, '')) + '</div>');
+      } else if (!line.trim()) {
+        closeList();
+        out.push('<div style="height:6px"></div>');
+      } else {
+        out.push('<div>' + inline(line) + '</div>');
+      }
+    });
+    if (listOpen) out.push('</ul>');
+    return out.join('').replace(/\u0000B(\d+)\u0000/g, function(_, i){ return blocks[+i]; });
+  }
+  // Guess the best render mode for a blob of content.
+  function _detectRender(text){
+    var t = String(text == null ? '' : text);
+    if (/<\s*(html|body|div|p|table|article|section|ul|ol|h[1-6]|br|img|span|a)\b/i.test(t)) return 'html';
+    if (/(^|\n)#{1,6}\s|\*\*[^*\n]+\*\*|```|(^|\n)\s*[-*]\s+\S|\[[^\]]+\]\(https?:/.test(t)) return 'markdown';
+    return 'text';
+  }
 
   function throttle(fn, ms){
     var last = 0, pending = null;
@@ -332,7 +468,7 @@
          {name:'auto_stitch', type:'bool',  default:false},
        ],
        context:'LLM suggests related dataset pairs.'},
-      {id:'unified_run',      label:'Unified run',           icon:'▶▶',
+      {id:'unified_run',      label:'Unified run',           icon:'▶︎▶︎',
        capability:'fabric.graph.unified_run',
        args:{dataset_id:'$id'}, stream:'fabric.unified_run.progress',
        options:[
@@ -469,6 +605,13 @@
       '.vg-sp{font-family:var(--mono,monospace);font-size:8.5px;padding:3px 6px;border:1px solid var(--border,#3a3530);border-radius:3px;margin-bottom:2px;background:var(--bg2,#272421);cursor:pointer;transition:all .12s}',
       '.vg-sp:hover{border-color:var(--acc,#5a9e8f)} .vg-sp.on{border-color:var(--acc2,#8fb87a);background:rgba(143,184,122,.1)}',
       '.vg-canvas-area{flex:1;min-width:0;display:flex;flex-direction:column;position:relative;background:var(--bg0,#181614)}',
+      // ── Detail drawer tabs ──────────────────────────────────────────────
+      '.vg-dtabs{display:flex;gap:2px;padding:4px 8px 0;border-bottom:1px solid var(--border,#3a3530);background:var(--bg1,#1f1d1a)}',
+      '.vg-dtab{font-family:var(--mono,monospace);font-size:9px;padding:3px 10px;border-radius:3px 3px 0 0;border:1px solid transparent;border-bottom:none;color:var(--dim,#6a6058);cursor:pointer;user-select:none;transition:all .12s}',
+      '.vg-dtab:hover{color:var(--acc,#5a9e8f)}',
+      '.vg-dtab.on{color:var(--acc2,#8fb87a);border-color:var(--border,#3a3530);background:var(--bg0,#181614)}',
+      '.vg-dpane{display:none}',
+      '.vg-dpane.on{display:block}',
       '.vg-gp{display:flex;gap:2px;margin-bottom:6px}',
       '.vg-gp .tb{font-family:var(--mono,monospace);font-size:8.5px;padding:2px 7px;flex:1;text-align:center;border-radius:3px;background:var(--bg2,#272421);border:1px solid var(--border,#3a3530);color:var(--dim2,#8a7e70);cursor:pointer;transition:all .12s}',
       '.vg-gp .tb:hover{border-color:var(--acc,#5a9e8f);color:var(--acc,#5a9e8f)}',
@@ -530,6 +673,12 @@
       // Content panel
       '.vg-bd-content{flex:1;overflow-y:auto;padding:10px 14px;font-size:11px;line-height:1.65;color:var(--text,#ddd5c8);white-space:pre-wrap;word-break:break-word;font-family:var(--sans,system-ui,sans-serif);background:var(--bg0,#181614)}',
       '.vg-bd-content-bar{display:flex;align-items:center;gap:8px;padding:4px 8px;border-bottom:1px solid var(--border,#3a3530);background:var(--bg1,#1f1d1a);font-size:9px;flex-shrink:0}',
+      // Canvas loading overlay (spinner + message) shown while a snapshot loads
+      '.vg-loadwrap{position:absolute;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;gap:9px;background:rgba(24,22,20,.55);z-index:30;pointer-events:none;border-radius:var(--radius,4px)}',
+      '.vg-loadwrap.on{display:flex}',
+      '.vg-loadspin{width:28px;height:28px;border-radius:50%;border:2.5px solid var(--border,#3a3530);border-top-color:var(--acc,#5a9e8f);animation:vg-rot .8s linear infinite}',
+      '@keyframes vg-rot{to{transform:rotate(360deg)}}',
+      '.vg-loadmsg{font-family:var(--mono,monospace);font-size:9.5px;color:var(--dim2,#8a7e70);letter-spacing:.5px;text-shadow:0 1px 2px rgba(0,0,0,.4)}',
       '.vg-bd-content-title{font-size:10px;font-weight:600;color:var(--acc,#5a9e8f);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
     ].join('\n');
     document.head.appendChild(s);
@@ -594,6 +743,7 @@
           '<div class="vg-search-wrap" style="position:relative;flex:1;min-width:160px;display:flex;align-items:center;gap:4px">' +
             '<input class="vg-search vg-top-search" placeholder="Search nodes..." style="flex:1;min-width:90px;font-size:10px;padding:3px 6px;background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:3px">' +
             '<button class="vg-btn vg-search-mode" data-mode="list" title="Search mode: List + zoom to result. Click to switch to Highlight." style="font-size:9px;padding:2px 6px;background:var(--bg2);color:var(--acc,#5a9e8f);border:1px solid var(--border);border-radius:3px;cursor:pointer;white-space:nowrap">List</button>' +
+            '<button class="vg-btn vg-search-deep" title="Deep search: also query the graph database for nodes not loaded into this view. Collapsed sub-nodes are always searched." style="font-size:9px;padding:2px 6px;background:var(--bg2);color:var(--dim,#6a6058);border:1px solid var(--border);border-radius:3px;cursor:pointer;white-space:nowrap">Deep</button>' +
             '<select class="vg-search-depth" title="Highlight depth (hops from match)" style="display:none;font-size:9px;padding:2px 3px;background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:3px">' +
               '<option value="0">0</option><option value="1" selected>1</option><option value="2">2</option><option value="3">3</option></select>' +
             '<div class="vg-search-results" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:2px;max-height:240px;overflow-y:auto;background:var(--bg1,#1f1d1a);border:1px solid var(--border,#3a3530);border-radius:4px;z-index:50;box-shadow:0 4px 14px rgba(0,0,0,.5)"></div>' +
@@ -806,6 +956,25 @@
       if (e.data && e.data.type === 'vera:theme') { _themeCache = {}; draw(); }
     });
 
+    // ── Loading overlay ──────────────────────────────────────────────────
+    // A spinner over the canvas while a snapshot/memory load is in flight, so
+    // slow backends give immediate feedback instead of a frozen empty graph.
+    // Exposed as instance.setLoading(on, msg) for host panels.
+    var _loadWrapEl = null;
+    function _setLoading(on, msg){
+      if (!_loadWrapEl) {
+        if (!on) return;
+        _loadWrapEl = document.createElement('div');
+        _loadWrapEl.className = 'vg-loadwrap';
+        _loadWrapEl.innerHTML = '<div class="vg-loadspin"></div><div class="vg-loadmsg"></div>';
+        var wrap = canvas.parentElement;
+        if (wrap) wrap.appendChild(_loadWrapEl); else return;
+      }
+      _loadWrapEl.classList.toggle('on', !!on);
+      var m = _loadWrapEl.querySelector('.vg-loadmsg');
+      if (m) m.textContent = msg || (on ? 'Loading graph' : '');
+    }
+
     function resize(){
       var rect = canvas.getBoundingClientRect();
       var rw = rect.width || canvas.offsetWidth;
@@ -833,7 +1002,13 @@
     // changes one of those counts, so the cache stays correct.
     function _topo(){
       var c = state._topoCache;
-      if (c && c.nc === state.nodes.length && c.ec === state.edges.length) return c;
+      // Validity check: counts catch in-place pushes; ARRAY IDENTITY catches
+      // load()/collapseNode() which swap in brand-new arrays of possibly the
+      // same length. Without the identity check a reload with identical counts
+      // kept serving the OLD node objects — edges then rendered against stale
+      // positions and appeared detached from the (new) nodes.
+      if (c && c.nodesRef === state.nodes && c.edgesRef === state.edges &&
+          c.nc === state.nodes.length && c.ec === state.edges.length) return c;
       var nm = {}, deg = {};
       for (var i = 0; i < state.nodes.length; i++) nm[state.nodes[i].id] = state.nodes[i];
       for (var j = 0; j < state.edges.length; j++) {
@@ -841,7 +1016,9 @@
         deg[e.from] = (deg[e.from] || 0) + 1;
         deg[e.to]   = (deg[e.to]   || 0) + 1;
       }
-      c = state._topoCache = { nc: state.nodes.length, ec: state.edges.length, nm: nm, deg: deg };
+      c = state._topoCache = { nc: state.nodes.length, ec: state.edges.length,
+                               nodesRef: state.nodes, edgesRef: state.edges,
+                               nm: nm, deg: deg };
       return c;
     }
 
@@ -869,6 +1046,21 @@
       // screen to be readable; small/normal graphs keep their current behaviour.
       var _bigGraph = state.nodes.length > 400;
 
+      // Viewport culling: the world-space rect currently on screen (+margin).
+      // On a large graph — especially zoomed in — most nodes/edges are outside
+      // it and can be skipped entirely. Small graphs skip the bookkeeping.
+      var _cull = state.nodes.length > 150;
+      var _vpad = 90;
+      var _vx0 = (-state.off.x) / _s - _vpad, _vy0 = (-state.off.y) / _s - _vpad;
+      var _vx1 = (W - state.off.x) / _s + _vpad, _vy1 = (H - state.off.y) / _s + _vpad;
+
+      // Edge batching: every edge sharing a (colour, alpha, width, dash) style
+      // is accumulated into one path and stroked ONCE. Per-edge stroke() +
+      // canvas state changes dominated the frame cost on big graphs; batching
+      // collapses thousands of strokes into a handful. Selected-node edges are
+      // few and drawn immediately (they sit on top anyway).
+      var _batches = {};
+      var _edgeLabels = (state.scale > 0.6 && !_bigGraph) ? [] : null;
       state.edges.forEach(function(e){
         var a = nm[e.from], b = nm[e.to];
         if (!a || !b) return;
@@ -876,6 +1068,9 @@
         if (e._layer && !_layerVisible(e._layer)) return;
         if (state._edgeHidden && state._edgeHidden(e.rel)) return;
         var isSel = state.selected && (state.selected.id === a.id || state.selected.id === b.id);
+        if (_cull && !isSel &&
+            ((a.x < _vx0 && b.x < _vx0) || (a.x > _vx1 && b.x > _vx1) ||
+             (a.y < _vy0 && b.y < _vy0) || (a.y > _vy1 && b.y > _vy1))) return;
         // Apply edge style function if provided
         var es = opts.edgeStyleFn ? opts.edgeStyleFn(e) : null;
         var ec = (es && es.color) || edgeColor(e.rel);
@@ -885,7 +1080,9 @@
         //          memory. DASHED = inferred: loom stitching, 3rd-order,
         //          similarity. Hubs only fade (never forced dashed), so a
         //          dense real hub stays solid and legible.
-        var isInferred   = isInferredEdge(e);
+        // Cached per edge object — classification only depends on the edge's
+        // own fields, so computing it once (not per frame) is safe.
+        var isInferred   = (e._inf !== undefined) ? e._inf : (e._inf = isInferredEdge(e));
         var isHub        = !isSel && ((_deg[e.from] || 0) > 8 || (_deg[e.to] || 0) > 8);
         var isStructural = _STRUCTURAL_T[a.type] || _STRUCTURAL_T[b.type];
         var edgeAlpha, dashPat;
@@ -910,26 +1107,58 @@
           }
         }
         var lw = isSel ? 1.8 : ((es && es.width) || (isStructural ? 1.2 : (isInferred ? 0.8 : 1.0)));
-        ctx.globalAlpha = edgeAlpha;
-        ctx.beginPath();
-        if (dashPat) ctx.setLineDash(dashPat);
-        else if (es && es.dash) ctx.setLineDash(es.dash);
-        else ctx.setLineDash([]);
-        ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
-        ctx.strokeStyle = ec;
-        ctx.lineWidth   = lw;
-        ctx.stroke();
-        ctx.globalAlpha = 1;
-        ctx.setLineDash([]);
-        if (e.rel && state.scale > 0.6 && !_bigGraph) {
-          ctx.font = '7px monospace';
-          ctx.fillStyle = _C_DIM2;
-          ctx.textAlign = 'center';
-          ctx.fillText(String(e.rel).slice(0, 14), (a.x + b.x) / 2, (a.y + b.y) / 2 - 2);
-          ctx.textAlign = 'left';
+        var dash = dashPat || (es && es.dash) || null;
+        if (isSel) {
+          // Selected edges are few — draw immediately so they sit on top of
+          // the batched strokes.
+          ctx.globalAlpha = edgeAlpha;
+          ctx.beginPath();
+          ctx.setLineDash(dash || []);
+          ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+          ctx.strokeStyle = ec;
+          ctx.lineWidth   = lw;
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+          ctx.setLineDash([]);
+        } else {
+          // Quantise the fade alpha so the relevance fade can't explode the
+          // number of distinct batches.
+          edgeAlpha = Math.round(edgeAlpha * 20) / 20;
+          var _bkey = ec + '|' + edgeAlpha + '|' + lw + '|' + (dash ? dash.join(',') : '');
+          var _b = _batches[_bkey];
+          if (!_b) _b = _batches[_bkey] = { color: ec, alpha: edgeAlpha, width: lw, dash: dash, pts: [] };
+          _b.pts.push(a.x, a.y, b.x, b.y);
+        }
+        if (_edgeLabels && e.rel) {
+          _edgeLabels.push(String(e.rel).slice(0, 14), (a.x + b.x) / 2, (a.y + b.y) / 2 - 2);
         }
       });
+      for (var _bk in _batches) {
+        var _b2 = _batches[_bk];
+        ctx.globalAlpha = _b2.alpha;
+        ctx.strokeStyle = _b2.color;
+        ctx.lineWidth   = _b2.width;
+        ctx.setLineDash(_b2.dash || []);
+        ctx.beginPath();
+        var _P = _b2.pts;
+        for (var _bi = 0; _bi < _P.length; _bi += 4) {
+          ctx.moveTo(_P[_bi], _P[_bi + 1]); ctx.lineTo(_P[_bi + 2], _P[_bi + 3]);
+        }
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      ctx.setLineDash([]);
+      if (_edgeLabels && _edgeLabels.length) {
+        ctx.font = '7px monospace';
+        ctx.fillStyle = _C_DIM2;
+        ctx.textAlign = 'center';
+        for (var _li = 0; _li < _edgeLabels.length; _li += 3) {
+          ctx.fillText(_edgeLabels[_li], _edgeLabels[_li + 1], _edgeLabels[_li + 2]);
+        }
+        ctx.textAlign = 'left';
+      }
 
+      var _liveAnim = false;
       state.nodes.forEach(function(n){
         if (n._hidden) return;
         var r = n.r || (n.type === 'Entity' ? 8 : 12);
@@ -937,9 +1166,39 @@
         var hov = state.hov === n;
         var sel = state.selected && state.selected.id === n.id;
         var hl  = state.searchHighlight.has(n.id);
+        // Off-screen nodes cost nothing (their pulse/spinner animation is
+        // invisible anyway, so it's safe to skip the bookkeeping too).
+        if (_cull && !sel && !hov &&
+            (n.x < _vx0 || n.x > _vx1 || n.y < _vy0 || n.y > _vy1)) return;
         var pulse = n._pulseUntil && n._pulseUntil > Date.now();
-        ctx.shadowColor = col;
-        ctx.shadowBlur = (hov || sel || hl || pulse) ? 16 : 5;
+        if (pulse) _liveAnim = true;
+        // LOD: a node rendering under ~2.5px is an unreadable dot — draw it as
+        // a single fill and skip stroke/labels/indicators entirely.
+        if (_cull && (r * _s) < 2.5 && !(hov || sel || hl || pulse || n._loading)) {
+          ctx.beginPath();
+          ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+          ctx.fillStyle = col + 'aa';
+          ctx.fill();
+          return;
+        }
+        // Loading spinner: a rotating arc around any node whose expansion is
+        // still fetching, so slow backends give immediate visual feedback.
+        if (n._loading) {
+          _liveAnim = true;
+          var _lt = (Date.now() % 900) / 900 * Math.PI * 2;
+          ctx.beginPath();
+          ctx.arc(n.x, n.y, r + 5, _lt, _lt + Math.PI * 1.25);
+          ctx.strokeStyle = _C_ACC;
+          ctx.lineWidth = 1.6;
+          ctx.stroke();
+        }
+        // Canvas shadows are among the slowest 2D ops — a base 5px glow on
+        // EVERY node dominated the frame budget even on small graphs. Only
+        // highlighted nodes get the glow now; the plain stroke reads the same.
+        if (hov || sel || hl || pulse) {
+          ctx.shadowColor = col;
+          ctx.shadowBlur = 16;
+        }
         if (pulse) {
           var t = (n._pulseUntil - Date.now()) / 1500;
           var rr = r + (1 - t) * 6;
@@ -949,13 +1208,16 @@
           ctx.lineWidth = 1.4;
           ctx.stroke();
         }
+        var _shape = nodeShape(n);
+        // Concepts get a brighter fill so they read as anchors, not data points.
+        var _fillA = (hov || sel || hl) ? 'a8' : (_shape === 'diamond' ? '99' : (n._alpha || '59'));
         ctx.beginPath();
-        ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-        ctx.fillStyle = col + ((hov || sel || hl) ? 'a8' : (n._alpha || '59'));  /* memory_graph: low fill, full stroke */
+        _shapePath(ctx, _shape, n.x, n.y, r);
+        ctx.fillStyle = col + _fillA;  /* memory_graph: low fill, full stroke */
         ctx.fill();
         ctx.shadowBlur = 0;
-        ctx.strokeStyle = (hov || sel || hl) ? _C_TEXT : col + 'cc';
-        ctx.lineWidth   = (hov || sel || hl) ? 2 : 1.2;
+        ctx.strokeStyle = (hov || sel || hl) ? _C_TEXT : col + (_shape === 'diamond' ? 'ff' : 'cc');
+        ctx.lineWidth   = (hov || sel || hl) ? 2 : (_shape === 'diamond' ? 1.8 : 1.2);
         ctx.stroke();
         // On big graphs only draw a label when the node is highlighted or large
         // enough on screen (r*scale >= 5px) — otherwise the text is illegible
@@ -1000,6 +1262,9 @@
           }
         }
       });
+      // Schedule the next repaint while any spinner/pulse is on screen (the
+      // frozen heartbeat checks _animUntil and re-marks the view dirty).
+      if (_liveAnim) state._animUntil = Date.now() + 250;
       ctx.restore();
     }
 
@@ -1018,6 +1283,12 @@
           state.tickCount = 0;
         } else {
           state.frozen = true; state._dirty = true;
+          // First natural settle after a load(): frame the whole layout.
+          // Cleared by any user pan/zoom so it never fights the user.
+          if (state._autoFitOnce) {
+            state._autoFitOnce = false;
+            try { fitView(); } catch(e){}
+          }
         }
       }
       if (state.frozen) {
@@ -1027,6 +1298,10 @@
         // (a freeze transition, or a hover/pan/zoom/drag/selection interaction).
         // The cheap 100ms heartbeat keeps running so a dirty flag is picked up
         // promptly — the same latency the old unconditional redraw had.
+        // While any node animation is live (loading spinner, pulse ring) keep
+        // repainting: draw() bumps _animUntil whenever it renders one, so the
+        // animation self-perpetuates and stops costing anything once finished.
+        if (state._animUntil && state._animUntil > Date.now()) state._dirty = true;
         if (state._dirty) { draw(); state._dirty = false; }
         state.animHandle = setTimeout(function(){
           if (state.stopped) return;
@@ -1034,10 +1309,6 @@
         }, 100);
         return;
       }
-      var nm2 = _topo().nm;
-      var damping = 0.85 - Math.min(0.4, state.tickCount / 700);
-      var maxV = Math.max(0.5, 8 - state.tickCount * 0.02);
-
       // ── Force+Axis mode: the AXIS takes precedence ───────────────────────
       // Pure positional relaxation — NO velocity is accumulated, so the system
       // cannot oscillate (the previous velocity-spring version resonated, making
@@ -1101,6 +1372,29 @@
         state.animHandle = requestAnimationFrame(tick);
         return;
       }
+
+      // Multi-substep during the hot phase: while the layout is still coarse,
+      // advance the simulation several iterations per painted frame. Same total
+      // iteration budget, roughly a third of the wall-clock time to settle —
+      // this is what makes large loaded graphs organise in a couple of seconds
+      // instead of needing repeated Re-layout presses.
+      var _sub = (!state.drag && state.nodes.length > 150 && state.tickCount < 140)
+                   ? (state.nodes.length > 800 ? 4 : 3) : 1;
+      for (var _ss = 0; _ss < _sub; _ss++) {
+        _forcePass();
+        if (_ss < _sub - 1) state.tickCount++;
+      }
+      draw();
+      state.animHandle = requestAnimationFrame(tick);
+    }
+
+    // One full force iteration (repulsion + springs + cluster separation +
+    // velocity integration). Shared by the visible tick loop and the headless
+    // pre-settle that load() runs so a fresh graph appears already organised.
+    function _forcePass(){
+      var nm2 = _topo().nm;
+      var damping = 0.85 - Math.min(0.4, state.tickCount / 700);
+      var maxV = Math.max(0.5, 8 - state.tickCount * 0.02);
 
       // When a layer has physics disabled, its nodes are pinned (they still draw
       // and still exert forces on others, but don't move themselves) — useful
@@ -1185,7 +1479,13 @@
         // A cross-cluster edge (endpoints in different communities) also gets a
         // little extra length so distinct groups don't sit on top of each other.
         if (a._cluster !== undefined && a._cluster !== b._cluster) restLen += 60;
-        var f  = str * (d - restLen);
+        // Degree-normalised pull (ForceAtlas2-style): inside a dense community
+        // every node is tugged by dozens of springs while repulsion is capped,
+        // so cliques packed into an unreadable pile. Dividing by √(smaller
+        // endpoint degree) leaves hub↔leaf spokes at full strength (leaf
+        // degree ≈ 1) but lets repulsion win between mutually-connected nodes.
+        var _dn = Math.pow(Math.min(a._deg || 1, b._deg || 1), 0.6);
+        var f  = (str / _dn) * (d - restLen);
         var aPinned = _anyPhysicsOff && !_layerPhysics(a._layer);
         var bPinned = _anyPhysicsOff && !_layerPhysics(b._layer);
         if (state.drag !== a && !aPinned) { a.vx += f * dx / d; a.vy += f * dy / d; }
@@ -1245,12 +1545,10 @@
           n.vx = (n.vx / spd) * maxV;
           n.vy = (n.vy / spd) * maxV;
         }
-        var WB = W * 4, HB = H * 4;
+        var WB = (W || 640) * 4, HB = (H || 420) * 4;
         n.x = Math.max(-WB, Math.min(WB, n.x + n.vx));
         n.y = Math.max(-HB, Math.min(HB, n.y + n.vy));
       });
-      draw();
-      state.animHandle = requestAnimationFrame(tick);
     }
     function wake(){
       state.frozen = false;
@@ -1402,13 +1700,33 @@
       return null;
     }
 
+    // Immediate interaction repaint. When the sim is frozen, the tick loop
+    // only checks the dirty flag on a 100ms heartbeat — pan/zoom/drag on a
+    // settled graph therefore repainted at ~10fps and felt sluggish. Input
+    // handlers call this instead: one coalesced rAF draw, full frame rate.
+    // (While the sim is hot the tick loop already draws every frame, so this
+    // only needs to paint in the frozen/stopped states.)
+    var _paintQueued = false;
+    function _paintNow(){
+      state._dirty = true;
+      if (_paintQueued) return;
+      _paintQueued = true;
+      requestAnimationFrame(function(){
+        _paintQueued = false;
+        if (state.frozen || state.stopped) {
+          try { draw(); state._dirty = false; } catch(e){}
+        }
+      });
+    }
+
     canvas.onmousedown = function(e){
       var rect = canvas.getBoundingClientRect();
       var mx = e.clientX - rect.left, my = e.clientY - rect.top;
       var n = findNode(mx, my);
       if (n) state.drag = n;
       else state.pan = { mx: mx, my: my, ox: state.off.x, oy: state.off.y };
-      state._dirty = true;
+      state._autoFitOnce = false;   // user took the camera — don't yank it later
+      _paintNow();
     };
     canvas.onmousemove = function(e){
       var rect = canvas.getBoundingClientRect();
@@ -1421,7 +1739,19 @@
         state.off.x = state.pan.ox + (mx - state.pan.mx);
         state.off.y = state.pan.oy + (my - state.pan.my);
       } else {
+        var _prevHov = state.hov;
         state.hov = findNode(mx, my);
+        // Only repaint when the hover target actually changed — marking dirty
+        // on every pointer move forced a full redraw at mouse-speed even on a
+        // frozen graph.
+        if (state.hov === _prevHov && !state.drag && !state.pan) {
+          if (state.hov && tooltip) {
+            tooltip.style.left = (mx + 12) + 'px';
+            tooltip.style.top  = (my + 12) + 'px';
+          }
+          canvas.style.cursor = state.hov ? 'pointer' : 'grab';
+          return;
+        }
         if (state.hov && tooltip) {
           var n = state.hov;
           var label = (n.label || n.id || '').slice(0, 60);
@@ -1437,12 +1767,12 @@
         }
       }
       canvas.style.cursor = (state.drag || state.hov) ? 'pointer' : (state.pan ? 'grabbing' : 'grab');
-      state._dirty = true;
+      _paintNow();
     };
     canvas.onmouseup = function(e){
-      var clicked = state.drag;
+      var clicked = state.drag, wasPan = state.pan;
       state.drag = null; state.pan = null;
-      state._dirty = true;
+      _paintNow();
       if (clicked && Math.abs(e.movementX) < 4 && Math.abs(e.movementY) < 4) {
         state.selected = clicked;
         if (opts.onNodeClick) {
@@ -1450,6 +1780,12 @@
           if (rv === false) return; // host suppressed default
         }
         showDetail(clicked);
+      } else if (!clicked && wasPan && state.selected) {
+        // A click on empty space (a pan that never actually moved) deselects,
+        // returning arrow keys to pan mode — the mouse counterpart of Escape.
+        var rect = canvas.getBoundingClientRect();
+        var moved = Math.hypot((e.clientX-rect.left)-wasPan.mx, (e.clientY-rect.top)-wasPan.my);
+        if (moved < 4) { state.selected = null; if (detailEl) detailEl.style.display = 'none'; }
       }
     };
     canvas.ondblclick = function(e){
@@ -1479,7 +1815,7 @@
     };
     canvas.onmouseleave = function(){
       if (tooltip) tooltip.style.display = 'none';
-      if (state.hov) { state.hov = null; state._dirty = true; }
+      if (state.hov) { state.hov = null; _paintNow(); }
     };
     canvas.onwheel = function(e){
       e.preventDefault();
@@ -1489,7 +1825,8 @@
       state.off.x = mx - (mx - state.off.x) * f;
       state.off.y = my - (my - state.off.y) * f;
       state.scale = Math.max(0.12, Math.min(5, state.scale * f));
-      state._dirty = true;
+      state._autoFitOnce = false;   // user took the camera — don't yank it later
+      _paintNow();
     };
 
     // ── Search (two modes) ──────────────────────────────────────────────────
@@ -1502,17 +1839,78 @@
     var searchDepthEl = container.querySelector('.vg-search-depth');
     var searchResEl   = container.querySelector('.vg-search-results');
 
+    function _nodeMatchesQ(n, q){
+      var l = String(n.label || '').toLowerCase();
+      var i = String(n.id || '').toLowerCase();
+      var name = (n.props && n.props.name) ? String(n.props.name).toLowerCase() : '';
+      return l.indexOf(q) >= 0 || i.indexOf(q) >= 0 || name.indexOf(q) >= 0;
+    }
     function _searchMatches(q){
       q = (q || '').trim().toLowerCase();
       if (!q) return [];
       var out = [];
-      state.nodes.forEach(function(n){
-        var l = String(n.label || '').toLowerCase();
-        var i = String(n.id || '').toLowerCase();
-        var name = (n.props && n.props.name) ? String(n.props.name).toLowerCase() : '';
-        if (l.indexOf(q) >= 0 || i.indexOf(q) >= 0 || name.indexOf(q) >= 0) out.push(n);
+      state.nodes.forEach(function(n){ if (_nodeMatchesQ(n, q)) out.push(n); });
+      return out;
+    }
+    // Matches hidden inside COLLAPSED sub-trees (removed from state.nodes but
+    // kept in the collapse stash). Returns [{node, parentId}].
+    function _searchCollapsedMatches(q){
+      q = (q || '').trim().toLowerCase();
+      if (!q || !state.collapsedStore) return [];
+      var out = [];
+      Object.keys(state.collapsedStore).forEach(function(pid){
+        (state.collapsedStore[pid].nodes || []).forEach(function(n){
+          if (_nodeMatchesQ(n, q)) out.push({ node: n, parentId: pid });
+        });
       });
       return out;
+    }
+    // Deep search: fuzzy CONTAINS over the whole graph DB, any label — reaches
+    // nodes (records, entities, loom neighbours…) never loaded into this view.
+    var _deepSeq = 0;
+    async function _searchBackend(q){
+      var seq = ++_deepSeq;
+      try {
+        var res = await fetch(apiBase + '/fabric/graph/query', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cypher:
+            'MATCH (n) WHERE toLower(coalesce(n.name,\'\')) CONTAINS $q ' +
+            'OR toLower(coalesce(n.title,\'\')) CONTAINS $q ' +
+            'OR toLower(coalesce(n.id,\'\')) CONTAINS $q RETURN n LIMIT 25',
+            params: { q: (q || '').toLowerCase() } }),
+        });
+        var d = await res.json();
+        if (seq !== _deepSeq) return null;   // superseded by a newer query
+        return (d && d.nodes) || [];
+      } catch(e){ return []; }
+    }
+    // Pull a deep-search hit onto the graph: add the node, then fetch its
+    // 1-hop neighbourhood so it connects to anything already on screen.
+    async function _materialiseDbNode(spec){
+      if (!spec || !spec.id) return null;
+      var added = addNode({
+        id: spec.id,
+        label: spec.name || (spec.props && (spec.props.title || spec.props.name || spec.props.url)) || spec.id,
+        type: spec.label || (spec.labels && spec.labels[0]) || spec.type || 'Node',
+        props: spec.props || {},
+      });
+      if (!added) return state.nodeIndex[spec.id] || null;
+      added._pulseUntil = Date.now() + 2000;
+      try {
+        var res = await fetch(apiBase + '/fabric/graph/query', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cypher: 'MATCH (a {id:$nid})-[r]-(b) RETURN a, r, b LIMIT 40',
+                                  params: { nid: spec.id } }),
+        });
+        var d = await res.json();
+        (d && d.edges || []).forEach(function(e){
+          if (state.nodeIndex[e.from] && state.nodeIndex[e.to]) {
+            addEdge({ from: e.from, to: e.to, rel: e.rel || 'RELATED_TO', props: e.props || {} }, true);
+          }
+        });
+        wake();
+      } catch(e){}
+      return added;
     }
 
     // Build an adjacency map once for neighbour expansion.
@@ -1549,28 +1947,79 @@
       draw();
     }
 
-    function _renderSearchResults(matches){
+    var _lastDbResults = [];
+    function _renderSearchResults(matches, extra){
       if (!searchResEl) return;
-      if (!matches.length) { searchResEl.style.display = 'none'; searchResEl.innerHTML = ''; return; }
+      extra = extra || {};
+      var collapsed = extra.collapsed || [];
+      var db = extra.db || [];
+      if (!matches.length && !collapsed.length && !db.length) {
+        searchResEl.style.display = 'none'; searchResEl.innerHTML = ''; return;
+      }
       searchResEl.style.display = '';
-      searchResEl.innerHTML = matches.slice(0, 60).map(function(n, i){
-        var sub = n.type || (n.props && n.props.type) || '';
-        return '<div class="vg-sr-row" data-id="'+esc(n.id)+'" style="padding:4px 8px;cursor:pointer;' +
+      function _rowHTML(label, sub, attrs, badge){
+        return '<div class="vg-sr-row" ' + attrs + ' style="padding:4px 8px;cursor:pointer;' +
           'border-bottom:1px solid var(--border,#3a3530);font-size:10px;display:flex;gap:6px;align-items:center">' +
-          '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text,#ddd5c8)">'+esc(n.label||n.id)+'</span>' +
+          '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text,#ddd5c8)">'+esc(label)+'</span>' +
+          (badge ? '<span style="font-size:7.5px;color:var(--acc3,#c9955a);border:1px solid var(--acc3,#c9955a);border-radius:2px;padding:0 3px">'+esc(badge)+'</span>' : '') +
           '<span style="font-size:8px;color:var(--dim,#6a6058);font-family:var(--mono,monospace)">'+esc(String(sub).slice(0,14))+'</span>' +
           '</div>';
+      }
+      function _secHTML(t){
+        return '<div style="padding:3px 8px;font-size:7.5px;color:var(--dim,#6a6058);text-transform:uppercase;letter-spacing:.6px;background:var(--bg2,#272421)">'+esc(t)+'</div>';
+      }
+      var html = matches.slice(0, 60).map(function(n){
+        return _rowHTML(n.label || n.id, n.type || (n.props && n.props.type) || '', 'data-id="'+esc(n.id)+'"', '');
       }).join('');
+      if (collapsed.length) {
+        html += _secHTML('Inside collapsed nodes');
+        html += collapsed.slice(0, 30).map(function(c){
+          var parent = state.nodeIndex[c.parentId];
+          return _rowHTML(c.node.label || c.node.id,
+            'in ' + ((parent && parent.label) || c.parentId).slice(0, 14),
+            'data-id="'+esc(c.node.id)+'" data-parent="'+esc(c.parentId)+'"', 'collapsed');
+        }).join('');
+      }
+      _lastDbResults = db;
+      if (db.length) {
+        html += _secHTML('Graph database (not loaded)');
+        html += db.slice(0, 25).map(function(n, i){
+          return _rowHTML(n.name || (n.props && (n.props.title || n.props.name)) || n.id,
+            n.label || (n.labels && n.labels[0]) || '',
+            'data-db="'+i+'"', 'db');
+        }).join('');
+      }
+      searchResEl.innerHTML = html;
       searchResEl.querySelectorAll('.vg-sr-row').forEach(function(row){
         row.onmouseenter = function(){ row.style.background = 'var(--bg2,#272421)'; };
         row.onmouseleave = function(){ row.style.background = ''; };
         row.onclick = function(){
+          var dbIdx = row.getAttribute('data-db');
+          var parentId = row.getAttribute('data-parent');
           var id = row.getAttribute('data-id');
+          searchResEl.style.display = 'none';
+          if (dbIdx !== null && dbIdx !== undefined && dbIdx !== '') {
+            // off-graph hit — pull it in with its 1-hop links, then focus
+            _materialiseDbNode(_lastDbResults[parseInt(dbIdx, 10)]).then(function(n2){
+              if (n2) { state.searchHighlight = new Set([n2.id]); _panZoomTo(n2); }
+            });
+            return;
+          }
+          if (parentId && !state.nodeIndex[id]) {
+            // hit inside a collapsed sub-tree — re-expand the parent, then focus
+            var pnode = state.nodeIndex[parentId];
+            if (pnode) {
+              Promise.resolve(expandNode(pnode)).then(function(){
+                var n3 = state.nodeIndex[id];
+                if (n3) { state.searchHighlight = new Set([id]); _panZoomTo(n3); }
+              });
+            }
+            return;
+          }
           var node = state.nodeIndex[id] || state.nodes.find(function(n){ return n.id === id; });
           // highlight just this node and centre it
           state.searchHighlight = new Set([id]);
           _panZoomTo(node);
-          searchResEl.style.display = 'none';
         };
       });
     }
@@ -1601,10 +2050,24 @@
         }
         draw();
       } else {
-        // list mode — show results dropdown; highlight matches lightly
+        // list mode — show results dropdown; highlight matches lightly.
+        // Collapsed sub-trees are always included; the Deep toggle adds
+        // whole-database hits asynchronously.
         state.searchHighlight = new Set(matches.map(function(n){ return n.id; }));
-        _renderSearchResults(matches);
+        var collapsed = _searchCollapsedMatches(q);
+        _renderSearchResults(matches, { collapsed: collapsed });
         draw();
+        if (_searchDeepOn) {
+          _searchBackend(q).then(function(db){
+            if (db === null) return;                       // superseded
+            if ((searchEl.value || '').trim() !== q) return; // input moved on
+            var have = {};
+            matches.forEach(function(n){ have[n.id] = 1; });
+            collapsed.forEach(function(c){ have[c.node.id] = 1; });
+            db = db.filter(function(n){ return n && n.id && !have[n.id] && !state.nodeIndex[n.id]; });
+            _renderSearchResults(matches, { collapsed: collapsed, db: db });
+          });
+        }
       }
     }
 
@@ -1637,22 +2100,49 @@
       };
     }
     if (searchDepthEl) searchDepthEl.onchange = _runSearch;
+    var searchDeepEl = container.querySelector('.vg-search-deep');
+    var _searchDeepOn = false;
+    if (searchDeepEl) searchDeepEl.onclick = function(){
+      _searchDeepOn = !_searchDeepOn;
+      searchDeepEl.style.color = _searchDeepOn ? 'var(--acc2,#8fb87a)' : 'var(--dim,#6a6058)';
+      searchDeepEl.style.borderColor = _searchDeepOn ? 'var(--acc2,#8fb87a)' : 'var(--border,#3a3530)';
+      _runSearch();
+    };
     // hide the results dropdown when clicking elsewhere
     if (canvas) canvas.addEventListener('mousedown', function(){ if (searchResEl) searchResEl.style.display = 'none'; });
 
     if (relayoutBtn) relayoutBtn.onclick = function(){
-      // One press = a few automatic anneal cycles, so a single click does what
-      // previously took several. (You can still click again to keep going.)
-      state.settleCycles = state.nodes.length > 120 ? 5 : 3;
+      // A genuine fresh layout, not a nudge: annealing from the current
+      // positions cannot escape a tangled arrangement (that's why complex
+      // graphs needed many presses and still looked wrong). Recompute the
+      // communities, RE-SEED the cluster-aware placement, pre-settle off
+      // screen, then anneal — and frame the result when it settles.
+      var _rn = state.nodes.length;
+      try { _computeClusters(); } catch(e){}
+      if (_rn > 12) {
+        _seedLayout(state.nodes.filter(function(n){ return !n._hidden; }));
+        var _rPre = _rn > 2500 ? 30 : _rn > 800 ? 70 : 120;
+        var _rT0 = Date.now();
+        for (var _ri = 0; _ri < _rPre; _ri++) {
+          state.tickCount = _ri;
+          try { _forcePass(); } catch(e){ break; }
+          if (Date.now() - _rT0 > (_rn > 800 ? 550 : 350)) break;
+        }
+        state.tickCount = 0;
+      }
+      state.settleCycles = _rn > 800 ? 8 : _rn > 120 ? 5 : 3;
+      state._autoFitOnce = true;
       wake();
     };
-    if (fitBtn) fitBtn.onclick = function(){
+    function fitView(){
       if (!state.nodes.length) return;
       var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
       state.nodes.forEach(function(n){
+        if (n._hidden) return;
         if (n.x < minX) minX = n.x; if (n.x > maxX) maxX = n.x;
         if (n.y < minY) minY = n.y; if (n.y > maxY) maxY = n.y;
       });
+      if (minX === Infinity) return;
       var pad = 60;
       var graphW = (maxX - minX) + pad * 2;
       var graphH = (maxY - minY) + pad * 2;
@@ -1660,7 +2150,9 @@
       state.scale = Math.min(2, Math.max(0.15, Math.min(sx, sy)));
       state.off.x = W / 2 - ((minX + maxX) / 2) * state.scale;
       state.off.y = H / 2 - ((minY + maxY) / 2) * state.scale;
-    };
+      _paintNow();
+    }
+    if (fitBtn) fitBtn.onclick = fitView;
 
     if (layerEl) {
       layerEl.addEventListener('change', function(){
@@ -1791,23 +2283,51 @@
     }
 
     // ── Graph source picker ─────────────────────────────────────────────
+    function _srcClick(){
+      var btn = this;
+      container.querySelectorAll('.vg-gp .tb').forEach(function(b){ b.classList.remove('on'); });
+      btn.classList.add('on');
+      var src = btn.dataset.src;
+      if (_memModeEl) _memModeEl.style.display = src === 'memory' ? '' : 'none';
+      if (_sessSecEl) _sessSecEl.style.display = src === 'memory' ? '' : 'none';
+      if (src === 'memory') {
+        var mmode = _memSelEl ? _memSelEl.value : 'session';
+        _loadMemory(mmode);
+      } else {
+        // No explicit label_filter — fetchSnapshot applies the graph's default
+        // scope (backend uses the adapter's registered scope_labels).
+        instance.fetchSnapshot(src, {});
+      }
+    }
     var _srcBtns = container.querySelectorAll('.vg-gp .tb');
-    _srcBtns.forEach(function(btn){
-      btn.addEventListener('click', function(){
-        _srcBtns.forEach(function(b){b.classList.remove('on');});
-        btn.classList.add('on');
-        var src = btn.dataset.src;
-        if (_memModeEl) _memModeEl.style.display = src === 'memory' ? '' : 'none';
-        if (_sessSecEl) _sessSecEl.style.display = src === 'memory' ? '' : 'none';
-        if (src === 'memory') {
-          var mmode = _memSelEl ? _memSelEl.value : 'session';
-          _loadMemory(mmode);
-        } else {
-          // No explicit label_filter — fetchSnapshot will apply the structural default.
-          instance.fetchSnapshot(src, {});
-        }
+    _srcBtns.forEach(function(btn){ btn.addEventListener('click', _srcClick); });
+    // Extend the Source row with user-registered custom graphs so any graph
+    // can be selected/loaded from the same place as fabric/memory/net.
+    var _gpEl = container.querySelector('.vg-gp');
+    if (_gpEl) {
+      fetch(apiBase + '/fabric/graphs').then(function(r){ return r.json(); }).then(function(d){
+        (d && d.graphs || []).forEach(function(g){
+          if (!g || !g.name) return;
+          if (['fabric', 'memory', 'net'].indexOf(g.name) >= 0) return;
+          if (_gpEl.querySelector('[data-src="' + g.name + '"]')) return;
+          var b = document.createElement('span');
+          b.className = 'tb';
+          b.dataset.src = g.name;
+          b.textContent = g.name.slice(0, 10);
+          b.title = g.description || ('Custom graph: ' + g.name);
+          b.addEventListener('click', _srcClick);
+          _gpEl.appendChild(b);
+        });
+        _syncSrcButtons();
+      }).catch(function(){});
+    }
+    // Keep the picker's active state in sync when a graph is loaded from
+    // elsewhere (registered-graphs list, host panel, layer select).
+    function _syncSrcButtons(){
+      container.querySelectorAll('.vg-gp .tb').forEach(function(b){
+        b.classList.toggle('on', b.dataset.src === state.currentLayer);
       });
-    });
+    }
     if (_memSelEl) _memSelEl.addEventListener('change', function(){ _loadMemory(_memSelEl.value); });
 
     async function _loadMemory(mmode){
@@ -2241,7 +2761,7 @@
       if(!items.length){_spListEl.innerHTML='<span style="font-size:9px;color:var(--dim,#6a6058)">No sessions</span>';return;}
       _spListEl.innerHTML=items.map(function(s){
         var on=_selectedSids.has(s.sid);
-        return '<div class="vg-sp'+(on?' on':'')+'" data-sid="'+esc(s.sid)+'" title="'+esc(s.sid)+'">'+(s.sid===curSid?'\u25b6 ':'')+esc(s.name||s.sid.slice(-12))+'<div style="font-size:7.5px;color:var(--dim,#6a6058)">'+s.count+' msgs \xb7 '+(s.ts||'').slice(0,10)+'</div></div>';
+        return '<div class="vg-sp'+(on?' on':'')+'" data-sid="'+esc(s.sid)+'" title="'+esc(s.sid)+'">'+(s.sid===curSid?'\u25b6︎ ':'')+esc(s.name||s.sid.slice(-12))+'<div style="font-size:7.5px;color:var(--dim,#6a6058)">'+s.count+' msgs \xb7 '+(s.ts||'').slice(0,10)+'</div></div>';
       }).join('');
     }
     if(_spListEl) _spListEl.addEventListener('click',function(ev){
@@ -2269,24 +2789,96 @@
 
     // ── Keyboard navigation ─────────────────────────────────────────────
     canvas.setAttribute('tabindex','0');
+    // Keyboard: selection-aware navigation.
+    //   • Nothing selected  → arrow keys PAN the viewport.
+    //   • A node selected    → arrow keys TRAVERSE along edges to the connected
+    //                          neighbour best aligned with the pressed direction,
+    //                          recentring on it. Escape deselects and hands the
+    //                          arrows back to pan mode.
+    //   • Tab / Shift-Tab    → cycle selection through every visible node.
+    function _recenterOn(n){
+      state.off.x = W/2 - n.x*state.scale;
+      state.off.y = H/2 - n.y*state.scale;
+    }
+    function _stepAlongEdge(cur, dir){
+      // Follow edges: among the node's directly-connected, visible neighbours,
+      // pick the one whose direction best matches the pressed arrow (cosine
+      // alignment); a nearer neighbour breaks near-ties. Neighbours more than
+      // ~70° off the pressed axis are ignored so the walk stays predictable.
+      var seen = {}, best = null, bestScore = -Infinity;
+      for (var i=0;i<state.edges.length;i++){
+        var e = state.edges[i];
+        var nid = e.from===cur.id ? e.to : (e.to===cur.id ? e.from : null);
+        if (!nid || seen[nid]) continue;
+        seen[nid] = 1;
+        var nb = state.nodeIndex[nid];
+        if (!nb || nb._hidden) continue;
+        var dx = nb.x-cur.x, dy = nb.y-cur.y, dist = Math.hypot(dx,dy);
+        if (dist < 1e-3) continue;
+        var cos = (dx*dir.x + dy*dir.y)/dist;   // +1 = dead ahead of the arrow
+        if (cos <= 0.35) continue;              // skip neighbours >~70° off-axis
+        var score = cos - dist*0.0004;          // best aligned first, then nearest
+        if (score > bestScore){ bestScore = score; best = nb; }
+      }
+      return best;
+    }
+    // Screen-space arrow vectors (canvas y grows downward), so world dx/dy align
+    // with what the user sees on screen.
+    var _ARROW_DIR = {
+      ArrowLeft:{x:-1,y:0}, ArrowRight:{x:1,y:0},
+      ArrowUp:{x:0,y:-1},   ArrowDown:{x:0,y:1}
+    };
     canvas.addEventListener('keydown', function(ev){
-      var PAN=40;
-      if(ev.key==='ArrowLeft'){state.off.x+=PAN;ev.preventDefault();}
-      else if(ev.key==='ArrowRight'){state.off.x-=PAN;ev.preventDefault();}
-      else if(ev.key==='ArrowUp'){state.off.y+=PAN;ev.preventDefault();}
-      else if(ev.key==='ArrowDown'){state.off.y-=PAN;ev.preventDefault();}
-      else if(ev.key==='Tab'){
+      var dir = _ARROW_DIR[ev.key];
+
+      // Escape → clear selection, close the detail drawer, return to pan mode.
+      if (ev.key==='Escape'){
+        if (state.selected){
+          state.selected = null;
+          if (detailEl) detailEl.style.display = 'none';
+          state._dirty = true;
+          ev.preventDefault();
+        }
+        return;
+      }
+
+      // A node is selected → walk the graph along edges.
+      if (dir && state.selected && !state.selected._hidden){
+        ev.preventDefault();
+        var hop = _stepAlongEdge(state.selected, dir);
+        if (hop){
+          state.selected = hop;
+          _recenterOn(hop);
+          state._dirty = true;
+          showDetail(hop);
+        }
+        return;   // no connected neighbour that way → stay put
+      }
+
+      // Nothing selected → pan the viewport (fixes: never marked dirty before, so
+      // a settled/frozen graph didn't repaint on keyboard pan).
+      if (dir){
+        var PAN=40;
+        state.off.x -= dir.x*PAN;
+        state.off.y -= dir.y*PAN;
+        state._dirty = true;
+        ev.preventDefault();
+        return;
+      }
+
+      // Tab / Shift-Tab → cycle selection through every visible node.
+      if (ev.key==='Tab'){
         ev.preventDefault();
         var vis2=state.nodes.filter(function(n){return !n._hidden;});
         if(!vis2.length)return;
         var curIdx=-1;
         if(state.selected){curIdx=vis2.indexOf(state.selected);}
         var next=ev.shiftKey?(curIdx<=0?vis2.length-1:curIdx-1):(curIdx>=vis2.length-1?0:curIdx+1);
-        var nn=vis2[next];
-        state.selected=nn;
-        state.off.x=W/2-nn.x*state.scale;
-        state.off.y=H/2-nn.y*state.scale;
-        showDetail(nn);
+        var nn2=vis2[next];
+        state.selected=nn2;
+        _recenterOn(nn2);
+        state._dirty = true;
+        showDetail(nn2);
       }
     });
 
@@ -2423,17 +3015,22 @@
               (node.type === 'Entity' && node.props && node.props.type ? ' · ' + esc(node.props.type) : '') +
             '</div>' +
           '</div>' +
+          '<button class="vg-detail-tbl" title="Records / properties as a table (bottom panel)" style="background:none;border:1px solid var(--border,#3a3530);color:var(--dim2,#8a7e70);font-size:9px;cursor:pointer;padding:2px 6px;border-radius:3px;white-space:nowrap">▤</button>' +
+          '<button class="vg-detail-cnt" title="Node content rendered (bottom panel)" style="background:none;border:1px solid var(--border,#3a3530);color:var(--dim2,#8a7e70);font-size:9px;cursor:pointer;padding:2px 6px;border-radius:3px;white-space:nowrap">≡</button>' +
           '<button class="vg-detail-full" title="View full, untruncated details" style="background:none;border:1px solid var(--border,#3a3530);color:var(--dim2,#8a7e70);font-size:8px;cursor:pointer;padding:2px 6px;border-radius:3px;white-space:nowrap">Full details</button>' +
           '<button class="vg-detail-close" style="background:none;border:none;color:var(--dim);font-size:14px;cursor:pointer;padding:0 4px">×</button>' +
         '</div>' +
-        '<div style="padding:8px">' +
+        // ── Tab rail: Overview | Actions | Tools ───────────────────────────
+        '<div class="vg-dtabs">' +
+          '<span class="vg-dtab" data-dt="overview">Overview</span>' +
+          '<span class="vg-dtab" data-dt="actions">Actions</span>' +
+          '<span class="vg-dtab" data-dt="tools">Tools</span>' +
+        '</div>' +
+        // ── Overview: identity, expansion, properties, connections ─────────
+        '<div class="vg-dpane" data-dt="overview" style="padding:8px">' +
           '<div style="font-size:8.5px;color:var(--dim2);font-family:var(--mono,monospace);margin-bottom:6px;word-break:break-all">' + esc(node.id) + '</div>' +
           ((props.url || props.link) && _isUrl(props.url || props.link) ?
             '<div style="margin-bottom:6px"><a href="' + _escAttr(props.url || props.link) + '" target="_blank" rel="noopener" style="font-size:10px;color:var(--acc,#5a9e8f);word-break:break-all">' + esc(props.url || props.link) + ' \u2197</a></div>' : '') +
-          '<div class="vg-builtin-acts" style="margin-bottom:8px"></div>' +
-          (_excludeSections.has('actions') ? '' :
-          '<div style="font-size:8.5px;color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Actions for ' + esc(nodeLabel) + '</div>' +
-          '<div class="vg-actions" style="display:flex;flex-direction:column;gap:4px;margin-bottom:10px"><span style="color:var(--dim);font-size:9.5px">Loading actions…</span></div>') +
           '<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)"><div style="font-size:8.5px;color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Properties</div>' + propsHTML + '</div>' +
           '<div style="margin-top:6px">' + edgeListHTML + '</div>' +
           // Context & expansion
@@ -2444,19 +3041,51 @@
             '<button class="vg-expand-btn" style="font-size:8px;padding:1px 6px;background:rgba(107,155,210,.1);border:1px solid var(--acc4,#6b9bd2);color:var(--acc4,#6b9bd2);border-radius:3px;cursor:pointer" title="Expand edges into visible nodes">Edges</button></div>' +
             '<div class="vg-ctx-result" style="display:none;font-size:9px;color:var(--dim2,#8a7e70);max-height:180px;overflow-y:auto;background:var(--bg0,#181614);border:1px solid var(--border,#3a3530);border-radius:3px;padding:5px 7px;white-space:pre-wrap;font-family:var(--mono,monospace)"></div>' +
           '</div>' +
-          // Cap runner
+        '</div>' +
+        // ── Actions: built-in expand/records + registry action cards ───────
+        '<div class="vg-dpane" data-dt="actions" style="padding:8px">' +
+          '<div class="vg-builtin-acts" style="margin-bottom:8px"></div>' +
+          (_excludeSections.has('actions') ? '' :
+          '<div style="font-size:8.5px;color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Actions for ' + esc(nodeLabel) + '</div>' +
+          '<div class="vg-actions" style="display:flex;flex-direction:column;gap:4px;margin-bottom:10px"><span style="color:var(--dim);font-size:9.5px">Loading actions…</span></div>') +
+          '<div class="vg-detail-extra" style="margin-top:8px"></div>' +
+        '</div>' +
+        // ── Tools: free-form cap runner + opt-in drawer sections ───────────
+        '<div class="vg-dpane" data-dt="tools" style="padding:8px">' +
           (_excludeSections.has('capRunner') ? '' :
-          '<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border,#3a3530)">' +
+          '<div class="vg-caprunner">' +
             '<div style="font-size:8px;color:var(--dim,#6a6058);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Run Capability</div>' +
-            '<select class="vg-cap-sel"><option value="">\u2014 pick capability \u2014</option></select>' +
-            '<div class="vg-cap-params" style="display:flex;flex-direction:column;gap:3px;margin:4px 0"></div>' +
-            '<button class="vg-cap-run">\u25b6 Run</button>' +
-            '<div class="vg-cap-result" style="display:none;margin-top:4px;font-size:9px;font-family:var(--mono,monospace);background:var(--bg0,#181614);border:1px solid var(--border,#3a3530);border-radius:3px;padding:4px 6px;max-height:100px;overflow-y:auto;white-space:pre-wrap"></div>' +
+            '<div style="font-size:7.5px;color:var(--dim,#6a6058);margin-bottom:2px">Drag a property into a field ↓</div>' +
+            '<div class="vg-cap-props" style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:5px"></div>' +
+            '<div class="vg-cap-combo" style="position:relative">' +
+              '<input class="vg-cap-search" placeholder="Search capabilities by name or description…" style="width:100%;font-size:9.5px;padding:3px 6px;background:var(--bg0,#181614);border:1px solid var(--border,#3a3530);color:var(--text,#ddd5c8);border-radius:3px;font-family:var(--mono,monospace);outline:none">' +
+              '<div class="vg-cap-list" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:2px;max-height:240px;overflow-y:auto;background:var(--bg1,#1f1d1a);border:1px solid var(--border,#3a3530);border-radius:4px;z-index:60;box-shadow:0 4px 14px rgba(0,0,0,.5)"></div>' +
+            '</div>' +
+            '<div class="vg-cap-chosen" style="display:none;margin-top:5px">' +
+              '<div style="display:flex;align-items:center;gap:5px"><span class="vg-cap-selname" style="flex:1;font-size:10px;font-weight:600;color:var(--acc,#5a9e8f);font-family:var(--mono,monospace);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>' +
+                '<button class="vg-cap-clear" title="Clear selection" style="background:none;border:none;color:var(--dim,#6a6058);cursor:pointer;font-size:12px;line-height:1;padding:0 2px">×</button></div>' +
+              '<div class="vg-cap-desc" style="font-size:9px;color:var(--dim2,#8a7e70);line-height:1.45;margin:3px 0"></div>' +
+              '<div class="vg-cap-params" style="display:flex;flex-direction:column;gap:3px;margin:4px 0"></div>' +
+              '<button class="vg-cap-run" style="width:100%">▶ Run</button>' +
+              '<div class="vg-cap-result" style="display:none;margin-top:4px;font-size:9px;font-family:var(--mono,monospace);background:var(--bg0,#181614);border:1px solid var(--border,#3a3530);border-radius:3px;padding:4px 6px;max-height:120px;overflow-y:auto;white-space:pre-wrap"></div>' +
+            '</div>' +
           '</div>') +
-          '<div class="vg-detail-extra" style="margin-top:8px">' +
+          '<div class="vg-detail-sections" style="margin-top:8px">' +
             _builtSections +
           '</div>' +
         '</div>';
+
+      // Tab switching — remember the active tab across node clicks so a user
+      // working through actions stays on Actions as they move between nodes.
+      function _setDetailTab(t){
+        state._detailTab = t;
+        detailEl.querySelectorAll('.vg-dtab').forEach(function(el){ el.classList.toggle('on', el.getAttribute('data-dt') === t); });
+        detailEl.querySelectorAll('.vg-dpane').forEach(function(el){ el.classList.toggle('on', el.getAttribute('data-dt') === t); });
+      }
+      detailEl.querySelectorAll('.vg-dtab').forEach(function(el){
+        el.onclick = function(){ _setDetailTab(el.getAttribute('data-dt')); };
+      });
+      _setDetailTab(state._detailTab || 'overview');
 
       detailEl.querySelector('.vg-detail-close').onclick = function(){
         detailEl.style.display = 'none';
@@ -2464,6 +3093,15 @@
       };
       var fullBtn = detailEl.querySelector('.vg-detail-full');
       if (fullBtn) fullBtn.onclick = function(){ _showFullDetails(node); };
+      var tblBtn2 = detailEl.querySelector('.vg-detail-tbl');
+      if (tblBtn2) tblBtn2.onclick = function(){ _nodeToTable(node); };
+      // Auto-surface dataset structure: selecting a Dataset/Subtable node
+      // fills the drawer's Table panel with its subtables (or its records).
+      if (node.type === 'Dataset' || node.type === 'Subtable') {
+        try { _datasetToDrawer(node); } catch(e){}
+      }
+      var cntBtn2 = detailEl.querySelector('.vg-detail-cnt');
+      if (cntBtn2) cntBtn2.onclick = function(){ _nodeToContent(node); };
       // Wire edge focus clicks
       detailEl.querySelectorAll('[data-focus-id]').forEach(function(el){
         el.onclick = function(){ instance.focusNode(el.dataset.focusId); };
@@ -2697,7 +3335,7 @@
       var spawnY = (node && node.y) ? node.y + (Math.random() - 0.5) * 80 : undefined;
       var added = addNode({
         id: aid,
-        label: '⚙ ' + (cap.split('.').pop() || cap),
+        label: (cap.split('.').pop() || cap),
         type: 'Memory',
         layer: 'memory',
         x: spawnX, y: spawnY,
@@ -2844,8 +3482,8 @@
           // Render actual result data inline
           _renderActionResult(streamBox, action, result);
           // Also graph the results as properly-labelled nodes (one per result),
-          // linked to the source node — see _graphActionResults.
-          try { _graphActionResults(action, node, result); } catch(e){ if (typeof console!=='undefined') console.warn('graph results', e); }
+          // branched off the run-record node — see _graphActionResults.
+          try { _graphActionResults(action, node, result, _activityNodeId); } catch(e){ if (typeof console!=='undefined') console.warn('graph results', e); }
           try { _updateActivity(_activityNodeId, result && result.ok ? 'done' : 'error', result); } catch(e){}
         } else {
           line.style.color = 'var(--err)';
@@ -2867,9 +3505,12 @@
         if (state.loadedViaSnapshot &&
             state.currentLayer && state.currentLayer !== 'memory' &&
             instance.fetchSnapshot) {
-          // Reload the exact same scope the user was viewing (currentParams
+          // MERGE the same scope the user was viewing back in (currentParams
           // carries dataset_id / label_filter / limit from the original call).
-          instance.fetchSnapshot(state.currentLayer, state.currentParams || {});
+          // A full reload here used to wipe node expansions and the result
+          // nodes the action just added — merge preserves them and only adds
+          // whatever the backend persisted.
+          instance.fetchSnapshot(state.currentLayer, state.currentParams || {}, { merge: true });
         }
       }, 600);
 
@@ -2906,7 +3547,7 @@
      * can be toggled. If opts.onActionResults is provided, it's called so the
      * host can pipe the new records through entity extraction / loom.
      */
-    function _graphActionResults(action, node, result){
+    function _graphActionResults(action, node, result, activityId){
       if (!result || !result.ok) return;
       var r = result.result || {};
       var capName = action.capability || action.id || 'cap';
@@ -2929,6 +3570,34 @@
         single = true;
       }
       if (!items.length) return;
+
+      // ── Anchor: the run-record node ──────────────────────────────────────
+      // Results hang off the RECORD of the run (which itself branches from the
+      // target node), not directly off the target — so one node click shows
+      // "this action ran here" and the record fans out into its results.
+      // The memory layer's activity node is that record when present;
+      // otherwise create a plain Activity node so the structure is the same.
+      var anchorId = (activityId && state.nodeIndex[activityId]) ? activityId : null;
+      if (!anchorId && srcId) {
+        anchorId = 'cap.' + capName + '.run.' + Date.now();
+        var anchorNode = addNode({
+          id: anchorId,
+          label: (capName.split('.').pop() || capName),
+          type: 'Activity',
+          layer: 'memories',
+          x: (node && node.x) ? node.x + (Math.random() - 0.5) * 80 : undefined,
+          y: (node && node.y) ? node.y + (Math.random() - 0.5) * 80 : undefined,
+          props: { capability: capName, target: srcId, started_at: new Date().toISOString() },
+          r: 8,
+        }, true);
+        if (anchorNode) {
+          anchorNode._pulseUntil = Date.now() + 1800;
+          addEdge({ from: srcId, to: anchorId, rel: 'RAN', layer: 'memories',
+                    props: { capability: capName } }, true);
+        } else {
+          anchorId = null;
+        }
+      }
 
       var newRecordIds = [];
       var added = 0;
@@ -2962,10 +3631,13 @@
         if (nodeAdded) {
           nodeAdded._pulseUntil = Date.now() + 2200;
           added++;
-          if (srcId && srcId !== rid) {
+          // Individual results connect to the RUN-RECORD node (fall back to the
+          // target node only if no record could be created).
+          var linkFrom = anchorId || srcId;
+          if (linkFrom && linkFrom !== rid) {
             // edge labelled with the capability so the provenance is visible
             addEdge({
-              from: srcId, to: rid,
+              from: linkFrom, to: rid,
               rel: ('HAS_' + String(capName).split('.').pop().toUpperCase()).slice(0, 20),
               props: { capability: capName },
               layer: 'structural',     // the provenance link is structural
@@ -2981,6 +3653,48 @@
         _computeClusters();
         _renderLayerUI();
         wake();
+      }
+
+      // ── Auto-ingest: run the normal entity-extraction/normalisation loop
+      // over the new results, same as records get on ingest. Extracted
+      // entities are added to the graph linked MENTIONED_IN to the result
+      // node they came from (the backend normalises/dedupes names). Opt out
+      // with opts.autoIngestResults === false.
+      if (added && opts.autoIngestResults !== false) {
+        var ingestItems = [];
+        items.slice(0, 300).forEach(function(item, i){
+          if (item == null || typeof item !== 'object') return;
+          var rid = (item.id || item.url) || ('cap.' + capName + '.result.' + i);
+          var txt = [item.title, item.name, item.label, item.text, item.summary,
+                     item.description, item.value, item.url]
+            .filter(function(x){ return x && typeof x === 'string'; }).join('. ');
+          if (txt && txt.trim().length > 20) ingestItems.push({ id: rid, text: txt.slice(0, 6000) });
+        });
+        if (ingestItems.length) {
+          fetch(apiBase + '/fabric/entity_graph/extract_text', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items: ingestItems, content_type: 'text' }),
+          }).then(function(r){ return r.json(); }).then(function(ex){
+            if (!ex || ex.error) return;
+            var got = 0;
+            (ex.nodes || []).forEach(function(nd){
+              var a = addNode({ id: nd.id, label: nd.name || nd.id,
+                                type: nd.type || 'Entity', props: nd.props || {},
+                                layer: 'entities' }, true);
+              if (a) { a._pulseUntil = Date.now() + 2000; got++; }
+              ((nd.props && nd.props.record_ids) || []).forEach(function(rid2){
+                if (state.nodeIndex[rid2]) {
+                  addEdge({ from: nd.id, to: rid2, rel: 'MENTIONED_IN', layer: 'entities' }, true);
+                }
+              });
+            });
+            (ex.edges || []).forEach(function(e2){
+              addEdge({ from: e2.from, to: e2.to, rel: e2.rel || 'RELATED_TO',
+                        props: e2.props || {}, layer: 'entities' }, true);
+            });
+            if (got) { _computeClusters(); _renderLayerUI(); _rebuildChips(); wake(); }
+          }).catch(function(){});
+        }
       }
 
       // Hand the new records to the host so it can run entity extraction / loom
@@ -3174,6 +3888,35 @@
     // ── Expand / collapse ────────────────────────────────────────────────
     async function expandNode(node){
       if (state.expanded[node.id] && state.expanded[node.id].length) return;
+      // Fast path: restore from the collapsed stash — instant, offline, and
+      // the children come back at their previous positions.
+      var _stash = state.collapsedStore && state.collapsedStore[node.id];
+      if (_stash && _stash.nodes && _stash.nodes.length) {
+        var _restored = [];
+        _stash.nodes.forEach(function(n){
+          if (!state.nodeIndex[n.id]) {
+            state.nodes.push(n); state.nodeIndex[n.id] = n;
+            n._pulseUntil = Date.now() + 1200;
+            _restored.push(n.id);
+          }
+        });
+        _stash.edges.forEach(function(e){
+          if (state.nodeIndex[e.from] && state.nodeIndex[e.to]) {
+            var dup = state.edges.some(function(x){ return x.from === e.from && x.to === e.to && x.rel === e.rel; });
+            if (!dup) state.edges.push(e);
+          }
+        });
+        delete state.collapsedStore[node.id];
+        state.expanded[node.id] = _restored;
+        if (_restored.length) wake();
+        if (state.selected && state.selected.id === node.id) showDetail(node);
+        if (opts.onExpand) opts.onExpand(node, _restored, instance);
+        return;
+      }
+      // Slow path (backend fetches) — show the loading spinner on the node.
+      node._loading = true;
+      state._animUntil = Date.now() + 500;
+      state._dirty = true;
       try {
         var added = [];
         var existing = {};
@@ -3387,10 +4130,11 @@
         }
 
         state.expanded[node.id] = added;
-        if (added.length) wake();
+        if (added.length) { _pulse(node.id); wake(); }
         if (state.selected && state.selected.id === node.id) showDetail(node);
         if (opts.onExpand) opts.onExpand(node, added, instance);
       } catch (e) { console.warn('expandNode', e); }
+      finally { node._loading = false; state._dirty = true; }
     }
     var expandEntities = expandNode;
 
@@ -3407,6 +4151,14 @@
         });
         if (!stillReferenced) keep[cid] = false;
       });
+      // Stash what we're about to remove: search can then still traverse the
+      // collapsed sub-nodes, and re-expanding restores instantly (offline)
+      // with prior positions instead of refetching.
+      state.collapsedStore = state.collapsedStore || {};
+      state.collapsedStore[node.id] = {
+        nodes: state.nodes.filter(function(n){ return keep[n.id] === false; }),
+        edges: state.edges.filter(function(e){ return keep[e.from] === false || keep[e.to] === false; }),
+      };
       state.nodes = state.nodes.filter(function(n){ return keep[n.id]; });
       state.edges = state.edges.filter(function(e){ return keep[e.from] !== false && keep[e.to] !== false; });
       state.nodeIndex = {};
@@ -3455,6 +4207,168 @@
       } catch (e) {
         extra.innerHTML = '<span style="color:var(--err);font-size:9.5px">Load failed: ' + esc(e.message || e) + '</span>';
       }
+    }
+
+    // ── Node → bottom drawer (Table / Content) ─────────────────────────────
+    // Works for any node type, from any panel: datasets get a records table
+    // (row click opens the record's content), records/pages get their body
+    // rendered (markdown/html auto-detected), everything else gets a rich
+    // property view. Exposed on the instance so sidebar panels can reuse it.
+    async function _nodeToTable(node){
+      var bd = instance.bottomDrawer; if (!bd || !node) return;
+      _pulse(node.id);   // reading a node's records = activity → pulse it
+      var p = node.props || {};
+      var dsId = node.type === 'Dataset' ? node.id : (p.dataset_id || '');
+      if (!dsId && node.type === 'Entity' && Array.isArray(p.datasets) && p.datasets.length) {
+        dsId = p.datasets[0];
+      }
+      if (!dsId) {
+        // Generic fallback: the node's own properties as a table.
+        var rows0 = Object.keys(p).map(function(k){
+          var v = p[k];
+          return [k, typeof v === 'object' ? JSON.stringify(v).slice(0, 400) : String(v == null ? '' : v).slice(0, 400)];
+        });
+        bd.showTable(['Property', 'Value'], rows0, (node.label || node.id) + ' — properties');
+        return;
+      }
+      // Shared records view (dynamic columns from the records' data keys).
+      await _recordsToDrawer(dsId, node.label || dsId);
+    }
+    async function _nodeToContent(node){
+      var bd = instance.bottomDrawer; if (!bd || !node) return;
+      _pulse(node.id);   // reading a node's content = activity → pulse it
+      var p = node.props || {};
+      var title = node.label || p.title || p.name || node.id;
+      var text = p.full_text || p.content || p.text || p.body || p.summary || p.text_preview || '';
+      // Only a preview (or nothing) on the node — try the stored record.
+      if ((!text || text.length < 240) && (p.dataset_id || node.type === 'FabricRecord' || node.type === 'Page')) {
+        try {
+          var r = await fetch(apiBase + '/fabric/browse', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dataset_id: p.dataset_id || '', limit: 5, offset: 0,
+                                    search: String(p.url || title || node.id).slice(0, 80) }),
+          });
+          var d = await r.json();
+          var recs = (d && d.records) || [];
+          var hit = recs.find(function(rc){ return rc.id === node.id || rc.url === p.url; }) || recs[0];
+          if (hit) {
+            var full = hit.full_text || hit.text || (hit.data && (hit.data.text || hit.data.content)) || '';
+            if (full && full.length > text.length) text = full;
+          }
+        } catch(e){}
+      }
+      if (text) { bd.showContent(title, text, { render: 'auto' }); return; }
+      // No body anywhere — rich property view rendered as markdown.
+      var md = '# ' + title + '\n\n' + Object.keys(p).map(function(k){
+        var v = p[k];
+        if (v == null || v === '') return '';
+        return '- **' + k + '**: ' + (typeof v === 'object' ? '`' + JSON.stringify(v).slice(0, 300) + '`' : String(v).slice(0, 500));
+      }).filter(Boolean).join('\n');
+      bd.showContent(title, md, { render: 'markdown' });
+    }
+
+    // ── Dataset / Subtable → bottom drawer tables ──────────────────────────
+    // Clicking a Dataset node surfaces its structure in the drawer's Table
+    // panel: datasets WITH subtables get a subtable index (row click drills
+    // into that subtable's records); datasets without (and Subtable nodes)
+    // get their records directly, with columns derived from the records' own
+    // data keys so structured rows render as a real table.
+    function _recordCols(recs){
+      var freq = {}, order = [];
+      recs.forEach(function(rc){
+        var d = (rc && typeof rc.data === 'object' && rc.data) || {};
+        Object.keys(d).forEach(function(k){
+          if (k.charAt(0) === '_') return;               // provenance/internal
+          var v = d[k];
+          if (v == null || typeof v === 'object') return; // scalar columns only
+          if (!freq[k]) { freq[k] = 0; order.push(k); }
+          freq[k]++;
+        });
+      });
+      order.sort(function(a, b){ return freq[b] - freq[a]; });
+      return order.slice(0, 12);
+    }
+    async function _recordsToDrawer(dsId, title){
+      var bd = instance.bottomDrawer; if (!bd || !dsId) return;
+      try {
+        var r = await fetch(apiBase + '/fabric/browse', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dataset_id: dsId, limit: 500, offset: 0, search: '' }),
+        });
+        var d = await r.json();
+        var recs = (d && d.records) || [];
+        if (!recs.length) { bd.log('No records in ' + dsId, 'warn'); return; }
+        var cols = _recordCols(recs);
+        var rows;
+        if (cols.length >= 2) {
+          rows = recs.map(function(rc){
+            var data = rc.data || {};
+            return cols.map(function(c){
+              var v = data[c];
+              return v == null ? '' : String(v).slice(0, 200);
+            });
+          });
+        } else {
+          cols = ['Title', 'URL', 'Tags', 'Chars'];
+          rows = recs.map(function(rc){
+            var data = rc.data || {};
+            return [
+              rc.title || rc.name || data.title || (rc.text || '').slice(0, 60) || rc.id,
+              rc.url || rc.link || data.url || '',
+              Array.isArray(rc.tags) ? rc.tags.join(', ') : (rc.tags || data.tags || ''),
+              (rc.text || '').length,
+            ];
+          });
+        }
+        bd.showTable(cols, rows, (title || dsId) + ' (' + recs.length + ' records)', {
+          onRow: function(i){
+            var rc = recs[i]; if (!rc) return;
+            var txt = rc.full_text || rc.text || (rc.data && (rc.data.text || rc.data.content)) || '';
+            if (!txt && rc.data && typeof rc.data === 'object') {
+              // Structured row with no prose body — render its fields as markdown.
+              txt = '# ' + (rc.title || rc.name || (rc.data && rc.data.name) || rc.id) + '\n\n' +
+                Object.keys(rc.data).map(function(k){
+                  var v = rc.data[k];
+                  if (v == null || v === '') return '';
+                  return '- **' + k + '**: ' + (typeof v === 'object' ? '`' + JSON.stringify(v).slice(0, 300) + '`' : String(v).slice(0, 500));
+                }).filter(Boolean).join('\n');
+              bd.showContent(rc.title || rc.url || rc.id, txt, { render: 'markdown' });
+            } else {
+              bd.showContent(rc.title || rc.url || rc.id, txt || '(record has no text body)', { render: 'auto' });
+            }
+            if (rc.id && state.nodeIndex[rc.id]) _pulse(rc.id);
+          },
+        });
+      } catch(e){ bd.log('Records load failed: ' + (e && e.message || e), 'err'); }
+    }
+    async function _datasetToDrawer(node){
+      var bd = instance.bottomDrawer; if (!bd || !node) return;
+      var p = node.props || {};
+      var dsId = (node.type === 'Subtable' && (p.sub_dataset || p.dataset_id)) || node.id;
+      if (node.type !== 'Dataset') { _recordsToDrawer(dsId, node.label || dsId); return; }
+      var subs = [];
+      try {
+        var r = await fetch(apiBase + '/fabric/subtables?parent_dataset=' + encodeURIComponent(dsId) + '&limit=300');
+        var d = await r.json();
+        subs = (d && d.subtables) || [];
+      } catch(e){}
+      if (!subs.length) { _recordsToDrawer(dsId, node.label || dsId); return; }
+      var rows = subs.map(function(s){
+        return [
+          s.title || s.sub_dataset || '',
+          s.kind || '',
+          s.row_count || 0,
+          Array.isArray(s.columns) ? s.columns.slice(0, 8).join(', ') : '',
+          s.from_url || '',
+        ];
+      });
+      bd.showTable(['Table', 'Kind', 'Rows', 'Columns', 'Source'], rows,
+        (node.label || dsId) + ' - ' + subs.length + ' subtables', {
+        onRow: function(i){
+          var s = subs[i]; if (!s || !s.sub_dataset) return;
+          _recordsToDrawer(s.sub_dataset, s.title || s.sub_dataset);
+        },
+      });
     }
 
     // ── Layers / groups (structural vs informational, etc.) ───────────────
@@ -3582,6 +4496,57 @@
       state._clusterIds = Object.keys(cset);
     }
 
+    // CLUSTER-AWARE seeding: a single phyllotaxis disc ordered by degree only
+    // scatters each community's members across the whole disc and the springs
+    // have to drag them together — that slow untangling is exactly the "blob
+    // that takes many Re-layouts" problem. Instead, place each community on
+    // its own small disc, and the discs themselves on a spiral. Springs then
+    // start mostly-satisfied and the layout is readable from the first frame.
+    // Shared by load() and the Re-layout button (annealing alone cannot
+    // escape a tangled arrangement — re-seeding can).
+    function _seedLayout(toSeed){
+      if (!toSeed || !toSeed.length) return;
+      var _scx = (W || 640) / 2, _scy = (H || 420) / 2;
+      var _golden = Math.PI * (3 - Math.sqrt(5));   // golden angle ≈ 2.39996 rad
+      var _spacing = 42;                            // px between successive points → even disc
+      var _byCl = {}, _clIds = [];
+      toSeed.forEach(function(n){
+        var c = n._cluster || '_none';
+        if (!_byCl[c]) { _byCl[c] = []; _clIds.push(c); }
+        _byCl[c].push(n);
+      });
+      _clIds.sort(function(a, b){ return _byCl[b].length - _byCl[a].length; });
+      if (_clIds.length <= 1) {
+        // one community — plain disc, hubs at the centre
+        toSeed.sort(function(a, b){ return (b._deg || 0) - (a._deg || 0); });
+        for (var _si = 0; _si < toSeed.length; _si++) {
+          var _ang = _si * _golden, _rad = _spacing * Math.sqrt(_si + 0.5);
+          var _sn = toSeed[_si];
+          _sn.x = _scx + Math.cos(_ang) * _rad;
+          _sn.y = _scy + Math.sin(_ang) * _rad;
+          _sn.vx = 0; _sn.vy = 0;
+        }
+      } else {
+        // spiral of cluster centres, spaced so neighbouring discs don't overlap
+        var _avgR = _spacing * Math.sqrt(toSeed.length / _clIds.length) + 60;
+        for (var _ci4 = 0; _ci4 < _clIds.length; _ci4++) {
+          var _members = _byCl[_clIds[_ci4]];
+          _members.sort(function(a, b){ return (b._deg || 0) - (a._deg || 0); });
+          var _cAng = _ci4 * _golden;
+          var _cRad = _ci4 === 0 ? 0 : _avgR * Math.sqrt(_ci4 + 0.5);
+          var _ccx = _scx + Math.cos(_cAng) * _cRad;
+          var _ccy = _scy + Math.sin(_cAng) * _cRad;
+          for (var _mi = 0; _mi < _members.length; _mi++) {
+            var _mAng = _mi * _golden, _mRad = _spacing * Math.sqrt(_mi + 0.5);
+            var _mn = _members[_mi];
+            _mn.x = _ccx + Math.cos(_mAng) * _mRad;
+            _mn.y = _ccy + Math.sin(_mAng) * _mRad;
+            _mn.vx = 0; _mn.vy = 0;
+          }
+        }
+      }
+    }
+
     // ── load / addNode / addEdge ─────────────────────────────────────────
     function load(data){
       data = data || {};
@@ -3595,7 +4560,7 @@
       var prevPos = {};
       state.nodes.forEach(function(n){ prevPos[n.id] = { x:n.x, y:n.y, vx:n.vx, vy:n.vy }; });
       state.nodes = []; state.edges = []; state.nodeIndex = {};
-      state.expanded = {}; state.searchHighlight = new Set();
+      state.expanded = {}; state.collapsedStore = {}; state.searchHighlight = new Set();
       state.tickCount = 0; state.frozen = false;
       var _explicitPos = {};
       (data.nodes || []).forEach(function(n){
@@ -3632,28 +4597,39 @@
       // which avoids the blob entirely. Only applies to larger fresh loads;
       // small graphs and position-preserving reloads keep their current layout.
       var _toSeed = state.nodes.filter(function(n){ return !prevPos[n.id] && !_explicitPos[n.id]; });
-      if (_toSeed.length > 40) {
-        _toSeed.sort(function(a, b){ return (b._deg || 0) - (a._deg || 0); });
-        var _scx = (W || 640) / 2, _scy = (H || 420) / 2;
-        var _golden = Math.PI * (3 - Math.sqrt(5));   // golden angle ≈ 2.39996 rad
-        var _spacing = 42;                            // px between successive points → even disc
-        for (var _si = 0; _si < _toSeed.length; _si++) {
-          var _ang = _si * _golden;
-          var _rad = _spacing * Math.sqrt(_si + 0.5);
-          var _sn = _toSeed[_si];
-          _sn.x = _scx + Math.cos(_ang) * _rad;
-          _sn.y = _scy + Math.sin(_ang) * _rad;
-          _sn.vx = 0; _sn.vy = 0;
+      if (_toSeed.length > 12) _seedLayout(_toSeed);
+      _applyVis();
+      var _nN = state.nodes.length;
+      // ── Headless pre-settle ──────────────────────────────────────────────
+      // Run the force simulation synchronously (no draw) before the first
+      // paint, so a freshly loaded graph appears already mostly organised
+      // instead of visibly crawling out of its seed positions. Iteration
+      // budget shrinks with size to keep load latency bounded.
+      if (_toSeed.length > 12) {
+        var _pre = _nN > 2500 ? 30 : _nN > 800 ? 70 : 120;
+        // Wall-clock budget: the pre-settle runs synchronously before first
+        // paint, so on very large/dense graphs cap it at ~350ms rather than
+        // blocking the main thread for seconds. The visible anneal cycles
+        // finish the job progressively after first paint.
+        var _preT0 = Date.now();
+        var _preBudget = _nN > 800 ? 550 : 350;   // big graphs earn more up-front time
+        for (var _pi2 = 0; _pi2 < _pre; _pi2++) {
+          state.tickCount = _pi2;
+          try { _forcePass(); } catch(e){ break; }
+          if (Date.now() - _preT0 > _preBudget) break;
         }
       }
-      _applyVis();
-      // Give the layout several automatic anneal cycles so it settles into a
-      // good arrangement on its own (equivalent to pressing Re-layout a few
-      // times). More nodes => allow a couple more cycles — but very large
-      // graphs (thousands of nodes) are expensive per frame and barely improve
-      // after the first pass, so cut their anneal short to keep the UI snappy.
-      var _nN = state.nodes.length;
-      state.settleCycles = _nN > 3000 ? 0 : _nN > 1200 ? 1 : _nN > 120 ? 5 : 3;
+      state.tickCount = 0;
+      // Automatic anneal cycles scale UP with graph size: a dense giant
+      // component needs far more iterations to untangle, and users were
+      // pressing Re-layout five times to supply them by hand. The visible
+      // sim multi-substeps while hot, so even large graphs work through
+      // these cycles in a few seconds of on-screen organising.
+      state.settleCycles = _nN > 3000 ? 2 : _nN > 800 ? 4 : _nN > 150 ? 3 : 2;
+      // Fit the view once when this load's settle completes — inflation and
+      // cluster separation push the layout outward, so without a fit the
+      // user lands zoomed into the middle of a larger arrangement.
+      state._autoFitOnce = true;
       updateMeta(); updateLegend(); _rebuildChips(); _rebuildTags(); _updateDebug(); _renderLayerUI(); wake();
     }
 
@@ -3661,31 +4637,100 @@
     // cloud's edge) rather than at the far periphery. Starting closer in means
     // the springs have far less distance to reel nodes in, so the layout settles
     // to its resting state much faster, while still avoiding a dense central pile.
+    // Centroid/extent stats are O(n) to compute; recomputing them for EVERY
+    // added node made bulk loads O(n²). Spawn placement tolerates slightly
+    // stale stats, so cache them and refresh only when the graph has grown
+    // noticeably (or was swapped out entirely by load()).
+    var _spawnStatsCache = null;
+    function _spawnStats(){
+      var c = _spawnStatsCache;
+      var n = state.nodes.length;
+      if (c && c.ref === state.nodes && n <= c.count * 1.15 + 24) return c;
+      var mx = 0, my = 0;
+      for (var i = 0; i < n; i++) { mx += state.nodes[i].x; my += state.nodes[i].y; }
+      mx /= n; my /= n;
+      var maxR = 0;
+      for (var j = 0; j < n; j++) {
+        var ddx = state.nodes[j].x - mx, ddy = state.nodes[j].y - my;
+        var rr = ddx * ddx + ddy * ddy;
+        if (rr > maxR) maxR = rr;
+      }
+      c = _spawnStatsCache = { ref: state.nodes, count: n, mx: mx, my: my, maxR: Math.sqrt(maxR) };
+      return c;
+    }
     function _spawnAtEdge(){
       var cx = (W || 640) / 2, cy = (H || 420) / 2;
       if (!state.nodes.length) {
         // first node(s): small jitter around centre
         return { x: cx + (Math.random() - 0.5) * 120, y: cy + (Math.random() - 0.5) * 120 };
       }
-      // find centroid + max radius of existing nodes
-      var mx = 0, my = 0, k = 0;
-      for (var i = 0; i < state.nodes.length; i++) { mx += state.nodes[i].x; my += state.nodes[i].y; k++; }
-      mx /= k; my /= k;
-      var maxR = 0;
-      for (var j = 0; j < state.nodes.length; j++) {
-        var ddx = state.nodes[j].x - mx, ddy = state.nodes[j].y - my;
-        var rr = Math.sqrt(ddx * ddx + ddy * ddy);
-        if (rr > maxR) maxR = rr;
-      }
+      var st = _spawnStats();
       // ~halfway between centre and the cloud edge (with a little jitter)
-      var ring = maxR * 0.5 + 40 + Math.random() * 40;
+      var ring = st.maxR * 0.5 + 40 + Math.random() * 40;
       var a = Math.random() * Math.PI * 2;
-      return { x: mx + Math.cos(a) * ring, y: my + Math.sin(a) * ring };
+      return { x: st.mx + Math.cos(a) * ring, y: st.my + Math.sin(a) * ring };
+    }
+
+    // Pulse a node by id: a brief expanding ring + glow marking "something just
+    // happened here" (data added, read, or a sub-record attached). Keeps the
+    // animation heartbeat alive so it plays even on a frozen graph.
+    function _pulse(id, ms){
+      var n = state.nodeIndex[id];
+      if (!n) return;
+      n._pulseUntil = Date.now() + (ms || 1500);
+      state._animUntil = Date.now() + (ms || 1500);
+      state._dirty = true;
+    }
+
+    // ── Incremental-build support ──────────────────────────────────────────
+    // Panels that stream a graph in via addNode/addEdge (discovery, loom live
+    // updates) never went through load(), so _computeClusters() never ran —
+    // no _deg/_cluster/_bridge meant ALL the anti-blob layout forces (hub
+    // rest-length scaling, degree repulsion, cluster separation) were silently
+    // inactive and dense communities collapsed into unreadable piles. Recompute
+    // on a debounce whenever the topology grows incrementally.
+    var _clusterTimer = null;
+    function _scheduleClusterRecompute(){
+      if (_clusterTimer) return;
+      _clusterTimer = setTimeout(function(){
+        _clusterTimer = null;
+        try { _computeClusters(); } catch(e){}
+        state._dirty = true;
+      }, 300);
+    }
+    // Coalesced side-effects for non-silent adds: the old per-call
+    // wake()+updateMeta()+updateLegend()+_renderLayerUI() meant a panel adding
+    // 300 nodes restarted the tick loop 300 times and rebuilt the legend/layer
+    // DOM 900 times — a real chunk of "the graph takes ages to appear".
+    var _refreshTimer = null;
+    function _scheduleGraphRefresh(){
+      if (_refreshTimer) return;
+      _refreshTimer = setTimeout(function(){
+        _refreshTimer = null;
+        try { updateMeta(); updateLegend(); _renderLayerUI(); } catch(e){}
+        _scheduleClusterRecompute();
+        wake();
+      }, 60);
     }
 
     function addNode(nodeSpec, silent){
       if (!nodeSpec || !nodeSpec.id) return null;
-      if (state.nodeIndex[nodeSpec.id]) return state.nodeIndex[nodeSpec.id];
+      var _existing = state.nodeIndex[nodeSpec.id];
+      if (_existing) {
+        // Node already on the graph. If the caller brought fresh props, merge
+        // them in and (unless silent) pulse — this is "data added to a node".
+        if (nodeSpec.props && typeof nodeSpec.props === 'object') {
+          var _changed = false;
+          Object.keys(nodeSpec.props).forEach(function(k){
+            var nv = nodeSpec.props[k];
+            if (nv !== undefined && nv !== '' && _existing.props[k] !== nv) {
+              _existing.props[k] = nv; _changed = true;
+            }
+          });
+          if (_changed && !silent) _pulse(_existing.id);
+        }
+        return _existing;
+      }
       var lbl = nodeSpec.label || nodeSpec.name || '';
       if ((!lbl || lbl === nodeSpec.id) && nodeSpec.props) {
         var p = nodeSpec.props;
@@ -3715,26 +4760,50 @@
       }
       state.nodes.push(n);
       state.nodeIndex[nodeSpec.id] = n;
-      if (!silent) { wake(); updateMeta(); updateLegend(); _renderLayerUI(); }
+      if (!silent) { n._pulseUntil = Date.now() + 1500; state._animUntil = Date.now() + 1500; _scheduleGraphRefresh(); }
       return n;
+    }
+
+    // Duplicate-edge lookup as a Set instead of a linear scan — the old
+    // per-addEdge scan made bulk loads O(E²) (seconds of pure comparisons on a
+    // few-thousand-edge snapshot). Rebuilt whenever the edges array is swapped
+    // (load/collapse) or mutated outside addEdge; addEdge keeps it in sync.
+    function _edgeKeySet(){
+      var s = state._ekSet;
+      if (s && state._ekRef === state.edges && state._ekCount === state.edges.length) return s;
+      s = new Set();
+      for (var i = 0; i < state.edges.length; i++) {
+        var e = state.edges[i];
+        s.add(e.from + '\u0001' + e.to + '\u0001' + (e.rel || ''));
+      }
+      state._ekSet = s; state._ekRef = state.edges; state._ekCount = state.edges.length;
+      return s;
     }
 
     function addEdge(edgeSpec, silent){
       if (!edgeSpec || !edgeSpec.from || !edgeSpec.to) return;
-      for (var i = 0; i < state.edges.length; i++) {
-        var e = state.edges[i];
-        if (e.from === edgeSpec.from && e.to === edgeSpec.to && e.rel === edgeSpec.rel) return;
-      }
+      var _rel = (edgeSpec.rel || edgeSpec.label || '').slice(0, 20);
+      var _ek = _edgeKeySet();
+      var _ekKey = edgeSpec.from + '\u0001' + edgeSpec.to + '\u0001' + _rel;
+      if (_ek.has(_ekKey)) return;
       var _e = {
         from: edgeSpec.from, to: edgeSpec.to,
-        rel:  (edgeSpec.rel || edgeSpec.label || '').slice(0, 20),
+        rel:  _rel,
         props: edgeSpec.props || {},
       };
       if (edgeSpec._dashed || edgeSpec.dashed) _e._dashed = true;
       _e._layer = _edgeLayer(edgeSpec);
       _ensureLayer(_e._layer);
       state.edges.push(_e);
-      if (!silent) { wake(); updateMeta(); _renderLayerUI(); }
+      _ek.add(_ekKey); state._ekCount = state.edges.length;
+      // A new relationship attached to nodes already on the graph = "a
+      // sub-record/link was added here" → pulse both endpoints so the user sees
+      // where the graph just grew.
+      if (!silent) {
+        if (state.nodeIndex[_e.from]) _pulse(_e.from);
+        if (state.nodeIndex[_e.to])   _pulse(_e.to);
+        _scheduleGraphRefresh();
+      }
     }
 
     function updateMeta(){
@@ -3752,15 +4821,21 @@
     }
 
     // ── Backend snapshot loader ───────────────────────────────────────────
-    async function fetchSnapshot(layer, params){
+    // opts2.merge: add new nodes/edges into the current view instead of
+    // replacing it — used by the post-action refresh so running an action
+    // never destroys expansions or freshly-graphed result nodes.
+    async function fetchSnapshot(layer, params, opts2){
       params = params || {};
+      opts2 = opts2 || {};
       state.currentLayer  = layer || state.currentLayer;
       state.currentParams = params;
+      try { _syncSrcButtons(); } catch(e){}
       var qs = [];
       var url;
       if (layer === 'memory') {
         return fetchMemory(params.memoryMode || 'all', params);
       }
+      _setLoading(true, 'Loading ' + (layer || 'graph') + '...');
       if (layer === 'entity') {
         url = '/fabric/entity_graph/snapshot';
         if (params.dataset_id)  qs.push('dataset_id=' + encodeURIComponent(params.dataset_id));
@@ -3814,13 +4889,28 @@
                  nodeType === 'Entity' ? Math.max(6, Math.min(20, 5 + Math.sqrt(mc) * 3)) : 10,
             };
           });
-          load({ nodes: nodes, edges: data.edges || [] });
+          if (opts2.merge) {
+            // Merge: keep everything on screen (positions, expansions, action
+            // results) and just pull in whatever the backend now has extra.
+            var _mAdded = 0;
+            nodes.forEach(function(n){
+              if (!state.nodeIndex[n.id]) { addNode(n, true); _mAdded++; }
+            });
+            (data.edges || []).forEach(function(e){ addEdge(e, true); });
+            if (_mAdded) _computeClusters();
+            _rebuildChips(); _renderLayerUI(); updateMeta(); updateLegend(); _updateDebug();
+            if (_mAdded) wake(); else { state._dirty = true; }
+          } else {
+            load({ nodes: nodes, edges: data.edges || [] });
+          }
           // Mark AFTER load() (which clears the flag) so the post-action
           // refetch knows this view came from a snapshot and is safe to reload.
           state.loadedViaSnapshot = true;
         }
       } catch (e) {
         console.warn('fetchSnapshot', layer, e);
+      } finally {
+        _setLoading(false);
       }
     }
 
@@ -3855,48 +4945,126 @@
       return _capCache;
     }
     async function _wireCapRunner(el, node){
-      var sel=el.querySelector('.vg-cap-sel'),par=el.querySelector('.vg-cap-params'),runBtn=el.querySelector('.vg-cap-run'),resEl=el.querySelector('.vg-cap-result');
-      if(!sel)return;
-      var caps=await _loadCaps();
-      sel.innerHTML='<option value="">\u2014 pick capability \u2014</option>'+Object.keys(caps).sort().map(function(n){return '<option value="'+esc(n)+'">'+esc(n)+'</option>';}).join('');
-      sel.onchange=function(){
-        var cap=caps[sel.value];if(!cap){par.innerHTML='';return;}
-        var props=(cap.schema&&cap.schema.properties)||{};
-        par.innerHTML=Object.keys(props).filter(function(k){return k!=='trace_id';}).map(function(k){
-          var v=props[k]; var prefill=(node.props&&node.props[k])||'';
-          return '<div style="display:flex;gap:4px;align-items:center"><span style="font-family:var(--mono,monospace);font-size:7.5px;color:var(--dim,#6a6058);min-width:50px;flex-shrink:0">'+esc(k)+'</span><input data-cp="'+esc(k)+'" value="'+esc(prefill)+'" placeholder="'+esc(v.type||k)+'" style="flex:1;font-size:8.5px;padding:2px 4px;background:var(--bg0,#181614);border:1px solid var(--border,#3a3530);color:var(--text,#ddd5c8);border-radius:2px;font-family:var(--mono,monospace)" ondragover="event.preventDefault()" ondrop="event.preventDefault();this.value=event.dataTransfer.getData(\'text/plain\').slice(0,500)"></div>';
-        }).join('');
-      };
-      if(runBtn) runBtn.onclick=async function(){
-        if(!sel.value)return;
-        if(resEl){resEl.style.display='block';resEl.textContent='running...';resEl.style.color='var(--dim,#6a6058)';}
-        var args={};par.querySelectorAll('[data-cp]').forEach(function(el2){if(el2.value)args[el2.dataset.cp]=el2.value;});
-        var capName = sel.value;
+      var searchEl = el.querySelector('.vg-cap-search');
+      var listEl   = el.querySelector('.vg-cap-list');
+      var chosenEl = el.querySelector('.vg-cap-chosen');
+      var selNameEl= el.querySelector('.vg-cap-selname');
+      var descEl   = el.querySelector('.vg-cap-desc');
+      var propsEl  = el.querySelector('.vg-cap-props');
+      var par      = el.querySelector('.vg-cap-chosen .vg-cap-params');
+      var runBtn   = el.querySelector('.vg-cap-run');
+      var resEl    = el.querySelector('.vg-cap-result');
+      if (!searchEl) return;   // capRunner excluded on this instance
+      var caps = await _loadCaps();
+      var capList = Object.keys(caps).map(function(n){ return caps[n]; });
+      var _selectedCap = null;
 
-        // Record this capability run to the memory layer (same as actions do)
+      // Draggable node-property chips: each carries the node's value for a key;
+      // drag one onto a param field to fill it. Same dataTransfer contract the
+      // param inputs accept, so it works cross-panel too.
+      if (propsEl) {
+        var p = node.props || {};
+        var chipKeys = ['id'].concat(Object.keys(p).filter(function(k){
+          var v = p[k]; return v != null && v !== '' && typeof v !== 'object';
+        }));
+        propsEl.innerHTML = chipKeys.slice(0, 24).map(function(k){
+          var val = k === 'id' ? node.id : String(p[k]);
+          return '<span class="vg-cap-chip" draggable="true" data-val="' + esc(val) + '" ' +
+            'title="' + esc(val) + '" ' +
+            'style="font-family:var(--mono,monospace);font-size:8px;padding:1px 6px;border-radius:8px;border:1px solid var(--border,#3a3530);background:var(--bg2,#272421);color:var(--dim2,#8a7e70);cursor:grab;white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis">' +
+            esc(k) + '</span>';
+        }).join('');
+        propsEl.querySelectorAll('.vg-cap-chip').forEach(function(chip){
+          chip.addEventListener('dragstart', function(ev){
+            ev.dataTransfer.setData('text/plain', chip.getAttribute('data-val'));
+          });
+        });
+      }
+
+      // Searchable capability list (name + description + tags)
+      function _renderList(q){
+        q = (q || '').trim().toLowerCase();
+        var matches = capList.filter(function(c){
+          if (!q) return true;
+          return (c.name || '').toLowerCase().indexOf(q) >= 0 ||
+                 (c.description || '').toLowerCase().indexOf(q) >= 0 ||
+                 (c.tags || []).join(' ').toLowerCase().indexOf(q) >= 0;
+        }).sort(function(a, b){ return (a.name || '') < (b.name || '') ? -1 : 1; });
+        if (!matches.length) {
+          listEl.innerHTML = '<div style="padding:6px 8px;font-size:9px;color:var(--dim,#6a6058)">No capabilities match.</div>';
+          listEl.style.display = ''; return;
+        }
+        listEl.innerHTML = matches.slice(0, 80).map(function(c){
+          var d = (c.description || '').slice(0, 90);
+          return '<div class="vg-cap-opt" data-cap="' + esc(c.name) + '" style="padding:4px 8px;cursor:pointer;border-bottom:1px solid var(--border,#3a3530)">' +
+            '<div style="font-size:9.5px;font-family:var(--mono,monospace);color:var(--acc,#5a9e8f);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(c.name) + '</div>' +
+            (d ? '<div style="font-size:8px;color:var(--dim2,#8a7e70);line-height:1.35;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(d) + '</div>' : '') +
+            '</div>';
+        }).join('');
+        listEl.style.display = '';
+        listEl.querySelectorAll('.vg-cap-opt').forEach(function(row){
+          row.onmouseenter = function(){ row.style.background = 'var(--bg2,#272421)'; };
+          row.onmouseleave = function(){ row.style.background = ''; };
+          row.onclick = function(){ _pickCap(row.getAttribute('data-cap')); };
+        });
+      }
+
+      function _pickCap(name){
+        var cap = caps[name]; if (!cap) return;
+        _selectedCap = cap;
+        listEl.style.display = 'none';
+        searchEl.value = name;
+        if (chosenEl) chosenEl.style.display = '';
+        if (selNameEl) selNameEl.textContent = name;
+        if (descEl) descEl.textContent = cap.description || '(no description)';
+        var props = (cap.schema && cap.schema.properties) || {};
+        var required = (cap.schema && cap.schema.required) || [];
+        par.innerHTML = Object.keys(props).filter(function(k){ return k !== 'trace_id'; }).map(function(k){
+          var v = props[k] || {};
+          var prefill = (node.props && node.props[k] != null && typeof node.props[k] !== 'object') ? String(node.props[k]) : '';
+          var req = required.indexOf(k) >= 0;
+          var hint = v.description ? esc(String(v.description).slice(0, 80)) : esc(v.type || k);
+          return '<div style="display:flex;gap:4px;align-items:center">' +
+            '<span title="' + hint + '" style="font-family:var(--mono,monospace);font-size:7.5px;color:' + (req ? 'var(--acc3,#c9955a)' : 'var(--dim,#6a6058)') + ';min-width:60px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(k) + (req ? '*' : '') + '</span>' +
+            '<input data-cp="' + esc(k) + '" value="' + esc(prefill) + '" placeholder="' + esc(v.type || k) + '" ' +
+            'style="flex:1;min-width:0;font-size:8.5px;padding:2px 4px;background:var(--bg0,#181614);border:1px solid var(--border,#3a3530);color:var(--text,#ddd5c8);border-radius:2px;font-family:var(--mono,monospace)" ' +
+            'ondragover="event.preventDefault();this.style.borderColor=\'var(--acc,#5a9e8f)\'" ' +
+            'ondragleave="this.style.borderColor=\'var(--border,#3a3530)\'" ' +
+            'ondrop="event.preventDefault();this.style.borderColor=\'var(--border,#3a3530)\';this.value=event.dataTransfer.getData(\'text/plain\').slice(0,2000)"></div>';
+        }).join('') || '<div style="font-size:8.5px;color:var(--dim,#6a6058)">No parameters.</div>';
+      }
+
+      searchEl.addEventListener('input', function(){ _renderList(searchEl.value); });
+      searchEl.addEventListener('focus', function(){ _renderList(searchEl.value); });
+      document.addEventListener('mousedown', function(ev){
+        var combo = el.querySelector('.vg-cap-combo');
+        if (listEl && combo && !combo.contains(ev.target)) listEl.style.display = 'none';
+      });
+      var clearBtn = el.querySelector('.vg-cap-clear');
+      if (clearBtn) clearBtn.onclick = function(){
+        _selectedCap = null; searchEl.value = '';
+        if (chosenEl) chosenEl.style.display = 'none';
+      };
+
+      if (runBtn) runBtn.onclick = async function(){
+        if (!_selectedCap) return;
+        var capName = _selectedCap.name;
+        if (resEl){ resEl.style.display = 'block'; resEl.textContent = 'running...'; resEl.style.color = 'var(--dim,#6a6058)'; }
+        var args = {}; par.querySelectorAll('[data-cp]').forEach(function(el2){ if (el2.value) args[el2.dataset.cp] = el2.value; });
         var fakeAction = { id: capName, capability: capName };
         var memNodeId = _recordActivity(fakeAction, node, 'running');
-
-        try{
-          var r=await fetch(apiBase+'/mcp/call',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:capName,arguments:args})});
-          var d=await r.json();
-          var c=d.content||d;
-          if(resEl){resEl.textContent=(typeof c==='string'?c:JSON.stringify(c,null,2)).slice(0,2000);resEl.style.color='var(--ok,#6db87a)';}
-
-          // Graph the results — parse them into nodes linked to the source node,
-          // same as _graphActionResults does for actions.
+        try {
+          var r = await fetch(apiBase + '/mcp/call', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name: capName, arguments: args }) });
+          var d = await r.json();
+          var c = d.content || d;
+          if (resEl){ resEl.textContent = (typeof c === 'string' ? c : JSON.stringify(c, null, 2)).slice(0, 2000); resEl.style.color = 'var(--ok,#6db87a)'; }
           try {
-            var payload = (typeof c === 'string') ? (function(){ try{return JSON.parse(c);}catch(e){return {};} })() : (c || {});
-            _graphActionResults(fakeAction, node, { ok: true, result: payload });
-          } catch(e2) {
-            if (typeof console !== 'undefined') console.warn('[vera-graph] cap result graphing:', e2);
-          }
-
-          // Update memory node status
+            var payload = (typeof c === 'string') ? (function(){ try{ return JSON.parse(c); }catch(e){ return {}; } })() : (c || {});
+            _graphActionResults(fakeAction, node, { ok: true, result: payload }, memNodeId);
+          } catch(e2){ if (typeof console !== 'undefined') console.warn('[vera-graph] cap result graphing:', e2); }
           try { _updateActivity(memNodeId, 'done', { ok: true, result: typeof c === 'object' ? c : {} }); } catch(e3){}
-
-        }catch(e){
-          if(resEl){resEl.textContent='Error: '+e.message;resEl.style.color='var(--err,#c96b6b)';}
+        } catch(e){
+          if (resEl){ resEl.textContent = 'Error: ' + e.message; resEl.style.color = 'var(--err,#c96b6b)'; }
           try { _updateActivity(memNodeId, 'error'); } catch(e4){}
         }
       };
@@ -3908,6 +5076,7 @@
       var qs = 'mode='+(mode||'session')+'&limit_nodes='+(params.limit||500)+'&limit_edges='+(params.edgeLimit||3000);
       if(params.session_id) qs += '&session_id='+encodeURIComponent(params.session_id);
       if(mode==='recent') qs += '&recent_hours='+(params.hours||24);
+      _setLoading(true, 'Loading memory...');
       try{
         var res=await fetch(apiBase+'/memory/graph/full?'+qs);
         var data=await res.json();
@@ -3916,6 +5085,7 @@
         var edges=(data.edges||[]).map(function(e){return{from:e.from_id||e.from,to:e.to_id||e.to,rel:e.relation||'RELATED'};});
         load({nodes:nodes,edges:edges});
       }catch(e){console.warn('fetchMemory:',e);}
+      finally{_setLoading(false);}
     }
 
     // ── Built-in drawer sections (opt-in via opts.sections array) ──────
@@ -3991,6 +5161,41 @@
       _wireLeftSections(_leftSecEl);
     }
 
+    // Registered-graphs list: each row is clickable and LOADS that graph into
+    // the view (the active one is marked). Used by both the left-panel and
+    // drawer variants of the section.
+    function _renderGraphList(rootEl){
+      var graphList = rootEl.querySelector('.vg-sec-graph-list');
+      if (!graphList) return;
+      fetch(apiBase + '/fabric/graphs').then(function(r){ return r.json(); }).then(function(d){
+        var gs = (d && d.graphs) || [];
+        if (!gs.length) { graphList.textContent = 'None'; return; }
+        graphList.innerHTML = gs.map(function(g){
+          var on = state.currentLayer === g.name;
+          var off = g.available === false;
+          return '<div class="vg-sec-graph-row" data-graph="' + esc(g.name) + '" title="' +
+              (off ? 'Graph backend not connected' : 'Load this graph into the view') + '" ' +
+              'style="display:flex;align-items:center;gap:5px;padding:2px 4px;border-radius:3px;cursor:' +
+              (off ? 'not-allowed' : 'pointer') + ';' + (on ? 'color:var(--acc2,#8fb87a);' : '') +
+              (off ? 'opacity:.45;' : '') + '">' +
+            '<span style="width:6px;height:6px;border-radius:50%;flex-shrink:0;background:' +
+              (on ? 'var(--acc2,#8fb87a)' : 'var(--border2,#4a4540)') + '"></span>' +
+            '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(g.name) + '</span>' +
+            (g.user_registered ? '<span style="color:var(--acc,#5a9e8f);font-size:8px">custom</span>' : '') +
+            '</div>';
+        }).join('');
+        graphList.querySelectorAll('.vg-sec-graph-row').forEach(function(row){
+          row.onmouseenter = function(){ row.style.background = 'var(--bg2,#272421)'; };
+          row.onmouseleave = function(){ row.style.background = ''; };
+          row.onclick = function(){
+            var name = row.getAttribute('data-graph');
+            instance.fetchSnapshot(name, {});
+            setTimeout(function(){ _renderGraphList(rootEl); }, 400);   // refresh active marker
+          };
+        });
+      }).catch(function(){ graphList.textContent = 'Failed to load'; });
+    }
+
     function _wireLeftSections(el){
       // Cypher query
       var cypRunBtn = el.querySelector('.vg-sec-cypher-run');
@@ -4012,15 +5217,10 @@
       if(regBtn) regBtn.onclick = async function(){
         var nameEl=el.querySelector('.vg-sec-reg-name'),labelsEl=el.querySelector('.vg-sec-reg-labels'),statEl=el.querySelector('.vg-sec-reg-status');
         if(!nameEl||!nameEl.value.trim()){if(statEl)statEl.textContent='Name required';return;}
-        try{var r=await fetch(apiBase+'/fabric/graphs/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nameEl.value.trim(),node_labels:labelsEl?labelsEl.value.trim():''})});var d=await r.json();if(statEl)statEl.textContent=d&&d.name?'Registered: '+d.name:(d&&d.error||'Failed');}catch(e){if(statEl)statEl.textContent=e.message;}
+        try{var r=await fetch(apiBase+'/fabric/graphs/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nameEl.value.trim(),node_labels:labelsEl?labelsEl.value.trim():''})});var d=await r.json();if(statEl)statEl.textContent=d&&d.name?'Registered: '+d.name:(d&&d.error||'Failed');if(d&&d.name)_renderGraphList(el);}catch(e){if(statEl)statEl.textContent=e.message;}
       };
-      // Load registered graphs list
-      var graphList = el.querySelector('.vg-sec-graph-list');
-      if(graphList){
-        fetch(apiBase+'/fabric/graphs').then(function(r){return r.json();}).then(function(d){
-          graphList.innerHTML = (d.graphs||[]).map(function(g){return '<div style="padding:2px 0">'+esc(g.name)+(g.user_registered?' <span style="color:var(--acc,#5a9e8f);font-size:8px">(custom)</span>':'')+'</div>';}).join('')||'None';
-        }).catch(function(){graphList.textContent='Failed to load';});
-      }
+      // Load registered graphs list (rows load the graph on click)
+      _renderGraphList(el);
     }
 
     // Wire section handlers after each showDetail call (delegated to _wireSections)
@@ -4058,15 +5258,10 @@
       if(regBtn) regBtn.onclick = async function(){
         var nameEl=detailEl.querySelector('.vg-sec-reg-name'),labelsEl=detailEl.querySelector('.vg-sec-reg-labels'),statEl=detailEl.querySelector('.vg-sec-reg-status');
         if(!nameEl||!nameEl.value.trim()){if(statEl)statEl.textContent='Name required';return;}
-        try{var r=await fetch(apiBase+'/fabric/graphs/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nameEl.value.trim(),node_labels:labelsEl?labelsEl.value.trim():''})});var d=await r.json();if(statEl)statEl.textContent=d&&d.name?'Registered: '+d.name:(d&&d.error||'Failed');}catch(e){if(statEl)statEl.textContent=e.message;}
+        try{var r=await fetch(apiBase+'/fabric/graphs/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nameEl.value.trim(),node_labels:labelsEl?labelsEl.value.trim():''})});var d=await r.json();if(statEl)statEl.textContent=d&&d.name?'Registered: '+d.name:(d&&d.error||'Failed');if(d&&d.name)_renderGraphList(detailEl);}catch(e){if(statEl)statEl.textContent=e.message;}
       };
-      // Load registered graphs list
-      var graphList = detailEl.querySelector('.vg-sec-graph-list');
-      if(graphList){
-        fetch(apiBase+'/fabric/graphs').then(function(r){return r.json();}).then(function(d){
-          graphList.innerHTML = (d.graphs||[]).map(function(g){return '<div style="padding:2px 0">'+esc(g.name)+(g.user_registered?' <span style="color:var(--acc,#5a9e8f);font-size:8px">(custom)</span>':'')+'</div>';}).join('')||'None';
-        }).catch(function(){graphList.textContent='Failed to load';});
-      }
+      // Load registered graphs list (rows load the graph on click)
+      _renderGraphList(detailEl);
       // Host callback
       if (opts.onNodeSelect) {
         try { opts.onNodeSelect(node, detailEl, instance); } catch(_){}
@@ -4264,31 +5459,41 @@
 
       function _tblRender(){
         if (!_tblPanelEl || !_tblData) return;
-        var rows = _tblData.rows;
+        // Track original row indices so onRow callbacks survive filtering.
+        var withIdx = _tblData.rows.map(function(r, i){ return { r: r, i: i }; });
         var q = (_tblSearch || '').toLowerCase();
-        if (q) rows = rows.filter(function(r){ return r.some(function(v){ return String(v).toLowerCase().indexOf(q) >= 0; }); });
+        if (q) withIdx = withIdx.filter(function(o){ return o.r.some(function(v){ return String(v).toLowerCase().indexOf(q) >= 0; }); });
         var tbody = _tblPanelEl.querySelector('.vg-bd-tbl-body');
         var ct = _tblPanelEl.querySelector('.vg-bd-tbl-count');
-        if (tbody) tbody.innerHTML = rows.map(function(r){
-          return '<tr>' + r.map(function(v){
-            var s = v == null ? '' : String(v);
-            var isUrl = /^https?:\/\//.test(s.trim());
-            var isLong = s.length > 120;
-            if (isUrl) {
-              return '<td title="' + esc(s.slice(0, 300)) + '"><a href="' + esc(s) + '" target="_blank" rel="noopener" style="color:var(--acc,#5a9e8f);text-decoration:none">' + esc(s.slice(0, 80)) + (s.length > 80 ? '\u2026' : '') + '</a></td>';
-            }
-            return '<td class="' + (isLong ? 'wrap' : '') + '" title="' + esc(s.slice(0, 300)) + '">' + esc(isLong ? s.slice(0, 300) + (s.length > 300 ? '\u2026' : '') : s) + '</td>';
-          }).join('') + '</tr>';
-        }).join('');
-        if (ct) ct.textContent = rows.length + (q ? '/' + _tblData.rows.length : '') + ' rows';
+        if (tbody) {
+          tbody.innerHTML = withIdx.map(function(o){
+            return '<tr data-ri="' + o.i + '">' + o.r.map(function(v){
+              var s = v == null ? '' : String(v);
+              var isUrl = /^https?:\/\//.test(s.trim());
+              var isLong = s.length > 120;
+              if (isUrl) {
+                return '<td title="' + esc(s.slice(0, 300)) + '"><a href="' + esc(s) + '" target="_blank" rel="noopener" style="color:var(--acc,#5a9e8f);text-decoration:none" onclick="event.stopPropagation()">' + esc(s.slice(0, 80)) + (s.length > 80 ? '\u2026' : '') + '</a></td>';
+              }
+              return '<td class="' + (isLong ? 'wrap' : '') + '" title="' + esc(s.slice(0, 300)) + '">' + esc(isLong ? s.slice(0, 300) + (s.length > 300 ? '\u2026' : '') : s) + '</td>';
+            }).join('') + '</tr>';
+          }).join('');
+          if (_tblData.onRow) {
+            tbody.querySelectorAll('tr').forEach(function(tr){
+              tr.onclick = function(){
+                try { _tblData.onRow(parseInt(tr.getAttribute('data-ri'), 10)); } catch(e){}
+              };
+            });
+          }
+        }
+        if (ct) ct.textContent = withIdx.length + (q ? '/' + _tblData.rows.length : '') + ' rows';
       }
-      function _tblRenderFull(cols, rows, title){
+      function _tblRenderFull(cols, rows, title, opts3){
         if (!_tblPanelEl) return;
         var head = _tblPanelEl.querySelector('.vg-bd-tbl-head-row');
         var titleEl = _tblPanelEl.querySelector('.vg-bd-tbl-title');
         if (head) head.innerHTML = cols.map(function(c){ return '<th>' + esc(c) + '</th>'; }).join('');
         if (titleEl) titleEl.textContent = title || 'Table';
-        _tblData = { cols: cols, rows: rows, title: title };
+        _tblData = { cols: cols, rows: rows, title: title, onRow: opts3 && opts3.onRow };
         _tblSearch = '';
         var si = _tblPanelEl.querySelector('.vg-bd-tbl-search'); if (si) si.value = '';
         _tblRender();
@@ -4297,7 +5502,27 @@
       }
 
       // ── Built-in panel: Content ───────────────────────────────────────
+      // Renders plain text, markdown, or (sanitised) HTML — mode auto-detected
+      // per document with a manual cycle button in the bar.
       var _contentPanelEl = null;
+      var _contentRaw = null, _contentMode = 'auto';
+      function _renderContentBody(){
+        if (!_contentPanelEl || !_contentRaw) return;
+        var body = _contentPanelEl.querySelector('.vg-bd-content');
+        if (!body) return;
+        var mode = _contentMode === 'auto' ? _detectRender(_contentRaw.text) : _contentMode;
+        if (mode === 'html') {
+          body.innerHTML = '<div style="white-space:normal;line-height:1.55">' + _sanitizeHtml(_contentRaw.text) + '</div>';
+        } else if (mode === 'markdown') {
+          body.innerHTML = '<div style="white-space:normal;line-height:1.55">' + _mdToHtml(_contentRaw.text) + '</div>';
+        } else {
+          var html = esc(_contentRaw.text || '');
+          html = html.replace(/(https?:\/\/[^\s<"]+)/g, function(m){ return '<a href="' + esc(m) + '" target="_blank" rel="noopener" style="color:var(--acc,#5a9e8f)">' + esc(m) + '</a>'; });
+          body.innerHTML = html;
+        }
+        var modeBtn = _contentPanelEl.querySelector('.vg-bd-content-mode');
+        if (modeBtn) modeBtn.textContent = _contentMode === 'auto' ? (mode + '·auto') : _contentMode;
+      }
       _registerPanel({
         id: 'content', title: 'Content', icon: '\u2261',
         build: function(body, inst){
@@ -4310,10 +5535,18 @@
             '<div class="vg-bd-content-bar">' +
               '<span class="vg-bd-content-title">No content loaded</span>' +
               '<span class="vg-bd-content-chars" style="color:var(--dim,#6a6058);font-size:8.5px"></span>' +
+              '<button class="vg-bd-content-mode" title="Render mode — click to cycle auto → text → markdown → html" style="font-size:8px;padding:1px 6px;background:var(--bg2,#272421);border:1px solid var(--border,#3a3530);color:var(--acc,#5a9e8f);border-radius:2px;cursor:pointer">auto</button>' +
               '<button style="font-size:8px;padding:1px 6px;background:var(--bg2,#272421);border:1px solid var(--border,#3a3530);color:var(--dim,#6a6058);border-radius:2px;cursor:pointer" onclick="this.closest(\'.vg-bd-panel\').querySelector(\'.vg-bd-content\').innerHTML=\'\'">Clear</button>' +
             '</div>' +
             '<div class="vg-bd-content"></div>';
           _contentPanelEl = body;
+          var modeBtn = body.querySelector('.vg-bd-content-mode');
+          if (modeBtn) modeBtn.onclick = function(){
+            var order = ['auto', 'text', 'markdown', 'html'];
+            _contentMode = order[(order.indexOf(_contentMode) + 1) % order.length];
+            _renderContentBody();
+          };
+          if (_contentRaw) _renderContentBody();
         }
       });
 
@@ -4323,7 +5556,7 @@
       // summary. Lets the user query the data or drive Vera in natural language.
       var _chatBodyEl = null, _chatMsgs = [], _chatSession = 'vgchat_' + Math.random().toString(36).slice(2, 9);
       _registerPanel({
-        id: 'chat', title: 'Chat', icon: '✉',
+        id: 'chat', title: 'Chat', icon: '✉︎',
         build: function(body, inst){
           // NOTE: do NOT set body.style.display here — the .vg-bd-panel/.on CSS
           // toggles display:none/flex per active tab. An inline display:flex
@@ -4437,8 +5670,8 @@
           if (_termEl) _termEl.innerHTML = '';
           if (_termBadge){ _termBadge.textContent = '0'; _panels['terminal'].tabEl.classList.remove('has-content'); }
         },
-        showTable: function(cols, rows, title){
-          _tblRenderFull(cols, rows, title);
+        showTable: function(cols, rows, title, opts3){
+          _tblRenderFull(cols, rows, title, opts3);
           _setActive('table', true);
         },
         showContent: function(title, text, opts2){
@@ -4477,11 +5710,11 @@
             }).join('');
           } else {
             if (ch) ch.textContent = text ? text.length + ' chars' : '';
-            if (body){
-              var html = esc(text || '');
-              html = html.replace(/(https?:\/\/[^\s<"]+)/g, function(m){ return '<a href="' + esc(m) + '" target="_blank" rel="noopener" style="color:var(--acc,#5a9e8f)">' + esc(m) + '</a>'; });
-              body.innerHTML = html;
-            }
+            // Rich rendering: opts2.render = 'auto'|'text'|'markdown'|'html'
+            // ('auto' sniffs the document; the bar button lets the user cycle).
+            _contentRaw = { title: title, text: text || '' };
+            if (opts2 && opts2.render) _contentMode = opts2.render;
+            _renderContentBody();
           }
           var badge = _panels['content'] && _panels['content'].tabEl.querySelector('.vg-bd-badge');
           if (badge){ badge.textContent = text||(pages&&pages.length) ? '\u2713' : ''; _panels['content'].tabEl.classList.toggle('has-content', !!(text||(pages&&pages.length))); }
@@ -4601,12 +5834,15 @@
       canvas:         canvas,
       eventBus:       opts.eventBus || _getSharedBus(),
       fetchMemory:    fetchMemory,
+      showNodeTable:  _nodeToTable,
+      showNodeContent:_nodeToContent,
       applyLayout:    _applyLayout,
       rebuildChips:   _rebuildChips,
       applyVis:       _applyVis,
       updateDebug:    _updateDebug,
       showDetail:     showDetail,
       getDetailEl:    function(){ return detailEl; },
+      setLoading:     _setLoading,
       bottomDrawer:   null,  // populated below from container._vgBdApi
     };
 
@@ -4687,7 +5923,7 @@
         var cTab = document.createElement('div');
         cTab.className = 'vg-sb-tab';
         cTab.setAttribute('data-panel', 'controls');
-        cTab.innerHTML = '\u2699<span class="vg-sb-tip">Controls</span>';
+        cTab.innerHTML = '\u2699︎<span class="vg-sb-tip">Controls</span>';
         cTab.onclick = function(){ _activatePanel('controls'); };
         _sbRailEl.appendChild(cTab);
         _mountedPanels['controls'] = { def: { id:'controls', title:'Controls', order:0 },

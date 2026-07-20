@@ -1,0 +1,47 @@
+{
+  "name": "input-automator",
+  "displayName": "Input Automator",
+  "description": "Panel with a text box that automates input: simulate typing into the editor, send text to the terminal, or run VS Code commands - with delays, repeats, and saved snippets.",
+  "version": "0.1.0",
+  "publisher": "vera",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "inputAutomator.open",
+        "title": "Input Automator: Open as Tab"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "inputAutomator.open",
+        "key": "ctrl+alt+i"
+      }
+    ],
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "inputAutomatorPanel",
+          "title": "Input Automator",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "inputAutomatorPanel": [
+        {
+          "type": "webview",
+          "id": "inputAutomator.view",
+          "name": "Input Automator"
+        }
+      ]
+    }
+  }
+}

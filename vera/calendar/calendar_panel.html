@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <title>Vera Calendar</title>
 <style>
@@ -18,26 +23,51 @@ html,body{ margin:0;padding:0;background:var(--bg);color:var(--fg);
 
 #root{ display:flex;height:100vh;min-height:0; }
 
-/* ── Sidebar ─────────────────────────────────────────── */
-#sidebar{ width:184px;flex-shrink:0;background:var(--bg1);
-  border-right:1px solid var(--border);display:flex;flex-direction:column; }
-#side-head{ padding:14px 14px 10px;border-bottom:1px solid var(--border);
-  display:flex;align-items:center;gap:8px; }
+/* ══ LEFT-HAND MENU (LHM) ═══════════════════════════════ */
+#sidebar{ width:322px;flex-shrink:0;background:var(--bg1);
+  border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0; }
+#side-head{ padding:13px 14px 11px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:8px;flex-shrink:0; }
 #side-head .ico{ width:24px;height:24px;background:var(--bg2);
   border:1px solid var(--border2);border-radius:6px;display:flex;
   align-items:center;justify-content:center;color:var(--acc);font-size:14px; }
 #side-head h1{ margin:0;font-size:12px;font-weight:600;letter-spacing:.04em; }
 #side-head .sub{ font-size:9px;color:var(--dim);letter-spacing:.12em;
   text-transform:uppercase;margin-top:1px; }
-#nav{ flex:1;padding:8px 6px; }
-.nav-btn{ display:flex;align-items:center;gap:9px;width:100%;padding:8px 10px;
-  background:transparent;border:1px solid transparent;color:var(--fg2);
-  border-radius:5px;font:inherit;font-size:11px;cursor:pointer;text-align:left;
-  margin-bottom:2px; }
-.nav-btn:hover{ background:var(--bg2);color:var(--fg); }
-.nav-btn.active{ background:var(--bg2);border-color:var(--border2);color:var(--acc); }
-.nav-btn .gl{ width:15px;text-align:center;opacity:.85; }
-#sync-tile{ margin:6px;padding:10px;background:var(--bg2);border:1px solid var(--border);
+
+/* LHM section tabs */
+#lhm-tabs{ display:flex;gap:3px;padding:8px 8px 0;flex-shrink:0; }
+.lt{ flex:1;background:transparent;border:1px solid transparent;color:var(--fg2);
+  border-radius:6px 6px 0 0;font:inherit;font-size:10px;font-weight:600;padding:7px 4px;
+  cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:2px;
+  border-bottom:2px solid transparent;transition:.12s; }
+.lt .g{ font-size:14px;line-height:1; }
+.lt:hover{ background:var(--bg2);color:var(--fg); }
+.lt.active{ color:var(--acc);border-bottom-color:var(--acc);background:var(--bg2); }
+.lt .badge{ position:absolute;top:4px;right:8px;width:6px;height:6px;border-radius:50%;
+  background:var(--purple);display:none; }
+.lt.has-alert{ position:relative; }
+.lt.has-alert .badge{ display:block; }
+
+/* LHM body — one active pane fills the remaining height */
+#lhm-body{ flex:1;min-height:0;display:flex;border-top:1px solid var(--border); }
+.lhm-pane{ display:none;flex:1;min-height:0;width:100%;flex-direction:column; }
+.lhm-pane.active{ display:flex; }
+.lhm-pane.scroll{ overflow-y:auto;padding:12px; }
+.pane-head{ display:flex;align-items:center;gap:8px;font-size:10px;font-weight:600;
+  letter-spacing:.07em;text-transform:uppercase;color:var(--fg2);margin-bottom:9px; }
+.pane-head .pane-actions{ margin-left:auto;font-weight:400;text-transform:none;letter-spacing:0; }
+.pane-head .pane-actions a{ color:var(--acc);cursor:pointer;font-size:10px; }
+
+/* LHM footer — app sections + sync */
+#lhm-foot{ flex-shrink:0;border-top:1px solid var(--border);padding:7px 8px 8px; }
+#lhm-foot .frow{ display:flex;gap:5px;margin-bottom:7px; }
+.foot-btn{ flex:1;background:transparent;border:1px solid var(--border2);color:var(--fg2);
+  border-radius:5px;font:inherit;font-size:10px;padding:6px 4px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;gap:5px;transition:.12s; }
+.foot-btn:hover{ background:var(--bg2);color:var(--fg); }
+.foot-btn.active{ background:var(--bg2);border-color:var(--acc);color:var(--acc); }
+#sync-tile{ padding:9px 10px;background:var(--bg2);border:1px solid var(--border);
   border-radius:6px;font-size:10px; }
 #sync-tile .lbl{ color:var(--dim);text-transform:uppercase;letter-spacing:.08em;
   font-size:9px;margin-bottom:5px; }
@@ -47,23 +77,22 @@ html,body{ margin:0;padding:0;background:var(--bg);color:var(--fg);
 .dot.off{ background:var(--err); }
 .dot.warn{ background:var(--warn); }
 
-/* ── Main ────────────────────────────────────────────── */
-#main{ flex:1;min-width:0;display:flex;flex-direction:column; }
-#topbar{ height:42px;flex-shrink:0;border-bottom:1px solid var(--border);
-  background:var(--bg1);padding:0 16px;display:flex;align-items:center;gap:12px; }
-#topbar h2{ margin:0;font-size:13px;font-weight:600; }
-#topbar .crumb{ font-size:10px;color:var(--dim); }
-#topbar .right{ margin-left:auto;display:flex;align-items:center;gap:8px; }
-#content{ flex:1;overflow-y:auto;padding:18px 22px;min-height:0; }
+/* ══ MAIN (calendar only) ═══════════════════════════════ */
+#main{ flex:1;min-width:0;display:flex;flex-direction:column;min-height:0; }
+#content{ flex:1;overflow-y:auto;padding:14px 18px;min-height:0;display:flex;
+  flex-direction:column; }
 .section{ display:none; }
 .section.active{ display:block; }
+.section[data-sec="calendar"].active{ display:flex;flex-direction:column;flex:1;min-height:0; }
+.section-head{ display:flex;align-items:center;gap:10px;margin-bottom:14px; }
+.section-head h2{ margin:0;font-size:15px;font-weight:600; }
 
 /* ── Buttons / inputs ────────────────────────────────── */
 .btn{ background:var(--bg2);border:1px solid var(--border2);color:var(--fg);
   border-radius:5px;padding:7px 13px;font:inherit;font-size:11px;cursor:pointer;
   display:inline-flex;align-items:center;gap:6px;transition:.12s; }
 .btn:hover{ background:var(--bg3);border-color:var(--acc); }
-.btn.primary{ background:var(--acc);border-color:var(--acc);color:#04121f;font-weight:600; }
+.btn.primary{ background:var(--acc);border-color:var(--acc);color:var(--on-acc,#04121f);font-weight:600; }
 .btn.primary:hover{ filter:brightness(1.1); }
 .btn.ghost{ background:transparent; }
 .btn.sm{ padding:4px 9px;font-size:10px; }
@@ -80,9 +109,18 @@ label.fl{ display:block;font-size:10px;color:var(--fg2);text-transform:uppercase
 .row2{ display:grid;grid-template-columns:1fr 1fr;gap:12px; }
 .muted{ color:var(--dim); }
 
-/* ── Calendar grid ───────────────────────────────────── */
-#cal-toolbar{ display:flex;align-items:center;gap:10px;margin-bottom:14px; }
-#cal-title{ font-size:15px;font-weight:600;min-width:170px; }
+/* ── View switcher ───────────────────────────────────── */
+.vsw{ display:inline-flex;border:1px solid var(--border2);border-radius:6px;
+  overflow:hidden;background:var(--bg1); }
+.vsw button{ background:transparent;border:none;color:var(--fg2);font:inherit;
+  font-size:10px;padding:5px 11px;cursor:pointer;border-right:1px solid var(--border); }
+.vsw button:last-child{ border-right:none; }
+.vsw button:hover{ color:var(--fg);background:var(--bg2); }
+.vsw button.active{ background:var(--bg3);color:var(--acc);font-weight:600; }
+
+/* ── Calendar month grid ─────────────────────────────── */
+#cal-toolbar{ display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-shrink:0; }
+#cal-title{ font-size:15px;font-weight:600;min-width:150px; }
 .cal-grid{ display:grid;grid-template-columns:repeat(7,1fr);gap:1px;
   background:var(--border);border:1px solid var(--border);border-radius:8px;
   overflow:hidden; }
@@ -92,6 +130,8 @@ label.fl{ display:block;font-size:10px;color:var(--fg2);text-transform:uppercase
   position:relative;transition:background .1s; }
 .cal-cell:hover{ background:var(--bg1); }
 .cal-cell.other{ background:#0a0c0f;color:var(--dim); }
+.cal-cell.wkend{ background:#0b0d11; }
+.cal-cell.other.wkend{ background:#090b0e; }
 .cal-cell.today{ background:rgba(74,158,255,.07); }
 .cal-cell .dnum{ font-size:11px;font-weight:600;color:var(--fg2); }
 .cal-cell.today .dnum{ color:var(--acc); }
@@ -100,122 +140,49 @@ label.fl{ display:block;font-size:10px;color:var(--fg2);text-transform:uppercase
   overflow:hidden;text-overflow:ellipsis;cursor:pointer; }
 .chip .ct{ color:var(--fg); }
 .more{ font-size:9px;color:var(--dim);margin-top:3px; }
-
-/* ── Day view ────────────────────────────────────────── */
-.day-event{ display:flex;gap:10px;padding:9px 11px;background:var(--bg1);
-  border:1px solid var(--border);border-radius:6px;margin-bottom:7px;
-  border-left:3px solid var(--acc);cursor:pointer; }
-.day-event .tm{ font-family:var(--mono);font-size:11px;color:var(--fg2);min-width:96px; }
-.day-event .ti{ font-weight:500; }
-.day-event .lo{ font-size:10px;color:var(--dim); }
-
-/* ── Lists (todos/notes/sources) ─────────────────────── */
-.list-item{ display:flex;align-items:flex-start;gap:10px;padding:10px 12px;
-  background:var(--bg1);border:1px solid var(--border);border-radius:6px;margin-bottom:7px; }
-.list-item .meta{ flex:1;min-width:0; }
-.list-item .t{ font-weight:500; }
-.list-item .s{ font-size:10px;color:var(--dim);margin-top:2px; }
-.check{ width:16px;height:16px;border:1.5px solid var(--border2);border-radius:4px;
-  cursor:pointer;flex-shrink:0;margin-top:1px;display:flex;align-items:center;
-  justify-content:center;font-size:11px;color:var(--acc2); }
-.check.on{ background:rgba(40,194,138,.12);border-color:var(--acc2); }
-.done .t{ text-decoration:line-through;color:var(--dim); }
-.pri{ font-size:9px;padding:1px 6px;border-radius:10px;background:var(--bg2);
-  border:1px solid var(--border2);color:var(--fg2); }
-.pri.p3{ color:var(--err);border-color:var(--err); }
-.pri.p2{ color:var(--warn);border-color:var(--warn); }
-
-/* ── Brain dump review cards ─────────────────────────── */
-.bd-group{ margin-bottom:18px; }
-.bd-group h4{ margin:0 0 8px;font-size:11px;text-transform:uppercase;
-  letter-spacing:.08em;color:var(--fg2); }
-.bd-card{ display:flex;gap:10px;padding:10px 12px;background:var(--bg1);
-  border:1px solid var(--border);border-radius:6px;margin-bottom:6px; }
-.bd-card.kev{ border-left:3px solid var(--acc); }
-.bd-card.ktd{ border-left:3px solid var(--acc2); }
-.bd-card.knt{ border-left:3px solid var(--purple); }
-.bd-card .bd-main{ flex:1; }
-.bd-card .bd-t{ font-weight:600;font-size:12px; }
-.bd-card .bd-s{ font-size:10px;color:var(--dim);margin-top:2px; }
-.bd-card.bd-needs{ border-left-color:var(--warn,#f5b341); }
-.bd-when-row{ display:flex;align-items:center;gap:10px;margin-top:6px;flex-wrap:wrap; }
-.bd-when{ background:var(--bg2);border:1px solid var(--border);border-radius:5px;
-  color:var(--fg);font-size:11px;padding:3px 6px;font-family:var(--mono); }
-.bd-ad-lbl{ display:flex;align-items:center;gap:4px;font-size:10px;color:var(--dim); }
-.bd-ad-lbl input{ width:auto;margin:0; }
-.bd-flag{ font-size:9px;text-transform:uppercase;letter-spacing:.04em;
-  color:var(--warn,#f5b341);font-weight:600; }
-.plan-row{ display:flex;gap:12px;padding:5px 0;border-bottom:1px solid var(--border); }
-.plan-row .pt{ font-family:var(--mono);color:var(--acc);min-width:60px; }
-
-/* ── Modal ───────────────────────────────────────────── */
-.modal-bg{ position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;
-  align-items:center;justify-content:center;z-index:50; }
-.modal-bg.show{ display:flex; }
-.modal{ background:var(--bg1);border:1px solid var(--border2);border-radius:10px;
-  width:440px;max-width:92vw;max-height:88vh;overflow:auto;padding:18px 20px; }
-.modal h3{ margin:0 0 14px;font-size:14px; }
-.modal-foot{ display:flex;gap:8px;justify-content:flex-end;margin-top:16px; }
-
-.empty{ text-align:center;color:var(--dim);padding:40px 0;font-size:12px; }
-.tag{ display:inline-block;font-size:9px;padding:1px 7px;border-radius:10px;
-  background:var(--bg2);border:1px solid var(--border2);color:var(--fg2);margin-left:6px; }
-.spin{ display:inline-block;width:12px;height:12px;border:2px solid var(--border2);
-  border-top-color:var(--acc);border-radius:50%;animation:sp .7s linear infinite; }
-@keyframes sp{ to{ transform:rotate(360deg); } }
-.toast{ position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
-  background:var(--bg2);border:1px solid var(--border2);border-radius:6px;
-  padding:9px 16px;font-size:11px;z-index:80;opacity:0;transition:opacity .2s; }
-.toast.show{ opacity:1; }
-
-/* ── Calendar multi-select (Google layers) ───────────── */
-.cal-multi{ border:1px solid var(--border);border-radius:6px;background:var(--bg);
-  max-height:184px;overflow-y:auto;padding:4px; }
-.cal-multi .crow{ display:flex;align-items:center;gap:9px;padding:6px 8px;
-  border-radius:5px;cursor:pointer; }
-.cal-multi .crow:hover{ background:var(--bg2); }
-.cal-multi .crow input{ width:auto;margin:0;flex-shrink:0;cursor:pointer; }
-.cal-multi .sw{ width:11px;height:11px;border-radius:3px;flex-shrink:0;
-  border:1px solid rgba(255,255,255,.15); }
-.cal-multi .nm{ flex:1;min-width:0;white-space:nowrap;overflow:hidden;
-  text-overflow:ellipsis; }
-.cal-multi .pri-tag{ font-size:9px;color:var(--dim); }
-.cal-multi .empty-mini{ padding:14px;text-align:center;color:var(--dim);font-size:11px; }
-
-/* ── Layers dropdown on the calendar view ────────────── */
-#layer-wrap{ position:relative; }
-#layer-pop{ position:absolute;top:30px;right:0;z-index:40;width:250px;
-  background:var(--bg1);border:1px solid var(--border2);border-radius:8px;
-  box-shadow:0 8px 24px rgba(0,0,0,.45);padding:6px;display:none; }
-#layer-pop.show{ display:block; }
-#layer-pop .lp-head{ display:flex;align-items:center;justify-content:space-between;
-  padding:4px 8px 7px;color:var(--dim);font-size:9px;letter-spacing:.08em;
-  text-transform:uppercase; }
-#layer-pop .lp-head a{ color:var(--acc);cursor:pointer;text-transform:none;
-  letter-spacing:0;font-size:10px; }
-#layer-list{ max-height:320px;overflow-y:auto; }
-.lp-actions a{ margin-left:3px; }
-.layer-row{ display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:5px;
-  cursor:pointer; }
-.layer-row:hover{ background:var(--bg2); }
-.layer-row input{ width:auto;margin:0;flex-shrink:0;cursor:pointer; }
-.layer-row .sw{ width:11px;height:11px;border-radius:3px;flex-shrink:0; }
-.layer-row .nm{ flex:1;min-width:0;white-space:nowrap;overflow:hidden;
-  text-overflow:ellipsis; }
-.layer-row.off .nm{ color:var(--dim);text-decoration:line-through; }
-
 .cal-cell.sel{ box-shadow:inset 0 0 0 1px var(--acc); }
 
-/* ── Day detail panel (under the month grid) ─────────── */
-#day-view{ margin-top:20px;border-top:1px solid var(--border2);padding-top:18px; }
-#day-view:empty{ display:none; }
+/* ── Week view ───────────────────────────────────────── */
+#view-week{ flex:1;display:flex;flex-direction:column;min-height:0; }
+#week-head{ display:grid;grid-template-columns:56px repeat(7,1fr);flex-shrink:0;
+  border:1px solid var(--border);border-bottom:none;border-radius:8px 8px 0 0;
+  background:var(--bg1);overflow:hidden; }
+.wk-h{ padding:6px 8px;border-left:1px solid var(--border);text-align:center;
+  cursor:pointer;min-width:0; }
+.wk-h:hover{ background:var(--bg2); }
+.wk-h .wd{ font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim); }
+.wk-h .dn{ font-size:14px;font-weight:600;color:var(--fg2);line-height:1.2; }
+.wk-h.today .dn{ color:var(--acc); }
+.wk-h .ad-chip{ display:block;font-size:9px;padding:1px 5px;margin-top:2px;
+  border-radius:3px;background:var(--bg2);border-left:2px solid var(--acc);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left; }
+#week-body{ flex:1;overflow-y:auto;display:grid;
+  grid-template-columns:56px repeat(7,1fr);border:1px solid var(--border);
+  border-radius:0 0 8px 8px;background:var(--bg);min-height:0; }
+#wk-hours{ position:relative;height:1440px; }
+#wk-hours .hl{ position:absolute;right:6px;transform:translateY(-50%);
+  font-family:var(--mono);font-size:9px;color:var(--dim); }
+.wk-col{ position:relative;height:1440px;border-left:1px solid var(--border);
+  background:repeating-linear-gradient(to bottom,transparent 0 59px,var(--border) 59px 60px);
+  cursor:pointer;min-width:0; }
+.wk-col.today{ background-color:rgba(74,158,255,.04); }
+.wk-ev{ position:absolute;left:2px;right:3px;border-radius:4px;background:var(--bg3);
+  border-left:3px solid var(--acc);padding:2px 5px;font-size:10px;overflow:hidden;
+  cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.35);min-height:16px;z-index:2; }
+.wk-ev:hover{ filter:brightness(1.2);z-index:5; }
+.wk-ev .t{ font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.wk-ev .m{ font-family:var(--mono);font-size:9px;color:var(--fg2); }
+.wk-now{ position:absolute;left:0;right:0;height:0;border-top:1.5px solid var(--err);
+  z-index:6;pointer-events:none; }
+.wk-now::before{ content:"";position:absolute;left:-2px;top:-3.5px;width:6px;height:6px;
+  border-radius:50%;background:var(--err); }
+
+/* ── Day view (main-area full timeline) ──────────────── */
 .dd-eyebrow{ font-size:9px;letter-spacing:.12em;text-transform:uppercase;
   color:var(--acc);margin-bottom:3px;font-weight:600; }
 .dd-empty{ padding:10px 12px;margin-bottom:10px;background:var(--bg1);
   border:1px dashed var(--border2);border-radius:6px;color:var(--dim);
   font-size:11px;text-align:center; }
-
-/* ── Day detail timeline ─────────────────────────────── */
 .dd-head{ display:flex;align-items:center;gap:10px;margin:4px 0 12px; }
 .dd-head h3{ margin:0;font-size:14px;font-weight:600; }
 .dd-head .dd-sub{ font-size:10px;color:var(--dim); }
@@ -243,101 +210,309 @@ label.fl{ display:block;font-size:10px;color:var(--fg2);text-transform:uppercase
   font-size:15px;color:var(--acc);pointer-events:none;transition:opacity .1s; }
 .hour-row:hover .hr-add{ opacity:.7; }
 
-/* ── Brain-dump chat UI ──────────────────────────────── */
-#bd-chat{ display:flex;flex-direction:column;gap:14px;max-width:760px;
-  margin-bottom:16px;min-height:60px; }
-.bd-msg{ display:flex;gap:10px;align-items:flex-start; }
-.bd-msg .av{ width:26px;height:26px;border-radius:7px;flex-shrink:0;display:flex;
-  align-items:center;justify-content:center;font-size:13px;background:var(--bg2);
+/* ── LHM Events pane (selected-day list) ─────────────── */
+.ev-head{ display:flex;align-items:flex-start;gap:8px;margin-bottom:10px; }
+.ev-head h3{ margin:1px 0 0;font-size:13px;font-weight:600;line-height:1.25; }
+.ev-head .dd-sub{ font-size:10px;color:var(--dim); }
+.ev-head .right{ margin-left:auto;display:flex;gap:5px;align-items:center;flex-shrink:0; }
+.evl-item{ display:flex;gap:9px;align-items:baseline;padding:7px 9px;background:var(--bg2);
+  border:1px solid var(--border);border-left:3px solid var(--acc);border-radius:6px;
+  margin-bottom:5px;cursor:pointer;min-width:0; }
+.evl-item:hover{ border-color:var(--border2);filter:brightness(1.08); }
+.evl-item .tm{ font-family:var(--mono);font-size:10px;color:var(--fg2);flex-shrink:0;min-width:40px; }
+.evl-item .ti{ font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.evl-item .loc{ font-size:9px;color:var(--dim); }
+
+/* ── Layers pane ─────────────────────────────────────── */
+.layer-row{ display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:6px;
+  cursor:pointer;background:var(--bg2);border:1px solid var(--border);margin-bottom:5px; }
+.layer-row:hover{ border-color:var(--border2); }
+.layer-row input{ width:auto;margin:0;flex-shrink:0;cursor:pointer; }
+.layer-row .sw{ width:11px;height:11px;border-radius:3px;flex-shrink:0; }
+.layer-row .nm{ flex:1;min-width:0;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;font-size:11px; }
+.layer-row.off .nm{ color:var(--dim);text-decoration:line-through; }
+.layer-row .cn{ font-size:9px;color:var(--dim); }
+
+/* ── Lists (sources) ─────────────────────────────────── */
+.list-item{ display:flex;align-items:flex-start;gap:10px;padding:10px 12px;
+  background:var(--bg1);border:1px solid var(--border);border-radius:6px;margin-bottom:7px; }
+.list-item .meta{ flex:1;min-width:0; }
+.list-item .t{ font-weight:500; }
+.list-item .s{ font-size:10px;color:var(--dim);margin-top:2px; }
+.check{ width:15px;height:15px;border:1.5px solid var(--border2);border-radius:4px;
+  cursor:pointer;flex-shrink:0;margin-top:1px;display:flex;align-items:center;
+  justify-content:center;font-size:10px;color:var(--acc2); }
+.check.on{ background:rgba(40,194,138,.12);border-color:var(--acc2); }
+.done .t{ text-decoration:line-through;color:var(--dim); }
+.pri{ font-size:9px;padding:1px 6px;border-radius:10px;background:var(--bg2);
+  border:1px solid var(--border2);color:var(--fg2);flex-shrink:0; }
+.pri.p3{ color:var(--err);border-color:var(--err); }
+.pri.p2{ color:var(--warn);border-color:var(--warn); }
+
+/* ══ RIGHT-HAND MENU (RHM) — schedule + todos only ═════ */
+#rail{ width:290px;flex-shrink:0;border-left:1px solid var(--border);
+  background:var(--bg1);display:flex;flex-direction:column;min-height:0;overflow-y:auto; }
+body.rail-hidden #rail{ display:none; }
+#rail-inner{ padding:11px 12px; }
+.rail-sec-h{ display:flex;align-items:center;gap:6px;font-size:10px;font-weight:600;
+  letter-spacing:.08em;text-transform:uppercase;color:var(--fg2);margin:14px 0 8px; }
+.rail-sec-h:first-child{ margin-top:0; }
+.rail-sec-h .cnt{ color:var(--dim);font-weight:400; }
+.rail-sec-h .rt{ margin-left:auto;font-size:9px;color:var(--dim);font-weight:400;
+  text-transform:none;letter-spacing:0; }
+.ag-item{ display:flex;gap:8px;align-items:center;padding:7px 9px;background:var(--bg2);
+  border:1px solid var(--border);border-left:3px solid var(--acc);border-radius:5px;
+  margin-bottom:5px;cursor:pointer;min-width:0; }
+.ag-item:hover{ border-color:var(--border2);filter:brightness(1.08); }
+.ag-item .tm{ font-family:var(--mono);font-size:10px;color:var(--fg2);
+  min-width:38px;flex-shrink:0; }
+.ag-item .ti{ font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.ag-item.past{ opacity:.45; }
+.ag-item.next{ border-color:var(--acc); }
+.ag-empty{ padding:9px 10px;background:var(--bg2);border:1px dashed var(--border2);
+  border-radius:6px;color:var(--dim);font-size:10px;text-align:center;margin-bottom:5px; }
+
+/* todos in the rail */
+#td-add-row{ display:flex;gap:6px;margin-bottom:8px; }
+#td-add-row input{ padding:6px 9px;font-size:11px; }
+#td-add-row .btn{ flex-shrink:0; }
+.td-item{ display:flex;align-items:flex-start;gap:8px;padding:6px 8px;
+  background:var(--bg2);border:1px solid var(--border);border-radius:5px;
+  margin-bottom:4px;min-width:0; }
+.td-item .meta{ flex:1;min-width:0;cursor:pointer; }
+.td-item .t{ font-size:11px;line-height:1.35; }
+.td-item .s{ font-size:9px;color:var(--dim);margin-top:1px; }
+.td-item .s .od{ color:var(--err); }
+.td-item .x{ background:transparent;border:none;color:var(--dim);cursor:pointer;
+  font-size:11px;padding:0 2px;border-radius:3px;flex-shrink:0; }
+.td-item .x:hover{ color:var(--err); }
+.td-grp{ font-size:9px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);
+  margin:8px 0 4px;display:flex;align-items:center;gap:6px;cursor:default; }
+.td-grp.overdue{ color:var(--err); }
+.td-grp .n{ opacity:.7; }
+.td-grp.clickable{ cursor:pointer; }
+.td-grp.clickable:hover{ color:var(--fg2); }
+
+/* ══ Assistant + Brain-dump (LHM panes) ════════════════ */
+#as-head{ display:flex;align-items:center;gap:8px;padding:9px 12px;
+  border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg1); }
+#as-head .ttl{ font-size:11px;font-weight:600;letter-spacing:.04em; }
+#as-head .sub{ font-size:9px;color:var(--dim); }
+#as-head .right{ margin-left:auto;display:flex;align-items:center;gap:8px; }
+#as-status{ font-size:9px;color:var(--dim); }
+#as-mode{ display:none;align-items:center;gap:7px;padding:6px 12px;flex-shrink:0;
+  background:rgba(167,139,250,.09);border-bottom:1px solid rgba(167,139,250,.35);
+  color:var(--purple);font-size:10px; }
+#as-mode .pulse{ width:7px;height:7px;border-radius:50%;background:var(--purple);
+  animation:aspulse 1.2s ease-in-out infinite; }
+@keyframes aspulse{ 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.35;transform:scale(.75)} }
+.feed{ flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;
+  gap:11px;min-height:0;background:var(--bg); }
+.as-msg{ display:flex;gap:8px;align-items:flex-start; }
+.as-msg .av{ width:24px;height:24px;border-radius:7px;flex-shrink:0;display:flex;
+  align-items:center;justify-content:center;font-size:12px;background:var(--bg2);
   border:1px solid var(--border2); }
-.bd-msg.user .av{ color:var(--acc); }
-.bd-msg.bot .av{ color:var(--purple); }
-.bd-msg .bubble{ flex:1;min-width:0;background:var(--bg1);border:1px solid var(--border);
-  border-radius:8px;padding:11px 13px; }
-.bd-msg.user .bubble{ background:var(--bg2); }
-.bd-msg .bubble p.txt{ margin:0;white-space:pre-wrap;word-break:break-word; }
+.as-msg.user .av{ color:var(--acc); }
+.as-msg.bot .av{ color:var(--purple); }
+.as-msg .bubble{ flex:1;min-width:0;background:var(--bg1);border:1px solid var(--border);
+  border-radius:8px;padding:9px 11px; }
+.as-msg.user .bubble{ background:var(--bg2); }
+.as-msg .bubble p.txt{ margin:0;white-space:pre-wrap;word-break:break-word; }
+.as-act{ font-size:10px;color:var(--dim);padding:1px 4px 1px 32px;line-height:1.5; }
+.as-act b{ color:var(--fg2); }
+.composer{ flex-shrink:0;border-top:1px solid var(--border);padding:9px 10px;
+  background:var(--bg1);display:flex;flex-direction:column;gap:7px; }
+.composer textarea{ width:100%;min-height:40px;max-height:150px;font-family:inherit;
+  font-size:11px;resize:none; }
+.composer .actions{ display:flex;gap:6px;align-items:center;flex-wrap:wrap; }
+.composer .actions .btn{ flex-shrink:0; }
+.as-hint{ font-size:9px;color:var(--dim);margin-left:auto;text-align:right;
+  line-height:1.3;max-width:150px; }
+
+/* Brain-dump proposal cards */
 .bd-summary{ display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px; }
 .bd-pill{ font-size:10px;padding:3px 9px;border-radius:11px;background:var(--bg2);
   border:1px solid var(--border2);color:var(--fg2); }
 .bd-pill b{ color:var(--fg); }
-#bd-composer{ display:flex;gap:8px;align-items:flex-end;max-width:760px; }
-#bd-composer textarea{ min-height:46px;max-height:160px; }
+.bd-group{ margin-bottom:14px; }
+.bd-group h4{ margin:0 0 8px;font-size:10px;text-transform:uppercase;
+  letter-spacing:.08em;color:var(--fg2); }
+.bd-card{ display:flex;gap:9px;padding:8px 10px;background:var(--bg2);
+  border:1px solid var(--border);border-radius:6px;margin-bottom:6px; }
+.bd-card.kev{ border-left:3px solid var(--acc); }
+.bd-card.ktd{ border-left:3px solid var(--acc2); }
+.bd-card.knt{ border-left:3px solid var(--purple); }
+.bd-card .bd-main{ flex:1;min-width:0; }
+.bd-card .bd-t{ font-weight:600;font-size:11px; }
+.bd-card .bd-s{ font-size:10px;color:var(--dim);margin-top:2px; }
+.bd-card.bd-needs{ border-left-color:var(--warn); }
+.bd-when-row{ display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap; }
+.bd-when{ background:var(--bg1);border:1px solid var(--border);border-radius:5px;
+  color:var(--fg);font-size:10px;padding:3px 6px;font-family:var(--mono);width:auto; }
+.bd-ad-lbl{ display:flex;align-items:center;gap:4px;font-size:10px;color:var(--dim); }
+.bd-ad-lbl input{ width:auto;margin:0; }
+.bd-flag{ font-size:9px;text-transform:uppercase;letter-spacing:.04em;
+  color:var(--warn);font-weight:600; }
+.plan-row{ display:flex;gap:12px;padding:5px 0;border-bottom:1px solid var(--border); }
+.plan-row .pt{ font-family:var(--mono);color:var(--acc);min-width:52px; }
+
+/* ── Modal ───────────────────────────────────────────── */
+.modal-bg{ position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;
+  align-items:center;justify-content:center;z-index:50; }
+.modal-bg.show{ display:flex; }
+.modal{ background:var(--bg1);border:1px solid var(--border2);border-radius:10px;
+  width:440px;max-width:92vw;max-height:88vh;overflow:auto;padding:18px 20px; }
+.modal h3{ margin:0 0 14px;font-size:14px; }
+.modal-foot{ display:flex;gap:8px;justify-content:flex-end;margin-top:16px; }
+
+.empty{ text-align:center;color:var(--dim);padding:40px 0;font-size:12px; }
+.tag{ display:inline-block;font-size:9px;padding:1px 7px;border-radius:10px;
+  background:var(--bg2);border:1px solid var(--border2);color:var(--fg2);margin-left:6px; }
+.spin{ display:inline-block;width:12px;height:12px;border:2px solid var(--border2);
+  border-top-color:var(--acc);border-radius:50%;animation:sp .7s linear infinite; }
+@keyframes sp{ to{ transform:rotate(360deg); } }
+.toast{ position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
+  background:var(--bg2);border:1px solid var(--border2);border-radius:6px;
+  padding:9px 16px;font-size:11px;z-index:80;opacity:0;transition:opacity .2s; }
+.toast.show{ opacity:1; }
+
+/* Google calendar multi-select (in source modal) */
+.cal-multi{ border:1px solid var(--border);border-radius:6px;background:var(--bg);
+  max-height:184px;overflow-y:auto;padding:4px; }
+.cal-multi .crow{ display:flex;align-items:center;gap:9px;padding:6px 8px;
+  border-radius:5px;cursor:pointer; }
+.cal-multi .crow:hover{ background:var(--bg2); }
+.cal-multi .crow input{ width:auto;margin:0;flex-shrink:0;cursor:pointer; }
+.cal-multi .sw{ width:11px;height:11px;border-radius:3px;flex-shrink:0;
+  border:1px solid rgba(255,255,255,.15); }
+.cal-multi .nm{ flex:1;min-width:0;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis; }
+.cal-multi .pri-tag{ font-size:9px;color:var(--dim); }
+.cal-multi .empty-mini{ padding:14px;text-align:center;color:var(--dim);font-size:11px; }
 </style>
 <link rel="stylesheet" href="/ui/vera-panel.css">
 </head>
 <body>
 <div id="root">
-  <!-- Sidebar -->
+  <!-- ══ LEFT-HAND MENU ══ -->
   <aside id="sidebar" data-vera-lhm>
     <div id="side-head">
       <div class="ico">🗓</div>
-      <div><h1>Calendar</h1><div class="sub">Scheduler &amp; Diary</div></div>
+      <div><h1>Calendar</h1><div class="sub">Schedule Manager</div></div>
     </div>
-    <nav id="nav">
-      <button class="nav-btn active" data-sec="calendar"><span class="gl">▦</span> Calendar</button>
-      <button class="nav-btn" data-sec="braindump"><span class="gl">✦</span> Brain Dump</button>
-      <button class="nav-btn" data-sec="todos"><span class="gl">☑</span> Todos</button>
-      <button class="nav-btn" data-sec="sources"><span class="gl">☁</span> Sources</button>
-      <button class="nav-btn" data-sec="settings"><span class="gl">⚙</span> Settings</button>
-    </nav>
-    <div id="sync-tile">
-      <div class="lbl">Sync</div>
-      <div class="row"><span class="dot" id="sync-dot"></span><span id="sync-text" class="muted">never synced</span></div>
-      <button class="btn ghost sm" style="margin-top:8px;width:100%" onclick="syncNow()">⟳ Sync now</button>
+
+    <div id="lhm-tabs">
+      <button class="lt active" data-t="layers" onclick="lhmTab('layers')"><span class="g">▦</span>Layers</button>
+      <button class="lt" data-t="events" onclick="lhmTab('events')"><span class="g">☰</span>Events</button>
+      <button class="lt" data-t="agent" onclick="lhmTab('agent')"><span class="g">✦</span>Agent<span class="badge"></span></button>
+      <button class="lt" data-t="dump" onclick="lhmTab('dump')"><span class="g">🧠</span>Dump</button>
+    </div>
+
+    <div id="lhm-body">
+      <!-- Layers -->
+      <div class="lhm-pane scroll active" data-pane="layers">
+        <div class="pane-head">Calendar layers
+          <span class="pane-actions"><a onclick="setAllLayers(true)">all</a> · <a onclick="setAllLayers(false)">none</a></span>
+        </div>
+        <div id="lhm-layers"></div>
+      </div>
+
+      <!-- Events (selected day) -->
+      <div class="lhm-pane scroll" data-pane="events">
+        <div id="lhm-events"></div>
+      </div>
+
+      <!-- Agent -->
+      <div class="lhm-pane" data-pane="agent">
+        <div id="as-head">
+          <span class="dot on" id="as-dot"></span>
+          <div>
+            <div class="ttl">Scheduling Assistant</div>
+            <div class="sub" id="as-agent-sub">live diary tools</div>
+          </div>
+          <div class="right">
+            <span id="as-status">ready</span>
+            <button class="btn ghost sm" id="as-stop" style="display:none;color:var(--err)" onclick="assistStop()">■ Stop</button>
+          </div>
+        </div>
+        <div id="as-mode"><span class="pulse"></span><span id="as-mode-txt">Scheduling mode</span></div>
+        <div class="feed" id="as-feed"></div>
+        <div class="composer">
+          <textarea id="as-input" rows="2" placeholder="Ask or instruct — “what's on Friday?”, “move standup to 10”…"></textarea>
+          <div class="actions">
+            <button class="btn primary sm" id="as-send" onclick="assistSend()" title="Send — the assistant reads &amp; edits the diary with real tools (Enter)">➤ Send</button>
+            <span class="as-hint">Acts on the diary — you'll see each edit live</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Brain dump -->
+      <div class="lhm-pane" data-pane="dump">
+        <div class="feed" id="dump-feed"></div>
+        <div class="composer">
+          <textarea id="dump-input" rows="3" placeholder="Dump your day — meetings, deadlines, errands, ideas… (Enter to organise, Shift+Enter for newline)"></textarea>
+          <div class="actions">
+            <button class="btn primary sm" id="dump-go" onclick="dumpOrganise()">✦ Organise</button>
+            <span class="as-hint">Proposes events / todos / notes — nothing saved until you accept</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="lhm-foot">
+      <div class="frow">
+        <button class="foot-btn active" data-sec="calendar" onclick="mainSection('calendar')">🗓 Calendar</button>
+        <button class="foot-btn" data-sec="sources" onclick="mainSection('sources')">☁ Sources</button>
+        <button class="foot-btn" data-sec="settings" onclick="mainSection('settings')">⚙ Settings</button>
+      </div>
+      <div id="sync-tile">
+        <div class="lbl">Sync</div>
+        <div class="row"><span class="dot" id="sync-dot"></span><span id="sync-text" class="muted">never synced</span></div>
+        <button class="btn ghost sm" style="margin-top:8px;width:100%" onclick="syncNow()">⟳ Sync now</button>
+      </div>
     </div>
   </aside>
 
-  <!-- Main -->
+  <!-- ══ MAIN ══ -->
   <div id="main">
-    <div id="topbar">
-      <h2 id="page-title">Calendar</h2>
-      <span class="crumb" id="page-crumb"></span>
-      <div class="right" id="topbar-actions"></div>
-    </div>
     <div id="content">
 
       <!-- CALENDAR -->
       <section class="section active" data-sec="calendar">
         <div id="cal-toolbar">
-          <button class="btn sm" onclick="moveMonth(-1)">‹</button>
-          <button class="btn sm" onclick="goToday()">Today</button>
-          <button class="btn sm" onclick="moveMonth(1)">›</button>
+          <button class="btn sm" onclick="moveView(-1)" title="Previous ( [ )">‹</button>
+          <button class="btn sm" onclick="goToday()" title="Jump to today (t)">Today</button>
+          <button class="btn sm" onclick="moveView(1)" title="Next ( ] )">›</button>
           <span id="cal-title"></span>
           <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
-            <div id="layer-wrap">
-              <button class="btn sm" onclick="toggleLayerPop(event)" title="Show / hide calendar layers">▦ Layers</button>
-              <div id="layer-pop">
-                <div class="lp-head"><span>Layers</span><span class="lp-actions"><a onclick="setAllLayers(true)">all</a> ·<a onclick="setAllLayers(false)">none</a></span></div>
-                <div id="layer-list"></div>
-              </div>
-            </div>
-            <button class="btn primary sm" onclick="openEvent()">+ Event</button>
+            <span class="vsw">
+              <button data-v="month" onclick="setView('month')" title="Month view (m)">Month</button>
+              <button data-v="week" onclick="setView('week')" title="Week view (w)">Week</button>
+              <button data-v="day" onclick="setView('day')" title="Day view (d)">Day</button>
+            </span>
+            <button class="btn primary sm" onclick="openEvent()" title="New event (n)">+ Event</button>
+            <button class="btn ghost sm" onclick="toggleRail()" title="Show / hide schedule &amp; todos">▥</button>
           </div>
         </div>
-        <div class="cal-grid" id="cal-grid"></div>
-        <div id="day-view"></div>
-      </section>
 
-      <!-- BRAIN DUMP -->
-      <section class="section" data-sec="braindump">
-        <div id="bd-chat"></div>
-        <div id="bd-composer">
-          <textarea id="bd-input" rows="2" placeholder="Dump anything on your mind — meetings, deadlines, errands, ideas… (Enter to send, Shift+Enter for newline)"></textarea>
-          <button class="btn primary" id="bd-go" onclick="runBraindump()">✦ Organise</button>
+        <div id="view-month">
+          <div class="cal-grid" id="cal-grid"></div>
         </div>
-      </section>
 
-      <!-- TODOS -->
-      <section class="section" data-sec="todos">
-        <div style="display:flex;gap:8px;margin-bottom:14px">
-          <input id="td-quick" placeholder="Add a todo and press Enter…" onkeydown="if(event.key==='Enter')quickTodo()">
-          <button class="btn" onclick="quickTodo()">Add</button>
+        <div id="view-week" style="display:none">
+          <div id="week-head"></div>
+          <div id="week-body"></div>
         </div>
-        <div id="todo-list"></div>
+
+        <div id="view-day" style="display:none">
+          <div id="day-solo"></div>
+        </div>
       </section>
 
       <!-- SOURCES -->
       <section class="section" data-sec="sources">
+        <div class="section-head"><h2>☁ Cloud calendars</h2></div>
         <p class="hint" style="margin-top:0;max-width:680px">
           Connect cloud calendars. Credentials are encrypted at rest (Fernet) and
           never shown again — leave a secret field blank when editing to keep it.</p>
@@ -351,11 +526,12 @@ label.fl{ display:block;font-size:10px;color:var(--fg2);text-transform:uppercase
 
       <!-- SETTINGS -->
       <section class="section" data-sec="settings">
+        <div class="section-head"><h2>⚙ Settings</h2></div>
         <div style="max-width:520px">
           <div class="field">
             <label class="fl">Ollama model</label>
             <input id="set-model" placeholder="(cluster default)">
-            <div class="hint">Model used for the brain-dump assistant. Blank = cluster default.</div>
+            <div class="hint">Model used for the scheduling assistant &amp; brain-dump organiser. Blank = cluster default.</div>
           </div>
           <div class="row2">
             <div class="field">
@@ -383,6 +559,20 @@ label.fl{ display:block;font-size:10px;color:var(--fg2);text-transform:uppercase
 
     </div>
   </div>
+
+  <!-- ══ RIGHT-HAND MENU — schedule + todos ══ -->
+  <div id="rail">
+    <div id="rail-inner">
+      <div class="rail-sec-h">📅 Today <span class="rt" id="agenda-date"></span></div>
+      <div id="agenda-list"></div>
+      <div class="rail-sec-h">☑ Todos <span class="cnt" id="todo-count"></span></div>
+      <div id="td-add-row">
+        <input id="td-quick" placeholder="Add a todo — Enter to save" onkeydown="if(event.key==='Enter')quickTodo()">
+        <button class="btn sm" onclick="quickTodo()">+</button>
+      </div>
+      <div id="todo-list"></div>
+    </div>
+  </div>
 </div>
 
 <!-- Event modal -->
@@ -402,6 +592,32 @@ label.fl{ display:block;font-size:10px;color:var(--fg2);text-transform:uppercase
       <button class="btn danger ghost" id="ev-del" onclick="deleteEvent()">Delete</button>
       <button class="btn ghost" onclick="closeModal('ev-modal')">Cancel</button>
       <button class="btn primary" onclick="saveEvent()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Todo modal -->
+<div class="modal-bg" id="td-modal">
+  <div class="modal">
+    <h3 id="td-modal-title">Edit todo</h3>
+    <input type="hidden" id="td-id">
+    <div class="field"><label class="fl">Title</label><input id="td-title"></div>
+    <div class="row2">
+      <div class="field"><label class="fl">Due</label><input id="td-due" type="date"></div>
+      <div class="field"><label class="fl">Priority</label>
+        <select id="td-pri">
+          <option value="0">— none</option>
+          <option value="1">P1 · low</option>
+          <option value="2">P2 · soon</option>
+          <option value="3">P3 · urgent</option>
+        </select>
+      </div>
+    </div>
+    <div class="field"><label class="fl">Notes</label><textarea id="td-notes" rows="3"></textarea></div>
+    <div class="modal-foot">
+      <button class="btn danger ghost" id="td-del" onclick="deleteTodoFromModal()">Delete</button>
+      <button class="btn ghost" onclick="closeModal('td-modal')">Cancel</button>
+      <button class="btn primary" onclick="saveTodoModal()">Save</button>
     </div>
   </div>
 </div>
@@ -435,7 +651,7 @@ label.fl{ display:block;font-size:10px;color:var(--fg2);text-transform:uppercase
           <a onclick="loadGoogleCalendars($('src-id').value)" style="float:right;color:var(--acc);cursor:pointer;text-transform:none;letter-spacing:0">⟳ refresh</a>
         </label>
         <div id="src-gcals" class="cal-multi"></div>
-        <div class="hint">Each selected calendar becomes a colour-coded layer you can toggle on the calendar.</div>
+        <div class="hint">Each selected calendar becomes a colour-coded layer you can toggle under Layers.</div>
       </div>
     </div>
     <div class="modal-foot">
@@ -458,30 +674,57 @@ async function call(path, body){
 function toast(msg){ const t=$("toast"); t.textContent=msg; t.classList.add("show");
   setTimeout(()=>t.classList.remove("show"),2200); }
 function pad(n){ return String(n).padStart(2,"0"); }
+function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function escAttr(s){ return (s||"").replace(/[\\']/g,c=>"\\"+c); }
 const MON=["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DOW=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 
 let view = new Date(); view.setDate(1);
 let selectedDay = null;
 let monthEvents = [];
+let weekEvents = [];
+let agendaEvents = [];
+let dayEvents = [];
+let TODOS = [];
 
-/* ── Layers (toggle visibility of sources / Google calendars) ── */
-let hiddenLayers = new Set(JSON.parse(localStorage.getItem("cal.hiddenLayers")||"[]"));
-function saveHidden(){ localStorage.setItem("cal.hiddenLayers",JSON.stringify([...hiddenLayers])); }
-function escAttr(s){ return (s||"").replace(/[\\']/g,c=>"\\"+c); }
+/* ══ LHM tab switching ══════════════════════════════════ */
+let LHMTAB = localStorage.getItem("cal.lhm")||"layers";
+if(!["layers","events","agent","dump"].includes(LHMTAB)) LHMTAB="layers";
+function lhmTab(name){
+  LHMTAB=name; localStorage.setItem("cal.lhm",name);
+  document.querySelectorAll("#lhm-tabs .lt").forEach(b=>b.classList.toggle("active",b.dataset.t===name));
+  document.querySelectorAll(".lhm-pane").forEach(p=>p.classList.toggle("active",p.dataset.pane===name));
+  if(name==="agent"){ $("lhm-tabs").querySelector('.lt[data-t="agent"]').classList.remove("has-alert");
+    setTimeout(()=>$("as-input").focus(),30); }
+  if(name==="dump") setTimeout(()=>$("dump-input").focus(),30);
+  if(name==="events") renderDay();
+}
+function flashAgent(){ if(LHMTAB!=="agent") $("lhm-tabs").querySelector('.lt[data-t="agent"]').classList.add("has-alert"); }
+
+/* ══ Main section switching (calendar / sources / settings) ══ */
+function mainSection(sec){
+  document.querySelectorAll("#content .section").forEach(s=>s.classList.toggle("active",s.dataset.sec===sec));
+  document.querySelectorAll("#lhm-foot .foot-btn").forEach(b=>b.classList.toggle("active",b.dataset.sec===sec));
+  if(sec==="sources") loadSources();
+  else if(sec==="settings") loadSettings();
+  else renderView();
+}
+
+/* ══ Layers ═════════════════════════════════════════════ */
 const LOCAL_COLOR="#4a9eff", DREAM_COLOR="#a78bfa";
-let calSources=null;   // cached /cal/sources, so layers reflect every connected
-                       // calendar (not just ones with events in the current view)
+let calSources=null;   // cached /cal/sources so layers reflect every connected calendar
 async function ensureCalSources(){
   if(calSources!==null) return calSources;
   try{ const r=await call("/cal/sources"); calSources=r.sources||[]; }
   catch(e){ calSources=[]; }
   return calSources;
 }
+let hiddenLayers = new Set(JSON.parse(localStorage.getItem("cal.hiddenLayers")||"[]"));
+function saveHidden(){ localStorage.setItem("cal.hiddenLayers",JSON.stringify([...hiddenLayers])); }
 function eventLayer(e){
   if(e.source==="dream"||e.read_only) return "dream";
   if(!e.source||e.source==="local") return "local";
-  if(e.calendar) return e.source+"::"+e.calendar;   // a single Google calendar
+  if(e.calendar) return e.source+"::"+e.calendar;
   return e.source;
 }
 function layerLabel(e){
@@ -493,14 +736,9 @@ function layerLabel(e){
 function layerVisible(e){ return !hiddenLayers.has(eventLayer(e)); }
 function collectLayers(){
   const map=new Map();
-  // Seed from the connected sources so every calendar shows as a toggleable
-  // layer even when the current month has no events from it. (The old code
-  // derived layers only from events in view, so an empty month → empty menu.)
   (calSources||[]).forEach(s=>{
     if(s.enabled===false) return;
     if(s.type==="google"){
-      // Each selected Google calendar is its own colour-coded layer; keys must
-      // match eventLayer() — "<sourceId>::<calendarId>".
       const cals=(s.calendars&&s.calendars.length) ? s.calendars
         : [{id:s.calendar_id||"primary", summary:s.label||"primary", color:s.color}];
       cals.forEach(c=>{ const k=s.id+"::"+(c.id||"primary");
@@ -510,84 +748,82 @@ function collectLayers(){
       map.set(s.id,{key:s.id,label:s.label||s.type,color:s.color||LOCAL_COLOR,n:0});
     }
   });
-  // Synthetic layers that are always available to toggle.
   if(!map.has("local")) map.set("local",{key:"local",label:"Local",color:LOCAL_COLOR,n:0});
   map.set("dream",{key:"dream",label:"💭 Dreams",color:DREAM_COLOR,n:0,dream:true});
-  // Overlay live counts from events in view; pick up any orphan layer (e.g. a
-  // source that was removed but still has cached events) so it stays toggleable.
   monthEvents.forEach(e=>{
     const k=eventLayer(e);
     if(!map.has(k)) map.set(k,{key:k,label:layerLabel(e),color:e.color||LOCAL_COLOR,n:0});
     map.get(k).n++;
   });
-  // Any currently-hidden layer must remain listed so it can always be re-enabled.
   hiddenLayers.forEach(k=>{ if(!map.has(k)) map.set(k,{key:k,
     label:k.includes("::")?k.split("::")[1]:k,color:LOCAL_COLOR,n:0}); });
   return [...map.values()].sort((a,b)=>{
-    const rank=L=>L.key==="local"?0:(L.dream?2:1);   // Local first, Dreams last
+    const rank=L=>L.key==="local"?0:(L.dream?2:1);
     return rank(a)-rank(b) || a.label.localeCompare(b.label);
   });
 }
 function renderLayerList(){
-  const box=$("layer-list"); if(!box) return;
+  const box=$("lhm-layers"); if(!box) return;
   const layers=collectLayers();
-  if(!layers.length){ box.innerHTML='<div class="empty-mini" style="padding:10px">No calendars connected — add one under Sources.</div>'; return; }
+  if(!layers.length){ box.innerHTML='<div class="ag-empty">No calendars connected — add one under Sources.</div>'; return; }
   box.innerHTML=layers.map(L=>{
     const off=hiddenLayers.has(L.key);
     return '<label class="layer-row'+(off?" off":"")+'"><input type="checkbox" '+(off?"":"checked")+
       ' onchange="toggleLayer(\''+escAttr(L.key)+'\')">'+
       '<span class="sw" style="background:'+esc(L.color)+'"></span>'+
       '<span class="nm">'+esc(L.label)+'</span>'+
-      (L.n?'<span class="muted" style="font-size:9px">'+L.n+'</span>':'')+'</label>';
+      (L.n?'<span class="cn">'+L.n+'</span>':'')+'</label>';
   }).join("");
 }
 function toggleLayer(k){ hiddenLayers.has(k)?hiddenLayers.delete(k):hiddenLayers.add(k);
-  saveHidden(); renderLayerList(); renderMonth(); }
+  saveHidden(); renderLayerList(); renderView(); renderAgenda(); }
 function setAllLayers(on){
   if(on){ hiddenLayers.clear(); }
   else { collectLayers().forEach(L=>hiddenLayers.add(L.key)); }
-  saveHidden(); renderLayerList(); renderMonth();
-}
-function toggleLayerPop(ev){ ev.stopPropagation(); $("layer-pop").classList.toggle("show"); }
-document.addEventListener("click",e=>{ const w=$("layer-wrap");
-  if(w&&!w.contains(e.target)) $("layer-pop").classList.remove("show"); });
-
-/* ── Navigation ─────────────────────────────── */
-document.querySelectorAll(".nav-btn").forEach(b=>b.onclick=()=>{
-  document.querySelectorAll(".nav-btn").forEach(x=>x.classList.remove("active"));
-  document.querySelectorAll(".section").forEach(x=>x.classList.remove("active"));
-  b.classList.add("active");
-  const sec=b.dataset.sec;
-  document.querySelector('.section[data-sec="'+sec+'"]').classList.add("active");
-  $("page-title").textContent=b.textContent.trim();
-  $("page-crumb").textContent="";
-  if(sec==="todos") loadTodos();
-  if(sec==="sources") loadSources();
-  if(sec==="settings") loadSettings();
-  if(sec==="calendar") renderMonth();
-  if(sec==="braindump") bdGreet();
-});
-function bdGreet(){
-  if($("bd-chat").children.length) { $("bd-input").focus(); return; }
-  bdAddMsg("bot",'<p class="txt">Hi — dump anything on your mind and I\'ll sort it into '+
-    'events, todos and notes for you to review. Meetings, deadlines, errands, ideas… '+
-    'just type it the way you\'d say it.</p>');
-  $("bd-input").focus();
+  saveHidden(); renderLayerList(); renderView(); renderAgenda();
 }
 
-/* ── Calendar month grid ────────────────────── */
+/* ══ View state (month / week / day) ════════════════════ */
 function isoLocal(d){ return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate()); }
+let VIEW = localStorage.getItem("cal.view")||"month";
+if(!["month","week","day"].includes(VIEW)) VIEW="month";
+function setView(v){
+  VIEW=v; localStorage.setItem("cal.view",v);
+  document.querySelectorAll(".vsw button").forEach(b=>b.classList.toggle("active",b.dataset.v===v));
+  $("view-month").style.display = v==="month"?"":"none";
+  $("view-week").style.display  = v==="week"?"flex":"none";
+  $("view-day").style.display   = v==="day"?"":"none";
+  renderView();
+}
+function renderView(){
+  if(!document.querySelector('.section[data-sec="calendar"]').classList.contains("active")) return;
+  if(VIEW==="month") renderMonth();
+  else if(VIEW==="week") renderWeek();
+  else renderDaySolo();
+}
+function shiftSelected(n){
+  const d=new Date((selectedDay||isoLocal(new Date()))+"T00:00");
+  d.setDate(d.getDate()+n);
+  selectedDay=isoLocal(d);
+  view=new Date(d.getFullYear(),d.getMonth(),1);
+}
+function moveView(n){
+  if(VIEW==="month"){ moveMonth(n); }
+  else if(VIEW==="week"){ shiftSelected(n*7); renderWeek(); }
+  else { shiftSelected(n); renderDaySolo(); }
+}
 function moveMonth(d){ view.setMonth(view.getMonth()+d); renderMonth(); }
-function goToday(){ view=new Date(); view.setDate(1); selectedDay=isoLocal(new Date()); renderMonth(); }
+function goToday(){ view=new Date(); view.setDate(1); selectedDay=isoLocal(new Date());
+  renderView(); }
 
+/* ══ Month grid ═════════════════════════════════════════ */
 async function renderMonth(){
   $("cal-title").textContent = MON[view.getMonth()]+" "+view.getFullYear();
-  // window: first visible Monday .. 6 weeks
   const first=new Date(view); const startOff=(first.getDay()+6)%7;
   const gridStart=new Date(first); gridStart.setDate(1-startOff);
   const gridEnd=new Date(gridStart); gridEnd.setDate(gridStart.getDate()+42);
   await ensureCalSources();
-  const wantDreams=!hiddenLayers.has("dream");   // Dreams are now a normal layer
+  const wantDreams=!hiddenLayers.has("dream");
   const res=await call("/cal/events?start="+isoLocal(gridStart)+"&end="+isoLocal(gridEnd)+(wantDreams?"&include_dreams=1":""));
   monthEvents=(res.events)||[];
   renderLayerList();
@@ -602,8 +838,9 @@ async function renderMonth(){
     const k=isoLocal(d);
     const cell=document.createElement("div");
     cell.dataset.k=k;
-    cell.className="cal-cell"+(d.getMonth()!==view.getMonth()?" other":"")+(k===today?" today":"")+(k===selectedDay?" sel":"");
-    cell.onclick=()=>{ selectedDay=k; highlightSelected(); renderDay(true); };
+    const wk=(d.getDay()===0||d.getDay()===6)?" wkend":"";
+    cell.className="cal-cell"+wk+(d.getMonth()!==view.getMonth()?" other":"")+(k===today?" today":"")+(k===selectedDay?" sel":"");
+    cell.onclick=()=>{ pickDay(k); };
     cell.ondblclick=()=>{ selectedDay=k; openEventAt(k,9); };
     let html='<div class="dnum">'+d.getDate()+'</div>';
     const evs=(byDay[k]||[]).sort((a,b)=>(a.start||"").localeCompare(b.start||""));
@@ -615,52 +852,175 @@ async function renderMonth(){
     cell.innerHTML=html;
     g.appendChild(cell);
   }
-  if(selectedDay) renderDay(false); else $("day-view").innerHTML="";
+  if(selectedDay) renderDay();
 }
 function timeOf(e){ if(e.all_day) return ""; const t=(e.start||"").slice(11,16); return t?t+" ":""; }
-function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
-
-let dayEvents=[];
-function fmtHour(h){ const ap=h<12?"am":"pm"; let hh=h%12; if(hh===0)hh=12; return hh+" "+ap; }
-function moveDay(n){
-  const d=new Date(selectedDay+"T00:00"); d.setDate(d.getDate()+n);
-  selectedDay=isoLocal(d);
-  if(d.getMonth()!==view.getMonth()||d.getFullYear()!==view.getFullYear()){
-    view=new Date(d.getFullYear(),d.getMonth(),1); renderMonth();
-  } else { highlightSelected(); renderDay(true); }
-}
 function highlightSelected(){
   document.querySelectorAll(".cal-cell").forEach(c=>c.classList.toggle("sel",c.dataset.k===selectedDay));
 }
-async function renderDay(scroll){
-  const dv=$("day-view");
-  if(!selectedDay){ dv.innerHTML=""; return; }
+// Selecting a day surfaces its events in the LHM Events pane.
+function pickDay(k){ selectedDay=k; highlightSelected(); lhmTab("events"); renderDay(); }
+
+/* ══ Week view ══════════════════════════════════════════ */
+function fmtHour(h){ const ap=h<12?"am":"pm"; let hh=h%12; if(hh===0)hh=12; return hh+" "+ap; }
+function weekStart(dISO){
+  const base=new Date((dISO||isoLocal(new Date()))+"T00:00");
+  const mon=new Date(base); mon.setDate(base.getDate()-((base.getDay()+6)%7));
+  return mon;
+}
+async function renderWeek(){
+  const mon=weekStart(selectedDay);
+  const end=new Date(mon); end.setDate(mon.getDate()+7);
+  const last=new Date(mon); last.setDate(mon.getDate()+6);
+  const sameMon=mon.getMonth()===last.getMonth();
+  $("cal-title").textContent=mon.getDate()+(sameMon?"":" "+MON[mon.getMonth()].slice(0,3))+
+    " – "+last.getDate()+" "+MON[last.getMonth()].slice(0,3)+" "+last.getFullYear();
+  view=new Date(mon.getFullYear(),mon.getMonth(),1);
+  await ensureCalSources();
   const wantDreams=!hiddenLayers.has("dream");
-  const next=new Date(selectedDay+"T00:00"); next.setDate(next.getDate()+1);
-  const res=await call("/cal/events?start="+selectedDay+"&end="+isoLocal(next)+(wantDreams?"&include_dreams=1":""));
-  dayEvents=(res.events||[]).filter(e=>(e.start||"").slice(0,10)===selectedDay&&layerVisible(e));
+  const res=await call("/cal/events?start="+isoLocal(mon)+"&end="+isoLocal(end)+(wantDreams?"&include_dreams=1":""));
+  weekEvents=(res.events||[]).filter(layerVisible);
+  renderLayerList();
 
+  const today=isoLocal(new Date());
+  const days=[];
+  for(let i=0;i<7;i++){ const d=new Date(mon); d.setDate(mon.getDate()+i); days.push(d); }
+
+  let hh='<div></div>';
+  days.forEach(d=>{
+    const k=isoLocal(d);
+    const ads=weekEvents.filter(e=>e.all_day&&(e.start||"").slice(0,10)===k);
+    hh+='<div class="wk-h'+(k===today?" today":"")+'" onclick="selectedDay=\''+k+'\';setView(\'day\')">'+
+      '<div class="wd">'+DOW[(d.getDay()+6)%7]+'</div><div class="dn">'+d.getDate()+'</div>'+
+      ads.slice(0,2).map(e=>'<span class="ad-chip" style="border-left-color:'+(e.color||"#4a9eff")+'" onclick="event.stopPropagation();openEvent(\''+esc(e.id)+'\')">'+esc(e.title)+'</span>').join("")+
+      (ads.length>2?'<span class="ad-chip">+'+(ads.length-2)+' more</span>':'')+
+      '</div>';
+  });
+  $("week-head").innerHTML=hh;
+
+  let hl='<div id="wk-hours">';
+  for(let h=1;h<24;h++) hl+='<span class="hl" style="top:'+(h*60)+'px">'+fmtHour(h)+'</span>';
+  hl+='</div>';
+  let cols='';
+  const nowD=new Date();
+  days.forEach(d=>{
+    const k=isoLocal(d);
+    const evs=weekEvents.filter(e=>!e.all_day&&(e.start||"").slice(0,10)===k)
+      .sort((a,b)=>(a.start||"").localeCompare(b.start||""));
+    let blocks='';
+    const laneEnd=[];
+    evs.forEach(e=>{
+      const sh=parseInt((e.start||"").slice(11,13),10)||0;
+      const sm=parseInt((e.start||"").slice(14,16),10)||0;
+      const top=sh*60+sm;
+      let dur=45;
+      if(e.end&&(e.end||"").slice(0,10)===k){
+        const eh=parseInt(e.end.slice(11,13),10)||0, em=parseInt(e.end.slice(14,16),10)||0;
+        dur=Math.max(22,(eh*60+em)-top);
+      }
+      let lane=0; while(lane<laneEnd.length&&laneEnd[lane]>top) lane++;
+      laneEnd[lane]=top+dur;
+      const tm=(e.start||"").slice(11,16)+(e.end?"–"+(e.end||"").slice(11,16):"");
+      blocks+='<div class="wk-ev" style="top:'+top+'px;height:'+dur+'px;margin-left:'+(lane*10)+'px;'+
+        'border-left-color:'+(e.color||"#4a9eff")+'" '+
+        'onclick="event.stopPropagation();openEvent(\''+esc(e.id)+'\')" title="'+esc(e.title)+'">'+
+        '<div class="t">'+esc(e.title)+'</div><div class="m">'+esc(tm)+'</div></div>';
+    });
+    let nowLine='';
+    if(k===today) nowLine='<div class="wk-now" style="top:'+(nowD.getHours()*60+nowD.getMinutes())+'px"></div>';
+    cols+='<div class="wk-col'+(k===today?" today":"")+'" data-k="'+k+'" '+
+      'onclick="weekColClick(event,\''+k+'\')">'+blocks+nowLine+'</div>';
+  });
+  $("week-body").innerHTML=hl+cols;
+  const tgt=(days.some(d=>isoLocal(d)===today))?Math.max(0,nowD.getHours()*60-180):450;
+  $("week-body").scrollTop=tgt;
+}
+function weekColClick(ev,k){
+  const rect=ev.currentTarget.getBoundingClientRect();
+  const rel=ev.clientY-rect.top;
+  const h=Math.max(0,Math.min(23,Math.floor(rel/60)));
+  selectedDay=k;
+  openEventAt(k,h);
+}
+
+/* ══ Day detail ═════════════════════════════════════════ */
+function moveDay(n){
+  const oldY=view.getFullYear(), oldM=view.getMonth();
+  shiftSelected(n);
+  if(VIEW==="day"){ renderDaySolo(); renderDay(); return; }
+  const d=new Date(selectedDay+"T00:00");
+  if(VIEW==="week"){ renderWeek(); }
+  else if(d.getMonth()!==oldM||d.getFullYear()!==oldY){ renderMonth(); }
+  else { highlightSelected(); }
+  renderDay();
+}
+async function fetchDayEvents(dayISO){
+  const wantDreams=!hiddenLayers.has("dream");
+  const next=new Date(dayISO+"T00:00"); next.setDate(next.getDate()+1);
+  const res=await call("/cal/events?start="+dayISO+"&end="+isoLocal(next)+(wantDreams?"&include_dreams=1":""));
+  return (res.events||[]).filter(e=>(e.start||"").slice(0,10)===dayISO&&layerVisible(e));
+}
+
+// LHM Events pane — a compact list of the selected day's events.
+async function renderDay(){
+  const box=$("lhm-events"); if(!box) return;
+  if(!selectedDay){ selectedDay=isoLocal(new Date()); }
+  dayEvents=await fetchDayEvents(selectedDay);
   const dObj=new Date(selectedDay+"T00:00");
-  const heading=dObj.toLocaleDateString(undefined,{weekday:"long",day:"numeric",month:"long",year:"numeric"});
+  const heading=dObj.toLocaleDateString(undefined,{weekday:"long",day:"numeric",month:"long"});
   const allDay=dayEvents.filter(e=>e.all_day);
-  const timed=dayEvents.filter(e=>!e.all_day);
-  const byHour={};
-  timed.forEach(e=>{ const h=parseInt((e.start||"").slice(11,13),10); (byHour[isNaN(h)?0:h]=byHour[isNaN(h)?0:h]||[]).push(e); });
-
-  let html='<div class="dd-head"><div>'+
-    '<div class="dd-eyebrow">Selected day</div>'+
-    '<h3>'+esc(heading)+'</h3>'+
+  const timed=dayEvents.filter(e=>!e.all_day).sort((a,b)=>(a.start||"").localeCompare(b.start||""));
+  let html='<div class="ev-head"><div>'+
+    '<div class="dd-eyebrow">Events</div><h3>'+esc(heading)+'</h3>'+
     '<div class="dd-sub">'+timed.length+' timed · '+allDay.length+' all-day</div></div>'+
     '<div class="right">'+
       '<button class="btn sm" onclick="moveDay(-1)" title="Previous day">‹</button>'+
       '<button class="btn sm" onclick="moveDay(1)" title="Next day">›</button>'+
       '<button class="btn primary sm" onclick="openEventAt(selectedDay,9)">+ Add</button>'+
     '</div></div>';
-
   if(!dayEvents.length){
-    html+='<div class="dd-empty">No events on this day — click any hour below to add one.</div>';
+    html+='<div class="dd-empty">Nothing on this day — “+ Add”, or double-click a day in the grid.</div>';
   }
+  allDay.forEach(e=>{
+    html+='<div class="evl-item" style="border-left-color:'+(e.color||"#4a9eff")+'" onclick="openEvent(\''+esc(e.id)+'\')">'+
+      '<span class="tm">all</span><span class="ti">'+esc(e.title)+
+      (e.calendar_label?'<span class="tag">'+esc(e.calendar_label)+'</span>':'')+'</span></div>';
+  });
+  timed.forEach(e=>{
+    const tm=(e.start||"").slice(11,16);
+    html+='<div class="evl-item" style="border-left-color:'+(e.color||"#4a9eff")+'" onclick="openEvent(\''+esc(e.id)+'\')">'+
+      '<span class="tm">'+esc(tm)+'</span><span class="ti">'+esc(e.title)+
+      (e.location?' <span class="loc">· '+esc(e.location)+'</span>':'')+'</span></div>';
+  });
+  box.innerHTML=html;
+}
 
+// Main-area day view — full 24-hour timeline.
+async function renderDaySolo(){
+  if(!selectedDay) selectedDay=isoLocal(new Date());
+  const dObj=new Date(selectedDay+"T00:00");
+  $("cal-title").textContent=dObj.toLocaleDateString(undefined,{weekday:"long",day:"numeric",month:"long"});
+  view=new Date(dObj.getFullYear(),dObj.getMonth(),1);
+  await ensureCalSources();
+  const evs=await fetchDayEvents(selectedDay);
+  dayEvents=evs;
+  renderLayerList();
+  renderDay();   // keep the LHM Events pane in sync
+
+  const heading=dObj.toLocaleDateString(undefined,{weekday:"long",day:"numeric",month:"long",year:"numeric"});
+  const allDay=evs.filter(e=>e.all_day);
+  const timed=evs.filter(e=>!e.all_day);
+  const byHour={};
+  timed.forEach(e=>{ const h=parseInt((e.start||"").slice(11,13),10); (byHour[isNaN(h)?0:h]=byHour[isNaN(h)?0:h]||[]).push(e); });
+
+  let html='<div class="dd-head"><div>'+
+    '<div class="dd-eyebrow">Day</div><h3>'+esc(heading)+'</h3>'+
+    '<div class="dd-sub">'+timed.length+' timed · '+allDay.length+' all-day</div></div>'+
+    '<div class="right">'+
+      '<button class="btn sm" onclick="moveDay(-1)">‹</button>'+
+      '<button class="btn sm" onclick="moveDay(1)">›</button>'+
+      '<button class="btn primary sm" onclick="openEventAt(selectedDay,9)">+ Add</button>'+
+    '</div></div>';
   if(allDay.length){
     html+='<div class="dd-allday">';
     allDay.forEach(e=>{ html+='<div class="ad" style="border-left-color:'+(e.color||"#4a9eff")+'" onclick="openEvent(\''+esc(e.id)+'\')">'+
@@ -668,7 +1028,6 @@ async function renderDay(scroll){
       (e.calendar_label?'<span class="tag">'+esc(e.calendar_label)+'</span>':'')+'</div>'; });
     html+='</div>';
   }
-
   const nowH=(selectedDay===isoLocal(new Date()))?new Date().getHours():-1;
   html+='<div class="dd-grid">';
   for(let h=0;h<24;h++){
@@ -685,20 +1044,20 @@ async function renderDay(scroll){
       '<div class="hr-body">'+body+'</div><span class="hr-add">+</span></div>';
   }
   html+='</div>';
-  dv.innerHTML=html;
-  if(scroll) dv.scrollIntoView({behavior:"smooth",block:"start"});
+  $("day-solo").innerHTML=html;
 }
 
-/* ── Event modal ────────────────────────────── */
-function findEvent(id){ return dayEvents.find(x=>x.id===id)||monthEvents.find(x=>x.id===id); }
-// Open the new-event modal pre-filled at a given day + hour (click-to-add).
+/* ══ Event modal ════════════════════════════════════════ */
+function findEvent(id){
+  return dayEvents.find(x=>x.id===id)||monthEvents.find(x=>x.id===id)
+    ||weekEvents.find(x=>x.id===id)||agendaEvents.find(x=>x.id===id);
+}
 function openEventAt(day,hour){
   openEvent(null,(day||selectedDay||isoLocal(new Date()))+"T"+pad(hour)+":00");
 }
 function openEvent(id,startISO){
   if(id){
     const ev=findEvent(id);
-    // Dream overlay events are virtual/read-only — surface info, don't edit.
     if(ev&&(ev.read_only||ev.source==="dream")){
       toast("💭 "+(ev.label||ev.title||"dream")+(ev.recurrence?" · "+ev.recurrence:"")+(ev.project?" · project: "+ev.project:""));
       return;
@@ -736,42 +1095,328 @@ async function saveEvent(){
   if(!body.title){ toast("Title required"); return; }
   const r=await call("/cal/event/upsert",body);
   if(r.error){ toast(r.error); return; }
-  closeModal("ev-modal"); toast("Saved"); renderMonth();
+  closeModal("ev-modal"); toast("Saved"); renderView(); renderDay(); renderAgenda();
 }
 async function deleteEvent(){
   const id=$("ev-id").value; if(!id) return;
-  await call("/cal/event/delete",{id}); closeModal("ev-modal"); toast("Deleted"); renderMonth();
+  await call("/cal/event/delete",{id}); closeModal("ev-modal"); toast("Deleted");
+  renderView(); renderDay(); renderAgenda();
 }
 
-/* ── Brain dump (chat) ──────────────────────── */
-let bdProposals={};   // msgId -> proposal, so each bot turn keeps its own state
-let bdSeq=0;
-function bdAddMsg(role,inner){
-  const id="bdm"+(++bdSeq);
-  const av=role==="user"?"🧠":"✦";
+/* ══ Agenda (RHM — today) ═══════════════════════════════ */
+async function renderAgenda(){
+  const t=isoLocal(new Date());
+  const n=new Date(); n.setDate(n.getDate()+1);
+  let res; try{ res=await call("/cal/events?start="+t+"&end="+isoLocal(n)+(!hiddenLayers.has("dream")?"&include_dreams=1":"")); }
+  catch(e){ res={}; }
+  agendaEvents=(res.events||[]).filter(e=>(e.start||"").slice(0,10)===t&&layerVisible(e));
+  $("agenda-date").textContent=new Date().toLocaleDateString(undefined,{weekday:"short",day:"numeric",month:"short"});
+  const box=$("agenda-list");
+  if(!agendaEvents.length){ box.innerHTML='<div class="ag-empty">Nothing scheduled today.</div>'; return; }
+  const nowHM=new Date().toTimeString().slice(0,5);
+  let nextMarked=false;
+  box.innerHTML=agendaEvents.map(e=>{
+    const tm=e.all_day?"all":(e.start||"").slice(11,16);
+    const past=!e.all_day&&(e.end?(e.end.slice(11,16)<nowHM&&(e.end||"").slice(0,10)<=t):tm<nowHM);
+    let cls="ag-item"+(past?" past":"");
+    if(!past&&!nextMarked&&!e.all_day){ cls+=" next"; nextMarked=true; }
+    return '<div class="'+cls+'" style="border-left-color:'+(e.color||"#4a9eff")+'" onclick="openEvent(\''+esc(e.id)+'\')">'+
+      '<span class="tm">'+esc(tm)+'</span><span class="ti">'+esc(e.title)+'</span></div>';
+  }).join("");
+}
+
+/* ══ Todos (RHM) ════════════════════════════════════════ */
+let showDone=false;
+async function loadTodos(){
+  const r=await call("/cal/todos"); TODOS=r.todos||[];
+  const open=TODOS.filter(t=>!t.done);
+  $("todo-count").textContent=open.length?("· "+open.length+" open"):"";
+  const list=$("todo-list");
+  if(!TODOS.length){ list.innerHTML='<div class="ag-empty">No todos — add one above or ask the assistant.</div>'; return; }
+  const today=isoLocal(new Date());
+  const groups={overdue:[],today:[],upcoming:[],nodate:[],done:[]};
+  TODOS.forEach(t=>{
+    if(t.done){ groups.done.push(t); return; }
+    const due=(t.due||"").slice(0,10);
+    if(due&&due<today) groups.overdue.push(t);
+    else if(due===today) groups.today.push(t);
+    else if(due) groups.upcoming.push(t);
+    else groups.nodate.push(t);
+  });
+  const byPri=(a,b)=>(b.priority||0)-(a.priority||0)||((a.due||"9999").localeCompare(b.due||"9999"));
+  Object.values(groups).forEach(g=>g.sort(byPri));
+  const item=t=>{
+    const pr=t.priority?'<span class="pri p'+t.priority+'">P'+t.priority+'</span>':"";
+    const due=(t.due||"").slice(0,10);
+    const od=due&&due<today&&!t.done;
+    const sub=(due?('<span'+(od?' class="od"':'')+'>due '+esc(due)+'</span>'):'')+
+      (t.notes?(due?' · ':'')+esc(t.notes):'')+
+      (t.for?((due||t.notes)?' · ':'')+'for '+esc(t.for):'');
+    return '<div class="td-item'+(t.done?" done":"")+'">'+
+      '<div class="check '+(t.done?"on":"")+'" onclick="toggleTodo(\''+t.id+'\')">'+(t.done?"✓":"")+'</div>'+
+      '<div class="meta" onclick="openTodoModal(\''+t.id+'\')"><div class="t">'+esc(t.title)+'</div>'+
+      (sub?'<div class="s">'+sub+'</div>':'')+'</div>'+pr+
+      '<button class="x" onclick="delTodo(\''+t.id+'\')" title="Delete">✕</button></div>';
+  };
+  let html="";
+  const grp=(key,label,cls)=>{
+    if(!groups[key].length) return;
+    html+='<div class="td-grp '+(cls||'')+'">'+label+' <span class="n">'+groups[key].length+'</span></div>';
+    html+=groups[key].map(item).join("");
+  };
+  grp("overdue","⚠ Overdue","overdue");
+  grp("today","Today");
+  grp("upcoming","Upcoming");
+  grp("nodate","Anytime");
+  if(groups.done.length){
+    html+='<div class="td-grp clickable" onclick="showDone=!showDone;loadTodos()">'+
+      (showDone?"▾":"▸")+' Done <span class="n">'+groups.done.length+'</span></div>';
+    if(showDone) html+=groups.done.map(item).join("");
+  }
+  list.innerHTML=html;
+}
+async function quickTodo(){
+  const v=$("td-quick").value.trim(); if(!v) return;
+  await call("/cal/todo/upsert",{title:v}); $("td-quick").value=""; loadTodos();
+}
+async function toggleTodo(id){ await call("/cal/todo/toggle",{id}); loadTodos(); }
+async function delTodo(id){ await call("/cal/todo/delete",{id}); loadTodos(); }
+function openTodoModal(id){
+  const t=TODOS.find(x=>x.id===id); if(!t) return;
+  $("td-id").value=t.id; $("td-title").value=t.title||"";
+  $("td-due").value=(t.due||"").slice(0,10); $("td-pri").value=String(t.priority||0);
+  $("td-notes").value=t.notes||"";
+  $("td-modal").classList.add("show");
+  setTimeout(()=>$("td-title").focus(),30);
+}
+async function saveTodoModal(){
+  const body={ id:$("td-id").value, title:$("td-title").value.trim(),
+    due:$("td-due").value, priority:+$("td-pri").value, notes:$("td-notes").value };
+  if(!body.title){ toast("Title required"); return; }
+  const cur=TODOS.find(x=>x.id===body.id); if(cur) body.done=!!cur.done;
+  const r=await call("/cal/todo/upsert",body);
+  if(r.error){ toast(r.error); return; }
+  closeModal("td-modal"); loadTodos();
+}
+async function deleteTodoFromModal(){
+  const id=$("td-id").value; if(!id) return;
+  await call("/cal/todo/delete",{id}); closeModal("td-modal"); loadTodos();
+}
+
+/* ══ RHM toggle ═════════════════════════════════════════ */
+function toggleRail(){
+  document.body.classList.toggle("rail-hidden");
+  localStorage.setItem("cal.rail",document.body.classList.contains("rail-hidden")?"0":"1");
+}
+
+/* ═══════════════════════════════════════════════════════
+   ASSISTANT (Agent pane) + BRAIN DUMP (Dump pane)
+   ═══════════════════════════════════════════════════════ */
+let ASCFG={agent:"secretary",toolkit:[],loop_version:"v3",
+  greeting:"Diary open. Ask me what's on or tell me what to arrange — I'll read and edit your calendar live."};
+let _loopActive=false, _loopAbort=null;
+const ASID=(()=>{ let s=localStorage.getItem("cal.assist.sid");
+  if(!s){ s="cal-"+Math.random().toString(36).slice(2,10); localStorage.setItem("cal.assist.sid",s); }
+  return s; })();
+
+let asSeq=0;
+function addMsgTo(feedEl,role,inner,avU,avB){
+  const id="m"+(++asSeq);
   const div=document.createElement("div");
-  div.className="bd-msg "+role; div.id=id;
-  div.innerHTML='<div class="av">'+av+'</div><div class="bubble">'+inner+'</div>';
-  $("bd-chat").appendChild(div);
-  div.scrollIntoView({behavior:"smooth",block:"end"});
+  div.className="as-msg "+role; div.id=id;
+  div.innerHTML='<div class="av">'+(role==="user"?avU:avB)+'</div><div class="bubble">'+inner+'</div>';
+  feedEl.appendChild(div);
+  feedEl.scrollTop=feedEl.scrollHeight;
   return id;
 }
-function bdInner(id){ return document.querySelector("#"+id+" .bubble"); }
-async function runBraindump(){
-  const text=$("bd-input").value.trim();
-  if(!text){ toast("Type something first"); return; }
-  bdAddMsg("user",'<p class="txt">'+esc(text)+'</p>');
-  $("bd-input").value=""; $("bd-input").style.height="auto";
-  $("bd-go").disabled=true;
-  const botId=bdAddMsg("bot",'<span class="muted"><span class="spin"></span> organising…</span>');
+function bubbleOf(id){ return document.querySelector("#"+id+" .bubble"); }
+function asAddMsg(role,inner){ return addMsgTo($("as-feed"),role,inner,"🧠","🗓"); }
+function asInner(id){ return bubbleOf(id); }
+function asActivity(html){
+  const div=document.createElement("div");
+  div.className="as-act"; div.innerHTML=html;
+  $("as-feed").appendChild(div); asScroll();
+}
+function asScroll(force){
+  const f=$("as-feed");
+  if(force||f.scrollHeight-f.scrollTop-f.clientHeight<180) f.scrollTop=f.scrollHeight;
+}
+function asSetMode(on,msg){
+  $("as-mode").style.display=on?"flex":"none";
+  if(msg) $("as-mode-txt").textContent=msg;
+}
+function asSetBusy(on){
+  _loopActive=on;
+  $("as-stop").style.display=on?"inline-flex":"none";
+  $("as-status").textContent=on?"working…":"ready";
+  $("as-dot").className="dot "+(on?"warn":"on");
+  $("as-send").disabled=on;
+  if(!on){ _loopAbort=null; asSetMode(false); }
+}
+
+async function initAssist(){
+  try{
+    const r=await call("/cal/assistant/config");
+    if(r&&r.toolkit) ASCFG=r;
+  }catch(e){}
+  $("as-agent-sub").textContent=(ASCFG.agent||"secretary")+" · live diary tools";
+  asAddMsg("bot",'<p class="txt">'+esc(ASCFG.greeting)+'</p>');
+  dumpAddMsg("bot",'<p class="txt">Paste anything on your mind — meetings, deadlines, errands, ideas — and I\'ll sort it into events, todos and notes for you to review. Nothing is saved until you accept.</p>');
+}
+
+async function ensureAloElement(){
+  if(window.customElements&&customElements.get("vera-agent-loop-output")) return true;
+  if(!document.getElementById("alo-script")){
+    const s=document.createElement("script"); s.id="alo-script";
+    s.src="/ui/elements/agent_loop_output.js"; document.head.appendChild(s);
+  }
+  const t0=Date.now();
+  while(Date.now()-t0<5000){
+    await new Promise(r=>setTimeout(r,200));
+    if(window.customElements&&customElements.get("vera-agent-loop-output")) return true;
+  }
+  return false;
+}
+
+async function assistSend(){
+  const text=$("as-input").value.trim();
+  if(!text){ $("as-input").focus(); return; }
+  if(_loopActive){ toast("Assistant is busy — stop it first"); return; }
+  asAddMsg("user",'<p class="txt">'+esc(text)+'</p>');
+  $("as-input").value=""; $("as-input").style.height="auto";
+  await runAssistLoop(text);
+}
+
+async function runAssistLoop(text){
+  const runId="cal_"+Date.now()+"_"+Math.random().toString(36).slice(2,8);
+  const msgId=asAddMsg("bot",'<span class="muted"><span class="spin"></span> engaging scheduling mode…</span>');
+  const holder=asInner(msgId);
+
+  const ok=await ensureAloElement();
+  if(!ok){
+    holder.innerHTML='<span style="color:var(--err)">Agent-loop renderer unavailable '+
+      '(/ui/elements/agent_loop_output.js) — check that agent_loop_output_capabilities.py is loaded.</span>';
+    return;
+  }
+  holder.innerHTML="";
+  const el=document.createElement("vera-agent-loop-output");
+  el.setAttribute("compact","true");
+  el.setAttribute("max-height","300");
+  holder.appendChild(el);
+  el.setApiBase(API);
+  el.setSessionId(ASID);
+  el.setHitlEndpoint("/workshop/agent_loop/hitl/respond");
+  el.setShowThinking(true);
+  el.addEventListener("alo:final",()=>{ scheduleRefresh(); asScroll(); });
+  el.addEventListener("alo:done",()=>{ asSetBusy(false); scheduleRefresh(); asScroll(); });
+  el.addEventListener("alo:error",()=>{ asSetBusy(false); asScroll(); });
+  try{
+    const ro=new ResizeObserver(()=>asScroll());
+    ro.observe(el);
+    el.addEventListener("alo:done",()=>{ try{ ro.disconnect(); }catch(_){}} );
+  }catch(_){}
+
+  asSetBusy(true);
+  asSetMode(true,"Scheduling mode — assistant is working the diary");
+
+  const now=new Date();
+  const tz=(Intl.DateTimeFormat().resolvedOptions().timeZone)||"local";
+  const goal="[Context: now is "+now.toString().slice(0,24)+" ("+tz+"); the calendar panel is open on "+
+    (selectedDay||isoLocal(now))+". You are the scheduling assistant working the user's diary: ground "+
+    "yourself with cal.assistant.briefing, then apply changes with the cal.* capabilities — meetings are "+
+    "events (cal.event.upsert), actions without a fixed time are todos (cal.todo.upsert). Check the day "+
+    "before adding a timed event; never double-book silently. Finish with a short summary of exactly what "+
+    "changed.]\n\nRequest: "+text;
+
+  el.appendEvent({type:"start",version:ASCFG.loop_version||"v3",max_cycles:8,
+                  agent_name:ASCFG.agent||"secretary",goal:text});
+
+  const req={
+    goal:goal,
+    allowed_caps:(ASCFG.toolkit||[]).join(","),
+    base_toolkit:(ASCFG.toolkit||[]).join(","),
+    max_cycles:8,
+    version:ASCFG.loop_version||"v3",
+    session_id:ASID,
+    run_id:runId,
+    record_history:true,
+    record_agent_name:ASCFG.agent||"secretary",
+    satisfaction_check:true,
+    enable_expand:true,
+    require_approval:false,
+    prefer_gpu:true,
+    triage_top_k:12,
+  };
+
+  _loopAbort=new AbortController();
+  let r;
+  try{
+    r=await fetch(API+"/workshop/agent_loop/stream",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(req),signal:_loopAbort.signal});
+  }catch(e){
+    el.appendEvent({type:"error",error:"Connection failed: "+(e.message||String(e))});
+    asSetBusy(false); return;
+  }
+  if(!r.ok){
+    const txt=await r.text().catch(()=>"")||"";
+    el.appendEvent({type:"error",error:"HTTP "+r.status+(txt?": "+txt.slice(0,200):"")});
+    asSetBusy(false); return;
+  }
+  const reader=r.body.getReader(); const dec=new TextDecoder(); let buf="";
+  try{
+    while(true){
+      let done,value;
+      try{ ({done,value}=await reader.read()); }catch(_){ break; }
+      if(done) break;
+      buf+=dec.decode(value,{stream:true});
+      while(true){
+        const i=buf.indexOf("\n\n"); if(i<0) break;
+        const chunk=buf.slice(0,i); buf=buf.slice(i+2);
+        for(const line of chunk.split("\n")){
+          if(!line.startsWith("data:")) continue;
+          const payload=line.slice(5).trim();
+          if(payload==="[DONE]"){ asSetBusy(false); scheduleRefresh(); return; }
+          let ev; try{ ev=JSON.parse(payload); }catch(_){ continue; }
+          if(ev.run_id&&ev.run_id!==runId) continue;
+          el.appendEvent(ev);
+          const ty=String(ev.type||"");
+          if(ty.indexOf("tool_done")>=0||ty.indexOf("tool_ok")>=0){
+            const tool=String(ev.tool||ev.cap||ev.name||"");
+            if(tool.indexOf("cal.")===0) scheduleRefresh();
+          }
+        }
+      }
+    }
+  }catch(_){/* aborted */}
+  asSetBusy(false); scheduleRefresh();
+}
+
+async function assistStop(){
+  try{ if(_loopAbort) _loopAbort.abort(); }catch(_){}
+  try{ await call("/workshop/agent_loop/cancel",{session_id:ASID}); }catch(_){}
+  asActivity("■ stopped");
+  asSetBusy(false);
+}
+
+/* ── Brain dump (Dump pane) ── */
+let bdProposals={};
+function dumpAddMsg(role,inner){ return addMsgTo($("dump-feed"),role,inner,"🧠","✦"); }
+async function dumpOrganise(){
+  const text=$("dump-input").value.trim();
+  if(!text){ $("dump-input").focus(); return; }
+  dumpAddMsg("user",'<p class="txt">'+esc(text)+'</p>');
+  $("dump-input").value=""; $("dump-input").style.height="auto";
+  $("dump-go").disabled=true;
+  const botId=dumpAddMsg("bot",'<span class="muted"><span class="spin"></span> organising…</span>');
   const r=await call("/cal/braindump",{text,apply:false});
-  $("bd-go").disabled=false;
-  if(r.error){ bdInner(botId).innerHTML='<span style="color:var(--err)">'+esc(r.error)+'</span>'; return; }
+  $("dump-go").disabled=false;
+  if(r.error){ bubbleOf(botId).innerHTML='<span style="color:var(--err)">'+esc(r.error)+'</span>'; return; }
   renderProposal(botId,r.proposal||{});
 }
 function renderProposal(botId,p){
   bdProposals[botId]=p;
-  const wrap=bdInner(botId);
+  const wrap=bubbleOf(botId);
   if(p._parse_error){
     wrap.innerHTML='<p class="txt">I couldn\'t structure that cleanly. Try splitting it into shorter lines, '+
       'or naming dates explicitly (e.g. "Tue 3pm").</p>'+
@@ -795,9 +1440,6 @@ function renderProposal(botId,p){
     items.forEach((it,i)=>{ h+='<div class="bd-card '+cls+'"><input type="checkbox" data-g="'+cls+'" data-i="'+i+'" checked style="width:auto;margin-top:2px">'+render(it)+'</div>'; });
     return h+'</div>';
   };
-  // Events get an inline, editable date/time so nothing lands on the calendar
-  // without a time the user has seen — and meetings the model couldn't place
-  // (start="") are flagged "needs a time" rather than silently dropped.
   if(p.events&&p.events.length){
     html+='<div class="bd-group"><h4>Events · '+p.events.length+'</h4>';
     p.events.forEach((e,i)=>{
@@ -821,20 +1463,19 @@ function renderProposal(botId,p){
     p.daily_plan.forEach(r=>{ html+='<div class="plan-row"><span class="pt">'+esc(r.time||"—")+'</span><span>'+esc(r.item||"")+'</span></div>'; });
     html+='</div>';
   }
-  html+='<div style="margin-top:14px;display:flex;gap:8px"><button class="btn primary sm" onclick="acceptProposal(\''+botId+'\',this)">✓ Add selected</button><button class="btn ghost sm" onclick="bdInner(\''+botId+'\').querySelectorAll(\'input[type=checkbox]\').forEach(c=>c.checked=false)">Clear</button></div>';
+  html+='<div style="margin-top:12px;display:flex;gap:8px"><button class="btn primary sm" onclick="acceptProposal(\''+botId+'\',this)">✓ Add selected</button><button class="btn ghost sm" onclick="bubbleOf(\''+botId+'\').querySelectorAll(\'input[type=checkbox]\').forEach(c=>c.checked=false)">Clear</button></div>';
   wrap.innerHTML=html;
+  const f=$("dump-feed"); f.scrollTop=f.scrollHeight;
 }
-// ISO start ("2026-06-16T15:00:00" or "2026-06-16") -> datetime-local value.
 function bdLocalVal(start){
   if(!start) return "";
   if(start.indexOf("T")>=0) return start.slice(0,16);
-  return start.slice(0,10)+"T09:00";   // date-only: seed a sensible clock time
+  return start.slice(0,10)+"T09:00";
 }
 async function acceptProposal(botId,btn){
   const p=bdProposals[botId]; if(!p) return;
   const pick={events:[],todos:[],notes:[]};
-  let needTime=0;
-  bdInner(botId).querySelectorAll('input[type=checkbox][data-g]').forEach(cb=>{
+  bubbleOf(botId).querySelectorAll('input[type=checkbox][data-g]').forEach(cb=>{
     if(!cb.checked) return;
     const g=cb.dataset.g, i=+cb.dataset.i;
     if(g==="kev"){
@@ -846,7 +1487,7 @@ async function acceptProposal(botId,btn){
       if(v){
         if(adEl&&adEl.checked){ ev.all_day=true; ev.start=v.slice(0,10); }
         else { ev.all_day=false; ev.start=v; }
-      } else { ev.start=""; needTime++; }
+      } else { ev.start=""; }
       pick.events.push(ev);
     }
     if(g==="ktd") pick.todos.push(p.todos[i]);
@@ -861,38 +1502,67 @@ async function acceptProposal(botId,btn){
   let msg='<p class="txt">✓ Added '+((a.events||[]).length)+' events, '+
     ((a.todos||[]).length)+' todos and '+((a.notes||[]).length)+' notes to your diary.</p>';
   if(unsched.length){
-    msg+='<p class="txt" style="color:var(--warn,#f5b341)">⚠ '+unsched.length+' event'+
+    msg+='<p class="txt" style="color:var(--warn)">⚠ '+unsched.length+' event'+
       (unsched.length===1?'':'s')+' still need'+(unsched.length===1?'s':'')+' a time: '+
       esc(unsched.join(", "))+'. Set a date/time above and add again.</p>';
     if(btn){ btn.disabled=false; btn.textContent="✓ Add selected"; }
   }
-  bdAddMsg("bot",msg);
+  dumpAddMsg("bot",msg);
   toast(unsched.length?(unsched.length+" event"+(unsched.length===1?"":"s")+" need a time")
                       :("Added "+n+" item"+(n===1?"":"s")));
+  renderView(); renderDay(); renderAgenda(); loadTodos();
 }
 
-/* ── Todos ──────────────────────────────────── */
-async function loadTodos(){
-  const r=await call("/cal/todos"); const list=$("todo-list");
-  const todos=r.todos||[];
-  if(!todos.length){ list.innerHTML='<div class="empty">No todos yet.</div>'; return; }
-  list.innerHTML=todos.map(t=>{
-    const pr=t.priority?'<span class="pri p'+t.priority+'">P'+t.priority+'</span>':"";
-    return '<div class="list-item '+(t.done?"done":"")+'">'+
-      '<div class="check '+(t.done?"on":"")+'" onclick="toggleTodo(\''+t.id+'\')">'+(t.done?"✓":"")+'</div>'+
-      '<div class="meta"><div class="t">'+esc(t.title)+'</div>'+
-      ((t.due||t.notes)?'<div class="s">'+esc((t.due?"due "+t.due:"")+(t.notes?" · "+t.notes:""))+'</div>':'')+'</div>'+
-      pr+'<button class="btn ghost sm danger" onclick="delTodo(\''+t.id+'\')">✕</button></div>';
-  }).join("");
+/* ═══════════════════════════════════════════════════════
+   LIVE EVENT FEED — /ws/mcp __events__ subscription.
+   ═══════════════════════════════════════════════════════ */
+let _refT=null;
+function scheduleRefresh(){
+  if(_refT) clearTimeout(_refT);
+  _refT=setTimeout(()=>{ _refT=null;
+    renderView(); renderDay(); renderAgenda(); loadTodos();
+  },600);
 }
-async function quickTodo(){
-  const v=$("td-quick").value.trim(); if(!v) return;
-  await call("/cal/todo/upsert",{title:v}); $("td-quick").value=""; loadTodos();
+function connectWS(){
+  try{
+    const pr=location.protocol==="https:"?"wss:":"ws:";
+    const ws=new WebSocket(pr+"//"+location.host+"/ws/mcp");
+    ws.onopen=()=>{ try{ ws.send(JSON.stringify({action:"subscribe",stream:"__events__"})); }catch(_){} };
+    ws.onmessage=ev=>{ try{ const m=JSON.parse(ev.data);
+      if(m.type==="event"&&m.data) handleLiveEvent(m.data); }catch(_){} };
+    ws.onclose=()=>setTimeout(connectWS,5000);
+  }catch(e){ setTimeout(connectWS,5000); }
 }
-async function toggleTodo(id){ await call("/cal/todo/toggle",{id}); loadTodos(); }
-async function delTodo(id){ await call("/cal/todo/delete",{id}); loadTodos(); }
+function handleLiveEvent(e){
+  const t=String(e.type||"");
+  if(t.indexOf("cal.")!==0) return;
+  if(t==="cal.event"||t==="cal.todo"){
+    scheduleRefresh();
+    if(!_loopActive){
+      const icon=e.stage==="delete"?"🗑":"✎";
+      const what=t==="cal.event"?"event":"todo";
+      asActivity(icon+" "+(e.message?esc(e.message):("<b>"+what+"</b> "+(e.stage||"changed"))));
+      flashAgent();
+    }
+  } else if(t==="cal.assistant"){
+    if(e.stage==="handover_start"){
+      lhmTab("agent");
+      asSetMode(true,"Scheduling mode — Vera handed over to the assistant");
+      asActivity("◈ "+esc(e.message||"scheduling mode engaged"));
+    } else if(e.stage==="handover_done"){
+      asSetMode(false);
+      asActivity("✓ "+esc(e.message||"scheduling run finished"));
+      scheduleRefresh();
+    } else if(e.stage==="handover_error"){
+      asSetMode(false);
+      asActivity('<span style="color:var(--err)">✗ '+esc(e.message||"scheduling run failed")+'</span>');
+    }
+  } else if(t==="cal.sync.progress"&&e.stage==="done"){
+    scheduleRefresh(); updateSyncTile(new Date().toISOString());
+  }
+}
 
-/* ── Sources ────────────────────────────────── */
+/* ══ Sources ════════════════════════════════════════════ */
 async function loadSources(){
   const r=await call("/cal/sources"); const list=$("source-list");
   const srcs=r.sources||[];
@@ -900,8 +1570,6 @@ async function loadSources(){
   list.innerHTML=srcs.map(s=>{
     const last=s.last_sync?("synced "+new Date(s.last_sync).toLocaleString()):"never synced";
     const res=s.last_result?(" · +"+s.last_result.added+" / ~"+s.last_result.updated+(s.last_result.errors?" · ⚠":"")):"";
-    // A google source linked to an Accounts-tab OAuth grant authorises there,
-    // not per-source — so it never shows "needs auth"/Connect here.
     const needAuth=s.type==="google"&&!s.has_refresh_token&&!s.account_id;
     return '<div class="list-item">'+
       '<span class="dot '+(s.enabled?(s.last_result&&s.last_result.errors?"warn":"on"):"off")+'" style="margin-top:4px"></span>'+
@@ -916,7 +1584,7 @@ async function loadSources(){
   updateSyncTile(newest);
 }
 let curSources=[];
-let gCalList=[];   // calendars shown in the Google picker for the open source
+let gCalList=[];
 async function openSource(type,existing){
   const m=$("src-modal"); m.classList.add("show");
   document.querySelectorAll(".src-fields").forEach(f=>f.style.display="none");
@@ -928,9 +1596,6 @@ async function openSource(type,existing){
   $("src-url-ics").value=existing&&existing.url||""; $("src-url-cd").value=existing&&existing.url||"";
   $("src-user").value=existing&&existing.username||""; $("src-pass").value="";
   $("src-gcid").value=existing&&existing.client_id||""; $("src-gcs").value="";
-  // Account link: ics/caldav pull stored credentials; google can instead use a
-  // linked account's OAuth grant (authorise once in the Accounts tab) rather
-  // than per-source client_id/secret.
   $("src-acct-wrap").style.display=(type==="ics"||type==="caldav"||type==="google")?"block":"none";
   if(type==="ics"||type==="caldav"||type==="google") loadSrcAccounts(existing&&existing.account_id||"");
   if(type==="google"){
@@ -954,7 +1619,6 @@ async function loadGoogleCalendars(srcId, current){
   if(r.error){ $("src-gcals").innerHTML='<div class="empty-mini">'+esc(r.error)+'</div>';
     gCalList=[]; $("src-gcals-count").textContent=""; return; }
   gCalList=r.calendars||[];
-  // A saved selection on the source wins over the server-side default.
   if(current&&current.length){
     const sel=new Set(current.map(c=>c.id));
     gCalList.forEach(c=>c.selected=sel.has(c.id));
@@ -984,8 +1648,6 @@ async function loadSrcAccounts(selected){
   $("src-acct").value=selected||""; onSrcAcct();
 }
 function onSrcAcct(){
-  // When an account is chosen, the manual cred inputs are filled from it server-side,
-  // so dim them as optional overrides.
   const using=!!$("src-acct").value;
   ["src-url-ics","src-url-cd","src-user","src-pass"].forEach(id=>{ const el=$(id); if(el) el.placeholder=using?"(from account — override optional)":el.getAttribute("data-ph")||el.placeholder; });
 }
@@ -1002,7 +1664,7 @@ async function saveSource(){
         .map(c=>({id:c.id,summary:c.summary,color:c.color})); }
   const r=await call("/cal/source/upsert",body);
   if(r.error){ toast(r.error); return; }
-  calSources=null;   // invalidate layer cache so new calendars appear
+  calSources=null;
   closeModal("src-modal"); toast("Source saved"); loadSources();
 }
 async function delSource(id,label){
@@ -1014,12 +1676,8 @@ async function googleConnect(id){
   if(r.error){ toast(r.error); return; }
   window.open(r.url,"_blank");
   toast("Approve access in the opened tab — waiting for Google…");
-  // Loopback flow: Google redirects back to Vera's callback, which stores the
-  // refresh token server-side. Poll the source until that token lands.
   const ok=await pollGoogleAuth(id,120000);
   if(!ok){
-    // Fallback for remote access, where the loopback callback can't reach Vera:
-    // let the user paste the code from the redirected URL's ?code= param.
     const code=prompt("Didn't complete automatically? Paste the `code` value "+
       "from the address bar of the page Google redirected you to (or leave "+
       "blank to cancel):");
@@ -1032,8 +1690,6 @@ async function googleConnect(id){
   const s=curSources.find(x=>x.id===id);
   if(s) openSource("google",s);
 }
-// Poll /cal/sources until the given google source reports a stored refresh
-// token (set by the loopback callback), or the timeout elapses.
 async function pollGoogleAuth(id,timeoutMs){
   const start=Date.now();
   while(Date.now()-start<timeoutMs){
@@ -1045,7 +1701,7 @@ async function pollGoogleAuth(id,timeoutMs){
   return false;
 }
 
-/* ── Sync ───────────────────────────────────── */
+/* ══ Sync ═══════════════════════════════════════════════ */
 async function syncNow(id){
   $("sync-dot").className="dot warn"; $("sync-text").textContent="syncing…";
   const r=await call("/cal/sync/run", id?{source:id}:{});
@@ -1053,8 +1709,8 @@ async function syncNow(id){
   const tot=(r.results||[]).reduce((a,x)=>a+x.added+x.updated,0);
   toast("Synced — "+tot+" events updated");
   updateSyncTile(new Date().toISOString());
-  calSources=null;   // sources/calendars may have changed — refresh layer list
-  if(document.querySelector('.section[data-sec="calendar"]').classList.contains("active")) renderMonth();
+  calSources=null;
+  renderView(); renderDay(); renderAgenda();
   if(document.querySelector('.section[data-sec="sources"]').classList.contains("active")) loadSources();
 }
 function updateSyncTile(ts){
@@ -1062,7 +1718,7 @@ function updateSyncTile(ts){
   $("sync-text").textContent=ts?("synced "+new Date(ts).toLocaleTimeString()):"never synced";
 }
 
-/* ── Settings ───────────────────────────────── */
+/* ══ Settings ═══════════════════════════════════════════ */
 async function loadSettings(){
   const c=await call("/cal/config");
   $("set-model").value=c.model||""; $("set-interval").value=c.sync_interval_min??15;
@@ -1080,21 +1736,73 @@ async function saveSettings(){
 /* keep curSources for edit */
 const _ls=loadSources; loadSources=async function(){ const r=await call("/cal/sources"); curSources=r.sources||[]; await _ls(); };
 
-/* ── Brain-dump composer: Enter sends, Shift+Enter newlines, auto-grow ── */
-(function(){
-  const ta=$("bd-input"); if(!ta) return;
-  ta.addEventListener("keydown",e=>{
-    if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); runBraindump(); }
-  });
-  ta.addEventListener("input",()=>{ ta.style.height="auto";
-    ta.style.height=Math.min(ta.scrollHeight,160)+"px"; });
-})();
+/* ══ Composers: Enter to send, Shift+Enter newline, auto-grow ══ */
+function wireComposer(taId,onEnter){
+  const ta=$(taId); if(!ta) return;
+  ta.addEventListener("keydown",e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); onEnter(); } });
+  ta.addEventListener("input",()=>{ ta.style.height="auto"; ta.style.height=Math.min(ta.scrollHeight,150)+"px"; });
+}
+wireComposer("as-input",assistSend);
+wireComposer("dump-input",dumpOrganise);
 
-/* ── Boot ───────────────────────────────────── */
+/* ══ Keyboard shortcuts (outside inputs) ════════════════ */
+document.addEventListener("keydown",e=>{
+  if(e.target&&/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+  if(e.metaKey||e.ctrlKey||e.altKey) return;
+  if(e.key==="t") goToday();
+  else if(e.key==="[") moveView(-1);
+  else if(e.key==="]") moveView(1);
+  else if(e.key==="m") setView("month");
+  else if(e.key==="w") setView("week");
+  else if(e.key==="d") setView("day");
+  else if(e.key==="n") openEvent();
+});
+
+/* ══ Panel bridge: semantic actions for chat agents ══ */
+window.addEventListener("load",()=>{
+  if(!window.VeraPanelBridge) return;
+  VeraPanelBridge.registerStateProvider(()=>({
+    view:VIEW, selected_day:selectedDay, lhm_tab:LHMTAB,
+    open_todos:(TODOS||[]).filter(t=>!t.done).length,
+    assistant_busy:_loopActive,
+    today_events:(agendaEvents||[]).length,
+  }));
+  VeraPanelBridge.registerActionHandler("assistant_ask",p=>{
+    const q=(p&&(p.text||p.query||p.request))||"";
+    if(!q) return {ok:false,error:"text required"};
+    lhmTab("agent"); $("as-input").value=q; assistSend();
+    return {ok:true,asked:q};
+  });
+  VeraPanelBridge.registerActionHandler("goto_day",p=>{
+    if(!(p&&p.day)) return {ok:false,error:"day (YYYY-MM-DD) required"};
+    selectedDay=String(p.day).slice(0,10);
+    const d=new Date(selectedDay+"T00:00");
+    view=new Date(d.getFullYear(),d.getMonth(),1);
+    setView(p.view||"day");
+    return {ok:true,day:selectedDay};
+  });
+  VeraPanelBridge.registerActionHandler("add_todo",async p=>{
+    const t=(p&&p.title)||"";
+    if(!t) return {ok:false,error:"title required"};
+    const r=await call("/cal/todo/upsert",{title:t,due:(p.due||""),priority:+(p.priority||0)});
+    loadTodos();
+    return r;
+  });
+});
+
+/* ══ Boot ═══════════════════════════════════════════════ */
 selectedDay=isoLocal(new Date());
-renderMonth();
+if(localStorage.getItem("cal.rail")==="0") document.body.classList.add("rail-hidden");
+setView(VIEW);
+lhmTab(LHMTAB);
+renderAgenda();
+loadTodos();
+initAssist();
+connectWS();
 (async()=>{ const r=await call("/cal/sync/status"); if(r.ts) updateSyncTile(r.ts); })();
+setInterval(()=>{ renderAgenda(); if(VIEW!=="month") renderView(); },300000);
 </script>
+<script src="/ui/elements/agent_loop_output.js" id="alo-script"></script>
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>

@@ -203,7 +203,7 @@
             '<label class="loom-check"><input type="checkbox" class="lm-mergeActive" checked><span>Merge into active graph (overlay, don\'t replace)</span></label>' +
             '<div style="display:flex;gap:4px;margin-top:5px">' +
               '<button class="lbtn teal lm-refresh" style="flex:1">\u21bb Refresh</button>' +
-              '<button class="lbtn lm-runvis" style="flex:1" title="Run pipeline stages on the visible graph dataset">\u25b6 Run on visible</button>' +
+              '<button class="lbtn lm-runvis" style="flex:1" title="Run pipeline stages on the visible graph dataset">\u25b6︎ Run on visible</button>' +
             '</div>' +
             '<div class="status-bar lm-viewstat" style="font-size:8.5px"></div>' +
           '</div>' +
@@ -221,6 +221,37 @@
             '<div class="lm-listcontent" style="max-height:280px;overflow-y:auto;font-size:10px;border:1px solid var(--border,#3a3530);border-radius:3px;background:var(--bg0,#181614)">' +
               '<div style="text-align:center;padding:18px;color:var(--dim,#6a6058);font-size:10px">No data yet.</div>' +
             '</div>' +
+          '</div>' +
+        '</details>' +
+        // DATASET LINKS — dynamic cross-dataset connection queries
+        '<details class="loom-section" open>' +
+          '<summary class="loom-section-head"><span class="loom-section-title">Dataset Links</span><span class="loom-section-sub">shared entities</span></summary>' +
+          '<div class="loom-section-body">' +
+            '<div class="loom-hint">Build a dataset-to-dataset graph from shared entities, precomputed loom edges, and live matching — a combined view of every way datasets connect.</div>' +
+            '<div class="row"><label>Connections</label>' +
+              '<select class="lm-dl-mode">' +
+                '<option value="entities" selected>Shared entities (extracted)</option>' +
+                '<option value="stitched">Precomputed (loom edges)</option>' +
+                '<option value="both">Both</option>' +
+              '</select></div>' +
+            '<div class="row"><label>Entity type</label>' +
+              '<select class="lm-dl-type">' +
+                '<option value="">All types</option>' +
+                '<option value="person">Person</option>' +
+                '<option value="organisation">Organisation</option>' +
+                '<option value="technology">Technology</option>' +
+                '<option value="domain">Domain</option>' +
+                '<option value="named_entity">Named entity</option>' +
+              '</select></div>' +
+            '<div class="row"><label>Min shared</label><input class="lm-dl-min" type="number" value="2" min="1" max="100"><span class="loom-unit">entities</span></div>' +
+            '<div class="row"><label>Name filter</label><input class="lm-dl-filter" placeholder="only entities matching…"></div>' +
+            '<label class="loom-check"><input type="checkbox" class="lm-dl-showent" checked><span>Show linking entities as nodes (between datasets)</span></label>' +
+            '<label class="loom-check"><input type="checkbox" class="lm-dl-merge"><span>Merge into active graph (overlay)</span></label>' +
+            '<div style="display:flex;gap:4px;margin-top:5px">' +
+              '<button class="lbtn primary lm-dl-run" style="flex:1">Build link graph</button>' +
+              '<button class="lbtn lm-dl-live" style="flex:1" title="Also run loom record-matching live between the linked datasets (not persisted)">+ live match</button>' +
+            '</div>' +
+            '<div class="status-bar lm-dl-stat" style="font-size:8.5px"></div>' +
           '</div>' +
         '</details>' +
         // DATASET CONFIG TARGET
@@ -1068,7 +1099,14 @@
       }
 
       // ── Pipeline log ──────────────────────────────────────────────────────
+      // Mirrored into the graph's shared bottom Terminal so loom activity is
+      // visible alongside discovery/worldview output without opening the panel.
       function pipeLog(msg, type){
+        try {
+          if (graph && graph.bottomDrawer && graph.bottomDrawer.log) {
+            graph.bottomDrawer.log('[loom] ' + msg, type);
+          }
+        } catch(_) {}
         if (elLogWrap) { elLogWrap.style.display = 'block'; elLogWrap.open = true; }
         if (!elLogContent) return;
         var ts = new Date().toLocaleTimeString();
@@ -1211,7 +1249,180 @@
         pipeLog('Active-graph extraction: +' + nAdded + ' entities, +' + eAdded + ' edges', 'ok');
       }
 
+      // ── Dataset Links: dynamic cross-dataset connection graphs ────────────
+      // Builds a dataset↔dataset graph from up to three connection sources:
+      //   1. shared entities — the entity-extraction system: an entity that is
+      //      mentioned in records of two datasets links those datasets
+      //   2. precomputed     — loom-stitched record edges aggregated per pair
+      //   3. live            — loom matching run on the fly between the linked
+      //      pairs (persist:false) — "found there and then"
+      // The result is loaded into the host graph (replace or overlay), with the
+      // linking entities optionally shown as nodes between the datasets.
+      async function buildDatasetLinks(includeLive){
+        var stat = $('.lm-dl-stat');
+        var mode       = ($('.lm-dl-mode')  || {}).value || 'entities';
+        var etype      = ($('.lm-dl-type')  || {}).value || '';
+        var minShared  = parseInt(($('.lm-dl-min') || {}).value || '2', 10) || 1;
+        var nameFilter = (($('.lm-dl-filter') || {}).value || '').trim().toLowerCase();
+        var showEnts   = !!($('.lm-dl-showent') && $('.lm-dl-showent').checked);
+        var merge      = !!($('.lm-dl-merge')   && $('.lm-dl-merge').checked);
+        setStatus(stat, 'Querying connections…', '');
+        pipeLog('Dataset links: querying (' + mode + (etype ? ', type=' + etype : '') +
+                ', min shared ' + minShared + ')…');
+
+        var nodes = [], edges = [], nodeMap = {};
+        function addN(spec){ if (!spec.id || nodeMap[spec.id]) return; nodeMap[spec.id] = 1; nodes.push(spec); }
+        function dsNode(did){
+          addN({ id: did, label: String(did).split('.').pop() || did, type: 'Dataset',
+                 layer: 'structure', props: { id: did } });
+        }
+        function pairKey(a, b){ return a < b ? a + ' ' + b : b + ' ' + a; }
+
+        var entPairs = {};   // pairKey -> { count, sample: [entity names] }
+        var entRows  = [];   // entities spanning >= 2 datasets (for showEnts)
+
+        function _tallyEntity(row){
+          var ds = row.ds || [];
+          if (!Array.isArray(ds) || ds.length < 2) return;
+          entRows.push(row);
+          for (var i = 0; i < ds.length; i++) {
+            for (var j = i + 1; j < ds.length; j++) {
+              var k = pairKey(String(ds[i]), String(ds[j]));
+              var rec = entPairs[k] || (entPairs[k] = { count: 0, sample: [] });
+              rec.count++;
+              if (rec.sample.length < 6) rec.sample.push(row.name || row.id);
+            }
+          }
+        }
+
+        if (mode === 'entities' || mode === 'both') {
+          // PRIMARY source: the entity store the discover/extraction system
+          // actually writes to (SQLite fabric_entities, served by the
+          // entity_graph snapshot API). Each entity carries props.datasets —
+          // every dataset it was seen in. Neo4j only holds the small subset
+          // explicitly persisted to the graph, which is why querying it
+          // directly surfaced almost none of the discover-extracted entities.
+          var qsE = '?limit=20000';
+          if (etype) qsE += '&entity_type=' + encodeURIComponent(etype);
+          var snap = await api('/fabric/entity_graph/snapshot' + qsE, 'GET', undefined, 90000);
+          ((snap && snap.nodes) || []).forEach(function(n){
+            var nm = String(n.name || (n.props && n.props.name) || n.id || '');
+            if (nameFilter && nm.toLowerCase().indexOf(nameFilter) < 0) return;
+            var ds = (n.props && n.props.datasets) || [];
+            _tallyEntity({ id: n.id, name: nm,
+                           type: (n.props && n.props.type) || n.type || 'entity',
+                           ds: ds });
+          });
+          // FALLBACK: entities that only exist as Neo4j graph nodes.
+          if (!entRows.length) {
+            var cy = 'MATCH (e:Entity)-[:MENTIONED_IN|HAS_ENTITY]-(r:FabricRecord) ' +
+                     'WHERE r.dataset_id IS NOT NULL ' +
+                     (etype ? 'AND e.type = $etype ' : '') +
+                     (nameFilter ? 'AND toLower(coalesce(e.name, e.id)) CONTAINS $nf ' : '') +
+                     'WITH e, collect(DISTINCT r.dataset_id) AS ds ' +
+                     'WHERE size(ds) >= 2 ' +
+                     'RETURN e.id AS id, coalesce(e.name, e.id) AS name, e.type AS type, ds ' +
+                     'LIMIT 4000';
+            var eres = await api('/fabric/graph/query', 'POST',
+              { cypher: cy, params: { etype: etype, nf: nameFilter } }, 60000);
+            ((eres && eres.rows) || []).forEach(_tallyEntity);
+          }
+        }
+
+        var stitchPairs = {};   // pairKey -> edge count
+        if (mode === 'stitched' || mode === 'both') {
+          var cy2 = 'MATCH (a:FabricRecord)-[r:RELATED_TO|SIMILAR_TO|REFERENCES|DEPENDS_ON|DERIVED_FROM|SHARES_TOPIC]-(b:FabricRecord) ' +
+                    'WHERE a.dataset_id IS NOT NULL AND b.dataset_id IS NOT NULL ' +
+                    'AND a.dataset_id < b.dataset_id ' +
+                    'RETURN a.dataset_id AS da, b.dataset_id AS db, count(r) AS n LIMIT 2000';
+          var sres = await api('/fabric/graph/query', 'POST', { cypher: cy2 }, 60000);
+          ((sres && sres.rows) || []).forEach(function(row){
+            if (row.da && row.db) stitchPairs[pairKey(String(row.da), String(row.db))] = row.n || 1;
+          });
+        }
+
+        // ── Assemble the dataset-level graph ────────────────────────────────
+        var pairList = [];
+        Object.keys(entPairs).forEach(function(k){
+          if (entPairs[k].count < minShared) return;
+          var ab = k.split(' ');
+          pairList.push(ab);
+          dsNode(ab[0]); dsNode(ab[1]);
+          edges.push({ from: ab[0], to: ab[1], rel: 'SHARES_ENTITIES', layer: 'loom',
+                       props: { shared: entPairs[k].count,
+                                sample: entPairs[k].sample.join(', ') } });
+        });
+        Object.keys(stitchPairs).forEach(function(k){
+          var ab = k.split(' ');
+          pairList.push(ab);
+          dsNode(ab[0]); dsNode(ab[1]);
+          edges.push({ from: ab[0], to: ab[1], rel: 'LOOM_LINKED', layer: 'loom',
+                       props: { stitched_edges: stitchPairs[k] } });
+        });
+
+        // Linking entities as intermediate nodes (only ones whose pairs passed)
+        if (showEnts && entRows.length) {
+          var keptDs = {};
+          Object.keys(nodeMap).forEach(function(id){ keptDs[id] = 1; });
+          entRows.slice(0, 150).forEach(function(row){
+            var ds = (row.ds || []).filter(function(d){ return keptDs[d]; });
+            if (ds.length < 2) return;
+            addN({ id: row.id, label: String(row.name || row.id).slice(0, 40),
+                   type: 'Entity', layer: 'entities',
+                   props: { type: row.type || 'entity', datasets: row.ds } });
+            ds.forEach(function(d){
+              edges.push({ from: row.id, to: d, rel: 'SHARED_IN', layer: 'entities' });
+            });
+          });
+        }
+
+        // ── Optional live loom pass over the top pairs ──────────────────────
+        if (includeLive && pairList.length) {
+          setStatus(stat, 'Live matching ' + Math.min(5, pairList.length) + ' pair(s)…', '');
+          var seen = {}, done = 0;
+          for (var pi = 0; pi < pairList.length && done < 5; pi++) {
+            var pk2 = pairList[pi].join(' ');
+            if (seen[pk2]) continue;
+            seen[pk2] = 1; done++;
+            var lr = await api('/fabric/loom/run', 'POST', {
+              dataset_a: pairList[pi][0], dataset_b: pairList[pi][1],
+              mode: 'hybrid', min_score: 0.4, max_matches: 20, persist: false,
+            }, 120000);
+            var nMatch = (lr && (lr.total || (lr.matches && lr.matches.length))) || 0;
+            if (nMatch) {
+              edges.push({ from: pairList[pi][0], to: pairList[pi][1],
+                           rel: 'LIVE_MATCH', layer: 'loom', _dashed: true,
+                           props: { matches: nMatch, computed: 'live' } });
+            }
+          }
+        }
+
+        if (!nodes.length) {
+          setStatus(stat, 'No cross-dataset connections found (try lowering Min shared, or run entity extraction first)', 'warn');
+          pipeLog('Dataset links: ' + entRows.length + ' multi-dataset entities seen, ' +
+                  'but no pair met the min-shared threshold', 'err');
+          return;
+        }
+
+        // ── Drive the host graph ────────────────────────────────────────────
+        if (graph && merge && graph.addNode && graph.addEdge) {
+          nodes.forEach(function(n){ graph.addNode(n, true); });
+          edges.forEach(function(e){ graph.addEdge(e, true); });
+          if (graph.wake) graph.wake();
+        } else if (graph && graph.load) {
+          graph.load({ nodes: nodes, edges: edges });
+        }
+        syncItemsFromActiveGraph(true);
+        var dsCount = nodes.filter(function(n){ return n.type === 'Dataset'; }).length;
+        var summary = dsCount + ' datasets · ' + edges.length + ' connection(s)' +
+          (showEnts ? ' · ' + (nodes.length - dsCount) + ' linking entities' : '');
+        setStatus(stat, summary, 'ok');
+        pipeLog('Dataset links: ' + summary + ' (from ' + entRows.length + ' shared entities)', 'ok');
+      }
+
       // ── Wire events ───────────────────────────────────────────────────────
+      if ($('.lm-dl-run'))  $('.lm-dl-run').onclick  = function(){ buildDatasetLinks(false); };
+      if ($('.lm-dl-live')) $('.lm-dl-live').onclick = function(){ buildDatasetLinks(true); };
       if (elViewSrc)  elViewSrc.onchange  = refreshView;
       if (elViewDs)   elViewDs.onchange   = refreshView;
       if (elTypeFilt) elTypeFilt.onchange = refreshView;

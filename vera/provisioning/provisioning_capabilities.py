@@ -41,6 +41,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -115,7 +116,12 @@ async def _state_save(patch: Dict[str, Any]) -> Dict[str, Any]:
     for k, v in patch.items():
         if k in _SECRET_FIELDS:
             if v:                       # seal only a new truthy value; keep existing
-                cur[k] = vsecrets.seal(v if isinstance(v, str) else json.dumps(v))
+                # force_fernet: these are OpenBao's OWN bootstrap secrets (its
+                # token/unseal key + step-ca password) — they must NOT be stored
+                # in OpenBao itself (it can't open the vault to read the token
+                # that opens the vault). Always Fernet-seal them inline.
+                cur[k] = vsecrets.seal(v if isinstance(v, str) else json.dumps(v),
+                                       force_fernet=True)
         elif v is not None:
             cur[k] = v
     cur["updated"] = now_iso()
@@ -316,7 +322,41 @@ async def _do_unseal(st: Dict) -> Dict:
             return {"error": err}
         if not last.get("sealed", True):
             break
+    # Once unsealed, hand OpenBao to the shared secret helper so it becomes the
+    # store of record for ALL new secrets (comms/accounts included) — see
+    # vera/security/secrets.py backend selection. Export the address + token into
+    # the process env, which is exactly what secrets._bao_cfg() reads.
+    try:
+        if last and not last.get("sealed", True):
+            _export_bao_env(st)
+    except Exception as e:
+        log.debug("provisioning: could not export OpenBao env: %s", e)
     return last or {}
+
+
+def _export_bao_env(st: Dict) -> None:
+    """Publish the (opened) OpenBao address + token into os.environ so the
+    leaf-level secrets helper routes new seals to the vault. `st` is a
+    secret-OPENED state (token in plaintext)."""
+    addr = (st.get("openbao_addr") or "").rstrip("/")
+    token = st.get("openbao_token") or ""
+    if not (addr and token):
+        return
+    os.environ["BAO_ADDR"] = addr
+    os.environ["BAO_TOKEN"] = token
+    if st.get("openbao_mount"):
+        os.environ["BAO_KV_MOUNT"] = st["openbao_mount"]
+    if st.get("openbao_namespace"):
+        os.environ["BAO_NAMESPACE"] = st["openbao_namespace"]
+    if st.get("verify_tls"):
+        os.environ["BAO_VERIFY_TLS"] = "true"
+    os.environ.setdefault("VERA_SECRET_BACKEND", "openbao")
+    # Reset the secrets helper's cached probe so it re-detects immediately.
+    try:
+        vsecrets._bao_cache["active"] = None
+    except Exception:
+        pass
+    log.info("provisioning: OpenBao is now the active secret backend (%s)", addr)
 
 
 @capability(
@@ -609,7 +649,7 @@ async def _provisioning_panel():
 
 
 # Standalone top-level tab retired — embedded as the Security sub-tab of the
-# workers/Ollama panel's Proxmox pane. The /provisioning/panel route is kept.
+# workers/Ollama panel's Provision pane. The /provisioning/panel route is kept.
 register_ui = (lambda *a, **k: None)
 register_ui(
     "provisioning-panel",
@@ -640,8 +680,12 @@ async def _startup_unseal():
     try:
         st = await _state_opened()
         if st.get("openbao_addr") and st.get("openbao_unseal"):
-            await _do_unseal(st)
+            await _do_unseal(st)     # exports OpenBao env on success
             log.info("provisioning: OpenBao auto-unseal attempted")
+        elif st.get("openbao_addr") and st.get("openbao_token"):
+            # Already-unsealed external vault (no stored unseal keys) — still make
+            # it the active secret backend if it's healthy.
+            _export_bao_env(st)
     except Exception as e:
         log.debug("provisioning startup unseal: %s", e)
 

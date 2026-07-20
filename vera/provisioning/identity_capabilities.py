@@ -430,7 +430,7 @@ async def _identity_panel():
 
 
 # Standalone top-level tab retired — embedded as the Identity sub-tab of the
-# workers/Ollama panel's Proxmox pane. The /identity/panel route is kept.
+# workers/Ollama panel's Provision pane. The /identity/panel route is kept.
 register_ui = (lambda *a, **k: None)
 register_ui(
     "identity-panel",

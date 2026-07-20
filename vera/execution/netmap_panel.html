@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="dusk">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Vera / Network Map</title>
@@ -301,6 +306,23 @@ code{font-family:inherit;background:var(--s2);padding:1px 4px;border-radius:2px;
   <button class="tbtn" onclick="refreshGraph({forceLayout:true,force:true})" title="Re-fetch graph from Neo4j">↻ Refresh</button>
   <button class="tbtn" onclick="runLayoutManual()" title="Re-run layout (resets positions)">⌖ Layout</button>
   <button class="tbtn" onclick="fitGraph()" title="Fit view (resets zoom)">⤢ Fit</button>
+  <label class="tbtn" style="gap:4px;padding:2px 7px" title="Group nodes into network boundaries (drawn as boxes)">Group
+    <select id="lay-group" onchange="setLayoutGroup(this.value)" style="background:var(--s2);border:1px solid var(--bd);border-radius:3px;color:var(--t1);font-size:10px;padding:2px 4px;outline:none">
+      <option value="none">none</option>
+      <option value="subnet">subnet</option>
+      <option value="prefix">prefix (CIDR)</option>
+      <option value="asn">ASN</option>
+      <option value="geo">geo (country)</option>
+    </select>
+  </label>
+  <label class="tbtn" style="gap:4px;padding:2px 7px" title="How nodes are positioned">Arrange
+    <select id="lay-arrange" onchange="setLayoutArrange(this.value)" style="background:var(--s2);border:1px solid var(--bd);border-radius:3px;color:var(--t1);font-size:10px;padding:2px 4px;outline:none">
+      <option value="force">force</option>
+      <option value="address">by address</option>
+      <option value="grid">grid</option>
+      <option value="geo">geolocation</option>
+    </select>
+  </label>
   <div class="tb-sep"></div>
   <button class="tbtn primary" onclick="newGraph()" title="Wipe all discovered nodes and start fresh">＋ New graph</button>
   <button class="tbtn" onclick="loadFabricWeb()" title="Pull crawled :Website / :WebEndpoint nodes from the data fabric into this graph">↧ Load crawled sites</button>
@@ -320,8 +342,45 @@ code{font-family:inherit;background:var(--s2);padding:1px 4px;border-radius:2px;
   <!-- ── LEFT RAIL ─────────────────────────────────────────────────────── -->
   <div id="rail">
 
+    <!-- ── Recon orchestrator (deterministic multi-stage) ──────────────── -->
+    <div class="rail-section open" id="sec-recon">
+      <div class="sh" onclick="secToggle('sec-recon')">
+        <span class="chev">▶</span><span class="icon">✦</span><span class="lbl">Recon</span>
+        <span class="sub">sweep→fingerprint→OSINT</span>
+      </div>
+      <div class="sb">
+        <div class="fi"><label>Target — CIDR / host / domain</label>
+          <input class="ip" id="recon-target" placeholder="192.168.1.0/24 · 10.0.0.5 · example.com"></div>
+        <div class="fi"><label>Profile</label>
+          <select class="ip" id="recon-profile">
+            <option value="quick">quick (6 ports)</option>
+            <option value="common" selected>common (~35 ports)</option>
+            <option value="web">web</option>
+            <option value="database">database</option>
+            <option value="iot">iot</option>
+            <option value="ms">ms (windows / AD)</option>
+          </select>
+        </div>
+        <div class="checkrow">
+          <label><input type="checkbox" id="recon-fingerprint" checked> fingerprint hosts</label>
+          <label><input type="checkbox" id="recon-enrich" title="geo / ASN / org / open ports + CVEs for each host"> enrich (geo/ASN/CVE)</label>
+          <label><input type="checkbox" id="recon-boundaries" title="roll hosts up into :NetBlock boundary nodes"> map boundaries</label>
+          <label><input type="checkbox" id="recon-osint" onchange="document.getElementById('recon-campaign-row').style.display=this.checked?'':'none'"> OSINT dorks</label>
+          <label><input type="checkbox" id="recon-link"> link Proxmox/Docker</label>
+        </div>
+        <div class="row">
+          <div class="fi" style="max-width:90px"><label>Max hosts</label><input class="ip" id="recon-maxhosts" type="number" value="20" min="1" max="254"></div>
+          <div class="fi" id="recon-campaign-row" style="display:none"><label>OSINT campaign</label>
+            <select class="ip" id="recon-campaign"><option value="">＋ new campaign</option></select></div>
+        </div>
+        <button class="btn osint" id="recon-run-btn" onclick="toggleRecon()">✦ Run recon</button>
+        <div class="scan-progress" id="recon-progress"><span id="recon-progress-text">…</span><div class="pbar"><div id="recon-progress-bar"></div></div></div>
+        <div class="hint">Deterministic pipeline — writes straight to the graph. For LLM-driven recon, use <b>Ask Vera → Agentic loop (V5)</b> at the bottom.</div>
+      </div>
+    </div>
+
     <!-- ── LAN sweep ───────────────────────────────────────────────────── -->
-    <div class="rail-section open" id="sec-lan">
+    <div class="rail-section" id="sec-lan">
       <div class="sh" onclick="secToggle('sec-lan')">
         <span class="chev">▶</span><span class="icon">⬚</span><span class="lbl">LAN sweep</span>
       </div>
@@ -446,6 +505,15 @@ code{font-family:inherit;background:var(--s2);padding:1px 4px;border-radius:2px;
           <label><input type="checkbox" id="dork-add-graph" checked> → graph nodes</label>
           <label><input type="checkbox" id="dork-save-fabric"> → fabric</label>
         </div>
+        <div class="fi"><label>Campaign — accumulates hits across sessions</label>
+          <div class="row" style="gap:4px">
+            <select class="ip" id="dork-campaign" onchange="onCampaignChange()" style="flex:1"><option value="">(none — one-off)</option></select>
+            <button class="btn ghost" style="padding:5px 8px" title="New campaign" onclick="createCampaignPrompt()">＋</button>
+            <button class="btn ghost" style="padding:5px 8px" title="View accumulated hits" onclick="openCampaignOverlay()">⛁</button>
+            <button class="btn ghost" style="padding:5px 8px;color:var(--ac4);border-color:var(--ac4)" title="Delete campaign" onclick="deleteActiveCampaign()">✕</button>
+          </div>
+          <div class="hint" id="dork-campaign-meta">No campaign — results are one-off.</div>
+        </div>
         <button class="btn osint" onclick="runDork()">Search</button>
         <div class="hint">Uses DuckDuckGo HTML — no API key required. Graphed hits become <code>:Website</code> nodes with source=<code>dork</code>.</div>
       </div>
@@ -497,6 +565,66 @@ code{font-family:inherit;background:var(--s2);padding:1px 4px;border-radius:2px;
       </div>
     </div>
 
+    <!-- ── Internet map / boundaries (enrich + ASN/prefix) ─────────────── -->
+    <div class="rail-section" id="sec-boundary">
+      <div class="sh" onclick="secToggle('sec-boundary')">
+        <span class="chev">▶</span><span class="icon">⊕</span><span class="lbl">Internet map</span>
+        <span class="sub">enrich · ASN · boundaries</span>
+      </div>
+      <div class="sb">
+        <button class="btn ghost" onclick="relinkGraph()" title="Attach floating OSINT/recon nodes to their :Domain, and link sites to the hosts that serve them">↻ Relink (fix floating nodes)</button>
+        <button class="btn ghost" onclick="enrichAllHosts()" title="Enrich every discovered host with geo / ASN / org / open ports + CVEs">✦ Enrich all hosts</button>
+        <button class="btn ghost" onclick="aggregateBoundaries()" title="Roll hosts up into :NetBlock boundary nodes (subnets/prefixes)">⊞ Map boundaries</button>
+        <div class="fi"><label>Expand ASN / host footprint</label>
+          <input class="ip" id="asn-input" placeholder="AS15169 · 8.8.8.8 · google.com"></div>
+        <button class="btn osint" onclick="expandAsn()" title="Pull the ASN's announced BGP prefixes + peer ASNs from RIPEstat">↗ Expand ASN (prefixes + peers)</button>
+        <div class="hint">Enrichment uses free no-key sources (ip-api, Shodan InternetDB, RDAP, RIPEstat) and is cached. Then use <b>Group → ASN/prefix/geo</b> in the toolbar to see boundaries.</div>
+      </div>
+    </div>
+
+    <!-- ── Presence & alerts (live monitoring) ─────────────────────────── -->
+    <div class="rail-section" id="sec-presence">
+      <div class="sh" onclick="secToggle('sec-presence')">
+        <span class="chev">▶</span><span class="icon">◉</span><span class="lbl">Presence &amp; alerts</span>
+        <span class="sub" id="presence-sub">off</span>
+      </div>
+      <div class="sb">
+        <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--t1)"><input type="checkbox" id="mon-enabled" onchange="setMonEnabled(this.checked)"> <b>Global monitoring</b> — poll presence</label>
+        <div class="row">
+          <div class="fi"><label>Interval (s)</label><input class="ip" id="mon-interval" type="number" value="60" min="15"></div>
+          <div class="fi"><label>Sweep every N</label><input class="ip" id="mon-discovery-n" type="number" value="5" min="1"></div>
+        </div>
+        <div class="fi"><label>LAN CIDRs (blank = auto from graph)</label><input class="ip" id="mon-cidrs" placeholder="192.168.1.0/24, 10.0.0.0/24"></div>
+        <div class="checkrow"><label><input type="checkbox" id="mon-newdev"> alert when a new/unknown device appears</label></div>
+        <div class="fi"><label>Default alert channels</label>
+          <div class="checkrow">
+            <label><input type="checkbox" class="mon-defch" value="browser" checked> browser</label>
+            <label><input type="checkbox" class="mon-defch" value="telegram"> telegram</label>
+            <label><input type="checkbox" class="mon-defch" value="email"> email</label>
+          </div>
+        </div>
+        <div class="fi"><label>Default alert email</label><input class="ip" id="mon-email" placeholder="you@example.com"></div>
+        <div class="row">
+          <button class="btn" onclick="saveMonConfig()">Save config</button>
+          <button class="btn ghost" onclick="monScanNow()">Scan now</button>
+          <button class="btn ghost" onclick="monTest()">Test alert</button>
+        </div>
+        <div style="border-top:1px dashed var(--bd);margin:6px 0 2px;padding-top:6px"></div>
+        <div class="fi"><label>Watch an external host / website</label>
+          <input class="ip" id="ext-url" placeholder="https://mysite.com or host.example.com"></div>
+        <div class="row">
+          <div class="fi"><label>Check</label><select class="ip" id="ext-check"><option value="http">http(s)</option><option value="tcp">tcp</option><option value="icmp">icmp ping</option></select></div>
+          <div class="fi" style="max-width:74px"><label>Port</label><input class="ip" id="ext-port" type="number" placeholder="443"></div>
+        </div>
+        <button class="btn osint" onclick="addExternalTarget()" title="Monitor uptime and alert if it goes down">+ Watch external host</button>
+        <div style="border-top:1px dashed var(--bd);margin:6px 0 2px;padding-top:6px"></div>
+        <div style="font-size:9px;letter-spacing:.05em;color:var(--t3);text-transform:uppercase;margin-bottom:3px">Watched targets <span id="mon-targets-count"></span></div>
+        <div id="mon-targets" style="display:flex;flex-direction:column;gap:3px"></div>
+        <div style="font-size:9px;letter-spacing:.05em;color:var(--t3);text-transform:uppercase;margin:8px 0 3px;display:flex"><span>Recent alerts</span><span style="flex:1"></span><button class="btn ghost" style="padding:1px 6px;font-size:9px" onclick="clearMonAlerts()">clear</button></div>
+        <div id="mon-alerts" style="display:flex;flex-direction:column;gap:3px;max-height:200px;overflow:auto"></div>
+      </div>
+    </div>
+
     <!-- ── Docker ──────────────────────────────────────────────────────── -->
     <div class="rail-section" id="sec-docker">
       <div class="sh" onclick="secToggle('sec-docker')">
@@ -513,6 +641,11 @@ code{font-family:inherit;background:var(--s2);padding:1px 4px;border-radius:2px;
         <div class="fi" data-dmode="local"><label>Label (optional)</label><input class="ip" id="docker-label" placeholder="local"></div>
         <div class="fi"><label style="display:flex;align-items:center;gap:4px;text-transform:none;font-size:10px;color:var(--t2)"><input type="checkbox" id="docker-sudo"> run as sudo (use if not in <code>docker</code> group)</label></div>
         <button class="btn" onclick="scanDocker()">Scan containers</button>
+        <div style="border-top:1px dashed var(--bd);margin:5px 0 1px;padding-top:6px">
+          <div class="fi"><label>Registered host (from Docker panel)</label>
+            <select class="ip" id="docker-reg-id"><option value="">all registered</option></select></div>
+          <button class="btn ghost" onclick="importDocker()" title="Pull containers from a host already registered in the workers/Docker panel — no creds needed">↧ Import registered</button>
+        </div>
       </div>
     </div>
 
@@ -534,6 +667,11 @@ code{font-family:inherit;background:var(--s2);padding:1px 4px;border-radius:2px;
         </div>
         <div class="fi"><label>Cluster name (optional)</label><input class="ip" id="pve-cluster"></div>
         <button class="btn" onclick="scanProxmox()">Scan cluster</button>
+        <div style="border-top:1px dashed var(--bd);margin:5px 0 1px;padding-top:6px">
+          <div class="fi"><label>Registered cluster (from Proxmox panel)</label>
+            <select class="ip" id="pve-reg-id"><option value="">all registered</option></select></div>
+          <button class="btn ghost" onclick="importProxmox()" title="Pull nodes/guests from a cluster already registered in the workers/Proxmox panel — uses its sealed creds">↧ Import registered</button>
+        </div>
       </div>
     </div>
 
@@ -590,6 +728,9 @@ code{font-family:inherit;background:var(--s2);padding:1px 4px;border-radius:2px;
             <option value="dork">Dork hits only</option>
             <option value="osint">Agent OSINT only</option>
             <option value="traceroute">Traceroute hops only</option>
+            <option value="enrich">Enrichment nodes only</option>
+            <option value="aggregate">Aggregated boundaries only</option>
+            <option value="expand">ASN expansion only</option>
           </select>
         </div>
         <button class="btn danger" onclick="clearSource()">Clear selected</button>
@@ -656,6 +797,21 @@ code{font-family:inherit;background:var(--s2);padding:1px 4px;border-radius:2px;
       <button class="llm-run" id="llm-run-btn" onclick="toggleLlmRun()">Plan &amp; run ▶</button>
     </div>
     <div class="llm-opts">
+      <label>Engine
+        <select id="llm-engine" onchange="onLlmEngineChange()" title="DAG planner = fast plan→run · Agentic loop = full V5 observe/think/act recon">
+          <option value="dag" selected>DAG planner</option>
+          <option value="loop">Agentic loop (V5)</option>
+        </select>
+      </label>
+      <label>Preset
+        <select id="llm-preset" onchange="applyReconPreset(this.value)" title="Prefill a recon goal">
+          <option value="">— goal presets —</option>
+          <option value="sweep">subnet sweep + triage</option>
+          <option value="host">single-host deep dive</option>
+          <option value="domain">domain OSINT</option>
+          <option value="infra">link Proxmox/Docker infra</option>
+        </select>
+      </label>
       <label>Model
         <select id="llm-model" title="Ollama model (uses routing default when empty)">
           <option value="">-- auto --</option>
@@ -685,7 +841,14 @@ code{font-family:inherit;background:var(--s2);padding:1px 4px;border-radius:2px;
       <label><input type="checkbox" id="llm-hitl" checked> HITL</label>
       <label>auto-approve <input type="number" id="llm-auto-secs" value="30" min="0" max="600" style="width:50px">s</label>
       <label><input type="checkbox" id="llm-execute" checked> execute</label>
+      <button class="tbtn" id="llm-loopcfg-btn" style="display:none" onclick="toggleLoopCfg()" title="Full V5 agentic-loop controls (recon rounds, planning, skills, …)">⚙ Loop config</button>
       <button class="tbtn" onclick="llmClear()">Clear log</button>
+    </div>
+    <!-- Unified agentic-loop config (shared element); only used by the V5 loop engine. -->
+    <div id="llm-loopcfg-pop" style="display:none;padding:10px 14px;border-bottom:1px solid var(--bd);background:var(--s2);max-height:300px;overflow:auto">
+      <script id="vera-agent-loop-config-js-include" src="/ui/elements/agent_loop_config.js"></script>
+      <vera-agent-loop-config id="llm-loop-config" version="v5" hide-engine compact collapsed
+        exclude="version,model,instance_id,require_approval,hitl_timeout_secs"></vera-agent-loop-config>
     </div>
     <div id="llm-extras-pop" style="display:none;padding:8px 14px;border-bottom:1px solid var(--bd);background:var(--s2)">
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
@@ -838,6 +1001,11 @@ const NODE_COLORS = {
   NetPort:     'var(--ac3)',
   NetHop:      'var(--ac3)',
   OsintHit:    'var(--ac5)',
+  Domain:      'var(--ac2)',
+  ASN:         'var(--ac4)',
+  NetBlock:    'var(--ac3)',
+  GeoRegion:   'var(--ac)',
+  WifiAP:      'var(--ac3)',
   Unknown:     'var(--t2)',
 };
 const NODE_SHAPES = {
@@ -845,12 +1013,15 @@ const NODE_SHAPES = {
   PVENode:'round-rectangle', K8sNode:'round-rectangle', DockerHost:'round-rectangle', NetHost:'round-rectangle',
   Container:'tag', PVEGuest:'tag', K8sPod:'tag', WebEndpoint:'round-tag',
   NetPort:'cut-rectangle', NetHop:'pentagon', OsintHit:'round-rectangle',
+  Domain:'round-hexagon', ASN:'hexagon', NetBlock:'round-diamond', GeoRegion:'star',
+  WifiAP:'concave-hexagon',
 };
 const NODE_SIZE = {
   Subnet:40, PVECluster:55, K8sCluster:55, Website:48,
   DockerHost:38, PVENode:38, K8sNode:38, NetHost:32,
   Container:26, PVEGuest:26, K8sPod:26, WebEndpoint:24,
   NetPort:22, NetHop:24, OsintHit:36,
+  Domain:50, ASN:58, NetBlock:44, GeoRegion:52, WifiAP:30,
 };
 
 function buildStyle(){
@@ -874,8 +1045,25 @@ function buildStyle(){
       'transition-property':'border-color,border-width,opacity,background-color',
       'transition-duration':'0.2s',
     }},
+    {selector:'node:parent', style:{
+      'background-color': getVar('--s2'),
+      'background-opacity':0.45,
+      'border-color': getVar('--bd2'),'border-width':1.5,'border-style':'dashed',
+      'shape':'round-rectangle',
+      'label':'data(label)',
+      'text-valign':'top','text-halign':'center','text-margin-y':-2,
+      'font-size':'11px','font-weight':'bold','color': getVar('--t2'),
+      'text-outline-color': getVar('--bg'),'text-outline-width':3,
+      'padding':'22px',
+    }},
     {selector:'node.fresh', style:{
       'border-color': getVar('--ac2'),'border-width':3,
+    }},
+    {selector:'node[status="up"]', style:{
+      'border-color': getVar('--ac2'),'border-width':3,
+    }},
+    {selector:'node[status="down"]', style:{
+      'border-color': getVar('--ac4'),'border-width':3,'background-blacken':0.45,
     }},
     {selector:'node:selected', style:{
       'border-color': getVar('--ac'),'border-width':3,
@@ -1046,7 +1234,10 @@ function renderGraph(opts){
   } else if(needsLayout){
     const newOnly = cy.nodes().filter(n=>!priorPos[n.id()]);
     if(newOnly.length){
-      newOnly.layout({name:'cose', animate:false, fit:false, padding:60, randomize:true}).run();
+      // Seed tidy positions now that parents (existing nodes) are present,
+      // then a gentle settle — no whole-graph reshuffle, no viewport jump.
+      newOnly.forEach(n=>{ n.position(_seedNodePosition(n.data())); });
+      _autoLayoutNewNodes({eles:newOnly, fit:false});
     }
     cy.zoom(zoom); cy.pan(pan);
   } else {
@@ -1055,22 +1246,183 @@ function renderGraph(opts){
   applyFilter();
 }
 
-function runLayoutInternal(opts){
-  opts = opts||{};
-  try{
-    cy.layout({
-      name:'cose-bilkent',
-      animate:'end', animationDuration:400,
-      fit: opts.fit!==false, padding:40,
-      nodeRepulsion:9000, idealEdgeLength:95,
-      edgeElasticity:0.45, gravity:0.25,
-      numIter:2000, tile:true, randomize:false,
-    }).run();
-  }catch(e){
-    cy.layout({name:'cose', animate:true, fit:opts.fit!==false, padding:40}).run();
+/* ════════════════════════════════════════════════════════════════════════
+   LAYOUT ENGINE — Group by (boundary) × Arrange (force / address / grid / geo)
+   Deterministic positional modes mean new nodes always land in place; the
+   layout is re-applied automatically on every graph change, so the manual
+   "Layout" button becomes a reset, not a per-scan chore.
+   ════════════════════════════════════════════════════════════════════════ */
+const _layout = {
+  group:   (localStorage.getItem('netmap_group')   || 'none'),
+  arrange: (localStorage.getItem('netmap_arrange') || 'force'),
+};
+const LEAF_TYPES = new Set(['NetPort','WebEndpoint','Container','PVEGuest','K8sPod']);
+const _LAYOUT_CELL = 74;
+
+function setLayoutGroup(v){ _layout.group=v; try{localStorage.setItem('netmap_group',v);}catch{} applyLayout({fit:true}); }
+function setLayoutArrange(v){ _layout.arrange=v; try{localStorage.setItem('netmap_arrange',v);}catch{} applyLayout({fit:true}); }
+
+function _ipToInt(ip){
+  const m=/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(ip||''); if(!m) return null;
+  return (((+m[1])*16777216)+((+m[2])*65536)+((+m[3])*256)+(+m[4]))>>>0;
+}
+function _nodeIp(d){
+  if(d.ip && /^\d+\.\d+\.\d+\.\d+$/.test(d.ip)) return d.ip;
+  if(d.type==='NetHost' && typeof d.id==='string' && d.id.indexOf('net:')===0){
+    const c=d.id.slice(4); if(/^\d+\.\d+\.\d+\.\d+$/.test(c)) return c;
+  }
+  return '';
+}
+function _groupKey(d){
+  switch(_layout.group){
+    case 'subnet': return d.subnet ? {id:'subnet:'+d.subnet, label:d.subnet} : null;
+    case 'prefix': return d.netblock_cidr ? {id:'prefix:'+d.netblock_cidr, label:d.netblock_cidr} : null;
+    case 'asn':    return d.asn ? {id:'asn:'+d.asn, label:'AS'+d.asn+(d.as_name?(' '+String(d.as_name).slice(0,18)):'')} : null;
+    case 'geo':    return d.geo_country ? {id:'geo:'+d.geo_country, label:d.geo_country} : null;
+    default:       return null;
   }
 }
-function runLayoutManual(){ runLayoutInternal({fit:true}); }
+function _effectiveGroupKey(n){
+  const d=n.data();
+  const k=_groupKey(d); if(k) return k;
+  // Derivative/leaf nodes inherit the group of a connected primary node
+  if(LEAF_TYPES.has(d.type) || !_nodeIp(d)){
+    const nb=n.neighborhood('node');
+    for(let i=0;i<nb.length;i++){ const kk=_groupKey(nb[i].data()); if(kk) return kk; }
+  }
+  return null;
+}
+function _sortByAddress(nodes){
+  return nodes.slice().sort((a,b)=>{
+    const ia=_ipToInt(_nodeIp(a.data())), ib=_ipToInt(_nodeIp(b.data()));
+    if(ia!=null && ib!=null) return ia-ib;
+    if(ia!=null) return -1; if(ib!=null) return 1;
+    return String(a.data('label')||a.id()).localeCompare(String(b.data('label')||b.id()));
+  });
+}
+function _sortByLabel(nodes){
+  return nodes.slice().sort((a,b)=>String(a.data('label')||a.id()).localeCompare(String(b.data('label')||b.id())));
+}
+function _gridPlace(nodes, ox, oy, cols, cell){
+  let i=0;
+  for(const n of nodes){
+    const r=Math.floor(i/cols), c=i%cols;
+    n.position({x: ox + c*cell, y: oy + r*cell}); i++;
+  }
+  const rows=Math.max(1, Math.ceil(nodes.length/cols));
+  return {w: cols*cell, h: rows*cell};
+}
+/* place a set of nodes (sorted) as a grid of primaries with leaves clustered
+   next to the primary they connect to */
+function _placeRegion(nodes, ox, oy){
+  const sortFn = _layout.arrange==='address' ? _sortByAddress : _sortByLabel;
+  const prim = nodes.filter(n=>!LEAF_TYPES.has(n.data('type')));
+  const leaves = nodes.filter(n=>LEAF_TYPES.has(n.data('type')));
+  const main = sortFn(prim.length?prim:nodes);
+  const cols = Math.max(1, Math.ceil(Math.sqrt(main.length)));
+  const dim = _gridPlace(main, ox, oy, cols, _LAYOUT_CELL);
+  if(prim.length){
+    const around={};
+    for(const lf of leaves){
+      let anchor=null;
+      const nb=lf.neighborhood('node');
+      for(let i=0;i<nb.length;i++){ if(!LEAF_TYPES.has(nb[i].data('type')) && !nb[i].data('_group')){ anchor=nb[i]; break; } }
+      if(!anchor) anchor=main[0];
+      if(!anchor) continue;
+      const aid=anchor.id(); around[aid]=(around[aid]||0)+1; const k=around[aid];
+      const ang=k*0.9, rad=24+k*6, ap=anchor.position();
+      lf.position({x: ap.x + Math.cos(ang)*rad + 16, y: ap.y + Math.sin(ang)*rad + 16});
+    }
+  }
+  return dim;
+}
+function _clearGroups(){
+  if(!cy) return;
+  cy.batch(()=>{
+    cy.nodes().forEach(n=>{ if(!n.data('_group') && n.isChild()) n.move({parent:null}); });
+    cy.nodes().filter(n=>n.data('_group')).remove();
+  });
+}
+function _buildGroups(real){
+  const groups=new Map();
+  real.forEach(n=>{
+    const k=_effectiveGroupKey(n);
+    const gid = k ? ('grp:'+k.id) : 'grp:__ungrouped__';
+    const label = k ? k.label : '(ungrouped)';
+    if(!groups.has(gid)) groups.set(gid,{label, nodes:[]});
+    groups.get(gid).nodes.push(n);
+  });
+  cy.batch(()=>{
+    for(const [gid,g] of groups)
+      cy.add({group:'nodes', data:{id:gid, label:g.label, _group:true, type:'_group'}, selectable:false});
+    for(const [gid,g] of groups) for(const n of g.nodes) n.move({parent:gid});
+  });
+  return groups;
+}
+function _arrangeForce(opts){
+  // Animate only on an explicit/final layout; stay instant during streaming
+  // bursts (fit:false) so rapid re-applies don't stack animations.
+  const anim = (opts.fit!==false);
+  try{
+    cy.layout({
+      name:'cose-bilkent', animate: anim?'end':false, animationDuration:400,
+      fit: opts.fit!==false, padding:50,
+      nodeRepulsion:9000, idealEdgeLength:95, edgeElasticity:0.45,
+      gravity:0.25, gravityRangeCompound:1.5, gravityCompound:1.0,
+      numIter:2000, tile:true, randomize: opts.randomize===true, nestingFactor:0.1,
+    }).run();
+  }catch(e){
+    try{ cy.layout({name:'cose', animate:anim, fit:opts.fit!==false, padding:40}).run(); }catch{}
+  }
+}
+function _arrangeGeo(real, opts){
+  const W=2600, H=1300;
+  const noGeo=[];
+  real.forEach(n=>{
+    const d=n.data(); const lat=parseFloat(d.lat), lon=parseFloat(d.lon);
+    if(isFinite(lat) && isFinite(lon)){
+      n.position({x:(lon+180)/360*W, y:(90-lat)/180*H});
+    } else noGeo.push(n);
+  });
+  let i=0; for(const n of _sortByLabel(noGeo)){ n.position({x:-200, y:i*42}); i++; }
+  if(opts.fit!==false){ try{ cy.fit(null, 60); }catch{} }
+}
+function _arrangePositional(real, groups, opts){
+  if(!groups){
+    _placeRegion(real, 0, 0);
+  } else {
+    const entries=[...groups.entries()].sort((a,b)=>String(a[1].label).localeCompare(String(b[1].label)));
+    const gcols=Math.max(1, Math.ceil(Math.sqrt(entries.length)));
+    const GAP=110;
+    let curX=0, curY=0, lineH=0, inLine=0;
+    for(const [gid,g] of entries){
+      const dim=_placeRegion(g.nodes, curX, curY);
+      curX += dim.w + GAP;
+      lineH = Math.max(lineH, dim.h);
+      if(++inLine>=gcols){ curX=0; curY += lineH + GAP + 40; lineH=0; inLine=0; }
+    }
+  }
+  if(opts.fit!==false){ try{ cy.fit(null, 55); }catch{} }
+}
+/* master entry — rebuilds grouping + positions every node deterministically */
+function applyLayout(opts){
+  opts = opts||{};
+  if(!cy || cy.nodes().filter(n=>!n.data('_group')).length===0) return;
+  const zoom=cy.zoom(), pan={...cy.pan()};
+  _clearGroups();
+  const real = cy.nodes().filter(n=>!n.data('_group'));
+  const useGroups = (_layout.group!=='none' && _layout.arrange!=='geo');
+  let groups=null;
+  if(useGroups) groups=_buildGroups(real);
+  if(_layout.arrange==='force')      _arrangeForce(opts);
+  else if(_layout.arrange==='geo')   _arrangeGeo(real, opts);
+  else                                _arrangePositional(real, groups, opts);
+  if(opts.fit===false){ try{ cy.zoom(zoom); cy.pan(pan); }catch{} }
+  applyFilter();
+}
+
+function runLayoutInternal(opts){ applyLayout(opts||{}); }
+function runLayoutManual(){ applyLayout({fit:true, randomize:true}); }
 function fitGraph(){ if(cy) cy.fit(null, 40); }
 function zoomBy(factor){
   if(!cy) return;
@@ -1105,6 +1457,7 @@ function applyFilter(){
   const q = _filterText.trim().toLowerCase();
   cy.nodes().forEach(n=>{
     const d = n.data();
+    if(d._group) return;   // synthetic group/boundary box — never filter
     const hideByType = _hiddenTypes.has(d.type);
     let hideByQ = false;
     if(q){
@@ -1202,88 +1555,130 @@ function _ensureCyNode(data, type){
   return added;
 }
 
-/* Pick a starting position near a plausible parent, or random offset from centre */
-function _pickInitialPos(data){
+/* ────────────────────────────────────────────────────────────────────────
+   DETERMINISTIC INCREMENTAL PLACEMENT
+   New nodes are seeded tidily next to their structural parent (or on a
+   growing outer ring when parentless) and collision-nudged, so they never
+   land in a heap. A gentle force settle over just the new region then tidies
+   edges — without reshuffling the whole graph or yanking the viewport. Result:
+   the map self-organises after every scan, so "Layout" is a rare manual reset
+   rather than a per-scan chore.
+   ──────────────────────────────────────────────────────────────────────── */
+const _childSlot = {};   // parentId -> how many children we've fanned out
+let   _ringSlot  = 0;    // parentless node counter (outer spiral)
+
+function _viewportCenter(){
   if(!cy) return {x:0, y:0};
-  const cx = cy.width()/2, cy_ = cy.height()/2;
-  // Try to position near an obvious parent (subnet for hosts, host for ports, site for endpoints)
-  const parentCandidates = [];
-  if(data.subnet) parentCandidates.push(`subnet:${data.subnet}`);
-  if(data.ip)     parentCandidates.push(`net:${data.ip}`);
-  for(const pid of parentCandidates){
-    const p = cy.getElementById(pid);
-    if(p && p.length){
-      const pp = p.position();
-      return {
-        x: pp.x + (Math.random()-0.5)*120,
-        y: pp.y + (Math.random()-0.5)*120,
-      };
-    }
+  const pan = cy.pan(), z = cy.zoom();
+  return {x:(cy.width()/2 - pan.x)/z, y:(cy.height()/2 - pan.y)/z};
+}
+function _graphCentroid(){
+  if(!cy) return _viewportCenter();
+  let sx=0, sy=0, n=0;
+  cy.nodes().forEach(nd=>{
+    if(nd.hasClass('fresh')) return;          // ignore just-added nodes
+    const p = nd.position(); sx+=p.x; sy+=p.y; n++;
+  });
+  return n ? {x:sx/n, y:sy/n} : _viewportCenter();
+}
+function _hasNearbyNode(pos, min){
+  if(!cy) return false;
+  const m2 = (min||46)*(min||46);
+  let clash = false;
+  cy.nodes().forEach(nd=>{
+    if(clash) return;
+    const p = nd.position();
+    const dx = p.x-pos.x, dy = p.y-pos.y;
+    if(dx*dx+dy*dy < m2) clash = true;
+  });
+  return clash;
+}
+/* Deterministically push a candidate outward from the centroid until clear */
+function _avoidCollision(pos){
+  const c = _graphCentroid();
+  for(let i=0;i<18 && _hasNearbyNode(pos);i++){
+    const dx = pos.x-c.x, dy = pos.y-c.y;
+    const d  = Math.hypot(dx,dy) || 1;
+    pos = {x: pos.x + dx/d*38, y: pos.y + dy/d*38};
   }
-  // Fallback: random spread around centre of viewport
-  const vpan = cy.pan(), vzoom = cy.zoom();
-  const vcx = (cx - vpan.x) / vzoom;
-  const vcy = (cy_ - vpan.y) / vzoom;
-  return {
-    x: vcx + (Math.random()-0.5)*300,
-    y: vcy + (Math.random()-0.5)*300,
-  };
+  return pos;
+}
+function _placeAround(center, parentId){
+  const k    = (_childSlot[parentId] = (_childSlot[parentId]||0)+1);
+  const per  = 10;
+  const ring = Math.floor((k-1)/per);
+  const idx  = (k-1) % per;
+  const ang  = (idx/per)*2*Math.PI + ring*0.62;
+  const rad  = 78 + ring*54;
+  return _avoidCollision({x: center.x + Math.cos(ang)*rad,
+                          y: center.y + Math.sin(ang)*rad});
+}
+function _placeOnOuterRing(){
+  const c   = _graphCentroid();
+  const k   = _ringSlot++;
+  const per = 12;
+  const ring = Math.floor(k/per);
+  const ang  = (k%per)/per*2*Math.PI + ring*0.5;
+  const rad  = 210 + ring*150;
+  return _avoidCollision({x: c.x + Math.cos(ang)*rad,
+                          y: c.y + Math.sin(ang)*rad});
+}
+/* Seed a tidy starting position for a new node, anchored to its parent. */
+function _seedNodePosition(data){
+  if(!cy) return {x:0, y:0};
+  const parents = [];
+  if(data.subnet)                       parents.push(`subnet:${data.subnet}`);
+  if(data.type==='Container' && data.host) parents.push(`docker:${data.host}`);
+  if(data.type==='PVEGuest'  && data.node) parents.push(`pve_node:${data.node}`);
+  if(data.type==='NetPort'   && data.ip)   parents.push(`net:${data.ip}`);
+  if(data.origin)                       parents.push(`site:${data.origin}`);
+  if(data.ip && data.type!=='NetHost')  parents.push(`net:${data.ip}`);
+  for(const pid of parents){
+    const p = cy.getElementById(pid);
+    if(p && p.length) return _placeAround(p.position(), pid);
+  }
+  return _placeOnOuterRing();
+}
+/* Back-compat alias (older call sites used _pickInitialPos) */
+function _pickInitialPos(data){ return _seedNodePosition(data); }
+
+/* Is any of these elements currently outside the visible viewport? */
+function _anyOutsideViewport(eles){
+  if(!cy || !eles) return false;
+  const pan = cy.pan(), z = cy.zoom();
+  const x1 = (-pan.x)/z, y1 = (-pan.y)/z;
+  const x2 = (cy.width()-pan.x)/z, y2 = (cy.height()-pan.y)/z;
+  let out = false;
+  eles.forEach(n=>{ const p=n.position();
+    if(p.x<x1||p.x>x2||p.y<y1||p.y>y2) out = true; });
+  return out;
 }
 
-/* Debounced incremental layout — runs after a burst of node adds settles */
+/* Gentle force settle over the new nodes + their neighbours. randomize:false
+   keeps current positions as the starting point so existing structure barely
+   moves; we only re-fit if a new node landed off-screen. */
+/* New nodes are now placed by the deterministic layout engine (applyLayout),
+   so they always land in their correct group/position — no force-settle, no
+   manual "Layout" press. These wrappers just (debounced-)re-apply the active
+   layout without yanking the viewport. */
+function _autoLayoutNewNodes(opts){
+  opts = opts||{};
+  applyLayout({fit: opts.fit===true ? true : false});
+}
+
 let _incrLayoutTimer = null;
 function _scheduleIncrementalLayout(){
   if(_incrLayoutTimer) clearTimeout(_incrLayoutTimer);
   _incrLayoutTimer = setTimeout(()=>{
     _incrLayoutTimer = null;
-    if(!cy) return;
-    const fresh = cy.nodes().filter(n=>n.hasClass('fresh'));
-    if(fresh.length===0) return;
-    try{
-      // Layout only the new nodes + their immediate neighbours for stability
-      const neighbourhood = fresh.union(fresh.neighborhood());
-      neighbourhood.layout({
-        name:'cose', animate:false, fit:false, padding:40,
-        randomize:false, boundingBox: _viewportBBox(),
-      }).run();
-    }catch(e){
-      // Fallback: just fit the view
-      try{ cy.fit(null, 40); }catch{}
-    }
-  }, 400);
+    applyLayout({fit:false});
+  }, 350);
 }
 
-function _viewportBBox(){
-  if(!cy) return undefined;
-  const pan = cy.pan(), zoom = cy.zoom();
-  return {
-    x1: (0 - pan.x)/zoom,    y1: (0 - pan.y)/zoom,
-    w:  cy.width()/zoom,      h:  cy.height()/zoom,
-  };
-}
-
-/* Run a full layout on all local (streamed) nodes once a stream finishes */
+/* Re-apply the layout once a stream finishes (fit so the user sees the result) */
 function _runFinalStreamLayout(){
   if(_incrLayoutTimer){ clearTimeout(_incrLayoutTimer); _incrLayoutTimer=null; }
-  if(!cy) return;
-  const local = cy.nodes().filter(n=>n.data('_local'));
-  if(local.length===0) return;
-  try{
-    // If the graph is small enough, do a full layout for best results
-    if(cy.nodes().length <= 200){
-      runLayoutInternal({fit:true});
-    } else {
-      // Otherwise just layout the new nodes and their neighbours
-      const nbhood = local.union(local.neighborhood());
-      nbhood.layout({
-        name:'cose', animate:false, fit:false, padding:40,
-        randomize:false,
-      }).run();
-      cy.fit(null, 40);
-    }
-  }catch(e){
-    try{ cy.fit(null, 40); }catch{}
-  }
+  applyLayout({fit:true});
 }
 
 function _ensureCyEdge(src, tgt, label){
@@ -1588,6 +1983,222 @@ async function scanProxmox(){
   }
   await _scan('Proxmox scan','/netscan/proxmox/scan',body, true);
 }
+
+/* ── Import from the workers panel's registered Proxmox / Docker stores ──── */
+async function loadRegisteredInfra(){
+  try{
+    const j=await (await fetch('/workers/docker/hosts')).json();
+    const sel=document.getElementById('docker-reg-id');
+    if(sel){ const cur=sel.value;
+      sel.innerHTML='<option value="">all registered</option>'+
+        (j.hosts||[]).map(h=>`<option value="${esc(h.id)}">${esc(h.label||h.url||h.id)}</option>`).join('');
+      sel.value=cur; }
+  }catch(e){ /* docker module may be absent */ }
+  try{
+    const j=await (await fetch('/proxmox/cluster/list')).json();
+    const sel=document.getElementById('pve-reg-id');
+    if(sel){ const cur=sel.value;
+      sel.innerHTML='<option value="">all registered</option>'+
+        (j.clusters||[]).map(c=>`<option value="${esc(c.id)}">${esc(c.label||c.name||c.id)}</option>`).join('');
+      sel.value=cur; }
+  }catch(e){ /* proxmox module may be absent */ }
+}
+async function importDocker(){
+  const id=document.getElementById('docker-reg-id').value||'';
+  showLoading('Importing Docker hosts…');
+  try{
+    const r=await fetch('/netscan/docker/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host_id:id})});
+    const j=await r.json();
+    if(j.error){ toast('Import error: '+j.error,'err'); }
+    else{ const n=(j.imported||[]).reduce((a,x)=>a+(x.containers||0),0);
+      toast(`Imported ${j.count||0} host(s) · ${n} container(s)`,'ok'); await refreshGraph(); }
+  }catch(e){ toast('Import failed: '+e.message,'err'); }
+  finally{ hideLoading(); }
+}
+async function importProxmox(){
+  const id=document.getElementById('pve-reg-id').value||'';
+  showLoading('Importing Proxmox clusters…');
+  try{
+    const r=await fetch('/netscan/proxmox/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cluster_id:id})});
+    const j=await r.json();
+    if(j.error){ toast('Import error: '+j.error,'err'); }
+    else{ const nn=(j.imported||[]).reduce((a,x)=>a+(x.nodes||0),0);
+      const ng=(j.imported||[]).reduce((a,x)=>a+(x.guests||0),0);
+      toast(`Imported ${j.count||0} cluster(s) · ${nn} node(s) · ${ng} guest(s)`,'ok'); await refreshGraph(); }
+  }catch(e){ toast('Import failed: '+e.message,'err'); }
+  finally{ hideLoading(); }
+}
+/* ── Internet map / boundary actions ───────────────────────────────────── */
+async function relinkGraph(){
+  showLoading('Linking floating nodes to their domains…');
+  try{
+    const j = await (await fetch('/netscan/graph/relink',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json();
+    if(j.error){ toast('Relink error: '+j.error,'err'); }
+    else { toast(`Relinked ${j.sites_linked||0} site(s) · ${j.hosts_linked||0} host(s) to domains`,'ok'); await refreshGraph({forceLayout:true}); }
+  }catch(e){ toast('Relink failed: '+e.message,'err'); }
+  finally{ hideLoading(); }
+}
+async function enrichAllHosts(){
+  const ips = _graphRaw.nodes
+    .filter(n=>n.data.type==='NetHost')
+    .map(n=>n.data.ip || (String(n.data.id||'').indexOf('net:')===0 ? n.data.id.slice(4) : ''))
+    .filter(ip=>/^\d+\.\d+\.\d+\.\d+$/.test(ip));
+  if(!ips.length){ toast('No hosts to enrich — run a scan first','err'); return; }
+  showLoading(`Enriching ${ips.length} host(s) — geo / ASN / CVEs…`);
+  setStatus('enriching hosts…');
+  try{
+    const j = await (await fetch('/netscan/enrich/bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({hosts:ips})})).json();
+    if(j.error){ toast('Enrich error: '+j.error,'err'); }
+    else { toast(`Enriched ${j.enriched||0} host(s)`,'ok'); await refreshGraph(); applyLayout({fit:false}); }
+  }catch(e){ toast('Enrich failed: '+e.message,'err'); }
+  finally{ hideLoading(); setStatus('ready','ok'); }
+}
+async function aggregateBoundaries(){
+  showLoading('Aggregating hosts into network boundaries…');
+  try{
+    const j = await (await fetch('/netscan/map/aggregate',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json();
+    if(j.error){ toast('Aggregate error: '+j.error,'err'); }
+    else { toast(`Mapped ${j.blocks||0} network boundaries from ${j.hosts||0} host(s)`,'ok'); await refreshGraph({forceLayout:true}); }
+  }catch(e){ toast('Aggregate failed: '+e.message,'err'); }
+  finally{ hideLoading(); }
+}
+async function expandAsn(){
+  const v = (document.getElementById('asn-input').value||'').trim();
+  if(!v){ toast('Enter an ASN (AS15169), IP, or domain','err'); return; }
+  const body = /^(as)?\d+$/i.test(v) ? {asn:v} : {host:v};
+  showLoading('Pulling ASN footprint from RIPEstat…');
+  setStatus('expanding ASN…');
+  try{
+    const j = await (await fetch('/netscan/asn/expand',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
+    if(j.error){ toast('ASN expand error: '+j.error,'err'); }
+    else { toast(`AS${j.asn}: ${j.prefixes||0} prefixes · ${j.peers||0} peers`,'ok'); await refreshGraph({forceLayout:true}); }
+  }catch(e){ toast('ASN expand failed: '+e.message,'err'); }
+  finally{ hideLoading(); setStatus('ready','ok'); }
+}
+
+/* ── Presence & alerts (live monitoring) ───────────────────────────────── */
+let _monAlertSeen = new Set();
+let _monPollTimer = null;
+let _monInited = false;
+function _monDefaultChannels(){
+  return Array.from(document.querySelectorAll('.mon-defch:checked')).map(c=>c.value);
+}
+async function loadMonConfig(){
+  try{
+    const j = await (await fetch('/netmon/config')).json();
+    const c = j.config||{};
+    document.getElementById('mon-enabled').checked = !!c.enabled;
+    document.getElementById('mon-interval').value = c.interval_sec||60;
+    document.getElementById('mon-discovery-n').value = c.discovery_every_n||5;
+    document.getElementById('mon-cidrs').value = (c.lan_cidrs||[]).join(', ');
+    document.getElementById('mon-newdev').checked = !!c.new_device_alert;
+    document.getElementById('mon-email').value = c.default_email||'';
+    const def = new Set(c.default_channels||['browser']);
+    document.querySelectorAll('.mon-defch').forEach(cb=>cb.checked=def.has(cb.value));
+    document.getElementById('presence-sub').textContent = c.enabled ? ('on · '+(c.interval_sec||60)+'s') : 'off';
+  }catch(e){}
+}
+async function setMonEnabled(on){
+  if(on && 'Notification' in window && Notification.permission==='default'){ try{ Notification.requestPermission(); }catch{} }
+  await fetch('/netmon/config/set',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!!on})});
+  toast(on?'Global monitoring ON':'Global monitoring OFF', on?'ok':'err'); loadMonConfig();
+}
+async function saveMonConfig(){
+  const body={
+    interval_sec: Number(document.getElementById('mon-interval').value||60),
+    discovery_every_n: Number(document.getElementById('mon-discovery-n').value||5),
+    lan_cidrs: (document.getElementById('mon-cidrs').value||'').split(',').map(s=>s.trim()).filter(Boolean),
+    new_device_alert: document.getElementById('mon-newdev').checked,
+    default_channels: _monDefaultChannels(),
+    default_email: (document.getElementById('mon-email').value||'').trim(),
+  };
+  await fetch('/netmon/config/set',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  toast('Monitor config saved','ok'); loadMonConfig();
+}
+async function monScanNow(){
+  showLoading('Running presence scan…');
+  try{
+    const j=await (await fetch('/netmon/scan_now',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json();
+    if(j.ran){ toast('Presence scan complete','ok'); await refreshGraph(); loadMonTargets(); }
+    else toast(j.note||'monitoring is off','err');
+  }catch(e){ toast('Scan failed: '+e.message,'err'); } finally{ hideLoading(); }
+}
+async function monTest(){
+  const ch=_monDefaultChannels(); const email=(document.getElementById('mon-email').value||'').trim();
+  await fetch('/netmon/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channels:ch,email_to:email})});
+  toast('Test alert sent to: '+(ch.join(', ')||'browser'),'ok'); setTimeout(loadMonAlerts,600);
+}
+async function addExternalTarget(){
+  const url=(document.getElementById('ext-url').value||'').trim();
+  if(!url){ toast('Enter a host or URL','err'); return; }
+  const isUrl=/^https?:\/\//i.test(url);
+  const body={ kind:'external', name:url, watch:true, triggers:['down','up'], channels:_monDefaultChannels(),
+    email_to:(document.getElementById('mon-email').value||'').trim(),
+    check_type:document.getElementById('ext-check').value,
+    port:Number(document.getElementById('ext-port').value||0) };
+  if(isUrl) body.url=url; else body.host=url;
+  await fetch('/netmon/target/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  toast('Now watching '+url,'ok'); document.getElementById('ext-url').value=''; loadMonTargets();
+}
+async function loadMonTargets(){
+  try{
+    const j=await (await fetch('/netmon/target/list')).json();
+    const watched=(j.targets||[]).filter(t=>t.watch);
+    const el=document.getElementById('mon-targets'); const cnt=document.getElementById('mon-targets-count');
+    if(cnt) cnt.textContent=watched.length?('('+watched.length+')'):'';
+    if(!el) return;
+    if(!watched.length){ el.innerHTML='<div style="font-size:9.5px;color:var(--t3)">None. Mark a device (inspector → Watch) or add an external host above.</div>'; return; }
+    el.innerHTML=watched.map(t=>{
+      const dot=t.status==='up'?'var(--ac2)':(t.status==='down'?'var(--ac4)':'var(--t3)');
+      const label=esc(t.name||t.host||t.url||t.ip||t.mac||t.id);
+      return `<div style="display:flex;align-items:center;gap:6px;background:var(--bg);border:1px solid var(--bd);border-radius:3px;padding:4px 7px">
+        <span style="width:8px;height:8px;border-radius:50%;background:${dot};flex-shrink:0" title="${esc(t.status||'unknown')}"></span>
+        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px">${label}</span>
+        <span style="font-size:8.5px;color:var(--t3)">${esc((t.triggers||[]).join(','))}</span>
+        <button class="btn ghost" style="padding:1px 5px;font-size:9px;color:var(--ac4);border-color:var(--ac4)" onclick="removeMonTarget('${esc(t.id)}')">✕</button>
+      </div>`;
+    }).join('');
+  }catch(e){}
+}
+async function removeMonTarget(id){
+  await fetch('/netmon/target/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+  loadMonTargets();
+}
+async function clearMonAlerts(){
+  await fetch('/netmon/alerts/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  _monAlertSeen.clear(); loadMonAlerts();
+}
+async function loadMonAlerts(){
+  try{
+    const j=await (await fetch('/netmon/alerts?limit=60')).json();
+    const alerts=j.alerts||[];
+    for(const a of alerts){
+      if(_monAlertSeen.has(a.id)) continue;
+      _monAlertSeen.add(a.id);
+      if(_monInited){
+        toast(a.title, a.kind==='up'?'ok':(a.kind==='down'?'err':''));
+        if((a.channels||[]).includes('browser') && 'Notification' in window && Notification.permission==='granted'){
+          try{ new Notification(a.title,{body:a.detail||''}); }catch{}
+        }
+      }
+    }
+    _monInited = true;
+    const el=document.getElementById('mon-alerts'); if(!el) return;
+    if(!alerts.length){ el.innerHTML='<div style="font-size:9.5px;color:var(--t3)">No alerts yet.</div>'; return; }
+    el.innerHTML=alerts.slice(0,40).map(a=>{
+      const col=a.kind==='down'?'var(--ac4)':(a.kind==='up'?'var(--ac2)':((a.kind==='new'||a.kind==='wifi')?'var(--ac3)':'var(--t2)'));
+      return `<div style="background:var(--bg);border:1px solid var(--bd);border-left:2px solid ${col};border-radius:3px;padding:4px 7px">
+        <div style="font-size:10px;color:var(--t1)">${esc(a.title)}</div>
+        <div style="font-size:8.5px;color:var(--t3)">${esc((a.ts||'').replace('T',' ').slice(0,19))}</div>
+      </div>`;
+    }).join('');
+  }catch(e){}
+}
+function _startMonPolling(){
+  if(_monPollTimer) clearInterval(_monPollTimer);
+  _monPollTimer=setInterval(()=>{ loadMonAlerts(); loadMonTargets(); }, 15000);
+}
+
 async function scanK8s(){
   const mode = document.querySelector('#sec-k8s .modeswitch button.active').dataset.kmode;
   const body = {
@@ -1735,10 +2346,84 @@ async function runDork(){
     if(saveToFabric && items.length){
       _dorkResultsToFabric(items, j.query||preset||query);
     }
+    // Accumulate into the active OSINT campaign (additive across sessions)
+    if(items.length) await addToActiveCampaign(items, j.query||preset||query);
     showDorkOverlay(j.query||preset||query, items);
     setStatus(`${items.length} hits · ${esc(j.query||'')}`,'ok');
     if(fingerprint) await refreshGraph({forceLayout:false});
   }catch(e){ toast('Dork search failed: '+e.message,'err'); setStatus('error','err'); }
+  finally{ hideLoading(); }
+}
+
+/* ── OSINT CAMPAIGNS (additive / iterative across sessions) ─────────────── */
+async function loadCampaigns(){
+  let camps=[];
+  try{ const j=await (await fetch('/netscan/osint/campaign/list')).json(); camps=j.campaigns||[]; }
+  catch(e){ return; }
+  for(const selId of ['dork-campaign','recon-campaign']){
+    const sel=document.getElementById(selId); if(!sel) continue;
+    const cur=sel.value;
+    const first = selId==='recon-campaign'
+      ? '<option value="">＋ new campaign</option>'
+      : '<option value="">(none — one-off)</option>';
+    sel.innerHTML=first+camps.map(c=>`<option value="${esc(c.campaign_id)}">${esc(c.name)} (${c.hit_count||0})</option>`).join('');
+    if(cur && camps.some(c=>c.campaign_id===cur)) sel.value=cur;
+    else if(selId==='dork-campaign' && _activeCampaign && camps.some(c=>c.campaign_id===_activeCampaign)) sel.value=_activeCampaign;
+  }
+  updateCampaignMeta();
+}
+function onCampaignChange(){
+  _activeCampaign=document.getElementById('dork-campaign').value||'';
+  updateCampaignMeta();
+}
+function updateCampaignMeta(){
+  const sel=document.getElementById('dork-campaign');
+  const meta=document.getElementById('dork-campaign-meta');
+  if(!sel||!meta) return;
+  const opt=sel.options[sel.selectedIndex];
+  meta.textContent = (sel.value&&opt) ? `Active — searches accumulate into "${opt.textContent}"` : 'No campaign — results are one-off.';
+}
+async function createCampaignPrompt(){
+  const name=prompt('New OSINT campaign name:'); if(!name||!name.trim()) return;
+  try{
+    const j=await (await fetch('/netscan/osint/campaign/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name.trim()})})).json();
+    if(j.error){ toast('Create failed: '+j.error,'err'); return; }
+    _activeCampaign=j.campaign_id;
+    await loadCampaigns();
+    const sel=document.getElementById('dork-campaign'); if(sel){ sel.value=j.campaign_id; onCampaignChange(); }
+    toast('Campaign created: '+name.trim(),'ok');
+  }catch(e){ toast('Create failed: '+e.message,'err'); }
+}
+async function deleteActiveCampaign(){
+  const sel=document.getElementById('dork-campaign'); const cid=sel?sel.value:'';
+  if(!cid){ toast('Pick a campaign first','err'); return; }
+  if(!confirm('Delete this OSINT campaign and its accumulated hits?')) return;
+  try{
+    await fetch('/netscan/osint/campaign/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({campaign_id:cid})});
+    if(_activeCampaign===cid) _activeCampaign='';
+    await loadCampaigns(); toast('Campaign deleted','ok');
+  }catch(e){ toast('Delete failed: '+e.message,'err'); }
+}
+async function addToActiveCampaign(results, queryLabel){
+  const sel=document.getElementById('dork-campaign');
+  const cid=sel?(sel.value||''):'';
+  if(!cid || !results || !results.length) return;
+  try{
+    const j=await (await fetch('/netscan/osint/campaign/add',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({campaign_id:cid, results, query:queryLabel||'', fabric:true})})).json();
+    if(!j.error){ toast(`Campaign +${j.added||0} new · ${j.hit_count||0} total`,'ok'); await loadCampaigns(); }
+  }catch(e){ /* non-fatal */ }
+}
+async function openCampaignOverlay(){
+  const sel=document.getElementById('dork-campaign'); const cid=sel?sel.value:'';
+  if(!cid){ toast('Pick or create a campaign first','err'); return; }
+  showLoading('Loading campaign…');
+  try{
+    const j=await (await fetch('/netscan/osint/campaign/get',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({campaign_id:cid})})).json();
+    if(j.error){ toast('Load failed: '+j.error,'err'); return; }
+    const hits=(j.hits||[]).slice().sort((a,b)=>(b.seen_count||0)-(a.seen_count||0));
+    showDorkOverlay(`Campaign: ${j.name} · ${hits.length} hits`, hits);
+  }catch(e){ toast('Load failed: '+e.message,'err'); }
   finally{ hideLoading(); }
 }
 
@@ -1762,13 +2447,8 @@ function _dorkResultsToGraph(results){
     }
   }
   _bumpCounts();
-  // Run a quick layout for new nodes
-  try{
-    const newNodes = cy.nodes().filter(n=>n.hasClass('fresh'));
-    if(newNodes.length>0){
-      newNodes.layout({name:'cose', animate:false, fit:false, padding:60, randomize:true}).run();
-    }
-  }catch{}
+  // Tidy the freshly-added dork hits (deterministic seed already applied)
+  _autoLayoutNewNodes({fit:true});
   toast(`Added ${results.length} dork hits to graph`,'ok');
 }
 
@@ -1897,6 +2577,9 @@ async function confirmNewGraph(){
   closeInspector();
   _graphRaw = {nodes:[], edges:[]};
   _lastNodeSig = '';
+  // Reset deterministic-placement counters so a fresh graph re-seeds cleanly
+  for(const k in _childSlot) delete _childSlot[k];
+  _ringSlot = 0;
   if(cy) cy.elements().remove();
   updateCounts(); renderLegend();
 
@@ -2108,9 +2791,10 @@ async function runAgentOsint(){
 
   _osintLog('system', `─── Done: ${allResults.length} unique results from ${dorkQueries.length} queries ───`);
 
-  // Step 3: Add to graph / fabric
+  // Step 3: Add to graph / fabric / campaign
   if(doGraph && allResults.length) _dorkResultsToGraph(allResults);
   if(doFabric && allResults.length) _dorkResultsToFabric(allResults, `agent_osint:${category}:${(prompt||domain||'').slice(0,40)}`);
+  if(allResults.length) await addToActiveCampaign(allResults, `agent_osint:${category}${domain?':'+domain:''}`);
 
   // Show results
   showDorkOverlay(`Agent OSINT: ${category}${domain?' · '+domain:''}`, allResults);
@@ -2168,6 +2852,7 @@ function bindCyEvents(){
   cy.on('tap','node', evt=>{
     if(evt.originalEvent && (evt.originalEvent.ctrlKey||evt.originalEvent.metaKey)) return;
     const n = evt.target;
+    if(n.data('_group')) return;   // group/boundary box — not inspectable
     highlightNeighborhood(n);
     openInspector(n);
   });
@@ -2176,6 +2861,7 @@ function bindCyEvents(){
   });
   cy.on('cxttap','node', evt=>{
     const n = evt.target;
+    if(n.data('_group')) return;
     const pos = evt.originalEvent;
     showCtxMenu(n, pos.clientX, pos.clientY);
     evt.originalEvent.preventDefault();
@@ -2252,6 +2938,17 @@ function renderInspActions(d){
   parts.push(`<button onclick="actScanPorts('${esc(d.id)}','1-1024')">Scan ports 1–1024</button>`);
   parts.push(`<button onclick="actScanPortsStream('${esc(d.id)}','common')">▶ Stream port scan</button>`);
   parts.push(`<button onclick="actFingerprint('${esc(d.id)}')">Full fingerprint (ports+banner+TLS)</button>`);
+  if(d.type==='NetHost'||d.type==='NetHop'||d.ip||d.hostname){
+    parts.push(`<button class="hot" onclick="actEnrich('${esc(d.id)}')">✦ Enrich (geo / ASN / org / CVEs)</button>`);
+    parts.push(`<button onclick="actAsnExpand('${esc(d.id)}')">Map this host's ASN (prefixes+peers)</button>`);
+  }
+  if(d.type==='ASN'){
+    parts.push(`<button class="hot" onclick="actAsnExpand('${esc(d.id)}')">Expand ASN — announced prefixes + peers</button>`);
+  }
+  if(d.type==='NetHost'||d.ip||d.mac){
+    parts.push(`<button onclick="actNameDevice('${esc(d.id)}')">✎ Name this device</button>`);
+    parts.push(`<button class="hot" onclick="actWatchDevice('${esc(d.id)}')">◉ Watch &amp; alert on change</button>`);
+  }
   if(d.type==='Website'||d.type==='WebEndpoint'||(d.open_ports&&(d.open_ports.includes?.(80)||d.open_ports.includes?.(443)))){
     parts.push(`<button onclick="actScanTech('${esc(d.id)}')">HTTP fingerprint</button>`);
   } else {
@@ -2765,6 +3462,79 @@ async function actFingerprint(id){
   }catch(e){ showInspResult(String(e),true); setStatus('error','err'); }
 }
 
+async function actEnrich(id){
+  const n = cy.getElementById(id); if(!n||!n.length) return;
+  const d = n.data();
+  const host = _hostOfNode(d) || d.ip || d.hostname;
+  if(!host){ toast('no host/IP on this node','err'); return; }
+  setStatus(`enriching ${host}…`);
+  showInspResult('querying geo / ASN / RDAP / Shodan InternetDB…');
+  try{
+    const j = await (await fetch('/netscan/enrich/host',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host})})).json();
+    if(j.error){ showInspResult(j.error, true); setStatus('error','err'); return; }
+    const L=[];
+    L.push(`IP: ${j.ip}${j.rdns?'  ('+j.rdns+')':''}`);
+    if(j.country) L.push(`Geo: ${j.city?j.city+', ':''}${j.country}${(j.lat!=null)?`  [${j.lat}, ${j.lon}]`:''}`);
+    if(j.asn) L.push(`ASN: AS${j.asn} ${j.as_name||''}`);
+    if(j.isp||j.org) L.push(`Org: ${j.org||j.isp}`);
+    if(j.netblock_cidr) L.push(`Netblock: ${j.netblock_cidr}${j.netname?'  ('+j.netname+')':''}`);
+    if((j.shodan_ports||[]).length) L.push(`Shodan ports: ${j.shodan_ports.join(', ')}`);
+    if((j.shodan_tags||[]).length) L.push(`Tags: ${j.shodan_tags.join(', ')}`);
+    if((j.shodan_vulns||[]).length) L.push(`CVEs: ${j.shodan_vulns.slice(0,20).join(', ')}${j.shodan_vulns.length>20?' …':''}`);
+    showInspResult(L.join('\n')); setStatus('enriched','ok');
+    await refreshGraph(); applyLayout({fit:false});
+  }catch(e){ showInspResult(String(e), true); setStatus('error','err'); }
+}
+
+async function actAsnExpand(id){
+  const n = cy.getElementById(id); if(!n||!n.length) return;
+  const d = n.data();
+  const body = {};
+  if(d.asn) body.asn = String(d.asn);
+  else { const host=_hostOfNode(d)||d.ip||d.hostname; if(host) body.host=host; }
+  if(!body.asn && !body.host){ toast('no ASN/host to expand','err'); return; }
+  setStatus('expanding ASN…');
+  showInspResult('pulling announced prefixes + peers from RIPEstat…');
+  try{
+    const j = await (await fetch('/netscan/asn/expand',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
+    if(j.error){ showInspResult(j.error, true); setStatus('error','err'); return; }
+    showInspResult(`AS${j.asn}: ${j.prefixes} prefixes · ${j.peers} peer ASN(s) added to the graph`);
+    setStatus('asn expanded','ok'); await refreshGraph({forceLayout:true});
+  }catch(e){ showInspResult(String(e), true); setStatus('error','err'); }
+}
+
+function _ipOfNode(d){
+  if(d.ip && /^\d+\.\d+\.\d+\.\d+$/.test(d.ip)) return d.ip;
+  if(typeof d.id==='string' && d.id.indexOf('net:')===0){ const c=d.id.slice(4); if(/^\d+\.\d+\.\d+\.\d+$/.test(c)) return c; }
+  return '';
+}
+async function actNameDevice(id){
+  const n=cy.getElementById(id); if(!n||!n.length) return;
+  const d=n.data();
+  const ip=_ipOfNode(d), mac=(d.mac||'');
+  if(!ip && !mac){ toast('no IP/MAC on this node','err'); return; }
+  const name=prompt('Friendly name for '+(mac||ip)+':', d.name||d.device_name||'');
+  if(name===null || !name.trim()) return;
+  try{
+    await fetch('/netmon/device/name',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mac,ip,name:name.trim()})});
+    toast('Named: '+name.trim(),'ok'); await refreshGraph();
+  }catch(e){ toast('Failed: '+e.message,'err'); }
+}
+async function actWatchDevice(id){
+  const n=cy.getElementById(id); if(!n||!n.length) return;
+  const d=n.data();
+  const ip=_ipOfNode(d), mac=(d.mac||'');
+  if(!ip && !mac){ toast('no IP/MAC on this node','err'); return; }
+  const channels=_monDefaultChannels();
+  try{
+    await fetch('/netmon/target/save',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({kind:'lan', mac, ip, name:d.name||d.device_name||'', watch:true, triggers:['down','up','attr'], channels})});
+    toast('Now watching '+(d.name||mac||ip)+' (down/up/attr → '+(channels.join(',')||'browser')+')','ok');
+    loadMonTargets();
+    const sec=document.getElementById('sec-presence'); if(sec && !sec.classList.contains('open')) secToggle('sec-presence');
+  }catch(e){ toast('Failed: '+e.message,'err'); }
+}
+
 async function actTraceFromNode(id){
   const n = cy.getElementById(id); if(!n||!n.length) return;
   const d = n.data();
@@ -3177,7 +3947,10 @@ async function _loadCapRegistry(){
   try{
     const r = await fetch('/ui/panels');
     const panels = await r.json();
-    const self = (panels||[]).find(p=>p.id==='netmap-panel' || p.panel_id==='netmap-panel');
+    // This panel is now the "Network" sub-tab of the merged Exec panel, so its
+    // ui_caps live under 'exec-panel'. Fall back to the legacy id for safety.
+    const self = (panels||[]).find(p=>p.id==='exec-panel' || p.panel_id==='exec-panel')
+              || (panels||[]).find(p=>p.id==='netmap-panel' || p.panel_id==='netmap-panel');
     if(self) _tabCaps = Array.from(new Set(self.ui_caps||[]));
     const all = new Set();
     for(const p of panels||[]){ (p.ui_caps||[]).forEach(c=>all.add(c)); }
@@ -3436,6 +4209,8 @@ async function runLlm(){
   const scope = document.getElementById('llm-scope').value;
   const includeCtx = document.getElementById('llm-ctx').checked;
 
+  const engine = (document.getElementById('llm-engine')||{}).value || 'dag';
+
   let allowed_caps = [];
   let include_extras = [];
   if(scope==='tab'){ allowed_caps = _tabCaps.slice(); }
@@ -3444,8 +4219,26 @@ async function runLlm(){
 
   _strip.classList.add('open');
   document.getElementById('llm-run-btn').textContent='Stop ■'; document.getElementById('llm-run-btn').classList.add('stop');
-  document.getElementById('llm-plan-status').textContent='planning…';
+  document.getElementById('llm-plan-status').textContent = engine==='loop'?'agent loop…':'planning…';
   llmLog('plan','GOAL', esc(goal));
+
+  if(engine==='loop'){
+    // V5 agentic loop — caps as a CSV string; HITL maps to require_approval.
+    const capsCsv = (scope==='all') ? '' : allowed_caps.concat(include_extras).join(',');
+    _loopSession = 'netmap-'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+    // Pull the full V5 config from the shared control (recon rounds, planning,
+    // skills, …); the explicit fields below (caps/model/HITL) take precedence.
+    const loopCfg = (document.getElementById('llm-loop-config')?.getConfig(true)) || {};
+    const lbody = {
+      ...loopCfg,
+      goal, version:'v5', allowed_caps: capsCsv,
+      model, instance_id, session_id: _loopSession,
+      require_approval: hitl, hitl_timeout_secs: autoSec>0?autoSec:300,
+    };
+    llmLog('plan','ENGINE', 'Agentic loop (V5) · '+(capsCsv?`${capsCsv.split(',').length} caps`:'all caps'));
+    _llmRun = await streamSSE('/workshop/agent_loop/stream', lbody, handleAgentLoopEvent);
+    return;
+  }
 
   const body = {
     goal, mode, execute:exec, hitl, auto_approve_secs:autoSec,
@@ -3493,6 +4286,176 @@ function handleLlmEvent(ev,d){
 function autoRefreshIfScan(d){
   const c=String(d.cap||'');
   if(c.startsWith('netscan.')) refreshGraph();
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   RECON ORCHESTRATOR  (deterministic, streamed)  +  AGENTIC LOOP (V5)
+   ════════════════════════════════════════════════════════════════════════ */
+let _reconRun = null;
+let _loopSession = '';
+let _activeCampaign = '';
+
+function _reconBtn(running){
+  const b=document.getElementById('recon-run-btn');
+  if(!b) return;
+  b.textContent = running ? '■ Stop recon' : '✦ Run recon';
+  b.classList.toggle('stop', running);
+}
+function toggleRecon(){
+  if(_reconRun){ try{ _reconRun.abort(); }catch{} _reconRun=null; _reconBtn(false); return; }
+  runRecon();
+}
+async function runRecon(){
+  const target=(document.getElementById('recon-target').value||'').trim();
+  if(!target){ toast('Enter a target (CIDR, host, or domain)','err'); return; }
+  const body={
+    target,
+    profile:     document.getElementById('recon-profile').value,
+    fingerprint: document.getElementById('recon-fingerprint').checked,
+    enrich:      document.getElementById('recon-enrich').checked,
+    map_boundaries: document.getElementById('recon-boundaries').checked,
+    osint:       document.getElementById('recon-osint').checked,
+    link_infra:  document.getElementById('recon-link').checked,
+    max_hosts:   Number(document.getElementById('recon-maxhosts').value||20),
+    osint_campaign_id: document.getElementById('recon-campaign').value||'',
+    osint_campaign_name: 'recon:'+target,
+  };
+  const prog=document.getElementById('recon-progress');
+  const ptext=document.getElementById('recon-progress-text');
+  const pbar=document.getElementById('recon-progress-bar');
+  prog.classList.add('live'); ptext.textContent='starting…'; pbar.style.width='4%';
+  _reconBtn(true); _showStreamBanner('recon: '+target);
+  const stageOrder={sweep:1,ports:1,fingerprint:2,enrich:3,osint:4,link:5,boundary:6};
+  _reconRun = await streamSSE('/netscan/recon/stream', body, (ev,d)=>{
+    d=d||{};
+    if(ev==='start'){ ptext.textContent='scanning '+(d.target||target); pbar.style.width='10%'; }
+    else if(ev==='stage'){
+      const pct=Math.min(96, 12 + (stageOrder[d.stage]||1)*20);
+      pbar.style.width=pct+'%';
+      ptext.textContent=`${d.stage}: ${d.status}${d.msg?' · '+d.msg:''}`;
+      if(d.status==='done'||d.status==='running') refreshGraph();
+    }
+    else if(ev==='host'){ /* node written server-side; periodic refresh covers it */ }
+    else if(ev==='fingerprint'){ ptext.textContent=`fingerprint ${d.host}: ${d.open||0} open`; refreshGraph(); }
+    else if(ev==='osint'){ ptext.textContent=`osint ${d.domain}: +${d.added||0} hit(s)`; if(d.campaign_id) _activeCampaign=d.campaign_id; }
+    else if(ev==='done'){
+      pbar.style.width='100%';
+      ptext.textContent=`recon complete · ${d.hosts||0} host(s)`;
+      _reconBtn(false); _reconRun=null;
+      refreshGraph(); if(typeof loadCampaigns==='function') loadCampaigns();
+      setTimeout(()=>prog.classList.remove('live'),4000);
+    }
+    else if(ev==='error'){ ptext.textContent='error: '+(d.error||'?'); _reconBtn(false); _reconRun=null; toast('Recon error: '+(d.error||''),'err'); }
+    else if(ev==='__done'){ if(_reconRun){ _reconBtn(false); _reconRun=null; } }
+  });
+}
+
+/* Goal presets prefill the Ask-Vera box and switch to the loop engine */
+function applyReconPreset(v){
+  if(!v) return;
+  const presets={
+    sweep:  'Sweep the local subnet (use the CIDR in the Recon box, default 192.168.1.0/24) with netscan.recon.run, fingerprint every host that has open ports, and summarise the exposed services. Add everything to the graph.',
+    host:   'Deep-dive recon on a single host: scan common ports, fingerprint open services (banners, TLS, HTTP tech) and report likely weak points. Graph the result.',
+    domain: 'OSINT recon on a target domain: scrape CT logs for subdomains, run targeted dorks for exposed services/secrets into an OSINT campaign, fingerprint the live hits, and graph them.',
+    infra:  'Import the registered Proxmox clusters (netscan.proxmox.import) and Docker hosts (netscan.docker.import) into the network graph, then explain any guests/containers that share an IP with discovered LAN hosts.',
+  };
+  const g=document.getElementById('llm-goal');
+  if(presets[v]){ g.value=presets[v]; }
+  document.getElementById('llm-strip').classList.add('open');
+  const eng=document.getElementById('llm-engine'); if(eng){ eng.value='loop'; onLlmEngineChange(); }
+  document.getElementById('llm-preset').value='';
+  g.focus();
+}
+function onLlmEngineChange(){
+  const eng=(document.getElementById('llm-engine')||{}).value||'dag';
+  const b=document.getElementById('llm-run-btn');
+  if(b) b.title = eng==='loop' ? 'Run the V5 agentic loop (observe→think→act)' : 'Plan and run a DAG';
+  // The full loop-config control only applies to the agentic loop engine.
+  const cfgBtn=document.getElementById('llm-loopcfg-btn');
+  if(cfgBtn) cfgBtn.style.display = eng==='loop' ? '' : 'none';
+  if(eng!=='loop'){ const pop=document.getElementById('llm-loopcfg-pop'); if(pop) pop.style.display='none'; }
+}
+function toggleLoopCfg(){
+  const pop=document.getElementById('llm-loopcfg-pop');
+  if(pop) pop.style.display = (pop.style.display==='none'||!pop.style.display) ? 'block' : 'none';
+}
+
+/* Adapter: map agent_loop_v5.* SSE events onto the same log rows + HITL cards */
+function handleAgentLoopEvent(ev,d){
+  d=d||{};
+  const stop=()=>{ const b=document.getElementById('llm-run-btn'); b.textContent='Plan & run ▶'; b.classList.remove('stop'); _llmRun=null; };
+  const m=String(ev).match(/^agent_loop(?:_v\d)?\.(.+)$/);
+  const kind=m?m[1]:String(ev);
+  switch(kind){
+    case 'triage_start': llmLog('plan','TRIAGE', esc(d.goal||'selecting tools…')); break;
+    case 'triage_done':
+    case 'toolkit':      llmLog('plan','TOOLKIT', `${(d.tools||[]).length||d.count||0} tools selected`); break;
+    case 'recon':        llmLog('plan','RECON', esc(d.summary||d.note||'reconnaissance')); break;
+    case 'master_plan':
+    case 'plan':
+    case 'subplan': {
+      const todos=(d.todos||d.steps||d.plan||[]);
+      const txt=Array.isArray(todos)?todos.map(t=>esc(typeof t==='string'?t:(t.title||t.goal||JSON.stringify(t)))).join(' → '):'';
+      llmLog('plan', kind.replace('_',' ').toUpperCase(), `${esc(d.rationale||'')}${txt?`<br><span class="small">${txt}</span>`:''}`);
+      document.getElementById('llm-plan-status').textContent='running…';
+      break; }
+    case 'phases':       llmLog('plan','PHASES', esc((d.phases||[]).join(' · ')||'')); break;
+    case 'step_start':   llmLog('step','STEP'+(d.step!=null?' '+(d.step+1):''), esc(d.title||d.goal||d.tool||'')); break;
+    case 'cycle_planning': if(d.thought) llmLog('step','THINK', `<span class="small">${esc(String(d.thought).slice(0,220))}</span>`); break;
+    case 'tool_call':    llmLog('step','ACT', `<span class="cap">${esc(d.tool||'')}</span>${d.args?` <span class="small">${esc(JSON.stringify(d.args).slice(0,120))}</span>`:''}`); break;
+    case 'tool_done':    llmLog('done-ev','OK', `<span class="cap">${esc(d.tool||'')}</span>${d.preview?` <span class="small">${esc(String(d.preview).slice(0,160))}</span>`:''}`); if(String(d.tool||'').startsWith('netscan.')) refreshGraph(); break;
+    case 'code_saved':   llmLog('done-ev','CODE', esc(d.path||d.filename||'saved')); break;
+    case 'replan':       llmLog('plan','REPLAN', esc(d.reason||'')); break;
+    case 'scope_widened':llmLog('plan','SCOPE+', esc((d.added||[]).join(', ')||d.reason||'')); break;
+    case 'step_done':    if(d.summary||d.title) llmLog('done-ev','STEP OK', esc(d.title||d.summary||'')); break;
+    case 'hitl_request': buildLoopHitlCard(d); break;
+    case 'hitl_resolved':llmLog('hitl','RESOLVED', esc(d.decision||'')); break;
+    case 'think': case 'thinking': break;   // token-level noise — skip
+    case 'done':
+      llmLog('done-ev','COMPLETE', esc(d.summary||d.result||'done'));
+      document.getElementById('llm-plan-status').textContent='done';
+      stop(); refreshGraph(); break;
+    default:
+      if(kind==='error'||ev==='error'){ llmLog('err','ERROR', esc(d.error||'loop error')); document.getElementById('llm-plan-status').textContent='error'; stop(); }
+      else if(ev==='__done'){ if(_llmRun) stop(); }
+      // ignore long_running_await ticks and other token noise
+  }
+}
+
+/* HITL card for the agent loop — responds to /workshop/agent_loop/hitl/respond */
+function buildLoopHitlCard(d){
+  const sid=d.session_id||_loopSession;
+  const step=(d.step!=null?d.step:-1);
+  const autoSec=d.timeout_secs||d.auto_approve_secs||0;
+  const paramsJson=JSON.stringify(d.args||d.params||{},null,2);
+  const capName=d.tool||d.cap||'';
+  const e=llmLog('hitl','APPROVE?', `
+    <div class="hitl-card">
+      <div class="hhdr"><span>Approve${step>=0?' step '+(step+1):''}: <span class="cap">${esc(capName)}</span>${d.reason?` <span class="small">· ${esc(d.reason)}</span>`:''}</span><span class="countdown" data-hitl-countdown></span></div>
+      <div class="hparams" contenteditable="true" spellcheck="false">${esc(paramsJson)}</div>
+      <div class="hacts">
+        <button class="btn-ok" data-hitl-approve>Approve</button>
+        <button class="btn-ed" data-hitl-edit>Approve (edited)</button>
+        <button class="btn-no" data-hitl-reject>Reject</button>
+      </div>
+    </div>`);
+  const card=e.querySelector('.hitl-card');
+  const countEl=card.querySelector('[data-hitl-countdown]');
+  let remaining=autoSec, timer=null;
+  if(autoSec>0){
+    countEl.textContent=`auto-approve in ${remaining}s`;
+    timer=setInterval(()=>{ remaining--; countEl.textContent=remaining>0?`auto-approve in ${remaining}s`:'auto-approving…'; if(remaining<=0) clearInterval(timer); },1000);
+  }
+  const cleanup=()=>{ if(timer) clearInterval(timer); card.querySelectorAll('button').forEach(b=>b.disabled=true); countEl.textContent=''; };
+  const respond=async(decision,args)=>{
+    cleanup();
+    const body={session_id:sid, step, decision};
+    if(args) body.args=args;
+    try{ await fetch('/workshop/agent_loop/hitl/respond',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }catch{}
+  };
+  card.querySelector('[data-hitl-approve]').onclick=()=>respond('approve');
+  card.querySelector('[data-hitl-edit]').onclick=()=>{ let ep={}; try{ ep=JSON.parse(card.querySelector('.hparams').textContent); }catch{ toast('invalid JSON','err'); return; } respond('edit', ep); };
+  card.querySelector('[data-hitl-reject]').onclick=()=>respond('reject');
 }
 function buildHitlCard(d){
   const traceId=d.trace_id; const autoSec=d.auto_approve_secs||30;
@@ -3542,7 +4505,32 @@ window.addEventListener('message', ev=>{
   if(d.action==='vera-netmap-focus' && d.id) focusOn(d.id);
   else if(d.action==='vera-netmap-refresh') refreshGraph();
   else if(d.action==='vera-netmap-new') newGraph();
+  else if(d.action==='vera-netmap-recon' && d.target) prefillRecon(d.target);
 });
+
+/* Prefill + open the Recon section (used by hash deep-link or postMessage,
+   e.g. the exec panel's "→ Network Map" button) */
+function prefillRecon(target){
+  const inp=document.getElementById('recon-target');
+  if(!inp) return;
+  inp.value=target;
+  const sec=document.getElementById('sec-recon');
+  if(sec && !sec.classList.contains('open')) secToggle('sec-recon');
+  inp.focus();
+  toast('Recon target set: '+target,'ok');
+}
+/* Deep-link: #recon:<target> opens the recon box ready to go */
+(function(){
+  try{
+    const h=(location.hash||'');
+    const m=h.match(/^#recon:(.+)$/);
+    if(m) setTimeout(()=>prefillRecon(decodeURIComponent(m[1])), 300);
+  }catch(e){}
+  window.addEventListener('hashchange', ()=>{
+    const m=(location.hash||'').match(/^#recon:(.+)$/);
+    if(m) prefillRecon(decodeURIComponent(m[1]));
+  });
+})();
 window.VeraNet = {refreshGraph, focusOn, openInspector, graphSsh, sshToExecPanel, ftOpen, ftClose, newGraph, abortAllStreams};
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -3657,6 +4645,11 @@ function _setupAutoRefresh(){
 (async function init(){
   initCy();
   setStatus('init…');
+  // Sync layout selectors with the saved preference
+  try{
+    const lg=document.getElementById('lay-group'); if(lg) lg.value=_layout.group;
+    const la=document.getElementById('lay-arrange'); if(la) la.value=_layout.arrange;
+  }catch(e){}
   await loadHosts();
   await _loadCapRegistry();
   await _loadLlmModels();
@@ -3664,6 +4657,11 @@ function _setupAutoRefresh(){
   _populateOsintModels();
   await refreshGraph({forceLayout:true});
   await loadMapsList();
+  await loadRegisteredInfra();   // registered Proxmox/Docker pickers
+  await loadCampaigns();         // OSINT campaign selectors
+  await loadMonConfig();         // presence monitor config
+  loadMonTargets(); loadMonAlerts(); _startMonPolling();
+  onLlmEngineChange();
   _setupAutoRefresh();
   // Wire Ctrl+Enter on llm-goal to fire the planner
   const ta = document.getElementById('llm-goal');

@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="utf-8">
 <title>DAG Workshop</title>
 <style>
@@ -13,6 +18,15 @@
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;background:var(--bg0);color:var(--text);font:12px/1.45 system-ui,-apple-system,Segoe UI,sans-serif;height:100%;overflow:hidden}
+/* Theme-consistent scrollbars across the workshop (incl. the DAG/pipeline
+   builder canvas, palette and inspector) — the browser default bar clashed
+   with the dark panels. */
+*{scrollbar-width:thin;scrollbar-color:var(--border2) transparent}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:6px;border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:var(--acc);background-clip:padding-box}
+::-webkit-scrollbar-corner{background:transparent}
 button{cursor:pointer;font:inherit;color:inherit}
 input,select,textarea{font:inherit;color:var(--text);background:var(--bg1);border:1px solid var(--border);border-radius:3px;padding:4px 7px;outline:none}
 input:focus,select:focus,textarea:focus{border-color:var(--acc)}
@@ -583,6 +597,14 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc)}
       <svg class="dw-nb-ico" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><line x1="10" y1="6.5" x2="14" y2="6.5"/><line x1="6.5" y1="10" x2="6.5" y2="14"/><line x1="17.5" y1="10" x2="17.5" y2="14"/></svg>
       Loop Builder
     </button>
+    <button class="nav-btn" data-section="loops" onclick="dwSection('loops');loopsLoad()">
+      <svg class="dw-nb-ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4M5 5l2.5 2.5M16.5 16.5L19 19M19 5l-2.5 2.5M7.5 16.5L5 19"/></svg>
+      Specialist Loops<span class="dw-nb-badge" id="nav-loops-count">—</span>
+    </button>
+    <button class="nav-btn" data-section="loopeval" onclick="dwSection('loopeval')">
+      <svg class="dw-nb-ico" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>
+      Loop Eval / Sim
+    </button>
     <button class="nav-btn" data-section="registered" onclick="dwSection('registered')">
       <svg class="dw-nb-ico" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
       Registered Caps<span class="dw-nb-badge" id="nav-reg-count">—</span>
@@ -844,14 +866,30 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc)}
         </div>
         <div class="al-side">
           <div class="al-meta-row">
+            <label>Specialist profile
+              <span style="font-size:9px;color:var(--dim)">— presets engine + agent + a scoped panel/cap family. Overrides below still win.</span>
+            </label>
+            <select id="alProfile" onchange="alApplyProfile(this.value)">
+              <option value="">— none (manual config) —</option>
+            </select>
+            <div id="alProfileDesc" style="font-size:9.5px;color:var(--dim);margin-top:3px;line-height:1.4"></div>
+          </div>
+          <div class="al-meta-row">
             <label>Loop variant</label>
             <select id="alVersion" onchange="alVersionChanged()">
+              <option value="v7">v7 — tiered + branching</option>
+              <option value="v6">v6 — adaptive specialists</option>
+              <option value="v5">v5 — specialist sub-agents</option>
               <option value="v2" selected>v2 — triage + dynamic context + auto-stop</option>
               <option value="v3">v3 — full message history + HITL</option>
               <option value="v4">v4 — strict (plan + verify)</option>
               <option value="v1">v1 — simple ReAct loop</option>
             </select>
             <div id="alVersionDesc" style="font-size:9.5px;color:var(--dim);margin-top:3px;line-height:1.4">Triages the goal, seeds the toolkit by category, supports mid-run expansion + auto-satisfaction.</div>
+            <!-- Full config surface for the v5/v6/v7 engines (shown only for those). -->
+            <div id="alV7CfgWrap" style="display:none;margin-top:6px">
+              <vera-agent-loop-config id="alV7Cfg" hide-engine exclude="model,instance_id,prefer_gpu" compact></vera-agent-loop-config>
+            </div>
             <div id="alPresetActions" style="display:none;margin-top:4px">
               <button class="btn xs danger" onclick="alDeleteSelectedPreset()" title="Remove the currently selected preset">× delete preset</button>
             </div>
@@ -1308,6 +1346,18 @@ Click 'Variables help' for the full list."></textarea>
         </div>
       </div>
     </div>
+    <!-- SPECIALIST LOOP PROFILES INVENTORY -->
+    <div class="section" id="sect-loops">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <span style="font-size:11px;color:var(--text2)">Specialised agentic loops — each pins an engine + a specialist agent + a scoped panel/capability family. Click <b>Run</b> to load a profile into the Agent Loop runner.</span>
+        <div style="flex:1"></div>
+        <button class="btn sm" onclick="loopsLoad()">Reload</button>
+      </div>
+      <div id="loopsList" style="flex:1;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;align-content:start">
+        <div class="empty">Loading…</div>
+      </div>
+    </div>
+
     <div class="section" id="sect-registered">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
         <span style="font-size:11px;color:var(--text2)">DAGs currently promoted to live capabilities</span>
@@ -1315,6 +1365,19 @@ Click 'Variables help' for the full list."></textarea>
         <button class="btn sm" onclick="regLoad()">Reload</button>
       </div>
       <div id="regList" style="flex:1;overflow-y:auto"><div class="empty">Loading…</div></div>
+    </div>
+
+    <!-- BUSINESS LOOP EVALUATION / SIMULATION -->
+    <div class="section" id="sect-loopeval">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <button class="btn sm" id="le-tab-lab" onclick="leTab('lab')">🧪 Loop Lab (CI/CD)</button>
+        <button class="btn sm" id="le-tab-sim" onclick="leTab('sim')">Sim eval</button>
+        <span style="font-size:11px;color:var(--text2)" id="le-desc">Loop Lab — test, evaluate, improve, and gate changes to the agent loops (variants + code, with git rollback).</span>
+        <div style="flex:1"></div>
+        <a class="btn sm" id="le-open" href="/evolve/panel" target="_blank" style="text-decoration:none">Open ↗</a>
+      </div>
+      <iframe id="loopEvalFrame" src="about:blank"
+              style="flex:1;border:1px solid var(--border);border-radius:4px;width:100%;min-height:520px;background:var(--bg0)"></iframe>
     </div>
 
     <!-- STREAMS -->
@@ -1434,6 +1497,20 @@ function dwSection(name){
   if(name==='streams')    strLoad();
   if(name==='builder'){ palLoadTree(); }
   if(name==='loopbuilder'){ lbInit(); }
+  if(name==='loopeval'){ if(!window._leWhich) leTab('lab'); }
+}
+function leTab(which){
+  window._leWhich=which;
+  const f=document.getElementById('loopEvalFrame'); if(!f) return;
+  const lab=which==='lab';
+  f.src=lab?'/evolve/panel':'/biz/panel#sim';
+  const open=document.getElementById('le-open'); if(open){ open.href=f.src; }
+  const desc=document.getElementById('le-desc');
+  if(desc)desc.textContent=lab
+    ? 'Loop Lab — test, evaluate, improve, and gate changes to the agent loops (variants + code, with git rollback).'
+    : 'Evaluate agent loops against a simulated business — seed a scenario, set a goal, watch the loop run, and score it from the sim ledger delta.';
+  const a=document.getElementById('le-tab-lab'), b=document.getElementById('le-tab-sim');
+  if(a)a.classList.toggle('primary',lab); if(b)b.classList.toggle('primary',!lab);
 }
 function dwRefreshAll(){ libLoad(); regLoad(); strLoad(); navCounts(); palLoadTree(); }
 
@@ -1540,13 +1617,35 @@ async function libSelect(id){
       <button class="btn sm" onclick="libEditSelected()">Edit</button>
       <button class="btn sm warn" onclick="libPromoteSelected()">Promote to Cap</button>
       <button class="btn sm danger" onclick="libDeleteSelected()">Delete</button>
-    </div>`;
+    </div>
+    <div class="detail-sec" id="libRunResult" style="display:none"></div>`;
 }
 async function libRunSelected(){
   if(!LIB_SELECTED) return;
+  // Show the run result IN the right-hand detail panel (not just a toast).
+  const box = document.getElementById('libRunResult');
+  if(box){ box.style.display=''; box.innerHTML = `<div class="detail-sec-h">Run result <span class="spinner"></span></div>`; }
   setStatus('Running DAG…');
   const res = await api('/dag/store/run', 'POST', {id:LIB_SELECTED});
-  if(res?.error){ toast('Run failed: '+res.error,'err'); setStatus('Run failed'); return; }
+  if(res?.error){
+    if(box) box.innerHTML = `<div class="detail-sec-h">Run result — failed</div><pre class="preview-block" style="color:var(--err);white-space:pre-wrap">${esc(res.error)}</pre>`;
+    toast('Run failed: '+res.error,'err'); setStatus('Run failed'); return;
+  }
+  // Render per-node steps (if the response carries them) + the final state.
+  const state = (res && (res.state ?? res.final_state ?? res.result)) ?? res;
+  const nodes = res && (res.nodes || res.history || res.steps);
+  let html = `<div class="detail-sec-h">Run result — ok</div>`;
+  if(Array.isArray(nodes) && nodes.length){
+    html += `<div class="dag-step-list">` + nodes.map((n,i)=>{
+      const cap = n.cap||n.tool||n.name||'?';
+      const okv = (n.ok!==false && !n.error);
+      return `<div class="dag-step"><span class="dag-step-i">${i+1}.</span>
+        <span class="dag-step-cap">${esc(cap)}</span>
+        <span style="margin-left:auto;color:${okv?'var(--ok,#5a9e8f)':'var(--err)'}">${okv?'✓':'✗'}</span></div>`;
+    }).join('') + `</div>`;
+  }
+  html += `<pre class="preview-block" style="max-height:300px;overflow:auto;white-space:pre-wrap">${esc(JSON.stringify(state,null,2))}</pre>`;
+  if(box) box.innerHTML = html;
   toast('DAG ran','ok'); setStatus('DAG run complete');
 }
 async function libDeleteSelected(){
@@ -3218,6 +3317,13 @@ function planLoadIntoJson(){
 // AGENT LOOP
 // ═══════════════════════════════════════════════════════════════════════════
 let AL_ABORT = null, AL_RUNNING = false;
+// Mirror the run state onto window._veraStreamActive — the harness's iframe
+// parking (_parkPanel) reads it so a hidden Workshop tab is never unloaded
+// mid-run (unloading aborts the SSE fetch and cancels the run server-side).
+function _alSetRunning(on){
+  AL_RUNNING = !!on;
+  window._veraStreamActive = !!on;
+}
 let AL_SESSION_ID = '', AL_LAST_RESULT = null;
 // Map of cycle number → {el, progressEl, tokenBuffer}
 const AL_CYCLE_REFS = new Map();
@@ -3310,6 +3416,8 @@ async function alLoadDiscoveryOptions(){
         + MS_DATA.models.map(m => `<option value="${esc(m.id||m.name||'')}">${esc(m.name||m.id||'')}${m.is_gpu?' ⚡':''}</option>`).join('');
       if(cur) lbMSel.value = cur;
     }
+    // Populate the specialist-profile selector too (best-effort).
+    try{ loopsLoad(); }catch(_){}
   }catch(e){ /* discovery is best-effort */ }
 }
 
@@ -3577,6 +3685,14 @@ function alVersionChanged(){
   const awRow = document.getElementById('alAwaitRow');
   if(awRow) awRow.style.display = (isV3||isV4) ? 'flex' : 'none';
   alToggleV4Rows(isV4);
+  // v5/v6/v7 — drive the reusable full-config element. The v1–v4 rows above are
+  // already hidden for these (their show conditions are v2/v3/v4-only).
+  const isV5=v==='v5', isV6=v==='v6', isV7=v==='v7';
+  const isV567 = isV5||isV6||isV7;
+  const cfgWrap = document.getElementById('alV7CfgWrap');
+  if(cfgWrap) cfgWrap.style.display = isV567 ? '' : 'none';
+  const cfgEl = document.getElementById('alV7Cfg');
+  if(cfgEl && isV567 && typeof cfgEl.setVersion === 'function'){ try{ cfgEl.setVersion(v); }catch(_){} }
   const desc = document.getElementById('alVersionDesc');
   if(desc){
     desc.textContent = isV1
@@ -3585,6 +3701,12 @@ function alVersionChanged(){
       ? 'Triages the goal, seeds the toolkit by category, supports mid-run expansion + auto-satisfaction.'
     : isV4
       ? 'Strict explore→think→act→verify worker: selects steps, plans a todo list, verifies every action, runs a strict completion check, and steers toward grep/sed/awk via exec.bash.run.'
+    : isV5
+      ? 'Orchestrator decomposes the goal into scoped steps, each run by an ephemeral specialist sub-agent. Full config below.'
+    : isV6
+      ? 'v5 + an adaptive controller (assess / insert / replan / stop after every step) and a final completion gate. Full config below.'
+    : isV7
+      ? 'v6 + tier classifier, per-step finalise, git-tree branching on failure, and dream-persisted multi-day goals. Full config below.'
       : 'Anthropic-style observe/think/act with full message history. Supports per-step HITL approval.';
   }
 }
@@ -3816,7 +3938,7 @@ async function alRun(){
   const outEl = await alResolveOutputEl();
   if(!outEl){ toast('Agent loop renderer not loaded','err'); return; }
 
-  AL_RUNNING = true;
+  _alSetRunning(true);
   document.getElementById('alRunBtn').disabled = true;
   document.getElementById('alStopBtn').disabled = false;
   // Reset the shared element for a fresh run + hide the post-run action bar.
@@ -3829,6 +3951,8 @@ async function alRun(){
   const requireApproval = document.getElementById('alRequireApproval').checked && version==='v3';
   AL_SESSION_ID = (crypto.randomUUID ? crypto.randomUUID()
                                      : 'sess_'+Math.random().toString(36).slice(2));
+  // Persist so a reload can reconnect to this run (it keeps running server-side).
+  try{ localStorage.setItem('vera_dag_loop_sid', AL_SESSION_ID); }catch(_){}
 
   // Wire the shared element to the workshop backend / this run's session, then
   // push a start event so the user sees a "Starting" card immediately.
@@ -3843,6 +3967,7 @@ async function alRun(){
   const body = {
     goal,
     version,
+    profile:            document.getElementById('alProfile')?.value || '',
     allowed_caps:       document.getElementById('alAllowed').value,
     max_cycles:         parseInt(document.getElementById('alMax').value)||8,
     model:              document.getElementById('alModel').value,
@@ -3887,6 +4012,20 @@ async function alRun(){
     prefer_terminal_tools: document.getElementById('alPreferTerminal')?.checked !== false,
   };
   if(Number.isNaN(body.min_explore_cycles)) body.min_explore_cycles = 2;
+  // For the v5/v6/v7 engines, merge the reusable config element's FULL parameter
+  // set into the body (the al* inputs above only cover v1–v4). The SSE dispatch
+  // reads the keys each engine needs and ignores the rest. model/instance/gpu stay
+  // owned by the panel's own inputs (excluded from the element).
+  if(['v5','v6','v7'].includes(version)){
+    const cfgEl = document.getElementById('alV7Cfg');
+    if(cfgEl && typeof cfgEl.getConfig === 'function'){
+      try{
+        const c = cfgEl.getConfig(true);   // engine-relevant keys only
+        delete c.version; delete c.model; delete c.instance_id; delete c.prefer_gpu;
+        Object.assign(body, c);
+      }catch(_){}
+    }
+  }
   AL_ABORT = new AbortController();
 
   // Show the starting card immediately via the element.
@@ -3901,7 +4040,7 @@ async function alRun(){
     });
   }catch(e){
     try{ outEl.appendEvent({type:'error', error:'Network error: '+(e.message||String(e))}); }catch(_){}
-    AL_RUNNING=false;
+    _alSetRunning(false);
     document.getElementById('alRunBtn').disabled=false;
     document.getElementById('alStopBtn').disabled=true;
     return;
@@ -3909,7 +4048,7 @@ async function alRun(){
   if(!resp.ok){
     const txt = await resp.text().catch(()=> '') || '';
     try{ outEl.appendEvent({type:'error', error:'HTTP '+resp.status+(txt?': '+txt.slice(0,200):'')}); }catch(_){}
-    AL_RUNNING=false;
+    _alSetRunning(false);
     document.getElementById('alRunBtn').disabled=false;
     document.getElementById('alStopBtn').disabled=true;
     return;
@@ -3943,10 +4082,68 @@ async function alRun(){
       catch(err){ console.warn('agent loop render error', err, ev); }
     }
   }
-  AL_RUNNING=false;
+  _alSetRunning(false);
   document.getElementById('alRunBtn').disabled=false;
   document.getElementById('alStopBtn').disabled=true;
   setStatus('Agent loop finished');
+}
+
+// Resume: on load, reconnect to a DAG-panel agentic loop that's still running.
+// The loop keeps running server-side across reloads (and is recoverable after a
+// server restart) — see /workshop/agent_loop/{session_state,reattach}.
+async function alResumeLoop(){
+  let sid=''; try{ sid=localStorage.getItem('vera_dag_loop_sid')||''; }catch(_){}
+  if(!sid) return;
+  const B=dwBase();
+  let st=null;
+  try{ const r=await fetch(B+'/workshop/agent_loop/session_state?session_id='+encodeURIComponent(sid)); st=await r.json(); }catch(_){ return; }
+  const run=(st&&st.run)||{};
+  // Only reconnect to LIVE or freshly-interrupted runs (don't replay old finished ones).
+  if(run.status!=='running' && run.status!=='interrupted') return;
+  let events=(st&&st.events)||[];
+  if(!events.length) return;
+  for(let i=events.length-1;i>=0;i--){ if(String(events[i].type||'').endsWith('.triage_start')){ events=events.slice(i); break; } }
+  const outEl=await alResolveOutputEl();
+  if(!outEl || typeof outEl.appendEvent!=='function') return;
+  try{ outEl.reset && outEl.reset(); }catch(_){}
+  try{
+    if(typeof outEl.setApiBase==='function') outEl.setApiBase(B||'');
+    if(typeof outEl.setSessionId==='function') outEl.setSessionId(sid);
+    if(typeof outEl.setHitlEndpoint==='function') outEl.setHitlEndpoint('/workshop/agent_loop/hitl/respond');
+  }catch(_){}
+  AL_SESSION_ID=sid;
+  const gEl=document.getElementById('loopGraphEl');
+  for(const ev of events){ try{ outEl.appendEvent(ev); }catch(_){} try{ if(gEl&&gEl.appendEvent) gEl.appendEvent(ev); }catch(_){} }
+  if(run.status==='running'){
+    setStatus('Reconnected to a running agent loop');
+    try{ _alSetRunning(true); }catch(_){}
+    alReattachLoop(sid, (st.count||events.length), outEl);
+  } else {
+    setStatus('Agent loop was interrupted (server restart) — progress restored');
+  }
+}
+async function alReattachLoop(sid, since, outEl){
+  const B=dwBase();
+  const gEl=document.getElementById('loopGraphEl');
+  try{
+    const resp=await fetch(B+'/workshop/agent_loop/reattach?session_id='+encodeURIComponent(sid)+'&since='+since);
+    if(!resp.ok || !resp.body){ try{ _alSetRunning(false); }catch(_){} return; }
+    const reader=resp.body.getReader(); const dec=new TextDecoder(); let buf='';
+    while(true){
+      const{done,value}=await reader.read(); if(done)break;
+      buf+=dec.decode(value,{stream:true}); const lines=buf.split('\n'); buf=lines.pop();
+      for(const line of lines){
+        if(!line.startsWith('data:'))continue; const raw=line.slice(5).trim();
+        if(!raw)continue;
+        if(raw==='[DONE]'){ try{ _alSetRunning(false); }catch(_){} return; }
+        let ev; try{ ev=JSON.parse(raw); }catch(_){ continue; }
+        if(ev.type==='result') AL_LAST_RESULT=ev;
+        try{ outEl.appendEvent(ev); }catch(_){}
+        try{ if(gEl&&gEl.appendEvent) gEl.appendEvent(ev); }catch(_){}
+      }
+    }
+  }catch(_){}
+  try{ _alSetRunning(false); }catch(_){}
 }
 
 // ╔══════════════════════════════════════════════════════════════════════╗
@@ -4337,9 +4534,23 @@ function handleAgentEvent(ev){
       <span style="color:var(--info);font-size:9px">live research stream · job <code>${esc((ev.job_id||'').slice(0,8))}</code><span class="cur"></span></span>`;
     strip.appendChild(streamHdr);
     strip.appendChild(streamArea);
+    // The server builds ws_url from ITS OWN vantage point (e.g.
+    // wss://localhost:8999) — from the browser `localhost` is the user's
+    // machine, not the Vera host, and a ws:// url is mixed-content-blocked on
+    // an https page. The /ws/stream route lives on the same app that serves
+    // this panel, so rebuild it same-origin (mirrors agent_loop_ouput.js).
+    let wsUrl = ev.ws_url;
+    try{
+      const u = new URL(ev.ws_url);
+      if(location.host && (u.hostname === 'localhost' || u.hostname === '127.0.0.1')){
+        wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + u.pathname;
+      }else if(location.protocol === 'https:' && u.protocol === 'ws:'){
+        wsUrl = 'wss://' + u.host + u.pathname;
+      }
+    }catch(_){}
     // Open WebSocket
     try{
-      const ws = new WebSocket(ev.ws_url);
+      const ws = new WebSocket(wsUrl);
       ws.onmessage = e => {
         try{
           const m = JSON.parse(e.data);
@@ -4724,7 +4935,13 @@ function alAddProgress(ev){
     }else if(rt==='research.completed'){
       body = `✓ job <b>${esc(data.job_id||'')}</b> done · ${data.elapsed?Math.round(data.elapsed)+'s':''} · ${data.cit_count||0} citations`;
     }else if(rt==='research.error'){
-      body = `<span style="color:var(--err)">✗ research error: ${esc(data.error||'?')}</span>`;
+      // Non-fatal sub-step failure — the job keeps running. Show each
+      // distinct message once per strip instead of spamming a line per call.
+      const msg = (data.error||data.text||data.message||'?').trim();
+      const seen = strip._resErrSeen || (strip._resErrSeen = new Set());
+      if(seen.has(msg)) return;
+      seen.add(msg);
+      body = `<span style="color:var(--err)">✗ research error: ${esc(msg)}</span>`;
     }else{
       body = esc(JSON.stringify(data).slice(0,180));
     }
@@ -5205,7 +5422,7 @@ function alStop(){
       }).catch(()=>{});
     }catch(_){}
   }
-  AL_RUNNING=false;
+  _alSetRunning(false);
   document.getElementById('alRunBtn').disabled=false;
   document.getElementById('alStopBtn').disabled=true;
 }
@@ -5230,6 +5447,63 @@ async function regLoad(){
         <button class="btn xs danger" onclick="regUnregister('${esc(c.cap_name)}')">Unregister</button>
       </div>
     </div>`).join('');
+}
+// ── Specialist loop profiles (loops.* caps) ─────────────────────────────────
+let LOOP_PROFILES = [];
+async function loopsLoad(){
+  const host = document.getElementById('loopsList');
+  if(host) host.innerHTML = '<div class="empty">Loading…</div>';
+  const res = await api('/loops/profiles');
+  LOOP_PROFILES = res?.profiles || [];
+  const badge = document.getElementById('nav-loops-count');
+  if(badge) badge.textContent = LOOP_PROFILES.length || '—';
+  alPopulateProfiles();
+  if(!host) return;
+  if(!LOOP_PROFILES.length){ host.innerHTML='<div class="empty">No loop profiles registered (loop_profiles.py)</div>'; return; }
+  host.innerHTML = LOOP_PROFILES.map(p=>`<div class="dag-card" style="${p.available?'':'opacity:.55'}">
+      <div class="dag-card-hd">
+        <span class="dag-card-name">${esc(p.icon||'↻')} ${esc(p.label)}</span>
+        <span class="dag-card-cat">${esc(p.engine)}</span>
+      </div>
+      <div class="dag-card-desc">${esc(p.description||'')}</div>
+      <div style="font-size:9.5px;color:var(--dim);margin:4px 0;line-height:1.5">
+        <b>agent:</b> ${esc(p.agent||'—')} · <b>caps:</b> ${p.cap_count}${p.panels?' · <b>panels</b>':''}
+        ${(p.family&&p.family.length)?'<br><b>family:</b> '+esc(p.family.join(', ')):''}
+      </div>
+      <div class="action-row">
+        <button class="btn xs primary" onclick="loopsRunProfile('${esc(p.id)}')" ${p.available?'':'disabled title="engine cap not registered"'}>Run</button>
+      </div>
+    </div>`).join('');
+}
+function alPopulateProfiles(){
+  const sel = document.getElementById('alProfile');
+  if(!sel || !LOOP_PROFILES.length) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">— none (manual config) —</option>' +
+    LOOP_PROFILES.map(p=>`<option value="${esc(p.id)}">${esc(p.icon||'')} ${esc(p.label)} (${esc(p.engine)})</option>`).join('');
+  sel.value = cur;
+}
+function alApplyProfile(id){
+  const desc = document.getElementById('alProfileDesc');
+  const p = LOOP_PROFILES.find(x=>x.id===id);
+  if(!p){ if(desc) desc.textContent=''; return; }
+  // Point the version select + agent at the profile; the server merges the
+  // profile's caps/skills/defaults from the `profile` body field at run time.
+  const vsel = document.getElementById('alVersion');
+  if(vsel){ vsel.value = p.engine; if(typeof alVersionChanged==='function') alVersionChanged(); }
+  const asel = document.getElementById('alAgentSel');
+  if(asel && p.agent){ asel.value = p.agent; }
+  if(desc) desc.innerHTML = esc(p.description||'') +
+    `<br><span style="color:var(--acc4)">${esc(p.agent||'')}</span> · ${p.cap_count} caps${p.panels?' · panels':''}`;
+}
+async function loopsRunProfile(id){
+  dwSection('agentloop');
+  if(!LOOP_PROFILES.length) await loopsLoad();
+  const sel = document.getElementById('alProfile');
+  if(sel){ sel.value = id; alApplyProfile(id); }
+  const goalEl = document.getElementById('alGoal');
+  if(goalEl){ goalEl.focus(); }
+  toast('Loaded "'+id+'" profile — enter a goal and Run','ok');
 }
 async function regUnregister(capName){
   if(!confirm('Unregister live capability "'+capName+'"?\n\n(The stored DAG is NOT deleted.)')) return;
@@ -5989,7 +6263,7 @@ function jobsAutoLoop(){
   }, 2000);
 }
 
-document.addEventListener('DOMContentLoaded', ()=>{ navCounts(); libLoad(); palLoadTree(); alLoadDiscoveryOptions(); alLoadPresets(); jobsAutoLoop(); jobsRefresh(); });
+document.addEventListener('DOMContentLoaded', ()=>{ navCounts(); libLoad(); palLoadTree(); alLoadDiscoveryOptions(); alLoadPresets(); jobsAutoLoop(); jobsRefresh(); setTimeout(()=>{ try{ alResumeLoop(); }catch(_){} }, 800); });
 if(document.readyState!=='loading'){ navCounts(); libLoad(); palLoadTree(); alLoadDiscoveryOptions(); alLoadPresets(); jobsAutoLoop(); jobsRefresh(); }
 </script>
 <script src="/ui/vera-ui.js"></script>
@@ -6035,6 +6309,11 @@ if(document.readyState!=='loading'){ navCounts(); libLoad(); palLoadTree(); alLo
   }, 2000);
 })();
 </script>
+<!-- <vera-agent-loop-config> — the FULL v5/v6/v7 config surface (same element the
+     chat/dream/netmap panels use). Lets the workshop configure the newer engines
+     (adaptive controller, branching, tiering, per-step finalise, dream persistence,
+     ephemeral-specialist knobs) instead of only the hand-rolled v1–v4 controls. -->
+<script id="vera-agent-loop-config-js-include" src="/ui/elements/agent_loop_config.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>

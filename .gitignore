@@ -27,6 +27,7 @@ lib/
 **/*.sqlite
 **/*.db
 **/*.log
+**/*.log.*
 **/*.jsonl
 **/*.sqlite3
 
@@ -48,3 +49,10 @@ vera/mesh/firmware/bin/.cache/
 **recover-server.sh
 
 # Cleanup
+
+# Dream per-cycle output workspaces (runtime artifacts)
+vera/dream/outputs/
+
+# Loop Lab CI/CD dev sandbox
+.loop-lab-worktrees/
+docker-compose.dev.yml

@@ -75,22 +75,80 @@ This is the payoff. Every Vera process is also a worker (see `capability_orchest
 | `docker.worker.list` | List Vera worker containers |
 | `docker.worker.stop` | Stop a worker container |
 | `docker.worker.logs` | Follow a worker's logs |
+| `docker.image.ensure` | Guarantee a **local-only** image exists on a host — build from this repo's Dockerfile or `save`/`load`-transfer from the local daemon, never a registry pull |
 
-`docker.worker.spawn` uses `VERA_WORKER_IMAGE` (default `vera:latest`). This means you can scale capability throughput by spawning workers onto any registered Docker host — local, a TCP daemon, or over SSH — straight from the harness.
+`docker.worker.spawn` uses `VERA_WORKER_IMAGE` (default `vera:latest`). The Vera
+image is **not on Docker Hub** — a bare `docker run vera:latest` on a fresh host
+fails with *pull access denied*. Spawn therefore calls `docker.image.ensure`
+first (`ensure_image=true` by default): if the host already has the image it's a
+no-op; if the local daemon has it and the host is remote, the image is streamed
+over with `docker save | docker load`; otherwise it is **built from the repo's
+Dockerfile** — `docker -H <host> build` ships the local build context, so this
+works for ssh/tcp hosts too. `docker compose build` tags the same `vera:latest`
+(the compose service declares `image: vera:latest`). This means you can scale
+capability throughput by spawning workers onto any registered Docker host —
+local, a TCP daemon, or over SSH — straight from the harness.
+
+### Provisioning the backing stores
+
+The compose stack's backing stores (redis, postgres, chromadb, neo4j and the
+garage blob store) can be provisioned onto any registered Docker host with the
+`provision.store.*` group (see `vera/provisioning/stores_capabilities.py` and
+the **Provision → Docker** pane):
+
+| Cap | Purpose |
+|---|---|
+| `provision.stores` | Catalog (image, ports, volumes per store) |
+| `provision.store.deploy` | Run one store — or `all` — as `vera-<store>` with named data volumes; garage gets a generated config + automatic admin-API bootstrap |
+| `provision.store.status` | Container state + reachability probe per store |
+| `provision.store.remove` | Remove the container (volumes kept unless `purge_volumes`) |
+| `provision.store.garage.bootstrap` | Layout / key import / bucket+grant via the garage **admin API** — idempotent; also repairs a local stack whose `garage-init` never completed (`fabric.objects.status` → AccessDenied) |
 
 ---
 
-## 6. Configuration
+## 6. Build service — `vera-builder`
+
+A dedicated compilation container so Vera never needs a toolchain in its own image. It ships **arduino-cli + the ESP32 Arduino core, PlatformIO, gcc/g++/make/cmake/ninja, esptool and mpy-cross** behind a small HTTP API ([`vera/build/builder_service.py`](../vera/build/builder_service.py)); Vera reaches it at `VERA_BUILDER_URL` over `vera-net`.
+
+| Endpoint (builder) | Vera capability | What it does |
+|---|---|---|
+| `POST /build/arduino` | `build.arduino`, `mesh.firmware.build` | `arduino-cli compile` → a **merged, flash-at-0x0** `.bin` (bootloader+partitions+app via `esptool merge_bin`) dropped into the mesh firmware catalog so the panel flasher can pick it up |
+| `POST /build/platformio` | `build.platformio` | `pio run` for any PlatformIO board/framework (PlatformIO auto-installs platforms + `lib_deps` in its own per-project env) |
+| `POST /build/python` | `build.python` | run Python in a **fresh, isolated virtualenv** — installs `requirements`, runs, discards the env |
+| `POST /build/exec` | `build.run` | run an arbitrary build command (make/cmake/cargo/go/tsc/…) in a sandbox; optional `apt` (system pkgs), `pip` (into a venv) and `env` |
+| `GET /health` | `build.status` | which toolchains + installed cores/libs are present + reachability |
+
+**Automatic dependency management.** The builder installs what a build needs rather than requiring a pre-baked image:
+
+- **Arduino** — `build.arduino`/`mesh.firmware.build` install the **board core** for the FQBN if it's missing (`esp32:esp32`, `arduino:avr`, `rp2040:rp2040`, `STMicroelectronics:stm32`, … — third-party cores via `board_urls`), then scan the sketch's `#include`s and auto-install the **libraries** they map to (`auto_libs`, on by default; skips core-bundled/std headers, resolves the rest via the library index). ArduinoJson is pinned to **v6** (the node sketch uses the v6 API). The returned `deps` lists what was installed.
+- **Python** — `build.python` (and `build.run` with `pip`/`venv`) provisions a **per-call virtualenv**, installs the requested packages (or a `requirements.txt` in `files`) into it, runs, then throws it away — builds never pollute each other or the image.
+- **System** — `build.run` can `apt`-install packages for a build (not isolated; persists in the running container until restart).
+- Cores/libs and PlatformIO platforms are cached in the `builder-cache` / `builder-pio` volumes, so the second build of a given kind is fast.
+
+`mesh.firmware.build` prefers the builder and falls back to a local `arduino-cli` if one is installed; with neither it returns a hint to start the container or build in the Arduino IDE. Its default FQBN is `esp32:esp32:esp32s3:CDCOnBoot=default` (ESP32-S3 with USB-CDC **off**) because the reference display board wires the parallel TFT's D4/D5 onto the S3's native USB pins (GPIO19/20) — CDC-off frees them. Source is passed inline as JSON (`{files:{path:content}}`); artifacts come back base64-encoded, so no shared volume is needed.
+
+> **Security:** `build.run` / `/build/exec` runs arbitrary commands — it's a self-hosted build runner (like a CI worker). Keep it on `vera-net` / a trusted LAN; don't expose the port to untrusted networks.
+
+> **First build is heavy:** `docker compose build vera-builder` installs the ESP32 toolchains (~2 GB), then caches them in the `builder-cache` volume.
+
+```bash
+docker compose up -d --build vera-builder     # bring up the build farm
+```
+
+## 7. Configuration
 
 | Env var | Default | Purpose |
 |---|---|---|
 | `VERA_DOCKER_HOSTS` | `~/.vera_docker_hosts.json` | Host-registry path |
 | `VERA_WORKER_IMAGE` | `vera:latest` | Image used by `docker.worker.spawn` |
 | `DOCKER_SOCK` | `/var/run/docker.sock` | Local unix socket path |
+| `VERA_BUILDER_URL` | `http://vera-builder:8080` | Build service URL (native orchestrator: `http://localhost:8785`) |
+| `BUILDER_PORT` | `8785` | Host port the builder is published on |
+| `BUILDER_DEFAULT_FQBN` | `esp32:esp32:esp32` | Default board for `build.arduino` when unspecified |
 
 ---
 
-## 7. UI
+## 8. UI
 
 The Docker pane lives inside the **Workers** tab (`workers_ollama_panel.html` / the workers panels). It lists hosts, containers, and images via the engine proxy, and exposes the lifecycle + worker-spawn actions. Because lifecycle actions are sandbox-gated, the same `<vera-sandbox-controls>` editor shown there governs whether they run.
 

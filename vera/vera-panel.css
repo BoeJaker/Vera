@@ -186,6 +186,32 @@ body.lhm-collapsed #sidebar[data-vera-lhm] #lhm-toggle svg { transform: rotate(1
 .opt > input:disabled ~ .opt-tick { opacity: .45; }
 .opt.disabled, .opt:has(> input:disabled) { opacity: .5; cursor: not-allowed; }
 
+/* ── Loading overlay + spinner ────────────────────────────────────────────
+   Reusable across the harness and every panel. Drop a
+   <div class="vera-loading"><div class="vera-spinner"></div></div> over any
+   position:relative container (iframe wrapper, widget body, view pane) while
+   its content loads/renders, then remove it. Theme-driven colours. */
+.vera-loading {
+  position: absolute; inset: 0; z-index: 40;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  background: color-mix(in srgb, var(--bg1, #16181d) 55%, transparent);
+  backdrop-filter: blur(1px);
+  animation: veraLoadingIn .12s ease-out;
+}
+.vera-loading.solid { background: var(--bg1, #16181d); }
+.vera-spinner {
+  width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0;
+  border: 2.5px solid var(--border2, #333); border-top-color: var(--acc, #5a9e8f);
+  animation: veraSpin .7s linear infinite;
+}
+.vera-spinner.sm { width: 16px; height: 16px; border-width: 2px; }
+.vera-loading .lbl {
+  font-family: var(--mono, ui-monospace, monospace); font-size: 10.5px;
+  color: var(--dim2, #8a7e70); letter-spacing: .5px;
+}
+@keyframes veraSpin { to { transform: rotate(360deg); } }
+@keyframes veraLoadingIn { from { opacity: 0; } to { opacity: 1; } }
+
 /* ── Chip multiselect ─────────────────────────────────────────────────── */
 .chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 14px; border: 1px solid var(--border); background: var(--bg2); color: var(--dim2, var(--dim)); font-size: 10px; cursor: pointer; user-select: none; transition: border-color .13s, background .13s, color .13s; }

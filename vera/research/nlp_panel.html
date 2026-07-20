@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="ash">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Vera / NLP Addons</title>
@@ -317,7 +322,20 @@ const VERA_API = (()=>{
     if (window.parent !== window && window.parent._veraResearcherUrl)
       return window.parent._veraResearcherUrl.replace(/\/$/, '');
   } catch(e) {}
-  return (localStorage.getItem('cfg-url') || ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8765')).replace(/\/$/, '');
+  // Standalone fallback: researcher_api is co-located on the orchestrator that
+  // served this page. The old :8765 default is dead (404) / mixed-content on
+  // an https page, so honour a stored cfg-url only if it isn't that, else use
+  // this page's own origin.
+  try {
+    const s = localStorage.getItem('cfg-url');
+    if (s) {
+      const u = new URL(s);
+      const mixed = (location.protocol === 'https:' && u.protocol === 'http:');
+      const deadPort = (u.port === '8765' && location.port !== '8765');
+      if (!mixed && !deadPort) return (u.protocol + '//' + u.host);
+    }
+  } catch(e) {}
+  return window.location.origin.replace(/\/$/, '');
 })();
 // Capability NLP route prefix — when in harness, NLP endpoints are at /nlp/*
 const _NLP_PREFIX = _parentBase ? '/api/nlp' : '';
@@ -1339,7 +1357,7 @@ async function checkHealth() {
 
 function showSettings() {
   const currentNlp  = localStorage.getItem('vera-nlp-url')  || ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8766');
-  const currentVera = localStorage.getItem('cfg-url') || ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8765');
+  const currentVera = localStorage.getItem('cfg-url') || (typeof VERA_API === 'string' ? VERA_API : window.location.origin);
   const nlp  = prompt('NLP engine URL:', currentNlp);
   if (nlp === null) return;
   const vera = prompt('Vera API URL:', currentVera);

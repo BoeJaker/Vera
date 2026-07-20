@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="dusk">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Vera / Identity</title>
@@ -18,7 +23,7 @@ input:focus,select:focus{border-color:var(--acc)}
 #top .logo{color:var(--acc);font-weight:700;white-space:nowrap}
 .spacer{flex:1}
 .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:6px;background:var(--bg3);border:1px solid var(--border2);color:var(--text);font-size:12px;white-space:nowrap}
-.btn:hover{border-color:var(--acc)}.btn.pri{background:var(--acc);border-color:var(--acc);color:#06121c;font-weight:700}
+.btn:hover{border-color:var(--acc)}.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#06121c);font-weight:700}
 .btn.gho{background:transparent}.btn.sm{padding:6px 9px;font-size:11px}.btn:disabled{opacity:.4;cursor:not-allowed}
 .iconbtn{padding:8px 10px;border-radius:6px;background:var(--bg3);border:1px solid var(--border2);font-size:14px;line-height:1}
 #body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px;padding-bottom:60px}
@@ -33,7 +38,7 @@ input:focus,select:focus{border-color:var(--acc)}
 .hint{font-size:10.5px;color:var(--dim)}
 .list-row{display:flex;align-items:center;gap:8px;padding:7px 9px;background:var(--bg1);border:1px solid var(--border);border-radius:6px;font-size:12px}
 .list-row .k{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mono-out{background:#000;border:1px solid var(--border);border-radius:6px;padding:8px;font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow:auto;display:none}
+.mono-out{background:var(--bg0);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow:auto;display:none}
 .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:80;background:var(--bg3);border:1px solid var(--border2);padding:10px 16px;border-radius:8px;font-size:12px;opacity:0;transition:.2s;pointer-events:none}
 .toast.on{opacity:1}.toast.err{border-color:var(--err);color:var(--err)}
 </style>
@@ -49,9 +54,48 @@ input:focus,select:focus{border-color:var(--acc)}
   </div>
   <div id="body">
     <div class="wrap">
+      <!-- ── lldap — the recommended lightweight directory ─────────────────── -->
+      <div class="card span2">
+        <h3>Directory backend · lldap <span id="lldapBadge" class="badge" style="margin-left:auto">—</span></h3>
+        <div class="hint" style="font-size:11px;line-height:1.6;color:var(--dim2)">
+          <b style="color:var(--text)">Recommended.</b> lldap is a lightweight LDAP
+          directory (users + groups) that container-apps bind to for login. It ships
+          its own web admin and pairs cleanly with <b>step-ca</b> (which already does
+          your PKI + SSH certs) — no overlap. Deploy it from <b>Provision → Security</b>,
+          or here; then manage users/groups in its admin. Prefer this unless you
+          specifically need Kerberos SSO, integrated DNS or an AD trust — that's when
+          the heavier <b>FreeIPA</b> option below earns its keep.
+        </div>
+        <div class="row" style="align-items:center;flex:0 0 auto">
+          <select id="lldapHost" style="width:auto;min-width:150px"></select>
+          <button class="btn" style="flex:0 0 auto" onclick="lldapDeploy()">Deploy / start lldap</button>
+          <a id="lldapAdmin" class="btn" style="flex:0 0 auto;display:none" target="_blank">Open lldap admin ↗</a>
+          <button class="btn gho" style="flex:0 0 auto" onclick="lldapRefresh()">⟳</button>
+        </div>
+
+        <!-- Directory management (shown once lldap is reachable) -->
+        <div id="lldapManage" style="display:none;flex-direction:column;gap:10px;margin-top:4px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+            <div>
+              <div style="font-size:10px;font-weight:600;color:var(--acc);margin-bottom:6px">Users <span id="luCount" class="hint"></span></div>
+              <div id="lldapUsers" style="display:flex;flex-direction:column;gap:4px;max-height:180px;overflow:auto"></div>
+              <div class="row" style="margin-top:6px"><input id="luLogin" placeholder="login" style="flex:1"><input id="luEmail" placeholder="email" style="flex:1.4"></div>
+              <div class="row" style="margin-top:4px"><input id="luName" placeholder="display name (optional)" style="flex:1"><button class="btn" style="flex:0 0 auto" onclick="lldapCreateUser()">+ User</button></div>
+            </div>
+            <div>
+              <div style="font-size:10px;font-weight:600;color:var(--acc2);margin-bottom:6px">Groups <span id="lgCount" class="hint"></span></div>
+              <div id="lldapGroups" style="display:flex;flex-direction:column;gap:4px;max-height:180px;overflow:auto"></div>
+              <div class="row" style="margin-top:6px"><input id="lgName" placeholder="group name" style="flex:1"><button class="btn" style="flex:0 0 auto" onclick="lldapCreateGroup()">+ Group</button></div>
+            </div>
+          </div>
+          <div class="hint">Set or reset a user's password in lldap's own admin (Open lldap admin ↗) — it uses a secure OPAQUE flow that can't be done over a plain API call.</div>
+        </div>
+        <div id="lldapOut" class="mono-out" style="display:none"></div>
+      </div>
+
       <!-- Connect -->
       <div class="card span2">
-        <h3>① Connect FreeIPA <span id="cfgBadge" class="badge">edit &amp; save</span></h3>
+        <h3>① Connect FreeIPA <span class="badge" style="background:none;border-color:var(--dim);color:var(--dim2)">advanced / optional</span> <span id="cfgBadge" class="badge">edit &amp; save</span></h3>
         <div class="row">
           <div class="field"><label>IPA URL</label><input id="cUrl" placeholder="https://ipa.lan"></div>
           <div class="field"><label>Admin user</label><input id="cUser" placeholder="admin"></div>
@@ -113,6 +157,82 @@ function toast(m,e){const t=$('#toast');t.textContent=m;t.className='toast on'+(
 async function api(p,m='GET',b){const o={method:m,headers:{'Content-Type':'application/json'}};if(b)o.body=JSON.stringify(b);const r=await fetch(p,o);if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}
 function show(id,txt){const o=$(id);o.style.display='block';o.textContent=txt;}
 
+/* ── lldap (recommended directory) — deploy via secprov, link its own admin ── */
+async function lldapHosts(){
+  try{ const j=await api('/workers/docker/hosts'); const hosts=j.hosts||[];
+    $('#lldapHost').innerHTML=hosts.map(h=>`<option value="${esc(h.id)}"${h.id==='local'?' selected':''}>${esc(h.label||h.id)}</option>`).join('')||'<option value="local">local</option>';
+  }catch(e){ $('#lldapHost').innerHTML='<option value="local">local</option>'; }
+}
+let LLDAP_HOST='local';
+async function lldapRefresh(){
+  LLDAP_HOST=$('#lldapHost').value||'local';
+  const b=$('#lldapBadge'), a=$('#lldapAdmin'), mng=$('#lldapManage');
+  // identity.lldap.status auto-discovers the deployed instance + logs in.
+  let s={};
+  try{ s=await api('/identity/lldap/status?host_id='+encodeURIComponent(LLDAP_HOST)); }catch(e){}
+  if(s.reachable){
+    b.textContent='running · '+(s.users||0)+' users'; b.className='badge ok';
+    a.href=s.admin_url||s.url; a.style.display='';
+    mng.style.display='flex';
+    loadLldapDir();
+  } else if(s.deployed){
+    b.textContent='deployed · not reachable'; b.className='badge warn';
+    if(s.url){ a.href=s.url; a.style.display=''; }
+    mng.style.display='none';
+  } else {
+    b.textContent='not deployed'; b.className='badge'; a.style.display='none';
+    mng.style.display='none';
+  }
+}
+async function loadLldapDir(){
+  try{
+    const [u,g]=await Promise.all([
+      api('/identity/lldap/users?host_id='+encodeURIComponent(LLDAP_HOST)),
+      api('/identity/lldap/groups?host_id='+encodeURIComponent(LLDAP_HOST))]);
+    const users=u.users||[], groups=g.groups||[];
+    $('#luCount').textContent=users.length?('· '+users.length):'';
+    $('#lgCount').textContent=groups.length?('· '+groups.length):'';
+    $('#lldapUsers').innerHTML=users.length?users.map(x=>
+      `<div class="list-row"><span class="k"><b>${esc(x.id)}</b> <span class="hint">${esc(x.email||'')}</span></span>`+
+      `<button class="btn sm gho" onclick="lldapDelUser('${esc(x.id)}')" title="Delete">✕</button></div>`).join('')
+      :'<span class="hint" style="color:var(--dim)">no users yet</span>';
+    $('#lldapGroups').innerHTML=groups.length?groups.map(x=>
+      `<div class="list-row"><span class="k">${esc(x.display_name)} <span class="hint">#${esc(x.id)}</span></span></div>`).join('')
+      :'<span class="hint" style="color:var(--dim)">no groups yet</span>';
+  }catch(e){}
+}
+async function lldapCreateUser(){
+  const id=$('#luLogin').value.trim(), email=$('#luEmail').value.trim();
+  if(!id||!email) return toast('login and email required',true);
+  try{ const r=await api('/identity/lldap/user/create','POST',{host_id:LLDAP_HOST,id,email,display_name:$('#luName').value.trim()});
+    if(r.error) return toast(r.error,true);
+    toast('user '+id+' created'); ['luLogin','luEmail','luName'].forEach(i=>$('#'+i).value=''); loadLldapDir();
+  }catch(e){ toast(e.message,true); }
+}
+async function lldapCreateGroup(){
+  const name=$('#lgName').value.trim(); if(!name) return toast('group name required',true);
+  try{ const r=await api('/identity/lldap/group/create','POST',{host_id:LLDAP_HOST,name});
+    if(r.error) return toast(r.error,true);
+    toast('group '+name+' created'); $('#lgName').value=''; loadLldapDir();
+  }catch(e){ toast(e.message,true); }
+}
+async function lldapDelUser(id){
+  if(!confirm('Delete user '+id+'?')) return;
+  try{ const r=await api('/identity/lldap/user/delete','POST',{host_id:LLDAP_HOST,user_id:id});
+    if(r.error) return toast(r.error,true); toast('deleted '+id); loadLldapDir();
+  }catch(e){ toast(e.message,true); }
+}
+async function lldapDeploy(){
+  const host=$('#lldapHost').value||'local';
+  const o=$('#lldapOut'); o.style.display='block'; o.textContent='deploying lldap on '+host+'… (image pull can take a while)';
+  try{ const r=await api('/provision/security/deploy','POST',{host_id:host,service:'lldap'});
+    o.textContent=JSON.stringify(r,null,2);
+    const svc=(r.services||{}).lldap||{};
+    if(svc.secrets) toast('Admin password shown ONCE in the output — save it');
+    lldapRefresh();
+  }catch(e){ o.textContent='Error: '+e.message; toast(e.message,true); }
+}
+
 async function loadCfg(){
   let c={}; try{ c=await api('/identity/config'); }catch(e){}
   $('#cUrl').value=c.ipa_url||''; $('#cUser').value=c.ipa_user||'admin'; $('#cDomain').value=c.ipa_domain||'';
@@ -162,7 +282,7 @@ async function addTrust(){
     if(r.error)return show('#tOut','Error: '+r.error); show('#tOut','Trust established with '+r.domain);
   }catch(e){ toast(e.message,true); }
 }
-(async()=>{ await loadCfg(); refresh(); })();
+(async()=>{ await loadCfg(); refresh(); await lldapHosts(); lldapRefresh(); })();
 </script>
 </body>
 </html>

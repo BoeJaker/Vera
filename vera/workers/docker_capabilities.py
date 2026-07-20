@@ -43,11 +43,13 @@ Env:
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
 import shlex
 import sys
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -193,6 +195,27 @@ def _normalize_tcp(url: str) -> str:
     return u.rstrip("/")
 
 
+def _socket_from_url(url: str) -> str:
+    """If `url` denotes a unix socket (unix:///… or a bare /…/*.sock path),
+    return the socket path, else "". Tolerates a stray scheme/slash prefix the UI
+    may prepend (e.g. 'https://unix:///var/run/docker.sock'), so a host saved as
+    tcp by mistake still resolves to the local socket instead of httpx trying to
+    dial host 'unix' → HTTP 502."""
+    u = (url or "").strip()
+    low = u.lower()
+    if low.startswith("https://"):
+        u = u[8:]
+    elif low.startswith("http://"):
+        u = u[7:]
+    s = u.lstrip("/")  # tolerate stray leading slashes before the scheme
+    if s.lower().startswith("unix://"):
+        p = s[len("unix://"):]
+        return p if p.startswith("/") else "/" + p
+    if u.startswith("/") and u.endswith(".sock"):
+        return u
+    return ""
+
+
 @capability(
     "docker.hosts.list",
     http_method="GET", http_path="/workers/docker/hosts", http_tags=["docker"],
@@ -221,6 +244,12 @@ async def cap_docker_hosts_save(
     kind = (kind or "tcp").strip().lower()
     if kind not in ("local", "tcp", "ssh"):
         return {"ok": False, "error": "kind must be local|tcp|ssh"}
+    # A unix-socket given as a tcp url is really a local host (dialing it as tcp
+    # would 502). Coerce it so it's stored — and dialed — correctly.
+    if kind == "tcp":
+        _sock = _socket_from_url(url)
+        if _sock:
+            kind, socket, url = "local", (socket or _sock), ""
     if kind == "tcp" and not url:
         return {"ok": False, "error": "url required for tcp host"}
     if kind == "ssh" and not ssh_host_id:
@@ -280,6 +309,13 @@ async def _engine_request(rec: dict, method: str, api_path: str,
         api_path = "/" + api_path
 
     if kind == "tcp":
+        # Recover hosts mistakenly saved as tcp with a unix-socket url.
+        sock = _socket_from_url(rec.get("url", ""))
+        if sock and os.path.exists(sock):
+            transport = httpx.AsyncHTTPTransport(uds=sock)
+            async with httpx.AsyncClient(transport=transport, timeout=timeout) as c:
+                r = await c.request(method, "http://localhost" + api_path)
+                return r.status_code, r.content, r.headers.get("content-type", "application/json")
         base = _normalize_tcp(rec.get("url", ""))
         if not base:
             return 503, b'{"message":"tcp host has no url"}', "application/json"
@@ -358,6 +394,17 @@ async def cap_docker_ping(host_id: str = "", trace_id=None) -> Dict:
         return {"ok": False, "error": str(e), "host_id": rec["id"]}
 
 
+async def _parse_engine_json(body: bytes, default):
+    """Parse an Engine API response body; big ones (containers/images on a
+    busy host — a captured 1.7s loop stall in docker.ps) off the loop."""
+    try:
+        if body and len(body) > 131072:
+            return await asyncio.to_thread(json.loads, body)
+        return json.loads(body) if body else default
+    except Exception:
+        return default
+
+
 @capability(
     "docker.ps",
     http_method="POST", http_path="/workers/docker/ps", http_tags=["docker"],
@@ -372,9 +419,8 @@ async def cap_docker_ps(host_id: str = "", all: bool = True, trace_id=None) -> D
     status, body, _ = await _engine_request(rec, "GET", f"/containers/json?all={'true' if all else 'false'}")
     if status != 200:
         return {"error": f"HTTP {status}", "containers": []}
-    try:
-        rows = json.loads(body or b"[]")
-    except Exception:
+    rows = await _parse_engine_json(body, [])
+    if not isinstance(rows, list):
         rows = []
     return {"host_id": rec["id"], "containers": rows, "count": len(rows)}
 
@@ -393,9 +439,8 @@ async def cap_docker_images(host_id: str = "", trace_id=None) -> Dict:
     status, body, _ = await _engine_request(rec, "GET", "/images/json")
     if status != 200:
         return {"error": f"HTTP {status}", "images": []}
-    try:
-        rows = json.loads(body or b"[]")
-    except Exception:
+    rows = await _parse_engine_json(body, [])
+    if not isinstance(rows, list):
         rows = []
     return {"host_id": rec["id"], "images": rows, "count": len(rows)}
 
@@ -634,6 +679,160 @@ async def cap_docker_rm(host_id: str = "", container: str = "", force: bool = Fa
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# IMAGE ENSURE  —  local-only images (vera:latest is NOT on Docker Hub)
+# ─────────────────────────────────────────────────────────────────────────────
+# .../Vera/vera/workers/docker_capabilities.py → parents[2] == repo root, where
+# the Dockerfile lives. `docker -H <remote> build <repo>` ships this local
+# context to the remote daemon, so building works for ssh/tcp hosts too.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+async def _image_present(rec: dict, image: str) -> bool:
+    try:
+        status, _, _ = await _engine_request(rec, "GET", f"/images/{image}/json")
+        return status == 200
+    except Exception:
+        return False
+
+
+@capability(
+    "docker.image.ensure",
+    http_method="POST", http_path="/workers/docker/image/ensure", http_tags=["docker"],
+    memory="off",
+    description="Make sure an image exists on a Docker host WITHOUT pulling from "
+                "a registry — for local-only images like the Vera one "
+                "('vera:latest' does not exist on Docker Hub; a docker run there "
+                "fails with 'pull access denied'). If missing, either BUILDS it "
+                "from this repo's Dockerfile (works for local, tcp and ssh hosts "
+                "— the build context is sent from this machine) or TRANSFERS an "
+                "image the local daemon already has via docker save/load. "
+                "Inputs: host_id (str), image (str — default VERA_WORKER_IMAGE/"
+                "'vera:latest'), strategy ('auto'|'build'|'transfer'|"
+                "'build_transfer' — auto prefers transfer when the local daemon "
+                "already has the image; for a remote target with a working local "
+                "daemon it builds locally then transfers, since streaming a build "
+                "context over ssh is fragile; else builds on the target), context "
+                "(str — build dir, default the Vera repo root), dockerfile (str), "
+                "force (bool=false — REBUILD from source even if the image already "
+                "exists; use to refresh a stale image, e.g. a dev sandbox running "
+                "an old vera:latest), timeout (int=1800). "
+                "Output: {ok, present, action, image, host_id, log}.",
+)
+async def cap_docker_image_ensure(host_id: str = "", image: str = "",
+                                  strategy: str = "auto", context: str = "",
+                                  dockerfile: str = "", timeout: int = 1800,
+                                  force: bool = False,
+                                  trace_id=None) -> Dict:
+    rec = _get_host(host_id)
+    if not rec:
+        return {"ok": False, "error": f"unknown host: {host_id}"}
+    image = image or os.getenv("VERA_WORKER_IMAGE", "vera:latest")
+    present = await _image_present(rec, image)
+    # force=True rebuilds even when present (refresh a stale image). Without it,
+    # an existing image short-circuits — which is why a stale sandbox image is
+    # never refreshed by a plain `sandbox up`.
+    if present and not force:
+        return {"ok": True, "present": True, "action": "none",
+                "image": image, "host_id": rec["id"]}
+
+    strategy = (strategy or "auto").strip().lower()
+    local_rec = _get_host("local")
+    is_remote = rec.get("id") != (local_rec or {}).get("id")
+    local_has = (await _image_present(local_rec, image)) \
+        if (is_remote and local_rec) else False
+    local_up = local_has
+    if is_remote and local_rec and not local_has:
+        try:
+            st, _, _ = await _engine_request(local_rec, "GET", "/_ping", timeout=5)
+            local_up = st == 200
+        except Exception:
+            local_up = False
+    if strategy == "auto":
+        # A forced refresh must actually REBUILD from source — never satisfy it
+        # by transferring a copy that may itself be stale. Build locally (and
+        # transfer to a remote target after).
+        if force and is_remote and local_up:
+            strategy = "build_transfer"
+        elif force:
+            strategy = "build"
+        elif is_remote and local_has:
+            strategy = "transfer"
+        elif is_remote and local_up:
+            # Build on the LOCAL daemon then save/load across. Building directly
+            # on the remote (`docker -H ssh://… build <ctx>`) streams the whole
+            # context through the ssh connhelper, which breaks on large repos
+            # ("write |1: broken pipe" on http://docker.example.com/…/build).
+            strategy = "build_transfer"
+        else:
+            strategy = "build"
+    if strategy == "transfer" and not local_has:
+        return {"ok": False, "error": f"transfer requested but the local daemon "
+                                      f"does not have {image} — build it first "
+                                      f"(strategy='build')",
+                "image": image, "host_id": rec["id"]}
+
+    log_tail = ""
+    if strategy in ("build", "build_transfer"):
+        build_rec = local_rec if strategy == "build_transfer" else rec
+        ctx = context or str(_REPO_ROOT)
+        args = ["build", "-t", image]
+        if dockerfile:
+            args += ["-f", dockerfile]
+        args += [ctx]
+        argv = await _docker_argv(build_rec, args)
+        ok, reason = _sandbox_gate(" ".join(argv), ctx)
+        if not ok:
+            await emit_event({"type": "exec.sandbox.blocked",
+                              "shell": "docker.image.ensure", "reason": reason})
+            return {"ok": False, "blocked": True, "error": f"sandbox: {reason}"}
+        await emit_event({"type": "docker.image.build", "image": image,
+                          "host_id": build_rec["id"], "context": ctx})
+        res = await _run_local(argv, timeout=int(timeout))
+        log_tail = ((res.get("stdout", "") or "") + "\n" +
+                    (res.get("stderr", "") or ""))[-2500:]
+        if not res.get("ok"):
+            return {"ok": False, "action": strategy, "image": image,
+                    "host_id": rec["id"], "log": log_tail,
+                    "error": (res.get("stderr") or "docker build failed")[-800:]}
+
+    if strategy in ("transfer", "build_transfer"):
+        # Two-step save/load through a temp tar — portable (no shell pipe),
+        # works from Windows-native runs too. Images can be GB-scale.
+        tmp = Path(tempfile.gettempdir()) / f"vera-img-{uuid.uuid4().hex[:8]}.tar"
+        try:
+            save_argv = await _docker_argv(local_rec, ["save", "-o", str(tmp), image])
+            load_argv = await _docker_argv(rec, ["load", "-i", str(tmp)])
+            for argv in (save_argv, load_argv):
+                ok, reason = _sandbox_gate(" ".join(argv))
+                if not ok:
+                    await emit_event({"type": "exec.sandbox.blocked",
+                                      "shell": "docker.image.ensure", "reason": reason})
+                    return {"ok": False, "blocked": True, "error": f"sandbox: {reason}"}
+            res = await _run_local(save_argv, timeout=int(timeout))
+            log_tail += ("\n" + (res.get("stderr", "") or ""))[-1500:]
+            if not res.get("ok"):
+                return {"ok": False, "action": strategy, "image": image,
+                        "host_id": rec["id"], "log": log_tail,
+                        "error": res.get("stderr") or "docker save failed"}
+            res = await _run_local(load_argv, timeout=int(timeout))
+            log_tail += ("\n" + (res.get("stdout", "") or "") +
+                         (res.get("stderr", "") or ""))[-1500:]
+            if not res.get("ok"):
+                return {"ok": False, "action": strategy, "image": image,
+                        "host_id": rec["id"], "log": log_tail,
+                        "error": res.get("stderr") or "docker load failed"}
+        finally:
+            try: tmp.unlink()
+            except Exception: pass
+
+    present = await _image_present(rec, image)
+    await emit_event({"type": "docker.image.ensured", "image": image,
+                      "host_id": rec["id"], "action": strategy, "ok": present})
+    return {"ok": present, "present": present, "action": strategy,
+            "image": image, "host_id": rec["id"], "log": log_tail}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # DOCKER WORKERS  —  run Vera in a container (joins the cluster)
 # ─────────────────────────────────────────────────────────────────────────────
 # Every Vera process auto-registers as a worker (capability_orchestration.
@@ -656,17 +855,22 @@ _DEFAULT_BACKEND_ENV = (
     description="Spin up a Vera worker container that joins the cluster. Runs the "
                 "Vera image (VERA_WORKER_IMAGE, default 'vera:latest') detached, "
                 "wired to the shared REDIS_URL so it auto-registers in WORKER_REGISTRY "
-                "and consumes the task stream. "
+                "and consumes the task stream. The Vera image is LOCAL-ONLY (not on "
+                "Docker Hub): when missing on the host it is built from this repo / "
+                "transferred from the local daemon first (docker.image.ensure) "
+                "instead of docker attempting a doomed registry pull. "
                 "Input: host_id (str — Docker host), name (str), image (str), "
                 "redis_url (str — default this orchestrator's), network (str), "
                 "gpus (str — e.g. 'all'), env (dict — extra -e vars), "
                 "inherit_backends (bool=true — copy POSTGRES/NEO4J/OLLAMA env), "
+                "ensure_image (bool=true — build/transfer the image if absent), "
                 "extra_args (str). Output: {ok, container_id, name, image, host_id}.",
 )
 async def cap_docker_worker_spawn(
     host_id: str = "", name: str = "", image: str = "", redis_url: str = "",
     network: str = "", gpus: str = "", env: Optional[Dict[str, str]] = None,
-    inherit_backends: bool = True, extra_args: str = "", trace_id=None,
+    inherit_backends: bool = True, ensure_image: bool = True,
+    extra_args: str = "", trace_id=None,
 ) -> Dict:
     rec = _get_host(host_id)
     if not rec:
@@ -674,6 +878,14 @@ async def cap_docker_worker_spawn(
     image = image or os.getenv("VERA_WORKER_IMAGE", "vera:latest")
     name = name or f"vera-worker-{uuid.uuid4().hex[:8]}"
     redis_url = redis_url or os.getenv("REDIS_URL", "") or getattr(cfg, "REDIS_URL", "redis://localhost:6379")
+
+    if ensure_image:
+        ens = await cap_docker_image_ensure(host_id=rec["id"], image=image)
+        if not ens.get("ok"):
+            return {"ok": False, "image": image, "host_id": rec["id"],
+                    "error": "image unavailable and could not be built/"
+                             "transferred: " + str(ens.get("error", ""))[:400],
+                    "ensure": {k: ens.get(k) for k in ("action", "log", "blocked")}}
 
     args = ["run", "-d", "--name", name,
             "--label", _WORKER_LABEL,
@@ -720,14 +932,15 @@ async def cap_docker_worker_spawn(
                 "Docker host. Sandbox-gated. Inputs: host_id (str!), image (str!), "
                 "name (str), ports (str — 'host:container,…' comma-sep), env (dict), "
                 "volumes (str — 'src:dst,…' comma-sep), network (str), restart "
-                "(str='unless-stopped'), extra_args (str), pull (bool=False — pull "
+                "(str='unless-stopped'), extra_args (str), command (str — container "
+                "command/args appended AFTER the image), pull (bool=False — pull "
                 "the image first). Output: {ok, container_id, name, image, host_id}.",
 )
 async def cap_docker_run(
     host_id: str = "", image: str = "", name: str = "", ports: str = "",
     env: Optional[Dict[str, str]] = None, volumes: str = "", network: str = "",
-    restart: str = "unless-stopped", extra_args: str = "", pull: bool = False,
-    trace_id=None,
+    restart: str = "unless-stopped", extra_args: str = "", command: str = "",
+    pull: bool = False, trace_id=None,
 ) -> Dict:
     rec = _get_host(host_id)
     if not rec:
@@ -750,6 +963,8 @@ async def cap_docker_run(
     if extra_args:
         args += shlex.split(extra_args)
     args += [image]
+    if command:
+        args += shlex.split(command)
 
     argv = await _docker_argv(rec, args)
     ok, reason = _sandbox_gate(" ".join(argv))
@@ -767,6 +982,225 @@ async def cap_docker_run(
     await emit_event({"type": "docker.container.run", "name": name, "image": image,
                       "container_id": cid[:12], "host_id": rec["id"]})
     return {"ok": True, "container_id": cid, "name": name, "image": image, "host_id": rec["id"]}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# VERA STACK  —  provision the backing services (docker-compose.yml equivalents)
+# on any registered Docker host, one service at a time.
+# ─────────────────────────────────────────────────────────────────────────────
+def _stack_catalog() -> Dict[str, Dict]:
+    """Service catalog mirroring docker-compose.yml (images, ports, volumes,
+    env) so the whole Vera stack — postgres, redis, chroma, neo4j, garage,
+    ollama — can be provisioned onto any registered Docker host."""
+    neo_user = os.getenv("NEO4J_USER", "neo4j")
+    neo_pass = os.getenv("NEO4J_PASS", "veraneo4j")
+    return {
+        "redis": {
+            "label": "Redis", "image": "redis:7-alpine",
+            "container_name": "vera-redis", "ports": "6379:6379",
+            "volumes": "vera-redis-data:/data", "env": {},
+            "command": "redis-server --appendonly yes --maxmemory 512mb "
+                       "--maxmemory-policy allkeys-lru",
+            "note": "event streams · task queues · caching",
+        },
+        "postgres": {
+            "label": "PostgreSQL", "image": "postgres:16-alpine",
+            "container_name": "vera-postgres", "ports": "5433:5432",
+            "volumes": "vera-pg-data:/var/lib/postgresql/data",
+            "env": {"POSTGRES_USER": "admin", "POSTGRES_PASSWORD": "admin",
+                    "POSTGRES_DB": "postgres"},
+            "command": "", "note": "persistent storage",
+        },
+        "chromadb": {
+            "label": "ChromaDB", "image": "chromadb/chroma:0.5.23",
+            "container_name": "vera-chromadb", "ports": "8008:8000",
+            "volumes": "vera-chroma-data:/chroma/chroma",
+            "env": {"IS_PERSISTENT": "TRUE", "ANONYMIZED_TELEMETRY": "FALSE"},
+            "command": "", "note": "vector embeddings store",
+        },
+        "neo4j": {
+            "label": "Neo4j", "image": "neo4j:5-community",
+            "container_name": "vera-neo4j", "ports": "7474:7474,7687:7687",
+            "volumes": "vera-neo4j-data:/data",
+            "env": {"NEO4J_AUTH": f"{neo_user}/{neo_pass}",
+                    "NEO4J_PLUGINS": '["apoc"]',
+                    "NEO4J_server_memory_heap_max__size": "512m"},
+            "command": "", "note": "memory graph database",
+        },
+        "garage": {
+            "label": "Garage (S3)", "image": "dxflrs/garage:v1.0.1",
+            "container_name": "vera-garage", "ports": "3900:3900,3903:3903",
+            "volumes": "vera-garage-etc:/etc/garage,"
+                       "vera-garage-meta:/var/lib/garage/meta,"
+                       "vera-garage-data:/var/lib/garage/data",
+            "env": {"GARAGE_ALLOW_WORLD_READABLE_SECRETS": "true"},
+            # config is written into the vera-garage-etc volume by a one-shot
+            # busybox helper before this runs (see docker.stack.deploy)
+            "command": "/garage -c /etc/garage/garage.toml server",
+            "config_file": "garage/garage.toml",
+            "note": "S3 blob store for the data fabric · ring needs bootstrap "
+                    "after first start (garage-init)",
+        },
+        "ollama": {
+            "label": "Ollama", "image": "ollama/ollama:latest",
+            "container_name": "vera-ollama", "ports": "11434:11434",
+            "volumes": "vera-ollama:/root/.ollama", "env": {},
+            "command": "", "gpus_hint": True,
+            "note": "LLM inference — pass gpus='all' on GPU hosts",
+        },
+    }
+
+
+@capability(
+    "docker.stack.catalog",
+    http_method="GET", http_path="/workers/docker/stack/catalog", http_tags=["docker"],
+    memory="off", silent=True,
+    description="Catalog of Vera's backing services (mirrors docker-compose.yml): "
+                "redis, postgres, chromadb, neo4j, garage, ollama — with image, "
+                "ports, volumes and env each deploy would use. Output: "
+                "{services:[{id,label,image,container_name,ports,note}]}.",
+)
+async def cap_docker_stack_catalog(trace_id=None) -> Dict:
+    cat = _stack_catalog()
+    return {"services": [
+        {"id": k, "label": v["label"], "image": v["image"],
+         "container_name": v["container_name"], "ports": v["ports"],
+         "note": v.get("note", "")}
+        for k, v in cat.items()]}
+
+
+@capability(
+    "docker.stack.status",
+    http_method="GET", http_path="/workers/docker/stack/status", http_tags=["docker"],
+    memory="off", silent=True,
+    description="State of each Vera stack service on a Docker host (by container "
+                "name). Input: host_id (str). Output: {services:[{id,label,image,"
+                "container_name,ports,note,exists,running,status}]}.",
+)
+async def cap_docker_stack_status(host_id: str = "", trace_id=None) -> Dict:
+    rec = _get_host(host_id)
+    if not rec:
+        return {"error": f"unknown host: {host_id}", "services": []}
+    out = []
+    for k, v in _stack_catalog().items():
+        exists = running = False
+        status_txt = ""
+        try:
+            st, body, _ = await _engine_request(
+                rec, "GET", f"/containers/{v['container_name']}/json", timeout=8)
+            if st == 200:
+                info = json.loads(body or b"{}")
+                exists = True
+                running = bool((info.get("State") or {}).get("Running"))
+                status_txt = (info.get("State") or {}).get("Status", "")
+        except Exception:
+            pass
+        out.append({"id": k, "label": v["label"], "image": v["image"],
+                    "container_name": v["container_name"], "ports": v["ports"],
+                    "note": v.get("note", ""), "exists": exists,
+                    "running": running, "status": status_txt})
+    return {"host_id": rec["id"], "services": out}
+
+
+def _stores_mod():
+    """The provision stores module, if loaded. It is the canonical stack-deploy
+    path (adds garage admin bootstrap + sealed secrets); docker.stack.deploy
+    delegates to it so there is ONE implementation rather than two."""
+    m = sys.modules.get("stores_capabilities")
+    if m is not None:
+        return m
+    for name, mod in list(sys.modules.items()):
+        if mod is not None and name.endswith("stores_capabilities"):
+            return mod
+    return None
+
+
+@capability(
+    "docker.stack.deploy",
+    http_method="POST", http_path="/workers/docker/stack/deploy", http_tags=["docker"],
+    description="Provision one Vera backing service (from docker.stack.catalog) "
+                "onto a Docker host. Delegates to provision.store.deploy — the "
+                "canonical path that also generates garage config + bootstraps "
+                "its ring and seals generated secrets — so there is a single "
+                "deploy implementation. Idempotent: an existing container is "
+                "started, not recreated. Inputs: host_id (str!), service (str! — "
+                "redis|postgres|chromadb|neo4j|garage|ollama), gpus (str — e.g. "
+                "'all', ollama only), env (dict), network (str, legacy path only). "
+                "Output: {ok, container_id|started|already, name, host_id}.",
+)
+async def cap_docker_stack_deploy(host_id: str = "", service: str = "",
+                                  gpus: str = "", env: Optional[Dict[str, str]] = None,
+                                  network: str = "", trace_id=None) -> Dict:
+    rec = _get_host(host_id)
+    if not rec:
+        return {"ok": False, "error": f"unknown host: {host_id}"}
+    svc_key = (service or "").strip().lower()
+
+    # Canonical path: delegate to provision.store.deploy when it knows this
+    # service (redis/postgres/chromadb/neo4j/garage/ollama all live there now).
+    sm = _stores_mod()
+    if sm is not None and svc_key in getattr(sm, "_STORES", {}):
+        res = await sm.cap_store_deploy(host_id=rec["id"], store=svc_key,
+                                        env=env or None, gpus=gpus)
+        st = (res.get("stores") or {}).get(svc_key, {}) if isinstance(res, dict) else {}
+        if res.get("error"):
+            return {"ok": False, "error": res["error"], "host_id": rec["id"]}
+        return {"ok": bool(st.get("ok", res.get("ok"))),
+                "name": st.get("container", f"vera-{svc_key}"),
+                "container_id": st.get("container_id", ""),
+                "already": st.get("already", False),
+                "bootstrap": st.get("bootstrap"), "secrets": st.get("secrets"),
+                "host_id": rec["id"]}
+
+    # Legacy fallback (stores module not loaded) — original inline logic.
+    svc = _stack_catalog().get(svc_key)
+    if not svc:
+        return {"ok": False, "error": f"unknown service: {service} — see docker.stack.catalog"}
+    cname = svc["container_name"]
+
+    # Already there? Start it rather than failing on the name collision.
+    try:
+        st, body, _ = await _engine_request(rec, "GET", f"/containers/{cname}/json", timeout=8)
+        if st == 200:
+            info = json.loads(body or b"{}")
+            if (info.get("State") or {}).get("Running"):
+                return {"ok": True, "already": True, "name": cname, "host_id": rec["id"]}
+            st2, _, _ = await _engine_request(rec, "POST", f"/containers/{cname}/start", timeout=30)
+            return {"ok": st2 in (204, 304), "started": True, "name": cname,
+                    "host_id": rec["id"]}
+    except Exception:
+        pass
+
+    # Garage needs its config written into the vera-garage-etc volume first
+    # (compose bind-mounts ./garage/garage.toml; remote hosts have no repo).
+    if svc.get("config_file"):
+        cfg_path = _REPO_ROOT / svc["config_file"]
+        if cfg_path.exists():
+            b64 = base64.b64encode(cfg_path.read_bytes()).decode()
+            vol = svc["volumes"].split(":", 1)[0]
+            writer = await _docker_argv(rec, [
+                "run", "--rm", "-v", f"{vol}:/cfg", "busybox", "sh", "-c",
+                f"echo {b64} | base64 -d > /cfg/garage.toml"])
+            wres = await _run_local(writer, timeout=120)
+            if not wres.get("ok"):
+                return {"ok": False, "name": cname, "host_id": rec["id"],
+                        "error": "config write failed: " +
+                                 (wres.get("stderr") or "")[-300:]}
+        else:
+            return {"ok": False, "error": f"config file missing: {svc['config_file']}"}
+
+    merged_env = dict(svc.get("env") or {})
+    merged_env.update(env or {})
+    extra = f"--gpus {shlex.quote(gpus)}" if (gpus and svc.get("gpus_hint")) else ""
+    res = await cap_docker_run(
+        host_id=rec["id"], image=svc["image"], name=cname,
+        ports=svc["ports"], env=merged_env, volumes=svc["volumes"],
+        network=network, extra_args=extra, command=svc.get("command", ""),
+        pull=True)
+    if res.get("ok"):
+        await emit_event({"type": "docker.stack.deployed", "service": service,
+                          "name": cname, "host_id": rec["id"]})
+    return res
 
 
 @capability(

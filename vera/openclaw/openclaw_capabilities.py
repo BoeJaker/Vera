@@ -690,22 +690,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
-from fastapi.responses import JSONResponse as _JSONResponse
 
-# ── Import from the main openclaw module ─────────────────────────────────────
-import Vera.vera.capability_orchestration as _orch
-from Vera.vera.capability_orchestration import (
-    APP,
-    capability,
-    emit_event,
-    now_iso,
-)
-# Pull shared config/state objects from the main module
-from Vera.vera.openclaw_capabilities import (   # noqa: E402
-    _CONFIG,
-    _STATE,
-)
-from Vera.vera.config import cfg
+# APP, capability, emit_event, now_iso, cfg, _CONFIG, _STATE are already in
+# scope — this extras section lives in the same module it extends.
 
 log = logging.getLogger("openclaw.extras")
 

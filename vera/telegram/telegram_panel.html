@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <title>Vera Telegram</title>
 <style>
@@ -171,7 +176,7 @@ textarea { font-family: var(--mono); resize: vertical; min-height: 80px; }
   transition: all .12s;
 }
 .btn:hover { background: var(--border); border-color: var(--acc); }
-.btn.primary { background: var(--acc); color: #fff; border-color: var(--acc); }
+.btn.primary { background: var(--acc); color: var(--on-acc,#fff); border-color: var(--acc); }
 .btn.primary:hover { background: #5cabff; }
 .btn.danger  { color: var(--err); border-color: rgba(239,91,91,.35); }
 .btn.danger:hover { background: rgba(239,91,91,.1); }

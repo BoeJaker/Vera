@@ -27,6 +27,7 @@ import asyncio
 import fnmatch
 import json
 import logging
+import os
 import re
 import sys
 import uuid
@@ -48,6 +49,77 @@ from Vera.vera.ide.ide_capabilities import (  # type: ignore
 )
 
 log = logging.getLogger("vera.ide.code")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SESSION-SANDBOX ROUTING
+# When a session has an ACTIVE sandbox, its /workspace lives in the container —
+# so listing/reading files under it must go INTO the container, not the host FS
+# (which doesn't have /workspace). No-ops (return None) otherwise → host as before.
+# ─────────────────────────────────────────────────────────────────────────────
+def _sandbox_mod():
+    m = sys.modules.get("session_sandbox_capabilities")
+    if m is not None and hasattr(m, "route_fs_read"):
+        return m
+    for name, mod in list(sys.modules.items()):
+        if mod is not None and name.endswith("session_sandbox_capabilities") \
+                and hasattr(mod, "route_fs_read"):
+            return mod
+    return None
+
+
+def _is_container_path(p: str) -> bool:
+    return bool(p) and str(p).replace("\\", "/").startswith("/workspace")
+
+
+async def _route_code(fn: str, session_id: str, *args, **kwargs):
+    """Call session_sandbox_capabilities.<fn>; returns its dict (ran in the
+    container) or None (no active sandbox → run on the host)."""
+    sid = session_id or _ide_get_session_id()
+    if not sid:
+        return None
+    sb = _sandbox_mod()
+    if sb is None or not hasattr(sb, fn):
+        return None
+    try:
+        return await getattr(sb, fn)(sid, *args, **kwargs)
+    except Exception as e:
+        log.debug("ide.code sandbox route %s failed (host): %s", fn, e)
+        return None
+
+
+async def _sbx_read_modify_write(session_id: str, path: str, transform,
+                                 *, allow_create: bool = True):
+    """Sandboxed read→transform→write for the line-edit caps. When the session
+    has an ACTIVE sandbox: read `path` from the container, apply
+    `transform(original: str, existed: bool) -> (new_text, meta)` and write the
+    result back INTO the container. Returns the cap-shaped result dict, or None
+    when there is no active sandbox (→ the caller runs on the host as before).
+    A transform may return (None, meta) to skip the write (dry-run / no-op)."""
+    read = await _route_code("route_fs_read", session_id, path)
+    if read is None:
+        return None
+    err = str(read.get("error") or "")
+    existed = not err
+    if err and "not found" not in err.lower():
+        return {"error": err, "ok": False, "sandboxed": True}
+    if not existed and not allow_create:
+        return {"error": f"File not found: {path}", "ok": False, "sandboxed": True}
+    original = (read.get("content") or "") if existed else ""
+    new_text, meta = transform(original, existed)
+    meta = dict(meta or {})
+    if new_text is None:
+        meta.setdefault("path", path)
+        meta["sandboxed"] = True
+        return meta
+    wr = await _route_code("route_fs_write", session_id, path, new_text)
+    if wr is None or wr.get("error"):
+        return {"error": (wr or {}).get("error") or "sandbox write failed",
+                "ok": False, "sandboxed": True}
+    meta.update({"path": path, "ok": True, "created": not existed,
+                 "bytes": len(new_text.encode("utf-8", errors="replace")),
+                 "sandboxed": True})
+    return meta
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -102,14 +174,20 @@ def _is_text_file(p: Path, sample: int = 2048) -> bool:
     "ide.fs.exists",
     http_method="GET", http_path="/ide/fs/exists", http_tags=["ide", "fs"],
     memory="off", silent=True,
-    description="Check whether a path exists on the real filesystem. "
-                "GET with ?path=... query param. "
+    description="Check whether a path exists on the real filesystem (or inside "
+                "the session's sandbox container when one is ACTIVE). "
+                "GET with ?path=... query param (+ optional session_id). "
                 "Output: {path, exists, kind (file|directory|missing), size}.",
 )
-async def ide_fs_exists(path: str = "", trace_id=None):
+async def ide_fs_exists(path: str = "", session_id: str = "", trace_id=None):
     try:
         if not path:
             return {"path": "", "exists": False, "kind": "missing", "size": 0}
+        # Sandbox-aware: while the session has an ACTIVE sandbox, existence is
+        # checked INSIDE the container (matching ide.fs.read/write).
+        routed = await _route_code("route_fs_exists", session_id, path)
+        if routed is not None:
+            return routed
         p = Path(path)
         if not p.exists():
             return {"path": path, "exists": False, "kind": "missing", "size": 0}
@@ -142,8 +220,22 @@ async def ide_code_read_lines(
     start: int = 1,
     end:   int = 0,     # 0 = end of file
     root:  str = "",
+    session_id: str = "",
     trace_id=None,
 ):
+    # Sandbox-aware: while the session has an ACTIVE sandbox, ALL its reads go
+    # into the container (matching ide.fs.* — never fall through to the host).
+    routed = await _route_code("route_fs_read", session_id, path)
+    if routed is not None:
+        if routed.get("error"):
+            return {"error": routed["error"], "exists": False}
+        all_lines = (routed.get("content") or "").splitlines()
+        total = len(all_lines)
+        s = max(1, int(start)); e = total if not end else min(total, int(end))
+        slice_lines = all_lines[s - 1:e] if s <= total else []
+        return {"path": path, "start": s, "end": e, "total_lines": total,
+                "lines": slice_lines, "content": "\n".join(slice_lines),
+                "sandboxed": True}
     try:
         p = _safe_path(path, root)
         if not p.exists() or not p.is_file():
@@ -194,6 +286,44 @@ async def ide_code_edit_lines(
     session_id:  str = "",
     trace_id=None,
 ):
+    # Sandbox-aware: while the session has an ACTIVE sandbox the edit happens
+    # entirely INSIDE the container (read → splice → write back) — never on the
+    # host filesystem.
+    def _splice(original: str, existed: bool):
+        lines = original.splitlines()
+        lines_before = len(lines)
+        s = max(1, int(start))
+        e = max(s, int(end))
+        if s > lines_before:
+            new_lines = lines + [""] * (s - lines_before - 1) + new_content.splitlines()
+        else:
+            new_lines = lines[:s - 1] + new_content.splitlines() + lines[e:]
+        trailing_nl = original.endswith("\n") or new_content.endswith("\n") or not existed
+        new_text = "\n".join(new_lines) + ("\n" if trailing_nl else "")
+        return new_text, {"lines_before": lines_before,
+                          "lines_after": len(new_lines),
+                          "replaced_range": [s, e]}
+    routed = await _sbx_read_modify_write(session_id, path, _splice)
+    if routed is not None:
+        if routed.get("ok"):
+            sid = session_id or _ide_get_session_id()
+            asyncio.ensure_future(_record(
+                session_id=sid, category="ide.code_edit",
+                text=f"[edit_lines] {os.path.basename(path)} {start}-{end}"
+                     + (f" by {agent}" if agent else "") + " (sandbox)",
+                full_text=f"Path: {path}\nRange: {start}-{end}\nAgent: {agent}\n\n"
+                          f"New content:\n{new_content[:2000]}",
+                tags=["ide", "code", "edit_lines", "sandbox"] + ([agent] if agent else []),
+                importance=0.6, source_type="ai" if agent else "tool",
+                record_type="observation",
+                capability_name="ide.code.edit_lines", broadcast_type="ide.code_edited",
+                fabric_dataset="ide.code_edits",
+                metadata={"path": path, "start": start, "end": end, "agent": agent,
+                          "bytes": routed.get("bytes", 0), "sandboxed": True},
+                fabric_data={"path": path, "start": start, "end": end,
+                             "agent": agent, "new_content": new_content[:20000]},
+            ))
+        return routed
     try:
         p = _safe_path(path, root)
         existed = p.exists()
@@ -273,6 +403,42 @@ async def ide_code_insert_at(
     session_id: str = "",
     trace_id=None,
 ):
+    # Sandbox-aware: insert INSIDE the container when the session is sandboxed.
+    def _insert(original: str, existed: bool):
+        lines = original.splitlines()
+        n = len(lines)
+        if line < 0 or line > n:
+            idx, actual = n, n + 1
+        elif line == 0:
+            idx, actual = 0, 1
+        else:
+            idx, actual = line - 1, line
+        new_lines = lines[:idx] + content.splitlines() + lines[idx:]
+        trailing_nl = original.endswith("\n") or content.endswith("\n") or not existed
+        new_text = "\n".join(new_lines) + ("\n" if trailing_nl else "")
+        return new_text, {"inserted_at": actual, "lines_after": len(new_lines)}
+    routed = await _sbx_read_modify_write(session_id, path, _insert)
+    if routed is not None:
+        if routed.get("ok"):
+            sid = session_id or _ide_get_session_id()
+            asyncio.ensure_future(_record(
+                session_id=sid, category="ide.code_edit",
+                text=f"[insert_at] {os.path.basename(path)} line "
+                     f"{routed.get('inserted_at')}"
+                     + (f" by {agent}" if agent else "") + " (sandbox)",
+                full_text=f"Path: {path}\nInserted at line: "
+                          f"{routed.get('inserted_at')}\nAgent: {agent}\n\n{content[:2000]}",
+                tags=["ide", "code", "insert_at", "sandbox"] + ([agent] if agent else []),
+                importance=0.55, source_type="ai" if agent else "tool",
+                record_type="observation",
+                capability_name="ide.code.insert_at", broadcast_type="ide.code_edited",
+                fabric_dataset="ide.code_edits",
+                metadata={"path": path, "line": routed.get("inserted_at"),
+                          "agent": agent, "sandboxed": True},
+                fabric_data={"path": path, "line": routed.get("inserted_at"),
+                             "agent": agent, "content": content[:20000]},
+            ))
+        return routed
     try:
         p = _safe_path(path, root)
         existed = p.exists()
@@ -394,11 +560,20 @@ async def ide_code_grep(
     exclude:        str  = "",
     max_results:    int  = 200,
     context_lines:  int  = 1,
+    session_id:     str  = "",
     trace_id=None,
 ):
     try:
         if not pattern:
             return {"error": "pattern is required", "matches": []}
+        # Sandbox-aware: search INSIDE the container when the session has an
+        # ACTIVE sandbox (include/exclude globs + context lines not applied there).
+        routed = await _route_code("route_fs_grep", session_id, pattern, root,
+                                   is_regex=bool(is_regex),
+                                   case_sensitive=bool(case_sensitive),
+                                   max_results=int(max_results))
+        if routed is not None:
+            return routed
         root_p = Path(root).resolve()
         if not root_p.exists() or not root_p.is_dir():
             return {"error": f"Not a directory: {root}", "matches": []}
@@ -497,16 +672,64 @@ async def ide_code_replace(
     trace_id=None,
 ):
     try:
-        p = _safe_path(path, root)
-        if not p.exists() or not p.is_file():
-            return {"error": f"File not found: {path}", "ok": False}
-        original = p.read_text(encoding="utf-8", errors="replace")
-
         flags = 0 if case_sensitive else re.IGNORECASE
         try:
             rx = re.compile(find if is_regex else re.escape(find), flags)
         except re.error as e:
             return {"error": f"Bad regex: {e}", "ok": False}
+
+        # Sandbox-aware: find/replace INSIDE the container when sandboxed.
+        def _replace(original: str, _existed: bool):
+            count = 1 if first_only else 0
+            new_text, n = rx.subn(replace, original, count=count)
+            if dry_run:
+                preview = []
+                for m in list(rx.finditer(original))[:3]:
+                    s, e = m.start(), m.end()
+                    line_no = original.count("\n", 0, s) + 1
+                    ctx_before = original.rfind("\n", 0, s) + 1
+                    ctx_after = original.find("\n", e)
+                    ctx_after = ctx_after if ctx_after != -1 else len(original)
+                    preview.append({
+                        "line":   line_no,
+                        "before": original[ctx_before:ctx_after],
+                        "after":  original[ctx_before:s] + replace + original[e:ctx_after],
+                    })
+                return None, {"ok": True, "dry_run": True,
+                              "replacements": n, "preview": preview}
+            if n == 0:
+                return None, {"ok": True, "replacements": 0, "changed": False}
+            return new_text, {"replacements": n, "changed": True}
+        routed = await _sbx_read_modify_write(session_id, path, _replace,
+                                              allow_create=False)
+        if routed is not None:
+            if routed.get("ok") and routed.get("changed"):
+                sid = session_id or _ide_get_session_id()
+                asyncio.ensure_future(_record(
+                    session_id=sid, category="ide.code_edit",
+                    text=f"[replace] {os.path.basename(path)}: "
+                         f"{routed.get('replacements')} × '{find[:60]}' → "
+                         f"'{replace[:60]}' (sandbox)",
+                    full_text=(f"Path: {path}\nAgent: {agent}\nFind: {find}\n"
+                               f"Replace: {replace}\nCount: "
+                               f"{routed.get('replacements')}\nRegex: {is_regex}"),
+                    tags=["ide", "code", "replace", "sandbox"] + ([agent] if agent else []),
+                    importance=0.6, source_type="ai" if agent else "tool",
+                    record_type="observation",
+                    capability_name="ide.code.replace", broadcast_type="ide.code_edited",
+                    fabric_dataset="ide.code_edits",
+                    metadata={"path": path, "replacements": routed.get("replacements"),
+                              "agent": agent, "is_regex": is_regex, "sandboxed": True},
+                    fabric_data={"path": path, "find": find[:500],
+                                 "replace": replace[:500],
+                                 "count": routed.get("replacements"), "agent": agent},
+                ))
+            return routed
+
+        p = _safe_path(path, root)
+        if not p.exists() or not p.is_file():
+            return {"error": f"File not found: {path}", "ok": False}
+        original = p.read_text(encoding="utf-8", errors="replace")
 
         count = 1 if first_only else 0   # re.sub count=0 means all
         new_text, n = rx.subn(replace, original, count=count)
@@ -571,8 +794,15 @@ async def ide_code_list_files(
     include:   str = "",
     exclude:   str = "",
     max_files: int = 2000,
+    session_id: str = "",
     trace_id=None,
 ):
+    # Sandbox-aware: while the session has an ACTIVE sandbox, listing happens IN
+    # the container (its files aren't on this host). Matches ide.fs.* semantics.
+    routed = await _route_code("route_code_list_files", session_id, root,
+                               max_files=int(max_files))
+    if routed is not None:
+        return routed
     try:
         root_p = Path(root).resolve()
         if not root_p.exists() or not root_p.is_dir():
@@ -649,31 +879,50 @@ _EXT_TO_LANG = {
 }
 
 
+def _outline_symbols(text: str, lang: str) -> List[Dict[str, Any]]:
+    pats = [(k, re.compile(rx)) for k, rx in _OUTLINE_PATTERNS[lang]]
+    symbols = []
+    for i, line in enumerate(text.splitlines(), 1):
+        for kind, rx in pats:
+            m = rx.match(line)
+            if m:
+                symbols.append({"kind": kind, "name": m.group(1), "line": i})
+                break
+    return symbols
+
+
 @capability(
     "ide.code.outline",
     http_method="POST", http_path="/ide/code/outline", http_tags=["ide", "code"],
     memory="off", silent=True,
     description="Extract a symbol outline (functions, classes, etc) from a source file. "
-                "Input: path (str!), root (str). "
+                "Input: path (str!), root (str), session_id (str). "
                 "Output: {path, language, symbols: [{kind, name, line}]}.",
 )
-async def ide_code_outline(path: str, root: str = "", trace_id=None):
+async def ide_code_outline(path: str, root: str = "", session_id: str = "",
+                           trace_id=None):
     try:
+        lang = _EXT_TO_LANG.get(os.path.splitext(str(path))[1].lower())
+        # Sandbox-aware: outline the container's copy when the session has an
+        # ACTIVE sandbox.
+        routed = await _route_code("route_fs_read", session_id, path)
+        if routed is not None:
+            if routed.get("error"):
+                return {"error": routed["error"], "symbols": []}
+            if not lang:
+                return {"path": path, "language": "unknown", "symbols": [],
+                        "sandboxed": True}
+            return {"path": path, "language": lang,
+                    "symbols": _outline_symbols(routed.get("content") or "", lang),
+                    "sandboxed": True}
         p = _safe_path(path, root)
         if not p.exists() or not p.is_file():
             return {"error": f"File not found: {path}", "symbols": []}
-        lang = _EXT_TO_LANG.get(p.suffix.lower())
         if not lang:
             return {"path": str(p), "language": "unknown", "symbols": []}
-        pats = [(k, re.compile(rx)) for k, rx in _OUTLINE_PATTERNS[lang]]
-        symbols = []
-        for i, line in enumerate(p.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
-            for kind, rx in pats:
-                m = rx.match(line)
-                if m:
-                    symbols.append({"kind": kind, "name": m.group(1), "line": i})
-                    break
-        return {"path": str(p), "language": lang, "symbols": symbols}
+        return {"path": str(p), "language": lang,
+                "symbols": _outline_symbols(
+                    p.read_text(encoding="utf-8", errors="replace"), lang)}
     except Exception as ex:
         return {"error": str(ex), "symbols": []}
 

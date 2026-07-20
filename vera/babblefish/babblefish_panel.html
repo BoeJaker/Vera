@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Babblefish — Universal Protocol Translator</title>
+<style>
+:root{
+  --bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;
+  --border:#3a3530;--border2:#4a4540;
+  --acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;
+  --ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;
+  --text:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;
+  --mono:'JetBrains Mono','Fira Mono',monospace;--sans:'Inter',system-ui,sans-serif;
+  --radius:5px;--radius-lg:8px;color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:12px}
+body{display:flex;flex-direction:column;overflow:hidden}
+header{display:flex;align-items:center;gap:9px;padding:9px 13px;border-bottom:1px solid var(--border);background:var(--bg1)}
+header .fish{font-size:16px}
+header h1{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:2px;color:var(--acc)}
+header .sub{font-size:9.5px;color:var(--dim2);margin-left:2px}
+header .sub em{color:var(--acc3);font-style:normal}
+main{flex:1;display:flex;min-height:0}
+.left{width:340px;flex-shrink:0;border-right:1px solid var(--border);padding:12px;overflow-y:auto;display:flex;flex-direction:column;gap:10px}
+.right{flex:1;display:flex;flex-direction:column;min-width:0}
+.field{display:flex;flex-direction:column;gap:3px}
+.field label{font-size:9px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim2)}
+input,select,textarea{background:var(--bg0);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:11.5px;padding:6px 8px;font-family:var(--sans);width:100%}
+textarea{font-family:var(--mono);font-size:11px;min-height:70px;resize:vertical}
+select:focus,input:focus,textarea:focus{outline:none;border-color:var(--acc)}
+.row2{display:flex;gap:8px}
+.row2 .field{flex:1}
+.btns{display:flex;gap:6px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:4px;padding:6px 12px;border-radius:4px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);cursor:pointer;font-size:11px;font-weight:600;transition:all .14s}
+.btn:hover{border-color:var(--acc);color:var(--acc)}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#111)}
+.btn.primary:hover{filter:brightness(1.08)}
+.moddesc{font-size:10px;color:var(--dim2);line-height:1.5;background:var(--bg0);border:1px solid var(--border);border-radius:var(--radius);padding:8px}
+.moddesc code{color:var(--acc2);font-family:var(--mono)}
+.out-tb{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--border);background:var(--bg1)}
+.out-tb .lbl{font-family:var(--mono);font-size:10px;letter-spacing:1px;color:var(--dim2)}
+.out-tb .status{margin-left:auto;font-family:var(--mono);font-size:9.5px}
+.out-tb .status.ok{color:var(--ok)}.out-tb .status.err{color:var(--err)}
+pre#out{flex:1;margin:0;padding:12px;overflow:auto;font-family:var(--mono);font-size:11px;line-height:1.55;color:var(--acc2);white-space:pre-wrap;word-break:break-word}
+.mods{display:flex;flex-wrap:wrap;gap:4px}
+.chip{font-family:var(--mono);font-size:9.5px;padding:2px 7px;border-radius:10px;border:1px solid var(--border);color:var(--dim2);cursor:pointer}
+.chip:hover,.chip.on{border-color:var(--acc);color:var(--acc)}
+.hint{font-size:9px;color:var(--dim);line-height:1.5}
+</style>
+</head>
+<body>
+<header>
+  <span class="fish">🐟</span>
+  <h1>BABBLEFISH</h1>
+  <span class="sub">universal protocol translator · <em>“…and instantly understand anything said in any form of language.”</em></span>
+</header>
+<main>
+  <div class="left">
+    <div class="field">
+      <label>Protocol module</label>
+      <select id="proto"></select>
+    </div>
+    <div class="mods" id="modChips"></div>
+    <div class="moddesc" id="modDesc">Loading modules…</div>
+    <div class="row2">
+      <div class="field"><label>Host</label><input id="host" placeholder="example.com" autocomplete="off"></div>
+      <div class="field" style="max-width:96px"><label>Port</label><input id="port" placeholder="auto" autocomplete="off"></div>
+    </div>
+    <div class="field">
+      <label>Request (text / JSON / hex)</label>
+      <textarea id="req" placeholder='e.g. {"method":"GET","path":"/"}  or  ["PING"]  or  a line of text'></textarea>
+    </div>
+    <div class="field" style="max-width:120px"><label>Timeout (s)</label><input id="timeout" value="5"></div>
+    <div class="btns">
+      <button class="btn primary" onclick="doSpeak()">Speak ▸</button>
+      <button class="btn" onclick="doListen()">Listen</button>
+      <button class="btn" onclick="doEncode()">Encode</button>
+      <button class="btn" onclick="doProbe()">Probe</button>
+    </div>
+    <div class="hint">Speak = send request + decode reply · Listen = grab a banner · Encode = dry-run the wire bytes · Probe = identify the protocol on host[:port].</div>
+  </div>
+  <div class="right">
+    <div class="out-tb"><span class="lbl" id="outLbl">OUTPUT</span><span class="status" id="status"></span></div>
+    <pre id="out">Pick a protocol, enter a host, and Speak. Everything here is also available to Vera agents as the babblefish.* capabilities.</pre>
+  </div>
+</main>
+<script>
+var BASE = '';
+try{ if(location.pathname.indexOf('/babblefish/')>=0) BASE=''; }catch(e){}
+var MODS = [];
+
+async function api(path, body){
+  var res = await fetch(BASE+path, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body||{})
+  });
+  return res.json();
+}
+function setStatus(txt, ok){
+  var s=document.getElementById('status'); s.textContent=txt||''; s.className='status '+(ok?'ok':(txt?'err':''));
+}
+function show(obj){ document.getElementById('out').textContent = (typeof obj==='string')?obj:JSON.stringify(obj,null,2); }
+
+function currentMod(){
+  var name=document.getElementById('proto').value;
+  return MODS.find(function(m){return m.name===name;});
+}
+function renderMod(){
+  var m=currentMod(); if(!m){document.getElementById('modDesc').textContent='';return;}
+  var ex = m.example ? JSON.stringify(m.example.request!==undefined?m.example.request:m.example) : '';
+  document.getElementById('modDesc').innerHTML =
+    '<b style="color:var(--acc)">'+m.name+'</b> · '+m.transport+' · default port <code>'+(m.default_port||'—')+'</code>'
+    + (m.declarative?' · <span style="color:var(--acc3)">custom</span>':'')
+    + '<br>'+ (m.description||'')
+    + (ex?'<br><span style="color:var(--dim2)">example request:</span> <code>'+ex.replace(/</g,'&lt;')+'</code>':'');
+  if(m.default_port && !document.getElementById('port').value) document.getElementById('port').placeholder = 'auto ('+m.default_port+')';
+}
+
+async function loadMods(){
+  try{
+    var r = await fetch(BASE+'/babblefish/modules'); var j = await r.json();
+    MODS = j.modules||[];
+    var sel=document.getElementById('proto'); sel.innerHTML='';
+    var chips=document.getElementById('modChips'); chips.innerHTML='';
+    MODS.forEach(function(m){
+      var o=document.createElement('option'); o.value=m.name; o.textContent=m.name; sel.appendChild(o);
+      var c=document.createElement('span'); c.className='chip'; c.textContent=m.name;
+      c.onclick=function(){ sel.value=m.name; renderMod(); };
+      chips.appendChild(c);
+    });
+    renderMod();
+  }catch(e){ document.getElementById('modDesc').textContent='Failed to load modules: '+e; }
+}
+
+function parseReq(){
+  var raw=document.getElementById('req').value.trim();
+  if(!raw) return {};
+  try{ return JSON.parse(raw); }catch(e){ return raw; }
+}
+function common(){
+  var m=currentMod();
+  return {
+    protocol: document.getElementById('proto').value,
+    host: document.getElementById('host').value.trim(),
+    port: parseInt(document.getElementById('port').value)||0,
+    timeout: parseFloat(document.getElementById('timeout').value)||5
+  };
+}
+
+async function doSpeak(){
+  var c=common(); if(!c.host){setStatus('host required',false);return;}
+  setStatus('speaking…',true); show('…');
+  var j=await api('/babblefish/speak', Object.assign(c,{request:parseReq()}));
+  setStatus(j.error?j.error:('ok · '+(j.reply_wire?j.reply_wire.bytes+' bytes':'')), !j.error); show(j);
+}
+async function doListen(){
+  var c=common(); if(!c.host||!c.port){setStatus('host and port required',false);return;}
+  setStatus('listening…',true); show('…');
+  var j=await api('/babblefish/listen', {host:c.host,port:c.port,protocol:c.protocol,timeout:c.timeout});
+  setStatus(j.error?j.error:'ok', !j.error); show(j);
+}
+async function doEncode(){
+  setStatus('',true);
+  var j=await api('/babblefish/encode', {protocol:document.getElementById('proto').value, request:parseReq()});
+  setStatus(j.error?j.error:'encoded', !j.error); show(j);
+}
+async function doProbe(){
+  var c=common(); if(!c.host){setStatus('host required',false);return;}
+  setStatus('probing…',true); show('…');
+  var j=await api('/babblefish/probe', {host:c.host,port:c.port,timeout:c.timeout});
+  setStatus(j.error?j.error:'done', !j.error); show(j);
+}
+document.getElementById('proto').addEventListener('change', renderMod);
+loadMods();
+</script>
+</body>
+</html>

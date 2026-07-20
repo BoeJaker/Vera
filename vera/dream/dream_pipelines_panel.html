@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Composite Pipelines</title>
@@ -23,7 +28,7 @@
        border-radius:7px;padding:7px 12px;font-size:12px;cursor:pointer;
        transition:.12s;display:inline-flex;align-items:center;gap:6px}
   .btn:hover{background:var(--bg3);border-color:var(--acc)}
-  .btn.pri{background:var(--acc);color:#08121f;border-color:var(--acc);font-weight:600}
+  .btn.pri{background:var(--acc);color:var(--on-acc,#08121f);border-color:var(--acc);font-weight:600}
   .btn.grn{background:var(--grn);color:#06140d;border-color:var(--grn);font-weight:600}
   .btn.red{background:transparent;color:var(--red);border-color:#5a2b2b}
   .btn.red:hover{background:#2a1414}
@@ -99,7 +104,7 @@
     <label class="fld">Description</label><textarea id="f-desc" style="min-height:44px"></textarea>
 
     <label class="fld">Stages (one per line, in order)</label>
-    <textarea id="f-stages" placeholder="dream.stage.snapshot_source&#10;dream.stage.review_codebase&#10;dream.stage.review_report&#10;dream.stage.deliver"></textarea>
+    <textarea id="f-stages" placeholder="dream.stage.snapshot_source&#10;dream.stage.review_codebase&#10;dream.stage.review_report&#10;dream.stage.deliver" oninput="renderStyleToggles()"></textarea>
     <div class="ref" id="stage-ref"></div>
 
     <div class="two">
@@ -108,7 +113,13 @@
     </div>
 
     <label class="fld">Stage config (JSON)</label>
-    <textarea id="f-stagecfg" placeholder='{"review_codebase":{"review_type":"changes","max_files":40}}'></textarea>
+    <textarea id="f-stagecfg" placeholder='{"review_codebase":{"review_type":"changes","max_files":40}}' oninput="renderStyleToggles()"></textarea>
+
+    <div id="f-styles-wrap" style="display:none;margin-top:6px">
+      <label class="fld">Prompting style (per analysis stage)</label>
+      <div id="f-styles"></div>
+      <div class="ref" style="margin-top:2px">One-shot = a single grounded LLM prompt (no tools) — right for analysis / documentation. Agentic loop = the tool-using ReAct agent — for tasks that must call tools or edit.</div>
+    </div>
     <div class="two">
       <div><label class="fld">Iterate (JSON)</label><textarea id="f-iterate" placeholder='{"enabled":false}'></textarea></div>
       <div><label class="fld">Pivot (JSON)</label><textarea id="f-pivot" placeholder='{"enabled":false}'></textarea></div>
@@ -122,6 +133,7 @@
     <div class="three">
       <div><label class="fld">Mode</label>
         <select id="f-mode"><option value="agent_loop">agent_loop</option>
+        <option value="one_shot">one_shot</option>
         <option value="stepwise">stepwise</option><option value="synthesize_only">synthesize_only</option></select></div>
       <div><label class="fld">Depth</label>
         <select id="f-depth"><option>brief</option><option selected>standard</option>
@@ -194,10 +206,51 @@ async function loadStageRef(){
   $('stage-ref').innerHTML = 'Available: ' + names.slice(0,60)
     .map(n=>'<code onclick="addStage(\''+esc(n)+'\')">'+esc(n.replace('dream.stage.',''))+'</code>').join(' ');
 }
-function addStage(n){ const ta=$('f-stages'); ta.value=(ta.value.trim()?ta.value.replace(/\s*$/,'')+'\n':'')+n; }
+function addStage(n){ const ta=$('f-stages'); ta.value=(ta.value.trim()?ta.value.replace(/\s*$/,'')+'\n':'')+n; renderStyleToggles(); }
 
 function lines(v){return (v||'').split('\n').map(s=>s.trim()).filter(Boolean);}
 function parseJSON(v,def){try{return v.trim()?JSON.parse(v):def;}catch(e){return undefined;}}
+
+// ── Per-stage prompting style (one-shot LLM vs agentic loop) ──────────────
+// Only stages that CAN run either way get a toggle; the choice is stored in
+// stage_config[<short>].prompt_style, so it round-trips through the normal save.
+const AGENTIC_STAGE_SHORTS = ['agent_loop','investigate','stepwise_execute'];
+// Per-stage default, mirrors _STAGE_DEFAULT_STYLE in dream_capabilities.py:
+// only stepwise_execute is agentic by default.
+const STAGE_DEFAULT_STYLE = {stepwise_execute:'agent_loop', agent_loop:'one_shot', investigate:'one_shot'};
+const ONE_SHOT_ALIASES = new Set(['one_shot','oneshot','one-shot','llm','prompt','single']);
+const AGENTIC_ALIASES = new Set(['agent_loop','agentic','loop','agent','stepwise','react']);
+function styleFromCfg(sc, short){
+  const v = ((sc&&sc[short]&&sc[short].prompt_style)||'').toString().trim().toLowerCase();
+  if (ONE_SHOT_ALIASES.has(v)) return 'one_shot';
+  if (AGENTIC_ALIASES.has(v)) return 'agent_loop';
+  return STAGE_DEFAULT_STYLE[short] || 'one_shot';
+}
+function renderStyleToggles(){
+  const wrap=$('f-styles-wrap'), host=$('f-styles');
+  if(!wrap||!host) return;
+  const stageShorts = lines($('f-stages').value).map(s=>s.replace('dream.stage.',''));
+  const present = AGENTIC_STAGE_SHORTS.filter(s=>stageShorts.includes(s));
+  if(!present.length){ wrap.style.display='none'; host.innerHTML=''; return; }
+  const sc = parseJSON($('f-stagecfg').value,{}) || {};
+  wrap.style.display='block';
+  host.innerHTML = present.map(s=>{
+    const cur = styleFromCfg(sc,s);
+    return '<div style="display:flex;align-items:center;gap:8px;margin:3px 0">'+
+      '<code style="min-width:150px">'+esc(s)+'</code>'+
+      '<select data-stage="'+esc(s)+'" onchange="applyStyleToggle(this)">'+
+        '<option value="agent_loop"'+(cur==='agent_loop'?' selected':'')+'>Agentic loop (tools)</option>'+
+        '<option value="one_shot"'+(cur==='one_shot'?' selected':'')+'>One-shot LLM (no tools)</option>'+
+      '</select></div>';
+  }).join('');
+}
+function applyStyleToggle(sel){
+  const short=sel.getAttribute('data-stage'), val=sel.value;
+  const sc = parseJSON($('f-stagecfg').value,{});
+  if(sc===undefined){ toast('err','Fix the Stage config JSON first'); return; }
+  sc[short] = Object.assign({}, sc[short]||{}, {prompt_style: val});
+  $('f-stagecfg').value = JSON.stringify(sc,null,2);
+}
 
 function openEditor(p){
   _editing = p || null;
@@ -219,6 +272,7 @@ function openEditor(p){
   $('f-maxsteps').value = p?.max_steps ?? 8;
   $('f-journal').checked = p?.journal !== false;
   $('m-status').textContent = '';
+  renderStyleToggles();
   $('ov').classList.add('on');
 }
 function closeEditor(){ $('ov').classList.remove('on'); }

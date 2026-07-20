@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en" data-panel="ide-remote-panel">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vera · Remote IDE</title>
+<style>
+  :root{
+    --bg0:#0d0f12; --bg1:#14171c; --bg2:#1b1f26; --bg3:#232833;
+    --fg:#e6e9ef; --fg-dim:var(--dim,#9aa4b2); --line:var(--border,#2a2f3a);
+    --accent:#5b8cff; --accent-dim:color-mix(in srgb, var(--accent,#5b8cff) 45%, transparent);
+    --ok:#37c871; --warn:#e0a83a; --err:#ef4444; --busy:var(--purple,#b07cff);
+    --radius:10px; --mono:'SF Mono',ui-monospace,'Cascadia Code',Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg0);color:var(--fg);
+       font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:13px}
+  a{color:var(--accent)}
+  .wrap{display:flex;flex-direction:column;height:100vh}
+  header{display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--bg1)}
+  header h1{font-size:14px;margin:0;font-weight:600;letter-spacing:.3px}
+  header h1 .sat{opacity:.9}
+  header .sub{color:var(--fg-dim);font-size:11px}
+  .tabbar{display:flex;gap:4px;padding:8px 12px 0;background:var(--bg1);border-bottom:1px solid var(--line)}
+  .tabbar button{background:none;border:none;color:var(--fg-dim);padding:8px 14px;border-radius:8px 8px 0 0;
+       cursor:pointer;font-size:13px;font-weight:500}
+  .tabbar button.active{color:var(--fg);background:var(--bg2);box-shadow:inset 0 -2px 0 var(--accent)}
+  main{flex:1;overflow:auto;padding:16px}
+  .view{display:none} .view.active{display:block}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .grow{flex:1;min-width:0}
+  .card{background:var(--bg1);border:1px solid var(--line);border-radius:var(--radius);padding:14px;margin-bottom:12px}
+  .card h3{margin:0 0 10px;font-size:13px;font-weight:600}
+  label{display:block;color:var(--fg-dim);font-size:11px;margin:0 0 3px}
+  input,select,textarea{background:var(--bg2);border:1px solid var(--line);color:var(--fg);
+       border-radius:8px;padding:7px 9px;font-size:12px;font-family:inherit;width:100%}
+  textarea{resize:vertical;min-height:70px;font-family:var(--mono)}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent-dim)}
+  button.btn{background:var(--bg3);border:1px solid var(--line);color:var(--fg);border-radius:8px;
+       padding:7px 12px;cursor:pointer;font-size:12px;font-weight:500;white-space:nowrap}
+  button.btn:hover{border-color:var(--accent-dim)}
+  button.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent,#fff)}
+  button.btn.primary:hover{filter:brightness(1.08)}
+  button.btn.danger:hover{border-color:var(--err);color:var(--err)}
+  button.btn:disabled{opacity:.45;cursor:not-allowed}
+  .chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:2px 8px;border-radius:20px;
+       background:var(--bg2);border:1px solid var(--line);color:var(--fg-dim)}
+  .chip .dot{width:7px;height:7px;border-radius:50%;background:var(--fg-dim)}
+  .chip.ok{color:var(--ok)} .chip.ok .dot{background:var(--ok)}
+  .chip.down{color:var(--err)} .chip.down .dot{background:var(--err)}
+  .chip.warn{color:var(--warn)} .chip.warn .dot{background:var(--warn)}
+  .chip.busy{color:var(--busy)} .chip.busy .dot{background:var(--busy);animation:pulse 1s infinite}
+  @keyframes pulse{50%{opacity:.35}}
+  .muted{color:var(--fg-dim)} .mono{font-family:var(--mono)}
+  .inst{border:1px solid var(--line);border-radius:var(--radius);padding:12px;margin-bottom:10px;background:var(--bg1)}
+  .inst .top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+  .inst .name{font-weight:600;font-size:13px}
+  .inst .meta{color:var(--fg-dim);font-size:11px;margin-top:2px}
+  .inst .acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+  .kind{font-size:10px;text-transform:uppercase;letter-spacing:.5px;padding:1px 6px;border-radius:5px;
+       background:var(--accent-dim);color:#cdd8ff}
+  .term{background:#07090c;border:1px solid var(--line);border-radius:8px;padding:10px;font-family:var(--mono);
+       font-size:11.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word;height:340px;overflow:auto}
+  .term .a{color:#cfe0ff} .term .t{color:var(--warn)} .term .e{color:var(--err)} .term .sys{color:var(--fg-dim)} .term .r{color:var(--ok)}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--fg-dim);font-weight:500;font-size:11px}
+  .st{font-size:10px;text-transform:uppercase;letter-spacing:.4px;padding:1px 7px;border-radius:5px;background:var(--bg3)}
+  .st.queued{color:var(--warn)} .st.running{color:var(--busy)} .st.done{color:var(--ok)}
+  .st.error{color:var(--err)} .st.cancelled{color:var(--fg-dim)}
+  .field{margin-bottom:10px}
+  .toast{position:fixed;bottom:14px;right:14px;background:var(--bg3);border:1px solid var(--line);
+       padding:9px 13px;border-radius:8px;font-size:12px;opacity:0;transition:opacity .2s;max-width:340px}
+  .toast.show{opacity:1}
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media(max-width:760px){.split{grid-template-columns:1fr}}
+  .frameWrap{border:1px solid var(--line);border-radius:8px;overflow:hidden;height:420px;background:#000;margin-top:10px;display:none}
+  .frameWrap iframe{width:100%;height:100%;border:none}
+  code.inline{background:var(--bg2);border:1px solid var(--line);border-radius:5px;padding:1px 5px;font-family:var(--mono);font-size:11px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1><span class="sat">🛰</span> Remote IDE</h1>
+    <span class="sub">Drive remote VS Code · run Claude Code &amp; Vera agents · autonomous work queue</span>
+  </header>
+  <div class="tabbar">
+    <button data-tab="instances" class="active">Instances</button>
+    <button data-tab="console">Console</button>
+    <button data-tab="queue">Work Queue</button>
+    <button data-tab="bridge">Bridge</button>
+  </div>
+  <main>
+    <!-- INSTANCES -->
+    <section class="view active" id="v-instances">
+      <div class="card">
+        <h3>Register / provision an instance</h3>
+        <div class="split">
+          <div>
+            <div class="field"><label>Kind</label>
+              <select id="reg-kind">
+                <option value="code-server">code-server (Vera-managed, install over SSH)</option>
+                <option value="tunnel">tunnel / existing URL</option>
+                <option value="ssh">ssh only (no browser IDE)</option>
+              </select></div>
+            <div class="field" id="reg-host-wrap"><label>SSH host (exec store)</label>
+              <select id="reg-host"><option value="">— pick a host —</option></select></div>
+            <div class="field" id="reg-url-wrap" style="display:none"><label>URL (tunnel)</label>
+              <input id="reg-url" placeholder="https://my-tunnel.example.dev"></div>
+          </div>
+          <div>
+            <div class="field"><label>Label</label><input id="reg-label" placeholder="dev-box / project name"></div>
+            <div class="field"><label>Remote project dir (workdir)</label>
+              <input id="reg-workdir" placeholder="/home/user/myproject"></div>
+            <div class="field"><label>code-server port</label><input id="reg-port" type="number" value="8080"></div>
+          </div>
+        </div>
+        <div class="row" style="margin-top:6px">
+          <label style="display:flex;align-items:center;gap:6px;margin:0"><input type="checkbox" id="reg-claude" checked style="width:auto"> also install Claude Code CLI</label>
+          <span class="grow"></span>
+          <button class="btn" id="btn-register">Register only</button>
+          <button class="btn primary" id="btn-provision">Provision &amp; start</button>
+        </div>
+        <div class="muted" style="margin-top:8px;font-size:11px" id="reg-note"></div>
+      </div>
+
+      <div class="row" style="margin-bottom:10px">
+        <h3 style="margin:0">Instances</h3><span class="grow"></span>
+        <button class="btn" id="btn-refresh-inst">↻ Refresh</button>
+      </div>
+      <div id="inst-list"><div class="muted">Loading…</div></div>
+
+      <div class="frameWrap" id="frameWrap"><iframe id="frame" title="remote vscode"></iframe></div>
+
+      <!-- Proxmox guests → VS Code (moved here from the Storage-fabric panel) -->
+      <div class="card" style="margin-top:12px">
+        <div class="row" style="margin-bottom:8px">
+          <h3 style="margin:0">Proxmox guests → VS Code</h3>
+          <span class="grow"></span>
+          <select id="pxg-cluster" style="width:auto;min-width:130px"></select>
+          <select id="pxg-node" style="width:auto;min-width:110px"></select>
+          <button class="btn" id="btn-pxg-load">↻ Load targets</button>
+        </div>
+        <div class="muted" style="font-size:11px;margin-bottom:8px">
+          Guests with enrolled SSH creds (Workers → Proxmox → guest → Enroll) get Remote-SSH
+          targets — full terminal, debugging and extensions inside the guest. Everything else
+          is editable through the vera-fs SMB share once the Storage panel's file server is synced.
+        </div>
+        <table>
+          <thead><tr><th>Guest</th><th>Type</th><th>Via</th><th>Open</th><th>SMB path</th></tr></thead>
+          <tbody id="pxg-body"><tr><td colspan="5" class="muted">Pick a cluster and load.</td></tr></tbody>
+        </table>
+        <div class="row" style="margin-top:8px">
+          <span class="muted" style="font-size:11px">~/.ssh/config block (paste once, then the links open directly)</span>
+          <span class="grow"></span>
+          <button class="btn" id="btn-pxg-copy">⧉ Copy ssh config</button>
+        </div>
+        <div class="term" id="pxg-cfg" style="height:auto;max-height:180px">—</div>
+      </div>
+    </section>
+
+    <!-- CONSOLE -->
+    <section class="view" id="v-console">
+      <div class="card">
+        <div class="split">
+          <div>
+            <div class="field"><label>Instance</label><select id="run-inst"></select></div>
+            <div class="field"><label>Engine</label>
+              <select id="run-engine">
+                <option value="claude">Claude Code CLI (headless)</option>
+                <option value="vera-agent">Vera agent (Ollama)</option>
+              </select></div>
+            <div class="field" id="run-agent-wrap" style="display:none"><label>Vera agent</label>
+              <select id="run-agent"><option value="writer">writer</option><option value="thinker">thinker</option><option value="analyser">analyser</option></select></div>
+          </div>
+          <div>
+            <div class="field"><label>Task</label>
+              <textarea id="run-task" placeholder="e.g. Add input validation to the /login route and write a test."></textarea></div>
+            <div class="row">
+              <button class="btn primary" id="btn-run">▶ Run (stream)</button>
+              <button class="btn" id="btn-enqueue">＋ Enqueue</button>
+              <button class="btn danger" id="btn-stop" disabled>■ Stop</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="row" style="margin-bottom:8px"><h3 style="margin:0">Output</h3><span class="grow"></span>
+          <span class="chip" id="run-state"><span class="dot"></span><span>idle</span></span>
+          <button class="btn" id="btn-clear-term">Clear</button></div>
+        <div class="term" id="term"><span class="sys">Pick an instance, choose an engine, and run a task. Claude Code streams live; Vera-agent posts on completion.</span></div>
+      </div>
+    </section>
+
+    <!-- QUEUE -->
+    <section class="view" id="v-queue">
+      <div class="card">
+        <div class="row">
+          <div><label>Autopilot</label>
+            <button class="btn" id="btn-autopilot">…</button></div>
+          <div><label>Max concurrency</label>
+            <input id="q-conc" type="number" min="1" value="1" style="width:80px"></div>
+          <button class="btn" id="btn-conc-save">Save</button>
+          <span class="grow"></span>
+          <button class="btn" id="btn-q-clear">Clear finished</button>
+          <button class="btn" id="btn-q-refresh">↻ Refresh</button>
+        </div>
+        <div class="muted" style="margin-top:8px;font-size:11px">
+          When autopilot is on, Vera dispatches queued tasks to free instances every ~10s.
+          dream/project goals can enqueue via <code class="inline">ide.remote.queue.add</code>.</div>
+      </div>
+      <table>
+        <thead><tr><th>Status</th><th>Task</th><th>Engine</th><th>Instance</th><th>Source</th><th>Summary</th><th></th></tr></thead>
+        <tbody id="q-body"><tr><td colspan="7" class="muted">No items.</td></tr></tbody>
+      </table>
+    </section>
+
+    <!-- BRIDGE -->
+    <section class="view" id="v-bridge">
+      <div class="card">
+        <h3>Vera ↔ Claude Code MCP bridge</h3>
+        <div class="muted" style="font-size:12px;line-height:1.6">
+          Installing the bridge lets a remote Claude Code session call back into Vera —
+          record work, query memory, run Vera IDE tools — i.e. use the Vera IDE features from VS Code.
+          It deploys <code class="inline">~/.vera/vera_mcp_bridge.py</code>, runs
+          <code class="inline">claude mcp add vera …</code>, and writes <code class="inline">&lt;workdir&gt;/.mcp.json</code>.
+        </div>
+      </div>
+      <div id="bridge-list"><div class="muted">Loading…</div></div>
+      <div class="card">
+        <h3>VS Code extension</h3>
+        <div class="muted" style="font-size:12px;line-height:1.6">
+          A companion extension lives in <code class="inline">tools/vera-vscode/</code>. Build it with
+          <code class="inline">npm install &amp;&amp; npx vsce package</code> and install the resulting
+          <code class="inline">.vsix</code> in any VS Code / code-server instance. It adds a Vera sidebar
+          (memory search, enqueue tasks) and a “Vera: Connect this workspace” command that installs the
+          MCP bridge locally.
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+let INSTANCES = [];
+
+function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2600); }
+
+async function api(path, method='GET', body=null){
+  const opt={method,headers:{'Content-Type':'application/json'}};
+  if(body) opt.body=JSON.stringify(body);
+  const r=await fetch(path,opt);
+  const txt=await r.text();
+  try{ return JSON.parse(txt); }catch(e){ return {error:'bad response: '+txt.slice(0,200)}; }
+}
+
+/* ---- tabs ---- */
+$$('.tabbar button').forEach(b=>b.onclick=()=>{
+  $$('.tabbar button').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active');
+  $$('.view').forEach(v=>v.classList.remove('active'));
+  $('#v-'+b.dataset.tab).classList.add('active');
+  if(b.dataset.tab==='queue') loadQueue();
+  if(b.dataset.tab==='bridge') renderBridge();
+  if(b.dataset.tab==='console') fillRunInstances();
+});
+
+/* ---- register form ---- */
+$('#reg-kind').onchange=()=>{
+  const k=$('#reg-kind').value;
+  $('#reg-host-wrap').style.display = (k==='tunnel')?'none':'block';
+  $('#reg-url-wrap').style.display  = (k==='tunnel')?'block':'none';
+  $('#btn-provision').style.display = (k==='code-server')?'inline-block':'none';
+};
+
+async function loadHosts(){
+  const r=await api('/exec/ssh/hosts');
+  const sel=$('#reg-host'); sel.innerHTML='<option value="">— pick a host —</option>';
+  (r.hosts||[]).forEach(h=>{
+    const o=document.createElement('option'); o.value=h.id;
+    o.textContent=(h.label||h.host)+'  ('+(h.user||'')+'@'+(h.host||'')+')'; sel.appendChild(o);
+  });
+}
+
+function regPayload(){
+  return {
+    kind:$('#reg-kind').value, host_id:$('#reg-host').value, url:$('#reg-url').value,
+    label:$('#reg-label').value, workdir:$('#reg-workdir').value,
+    port:parseInt($('#reg-port').value||'8080',10)
+  };
+}
+$('#btn-register').onclick=async()=>{
+  const r=await api('/ide/remote/register','POST',regPayload());
+  if(r.ok){ toast('Registered '+(r.instance.label||'')); loadInstances(); } else toast('Error: '+(r.error||'?'));
+};
+$('#btn-provision').onclick=async()=>{
+  const p=regPayload();
+  if(!p.host_id){ toast('Pick an SSH host first'); return; }
+  $('#reg-note').textContent='Provisioning code-server over SSH… this can take a minute.';
+  $('#btn-provision').disabled=true;
+  const r=await api('/ide/remote/provision','POST',
+    {host_id:p.host_id,port:p.port,workdir:p.workdir,label:p.label,install_claude:$('#reg-claude').checked});
+  $('#btn-provision').disabled=false;
+  if(r.ok){
+    $('#reg-note').innerHTML='✅ Provisioned. URL: <b>'+(r.url||'?')+'</b> · code-server password: <code class="inline">'+(r.password||'')+'</code>'+(r.claude_installed===false?' · ⚠ Claude CLI install failed (check Node ≥18)':'');
+    loadInstances();
+  } else { $('#reg-note').textContent='❌ '+(r.error||'failed')+(r.steps?(' — '+JSON.stringify(r.steps.slice(-1))):''); }
+};
+
+/* ---- instances ---- */
+async function loadInstances(){
+  const r=await api('/ide/remote/instances');
+  INSTANCES=r.instances||[];
+  renderInstances(); fillRunInstances();
+}
+function statusChip(inst){
+  const s=inst.status||'unknown';
+  const cls = s==='running'?'ok':(s==='down'?'down':'warn');
+  return '<span class="chip '+cls+'"><span class="dot"></span>'+s+'</span>';
+}
+function renderInstances(){
+  const el=$('#inst-list');
+  if(!INSTANCES.length){ el.innerHTML='<div class="muted">No instances yet — register or provision one above.</div>'; return; }
+  el.innerHTML=INSTANCES.map(i=>`
+    <div class="inst" data-id="${i.id}">
+      <div class="top">
+        <div>
+          <span class="name">${esc(i.label||i.id)}</span> <span class="kind">${i.kind}</span>
+          <div class="meta">${i.url?esc(i.url):'(no url)'} · workdir: ${esc(i.workdir||'—')} · host: ${esc(i.host_id||'—')}</div>
+        </div>
+        <div>${statusChip(i)}</div>
+      </div>
+      <div class="acts">
+        ${i.url?`<button class="btn" data-act="open">Open</button>`:''}
+        <button class="btn" data-act="status">Check status</button>
+        ${i.host_id&&i.kind==='code-server'?`<button class="btn" data-act="start">Start</button><button class="btn" data-act="stop">Stop</button>`:''}
+        ${i.host_id?`<button class="btn" data-act="bridge">Install bridge</button>`:''}
+        <button class="btn" data-act="run">Run task ▶</button>
+        <button class="btn danger" data-act="delete">Delete</button>
+      </div>
+      <div class="meta" data-status style="margin-top:8px"></div>
+    </div>`).join('');
+  $$('#inst-list .inst').forEach(card=>{
+    const id=card.dataset.id;
+    card.querySelectorAll('button[data-act]').forEach(btn=>btn.onclick=()=>instAct(id,btn.dataset.act,card));
+  });
+}
+async function instAct(id,act,card){
+  const inst=INSTANCES.find(x=>x.id===id)||{};
+  const note=card?card.querySelector('[data-status]'):null;
+  if(act==='delete'){ if(!confirm('Delete instance '+(inst.label||id)+'?'))return;
+    await api('/ide/remote/delete','POST',{id}); toast('Deleted'); loadInstances(); return; }
+  if(act==='open'){
+    const r=await api('/ide/remote/open?instance_id='+encodeURIComponent(id));
+    const src=r.proxy_url||r.url;   // proxy = same-origin → in-iframe login works
+    if(src){ $('#frame').src=src; $('#frameWrap').style.display='block';
+      $('#frameWrap').scrollIntoView({behavior:'smooth'});
+      if(r.needs_password) toast('code-server needs its password (IDE header → 🔑 copies it).'); }
+    else toast('No URL for this instance'); return; }
+  if(act==='status'){ if(note)note.textContent='Checking…';
+    const r=await api('/ide/remote/status','POST',{instance_id:id});
+    if(note) note.innerHTML = r.ok ? `code-server: <b>${r.code_server||'?'}</b> · claude: <b>${esc(r.claude||'?')}</b> · bridge: <b>${r.bridge?'yes':'no'}</b> · url: <b>${r.url_reachable?'reachable':'—'}</b>` : ('❌ '+(r.error||'?'));
+    loadInstances(); return; }
+  if(act==='start'||act==='stop'){ if(note)note.textContent=act+'ing…';
+    const r=await api('/ide/remote/'+act,'POST',{instance_id:id}); toast(r.ok?act+'ed':'error'); return; }
+  if(act==='bridge'){ if(note)note.textContent='Installing MCP bridge…';
+    const r=await api('/ide/remote/bridge/install','POST',{instance_id:id});
+    if(note) note.textContent = r.ok?('✅ bridge installed → '+r.url):('❌ '+JSON.stringify(r.steps||r.error)); return; }
+  if(act==='run'){ $$('.tabbar button').forEach(x=>x.classList.remove('active'));
+    document.querySelector('.tabbar button[data-tab=console]').classList.add('active');
+    $$('.view').forEach(v=>v.classList.remove('active')); $('#v-console').classList.add('active');
+    fillRunInstances(); $('#run-inst').value=id; return; }
+}
+const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* ---- console ---- */
+function fillRunInstances(){
+  const sel=$('#run-inst'); const cur=sel.value;
+  sel.innerHTML=INSTANCES.map(i=>`<option value="${i.id}">${esc(i.label||i.id)} (${i.kind})</option>`).join('');
+  if(cur) sel.value=cur;
+}
+$('#run-engine').onchange=()=>{ $('#run-agent-wrap').style.display = $('#run-engine').value==='vera-agent'?'block':'none'; };
+function termLine(cls,txt){ const t=$('#term'); const span=document.createElement('span');
+  span.className=cls; span.textContent=txt+'\n'; t.appendChild(span); t.scrollTop=t.scrollHeight; }
+$('#btn-clear-term').onclick=()=>{ $('#term').innerHTML=''; };
+function setRunState(s,cls){ $('#run-state').className='chip '+(cls||''); $('#run-state').innerHTML='<span class="dot"></span>'+s; }
+
+let RUN_ABORT=null;
+$('#btn-run').onclick=async()=>{
+  const instance_id=$('#run-inst').value, task=$('#run-task').value.trim();
+  const engine=$('#run-engine').value;
+  if(!instance_id){ toast('No instance'); return; }
+  if(!task){ toast('Enter a task'); return; }
+  $('#term').innerHTML=''; setRunState('running','busy'); $('#btn-run').disabled=true; $('#btn-stop').disabled=false;
+
+  if(engine==='vera-agent'){
+    termLine('sys','Running Vera agent ('+$('#run-agent').value+') — result posts on completion…');
+    const r=await api('/ide/remote/run','POST',{instance_id,task,engine,agent:$('#run-agent').value});
+    termLine(r.ok?'r':'e', r.summary||r.error||JSON.stringify(r));
+    setRunState(r.ok?'done':'error',r.ok?'ok':'down'); $('#btn-run').disabled=false; $('#btn-stop').disabled=true; loadInstances(); return;
+  }
+  // Claude Code — SSE over fetch (POST)
+  try{
+    RUN_ABORT=new AbortController();
+    const resp=await fetch('/ide-api/remote/run',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({instance_id,task}),signal:RUN_ABORT.signal});
+    const reader=resp.body.getReader(); const dec=new TextDecoder(); let buf='';
+    while(true){
+      const {done,value}=await reader.read(); if(done) break;
+      buf+=dec.decode(value,{stream:true});
+      let idx; while((idx=buf.indexOf('\n\n'))>=0){
+        const frame=buf.slice(0,idx); buf=buf.slice(idx+2);
+        const line=frame.split('\n').find(l=>l.startsWith('data:')); if(!line) continue;
+        const data=line.slice(5).trim();
+        if(data==='[DONE]') continue;
+        let ev; try{ev=JSON.parse(data);}catch(e){continue;}
+        handleFrame(ev);
+      }
+    }
+    setRunState('done','ok');
+  }catch(e){ termLine('e','stream error: '+e.message); setRunState('error','down'); }
+  $('#btn-run').disabled=false; $('#btn-stop').disabled=true; RUN_ABORT=null; loadInstances();
+};
+function handleFrame(ev){
+  const t=ev.event, d=ev.data;
+  if(t==='meta') termLine('sys','▶ '+(d.label||'')+' · '+(d.workdir||''));
+  else if(t==='assistant') termLine('a', typeof d==='string'?d:JSON.stringify(d));
+  else if(t==='tool') termLine('t','⚙ '+summariseTool(d));
+  else if(t==='result') termLine('r','✔ '+(d.result||d.subtype||'done'));
+  else if(t==='stdout') termLine('sys', typeof d==='string'?d:JSON.stringify(d));
+  else if(t==='stderr') termLine('e', d);
+  else if(t==='error') termLine('e','✖ '+d);
+  else if(t==='exit') termLine('sys','exit '+d);
+}
+function summariseTool(d){ try{ const m=d.message||d; const c=(m.content||[]).find(x=>x.type==='tool_use'); return c?(c.name+' '+JSON.stringify(c.input).slice(0,120)):(d.type||'tool'); }catch(e){ return 'tool'; } }
+$('#btn-stop').onclick=()=>{ if(RUN_ABORT){ RUN_ABORT.abort(); termLine('sys','(stopped — remote run may continue)'); } };
+$('#btn-enqueue').onclick=async()=>{
+  const instance_id=$('#run-inst').value||'any', task=$('#run-task').value.trim();
+  if(!task){ toast('Enter a task'); return; }
+  const r=await api('/ide/remote/queue/add','POST',{instance_id,task,engine:$('#run-engine').value,agent:$('#run-agent').value});
+  toast(r.ok?'Enqueued':'Error'); if(r.ok) $('#run-task').value='';
+};
+
+/* ---- queue ---- */
+async function loadQueue(){
+  const r=await api('/ide/remote/queue/list');
+  const ap=r.autopilot; $('#btn-autopilot').textContent = ap?'● ON':'○ OFF';
+  $('#btn-autopilot').className='btn '+(ap?'primary':'');
+  $('#q-conc').value=r.max_concurrency||1;
+  const b=$('#q-body');
+  const items=(r.items||[]).slice().reverse();
+  if(!items.length){ b.innerHTML='<tr><td colspan="7" class="muted">No items.</td></tr>'; return; }
+  b.innerHTML=items.map(i=>`<tr>
+    <td><span class="st ${i.status}">${i.status}</span></td>
+    <td>${esc((i.task||'').slice(0,80))}</td><td>${i.engine}</td>
+    <td>${esc(shortInst(i.instance_id))}</td><td>${i.source||''}</td>
+    <td class="muted">${esc((i.summary||'').slice(0,90))}</td>
+    <td>${(i.status==='queued'||i.status==='running')?`<button class="btn danger" data-cancel="${i.id}">Cancel</button>`:''}</td>
+  </tr>`).join('');
+  b.querySelectorAll('button[data-cancel]').forEach(btn=>btn.onclick=async()=>{
+    await api('/ide/remote/queue/cancel','POST',{id:btn.dataset.cancel}); loadQueue(); });
+}
+function shortInst(id){ if(id==='any')return 'any'; const i=INSTANCES.find(x=>x.id===id); return i?i.label:(id||'').slice(0,8); }
+$('#btn-autopilot').onclick=async()=>{ const on=$('#btn-autopilot').textContent.includes('ON');
+  await api('/ide/remote/autopilot','POST',{enabled:!on}); loadQueue(); };
+$('#btn-conc-save').onclick=async()=>{ await api('/ide/remote/autopilot','POST',{max_concurrency:parseInt($('#q-conc').value||'1',10)}); toast('Saved'); loadQueue(); };
+$('#btn-q-clear').onclick=async()=>{ await api('/ide/remote/queue/clear','POST',{which:'finished'}); loadQueue(); };
+$('#btn-q-refresh').onclick=loadQueue;
+
+/* ---- bridge tab ---- */
+function renderBridge(){
+  const el=$('#bridge-list');
+  if(!INSTANCES.length){ el.innerHTML='<div class="muted">No instances.</div>'; return; }
+  el.innerHTML=INSTANCES.filter(i=>i.host_id).map(i=>`
+    <div class="inst" data-id="${i.id}">
+      <div class="top"><div><span class="name">${esc(i.label||i.id)}</span>
+        <div class="meta">host: ${esc(i.host_id)} · workdir: ${esc(i.workdir||'—')}</div></div>
+        <div class="acts">
+          <button class="btn" data-b="status">Verify</button>
+          <button class="btn primary" data-b="install">Install / re-register</button>
+        </div></div>
+      <div class="meta" data-bnote style="margin-top:8px"></div>
+    </div>`).join('') || '<div class="muted">No host-backed instances (tunnels are self-managed).</div>';
+  el.querySelectorAll('.inst').forEach(card=>{
+    const id=card.dataset.id, note=card.querySelector('[data-bnote]');
+    card.querySelector('[data-b=status]').onclick=async()=>{ note.textContent='Checking…';
+      const r=await api('/ide/remote/bridge/status','POST',{instance_id:id});
+      note.textContent = r.ok?`bridge file: ${r.bridge_file?'yes':'no'} · claude registered: ${r.claude_registered?'yes':'no'}`:('❌ '+(r.error||'?')); };
+    card.querySelector('[data-b=install]').onclick=async()=>{ note.textContent='Installing…';
+      const r=await api('/ide/remote/bridge/install','POST',{instance_id:id});
+      note.textContent = r.ok?('✅ installed → '+r.url+(r.registered?' · claude registered':' · .mcp.json written')):('❌ '+JSON.stringify(r.steps||r.error)); };
+  });
+}
+
+/* ---- Proxmox guests → VS Code targets (pxstore.vscode.targets) ---- */
+let PXG_CFG='';
+async function pxgInit(){
+  const j=await api('/proxmox/cluster/list'); const cs=(j&&j.clusters)||[];
+  const sel=$('#pxg-cluster');
+  sel.innerHTML=cs.map(c=>`<option value="${esc(c.id)}">${esc(c.label||c.id)}</option>`).join('')||'<option value="">no clusters</option>';
+  sel.onchange=pxgNodes;
+  $('#pxg-node').onchange=pxgLoad;
+  $('#btn-pxg-load').onclick=pxgLoad;
+  $('#btn-pxg-copy').onclick=async()=>{ try{ await navigator.clipboard.writeText(PXG_CFG||''); toast('Copied'); }catch(e){ toast('Copy failed'); } };
+  if(cs.length) pxgNodes();
+}
+async function pxgNodes(){
+  const cid=$('#pxg-cluster').value; if(!cid) return;
+  try{
+    const inv=await api('/pxstore/inventory','POST',{cluster_id:cid});
+    const nodes=inv.nodes||(inv.node?[inv.node]:[]);
+    $('#pxg-node').innerHTML=nodes.map(n=>`<option${n===inv.node?' selected':''}>${esc(n)}</option>`).join('')||'<option value="">all</option>';
+  }catch(e){ $('#pxg-node').innerHTML='<option value="">all</option>'; }
+  pxgLoad();
+}
+async function pxgLoad(){
+  const cid=$('#pxg-cluster').value; if(!cid) return;
+  $('#pxg-body').innerHTML='<tr><td colspan="5" class="muted">loading…</td></tr>';
+  const r=await api('/pxstore/vscode/targets','POST',{cluster_id:cid,node:$('#pxg-node').value||''});
+  if(r.error){ $('#pxg-body').innerHTML=`<tr><td colspan="5" class="muted">${esc(r.error)}</td></tr>`; return; }
+  PXG_CFG=r.ssh_config||'';
+  $('#pxg-cfg').textContent=PXG_CFG||'— no SSH-enrolled guests yet (Workers → Proxmox → guest → Enroll) —';
+  $('#pxg-body').innerHTML=(r.targets||[]).map(t=>`<tr>
+    <td><b>${esc(t.name)}</b> <span class="muted">#${t.vmid}</span></td>
+    <td>${t.type==='lxc'?'CT':'VM'}</td>
+    <td><span class="chip ${t.via==='ssh'?'ok':''}"><span class="dot"></span><span>${esc(t.via)}</span></span></td>
+    <td>${t.uri?`<a href="${esc(t.uri)}">Open in VS Code ↗</a>`:'<span class="muted">via share</span>'}</td>
+    <td class="mono" style="font-size:11px">${esc(t.smb||'')}</td></tr>`
+  ).join('')||'<tr><td colspan="5" class="muted">no guests</td></tr>';
+}
+
+/* ---- boot + light polling ---- */
+loadHosts(); loadInstances(); pxgInit();
+setInterval(()=>{ if($('#v-queue').classList.contains('active')) loadQueue(); }, 6000);
+setInterval(()=>{ if($('#v-instances').classList.contains('active')) loadInstances(); }, 15000);
+</script>
+<script src="/ui/vera-ui.js"></script>
+</body>
+</html>

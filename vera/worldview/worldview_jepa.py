@@ -1462,6 +1462,30 @@ async def _persist_to_fabric() -> Dict:
 
 _wv_startup_done = False
 
+# Auto-start the live-ingest stream worker once a trained model is loaded, so
+# worldview is part of the ingestion path BY DEFAULT — previously someone had
+# to remember to call worldview.stream.start after every restart, so in
+# practice new fabric records were never encoded into the world model.
+_WV_STREAM_AUTOSTART = os.getenv("WORLDVIEW_STREAM_AUTOSTART", "1") == "1"
+
+async def _maybe_autostart_stream():
+    if not _WV_STREAM_AUTOSTART or _STREAM_ENABLED:
+        return
+    if not (MODEL.ready and MODEL.train_steps.get("gnn", 0) > 0):
+        log.info("worldview stream not auto-started — model untrained (run "
+                 "worldview.train once; streaming then follows ingestion "
+                 "automatically on every start)")
+        return
+    try:
+        res = await cap_worldview_stream_start()
+        if res.get("running"):
+            log.info("worldview stream worker auto-started — new fabric records "
+                     "are encoded into the world model as they are ingested "
+                     "(disable with WORLDVIEW_STREAM_AUTOSTART=0)")
+    except Exception as e:
+        log.debug("worldview stream autostart: %s", e)
+
+
 async def _worldview_startup_load():
     global _wv_startup_done
     if _wv_startup_done:
@@ -1476,6 +1500,7 @@ async def _worldview_startup_load():
         await _load_loss_history()
         _restore_index_from_cached_latents()
         _wv_startup_done = True
+        await _maybe_autostart_stream()
         return
     try:
         blob = await _fabric_load_checkpoint()
@@ -1489,6 +1514,7 @@ async def _worldview_startup_load():
     await _load_loss_history()
     _restore_index_from_cached_latents()
     _wv_startup_done = True
+    await _maybe_autostart_stream()
 
 
 def _restore_index_from_cached_latents():
@@ -2639,6 +2665,7 @@ async def _embed_direct(text: str, ollama_model: str,
             "caller_module": "worldview_jepa",
             "cap_name":     "worldview.reembed",
             "prompt_preview": f"[embed] {text_preview}",
+            "prompt_full":  f"[embed] {(text or '')[:16000]}",
             "json_mode":    False,
             "prefer_gpu":   False,
             "streaming":    False,

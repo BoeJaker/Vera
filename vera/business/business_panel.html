@@ -1,0 +1,1055 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Vera — Business Ops</title>
+<style>
+:root{
+  --bg0:#141312;--bg1:#1b1917;--bg2:#242120;--bg3:#2e2a28;
+  --border:#38332f;--border2:#4a4540;
+  --acc:#5a9e8f;--acc2:#8fb87a;
+  --up:#3fd0a4;--dn:#e0705a;
+  --s1:#7aa2f7;--s2:#e8b34d;--s3:#b48ead;--s4:#5ec9b8;
+  --ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;
+  --text:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;
+  --mono:'JetBrains Mono','Fira Mono',monospace;
+  --sans:'Inter','IBM Plex Sans',system-ui,sans-serif;
+  --radius:6px;--radius-sm:4px;color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:13px}
+body{display:flex;flex-direction:column;overflow:hidden}
+button{font-family:var(--sans);cursor:pointer}
+a{color:var(--acc)}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:4px}
+::-webkit-scrollbar-track{background:transparent}
+
+/* One combined bar: brand + section tabs + chips + controls (no separate tab row) */
+.hdr{display:flex;align-items:center;gap:10px;padding:5px 14px;border-bottom:1px solid var(--border);background:var(--bg1);flex-shrink:0;flex-wrap:wrap}
+.hdr .brand{font-size:14px;font-weight:700;color:var(--acc);letter-spacing:.3px;white-space:nowrap}
+.hdr .chips{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto;align-items:center}
+.chip{background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:3px 10px;font-size:11px;color:var(--dim2);white-space:nowrap}
+.chip b{color:var(--text);font-family:var(--mono)}
+.simtag{background:var(--s3);color:var(--on-acc,#0d0f12);border-radius:20px;padding:3px 10px;font-size:10px;font-weight:700;display:none}
+body.sim .simtag{display:inline-block}
+.toggle{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dim2);cursor:pointer;user-select:none}
+.toggle input{accent-color:var(--s3)}
+
+.layout{flex:1;display:flex;min-height:0}
+nav.side{display:flex;flex-direction:row;flex-wrap:wrap;align-items:center;gap:2px;min-width:0}
+nav.side .grp{align-self:stretch;width:1px;padding:0;margin:2px 4px;background:var(--border);font-size:0}
+nav.side button{background:none;border:none;color:var(--dim2);text-align:left;padding:6px 11px;border-radius:var(--radius);font-size:12.5px;display:flex;align-items:center;gap:7px;white-space:nowrap}
+nav.side button:hover{background:var(--bg2);color:var(--text)}
+nav.side button.active{background:var(--bg2);color:var(--acc);font-weight:600}
+nav.side button .ic{width:16px;text-align:center}
+main.content{flex:1;overflow:auto;padding:16px 18px;min-width:0}
+
+/* Agent dock */
+#dock{width:360px;flex-shrink:0;border-left:1px solid var(--border);background:var(--bg1);display:flex;flex-direction:column;min-height:0;transition:width .18s}
+#dock.collapsed{width:44px}
+.dock-hd{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid var(--border);flex-shrink:0}
+.dock-hd .dtabs{display:flex;gap:4px}
+.dock-hd .dtab{font-size:11px;padding:4px 9px;border-radius:12px;background:var(--bg2);border:1px solid var(--border);color:var(--dim2)}
+.dock-hd .dtab.active{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#0d0f12);font-weight:600}
+#dock.collapsed .dock-hd .dtabs,#dock.collapsed .dock-body{display:none}
+.dcol{margin-left:auto;background:none;border:1px solid var(--border);color:var(--dim2);border-radius:4px;width:24px;height:24px;font-size:13px}
+.dock-body{flex:1;display:flex;flex-direction:column;min-height:0}
+#chatLog{flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:8px}
+.cmsg{max-width:92%;padding:7px 10px;border-radius:9px;font-size:12.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
+.cmsg.user{align-self:flex-end;background:var(--acc);color:var(--on-acc,#0d0f12)}
+.cmsg.bot{align-self:flex-start;background:var(--bg2);border:1px solid var(--border)}
+.cmsg .think{color:var(--dim);font-style:italic;font-size:11px;border-left:2px solid var(--border2);padding-left:6px;margin-bottom:4px}
+.dock-foot{border-top:1px solid var(--border);padding:8px;flex-shrink:0}
+.qchips{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px}
+.qchip{font-size:10px;padding:2px 7px;border-radius:10px;background:var(--bg2);border:1px solid var(--border);color:var(--dim2);cursor:pointer}
+.qchip:hover{border-color:var(--acc);color:var(--text)}
+.chatbar{display:flex;gap:6px;align-items:flex-end}
+#chatIn{flex:1;resize:none;max-height:120px;min-height:36px;font-family:var(--sans);font-size:12.5px}
+.spin{display:inline-block;width:11px;height:11px;border:2px solid var(--border2);border-top-color:var(--acc);border-radius:50%;animation:spin .8s linear infinite;vertical-align:-1px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+h2{font-size:16px;font-weight:600;margin-bottom:2px}
+.sub{color:var(--dim2);font-size:11px;margin-bottom:14px}
+.toolbar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+input,select,textarea{background:var(--bg2);border:1px solid var(--border);color:var(--text);border-radius:var(--radius-sm);padding:6px 9px;font-family:var(--sans);font-size:13px;outline:none}
+input:focus,select:focus,textarea:focus{border-color:var(--acc)}
+textarea{width:100%;resize:vertical;font-family:var(--mono);font-size:12px}
+.btn{background:var(--bg2);border:1px solid var(--border2);color:var(--text);border-radius:var(--radius-sm);padding:6px 12px;font-size:12px}
+.btn:hover{background:var(--bg3)}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#0d0f12);font-weight:600}
+.btn.pri:hover{filter:brightness(1.08)}
+.btn.sm{padding:3px 8px;font-size:11px}
+.btn.danger{color:var(--err);border-color:var(--border)}
+
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;color:var(--dim2);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.3px;padding:6px 8px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg0)}
+td{padding:7px 8px;border-bottom:1px solid var(--border)}
+tr:hover td{background:var(--bg1)}
+.mono{font-family:var(--mono)}
+.right{text-align:right}
+.actions{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
+.pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:10px;background:var(--bg3);color:var(--dim2)}
+.pill.active,.pill.paid,.pill.published,.pill.done,.pill.accepted,.pill.running{color:var(--up)}
+.pill.lead,.pill.idea,.pill.researching,.pill.todo,.pill.draft,.pill.new{color:var(--s1)}
+.pill.cancelled,.pill.rejected,.pill.blocked,.pill.archived,.pill.duplicate{color:var(--dn)}
+.pill.scheduled,.pill.submitted,.pill.active,.pill.doing,.pill.review,.pill.triaged{color:var(--s2)}
+.warn{color:var(--warn)}.err{color:var(--err)}.ok{color:var(--ok)}.up{color:var(--up)}.dn{color:var(--dn)}
+
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-bottom:18px}
+.card{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);padding:14px}
+.card .k{color:var(--dim2);font-size:11px;text-transform:uppercase;letter-spacing:.3px}
+.card .v{font-family:var(--mono);font-size:22px;font-weight:600;margin-top:6px}
+.card .v.small{font-size:16px}
+
+.streamgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-bottom:18px}
+.streamcard{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);padding:14px;cursor:pointer;position:relative;overflow:hidden}
+.streamcard:hover{border-color:var(--acc)}
+.streamcard .top{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.streamcard .ico{font-size:20px}
+.streamcard .nm{font-weight:600}
+.streamcard .kind{font-size:10px;color:var(--dim2)}
+.streamcard .net{font-family:var(--mono);font-size:18px;font-weight:600;margin:4px 0}
+.bar{height:5px;background:var(--bg3);border-radius:3px;overflow:hidden;margin-top:6px}
+.bar>i{display:block;height:100%;background:var(--acc);border-radius:3px}
+
+.empty{color:var(--dim);text-align:center;padding:40px;font-size:13px}
+.result{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-top:10px;font-size:12px}
+.vera-loading{display:flex;align-items:center;justify-content:center;padding:40px;color:var(--dim2)}
+.vera-loading::before{content:"";width:18px;height:18px;border:2px solid var(--border2);border-top-color:var(--acc);border-radius:50%;animation:spin .8s linear infinite;margin-right:10px}
+
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:50}
+.modal-bg.on{display:flex}
+.modal{background:var(--bg1);border:1px solid var(--border2);border-radius:var(--radius);width:min(560px,92vw);max-height:88vh;overflow:auto;padding:18px}
+.modal h3{font-size:15px;margin-bottom:14px}
+.field{margin-bottom:11px}
+.field label{display:block;color:var(--dim2);font-size:11px;margin-bottom:4px}
+.field input,.field select,.field textarea{width:100%}
+.modal .foot{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+
+#toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius);padding:9px 16px;font-size:12px;z-index:80;opacity:0;transition:opacity .2s;pointer-events:none;max-width:70vw}
+#toast.on{opacity:1}
+#toast.err{border-color:var(--err);color:var(--err)}
+#toast.ok{border-color:var(--ok);color:var(--ok)}
+
+#graphCanvas{width:100%;height:calc(100vh - 160px);background:var(--bg0);border:1px solid var(--border);border-radius:var(--radius);display:block}
+.simrow{display:flex;gap:16px;flex-wrap:wrap}
+.simbox{flex:1;min-width:280px;background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);padding:14px}
+.scoregauge{font-family:var(--mono);font-size:34px;font-weight:700}
+</style>
+</head>
+<body>
+  <div class="hdr">
+    <span class="brand">Business Ops</span>
+    <span class="simtag">SIMULATION</span>
+    <nav class="side" id="nav"></nav>
+    <div class="chips" id="hdrChips"></div>
+    <label class="toggle" title="View simulated business instead of live"><input type="checkbox" id="simToggle"> Sim view</label>
+    <button class="btn sm" onclick="render()">↻</button>
+  </div>
+  <div class="layout">
+    <main class="content" id="content"><div class="vera-loading">Loading…</div></main>
+    <aside id="dock">
+      <div class="dock-hd">
+        <div class="dtabs">
+          <button class="dtab active" data-dmode="chat" onclick="setDock('chat')">Operator</button>
+          <button class="dtab" data-dmode="loop" onclick="setDock('loop')">⚙ Agent Loop</button>
+        </div>
+        <button class="dcol" onclick="toggleDock()" title="Collapse">»</button>
+      </div>
+      <div class="dock-body">
+        <div id="chatLog"></div>
+        <div class="dock-foot">
+          <div class="qchips" id="qchips"></div>
+          <div class="chatbar">
+            <textarea id="chatIn" placeholder="Ask the operator, or set an agentic goal…" onkeydown="chatKey(event)"></textarea>
+            <button class="btn pri" id="chatSend" onclick="dockSend()">Send</button>
+            <button class="btn danger" id="chatStop" style="display:none" onclick="dockStop()">Stop</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="modal-bg" id="modalBg"><div class="modal" id="modal"></div></div>
+  <div id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const el = (t,a={},...kids)=>{const e=document.createElement(t);
+  for(const k in a){ if(k==='class')e.className=a[k]; else if(k==='html')e.innerHTML=a[k];
+    else if(k.startsWith('on'))e.addEventListener(k.slice(2),a[k]); else e.setAttribute(k,a[k]); }
+  for(const kid of kids){ if(kid==null)continue; e.append(kid.nodeType?kid:document.createTextNode(kid)); }
+  return e; };
+const money = (v,c='')=> (v==null?'—':(c?c+' ':'$')+Number(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}));
+const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+const short = (s,n=40)=> s&&s.length>n? s.slice(0,n)+'…' : (s||'');
+const dt = s => s? String(s).slice(0,16).replace('T',' ') : '';
+
+let SIM = false;           // sim view flag
+const simq = ()=> SIM? '&is_sim=1' : '&is_sim=0';
+const simParam = ()=> ({is_sim: SIM?1:0});
+
+async function api(path, body){
+  const opt = body ? {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)} : {};
+  const r = await fetch(path, opt);
+  return r.json().catch(()=>({error:'bad response'}));
+}
+function qs(obj){ const p=new URLSearchParams(); for(const k in obj) if(obj[k]!==''&&obj[k]!=null) p.set(k,obj[k]); const s=p.toString(); return s?'?'+s:''; }
+
+let toastT;
+function toast(msg,kind=''){ const t=$('#toast'); t.textContent=msg; t.className='on '+kind;
+  clearTimeout(toastT); toastT=setTimeout(()=>t.className=t.className.replace('on',''),2600); }
+
+// ── Modal form builder ───────────────────────────────────────────────────────
+function closeModal(){ $('#modalBg').classList.remove('on'); $('#modal').innerHTML=''; }
+$('#modalBg').addEventListener('click',e=>{ if(e.target.id==='modalBg') closeModal(); });
+function openForm(title, fields, values, onSubmit){
+  const m=$('#modal'); m.innerHTML=''; m.append(el('h3',{},title));
+  const inputs={};
+  for(const f of fields){
+    const wrap=el('div',{class:'field'}); wrap.append(el('label',{},f.label));
+    let inp;
+    if(f.type==='select'){ inp=el('select'); for(const o of f.options){ const opt=el('option',{value:o.value!=null?o.value:o}); opt.textContent=o.label!=null?o.label:o; inp.append(opt);} }
+    else if(f.type==='textarea'){ inp=el('textarea',{rows:f.rows||3}); }
+    else { inp=el('input',{type:f.type||'text'}); if(f.step)inp.step=f.step; if(f.placeholder)inp.placeholder=f.placeholder; }
+    const v=values&&values[f.name]!=null?values[f.name]:(f.default!=null?f.default:'');
+    if(f.type==='textarea'&&typeof v==='object') inp.value=JSON.stringify(v,null,2); else inp.value=v;
+    inputs[f.name]=inp; wrap.append(inp); m.append(wrap);
+  }
+  const foot=el('div',{class:'foot'});
+  foot.append(el('button',{class:'btn',onclick:closeModal},'Cancel'));
+  const save=el('button',{class:'btn pri'},'Save');
+  save.addEventListener('click',async()=>{
+    const out={}; for(const f of fields){ let val=inputs[f.name].value; if(f.type==='number') val=val===''?null:Number(val); out[f.name]=val; }
+    save.disabled=true; save.textContent='Saving…';
+    try{ const r=await onSubmit(out); if(r&&r.error){ toast(r.error,'err'); save.disabled=false; save.textContent='Save'; return; } closeModal(); toast('Saved','ok'); render(); }
+    catch(e){ toast(String(e),'err'); save.disabled=false; save.textContent='Save'; }
+  });
+  foot.append(save); m.append(foot); $('#modalBg').classList.add('on');
+}
+function pillCls(s){ return 'pill '+esc(s||''); }
+
+// ── Navigation ───────────────────────────────────────────────────────────────
+const NAV = [
+  {grp:'Overview', items:[['dashboard','▦','Dashboard'],['streams','✦','Streams'],['graph','⬡','Network Graph']]},
+  {grp:'Store',    items:[['stores','▣','Stores']]},
+  {grp:'Money',    items:[['money','¤','Accounts'],['ledger','▤','Ledger']]},
+  {grp:'Income',   items:[['gigs','⚙','Gigs'],['content','▷','Content'],['bounties','◈','Bounties']]},
+  {grp:'Growth',   items:[['marketing','➤','Marketing'],['tasks','✓','Tasks']]},
+  {grp:'Agents',   items:[['sim','⚗','Simulation'],['printer','⎙','Printer']]},
+];
+const ALL_SECTIONS = NAV.flatMap(g=>g.items.map(i=>i[0]));
+let current = location.hash.slice(1) || 'dashboard';
+if(!ALL_SECTIONS.includes(current)) current='dashboard';
+
+function buildNav(){ const n=$('#nav'); n.innerHTML='';
+  if(STORE_OPEN){
+    // Store mode: the header tabs become the store's tabs.
+    n.append(el('button',{title:'Back to all stores',onclick:closeStore},'←'),
+      el('span',{style:'font-weight:700;color:var(--acc);padding:0 4px;white-space:nowrap'},
+        (STORE_OPEN.icon||'▣')+' '+(STORE_OPEN.name||'Store')),
+      el('div',{class:'grp'}));
+    for(const [id,ic,label] of STORE_SECTIONS)
+      n.append(el('button',{class:id===storeCur?'active':'',onclick:()=>storeGo(id)},
+        el('span',{class:'ic'},ic), label));
+    return;
+  }
+  for(const g of NAV){ n.append(el('div',{class:'grp'},g.grp));
+    for(const [id,ic,label] of g.items){
+      n.append(el('button',{class:id===current?'active':'',onclick:()=>{current=id;location.hash=id;render();}},
+        el('span',{class:'ic'},ic), label)); }
+  }
+}
+function loading(){ $('#content').innerHTML='<div class="vera-loading">Loading…</div>'; }
+function setContent(...nodes){ const c=$('#content'); c.innerHTML=''; c.append(...nodes); }
+
+async function render(){
+  if(STORE_OPEN){ buildNav(); return; }   // store mode: the iframe owns the content
+  buildNav(); loading();
+  try{ await RENDER[current](); }
+  catch(e){ setContent(el('div',{class:'empty err'},'Error: '+e)); console.error(e); }
+  refreshChips();
+}
+async function refreshChips(){
+  if(STORE_OPEN) return;                  // store iframe supplies chips via postMessage
+  const d=await api('/business/dashboard'+qs(simParam()));
+  const c=$('#hdrChips'); c.innerHTML='';
+  const g = d.goal_pct!=null? d.goal_pct.toFixed(0)+'%' : '—';
+  const chips=[['Cash',money(d.cash_balance)],['30d net',money(d.net_30d)],['Goal',g],['Streams',d.n_streams]];
+  for(const [k,v] of chips) c.append(el('span',{class:'chip',html:k+' <b>'+esc(v)+'</b>'}));
+}
+
+$('#simToggle').addEventListener('change',e=>{ SIM=e.target.checked; document.body.classList.toggle('sim',SIM); render(); });
+
+const RENDER = {};
+
+// ── Stores (master view + drill into each store) ─────────────────────────────
+const _btnPri='background:var(--acc);border:1px solid var(--acc);color:var(--on-acc,#0d0f12);font-weight:600;border-radius:5px;padding:6px 12px;font-size:12px;cursor:pointer';
+const _btnS='background:var(--bg2);border:1px solid var(--border2);color:var(--text);border-radius:5px;padding:5px 11px;font-size:12px;cursor:pointer';
+const _chipS='background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:3px 11px;font-size:11px;color:var(--dim2)';
+const _cardS='background:var(--bg1);border:1px solid var(--border);border-radius:7px;padding:12px 14px';
+RENDER.stores = async ()=>{
+  const m = await api('/business/store/master');
+  const stores = m.stores||[]; const t = m.totals||{};
+  const box = el('div',{});
+  box.append(el('h2',{},'Stores'),
+    el('div',{class:'sub',style:'color:var(--dim2);font-size:11px;margin:2px 0 12px'},
+      'Every shop you run — each with its own inventory & books. Combined below.'));
+  const bar = el('div',{style:'display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap'});
+  const nameI = el('input',{placeholder:'New store name (e.g. Retro Games UK)',
+    style:'flex:1;min-width:200px;background:var(--bg2);border:1px solid var(--border);color:var(--text);border-radius:5px;padding:6px 9px'});
+  bar.append(nameI, el('button',{style:_btnPri, onclick:async()=>{ if(!nameI.value.trim())return;
+    await api('/business/store/upsert',{name:nameI.value.trim(),currency:'GBP'}); nameI.value=''; RENDER.stores(); }},'＋ New store'));
+  box.append(bar);
+  const tr = el('div',{style:'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px'});
+  const chip=(k,v)=>el('div',{style:_chipS, html:k+' <b style="color:var(--text);font-family:var(--mono)">'+esc(v)+'</b>'});
+  tr.append(chip('Stores',t.store_count!=null?t.store_count:stores.length), chip('30d sales',money(t.revenue_30d)),
+    chip('30d profit',money(t.net_30d)), chip('Inventory',money(t.inventory_retail)), chip('Open orders',t.open_orders||0));
+  box.append(tr);
+  const grid = el('div',{style:'display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px'});
+  for(const s of stores){
+    const c = el('div',{style:_cardS});
+    c.append(el('div',{style:'display:flex;align-items:center;gap:8px;margin-bottom:8px'},
+      el('span',{style:'font-size:18px'}, s.icon||'▣'),
+      el('div',{style:'font-weight:700;font-size:14px'}, esc(s.name||'')),
+      el('span',{style:'margin-left:auto;font-size:10px;color:var(--dim2)'}, esc(s.platform||''))));
+    const row=(k,v)=>el('div',{style:'display:flex;justify-content:space-between;font-size:12px;padding:2px 0'},
+      el('span',{style:'color:var(--dim2)'},k), el('span',{style:'font-family:var(--mono)'},v));
+    c.append(row('30d sales', money(s.revenue_30d)), row('30d profit', money(s.net_30d)),
+      row('Inventory', money(s.inventory_retail)), row('Products', s.product_count),
+      row('Live listings', s.listings_live), row('Open orders', s.open_orders));
+    if(s.id) c.append(el('button',{style:_btnPri+';margin-top:9px;width:100%', onclick:()=>openStore(s)}, 'Open store →'));
+    grid.append(c);
+  }
+  if(!stores.length) grid.append(el('div',{style:'color:var(--dim);padding:20px'},'No stores yet — create one above, then add inventory in it.'));
+  box.append(grid);
+  setContent(box);
+};
+// Store mode — the store panel replaces the content full-bleed and its tabs
+// take over the header (mirrors SECTIONS in commerce_uk_panel.html).
+let STORE_OPEN=null, storeCur='dashboard', storeFrame=null;
+const STORE_SECTIONS=[
+  ['dashboard','▦','Dashboard'],['inventory','▤','Inventory'],['quicklist','↯','Quick List'],
+  ['listings','❖','Listings'],['orders','▥','Orders'],['customers','◎','Customers'],
+  ['shipping','➤','Shipping'],['market','⌕','Market & Deals'],['tax','£','Tax & Profit'],
+  ['settings','⚙','Settings']];
+function openStore(s){
+  STORE_OPEN=s; storeCur='dashboard'; buildNav(); $('#hdrChips').innerHTML='';
+  storeFrame = el('iframe',{src:'/business/store/panel?embed=1&store='+encodeURIComponent(s.id)+'&store_name='+encodeURIComponent(s.name||''),
+    allow:'clipboard-read; clipboard-write; camera; serial; usb',
+    style:'width:100%;height:100%;border:none;display:block;background:var(--bg0)'});
+  const c=$('#content'); c.innerHTML=''; c.style.padding='0'; c.style.overflow='hidden'; c.append(storeFrame);
+}
+function closeStore(){
+  STORE_OPEN=null; storeFrame=null;
+  const c=$('#content'); c.style.padding=''; c.style.overflow='';
+  current='stores'; location.hash='stores'; render();
+}
+function storeGo(id){ storeCur=id; buildNav();
+  if(storeFrame&&storeFrame.contentWindow) storeFrame.contentWindow.postMessage({type:'store.nav',id},'*'); }
+window.addEventListener('message',e=>{ const d=e.data||{}; if(!STORE_OPEN) return;
+  if(d.type==='store.chips'&&Array.isArray(d.chips)){ const c=$('#hdrChips'); c.innerHTML='';
+    for(const ch of d.chips) c.append(el('span',{class:'chip',html:esc(ch[0])+' <b>'+esc(ch[1])+'</b>'})); }
+  else if(d.type==='store.nav.state'&&d.id&&d.id!==storeCur){ storeCur=d.id; buildNav(); }
+});
+
+// ── Dashboard ────────────────────────────────────────────────────────────────
+RENDER.dashboard = async ()=>{
+  const d=await api('/business/dashboard'+qs(simParam()));
+  const stat=(k,v,sm,cls)=>{ const c=el('div',{class:'card'}); c.append(el('div',{class:'k'},k),el('div',{class:'v'+(sm?' small':'')+(cls?' '+cls:'')},v)); return c; };
+  const cards=el('div',{class:'cards'});
+  cards.append(
+    stat('Cash', money(d.cash_balance), true),
+    stat('Revenue 30d', money(d.revenue_30d), true, 'up'),
+    stat('Expense 30d', money(d.expense_30d), true, 'dn'),
+    stat('Net 30d', money(d.net_30d), true, d.net_30d>=0?'up':'dn'),
+    stat('Goal', d.goal_pct!=null? d.goal_pct.toFixed(0)+'%':'—'),
+    stat('Open gigs', d.open_gigs),
+    stat('Content pipe', d.content_pipeline),
+    stat('Open bounties', d.open_bounties),
+    stat('Inventory', money(d.inventory_value), true),
+    stat('Open tasks', d.open_tasks),
+  );
+  const nodes=[el('h2',{},'State of the business'+(SIM?' (simulation)':'')),
+    el('div',{class:'sub'},'One glance for you and the agents — 30-day performance across every income stream'),cards];
+
+  nodes.push(el('h2',{},'Income streams'));
+  if((d.streams||[]).length){
+    const grid=el('div',{class:'streamgrid'});
+    for(const s of d.streams){
+      const card=el('div',{class:'streamcard',onclick:()=>{current='streams';location.hash='streams';render();}});
+      card.append(el('div',{class:'top'},el('span',{class:'ico'},s.icon||'✦'),
+        el('div',{},el('div',{class:'nm'},s.name),el('div',{class:'kind'},esc(s.kind)+' · '+esc(s.status)))));
+      card.append(el('div',{class:'net '+(s.net_30d>=0?'up':'dn')},money(s.net_30d)+' net'));
+      card.append(el('div',{class:'sub',style:'margin:0'},'Rev '+money(s.revenue_30d)+' · Exp '+money(s.expense_30d)));
+      if(s.goal_pct!=null){ const b=el('div',{class:'bar'}); b.append(el('i',{style:'width:'+Math.min(100,s.goal_pct)+'%'})); card.append(b);
+        card.append(el('div',{class:'sub',style:'margin:4px 0 0'},s.goal_pct.toFixed(0)+'% of '+money(s.goal_monthly)+' goal')); }
+      grid.append(card);
+    }
+    nodes.push(grid);
+  } else nodes.push(el('div',{class:'empty'},'No income streams yet. Add one under Streams, or ask the operator to set them up.'));
+
+  if(d.commerce){ nodes.push(el('h2',{style:'margin-top:8px'},'E-commerce shop'));
+    nodes.push(el('div',{class:'result',html:
+      `Products <b>${d.commerce.products||0}</b> · Low stock <b class="warn">${d.commerce.low_stock||0}</b> · `+
+      `Open orders <b>${d.commerce.open_orders||0}</b> · 30d revenue <b>${money(d.commerce.revenue_30d)}</b>`})); }
+  setContent(...nodes);
+};
+
+// ── Streams ──────────────────────────────────────────────────────────────────
+RENDER.streams = async ()=>{
+  const data=await api('/business/stream/list'+qs({limit:200,is_sim:SIM?1:0}));
+  const bar=el('div',{class:'toolbar'});
+  bar.append(el('button',{class:'btn pri',style:'margin-left:auto',onclick:()=>streamForm()},'+ New stream'));
+  const t=el('table'); t.innerHTML='<tr><th></th><th>Name</th><th>Kind</th><th>Platform</th><th class="right">Monthly goal</th><th>Status</th><th class="right">Actions</th></tr>';
+  for(const s of data.streams){ const tr=el('tr');
+    tr.innerHTML=`<td>${s.icon||'✦'}</td><td>${esc(s.name)}</td><td class="mono">${esc(s.kind)}</td><td class="mono">${esc(s.platform||'')}</td>
+      <td class="right mono">${money(s.goal_monthly,s.currency)}</td><td><span class="${pillCls(s.status)}">${esc(s.status)}</span></td>`;
+    const act=el('td',{class:'right'}); const a=el('div',{class:'actions'});
+    a.append(el('button',{class:'btn sm',onclick:()=>streamForm(s)},'Edit'),
+      el('button',{class:'btn sm danger',onclick:async()=>{ if(confirm('Delete '+s.name+'?')){await api('/business/stream/delete',{id:s.id});toast('Deleted');render();}}},'✕'));
+    act.append(a); tr.append(act); t.append(tr); }
+  const nodes=[el('h2',{},'Income streams'),el('div',{class:'sub'},data.count+' streams — each owns its own inventory, money, tasks & marketing'),bar];
+  nodes.push(data.streams.length?t:el('div',{class:'empty'},'No streams yet.'));
+  setContent(...nodes);
+};
+function streamForm(s){
+  openForm(s?'Edit stream':'New income stream',[
+    {name:'name',label:'Name'},
+    {name:'kind',label:'Kind',type:'select',options:['ecommerce','freelance','content','bounty','cards','services','reselling','affiliate','saas','other'],default:'other'},
+    {name:'platform',label:'Platform (ebay, fiverr, youtube…)'},
+    {name:'status',label:'Status',type:'select',options:['active','paused','planning','archived'],default:'active'},
+    {name:'goal_monthly',label:'Monthly revenue goal',type:'number',step:'0.01'},
+    {name:'currency',label:'Currency',default:'USD'},
+    {name:'icon',label:'Icon (emoji)'},
+    {name:'description',label:'Description',type:'textarea'},
+  ], s||{}, vals=>{ if(s)vals.id=s.id; else vals.is_sim=SIM?1:0; return api('/business/stream/upsert',vals); });
+}
+async function streamOptions(){ const d=await api('/business/stream/list'+qs({limit:200,is_sim:SIM?1:0}));
+  return [{value:'',label:'— none —'},...(d.streams||[]).map(s=>({value:s.id,label:(s.icon||'')+' '+s.name}))]; }
+
+// ── Money accounts ───────────────────────────────────────────────────────────
+RENDER.money = async ()=>{
+  const data=await api('/business/account/list'+qs({is_sim:SIM?1:0,limit:200}));
+  const bar=el('div',{class:'toolbar'});
+  bar.append(el('span',{class:'chip',html:'Total <b>'+money(data.total_balance)+'</b>'}),
+    el('button',{class:'btn pri',style:'margin-left:auto',onclick:()=>accountForm()},'+ New account'));
+  const t=el('table'); t.innerHTML='<tr><th>Account</th><th>Kind</th><th>Currency</th><th class="right">Balance</th><th class="right">Actions</th></tr>';
+  for(const a of data.accounts){ const tr=el('tr');
+    tr.innerHTML=`<td>${esc(a.name)}${a.is_sim?' <span class="pill">sim</span>':''}</td><td class="mono">${esc(a.kind)}</td><td class="mono">${esc(a.currency)}</td>
+      <td class="right mono ${a.balance>=0?'up':'dn'}">${money(a.balance,a.currency)}</td>`;
+    const act=el('td',{class:'right'}); const box=el('div',{class:'actions'});
+    box.append(el('button',{class:'btn sm pri',onclick:()=>txnForm(a)},'+ Txn'),
+      el('button',{class:'btn sm',onclick:()=>accountForm(a)},'Edit'),
+      el('button',{class:'btn sm',title:'Recalc from ledger',onclick:async()=>{await api('/business/account/recalc',{account_id:a.id});toast('Recalculated','ok');render();}},'↻'),
+      el('button',{class:'btn sm danger',onclick:async()=>{ if(confirm('Delete '+a.name+'?')){await api('/business/account/delete',{id:a.id});toast('Deleted');render();}}},'✕'));
+    act.append(box); tr.append(act); t.append(tr); }
+  const nodes=[el('h2',{},'Money accounts'+(SIM?' (simulated)':'')),
+    el('div',{class:'sub'},'Bank / PayPal / Stripe / crypto / cash — balances driven by the ledger'),bar];
+  nodes.push(data.accounts.length?t:el('div',{class:'empty'},'No accounts yet.'));
+  setContent(...nodes);
+};
+async function accountForm(a){
+  openForm(a?'Edit account':'New money account',[
+    {name:'name',label:'Name'},
+    {name:'kind',label:'Kind',type:'select',options:['bank','paypal','stripe','wise','crypto','cash','platform_balance','revolut','other'],default:'bank'},
+    {name:'currency',label:'Currency',default:'USD'},
+    ...(a?[]:[{name:'balance',label:'Opening balance',type:'number',step:'0.01',default:0}]),
+    {name:'stream_id',label:'Stream',type:'select',options:await streamOptions()},
+    {name:'external_ref',label:'External reference (acct #, wallet…)'},
+  ], a||{}, vals=>{ if(a)vals.id=a.id; vals.is_sim=SIM?1:0; return api('/business/account/upsert',vals); });
+}
+function txnForm(a){
+  openForm('New transaction — '+a.name,[
+    {name:'amount',label:'Amount (+in / −out)',type:'number',step:'0.01'},
+    {name:'category',label:'Category',type:'select',options:['income','expense','fee','payout','refund','transfer','adjustment','tax'],default:'income'},
+    {name:'description',label:'Description'},
+  ], {}, vals=>api('/business/txn/add',{account_id:a.id,amount:vals.amount,category:vals.category,description:vals.description,is_sim:SIM?1:0}));
+}
+
+// ── Ledger ───────────────────────────────────────────────────────────────────
+RENDER.ledger = async ()=>{
+  const data=await api('/business/txn/list'+qs({is_sim:SIM?1:0,limit:300}));
+  const bar=el('div',{class:'toolbar'});
+  bar.append(el('span',{class:'chip',html:'Income <b class="up">'+money(data.income)+'</b>'}),
+    el('span',{class:'chip',html:'Expense <b class="dn">'+money(data.expense)+'</b>'}),
+    el('span',{class:'chip',html:'Net <b>'+money(data.net)+'</b>'}));
+  const t=el('table'); t.innerHTML='<tr><th>When</th><th>Category</th><th>Description</th><th class="right">Amount</th></tr>';
+  for(const x of data.txns){ t.append(el('tr',{html:
+    `<td class="mono">${dt(x.ts)}</td><td><span class="pill">${esc(x.category)}</span></td><td>${esc(x.description||'')}</td>
+     <td class="right mono ${x.amount>=0?'up':'dn'}">${money(x.amount)}</td>`})); }
+  const nodes=[el('h2',{},'Ledger'+(SIM?' (simulated)':'')),el('div',{class:'sub'},data.count+' transactions'),bar];
+  nodes.push(data.txns.length?t:el('div',{class:'empty'},'No transactions yet.'));
+  setContent(...nodes);
+};
+
+// ── Inventory (stream-scoped; trading cards etc.) ─────────────────────────────
+RENDER.inventory = async ()=>{
+  const q=RENDER._invq||'';
+  const data=await api('/business/inventory/list'+qs({q,limit:500,is_sim:SIM?1:0}));
+  const bar=el('div',{class:'toolbar'});
+  const search=el('input',{type:'text',placeholder:'Search name / sku / set…',value:q,style:'width:220px'});
+  search.addEventListener('keydown',e=>{ if(e.key==='Enter'){RENDER._invq=search.value;render();}});
+  bar.append(search,el('button',{class:'btn sm',onclick:()=>{RENDER._invq=search.value;render();}},'Search'),
+    el('span',{class:'chip',html:'Value <b>'+money(data.total_value)+'</b>'}),
+    el('button',{class:'btn pri',style:'margin-left:auto',onclick:()=>invForm()},'+ New item'));
+  const t=el('table'); t.innerHTML='<tr><th>Name</th><th>Kind</th><th>Set / grade</th><th class="right">Qty</th><th class="right">Cost</th><th class="right">Market</th><th>Status</th><th class="right">Actions</th></tr>';
+  for(const i of data.items){ const tr=el('tr');
+    tr.innerHTML=`<td>${esc(i.name)}</td><td class="mono">${esc(i.kind||'')}</td>
+      <td>${esc(i.set_name||'')}${i.grade?' · '+esc(i.grade):''}${i.condition?' ('+esc(i.condition)+')':''}</td>
+      <td class="right mono">${i.qty}</td><td class="right mono">${money(i.cost,i.currency)}</td>
+      <td class="right mono">${money(i.market_value,i.currency)}</td><td><span class="${pillCls(i.status)}">${esc(i.status)}</span></td>`;
+    const act=el('td',{class:'right'}); const a=el('div',{class:'actions'});
+    a.append(el('button',{class:'btn sm',onclick:()=>invForm(i)},'Edit'),
+      el('button',{class:'btn sm',onclick:async()=>{const d=prompt('Qty delta (+/−)','1'); if(d){await api('/business/inventory/adjust',{id:i.id,delta:Number(d)});render();}}},'Qty±'),
+      el('button',{class:'btn sm',title:'Print label',onclick:()=>printLabelFor(i)},'⎙'),
+      el('button',{class:'btn sm danger',onclick:async()=>{if(confirm('Delete '+i.name+'?')){await api('/business/inventory/delete',{id:i.id});toast('Deleted');render();}}},'✕'));
+    act.append(a); tr.append(act); t.append(tr); }
+  const nodes=[el('h2',{},'Inventory'),el('div',{class:'sub'},data.count+' items across all streams — trading cards, stock, supplies'),bar];
+  nodes.push(data.items.length?t:el('div',{class:'empty'},'No inventory yet.'));
+  setContent(...nodes);
+};
+async function invForm(i){
+  openForm(i?'Edit item':'New inventory item',[
+    {name:'name',label:'Name'},
+    {name:'stream_id',label:'Stream',type:'select',options:await streamOptions()},
+    {name:'kind',label:'Kind (card, stock, supply…)',placeholder:'card'},
+    {name:'sku',label:'SKU'},
+    {name:'set_name',label:'Set / collection'},
+    {name:'grade',label:'Grade (PSA 10…)'},
+    {name:'condition',label:'Condition'},
+    {name:'qty',label:'Qty',type:'number',default:1},
+    {name:'cost',label:'Cost',type:'number',step:'0.01'},
+    {name:'market_value',label:'Market value',type:'number',step:'0.01'},
+    {name:'price',label:'List price',type:'number',step:'0.01'},
+    {name:'status',label:'Status',type:'select',options:['in_stock','listed','sold','reserved','damaged'],default:'in_stock'},
+    {name:'location',label:'Location'},
+  ], i||{}, vals=>{ if(i)vals.id=i.id; else vals.is_sim=SIM?1:0; return api('/business/inventory/upsert',vals); });
+}
+function printLabelFor(i){
+  openForm('Print label — '+i.name,[
+    {name:'to',label:'Ship to (one line each)',type:'textarea',rows:4},
+    {name:'ref',label:'Order / tracking ref'},
+  ], {}, async vals=>{
+    const to=(vals.to||'').split('\n').map(x=>x.trim()).filter(Boolean);
+    const r=await printJob('/print/label',{to,ref:vals.ref,barcode:vals.ref||i.sku}); return r; });
+}
+
+// ── Gigs ─────────────────────────────────────────────────────────────────────
+RENDER.gigs = async ()=>{
+  const data=await api('/business/gig/list'+qs({limit:200,is_sim:SIM?1:0}));
+  const bar=el('div',{class:'toolbar'});
+  bar.append(el('span',{class:'chip',html:'Pipeline <b>'+money(data.pipeline_value)+'</b>'}),
+    el('button',{class:'btn pri',style:'margin-left:auto',onclick:()=>gigForm()},'+ New gig'));
+  const t=el('table'); t.innerHTML='<tr><th>Title</th><th>Platform</th><th>Client</th><th class="right">Price</th><th>Due</th><th>Status</th><th class="right">Actions</th></tr>';
+  for(const g of data.gigs){ const tr=el('tr');
+    tr.innerHTML=`<td>${esc(g.title)}</td><td class="mono">${esc(g.platform)}</td><td>${esc(g.client||'')}</td>
+      <td class="right mono">${money(g.price,g.currency)}</td><td class="mono">${dt(g.due_at)}</td><td><span class="${pillCls(g.status)}">${esc(g.status)}</span></td>`;
+    const act=el('td',{class:'right'}); const a=el('div',{class:'actions'});
+    a.append(el('button',{class:'btn sm',onclick:()=>gigForm(g)},'Edit'),
+      el('button',{class:'btn sm danger',onclick:async()=>{if(confirm('Delete?')){await api('/business/gig/delete',{id:g.id});render();}}},'✕'));
+    act.append(a); tr.append(act); t.append(tr); }
+  const nodes=[el('h2',{},'Freelance gigs'),el('div',{class:'sub'},data.count+' gigs — Fiverr / Upwork / direct'),bar];
+  nodes.push(data.gigs.length?t:el('div',{class:'empty'},'No gigs yet.'));
+  setContent(...nodes);
+};
+async function gigForm(g){
+  openForm(g?'Edit gig':'New gig',[
+    {name:'title',label:'Title'},
+    {name:'stream_id',label:'Stream',type:'select',options:await streamOptions()},
+    {name:'platform',label:'Platform',type:'select',options:['fiverr','upwork','freelancer','peopleperhour','direct','other'],default:'fiverr'},
+    {name:'client',label:'Client'},
+    {name:'status',label:'Status',type:'select',options:['lead','quoted','active','review','delivered','paid','cancelled'],default:'lead'},
+    {name:'price',label:'Price',type:'number',step:'0.01'},
+    {name:'due_at',label:'Due (ISO, e.g. 2026-07-12T17:00)'},
+    {name:'notes',label:'Notes',type:'textarea'},
+  ], g||{}, vals=>{ if(g)vals.id=g.id; else vals.is_sim=SIM?1:0; return api('/business/gig/upsert',vals); });
+}
+
+// ── Content ──────────────────────────────────────────────────────────────────
+RENDER.content = async ()=>{
+  const data=await api('/business/content/list'+qs({limit:200,is_sim:SIM?1:0}));
+  const bar=el('div',{class:'toolbar'});
+  bar.append(el('button',{class:'btn pri',style:'margin-left:auto',onclick:()=>contentForm()},'+ New piece'));
+  const t=el('table'); t.innerHTML='<tr><th>Title</th><th>Platform</th><th>Publish</th><th>Status</th><th class="right">Actions</th></tr>';
+  for(const c of data.content){ const tr=el('tr');
+    tr.innerHTML=`<td>${esc(c.title)}${c.url?' <a href="'+esc(c.url)+'" target="_blank">↗</a>':''}</td><td class="mono">${esc(c.platform)}</td>
+      <td class="mono">${dt(c.publish_at)}</td><td><span class="${pillCls(c.status)}">${esc(c.status)}</span></td>`;
+    const act=el('td',{class:'right'}); const a=el('div',{class:'actions'});
+    a.append(el('button',{class:'btn sm',onclick:()=>contentForm(c)},'Edit'),
+      el('button',{class:'btn sm',title:'Schedule publish',onclick:()=>scheduleContent(c)},''),
+      el('button',{class:'btn sm danger',onclick:async()=>{if(confirm('Delete?')){await api('/business/content/delete',{id:c.id});render();}}},'✕'));
+    act.append(a); tr.append(act); t.append(tr); }
+  const nodes=[el('h2',{},'Content pipeline'),el('div',{class:'sub'},data.count+' pieces — YouTube / short-form / blog'),bar];
+  nodes.push(data.content.length?t:el('div',{class:'empty'},'No content yet.'));
+  setContent(...nodes);
+};
+async function contentForm(c){
+  openForm(c?'Edit content':'New content piece',[
+    {name:'title',label:'Title'},
+    {name:'stream_id',label:'Stream',type:'select',options:await streamOptions()},
+    {name:'platform',label:'Platform',type:'select',options:['youtube','tiktok','instagram','x','linkedin','blog','podcast','other'],default:'youtube'},
+    {name:'status',label:'Status',type:'select',options:['idea','scripting','recording','editing','scheduled','published','archived'],default:'idea'},
+    {name:'publish_at',label:'Publish at (ISO)'},
+    {name:'url',label:'URL'},
+    {name:'script',label:'Script / outline',type:'textarea',rows:4},
+  ], c||{}, vals=>{ if(c)vals.id=c.id; else vals.is_sim=SIM?1:0; return api('/business/content/upsert',vals); });
+}
+function scheduleContent(c){
+  openForm('Schedule publish — '+c.title,[
+    {name:'when',label:'When (ISO, e.g. 2026-07-12T18:00)'},
+  ], {}, async vals=>{
+    await api('/business/content/upsert',{id:c.id,status:'scheduled',publish_at:vals.when});
+    return api('/business/task/schedule',{stream_id:c.stream_id,title:'Publish: '+c.title,kind:'content',when:vals.when,notes:'Auto from content pipeline'});
+  });
+}
+
+// ── Bounties ─────────────────────────────────────────────────────────────────
+RENDER.bounties = async ()=>{
+  const data=await api('/business/bounty/list'+qs({limit:200,is_sim:SIM?1:0}));
+  const bar=el('div',{class:'toolbar'});
+  bar.append(el('span',{class:'chip',html:'Pending <b class="warn">'+money(data.reward_pending)+'</b>'}),
+    el('span',{class:'chip',html:'Paid <b class="up">'+money(data.reward_paid)+'</b>'}),
+    el('button',{class:'btn pri',style:'margin-left:auto',onclick:()=>bountyForm()},'+ New submission'));
+  const t=el('table'); t.innerHTML='<tr><th>Program</th><th>Platform</th><th>Severity</th><th class="right">Reward</th><th>Status</th><th class="right">Actions</th></tr>';
+  for(const b of data.bounties){ const tr=el('tr');
+    tr.innerHTML=`<td>${esc(b.program||b.title)}${b.target?' <span class="sub">'+esc(short(b.target,24))+'</span>':''}</td><td class="mono">${esc(b.platform)}</td>
+      <td>${esc(b.severity||'')}</td><td class="right mono">${money(b.reward,b.currency)}</td><td><span class="${pillCls(b.status)}">${esc(b.status)}</span></td>`;
+    const act=el('td',{class:'right'}); const a=el('div',{class:'actions'});
+    a.append(el('button',{class:'btn sm',onclick:()=>bountyForm(b)},'Edit'),
+      el('button',{class:'btn sm danger',onclick:async()=>{if(confirm('Delete?')){await api('/business/bounty/delete',{id:b.id});render();}}},'✕'));
+    act.append(a); tr.append(act); t.append(tr); }
+  const nodes=[el('h2',{},'Bug bounties'),el('div',{class:'sub'},data.count+' submissions — HackerOne / Bugcrowd / direct'),bar];
+  nodes.push(data.bounties.length?t:el('div',{class:'empty'},'No bounty submissions yet.'));
+  setContent(...nodes);
+};
+async function bountyForm(b){
+  openForm(b?'Edit submission':'New bounty submission',[
+    {name:'program',label:'Program'},
+    {name:'stream_id',label:'Stream',type:'select',options:await streamOptions()},
+    {name:'platform',label:'Platform',type:'select',options:['hackerone','bugcrowd','intigriti','yeswehack','direct','other'],default:'hackerone'},
+    {name:'target',label:'Target / asset'},
+    {name:'title',label:'Report title'},
+    {name:'severity',label:'Severity',type:'select',options:['','low','medium','high','critical']},
+    {name:'status',label:'Status',type:'select',options:['researching','submitted','triaged','accepted','paid','duplicate','informative','rejected'],default:'researching'},
+    {name:'reward',label:'Reward',type:'number',step:'0.01'},
+    {name:'url',label:'Report URL'},
+    {name:'notes',label:'Notes',type:'textarea'},
+  ], b||{}, vals=>{ if(b)vals.id=b.id; else vals.is_sim=SIM?1:0; return api('/business/bounty/upsert',vals); });
+}
+
+// ── Marketing ────────────────────────────────────────────────────────────────
+RENDER.marketing = async ()=>{
+  const socials=await api('/business/social/list'+qs({limit:200,is_sim:SIM?1:0}));
+  const camps=await api('/business/campaign/list'+qs({limit:200,is_sim:SIM?1:0}));
+  const nodes=[el('h2',{},'Marketing'),el('div',{class:'sub'},'Social accounts + campaigns. Link real credentials from the accounts system.')];
+  const bar=el('div',{class:'toolbar'});
+  bar.append(el('span',{class:'chip',html:'Followers <b>'+(socials.total_followers||0).toLocaleString()+'</b>'}),
+    el('button',{class:'btn',onclick:()=>socialForm()},'+ Social account'),
+    el('button',{class:'btn pri',onclick:()=>campaignForm()},'+ Campaign'));
+  nodes.push(bar);
+  nodes.push(el('h2',{style:'font-size:14px;margin-top:6px'},'Social accounts'));
+  if((socials.socials||[]).length){ const t=el('table');
+    t.innerHTML='<tr><th>Platform</th><th>Handle</th><th class="right">Followers</th><th>Linked cred</th><th class="right">Actions</th></tr>';
+    for(const s of socials.socials){ const tr=el('tr');
+      tr.innerHTML=`<td class="mono">${esc(s.platform)}</td><td>${esc(s.handle||'')}${s.url?' <a href="'+esc(s.url)+'" target="_blank">↗</a>':''}</td>
+        <td class="right mono">${(s.followers||0).toLocaleString()}</td><td class="mono">${s.acct_id?esc(short(s.acct_id,14)):'—'}</td>`;
+      const act=el('td',{class:'right'}); const a=el('div',{class:'actions'});
+      a.append(el('button',{class:'btn sm',onclick:()=>socialForm(s)},'Edit'),
+        el('button',{class:'btn sm danger',onclick:async()=>{if(confirm('Delete?')){await api('/business/social/delete',{id:s.id});render();}}},'✕'));
+      act.append(a); tr.append(act); t.append(tr); }
+    nodes.push(t);
+  } else nodes.push(el('div',{class:'empty'},'No social accounts yet.'));
+  nodes.push(el('h2',{style:'font-size:14px;margin-top:14px'},'Campaigns'));
+  if((camps.campaigns||[]).length){ const t=el('table');
+    t.innerHTML='<tr><th>Name</th><th>Goal</th><th class="right">Budget</th><th>Window</th><th>Status</th><th class="right">Actions</th></tr>';
+    for(const c of camps.campaigns){ const tr=el('tr');
+      tr.innerHTML=`<td>${esc(c.name)}</td><td>${esc(short(c.goal,30))}</td><td class="right mono">${money(c.budget,c.currency)}</td>
+        <td class="mono">${dt(c.start_at)}→${dt(c.end_at)}</td><td><span class="${pillCls(c.status)}">${esc(c.status)}</span></td>`;
+      const act=el('td',{class:'right'}); const a=el('div',{class:'actions'});
+      a.append(el('button',{class:'btn sm',onclick:()=>campaignForm(c)},'Edit'),
+        el('button',{class:'btn sm danger',onclick:async()=>{if(confirm('Delete?')){await api('/business/campaign/delete',{id:c.id});render();}}},'✕'));
+      act.append(a); tr.append(act); t.append(tr); }
+    nodes.push(t);
+  } else nodes.push(el('div',{class:'empty'},'No campaigns yet.'));
+  setContent(...nodes);
+};
+async function socialForm(s){
+  const acc=await api('/business/social/accounts');
+  const credOpts=[{value:'',label:'— none —'},...(acc.accounts||[]).map(a=>({value:a.id,label:(a.label||a.email||a.id)}))];
+  openForm(s?'Edit social account':'New social account',[
+    {name:'platform',label:'Platform',type:'select',options:['youtube','x','instagram','tiktok','facebook','linkedin','fiverr','ebay','etsy','reddit','other'],default:'youtube'},
+    {name:'handle',label:'Handle / @name'},
+    {name:'stream_id',label:'Stream',type:'select',options:await streamOptions()},
+    {name:'url',label:'URL'},
+    {name:'followers',label:'Followers',type:'number'},
+    {name:'acct_id',label:'Linked credential (accounts system)',type:'select',options:credOpts},
+  ], s||{}, vals=>{ if(s)vals.id=s.id; else vals.is_sim=SIM?1:0; return api('/business/social/upsert',vals); });
+}
+async function campaignForm(c){
+  openForm(c?'Edit campaign':'New campaign',[
+    {name:'name',label:'Name'},
+    {name:'stream_id',label:'Stream',type:'select',options:await streamOptions()},
+    {name:'goal',label:'Goal'},
+    {name:'budget',label:'Budget',type:'number',step:'0.01'},
+    {name:'status',label:'Status',type:'select',options:['draft','scheduled','running','paused','done'],default:'draft'},
+    {name:'start_at',label:'Start (ISO)'},{name:'end_at',label:'End (ISO)'},
+    {name:'notes',label:'Notes',type:'textarea'},
+  ], c||{}, vals=>{ if(c)vals.id=c.id; else vals.is_sim=SIM?1:0; return api('/business/campaign/upsert',vals); });
+}
+
+// ── Tasks ────────────────────────────────────────────────────────────────────
+RENDER.tasks = async ()=>{
+  const data=await api('/business/task/list'+qs({limit:200,is_sim:SIM?1:0}));
+  const bar=el('div',{class:'toolbar'});
+  bar.append(el('button',{class:'btn pri',style:'margin-left:auto',onclick:()=>taskForm()},'+ New task'));
+  const t=el('table'); t.innerHTML='<tr><th>Task</th><th>Kind</th><th>Due</th><th>Calendar</th><th>Status</th><th class="right">Actions</th></tr>';
+  for(const k of data.tasks){ const tr=el('tr');
+    const cal = k.cal_event_id? 'event' : k.cal_todo_id? '☑ todo' : '—';
+    tr.innerHTML=`<td>${esc(k.title)}</td><td class="mono">${esc(k.kind)}</td><td class="mono">${dt(k.due_at)}</td>
+      <td class="sub" style="margin:0">${cal}</td><td><span class="${pillCls(k.status)}">${esc(k.status)}</span></td>`;
+    const act=el('td',{class:'right'}); const a=el('div',{class:'actions'});
+    a.append(el('button',{class:'btn sm',title:'Schedule into calendar',onclick:()=>scheduleTask(k)},''),
+      el('button',{class:'btn sm',onclick:()=>taskForm(k)},'Edit'),
+      el('button',{class:'btn sm danger',onclick:async()=>{if(confirm('Delete?')){await api('/business/task/delete',{id:k.id});render();}}},'✕'));
+    act.append(a); tr.append(act); t.append(tr); }
+  const nodes=[el('h2',{},'Operational tasks'),el('div',{class:'sub'},data.count+' tasks — schedule them into the Calendar with'),bar];
+  nodes.push(data.tasks.length?t:el('div',{class:'empty'},'No tasks yet.'));
+  setContent(...nodes);
+};
+async function taskForm(k){
+  openForm(k?'Edit task':'New task',[
+    {name:'title',label:'Title'},
+    {name:'stream_id',label:'Stream',type:'select',options:await streamOptions()},
+    {name:'kind',label:'Kind',type:'select',options:['post','list','ship','restock','research','outreach','invoice','admin','content','followup','other'],default:'other'},
+    {name:'status',label:'Status',type:'select',options:['todo','scheduled','doing','done','blocked','cancelled'],default:'todo'},
+    {name:'due_at',label:'Due (ISO)'},
+    {name:'notes',label:'Notes',type:'textarea'},
+  ], k||{}, vals=>{ if(k)vals.id=k.id; else vals.is_sim=SIM?1:0; return api('/business/task/upsert',vals); });
+}
+function scheduleTask(k){
+  openForm('Schedule "'+k.title+'" into calendar',[
+    {name:'when',label:'When (ISO — blank = untimed todo)'},
+    {name:'duration_min',label:'Duration (min)',type:'number',default:30},
+  ], {}, async vals=>{
+    const r=await api('/business/task/schedule',{id:k.id,stream_id:k.stream_id,title:k.title,kind:k.kind,when:vals.when,duration_min:vals.duration_min,notes:k.notes});
+    if(r.error)return r; toast(r.cal_event_id?'Added to calendar':'Added as todo','ok'); return {}; });
+}
+
+// ── Network graph (self-contained force layout) ───────────────────────────────
+let GRAPH={raf:0};
+RENDER.graph = async ()=>{
+  const nodes=[el('h2',{},'Business network graph'+(SIM?' (simulation)':'')),
+    el('div',{class:'sub'},'Streams ↔ accounts ↔ gigs ↔ content ↔ bounties ↔ channels ↔ platforms. Drag nodes; scroll to zoom.')];
+  const cv=el('canvas',{id:'graphCanvas'}); nodes.push(cv);
+  setContent(...nodes);
+  const data=await api('/business/graph'+qs(simParam()));
+  startGraph(cv, data);
+};
+const NODE_COLORS={root:'#8fb87a',stream:'#5a9e8f',account:'#e8b34d',gig:'#7aa2f7',content:'#b48ead',bounty:'#e0705a',social:'#5ec9b8',campaign:'#c9a35a',platform:'#6a6058'};
+function startGraph(cv, data){
+  cancelAnimationFrame(GRAPH.raf);
+  const dpr=window.devicePixelRatio||1;
+  function fit(){ const r=cv.getBoundingClientRect(); cv.width=r.width*dpr; cv.height=r.height*dpr; }
+  fit();
+  const W=()=>cv.width/dpr, H=()=>cv.height/dpr;
+  const N=data.nodes.map(n=>({...n,x:Math.random()*W(),y:Math.random()*H(),vx:0,vy:0}));
+  const idx={}; N.forEach((n,i)=>idx[n.id]=i);
+  const E=data.edges.filter(e=>idx[e.source]!=null&&idx[e.target]!=null);
+  let view={x:0,y:0,z:1}, drag=null, pan=null;
+  const ctx=cv.getContext('2d');
+  function step(){
+    for(let i=0;i<N.length;i++){ const a=N[i];
+      for(let j=i+1;j<N.length;j++){ const b=N[j];
+        let dx=a.x-b.x,dy=a.y-b.y,d2=dx*dx+dy*dy+0.01,d=Math.sqrt(d2);
+        const f=1600/d2; dx/=d;dy/=d; a.vx+=dx*f;a.vy+=dy*f;b.vx-=dx*f;b.vy-=dy*f; } }
+    for(const e of E){ const a=N[idx[e.source]],b=N[idx[e.target]];
+      let dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)+0.01,f=(d-90)*0.02; dx/=d;dy/=d;
+      a.vx+=dx*f;a.vy+=dy*f;b.vx-=dx*f;b.vy-=dy*f; }
+    const cx=W()/2,cy=H()/2;
+    for(const n of N){ n.vx+=(cx-n.x)*0.002; n.vy+=(cy-n.y)*0.002;
+      if(drag&&drag.n===n)continue; n.vx*=0.86;n.vy*=0.86; n.x+=n.vx;n.y+=n.vy; }
+  }
+  function draw(){
+    ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,W(),H());
+    ctx.save(); ctx.translate(view.x,view.y); ctx.scale(view.z,view.z);
+    ctx.strokeStyle='#38332f'; ctx.lineWidth=1;
+    for(const e of E){ const a=N[idx[e.source]],b=N[idx[e.target]];
+      ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke(); }
+    ctx.font='11px Inter,sans-serif';
+    for(const n of N){ const r=n.type==='root'?11:(n.type==='stream'?9:6);
+      ctx.beginPath();ctx.arc(n.x,n.y,r,0,7); ctx.fillStyle=n.color||NODE_COLORS[n.type]||'#8a7e70'; ctx.fill();
+      ctx.fillStyle='#ddd5c8'; ctx.fillText(short(n.label,18),n.x+r+3,n.y+4); }
+    ctx.restore();
+  }
+  function loop(){ step();draw(); GRAPH.raf=requestAnimationFrame(loop); }
+  loop();
+  const toWorld=(mx,my)=>({x:(mx-view.x)/view.z,y:(my-view.y)/view.z});
+  cv.onmousedown=e=>{ const r=cv.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top,w=toWorld(mx,my);
+    let hit=null; for(const n of N){ if((n.x-w.x)**2+(n.y-w.y)**2<120){hit=n;break;} }
+    if(hit)drag={n:hit}; else pan={mx,my,vx:view.x,vy:view.y}; };
+  cv.onmousemove=e=>{ const r=cv.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
+    if(drag){ const w=toWorld(mx,my); drag.n.x=w.x;drag.n.y=w.y;drag.n.vx=0;drag.n.vy=0; }
+    else if(pan){ view.x=pan.vx+(mx-pan.mx); view.y=pan.vy+(my-pan.my); } };
+  window.onmouseup=()=>{ drag=null;pan=null; };
+  cv.onwheel=e=>{ e.preventDefault(); const f=e.deltaY<0?1.1:0.9; view.z=Math.max(0.2,Math.min(4,view.z*f)); };
+  window.addEventListener('resize',fit,{once:true});
+}
+
+// ── Simulation ───────────────────────────────────────────────────────────────
+RENDER.sim = async ()=>{
+  const scen=await api('/business/sim/scenarios');
+  const status=await api('/business/sim/status');
+  const nodes=[el('h2',{},'Business simulation'),
+    el('div',{class:'sub'},'A sandbox to watch the agents operate. Seeds simulated streams + accounts (is_sim), drives synthetic activity, and scores an agent loop against a goal — the same evaluation the DAG Workshop front-ends.')];
+
+  const start=el('div',{class:'simbox'});
+  start.append(el('h2',{style:'font-size:14px'},'Scenario'));
+  const sel=el('select',{style:'width:100%;margin:6px 0'});
+  for(const s of scen.scenarios){ const o=el('option',{value:s.id}); o.textContent=s.label+' — '+s.description.slice(0,60); sel.append(o); }
+  start.append(sel);
+  start.append(el('div',{class:'toolbar',style:'margin-top:8px'},
+    el('button',{class:'btn pri',onclick:async()=>{const r=await api('/business/sim/start',{scenario:sel.value}); if(r.error){toast(r.error,'err');return;} toast('Sim started','ok'); SIM=true; $('#simToggle').checked=true; document.body.classList.add('sim'); render();}},'▶ Start run'),
+    el('button',{class:'btn',onclick:async()=>{const r=await api('/business/sim/step',{n:12}); if(r.error){toast(r.error,'err');return;} toast('Step +'+r.generated+' txns','ok'); render();}},'⏭ Advance'),
+    el('button',{class:'btn danger',onclick:async()=>{ if(confirm('Purge ALL simulated data?')){await api('/business/sim/reset',{confirm:true}); toast('Reset','ok'); SIM=false;$('#simToggle').checked=false;document.body.classList.remove('sim'); render();}}},'Reset')));
+
+  const info=el('div',{class:'simbox'});
+  info.append(el('h2',{style:'font-size:14px'},'Active run'));
+  if(status.run){ const r=status.run,t=status.totals||{};
+    info.append(el('div',{class:'result',html:
+      `Scenario <b>${esc(r.label||r.scenario)}</b><br>Step <b class="mono">${r.steps}</b> · seed <span class="mono">${r.seed}</span><br>
+       Sim cash <b class="mono">${money(t.cash)}</b> · income <b class="mono up">${money(t.income)}</b> · net <b class="mono">${money(t.net)}</b>`}));
+  } else info.append(el('div',{class:'sub'},'No active run. Pick a scenario and Start.'));
+
+  const evbox=el('div',{class:'simbox'});
+  evbox.append(el('h2',{style:'font-size:14px'},'Agent-loop evaluation'));
+  evbox.append(el('div',{class:'sub'},'Give the operator agent a goal; it runs against the simulated accounts, then we score it from the sim ledger delta.'));
+  const goal=el('textarea',{rows:2,placeholder:'e.g. Grow simulated 30-day net by listing inventory and pricing competitively',style:'width:100%'});
+  evbox.append(goal);
+  evbox.append(el('div',{class:'toolbar',style:'margin-top:6px'},
+    el('button',{class:'btn pri',onclick:()=>runEval(goal.value)},'▶ Run evaluation')));
+  const evalHost=el('div',{id:'evalHost'}); evbox.append(evalHost);
+  if((status.evals||[]).length){ evbox.append(el('h2',{style:'font-size:12px;margin-top:12px'},'Past evaluations'));
+    const t=el('table'); t.innerHTML='<tr><th>Goal</th><th>Status</th><th class="right">Score</th></tr>';
+    for(const e of status.evals){ t.append(el('tr',{html:`<td>${esc(short(e.goal,40))}</td><td><span class="pill">${esc(e.status)}</span></td><td class="right mono">${e.score!=null?e.score:'—'}</td>`})); }
+    evbox.append(t); }
+
+  nodes.push(el('div',{class:'simrow'},start,info));
+  nodes.push(el('div',{class:'simrow',style:'margin-top:16px'},evbox));
+  setContent(...nodes);
+};
+async function runEval(goal){
+  if(!goal||!goal.trim()){ toast('Enter a goal','err'); return; }
+  const def=await api('/business/sim/evaluate',{goal:goal.trim()});
+  if(def.error){ toast(def.error,'err'); return; }
+  const host=$('#evalHost'); host.innerHTML='';
+  const ok=await ensureAlo();
+  if(!ok){ host.innerHTML='<div class="result err">Agent-loop renderer unavailable</div>'; return; }
+  const alo=document.createElement('vera-agent-loop-output');
+  alo.setAttribute('compact','true'); alo.setAttribute('max-height','320'); host.append(alo);
+  alo.setApiBase(''); alo.setSessionId(VERA_SID); alo.setHitlEndpoint('/workshop/agent_loop/hitl/respond'); alo.setShowThinking(true);
+  const req=def.agent_request; const runId='bizeval_'+Date.now().toString(36); req.run_id=runId; req.session_id=VERA_SID;
+  alo.appendEvent({type:'start',version:'v5',agent_name:req.agent_name,goal:def.eval.goal});
+  const eid=def.eval.id;
+  alo.addEventListener('alo:done',async()=>{ const sc=await api('/business/sim/score',{eval_id:eid}); showScore(host,sc); refreshChips(); });
+  alo.addEventListener('alo:error',async()=>{ const sc=await api('/business/sim/score',{eval_id:eid}); showScore(host,sc); });
+  streamLoop(req,runId,alo);
+}
+function showScore(host,sc){ if(sc.error){ toast(sc.error,'err'); return; }
+  host.append(el('div',{class:'result',html:
+    `<div class="scoregauge ${sc.score>=50?'up':(sc.score>0?'warn':'dn')}">${sc.score}/100</div>
+     Net Δ <b class="mono">${money(sc.delta.net)}</b> · income Δ <b class="mono">${money(sc.delta.income)}</b>`})); }
+
+// ── Printer ──────────────────────────────────────────────────────────────────
+async function printJob(path, body){
+  const r=await api(path, body);
+  if(r.error){ toast(r.error,'err'); return r; }
+  // If a web serial printer is the target, hand the bytes to the element.
+  if(r.escpos_b64 && (r.transport==='webserial' || !r.routed)){
+    const tp=$('#tpEl'); if(tp&&tp.printB64){ await tp.printB64(r.escpos_b64); }
+    else toast('Bytes ready — open the Printer tab & connect','ok');
+  } else if(r.routed){ toast('Printed via '+r.transport,'ok'); }
+  return {};
+}
+RENDER.printer = async ()=>{
+  const st=await api('/print/status');
+  const nodes=[el('h2',{},'Thermal printer'),
+    el('div',{class:'sub'},'A standalone module (print.*), surfaced here as an element. Print receipts, packing slips & address labels. Three transports: this browser (Web Serial), the server, or a USB-ESP32 over the mesh.')];
+
+  // Web Serial element
+  const host=el('div',{style:'max-width:520px;margin-bottom:16px'});
+  const tp=document.createElement('vera-thermal-printer'); tp.id='tpEl'; tp.setAttribute('baud','9600'); host.append(tp);
+  nodes.push(host);
+
+  // Quick print
+  const qp=el('div',{class:'simbox',style:'max-width:520px;margin-bottom:16px'});
+  qp.append(el('h2',{style:'font-size:14px'},'Quick print'));
+  const ta=el('textarea',{rows:3,placeholder:'Text to print…',style:'width:100%;margin:6px 0'});
+  qp.append(ta,el('div',{class:'toolbar'},
+    el('button',{class:'btn pri',onclick:()=>printJob('/print/text',{text:ta.value,title:'',align:'left'})},'Print text'),
+    el('button',{class:'btn',onclick:()=>printJob('/print/text',{title:'VERA',text:'Test '+new Date().toLocaleString(),align:'center'})},'Test receipt')));
+  nodes.push(qp);
+
+  // Server / mesh status + configured printers
+  const cfg=el('div',{class:'simbox',style:'max-width:640px'});
+  cfg.append(el('h2',{style:'font-size:14px'},'Configured printers'));
+  const ports=(st.ports||[]).map(p=>p.port).join(', ')||'none';
+  cfg.append(el('div',{class:'sub',style:'margin:4px 0',html:
+    'Server serial (pyserial): '+(st.pyserial?'<span class="ok">available</span>':'<span class="err">not installed</span>')+
+    ' · detected ports: '+esc(ports)}));
+  const t=el('table'); t.innerHTML='<tr><th>Name</th><th>Transport</th><th>Port/Node</th><th>Width</th><th class="right">Actions</th></tr>';
+  for(const p of (st.printers||[])){ const tr=el('tr');
+    tr.innerHTML=`<td>${esc(p.name)}${p.is_default?' <span class="pill">default</span>':''}</td><td class="mono">${esc(p.transport)}</td>
+      <td class="mono">${esc(p.port||p.node_id||'')}</td><td class="mono">${p.width_mm}mm</td>`;
+    const act=el('td',{class:'right'}); act.append(el('div',{class:'actions'},
+      el('button',{class:'btn sm',onclick:()=>printerForm(p)},'Edit'),
+      el('button',{class:'btn sm danger',onclick:async()=>{await api('/print/printer/delete',{id:p.id});render();}},'✕')));
+    tr.append(act); t.append(tr); }
+  cfg.append(t);
+  cfg.append(el('div',{class:'toolbar',style:'margin-top:8px'},el('button',{class:'btn pri',onclick:()=>printerForm()},'+ Add printer')));
+  nodes.push(cfg);
+  setContent(...nodes);
+  ensureThermal();
+};
+function printerForm(p){
+  openForm(p?'Edit printer':'Add printer',[
+    {name:'name',label:'Name'},
+    {name:'transport',label:'Transport',type:'select',options:['webserial','server_serial','mesh'],default:'webserial'},
+    {name:'port',label:'Server COM/tty (server_serial)'},
+    {name:'baud',label:'Baud',type:'number',default:9600},
+    {name:'node_id',label:'Mesh node id (mesh)'},
+    {name:'width_mm',label:'Paper width mm',type:'select',options:[58,80],default:58},
+    {name:'is_default',label:'Default?',type:'select',options:[{value:'',label:'No'},{value:'1',label:'Yes'}]},
+  ], p||{}, vals=>{ if(p)vals.id=p.id; vals.is_default=!!vals.is_default; return api('/print/printer/upsert',vals); });
+}
+
+// ── Agent dock: conversational operator + agentic loop ────────────────────────
+const VERA_SID = 'biz_'+(localStorage.getItem('vera:biz:sid')|| (()=>{const s=Math.random().toString(36).slice(2);localStorage.setItem('vera:biz:sid',s);return s;})());
+let DOCK_MODE='chat', HIST=[], busy=false, _abort=null;
+function setDock(m){ DOCK_MODE=m; document.querySelectorAll('.dtab').forEach(b=>b.classList.toggle('active',b.dataset.dmode===m));
+  buildQchips(); }
+function toggleDock(){ $('#dock').classList.toggle('collapsed'); }
+function buildQchips(){ const c=$('#qchips'); c.innerHTML='';
+  const chips = DOCK_MODE==='chat'
+    ? ['How is the business doing?','What needs my attention today?','Which stream is closest to goal?','Draft a plan to hit this month’s targets']
+    : ['List everything below reorder point and restock it','Schedule this week’s content posts into the calendar','Reconcile every account balance from the ledger'];
+  for(const q of chips) c.append(el('button',{class:'qchip',onclick:()=>{$('#chatIn').value=q;dockSend();}},short(q,34)));
+}
+function chatKey(e){ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); dockSend(); } }
+function chatAdd(cls,html){ const d=el('div',{class:'cmsg '+cls,html:html}); $('#chatLog').append(d); $('#chatLog').scrollTop=1e9; return d; }
+function dockBusy(b){ busy=b; $('#chatSend').style.display=b?'none':'inline-flex'; $('#chatStop').style.display=b?'inline-flex':'none'; }
+function dockStop(){ if(_abort)try{_abort.abort();}catch(_){}; dockBusy(false); }
+
+async function ensureAlo(){
+  if(window.customElements&&customElements.get('vera-agent-loop-output')) return true;
+  if(!document.getElementById('alo-script')){ const s=el('script',{id:'alo-script',src:'/ui/elements/agent_loop_output.js'}); document.head.append(s); }
+  const t0=Date.now(); while(Date.now()-t0<5000){ await new Promise(r=>setTimeout(r,150));
+    if(window.customElements&&customElements.get('vera-agent-loop-output')) return true; } return false;
+}
+function ensureThermal(){ if(window.customElements&&customElements.get('vera-thermal-printer')) return;
+  if(!document.getElementById('tp-script')){ const s=el('script',{id:'tp-script',src:'/ui/elements/thermal_printer_element.js'}); document.head.append(s); } }
+
+function dockSend(){ const text=$('#chatIn').value.trim(); if(!text||busy) return;
+  $('#chatIn').value=''; $('#chatIn').style.height='auto';
+  if(DOCK_MODE==='chat') convSend(text); else loopSend(text); }
+
+// Conversational operator — /agents/chat/stream
+async function convSend(text){
+  chatAdd('user',esc(text)); HIST.push({role:'user',content:text});
+  const holder=chatAdd('bot','<span class="spin"></span>');
+  dockBusy(true); _abort=new AbortController();
+  let acc='', think='';
+  try{
+    const r=await fetch('/agents/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({message:text,agent_name:'business-operator',history:JSON.stringify(HIST),session_id:VERA_SID}),signal:_abort.signal});
+    const reader=r.body.getReader(),dec=new TextDecoder(); let buf='';
+    while(true){ let done,value; try{({done,value}=await reader.read());}catch(_){break;} if(done)break;
+      buf+=dec.decode(value,{stream:true}); let i;
+      while((i=buf.indexOf('\n\n'))>=0){ const chunk=buf.slice(0,i); buf=buf.slice(i+2);
+        for(const ln of chunk.split('\n')){ if(!ln.startsWith('data:'))continue; const pl=ln.slice(5).trim();
+          if(pl==='[DONE]'){ break; } let ev; try{ev=JSON.parse(pl);}catch(_){continue;}
+          if(ev.type==='token'&&ev.text){ acc+=ev.text; holder.innerHTML=(think?'<div class="think">'+esc(think)+'</div>':'')+esc(acc); $('#chatLog').scrollTop=1e9; }
+          else if(ev.type==='thinking'&&ev.text){ think+=ev.text; holder.innerHTML='<div class="think">'+esc(think)+'</div>'+esc(acc); }
+          else if(ev.type==='error'){ holder.innerHTML='<span class="err">'+esc(ev.text||'error')+'</span>'; }
+        } }
+    }
+    if(acc){ HIST.push({role:'assistant',content:acc}); }
+    // A conversational turn may have changed data — refresh the view.
+    refreshChips(); if(['dashboard','streams','money','ledger'].includes(current)) render();
+  }catch(e){ if(String(e).indexOf('abort')<0) holder.innerHTML='<span class="err">'+esc(String(e))+'</span>'; }
+  finally{ dockBusy(false); }
+}
+
+// Agentic loop — /workshop/agent_loop/stream
+async function loopSend(text){
+  chatAdd('user',esc(text));
+  const holder=chatAdd('bot','<span class="spin"></span> spinning up agent loop…');
+  const ok=await ensureAlo(); if(!ok){ holder.innerHTML='<span class="err">Agent-loop renderer unavailable</span>'; return; }
+  holder.innerHTML='';
+  const alo=document.createElement('vera-agent-loop-output'); alo.setAttribute('compact','true'); alo.setAttribute('max-height','360'); holder.append(alo);
+  alo.setApiBase(''); alo.setSessionId(VERA_SID); alo.setHitlEndpoint('/workshop/agent_loop/hitl/respond'); alo.setShowThinking(true);
+  dockBusy(true);
+  const runId='bizloop_'+Date.now().toString(36);
+  const brief=await api('/business/brief'+qs(simParam()));
+  const goal='[Business context]\n'+(brief.brief||'')+'\n\nRequest: '+text
+    +(SIM?'\n(You are in the SIMULATED business sandbox — is_sim=1 is enforced on every business call; your toolkit is locked.)':'');
+  // Server-enforced sandbox (context.set_session_cap_guard): in sim view the
+  // toolkit is LOCKED to BIZ_TOOLKIT and every business.* call is pinned to
+  // is_sim=1; in live view business.* is pinned to is_sim=0 and the sim
+  // controls are denied — the agent cannot cross worlds in either direction.
+  const guard = SIM
+    ? {label:'business-sim', allow:BIZ_TOOLKIT, deny:['business.sim.*'],
+       pin_args:{'business.*':{is_sim:1}}}
+    : {label:'business-live', deny:['business.sim.*'],
+       pin_args:{'business.*':{is_sim:0}}};
+  const req={ goal, version:'v6', max_cycles:12, agent_name:'business-operator',
+    allowed_caps:BIZ_TOOLKIT.join(','), base_toolkit:BIZ_TOOLKIT.join(','),
+    session_id:VERA_SID, run_id:runId, record_history:true, record_agent_name:'business-operator',
+    satisfaction_check:true, enable_expand:!SIM, require_approval:false, prefer_gpu:true,
+    cap_guard:guard };
+  alo.appendEvent({type:'start',version:'v6',agent_name:'business-operator',goal:text});
+  alo.addEventListener('alo:done',()=>{ dockBusy(false); refreshChips(); render(); });
+  alo.addEventListener('alo:error',()=>{ dockBusy(false); });
+  streamLoop(req,runId,alo);
+}
+async function streamLoop(req,runId,alo){
+  _abort=new AbortController();
+  let r; try{ r=await fetch('/workshop/agent_loop/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(req),signal:_abort.signal}); }
+  catch(e){ alo.appendEvent({type:'error',error:'Connection failed: '+(e.message||e)}); dockBusy(false); return; }
+  if(!r.ok){ const t=await r.text().catch(()=>''); alo.appendEvent({type:'error',error:'HTTP '+r.status+(t?': '+t.slice(0,200):'')}); dockBusy(false); return; }
+  const reader=r.body.getReader(),dec=new TextDecoder(); let buf='';
+  try{ while(true){ let done,value; try{({done,value}=await reader.read());}catch(_){break;} if(done)break;
+    buf+=dec.decode(value,{stream:true}); let i;
+    while((i=buf.indexOf('\n\n'))>=0){ const chunk=buf.slice(0,i); buf=buf.slice(i+2);
+      for(const ln of chunk.split('\n')){ if(!ln.startsWith('data:'))continue; const pl=ln.slice(5).trim();
+        if(pl==='[DONE]'){ return; } let ev; try{ev=JSON.parse(pl);}catch(_){continue;}
+        if(ev.run_id&&ev.run_id!==runId) continue; alo.appendEvent(ev);
+      } } } }
+  finally{ dockBusy(false); }
+}
+const BIZ_TOOLKIT=['business.brief','business.dashboard','business.graph','business.stream.list','business.stream.upsert',
+  'business.account.list','business.account.upsert','business.txn.add','business.txn.list','business.account.recalc',
+  'business.inventory.list','business.inventory.upsert','business.inventory.adjust',
+  'business.gig.list','business.gig.upsert','business.content.list','business.content.upsert',
+  'business.bounty.list','business.bounty.upsert','business.social.list','business.social.upsert','business.social.accounts',
+  'business.campaign.list','business.campaign.upsert','business.task.list','business.task.upsert','business.task.schedule',
+  'print.text','print.receipt','print.label','print.printers',
+  'cal.event.upsert','cal.todo.upsert','web.search','llm.summarize'];
+
+window.addEventListener('hashchange',()=>{ const h=location.hash.slice(1);
+  if(!ALL_SECTIONS.includes(h)) return;
+  if(STORE_OPEN){ STORE_OPEN=null; storeFrame=null;      // any hash nav exits store mode
+    const c=$('#content'); c.style.padding=''; c.style.overflow=''; }
+  else if(h===current) return;
+  current=h; render(); });
+setDock('chat'); render();
+</script>
+</body>
+</html>

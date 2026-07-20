@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Vera — WorldView</title>
@@ -22,7 +27,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg0);color:var(--text);
   border:1px solid var(--border);background:var(--bg2);color:var(--dim2);cursor:pointer;
   font-family:var(--sans);font-size:11px;font-weight:500;transition:all .14s;white-space:nowrap}
 .btn:hover{border-color:var(--acc);color:var(--acc);background:rgba(90,158,143,.08)}
-.btn.primary{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#fff);font-weight:600}
 .btn.primary:hover{filter:brightness(1.1)}
 .btn.danger{border-color:var(--err);color:var(--err)}
 .btn.danger:hover{background:rgba(201,107,107,.1)}

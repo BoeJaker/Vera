@@ -247,9 +247,23 @@ The component maintains independent layout state per source so flipping back to 
 
 ## 12. The Galaxy panel
 
-`memory_galaxy_panel.html` (mounted at `/galaxy/panel`, registered with `tab_order=58`) is the dedicated full-screen instance. It opens with `source='memory'`, `layers=['memory','fabric','entity','net','aux']`, and `showLeftPanel=true`. The Galaxy panel is the canonical place to visualise the entire system — all sessions, all datasets, all activity, in one navigable canvas.
+`vera/fabric/memory_map.html` (mounted at `/galaxy/panel`, registered with `tab_order=58`) is the dedicated full-screen **3D** instance — a THREE.js star map, distinct from the 2D canvas component described above.
 
-It's the most computationally expensive view (the graph can grow to thousands of nodes for long-running deployments) and reuses the same physics-budget grid binning that keeps the other views responsive.
+**Default connection.** On boot the panel connects to the Vera capability orchestrator (its own origin — it is served by the orchestrator) via `GET /mcp/tools` and renders the **capability galaxy**: the orchestrator core at the centre, one spiral arm per module, one star per registered capability. Live `cap.call` / `cap.ok` / `cap.err` events from the `/ws/mcp` event stream pulse the star that just ran (red on error). If the orchestrator is unreachable, it falls back to the built-in demo dataset.
+
+Other sources (Neo4j cypher, memory search, data fabric, chat history, Chroma vector space) are loaded from the ⚙ config modal exactly as before.
+
+**3D layouts.** The Clustering panel offers: free layout, by node type, vector semantic, graph community, by data source, spiral (degree), **galaxy (spiral arms)**, **orbit shells** (concentric type spheres), and timeline. The galaxy layout picks its arm grouping automatically — capability module, then data source, then community, then type — whichever yields 2–32 arms.
+
+**Rendering.** All node spheres are drawn through a single `THREE.InstancedMesh` (one draw call regardless of node count) with per-instance colour; edges were already merged into one `LineSegments`. Picking is screen-space projection rather than mesh raycasting, hover work is throttled to 25 Hz, and the pixel ratio is capped at 1.5. This keeps the view at full framerate into the tens of thousands of nodes.
+
+**Spatial streaming.** With a Neo4j-backed graph connected, the SPATIAL toggle streams batches in as you fly (time on X, community on Y, embedding on Z) and now also **unloads** regions the camera has left behind (`unloadRadius`), reloading them when you fly back — the world streams in and out around the camera like game chunks.
+
+**Navigation.** If the galaxy leaves the screen, a cyan edge-of-screen beacon points back at its centroid with the distance; clicking it — or pressing the Home key (`H` by default) — re-frames the graph. The background starfield rides with the camera (fog-exempt), so empty space always keeps a horizon reference.
+
+**Controls.** Every camera and starfighter movement key is remappable from the CONTROLS drawer in the left panel (click a key chip, press the new key; Esc cancels; duplicates within a group show pink). Bindings persist per-browser in `localStorage('gg_keybinds')`.
+
+**Easter egg.** Type `ship` while the canvas has focus. 🚀
 
 ---
 

@@ -5,7 +5,11 @@
 # ── Core server ───────────────────────────────────────────
 fastapi>=0.110,<1.0
 uvicorn[standard]>=0.29,<1.0
-httpx>=0.27,<1.0
+httpx[http2]>=0.27,<1.0      # http2 extra: real Chrome speaks HTTP/2; an h1-only
+                             #  client wearing a Chrome UA is a bot fingerprint
+                             #  (web_client falls back to h1 gracefully if absent)
+websockets>=12               # upstream WS client for the /vscode/{id}/ code-server proxy
+                             #  (also pulled in transitively by uvicorn[standard])
 
 # ── Backing stores ───────────────────────────────────────
 redis[hiredis]>=5.0,<6.0

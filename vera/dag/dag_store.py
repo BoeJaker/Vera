@@ -145,11 +145,26 @@ _DESC_TAG_PATTERNS = [
     (r'\bping\b|\bhealth\b|\bstatus',  "monitoring"),
     (r'\burl\b|\bhttp\b|\bweb\b',      "http"),
 ]
+_DESC_TAG_PATTERNS = [(re.compile(p, re.IGNORECASE), t)
+                      for p, t in _DESC_TAG_PATTERNS]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CAPABILITY INDEX
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _gated_read_caps() -> set:
+    """Caps hidden from discovery by the canonical-retrieval gate
+    (fabric/memory_retrieval.py). Empty set when the module isn't loaded or
+    tooling mode is 'full' — i.e. default is full tooling."""
+    import sys as _sys
+    mr = (_sys.modules.get("memory_retrieval")
+          or _sys.modules.get("Vera.vera.fabric.memory_retrieval"))
+    try:
+        return mr.gated_discovery_caps() if mr else set()
+    except Exception:
+        return set()
+
 
 class CapabilityIndex:
     """
@@ -170,9 +185,13 @@ class CapabilityIndex:
         self._embed_running = False
 
     def build(self):
-        """Synchronously build the index from the current CAPABILITY_REGISTRY."""
-        for name, cap in CAPABILITY_REGISTRY.items():
-            self._index[name] = self._enrich(name, cap)
+        """Synchronously build the index from the current CAPABILITY_REGISTRY.
+        CPU-bound (regex scans over every cap description) — async callers must
+        run it via asyncio.to_thread. Builds into a fresh dict and swaps
+        atomically so loop-side readers never see a half-built index."""
+        idx = {name: self._enrich(name, cap)
+               for name, cap in list(CAPABILITY_REGISTRY.items())}
+        self._index = idx
         log.info("CapabilityIndex built — %d caps", len(self._index))
 
     def _enrich(self, name: str, cap: dict) -> dict:
@@ -184,7 +203,7 @@ class CapabilityIndex:
         # Auto-generate tags from description
         auto_tags = []
         for pattern, tag in _DESC_TAG_PATTERNS:
-            if re.search(pattern, desc, re.IGNORECASE) and tag not in dec_tags:
+            if pattern.search(desc) and tag not in dec_tags:
                 auto_tags.append(tag)
 
         all_tags = list(dict.fromkeys(dec_tags + auto_tags + [category, group]))
@@ -405,6 +424,13 @@ class CapabilityIndex:
         # Sort; take top_k but always include at least a minimal set
         ranked = sorted(scores.items(), key=lambda x: -x[1])
 
+        # Canonical-tooling gate: hide the overlapping fabric/memory read caps
+        # from discovery when memory_retrieval is in canonical mode (soft gate —
+        # they stay callable, they just don't surface in searches/toolkits).
+        gated = _gated_read_caps()
+        if gated:
+            ranked = [r for r in ranked if r[0] not in gated]
+
         # Always include a few general caps even if low score
         must_include = {"obs.health", "echo", "health.check"}
         result = [r for r in ranked if r[1] > 0]
@@ -422,7 +448,7 @@ class CapabilityIndex:
         req   = set(cap.get("schema", {}).get("required", []))
         io    = cap.get("io")
         params = ", ".join(
-            f"{p}:{v.get('type','str')}{'!' if p in req else ''}"
+            _orch._format_param_sig(p, v, req)
             for p, v in props.items()
             if p not in ("trace_id",)
         )
@@ -891,6 +917,8 @@ class ExecutionMonitor:
             schema_props = cap.get("schema", {}).get("properties", {})
             params_desc  = "\n".join(
                 f"  {k}: {v.get('type','str')} — {v.get('description','')}"
+                + (f" (one of: {'|'.join(str(o) for o in _orch.enum_options(v))})"
+                   if _orch.enum_options(v) else "")
                 for k, v in schema_props.items()
                 if k not in ("trace_id",)
             )
@@ -1159,8 +1187,8 @@ async def caps_embed_run(force: bool = False, trace_id=None):
         for entry in CAP_INDEX._index.values():
             entry["embedding"] = []
     # Re-build index to pick up any new caps registered since startup
-    CAP_INDEX.build()
     import asyncio as _asyncio
+    await _asyncio.to_thread(CAP_INDEX.build)
     _asyncio.create_task(CAP_INDEX.start_embedding())
     return {
         "status":  "started",
@@ -1936,7 +1964,7 @@ log.info("plan_dag patched to use CapabilityIndex")
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _startup():
-    CAP_INDEX.build()
+    await asyncio.to_thread(CAP_INDEX.build)
     await DAG_STORE._pg_init()
     asyncio.create_task(CAP_INDEX.start_embedding())
     asyncio.create_task(_DAG_CAP_REGISTRY.restore_from_redis())

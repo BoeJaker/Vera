@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Vera — Data Fabric</title>
@@ -31,7 +36,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg0);color:var(--text);
   border:1px solid var(--border);background:var(--bg2);color:var(--dim2);cursor:pointer;
   font-family:var(--sans);font-size:11px;font-weight:500;transition:all .14s;white-space:nowrap}
 .btn:hover{border-color:var(--acc);color:var(--acc);background:rgba(90,158,143,.08)}
-.btn.primary{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#fff);font-weight:600}
 .btn.primary:hover{filter:brightness(1.1)}
 .btn.teal{background:rgba(0,212,170,.1);border-color:var(--acc2);color:var(--acc2)}
 .btn.danger{border-color:var(--err);color:var(--err)}
@@ -188,6 +193,7 @@ code{font-family:var(--mono);font-size:.9em}
     <button class="fab-nb" id="fnav-query"    onclick="fabSection('query')" title="Query"><span class="fab-nb-icon">⌕</span><span class="fab-nb-label">Query</span></button>
     <button class="fab-nb" id="fnav-iot"      onclick="fabSection('iot')" title="IoT &amp; TS"><span class="fab-nb-icon">⬡</span><span class="fab-nb-label">IoT &amp; TS</span></button>
     <button class="fab-nb" id="fnav-graph"    onclick="fabSection('graph')" title="Graph"><span class="fab-nb-icon">◈</span><span class="fab-nb-label">Graph</span></button>
+    <button class="fab-nb" id="fnav-memgraph" onclick="fabSection('memgraph')" title="Memory Graph"><span class="fab-nb-icon">◉</span><span class="fab-nb-label">Memory</span></button>
     <button class="fab-nb" id="fnav-loom"     onclick="fabSection('loom')" title="Loom"><span class="fab-nb-icon">⧖</span><span class="fab-nb-label">Loom</span></button>
     <button class="fab-nb" id="fnav-schedule" onclick="fabSection('schedule')" title="Schedule"><span class="fab-nb-icon">⏱</span><span class="fab-nb-label">Schedule</span></button>
     <button class="fab-nb" id="fnav-bus"      onclick="fabSection('bus')" title="Bus"><span class="fab-nb-icon">⇄</span><span class="fab-nb-label">Bus</span></button>
@@ -1241,6 +1247,25 @@ code{font-family:var(--mono);font-size:.9em}
   <!-- STATS -->
   <div id="fsec-stats" style="display:none">
     <div class="sec" style="margin-bottom:10px">Fabric Statistics</div>
+    <!-- LLM-NLP master switch: OFF = automatic pipelines (ingestion, discovery
+         crawls, collectors, loops) use regex/spaCy NLP only; LLM extraction
+         runs solely on a human's direct request from this UI. -->
+    <div class="card" style="margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="flex:1">
+          <div style="font-size:10px;font-weight:600;color:var(--acc2);margin-bottom:3px">LLM NLP (system-wide)</div>
+          <div style="font-size:9.5px;color:var(--dim2);line-height:1.5">
+            When <b>off</b> (default), ingestion / discovery / background loops never
+            send NLP work to the LLM cluster &mdash; entity extraction uses regex &amp; spaCy
+            only. LLM extraction still works when you run it yourself from this panel.
+          </div>
+        </div>
+        <label style="display:flex;align-items:center;gap:6px;font-size:10px;cursor:pointer;white-space:nowrap">
+          <input type="checkbox" id="fabLlmNlpToggle" onchange="fabLlmNlpSet(this.checked)">
+          <span id="fabLlmNlpState" style="color:var(--dim2)">&hellip;</span>
+        </label>
+      </div>
+    </div>
     <button class="btn sm" onclick="fabLoadStats()" style="margin-bottom:10px">↻ Refresh</button>
     <div id="fabStatsGrid" class="g2" style="gap:8px"><span style="color:var(--dim);font-size:10px">Loading…</span></div>
   </div>
@@ -1321,6 +1346,14 @@ code{font-family:var(--mono);font-size:.9em}
   </div>
 
   <!-- VECTORS -->
+  <!-- MEMORY GRAPH — the session/agent memory graph, folded in from its old
+       top-level tab (lazy iframe, same pattern as WorldView / Vectors). -->
+  <div id="fsec-memgraph" style="display:none;height:calc(100vh - 80px);padding:0;overflow:hidden;position:relative">
+    <iframe id="fsec-memgraph-frame" src="about:blank"
+            style="width:100%;height:100%;border:none"
+            allow="clipboard-read;clipboard-write"></iframe>
+  </div>
+
   <div id="fsec-vectors" style="display:none;height:calc(100vh - 80px);padding:0;overflow:hidden;position:relative">
     <iframe id="fsec-vectors-frame" src="about:blank"
             style="width:100%;height:100%;border:none;display:block;background:#181614"
@@ -1632,7 +1665,7 @@ async function fabObjectsUpload(input){
 
 function fabSection(name){
   _fabSection=name;
-  ['datasets','sources','discover','query','iot','graph','loom','schedule','bus','stats','skills','worldview','vectors','objects'].forEach(function(s){
+  ['datasets','sources','discover','query','iot','graph','memgraph','loom','schedule','bus','stats','skills','worldview','vectors','objects'].forEach(function(s){
     var el=document.getElementById('fsec-'+s),btn=document.getElementById('fnav-'+s);
     if(el) {
       if (s === name) {
@@ -1681,6 +1714,13 @@ function fabSection(name){
     var wvf=document.getElementById('fsec-worldview-frame');
     if(wvf&&wvf.src==='about:blank'){
       wvf.src=API+'/ui/panels/worldview-panel';
+    }
+  }
+  // Lazy-load Memory Graph iframe on first visit
+  if(name==='memgraph'){
+    var mgf=document.getElementById('fsec-memgraph-frame');
+    if(mgf&&mgf.src==='about:blank'){
+      mgf.src=API+'/memgraph/panel';
     }
   }
   // Lazy-load Vector Browser iframe on first visit
@@ -4157,6 +4197,23 @@ async function fabLoadStats(){
   var pg=res.postgres||{},faiss=res.faiss||{},chro=res.chroma||{},obj=res.object_store||{};
   el.innerHTML=tile('Datasets',(pg.datasets||0).toLocaleString(),(pg.records||0).toLocaleString()+' records')+tile('FAISS',(faiss.global_vectors||0).toLocaleString(),(faiss.global_shards||0)+' shards · '+(faiss.index_type||'?'),faiss.available?'var(--ok)':'var(--err)')+tile('Chroma',chro.available?(chro.count||0).toLocaleString():'—',chro.collection||'',chro.available?'var(--ok)':'var(--err)')+tile('Object store',obj.available?obj.mode:'none',obj.available?obj.bucket:'disabled',obj.available?'var(--acc2)':'var(--dim)')+tile('Neo4j',res.neo4j?.available?'connected':'disconnected','Fabric graph',res.neo4j?.available?'var(--ok)':'var(--err)')+tile('Scheduled',_fabSrcData.filter(function(s){return s.interval>0;}).length,'active schedules','var(--acc3)');
   var sb=document.getElementById('fabStatusBar');if(sb)sb.textContent=(pg.datasets||0)+'ds · '+(pg.records||0).toLocaleString()+'rec';
+  fabLlmNlpLoad();
+}
+
+// ── LLM-NLP master switch (system-wide; default OFF) ─────────────────────────
+async function fabLlmNlpLoad(){
+  var t=document.getElementById('fabLlmNlpToggle'),s=document.getElementById('fabLlmNlpState');
+  if(!t)return;
+  var r=await api('/fabric/nlp/config');
+  var on=!!(r&&r.enabled);
+  t.checked=on;
+  if(s){s.textContent=on?'enabled':'disabled';s.style.color=on?'var(--ok)':'var(--dim2)';}
+}
+async function fabLlmNlpSet(on){
+  var s=document.getElementById('fabLlmNlpState');
+  var r=await api('/fabric/nlp/set','POST',{enabled:!!on});
+  var ok=!!(r&&r.ok);
+  if(s){s.textContent=ok?(on?'enabled':'disabled'):'error';s.style.color=on&&ok?'var(--ok)':'var(--dim2)';}
 }
 
 // ── WS handler (overwrites early stub) ────────────────────────────────────────
@@ -6107,6 +6164,131 @@ window.addEventListener('vg:action', function(ev){
 })();
 </script>
 <script src="/ui/vera-panel-bridge.js"></script>
+<script>
+/* ── Chat ↔ panel bridge: curated Data Fabric actions ─────────────────────────
+ * Fabric is a large, tab-sectioned panel with 200+ controls, most hidden per
+ * section. The generic auto-derived actions can't drive it reliably, so — like
+ * the exec and netmap panels — we register a small set of SEMANTIC actions and a
+ * curated state provider. Agents reach these through panel.dispatch (action +
+ * payload), NEVER as capabilities. Registered after the bridge shim loads. */
+(function(){
+  if(!window.VeraPanelBridge) return;
+  var B = window.VeraPanelBridge;
+
+  var SECTIONS = ['datasets','sources','discover','query','iot','graph','memgraph',
+                  'loom','schedule','bus','stats','skills','worldview','vectors','objects'];
+
+  function _set(id, v){
+    if(v===undefined || v===null) return false;
+    var el = document.getElementById(id);
+    if(!el) return false;
+    if(el.type==='checkbox') el.checked = !!v; else el.value = String(v);
+    try{ el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); }catch(e){}
+    return true;
+  }
+  function _dsNames(){
+    try{ return (window._fabDatasets||[]).map(function(d){ return d.dataset_id; }).filter(Boolean); }
+    catch(e){ return []; }
+  }
+
+  // Switch to a fabric section (tab). payload: {section}
+  B.registerActionHandler('go_to_section', function(p){
+    p = p || {};
+    var s = String(p.section||p.name||'').trim().toLowerCase();
+    if(!s) return {ok:false, error:'section required', valid_sections:SECTIONS};
+    if(SECTIONS.indexOf(s) < 0) return {ok:false, error:'unknown section: '+s, valid_sections:SECTIONS};
+    try{ fabSection(s); }catch(e){ return {ok:false, error:String(e)}; }
+    return {section:s};
+  });
+
+  // Run a hybrid fabric search. payload:
+  //   {text, vector?, dataset?, top_k?, expand?, faiss?, chroma?, data?}
+  // Fills the Query tab's DSL form and clicks Search (fabRunQuery), so the agent
+  // drives the exact same path a human would. Named so the live cap-activity
+  // mirror below can replay agent fabric.query calls through the same path.
+  var _actQuery = function(p){
+    p = p || {};
+    var text = p.text || p.query || p.keywords || p.q || '';
+    var vector = p.vector || p.semantic || '';
+    if(!text && !vector) return {ok:false, error:'text or vector required'};
+    try{ fabSection('query'); if(typeof fabQueryTab==='function') fabQueryTab('dsl'); }catch(e){}
+    _set('fqText', text);
+    _set('fqVector', vector);
+    if(p.dataset!==undefined || p.dataset_id!==undefined) _set('fqDataset', p.dataset||p.dataset_id||'');
+    if(p.top_k!==undefined) _set('fqTopK', p.top_k);
+    if(p.expand!==undefined) _set('fqExpand', p.expand);
+    if(p.faiss!==undefined)  _set('fqFaiss', p.faiss);
+    if(p.chroma!==undefined) _set('fqChroma', p.chroma);
+    if(p.data!==undefined)   _set('fqData', p.data);
+    try{ fabRunQuery(); }catch(e){ return {ok:false, error:String(e)}; }
+    return {started:true, text:text, vector:vector, dataset:(p.dataset||p.dataset_id||'all')};
+  };
+  B.registerActionHandler('query', _actQuery);
+
+  // Open a dataset and browse its records. payload: {dataset_id, search?}
+  B.registerActionHandler('open_dataset', function(p){
+    p = p || {};
+    var id = p.dataset_id || p.dataset || p.id || '';
+    if(!id) return {ok:false, error:'dataset_id required', datasets:_dsNames().slice(0,50)};
+    try{
+      fabSelectDs(id);
+      if(p.search){ _set('fabRecSearch', p.search); if(typeof fabBrowse==='function') fabBrowse(0); }
+    }catch(e){ return {ok:false, error:String(e)}; }
+    return {opened:id};
+  });
+
+  // Enumerate available datasets (no UI change). payload: {} 
+  B.registerActionHandler('list_datasets', function(){
+    var names = _dsNames();
+    return {count:names.length, datasets:names.slice(0, 200)};
+  });
+
+  B.registerStateProvider(function(){
+    var st = {panel:'fabric'};
+    try{
+      st.section = window._fabSection || 'datasets';
+      st.selected_dataset = window._fabSelected || null;
+      var names = _dsNames();
+      st.dataset_count = names.length;
+      st.datasets = names.slice(0, 40);
+      var qs = document.getElementById('fqStatus');
+      if(qs && qs.textContent.trim()) st.last_query_status = qs.textContent.trim().slice(0, 120);
+    }catch(e){ st.provider_error = String(e); }
+    // Listed first so it survives chat-side truncation. These are panel.dispatch
+    // actions — NOT capabilities. Do not call them directly.
+    st.panel_actions = {
+      go_to_section: 'Switch fabric section/tab. payload: {section: "datasets"|"sources"|"discover"|"query"|"graph"|"loom"|"schedule"|"stats"|"vectors"|"objects"|...}',
+      query:         'Hybrid search over the fabric. payload: {text, vector?, dataset?, top_k?, expand?}. Results appear in the Query tab.',
+      open_dataset:  'Open a dataset and browse its records. payload: {dataset_id, search?}',
+      list_datasets: 'List available datasets. payload: {} — returns dataset ids.',
+    };
+    return st;
+  });
+
+  /* ── Live mirroring of agent fabric.* cap calls ────────────────────────────
+   * When a chat agent runs fabric caps HEADLESS (fabric.query, fabric.insert,
+   * dataset ops…), the chat forwards the activity here. Beyond the bridge's
+   * built-in activity feed, natively mirror the important ones so the panel
+   * shows what the agent did: replay queries through the Query tab UI and
+   * refresh the dataset list after mutations. */
+  B.registerCapActivityHandler('fabric.*', function(a){
+    if(a.phase !== 'ok') return;                    // mirror completed calls only
+    var args = a.args || {};
+    try{
+      if(a.cap === 'fabric.query' || a.cap === 'fabric.search'){
+        var t = args.text || args.query || args.q || args.keywords || '';
+        var vec = args.vector || args.semantic || '';
+        if(t || vec) _actQuery({text: t, vector: vec,
+                                dataset: args.dataset || args.dataset_id || '',
+                                top_k: args.top_k});
+      } else if(/^fabric\.(insert|ingest|delete|create|drop|update|import|subtables)/.test(a.cap)
+                || a.cap === 'fabric.datasets'){
+        if(typeof fabLoadDatasets === 'function') fabLoadDatasets();
+      }
+    }catch(e){}
+  });
+})();
+</script>
 </body>
 </html>
 
@@ -6134,7 +6316,7 @@ window.addEventListener('vg:action', function(ev){
 .wacq-stage{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:10px;margin-bottom:8px;transition:.15s}
 .wacq-stage:hover{border-color:var(--border2)}
 .wacq-stage-hd{display:flex;align-items:center;gap:8px;margin-bottom:6px}
-.wacq-stage-num{width:22px;height:22px;border-radius:50%;background:var(--acc);color:#111;font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.wacq-stage-num{width:22px;height:22px;border-radius:50%;background:var(--acc);color:var(--on-acc,#111);font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .wacq-neg-chip{display:inline-flex;align-items:center;gap:3px;font-size:9.5px;padding:2px 7px 2px 8px;border-radius:10px;background:rgba(201,107,107,.12);border:1px solid rgba(201,107,107,.25);color:var(--err);cursor:pointer;transition:.1s}
 .wacq-neg-chip:hover{background:rgba(201,107,107,.2);border-color:var(--err)}
 .wacq-neg-chip .x{opacity:.5;margin-left:2px}

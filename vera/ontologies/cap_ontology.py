@@ -427,7 +427,7 @@ def _cap_brief(name: str) -> str:
     props = (cap.get("schema") or {}).get("properties") or {}
     req = set((cap.get("schema") or {}).get("required") or [])
     sig = ", ".join(
-        f"{p}:{(v.get('type') or 'str')}{'!' if p in req else ''}"
+        _orch._format_param_sig(p, v, req)
         for p, v in props.items() if p != "trace_id"
     )
     return f"{name}({sig}) — {desc}"

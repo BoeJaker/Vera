@@ -1,16 +1,19 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="ash">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Vera / Notebooks</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-<!-- CodeMirror 5 core -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/theme/dracula.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.js"></script>
-<!-- Language modes -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/python/python.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/javascript/javascript.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/shell/shell.min.js"></script>
@@ -21,8 +24,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/css/css.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/markdown/markdown.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/rust/rust.min.js"></script>
-<!-- marked.js for markdown preview -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
 <style>
 /* ── Themes ──────────────────────────────────────────────────────────────── */
 [data-theme="ash"]  {--bg:#f0ede8;--s1:#e8e5df;--s2:#dedbd4;--s3:#d4d1c8;--bd:rgba(0,0,0,.08);--bd2:rgba(0,0,0,.15);--t1:#1a1a18;--t2:#6a6860;--t3:#a8a69e;--ac:#2e6da4;--ac2:#228060;--ac3:#c47020;--ac4:#c03030;--ac5:#6040a0}
@@ -36,37 +37,43 @@
 html,body{height:100%;background:var(--bg);color:var(--t1);font:13px/1.5 'ui-monospace','SFMono-Regular','Menlo',monospace;overflow:hidden}
 button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 input,select,textarea{font:inherit;color:inherit;background:none;border:none;outline:none}
-::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:2px}
+::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:3px}
 
-/* ── Rainbow ─────────────────────────────────────────────────────────────── */
 #rainbow{height:3px;background:linear-gradient(90deg,#e03030 0%,#e06020 12%,#e0a020 24%,#50a830 36%,#2080c8 50%,#5040c0 62%,#9030a0 74%,#c02870 86%,#e03030 100%);opacity:.75;flex-shrink:0}
-
-/* ── Shell ───────────────────────────────────────────────────────────────── */
 #shell{display:flex;flex-direction:column;height:100vh;overflow:hidden}
 
 /* ── Topbar ──────────────────────────────────────────────────────────────── */
-#topbar{height:44px;background:var(--s1);border-bottom:1px solid var(--bd);display:flex;align-items:center;padding:0 14px;gap:10px;flex-shrink:0}
-.tb-logo{color:var(--ac);font-weight:500;font-size:13px;letter-spacing:.05em;cursor:pointer}
+#topbar{height:44px;background:var(--s1);border-bottom:1px solid var(--bd);display:flex;align-items:center;padding:0 12px;gap:8px;flex-shrink:0}
+.tb-logo{color:var(--ac);font-weight:500;font-size:13px;letter-spacing:.05em;cursor:pointer;white-space:nowrap}
 .tb-sep{width:1px;height:20px;background:var(--bd)}
-#nb-title-input{flex:1;font-size:14px;font-weight:500;color:var(--t1);background:none;border:none;outline:none}
+#nb-title-input{flex:1;font-size:14px;font-weight:500;color:var(--t1);min-width:60px}
 #nb-title-input::placeholder{color:var(--t3)}
-.tbtn{display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:6px;font-size:11px;color:var(--t2);transition:.12s;border:1px solid transparent;white-space:nowrap}
+.tbtn{display:flex;align-items:center;gap:5px;padding:4px 9px;border-radius:6px;font-size:11px;color:var(--t2);transition:.12s;border:1px solid transparent;white-space:nowrap}
 .tbtn:hover{background:var(--bd);color:var(--t1)}
 .tbtn.primary{background:var(--ac);color:#fff;border-color:var(--ac)}
 .tbtn.primary:hover{opacity:.85}
+.tbtn.on{border-color:var(--ac);color:var(--ac)}
 .tbtn svg{width:13px;height:13px;flex-shrink:0}
-/* theme pill */
 #theme-sel{background:var(--s2);border:1px solid var(--bd);border-radius:5px;padding:3px 7px;font-size:11px;color:var(--t2)}
+.conn-dot{width:7px;height:7px;border-radius:50%;background:var(--t3);flex-shrink:0}
+.conn-dot.ok{background:var(--ac2)}
+.conn-dot.bad{background:var(--ac4)}
 
 /* ── Body layout ─────────────────────────────────────────────────────────── */
-#body{display:grid;grid-template-columns:220px 180px 1fr;flex:1;overflow:hidden;min-height:0}
+#body{display:grid;grid-template-columns:210px 168px 1fr;flex:1;overflow:hidden;min-height:0;transition:grid-template-columns .18s}
+#body.drawer-open{grid-template-columns:210px 168px 1fr 320px}
+#body.sidebar-collapsed{grid-template-columns:0 168px 1fr}
 
 /* ── Sidebar — notebook list ─────────────────────────────────────────────── */
 #sidebar{background:var(--s1);border-right:1px solid var(--bd);display:flex;flex-direction:column;overflow:hidden}
-#sidebar-head{padding:10px 12px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:7px;flex-shrink:0}
+/* Embed / focus mode — a single notebook with no notebook-list chrome. */
+html.nb-embed #sidebar{display:none}
+#sidebar-head{padding:9px 11px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:7px;flex-shrink:0}
 #sidebar-head span{font-size:10px;color:var(--t3);letter-spacing:.1em;text-transform:uppercase;flex:1}
+#nb-search{padding:6px 11px;border-bottom:1px solid var(--bd)}
+#nb-search input{width:100%;background:var(--s2);border:1px solid var(--bd);border-radius:5px;padding:4px 8px;font-size:11px;color:var(--t1)}
 .nb-list{flex:1;overflow-y:auto;padding:6px}
 .nb-item{padding:7px 9px;border-radius:6px;cursor:pointer;transition:.1s;border:1px solid transparent;margin-bottom:3px}
 .nb-item:hover{background:var(--s2);border-color:var(--bd)}
@@ -74,215 +81,210 @@ input,select,textarea{font:inherit;color:inherit;background:none;border:none;out
 .nb-item-title{font-size:12px;color:var(--t1);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .nb-item-meta{font-size:10px;color:var(--t3);margin-top:2px}
 
-/* ── Main editor ─────────────────────────────────────────────────────────── */
-#editor{display:flex;flex-direction:column;overflow:hidden;min-height:0;flex:1}
-#cell-scroll{flex:1;overflow-y:auto;padding:20px 0;min-height:0;display:flex;flex-direction:column}
-#cells-container{max-width:840px;margin:0 auto;padding:0 20px;flex:1}
-/* doc-view takes same slot as cell-scroll, toggled via JS */
-#doc-view{flex:1;overflow-y:auto;min-height:0;display:none;flex-direction:column}
-#doc-view-content h2{font-size:1.45em;font-weight:600;margin:1.6em 0 .5em}
-#doc-view-content h3{font-size:1.15em;font-weight:600;margin:1.3em 0 .4em;color:var(--t2)}
-#doc-view-content p{margin:.65em 0}
-#doc-view-content ul,#doc-view-content ol{margin:.5em 0 .5em 1.5em}
-#doc-view-content li{margin:.2em 0}
-#doc-view-content strong{color:var(--t1);font-weight:600}
-#doc-view-content a{color:var(--ac)}
-#doc-view-content code{font:inherit;font-size:12px;background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:1px 5px;color:var(--ac)}
-#doc-view-content pre{background:var(--s1);border:1px solid var(--bd);border-radius:6px;padding:13px;overflow-x:auto;font-size:12px;margin:1em 0}
-#doc-view-content blockquote{border-left:3px solid var(--ac);margin:1em 0;padding:.4em 1em;color:var(--t2);background:var(--s1);border-radius:0 5px 5px 0}
-#doc-view-content table{width:100%;border-collapse:collapse;margin:1em 0;font-size:13px}
-#doc-view-content th{background:var(--s2);font-weight:600;padding:8px 12px;border:1px solid var(--bd);text-align:left}
-#doc-view-content td{padding:7px 12px;border:1px solid var(--bd)}
-#doc-view-content tr:nth-child(even) td{background:var(--s1)}
-.doc-section{margin-bottom:2.4em}
-.doc-section+.doc-section{border-top:1px solid var(--bd);padding-top:2em}
-.doc-section-meta{font-size:9px;color:var(--t3);margin-bottom:.8em;display:none}
-.doc-section-meta.show{display:block}
-.doc-idx-item{display:flex;align-items:center;gap:7px;padding:3px 0;cursor:pointer}
-.doc-idx-item:hover .doc-idx-title{color:var(--t1)}
-.doc-idx-title{font-size:11px;color:var(--ac);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-
-/* ── Cell ────────────────────────────────────────────────────────────────── */
-.cell{position:relative;margin-bottom:8px;border-radius:8px;border:2px solid transparent;transition:.15s;background:var(--s1)}
-.cell:hover{border-color:var(--bd)}
-.cell.focused{border-color:var(--ac)}
-.cell.generating{border-color:var(--ac3);animation:cellpulse 1.2s ease-in-out infinite}
-@keyframes cellpulse{0%,100%{border-color:var(--ac3)}50%{border-color:rgba(196,112,32,.3)}}
-
-/* Cell toolbar */
-.cell-bar{display:flex;align-items:center;gap:5px;padding:5px 10px 3px;border-bottom:1px solid var(--bd);background:var(--s2);border-radius:6px 6px 0 0}
-.cell-type-sel{font-size:10px;padding:1px 6px;border-radius:4px;background:var(--s3);border:1px solid var(--bd);color:var(--t2)}
-.cell-lang-sel{font-size:10px;padding:1px 6px;border-radius:4px;background:var(--s3);border:1px solid var(--bd);color:var(--t2)}
-.cell-tag-sel{font-size:10px;padding:1px 6px;border-radius:4px;background:var(--s3);border:1px solid var(--bd);color:var(--t3)}
-.cell-tag-sel.flesh_out{color:var(--ac);border-color:rgba(46,109,164,.3)}
-.cell-tag-sel.to_code{color:var(--ac2);border-color:rgba(34,128,96,.3)}
-.cell-tag-sel.research{color:var(--ac5);border-color:rgba(96,64,160,.3)}
-.cell-tag-sel.summarise{color:var(--ac3);border-color:rgba(196,112,32,.3)}
-[data-theme="dusk"] .cell-tag-sel.flesh_out{color:var(--ac)}
-.cell-bar-spacer{flex:1}
-.cell-btn{width:22px;height:22px;border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--t3);transition:.1s;flex-shrink:0}
-.cell-btn:hover{background:var(--bd);color:var(--t1)}
-.cell-btn.run{color:var(--ac3)}
-.cell-btn.run:hover{background:rgba(196,112,32,.12);color:var(--ac3)}
-.cell-btn svg{width:12px;height:12px}
-.drag-handle{cursor:grab;color:var(--t3);padding:0 3px}
-.drag-handle:active{cursor:grabbing}
-
-/* Cell content areas */
-.cell-input{padding:10px 12px;min-height:48px}
-.cell-input textarea{width:100%;background:none;border:none;outline:none;color:var(--t1);resize:none;font-size:13px;line-height:1.6;font-family:inherit;min-height:40px}
-.cell-input textarea::placeholder{color:var(--t3)}
-
-/* CodeMirror override */
-.cell-code .CodeMirror{background:var(--s2)!important;border:none;font-size:12px;line-height:1.6;min-height:60px;max-height:600px}
-.cell-code .CodeMirror-scroll{padding:8px 12px}
-[data-theme="ash"] .cell-code .CodeMirror{background:#f8f6f0!important;color:#1a1a18!important}
-[data-theme="dusk"] .cell-code .CodeMirror,[data-theme="void"] .cell-code .CodeMirror,[data-theme="chalk"] .cell-code .CodeMirror,[data-theme="ice"] .cell-code .CodeMirror{background:var(--s2)!important;color:var(--t1)!important}
-
-/* Generated output */
-.cell-generated{border-top:1px solid var(--bd);padding:12px 14px;background:var(--bg)}
-.cell-generated-label{font-size:9px;color:var(--t3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;display:flex;align-items:center;gap:6px}
-.cell-generated-label .gen-actions{display:flex;gap:4px;margin-left:auto}
-.gen-action-btn{font-size:10px;padding:1px 7px;border-radius:4px;background:var(--s2);border:1px solid var(--bd);color:var(--t2);transition:.1s}
-.gen-action-btn:hover{border-color:var(--bd2);color:var(--t1)}
-.gen-content{font-size:13px;line-height:1.7;color:var(--t2)}
-.gen-content h1{font-size:16px;font-weight:500;color:var(--t1);margin:.8em 0 .3em}
-.gen-content h2{font-size:14px;font-weight:500;color:var(--t1);margin:.7em 0 .3em}
-.gen-content h3{font-size:13px;font-weight:500;color:var(--t2);margin:.6em 0 .2em}
-.gen-content p{margin:.3em 0}
-.gen-content ul,.gen-content ol{margin:.3em 0;padding-left:1.4em}
-.gen-content li{margin:.15em 0}
-.gen-content strong{color:var(--t1);font-weight:500}
-.gen-content a{color:var(--ac)}
-.gen-content code{font:inherit;font-size:12px;background:var(--s2);border:1px solid var(--bd);border-radius:3px;padding:1px 4px;color:var(--ac)}
-.gen-content pre{background:var(--s1);border:1px solid var(--bd);border-radius:6px;padding:10px 12px;overflow-x:auto;margin:.6em 0;font-size:12px}
-.gen-content pre code{background:none;border:none;padding:0;color:var(--t1)}
-.gen-content hr{border:none;border-top:1px solid var(--bd);margin:1em 0}
-.gen-content blockquote{border-left:2px solid var(--bd2);padding-left:10px;color:var(--t2);margin:.5em 0;font-style:italic}
-/* Streaming cursor in generated content */
-.gen-cursor{display:inline-block;width:2px;height:13px;background:var(--ac);margin-left:2px;vertical-align:middle;animation:blink .7s step-end infinite}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
-
-/* ── Thread / conversation ───────────────────────────────────────────────── */
-.cell-thread{border-top:1px solid var(--bd);background:var(--bg)}
-.thread-toggle{display:flex;align-items:center;gap:6px;padding:7px 14px;cursor:pointer;font-size:10px;color:var(--t3);letter-spacing:.07em;text-transform:uppercase;transition:.1s;user-select:none}
-.thread-toggle:hover{color:var(--t2)}
-.thread-toggle svg{width:10px;height:10px;transition:.15s}
-.thread-toggle.open svg{transform:rotate(90deg)}
-.thread-messages{display:none;padding:10px 14px;border-top:1px solid var(--bd)}
-.thread-toggle.open + .thread-messages{display:flex;flex-direction:column;gap:8px}
-.thread-msg{display:flex;flex-direction:column;gap:2px}
-.thread-msg-role{font-size:9px;color:var(--t3);letter-spacing:.07em;text-transform:uppercase}
-.thread-msg-role.user{color:var(--ac)}
-.thread-msg-content{font-size:12px;color:var(--t2);line-height:1.55;background:var(--s1);border-radius:5px;padding:7px 10px}
-.thread-msg-content.user{background:rgba(46,109,164,.07)}
-[data-theme="dusk"] .thread-msg-content.user{background:rgba(110,168,216,.07)}
-.thread-input-row{display:flex;gap:7px;margin-top:6px;border-top:1px solid var(--bd);padding-top:8px}
-.thread-input{flex:1;background:var(--s2);border:1px solid var(--bd);border-radius:6px;padding:6px 10px;font-size:12px;color:var(--t1);resize:none;line-height:1.4;min-height:32px;max-height:100px}
-.thread-input:focus{border-color:var(--bd2);outline:none}
-.thread-send{width:28px;height:28px;border-radius:5px;background:var(--ac);display:flex;align-items:center;justify-content:center;flex-shrink:0;color:#fff;align-self:flex-end;transition:.1s}
-.thread-send:hover{opacity:.85}
-.thread-send:disabled{opacity:.3;cursor:not-allowed}
-.thread-send svg{width:11px;height:11px}
-.thread-mode-sel{font-size:10px;padding:1px 6px;border-radius:4px;background:var(--s2);border:1px solid var(--bd);color:var(--t2);align-self:flex-end}
-
-/* ── Add cell bar ────────────────────────────────────────────────────────── */
-.add-cell-row{display:flex;align-items:center;gap:8px;padding:6px 0;opacity:0;transition:opacity .15s}
-.add-cell-row:hover,.cells-container:hover .add-cell-row{opacity:1}
-.add-cell-line{flex:1;height:1px;background:var(--bd)}
-.add-cell-btn{font-size:10px;padding:3px 10px;border-radius:5px;background:var(--s2);border:1px solid var(--bd);color:var(--t2);display:flex;align-items:center;gap:4px;transition:.1s;white-space:nowrap}
-.add-cell-btn:hover{border-color:var(--ac);color:var(--ac)}
-.add-cell-btn svg{width:10px;height:10px}
-
-/* ── Bottom toolbar ──────────────────────────────────────────────────────── */
-#bottom-bar{height:38px;border-top:1px solid var(--bd);background:var(--s1);display:flex;align-items:center;padding:0 16px;gap:10px;flex-shrink:0;font-size:11px;color:var(--t3)}
-#cell-count{flex:1}
-.bbtn{padding:3px 10px;border-radius:5px;background:var(--s2);border:1px solid var(--bd);color:var(--t2);font-size:11px;transition:.1s;display:flex;align-items:center;gap:5px}
-.bbtn:hover{border-color:var(--bd2);color:var(--t1)}
-.bbtn svg{width:11px;height:11px}
-.bbtn.accent{border-color:var(--ac);color:var(--ac);background:rgba(46,109,164,.06)}
-[data-theme="dusk"] .bbtn.accent{background:rgba(110,168,216,.07)}
-
-/* Toast */
-.toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--s3);border:1px solid var(--bd2);color:var(--t1);font-size:11px;padding:6px 14px;border-radius:6px;z-index:9999;pointer-events:none;transition:opacity .3s}
-
-/* Dragging */
-.cell.dragging{opacity:.4;border:2px dashed var(--ac)!important}
-.cell.drag-over{border-color:var(--ac3)!important;background:rgba(196,112,32,.05)}
-
-/* Empty state */
-#empty-nb{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:12px;opacity:.25}
-#empty-nb svg{width:36px;height:36px}
-#empty-nb p{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3)}
-
-/* ── Pages ───────────────────────────────────────────────────────────────── */
-#pages-sidebar{width:180px;border-right:1px solid var(--bd);display:flex;flex-direction:column;overflow:hidden;background:var(--s1);flex-shrink:0}
-#pages-head{height:36px;border-bottom:1px solid var(--bd);display:flex;align-items:center;padding:0 8px;gap:5px;flex-shrink:0}
+/* ── Pages sidebar ───────────────────────────────────────────────────────── */
+#pages-sidebar{border-right:1px solid var(--bd);display:flex;flex-direction:column;overflow:hidden;background:var(--s1)}
+#pages-head{height:34px;border-bottom:1px solid var(--bd);display:flex;align-items:center;padding:0 8px;gap:5px;flex-shrink:0}
 #pages-head span{font-size:10px;color:var(--t3);letter-spacing:.08em;text-transform:uppercase;flex:1}
 #pages-list{flex:1;overflow-y:auto;padding:5px}
 .page-item{padding:5px 8px;border-radius:5px;cursor:pointer;border:1px solid transparent;margin-bottom:2px;display:flex;align-items:center;gap:5px}
 .page-item:hover{background:var(--s2);border-color:var(--bd)}
 .page-item.active{background:var(--s2);border-color:var(--ac)}
 .page-item-title{font-size:12px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--t2)}
-.page-item input{font:inherit;font-size:12px;background:none;border:none;outline:none;color:var(--t1);flex:1;min-width:0}
+.page-item input{font:inherit;font-size:12px;color:var(--t1);flex:1;min-width:0}
 .page-del{opacity:0;color:var(--ac4);font-size:11px;padding:0 2px;cursor:pointer}
 .page-item:hover .page-del{opacity:1}
+.icon-btn{width:20px;height:20px;border-radius:4px;background:var(--s2);border:1px solid var(--bd);display:flex;align-items:center;justify-content:center;color:var(--t2);cursor:pointer;flex-shrink:0}
+.icon-btn:hover{color:var(--ac);border-color:var(--ac)}
+.icon-btn svg{width:11px;height:11px}
+.layout-toggle{display:flex;gap:2px}
+.layout-toggle button{font-size:9px;width:22px;height:20px;border-radius:3px;border:1px solid var(--bd);background:var(--s2);color:var(--t3)}
+.layout-toggle button.active{border-color:var(--ac);color:var(--ac)}
 
-/* ── Cell title ──────────────────────────────────────────────────────────── */
-.cell-title-row{display:flex;align-items:center;gap:6px;padding:4px 10px 0;background:var(--s2);border-radius:6px 6px 0 0}
-.cell-title-input{font-size:11px;font-weight:500;color:var(--t2);background:none;border:none;outline:none;flex:1;font:inherit;padding:2px 0}
+/* ── Editor ──────────────────────────────────────────────────────────────── */
+#editor{display:flex;flex-direction:column;overflow:hidden;min-height:0;flex:1}
+#cell-scroll{flex:1;overflow-y:auto;padding:18px 0;min-height:0}
+#cells-container{max-width:900px;margin:0 auto;padding:0 20px}
+#cells-container.canvas{max-width:none;padding:0}
+#cells-list.canvas-grid{position:relative;min-height:800px}
+
+/* Doc view */
+#doc-view{flex:1;overflow-y:auto;min-height:0;display:none;flex-direction:column}
+#doc-view-content h2{font-size:1.45em;font-weight:600;margin:1.6em 0 .5em}
+#doc-view-content h3{font-size:1.15em;font-weight:600;margin:1.3em 0 .4em;color:var(--t2)}
+#doc-view-content p{margin:.65em 0}
+#doc-view-content ul,#doc-view-content ol{margin:.5em 0 .5em 1.5em}
+#doc-view-content strong{color:var(--t1);font-weight:600}
+#doc-view-content a{color:var(--ac)}
+#doc-view-content code{font:inherit;font-size:12px;background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:1px 5px;color:var(--ac)}
+#doc-view-content pre{background:var(--s1);border:1px solid var(--bd);border-radius:6px;padding:13px;overflow-x:auto;font-size:12px;margin:1em 0}
+.doc-section{margin-bottom:2.4em}
+.doc-section+.doc-section{border-top:1px solid var(--bd);padding-top:2em}
+
+/* ── Cell ────────────────────────────────────────────────────────────────── */
+.cell{position:relative;margin-bottom:10px;border-radius:9px;border:1px solid var(--bd);transition:border-color .15s,box-shadow .15s;background:var(--s1)}
+.cell:hover{border-color:var(--bd2)}
+.cell.focused{border-color:var(--ac)}
+.cell.generating{border-color:var(--ac3);animation:cellpulse 1.2s ease-in-out infinite}
+.cell.running{border-color:var(--ac2)}
+@keyframes cellpulse{0%,100%{border-color:var(--ac3)}50%{border-color:rgba(196,112,32,.3)}}
+.canvas-grid .cell{position:absolute;margin:0;overflow:hidden;display:flex;flex-direction:column}
+
+.cell-head{display:flex;align-items:center;gap:6px;padding:5px 9px;border-bottom:1px solid var(--bd);background:var(--s2);border-radius:8px 8px 0 0}
+.cell-kind{font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--t3);display:flex;align-items:center;gap:4px}
+.cell-kind svg{width:11px;height:11px}
+.cell-title-input{font-size:11px;font-weight:500;color:var(--t2);flex:1;min-width:0;padding:1px 0}
 .cell-title-input::placeholder{color:var(--t3)}
 .cell-title-input:focus{color:var(--t1)}
-.auto-name-btn{font-size:9px;padding:1px 5px;border-radius:3px;background:var(--s3);border:1px solid var(--bd);color:var(--t3);cursor:pointer;flex-shrink:0}
-.auto-name-btn:hover{color:var(--ac);border-color:var(--ac)}
+.cell-head .drag-handle{cursor:grab;color:var(--t3);padding:0 2px}
+.cell-head .drag-handle:active{cursor:grabbing}
+.cell-sel{font-size:10px;padding:1px 5px;border-radius:4px;background:var(--s3);border:1px solid var(--bd);color:var(--t2)}
+.cell-btn{width:22px;height:22px;border-radius:5px;display:flex;align-items:center;justify-content:center;color:var(--t3);transition:.1s;flex-shrink:0}
+.cell-btn:hover{background:var(--bd);color:var(--t1)}
+.cell-btn.run{color:var(--ac2)}
+.cell-btn.run:hover{background:rgba(34,128,96,.12)}
+.cell-btn.stop{color:var(--ac4)}
+.cell-btn svg{width:12px;height:12px}
+.cell-body{padding:0}
+.canvas-grid .cell-body{flex:1;overflow:auto}
 
-/* ── Image cell ──────────────────────────────────────────────────────────── */
-.cell-image{padding:10px}
-.cell-image img{max-width:100%;border-radius:5px;display:block;margin-bottom:8px;cursor:pointer}
-.cell-image-url{width:100%;background:var(--s3);border:1px solid var(--bd);border-radius:4px;padding:4px 8px;font-size:11px;color:var(--t1);outline:none;font:inherit}
-.cell-image-url:focus{border-color:var(--bd2)}
-.cell-image-drop{border:2px dashed var(--bd2);border-radius:6px;padding:16px;text-align:center;font-size:11px;color:var(--t3);margin-bottom:8px;cursor:pointer;transition:.15s}
-.cell-image-drop.dragover{border-color:var(--ac);color:var(--ac);background:rgba(46,109,164,.04)}
+.cell-input{padding:9px 12px}
+.cell-input textarea{width:100%;color:var(--t1);resize:none;font-size:13px;line-height:1.6;font-family:inherit;min-height:38px}
+.cell-input textarea::placeholder{color:var(--t3)}
 
-/* ── Code with line numbers ──────────────────────────────────────────────── */
-.nb-code-wrap{position:relative;background:var(--s1);border-radius:0 0 6px 6px;overflow:hidden}
-.nb-code-wrap pre{margin:0;border-radius:0;background:#282c34!important;font-size:12px;line-height:1.55;overflow-x:auto}
-.nb-code-wrap .hljs{padding:12px 12px 12px 50px;background:transparent}
-.nb-line-nums{position:absolute;left:0;top:0;bottom:0;width:38px;background:rgba(0,0,0,.2);padding:12px 6px 12px 4px;text-align:right;font-size:12px;line-height:1.55;color:rgba(255,255,255,.25);pointer-events:none;user-select:none;font-family:monospace;overflow:hidden}
+.cell-code .CodeMirror{background:var(--s2)!important;border:none;font-size:12px;line-height:1.6;min-height:56px;max-height:560px}
+.cell-code .CodeMirror-scroll{padding:8px 12px}
+[data-theme="ash"] .cell-code .CodeMirror{background:#f8f6f0!important;color:#1a1a18!important}
 
-/* ── Insert citations ────────────────────────────────────────────────────── */
-.insert-panel{background:var(--s2);border:1px solid var(--bd);border-radius:6px;padding:8px;margin:4px 0;display:none}
-.insert-panel.open{display:block}
-.insert-cit-item{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:4px;cursor:pointer;transition:.1s;font-size:11px}
-.insert-cit-item:hover{background:var(--bd)}
-.insert-cit-thumb{width:40px;height:28px;object-fit:cover;border-radius:3px;background:var(--s3);flex-shrink:0}
-.insert-cit-info{flex:1;min-width:0}
-.insert-cit-title{color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.insert-cit-domain{font-size:9px;color:var(--t3)}
+/* Exec output */
+.cell-exec-out{border-top:1px solid var(--bd);background:#0c0d10;color:#cdd3dc;font-size:11.5px;line-height:1.5;font-family:'ui-monospace',monospace;padding:9px 12px;max-height:340px;overflow:auto;white-space:pre-wrap;word-break:break-word;display:none}
+.cell-exec-out.show{display:block}
+.cell-exec-out .o-err{color:#e88}
+.cell-exec-out .o-info{color:#7aa7d0}
+.cell-exec-out .o-ok{color:#7ec99b}
 
-/* ── Gen to cell button ──────────────────────────────────────────────────── */
-.gen-to-cell-btn{font-size:10px;padding:2px 8px;border-radius:4px;background:var(--s2);border:1px solid rgba(34,128,96,.3);color:var(--ac2);cursor:pointer;margin:2px 0 6px 12px;display:inline-block}
-.gen-to-cell-btn:hover{background:rgba(34,128,96,.08)}
+/* Generated output */
+.cell-generated{border-top:1px solid var(--bd);padding:11px 13px;background:var(--bg)}
+.cell-generated-label{font-size:9px;color:var(--t3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.cell-generated-label .gen-actions{display:flex;gap:4px;margin-left:auto}
+.gen-action-btn{font-size:10px;padding:1px 7px;border-radius:4px;background:var(--s2);border:1px solid var(--bd);color:var(--t2);transition:.1s}
+.gen-action-btn:hover{border-color:var(--bd2);color:var(--t1)}
+.gen-content{font-size:13px;line-height:1.7;color:var(--t2)}
+.gen-content h1{font-size:16px;color:var(--t1);margin:.8em 0 .3em}
+.gen-content h2{font-size:14px;color:var(--t1);margin:.7em 0 .3em}
+.gen-content h3{font-size:13px;color:var(--t2);margin:.6em 0 .2em}
+.gen-content p{margin:.3em 0}
+.gen-content ul,.gen-content ol{margin:.3em 0;padding-left:1.4em}
+.gen-content strong{color:var(--t1)}
+.gen-content a{color:var(--ac)}
+.gen-content code{font:inherit;font-size:12px;background:var(--s2);border:1px solid var(--bd);border-radius:3px;padding:1px 4px;color:var(--ac)}
+.gen-content pre{background:var(--s1);border:1px solid var(--bd);border-radius:6px;padding:10px 12px;overflow-x:auto;margin:.6em 0;font-size:12px}
+.gen-content pre code{background:none;border:none;padding:0;color:var(--t1)}
+.gen-cursor{display:inline-block;width:2px;height:13px;background:var(--ac);margin-left:2px;vertical-align:middle;animation:blink .7s step-end infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
 
-/* ── File cell ───────────────────────────────────────────────────────────── */
-.cell-file{background:var(--s1);border-bottom:1px solid var(--bd)}
+/* Mermaid / illustrate / image / embed */
+.cell-render{padding:8px 10px;background:var(--bg);border-top:1px solid var(--bd)}
+.cell-render vera-mermaid{display:block;width:100%;min-height:80px}
+.cell-render img{max-width:100%;border-radius:6px;display:block}
+.cell-embed{border-top:1px solid var(--bd);background:var(--bg);position:relative}
+.cell-embed iframe{width:100%;border:none;display:block;background:var(--s1)}
+.cell-embed-bar{display:flex;align-items:center;gap:6px;padding:4px 8px;background:var(--s2);border-top:1px solid var(--bd);font-size:10px;color:var(--t3)}
+.iframe-html{width:100%;border:none;background:#fff;border-radius:6px;min-height:220px}
+.cell-image-drop{border:2px dashed var(--bd2);border-radius:6px;padding:16px;text-align:center;font-size:11px;color:var(--t3);margin:8px;cursor:pointer}
+.cell-image-drop.dragover{border-color:var(--ac);color:var(--ac)}
+.cell-mini-input{width:100%;background:var(--s3);border:1px solid var(--bd);border-radius:5px;padding:5px 8px;font-size:11px;color:var(--t1);margin-bottom:6px}
 
-/* ── Multi-column cell layout ───────────────────────────────────────────── */
-#cells-list.cols-2{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start}
-#cells-list.cols-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;align-items:start}
-#cells-list.cols-2 .add-cell-row,
-#cells-list.cols-3 .add-cell-row{grid-column:1/-1}
-.page-cols{display:flex;align-items:center;gap:2px}
-.page-col-btn{font-size:9px;width:18px;height:18px;border-radius:3px;border:1px solid var(--bd);background:var(--s2);color:var(--t3);cursor:pointer;display:flex;align-items:center;justify-content:center}
-.page-col-btn.active{border-color:var(--ac);color:var(--ac)}
-.page-item.drag-target{background:var(--s2);border-color:var(--ac2)!important}
-.cell.dragging-to-page{opacity:.4}
+/* Thread */
+.cell-thread{border-top:1px solid var(--bd);background:var(--bg)}
+.thread-toggle{display:flex;align-items:center;gap:6px;padding:6px 13px;cursor:pointer;font-size:10px;color:var(--t3);letter-spacing:.07em;text-transform:uppercase;user-select:none}
+.thread-toggle:hover{color:var(--t2)}
+.thread-toggle svg{width:10px;height:10px;transition:.15s}
+.thread-toggle.open svg{transform:rotate(90deg)}
+.thread-messages{display:none;padding:9px 13px;border-top:1px solid var(--bd)}
+.thread-toggle.open + .thread-messages{display:flex;flex-direction:column;gap:8px}
+.thread-msg-role{font-size:9px;color:var(--t3);letter-spacing:.07em;text-transform:uppercase}
+.thread-msg-role.user{color:var(--ac)}
+.thread-msg-content{font-size:12px;color:var(--t2);line-height:1.55;background:var(--s1);border-radius:5px;padding:7px 10px}
+.thread-input-row{display:flex;gap:7px;margin-top:6px;border-top:1px solid var(--bd);padding-top:8px}
+.thread-input{flex:1;background:var(--s2);border:1px solid var(--bd);border-radius:6px;padding:6px 10px;font-size:12px;color:var(--t1);resize:none;min-height:32px;max-height:100px}
+.thread-send{width:28px;height:28px;border-radius:5px;background:var(--ac);display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0;align-self:flex-end}
+.thread-send svg{width:11px;height:11px}
+.thread-mode-sel{font-size:10px;padding:1px 6px;border-radius:4px;background:var(--s2);border:1px solid var(--bd);color:var(--t2);align-self:flex-end}
 
-/* View mode toolbar strip — now lives inside #doc-view */
-#view-toolbar{position:sticky;top:0;z-index:50;background:var(--bg);border-bottom:1px solid var(--bd);padding:6px 12px;display:flex;align-items:center;gap:8px;backdrop-filter:blur(8px)}
-.vtb-btn{font-size:10px;padding:2px 9px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;transition:.1s;white-space:nowrap}
-.vtb-btn:hover{border-color:var(--bd2);color:var(--t1)}
-#view-toc{position:fixed;right:20px;top:70px;width:200px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:10px;display:none;max-height:70vh;overflow-y:auto;z-index:100}
+/* Add-cell bar / block menu */
+.add-cell-row{display:flex;align-items:center;gap:8px;padding:5px 0;opacity:.35;transition:opacity .15s}
+.add-cell-row:hover{opacity:1}
+.add-cell-line{flex:1;height:1px;background:var(--bd)}
+.add-cell-btn{font-size:10px;padding:3px 12px;border-radius:14px;background:var(--s2);border:1px solid var(--bd);color:var(--t2);display:flex;align-items:center;gap:5px}
+.add-cell-btn:hover{border-color:var(--ac);color:var(--ac)}
+.add-cell-btn svg{width:11px;height:11px}
+
+/* Popovers / menus */
+.pop{position:fixed;z-index:900;background:var(--s1);border:1px solid var(--bd2);border-radius:9px;box-shadow:0 12px 40px rgba(0,0,0,.35);padding:6px;display:none;min-width:220px;max-height:70vh;overflow-y:auto}
+.pop.show{display:block}
+.pop-title{font-size:9px;color:var(--t3);letter-spacing:.08em;text-transform:uppercase;padding:5px 8px 3px}
+.pop-item{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:6px;cursor:pointer;font-size:12px;color:var(--t1)}
+.pop-item:hover,.pop-item.sel{background:var(--s2)}
+.pop-item .pi-ico{width:20px;text-align:center;color:var(--ac)}
+.pop-item .pi-desc{font-size:10px;color:var(--t3)}
+.pop-item .pi-main{flex:1;min-width:0}
+
+/* Command palette */
+#palette{position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.35);display:none;align-items:flex-start;justify-content:center;padding-top:12vh}
+#palette.show{display:flex}
+#palette-box{width:min(560px,92vw);background:var(--s1);border:1px solid var(--bd2);border-radius:12px;box-shadow:0 24px 70px rgba(0,0,0,.45);overflow:hidden}
+#palette-input{width:100%;padding:14px 16px;font-size:14px;color:var(--t1);border-bottom:1px solid var(--bd);background:var(--s2)}
+#palette-results{max-height:52vh;overflow-y:auto;padding:6px}
+
+/* Settings popover */
+#settings-pop .sr{display:flex;flex-direction:column;gap:3px;padding:6px 8px}
+#settings-pop label{font-size:10px;color:var(--t3)}
+#settings-pop input{background:var(--s2);border:1px solid var(--bd);border-radius:5px;padding:5px 8px;font-size:11px;color:var(--t1)}
+
+/* Sources drawer */
+#drawer{background:var(--s1);border-left:1px solid var(--bd);display:none;flex-direction:column;overflow:hidden}
+#body.drawer-open #drawer{display:flex}
+#drawer-head{height:40px;display:flex;align-items:center;gap:6px;padding:0 10px;border-bottom:1px solid var(--bd);flex-shrink:0}
+#drawer-head span{flex:1;font-size:11px;color:var(--ac);font-weight:500}
+.drawer-tabs{display:flex;border-bottom:1px solid var(--bd);flex-shrink:0}
+.drawer-tab{flex:1;padding:7px 4px;font-size:10px;color:var(--t3);border-bottom:2px solid transparent;text-align:center}
+.drawer-tab.active{color:var(--ac);border-bottom-color:var(--ac)}
+#drawer-search{padding:7px 9px;border-bottom:1px solid var(--bd)}
+#drawer-search input,#drawer-ds{width:100%;background:var(--s2);border:1px solid var(--bd);border-radius:5px;padding:5px 8px;font-size:11px;color:var(--t1)}
+#drawer-ds{margin-top:5px}
+#drawer-body{flex:1;overflow-y:auto;padding:7px}
+.src-item{border:1px solid var(--bd);border-radius:6px;padding:7px 9px;margin-bottom:6px;cursor:pointer;transition:.1s;background:var(--s2)}
+.src-item:hover{border-color:var(--ac)}
+.src-item-title{font-size:11.5px;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.src-item-meta{font-size:9.5px;color:var(--t3);margin-top:2px}
+.src-item-body{font-size:10.5px;color:var(--t2);margin-top:4px;max-height:44px;overflow:hidden;line-height:1.4}
+.src-empty{font-size:11px;color:var(--t3);text-align:center;padding:18px 8px}
+
+/* Bottom bar */
+#bottom-bar{height:36px;border-top:1px solid var(--bd);background:var(--s1);display:flex;align-items:center;padding:0 14px;gap:9px;flex-shrink:0;font-size:11px;color:var(--t3)}
+#cell-count{flex:1}
+.bbtn{padding:3px 10px;border-radius:5px;background:var(--s2);border:1px solid var(--bd);color:var(--t2);font-size:11px;display:flex;align-items:center;gap:5px}
+.bbtn:hover{border-color:var(--bd2);color:var(--t1)}
+.bbtn svg{width:11px;height:11px}
+
+.toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--s3);border:1px solid var(--bd2);color:var(--t1);font-size:11px;padding:6px 14px;border-radius:6px;z-index:9999;pointer-events:none;transition:opacity .3s}
+
+.cell.dragging{opacity:.4;border:2px dashed var(--ac)!important}
+.cell.drag-over{border-color:var(--ac3)!important}
+.resize-h{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;color:var(--t3);display:none}
+.canvas-grid .resize-h{display:block}
+
+#empty-nb{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:12px;opacity:.25}
+#empty-nb svg{width:36px;height:36px}
+#empty-nb p{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3)}
+
+/* Graph modal */
+#graph-modal{position:fixed;inset:0;z-index:1100;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center}
+#graph-modal.show{display:flex}
+#graph-box{width:min(1100px,94vw);height:min(760px,90vh);background:var(--s1);border:1px solid var(--bd2);border-radius:12px;display:flex;flex-direction:column;overflow:hidden}
+#graph-box-head{height:42px;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--bd)}
+#graph-box-head span{flex:1;font-size:12px;color:var(--ac);font-weight:500}
+#graph-frame{flex:1;border:none}
 </style>
 <link rel="stylesheet" href="/ui/themes.css">
 </head>
@@ -293,27 +295,23 @@ input,select,textarea{font:inherit;color:inherit;background:none;border:none;out
 <!-- Topbar -->
 <div id="topbar">
   <span class="tb-logo" onclick="window.location.href='index.html'">⬡ Notes</span>
+  <span class="conn-dot" id="conn-dot" title="backend connection"></span>
   <div class="tb-sep"></div>
-  <input id="nb-title-input" placeholder="Notebook title…" value="Untitled Notebook"
-    onchange="saveNotebookMeta()" onblur="saveNotebookMeta()">
+  <input id="nb-title-input" placeholder="Notebook title…" value="" onchange="saveNotebookMeta()" onblur="saveNotebookMeta()">
   <div class="tb-sep"></div>
-  <button class="tbtn" onclick="deleteCurrentNotebook()" title="Delete this notebook" style="color:var(--ac4)">🗑 Delete</button>
-  <button class="tbtn" id="view-mode-btn" onclick="enterViewMode()" title="View as document" style="color:var(--ac)">📄 View</button>
-  <button class="tbtn" onclick="runAllCells()" title="Generate all tagged cells">
-    <svg viewBox="0 0 12 12" fill="currentColor"><polygon points="2,1 11,6 2,11"/></svg>Run all tagged
-  </button>
-  <button class="tbtn" onclick="exportNotebook('md')" title="Export as Markdown">
-    <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M2 8v2h8V8"/><line x1="6" y1="1" x2="6" y2="7"/><polyline points="4,5 6,7 8,5"/></svg>Export MD
-  </button>
-  <button class="tbtn" onclick="exportNotebook('ipynb')" title="Export as Jupyter Notebook">
-    <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1" y="1" width="10" height="10" rx="2"/><line x1="4" y1="6" x2="8" y2="6"/></svg>Export .ipynb
-  </button>
+  <button class="tbtn" onclick="openGraphView()" title="View this notebook as an entity graph">✦ Graph</button>
+  <button class="tbtn" onclick="syncToGraph()" title="Extract entities from cells into the knowledge graph">⟳ Sync</button>
+  <button class="tbtn" id="autobackup-btn" onclick="toggleAutoBackup()" title="Auto-backup to Gitea on save">☁</button>
+  <button class="tbtn" onclick="backupGitea()" title="Backup this notebook to Gitea">Backup</button>
+  <button class="tbtn" id="drawer-btn" onclick="toggleDrawer()" title="Sources — pull data from fabric / memory / graph">⊞ Sources</button>
+  <button class="tbtn" onclick="enterViewMode()" title="Read as a document">📄 View</button>
+  <div class="tb-sep"></div>
+  <button class="tbtn" onclick="exportNotebook('md')" title="Export Markdown">MD</button>
+  <button class="tbtn" onclick="exportNotebook('ipynb')" title="Export .ipynb">ipynb</button>
+  <button class="tbtn" onclick="openSettings(event)" title="Backend / connection settings">⚙</button>
   <select id="theme-sel" onchange="setTheme(this.value)">
-    <option value="ash">Ash</option>
-    <option value="dusk">Dusk</option>
-    <option value="void">Void</option>
-    <option value="chalk">Chalk</option>
-    <option value="ice">Ice</option>
+    <option value="ash">Ash</option><option value="dusk">Dusk</option>
+    <option value="void">Void</option><option value="chalk">Chalk</option><option value="ice">Ice</option>
   </select>
 </div>
 
@@ -324,61 +322,43 @@ input,select,textarea{font:inherit;color:inherit;background:none;border:none;out
       <span>Notebooks</span>
       <button class="tbtn" style="padding:2px 8px;font-size:10px" onclick="createNotebook()">+ New</button>
     </div>
+    <div id="nb-search"><input placeholder="Filter…" oninput="filterNotebooks(this.value)"></div>
     <div class="nb-list" id="nb-list"></div>
   </div>
 
-  <!-- Pages sidebar -->
+  <!-- Pages -->
   <div id="pages-sidebar">
     <div id="pages-head">
-      <span style="flex:1">Pages</span>
-      <div class="page-cols" id="page-col-ctrl" style="display:none;margin-right:3px">
-        <button class="page-col-btn active" id="col-1" onclick="setColumns(1)" title="Single">▌</button>
-        <button class="page-col-btn" id="col-2" onclick="setColumns(2)" title="Two columns">▌▌</button>
-        <button class="page-col-btn" id="col-3" onclick="setColumns(3)" title="Three columns">▌▌▌</button>
+      <span>Pages</span>
+      <div class="layout-toggle" id="layout-toggle" style="display:none">
+        <button id="lt-flow" class="active" onclick="setLayout('flow')" title="Linear flow">≣</button>
+        <button id="lt-canvas" onclick="setLayout('canvas')" title="Free canvas">▦</button>
       </div>
-      <button style="width:20px;height:20px;border-radius:3px;background:var(--s2);border:1px solid var(--bd);display:flex;align-items:center;justify-content:center;color:var(--t2);cursor:pointer" onclick="addPage()" title="New page">
+      <button class="icon-btn" onclick="addPage()" title="New page">
         <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.3"><line x1="5" y1="2" x2="5" y2="8"/><line x1="2" y1="5" x2="8" y2="5"/></svg>
       </button>
     </div>
-    <div id="pages-list">
-      <div class="page-item active" id="page-all" onclick="selectPage(null)">
-        <span class="page-item-title">All cells</span>
-      </div>
-    </div>
+    <div id="pages-list"></div>
   </div>
 
   <!-- Editor -->
   <div id="editor">
-    <!-- Document view — replaces cell-scroll when in view mode -->
-    <div id="doc-view" style="display:none;flex:1;overflow-y:auto;min-height:0">
-      <!-- View mode toolbar strip -->
-      <div id="view-toolbar" style="position:sticky;top:0;z-index:50;background:var(--bg);border-bottom:1px solid var(--bd);padding:6px 12px;display:flex;align-items:center;gap:8px;backdrop-filter:blur(8px)">
-        <button class="vtb-btn" onclick="exitViewMode()">← Edit</button>
-        <button class="vtb-btn" id="vtb-meta" onclick="toggleViewMeta()">Meta</button>
-        <button class="vtb-btn" onclick="toggleViewToc()">Contents</button>
-        <button class="vtb-btn" onclick="printDoc()">Print</button>
+    <div id="doc-view">
+      <div style="position:sticky;top:0;z-index:50;background:var(--bg);border-bottom:1px solid var(--bd);padding:6px 12px;display:flex;gap:8px;align-items:center;backdrop-filter:blur(8px)">
+        <button class="tbtn" onclick="exitViewMode()">← Edit</button>
+        <button class="tbtn" onclick="printDoc()">Print</button>
         <div style="flex:1"></div>
         <span id="view-cell-count" style="font-size:10px;color:var(--t3)"></span>
       </div>
-      <!-- TOC panel -->
-      <div id="view-toc" style="position:fixed;right:20px;top:70px;width:200px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:10px;display:none;max-height:70vh;overflow-y:auto;z-index:100"></div>
-      <!-- Document content -->
       <div id="doc-view-content" style="max-width:760px;margin:0 auto;padding:28px 24px 80px;font-size:14px;line-height:1.82;color:var(--t1)">
-        <h1 id="doc-view-title" style="font-size:2em;font-weight:700;letter-spacing:-.03em;margin:0 0 .6em;border-bottom:2px solid var(--bd);padding-bottom:.35em"></h1>
-        <!-- Document index auto-generated from pages/sections -->
-        <div id="doc-view-index" style="display:none;background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:12px 16px;margin-bottom:2em;font-size:12px"></div>
+        <h1 id="doc-view-title" style="font-size:2em;font-weight:700;margin:0 0 .6em;border-bottom:2px solid var(--bd);padding-bottom:.35em"></h1>
         <div id="doc-view-body"></div>
       </div>
     </div>
     <div id="cell-scroll">
       <div id="cells-container">
-        <div id="empty-nb" id="empty-nb-state">
-          <svg viewBox="0 0 36 36" fill="none" stroke="currentColor" stroke-width="1.1">
-            <rect x="4" y="4" width="28" height="28" rx="3"/>
-            <line x1="9" y1="13" x2="27" y2="13"/>
-            <line x1="9" y1="18" x2="21" y2="18"/>
-            <line x1="9" y1="23" x2="24" y2="23"/>
-          </svg>
+        <div id="empty-nb">
+          <svg viewBox="0 0 36 36" fill="none" stroke="currentColor" stroke-width="1.1"><rect x="4" y="4" width="28" height="28" rx="3"/><line x1="9" y1="13" x2="27" y2="13"/><line x1="9" y1="18" x2="21" y2="18"/><line x1="9" y1="23" x2="24" y2="23"/></svg>
           <p>Select or create a notebook</p>
         </div>
         <div id="cells-list" style="display:none"></div>
@@ -386,1572 +366,1251 @@ input,select,textarea{font:inherit;color:inherit;background:none;border:none;out
     </div>
     <div id="bottom-bar">
       <span id="cell-count">0 cells</span>
-      <button class="bbtn" onclick="addCell('markdown')">
-        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><line x1="6" y1="2" x2="6" y2="10"/><line x1="2" y1="6" x2="10" y2="6"/></svg>Markdown
-      </button>
-      <button class="bbtn" onclick="addCell('image')">
-        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1" y="2" width="10" height="8" rx="1"/><circle cx="4" cy="5" r="1"/><polyline points="1,9 4,6 7,8 9,6 11,8"/></svg>Image
-      </button>
-      <button class="bbtn" onclick="addCell('code')">
-        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><polyline points="3,4 1,6 3,8"/><polyline points="9,4 11,6 9,8"/><line x1="6" y1="2" x2="5" y2="10"/></svg>Code
-      </button>
-      <button class="bbtn" onclick="addCell('markdown','flesh_out')">
-        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="6" cy="6" r="4"/><polyline points="4,6 6,4 8,6"/></svg>AI Cell
-      </button>
-      <div style="flex:1"></div>
-      <button class="bbtn" onclick="saveAllCells()">
-        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M1 8v2h10V8"/><path d="M3 5l3 3 3-3"/><line x1="6" y1="1" x2="6" y2="8"/></svg>Save
-      </button>
+      <button class="bbtn" onclick="openBlockMenu(event,null)">＋ Add block</button>
+      <button class="bbtn" onclick="saveAllCells()">💾 Save</button>
+      <span style="opacity:.6">⌘K palette · / block menu</span>
     </div>
+  </div>
+
+  <!-- Sources drawer -->
+  <div id="drawer">
+    <div id="drawer-head">
+      <span>Sources</span>
+      <button class="cell-btn" onclick="toggleDrawer()">✕</button>
+    </div>
+    <div class="drawer-tabs">
+      <div class="drawer-tab active" data-tab="fabric" onclick="setDrawerTab('fabric')">Fabric</div>
+      <div class="drawer-tab" data-tab="memory" onclick="setDrawerTab('memory')">Memory</div>
+      <div class="drawer-tab" data-tab="entity" onclick="setDrawerTab('entity')">Entities</div>
+      <div class="drawer-tab" data-tab="cites" onclick="setDrawerTab('cites')">Cites</div>
+    </div>
+    <div id="drawer-search">
+      <input id="drawer-q" placeholder="Search…" onkeydown="if(event.key==='Enter')loadDrawer()">
+      <select id="drawer-ds" style="display:none" onchange="loadDrawer()"></select>
+    </div>
+    <div id="drawer-body"><div class="src-empty">Pick a tab</div></div>
   </div>
 </div>
 
-<!-- Dive Deeper panel — slides up from bottom -->
+<!-- Dive panel -->
 <div id="dive-panel" style="position:fixed;bottom:0;left:0;right:0;background:var(--s1);border-top:2px solid var(--ac);z-index:400;transform:translateY(100%);transition:transform .25s;max-height:72vh;display:flex;flex-direction:column">
   <div style="display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--bd);flex-shrink:0">
     <div style="font-size:11px;color:var(--ac);font-weight:500;flex:1">⊕ Dive Deeper</div>
     <span id="dive-cell-ref" style="font-size:10px;color:var(--t3)"></span>
     <button onclick="closeDivePanel()" style="color:var(--t3);font-size:14px;padding:2px 6px">✕</button>
   </div>
-  <!-- Tabs: Chat / Research / Generate Variant -->
   <div style="display:flex;border-bottom:1px solid var(--bd);flex-shrink:0">
-    <button id="dive-tab-chat"   onclick="setDiveTab('chat')"    style="flex:1;padding:7px;font-size:11px;color:var(--ac);border-bottom:2px solid var(--ac);transition:.1s">Chat</button>
-    <button id="dive-tab-research" onclick="setDiveTab('research')" style="flex:1;padding:7px;font-size:11px;color:var(--t3);border-bottom:2px solid transparent;transition:.1s">Research</button>
-    <button id="dive-tab-variant" onclick="setDiveTab('variant')" style="flex:1;padding:7px;font-size:11px;color:var(--t3);border-bottom:2px solid transparent;transition:.1s">Variant</button>
+    <button id="dive-tab-chat" onclick="setDiveTab('chat')" style="flex:1;padding:7px;font-size:11px;color:var(--ac);border-bottom:2px solid var(--ac)">Chat</button>
+    <button id="dive-tab-research" onclick="setDiveTab('research')" style="flex:1;padding:7px;font-size:11px;color:var(--t3);border-bottom:2px solid transparent">Research</button>
+    <button id="dive-tab-variant" onclick="setDiveTab('variant')" style="flex:1;padding:7px;font-size:11px;color:var(--t3);border-bottom:2px solid transparent">Variant</button>
   </div>
-  <!-- Conversation -->
   <div id="dive-messages" style="flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:8px;min-height:0"></div>
-  <!-- Input -->
   <div style="padding:10px 14px;border-top:1px solid var(--bd);flex-shrink:0;display:flex;gap:8px;align-items:flex-end">
-    <textarea id="dive-input" placeholder="Ask a question, request changes, or dig deeper…"
-      style="flex:1;background:var(--s2);border:1px solid var(--bd);border-radius:7px;padding:8px 11px;font-size:12px;color:var(--t1);resize:none;line-height:1.5;min-height:36px;max-height:120px;outline:none"
-      onkeydown="diveKeydown(event)" oninput="autoGrow(this)"
-      onfocus="this.style.borderColor='var(--bd2)'" onblur="this.style.borderColor='var(--bd)'"></textarea>
-    <button onclick="sendDiveMsg()" id="dive-send"
-      style="width:34px;height:34px;border-radius:6px;background:var(--ac);display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0;transition:.1s">
-      <svg viewBox="0 0 12 12" width="13" height="13" fill="currentColor"><path d="M1 1l10 5L1 11V7l7-1-7-1V1z"/></svg>
-    </button>
+    <textarea id="dive-input" placeholder="Ask a question, request changes, or dig deeper…" style="flex:1;background:var(--s2);border:1px solid var(--bd);border-radius:7px;padding:8px 11px;font-size:12px;color:var(--t1);resize:none;min-height:36px;max-height:120px" onkeydown="diveKeydown(event)" oninput="autoGrow(this)"></textarea>
+    <button onclick="sendDiveMsg()" style="width:34px;height:34px;border-radius:6px;background:var(--ac);display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0"><svg viewBox="0 0 12 12" width="13" height="13" fill="currentColor"><path d="M1 1l10 5L1 11V7l7-1-7-1V1z"/></svg></button>
   </div>
 </div>
 
+<!-- Menus / palette / graph modal -->
+<div class="pop" id="block-menu"></div>
+<div class="pop" id="picker-pop"></div>
+<div class="pop" id="settings-pop"></div>
+<div id="palette"><div id="palette-box"><input id="palette-input" placeholder="Type a command…" oninput="paletteFilter(this.value)" onkeydown="paletteKey(event)"><div id="palette-results"></div></div></div>
+<div id="graph-modal"><div id="graph-box"><div id="graph-box-head"><span id="graph-box-title">Notebook graph</span><button class="tbtn" onclick="syncToGraph().then(()=>mountNbGraph(0))" title="Re-sync then reload">⟳ Re-sync</button><button class="tbtn" onclick="closeGraphView()">✕</button></div><div id="graph-frame" style="flex:1;overflow:hidden;position:relative"></div></div></div>
+
 <script>
 /* ══════════════════════════════════════════════════════════════════════════
-   State
+   Base URL resolution — two bases:
+     NB_API : researcher_api (notebook CRUD + per-cell WS)
+     ORCH   : capability orchestrator (fabric / memory / entity / panels / exec)
+   Embedded in the harness → both = parent._veraBase (which proxies both).
+   Standalone → both default to this page's origin; overridable in settings.
+   (No more hardcoded researcher_api port — that was why standalone loads failed.)
 ══════════════════════════════════════════════════════════════════════════ */
-// API base — when embedded in Vera harness iframe, use parent _veraBase.
-// Falls back to localStorage 'cfg-url' then hardcoded default for standalone use.
-const API = (()=>{
-  try {
-    if (window.parent !== window && window.parent._veraBase)
-      return window.parent._veraBase;
-  } catch(e) {}
-  return localStorage.getItem('cfg-url') || ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8765');
-})();
-const WS_BASE = API.replace(/^http/, 'ws');
+let EMBEDDED = false, PARENT_BASE = '';
+try { if (window.parent !== window && window.parent._veraBase) { EMBEDDED = true; PARENT_BASE = String(window.parent._veraBase).replace(/\/$/, ''); } } catch(e){}
+const _ORIGIN = location.origin.replace(/\/$/, '');
+// A saved base is only trustworthy if it isn't a stale standalone :8765 base
+// (dead in Vera mode → 404) or an http:// base on an https:// page (mixed-
+// content-blocked). Otherwise fall back to the harness base / this origin.
+function _nbBase(key){
+  const fb = PARENT_BASE || _ORIGIN;
+  const v = (localStorage.getItem(key) || '').replace(/\/$/, '');
+  if(!v) return fb;
+  try{
+    const u = new URL(v);
+    if(location.protocol==='https:' && u.protocol==='http:') return fb;   // mixed-content
+    if(u.port==='8765' && location.port!=='8765') return fb;              // dead standalone port
+    return v;
+  }catch(_){ return fb; }
+}
+let NB_API = _nbBase('nb:base:api');
+let ORCH   = _nbBase('nb:base:orch');
+const WS_BASE = () => NB_API.replace(/^http/, 'ws');
 
-let currentNb = null;  // {id, title, cells:[]}
-let cells = [];        // in-memory ordered cells
-let editors = {};      // cell_id → CodeMirror instance
-let cellWS = {};       // cell_id → WebSocket
+let currentNb = null, cells = [], editors = {}, cellWS = {}, execRuns = {};
+let currentPage = null, nbPages = [], _nbAll = [];
+let _sessionCits = [];
+
+/* ── fetch helpers ─────────────────────────────────────────────────────── */
+async function nbJson(path, opts){ const r = await fetch(NB_API + path, opts); if(!r.ok) throw new Error(r.status+' '+path); return r.json(); }
+async function nbPost(path, body){ return nbJson(path, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}); }
+async function nbPatch(path, body){ return nbJson(path, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}); }
+async function nbDelete(path){ return fetch(NB_API + path, {method:'DELETE'}); }
+async function orchJson(path){ const r = await fetch(ORCH + path); return r.json(); }
+async function orchPost(path, body){ const r = await fetch(ORCH + path, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}); return r.json(); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Cell type registry — pluggable. Each entry drives the block menu, slash
+   commands, and rendering. `render(cell)` returns the body HTML; `init(cell)`
+   runs after insertion; `runnable` shows a ▶ button wired to run(cell).
+══════════════════════════════════════════════════════════════════════════ */
+const LANGS = ['python','javascript','typescript','bash','shell','sql','json','yaml','html','css','rust','go','java','cpp','text'];
+
+const CELL_TYPES = {
+  markdown:  {label:'Text',      icon:'¶',  group:'write',  desc:'Markdown / notes'},
+  ai:        {label:'AI write',  icon:'✦',  group:'write',  desc:'Note → AI fleshes it out', tag:'flesh_out'},
+  research:  {label:'Research',  icon:'⊕',  group:'write',  desc:'Investigate a question live', tag:'research'},
+  code:      {label:'Code',      icon:'{}', group:'run',    desc:'Executable code cell'},
+  mermaid:   {label:'Mermaid',   icon:'◇',  group:'render', desc:'Diagram from mermaid source'},
+  illustrate:{label:'Illustrate',icon:'▤',  group:'render', desc:'AI-generated HTML/SVG diagram'},
+  'image-gen':{label:'Image gen',icon:'✷',  group:'render', desc:'Generate an image (SD)'},
+  image:     {label:'Image',     icon:'▣',  group:'render', desc:'Paste / drop / URL image'},
+  object:    {label:'Object',    icon:'⚙',  group:'embed',  desc:'Embed & run a DAG / dream / ML'},
+  panel:     {label:'Panel',     icon:'▥',  group:'embed',  desc:'Embed any Vera panel / widget'},
+};
+const OBJECT_KINDS = {
+  dream:  {label:'Dream',           route:'/dream/panel'},
+  ml:     {label:'ML Lab',          route:'/ml/panel'},
+  graph:  {label:'Knowledge Graph', route:'/memgraph/panel'},
+  fabric: {label:'Data Fabric',     route:'/fabric/panel'},
+  exec:   {label:'Execution',       route:'/exec/panel'},
+};
 
 /* ══════════════════════════════════════════════════════════════════════════
    Init
 ══════════════════════════════════════════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded', () => {
-  const t = localStorage.getItem('theme') || 'ash';
-  setTheme(t, false);
+  setTheme(localStorage.getItem('theme') || 'ash', false);
   loadNotebooks();
-  // Check URL param for ?nb=id
-  const nbId = new URLSearchParams(location.search).get('nb');
+  const _qs = new URLSearchParams(location.search);
+  const nbId = _qs.get('nb');
+  // Embed / focus mode (used by the Workspaces "notebook" widget): show just
+  // ONE notebook — hide the notebook-list sidebar and the "new notebook" chrome
+  // so the tile is a single notebook, not the whole notebook UI.
+  if (_qs.get('embed') === '1' || _qs.get('focus') === '1') {
+    document.documentElement.classList.add('nb-embed');
+  }
   if (nbId) openNotebook(nbId);
+  document.addEventListener('keydown', globalKeys);
+  // load the mermaid element (served by the orchestrator)
+  loadScriptOnce(ORCH + '/ui/elements/vera_mermaid.js');
 });
+
+function loadScriptOnce(src){ if(document.querySelector('script[data-src="'+src+'"]'))return; const s=document.createElement('script'); s.src=src; s.dataset.src=src; s.onerror=()=>{}; document.head.appendChild(s); }
+
+function globalKeys(e){
+  if ((e.metaKey||e.ctrlKey) && e.key.toLowerCase()==='k'){ e.preventDefault(); openPalette(); }
+  if (e.key==='Escape'){ closePalette(); closeAllPops(); }
+}
 
 /* ══════════════════════════════════════════════════════════════════════════
    Theme
 ══════════════════════════════════════════════════════════════════════════ */
-function setTheme(t, save=true) {
+function setTheme(t, save=true){
   document.documentElement.setAttribute('data-theme', t);
-  document.getElementById('theme-sel').value = t;
+  const sel=document.getElementById('theme-sel'); if(sel) sel.value=t;
   if (save) localStorage.setItem('theme', t);
-  // Update CodeMirror themes
-  Object.values(editors).forEach(cm => {
-    cm.setOption('theme', ['ash'].includes(t) ? 'default' : 'dracula');
-  });
+  Object.values(editors).forEach(cm => { try{ cm.setOption('theme', t==='ash'?'default':'dracula'); }catch(e){} });
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Settings popover (base URLs)
+══════════════════════════════════════════════════════════════════════════ */
+function openSettings(ev){
+  const pop=document.getElementById('settings-pop');
+  pop.innerHTML = `
+    <div class="pop-title">Backend connection ${EMBEDDED?'(embedded — auto)':'(standalone)'}</div>
+    <div class="sr"><label>Notebook API (researcher_api)</label><input id="set-nb" value="${esc(NB_API)}"></div>
+    <div class="sr"><label>Orchestrator (fabric / memory / panels)</label><input id="set-orch" value="${esc(ORCH)}"></div>
+    <div style="display:flex;gap:6px;padding:8px">
+      <button class="tbtn primary" style="flex:1" onclick="saveSettings()">Save & reload</button>
+      <button class="tbtn" onclick="resetSettings()">Reset</button>
+    </div>
+    <div style="font-size:9.5px;color:var(--t3);padding:0 8px 6px">Origin: ${esc(_ORIGIN)}</div>`;
+  showPopAt(pop, ev);
+}
+function saveSettings(){
+  localStorage.setItem('nb:base:api', document.getElementById('set-nb').value.trim());
+  localStorage.setItem('nb:base:orch', document.getElementById('set-orch').value.trim());
+  location.reload();
+}
+function resetSettings(){ localStorage.removeItem('nb:base:api'); localStorage.removeItem('nb:base:orch'); location.reload(); }
+
+function showPopAt(pop, ev){
+  closeAllPops(); pop.classList.add('show');
+  const x = ev ? Math.min(ev.clientX, innerWidth-260) : innerWidth-280;
+  const y = ev ? Math.min(ev.clientY+8, innerHeight-40) : 52;
+  pop.style.left = Math.max(8,x)+'px'; pop.style.top = y+'px';
+  setTimeout(()=>document.addEventListener('mousedown', popOutside), 0);
+}
+function popOutside(e){ if(!e.target.closest('.pop')){ closeAllPops(); document.removeEventListener('mousedown', popOutside); } }
+function closeAllPops(){ document.querySelectorAll('.pop.show').forEach(p=>p.classList.remove('show')); }
 
 /* ══════════════════════════════════════════════════════════════════════════
    Notebook list
 ══════════════════════════════════════════════════════════════════════════ */
-async function loadNotebooks() {
+async function loadNotebooks(){
+  const dot=document.getElementById('conn-dot');
   try {
-    const r = await fetch(`${API}/api/notebooks`);
-    const nbs = await r.json();
-    const el = document.getElementById('nb-list');
-    if (!nbs.length) {
-      el.innerHTML = '<div style="font-size:11px;color:var(--t3);padding:10px 8px">No notebooks yet</div>';
-      return;
-    }
-    el.innerHTML = nbs.map(nb => `
-      <div class="nb-item ${currentNb?.id === nb.id ? 'active' : ''}"
-           onclick="openNotebook('${nb.id}')">
-        <div class="nb-item-title">${esc(nb.title)}</div>
-        <div class="nb-item-meta">${formatAge((Date.now()/1000)-(nb.updated_at||nb.created_at))} ago</div>
-      </div>`).join('');
-  } catch(e) { console.error(e); }
+    _nbAll = await nbJson('/api/notebooks');
+    if(dot){ dot.classList.add('ok'); dot.classList.remove('bad'); }
+    renderNbList(_nbAll);
+  } catch(e){ if(dot){ dot.classList.add('bad'); } console.error(e);
+    document.getElementById('nb-list').innerHTML='<div class="src-empty">Backend unreachable.<br>Check ⚙ settings.</div>'; }
 }
-
-async function createNotebook() {
-  const title = prompt('Notebook title:', 'Untitled Notebook');
-  if (!title) return;
-  try {
-    const r = await fetch(`${API}/api/notebooks`, {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({title, description: '', tags: []})
-    });
-    const nb = await r.json();
-    await loadNotebooks();
-    openNotebook(nb.id);
-  } catch(e) { toast('Error creating notebook'); }
+function filterNotebooks(q){
+  q=(q||'').toLowerCase();
+  renderNbList(_nbAll.filter(nb => (nb.title||'').toLowerCase().includes(q)));
+}
+function renderNbList(nbs){
+  const el=document.getElementById('nb-list');
+  if(!nbs.length){ el.innerHTML='<div class="src-empty">No notebooks</div>'; return; }
+  el.innerHTML = nbs.map(nb => `
+    <div class="nb-item ${currentNb&&currentNb.id===nb.id?'active':''}" onclick="openNotebook('${nb.id}')">
+      <div class="nb-item-title">${esc(nb.title)}</div>
+      <div class="nb-item-meta">${formatAge((Date.now()/1000)-(nb.updated_at||nb.created_at||0))} ago</div>
+    </div>`).join('');
+}
+async function createNotebook(){
+  const title = prompt('Notebook title:', 'Untitled Notebook'); if(!title) return;
+  try { const nb = await nbPost('/api/notebooks', {title, description:'', tags:[]}); await loadNotebooks(); openNotebook(nb.id); }
+  catch(e){ toast('Error creating notebook'); }
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
    Open notebook
 ══════════════════════════════════════════════════════════════════════════ */
-async function openNotebook(id) {
-  // Close existing WS connections
-  Object.values(cellWS).forEach(ws => { try { ws.close(); } catch(e){} });
-  cellWS = {}; editors = {};
-
+async function openNotebook(id){
+  Object.values(cellWS).forEach(ws=>{ try{ws.close();}catch(e){} });
+  cellWS={}; editors={};
   try {
-    const r = await fetch(`${API}/api/notebooks/${id}`);
-    if (!r.ok) throw new Error('Not found');
-    currentNb = await r.json();
-    nbPages = (currentNb.pages || []).sort((a,b) => a.sort_order - b.sort_order);
-    cells = (currentNb.cells || []).sort((a,b) => a.sort_order - b.sort_order);
+    currentNb = await nbJson('/api/notebooks/'+id);
+    nbPages = (currentNb.pages||[]).sort((a,b)=>a.sort_order-b.sort_order);
+    cells = (currentNb.cells||[]).sort((a,b)=>a.sort_order-b.sort_order);
+    cells.forEach(c => { if(!c.props) c.props={}; });
     currentPage = null;
-
     document.getElementById('nb-title-input').value = currentNb.title;
-    history.replaceState({}, '', `?nb=${id}`);
-    renderPages();
-    renderAllCells();
-    loadNotebooks(); // refresh sidebar active state
-    // Pass session citations from opener if available
+    document.getElementById('autobackup-btn').classList.toggle('on', !!getAutoBackup());
+    history.replaceState({},'','?nb='+id);
+    renderPages(); renderVisibleCells(); renderNbList(_nbAll);
     try { if(window.opener&&window.opener.S) _sessionCits=window.opener.S.cits||[]; } catch(e){}
-  } catch(e) { toast('Failed to open notebook'); console.error(e); }
+  } catch(e){ toast('Failed to open notebook'); console.error(e); }
+}
+
+async function deleteCurrentNotebook(){
+  if(!currentNb) return;
+  if(!confirm('Delete "'+currentNb.title+'"? Cannot be undone.')) return;
+  await nbDelete('/api/notebooks/'+currentNb.id).catch(()=>{});
+  currentNb=null; cells=[]; nbPages=[]; currentPage=null;
+  document.getElementById('nb-title-input').value='';
+  renderPages(); renderVisibleCells(); await loadNotebooks(); toast('Deleted');
+}
+
+async function saveNotebookMeta(){
+  if(!currentNb) return;
+  const title=document.getElementById('nb-title-input').value.trim()||'Untitled';
+  currentNb.title=title;
+  try { await nbPatch('/api/notebooks/'+currentNb.id, {title}); loadNotebooks(); } catch(e){}
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Pages + layout
+══════════════════════════════════════════════════════════════════════════ */
+function layoutKey(){ return 'nb:layout:'+(currentNb?currentNb.id:'')+':'+(currentPage||'all'); }
+function getLayout(){ return localStorage.getItem(layoutKey()) || 'flow'; }
+function setLayout(mode){ localStorage.setItem(layoutKey(), mode); renderVisibleCells(); }
+
+function renderPages(){
+  const list=document.getElementById('pages-list'); if(!list) return;
+  list.innerHTML='';
+  const all=document.createElement('div');
+  all.className='page-item'+(currentPage===null?' active':'');
+  all.innerHTML='<span class="page-item-title">All cells</span>';
+  all.onclick=()=>selectPage(null); list.appendChild(all);
+  nbPages.forEach(p=>{
+    const div=document.createElement('div');
+    div.className='page-item'+(currentPage===p.id?' active':''); div.dataset.pageId=p.id;
+    const inp=document.createElement('input'); inp.value=p.title;
+    inp.onblur=()=>renamePage(p.id,inp.value); inp.onkeydown=e=>{if(e.key==='Enter')inp.blur();};
+    inp.onclick=e=>e.stopPropagation();
+    const del=document.createElement('span'); del.className='page-del'; del.textContent='✕';
+    del.onclick=e=>{e.stopPropagation();deletePage(p.id);};
+    div.appendChild(inp); div.appendChild(del);
+    div.onclick=()=>selectPage(p.id); list.appendChild(div);
+  });
+  const lt=document.getElementById('layout-toggle'); if(lt) lt.style.display = currentNb?'flex':'none';
+  syncLayoutToggle();
+}
+function syncLayoutToggle(){
+  const m=getLayout();
+  const f=document.getElementById('lt-flow'), c=document.getElementById('lt-canvas');
+  if(f) f.classList.toggle('active', m==='flow');
+  if(c) c.classList.toggle('active', m==='canvas');
+}
+function selectPage(id){ currentPage=id; renderPages(); renderVisibleCells(); }
+async function addPage(){
+  if(!currentNb) return;
+  try { const page=await nbPost('/api/notebooks/'+currentNb.id+'/pages',{title:'New Page',sort_order:nbPages.length});
+    nbPages.push(page); currentPage=page.id; renderPages(); renderVisibleCells();
+    setTimeout(()=>{const i=document.querySelector('[data-page-id="'+page.id+'"] input'); if(i){i.focus();i.select();}},50);
+  } catch(e){ toast('Error adding page'); }
+}
+async function renamePage(id,title){
+  const p=nbPages.find(x=>x.id===id); if(!p||!title.trim())return; p.title=title.trim();
+  await nbPatch('/api/notebooks/'+currentNb.id+'/pages/'+id,{title:p.title}).catch(()=>{}); renderPages();
+}
+async function deletePage(id){
+  if(!confirm('Delete this page? Cells are kept.'))return;
+  await nbDelete('/api/notebooks/'+currentNb.id+'/pages/'+id).catch(()=>{});
+  nbPages=nbPages.filter(p=>p.id!==id); cells.forEach(c=>{if(c.page_id===id)c.page_id=null;});
+  if(currentPage===id)currentPage=null; renderPages(); renderVisibleCells();
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
    Render cells
 ══════════════════════════════════════════════════════════════════════════ */
-function renderAllCells() {
-  // Delegate to renderVisibleCells so page filtering is always applied
-  renderVisibleCells();
+function visibleCells(){ return currentPage ? cells.filter(c=>c.page_id===currentPage) : cells; }
+
+function renderVisibleCells(){
+  const empty=document.getElementById('empty-nb'), list=document.getElementById('cells-list');
+  const cont=document.getElementById('cells-container');
+  if(!list) return;
+  if(document.body.classList.contains('view-mode')){ return; }
+  const vis=visibleCells();
+  if(empty) empty.style.display = (currentNb&&vis.length)?'none':(currentNb?'none':'');
+  list.style.display='block'; list.innerHTML='';
+  const canvas = currentNb && getLayout()==='canvas';
+  cont.classList.toggle('canvas', canvas);
+  list.classList.toggle('canvas-grid', canvas);
+  if(!currentNb){ if(empty)empty.style.display=''; return; }
+
+  vis.forEach((cell,i)=>list.appendChild(buildCellEl(cell,i)));
+  if(!canvas){ list.appendChild(buildAddBar()); }
+  updateCellCount();
+  vis.forEach(cell=>initCell(cell));
+  if(canvas){ layoutCanvas(vis); } else { initDragDrop(); }
+  setTimeout(initPageDrag,50);
 }
 
-function buildCellEl(cell, idx) {
-  const el = document.createElement('div');
-  el.className = 'cell';
-  el.id = `cell-${cell.id}`;
-  el.dataset.id = cell.id;
-  el.draggable = true;
-  el.innerHTML = buildCellHTML(cell, idx);
+function buildCellEl(cell,idx){
+  const el=document.createElement('div');
+  el.className='cell'; el.id='cell-'+cell.id; el.dataset.id=cell.id; el.draggable=true;
+  el.innerHTML=buildCellHTML(cell,idx);
   return el;
 }
 
-function buildCellHTML(cell, idx) {
-  const isCode = cell.cell_type === 'code';
-  const tagColor = {flesh_out:'var(--ac)',to_code:'var(--ac2)',research:'var(--ac5)',summarise:'var(--ac3)',none:'var(--t3)'}[cell.tag||'none'];
-  const langOptions = ['python','javascript','typescript','bash','shell','sql','json','yaml','html','css','rust','go','java','cpp','text']
-    .map(l => `<option value="${l}" ${cell.lang===l?'selected':''}>${l}</option>`).join('');
-  const tagOptions = [
-    ['none','— no tag —'],['flesh_out','✦ Flesh out'],['to_code','{ } To code'],
-    ['research','⊕ Research'],['summarise','↓ Summarise']
-  ].map(([v,l])=>`<option value="${v}" ${cell.tag===v?'selected':''}>${l}</option>`).join('');
-
-  const genContent = cell.generated ? renderMD(cell.generated) : '';
-  const threadCount = (cell.thread||[]).filter(m=>m.role==='user').length;
-
-  const isImage = cell.cell_type === 'image';
-  const isFile  = cell.cell_type === 'file';
-  return `
-  <div class="cell-title-row">
-    <input class="cell-title-input" placeholder="Cell title…" value="${esc(cell.title||'')}"
-      onblur="updateCellField('${cell.id}','title',this.value)"
-      onkeydown="if(event.key==='Enter')this.blur()">
-    <button class="auto-name-btn" onclick="autoNameCell('${cell.id}')" title="Auto-name with AI">✦ Name</button>
-  </div>
-  <div class="cell-bar">
-    <span class="drag-handle" title="Drag to reorder">
-      <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor"><circle cx="3" cy="3" r="1.5"/><circle cx="7" cy="3" r="1.5"/><circle cx="3" cy="7" r="1.5"/><circle cx="7" cy="7" r="1.5"/><circle cx="3" cy="11" r="1.5"/><circle cx="7" cy="11" r="1.5"/></svg>
-    </span>
-    <select class="cell-type-sel" onchange="changeCellType('${cell.id}',this.value)">
-      <option value="markdown" ${!isCode&&!isImage&&cell.cell_type!=='file'?'selected':''}>MD</option>
-      <option value="code"     ${isCode?'selected':''}>Code</option>
-      <option value="image"    ${isImage?'selected':''}>Image</option>
-      <option value="file"     ${cell.cell_type==='file'?'selected':''}>File</option>
-    </select>
-    ${isCode ? `<select class="cell-lang-sel" onchange="updateCellField('${cell.id}','lang',this.value)">${langOptions}</select>` : ''}
-    <select class="cell-tag-sel ${cell.tag||'none'}" onchange="updateCellField('${cell.id}','tag',this.value)" title="Agent tag">
-      ${tagOptions}
-    </select>
-    <div class="cell-bar-spacer"></div>
-    <button class="cell-btn run" onclick="runCell('${cell.id}')" title="Generate / flesh out">
-      <svg viewBox="0 0 12 12" fill="currentColor"><polygon points="2,1 11,6 2,11"/></svg>
-    </button>
-    <button class="cell-btn" onclick="deleteCell('${cell.id}')" title="Delete cell">
-      <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
-    </button>
-  </div>
-  <div class="${isCode ? 'cell-code' : 'cell-input'}" id="cell-input-${cell.id}">
-    ${isCode
-      ? `<textarea id="cell-ta-${cell.id}" style="display:none">${esc(cell.content)}</textarea>`
-      : `<textarea placeholder="${getPlaceholder(cell.tag)}" oninput="autoGrow(this);cellChanged('${cell.id}',this.value)"
-           onkeydown="cellKeydown(event,'${cell.id}')">${esc(cell.content)}</textarea>`
-    }
-  </div>
-  ${genContent ? `
-  <div class="cell-generated">
-    <div class="cell-generated-label">
-      <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="6" cy="6" r="4"/><line x1="6" y1="4" x2="6" y2="6.5"/><line x1="6" y1="7.5" x2="6" y2="8"/></svg>
-      Generated
-      <div class="gen-actions">
-        <button class="gen-action-btn" onclick="acceptGenerated('${cell.id}')" title="Accept — replace cell content">Accept ↑</button>
-        <button class="gen-action-btn" onclick="regenCell('${cell.id}')" title="Regenerate">↺ Regen</button>
-        <button class="gen-action-btn" onclick="openDivePanel('${cell.id}')" title="Dive deeper" style="color:var(--ac)">⊕ Dive</button>
-        <button class="gen-action-btn" onclick="genToCell('${cell.id}')" title="Save as new cell below" style="color:var(--ac2)">↓ Cell</button>
-        <button class="gen-action-btn" onclick="clearGenerated('${cell.id}')" title="Discard">✕</button>
-      </div>
-    </div>
-    <div class="gen-content" id="gen-${cell.id}">${genContent}</div>
-  </div>` : `<div class="cell-generated" id="gen-wrap-${cell.id}" style="display:none">
-    <div class="cell-generated-label">
-      <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="6" cy="6" r="4"/><line x1="6" y1="4" x2="6" y2="6.5"/><line x1="6" y1="7.5" x2="6" y2="8"/></svg>
-      Generated
-      <div class="gen-actions">
-        <button class="gen-action-btn" onclick="acceptGenerated('${cell.id}')">Accept ↑</button>
-        <button class="gen-action-btn" onclick="regenCell('${cell.id}')">↺ Regen</button>
-        <button class="gen-action-btn" onclick="clearGenerated('${cell.id}')">✕</button>
-      </div>
-    </div>
-    <div class="gen-content" id="gen-${cell.id}"></div>
-  </div>`}
-  <div class="cell-thread">
-    <div class="thread-toggle ${threadCount?'':''}${threadCount?' open':''}" onclick="toggleThread(this)">
-      <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.3"><polyline points="3,2 6,5 3,8"/></svg>
-      ${threadCount ? `${threadCount} message${threadCount!==1?'s':''}` : 'Chat about this cell'}
-    </div>
-    <div class="thread-messages" id="thread-${cell.id}">
-      ${(cell.thread||[]).filter(m=>m.role!=='system').map(m=>`
-        <div class="thread-msg">
-          <div class="thread-msg-role ${m.role}">${m.role}</div>
-          <div class="thread-msg-content ${m.role}">${m.role==='assistant'?renderMD(m.content):esc(m.content)}</div>
-        </div>`).join('')}
-      <div class="thread-input-row">
-        <textarea class="thread-input" id="thread-ta-${cell.id}"
-          placeholder="Ask about this cell, request changes, iterate…"
-          onkeydown="threadKeydown(event,'${cell.id}')" rows="1" oninput="autoGrow(this)"></textarea>
-        <select class="thread-mode-sel" id="thread-mode-${cell.id}">
-          <option value="chat">Chat</option>
-          <option value="research">Research</option>
-        </select>
-        <button class="thread-send" id="thread-send-${cell.id}" onclick="sendThreadMsg('${cell.id}')">
-          <svg viewBox="0 0 12 12" fill="currentColor"><path d="M1 1l10 5L1 11V7l7-1-7-1V1z"/></svg>
-        </button>
-      </div>
-    </div>
-  </div>
-  <div class="insert-panel" id="ins-${cell.id}"></div>`;
+function buildCellHTML(cell){
+  const meta=CELL_TYPES[cell.cell_type] || CELL_TYPES.markdown;
+  const runnable = cell.cell_type==='code' || cell.cell_type==='mermaid' || cell.cell_type==='illustrate' || cell.cell_type==='image-gen' || cell.tag==='flesh_out' || cell.tag==='research' || cell.tag==='to_code' || cell.tag==='summarise';
+  const head = `
+  <div class="cell-head">
+    <span class="drag-handle" title="drag to reorder"><svg width="9" height="13" viewBox="0 0 10 14" fill="currentColor"><circle cx="3" cy="3" r="1.4"/><circle cx="7" cy="3" r="1.4"/><circle cx="3" cy="7" r="1.4"/><circle cx="7" cy="7" r="1.4"/><circle cx="3" cy="11" r="1.4"/><circle cx="7" cy="11" r="1.4"/></svg></span>
+    <span class="cell-kind">${esc(meta.icon)} ${esc(meta.label)}</span>
+    <input class="cell-title-input" placeholder="title…" value="${esc(cell.title||'')}" onblur="updateCellField('${cell.id}','title',this.value)" onkeydown="if(event.key==='Enter')this.blur()">
+    ${cell.cell_type==='code' ? langSelect(cell) : ''}
+    ${runnable ? `<button class="cell-btn run" title="Run (Shift+Enter)" onclick="runCell('${cell.id}')"><svg viewBox="0 0 12 12" fill="currentColor"><polygon points="2,1 11,6 2,11"/></svg></button>` : ''}
+    <button class="cell-btn" title="Convert / actions" onclick="openCellMenu(event,'${cell.id}')"><svg viewBox="0 0 12 12" fill="currentColor"><circle cx="2.5" cy="6" r="1.1"/><circle cx="6" cy="6" r="1.1"/><circle cx="9.5" cy="6" r="1.1"/></svg></button>
+    <button class="cell-btn" title="Delete" onclick="deleteCell('${cell.id}')"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg></button>
+  </div>`;
+  const body = renderCellBody(cell);
+  const thread = threadHTML(cell);
+  const resize = '<svg class="resize-h" viewBox="0 0 16 16" fill="currentColor" onmousedown="startResize(event,\''+cell.id+'\')"><path d="M14 2v12H2z" opacity=".4"/></svg>';
+  return head + '<div class="cell-body">'+body+'</div>' + thread + resize;
 }
 
-function buildAddBar() {
-  const el = document.createElement('div');
-  el.className = 'add-cell-row';
-  el.innerHTML = `
-    <div class="add-cell-line"></div>
-    <button class="add-cell-btn" onclick="addCell('markdown')">
-      <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3"><line x1="6" y1="2" x2="6" y2="10"/><line x1="2" y1="6" x2="10" y2="6"/></svg>
-      Markdown
-    </button>
-    <button class="add-cell-btn" onclick="addCell('code')">
-      <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3"><polyline points="3,4 1,6 3,8"/><polyline points="9,4 11,6 9,8"/></svg>
-      Code
-    </button>
-    <button class="add-cell-btn" onclick="addCell('markdown','flesh_out')">
-      <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="6" cy="6" r="4"/><polyline points="4,6 6,4 8,6"/></svg>
-      AI
-    </button>
+function langSelect(cell){
+  return `<select class="cell-sel" onchange="updateCellField('${cell.id}','lang',this.value);remapMode('${cell.id}',this.value)">`
+    + LANGS.map(l=>`<option value="${l}" ${cell.lang===l?'selected':''}>${l}</option>`).join('') + '</select>';
+}
+
+/* ── Body renderers per type ─────────────────────────────────────────────── */
+function renderCellBody(cell){
+  switch(cell.cell_type){
+    case 'code':       return codeBody(cell);
+    case 'mermaid':    return mermaidBody(cell);
+    case 'illustrate': return illustrateBody(cell);
+    case 'image-gen':  return imageGenBody(cell);
+    case 'image':      return imageBody(cell);
+    case 'object':     return embedBody(cell,'object');
+    case 'panel':      return embedBody(cell,'panel');
+    default:           return textBody(cell);   // markdown / ai / research
+  }
+}
+
+function textBody(cell){
+  const ph = {flesh_out:'Write a brief note — ▶ to have AI flesh it out…',
+    to_code:'Describe what the code should do — ▶ to generate…',
+    research:'Research topic or question — ▶ to investigate…',
+    summarise:'Paste content to summarise — ▶ to condense…',
+    none:'Write markdown here…'}[cell.tag||'none'];
+  return `<div class="cell-input">
+      <textarea placeholder="${esc(ph)}" oninput="autoGrow(this);cellChanged('${cell.id}',this.value)" onkeydown="cellKeydown(event,'${cell.id}')">${esc(cell.content)}</textarea>
+    </div>` + generatedHTML(cell);
+}
+
+function codeBody(cell){
+  return `<div class="cell-code" id="code-${cell.id}"><textarea id="cell-ta-${cell.id}" style="display:none">${esc(cell.content)}</textarea></div>
+    <div class="cell-exec-out" id="exec-${cell.id}"></div>`;
+}
+
+function mermaidBody(cell){
+  return `<div class="cell-input"><textarea placeholder="Mermaid source — e.g. graph TD; A-->B  (or ▶ to AI-generate from the title)" oninput="autoGrow(this);cellChanged('${cell.id}',this.value);liveMermaid('${cell.id}',this.value)" onkeydown="cellKeydown(event,'${cell.id}')">${esc(cell.content)}</textarea></div>
+    <div class="cell-render"><vera-mermaid id="mm-${cell.id}" bare></vera-mermaid></div>`;
+}
+
+function illustrateBody(cell){
+  const html = cell.generated || '';
+  return `<div class="cell-input"><textarea placeholder="Describe a diagram / illustration — ▶ to generate a self-contained HTML/SVG figure" oninput="autoGrow(this);cellChanged('${cell.id}',this.value)" onkeydown="cellKeydown(event,'${cell.id}')">${esc(cell.content)}</textarea></div>
+    <div class="cell-render" id="ill-wrap-${cell.id}" style="${html?'':'display:none'}">
+      ${html ? `<iframe class="iframe-html" id="ill-${cell.id}" sandbox="allow-scripts" srcdoc="${esc(html)}"></iframe>` : ''}
+    </div>`;
+}
+
+function imageGenBody(cell){
+  const p=cell.props||{};
+  const img = cell.generated || '';
+  return `<div class="cell-input">
+      <input class="cell-mini-input" placeholder="width x height (e.g. 768x512)" value="${esc(p.size||'768x512')}" onchange="setProp('${cell.id}','size',this.value)">
+      <textarea placeholder="Image prompt — ▶ to generate with Stable Diffusion" oninput="autoGrow(this);cellChanged('${cell.id}',this.value)">${esc(cell.content)}</textarea>
+    </div>
+    <div class="cell-render" id="ig-wrap-${cell.id}" style="${img?'':'display:none'}">${img?`<img id="ig-${cell.id}" src="${esc(img)}">`:''}</div>`;
+}
+
+function imageBody(cell){
+  const url=cell.content||'';
+  return `<div style="padding:8px 10px">
+    ${url?`<img style="max-width:100%;border-radius:6px;display:block;margin-bottom:6px" src="${esc(url)}" onerror="this.style.display='none'">`:''}
+    <div class="cell-image-drop" id="img-drop-${cell.id}" ondragover="event.preventDefault();this.classList.add('dragover')" ondragleave="this.classList.remove('dragover')" ondrop="handleImageDrop(event,'${cell.id}')" onclick="document.getElementById('img-file-${cell.id}').click()">Drop / paste an image, or click to choose</div>
+    <input type="file" id="img-file-${cell.id}" accept="image/*" style="display:none" onchange="handleImageFile(event,'${cell.id}')">
+    <input class="cell-mini-input" placeholder="…or paste an image URL" value="${esc(url.startsWith('data:')?'':url)}" onchange="setImageUrl('${cell.id}',this.value)">
+  </div>`;
+}
+
+function embedBody(cell, kind){
+  const p=cell.props||{};
+  let src='';
+  if(kind==='panel' && p.panelId) src = ORCH + '/ui/panel/window?id=' + encodeURIComponent(p.panelId);
+  else if(kind==='object' && p.route) src = ORCH + p.route + (p.hash?('#'+p.hash):'');
+  const h = p.h || 360;
+  if(!src){
+    return `<div style="padding:16px;text-align:center">
+      <button class="tbtn primary" onclick="openEmbedPicker(event,'${cell.id}','${kind}')">Pick a ${kind==='object'?'system object':'panel'} to embed…</button>
+    </div>`;
+  }
+  return `<div class="cell-embed">
+    <iframe id="emb-${cell.id}" src="${esc(src)}" style="height:${h}px" allow="clipboard-read; clipboard-write"></iframe>
+    <div class="cell-embed-bar">
+      <span>${esc((kind==='panel'?p.panelId:(OBJECT_KINDS[p.kind]?OBJECT_KINDS[p.kind].label:p.route))||'')}</span>
+      <div style="flex:1"></div>
+      <button class="icon-btn" title="Taller" onclick="embResize('${cell.id}',80)">＋</button>
+      <button class="icon-btn" title="Shorter" onclick="embResize('${cell.id}',-80)">－</button>
+      <button class="icon-btn" title="Reload" onclick="document.getElementById('emb-${cell.id}').src=document.getElementById('emb-${cell.id}').src">⟳</button>
+      <button class="icon-btn" title="Pop out" onclick="window.open('${esc(src)}','_blank','noopener')">⇱</button>
+      <button class="icon-btn" title="Change" onclick="openEmbedPicker(event,'${cell.id}','${kind}')">⚙</button>
+    </div>
+  </div>`;
+}
+
+/* Generated block (for text/AI cells) */
+function generatedHTML(cell){
+  if(!cell.generated) return `<div class="cell-generated" id="gen-wrap-${cell.id}" style="display:none"><div class="cell-generated-label">Generated<div class="gen-actions"><button class="gen-action-btn" onclick="acceptGenerated('${cell.id}')">Accept ↑</button><button class="gen-action-btn" onclick="clearGenerated('${cell.id}')">✕</button></div></div><div class="gen-content" id="gen-${cell.id}"></div></div>`;
+  return `<div class="cell-generated"><div class="cell-generated-label">Generated<div class="gen-actions">
+    <button class="gen-action-btn" onclick="acceptGenerated('${cell.id}')">Accept ↑</button>
+    <button class="gen-action-btn" onclick="runCell('${cell.id}')">↺ Regen</button>
+    <button class="gen-action-btn" style="color:var(--ac)" onclick="openDivePanel('${cell.id}')">⊕ Dive</button>
+    <button class="gen-action-btn" style="color:var(--ac2)" onclick="genToCell('${cell.id}')">↓ Cell</button>
+    <button class="gen-action-btn" onclick="clearGenerated('${cell.id}')">✕</button>
+  </div></div><div class="gen-content" id="gen-${cell.id}">${renderMD(cell.generated)}</div></div>`;
+}
+
+/* Thread */
+function threadHTML(cell){
+  if(cell.cell_type==='object'||cell.cell_type==='panel'||cell.cell_type==='image') return '';
+  const count=(cell.thread||[]).filter(m=>m.role==='user').length;
+  return `<div class="cell-thread">
+    <div class="thread-toggle ${count?'open':''}" onclick="this.classList.toggle('open')">
+      <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.3"><polyline points="3,2 6,5 3,8"/></svg>
+      ${count?`${count} message${count!==1?'s':''}`:'Chat about this cell'}
+    </div>
+    <div class="thread-messages" id="thread-${cell.id}">
+      ${(cell.thread||[]).filter(m=>m.role!=='system').map(m=>`<div class="thread-msg"><div class="thread-msg-role ${m.role}">${m.role}</div><div class="thread-msg-content ${m.role}">${m.role==='assistant'?renderMD(m.content):esc(m.content)}</div></div>`).join('')}
+      <div class="thread-input-row">
+        <textarea class="thread-input" id="thread-ta-${cell.id}" placeholder="Ask, request changes, iterate…" onkeydown="threadKeydown(event,'${cell.id}')" rows="1" oninput="autoGrow(this)"></textarea>
+        <select class="thread-mode-sel" id="thread-mode-${cell.id}"><option value="chat">Chat</option><option value="research">Research</option></select>
+        <button class="thread-send" onclick="sendThreadMsg('${cell.id}')"><svg viewBox="0 0 12 12" fill="currentColor"><path d="M1 1l10 5L1 11V7l7-1-7-1V1z"/></svg></button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function buildAddBar(){
+  const el=document.createElement('div'); el.className='add-cell-row';
+  el.innerHTML=`<div class="add-cell-line"></div>
+    <button class="add-cell-btn" onclick="openBlockMenu(event,null)"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3"><line x1="6" y1="2" x2="6" y2="10"/><line x1="2" y1="6" x2="10" y2="6"/></svg>Add block</button>
     <div class="add-cell-line"></div>`;
   return el;
 }
 
-function getPlaceholder(tag) {
-  const map = {
-    flesh_out: 'Write a brief note — press ▶ to have the AI flesh it out…',
-    to_code:   'Describe what the code should do — press ▶ to generate…',
-    research:  'Research topic or question — press ▶ to investigate…',
-    summarise: 'Paste content to summarise — press ▶ to condense…',
-    none:      'Write markdown here…',
-  };
-  return map[tag||'none'];
+function initCell(cell){
+  if(cell.cell_type==='code') initCodeMirror(cell);
+  if(cell.cell_type==='mermaid') liveMermaid(cell.id, cell.content);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
    CodeMirror
 ══════════════════════════════════════════════════════════════════════════ */
-function initCodeMirror(cell) {
-  const ta = document.getElementById(`cell-ta-${cell.id}`);
-  if (!ta || editors[cell.id]) return;
-  const t = localStorage.getItem('theme') || 'ash';
-  const cm = CodeMirror.fromTextArea(ta, {
-    mode: langToMode(cell.lang),
-    theme: ['ash'].includes(t) ? 'default' : 'dracula',
-    lineNumbers: true,
-    lineWrapping: false,
-    indentUnit: 2,
-    tabSize: 2,
-    indentWithTabs: false,
-    extraKeys: {
-      'Shift-Enter': () => runCell(cell.id),
-      Tab: cm => cm.execCommand('indentMore'),
-    },
-  });
-  cm.on('change', () => cellChanged(cell.id, cm.getValue()));
-  editors[cell.id] = cm;
-  // Adjust height
-  cm.setSize(null, 'auto');
+function initCodeMirror(cell){
+  const ta=document.getElementById('cell-ta-'+cell.id);
+  if(!ta||editors[cell.id]) return;
+  const t=localStorage.getItem('theme')||'ash';
+  const cm=CodeMirror.fromTextArea(ta,{mode:langToMode(cell.lang),theme:t==='ash'?'default':'dracula',
+    lineNumbers:true,lineWrapping:false,indentUnit:2,tabSize:2,
+    extraKeys:{'Shift-Enter':()=>runCell(cell.id),'Cmd-Enter':()=>runCell(cell.id),'Ctrl-Enter':()=>runCell(cell.id),Tab:cm=>cm.execCommand('indentMore')}});
+  cm.on('change',()=>cellChanged(cell.id,cm.getValue()));
+  editors[cell.id]=cm; cm.setSize(null,'auto');
 }
-
-function langToMode(lang) {
-  const m = {python:'python',javascript:'javascript',typescript:'javascript',
-    bash:'shell',shell:'shell',sql:'sql',json:'javascript',yaml:'yaml',
-    html:'htmlmixed',css:'css',rust:'rust',go:'go',java:'clike',cpp:'clike'};
-  return m[lang] || 'text/plain';
+function remapMode(id,lang){ if(editors[id]) editors[id].setOption('mode',langToMode(lang)); }
+function langToMode(lang){
+  const m={python:'python',javascript:'javascript',typescript:'javascript',bash:'shell',shell:'shell',sql:'sql',json:'javascript',yaml:'yaml',html:'htmlmixed',css:'css',rust:'rust',go:'go',java:'clike',cpp:'clike'};
+  return m[lang]||'text/plain';
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
    Cell operations
 ══════════════════════════════════════════════════════════════════════════ */
-function cellChanged(id, value) {
-  const cell = cells.find(c => c.id === id);
-  if (cell) { cell.content = value; cell._dirty = true; }
+function cellChanged(id,v){ const c=cells.find(x=>x.id===id); if(c){ c.content=v; c._dirty=true; } }
+function setProp(id,k,v){ const c=cells.find(x=>x.id===id); if(c){ c.props=c.props||{}; c.props[k]=v; c._dirty=true; saveSingleCell(c); } }
+function updateCellField(id,field,value){
+  const c=cells.find(x=>x.id===id); if(!c)return; c[field]=value; c._dirty=true; saveSingleCell(c);
 }
 
-function updateCellField(id, field, value) {
-  const cell = cells.find(c => c.id === id);
-  if (!cell) return;
-  cell[field] = value; cell._dirty = true;
-  // Update tag select styling
-  if (field === 'tag') {
-    const sel = document.querySelector(`#cell-${id} .cell-tag-sel`);
-    if (sel) sel.className = `cell-tag-sel ${value}`;
-    const ta = document.querySelector(`#cell-input-${id} textarea`);
-    if (ta) ta.placeholder = getPlaceholder(value);
-  }
-  if (field === 'lang' && editors[id]) {
-    editors[id].setOption('mode', langToMode(value));
-  }
-}
-
-function changeCellType(id, newType) {
-  const cell = cells.find(c => c.id === id);
-  if (!cell) return;
-  cell.cell_type = newType; cell._dirty = true;
-  // Re-render this cell
-  const el = document.getElementById(`cell-${id}`);
-  const idx = cells.indexOf(cell);
-  if (el) {
-    el.innerHTML = buildCellHTML(cell, idx);
-    if (newType === 'code') initCodeMirror(cell);
-  }
-}
-
-async function addCell(type='markdown', tag='none') {
-  if (!currentNb) { toast('Open a notebook first'); return; }
-  const maxOrder = cells.reduce((m,c) => Math.max(m, c.sort_order||0), -1);
+async function addCell(type='markdown', opts={}){
+  if(!currentNb){ toast('Open a notebook first'); return; }
+  const meta=CELL_TYPES[type]||{};
+  const tag=opts.tag||meta.tag||'none';
+  const cellType = (type==='ai'||type==='research') ? 'markdown' : type;
+  const maxOrder=cells.reduce((m,c)=>Math.max(m,c.sort_order||0),-1);
+  const body={cell_type:cellType, lang:opts.lang||'python', tag, content:opts.content||'',
+    sort_order:opts.after!=null?opts.after+0.5:maxOrder+1, page_id:currentPage||undefined,
+    title:opts.title||'', props:opts.props||{}};
   try {
-    const r = await fetch(`${API}/api/notebooks/${currentNb.id}/cells`, {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({cell_type:type, lang:'python', tag, content:'', sort_order:maxOrder+1, page_id:currentPage||undefined, title:''})
-    });
-    const cell = await r.json();
-    cells.push(cell);
-    // Append to list
-    const list = document.getElementById('cells-list');
-    const addBar = list.querySelector('.add-cell-row');
-    const el = buildCellEl(cell, cells.length-1);
-    list.insertBefore(el, addBar);
-    if (type === 'code') initCodeMirror(cell);
-    updateCellCount();
-    // Focus the new cell's textarea
-    setTimeout(() => {
-      const ta = document.querySelector(`#cell-input-${cell.id} textarea`);
-      if (ta) ta.focus();
-    }, 50);
-  } catch(e) { toast('Error adding cell'); }
+    const cell=await nbPost('/api/notebooks/'+currentNb.id+'/cells', body);
+    cell.props=cell.props||{};
+    if(opts.after!=null){ const i=cells.findIndex(c=>c.sort_order>opts.after); if(i<0)cells.push(cell); else cells.splice(i,0,cell); }
+    else cells.push(cell);
+    cells.forEach((c,i)=>c.sort_order=i);
+    renderVisibleCells();
+    setTimeout(()=>{ const el=document.querySelector('#cell-'+cell.id+' textarea'); if(el)el.focus();
+      document.getElementById('cell-'+cell.id)?.scrollIntoView({block:'center',behavior:'smooth'}); },60);
+    return cell;
+  } catch(e){ toast('Error adding cell'); }
 }
 
-async function deleteCell(id) {
-  if (!confirm('Delete this cell?')) return;
-  try {
-    await fetch(`${API}/api/notebooks/${currentNb.id}/cells/${id}`, {method:'DELETE'});
-    cells = cells.filter(c => c.id !== id);
-    document.getElementById(`cell-${id}`)?.remove();
-    if (editors[id]) { editors[id] = null; delete editors[id]; }
-    if (cellWS[id]) { cellWS[id].close(); delete cellWS[id]; }
-    updateCellCount();
-  } catch(e) { toast('Error deleting cell'); }
+async function deleteCell(id){
+  if(!confirm('Delete this cell?'))return;
+  await nbDelete('/api/notebooks/'+currentNb.id+'/cells/'+id).catch(()=>{});
+  cells=cells.filter(c=>c.id!==id);
+  if(editors[id]){ delete editors[id]; } if(cellWS[id]){ try{cellWS[id].close();}catch(e){} delete cellWS[id]; }
+  renderVisibleCells();
 }
 
-function cellKeydown(e, id) {
-  if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); runCell(id); }
-  if (e.key === 'Enter' && e.ctrlKey)  { e.preventDefault(); addCell(); }
+function cellKeydown(e,id){
+  if(e.key==='Enter'&&e.shiftKey){ e.preventDefault(); runCell(id); }
+  if(e.key==='/' && e.target.value===''){ e.preventDefault(); openBlockMenu(e,id); }
 }
 
-function toggleThread(btn) {
-  btn.classList.toggle('open');
+async function changeCellType(id,newType){
+  const c=cells.find(x=>x.id===id); if(!c)return;
+  const meta=CELL_TYPES[newType]||{};
+  c.cell_type=(newType==='ai'||newType==='research')?'markdown':newType;
+  if(meta.tag) c.tag=meta.tag; else if(newType==='markdown') c.tag='none';
+  c._dirty=true; await saveSingleCell(c); renderVisibleCells();
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   Agent generation
+   Run dispatch
 ══════════════════════════════════════════════════════════════════════════ */
-function getCellWS(cellId) {
-  if (cellWS[cellId] && cellWS[cellId].readyState <= 1) return cellWS[cellId];
-  const ws = new WebSocket(`${WS_BASE}/ws/notebook/${currentNb.id}/cell/${cellId}`);
-  cellWS[cellId] = ws;
-  let genBuf = '';
-  let genTimer = null;
-  const BATCH = 40;
+function runCell(id){
+  const c=cells.find(x=>x.id===id); if(!c)return;
+  if(c.cell_type==='code')       return runCodeCell(c);
+  if(c.cell_type==='mermaid')    return generateMermaid(c);
+  if(c.cell_type==='illustrate') return runIllustrate(c);
+  if(c.cell_type==='image-gen')  return runImageGen(c);
+  return runAgentCell(c);   // markdown/ai/research
+}
 
-  ws.onmessage = e => {
-    const m = JSON.parse(e.data);
-    if (m.type === 'token') {
-      genBuf += m.text;
-      if (genTimer) return;
-      genTimer = setTimeout(() => {
-        genTimer = null;
-        updateGenContent(cellId, genBuf, false);
-      }, BATCH);
-    } else if (m.type === 'done') {
-      clearTimeout(genTimer); genTimer = null;
-      const cell = cells.find(c => c.id === cellId);
-      if (cell) {
-        cell.generated = m.generated || m.response || genBuf;
-        cell._dirty = false;
-      }
-      updateGenContent(cellId, m.generated || m.response || genBuf, true);
-      if (m.thread) updateThread(cellId, m.thread);
-      setGenerating(cellId, false);
-      genBuf = '';
-    } else if (m.type === 'citations') {
-      // Populate session citations so insert panel works
-      if (m.citations && m.citations.length) {
-        _sessionCits = _sessionCits.concat(m.citations.filter(function(c){
-          return !_sessionCits.some(function(x){ return x.url===c.url; });
-        }));
-      }
-      // Show status count
-      addStepToCell(cellId, '✓ ' + (m.citations||[]).length + ' sources found');
-    } else if (m.type === 'crawl_progress') {
-      addStepToCell(cellId, 'Crawling ' + (m.domain||m.url));
-    } else if (m.type === 'status') {
-      addStepToCell(cellId, m.text);
-    } else if (m.type === 'error') {
-      toast('Error: ' + m.text);
-      setGenerating(cellId, false);
-    }
+/* ── Agent cells (WS generate / research) ────────────────────────────────── */
+function runAgentCell(cell){
+  setGenerating(cell.id,true);
+  const content = editors[cell.id]?editors[cell.id].getValue():cell.content;
+  cell.content=content;
+  const ws=getCellWS(cell.id);
+  const action = cell.tag==='research'?'research':'generate';
+  const send=()=>ws.send(JSON.stringify({action,message:content}));
+  if(ws.readyState===1) send(); else ws.onopen=send;
+}
+
+function getCellWS(cellId){
+  if(cellWS[cellId]&&cellWS[cellId].readyState<=1) return cellWS[cellId];
+  const ws=new WebSocket(WS_BASE()+'/ws/notebook/'+currentNb.id+'/cell/'+cellId);
+  cellWS[cellId]=ws; let genBuf=''; let genTimer=null;
+  ws.onmessage=e=>{
+    const m=JSON.parse(e.data);
+    if(m.type==='token'){ genBuf+=m.text; if(genTimer)return; genTimer=setTimeout(()=>{genTimer=null;updateGenContent(cellId,genBuf,false);},40); }
+    else if(m.type==='done'){ clearTimeout(genTimer);genTimer=null;
+      const c=cells.find(x=>x.id===cellId); if(c){c.generated=m.generated||m.response||genBuf;c._dirty=true;saveSingleCell(c);}
+      updateGenContent(cellId,m.generated||m.response||genBuf,true);
+      if(m.thread)updateThreadCount(cellId,m.thread); setGenerating(cellId,false); genBuf=''; }
+    else if(m.type==='citations'){ if(m.citations&&m.citations.length){ _sessionCits=_sessionCits.concat(m.citations.filter(c=>!_sessionCits.some(x=>x.url===c.url))); } addStepToCell(cellId,'✓ '+(m.citations||[]).length+' sources'); }
+    else if(m.type==='status'){ addStepToCell(cellId,m.text); }
+    else if(m.type==='crawl_progress'){ addStepToCell(cellId,'Crawling '+(m.domain||m.url)); }
+    else if(m.type==='error'){ toast('Error: '+m.text); setGenerating(cellId,false); }
   };
-  ws.onerror = () => { toast('WebSocket error'); setGenerating(cellId, false); };
+  ws.onerror=()=>{ setGenerating(cellId,false); };
   return ws;
 }
-
-function runCell(id) {
-  const cell = cells.find(c => c.id === id);
-  if (!cell) return;
-  setGenerating(id, true);
-  const content = editors[id] ? editors[id].getValue() : cell.content;
-  cell.content = content;
-  const ws = getCellWS(id);
-  const action = cell.tag === 'research' ? 'research' : 'generate';
-  const send = () => ws.send(JSON.stringify({action, message: content}));
-  if (ws.readyState === 1) send();
-  else ws.onopen = send;
+function setGenerating(id,on){ const el=document.getElementById('cell-'+id); if(el)el.classList.toggle('generating',on); }
+function updateGenContent(cellId,content,final){
+  let wrap=document.getElementById('gen-wrap-'+cellId); if(!wrap)wrap=document.querySelector('#cell-'+cellId+' .cell-generated');
+  if(wrap)wrap.style.display=''; const el=document.getElementById('gen-'+cellId); if(!el)return;
+  el.innerHTML=renderMD(content)+(final?'':'<span class="gen-cursor"></span>');
 }
+function addStepToCell(cellId,text){
+  let wrap=document.getElementById('gen-wrap-'+cellId); if(!wrap)wrap=document.querySelector('#cell-'+cellId+' .cell-generated');
+  if(wrap)wrap.style.display=''; const el=document.getElementById('gen-'+cellId);
+  if(el)el.innerHTML+='<div style="font-size:10px;color:var(--t3);margin:3px 0">'+esc(text)+'</div>';
+}
+async function acceptGenerated(id){
+  const c=cells.find(x=>x.id===id); if(!c||!c.generated)return;
+  c.content=c.generated; const ta=document.querySelector('#cell-'+id+' .cell-input textarea');
+  if(ta){ta.value=c.generated;autoGrow(ta);} if(editors[id])editors[id].setValue(c.generated);
+  c.generated=''; c._dirty=true; await saveSingleCell(c); renderVisibleCells(); toast('Accepted');
+}
+async function clearGenerated(id){ const c=cells.find(x=>x.id===id); if(!c)return; c.generated=''; c._dirty=true; await saveSingleCell(c);
+  const w=document.getElementById('gen-wrap-'+id)||document.querySelector('#cell-'+id+' .cell-generated'); if(w)w.style.display='none'; }
+function genToCell(id){ const c=cells.find(x=>x.id===id); if(!c||!c.generated)return; addCell('markdown',{after:c.sort_order,content:c.generated}); }
+function updateThreadCount(cellId,thread){ const t=document.querySelector('#cell-'+cellId+' .thread-toggle'); const n=thread.filter(m=>m.role==='user').length;
+  if(t&&n>0)t.innerHTML='<svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.3"><polyline points="3,2 6,5 3,8"/></svg>'+n+' message'+(n!==1?'s':''); }
 
-function regenCell(id) { runCell(id); }
-
-async function runAllCells() {
-  const tagged = cells.filter(c => c.tag && c.tag !== 'none');
-  for (const cell of tagged) {
-    await new Promise(resolve => {
-      const ws = getCellWS(cell.id);
-      const orig = ws.onmessage;
-      ws.onmessage = e => {
-        const m = JSON.parse(e.data);
-        if (orig) orig({data:e.data});
-        if (m.type === 'done') resolve();
-      };
-      setGenerating(cell.id, true);
-      const send = () => ws.send(JSON.stringify({action:'generate',message:cell.content}));
-      if (ws.readyState === 1) send(); else ws.onopen = send;
-    });
+/* ── Executable code cells (via IDE exec sandbox SSE) ────────────────────── */
+function langRunCmd(lang, code){
+  const eof='VERA_NB_EOF_'+Math.random().toString(36).slice(2,8);
+  const py = i => i+" - <<'"+eof+"'\n"+code+"\n"+eof;
+  switch((lang||'').toLowerCase()){
+    case 'python': case 'python3': return py('python3');
+    case 'javascript': case 'js': case 'node': return "node - <<'"+eof+"'\n"+code+"\n"+eof;
+    case 'bash': case 'shell': case 'sh': return code;
+    case 'ruby': return py('ruby');
+    default: return code;   // treat as a shell snippet
   }
 }
-
-function setGenerating(id, on) {
-  const el = document.getElementById(`cell-${id}`);
-  if (el) el.classList.toggle('generating', on);
-  const btn = el?.querySelector('.cell-btn.run');
-  if (btn) btn.style.opacity = on ? '0.4' : '1';
+function runCodeCell(cell){
+  const code = editors[cell.id]?editors[cell.id].getValue():cell.content;
+  cell.content=code; cell._dirty=true; saveSingleCell(cell);
+  const out=document.getElementById('exec-'+cell.id); if(!out)return;
+  out.classList.add('show'); out.innerHTML='<span class="o-info">$ running…</span>\n';
+  const el=document.getElementById('cell-'+cell.id); if(el)el.classList.add('running');
+  const cmd=langRunCmd(cell.lang, code);
+  const cwd=(cell.props&&cell.props.cwd)||'';
+  let pid=null;
+  streamSSE(NB_API+'/ide-api/exec/run', {cmd, cwd, session_id:'notebook:'+currentNb.id},
+    ev=>{
+      if(ev.event==='pid'){ pid=parseInt(ev.data); execRuns[cell.id]=pid; }
+      else if(ev.event==='stdout'){ appendExec(out, ev.data, ''); }
+      else if(ev.event==='stderr'){ appendExec(out, ev.data, 'o-err'); }
+      else if(ev.event==='exit'){ const code2=parseInt(ev.data);
+        appendExec(out, (code2===0?'\n✓ done':'\n✗ exit '+code2), code2===0?'o-ok':'o-err');
+        if(el)el.classList.remove('running'); delete execRuns[cell.id]; }
+    },
+    ()=>{ if(el)el.classList.remove('running'); });
+}
+function appendExec(out, text, cls){
+  const span=document.createElement('span'); if(cls)span.className=cls; span.textContent=text;
+  out.appendChild(span); out.scrollTop=out.scrollHeight;
+}
+function stopCode(id){
+  const pid=execRuns[id]; if(!pid)return;
+  fetch(NB_API+'/ide-api/exec/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pid})}).catch(()=>{});
+}
+function streamSSE(url, body, onEvent, onDone){
+  fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(async resp=>{
+      if(!resp.ok){ onEvent({event:'stderr',data:'HTTP '+resp.status}); onEvent({event:'exit',data:'-1'}); onDone&&onDone(); return; }
+      const reader=resp.body.getReader(); const dec=new TextDecoder(); let buf='';
+      while(true){ const {done,value}=await reader.read(); if(done)break;
+        buf+=dec.decode(value,{stream:true}); const parts=buf.split('\n\n'); buf=parts.pop();
+        for(const part of parts){ const dl=part.split('\n').find(l=>l.startsWith('data:')); if(!dl)continue;
+          try{ onEvent(JSON.parse(dl.slice(5))); }catch(e){} } }
+      onDone&&onDone();
+    }).catch(e=>{ onEvent({event:'stderr',data:'stream error: '+e.message}); onDone&&onDone(); });
 }
 
-function updateGenContent(cellId, content, final) {
-  let wrap = document.querySelector(`#gen-wrap-${cellId}`);
-  if (!wrap) wrap = document.querySelector(`#cell-${cellId} .cell-generated`);
-  if (!wrap) return;
-  wrap.style.display = '';
-  const el = document.getElementById(`gen-${cellId}`);
-  if (!el) return;
-  if (final) {
-    el.innerHTML = renderMD(content);
+/* ── Mermaid cells ───────────────────────────────────────────────────────── */
+function liveMermaid(id, src){
+  const el=document.getElementById('mm-'+id); if(!el)return;
+  const draw=()=>{ try{ el.render ? el.render(src||'') : (el.textContent=src||''); }catch(e){} };
+  if(el.render) draw(); else setTimeout(draw,300);
+}
+function generateMermaid(cell){
+  // Ask the notebook agent (WS chat) to author mermaid source from the title/prompt.
+  const prompt = 'Produce ONLY valid Mermaid diagram source (no prose, no ``` fences) for: '
+    + (cell.title || cell.content || 'a diagram');
+  setGenerating(cell.id,true);
+  const ws=getCellWS(cell.id); let buf='';
+  const orig=ws.onmessage;
+  ws.onmessage=e=>{ const m=JSON.parse(e.data);
+    if(m.type==='token'){ buf+=m.text; }
+    else if(m.type==='done'){ let src=(m.response||buf||'').replace(/```(mermaid)?/g,'').trim();
+      cell.content=src; cell._dirty=true; saveSingleCell(cell);
+      const ta=document.querySelector('#cell-'+cell.id+' textarea'); if(ta)ta.value=src;
+      liveMermaid(cell.id,src); setGenerating(cell.id,false); ws.onmessage=orig; }
+    else if(orig) orig(e);
+  };
+  const send=()=>ws.send(JSON.stringify({action:'chat',message:prompt}));
+  if(ws.readyState===1)send(); else ws.onopen=send;
+}
+
+/* ── Illustrate cells (AI → self-contained HTML/SVG in sandboxed iframe) ──── */
+function runIllustrate(cell){
+  const prompt = 'Return ONLY a single self-contained HTML document (inline CSS + inline SVG, no '
+    + 'external resources, no scripts required) that visually illustrates: '
+    + (cell.content||cell.title||'a concept') + '. Output raw HTML only, no markdown fences, no commentary.';
+  setGenerating(cell.id,true);
+  const ws=getCellWS(cell.id); let buf='';
+  const orig=ws.onmessage;
+  ws.onmessage=e=>{ const m=JSON.parse(e.data);
+    if(m.type==='token'){ buf+=m.text; }
+    else if(m.type==='done'){ let html=(m.response||buf||'');
+      html=html.replace(/^```(html)?/i,'').replace(/```$/,'').trim();
+      cell.generated=html; cell._dirty=true; saveSingleCell(cell);
+      const wrap=document.getElementById('ill-wrap-'+cell.id);
+      if(wrap){ wrap.style.display=''; wrap.innerHTML='<iframe class="iframe-html" sandbox="allow-scripts" srcdoc="'+esc(html)+'"></iframe>'; }
+      setGenerating(cell.id,false); ws.onmessage=orig; }
+    else if(orig) orig(e);
+  };
+  const send=()=>ws.send(JSON.stringify({action:'chat',message:prompt}));
+  if(ws.readyState===1)send(); else ws.onopen=send;
+}
+
+/* ── Image-gen cells (image.generate over ORCH) ──────────────────────────── */
+async function runImageGen(cell){
+  const prompt=(editors[cell.id]?editors[cell.id].getValue():cell.content)||cell.content;
+  if(!prompt.trim()){ toast('Enter a prompt'); return; }
+  const [w,h]=((cell.props&&cell.props.size)||'768x512').split('x').map(n=>parseInt(n)||512);
+  setGenerating(cell.id,true);
+  try{
+    const r=await orchPost('/image/generate',{prompt,width:w,height:h,steps:24});
+    const b64=r.image_b64||r.b64||(r.images&&r.images[0]);
+    const src = b64 ? (b64.startsWith('data:')?b64:'data:image/png;base64,'+b64) : (r.url||r.image_url||'');
+    if(!src) throw new Error(r.error||'no image returned');
+    cell.generated=src; cell._dirty=true; saveSingleCell(cell);
+    const wrap=document.getElementById('ig-wrap-'+cell.id);
+    if(wrap){ wrap.style.display=''; wrap.innerHTML='<img src="'+esc(src)+'">'; }
+  }catch(e){ toast('Image gen failed: '+e.message); }
+  setGenerating(cell.id,false);
+}
+
+/* ── Embed (object / panel) pickers ──────────────────────────────────────── */
+async function openEmbedPicker(ev, cellId, kind){
+  const pop=document.getElementById('picker-pop');
+  if(kind==='object'){
+    pop.innerHTML='<div class="pop-title">Embed a system object</div>'
+      + Object.entries(OBJECT_KINDS).map(([k,v])=>`<div class="pop-item" onclick="setEmbed('${cellId}','object',{kind:'${k}',route:'${v.route}'})"><span class="pi-ico">⚙</span><div class="pi-main">${esc(v.label)}<div class="pi-desc">${esc(ORCH+v.route)}</div></div></div>`).join('')
+      + `<div class="pop-item" onclick="customEmbed('${cellId}')"><span class="pi-ico">✎</span><div class="pi-main">Custom route…<div class="pi-desc">e.g. /dream/panel#projects</div></div></div>`;
+    showPopAt(pop, ev);
   } else {
-    el.innerHTML = renderMD(content) + '<span class="gen-cursor"></span>';
+    pop.innerHTML='<div class="pop-title">Loading panels…</div>'; showPopAt(pop, ev);
+    let panels=[]; try{ panels=await orchJson('/ui/panels'); }catch(e){}
+    panels=(panels||[]).filter(p=>p&&p.id);
+    pop.innerHTML='<div class="pop-title">Embed a Vera panel</div>'
+      + (panels.length? panels.map(p=>`<div class="pop-item" onclick="setEmbed('${cellId}','panel',{panelId:'${esc(p.id)}'})"><span class="pi-ico">${esc(p.icon||'▥')}</span><div class="pi-main">${esc(p.label||p.id)}<div class="pi-desc">${esc(p.id)}</div></div></div>`).join('')
+        : '<div class="src-empty">No panels (orchestrator unreachable?)</div>');
   }
 }
-
-function addStepToCell(cellId, text) {
-  let wrap = document.querySelector(`#gen-wrap-${cellId}`);
-  if (!wrap) wrap = document.querySelector(`#cell-${cellId} .cell-generated`);
-  if (wrap) wrap.style.display = '';
-  const el = document.getElementById(`gen-${cellId}`);
-  if (el) el.innerHTML += `<div style="font-size:10px;color:var(--t3);margin:3px 0">${esc(text)}</div>`;
+function customEmbed(cellId){ const r=prompt('Panel route (relative to orchestrator):','/dream/panel'); if(r) setEmbed(cellId,'object',{route:r}); }
+function setEmbed(cellId,kind,props){
+  const c=cells.find(x=>x.id===cellId); if(!c)return;
+  c.props=Object.assign(c.props||{},props); c._dirty=true; saveSingleCell(c); closeAllPops(); renderVisibleCells();
 }
-
-async function acceptGenerated(id) {
-  const cell = cells.find(c => c.id === id);
-  if (!cell || !cell.generated) return;
-  cell.content = cell.generated; cell._dirty = true;
-  // Update input
-  const ta = document.querySelector(`#cell-input-${id} textarea`);
-  if (ta) { ta.value = cell.generated; autoGrow(ta); }
-  if (editors[id]) editors[id].setValue(cell.generated);
-  // Clear generated
-  cell.generated = ''; cell._dirty = true;
-  let wrap = document.querySelector(`#gen-wrap-${id}`);
-  if (!wrap) wrap = document.querySelector(`#cell-${id} .cell-generated`);
-  if (wrap) wrap.style.display = 'none';
-  await saveSingleCell(cell);
-  toast('Content accepted');
-}
-
-async function clearGenerated(id) {
-  const cell = cells.find(c => c.id === id);
-  if (!cell) return;
-  cell.generated = ''; cell._dirty = true;
-  let wrap = document.querySelector(`#gen-wrap-${id}`);
-  if (!wrap) wrap = document.querySelector(`#cell-${id} .cell-generated`);
-  if (wrap) wrap.style.display = 'none';
-  await saveSingleCell(cell);
-}
+function embResize(id,dy){ const c=cells.find(x=>x.id===id); if(!c)return; c.props=c.props||{}; c.props.h=Math.max(160,(c.props.h||360)+dy);
+  const f=document.getElementById('emb-'+id); if(f)f.style.height=c.props.h+'px'; c._dirty=true; saveSingleCell(c); }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   Thread / conversation
+   Thread + dive (ported)
 ══════════════════════════════════════════════════════════════════════════ */
-function threadKeydown(e, id) {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendThreadMsg(id); }
+function threadKeydown(e,id){ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendThreadMsg(id); } }
+function sendThreadMsg(id){
+  const ta=document.getElementById('thread-ta-'+id); const msg=ta&&ta.value.trim(); if(!msg)return;
+  ta.value=''; ta.style.height='auto';
+  const mode=(document.getElementById('thread-mode-'+id)||{}).value||'chat';
+  appendThreadMsg(id,{role:'user',content:msg});
+  const ws=getCellWS(id); let resp=''; const orig=ws.onmessage;
+  appendThreadMsg(id,{role:'assistant',content:''});
+  ws.onmessage=e=>{ const m=JSON.parse(e.data);
+    if(m.type==='token'){ resp+=m.text; updateLastThread(id,resp); }
+    else if(m.type==='done'){ finaliseLastThread(id,m.response||resp);
+      const c=cells.find(x=>x.id===id); if(c&&m.thread)c.thread=m.thread; ws.onmessage=orig; }
+    else if(orig) orig(e); };
+  const send=()=>ws.send(JSON.stringify({action:mode,message:msg}));
+  if(ws.readyState===1)send(); else ws.onopen=send;
 }
-
-function sendThreadMsg(id) {
-  const ta = document.getElementById(`thread-ta-${id}`);
-  const msg = ta?.value?.trim();
-  if (!msg) return;
-  ta.value = ''; ta.style.height = 'auto';
-
-  const mode = document.getElementById(`thread-mode-${id}`)?.value || 'chat';
-  const sendBtn = document.getElementById(`thread-send-${id}`);
-  if (sendBtn) sendBtn.disabled = true;
-
-  // Add user message to UI immediately
-  appendThreadMsg(id, {role:'user', content:msg});
-
-  const ws = getCellWS(id);
-  let respBuf = '';
-
-  const origOnMsg = ws.onmessage;
-  ws.onmessage = e => {
-    const m = JSON.parse(e.data);
-    if (m.type === 'token') { respBuf += m.text; updateLastThreadMsg(id, respBuf); }
-    else if (m.type === 'done') {
-      const finalResp = m.response || respBuf;
-      finaliseLastThreadMsg(id, finalResp);
-      const cell = cells.find(c => c.id === id);
-      if (cell && m.thread) cell.thread = m.thread;
-      if (sendBtn) sendBtn.disabled = false;
-      respBuf = '';
-      ws.onmessage = origOnMsg;
-    } else if (origOnMsg) origOnMsg(e);
-  };
-
-  // Add streaming placeholder for assistant
-  appendThreadMsg(id, {role:'assistant', content:''});
-
-  const send = () => ws.send(JSON.stringify({action:mode, message:msg}));
-  if (ws.readyState === 1) send(); else ws.onopen = send;
+function appendThreadMsg(cellId,msg){
+  const el=document.getElementById('thread-'+cellId); if(!el)return;
+  const row=el.querySelector('.thread-input-row');
+  const div=document.createElement('div'); div.className='thread-msg'; div.dataset.role=msg.role;
+  div.innerHTML='<div class="thread-msg-role '+msg.role+'">'+msg.role+'</div><div class="thread-msg-content '+msg.role+'">'+(msg.role==='assistant'?renderMD(msg.content):esc(msg.content))+'</div>';
+  el.insertBefore(div,row);
+  const toggle=el.previousElementSibling; if(toggle&&!toggle.classList.contains('open'))toggle.classList.add('open');
+  el.scrollTop=el.scrollHeight;
 }
+function updateLastThread(cellId,content){ const el=document.getElementById('thread-'+cellId); if(!el)return;
+  const msgs=el.querySelectorAll('.thread-msg[data-role="assistant"]'); const last=msgs[msgs.length-1];
+  if(last)last.querySelector('.thread-msg-content').innerHTML=renderMD(content)+'<span class="gen-cursor"></span>'; }
+function finaliseLastThread(cellId,content){ const el=document.getElementById('thread-'+cellId); if(!el)return;
+  const msgs=el.querySelectorAll('.thread-msg[data-role="assistant"]'); const last=msgs[msgs.length-1];
+  if(last)last.querySelector('.thread-msg-content').innerHTML=renderMD(content); }
 
-function appendThreadMsg(cellId, msg) {
-  const el = document.getElementById(`thread-${cellId}`);
-  if (!el) return;
-  const inputRow = el.querySelector('.thread-input-row');
-  const div = document.createElement('div');
-  div.className = 'thread-msg';
-  div.dataset.role = msg.role;
-  div.innerHTML = `
-    <div class="thread-msg-role ${msg.role}">${msg.role}</div>
-    <div class="thread-msg-content ${msg.role}">${msg.role==='assistant'?renderMD(msg.content):esc(msg.content)}</div>`;
-  el.insertBefore(div, inputRow);
-  // Ensure thread is open
-  const toggle = el.previousElementSibling;
-  if (toggle && !toggle.classList.contains('open')) toggle.classList.add('open');
-  el.style.display = 'flex';
-  el.scrollTop = el.scrollHeight;
-}
-
-function updateLastThreadMsg(cellId, content) {
-  const el = document.getElementById(`thread-${cellId}`);
-  if (!el) return;
-  const msgs = el.querySelectorAll('.thread-msg[data-role="assistant"]');
-  const last = msgs[msgs.length - 1];
-  if (last) last.querySelector('.thread-msg-content').innerHTML = renderMD(content) + '<span class="gen-cursor"></span>';
-}
-
-function finaliseLastThreadMsg(cellId, content) {
-  const el = document.getElementById(`thread-${cellId}`);
-  if (!el) return;
-  const msgs = el.querySelectorAll('.thread-msg[data-role="assistant"]');
-  const last = msgs[msgs.length - 1];
-  if (last) last.querySelector('.thread-msg-content').innerHTML = renderMD(content);
-}
-
-function updateThread(cellId, thread) {
-  const toggle = document.querySelector(`#cell-${cellId} .thread-toggle`);
-  const count = thread.filter(m=>m.role==='user').length;
-  if (toggle && count > 0) {
-    toggle.innerHTML = `<svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.3"><polyline points="3,2 6,5 3,8"/></svg>${count} message${count!==1?'s':''}`;
-  }
+const DIVE={cellId:null,tab:'chat'};
+function openDivePanel(cellId){ DIVE.cellId=cellId; const c=cells.find(x=>x.id===cellId);
+  document.getElementById('dive-cell-ref').textContent=c?(c.content||'').slice(0,40)+'…':'';
+  renderDiveThread(c&&c.thread||[]); document.getElementById('dive-panel').style.transform='translateY(0)';
+  document.getElementById('dive-input').focus(); }
+function closeDivePanel(){ document.getElementById('dive-panel').style.transform='translateY(100%)'; }
+function setDiveTab(tab){ DIVE.tab=tab; ['chat','research','variant'].forEach(t=>{ const b=document.getElementById('dive-tab-'+t); if(b){b.style.color=t===tab?'var(--ac)':'var(--t3)';b.style.borderBottom=t===tab?'2px solid var(--ac)':'2px solid transparent';} }); }
+function diveKeydown(e){ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendDiveMsg(); } }
+function renderDiveThread(thread){ const el=document.getElementById('dive-messages');
+  const f=thread.filter(m=>m.role!=='system');
+  el.innerHTML = f.length? f.map(m=>'<div style="display:flex;flex-direction:column;gap:3px"><div style="font-size:9px;color:'+(m.role==='user'?'var(--ac)':'var(--t3)')+';text-transform:uppercase">'+m.role+'</div><div style="font-size:12px;line-height:1.55;padding:8px 10px;border-radius:6px;background:'+(m.role==='user'?'rgba(46,109,164,.08)':'var(--s1)')+'">'+(m.role==='assistant'?renderMD(m.content):esc(m.content))+'</div></div>').join('') : '<div class="src-empty">Start a conversation about this cell</div>';
+  el.scrollTop=el.scrollHeight; }
+function sendDiveMsg(){
+  const inp=document.getElementById('dive-input'); const msg=inp&&inp.value.trim(); if(!msg||!DIVE.cellId)return;
+  inp.value=''; inp.style.height='auto'; const tab=DIVE.tab; const el=document.getElementById('dive-messages');
+  const add=(role)=>{ const d=document.createElement('div'); d.style.cssText='display:flex;flex-direction:column;gap:3px'; d.dataset.role=role;
+    d.innerHTML='<div style="font-size:9px;color:'+(role==='user'?'var(--ac)':'var(--t3)')+';text-transform:uppercase">'+role+'</div><div class="dive-msg-content" style="font-size:12px;line-height:1.55;padding:8px 10px;border-radius:6px;background:'+(role==='user'?'rgba(46,109,164,.08)':'var(--s1)')+'">'+(role==='assistant'?'<span style="color:var(--t3)">…</span>':esc(msg))+'</div>'; el.appendChild(d); el.scrollTop=el.scrollHeight; return d; };
+  add('user'); const ad=add('assistant'); const ce=ad.querySelector('.dive-msg-content');
+  const ws=getCellWS(DIVE.cellId); let buf=''; const orig=ws.onmessage;
+  ws.onmessage=e=>{ const m=JSON.parse(e.data);
+    if(m.type==='token'){ buf+=m.text; ce.innerHTML=renderMD(buf)+'<span class="gen-cursor"></span>'; el.scrollTop=el.scrollHeight; }
+    else if(m.type==='done'){ const r=m.response||buf; ce.innerHTML=renderMD(r);
+      const c=cells.find(x=>x.id===DIVE.cellId); if(c&&m.thread)c.thread=m.thread;
+      if(tab==='variant'&&r){ const b=document.createElement('button'); b.className='gen-action-btn'; b.style.marginTop='6px'; b.textContent='↑ Add as new cell';
+        b.onclick=()=>addCell('markdown',{after:c?c.sort_order:null,content:r}); ad.appendChild(b); }
+      ws.onmessage=orig; buf=''; }
+    else if(orig) orig(e); };
+  const action=tab==='research'?'research':'chat';
+  const c=cells.find(x=>x.id===DIVE.cellId);
+  const message=tab==='variant'?('Generate a variant: '+msg+'\n\nOriginal:\n'+((c&&c.generated)||'')):msg;
+  const send=()=>ws.send(JSON.stringify({action,message}));
+  if(ws.readyState===1)send(); else ws.onopen=send;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
    Save
 ══════════════════════════════════════════════════════════════════════════ */
-async function saveSingleCell(cell) {
-  const content = editors[cell.id] ? editors[cell.id].getValue() : cell.content;
+async function saveSingleCell(cell){
+  const content = editors[cell.id]?editors[cell.id].getValue():cell.content;
   try {
-    await fetch(`${API}/api/notebooks/${currentNb.id}/cells/${cell.id}`, {
-      method: 'PATCH', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({
-        content, generated:cell.generated||'', tag:cell.tag,
-        cell_type:cell.cell_type, lang:cell.lang,
-        sort_order:cell.sort_order||0,
-        title:cell.title||'', page_id:cell.page_id||null,
-        citations:cell.citations||[], parse_mode:cell.parse_mode||'whole',
-        agent_mode:cell.agent_mode||'single'
-      })
+    await nbPatch('/api/notebooks/'+currentNb.id+'/cells/'+cell.id, {
+      content, generated:cell.generated||'', tag:cell.tag, cell_type:cell.cell_type, lang:cell.lang,
+      sort_order:cell.sort_order||0, title:cell.title||'', page_id:cell.page_id||null,
+      citations:cell.citations||[], props:cell.props||{}
     });
-    cell._dirty = false;
-  } catch(e) { toast('Save failed'); }
+    cell._dirty=false;
+    if(getAutoBackup()) scheduleAutoBackup();
+  } catch(e){ toast('Save failed'); }
 }
-
-async function saveAllCells() {
-  const dirty = cells.filter(c => c._dirty);
-  for (const cell of dirty) await saveSingleCell(cell);
-  if (dirty.length) toast(`Saved ${dirty.length} cell${dirty.length!==1?'s':''}`);
-  else toast('All cells up to date');
+async function saveAllCells(){
+  cells.forEach(c=>{ if(editors[c.id]) c.content=editors[c.id].getValue(); });
+  const dirty=cells.filter(c=>c._dirty);
+  for(const c of dirty) await saveSingleCell(c);
+  toast(dirty.length?('Saved '+dirty.length+' cell'+(dirty.length!==1?'s':'')):'All up to date');
 }
-
-async function saveNotebookMeta() {
-  if (!currentNb) return;
-  const title = document.getElementById('nb-title-input').value.trim() || 'Untitled';
-  currentNb.title = title;
-  try {
-    await fetch(`${API}/api/notebooks/${currentNb.id}`, {
-      method: 'PATCH', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({title})
-    });
-    loadNotebooks();
-  } catch(e) {}
-}
-
-// Auto-save every 30s
-setInterval(() => { if (currentNb) saveAllCells(); }, 30000);
+setInterval(()=>{ if(currentNb) saveAllCells(); }, 30000);
 
 /* ══════════════════════════════════════════════════════════════════════════
-   Export
+   Sync to graph + Gitea backup
 ══════════════════════════════════════════════════════════════════════════ */
-function exportNotebook(format) {
-  if (!currentNb) { toast('No notebook open'); return; }
-  if (format === 'md') {
-    let md = `# ${currentNb.title}\n\n`;
-    cells.forEach(cell => {
-      const content = editors[cell.id] ? editors[cell.id].getValue() : cell.content;
-      if (cell.cell_type === 'code') {
-        md += `\`\`\`${cell.lang}\n${content}\n\`\`\`\n\n`;
-      } else {
-        md += content + '\n\n';
-      }
-      if (cell.generated) md += '> *AI output:*\n>\n> ' + cell.generated.replace(/\n/g,'\n> ') + '\n\n';
-    });
-    download(md, `${currentNb.title}.md`, 'text/markdown');
-  } else if (format === 'ipynb') {
-    const nb = {
-      nbformat: 4, nbformat_minor: 5,
-      metadata: {kernelspec:{display_name:'Python 3',language:'python',name:'python3'},language_info:{name:'python'}},
-      cells: cells.map(cell => {
-        const content = editors[cell.id] ? editors[cell.id].getValue() : cell.content;
-        if (cell.cell_type === 'code') {
-          return {cell_type:'code',metadata:{},source:content.split('\n').map((l,i,a)=>i<a.length-1?l+'\n':l),outputs:[],execution_count:null};
-        } else {
-          let src = content;
-          if (cell.generated) src += '\n\n---\n*AI generated:*\n\n' + cell.generated;
-          return {cell_type:'markdown',metadata:{},source:src.split('\n').map((l,i,a)=>i<a.length-1?l+'\n':l)};
-        }
-      })
-    };
-    download(JSON.stringify(nb,null,2), `${currentNb.title}.ipynb`, 'application/json');
+async function syncToGraph(){
+  if(!currentNb){ toast('Open a notebook'); return; }
+  await saveAllCells();
+  toast('Extracting entities…');
+  try { const r=await nbPost('/api/notebooks/'+currentNb.id+'/sync_graph', {loom:true});
+    toast('Synced '+(r.cells||0)+' cells → graph'+(r.loom?' + loom':'')); }
+  catch(e){ toast('Sync failed'); }
+}
+function getAutoBackup(){ return currentNb && localStorage.getItem('nb:autobackup:'+currentNb.id)==='1'; }
+function toggleAutoBackup(){
+  if(!currentNb){ toast('Open a notebook'); return; }
+  const nv=!getAutoBackup(); localStorage.setItem('nb:autobackup:'+currentNb.id, nv?'1':'0');
+  document.getElementById('autobackup-btn').classList.toggle('on', nv);
+  toast(nv?'Auto-backup on save: ON':'Auto-backup: OFF');
+}
+let _abTimer=null;
+function scheduleAutoBackup(){ clearTimeout(_abTimer); _abTimer=setTimeout(()=>backupGitea(true), 4000); }
+async function backupGitea(silent){
+  if(!currentNb){ if(!silent)toast('Open a notebook'); return; }
+  if(!silent) toast('Backing up to Gitea…');
+  try { const r=await nbPost('/api/notebooks/'+currentNb.id+'/gitea', {});
+    if(r.ok){ toast('Backed up ✓'); if(!silent&&r.url) window.open(r.url,'_blank','noopener'); }
+    else { if(!silent) toast('Gitea: '+(r.error||'failed')); }
+  } catch(e){ if(!silent) toast('Backup failed'); }
+}
+
+/* ── Notebook graph view — the notebook's own entity graph (dataset-scoped),
+      rendered by the shared vera-graph engine so notes connect via entities ── */
+let _nbGraph=null;
+function openGraphView(){
+  if(!currentNb){ toast('Open a notebook'); return; }
+  document.getElementById('graph-box-title').textContent='Graph · '+(currentNb.title||'');
+  document.getElementById('graph-modal').classList.add('show');
+  loadScriptOnce(ORCH+'/ui/vera-graph.js');
+  mountNbGraph(0);
+}
+function mountNbGraph(tries){
+  const c=document.getElementById('graph-frame'); if(!c)return;
+  if(!(window.veraUI&&window.veraUI.Graph&&window.veraUI.Graph.create)){
+    if(tries>50){ c.innerHTML='<div class="src-empty" style="padding:40px">Graph engine unavailable — check the orchestrator URL in ⚙.</div>'; return; }
+    return setTimeout(()=>mountNbGraph(tries+1),80);
+  }
+  c.innerHTML='';
+  try {
+    _nbGraph = window.veraUI.Graph.create(c, {apiBase:ORCH, defaultLayer:'entity'});
+    _nbGraph.fetchSnapshot('entity', {dataset_id:'notebook:'+currentNb.id, include_records:true, limit:400});
+  } catch(e){ c.innerHTML='<div class="src-empty" style="padding:40px">Graph error: '+esc(e.message)+'<br>Try ⟳ Sync first so the notebook has entities.</div>'; }
+}
+function closeGraphView(){ document.getElementById('graph-modal').classList.remove('show'); const c=document.getElementById('graph-frame'); if(c)c.innerHTML=''; _nbGraph=null; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Block menu / slash / palette
+══════════════════════════════════════════════════════════════════════════ */
+function openBlockMenu(ev, afterCellId){
+  const pop=document.getElementById('block-menu');
+  const groups={write:'Write',run:'Run',render:'Render',embed:'Embed'};
+  let html='';
+  for(const g in groups){
+    const items=Object.entries(CELL_TYPES).filter(([k,v])=>v.group===g);
+    if(!items.length)continue;
+    html+='<div class="pop-title">'+groups[g]+'</div>';
+    html+=items.map(([k,v])=>`<div class="pop-item" onclick="blockPick('${k}','${afterCellId||''}')"><span class="pi-ico">${esc(v.icon)}</span><div class="pi-main">${esc(v.label)}<div class="pi-desc">${esc(v.desc)}</div></div></div>`).join('');
+  }
+  pop.innerHTML=html; showPopAt(pop, ev);
+}
+function blockPick(type, afterId){
+  closeAllPops();
+  const c = afterId ? cells.find(x=>x.id===afterId) : null;
+  addCell(type, {after: c? c.sort_order : null});
+}
+function openCellMenu(ev, cellId){
+  const pop=document.getElementById('picker-pop');
+  pop.innerHTML='<div class="pop-title">Convert to</div>'
+    + Object.entries(CELL_TYPES).map(([k,v])=>`<div class="pop-item" onclick="changeCellType('${cellId}','${k}');closeAllPops()"><span class="pi-ico">${esc(v.icon)}</span><div class="pi-main">${esc(v.label)}</div></div>`).join('')
+    + '<div class="pop-title">Actions</div>'
+    + `<div class="pop-item" onclick="duplicateCell('${cellId}');closeAllPops()"><span class="pi-ico">⎘</span><div class="pi-main">Duplicate</div></div>`
+    + `<div class="pop-item" onclick="autoNameCell('${cellId}');closeAllPops()"><span class="pi-ico">✦</span><div class="pi-main">Auto-name</div></div>`;
+  showPopAt(pop, ev);
+}
+function duplicateCell(id){ const c=cells.find(x=>x.id===id); if(!c)return; addCell(c.cell_type,{after:c.sort_order,content:c.content,title:c.title,tag:c.tag,lang:c.lang,props:Object.assign({},c.props)}); }
+
+async function autoNameCell(cellId){
+  try{ const d=await nbPost('/api/notebooks/'+currentNb.id+'/cells/'+cellId+'/name',{});
+    if(d.title){ const c=cells.find(x=>x.id===cellId); if(c)c.title=d.title;
+      const i=document.querySelector('#cell-'+cellId+' .cell-title-input'); if(i)i.value=d.title; toast('Named'); } }
+  catch(e){ toast('Auto-name failed'); }
+}
+
+const PALETTE_CMDS=[
+  {label:'New notebook', run:createNotebook},
+  {label:'Add text block', run:()=>addCell('markdown')},
+  {label:'Add code block', run:()=>addCell('code')},
+  {label:'Add mermaid diagram', run:()=>addCell('mermaid')},
+  {label:'Add illustrate (HTML) block', run:()=>addCell('illustrate')},
+  {label:'Add image-gen block', run:()=>addCell('image-gen')},
+  {label:'Embed a system object', run:()=>addCell('object')},
+  {label:'Embed a panel', run:()=>addCell('panel')},
+  {label:'Sync notebook to graph', run:syncToGraph},
+  {label:'Open notebook graph view', run:openGraphView},
+  {label:'Backup to Gitea', run:()=>backupGitea(false)},
+  {label:'Toggle Sources drawer', run:toggleDrawer},
+  {label:'New page', run:addPage},
+  {label:'Layout: flow', run:()=>setLayout('flow')},
+  {label:'Layout: canvas', run:()=>setLayout('canvas')},
+  {label:'View as document', run:enterViewMode},
+  {label:'Export Markdown', run:()=>exportNotebook('md')},
+  {label:'Export .ipynb', run:()=>exportNotebook('ipynb')},
+  {label:'Delete this notebook', run:deleteCurrentNotebook},
+];
+let _palFiltered=PALETTE_CMDS, _palSel=0;
+function openPalette(){ document.getElementById('palette').classList.add('show'); const i=document.getElementById('palette-input'); i.value=''; i.focus(); paletteFilter(''); }
+function closePalette(){ document.getElementById('palette').classList.remove('show'); }
+function paletteFilter(q){ q=(q||'').toLowerCase(); _palFiltered=PALETTE_CMDS.filter(c=>c.label.toLowerCase().includes(q)); _palSel=0; renderPalette(); }
+function renderPalette(){ const el=document.getElementById('palette-results');
+  el.innerHTML=_palFiltered.map((c,i)=>`<div class="pop-item ${i===_palSel?'sel':''}" onclick="runPalette(${i})">${esc(c.label)}</div>`).join('')||'<div class="src-empty">No matches</div>'; }
+function paletteKey(e){ if(e.key==='ArrowDown'){e.preventDefault();_palSel=Math.min(_palSel+1,_palFiltered.length-1);renderPalette();}
+  else if(e.key==='ArrowUp'){e.preventDefault();_palSel=Math.max(_palSel-1,0);renderPalette();}
+  else if(e.key==='Enter'){e.preventDefault();runPalette(_palSel);} }
+function runPalette(i){ const c=_palFiltered[i]; closePalette(); if(c)c.run(); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Sources drawer  (Phase 2)
+══════════════════════════════════════════════════════════════════════════ */
+let _drawerTab='fabric', _fabricDatasets=null;
+function toggleDrawer(){
+  const b=document.getElementById('body'); const open=b.classList.toggle('drawer-open');
+  document.getElementById('drawer-btn').classList.toggle('on', open);
+  if(open) loadDrawer();
+}
+function setDrawerTab(t){ _drawerTab=t; document.querySelectorAll('.drawer-tab').forEach(el=>el.classList.toggle('active',el.dataset.tab===t));
+  document.getElementById('drawer-ds').style.display = t==='fabric'?'block':'none'; loadDrawer(); }
+
+async function loadDrawer(){
+  const body=document.getElementById('drawer-body'); const q=document.getElementById('drawer-q').value.trim();
+  body.innerHTML='<div class="src-empty">Loading…</div>';
+  try {
+    if(_drawerTab==='fabric') return loadFabricDrawer(q);
+    if(_drawerTab==='memory') return loadMemoryDrawer(q);
+    if(_drawerTab==='entity') return loadEntityDrawer(q);
+    if(_drawerTab==='cites')  return loadCitesDrawer(q);
+  } catch(e){ body.innerHTML='<div class="src-empty">Error: '+esc(e.message)+'<br>Check ⚙ orchestrator URL.</div>'; }
+}
+
+async function loadFabricDrawer(q){
+  const body=document.getElementById('drawer-body'); const dsSel=document.getElementById('drawer-ds');
+  if(!_fabricDatasets){
+    let d=[]; try{ d=await orchJson('/fabric/datasets'); }catch(e){}
+    _fabricDatasets = Array.isArray(d)?d:(d.datasets||[]);
+    dsSel.innerHTML='<option value="">— pick a dataset —</option>'+_fabricDatasets.map(ds=>{const id=ds.dataset_id||ds.id||ds.name||ds; return `<option value="${esc(id)}">${esc(id)}</option>`;}).join('');
+  }
+  const ds=dsSel.value;
+  // /fabric/query requires at least one of text / dataset_id.
+  if(!ds && !q){ body.innerHTML='<div class="src-empty">Pick a dataset above, or type a search term.</div>'; return; }
+  const qbody={limit:40}; if(ds)qbody.dataset_id=ds; if(q)qbody.text=q;
+  let rows=[];
+  try { const r=await orchPost('/fabric/query',qbody);
+    rows = r.results||r.records||r.rows||r.matches||(Array.isArray(r)?r:[]); } catch(e){}
+  renderSrc(rows.map(rec=>({title:rec.title||(rec.text&&rec.text.slice(0,60))||rec.id||'record',meta:(rec.dataset_id||ds||'')+(rec.source?(' · '+rec.source):''),body:(rec.text||rec.full_text||'').slice(0,220),payload:{text:rec.full_text||rec.text||'',title:rec.title||'',url:rec.url||''}})));
+}
+async function loadMemoryDrawer(q){
+  let r; try{ r=await orchJson('/memory/all/nodes?limit=120'); }catch(e){ r={}; }
+  let nodes=r.nodes||[]; if(q) nodes=nodes.filter(n=>((n.text||'')+(n.summary||'')).toLowerCase().includes(q.toLowerCase()));
+  renderSrc(nodes.slice(0,60).map(n=>({title:n.summary||n.text&&n.text.slice(0,60)||n.category||n.id,meta:(n.record_type||'')+' · '+(n.source_type||''),body:(n.text||'').slice(0,200),payload:{text:n.text||n.summary||'',title:n.summary||'',url:''}})));
+}
+async function loadEntityDrawer(q){
+  let r; try{ r=await orchJson('/fabric/entity_graph/snapshot?limit=150&include_datasets=1'); }catch(e){ r={}; }
+  let ents=r.nodes||r.entities||[]; if(q) ents=ents.filter(e=>((e.name||'')+'').toLowerCase().includes(q.toLowerCase()));
+  renderSrc(ents.slice(0,60).map(e=>{
+    const pr=e.props||e; const nm=e.name||pr.name||e.id; const ty=e.type||pr.type||'entity';
+    const desc=pr.description||''; const mc=pr.mention_count||pr.mentions||0;
+    return {title:nm, meta:ty+' · '+mc+' mentions', body:desc,
+      payload:{text:'**'+nm+'** ('+ty+')'+(desc?'\n\n'+desc:''), title:nm, url:''}};
+  }));
+}
+function loadCitesDrawer(q){
+  let c=_sessionCits; if(q) c=c.filter(x=>((x.title||'')+(x.url||'')).toLowerCase().includes(q.toLowerCase()));
+  renderSrc(c.slice(0,40).map(x=>({title:x.title||x.url,meta:x.domain||'',body:(x.snippet||'').slice(0,180),payload:{text:'> **['+(x.title||x.url)+']('+x.url+')**\n> '+(x.domain||'')+'\n> '+((x.snippet||'').slice(0,200)),title:x.title||'',url:x.url||''}})));
+}
+function renderSrc(items){
+  const body=document.getElementById('drawer-body');
+  if(!items.length){ body.innerHTML='<div class="src-empty">Nothing found</div>'; return; }
+  body.innerHTML=''; items.forEach(it=>{
+    const d=document.createElement('div'); d.className='src-item';
+    d.innerHTML='<div class="src-item-title">'+esc(it.title||'')+'</div><div class="src-item-meta">'+esc(it.meta||'')+'</div>'+(it.body?'<div class="src-item-body">'+esc(it.body)+'</div>':'');
+    d.onclick=()=>insertSource(it.payload); body.appendChild(d);
+  });
+}
+function insertSource(p){
+  if(!currentNb){ toast('Open a notebook first'); return; }
+  const content = p.title ? ('### '+p.title+'\n\n'+(p.text||'')) : (p.text||'');
+  addCell('markdown',{content, title:p.title||''});
+  toast('Inserted into notebook');
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Main-UI selection bridge — receive items from the harness / research panel
+══════════════════════════════════════════════════════════════════════════ */
+window.addEventListener('message', ev=>{
+  const d=ev.data||{};
+  if(d.type==='vera-citations'){ _sessionCits=d.citations||[]; if(_drawerTab==='cites')loadDrawer(); }
+  else if(d.type==='vera-insert'){
+    const p=d.payload||{};
+    const text = p.text || p.content || p.summary || '';
+    if(!currentNb){ toast('Open a notebook to receive: '+(p.title||p.kind||'')); return; }
+    if(p.kind==='object' && (p.route||p.panelId)){ addCell(p.panelId?'panel':'object',{props:p.panelId?{panelId:p.panelId}:{route:p.route,kind:p.objectKind}}); }
+    else addCell('markdown',{content:(p.title?('### '+p.title+'\n\n'):'')+text, title:p.title||''});
+    toast('Inserted from main UI');
+  }
+});
+try{ if(window.opener&&window.opener.S&&window.opener.S.cits) _sessionCits=window.opener.S.cits; }catch(e){}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Image cell helpers
+══════════════════════════════════════════════════════════════════════════ */
+function handleImageDrop(e,id){ e.preventDefault(); const drop=document.getElementById('img-drop-'+id); if(drop)drop.classList.remove('dragover');
+  const f=e.dataTransfer.files[0];
+  if(f&&f.type.startsWith('image/')) readImg(f,id);
+  else { const u=e.dataTransfer.getData('text/plain')||e.dataTransfer.getData('text/uri-list'); if(u)setImageUrl(id,u); } }
+function handleImageFile(e,id){ const f=e.target.files[0]; if(f)readImg(f,id); }
+function readImg(f,id){ const r=new FileReader(); r.onload=e=>setImageUrl(id,e.target.result); r.readAsDataURL(f); }
+function setImageUrl(id,url){ const c=cells.find(x=>x.id===id); if(!c)return; c.content=url; c._dirty=true; saveSingleCell(c); renderVisibleCells(); }
+document.addEventListener('paste', e=>{
+  const f=document.activeElement; if(!f)return; const cellEl=f.closest&&f.closest('.cell'); if(!cellEl)return;
+  const c=cells.find(x=>x.id===cellEl.dataset.id); if(!c||c.cell_type!=='image')return;
+  const items=e.clipboardData&&e.clipboardData.items; if(!items)return;
+  for(const it of items){ if(it.type.indexOf('image')!==-1){ e.preventDefault(); readImg(it.getAsFile(),c.id); break; } }
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Drag & drop (reorder + move between pages) + canvas
+══════════════════════════════════════════════════════════════════════════ */
+function initDragDrop(){
+  const list=document.getElementById('cells-list'); if(!list||list._dnd)return; list._dnd=true; let dragEl=null;
+  list.addEventListener('dragstart',e=>{ const c=e.target.closest&&e.target.closest('.cell'); if(!c)return; dragEl=c; c.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/cell-id',c.dataset.id); });
+  list.addEventListener('dragend',()=>{ if(dragEl)dragEl.classList.remove('dragging'); document.querySelectorAll('.cell.drag-over').forEach(c=>c.classList.remove('drag-over')); dragEl=null; syncCellOrder(); });
+  list.addEventListener('dragover',e=>{ if(!dragEl||getLayout()==='canvas')return; e.preventDefault(); const t=e.target.closest('.cell'); if(!t||t===dragEl)return;
+    document.querySelectorAll('.cell.drag-over').forEach(c=>c.classList.remove('drag-over')); t.classList.add('drag-over');
+    const r=t.getBoundingClientRect(); if(e.clientY>r.top+r.height/2)t.after(dragEl); else t.before(dragEl); });
+}
+async function syncCellOrder(){
+  if(!currentNb||getLayout()==='canvas')return;
+  const order=[...document.querySelectorAll('#cells-list .cell')].map(el=>el.dataset.id).filter(Boolean);
+  cells.sort((a,b)=>order.indexOf(a.id)-order.indexOf(b.id)); cells.forEach((c,i)=>c.sort_order=i);
+  await nbPost('/api/notebooks/'+currentNb.id+'/reorder',{order}).catch(()=>{});
+}
+function initPageDrag(){
+  document.querySelectorAll('#pages-list .page-item').forEach(item=>{
+    item.ondragover=e=>{ e.preventDefault(); item.classList.add('active'); };
+    item.ondragleave=()=>{};
+    item.ondrop=async e=>{ e.preventDefault(); const id=e.dataTransfer.getData('text/cell-id'); if(!id)return;
+      const target=item.dataset.pageId||null; const c=cells.find(x=>x.id===id); if(!c)return; c.page_id=target;
+      await nbPatch('/api/notebooks/'+currentNb.id+'/cells/'+id+'/move',{page_id:target,sort_order:c.sort_order}).catch(()=>{});
+      renderVisibleCells(); toast('Moved'); };
+  });
+}
+
+/* Canvas layout: absolute placement from props.canvas {x,y,w,h}; drag via head, resize via handle */
+function layoutCanvas(vis){
+  vis.forEach((cell,i)=>{
+    const el=document.getElementById('cell-'+cell.id); if(!el)return;
+    const g=(cell.props&&cell.props.canvas)||{};
+    const x=g.x!=null?g.x:24+(i%3)*300, y=g.y!=null?g.y:24+Math.floor(i/3)*220, w=g.w||280, h=g.h||200;
+    el.style.left=x+'px'; el.style.top=y+'px'; el.style.width=w+'px'; el.style.height=h+'px';
+    const head=el.querySelector('.cell-head'); if(head) head.onmousedown=e=>startCanvasDrag(e,cell.id);
+  });
+}
+let _cdrag=null;
+function startCanvasDrag(e,id){
+  if(e.target.closest('input,select,button,textarea,.CodeMirror'))return;
+  if(getLayout()!=='canvas')return;
+  const el=document.getElementById('cell-'+id); const r=el.getBoundingClientRect();
+  _cdrag={id,dx:e.clientX-r.left,dy:e.clientY-r.top,el}; e.preventDefault();
+  document.addEventListener('mousemove',canvasDragMove); document.addEventListener('mouseup',canvasDragEnd);
+}
+function canvasDragMove(e){ if(!_cdrag)return; const list=document.getElementById('cells-list').getBoundingClientRect();
+  const x=Math.max(0,e.clientX-list.left-_cdrag.dx), y=Math.max(0,e.clientY-list.top-_cdrag.dy);
+  _cdrag.el.style.left=x+'px'; _cdrag.el.style.top=y+'px'; }
+function canvasDragEnd(){ if(!_cdrag)return; const c=cells.find(x=>x.id===_cdrag.id);
+  if(c){ c.props=c.props||{}; c.props.canvas=Object.assign(c.props.canvas||{},{x:parseInt(_cdrag.el.style.left),y:parseInt(_cdrag.el.style.top),w:_cdrag.el.offsetWidth,h:_cdrag.el.offsetHeight}); c._dirty=true; saveSingleCell(c); }
+  document.removeEventListener('mousemove',canvasDragMove); document.removeEventListener('mouseup',canvasDragEnd); _cdrag=null; }
+let _rz=null;
+function startResize(e,id){ if(getLayout()!=='canvas')return; e.preventDefault(); e.stopPropagation();
+  const el=document.getElementById('cell-'+id); _rz={id,el,sx:e.clientX,sy:e.clientY,w:el.offsetWidth,h:el.offsetHeight};
+  document.addEventListener('mousemove',rzMove); document.addEventListener('mouseup',rzEnd); }
+function rzMove(e){ if(!_rz)return; _rz.el.style.width=Math.max(160,_rz.w+(e.clientX-_rz.sx))+'px'; _rz.el.style.height=Math.max(120,_rz.h+(e.clientY-_rz.sy))+'px'; }
+function rzEnd(){ if(!_rz)return; const c=cells.find(x=>x.id===_rz.id);
+  if(c){ c.props=c.props||{}; c.props.canvas=Object.assign(c.props.canvas||{},{w:_rz.el.offsetWidth,h:_rz.el.offsetHeight,x:parseInt(_rz.el.style.left)||0,y:parseInt(_rz.el.style.top)||0}); c._dirty=true; saveSingleCell(c); }
+  document.removeEventListener('mousemove',rzMove); document.removeEventListener('mouseup',rzEnd); _rz=null; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Doc view + export
+══════════════════════════════════════════════════════════════════════════ */
+function enterViewMode(){
+  if(!currentNb){ toast('Open a notebook'); return; }
+  document.body.classList.add('view-mode');
+  document.getElementById('cell-scroll').style.display='none';
+  document.getElementById('bottom-bar').style.display='none';
+  document.getElementById('doc-view').style.display='flex';
+  document.getElementById('doc-view-title').textContent=currentNb.title||'Untitled';
+  const body=document.getElementById('doc-view-body'); body.innerHTML='';
+  document.getElementById('view-cell-count').textContent=cells.length+' cells';
+  cells.forEach(cell=>{
+    const content=(cell.generated||cell.content||'').trim(); if(!content&&cell.cell_type!=='image')return;
+    const sec=document.createElement('div'); sec.className='doc-section'; let h='';
+    if(cell.title)h+='<h3>'+esc(cell.title)+'</h3>';
+    if(cell.cell_type==='code')h+='<pre><code>'+esc(content)+'</code></pre>';
+    else if(cell.cell_type==='image'||cell.cell_type==='image-gen')h+='<img src="'+esc(cell.content||cell.generated)+'" style="max-width:100%;border-radius:6px">';
+    else if(cell.cell_type==='mermaid')h+='<pre><code>'+esc(content)+'</code></pre>';
+    else if(cell.cell_type==='illustrate'&&cell.generated)h+='<iframe class="iframe-html" sandbox="allow-scripts" srcdoc="'+esc(cell.generated)+'"></iframe>';
+    else h+='<div>'+renderMD(content)+'</div>';
+    sec.innerHTML=h; body.appendChild(sec);
+  });
+}
+function exitViewMode(){
+  document.body.classList.remove('view-mode');
+  document.getElementById('doc-view').style.display='none';
+  document.getElementById('cell-scroll').style.display='';
+  document.getElementById('bottom-bar').style.display='';
+  renderVisibleCells();
+}
+function printDoc(){ window.print(); }
+
+function exportNotebook(format){
+  if(!currentNb){ toast('No notebook open'); return; }
+  cells.forEach(c=>{ if(editors[c.id]) c.content=editors[c.id].getValue(); });
+  if(format==='md'){
+    let md='# '+currentNb.title+'\n\n';
+    cells.forEach(c=>{ if(c.title)md+='### '+c.title+'\n\n';
+      if(c.cell_type==='code')md+='```'+c.lang+'\n'+c.content+'\n```\n\n';
+      else if(c.cell_type==='image'||c.cell_type==='image-gen')md+='!['+(c.title||'')+']('+(c.content||c.generated)+')\n\n';
+      else md+=c.content+'\n\n';
+      if(c.generated&&c.cell_type!=='illustrate'&&c.cell_type!=='image-gen')md+='> *AI output:*\n>\n> '+c.generated.replace(/\n/g,'\n> ')+'\n\n'; });
+    download(md, currentNb.title+'.md','text/markdown');
+  } else {
+    const nb={nbformat:4,nbformat_minor:5,metadata:{kernelspec:{display_name:'Python 3',language:'python',name:'python3'},language_info:{name:'python'}},
+      cells:cells.map(c=>{ if(c.cell_type==='code')return {cell_type:'code',metadata:{},source:splitLines(c.content),outputs:[],execution_count:null};
+        let s=c.content; if(c.generated)s+='\n\n---\n*AI generated:*\n\n'+c.generated; return {cell_type:'markdown',metadata:{},source:splitLines(s)}; })};
+    download(JSON.stringify(nb,null,2), currentNb.title+'.ipynb','application/json');
   }
 }
-
-function download(content, filename, type) {
-  const blob = new Blob([content], {type});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href=url; a.download=filename; a.click();
-  URL.revokeObjectURL(url);
-}
+function splitLines(s){ return (s||'').split('\n').map((l,i,a)=>i<a.length-1?l+'\n':l); }
+function download(content,filename,type){ const b=new Blob([content],{type}); const u=URL.createObjectURL(b);
+  const a=document.createElement('a'); a.href=u; a.download=filename; a.click(); URL.revokeObjectURL(u); }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   Drag & drop reorder
+   Markdown renderer + utils (ported)
 ══════════════════════════════════════════════════════════════════════════ */
-function initDragDrop() {
-  const list = document.getElementById('cells-list');
-  let dragEl = null;
-
-  list.addEventListener('dragstart', e => {
-    const cell = e.target.closest('.cell');
-    if (!cell) return;
-    dragEl = cell;
-    cell.classList.add('dragging');
-    e.dataTransfer.effectAllowed = 'move';
-  });
-  list.addEventListener('dragend', e => {
-    if (dragEl) dragEl.classList.remove('dragging');
-    document.querySelectorAll('.cell.drag-over').forEach(c=>c.classList.remove('drag-over'));
-    dragEl = null;
-    syncCellOrder();
-  });
-  list.addEventListener('dragover', e => {
-    e.preventDefault();
-    const target = e.target.closest('.cell');
-    if (!target || target === dragEl) return;
-    document.querySelectorAll('.cell.drag-over').forEach(c=>c.classList.remove('drag-over'));
-    target.classList.add('drag-over');
-    const rect = target.getBoundingClientRect();
-    const after = e.clientY > rect.top + rect.height / 2;
-    if (after) target.after(dragEl); else target.before(dragEl);
-  });
-  list.addEventListener('drop', e => e.preventDefault());
+function _renderCodeBlock(lang,code){
+  if(lang&&typeof hljs!=='undefined'&&hljs.getLanguage(lang)){ const hl=hljs.highlight(code,{language:lang}).value;
+    return '<pre><code class="hljs language-'+lang+'">'+hl+'</code></pre>'; }
+  return '<pre><code>'+esc(code)+'</code></pre>';
 }
-
-async function syncCellOrder() {
-  if (!currentNb) return;
-  const order = [...document.querySelectorAll('.cell')].map(el=>el.dataset.id).filter(Boolean);
-  cells.sort((a,b) => order.indexOf(a.id) - order.indexOf(b.id));
-  cells.forEach((c,i) => { c.sort_order=i; c._dirty=true; });
-  try {
-    await fetch(`${API}/api/notebooks/${currentNb.id}/reorder`, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({order})
-    });
-  } catch(e) {}
-  updateCellCount();
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   Markdown renderer (simple)
-══════════════════════════════════════════════════════════════════════════ */
-function _renderCodeBlock(lang, code) {
-  if (lang && typeof hljs !== 'undefined' && hljs.getLanguage(lang)) {
-    const hl = hljs.highlight(code, {language: lang}).value;
-    const lines = hl.split('\n');
-    const nums  = lines.map((_,i)=>i+1).join('\n');
-    return `<div class="nb-code-wrap"><div class="nb-line-nums">${nums}</div><pre><code class="hljs language-${lang}">${hl}</code></pre></div>`;
-  }
-  return `<pre><code>${esc(code)}</code></pre>`;
-}
-function renderMD(text) {
-  if (!text) return '';
-  // Always use our renderer (handles hljs); marked.js would bypass it
-  return text
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/```(\w*)\n?([\s\S]*?)```/g,(_, lang, code)=>{
-      const raw = code.trim().replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>');
-      return _renderCodeBlock(lang, raw);
-    })
+function renderMD(text){
+  if(!text)return '';
+  return text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/```(\w*)\n?([\s\S]*?)```/g,(_,lang,code)=>{ const raw=code.trim().replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>'); return _renderCodeBlock(lang,raw); })
     .replace(/`([^`]+)`/g,'<code>$1</code>')
     .replace(/^### (.+)$/gm,'<h3>$1</h3>').replace(/^## (.+)$/gm,'<h2>$1</h2>').replace(/^# (.+)$/gm,'<h1>$1</h1>')
     .replace(/^---+$/gm,'<hr>')
     .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>').replace(/\*([^*]+)\*/g,'<em>$1</em>')
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>')
-    .replace(/^[*\-] (.+)$/gm,'<li>$1</li>').replace(/(<li>[\s\S]*?<\/li>\n*)+/g,s=>`<ul>${s}</ul>`)
+    .replace(/^[*\-] (.+)$/gm,'<li>$1</li>').replace(/(<li>[\s\S]*?<\/li>\n*)+/g,s=>'<ul>'+s+'</ul>')
     .replace(/^(?!<[hupbol]|<pre|<hr|<div)(.+)$/gm,'<p>$1</p>');
 }
-
-/* ══════════════════════════════════════════════════════════════════════════
-   Dive Deeper panel
-   Lets users iterate on any generated cell content via chat, research,
-   or variant generation — maintaining a persistent conversation thread.
-══════════════════════════════════════════════════════════════════════════ */
-const DIVE = {
-  cellId: null,
-  tab:    'chat',
-  ws:     null,
-  buf:    '',
-};
-
-function openDivePanel(cellId) {
-  DIVE.cellId = cellId;
-  DIVE.buf = '';
-  const cell = cells.find(c => c.id === cellId);
-  const panel = document.getElementById('dive-panel');
-  const ref = document.getElementById('dive-cell-ref');
-  if (ref) ref.textContent = cell ? cell.content.slice(0,40)+'…' : '';
-  // Restore existing thread
-  renderDiveThread(cell?.thread || []);
-  panel.style.transform = 'translateY(0)';
-  document.getElementById('dive-input')?.focus();
-}
-
-function closeDivePanel() {
-  document.getElementById('dive-panel').style.transform = 'translateY(100%)';
-  if (DIVE.ws) { try { DIVE.ws.close(); } catch(e){} DIVE.ws = null; }
-}
-
-function setDiveTab(tab) {
-  DIVE.tab = tab;
-  ['chat','research','variant'].forEach(t => {
-    const btn = document.getElementById(`dive-tab-${t}`);
-    if (!btn) return;
-    const active = t === tab;
-    btn.style.color = active ? 'var(--ac)' : 'var(--t3)';
-    btn.style.borderBottom = active ? '2px solid var(--ac)' : '2px solid transparent';
-  });
-  const ph = {
-    chat:     'Ask a question, request changes, or continue the conversation…',
-    research: 'Enter a research query to investigate further…',
-    variant:  'Describe a variation you want — different angle, style, or focus…',
-  };
-  const inp = document.getElementById('dive-input');
-  if (inp) inp.placeholder = ph[tab] || '';
-}
-
-function diveKeydown(e) {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendDiveMsg(); }
-}
-
-function renderDiveThread(thread) {
-  const el = document.getElementById('dive-messages');
-  if (!el) return;
-  const filtered = thread.filter(m => m.role !== 'system');
-  if (!filtered.length) {
-    el.innerHTML = '<div style="font-size:11px;color:var(--t3);padding:8px 0;text-align:center">Start a conversation about this cell\'s content</div>';
-    return;
-  }
-  el.innerHTML = filtered.map(m => `
-    <div style="display:flex;flex-direction:column;gap:3px">
-      <div style="font-size:9px;color:${m.role==='user'?'var(--ac)':'var(--t3)'};letter-spacing:.07em;text-transform:uppercase">${m.role}</div>
-      <div style="font-size:12px;line-height:1.55;padding:8px 10px;border-radius:6px;background:${m.role==='user'?'rgba(46,109,164,.08)':'var(--s1)'}">
-        ${m.role==='assistant' ? renderMD(m.content) : esc(m.content)}
-      </div>
-    </div>`).join('');
-  el.scrollTop = el.scrollHeight;
-}
-
-function sendDiveMsg() {
-  const inp = document.getElementById('dive-input');
-  const msg = inp?.value?.trim();
-  if (!msg || !DIVE.cellId || !currentNb) return;
-  inp.value = ''; inp.style.height = 'auto';
-
-  const tab = DIVE.tab;
-
-  // Append user message
-  const el = document.getElementById('dive-messages');
-  const addMsg = (role, content, streaming=false) => {
-    const div = document.createElement('div');
-    div.style.cssText = 'display:flex;flex-direction:column;gap:3px';
-    div.dataset.role = role;
-    div.innerHTML = `
-      <div style="font-size:9px;color:${role==='user'?'var(--ac)':'var(--t3)'};letter-spacing:.07em;text-transform:uppercase">${role}</div>
-      <div class="dive-msg-content" style="font-size:12px;line-height:1.55;padding:8px 10px;border-radius:6px;background:${role==='user'?'rgba(46,109,164,.08)':'var(--s1)'}">
-        ${role==='assistant'?'<span style="color:var(--t3)">…</span>':esc(content)}
-      </div>`;
-    el.appendChild(div);
-    el.scrollTop = el.scrollHeight;
-    return div;
-  };
-
-  addMsg('user', msg);
-  const assistDiv = addMsg('assistant', '', true);
-  const contentEl = assistDiv.querySelector('.dive-msg-content');
-
-  let buf = '';
-  let batchTimer = null;
-  const BATCH = 40;
-
-  const ws = getCellWS(DIVE.cellId);
-  DIVE.ws = ws;
-
-  const origOnMsg = ws.onmessage;
-  ws.onmessage = e => {
-    const m = JSON.parse(e.data);
-    if (m.type === 'token') {
-      buf += m.text;
-      if (batchTimer) return;
-      batchTimer = setTimeout(() => {
-        batchTimer = null;
-        contentEl.innerHTML = renderMD(buf) + '<span class="gen-cursor"></span>';
-        el.scrollTop = el.scrollHeight;
-      }, BATCH);
-    } else if (m.type === 'done') {
-      clearTimeout(batchTimer);
-      const resp = m.response || buf;
-      contentEl.innerHTML = renderMD(resp);
-      el.scrollTop = el.scrollHeight;
-      // Update cell thread
-      const cell = cells.find(c => c.id === DIVE.cellId);
-      if (cell && m.thread) cell.thread = m.thread;
-      // If variant: offer to accept into a new cell
-      if (tab === 'variant' && resp) {
-        const acceptBtn = document.createElement('button');
-        acceptBtn.style.cssText = 'margin-top:6px;font-size:10px;padding:2px 10px;border-radius:4px;background:var(--s2);border:1px solid var(--bd);color:var(--ac);cursor:pointer';
-        acceptBtn.textContent = '↑ Add as new cell';
-        acceptBtn.onclick = () => addCellWithContent(resp, cell?.cell_type || 'markdown', cell?.lang || 'python');
-        assistDiv.appendChild(acceptBtn);
-      }
-      ws.onmessage = origOnMsg;
-      buf = '';
-    } else if (m.type === 'status') {
-      contentEl.innerHTML = `<span style="color:var(--t3);font-size:10px">${esc(m.text)}</span>`;
-    } else if (origOnMsg) {
-      origOnMsg(e);
-    }
-  };
-
-  // Send action
-  const action = tab === 'research' ? 'research' : 'chat';
-  const variantMsg = tab === 'variant'
-    ? `Generate a variant of the cell content: ${msg}\n\nOriginal content:\n${cells.find(c=>c.id===DIVE.cellId)?.generated || ''}`
-    : msg;
-
-  const send = () => ws.send(JSON.stringify({action, message: variantMsg}));
-  if (ws.readyState === 1) send(); else ws.onopen = send;
-}
-
-async function addCellWithContent(content, type, lang) {
-  if (!currentNb) return;
-  const maxOrder = cells.reduce((m,c) => Math.max(m, c.sort_order||0), -1);
-  try {
-    const r = await fetch(`${API}/api/notebooks/${currentNb.id}/cells`, {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({cell_type:type, lang, tag:'none', content, sort_order:maxOrder+1})
-    });
-    const cell = await r.json();
-    cells.push(cell);
-    const list = document.getElementById('cells-list');
-    const addBar = list.querySelector('.add-cell-row');
-    const el = buildCellEl(cell, cells.length-1);
-    list.insertBefore(el, addBar);
-    if (type === 'code') initCodeMirror(cell);
-    updateCellCount();
-    toast('Added as new cell');
-    el.scrollIntoView({behavior:'smooth', block:'center'});
-  } catch(e) { toast('Error adding cell'); }
-}
-
-function autoGrow(el) {
-  el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 400) + 'px';
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   Utilities
-══════════════════════════════════════════════════════════════════════════ */
-function updateCellCount() {
-  document.getElementById('cell-count').textContent = `${cells.length} cell${cells.length!==1?'s':''}`;
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   Pages
-══════════════════════════════════════════════════════════════════════════ */
-var currentPage = null;
-var nbPages = [];
-
-function renderPages() {
-  var list = document.getElementById('pages-list');
-  if (!list) return;
-  // "All cells" item
-  var allItem = document.createElement('div');
-  allItem.className = 'page-item' + (currentPage===null ? ' active' : '');
-  allItem.id = 'page-all';
-  allItem.innerHTML = '<span class="page-item-title">All cells</span>';
-  allItem.onclick = function() { selectPage(null); };
-  list.innerHTML = '';
-  list.appendChild(allItem);
-
-  nbPages.forEach(function(p) {
-    var div = document.createElement('div');
-    div.className = 'page-item' + (currentPage===p.id ? ' active' : '');
-    div.dataset.pageId = p.id;
-
-    var inp = document.createElement('input');
-    inp.style.cssText = 'flex:1;font-size:12px;background:none;border:none;outline:none;color:var(--t1);min-width:0';
-    inp.value = p.title;
-    inp.addEventListener('blur', function() { renamePage(p.id, this.value); });
-    inp.addEventListener('keydown', function(e) { if(e.key==='Enter') this.blur(); });
-    inp.addEventListener('click', function(e) { e.stopPropagation(); });
-
-    var del = document.createElement('span');
-    del.className = 'page-del';
-    del.textContent = '✕';
-    del.title = 'Delete page';
-    del.addEventListener('click', function(e) { e.stopPropagation(); deletePage(p.id); });
-
-    div.appendChild(inp);
-    div.appendChild(del);
-    div.addEventListener('click', function() { selectPage(p.id); });
-    list.appendChild(div);
-  });
-}
-
-function selectPage(pageId) {
-  currentPage = pageId;
-  renderPages();
-  renderVisibleCells();
-}
-
-function renderVisibleCells() {
-  var visible = currentPage ? cells.filter(function(c){ return c.page_id===currentPage; }) : cells;
-  var empty = document.getElementById('empty-nb');
-  var list  = document.getElementById('cells-list');
-  if (!list) return;
-
-  // ── View mode: render as clean document ──────────────────────────────
-  if (document.body.classList.contains('view-mode')) {
-    if (empty) empty.style.display = 'none';
-    list.style.display = 'block';
-    list.innerHTML = '';
-    visible.forEach(function(cell) {
-      var div = document.createElement('div');
-      div.className = 'cell';
-      div.id = 'cell-'+cell.id;
-      div.innerHTML = buildCellViewHTML(cell);
-      list.appendChild(div);
-    });
-    document.querySelectorAll('.view-meta').forEach(function(el){
-      el.classList.toggle('show-meta', _viewMetaOn);
-    });
-    _buildToc();
-    return;
-  }
-
-  // ── Edit mode: normal rendering ───────────────────────────────────────
-  if (empty) empty.style.display = visible.length ? 'none' : '';
-  list.style.display = 'block';
-  list.innerHTML = '';
-  visible.forEach(function(cell, i) { list.appendChild(buildCellEl(cell, i)); });
-  list.appendChild(buildAddBar());
-  updateCellCount();
-  visible.forEach(function(cell) {
-    if (cell.cell_type==='code') initCodeMirror(cell);
-  });
-  initDragDrop();
-  var _page=nbPages.find(function(p){return p.id===currentPage;});
-  applyColumns(_page||null);
-  setTimeout(initPageDrag, 50);
-}
-
-async function addPage() {
-  if (!currentNb) return;
-  try {
-    var r = await fetch(API+'/api/notebooks/'+currentNb.id+'/pages', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({title:'New Page', sort_order: nbPages.length})
-    });
-    var page = await r.json();
-    nbPages.push(page);
-    currentPage = page.id;
-    renderPages();
-    renderVisibleCells();
-    setTimeout(function(){
-      var inp = document.querySelector('[data-page-id="'+page.id+'"] input');
-      if (inp) { inp.focus(); inp.select(); }
-    }, 50);
-  } catch(e) { toast('Error adding page'); }
-}
-
-async function renamePage(pageId, title) {
-  var page = nbPages.find(function(p){ return p.id===pageId; });
-  if (!page || !title.trim()) return;
-  page.title = title.trim();
-  try {
-    await fetch(API+'/api/notebooks/'+currentNb.id+'/pages/'+pageId, {
-      method:'PATCH', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({title: page.title})
-    });
-  } catch(e) {}
-  renderPages();
-}
-
-async function deletePage(pageId) {
-  if (!confirm('Delete this page? Cells will not be deleted.')) return;
-  await fetch(API+'/api/notebooks/'+currentNb.id+'/pages/'+pageId, {method:'DELETE'}).catch(function(){});
-  nbPages = nbPages.filter(function(p){ return p.id!==pageId; });
-  cells.forEach(function(c){ if(c.page_id===pageId) c.page_id=null; });
-  if (currentPage===pageId) currentPage=null;
-  renderPages();
-  renderVisibleCells();
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   Auto-name cell
-══════════════════════════════════════════════════════════════════════════ */
-async function autoNameCell(cellId) {
-  if (!currentNb) return;
-  try {
-    var r = await fetch(API+'/api/notebooks/'+currentNb.id+'/cells/'+cellId+'/name', {method:'POST'});
-    var d = await r.json();
-    if (d.title) {
-      var cell = cells.find(function(c){ return c.id===cellId; });
-      if (cell) cell.title = d.title;
-      var inp = document.querySelector('#cell-'+cellId+' .cell-title-input');
-      if (inp) inp.value = d.title;
-      toast('Named: "'+d.title+'"');
-    }
-  } catch(e) { toast('Auto-name failed'); }
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   Image cell — file/paste/drop handling
-══════════════════════════════════════════════════════════════════════════ */
-function handleImageDrop(event, cellId) {
-  event.preventDefault();
-  var drop = document.getElementById('img-drop-'+cellId);
-  if (drop) drop.classList.remove('dragover');
-  var file = event.dataTransfer.files[0];
-  if (file && file.type.startsWith('image/')) {
-    _readImageFile(file, cellId);
-  } else {
-    var url = event.dataTransfer.getData('text/plain') || event.dataTransfer.getData('text/uri-list');
-    if (url) _setImageUrl(cellId, url);
-  }
-}
-
-function handleImageFile(event, cellId) {
-  var file = event.target.files[0];
-  if (file) _readImageFile(file, cellId);
-}
-
-function _readImageFile(file, cellId) {
-  var reader = new FileReader();
-  reader.onload = function(e) { _setImageUrl(cellId, e.target.result); };
-  reader.readAsDataURL(file);
-}
-
-function _setImageUrl(cellId, url) {
-  updateCellField(cellId, 'content', url);
-  rerenderCell(cellId);
-}
-
-function rerenderCell(cellId) {
-  var cell = cells.find(function(c){ return c.id===cellId; });
-  if (!cell) return;
-  var el = document.getElementById('cell-'+cellId);
-  if (!el) return;
-  el.innerHTML = buildCellHTML(cell, cells.indexOf(cell));
-  if (cell.cell_type==='code') initCodeMirror(cell);
-}
-
-// Global paste handler for image cells
-document.addEventListener('paste', function(e) {
-  var focused = document.activeElement;
-  if (!focused) return;
-  var cellEl = focused.closest ? focused.closest('.cell') : null;
-  if (!cellEl) return;
-  var cellId = cellEl.dataset.id;
-  var cell = cells.find(function(c){ return c.id===cellId; });
-  if (!cell || cell.cell_type !== 'image') return;
-  var items = e.clipboardData && e.clipboardData.items;
-  if (!items) return;
-  for (var i=0; i<items.length; i++) {
-    if (items[i].type.indexOf('image') !== -1) {
-      e.preventDefault();
-      _readImageFile(items[i].getAsFile(), cellId);
-      break;
-    }
-  }
-});
-
-/* ══════════════════════════════════════════════════════════════════════════
-   Insert citations panel
-══════════════════════════════════════════════════════════════════════════ */
-var _sessionCits = [];  // populated from URL param or postMessage from research.html
-
-function toggleInsertPanel(cellId) {
-  var panel = document.getElementById('ins-'+cellId);
-  if (!panel) return;
-  var open = panel.classList.toggle('open');
-  if (!open) return;
-  if (!_sessionCits.length) {
-    panel.innerHTML = '<div style="font-size:11px;color:var(--t3);padding:6px">No sources loaded. Run a research query in the main UI first, then open notebooks from there.</div>';
-    return;
-  }
-  panel.innerHTML = '<div style="font-size:9px;color:var(--t3);letter-spacing:.07em;text-transform:uppercase;margin-bottom:5px">Insert from sources</div>'
-    + _sessionCits.slice(0,8).map(function(c,i){
-      var shot = c.screenshot_url||'';
-      return '<div class="insert-cit-item" onclick="insertCitation(\''+cellId+'\','+i+')">'
-        +(shot?'<img class="insert-cit-thumb" src="'+esc(shot)+'" onerror="this.style.display=\'none\'">':'<div class="insert-cit-thumb"></div>')
-        +'<div class="insert-cit-info"><div class="insert-cit-title">'+esc(c.title||c.url)+'</div>'
-        +'<div class="insert-cit-domain">'+esc(c.domain||'')+'</div></div>'
-        +(shot?'<button onclick="event.stopPropagation();insertScreenshot(\''+cellId+'\','+i+')" title="Insert screenshot" style="font-size:9px;padding:1px 5px;border-radius:3px;background:var(--s3);border:1px solid var(--bd);color:var(--t3)">📷</button>':'')
-        +'</div>';
-    }).join('');
-}
-
-function insertCitation(cellId, idx) {
-  var c = _sessionCits[idx]; if(!c) return;
-  var cell = cells.find(function(x){ return x.id===cellId; });
-  var ta = document.querySelector('#cell-'+cellId+' textarea') || (editors[cellId] ? null : null);
-  var cur = editors[cellId] ? editors[cellId].getValue() : (ta ? ta.value : (cell?cell.content:''));
-  var insert = '> **['+esc(c.title)+']('+c.url+')**\n> *'+esc(c.domain||'')+'*\n> '+esc((c.snippet||'').slice(0,200));
-  var newVal = cur ? cur+'\n\n'+insert : insert;
-  if (editors[cellId]) editors[cellId].setValue(newVal);
-  else if (ta) { ta.value=newVal; autoGrow(ta); }
-  if (cell) { cell.content=newVal; cell._dirty=true; }
-  var p=document.getElementById('ins-'+cellId); if(p)p.classList.remove('open');
-  toast('Citation inserted');
-}
-
-function insertScreenshot(cellId, idx) {
-  var c = _sessionCits[idx]; if(!c||!c.screenshot_url) return;
-  addCellAfter(cellId, 'image', c.screenshot_url, c.title||'');
-  var p=document.getElementById('ins-'+cellId); if(p)p.classList.remove('open');
-}
-
-function addCellAfter(afterId, type, content, title) {
-  // Insert a new cell of given type after afterId
-  var afterCell = cells.find(function(c){ return c.id===afterId; });
-  var sort = afterCell ? afterCell.sort_order+0.5 : cells.length;
-  fetch(API+'/api/notebooks/'+currentNb.id+'/cells', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({cell_type:type||'markdown',lang:'python',tag:'none',
-      content:content||'',sort_order:sort,page_id:afterCell?afterCell.page_id:currentPage,title:title||''})
-  }).then(function(r){ return r.json(); }).then(function(cell){
-    var idx = cells.findIndex(function(c){ return c.id===afterId; });
-    if (idx>=0) cells.splice(idx+1,0,cell); else cells.push(cell);
-    cells.forEach(function(c,i){ c.sort_order=i; });
-    renderVisibleCells();
-    toast('Cell added');
-  }).catch(function(){ toast('Error adding cell'); });
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   Save generated to new cell
-══════════════════════════════════════════════════════════════════════════ */
-function genToCell(cellId) {
-  var cell = cells.find(function(c){ return c.id===cellId; });
-  if (!cell || !cell.generated) return;
-  addCellAfter(cellId, 'markdown', cell.generated, '');
-  toast('Generated content saved as new cell');
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   Receive session citations from parent window (research.html)
-══════════════════════════════════════════════════════════════════════════ */
-window.addEventListener('message', function(e) {
-  if (e.data && e.data.type === 'vera-citations') {
-    _sessionCits = e.data.citations || [];
-  }
-});
-// Also try to read from opener
-try {
-  if (window.opener && window.opener.S && window.opener.S.cits) {
-    _sessionCits = window.opener.S.cits;
-  }
-} catch(e) {}
-
-
-
-function copyFileContent(cellId) {
-  var cell = cells.find(function(c){ return c.id===cellId; });
-  if (!cell) return;
-  navigator.clipboard.writeText(cell.content||'').then(function(){ toast('Copied'); }).catch(function(){ toast('Copy failed'); });
-}
-
-function editFileCell(cellId) {
-  var cell = cells.find(function(c){ return c.id===cellId; });
-  if (!cell) return;
-  // Convert to code cell temporarily for editing
-  cell.cell_type = 'code';
-  rerenderCell(cellId);
-  toast('Editing as code — change type back to File when done');
-}
-
-
-/* ── Column layout ──────────────────────────────────────────────────────── */
-function setColumns(n){
-  var list=document.getElementById('cells-list');
-  if(list) list.className=n>1?'cols-'+n:'';
-  [1,2,3].forEach(function(i){
-    var b=document.getElementById('col-'+i);
-    if(b) b.classList.toggle('active',i===n);
-  });
-  if(currentNb && currentPage){
-    var page=nbPages.find(function(p){return p.id===currentPage;});
-    if(page){
-      page.column_count=n;
-      fetch(API+'/api/notebooks/'+currentNb.id+'/pages/'+currentPage,{
-        method:'PATCH',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({column_count:n})
-      }).catch(function(){});
-    }
-  }
-}
-
-function applyColumns(page){
-  var cols=page?parseInt(page.column_count)||1:1;
-  var list=document.getElementById('cells-list');
-  if(list) list.className=cols>1?'cols-'+cols:'';
-  [1,2,3].forEach(function(i){
-    var b=document.getElementById('col-'+i); if(b) b.classList.toggle('active',i===cols);
-  });
-  var ctrl=document.getElementById('page-col-ctrl');
-  if(ctrl) ctrl.style.display=currentPage?'flex':'none';
-}
-
-/* ── Delete notebook ─────────────────────────────────────────────────────── */
-async function deleteCurrentNotebook(){
-  if(!currentNb) return;
-  if(!confirm('Delete notebook "'+currentNb.title+'"? Cannot be undone.')) return;
-  try{
-    await fetch(API+'/api/notebooks/'+currentNb.id,{method:'DELETE'});
-    currentNb=null; cells=[]; nbPages=[]; currentPage=null;
-    document.getElementById('nb-title-input').value='';
-    document.getElementById('cells-list').innerHTML='';
-    renderPages();
-    await loadNotebooks();
-    toast('Notebook deleted');
-  }catch(e){toast('Delete failed: '+e.message);}
-}
-
-/* ── Drag cells between pages ────────────────────────────────────────────── */
-var _dragCellId=null;
-
-function initPageDrag(){
-  var cellEls=document.querySelectorAll('#cells-list .cell');
-  cellEls.forEach(function(el){
-    el.draggable=true;
-    el.addEventListener('dragstart',function(e){
-      _dragCellId=el.dataset.id;
-      e.dataTransfer.setData('text/cell-id',_dragCellId);
-      e.dataTransfer.effectAllowed='move';
-      el.classList.add('dragging-to-page');
-    });
-    el.addEventListener('dragend',function(){
-      el.classList.remove('dragging-to-page');
-      _dragCellId=null;
-      document.querySelectorAll('.page-item.drag-target').forEach(function(p){p.classList.remove('drag-target');});
-    });
-  });
-  var pageItems=document.querySelectorAll('#pages-list .page-item');
-  pageItems.forEach(function(item){
-    item.addEventListener('dragover',function(e){
-      if(!_dragCellId)return;
-      e.preventDefault(); e.dataTransfer.dropEffect='move';
-      item.classList.add('drag-target');
-    });
-    item.addEventListener('dragleave',function(){item.classList.remove('drag-target');});
-    item.addEventListener('drop',async function(e){
-      e.preventDefault();
-      item.classList.remove('drag-target');
-      var cellId=e.dataTransfer.getData('text/cell-id')||_dragCellId;
-      if(!cellId||!currentNb)return;
-      var targetPageId=item.dataset.pageId||null;
-      if(item.id==='page-all') targetPageId=null;
-      var cell=cells.find(function(c){return c.id===cellId;});
-      if(!cell)return;
-      cell.page_id=targetPageId;
-      try{
-        await fetch(API+'/api/notebooks/'+currentNb.id+'/cells/'+cellId+'/move',{
-          method:'PATCH',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({page_id:targetPageId,sort_order:cell.sort_order})
-        });
-      }catch(ex){toast('Move failed');}
-      renderVisibleCells();
-      var pageName=targetPageId?(nbPages.find(function(p){return p.id===targetPageId;})||{title:'page'}).title:'All cells';
-      toast('Moved to '+pageName);
-    });
-  });
-}
-
-
-/* ══════════════════════════════════════════════════════════════════════════
-   Notebook document view — renders in #doc-view inside #editor
-══════════════════════════════════════════════════════════════════════════ */
-var _viewMetaOn = false;
-
-function enterViewMode() {
-  if (!currentNb) { toast('Open a notebook first'); return; }
-  document.getElementById('cell-scroll').style.display = 'none';
-  document.getElementById('bottom-bar').style.display  = 'none';
-  document.getElementById('doc-view').style.display    = 'flex';
-  document.getElementById('view-mode-btn').style.display = 'none';
-  document.getElementById('doc-view-title').textContent = currentNb.title || 'Untitled';
-  _buildDocView();
-  history.pushState({view:true}, '', '?nb='+(currentNb?currentNb.id:'')+'&view=1');
-}
-
-function exitViewMode() {
-  document.getElementById('doc-view').style.display    = 'none';
-  document.getElementById('cell-scroll').style.display = 'flex';
-  document.getElementById('bottom-bar').style.display  = '';
-  document.getElementById('view-mode-btn').style.display = '';
-  var toc = document.getElementById('view-toc');
-  if (toc) toc.style.display = 'none';
-  history.pushState({}, '', '?nb='+(currentNb?currentNb.id:''));
-}
-
-function _buildDocView() {
-  var visibleCells = currentPage
-    ? cells.filter(function(c){ return c.page_id === currentPage; })
-    : cells;
-
-  // Build document index if multiple pages or many cells
-  var idxEl = document.getElementById('doc-view-index');
-  var bodyEl = document.getElementById('doc-view-body');
-  var countEl = document.getElementById('view-cell-count');
-  if (countEl) countEl.textContent = visibleCells.length + ' cell' + (visibleCells.length !== 1 ? 's' : '');
-
-  bodyEl.innerHTML = '';
-
-  // Group by page if pages exist
-  var grouped = [];
-  if (nbPages && nbPages.length > 0) {
-    // One group per page (in order)
-    nbPages.forEach(function(p) {
-      var pageCells = cells.filter(function(c){ return c.page_id === p.id; });
-      if (pageCells.length) grouped.push({title: p.title, cells: pageCells, id: p.id});
-    });
-    // Cells not assigned to any page
-    var unassigned = cells.filter(function(c){ return !c.page_id; });
-    if (unassigned.length) grouped.unshift({title: null, cells: unassigned, id: 'root'});
-  } else {
-    grouped.push({title: null, cells: visibleCells, id: 'root'});
-  }
-
-  // Render index if multiple groups
-  if (grouped.length > 1) {
-    var idxHtml = '<div style="font-size:9px;color:var(--t3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px">Document Index</div>';
-    grouped.forEach(function(g, gi) {
-      if (!g.title) return;
-      idxHtml += '<div class="doc-idx-item" onclick="document.getElementById(\'doc-sec-'+g.id+'\').scrollIntoView({behavior:\'smooth\'})">'
-        + '<span style="font-size:10px;color:var(--t3);min-width:20px">'+(gi+1)+'.</span>'
-        + '<span class="doc-idx-title">'+esc(g.title)+'</span>'
-        + '<span style="font-size:9px;color:var(--t3)">'+g.cells.length+' cells</span>'
-        + '</div>';
-    });
-    idxEl.innerHTML = idxHtml;
-    idxEl.style.display = '';
-  } else {
-    idxEl.style.display = 'none';
-  }
-
-  // Render each group
-  grouped.forEach(function(g) {
-    var secDiv = document.createElement('div');
-    secDiv.className = 'doc-section';
-    secDiv.id = 'doc-sec-' + g.id;
-    var secHtml = '';
-    if (g.title) secHtml += '<h2 style="font-size:1.35em;font-weight:600;margin:0 0 1em;padding-bottom:.3em;border-bottom:1px solid var(--bd)">'+esc(g.title)+'</h2>';
-    g.cells.forEach(function(cell) {
-      var content = (cell.generated || cell.content || '').trim();
-      if (!content) return;
-      secHtml += '<div class="doc-section-meta'+(+_viewMetaOn?' show':'')+'">'
-        + (cell.title ? '<strong>'+esc(cell.title)+'</strong> · ' : '')
-        + esc(cell.cell_type)
-        + (cell.tag && cell.tag !== 'none' ? ' · '+esc(cell.tag) : '')
-        + '</div>';
-      if (cell.cell_type === 'code') {
-        secHtml += '<pre style="background:var(--s1);border:1px solid var(--bd);border-radius:6px;padding:13px;overflow-x:auto;font-size:12px;margin:.8em 0"><code>'+esc(content)+'</code></pre>';
-      } else if (cell.cell_type === 'image') {
-        secHtml += '<img src="'+esc(content)+'" style="max-width:100%;border-radius:5px;margin:.8em 0" onerror="this.style.display=\'none\'">';
-      } else {
-        secHtml += '<div style="margin-bottom:1.6em">'+renderMD(content)+'</div>';
-      }
-    });
-    secDiv.innerHTML = secHtml;
-    bodyEl.appendChild(secDiv);
-  });
-
-  _buildDocToc();
-}
-
-function toggleViewMeta() {
-  _viewMetaOn = !_viewMetaOn;
-  var btn = document.getElementById('vtb-meta');
-  if (btn) { btn.style.borderColor = _viewMetaOn ? 'var(--ac)' : ''; btn.style.color = _viewMetaOn ? 'var(--ac)' : ''; }
-  document.querySelectorAll('.doc-section-meta').forEach(function(el){
-    el.classList.toggle('show', _viewMetaOn);
-  });
-}
-
-function toggleViewToc() {
-  var toc = document.getElementById('view-toc');
-  if (!toc) return;
-  var showing = toc.style.display !== 'none' && toc.style.display !== '';
-  toc.style.display = showing ? 'none' : 'block';
-}
-
-function printDoc() { window.print(); }
-
-function _buildDocToc() {
-  var toc = document.getElementById('view-toc');
-  if (!toc) return;
-  var headings = document.querySelectorAll('#doc-view-body h1,#doc-view-body h2,#doc-view-body h3,#doc-view-content>h1');
-  if (!headings.length) { toc.innerHTML = '<div style="font-size:11px;color:var(--t3);padding:4px 6px">No headings found</div>'; return; }
-  var html = '<div style="font-size:9px;color:var(--t3);letter-spacing:.07em;text-transform:uppercase;padding:2px 6px 6px;border-bottom:1px solid var(--bd);margin-bottom:4px">Contents</div>';
-  headings.forEach(function(h, i) {
-    var level = h.tagName.toLowerCase();
-    var id = 'vtoc-h-' + i; h.id = id;
-    var cls = level === 'h1' ? 'font-weight:600;color:var(--t2)' : level === 'h2' ? 'padding-left:10px' : 'padding-left:18px;font-size:10px';
-    html += '<a style="display:block;font-size:11px;color:var(--t3);padding:2px 6px;border-radius:3px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-decoration:none;'+cls+'" onclick="document.getElementById(\''+id+'\').scrollIntoView({behavior:\'smooth\'});toggleViewToc()">'+esc(h.textContent.slice(0,50))+'</a>';
-  });
-  toc.innerHTML = html;
-}
-
-/* view-mode rendering handled by _buildDocView */
-
-/* Check URL param on load */
-(function(){
-  var params = new URLSearchParams(window.location.search);
-  if (params.get('view') === '1') {
-    window._autoViewMode = true;
-  }
-})();
-
-function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
-function formatAge(s){if(s<60)return Math.round(s)+'s';if(s<3600)return Math.round(s/60)+'m';if(s<86400)return Math.round(s/3600)+'h';return Math.round(s/86400)+'d';}
-function toast(msg){
-  const t=document.createElement('div');t.className='toast';t.textContent=msg;document.body.appendChild(t);
-  setTimeout(()=>{t.style.opacity='0';setTimeout(()=>t.remove(),300);},2200);
-}
+function updateCellCount(){ const el=document.getElementById('cell-count'); if(el)el.textContent=cells.length+' cell'+(cells.length!==1?'s':''); }
+function autoGrow(el){ el.style.height='auto'; el.style.height=Math.min(el.scrollHeight,400)+'px'; }
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function formatAge(s){ if(s<60)return Math.round(s)+'s'; if(s<3600)return Math.round(s/60)+'m'; if(s<86400)return Math.round(s/3600)+'h'; return Math.round(s/86400)+'d'; }
+function toast(msg){ const t=document.createElement('div'); t.className='toast'; t.textContent=msg; document.body.appendChild(t);
+  setTimeout(()=>{ t.style.opacity='0'; setTimeout(()=>t.remove(),300); },2200); }
 </script>
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>

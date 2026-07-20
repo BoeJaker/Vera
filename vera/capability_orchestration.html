@@ -1,11 +1,27 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash.
+  Cached vars are only replayed when they were resolved FOR the cached theme id
+  (vera:ui:themeVarsFor stamp) — otherwise stale dark vars would override a
+  light [data-theme] like ash and the whole shell paints black. */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  if(t&&S.getItem('vera:ui:themeVarsFor')===t){
+    var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+    if(v)for(var k in v)d.style.setProperty(k,v[k]);}}catch(e){}})();</script>
 <meta charset="UTF-8">
 <title>Vera — Orchestrator Harness</title>
 <script src="/ui/vera-ui.js"></script>
+<!-- Fonts loaded non-render-blocking: the shell paints immediately with the
+     system fallbacks in the CSS var stacks, then swaps in the web fonts if/when
+     they arrive. On a LAN box with slow/no route to Google, this avoids the
+     multi-second blank-page stall the render-blocking @import used to cause. -->
+<link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" media="print" onload="this.media='all'"
+      href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap">
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
 /* ── Warm dark (default) ── */
 :root{
   /* Warm dark — charcoal with warm undertones */
@@ -43,6 +59,13 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .logo{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--acc);letter-spacing:3px;display:flex;align-items:center;gap:6px;flex-shrink:0}
 .logo-hex{width:16px;height:16px;background:var(--acc);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);animation:pulse 3s ease-in-out infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.55}}
+/* Reusable loading overlay + spinner for lazily-loaded tab iframes, widgets and pop-outs */
+.vera-loading{position:absolute;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;gap:10px;background:color-mix(in srgb,var(--bg1,#16181d) 60%,transparent);backdrop-filter:blur(1px);animation:veraLoadingIn .12s ease-out}
+.vera-spinner{width:26px;height:26px;border-radius:50%;flex-shrink:0;border:2.5px solid var(--border2,#333);border-top-color:var(--acc,#5a9e8f);animation:veraSpin .7s linear infinite}
+.vera-spinner.sm{width:16px;height:16px;border-width:2px}
+.vera-loading .lbl{font-family:var(--mono);font-size:10.5px;color:var(--dim2);letter-spacing:.5px}
+@keyframes veraSpin{to{transform:rotate(360deg)}}
+@keyframes veraLoadingIn{from{opacity:0}to{opacity:1}}
 .dot{width:6px;height:6px;border-radius:50%;background:var(--err);transition:background .4s;flex-shrink:0}
 .dot.live{background:var(--ok);box-shadow:0 0 5px var(--ok)}.dot.warn{background:var(--warn)}
 .conn-label{color:var(--dim2);font-size:10px;font-family:var(--mono);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -53,11 +76,42 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .url-input{background:var(--bg0);border:1px solid var(--border2);color:var(--text);padding:3px 8px;border-radius:3px;font-family:var(--mono);font-size:10.5px;width:190px}
 .url-input:focus{outline:none;border-color:var(--acc)}
 
+/* HEADER METRIC BAR — configurable live meters (Ollama load, dream proximity,
+   stack-monitor CPU/RAM/Docker/Proxmox/queue), embedded in the top header next
+   to the node pills. Replaces the old standalone load-strip row. */
+#hdrMetrics{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:9.5px;overflow:hidden;min-width:0;flex-shrink:1}
+#hdrMetrics .ls-meter{width:64px}
+#hdrMetricCfgWrap{position:relative;flex-shrink:0}
+#hdrMetricBtn{padding:2px 6px;font-size:10px;line-height:1.2}
+#hdrMetricCfg{position:absolute;top:calc(100% + 7px);right:0;z-index:2000;background:var(--bg2);border:1px solid var(--border2);border-radius:5px;box-shadow:0 8px 22px rgba(0,0,0,.5);padding:8px 11px;display:none;min-width:210px}
+#hdrMetricCfg .hm-cfg-title{font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:5px}
+#hdrMetricCfg label{display:flex;align-items:center;gap:7px;font-size:10.5px;color:var(--dim2);padding:3px 0;cursor:pointer;font-family:var(--sans);user-select:none}
+#hdrMetricCfg label:hover{color:var(--text)}
+#hdrMetricCfg .hm-desc{font-size:8.5px;color:var(--dim);margin-left:auto;font-family:var(--mono)}
+.ls-group{display:flex;align-items:center;gap:6px;white-space:nowrap;min-width:0}
+.ls-label{color:var(--dim);letter-spacing:1.4px;font-weight:700}
+.ls-icon{font-size:11px;line-height:1;color:var(--dim2)}
+.ls-meter{width:84px;height:5px;border-radius:3px;background:var(--bg3);overflow:hidden;flex-shrink:0;border:1px solid var(--border)}
+.ls-meter-fill{height:100%;width:0%;border-radius:3px;background:var(--ok);transition:width .5s ease,background .4s ease}
+.ls-meter-fill.warn{background:var(--warn)}
+.ls-meter-fill.hot{background:var(--err)}
+.ls-meter-fill.dream{background:var(--acc4)}
+.ls-val{color:var(--dim2);overflow:hidden;text-overflow:ellipsis}
+.ls-sep{width:1px;height:13px;background:var(--border);flex-shrink:0}
+/* Approaching a dream cycle — amber emphasis */
+.ls-group.approaching .ls-icon,.ls-group.approaching .ls-val{color:var(--warn)}
+/* In a dream cycle — violet, pulsing icon + fill */
+.ls-group.dreaming .ls-icon{color:var(--acc4);animation:lsDreamPulse 2.4s ease-in-out infinite}
+.ls-group.dreaming .ls-val{color:var(--acc4);font-weight:700}
+.ls-meter-fill.pulse{animation:lsFillPulse 2.4s ease-in-out infinite}
+@keyframes lsDreamPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(1.18)}}
+@keyframes lsFillPulse{0%,100%{opacity:1}50%{opacity:.5}}
+
 /* BUTTONS */
 .btn{display:inline-flex;align-items:center;gap:4px;padding:4px 11px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg2);color:var(--dim2);cursor:pointer;font-family:var(--sans);font-size:11px;font-weight:500;transition:all .14s;white-space:nowrap;letter-spacing:.01em}
 .btn:hover{border-color:var(--acc);color:var(--acc);background:rgba(123,159,247,.1)}
-.btn.primary{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
-.btn.primary:hover{filter:brightness(1.1);color:#fff}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#fff);font-weight:600}
+.btn.primary:hover{filter:brightness(1.1);color:var(--on-acc,#fff)}
 .btn.teal{background:rgba(0,212,170,.1);border-color:var(--acc2);color:var(--acc2)}
 .btn.amber{background:rgba(245,158,11,.1);border-color:var(--acc3);color:var(--acc3)}
 .btn.gpu-btn{background:rgba(255,112,67,.12);border-color:var(--gpu);color:var(--gpu)}
@@ -74,7 +128,7 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .event-feed{flex:1;overflow-y:auto;padding:3px}
 /* Observe panel */
 .obs-chip{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:10px;font-size:9px;cursor:pointer;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);transition:.15s;user-select:none}
-.obs-chip.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.obs-chip.on{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#fff)}
 .obs-chip.err{background:var(--err);border-color:var(--err);color:#fff}
 .obs-chip.warn{background:#d97706;border-color:#d97706;color:#fff}
 .obs-chip.ok{background:var(--ok);border-color:var(--ok);color:#fff}
@@ -95,7 +149,7 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .feed-filter-chip.on{background:rgba(123,159,247,.25);border-color:var(--acc);color:var(--acc)}
 .ev{padding:2px 6px;border-radius:2px;font-size:9.5px;border-left:2px solid transparent;margin-bottom:1px;line-height:1.6;word-break:break-all;font-family:var(--mono)}
 .ev:hover{background:rgba(255,255,255,.02)}
-.ev.ok{border-color:var(--ok)}.ev.err{border-color:var(--err);color:#fca5a5}.ev.info{border-color:var(--acc)}.ev.warn{border-color:var(--warn)}
+.ev.ok{border-color:var(--ok)}.ev.err{border-color:var(--err);color:var(--err)}.ev.info{border-color:var(--acc)}.ev.warn{border-color:var(--warn)}
 .ev-time{color:var(--dim)}
 .main{flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative}
 
@@ -204,21 +258,37 @@ select option{background:var(--bg2)}
 .tv-ok{color:var(--ok)}.tv-err{color:var(--err)}.tv-neu{color:var(--acc)}.tv-warn{color:var(--warn)}
 
 /* ── DASHBOARD (scoped to #panel-dashboard only — does NOT bleed to other tabs) ── */
-#panel-dashboard{padding:14px 16px 18px}
+/* Trailing bottom room so the bottom-row widgets always have empty scroll
+   space to be resized/expanded into (see .dash-grid flex + editing rules). */
+#panel-dashboard{padding:14px 16px 120px}
 #panel-dashboard .dash-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap}
 #panel-dashboard .dash-toolbar .dash-title{font-size:11px;font-weight:600;color:var(--text);letter-spacing:.4px;display:flex;align-items:center;gap:8px;margin-right:auto}
 #panel-dashboard .dash-toolbar .dash-title::before{content:'';width:3px;height:14px;background:linear-gradient(180deg,var(--acc),var(--acc2));border-radius:2px}
 #panel-dashboard .dash-meta{font-size:9.5px;color:var(--dim2);font-family:var(--mono)}
 
-/* Configurable widget grid */
-.dash-grid{display:grid;grid-template-columns:repeat(12,1fr);grid-auto-rows:minmax(58px,auto);gap:10px;margin-bottom:14px}
-.dash-grid.editing{outline:1px dashed var(--border2);outline-offset:6px;border-radius:6px;background:repeating-linear-gradient(45deg,transparent 0 11px,rgba(255,255,255,.012) 11px 22px)}
+/* Configurable widget grid.
+   flex:0 0 auto — the dashboard panel is a flex column (.panel.active); without
+   this the grid is flex-shrunk toward its min-content height on a short viewport,
+   collapsing every row to its minmax() minimum (squished widgets) and stopping
+   the panel from ever scrolling. Keeping natural height lets the panel overflow
+   and scroll instead. */
+.dash-grid{display:grid;grid-template-columns:repeat(12,1fr);grid-auto-rows:minmax(58px,auto);gap:10px;margin-bottom:14px;flex:0 0 auto}
+/* While configuring, add a tall drop zone below the grid so widgets can be
+   dragged/resized down into fresh scroll space instead of hitting the edge. */
+.dash-grid.editing{outline:1px dashed var(--border2);outline-offset:6px;border-radius:6px;background:repeating-linear-gradient(45deg,transparent 0 11px,rgba(255,255,255,.012) 11px 22px);padding-bottom:220px}
 
 .widget{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow);display:flex;flex-direction:column;min-width:0;overflow:hidden;position:relative;transition:border-color .15s,transform .15s}
 .widget:hover{border-color:var(--border2)}
 .widget.dragging{opacity:.45;transform:scale(.985)}
 .widget.drag-over{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc),var(--shadow)}
 .widget.hidden{display:none}
+/* Popped-out (floating) widget: lifted out of the grid with position:fixed so it
+   stays mounted (its iframe/content keeps running) while floating over the page.
+   A same-size placeholder (.w-float-ph) holds its grid slot until it docks. */
+.widget.floating{position:fixed;z-index:9000;resize:both;overflow:hidden;min-width:280px;min-height:180px;box-shadow:0 18px 60px rgba(0,0,0,.65);border-color:var(--acc);background:var(--bg2)}
+.widget.floating .w-head{cursor:move}
+.widget.floating .w-actions{opacity:1}
+.w-iconbtn.w-pop.on{color:var(--acc)}
 
 /* Widget head */
 .w-head{display:flex;align-items:center;gap:6px;padding:7px 10px 6px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,rgba(255,255,255,.014),transparent);flex-shrink:0}
@@ -394,8 +464,15 @@ select option{background:var(--bg2)}
   <div class="dot" id="dot"></div>
   <span class="conn-label" id="connLabel">disconnected</span>
   <div id="hdrPills"></div>
+  <div class="ls-sep" style="flex-shrink:0"></div>
+  <!-- Configurable metric bar — meters rendered by renderHdrMetrics() -->
+  <div id="hdrMetrics"></div>
+  <div id="hdrMetricCfgWrap">
+    <button class="btn sm" id="hdrMetricBtn" onclick="hdrMetricsToggleCfg(event)" title="Choose which metrics show in the header">▦</button>
+    <div id="hdrMetricCfg"></div>
+  </div>
   <div class="hdr-right">
-      <button class="btn sm" id="themeBtn" onclick="toggleTheme()" title="Toggle light/dark mode" style="padding:3px 8px;font-size:13px">☀</button>
+      <button class="btn sm" id="themeBtn" onclick="openThemeMenu(event)" oncontextmenu="event.preventDefault();toggleTheme()" title="Choose theme (right-click to cycle)" style="padding:3px 8px;font-size:13px">☀</button>
     <input class="url-input" id="backendUrl" value="" placeholder="http://host:8999">
     <button class="btn primary" onclick="connect()">Connect</button>
     <button class="btn sm" onclick="refreshAll()">↻</button>
@@ -447,6 +524,12 @@ select option{background:var(--bg2)}
         <button class="tab-ctrl-btn" onclick="tabToggleLhm()" title="Toggle left-hand menu" id="tabLhmBtn">☰</button>
         <button class="tab-ctrl-btn" onclick="tabToggleAutohide()" title="Auto-hide tabs" id="tabAutohideBtn">⇕</button>
         <button class="tab-ctrl-btn" onclick="tabAddPane()" title="Open additional panel alongside">+</button>
+        <button class="tab-ctrl-btn" onclick="openTabPicker()" id="tabPickerBtn"
+                title="Add any registered panel as a top-level tab (right-click a custom tab to remove it)">⊞</button>
+        <button class="tab-ctrl-btn" onclick="openActiveStandalone()"
+                title="Open the current tab in its own standalone browser tab">↗</button>
+        <button class="tab-ctrl-btn" onclick="openStandalonePicker()"
+                title="Open any panel standalone in a new browser tab">⧉</button>
       </div>
     </div>
 
@@ -464,6 +547,9 @@ select option{background:var(--bg2)}
       <div class="lhm-nav-foot">
         <button class="tab-ctrl-btn" onclick="tabToggleLhm()" title="Switch to horizontal tabs">☰</button>
         <button class="tab-ctrl-btn" onclick="tabAddPane()" title="Open additional panel">+</button>
+        <button class="tab-ctrl-btn" onclick="openTabPicker()" title="Add any registered panel as a top-level tab">⊞</button>
+        <button class="tab-ctrl-btn" onclick="openActiveStandalone()" title="Open the current tab in its own standalone browser tab">↗</button>
+        <button class="tab-ctrl-btn" onclick="openStandalonePicker()" title="Open any panel standalone in a new browser tab">⧉</button>
         <button class="tab-ctrl-btn" id="lhmEventsBtn" onclick="_lhmToggleEvents()" title="Toggle live events">◎</button>
       </div>
     </nav>
@@ -494,6 +580,20 @@ select option{background:var(--bg2)}
 
         <!-- The reactive grid — every child .widget is configurable -->
         <div class="dash-grid" id="dashGrid">
+
+          <!-- ── System Monitor (proxmox + docker + ollama, with graphs) ── -->
+          <div class="widget w-w12 w-h5" data-wid="sysmon" data-panel="system-monitor">
+            <div class="w-head">
+              <span class="w-grip">⠿</span>
+              <span class="w-dot ok"></span>
+              <span class="w-title">▦ System Monitor</span>
+              <span class="w-actions"><button class="w-iconbtn" onclick="dashHideWidget('sysmon')">×</button></span>
+            </div>
+            <div class="w-body flush" style="padding:0;position:relative">
+              <iframe src="/sysmon/panel" style="width:100%;height:100%;min-height:440px;border:none;background:transparent"></iframe>
+            </div>
+            <span class="w-resize" data-resize></span>
+          </div>
 
           <!-- ── KPI: Status ── -->
           <div class="widget w-w2 w-h1" data-wid="status">
@@ -1049,14 +1149,23 @@ const wsUrl = ()=>base().replace(/^http/,'ws')+'/ws/mcp';
 // even before connect() is called and even if the URL changes.
 Object.defineProperty(window, '_veraBase', { get: base, configurable: true });
 
-// _veraResearcherUrl — points to researcher_api server (default :8765).
-// NLP panel ctx.llm() calls need the researcher URL, not the capability backend.
-// Reads from localStorage 'cfg-url' (same key as research.html) so they stay in sync.
+// _veraResearcherUrl — researcher_api is co-located on the orchestrator now, so
+// its routes live on THIS origin (same as base()). The legacy standalone :8765
+// default is dead (404) and, being http://, is mixed-content-blocked on the
+// https UI. Only honour an explicit cfg-url override when it isn't that dead
+// port or an https→http downgrade; otherwise use the capability backend base.
 Object.defineProperty(window, '_veraResearcherUrl', {
   get: () => {
     try {
-      return (localStorage.getItem('cfg-url') || ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8765')).replace(/\/$/, '');
-    } catch(e) { return ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8765'); }
+      const s = localStorage.getItem('cfg-url');
+      if (s) {
+        const u = new URL(s);
+        const mixed = (location.protocol === 'https:' && u.protocol === 'http:');
+        const deadPort = (u.port === '8765' && location.port !== '8765');
+        if (!mixed && !deadPort) return (u.protocol + '//' + u.host);
+      }
+    } catch(e) {}
+    return base();
   },
   configurable: true,
 });
@@ -1264,9 +1373,14 @@ function _tabRender(){
     const pid = _panelIdFromEl(p);
     if(_openTabs.has(pid)){
       p.classList.add('active');
+      _ensurePanelLoaded(p);   // lazy tab iframes load on first show
       visibleCount++;
     } else {
       p.classList.remove('active');
+      // Drop any drag-resize sizing so a reopened tab gets a fresh equal share
+      // instead of snapping back to the previous split layout.
+      p.style.flex = ''; p.style.width = '';
+      _schedulePark(p);        // reclaim long-hidden tab iframes (stop their polling)
     }
   });
 
@@ -1319,6 +1433,18 @@ function _attachDividerDrag(divider){
       next.style.width = Math.max(120, nextStart - delta) + 'px';
     };
     const onUp = ()=>{
+      // Convert the fixed pixel widths back into proportional flex values so
+      // panels stay fluid: leaving flex:none + px widths frozen the layout,
+      // so closing a tab left a blank gap and reopened tabs kept old sizes.
+      if(panelsEl){
+        const panels = [...panelsEl.querySelectorAll('.panel.active')];
+        const widths = panels.map(p=>p.getBoundingClientRect().width);
+        const total  = widths.reduce((a,b)=>a+b,0);
+        if(total>0) panels.forEach((p,i)=>{
+          p.style.flex  = (widths[i]/total*panels.length).toFixed(4)+' 1 0px';
+          p.style.width = '';
+        });
+      }
       divider.classList.remove('dragging');
       if(panelsEl) panelsEl.classList.remove('resizing');
       document.body.style.cursor = '';
@@ -1574,6 +1700,8 @@ function handleLiveEvent(ev){
   if(!ev) return;
   const t=ev.type||'event';
   const cls=(t.includes('error')||t.includes('fail'))? 'err':(t.includes('done')||t.includes('ok'))? 'ok':t.includes('warn')? 'warn':'info';
+  // Dream lifecycle/scheduler events → refresh the top-strip dream indicator
+  if(t.startsWith('dream.scheduler.')||t.startsWith('dream.cycle.')) nudgeDreamState();
   // Backend errors/status go to syslog feed always
   if(t==='backend.error'){
     addEv('err',`[backend.${ev.backend}] ${ev.op||'connect'} FAILED: ${ev.error||''}`);
@@ -1652,12 +1780,11 @@ function handleLiveEvent(ev){
   if(_fabricHandleEvent && _fabricHandleEvent(ev)) return;
   // Theme changed from another panel (e.g. UI builder) — apply to harness + iframes
   if(t === 'ui.theme.changed' && ev.theme){
-    _currentTheme = ev.theme;
-    if(ev.vars) _applyThemeVars(ev.vars);
-    _updateThemeBtn(ev.theme);
-    try{ localStorage.setItem('vera-theme', ev.theme); }catch(e){}
-    document.querySelectorAll('iframe').forEach(f=>{
-      try{ f.contentWindow.postMessage({type:'vera:theme', theme:ev.theme, vars:ev.vars}, '*'); }catch(e){}
+    _applyThemeById(ev.theme, ev.vars).then(()=>{
+      const vars = ev.vars || (_allThemesCache && _allThemesCache[ev.theme] && _allThemesCache[ev.theme].vars);
+      document.querySelectorAll('iframe').forEach(f=>{
+        try{ f.contentWindow.postMessage({type:'vera:theme', theme:ev.theme, vars}, '*'); }catch(e){}
+      });
     });
     return;
   }
@@ -1705,7 +1832,263 @@ function renderHdrPills(){
       ${i.has_gpu?'⚡':''}${iid} <span style="color:${col}">${lat}</span>
     </div>`;
   }).join('');
+  renderOllamaLoad();   // keep the top-strip load meter in sync with the pills
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HEADER METRIC BAR (top header, next to the node pills)
+//   Configurable set of live meters. Built-in sources:
+//   • ollama — aggregate in_use across ONLINE instances, from the same
+//     `instances` map the header pills use (refreshes with every ping push).
+//   • dream  — dream.scheduler.status poll: idle progress toward the next
+//     cycle / approaching / DREAMING. Live dream.* events nudge the poll.
+//   • cpu/mem/docker/proxmox/queue/workers — stack monitor, from the
+//     /sysmon/history compact sample (one lightweight call covers them all).
+//   Selection persists in localStorage. ▦ button opens the picker.
+// ─────────────────────────────────────────────────────────────────────────────
+const HDR_METRICS = {
+  ollama:  {label:'OLLAMA',  icon:'⚡', title:'Aggregate load across the online Ollama instances'},
+  dream:   {label:'DREAM',   icon:'☾', title:'Dream scheduler — idle progress toward the next dream cycle'},
+  cpu:     {label:'CPU',     icon:'▣', title:'Host CPU % (stack monitor)'},
+  mem:     {label:'RAM',     icon:'▤', title:'Host memory % (stack monitor)'},
+  docker:  {label:'DOCKER',  icon:'◧', title:'Docker containers running / total (stack monitor)'},
+  proxmox: {label:'PMX',     icon:'⬢', title:'Proxmox guests running / total (stack monitor)'},
+  queue:   {label:'QUEUE',   icon:'≡', title:'Task-stream backlog (stack monitor)'},
+  workers: {label:'WORKERS', icon:'⚙', title:'Registered cluster workers (stack monitor)'},
+};
+const _HM_SYSMON_KEYS = ['cpu','mem','docker','proxmox','queue','workers'];
+const _HM_LS_KEY = 'vera:hdr-metrics';
+let _hmLast = null;   // last /sysmon/history compact sample
+
+function hdrMetricsSelected(){
+  try{
+    const raw = localStorage.getItem(_HM_LS_KEY);
+    if(raw){
+      const sel = JSON.parse(raw).filter(k=>HDR_METRICS[k]);
+      if(sel.length) return sel;
+    }
+  }catch(e){}
+  return ['ollama','dream'];
+}
+function hdrMetricsSave(sel){
+  try{ localStorage.setItem(_HM_LS_KEY, JSON.stringify(sel)); }catch(e){}
+}
+
+function renderHdrMetrics(){
+  const host = document.getElementById('hdrMetrics');
+  if(!host) return;
+  const sel = hdrMetricsSelected();
+  host.innerHTML = sel.map((k,i)=>{
+    const m = HDR_METRICS[k]; if(!m) return '';
+    const sep = i>0 ? '<div class="ls-sep"></div>' : '';
+    if(k==='ollama'){
+      return sep+`<div class="ls-group" id="lsOllamaGroup" title="${m.title}">
+        <span class="ls-icon">⚡</span><span class="ls-label">OLLAMA</span>
+        <div class="ls-meter"><div class="ls-meter-fill" id="lsOllamaFill"></div></div>
+        <span class="ls-val" id="lsOllamaVal">—</span></div>`;
+    }
+    if(k==='dream'){
+      return sep+`<div class="ls-group" id="lsDreamGroup" title="${m.title}">
+        <span class="ls-icon" id="lsDreamIcon">☾</span><span class="ls-label">DREAM</span>
+        <div class="ls-meter"><div class="ls-meter-fill dream" id="lsDreamFill"></div></div>
+        <span class="ls-val" id="lsDreamVal">—</span></div>`;
+    }
+    return sep+`<div class="ls-group" title="${m.title}">
+      <span class="ls-icon">${m.icon}</span><span class="ls-label">${m.label}</span>
+      <div class="ls-meter"><div class="ls-meter-fill" id="hmFill-${k}"></div></div>
+      <span class="ls-val" id="hmVal-${k}">—</span></div>`;
+  }).join('');
+  // Re-apply current data to the freshly-built elements
+  renderOllamaLoad();
+  if(sel.includes('dream')){
+    if(_lastDreamSt) renderDreamState(_lastDreamSt); else pollDreamState();
+  }
+  hdrSysmonApply();
+  if(sel.some(k=>_HM_SYSMON_KEYS.includes(k)) && !_hmLast) pollHdrSysmon();
+}
+
+function _hmSet(k, pct, val, cls){
+  const fill = document.getElementById('hmFill-'+k);
+  const el   = document.getElementById('hmVal-'+k);
+  if(fill){
+    fill.style.width = (pct==null?0:Math.max(0,Math.min(100,pct)))+'%';
+    fill.className = 'ls-meter-fill'+(cls?' '+cls:'');
+  }
+  if(el) el.textContent = val;
+}
+function hdrSysmonApply(){
+  const s = _hmLast;
+  if(!s){ _HM_SYSMON_KEYS.forEach(k=>_hmSet(k,0,'—','')); return; }
+  const load = p => p==null?'':p>=90?'hot':p>=70?'warn':'';
+  _hmSet('cpu', s.cpu, s.cpu!=null?s.cpu.toFixed(0)+'%':'—', load(s.cpu));
+  _hmSet('mem', s.mem, s.mem!=null?s.mem.toFixed(0)+'%':'—', load(s.mem));
+  const dt=s.dkr_containers||0, dr=s.dkr_running||0;
+  _hmSet('docker', dt?dr/dt*100:0, dr+'/'+dt+' up', '');
+  const pt=s.pmx_guests||0, pr=s.pmx_running||0;
+  _hmSet('proxmox', pt?pr/pt*100:0, pr+'/'+pt+' up', '');
+  const q=s.queue||0;
+  _hmSet('queue', Math.min(q*10,100), q+' queued', q>0?'warn':'');
+  const w=s.workers||0;
+  _hmSet('workers', Math.min(w*12,100), w+' online', '');
+}
+
+let _hmPollInflight=false;
+async function pollHdrSysmon(){
+  if(_hmPollInflight) return;
+  if(!hdrMetricsSelected().some(k=>_HM_SYSMON_KEYS.includes(k))) return;
+  _hmPollInflight=true;
+  try{
+    const r = await fetch(base()+'/sysmon/history?limit=1');
+    const d = await r.json();
+    _hmLast = (d && d.samples && d.samples[d.samples.length-1]) || null;
+  }catch(e){ _hmLast=null; }
+  finally{ _hmPollInflight=false; }
+  hdrSysmonApply();
+}
+setInterval(pollHdrSysmon, 10000);
+
+function hdrMetricsToggleCfg(ev){
+  if(ev) ev.stopPropagation();
+  const cfg = document.getElementById('hdrMetricCfg');
+  if(!cfg) return;
+  if(cfg.style.display==='block'){ cfg.style.display='none'; return; }
+  const sel = hdrMetricsSelected();
+  cfg.innerHTML = '<div class="hm-cfg-title">Header metrics</div>'
+    + Object.entries(HDR_METRICS).map(([k,m])=>
+      `<label><input type="checkbox" ${sel.includes(k)?'checked':''} onchange="hdrMetricToggle('${k}',this.checked)">
+       <span>${m.icon} ${m.label}</span><span class="hm-desc">${_HM_SYSMON_KEYS.includes(k)?'sysmon':k}</span></label>`
+    ).join('');
+  cfg.style.display='block';
+}
+function hdrMetricToggle(k, on){
+  let sel = hdrMetricsSelected().filter(x=>x!==k);
+  if(on) sel.push(k);
+  // Keep the registry's display order
+  sel = Object.keys(HDR_METRICS).filter(x=>sel.includes(x));
+  hdrMetricsSave(sel);
+  renderHdrMetrics();
+  if(on && _HM_SYSMON_KEYS.includes(k)) pollHdrSysmon();
+}
+// Close the picker on any outside click
+document.addEventListener('click', (e)=>{
+  const cfg = document.getElementById('hdrMetricCfg');
+  if(cfg && cfg.style.display==='block' && !e.target.closest('#hdrMetricCfgWrap')) cfg.style.display='none';
+});
+
+function renderOllamaLoad(){
+  const fill=document.getElementById('lsOllamaFill');
+  const val =document.getElementById('lsOllamaVal');
+  if(!fill||!val) return;
+  const nodes=Object.values(instances);
+  const online=nodes.filter(i=>i&&i.status==='online');
+  if(!online.length){
+    fill.style.width='0%'; fill.className='ls-meter-fill';
+    val.textContent=nodes.length?`${nodes.length} offline`:'no nodes';
+    val.style.color=nodes.length?'var(--err)':'var(--dim)';
+    return;
+  }
+  const active=online.reduce((s,i)=>s+(+i.in_use||0),0);
+  const busy  =online.filter(i=>(+i.in_use||0)>0).length;
+  const pct   =Math.round(busy/online.length*100);
+  // Meter = fraction of online nodes occupied; red when every node is busy
+  // (cluster saturated — no spare capacity), amber when partially loaded.
+  fill.style.width=pct+'%';
+  fill.className='ls-meter-fill'+(busy===0?'':busy>=online.length?' hot':' warn');
+  val.textContent=`${active} active · ${busy}/${online.length} busy`;
+  val.style.color=busy===0?'var(--dim2)':busy>=online.length?'var(--err)':'var(--warn)';
+}
+
+function renderDreamState(st){
+  const grp =document.getElementById('lsDreamGroup');
+  const fill=document.getElementById('lsDreamFill');
+  const val =document.getElementById('lsDreamVal');
+  const icon=document.getElementById('lsDreamIcon');
+  if(!grp||!fill||!val||!icon) return;
+  grp.classList.remove('dreaming','approaching');
+  fill.className='ls-meter-fill dream';
+  if(!st || st.error){
+    fill.style.width='0%'; icon.textContent='☾';
+    val.textContent='—'; val.style.color='var(--dim)';
+    return;
+  }
+  // Actively dreaming right now
+  if(st.in_cycle){
+    const c=st.current_cycle||{};
+    grp.classList.add('dreaming');
+    fill.style.width='100%'; fill.classList.add('pulse');
+    icon.textContent='✦';
+    val.textContent='DREAMING · '+(c.label||c.trigger||'cycle');
+    return;
+  }
+  // Background loops (v8 programs / project_compose) running between cycles —
+  // ambient long-horizon work still counts as the dream system being busy.
+  const bg=+st.background_loops||0;
+  if(bg>0){
+    grp.classList.add('dreaming');
+    fill.style.width='100%'; fill.classList.add('pulse');
+    icon.textContent='✦';
+    val.textContent=bg+' background loop'+(bg>1?'s':'');
+    val.style.color='';
+    return;
+  }
+  // Scheduler stopped or dreaming disabled — nothing pending
+  if(!(st.scheduler_running && st.enabled)){
+    fill.style.width='0%'; icon.textContent='☾';
+    val.textContent=st.scheduler_running?'disabled':'off';
+    val.style.color='var(--dim)';
+    return;
+  }
+  const idle=+st.idle_minutes||0, need=+st.min_idle_minutes||0;
+  icon.textContent='☾';
+  if(!need){
+    fill.style.width='0%';
+    val.textContent=`idle ${idle.toFixed(0)}m`; val.style.color='var(--dim2)';
+    return;
+  }
+  const prog=Math.max(0,Math.min(1,idle/need));
+  fill.style.width=Math.round(prog*100)+'%';
+  const remain=Math.max(0,need-idle);
+  if(prog>=0.8){
+    // Within 20% of the idle threshold — a dream cycle is imminent
+    grp.classList.add('approaching');
+    fill.className='ls-meter-fill warn';   // amber overrides the violet dream tint
+    val.textContent=`~${remain.toFixed(1)}m to dream`;
+  } else {
+    val.textContent=`idle ${idle.toFixed(1)}/${need.toFixed(0)}m`;
+    val.style.color='var(--dim2)';
+  }
+}
+
+let _dreamPollInflight=false;
+let _lastDreamSt=null;   // cached so renderHdrMetrics() can repaint instantly
+async function pollDreamState(){
+  if(_dreamPollInflight) return;
+  _dreamPollInflight=true;
+  try{
+    _lastDreamSt = await callCapRaw('dream.scheduler.status',{});
+    renderDreamState(_lastDreamSt);
+  }catch(e){
+    // Backend not up / dream caps not loaded — show neutral state, no feed spam
+    _lastDreamSt=null;
+    renderDreamState(null);
+  }finally{
+    _dreamPollInflight=false;
+  }
+}
+// Throttled nudge so a burst of dream.* events triggers at most one extra poll
+let _dreamNudgeT=0;
+function nudgeDreamState(){
+  const now=Date.now();
+  if(now-_dreamNudgeT<1500) return;
+  _dreamNudgeT=now;
+  pollDreamState();
+}
+setInterval(pollDreamState, 5000);
+pollDreamState();
+// Build the header metric bar (creates the lsOllama*/lsDream* elements the
+// two renderers above target) and prime the sysmon-backed meters.
+renderHdrMetrics();
+pollHdrSysmon();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EVENTS
@@ -2039,7 +2422,7 @@ async function loadHealth(){
 async function loadDiagnostics(){
   // Unhide the diagnostics widget on the dashboard if we're on the new layout
   const w=document.getElementById('wDiagnostics');
-  if(w){w.classList.remove('hidden'); _dashState.hidden.delete('diagnostics'); dashSaveLayout(); dashRenderHiddenChips();}
+  if(w){ if(_dashCtl) _dashCtl.show('diagnostics'); else w.classList.remove('hidden'); }
   const el=document.getElementById('diagResult');
   el.style.display='block'; el.textContent='⟳ Running diagnostics…'; el.style.color='var(--dim2)';
   const d=await api('/diagnostics');
@@ -2483,10 +2866,153 @@ function _setPanelMsg(msg) {
   if (el) el.textContent = msg;
 }
 
+// ─── lazy tab iframes ─────────────────────────────────────────────────────────
+// Previously EVERY mode="tab" panel's <iframe src> was injected on first paint,
+// so ~30 panels all fetched their document + booted their JS + imported web
+// fonts at once — the main cause of the sluggish startup and overall
+// heaviness. Instead we park each iframe's src in data-lazy-src and only load
+// it the first time its tab is actually shown, with a spinner in the meantime.
+function _deferPanelIframes(panelEl) {
+  const frames = panelEl.querySelectorAll('iframe[src]');
+  let any = false;
+  frames.forEach(f => {
+    const src = f.getAttribute('src');
+    if (!src) return;
+    f.setAttribute('data-lazy-src', src);
+    f.setAttribute('data-lazy', '1');   // mark as harness-managed (park/reload)
+    f.removeAttribute('src');           // panelEl is still detached here → no load starts
+    any = true;
+  });
+  if (any) _ensurePanelSpinner(panelEl);
+}
+
+function _ensurePanelSpinner(panelEl) {
+  if (!panelEl || panelEl.querySelector(':scope > .vera-loading')) return;
+  const ov = document.createElement('div');
+  ov.className = 'vera-loading';
+  ov.innerHTML = '<div class="vera-spinner"></div><span class="lbl">loading…</span>';
+  panelEl.appendChild(ov);
+}
+
+// Called whenever a panel becomes visible. Loads any parked iframe and drops the
+// spinner once it fires 'load'. A cheap no-op after the first activation.
+// If a frame never loads (slow/errored route), we surface a Retry affordance
+// instead of leaving a blank white iframe with a browser "no response" message.
+function _ensurePanelLoaded(panelEl) {
+  if (!panelEl) return;
+  if (panelEl._parkTimer) { clearTimeout(panelEl._parkTimer); panelEl._parkTimer = null; }
+  if (panelEl._loadTimer) { clearTimeout(panelEl._loadTimer); panelEl._loadTimer = null; }
+  const frames = panelEl.querySelectorAll('iframe[data-lazy-src]');
+  if (!frames.length) return;
+  _ensurePanelSpinner(panelEl);
+  const ov = panelEl.querySelector(':scope > .vera-loading');
+  let pending = frames.length, settled = false, poll = null;
+  const done = () => { settled = true; if (poll) clearInterval(poll); if (ov && ov.parentNode) ov.remove(); };
+  const fail = () => {
+    if (settled) return; settled = true;
+    if (poll) clearInterval(poll);
+    if (ov) _showPanelLoadError(panelEl, ov);
+  };
+  frames.forEach(f => {
+    const src = f.getAttribute('data-lazy-src');
+    f.removeAttribute('data-lazy-src');
+    f.addEventListener('load', () => { if (--pending <= 0) done(); }, { once: true });
+    // A cross-origin/blocked frame fires 'error'; same-origin route errors just
+    // render an error page (which still fires 'load'), so the timeout below is
+    // the real backstop for "took too long / no response".
+    f.addEventListener('error', fail, { once: true });
+    f.setAttribute('src', src);
+  });
+  // The iframe 'load' event waits for EVERY subresource of the inner page, so a
+  // panel that is rendered and interactive but keeps one request hanging (or a
+  // slow sibling frame in a merged panel) would never settle. Same-origin lets
+  // us check whether the route actually committed a document instead.
+  poll = setInterval(() => {
+    if (settled) { clearInterval(poll); return; }
+    if (Array.from(frames).every(_frameResponded)) done();
+  }, 700);
+  // Backstop: only claim "didn't respond" if NO frame got a document in 12s;
+  // if any route answered, drop the overlay and let the panel show through.
+  panelEl._loadTimer = setTimeout(() => {
+    if (settled) return;
+    if (Array.from(frames).some(_frameResponded)) done(); else fail();
+  }, 12000);
+}
+
+// True once the frame has committed a real document — i.e. the backend route
+// responded and parsing started — even if its window 'load' never fires.
+// The pre-navigation document is about:blank, so a dead route stays false.
+// Cross-origin frames throw / return null: fall back to the load/error events.
+function _frameResponded(f) {
+  try {
+    const d = f.contentDocument;
+    return !!(d && d.location && d.location.href !== 'about:blank');
+  } catch (_) { return false; }
+}
+
+// Replace the spinner overlay with a "didn't load" message + Retry. Retry
+// re-parks the frames and calls _ensurePanelLoaded again (fresh spinner + load).
+function _showPanelLoadError(panelEl, ov) {
+  ov.classList.add('solid');
+  ov.innerHTML =
+    '<div style="display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;padding:18px">' +
+      '<div style="font-size:20px;opacity:.7">⚠</div>' +
+      '<div style="font-size:12px;color:var(--dim2)">This panel didn’t respond.<br>The backend route may be slow or still starting.</div>' +
+      '<button class="btn sm" style="pointer-events:auto">↻ Retry</button>' +
+    '</div>';
+  const btn = ov.querySelector('button');
+  if (btn) btn.onclick = () => {
+    // Re-park: move current src back to data-lazy-src so _ensurePanelLoaded reloads.
+    panelEl.querySelectorAll('iframe[data-lazy="1"]').forEach(f => {
+      const src = f.getAttribute('src') || f.getAttribute('data-lazy-src');
+      if (src) { f.setAttribute('data-lazy-src', src); f.removeAttribute('src'); }
+    });
+    ov.remove();
+    _ensurePanelLoaded(panelEl);
+  };
+}
+
+// ─── background tab discarding ────────────────────────────────────────────────
+// Same-origin panel iframes all share THIS page's main thread, so every tab left
+// open keeps polling / redrawing forever — they accumulate into jank and the
+// "page unresponsive" dialog. When a tab has been hidden for _PARK_DELAY we
+// unload its iframe (stopping its timers + freeing memory); it reloads with a
+// spinner the next time it's shown. Quick tab flips keep the frame live.
+const _PARK_DELAY = 45000;
+function _schedulePark(panelEl) {
+  if (!panelEl || panelEl._parkTimer) return;
+  // Only worth scheduling if there's a live (loaded) managed iframe to reclaim.
+  if (!panelEl.querySelector('iframe[data-lazy="1"]:not([data-lazy-src])')) return;
+  panelEl._parkTimer = setTimeout(() => { panelEl._parkTimer = null; _parkPanel(panelEl); }, _PARK_DELAY);
+}
+function _parkPanel(panelEl) {
+  if (!panelEl || panelEl.classList.contains('active')) return;   // shown again meanwhile
+  const frames = panelEl.querySelectorAll('iframe[data-lazy="1"]:not([data-lazy-src])');
+  if (!frames.length) return;
+  // Never unload a panel mid-stream: killing the iframe aborts its in-flight
+  // SSE fetch and the server cancels the run (agent loop / DAG run) with it.
+  // Panels flag activity via window._veraStreamActive; same-origin, so we can
+  // read it. Re-check again after another park delay.
+  for (const f of frames) {
+    try {
+      if (f.contentWindow && f.contentWindow._veraStreamActive) {
+        _schedulePark(panelEl);
+        return;
+      }
+    } catch (_) {}
+  }
+  frames.forEach(f => {
+    const src = f.getAttribute('src') || f.getAttribute('data-lazy-src');
+    if (src) f.setAttribute('data-lazy-src', src);
+    f.removeAttribute('src');   // stops the panel's JS + timers
+  });
+  _ensurePanelSpinner(panelEl);   // ready to show a spinner on next activation
+}
+
 // ─── auto-tab creation for mode="tab" panels ──────────────────────────────────
 // Creates a real top-level tab + panel div from a registered UI panel.
 // Safe to call multiple times — skips if the tab already exists.
-function _createAutoTab(p) {
+function _createAutoTab(p, opts) {
   const tabId   = `auto-${p.id}`;
   const panelId = `panel-auto-${p.id}`;
 
@@ -2499,7 +3025,16 @@ function _createAutoTab(p) {
   tabEl.className    = 'tab';
   tabEl.dataset.tab  = `auto-${p.id}`;
   tabEl.dataset.autoPanelId = p.id;
-  tabEl.textContent  = (p.icon ? p.icon + ' ' : '') + (p.label || p.id);
+  tabEl.textContent  = p.label || p.id;   // top-level tabs are text-only (no glyphs)
+  if (opts && opts.custom) {
+    // User-promoted tab (from the ⊞ picker) — removable via right-click.
+    tabEl.dataset.customTab = '1';
+    tabEl.title = 'Custom tab — right-click to remove';
+    tabEl.addEventListener('contextmenu', e => {
+      e.preventDefault();
+      if (confirm(`Remove "${p.label || p.id}" from the main tabs?`)) customTabRemove(p.id);
+    });
+  }
   tabBar.appendChild(tabEl);
 
   // ── Panel div ─────────────────────────────────────────────────────────────
@@ -2518,6 +3053,9 @@ function _createAutoTab(p) {
     panelEl.style.cssText = 'padding:0;overflow:hidden;';
   }
   panelEl.innerHTML = html;
+  // Defer the iframe load until this tab is first shown (see _ensurePanelLoaded).
+  // Must run while panelEl is still detached so removing src aborts nothing.
+  if (isIframe) _deferPanelIframes(panelEl);
   panelsEl.appendChild(panelEl);
   _injectPanelJs(p);
 
@@ -2555,6 +3093,7 @@ async function loadAllPanels() {
   const mediaPanels  = [];
   let   autoTabCount = 0;
   let   mountCount   = 0;
+  let   elementCount = 0;
 
   for (const p of sorted) {
     const mode = _panelMode(p);
@@ -2564,11 +3103,18 @@ async function loadAllPanels() {
     } else if (mode === 'mount') {
       // Dedicated mount panels are lazy-loaded when their tab is clicked
       mountCount++;
+    } else if (mode === 'element') {
+      // Registered for pickers only (dashboard widgets / custom tabs) — the
+      // panel renders inside another panel's sub-tabs (e.g. Fabric → Memory).
+      elementCount++;
     } else {
       // inject → media sub-switcher
       mediaPanels.push(p);
     }
   }
+
+  // Re-create any user-promoted custom tabs (⊞ picker) from localStorage.
+  _customTabsRestore(sorted);
 
   // ── Render media sub-switcher ──────────────────────────────────────────────
   const tabsEl = document.getElementById('mediaTabs');
@@ -2604,6 +3150,7 @@ async function loadAllPanels() {
     mediaPanels.length  ? `${mediaPanels.length} media`   : '',
     autoTabCount        ? `${autoTabCount} auto-tabs`      : '',
     mountCount          ? `${mountCount} mount`            : '',
+    elementCount        ? `${elementCount} elements`       : '',
   ].filter(Boolean).join(' · ');
 
   _setPanelMsg(`✓ ${panels.length} panels — ${summary}`);
@@ -2639,6 +3186,199 @@ function reloadPanels() {
 
   _setPanelMsg('Reloading…');
   loadAllPanels();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CUSTOM TOP-LEVEL TABS — promote any registered UI panel (a hub's sub-tab, a
+// dashboard element, …) to its own main tab via the ⊞ picker. Persisted per
+// browser in localStorage; right-click a custom tab to remove it again.
+// ─────────────────────────────────────────────────────────────────────────────
+const _CUSTOM_TABS_KEY = 'vera.customTabs.v1';
+function _customTabsGet(){
+  try { const a = JSON.parse(localStorage.getItem(_CUSTOM_TABS_KEY) || '[]');
+        return Array.isArray(a) ? a : []; } catch(_) { return []; }
+}
+function _customTabsSave(ids){
+  try { localStorage.setItem(_CUSTOM_TABS_KEY, JSON.stringify(ids)); } catch(_){}
+}
+function _customTabsRestore(panels){
+  for (const id of _customTabsGet()) {
+    const p = (panels || []).find(x => x.id === id);
+    if (p && !_autoTabsCreated.has(p.id)) _createAutoTab(p, {custom: true});
+  }
+}
+async function customTabAdd(panelId){
+  const panels = await _fetchUiPanels();
+  const p = panels.find(x => x.id === panelId);
+  if (!p) return;
+  const ids = _customTabsGet();
+  if (!ids.includes(panelId)) { ids.push(panelId); _customTabsSave(ids); }
+  if (!_autoTabsCreated.has(p.id)) _createAutoTab(p, {custom: true});
+  switchTab('auto-' + p.id);
+  _tabFireLoader('auto-' + p.id);
+}
+function customTabRemove(panelId){
+  _customTabsSave(_customTabsGet().filter(id => id !== panelId));
+  const tab   = document.querySelector(`#tabBar .tab[data-auto-panel-id="${panelId}"]`);
+  const panel = document.getElementById('panel-auto-' + panelId);
+  const wasActive = tab && tab.classList.contains('active');
+  if (tab)   tab.remove();
+  if (panel) panel.remove();
+  _autoTabsCreated.delete(panelId);
+  if (wasActive) switchTab('dashboard');
+  setTimeout(_lhmNavSync, 50);
+}
+
+// ── ⊞ picker modal: every registered panel that isn't already a main tab ─────
+let _tabPickerEl = null;
+function openTabPicker(){
+  if (!_tabPickerEl) {
+    const o = document.createElement('div');
+    o.id = 'tabPickerOverlay';
+    o.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;'
+      + 'align-items:center;justify-content:center;z-index:9500;backdrop-filter:blur(2px)';
+    o.innerHTML =
+      '<div style="background:var(--bg1);border:1px solid var(--border2);border-radius:var(--radius-lg,8px);'
+      + 'width:540px;max-width:96%;max-height:80%;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.5)">'
+      + '<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border)">'
+      + '<span style="font-family:var(--mono);font-size:10px;font-weight:700;color:var(--acc);letter-spacing:1px">ADD TAB</span>'
+      + '<input id="tabPickerSearch" placeholder="Search registered panels &amp; elements…" '
+      + 'style="flex:1;background:var(--bg0);border:1px solid var(--border2);color:var(--text);'
+      + 'padding:5px 9px;border-radius:3px;font-family:var(--mono);font-size:11px">'
+      + '<button class="tab-ctrl-btn" onclick="closeTabPicker()">✕</button></div>'
+      + '<div id="tabPickerList" style="flex:1;overflow-y:auto;padding:6px"></div>'
+      + '<div style="padding:7px 14px;border-top:1px solid var(--border);font-size:9.5px;color:var(--dim2)">'
+      + 'Right-click a custom tab to remove it again.</div></div>';
+    document.body.appendChild(o);
+    o.addEventListener('click', e => { if (e.target === o) closeTabPicker(); });
+    o.querySelector('#tabPickerSearch').addEventListener('input', e => _tabPickerRender(e.target.value));
+    _tabPickerEl = o;
+  }
+  _tabPickerEl.style.display = 'flex';
+  const inp = _tabPickerEl.querySelector('#tabPickerSearch');
+  inp.value = ''; inp.focus();
+  _tabPickerRender('');
+}
+function closeTabPicker(){ if (_tabPickerEl) _tabPickerEl.style.display = 'none'; }
+async function _tabPickerRender(q){
+  const list = document.getElementById('tabPickerList');
+  if (!list) return;
+  list.innerHTML = '<div style="font-size:10px;color:var(--dim);padding:10px">Loading…</div>';
+  const panels = await _fetchUiPanels();
+  q = (q || '').toLowerCase();
+  const current = new Set(_customTabsGet());
+  const items = panels.filter(p => {
+    if (_panelMode(p) === 'tab') return false;                 // already a main tab
+    if (q && !(p.id || '').toLowerCase().includes(q)
+          && !(p.label || '').toLowerCase().includes(q)) return false;
+    return true;
+  }).sort((a, b) => (a.tab_order ?? 100) - (b.tab_order ?? 100));
+  if (!items.length) {
+    list.innerHTML = '<div style="font-size:10px;color:var(--dim);padding:10px">'
+      + (q ? 'No panels match "' + esc(q) + '"' : 'No promotable panels registered') + '</div>';
+    return;
+  }
+  list.innerHTML = items.map(p => {
+    const added = current.has(p.id);
+    return '<div class="wl-item" data-id="' + esc(p.id) + '" style="display:flex;align-items:center;'
+      + 'gap:8px;padding:7px 10px;border-radius:3px;cursor:pointer;border:1px solid transparent'
+      + (added ? ';opacity:.55' : '') + '">'
+      + '<span style="font-size:14px;width:22px;text-align:center;flex-shrink:0">' + (p.icon || '▣') + '</span>'
+      + '<span style="font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--text);flex:1">'
+      + esc(p.label || p.id) + '</span>'
+      + '<span style="font-size:8.5px;color:var(--dim2);font-family:var(--mono)">' + esc(p.id) + '</span>'
+      + '<span style="font-size:7.5px;padding:1px 5px;border-radius:3px;background:var(--bg0);'
+      + 'border:1px solid var(--border);color:var(--dim2);font-family:var(--mono)">'
+      + (added ? 'added' : esc(p.mode || 'inject')) + '</span></div>';
+  }).join('');
+  list.querySelectorAll('.wl-item').forEach(it => {
+    it.onmouseenter = () => { it.style.background = 'var(--bg2)'; it.style.borderColor = 'var(--border)'; };
+    it.onmouseleave = () => { it.style.background = '';           it.style.borderColor = 'transparent'; };
+    it.onclick = () => { closeTabPicker(); customTabAdd(it.dataset.id); };
+  });
+}
+
+// ─── open a panel standalone in its own browser tab ───────────────────────────
+// Uses the backend's /ui/panel/window route, which wraps any registered panel
+// (tab / element / inject) into a self-contained, themed page. A standalone tab
+// runs in its OWN browser process/thread, so it also sidesteps the shared-main-
+// thread contention of the in-app iframes.
+function openPanelStandalone(id){
+  if (!id) return;
+  window.open(base() + '/ui/panel/window?id=' + encodeURIComponent(id), '_blank', 'noopener');
+}
+// Resolve the registered panel id of the currently-active tab ('' for built-in
+// static tabs like Dashboard, which aren't registered UI panels).
+function _activePanelId(){
+  const t = [..._openTabs][0] || '';
+  return t.startsWith('auto-') ? t.slice(5) : '';
+}
+function openActiveStandalone(){
+  const id = _activePanelId();
+  if (id) { openPanelStandalone(id); return; }
+  // Built-in tab has no standalone page — fall back to the picker so the user
+  // can still open any registered panel in its own browser tab.
+  openStandalonePicker();
+}
+
+let _soloPickerEl = null;
+function openStandalonePicker(){
+  if (!_soloPickerEl) {
+    const o = document.createElement('div');
+    o.id = 'soloPickerOverlay';
+    o.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;'
+      + 'align-items:center;justify-content:center;z-index:9500;backdrop-filter:blur(2px)';
+    o.innerHTML =
+      '<div style="background:var(--bg1);border:1px solid var(--border2);border-radius:var(--radius-lg,8px);'
+      + 'width:540px;max-width:96%;max-height:80%;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.5)">'
+      + '<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border)">'
+      + '<span style="font-family:var(--mono);font-size:10px;font-weight:700;color:var(--acc);letter-spacing:1px">OPEN IN BROWSER TAB ↗</span>'
+      + '<input id="soloPickerSearch" placeholder="Search any panel…" '
+      + 'style="flex:1;background:var(--bg0);border:1px solid var(--border2);color:var(--text);'
+      + 'padding:5px 9px;border-radius:3px;font-family:var(--mono);font-size:11px">'
+      + '<button class="tab-ctrl-btn" onclick="closeStandalonePicker()">✕</button></div>'
+      + '<div id="soloPickerList" style="flex:1;overflow-y:auto;padding:6px"></div>'
+      + '<div style="padding:7px 14px;border-top:1px solid var(--border);font-size:9.5px;color:var(--dim2)">'
+      + 'Opens the panel as its own standalone page — runs in a separate browser tab.</div></div>';
+    document.body.appendChild(o);
+    o.addEventListener('click', e => { if (e.target === o) closeStandalonePicker(); });
+    o.querySelector('#soloPickerSearch').addEventListener('input', e => _soloPickerRender(e.target.value));
+    _soloPickerEl = o;
+  }
+  _soloPickerEl.style.display = 'flex';
+  const inp = _soloPickerEl.querySelector('#soloPickerSearch');
+  inp.value = ''; inp.focus();
+  _soloPickerRender('');
+}
+function closeStandalonePicker(){ if (_soloPickerEl) _soloPickerEl.style.display = 'none'; }
+async function _soloPickerRender(q){
+  const list = document.getElementById('soloPickerList');
+  if (!list) return;
+  list.innerHTML = '<div style="font-size:10px;color:var(--dim);padding:10px">Loading…</div>';
+  const panels = await _fetchUiPanels();
+  q = (q || '').toLowerCase();
+  const items = panels.filter(p =>
+    !q || (p.id || '').toLowerCase().includes(q) || (p.label || '').toLowerCase().includes(q)
+  ).sort((a, b) => (a.tab_order ?? 100) - (b.tab_order ?? 100));
+  if (!items.length) {
+    list.innerHTML = '<div style="font-size:10px;color:var(--dim);padding:10px">'
+      + (q ? 'No panels match "' + esc(q) + '"' : 'No panels registered') + '</div>';
+    return;
+  }
+  list.innerHTML = items.map(p =>
+    '<div class="wl-item" data-id="' + esc(p.id) + '" style="display:flex;align-items:center;'
+    + 'gap:8px;padding:7px 10px;border-radius:3px;cursor:pointer;border:1px solid transparent">'
+    + '<span style="font-size:14px;width:22px;text-align:center;flex-shrink:0">' + (p.icon || '▣') + '</span>'
+    + '<span style="font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--text);flex:1">'
+    + esc(p.label || p.id) + '</span>'
+    + '<span style="font-size:8.5px;color:var(--dim2);font-family:var(--mono)">' + esc(p.id) + '</span>'
+    + '<span style="font-size:11px;color:var(--acc)">↗</span></div>'
+  ).join('');
+  list.querySelectorAll('.wl-item').forEach(it => {
+    it.onmouseenter = () => { it.style.background = 'var(--bg2)'; it.style.borderColor = 'var(--border)'; };
+    it.onmouseleave = () => { it.style.background = '';           it.style.borderColor = 'transparent'; };
+    it.onclick = () => { closeStandalonePicker(); openPanelStandalone(it.dataset.id); };
+  });
 }
 
 // ─── dedicated mount (lazy, on tab click) ─────────────────────────────────────
@@ -2688,6 +3428,17 @@ async function _mountDedicatedPanel(panelId) {
 
   mountEl.innerHTML = _rewritePanelUrls(p.html || '');
   mountEl.dataset.mounted = panelId;
+  // Spinner overlay while the panel's iframe boots.
+  const _mf = mountEl.querySelector('iframe');
+  if (_mf) {
+    if (getComputedStyle(mountEl).position === 'static') mountEl.style.position = 'relative';
+    const _mov = document.createElement('div');
+    _mov.className = 'vera-loading';
+    _mov.innerHTML = '<div class="vera-spinner"></div><span class="lbl">loading…</span>';
+    mountEl.appendChild(_mov);
+    _mf.addEventListener('load', () => _mov.remove(), { once: true });
+    setTimeout(() => { if (_mov.parentNode) _mov.remove(); }, 10000);
+  }
   _injectPanelJs(p);
   addEv('ok', `Panel mounted: ${panelId}`);
 }
@@ -4439,45 +5190,119 @@ _fabricHandleEvent = function(ev){
 // update immediately without a reload.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const _THEME_CYCLE = ['dusk','void','chalk','ice','ash'];
 let   _currentTheme = 'dusk';
+let   _allThemesCache = null;   // {id:{label,type,accent,vars}} from /ui/themes
 
 // Map vera theme vars (--bg, --s1 …) → harness CSS vars (--bg0, --bg1 …)
 const _THEME_VAR_MAP = {
-  '--bg':  ['--bg0'],
-  '--s1':  ['--bg1'],
-  '--s2':  ['--bg2'],
-  '--s3':  ['--bg3'],
-  '--bd':  ['--border'],
-  '--bd2': ['--border2'],
-  '--t1':  ['--text','--fg'],
-  '--t2':  ['--dim2'],
-  '--t3':  ['--dim'],
-  '--ac':  ['--acc'],
-  '--ac2': ['--acc2','--ok'],
-  '--ac3': ['--acc3','--warn'],
-  '--ac4': ['--err'],
-  '--ac5': ['--acc4'],
+  '--bg':   ['--bg0'],
+  '--s1':   ['--bg1'],
+  '--s2':   ['--bg2'],
+  '--s3':   ['--bg3'],
+  '--bd':   ['--border'],
+  '--bd2':  ['--border2'],
+  '--t1':   ['--text','--fg'],
+  '--t2':   ['--dim2'],
+  '--t3':   ['--dim'],
+  '--ac':   ['--acc'],
+  '--ac2':  ['--acc2','--ok'],
+  '--ac3':  ['--acc3','--warn','--gpu'],
+  '--ac4':  ['--err'],
+  '--ac5':  ['--acc4','--purple'],
+  '--on-ac':['--on-acc','--on-accent'],
 };
 
-function _applyThemeVars(vars){
+// Relative luminance of a #hex colour; non-hex (rgba/named) → 0.5 (treated dark).
+function _lumJS(hex){
+  if(typeof hex !== 'string') return 0.5;
+  let h = hex.trim().replace('#','');
+  if(h.length === 3) h = h.replace(/(.)/g,'$1$1');
+  if(h.length < 6) return 0.5;
+  const r = parseInt(h.slice(0,2),16)/255, g = parseInt(h.slice(2,4),16)/255, b = parseInt(h.slice(4,6),16)/255;
+  if([r,g,b].some(isNaN)) return 0.5;
+  const lin = c => c<=0.03928 ? c/12.92 : Math.pow((c+0.055)/1.055,2.4);
+  return 0.2126*lin(r)+0.7152*lin(g)+0.0722*lin(b);
+}
+function _deriveOnAccentJS(accent){ return accent ? (_lumJS(accent) > 0.45 ? '#0c0d10' : '#f6f4ef') : ''; }
+function _isLightBg(bg){ return _lumJS(bg) > 0.5; }
+
+// Persist the active theme + a full paint set to the SHARED cache keys that the
+// boot script (top of this file) and vera-ui.js (child iframes) both read, so a
+// reload — or any freshly-loaded panel — paints this exact theme with no flash.
+function _writeThemeCache(id, vars){
+  try{
+    if(id){ localStorage.setItem('vera:ui:theme', id); localStorage.setItem('vera-theme', id); }
+    if(vars && Object.keys(vars).length){
+      localStorage.setItem('vera:ui:themeVars', JSON.stringify(vars));
+      // coherence stamp — see the boot script + vera-ui.js: vars are only
+      // replayed on load when they belong to the cached theme id.
+      if(id) localStorage.setItem('vera:ui:themeVarsFor', id);
+    } else if(id && localStorage.getItem('vera:ui:themeVarsFor') !== id){
+      localStorage.removeItem('vera:ui:themeVars');
+      localStorage.removeItem('vera:ui:themeVarsFor');
+    }
+  }catch(e){}
+}
+
+function _applyThemeVars(vars, themeId){
   if(!vars) return;
   const root = document.documentElement;
+  const applied = {};
+  const put = (k,v)=>{ root.style.setProperty(k,v); applied[k]=v; };
   for(const [src, targets] of Object.entries(_THEME_VAR_MAP)){
-    if(vars[src]) targets.forEach(t => root.style.setProperty(t, vars[src]));
+    if(vars[src]) targets.forEach(t => put(t, vars[src]));
   }
-  // color-scheme for scrollbars / inputs
-  const isLight = ['ash'].includes(_currentTheme);
-  root.style.setProperty('color-scheme', isLight ? 'light' : 'dark');
+  // Text-on-accent — derive if an older/custom theme didn't ship --on-ac so
+  // .primary buttons / active tabs never render ink-on-ink.
+  const onAc = vars['--on-ac'] || _deriveOnAccentJS(vars['--ac']);
+  if(onAc){ put('--on-acc', onAc); put('--on-accent', onAc); }
+  // Keep data-theme in sync so [data-theme] CSS fallbacks + attribute-scoped
+  // styling match the inline vars (also what a reload restores from cache).
+  const tid = themeId || _currentTheme;
+  if(tid) root.setAttribute('data-theme', tid);
+  // Native control colour-scheme, inferred from the actual background luminance
+  // (works for every light theme: ash, solar-light, paperwhite …).
+  root.style.setProperty('color-scheme', _isLightBg(vars['--bg']) ? 'light' : 'dark');
+  // Store both the raw research vars and the mapped harness vars.
+  _writeThemeCache(tid, Object.assign({}, vars, applied));
+}
+
+// Fetch (and cache) the full theme catalogue — built-in + custom.
+async function _fetchAllThemes(force){
+  if(_allThemesCache && !force) return _allThemesCache;
+  try{
+    const r = await fetch(base()+'/ui/themes');
+    const d = await r.json();
+    _allThemesCache = d.themes || {};
+  }catch(e){ _allThemesCache = _allThemesCache || {}; }
+  return _allThemesCache;
+}
+
+// Apply a theme by id. Uses supplied vars if present, else resolves them from
+// the catalogue — this is what makes cross-panel changes (which arrive without
+// vars) actually repaint the shell (dashboard bg, live-events feed, etc.).
+async function _applyThemeById(themeId, vars){
+  if(!themeId) return;
+  _currentTheme = themeId;
+  if(!vars){
+    const themes = await _fetchAllThemes();
+    vars = (themes[themeId] || {}).vars;
+  }
+  if(vars) _applyThemeVars(vars, themeId);
+  _updateThemeBtn(themeId);
+  try{ localStorage.setItem('vera-theme', themeId); }catch(e){}
 }
 
 function _updateThemeBtn(themeId){
   const btn = document.getElementById('themeBtn');
   if(!btn) return;
-  // Show the NEXT theme name as a hint, current theme icon
-  const icons = {ash:'☀',dusk:'🌒',void:'⬛',chalk:'🪨',ice:'❄'};
-  btn.textContent = icons[themeId] || '◑';
-  btn.title = `Theme: ${themeId} — click to cycle`;
+  const icons = {ash:'☀',dusk:'🌒',void:'⬛',chalk:'🪨',ice:'❄',
+                 'solar-light':'🌅','solar-dark':'🌇',gruvbox:'🟫',nord:'🧊',
+                 dracula:'🧛',monokai:'🎨',tokyonight:'🌃',matrix:'💾',
+                 amber:'🟠',c64:'🕹',paperwhite:'📄'};
+  btn.textContent = icons[themeId] || '🎨';
+  const label = (_allThemesCache && _allThemesCache[themeId] && _allThemesCache[themeId].label) || themeId;
+  btn.title = `Theme: ${label} — click to choose`;
 }
 
 async function _setTheme(themeId){
@@ -4488,7 +5313,7 @@ async function _setTheme(themeId){
       body: JSON.stringify({theme: themeId})
     });
     const data = await res.json();
-    if(data?.vars) _applyThemeVars(data.vars);
+    if(data?.vars) _applyThemeVars(data.vars, themeId);
     // Broadcast to all child iframes (UI builder, fabric panel, etc.)
     document.querySelectorAll('iframe').forEach(f=>{
       try{ f.contentWindow.postMessage({type:'vera:theme', theme:themeId, vars:data?.vars}, '*'); }catch(e){}
@@ -4498,26 +5323,79 @@ async function _setTheme(themeId){
   try{ localStorage.setItem('vera-theme', themeId); }catch(e){}
 }
 
+// Cycle to the next theme across the FULL catalogue (built-in + custom) — no
+// longer limited to a hard-coded list of five.
 async function toggleTheme(){
-  const idx  = _THEME_CYCLE.indexOf(_currentTheme);
-  const next = _THEME_CYCLE[(idx+1) % _THEME_CYCLE.length];
-  await _setTheme(next);
+  const themes = await _fetchAllThemes();
+  const ids = Object.keys(themes);
+  if(!ids.length) return;
+  const idx = ids.indexOf(_currentTheme);
+  await _setTheme(ids[(idx + 1) % ids.length]);
 }
 
-// Listen for theme changes broadcast from child iframes (UI builder → harness)
+// Dropdown picker anchored under the theme button — lets you jump straight to
+// any theme rather than clicking through the whole cycle.
+function _buildThemeMenuRows(menu, themes){
+  menu.innerHTML = '';
+  Object.keys(themes).forEach(tid=>{
+    const t = themes[tid], active = tid === _currentTheme;
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:5px;'+
+      'cursor:pointer;white-space:nowrap;'+(active?'background:var(--border)':'');
+    row.onmouseover = ()=>{ if(!active) row.style.background='var(--bg3)'; };
+    row.onmouseout  = ()=>{ if(!active) row.style.background=''; };
+    row.onclick = ()=>{ _setTheme(tid); menu.remove(); };
+    row.innerHTML = '<span style="width:12px;height:12px;border-radius:50%;flex-shrink:0;background:'+
+      (t.accent||'#888')+';border:1.5px solid '+(active?'var(--text)':'transparent')+'"></span>'+
+      '<span style="color:'+(active?'var(--text)':'var(--dim2)')+'">'+(t.label||tid)+'</span>';
+    menu.appendChild(row);
+  });
+}
+function openThemeMenu(ev){
+  ev && ev.stopPropagation();
+  const existing = document.getElementById('themeMenu');
+  if(existing){ existing.remove(); return; }
+  const btn = document.getElementById('themeBtn');
+  if(!btn) return;
+  const menu = document.createElement('div');
+  menu.id = 'themeMenu';
+  menu.style.cssText = 'position:fixed;z-index:5000;min-width:160px;max-height:70vh;overflow-y:auto;'+
+    'padding:5px;background:var(--bg2);border:1px solid var(--border2);border-radius:7px;'+
+    'box-shadow:0 12px 34px rgba(0,0,0,.5);font-size:11px';
+  // Paint from the in-memory cache immediately — no network wait on open. The
+  // catalogue is fetched once at boot (and cached), so opening is instant. Only
+  // if the cache is somehow empty do we block on a fetch.
+  if(_allThemesCache && Object.keys(_allThemesCache).length){
+    _buildThemeMenuRows(menu, _allThemesCache);
+  } else {
+    menu.innerHTML = '<div style="padding:6px 8px;color:var(--dim2)">loading…</div>';
+    _fetchAllThemes().then(themes=>{ if(menu.isConnected) _buildThemeMenuRows(menu, themes); });
+  }
+  document.body.appendChild(menu);
+  const r = btn.getBoundingClientRect();
+  menu.style.top   = (r.bottom + 5) + 'px';
+  menu.style.right = (window.innerWidth - r.right) + 'px';
+  // Refresh the catalogue in the background so newly-added custom themes appear;
+  // re-render only if the menu is still open (no blocking on open).
+  _fetchAllThemes(true).then(themes=>{ if(menu.isConnected) _buildThemeMenuRows(menu, themes); }).catch(()=>{});
+  setTimeout(()=>document.addEventListener('click', function _close(){ menu.remove(); document.removeEventListener('click', _close); }), 0);
+}
+
+// Listen for theme changes broadcast from child iframes (UI builder → harness).
+// Child broadcasts often omit vars, so _applyThemeById resolves them from the
+// catalogue — that's what makes the shell (dashboard bg, live events) actually
+// repaint live instead of only after a reload.
 window.addEventListener('message', e=>{
   if(e.data?.type === 'vera:theme' && e.data.theme){
     const themeId = e.data.theme;
-    _currentTheme = themeId;
-    if(e.data.vars) _applyThemeVars(e.data.vars);
-    _updateThemeBtn(themeId);
-    try{ localStorage.setItem('vera-theme', themeId); }catch(e){}
-    // Re-broadcast to OTHER iframes (UI builder changed → push to fabric panel etc.)
-    document.querySelectorAll('iframe').forEach(f=>{
-      try{
-        if(f.contentWindow !== e.source)
-          f.contentWindow.postMessage({type:'vera:theme', theme:themeId, vars:e.data.vars}, '*');
-      }catch(ex){}
+    _applyThemeById(themeId, e.data.vars).then(()=>{
+      const vars = e.data.vars || (_allThemesCache && _allThemesCache[themeId] && _allThemesCache[themeId].vars);
+      document.querySelectorAll('iframe').forEach(f=>{
+        try{
+          if(f.contentWindow !== e.source)
+            f.contentWindow.postMessage({type:'vera:theme', theme:themeId, vars}, '*');
+        }catch(ex){}
+      });
     });
   }
 });
@@ -4526,6 +5404,7 @@ window.addEventListener('message', e=>{
 (async ()=>{
   const saved = (() =>{ try{ return localStorage.getItem('vera-theme'); }catch(e){ return null; } })();
   if(saved){ _currentTheme = saved; _updateThemeBtn(saved); }
+  await _fetchAllThemes();   // prime the catalogue for the picker + labels
   // Wait for backend — retry a few times so custom themes from Redis are loaded
   for(let attempt=0; attempt<6; attempt++){
     try{
@@ -4534,7 +5413,7 @@ window.addEventListener('message', e=>{
       if(data?.vars){
         const activeId = data.theme || saved || 'dusk';
         _currentTheme = activeId;
-        _applyThemeVars(data.vars);
+        _applyThemeVars(data.vars, activeId);
         _updateThemeBtn(activeId);
         break;
       }
@@ -4958,40 +5837,110 @@ function _dashOnResizeMouseDown(e){
   document.addEventListener('mouseup', onUp);
 }
 
-// ── Initialise once DOM is ready ──────────────────────────────────────────────
-(function _dashInit(){
-  if(document.readyState==='loading'){
-    document.addEventListener('DOMContentLoaded', _dashInit, {once:true});
+// ── Dashboard framework is now the shared VeraDash module ─────────────────────
+// (served at /ui/vera-dashboard.js — see the <script> near </body>). All the
+// bespoke dash* layout/drag/resize/loader/pop-out code above is SUPERSEDED and
+// inert; these public entry points (still referenced by the toolbar + each
+// widget's × button) just delegate to the VeraDash instance. This also fixes the
+// old text-selection bug: VeraDash only makes widgets draggable in edit mode.
+let _dashCtl=null;
+function dashToggleEdit(){ _dashCtl && _dashCtl.toggleEdit(); }
+function dashResetLayout(){ _dashCtl && _dashCtl.reset(); }
+function dashOpenWidgetLoader(){ _dashCtl && _dashCtl.openLoader(); }
+function dashHideWidget(wid){ _dashCtl && _dashCtl.hide(wid); }
+function dashShowWidget(wid){ _dashCtl && _dashCtl.show(wid); }
+(function _dashBootVeraDash(){
+  function go(){
+    const g=document.getElementById('dashGrid'); if(!g) return;
+    if(!window.VeraDash){ return setTimeout(go,60); }   // wait for /ui/vera-dashboard.js
+    _dashCtl=VeraDash.init(g,{key:'main',loader:true,popout:true,
+      editBtn:'dashEditBtn',hiddenPicker:'dashHiddenPicker',hiddenChips:'dashHiddenChips'});
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',go,{once:true});
+  else go();
+})();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CROSS-FRAME WIDGET POP-OUT — embedded dashboards (Dream, Workers & Ollama, …)
+// live inside tab iframes, so a float reparented to THEIR body disappears when
+// the top-level tab switches. Their VeraDash posts 'vera.dash.solo' instead;
+// we float a chrome window here containing a solo view of that page
+// (#vd-solo=<wid> shows exactly that one widget, live), which survives any tab
+// switch just like the main dashboard's floats.
+// ─────────────────────────────────────────────────────────────────────────────
+const _soloFloats = {};
+window.addEventListener('message', e => {
+  const d = e.data;
+  if (!d || d.type !== 'vera.dash.solo' || !d.wid || !d.href) return;
+  _veraSoloFloat(d);
+});
+function _veraSoloFloat(d){
+  const key = String(d.wid);
+  if (_soloFloats[key]) {                       // already open → nudge to front
+    document.body.appendChild(_soloFloats[key]);
     return;
   }
-  const grid=document.getElementById('dashGrid');
-  if(!grid) return;
-  // Make widgets draggable
-  grid.querySelectorAll('.widget').forEach(w=>{
-    w.setAttribute('draggable','true');
-    w.addEventListener('dragstart',_dashOnDragStart);
-    w.addEventListener('dragover',_dashOnDragOver);
-    w.addEventListener('dragleave',_dashOnDragLeave);
-    w.addEventListener('drop',_dashOnDrop);
-    w.addEventListener('dragend',_dashOnDragEnd);
+  const el = document.createElement('div');
+  el.className = 'vera-solo-float';
+  const w = Math.min(Math.max(340, d.w || 520), window.innerWidth  - 40);
+  const h = Math.min(Math.max(240, d.h || 380), window.innerHeight - 60);
+  el.style.cssText =
+    `position:fixed;z-index:9000;right:24px;bottom:24px;width:${w}px;height:${h}px;`
+    + 'display:flex;flex-direction:column;background:var(--bg2);border:1px solid var(--acc);'
+    + 'border-radius:var(--radius-lg,8px);box-shadow:0 18px 60px rgba(0,0,0,.65);'
+    + 'overflow:hidden;resize:both;min-width:300px;min-height:200px';
+  const src = String(d.href).split('#')[0] + '#vd-solo=' + encodeURIComponent(d.wid);
+  el.innerHTML =
+    '<div class="solo-head" style="display:flex;align-items:center;gap:6px;padding:6px 10px;'
+    + 'border-bottom:1px solid var(--border);cursor:move;flex-shrink:0;font-size:11px;'
+    + 'font-family:var(--mono);background:var(--bg1)">'
+    + '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+    + esc(d.title || d.wid) + '</span>'
+    + '<button class="w-iconbtn" title="Close" style="cursor:pointer">✕</button></div>'
+    + '<div style="flex:1;position:relative;min-height:0;display:flex">'
+    + '<iframe src="' + esc(src) + '" style="flex:1;border:none;width:100%;background:transparent"></iframe>'
+    + '<div class="vera-loading"><div class="vera-spinner"></div></div>'
+    + '</div>';
+  const _soloOv = el.querySelector('.vera-loading');
+  const _soloFrame = el.querySelector('iframe');
+  if (_soloFrame && _soloOv) {
+    _soloFrame.addEventListener('load', () => _soloOv.remove(), { once: true });
+    setTimeout(() => { if (_soloOv.parentNode) _soloOv.remove(); }, 10000);
+  }
+  el.querySelector('button').onclick = () => { el.remove(); delete _soloFloats[key]; };
+  const head = el.querySelector('.solo-head');
+  head.addEventListener('mousedown', ev => {
+    if (ev.target.closest('button')) return;
+    const r = el.getBoundingClientRect();
+    el.style.left = r.left + 'px'; el.style.top = r.top + 'px';
+    el.style.right = 'auto';       el.style.bottom = 'auto';
+    const dx = ev.clientX - r.left, dy = ev.clientY - r.top;
+    const mv = e2 => {
+      el.style.left = Math.max(0, Math.min(window.innerWidth  - 60, e2.clientX - dx)) + 'px';
+      el.style.top  = Math.max(0, Math.min(window.innerHeight - 28, e2.clientY - dy)) + 'px';
+    };
+    const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); };
+    document.addEventListener('mousemove', mv);
+    document.addEventListener('mouseup', up);
+    ev.preventDefault();
   });
-  // Resize handles
-  grid.addEventListener('mousedown', _dashOnResizeMouseDown);
-
-  // Restore saved layout (if any)
-  if(dashLoadLayout()) dashApplyLayout();
-  dashRenderHiddenChips();
-})();
+  document.body.appendChild(el);
+  _soloFloats[key] = el;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DASHBOARD WIDGET LOADER — searchable panel/element picker
 // Lets the user add any registered UI element to the main dashboard grid
 // ─────────────────────────────────────────────────────────────────────────────
+// NOTE: everything from here to _dashEnhancePop() is the OLD bespoke loader +
+// pop-out, now SUPERSEDED by the shared VeraDash module and left only as inert
+// dead code (no live caller). The function below is renamed so it no longer
+// shadows the VeraDash-delegating dashOpenWidgetLoader defined above.
 let _dashWlPanels = [];
 let _dashDynWidgets = {};
 const _DASH_DYN_KEY = 'vera.dash.dynamic.v1';
 
-async function dashOpenWidgetLoader(){
+async function _dead_dashOpenWidgetLoader(){
   const overlay = document.getElementById('dashWlOverlay');
   if(overlay) overlay.style.display='flex';
   document.getElementById('dashWlSearch').value='';
@@ -5033,6 +5982,7 @@ async function dashWlAdd(panelId){
   const widget=document.createElement('div');
   widget.className='widget w-w6 w-h3';
   widget.dataset.wid=wid;
+  widget.dataset.panel=panelId;   // enables the "open in new window" pop-out
   widget.innerHTML='<div class="w-head"><span class="w-grip">⠿</span><span class="w-dot ok"></span><span class="w-title">'+(p.icon||'')+' '+esc(p.label||p.id)+'</span><span class="w-actions"><button class="w-iconbtn" onclick="dashHideWidget(\''+wid+'\')">×</button><button class="w-iconbtn" onclick="dashRemoveDynWidget(\''+wid+'\')" title="Remove completely">🗑</button></span></div><div class="w-body flush" style="padding:0;position:relative"><iframe style="width:100%;height:100%;border:none;background:transparent" srcdoc="'+esc((full.html||'<div style=&quot;padding:10px;color:#888&quot;>No content</div>').replace(/"/g,'&quot;'))+'"></iframe></div><span class="w-resize" data-resize></span>';
   grid.appendChild(widget);
   // Register drag
@@ -5050,6 +6000,7 @@ async function dashWlAdd(panelId){
   // Update order
   _dashState.order=Array.from(grid.querySelectorAll('.widget')).map(w=>w.dataset.wid);
   dashSaveLayout();
+  _dashEnhancePop();   // give the new widget its pop-out / new-window buttons
 }
 function dashRemoveDynWidget(wid){
   const grid=document.getElementById('dashGrid');if(!grid)return;
@@ -5060,39 +6011,90 @@ function dashRemoveDynWidget(wid){
   dashSaveLayout();
   try{localStorage.setItem(_DASH_DYN_KEY,JSON.stringify(_dashDynWidgets));}catch(_){}
 }
-// Restore dynamic widgets on load
-(function _dashRestoreDyn(){
-  try{const raw=localStorage.getItem(_DASH_DYN_KEY);if(raw)_dashDynWidgets=JSON.parse(raw)||{};}catch(_){}
-  for(const [wid,info] of Object.entries(_dashDynWidgets)){
-    const grid=document.getElementById('dashGrid');
-    if(!grid||grid.querySelector('[data-wid="'+wid+'"]'))continue;
-    // Lazy load
-    dashWlAdd(info.panelId).catch(()=>{});
-  }
-})();
+// ─────────────────────────────────────────────────────────────────────────────
+// GENERIC WIDGET POP-OUT — float any dashboard widget on the page, or open a
+// panel-backed widget in its own browser window. Applies to every widget in the
+// grid (static KPIs float in place; panel widgets also get a "new window").
+// ─────────────────────────────────────────────────────────────────────────────
+let _dashFloatDrag=null;
+function _dashWidget(wid){ return document.querySelector('#dashGrid .widget[data-wid="'+wid+'"]')
+                              || document.querySelector('.widget.floating[data-wid="'+wid+'"]'); }
+function dashWidgetPop(wid){
+  const w=_dashWidget(wid); if(!w) return;
+  if(w.classList.contains('floating')) return dashWidgetDock(wid);
+  const r=w.getBoundingClientRect();
+  // Placeholder keeps the grid slot (same span classes) so siblings don't reflow.
+  const ph=document.createElement('div');
+  // keep the grid-span classes but NOT 'widget' (so dashApplyLayout/.widget queries skip it)
+  ph.className=w.className.replace(/\bwidget\b/,'').trim(); ph.dataset.floatPh=wid; ph.style.visibility='hidden';
+  w.parentNode.insertBefore(ph, w.nextSibling);
+  w.classList.add('floating');
+  w.style.left=Math.max(8,Math.min(window.innerWidth-r.width-8,r.left))+'px';
+  w.style.top =Math.max(8,r.top)+'px';
+  w.style.width=Math.max(300,r.width)+'px';
+  w.style.height=Math.max(200,r.height)+'px';
+  // Reparent to <body> so the float survives switching the top-level tab — every
+  // tab is a .panel that gets display:none when inactive, which would hide a
+  // float left inside the dashboard panel. (Moving an iframe reloads it; cheap.)
+  document.body.appendChild(w);
+  const pb=w.querySelector('.w-pop'); if(pb){ pb.classList.add('on'); pb.title='Dock back into the grid'; }
+  w.querySelector('.w-head').addEventListener('mousedown',_dashFloatStart);
+}
+function dashWidgetDock(wid){
+  const w=document.querySelector('.widget.floating[data-wid="'+wid+'"]'); if(!w) return;
+  w.querySelector('.w-head').removeEventListener('mousedown',_dashFloatStart);
+  w.classList.remove('floating');
+  w.style.left=w.style.top=w.style.width=w.style.height='';
+  const ph=document.querySelector('#dashGrid [data-float-ph="'+wid+'"]');
+  if(ph){ ph.parentNode.insertBefore(w, ph); ph.remove(); }
+  else { const g=document.getElementById('dashGrid'); if(g) g.appendChild(w); }  // placeholder lost → return to grid end
+  const pb=w.querySelector('.w-pop'); if(pb){ pb.classList.remove('on'); pb.title='Pop out (float on page)'; }
+}
+function dashWidgetWindow(wid){
+  const w=_dashWidget(wid); if(!w) return;
+  const pid=w.dataset.panel;
+  if(!pid) return;
+  window.open('/ui/panel/window?id='+encodeURIComponent(pid),'veraPanel_'+pid,
+              'width=1040,height=820,menubar=no,toolbar=no,location=no,status=no');
+}
+function _dashFloatStart(e){
+  if(e.target.closest('button')) return;            // don't drag when hitting an action button
+  const w=e.currentTarget.closest('.widget'); if(!w||!w.classList.contains('floating')) return;
+  const r=w.getBoundingClientRect();
+  _dashFloatDrag={w, dx:e.clientX-r.left, dy:e.clientY-r.top};
+  document.addEventListener('mousemove',_dashFloatMove);
+  document.addEventListener('mouseup',_dashFloatEnd);
+  e.preventDefault();
+}
+function _dashFloatMove(e){
+  if(!_dashFloatDrag) return; const w=_dashFloatDrag.w;
+  w.style.left=Math.max(0,Math.min(window.innerWidth-60, e.clientX-_dashFloatDrag.dx))+'px';
+  w.style.top =Math.max(0,Math.min(window.innerHeight-28,e.clientY-_dashFloatDrag.dy))+'px';
+}
+function _dashFloatEnd(){ _dashFloatDrag=null;
+  document.removeEventListener('mousemove',_dashFloatMove);
+  document.removeEventListener('mouseup',_dashFloatEnd); }
+// Add the pop-out (and, for panel widgets, new-window) buttons to every widget
+// that doesn't already have them. Idempotent — safe to call repeatedly.
+function _dashEnhancePop(){
+  const grid=document.getElementById('dashGrid'); if(!grid) return;
+  grid.querySelectorAll('.widget').forEach(w=>{
+    const act=w.querySelector('.w-actions'); const wid=w.dataset.wid;
+    if(!act || !wid || act.querySelector('.w-pop')) return;
+    const win = w.dataset.panel
+      ? '<button class="w-iconbtn w-popwin" title="Open in a new window" onclick="dashWidgetWindow(\''+wid+'\')">&#x29C9;</button>' : '';
+    act.insertAdjacentHTML('afterbegin',
+      '<button class="w-iconbtn w-pop" title="Pop out (float on page)" onclick="dashWidgetPop(\''+wid+'\')">&#x2922;</button>'+win);
+  });
+}
+
+// Dynamic-widget restore + pop-out buttons are now handled by VeraDash.init().
 
 </script>
 
-<!-- Widget Loader Overlay for main dashboard -->
-<div id="dashWlOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);align-items:center;justify-content:center;z-index:600;backdrop-filter:blur(2px)" onclick="if(event.target===this)dashCloseWidgetLoader()">
-  <div style="background:var(--bg1);border:1px solid var(--border2);border-radius:var(--radius-lg);width:520px;max-width:96%;max-height:80%;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.5)">
-    <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border)">
-      <span style="font-family:var(--mono);font-size:10px;font-weight:700;color:var(--acc);letter-spacing:1px">ADD WIDGET</span>
-      <input id="dashWlSearch" placeholder="Search panels & elements…" style="flex:1;background:var(--bg0);border:1px solid var(--border2);color:var(--text);padding:5px 9px;border-radius:3px;font-family:var(--mono);font-size:11px" oninput="_dashWlRender()">
-      <button class="btn sm" onclick="dashCloseWidgetLoader()">✕</button>
-    </div>
-    <div id="dashWlList" style="flex:1;overflow-y:auto;padding:6px"><span style="font-size:10px;color:var(--dim);padding:10px">Loading…</span></div>
-  </div>
-</div>
-
-<style>
-.wl-item{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:3px;cursor:pointer;transition:.12s;border:1px solid transparent}
-.wl-item:hover{background:var(--bg2);border-color:var(--border)}
-.wl-item-icon{font-size:14px;width:22px;text-align:center;flex-shrink:0}
-.wl-item-label{font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--text);flex:1}
-.wl-item-id{font-size:8.5px;color:var(--dim2);font-family:var(--mono)}
-.wl-item-mode{font-size:7.5px;padding:1px 5px;border-radius:3px;background:var(--bg0);border:1px solid var(--border);color:var(--dim2);font-family:var(--mono)}
-</style>
+<!-- Shared dashboard framework (drag/resize/hide + widget loader + pop-out).
+     Provides the "+ Add Widget" modal, so the old inline overlay is gone. -->
+<script src="/ui/vera-dashboard.js"></script>
 
 </body>
 </html>

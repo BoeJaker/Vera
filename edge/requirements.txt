@@ -1,0 +1,61 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# GPU Inference Server (edge/GPU_inference.py) — requirements
+# =============================================================================
+# Target hardware: NVIDIA Tesla GPU (V100 / P100 / T4 / A100).
+#
+# IMPORTANT — torch must match your CUDA + Tesla compute capability:
+#   V100 = sm_70 (Volta) · P100 = sm_60 (Pascal) · T4 = sm_75 (Turing) · A100 = sm_80
+#   Install torch from the matching CUDA index FIRST, before this file, e.g. CUDA 12.1:
+#     pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+#   then:  pip install -r requirements.txt
+#   A wheel built only for newer archs will hit a PTX-JIT error on a V100 — pick a
+#   build that includes your sm_XX. SD_DEVICE=cpu forces CPU if the GPU build is wrong.
+#
+#   xformers is NOT required and is intentionally skipped on V100/Pascal (pre-Ampere);
+#   the server enables attention slicing + VAE tiling instead. Only install xformers if
+#   you are on Turing/Ampere (T4/A100) AND want it:  pip install xformers
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Web server ───────────────────────────────────────────────────────────────
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9
+httpx>=0.26
+pydantic>=2.5
+redis>=5.0
+
+# ── Core ML / Stable Diffusion ───────────────────────────────────────────────
+# torch/torchvision/torchaudio: install via the CUDA index above (do not let this
+# file pull a CPU-only wheel). Listed here for completeness/pinning of the floor.
+torch>=2.1
+torchvision>=0.16
+torchaudio>=2.1
+diffusers>=0.27          # ControlNet, IP-Adapter (load_ip_adapter), SDXL
+transformers>=4.38
+accelerate>=0.27
+safetensors>=0.4
+numpy>=1.23,<2.0         # <2.0: basicsr/realesrgan + some torch builds dislike numpy 2
+Pillow>=9.3
+
+# ── Speech (STT + TTS) ───────────────────────────────────────────────────────
+openai-whisper>=20231117
+soundfile>=0.12
+kokoro-onnx>=0.3.0       # default TTS engine (CPU/GPU, Apache-2.0)
+# TTS>=0.22              # OPTIONAL — Coqui TTS (only if TTS_ENGINE=coqui)
+
+# ── Sprite pipeline tiers (all OPTIONAL; the server degrades gracefully) ──────
+# Each tier auto-detects at runtime and reports via GET /sd/capabilities. Missing
+# any of these just disables that tier (chroma-key / img2img / Lanczos fallbacks).
+rembg>=2.0.50            # background removal  → /rembg   (pulls onnxruntime)
+onnxruntime>=1.16        # rembg backend (use onnxruntime-gpu instead for CUDA rembg)
+controlnet-aux>=0.0.7    # OpenPose skeleton detection → /controlnet/pose
+compel>=2.0.2            # long prompts (>77 CLIP tokens) → reported as long_prompts
+opencv-python-headless>=4.8   # Haar face cascade for /expression (face-region edits)
+
+# ── ESRGAN upscaler (OPTIONAL) → /upscale ────────────────────────────────────
+# NOTE: basicsr imports torchvision.transforms.functional_tensor, REMOVED in
+# torchvision>=0.17. If import fails, the /upscale tier just stays off (Vera falls
+# back to Lanczos). To use it, either pin torchvision<0.17, or patch basicsr's
+# degradations.py import to `torchvision.transforms.functional`. realesrgan pulls basicsr.
+realesrgan>=0.3.0
+# basicsr>=1.4.2         # (transitive via realesrgan; listed for clarity)

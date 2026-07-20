@@ -1,0 +1,299 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Remote</title>
+<script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-terminal.js"></script>
+<style>
+  :root{ --bg0:#0d0f12; --bg1:#14171c; --bg2:#1b1f26; --fg:#d6dde6; --t2:#9aa4b2;
+         --t3:#6b7480; --acc:#5aa9ff; --line:#252b34; --run:#3ecf8e; --stop:#e05a5a; }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg0);color:var(--fg);
+    font:13px/1.45 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  #wrap{display:flex;height:100vh;overflow:hidden}
+  #side{width:320px;min-width:260px;border-right:1px solid var(--line);
+    display:flex;flex-direction:column;background:var(--bg1)}
+  #main{flex:1;display:flex;flex-direction:column;min-width:0}
+  header{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)}
+  header .ttl{font-weight:600;font-size:14px}
+  .spacer{flex:1}
+  .btn{background:var(--bg2);color:var(--fg);border:1px solid var(--line);border-radius:7px;
+    padding:5px 10px;font-size:12px;cursor:pointer}
+  .btn:hover{border-color:var(--acc)}
+  .btn.pri{background:var(--acc);color:var(--on-acc,#04121f);border-color:var(--acc);font-weight:600}
+  .btn.sm{padding:3px 8px;font-size:11px}
+  .btn.danger:hover{border-color:var(--stop);color:var(--stop)}
+  .tabs{display:flex;gap:2px;padding:6px 8px;border-bottom:1px solid var(--line)}
+  .tab{flex:1;text-align:center;padding:6px 4px;font-size:12px;border-radius:6px;cursor:pointer;color:var(--t2)}
+  .tab.on{background:var(--bg2);color:var(--fg)}
+  .list{flex:1;overflow:auto;padding:6px}
+  .item{padding:8px 9px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:pointer;background:var(--bg0)}
+  .item:hover{border-color:var(--acc)}
+  .item.sel{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc) inset}
+  .item .nm{font-weight:600;display:flex;align-items:center;gap:6px}
+  .item .sub{color:var(--t3);font-size:11px;margin-top:2px}
+  .item .row{display:flex;gap:5px;margin-top:6px;flex-wrap:wrap}
+  .pill{font-size:10px;padding:1px 6px;border-radius:20px;background:var(--bg2);color:var(--t2)}
+  .pill.run{color:var(--run)} .pill.stop{color:var(--stop)}
+  .sec{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--t3);
+    padding:8px 8px 4px;display:flex;align-items:center;gap:6px}
+  #termbar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);
+    background:var(--bg1)}
+  #termbar .who{font-weight:600}
+  #termbar .who small{color:var(--t3);font-weight:400}
+  #termhost{flex:1;min-height:0;position:relative;background:#000}
+  #empty{flex:1;display:flex;align-items:center;justify-content:center;color:var(--t3);flex-direction:column;gap:8px}
+  #toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--bg2);
+    border:1px solid var(--line);border-radius:8px;padding:8px 14px;opacity:0;transition:.2s;pointer-events:none;z-index:50}
+  #toast.on{opacity:1} #toast.err{border-color:var(--stop);color:var(--stop)}
+  input.f{background:var(--bg0);border:1px solid var(--line);color:var(--fg);border-radius:6px;padding:5px 7px;font-size:12px;width:100%}
+  label.chk{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--t2);cursor:pointer}
+  .ov{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:100}
+  .ov.on{display:flex}
+  .box{background:var(--bg1);border:1px solid var(--line);border-radius:12px;width:400px;max-width:94%;display:flex;flex-direction:column;overflow:hidden}
+  .box h3{margin:0;padding:12px 14px;border-bottom:1px solid var(--line);font-size:14px}
+  .box .bd{padding:12px 14px;overflow:auto;max-height:70vh}
+  .box .ft{padding:10px 14px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end}
+  .fld{margin-bottom:10px}
+  .fld label{display:block;font-size:11px;color:var(--t2);margin-bottom:3px}
+  .fld input{width:100%}
+  .hint{font-size:11px;color:var(--t3);margin-bottom:10px}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="side">
+    <header>
+      <span class="ttl">⎈ Remote</span>
+      <span class="spacer"></span>
+      <button class="btn sm" onclick="loadAll()">↻</button>
+    </header>
+    <div class="tabs">
+      <div class="tab on" data-t="saved" onclick="switchTab('saved')">Saved</div>
+      <div class="tab" data-t="docker" onclick="switchTab('docker')">Docker</div>
+      <div class="tab" data-t="ssh" onclick="switchTab('ssh')">SSH</div>
+      <div class="tab" data-t="proxmox" onclick="switchTab('proxmox')">Proxmox</div>
+    </div>
+    <div style="padding:6px 8px" id="pxToggleWrap">
+      <label class="chk"><input type="checkbox" id="pxToggle" onchange="loadTargets()"> load Proxmox guests (live API)</label>
+    </div>
+    <div class="list" id="list"></div>
+  </div>
+
+  <div id="main">
+    <div id="termbar" style="display:none">
+      <span class="who" id="who"></span>
+      <span class="spacer"></span>
+      <button class="btn sm" onclick="fitTerm()">Fit</button>
+      <button class="btn sm danger" onclick="closeTerm()">✕ Close</button>
+    </div>
+    <div id="empty">
+      <div style="font-size:26px">⌨</div>
+      <div>Select a container, host or guest to open a terminal.</div>
+    </div>
+    <div id="termhost" style="display:none"></div>
+  </div>
+</div>
+<!-- Enroll-to-SSH modal -->
+<div class="ov" id="enrollOv">
+  <div class="box">
+    <h3>Enroll guest to SSH</h3>
+    <div class="bd">
+      <div class="hint" id="enrollWho"></div>
+      <div class="hint">Registers this guest as an SSH host so it gets a full in-Vera terminal + file explorer (instead of console-only). The guest must have an SSH server running and reachable.</div>
+      <div class="fld"><label>User</label><input class="f" id="enUser" value="root"></div>
+      <div class="fld"><label>Password <span style="color:var(--t3)">(leave blank if using a key path)</span></label><input class="f" id="enPass" type="password" placeholder="password"></div>
+      <div class="fld"><label>Key path <span style="color:var(--t3)">(optional, on the Vera host)</span></label><input class="f" id="enKey" placeholder="/home/user/.ssh/id_ed25519"></div>
+      <div style="display:flex;gap:8px">
+        <div class="fld" style="flex:1"><label>IP <span style="color:var(--t3)">(blank = auto-detect)</span></label><input class="f" id="enIp" placeholder="auto"></div>
+        <div class="fld" style="width:90px"><label>Port</label><input class="f" id="enPort" value="22"></div>
+      </div>
+    </div>
+    <div class="ft">
+      <button class="btn" onclick="closeEnroll()">Cancel</button>
+      <button class="btn pri" id="enrollBtn" onclick="doEnroll()">Enroll</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let TAB='saved', TARGETS={docker:[],ssh:[],proxmox:[]}, CONNS=[], TERM=null, SELKEY='';
+
+function toast(m,e){ const t=$('#toast'); t.textContent=m; t.className='toast on'+(e?' err':'');
+  clearTimeout(t._h); t._h=setTimeout(()=>t.className='toast',2600); }
+async function api(path,method='GET',body){
+  const o={method,headers:{'Content-Type':'application/json'}}; if(body)o.body=JSON.stringify(body);
+  const r=await fetch(path,o); if(!r.ok) throw new Error('HTTP '+r.status); return r.json();
+}
+
+function switchTab(t){ TAB=t; document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x.dataset.t===t));
+  $('#pxToggleWrap').style.display = t==='proxmox'?'':'none'; render(); }
+
+async function loadAll(){ await Promise.all([loadConns(), loadTargets()]); }
+async function loadConns(){ try{ CONNS=(await api('/remote/conn/list')).connections||[]; }catch(e){ CONNS=[]; } render(); }
+async function loadTargets(){
+  const px = $('#pxToggle') && $('#pxToggle').checked;
+  try{ localStorage.setItem('vera.remote.px', px?'1':'0'); }catch(e){}
+  try{ TARGETS = await api('/remote/conn/targets?include_proxmox='+(px?'true':'false')); }
+  catch(e){ TARGETS={docker:[],ssh:[],proxmox:[]}; }
+  render();
+}
+
+function render(){
+  const el=$('#list'); let h='';
+  if(TAB==='saved'){
+    if(!CONNS.length) h='<div class="sec">No saved connections yet — open a target below and “Save”.</div>';
+    CONNS.forEach(c=>{
+      const key='conn:'+c.id;
+      h+=`<div class="item ${SELKEY===key?'sel':''}" onclick="openConn('${c.id}')">
+        <div class="nm">${icon(c.kind)} ${esc(c.label)}</div>
+        <div class="sub">${esc(c.kind)}${c.container?' · '+esc(c.container):''}${c.ssh_host_id?' · ssh':''}</div>
+        <div class="row">
+          <button class="btn sm" onclick="event.stopPropagation();openConn('${c.id}')">Open</button>
+          <button class="btn sm danger" onclick="event.stopPropagation();delConn('${c.id}')">Delete</button>
+        </div></div>`;
+    });
+  } else if(TAB==='docker'){
+    const rows=TARGETS.docker||[];
+    if(!rows.length) h='<div class="sec">No running containers found.</div>';
+    rows.forEach(c=>{
+      const key='d:'+c.docker_host_id+':'+c.container;
+      h+=`<div class="item ${SELKEY===key?'sel':''}" onclick="openDocker('${esc(c.docker_host_id)}','${esc(c.container)}')">
+        <div class="nm">📦 ${esc(c.container)}</div>
+        <div class="sub">${esc(c.image)} · ${esc(c.host_label)} · <span class="pill run">${esc(c.state)}</span></div>
+        <div class="row">
+          <button class="btn sm" onclick="event.stopPropagation();openDocker('${esc(c.docker_host_id)}','${esc(c.container)}')">Terminal</button>
+          <button class="btn sm" onclick="event.stopPropagation();saveConn('docker',{docker_host_id:'${esc(c.docker_host_id)}',container:'${esc(c.container)}',label:'${esc(c.container)}'})">Save</button>
+        </div></div>`;
+    });
+  } else if(TAB==='ssh'){
+    const rows=TARGETS.ssh||[];
+    if(!rows.length) h='<div class="sec">No stored SSH hosts.</div>';
+    rows.forEach(s=>{
+      h+=`<div class="item ${SELKEY==='s:'+s.ssh_host_id?'sel':''}" onclick="openSsh('${esc(s.ssh_host_id)}')">
+        <div class="nm">🖧 ${esc(s.label||s.host)}</div>
+        <div class="sub">${esc(s.user)}@${esc(s.host)}:${s.port}${s.tags?' · '+esc(s.tags):''}</div>
+        <div class="row">
+          <button class="btn sm" onclick="event.stopPropagation();openSsh('${esc(s.ssh_host_id)}')">Terminal</button>
+          <button class="btn sm" onclick="event.stopPropagation();saveConn('ssh',{ssh_host_id:'${esc(s.ssh_host_id)}',label:'${esc(s.label||s.host)}'})">Save</button>
+        </div></div>`;
+    });
+  } else if(TAB==='proxmox'){
+    const rows=TARGETS.proxmox||[];
+    if(!rows.length) h='<div class="sec">Tick “load Proxmox guests” to fetch, then enroll a guest to SSH for terminal access.</div>';
+    rows.forEach(g=>{
+      const run=g.status==='running';
+      const nm=(g.name||('vm'+g.vmid));
+      const meta=`{cluster_id:'${esc(g.cluster_id)}',node:'${esc(g.node)}',guest_type:'${esc(g.guest_type)}',vmid:${g.vmid},label:'${esc(nm)}'}`;
+      h+=`<div class="item">
+        <div class="nm">${g.guest_type==='lxc'?'📦':'🗔'} ${esc(nm)}</div>
+        <div class="sub">${esc(g.guest_type)} · ${g.vmid} · ${esc(g.node)} · ${esc(g.cluster_label)} · <span class="pill ${run?'run':'stop'}">${esc(g.status)}</span></div>
+        <div class="row">
+          <button class="btn sm" onclick="openProxmox('${esc(g.cluster_id)}','${esc(g.node)}','${esc(g.guest_type)}',${g.vmid})">Console</button>
+          <button class="btn sm" onclick="saveConn('proxmox',${meta})">Save</button>
+          <button class="btn sm pri" onclick="openEnroll(${meta})">Enroll SSH</button>
+        </div></div>`;
+    });
+  }
+  el.innerHTML=h;
+}
+function icon(k){ return k==='docker'?'📦':k==='ssh'?'🖧':k==='proxmox'?'🗔':'⎈'; }
+
+async function mountTerm(wsPath, whoHtml, key){
+  closeTerm(false);
+  SELKEY=key||''; render();
+  $('#empty').style.display='none'; $('#termbar').style.display='';
+  const host=$('#termhost'); host.style.display=''; host.innerHTML='';
+  $('#who').innerHTML=whoHtml;
+  TERM=document.createElement('vera-terminal');
+  host.appendChild(TERM);
+  TERM.connect(wsPath);
+}
+function closeTerm(clearSel){
+  if(TERM){ try{TERM.destroy();}catch(e){} TERM=null; }
+  $('#termhost').style.display='none'; $('#termhost').innerHTML='';
+  $('#termbar').style.display='none'; $('#empty').style.display='';
+  if(clearSel!==false){ SELKEY=''; render(); }
+}
+function fitTerm(){ TERM && TERM.fit(); }
+
+async function openConn(id){
+  try{ const r=await api('/remote/conn/open','POST',{conn_id:id});
+    if(!r.ok){ if(r.deeplink_url){ window.open(r.deeplink_url,'_blank'); return; } return toast(r.error||'open failed',true); }
+    const c=CONNS.find(x=>x.id===id)||{};
+    mountTerm(r.ws_path, `${icon(c.kind)} ${esc(c.label||id)} <small>${esc(r.kind)}</small>`, 'conn:'+id);
+  }catch(e){ toast('open failed: '+e.message,true); }
+}
+async function openDocker(host,container){
+  try{ const r=await api('/remote/conn/open','POST',{kind:'docker',docker_host_id:host,container});
+    if(!r.ok) return toast(r.error||'open failed',true);
+    mountTerm(r.ws_path, `📦 ${esc(container)} <small>${esc(host)}</small>`, 'd:'+host+':'+container);
+  }catch(e){ toast('open failed: '+e.message,true); }
+}
+async function openSsh(hid){
+  try{ const r=await api('/remote/conn/open','POST',{kind:'ssh',ssh_host_id:hid});
+    if(!r.ok) return toast(r.error||'open failed',true);
+    const s=(TARGETS.ssh||[]).find(x=>x.ssh_host_id===hid)||{};
+    mountTerm(r.ws_path, `🖧 ${esc(s.label||hid)} <small>${esc((s.user||'')+'@'+(s.host||''))}</small>`, 's:'+hid);
+  }catch(e){ toast('open failed: '+e.message,true); }
+}
+async function openProxmox(cluster,node,gtype,vmid){
+  try{ const r=await api('/remote/conn/open','POST',{kind:'proxmox',cluster_id:cluster,node,guest_type:gtype,vmid});
+    if(r.ok && r.ws_path){ mountTerm(r.ws_path, `🗔 ${esc(node)}/${vmid}`, 'p:'+vmid); return; }
+    if(r.deeplink_url){ window.open(r.deeplink_url,'_blank'); toast('Opened Proxmox console (enroll the guest to SSH for an in-Vera terminal)'); return; }
+    toast(r.error||'open failed',true);
+  }catch(e){ toast('open failed: '+e.message,true); }
+}
+async function saveConn(kind,fields){
+  try{ const r=await api('/remote/conn/save','POST',Object.assign({kind},fields));
+    if(!r.ok) return toast(r.error||'save failed',true);
+    toast('Saved connection'); loadConns();
+  }catch(e){ toast('save failed: '+e.message,true); }
+}
+async function delConn(id){
+  if(!confirm('Delete this connection?')) return;
+  try{ await api('/remote/conn/delete','POST',{id}); toast('Deleted'); loadConns(); }
+  catch(e){ toast('delete failed: '+e.message,true); }
+}
+
+/* ── Enroll a Proxmox guest to SSH ─────────────────────────────── */
+let ENROLL=null;
+function openEnroll(meta){
+  ENROLL=meta;
+  $('#enrollWho').textContent=(meta.label||('vm'+meta.vmid))+'  ·  '+meta.guest_type+' '+meta.vmid+' @ '+meta.node;
+  $('#enUser').value='root'; $('#enPass').value=''; $('#enKey').value=''; $('#enIp').value=''; $('#enPort').value='22';
+  $('#enrollOv').classList.add('on'); $('#enUser').focus();
+}
+function closeEnroll(){ $('#enrollOv').classList.remove('on'); ENROLL=null; }
+async function doEnroll(){
+  if(!ENROLL) return;
+  const body={ cluster_id:ENROLL.cluster_id, node:ENROLL.node, guest_type:ENROLL.guest_type,
+    vmid:ENROLL.vmid, user:$('#enUser').value.trim()||'root', password:$('#enPass').value,
+    key_path:$('#enKey').value.trim(), ip:$('#enIp').value.trim(),
+    port:parseInt($('#enPort').value)||22, label:ENROLL.label };
+  const btn=$('#enrollBtn'); btn.disabled=true; btn.textContent='Enrolling…';
+  try{
+    const r=await api('/proxmox/guest/enroll','POST',body);
+    if(r.error || !r.ok){ toast(r.error||'enroll failed',true); return; }
+    // Upgrade (or create) a saved connection now that we have an ssh_host_id.
+    await api('/remote/conn/save','POST',{ kind:'proxmox', cluster_id:ENROLL.cluster_id,
+      node:ENROLL.node, guest_type:ENROLL.guest_type, vmid:ENROLL.vmid,
+      ssh_host_id:r.ssh_host_id, label:ENROLL.label });
+    toast('Enrolled '+(r.ip||'')+' — terminal ready');
+    closeEnroll(); loadConns();
+  }catch(e){ toast('enroll failed: '+e.message,true); }
+  finally{ btn.disabled=false; btn.textContent='Enroll'; }
+}
+
+try{ if($('#pxToggle') && localStorage.getItem('vera.remote.px')==='1') $('#pxToggle').checked=true; }catch(e){}
+switchTab('saved');
+loadAll();
+</script>
+</body>
+</html>

@@ -148,11 +148,13 @@
   // button's exact onclick (including any fixed args), so form-driven buttons
   // work after the agent fills inputs via set_field. Returns null if no match
   // so the caller can report the action as unhandled.
-  function _triggerNamed(name){
+  // Locate the button matching a named action WITHOUT clicking it, so the caller
+  // can scope a payload fill to the button's container before firing. Returns
+  // {el, meta} or null. Matching order mirrors _triggerNamed: id → onclick
+  // handler(:arg) → visible label.
+  function _findNamed(name){
     if(!name) return null;
     var raw = String(name).trim(), byLabel = null;
-    // Accept disambiguated forms so a specific parameterised button can be
-    // targeted:  "handler:arg"  or  "handler('arg')" / "handler(arg)".
     var wantFn = raw, wantArg = null;
     var mm = raw.match(/^([a-zA-Z_$][\w$]*)\s*(?::\s*(.+)|\(\s*['"]?([^'")]*)['"]?\s*\))$/);
     if(mm){ wantFn = mm[1]; wantArg = (mm[2] !== undefined) ? mm[2] : mm[3]; if(wantArg != null) wantArg = String(wantArg).trim(); }
@@ -160,16 +162,13 @@
     for(var i = 0; i < btns.length; i++){
       var b = btns[i];
       if(b.offsetParent === null) continue;                 // skip hidden
-      if(b.id === raw){ b.click(); return {clicked: raw, by: 'id'}; }
+      if(b.id === raw){ return {el: b, meta: {clicked: raw, by: 'id'}}; }
       var oc = b.getAttribute('onclick') || '';
       var m = oc.match(/^\s*([a-zA-Z_$][\w$]*)\s*\(\s*(?:'([^']*)'|"([^"]*)")?/);
       if(m && m[1] === wantFn){
         var a0 = (m[2] !== undefined) ? m[2] : m[3];
-        // Bare handler name matches the first button; a requested arg must match
-        // that button's first string literal (so fabSection:sources is exact).
         if(wantArg == null || (a0 != null && a0 === wantArg)){
-          b.click();
-          return {clicked: wantFn, by: 'action', arg: (wantArg != null ? wantArg : (a0 || undefined))};
+          return {el: b, meta: {clicked: wantFn, by: 'action', arg: (wantArg != null ? wantArg : (a0 || undefined))}};
         }
       }
       if(!byLabel){
@@ -177,7 +176,31 @@
         if(lbl && lbl.toLowerCase() === raw.toLowerCase()) byLabel = b;
       }
     }
-    if(byLabel){ byLabel.click(); return {clicked: raw, by: 'label'}; }
+    if(byLabel){ return {el: byLabel, meta: {clicked: raw, by: 'label'}}; }
+    return null;
+  }
+
+  function _triggerNamed(name){
+    var f = _findNamed(name);
+    if(!f) return null;
+    f.el.click();
+    return f.meta;
+  }
+
+  // The nearest logical container of a control — a <form>, a section
+  // (.sec/.section/.card/.pane/.tab-pane or an id like fsec-*), or the panel
+  // root. Used to scope payload→input mapping so a one-shot dispatch on a busy
+  // multi-section panel fills the RIGHT form, not a same-named input elsewhere.
+  function _containerOf(el){
+    var n = el;
+    while(n && n !== document.body){
+      if(n.tagName === 'FORM') return n;
+      var cl = n.className && n.className.baseVal !== undefined ? n.className.baseVal : (n.className || '');
+      cl = String(cl);
+      if(/\b(sec|section|card|pane|panel|tab-pane|fqtab|fsec)\b/.test(cl)) return n;
+      if(n.id && /^(fsec-|sec-|tab-|pane-)/.test(n.id)) return n;
+      n = n.parentElement;
+    }
     return null;
   }
 
@@ -240,15 +263,26 @@
   // resolves to exactly one visible input (exact id, then synonym-aware
   // substring) — ambiguous keys are skipped rather than guessed. Returns the
   // ids that were set.
-  function _applyPayloadToInputs(payload){
+  function _applyPayloadToInputs(payload, scope){
     if(!payload || typeof payload !== 'object') return [];
     var SYN = {command:['cmd'], cmd:['command'], cwd:['dir','path','directory'],
                dir:['cwd'], path:['cwd'], timeout:['to'], to:['timeout'],
-               host:['hostname'], url:['link','href'], query:['q','sql']};
+               host:['hostname'], url:['link','href'], query:['q','sql','text','keywords'],
+               text:['query','q'], keywords:['query','q','text']};
     function norm(s){ return String(s).toLowerCase().replace(/[^a-z0-9]/g, ''); }
+    // Scope the candidate inputs to a container when given (e.g. the section that
+    // holds the button we're about to click) so a key like "query" maps to THIS
+    // form's field, not a same-named input in a different section. Fall back to
+    // the whole document when the scope holds no usable inputs.
+    var root = (scope && scope.querySelectorAll) ? scope : document;
     var inputs = Array.prototype.filter.call(
-      document.querySelectorAll('input, select, textarea'),
+      root.querySelectorAll('input, select, textarea'),
       function(el){ return el.id && el.type !== 'hidden' && el.offsetParent !== null; });
+    if(!inputs.length && root !== document){
+      inputs = Array.prototype.filter.call(
+        document.querySelectorAll('input, select, textarea'),
+        function(el){ return el.id && el.type !== 'hidden' && el.offsetParent !== null; });
+    }
     var applied = [];
     Object.keys(payload).forEach(function(key){
       var val = payload[key];
@@ -277,6 +311,131 @@
     click: _click, set_field: _setField, set_fields: _setFields, submit: _submit,
   };
 
+  // ── Live cap-activity feed ────────────────────────────────────────────
+  // The chat forwards every server-side cap the agent runs (call/ok/error,
+  // scoped to this panel's cap groups) as vera:panel:cap_activity messages.
+  // With zero panel code, a small overlay feed appears showing the agent's
+  // actions live. Panels MAY additionally register native mirrors:
+  //   VeraPanelBridge.registerCapActivityHandler('fabric.query', fn)
+  //   VeraPanelBridge.registerCapActivityHandler('fabric.*', fn)   // group
+  //   VeraPanelBridge.registerCapActivityHandler('*', fn)          // all
+  // fn receives {phase:'call'|'ok'|'error', cap, group, trace_id, args?,
+  // preview?, error?, elapsed_ms?} — e.g. re-run the query in the panel UI,
+  // refresh a list after a mutation, or jump to the relevant section.
+  var _capActivityHandlers = [];   // [{pattern, fn}]
+  var _feedBox = null, _feedList = null, _feedCollapsed = false;
+  var _feedRows = {};              // trace_id+cap → row el (call→ok/error resolution)
+
+  function _feedEnsure(){
+    if(_feedBox) return;
+    var css = 'position:fixed;right:10px;bottom:10px;z-index:99999;max-width:360px;' +
+              'font:11px/1.4 ui-monospace,Menlo,monospace;color:var(--text,#ddd);' +
+              'background:var(--bg2,rgba(28,28,30,.96));border:1px solid var(--border,#444);' +
+              'border-radius:8px;box-shadow:0 4px 18px rgba(0,0,0,.35);overflow:hidden';
+    _feedBox = document.createElement('div');
+    _feedBox.id = 'vpbCapFeed';
+    _feedBox.setAttribute('style', css);
+    var hd = document.createElement('div');
+    hd.setAttribute('style', 'display:flex;align-items:center;gap:6px;padding:5px 9px;' +
+      'font-weight:700;font-size:10px;letter-spacing:.05em;cursor:pointer;' +
+      'border-bottom:1px solid var(--border,#444);color:var(--acc,#5a9e8f)');
+    hd.innerHTML = '<span>⚡ AGENT ACTIVITY</span>' +
+      '<span style="flex:1"></span><span id="vpbCapFeedTgl" style="opacity:.7">–</span>';
+    hd.onclick = function(){
+      _feedCollapsed = !_feedCollapsed;
+      _feedList.style.display = _feedCollapsed ? 'none' : '';
+      var t = document.getElementById('vpbCapFeedTgl');
+      if(t) t.textContent = _feedCollapsed ? '+' : '–';
+    };
+    _feedList = document.createElement('div');
+    _feedList.setAttribute('style', 'display:flex;flex-direction:column;gap:2px;' +
+      'padding:5px 8px;max-height:180px;overflow-y:auto');
+    _feedBox.appendChild(hd); _feedBox.appendChild(_feedList);
+    (document.body || document.documentElement).appendChild(_feedBox);
+  }
+
+  function _feedTrim(){
+    while(_feedList && _feedList.children.length > 6){
+      var last = _feedList.lastChild;
+      for(var k in _feedRows){ if(_feedRows[k] === last) delete _feedRows[k]; }
+      _feedList.removeChild(last);
+    }
+  }
+
+  function _fmtArgs(args){
+    if(!args || typeof args !== 'object') return '';
+    var parts = [];
+    for(var k in args){
+      if(!args.hasOwnProperty(k)) continue;
+      parts.push(k + '=' + String(args[k]).slice(0, 32));
+      if(parts.length >= 3) break;
+    }
+    return parts.join(' ');
+  }
+
+  function _feedShow(a){
+    try{
+      _feedEnsure();
+      var key = (a.trace_id || '') + '|' + (a.cap || '');
+      var row = _feedRows[key];
+      if(a.phase === 'call' || !row){
+        row = document.createElement('div');
+        row.setAttribute('style', 'display:flex;gap:6px;align-items:baseline;' +
+          'white-space:nowrap;overflow:hidden;text-overflow:ellipsis');
+        _feedList.insertBefore(row, _feedList.firstChild);
+        _feedRows[key] = row;
+        _feedTrim();
+      }
+      var icon = a.phase === 'ok' ? '<span style="color:var(--ok,#6db87a)">✓</span>'
+               : a.phase === 'error' ? '<span style="color:var(--err,#c96b6b)">✗</span>'
+               : '<span style="color:var(--warn,#c9a35a)">▸</span>';
+      var tail = a.phase === 'ok' ? ((a.elapsed_ms != null ? (a.elapsed_ms/1000).toFixed(1)+'s ' : '') +
+                                     String(a.preview || '').slice(0, 46))
+               : a.phase === 'error' ? String(a.error || 'failed').slice(0, 60)
+               : _fmtArgs(a.args);
+      row.innerHTML = icon + ' <b>' + String(a.cap || '')
+        .replace(/</g, '&lt;') + '</b> <span style="opacity:.65">' +
+        String(tail).replace(/</g, '&lt;') + '</span>';
+      // Rows fade out on their own so the feed disappears when the agent goes idle.
+      if(row._vpbTimer) clearTimeout(row._vpbTimer);
+      row._vpbTimer = setTimeout(function(){
+        try{
+          if(row.parentNode) row.parentNode.removeChild(row);
+          delete _feedRows[key];
+          if(_feedList && !_feedList.children.length && _feedBox){
+            _feedBox.parentNode.removeChild(_feedBox);
+            _feedBox = null; _feedList = null; _feedRows = {};
+          }
+        }catch(e){}
+      }, 45000);
+    }catch(e){}
+  }
+
+  var _capArgsMemo = {};   // trace_id|cap → args from the 'call' phase
+  function _onCapActivity(a){
+    if(!a || !a.cap) return;
+    // Only the 'call' phase carries args; remember them so ok/error handlers
+    // (which mirror completed calls) still see what the cap was invoked with.
+    var memoKey = (a.trace_id || '') + '|' + a.cap;
+    if(a.phase === 'call' && a.args){
+      if(Object.keys(_capArgsMemo).length > 40) _capArgsMemo = {};
+      _capArgsMemo[memoKey] = a.args;
+    } else if(a.args == null && _capArgsMemo[memoKey]){
+      a.args = _capArgsMemo[memoKey];
+    }
+    if(a.phase !== 'call') delete _capArgsMemo[memoKey];
+    _feedShow(a);
+    var grp = String(a.cap).split('.')[0];
+    for(var i = 0; i < _capActivityHandlers.length; i++){
+      var h = _capActivityHandlers[i];
+      var p = h.pattern;
+      var hit = (p === '*') || (p === a.cap) ||
+                (p.slice(-2) === '.*' && p.slice(0, -2) === grp);
+      if(!hit) continue;
+      try{ h.fn(a); }catch(e){}
+    }
+  }
+
   // ── postMessage plumbing ──────────────────────────────────────────────
   function publishState(){
     var s = _buildState();
@@ -302,20 +461,39 @@
       _panelId = d.panel_id || _panelId; _sessionId = d.session_id || _sessionId;
       setTimeout(publishState, 50);
     } else if(t === 'vera:panel:query'){
+      // Explicit freshness ping — bypass the changed-state dedupe. Without
+      // this, an idle panel whose state hasn't changed republishes NOTHING,
+      // the chat's snapshot ages past its 5-minute staleness guard, and
+      // panel.query starts returning "no panel mounted" while the panel is
+      // visibly on screen.
+      _lastState = null;
       publishState();
+    } else if(t === 'vera:panel:cap_activity'){
+      _onCapActivity(d.activity || {});
     } else if(t === 'vera:panel:action'){
       var act = String(d.action || ''); var aid = d.action_id || ''; var payload = d.payload || {};
       if(act === '__query__'){ publishActionResult(aid, true, _buildState(), null, act); publishStateDebounced(); return; }
+      // Generic introspection: return the full control catalog + action list so
+      // an agent can discover what a bespoke-less panel can do before driving it.
+      if(act === 'describe' || act === '__describe__'){
+        var s = _buildState();
+        publishActionResult(aid, true, {ui: s.ui, panel_actions: s.panel_actions || {}, active: s.active, heading: s.heading}, null, act);
+        return;
+      }
       var h = _actionHandlers[act] || _builtins[act] || _actionHandlers['*'];
       if(!h){
         // Auto fallback — treat `act` as a named button (onclick handler name,
-        // id, label, or "handler:arg") and click it. First apply any payload to
-        // the panel's visible inputs so a one-shot dispatch carrying a payload
-        // (e.g. runLocal {command:"whoami"}) fills the field before clicking —
-        // this gives every panel semantic, named actions without bespoke wiring.
-        var applied = _applyPayloadToInputs(payload);
-        var nres = _triggerNamed(act);
-        if(nres){ if(applied && applied.length) nres.set_fields = applied; publishActionResult(aid, true, nres, null, act); publishStateDebounced(); return; }
+        // id, label, or "handler:arg"). Locate it FIRST, then apply any payload
+        // to inputs scoped to that button's container so the one-shot dispatch
+        // fills the right form before clicking — this gives every panel
+        // semantic, named actions without bespoke wiring.
+        var found = _findNamed(act);
+        if(found){
+          var applied = _applyPayloadToInputs(payload, _containerOf(found.el));
+          found.el.click();
+          if(applied && applied.length) found.meta.set_fields = applied;
+          publishActionResult(aid, true, found.meta, null, act); publishStateDebounced(); return;
+        }
         publishEvent('action_unhandled', {action: act}); publishActionResult(aid, false, null, 'no handler for action: ' + act, act); return;
       }
       var ret;
@@ -334,6 +512,10 @@
   window.VeraPanelBridge = {
     registerStateProvider: function(fn){ _stateProvider = fn; publishStateDebounced(); },
     registerActionHandler: function(name, fn){ _actionHandlers[String(name)] = fn; },
+    registerCapActivityHandler: function(pattern, fn){
+      if(pattern && typeof fn === 'function')
+        _capActivityHandlers.push({pattern: String(pattern), fn: fn});
+    },
     publishState: publishState, publishStateDebounced: publishStateDebounced,
     publishEvent: publishEvent, publishActionResult: publishActionResult,
     panelId: function(){ return _panelId; }, sessionId: function(){ return _sessionId; },

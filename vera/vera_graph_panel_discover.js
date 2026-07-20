@@ -219,7 +219,7 @@ window.veraUI.Graph.registerPanel({
           '<span style="font-size:8.5px;color:var(--dim2)">% — drop off-topic pages</span></div>'+
         '<div class="r"><label>Neighbor depth</label><input type="number" class="dc-ndepth" value="1" min="0" max="3"></div>'+
 
-        '<details class="dc-dd"><summary>⚙ Crawl options <span class="dd-count" data-dd="crawlopts"></span></summary>'+
+        '<details class="dc-dd"><summary>⚙︎ Crawl options <span class="dd-count" data-dd="crawlopts"></span></summary>'+
           '<div class="dc-list">'+
             selItem('dc-autosyn','Auto-synthesize 3rd-order','Build the distilled 3rd-order topic model automatically when the crawl finishes',false)+
             selItem('dc-inferedges','Infer complex edges','Infer non-explicit relationships between entities',true)+
@@ -247,7 +247,7 @@ window.veraUI.Graph.registerPanel({
         '<div class="r"><label>Map focus</label><input type="text" class="dc-mapfocus" placeholder="optional — bias entity extraction (e.g. people & orgs)"></div>'+
         '<div class="r"><label>Map dataset</label><input type="text" class="dc-mapds" placeholder="optional dataset id for the map"></div>'+
 
-        '<details class="dc-dd"><summary>🌐 Search sites <span class="dd-count" data-dd="sites"></span></summary>'+
+        '<details class="dc-dd"><summary>⊚ Search sites <span class="dd-count" data-dd="sites"></span></summary>'+
           '<div class="dc-list">'+
             selItem('dc-site-all','All sites','Search the open web with no site bias',false)+
             selItem('dc-site-reddit','Reddit','Discussions & community threads',true)+
@@ -267,7 +267,7 @@ window.veraUI.Graph.registerPanel({
           '</div>'+
         '</details>'+
 
-        '<details class="dc-dd"><summary>🛡 Anti-bot / stealth</summary>'+
+        '<details class="dc-dd"><summary>◈ Anti-bot / stealth</summary>'+
           '<div class="ddbody">'+
             '<div class="r" title="Custom User-Agent string. Blank = a realistic modern-browser default. Helps with \'Pardon our interruption\' / bot walls."><label>User agent</label><input type="text" class="dc-ua" placeholder="blank = realistic browser default"></div>'+
             '<div class="wr">'+
@@ -336,7 +336,7 @@ window.veraUI.Graph.registerPanel({
       '</div></details>'+
 
       // ── HISTORY ──────────────────────────────────────────────────────
-      '<details class="sec"><summary class="sec-hd"><span>⏰ History</span><span class="dc-hct" style="font-size:8px;color:var(--dim)"></span></summary><div class="sec-body" style="padding:2px 0">'+
+      '<details class="sec"><summary class="sec-hd"><span>◷ History</span><span class="dc-hct" style="font-size:8px;color:var(--dim)"></span></summary><div class="sec-body" style="padding:2px 0">'+
         '<div style="display:flex;gap:4px;padding:4px 6px;border-bottom:1px solid var(--border)">'+
           '<button class="btn dc-hist-refresh" style="font-size:8.5px;padding:2px 6px">↻ Refresh</button>'+
           '<button class="btn warn dc-hist-clear" style="font-size:8.5px;padding:2px 6px">✕ Clear all</button>'+
@@ -374,6 +374,22 @@ window.veraUI.Graph.registerPanel({
         '<div style="font-size:8.5px;color:var(--dim2);margin-bottom:4px">Distilled coherent topic representations. Build via Auto-synthesize, Map topic, or Synthesize now.</div>'+
         '<div class="dc-mlist"></div>'+
         '<div class="status dc-models-status"></div>'+
+      '</div></details>'+
+
+      // ── KNOWLEDGEBASES (structured wiki built from crawls) ───────────
+      '<details class="sec"><summary class="sec-hd"><span>⌸ Knowledgebases</span><span class="dc-kbct" style="font-size:8px;color:var(--dim)"></span></summary><div class="sec-body">'+
+        '<div style="display:flex;gap:4px;margin-bottom:4px;flex-wrap:wrap">'+
+          '<button class="btn dc-kb-refresh" style="font-size:8.5px;padding:2px 6px">↻ Refresh</button>'+
+          '<button class="btn teal dc-kb-build" style="font-size:8.5px;padding:2px 6px" title="Write/extend a wiki knowledgebase from the dataset’s entities, tables and pages">✎ Build from dataset</button>'+
+        '</div>'+
+        '<div class="r" style="margin-bottom:4px"><span class="lbl">Dataset</span><input type="text" class="dc-kb-ds" placeholder="active dataset" style="flex:1;font-size:8.5px"></div>'+
+        '<div style="display:flex;gap:4px;margin-bottom:4px">'+
+          '<input type="text" class="dc-kb-q" placeholder="Ask the knowledgebase…" style="flex:1;font-size:8.5px;padding:2px 5px;background:var(--bg0);border:1px solid var(--border2);color:var(--text);border-radius:3px">'+
+          '<button class="btn dc-kb-ask" style="font-size:8.5px;padding:2px 8px">Ask</button>'+
+        '</div>'+
+        '<div style="font-size:8.5px;color:var(--dim2);margin-bottom:4px">Wiki-like structured knowledge accumulated from crawls — articles + facts + tables. Queryable like an API via fabric.kb.query; crawls with a topic extend it automatically.</div>'+
+        '<div class="dc-kblist"></div>'+
+        '<div class="status dc-kb-status"></div>'+
       '</div></details>'+
 
       // ── NER BACKEND + ENTITY CONFIG (shared with Loom) ───────────────
@@ -470,7 +486,7 @@ window.veraUI.Graph.registerPanel({
       '</div></details>'+
 
       // ── LOG ──────────────────────────────────────────────────────────
-      '<details class="sec"><summary class="sec-hd"><span>▶ Log</span></summary><div class="sec-body">'+
+      '<details class="sec"><summary class="sec-hd"><span>▶︎ Log</span></summary><div class="sec-body">'+
         '<div class="log dc-log"></div>'+
         '<div class="btn-row" style="margin-top:3px;align-items:center">'+
           '<button class="btn" style="font-size:8.5px;padding:2px 6px" onclick="this.closest(\'.dc4\').querySelector(\'.dc-log\').innerHTML=\'\'">Clear</button>'+
@@ -594,11 +610,24 @@ window.veraUI.Graph.registerPanel({
     }
 
     // ── Polling ─────────────────────────────────────────────────────────
+    // In-flight guard: the graph reconstruction is the heaviest discover
+    // endpoint, and pollOnce fires from BOTH the 2.6s interval and per-page
+    // crawl events. Without the guard, calls stacked whenever one took longer
+    // than the interval and the pile-up degraded the whole backend. Bursts
+    // collapse into a single trailing refresh instead.
+    var _pollBusy=false,_pollAgain=false;
     async function pollOnce(){
       if(!active.crawlId)return;
-      var g=await api('/fabric/discover/graph?crawl_id='+encodeURIComponent(active.crawlId)+(active.datasetId?'&dataset_id='+encodeURIComponent(active.datasetId):''));
-      if(g&&!g.error){if(g.dataset_id){active.datasetId=g.dataset_id;_saveActive();}applyGraph(g,true);
-        var st=g.stats||{};overlay(null,(st.pages||0)+' pages · '+(st.surfaces||0)+' surfaces · '+(st.entities||0)+' entities',active.running?'running':'done');}
+      if(_pollBusy){_pollAgain=true;return;}
+      _pollBusy=true;
+      try{
+        var g=await api('/fabric/discover/graph?crawl_id='+encodeURIComponent(active.crawlId)+(active.datasetId?'&dataset_id='+encodeURIComponent(active.datasetId):''),null,null,60000);
+        if(g&&!g.error){if(g.dataset_id){active.datasetId=g.dataset_id;_saveActive();}applyGraph(g,true);
+          var st=g.stats||{};overlay(null,(st.pages||0)+' pages · '+(st.surfaces||0)+' surfaces · '+(st.entities||0)+' entities',active.running?'running':'done');}
+      } finally {
+        _pollBusy=false;
+        if(_pollAgain){_pollAgain=false;setTimeout(pollOnce,500);}
+      }
       updateCurStrip();
     }
     function startPolling(){stopPolling();pollTimer=setInterval(function(){pollOnce();refreshSideLists();},2600);}
@@ -846,7 +875,7 @@ window.veraUI.Graph.registerPanel({
         use_llm_entities:chk('.dc-llment',true),
         max_concurrency:intv('.dc-conc',4,1,16),
       };
-      log('▶ Mapping "'+topic+'" (depth '+payload.depth+', sites '+_sites+', angles '+payload.search_angles+')', 'ok');
+      log('▶︎ Mapping "'+topic+'" (depth '+payload.depth+', sites '+_sites+', angles '+payload.search_angles+')', 'ok');
       await runCrawl(api('/fabric/discover/map_topic','POST',payload,600000),cid,
         'Mapping "'+topic+'"',true,'.dc-topic-status');
     }
@@ -1108,6 +1137,86 @@ window.veraUI.Graph.registerPanel({
       log('Model "'+esc(topic)+'": '+sub,nodes.length?'ok':'warn');
     }
 
+    // ── Knowledgebases (wiki built from crawls) ───────────────────────────
+    var _kbSel='';
+    async function loadKbs(){
+      var el=q('.dc-kblist');var ct=q('.dc-kbct');if(!el)return;
+      var res=await api('/fabric/kb/list');
+      var kbs=(res&&res.knowledgebases)||[];
+      if(ct)ct.textContent=kbs.length||'';
+      if(!kbs.length){el.innerHTML='<div style="font-size:9px;color:var(--dim)">No knowledgebases yet — crawl a topic (auto-builds after the crawl) or use Build from dataset.</div>';return;}
+      el.innerHTML=kbs.map(function(k){
+        return '<div class="model-item" data-kb="'+esc(k.kb_id)+'">'+
+          '<div class="mt">⌸ '+esc(k.subject||k.kb_id)+(k.status==='building'?' <span style="color:var(--acc3)">building…</span>':'')+'</div>'+
+          '<div class="ms">'+(k.article_count||0)+' articles · '+(k.fact_count||0)+' facts'+
+            (k.updated_at?' · '+String(k.updated_at).slice(0,16).replace('T',' '):'')+'</div>'+
+          '<div class="kb-arts" style="display:none;margin-top:3px"></div>'+
+        '</div>';
+      }).join('');
+      el.querySelectorAll('.model-item[data-kb]').forEach(function(r){
+        r.onclick=function(){openKb(r);};
+      });
+    }
+    async function openKb(rowEl){
+      var kbId=rowEl.getAttribute('data-kb');if(!kbId)return;
+      _kbSel=kbId;
+      var box=rowEl.querySelector('.kb-arts');if(!box)return;
+      if(box.style.display!=='none'){box.style.display='none';return;}
+      box.style.display='block';
+      box.innerHTML='<div style="font-size:8.5px;color:var(--dim)">Loading…</div>';
+      var res=await api('/fabric/kb/get?kb_id='+encodeURIComponent(kbId));
+      if(!res||res.error){box.innerHTML='<div style="font-size:8.5px;color:var(--err)">'+esc((res&&res.error)||'load failed')+'</div>';return;}
+      var arts=res.articles||[];
+      box.innerHTML='<div class="run-item" data-slug="">≡ Read index</div>'+
+        arts.map(function(a){
+          return '<div class="run-item" data-slug="'+esc(a.slug)+'" title="'+esc(a.summary||'')+'">'+
+            '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(a.title||a.slug)+'</span>'+
+            '<span style="font-size:7px;color:var(--dim)">'+esc(a.kind||'')+'</span></div>';
+        }).join('');
+      box.querySelectorAll('.run-item').forEach(function(it){
+        it.onclick=function(ev){ev.stopPropagation();readKbArticle(kbId,it.getAttribute('data-slug'));};
+      });
+    }
+    async function readKbArticle(kbId,slug){
+      var res=await api('/fabric/kb/render?kb_id='+encodeURIComponent(kbId)+(slug?'&slug='+encodeURIComponent(slug):''));
+      if(!res||res.error){log('KB render failed: '+((res&&res.error)||'?'),'err');return;}
+      var bd=graph&&graph.bottomDrawer;
+      if(bd&&bd.showContent)bd.showContent(res.title||kbId,res.markdown||'',{render:'markdown'});
+      else log('KB: '+(res.markdown||'').slice(0,400),'info');
+    }
+    async function kbAsk(){
+      var qel=q('.dc-kb-q');var query=(qel&&qel.value||'').trim();if(!query)return;
+      var st=q('.dc-kb-status');if(st){st.textContent='querying…';st.className='status dc-kb-status';}
+      var body={query:query,mode:'answer'};
+      if(_kbSel){body.kb_id=_kbSel;}
+      else{
+        var res0=await api('/fabric/kb/list');var kbs=(res0&&res0.knowledgebases)||[];
+        if(!kbs.length){if(st){st.textContent='no knowledgebases yet';st.className='status dc-kb-status err';}return;}
+        body.kb_id=kbs[0].kb_id;
+      }
+      var res=await api('/fabric/kb/query','POST',body,120000);
+      if(!res||res.error){if(st){st.textContent='query failed: '+((res&&res.error)||'?');st.className='status dc-kb-status err';}return;}
+      if(st)st.textContent='';
+      var md='# '+query+'\n\n';
+      if(res.answer)md+=res.answer+'\n\n';
+      if((res.facts||[]).length)md+='## Facts\n'+res.facts.map(function(f){return '- **'+f.subject+'** '+f.predicate+' **'+f.object+'**';}).join('\n')+'\n\n';
+      if((res.articles||[]).length)md+='## Related articles\n'+res.articles.map(function(a){return '- '+(a.title||a.slug)+' — '+(a.summary||'').slice(0,140);}).join('\n')+'\n\n';
+      if((res.rows||[]).length)md+='## Matching rows\n'+res.rows.map(function(r){return '- ['+(r.table||'')+'] '+JSON.stringify(r.row).slice(0,200);}).join('\n');
+      var bd=graph&&graph.bottomDrawer;
+      if(bd&&bd.showContent)bd.showContent('KB: '+query,md,{render:'markdown'});
+    }
+    async function kbBuild(){
+      var ds=((q('.dc-kb-ds')&&q('.dc-kb-ds').value)||'').trim()||active.datasetId;
+      if(!ds){log('No dataset — select/run a crawl first or type a dataset id','warn');return;}
+      var st=q('.dc-kb-status');if(st)st.textContent='building… (watch the log)';
+      log('✎ building knowledgebase from '+ds+'…','acc');
+      var res=await api('/fabric/kb/build','POST',{dataset_id:ds},600000);
+      if(!res||res.error){log('KB build failed: '+((res&&res.error)||'?'),'err');if(st)st.textContent='';return;}
+      log('✓ KB "'+(res.subject||res.kb_id)+'": '+(res.article_count||0)+' articles, '+(res.fact_count||0)+' facts','ok');
+      if(st)st.textContent='';
+      loadKbs();
+    }
+
     // ── Research-brief / goal display ─────────────────────────────────────
     // Show the LLM's evolving, goal-oriented research brief so the user can SEE
     // how discovery is being targeted (and how refinement sharpens it).
@@ -1142,13 +1251,13 @@ window.veraUI.Graph.registerPanel({
           var ss=e.stage||'';
           var rel=(e.relevance!=null)?(' rel='+(+e.relevance).toFixed(2)):'';
           var dep=(e.depth!=null)?(' d='+e.depth):'';
-          if(ss==='starting')           log('▶ crawl start: '+(e.url||'')+' max='+(e.max_pages||'?')+' depth='+(e.max_depth||'?')+(e.resumed?' (resumed)':''),'ok');
-          else if(ss==='map_start')     log('▶ '+(e.message||'mapping topic'),'ok');
+          if(ss==='starting')           log('▶︎ crawl start: '+(e.url||'')+' max='+(e.max_pages||'?')+' depth='+(e.max_depth||'?')+(e.resumed?' (resumed)':''),'ok');
+          else if(ss==='map_start')     log('▶︎ '+(e.message||'mapping topic'),'ok');
           else if(ss==='seeding')       log('↗ seeding'+(e.queries?' · '+e.queries.length+' angles':'')+(e.message?': '+e.message:''),'info');
           else if(ss==='expanding')     log('↻ concept expansion round '+(e.round||'?')+(e.concepts&&e.concepts.length?' · '+e.concepts.slice(0,4).join(', '):''),'info');
           else if(ss==='page_fetching') log('… fetch '+((e.url||'').slice(0,100))+dep,'dim');
           else if(ss==='content_extracted') log('≡ '+(e.chars||0)+' chars · '+(e.links||0)+' links — '+((e.url||'').slice(0,70)),'dim');
-          else if(ss==='llm_action')    log('⚙ LLM '+(e.action||'')+((e.url)?' @ '+e.url.slice(0,60):'')+(e.message?' — '+e.message:''),'acc');
+          else if(ss==='llm_action')    log('⚙︎ LLM '+(e.action||'')+((e.url)?' @ '+e.url.slice(0,60):'')+(e.message?' — '+e.message:''),'acc');
           else if(ss==='page_added')    log('+ '+((e.title||e.url||'').slice(0,80))+rel+dep+(e.usefulness!=null?' use='+(+e.usefulness).toFixed(2):'')+(e.source_type?' ['+e.source_type+']':'')+(e.entities_queued?' · '+e.entities_queued+' ents queued':''),'info');
           else if(ss==='page_skipped')  log('⊘ skip '+((e.url||'').slice(0,80))+' — '+(e.reason||'')+rel,'dim');
           else if(ss==='entity_found'||ss==='entity_extracted') log('⊙ '+(e.count||0)+' entities'+(e.backend?' ['+e.backend+']':'')+(e.names?': '+e.names.slice(0,8).join(', '):'')+((e.url)?' @ '+(e.url||'').slice(0,50):''),'info');
@@ -1160,7 +1269,7 @@ window.veraUI.Graph.registerPanel({
           else if(ss==='scanning')      log('⇉ parallel scan: in-flight='+(e.in_flight||0)+' queued='+(e.queued||0),'acc');
           else if(ss==='consolidated')  log('⧖ consolidated: merged '+(e.merged||0)+' duplicate entities','ok');
           else if(ss==='consolidating') log('⧖ consolidating entities…','acc');
-          else if(ss==='queued')        log('⏳ queued behind another crawl for this topic','dim');
+          else if(ss==='queued')        log('⧗ queued behind another crawl for this topic','dim');
           else if(ss==='describing')    log('✎ grounding topic…','acc');
           else if(ss==='described')     { log('✎ '+(e.message||'topic grounded'),'ok'); if(e.description) renderBrief({type:(e.grounded?'web-grounded':'topic'),summary:e.description}, e.goal, 0); }
           else if(ss==='brief')         { log('✎ research brief built'+(e.topic?': '+e.topic.slice(0,80):'')+(e.goal?' · goal: '+e.goal.slice(0,60):''),'acc'); renderBrief(e.brief, e.goal, 0); }
@@ -1174,45 +1283,57 @@ window.veraUI.Graph.registerPanel({
           else if(ss==='seeded')        log('✓ seeded: '+(e.message||''),'ok');
           else if(ss==='synthesizing')  log('◈ auto-synthesizing 3rd-order…','acc');
           else if(ss==='synthesized')   log('✓ 3rd-order model ready'+(e.entries?' · '+e.entries+' entries':''),'ok');
-          else if(ss==='synthesize_error') log('⚠ synthesis failed: '+(e.error||e.message||'unknown'),'err');
+          else if(ss==='synthesize_error') log('⚠︎ synthesis failed: '+(e.error||e.message||'unknown'),'err');
+          else if(ss==='stitching')     log('⧉ stitching sub-table fragments into coherent tables…','acc');
+          else if(ss==='stitched')      log('✓ stitched '+(e.count||0)+' coherent table(s)','ok');
+          else if(ss==='kb_building')   log('✎ building knowledgebase…','acc');
+          else if(ss==='kb_built')      log('✓ knowledgebase updated — '+(e.articles||0)+' articles · '+(e.facts||0)+' facts','ok');
+          else if(ss==='kb_error')      log('⚠︎ kb build failed: '+(e.message||''),'err');
           else if(ss==='required_keyword_missing') log('⊘ skip '+((e.url||'').slice(0,70))+' — '+esc(e.message||'keyword not found'),'dim');
           else if(ss==='done')          log('✓ done — '+(e.pages||0)+'p · '+(e.surfaces||0)+' surfaces · '+(e.subtables||0)+' subtables · '+(e.entities||0)+' entities','ok');
           else if(e.message)            log(e.message,'info');
           if(ss==='page_added'||ss==='surface_detected'||ss==='subtable_added'||ss==='done')pollOnce();
           if(ss==='synthesized'||ss==='done')loadModels();
+          if(ss==='stitched')refreshSideLists();
+          if(ss==='kb_built')loadKbs();
         } else if(t==='fabric.entity_graph.progress'){
           var es=e.stage||'';var bk=e.backend?' ['+e.backend+']':'';
           if(es==='extracting')         log('⊙ extracting from '+(e.count||0)+' records'+bk+(e.use_llm?' + LLM':''),'info');
           else if(es==='extracted')     log('✓ extracted: '+(e.total||0)+' entities ('+(e.new_entities||0)+' new)'+bk,'ok');
           else if(es==='ner_batch')     log('⊙ NER batch '+(e.batch||0)+'/'+(e.total_batches||'?')+bk+(e.entities_found?' · '+e.entities_found+' found':''),'dim');
           else if(es==='aliased')       log('⧗ alias merge: '+(e.merged||0)+' ('+(e.before||0)+'→'+(e.after||0)+')','ok');
-          else if(es==='gliner_load')   log('⚙ loading GLiNER model…','warn');
+          else if(es==='gliner_load')   log('⚙︎ loading GLiNER model…','warn');
           else if(es==='gliner_ready')  log('✓ GLiNER ready'+(e.model?' · '+e.model:''),'ok');
-          else if(es==='spacy_load')    log('⚙ loading spaCy…','warn');
+          else if(es==='spacy_load')    log('⚙︎ loading spaCy…','warn');
           else if(es==='spacy_ready')   log('✓ spaCy ready'+(e.model?' · '+e.model:''),'ok');
           else if(es==='consolidated')  log('⧖ entity graph consolidated: merged '+(e.merged||0)+(e.linked?', +'+e.linked+' relations':''),'ok');
           else if(es==='done')          log('✓ entity extraction done — '+(e.entities||0)+' entities, '+(e.relations||0)+' relations (persisted '+(e.persisted||0)+')'+bk,'ok');
-          else if(e.message)            log('⚙ entity: '+e.message,'acc');
+          else if(e.message)            log('⚙︎ entity: '+e.message,'acc');
           // Entity/consolidation done: refresh graph so new entity nodes appear
           if(es==='done'||es==='consolidated')setTimeout(pollOnce,800);
         } else if(t==='fabric.synthesize.progress'){
           var sv=e.stage||'';
           if(sv==='start')              log('◈ synthesising: '+(e.topic||e.message||''),'ok');
           else if(sv==='loaded')        log('◈ scope: '+(e.entities||0)+' entities, '+(e.relations||0)+' relations','info');
-          else if(sv==='planning')      log('⚙ planning topic structure (LLM)…','acc');
+          else if(sv==='planning')      log('⚙︎ planning topic structure (LLM)…','acc');
           else if(sv==='planned')       log('◈ planned: '+(e.entry_type||'')+' · '+(e.expected||0)+' expected','ok');
-          else if(sv==='synthesising')  log('⚙ distilling entries ('+(e.done||0)+'/'+(e.total||0)+')…','acc');
+          else if(sv==='synthesising')  log('⚙︎ distilling entries ('+(e.done||0)+'/'+(e.total||0)+')…','acc');
           else if(sv==='profiling')     log('⊙ '+(e.message||('profiling '+(e.current||0)+'/'+(e.total||0)))+(e.total?' ['+(e.current||0)+'/'+e.total+']':''),'dim');
           else if(sv==='profiled')      log('✓ '+(e.message||('profiled '+(e.count||0)+' entities')),'ok');
           else if(sv==='coverage')      log('▤ '+(e.message||('coverage '+(e.covered||0)+'/'+(e.total||0))),'info');
           else if(sv==='done')          log('✓ 3rd-order — '+(e.entries||0)+' entries, '+(e.relations||0)+' relations','ok');
-          else if(sv==='empty')         log('⚠ nothing to synthesise: '+(e.message||'no entries'),'warn');
+          else if(sv==='empty')         log('⚠︎ nothing to synthesise: '+(e.message||'no entries'),'warn');
           else if(e.message)            log('◈ '+e.message,'acc');
           if(sv==='done')loadModels();
         } else if(t==='fabric.loom.progress'){
           var lv=e.stage||'';
           if(lv==='done') log('✓ loom: +'+(e.internal||0)+' internal, +'+(e.cross||0)+' cross-dataset links','ok');
           else if(e.message) log('⧖ loom: '+e.message,'acc');
+        } else if(t==='fabric.kb.progress'){
+          var kv=e.stage||'';
+          if(kv==='article')        log('✎ kb article: '+(e.title||e.slug||''),'ok');
+          else if(kv==='done')      { log('✓ knowledgebase ready — '+(e.articles||0)+' articles · '+(e.facts||0)+' facts','ok'); loadKbs(); }
+          else if(e.message)        log('✎ kb: '+e.message,'acc');
         } else if(t==='fabric.discover.surface'||t==='fabric.discover.subtable'){
           pollOnce();
         }
@@ -1268,7 +1389,7 @@ window.veraUI.Graph.registerPanel({
         '<div class="rd-stats" style="display:flex;gap:10px;padding:5px 12px;border-bottom:1px solid var(--border);font-size:9px;color:var(--dim2);flex-shrink:0;flex-wrap:wrap"></div>' +
         // Headings TOC
         '<div class="rd-toc-wrap" style="display:none;border-bottom:1px solid var(--border);background:var(--bg0);flex-shrink:0">' +
-            '<div style="padding:4px 12px;font-size:8.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;cursor:pointer" class="rd-toc-toggle">▶ Contents</div>' +
+            '<div style="padding:4px 12px;font-size:8.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;cursor:pointer" class="rd-toc-toggle">▶︎ Contents</div>' +
             '<div class="rd-toc" style="display:none;padding:4px 12px 8px;max-height:160px;overflow-y:auto"></div>' +
         '</div>' +
         // Tags
@@ -1283,7 +1404,7 @@ window.veraUI.Graph.registerPanel({
         var toc = _reader.querySelector('.rd-toc');
         var open = toc.style.display !== 'none';
         toc.style.display = open ? 'none' : 'block';
-        this.textContent = (open ? '▶' : '▼') + ' Contents';
+        this.textContent = (open ? '▶︎' : '▼') + ' Contents';
     };
 
     function _openReader(node) {
@@ -1358,6 +1479,27 @@ window.veraUI.Graph.registerPanel({
 
         _reader.style.display = 'flex';
         _reader.querySelector('.rd-body').scrollTop = 0;
+
+        // The graph payload now carries only a text PREVIEW (the full body per
+        // node made discovery graphs multi-MB). If this node was truncated,
+        // pull the stored page record and upgrade the reader in place.
+        if (p.text_truncated && !p._fullFetched) {
+            p._fullFetched = true;
+            var _ds = p.dataset_id || active.datasetId || '';
+            var _needle = String(p.url || p.title || '').slice(0, 80);
+            if (_ds && _needle) {
+                api('/fabric/browse', 'POST', {dataset_id: _ds, limit: 5, offset: 0, search: _needle}, 30000)
+                  .then(function(r){
+                    var recs = (r && r.records) || [];
+                    var hit = recs.find(function(rc){ return rc.url === p.url || rc.id === p.record_id; }) || recs[0];
+                    var full = hit && (hit.full_text || hit.text || (hit.data && (hit.data.text || hit.data.content))) || '';
+                    if (full && full.length > (p.text || '').length) {
+                        p.text = full;
+                        if (_reader.style.display !== 'none') _openReader(node);
+                    }
+                  }).catch(function(){});
+            }
+        }
     }
 
     // Hook into graph node selection — show content/links in the bottom drawer
@@ -1576,6 +1718,11 @@ window.veraUI.Graph.registerPanel({
     q('.dc-hist-refresh').onclick=function(){loadHistory(false);};
     q('.dc-hist-clear').onclick=clearHistory;
     q('.dc-models-refresh').onclick=loadModels;
+    if(q('.dc-kb-refresh'))q('.dc-kb-refresh').onclick=loadKbs;
+    if(q('.dc-kb-build'))q('.dc-kb-build').onclick=kbBuild;
+    if(q('.dc-kb-ask'))q('.dc-kb-ask').onclick=kbAsk;
+    var _kbQEl=q('.dc-kb-q');
+    if(_kbQEl)_kbQEl.onkeydown=function(ev){if(ev.key==='Enter')kbAsk();};
     // Trigger 3rd-order synthesis on the active (or typed) dataset. Progress
     // streams into the terminal via the fabric.synthesize.progress handler.
     async function synthesizeNow(){
@@ -1588,6 +1735,7 @@ window.veraUI.Graph.registerPanel({
         log('✓ 3rd-order model: '+(res.entries||res.entry_count||0)+' entries','ok');
         setStatus('.dc-models-status','Done: '+(res.entries||res.entry_count||0)+' entries',' ok');
         loadModels();
+    loadKbs();
       } else {log('Synthesis failed: '+((res&&res.error)||'?'),'err');setStatus('.dc-models-status',(res&&res.error)||'Failed',' err');}
     }
     if(q('.dc-synth-now'))q('.dc-synth-now').onclick=synthesizeNow;

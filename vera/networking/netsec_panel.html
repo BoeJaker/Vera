@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dusk">
+<head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Vera / Mesh</title>
+<style>
+:root{--bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;--border:#3a3530;--border2:#4a4540;--acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--acc4:#9e8fa0;--ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;--gpu:#c97a5a;--text:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;--mono:'JetBrains Mono','Fira Mono',monospace;--sans:'Inter','IBM Plex Sans',system-ui,sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg0);color:var(--text);font:12px/1.5 var(--sans)}
+body{overflow:hidden}
+pre,code,.mono{font-family:var(--mono)}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,select{font:inherit;color:inherit;background:var(--bg0);border:1px solid var(--border);border-radius:5px;padding:7px 9px;outline:none;width:100%}
+input:focus,select:focus{border-color:var(--acc)}
+::-webkit-scrollbar{width:7px;height:7px}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px}
+#shell{display:flex;flex-direction:column;height:100vh;height:100dvh;overflow:hidden}
+#top{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg1);border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap}
+.logo{color:var(--acc);font-weight:700;white-space:nowrap}
+.spacer{flex:1}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border-radius:6px;background:var(--bg3);border:1px solid var(--border2);color:var(--text);font-size:12px;white-space:nowrap;flex:0 0 auto}
+.btn:hover{border-color:var(--acc)}.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#06121c);font-weight:700}
+.btn.sm{padding:5px 8px;font-size:11px}.btn.danger{color:var(--err);border-color:var(--err)}.btn:disabled{opacity:.4;cursor:not-allowed}
+#body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px;padding-bottom:60px}
+.wrap{max-width:1060px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+.statbar{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+@media(min-width:640px){.statbar{grid-template-columns:repeat(4,1fr)}}
+.stat{background:var(--bg2);border:1px solid var(--border);border-radius:9px;padding:11px 13px}
+.stat .v{font-size:20px;font-weight:700}.stat .l{font-size:10px;color:var(--dim2);text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
+.stat .v.ok{color:var(--ok)}.stat .v.warn{color:var(--warn)}.stat .v.err{color:var(--err)}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:11px}
+.card h3{font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--dim2);display:flex;align-items:center;gap:8px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
+.field{display:flex;flex-direction:column;gap:4px;min-width:0}.field label{font-size:10px;color:var(--dim2);text-transform:uppercase}
+.hint{font-size:10.5px;color:var(--dim);line-height:1.5}
+.note{background:rgba(90,158,143,.06);border:1px solid rgba(90,158,143,.28);border-radius:7px;padding:10px 12px;font-size:11.5px;color:var(--dim2)}
+.note b{color:var(--text)}
+table{width:100%;border-collapse:collapse;font-size:11.5px}
+th{text-align:left;color:var(--dim);font-weight:600;padding:6px 8px;border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+td{padding:6px 8px;border-bottom:1px solid rgba(58,53,48,.5);vertical-align:middle}
+tr:hover td{background:rgba(255,255,255,.02)}
+.tbl{background:var(--bg1);border:1px solid var(--border);border-radius:8px;overflow-x:auto}
+.pill{font-size:9.5px;padding:1px 8px;border-radius:12px;border:1px solid var(--dim);color:var(--dim2);white-space:nowrap}
+.pill.ok{color:var(--ok);border-color:var(--ok)}.pill.warn{color:var(--warn);border-color:var(--warn)}.pill.err{color:var(--err);border-color:var(--err)}
+.tog{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--text)}.tog input{width:auto}
+.mono-out{background:var(--bg0);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:9px;font-size:10.5px;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;display:none}
+.empty{padding:14px;text-align:center;color:var(--dim);font-size:11px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:60;background:var(--bg3);border:1px solid var(--border2);padding:10px 16px;border-radius:8px;font-size:12px;opacity:0;transition:.2s;pointer-events:none}
+.toast.on{opacity:1}.toast.err{border-color:var(--err);color:var(--err)}.toast.ok{border-color:var(--ok)}
+</style>
+<script src="/ui/vera-ui.js"></script>
+</head>
+<body>
+<div id="shell">
+  <div id="top">
+    <span class="logo">🔗 Mesh</span>
+    <span id="prov-badge" class="pill">—</span>
+    <span id="enf-badge" class="pill">—</span>
+    <span class="spacer"></span>
+    <button class="btn sm" onclick="refresh()">⟳ Refresh</button>
+  </div>
+  <div id="body"><div class="wrap">
+
+    <div class="note">
+      <b>Encrypted overlay across the cluster.</b> Pulls Proxmox nodes, guests and
+      Docker hosts onto a private, authenticated network so Vera's connections
+      ride encrypted links between <b>enrolled</b> devices. Tolerant to begin:
+      hosts can join before they're enrolled (turn on <b>Enforce enrolment</b> to
+      refuse non-enrolled hosts). Keys are generated on each host and never leave
+      it. Enrol hosts in <b>Provision → Enroll</b>; deploy step-ca first from
+      <b>Provision → Security</b>.
+    </div>
+
+    <div class="statbar">
+      <div class="stat"><div class="v" id="st-members">—</div><div class="l">Members</div></div>
+      <div class="stat"><div class="v" id="st-up">—</div><div class="l">Interfaces up</div></div>
+      <div class="stat"><div class="v" id="st-enrolled">—</div><div class="l">Enrolled</div></div>
+      <div class="stat"><div class="v" id="st-hand">—</div><div class="l">Handshaking</div></div>
+    </div>
+
+    <!-- ── Config ─────────────────────────────────────────────────────────── -->
+    <div class="card">
+      <h3>Backend &amp; overlay</h3>
+      <div class="row">
+        <div class="field" style="flex:1;min-width:160px"><label>Provider (backend)</label>
+          <select id="c-provider"></select></div>
+        <div class="field" style="flex:1;min-width:130px"><label>Overlay subnet</label>
+          <input id="c-subnet" placeholder="10.88.0.0/16"></div>
+        <div class="field" style="max-width:110px"><label>Listen port</label>
+          <input id="c-port" type="number" placeholder="51820"></div>
+        <div class="field" style="max-width:100px"><label>Interface</label>
+          <input id="c-iface" placeholder="vera0"></div>
+        <label class="tog" style="padding-bottom:8px"><input type="checkbox" id="c-enforce"> Enforce enrolment</label>
+        <button class="btn pri" style="flex:0 0 auto" onclick="saveCfg()">Save</button>
+      </div>
+      <div class="hint" id="prov-desc"></div>
+    </div>
+
+    <!-- ── Members ────────────────────────────────────────────────────────── -->
+    <div class="card">
+      <h3>Members <span class="spacer" style="flex:1"></span>
+        <button class="btn sm" onclick="syncAll()">↺ Resync all</button></h3>
+      <div class="tbl"><table>
+        <thead><tr><th>Host</th><th>Overlay IP</th><th>Enrolled</th><th>State</th><th>Peers</th><th>Endpoint</th><th></th></tr></thead>
+        <tbody id="m-body"><tr><td colspan="7" class="empty">No members yet — join a host below.</td></tr></tbody>
+      </table></div>
+      <div id="m-out" class="mono-out"></div>
+    </div>
+
+    <!-- ── Candidates ─────────────────────────────────────────────────────── -->
+    <div class="card">
+      <h3>Available hosts <span class="spacer" style="flex:1"></span>
+        <span class="hint">from Workers → Connections</span></h3>
+      <div class="tbl"><table>
+        <thead><tr><th>Host</th><th>User</th><th>Address</th><th>Enrolled</th><th></th></tr></thead>
+        <tbody id="c-body"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+      </table></div>
+      <div id="c-out" class="mono-out"></div>
+    </div>
+
+  </div></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const $=s=>document.getElementById(s);
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function toast(m,k){const t=$('toast');t.textContent=m;t.className='toast on'+(k?' '+k:'');clearTimeout(t._h);t._h=setTimeout(()=>t.className='toast',k==='err'?5000:2800);}
+async function api(p,m='GET',b){const o={method:m,headers:{'Content-Type':'application/json'}};if(b)o.body=JSON.stringify(b);const r=await fetch(p,o);try{return await r.json();}catch(e){return{error:'HTTP '+r.status};}}
+function out(id,t){const o=$(id);o.style.display='block';o.textContent=t;}
+function age(s){ if(s==null) return '—'; if(s<0) return '—'; if(s<90) return s+'s'; if(s<3600) return Math.floor(s/60)+'m'; return Math.floor(s/3600)+'h'; }
+
+let PROVIDERS=[], CFG={};
+
+async function loadProviders(){
+  const j=await api('/netsec/mesh/providers'); PROVIDERS=j.providers||[];
+  $('c-provider').innerHTML=PROVIDERS.map(p=>`<option value="${esc(p.name)}">${esc(p.label)}${p.experimental?' ⚠':''}</option>`).join('');
+  $('c-provider').onchange=showProvDesc;
+}
+function showProvDesc(){
+  const p=PROVIDERS.find(x=>x.name===$('c-provider').value);
+  $('prov-desc').innerHTML=p?esc(p.description)+(p.experimental?' <b style="color:var(--warn)">— experimental</b>':''):'';
+}
+
+async function loadCfg(){
+  const j=await api('/netsec/mesh/config'); CFG=j.config||{};
+  $('c-provider').value=CFG.provider||'wireguard';
+  $('c-subnet').value=CFG.subnet||''; $('c-port').value=CFG.listen_port||'';
+  $('c-iface').value=CFG.iface||''; $('c-enforce').checked=!!CFG.enforce;
+  $('prov-badge').textContent=(CFG.provider||'—'); $('prov-badge').className='pill ok';
+  $('enf-badge').textContent=CFG.enforce?'enforce: on':'tolerant';
+  $('enf-badge').className='pill '+(CFG.enforce?'warn':'');
+  showProvDesc();
+}
+async function saveCfg(){
+  const body={provider:$('c-provider').value,subnet:$('c-subnet').value.trim(),
+    listen_port:parseInt($('c-port').value)||51820,iface:$('c-iface').value.trim()||'vera0',
+    enforce:$('c-enforce').checked};
+  const r=await api('/netsec/mesh/config/save','POST',body);
+  if(r.error) return toast(r.error,'err');
+  toast('Saved','ok'); loadCfg();
+}
+
+async function loadMembers(){
+  const [m,st]=await Promise.all([api('/netsec/mesh/members'),api('/netsec/mesh/status')]);
+  const members=m.members||[]; const status={}; (st.members||[]).forEach(s=>status[s.host_id]=s);
+  $('st-members').textContent=members.length;
+  const up=(st.members||[]).filter(s=>s.up).length; $('st-up').textContent=up; $('st-up').className='v '+(up===members.length&&members.length?'ok':up?'warn':'');
+  const enr=members.filter(x=>x.enrolled).length; $('st-enrolled').textContent=enr+'/'+members.length; $('st-enrolled').className='v '+(enr===members.length&&members.length?'ok':enr?'warn':'');
+  const hand=(st.members||[]).reduce((a,s)=>a+(s.handshaken||0),0); $('st-hand').textContent=hand;
+  $('m-body').innerHTML=members.length?members.map(x=>{
+    const s=status[x.host_id]||{};
+    const state=s.up?'<span class="pill ok">up</span>':(x.state==='error'?`<span class="pill err" title="${esc(s.error||x.last_error||'')}">error</span>`:'<span class="pill">'+esc(x.state||'—')+'</span>');
+    return `<tr>
+      <td><b>${esc(x.label||x.host)}</b><div class="hint">${esc(x.host||'')}</div></td>
+      <td class="mono">${esc(x.ip||'—')}</td>
+      <td>${x.enrolled?'<span class="pill ok">cert</span>':'<span class="pill warn">no</span>'}</td>
+      <td>${state}</td>
+      <td>${s.up?`${s.handshaken||0}/${s.peer_count||0}`:'—'}</td>
+      <td class="mono" style="font-size:10px">${esc(x.endpoint||'')}</td>
+      <td style="white-space:nowrap">
+        <button class="btn sm" onclick="syncOne('${esc(x.host_id)}')">Sync</button>
+        <button class="btn sm danger" onclick="leave('${esc(x.host_id)}','${esc(x.label||x.host)}')">Leave</button>
+      </td></tr>`;
+  }).join(''):'<tr><td colspan="7" class="empty">No members yet — join a host below.</td></tr>';
+}
+
+async function loadCandidates(){
+  const j=await api('/netsec/mesh/candidates'); const cs=j.candidates||[];
+  $('c-body').innerHTML=cs.length?cs.map(c=>`<tr>
+    <td><b>${esc(c.label)}</b></td><td>${esc(c.user||'')}</td><td class="mono">${esc(c.host||'')}</td>
+    <td>${c.enrolled?'<span class="pill ok">cert</span>':`<span class="pill">${esc(c.auth||'—')}</span>`}</td>
+    <td style="white-space:nowrap"><button class="btn sm pri" onclick="join('${esc(c.host_id)}','${esc(c.label)}')">Join mesh</button></td>
+  </tr>`).join(''):'<tr><td colspan="5" class="empty">All exec hosts are already on the mesh (or none are saved). Add hosts in Workers → Connections.</td></tr>';
+}
+
+async function join(hid,label){
+  if(!confirm('Join "'+label+'" to the mesh? Installs the provider over SSH and generates a key on the host.')) return;
+  out('c-out','▶ Joining '+label+'… (installing provider, generating identity, syncing peers)');
+  const r=await api('/netsec/mesh/join','POST',{host_id:hid});
+  if(r.error){ out('c-out','✗ '+r.error); return toast(r.error,'err'); }
+  out('c-out','✓ joined '+label+' → '+(r.member&&r.member.ip||'')+(r.warning?'\n⚠ '+r.warning:'')+'\n\nsync:\n'+JSON.stringify(r.sync,null,2));
+  toast('Joined '+label,'ok'); refresh();
+}
+async function leave(hid,label){
+  if(!confirm('Remove "'+label+'" from the mesh? Tears its interface down and resyncs the rest.')) return;
+  out('m-out','removing '+label+'…');
+  const r=await api('/netsec/mesh/leave','POST',{host_id:hid});
+  if(r.error){ out('m-out','✗ '+r.error); return toast(r.error,'err'); }
+  out('m-out','✓ removed '+label); toast('Removed '+label,'ok'); refresh();
+}
+async function syncOne(hid){ out('m-out','syncing…'); const r=await api('/netsec/mesh/sync','POST',{host_id:hid}); out('m-out',JSON.stringify(r.results||r,null,2)); toast(r.ok?'Synced':'Sync had issues',r.ok?'ok':'err'); loadMembers(); }
+async function syncAll(){ out('m-out','resyncing all members…'); const r=await api('/netsec/mesh/sync','POST',{}); out('m-out',JSON.stringify(r.results||r,null,2)); toast(r.ok?'Resynced':'Resync had issues',r.ok?'ok':'err'); loadMembers(); }
+
+async function refresh(){ await loadCfg(); await Promise.all([loadMembers(),loadCandidates()]); }
+
+(async()=>{ await loadProviders(); refresh(); })();
+setInterval(loadMembers, 20000);
+</script>
+</body>
+</html>

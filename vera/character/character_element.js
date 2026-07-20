@@ -148,6 +148,7 @@
 
     disconnectedCallback() {
       this.unbindEvents();
+      if (this._sheetPlayer) { cancelAnimationFrame(this._sheetPlayer.raf); this._sheetPlayer = null; }
       if (this._blinkTimer) clearInterval(this._blinkTimer);
       if (this._narrateTimer) clearInterval(this._narrateTimer);
     }
@@ -232,7 +233,10 @@
           if (rec.voice) this._voice = rec.voice;
           if (rec.style === 'pixel') this.setAttribute('pixel', ''); else this.removeAttribute('pixel');
           if (this._mode === 'auto') this._mode = rec.render_mode || 'procedural';
-          this._buildFrames(rec.frame_urls);
+          if (this._mode === 'spritesheet' && rec.sheet && rec.sheet.url)
+            this._buildSheet(rec.sheet);
+          else
+            this._buildFrames(rec.frame_urls || {});
           if (this._narrate || rec.idle_blink) this._startBlink(rec.idle_blink !== false);
         } else {
           this._buildEmoji();
@@ -248,6 +252,7 @@
     }
 
     _clearLayers() {
+      if (this._sheetPlayer) { cancelAnimationFrame(this._sheetPlayer.raf); this._sheetPlayer = null; }
       this._sr.querySelectorAll('.frame,.emoji').forEach(n => n.remove());
       const ph = this._sr.querySelector('[data-part="ph"]');
       if (ph) ph.remove();
@@ -264,6 +269,85 @@
         this._bob.appendChild(img);
         this._frames[state] = { img, url: urls[state] };
       });
+    }
+
+    // Play packed sprite sheets (from spritegen). New records carry EVERY built
+    // animation (sheet.animations) → canvas player that idles by default, plays
+    // 'talk' while speaking and one-shot reactions (hurt/jump) on state changes.
+    // Old records with a single sheet keep the CSS steps() fallback.
+    _buildSheet(sheet) {
+      this._clearLayers();
+      const anims = sheet.animations;
+      if (!anims || !Object.keys(anims).length) return this._buildSheetSingle(sheet);
+      const cv = document.createElement('canvas');
+      cv.className = 'frame on';
+      cv.style.cssText = 'image-rendering:pixelated;object-fit:contain;background:transparent';
+      this._bob.appendChild(cv);
+      this._sheetEl = cv;
+      const ctx = cv.getContext('2d');
+      const player = { anims: {}, cur: null, raf: 0 };
+      Object.keys(anims).forEach(a => {
+        const img = new Image();
+        img.src = this._base + anims[a].url;
+        player.anims[a] = { img, m: anims[a] };
+      });
+      player.def = (sheet.anim && player.anims[sheet.anim]) ? sheet.anim
+                 : (player.anims.idle ? 'idle' : Object.keys(player.anims)[0]);
+      player.play = (name, once) => {
+        const A = player.anims[name];
+        if (!A) return false;
+        player.cur = { name, start: performance.now(),
+                       once: (once != null) ? !!once : (A.m.loop === false) };
+        if (cv.width !== A.m.frame_width || cv.height !== A.m.frame_height) {
+          cv.width = A.m.frame_width; cv.height = A.m.frame_height;
+        }
+        ctx.imageSmoothingEnabled = false;
+        return true;
+      };
+      const tick = (now) => {
+        player.raf = requestAnimationFrame(tick);
+        const c = player.cur;
+        if (!c) return;
+        const A = player.anims[c.name];
+        if (!A || !A.img.naturalWidth) return;
+        const m = A.m;
+        let idx = Math.floor((now - c.start) / 1000 * Math.max(1, m.fps || 8));
+        if (c.once && idx >= m.count) { player.play(player.def); return; }
+        idx %= Math.max(1, m.count);
+        const col = idx % m.columns, row = Math.floor(idx / m.columns);
+        ctx.clearRect(0, 0, cv.width, cv.height);
+        ctx.drawImage(A.img, col * m.frame_width, row * m.frame_height,
+                      m.frame_width, m.frame_height, 0, 0, cv.width, cv.height);
+      };
+      player.play(player.def);
+      player.raf = requestAnimationFrame(tick);
+      this._sheetPlayer = player;
+      this._frames = {};
+    }
+
+    // Single-sheet CSS steps() fallback (older character records).
+    _buildSheetSingle(sheet) {
+      const S = this._stage.clientWidth || parseInt(this.getAttribute('size') || '220', 10) || 220;
+      const N = Math.max(1, sheet.count || sheet.columns || 1);
+      const fps = sheet.fps || 8;
+      const div = document.createElement('div');
+      div.className = 'frame on';
+      div.style.cssText =
+        `background-image:url(${this._base + sheet.url});background-repeat:no-repeat;` +
+        `background-position:0 center;background-size:${N * S}px ${S}px;image-rendering:pixelated`;
+      this._bob.appendChild(div);
+      this._sheetEl = div;
+      try {
+        if (N > 1) div.animate(
+          [{ backgroundPositionX: '0px' }, { backgroundPositionX: `-${N * S}px` }],
+          { duration: (N / Math.max(1, fps)) * 1000, iterations: Infinity, easing: `steps(${N})` });
+      } catch (_) {}
+      this._frames = {};
+    }
+
+    // Public: play a named sprite animation (no-op for non-sprite characters).
+    playAnim(name, once) {
+      return this._sheetPlayer ? this._sheetPlayer.play(name, once) : false;
     }
 
     _buildEmoji() {
@@ -304,11 +388,16 @@
       state = state || 'idle';
       this._state = state;
       this.setAttribute('state', state);
+      if (this._sheetPlayer) this._spriteState(state);
       if (Object.keys(this._frames).length) this._showFrame(state);
       this._stage.classList.toggle('ring', state !== 'idle');
       this._stage.style.setProperty('--ring', STATE_RING[state] || STATE_RING.idle);
       this.dispatchEvent(new CustomEvent('char:state', { detail: { state }, bubbles: true }));
     }
+
+    /** Public mouth flap that leaves the logical state (and status ring) alone —
+        used by the chat buddy to lip-flap while reply tokens stream in. */
+    flap(open) { this._mouth(!!open); }
 
     _setStatus(txt) {
       if (!this._statusEl) return;
@@ -358,7 +447,30 @@
       });
     }
 
+    // Map logical companion states onto whichever sprite animations exist.
+    _spriteState(state) {
+      const p = this._sheetPlayer;
+      if (!p) return;
+      const loops = { talking: 'talk', working: 'walk' };
+      const shots = { error: 'hurt', happy: 'jump' };
+      if (loops[state] && p.anims[loops[state]]) {
+        if (!p.cur || p.cur.name !== loops[state]) p.play(loops[state]);
+      } else if (shots[state] && p.anims[shots[state]]) {
+        p.play(shots[state], true);
+      } else if (state === 'idle' && p.cur && p.cur.name !== p.def && !p.cur.once) {
+        p.play(p.def);
+      }
+    }
+
     _mouth(open) {
+      if (this._sheetPlayer) {
+        const p = this._sheetPlayer;
+        if (p.anims.talk) {
+          if (open && (!p.cur || p.cur.name !== 'talk')) p.play('talk');
+          else if (!open && p.cur && p.cur.name === 'talk') p.play(p.def);
+        }
+        return;
+      }
       if (!Object.keys(this._frames).length) return;
       const key = open ? (this._frames.talking ? 'talking' : 'neutral')
                        : (this._frames.neutral ? 'neutral' : Object.keys(this._frames)[0]);

@@ -174,7 +174,20 @@ The loop runs for `maxSteps` cycles (default 8) or until done/defer/abort. A "Co
 
 ## 6. The IDE panel
 
-`ide_panel.html` is the harness IDE tab. Sections:
+The harness **IDE tab** now mounts a merged wrapper (`vscode_panel.html`, served
+at `/ide/vscode/panel`) with three views:
+
+- **VS Code** *(default)* — a real code-server embedded through the same-origin
+  proxy (see §12): the central instance, any remote code-server, or a sandbox
+  interactive worker, switchable from the header dropdown.
+- **Workbench** — the original custom IDE (`ide_panel.html`, everything below
+  in this section) — unchanged and lazily loaded.
+- **Remotes & Queue** — the old Remote-IDE panel (`ide_remote_panel.html`):
+  instance registry/provisioning, the Claude-Code/vera-agent console, the
+  autonomous work queue + autopilot, and the MCP bridge — merged into the IDE
+  tab instead of a separate top-level tab.
+
+`ide_panel.html` is the classic workbench view. Sections:
 
 ### Tree pane
 
@@ -280,6 +293,146 @@ The `ide.inspect.generate_capability` cap is the workflow for creating new caps:
 4. The generated file is written to disk (in a `generated/` folder, not the main module path) and shown in the IDE panel for review.
 
 This is the bootstrap path for growing the system — sketch a capability in English, let the IDE write the code, review, then move the file into the live module path.
+
+---
+
+## 12. Central VS Code, the same-origin proxy, and interactive workers
+
+`vscode_capabilities.py` (group `ide.vscode.*`) makes a **central code-server
+running next to Vera** the primary IDE surface.
+
+### Central instance
+
+The `vscode` compose service runs `codercom/code-server` with:
+
+- `vera-projects` mounted at `/home/coder/projects` — the exact tree
+  `VERA_PROJECT_ROOT` points at, so the central IDE, the classic workbench and
+  the coding agents all edit the same files;
+- `vscode-data:/home/coder` so settings/extensions persist;
+- the docker socket mounted so its integrated terminal can
+  `docker exec -it vera-sbx-… sh` into any session sandbox.
+
+`ide.vscode.central.ensure` deploys the same container onto any registered
+Docker host (native/non-compose runs), or *adopts* the compose one, and then
+best-effort installs the **Claude Code CLI**, extensions from
+`VSCODE_CENTRAL_EXTENSIONS`, the **Vera MCP bridge** (so Claude Code inside the
+container can call Vera capabilities) and, when the socket is mounted, a docker
+CLI. It registers instance `central` in the shared Remote-IDE registry, so the
+work queue / autopilot / `ide.remote.run` drive it like any other instance.
+
+### Same-origin proxy — the iframe-login fix
+
+Every instance is embedded via `/vscode/{instance_id}/…`, a reverse proxy
+(HTTP + WebSocket) inside the orchestrator. code-server's session cookie was
+**third-party** when the iframe pointed at the raw `http://host:port` URL, so
+browsers dropped it and login only worked standalone. Through the proxy the
+cookie is first-party (and re-scoped to `Path=/vscode/{id}/`, so instances
+can't clobber each other), which makes in-page login work for the central
+instance *and* every remote code-server. Frame-blocking headers
+(`X-Frame-Options`, CSP) are stripped in transit.
+
+### Interactive workers (sandbox sidecars)
+
+`ide.vscode.sandbox.attach` starts a code-server sidecar
+(`vera-sbx-<session>-code`) sharing a session sandbox's `/workspace` volume —
+you work alongside Vera in that session's filespace while her `exec`/`code`
+calls keep running inside the sandbox container itself. Sidecars register as
+`sbxw-<session>` (kind `sandbox-worker`), get a proxy path and a sealed
+password, and are detached with `ide.vscode.sandbox.detach` (sandbox + volume
+untouched). The `＋ Worker` menu in the IDE header lists sandboxes to
+attach/open/detach.
+
+### Password management
+
+Passwords are Fernet-sealed on the instance records (`security/secrets.py`):
+
+- `ide.vscode.password.reveal` — plaintext for the login form / clipboard
+  (IDE header 🔑, Workers → Connections ⧉ pw);
+- `ide.vscode.password.set` — rotate: central + sandbox workers are redeployed
+  with the new `PASSWORD`, remote `kind=code-server` hosts get
+  `~/.config/code-server/config.yaml` rewritten + restarted over SSH.
+
+The **Workers → Connections** pane lists all VS Code instances next to the SSH
+credential store, with Open (proxy), copy-password, rotate and deploy-central
+actions.
+
+---
+
+## 13. VS Code client windows & Claude Code auth
+
+Two extensions in `tools/` extend the remote system to machines Vera can't SSH
+into (a laptop's own VS Code):
+
+- **`tools/vera-vscode`** — the Vera sidebar + MCP-bridge connector. In
+  **client mode** (`vera.clientMode`) it registers the window as instance
+  `kind=vscode-client` and long-polls `POST /ide-api/remote/client/poll`;
+  `ide.remote.client.dispatch` pushes actions into it (`open_file`,
+  `run_command`, `terminal`, `type_text`, `notify`, `claude_task`), results
+  come back via `/ide-api/remote/client/result` and resolve the dispatcher's
+  future. The work queue picks live client windows for `instance_id=any`
+  items, and `claude_task` runs the **client's own** `claude` CLI — so it
+  uses whatever sign-in exists on that machine.
+- **`tools/vscode-input-automator`** — a generic input macro panel (typing,
+  terminal, command palette), useful for driving interactive tools manually.
+
+**Claude Code auth modes** (`ide.remote.register auth=api-key|subscription`):
+`api-key` (default) resolves per-instance sealed key → providers store → env
+and exports `ANTHROPIC_API_KEY` for headless runs. `subscription` exports
+**nothing** (an exported key would override the host's `claude login`
+credentials); optionally a sealed `oauth_token` (from `claude setup-token`)
+is exported as `CLAUDE_CODE_OAUTH_TOKEN`. `ide.remote.detect` / `.status`
+report `claude_login` (whether `~/.claude/.credentials.json` exists) so the
+panel can show sign-in state. The one-time interactive `claude login` can be
+done through the embedded code-server terminal.
+
+## 14. Quick-connect (download-and-run) + self-packaged extension
+
+The IDE panel's **🔌 Connect** button (and `ide.vscode.connect.info`) opens a
+download page at `GET /vscode/connect` that wires a user's **desktop** VS Code
+to Vera in one shot — no manual `vsce`, no marketplace, no SSH:
+
+| Route | Serves |
+|---|---|
+| `GET /vscode/connect` | Landing page: copy-paste one-liners + download links |
+| `GET /vscode/connect/extension.vsix` | The `vera-vscode` extension, **packaged in-process** |
+| `GET /vscode/connect/connect.ps1` | Windows quick-connect script (base URL baked in per-request) |
+| `GET /vscode/connect/connect.sh` | macOS/Linux quick-connect script |
+| `GET /vscode/connect/cert` | Vera's TLS cert (PEM) for the client trust store |
+
+The one-liner (`iex (irm …/connect.ps1)` on Windows, `curl -fsSLk …/connect.sh
+| bash` on Unix) finds the `code` CLI, installs the extension, sets
+`vera.baseUrl` + `vera.clientMode=true` in `settings.json`, and trusts the cert
+— after a reload the window appears in **Remotes & Queue** and Vera can queue
+Claude Code tasks straight into it (via the §13 client-dispatch channel).
+
+**Vera packages the `.vsix` itself.** A VSIX is just an OPC zip
+(`[Content_Types].xml` + `extension.vsixmanifest` at the root, the extension
+under `extension/`), so `vscode_capabilities._build_vsix_bytes()` builds a valid
+package with `zipfile` — no Node, no `vsce`, no container. `code
+--install-extension` accepts it directly. `ide.vscode.extension.build` exposes
+this (`mode="zip"`, default); `mode="vsce"` is an optional path that spins up a
+throwaway `node:20-alpine` container and runs the official `@vscode/vsce`
+packager when you want a canonical package (source injected as a base64 tar.gz,
+result read back as base64 — the extension is tiny so both fit the exec cap).
+
+### The webview "service worker SSL error"
+
+> `Could not register service worker: … An SSL certificate error occurred when
+> fetching the script.`
+
+The browser IDE is code-server behind Vera's same-origin proxy over
+**self-signed HTTPS** (`TLS_ENABLED=1`, cert auto-generated at `~/.vera/tls`).
+Browsers refuse to register a service worker in a *cert-errored* secure context,
+and code-server's **webviews** (Claude Code's chat UI, notebooks, markdown
+preview, …) all depend on that service worker — so they fail to load even though
+the main page rendered after you clicked through the cert warning.
+
+The fix is to **trust Vera's certificate** on the client machine (the
+quick-connect script does this automatically; the landing page lists the manual
+`Import-Certificate` / Keychain / `update-ca-certificates` steps), then restart
+the browser. A real CA-signed or `mkcert` certificate for the host removes it
+permanently and is the recommended long-term fix — point `TLS_CERTFILE` /
+`TLS_KEYFILE` at it.
 
 ---
 

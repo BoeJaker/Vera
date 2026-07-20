@@ -82,6 +82,57 @@ MEMORY_EXCLUDE_GROUPS = {
 # ── Minimum text length to bother storing ────────────────────────────────────
 MEMORY_MIN_TEXT_LEN = 30
 
+# ── Chat I/O → entity graph ───────────────────────────────────────────────────
+# When on, each stored chat message is (async, non-blocking) ingested into the
+# `chat.messages` fabric dataset. That runs the NLP entity extractor and — via
+# fabric.entity_graph.link_memory in the post-ingest pipeline — links the
+# extracted entities back to this message's :Memory node. Heuristic-first; LLM
+# extraction stays opt-in through the per-dataset fabric config. Default ON;
+# set VERA_CHAT_ENTITY_EXTRACT=0 to disable.
+import os as _os
+CHAT_ENTITY_EXTRACT = _os.getenv("VERA_CHAT_ENTITY_EXTRACT", "1") not in \
+    ("0", "false", "False", "no", "off", "")
+CHAT_ENTITY_MIN_LEN = 30
+
+
+def _fabric_mod():
+    """Lazy handle to the data_fabric module (avoids a load-time import cycle)."""
+    return (sys.modules.get("data_fabric")
+            or sys.modules.get("Vera.vera.fabric.data_fabric"))
+
+
+async def _ingest_message_entities(node_id: str, text: str, role: str,
+                                   session_id: str, agent_name: str):
+    """Fire-and-forget: push one chat message through the fabric so entity
+    extraction runs and (via fabric.entity_graph.link_memory) connects the
+    extracted entities to this message's :Memory node. Never raises; never
+    blocks the turn."""
+    if not CHAT_ENTITY_EXTRACT or not node_id or not text:
+        return
+    if len(text.strip()) < CHAT_ENTITY_MIN_LEN:
+        return
+    fabric = _fabric_mod()
+    if not fabric or not hasattr(fabric, "ingest_dataset"):
+        return
+    try:
+        await fabric.ingest_dataset(
+            dataset_id="chat.messages",
+            data=[{
+                "text":       text[:8000],
+                "role":       role,
+                "node_id":    node_id,
+                "session_id": session_id,
+                "agent":      agent_name,
+                "ts":         now_iso(),
+            }],
+            source="chat",
+            source_id=session_id or agent_name,
+            tags=["chat", role, agent_name] if agent_name else ["chat", role],
+        )
+    except Exception as e:
+        log.debug("chat entity ingest [%s]: %s",
+                  (node_id or "?")[:8], e)
+
 
 def _memory():
     """Lazy import to avoid circular dependency at load time."""
@@ -413,6 +464,19 @@ async def record_agent_turn(
                                   session_id=session_id)
     except Exception as _e:
         log.debug("record_agent_turn cross-link: %s", _e)
+
+    # Entity extraction on chat I/O — non-blocking. Routes each message's text
+    # through the fabric so the NLP entity engine runs and connects the extracted
+    # entities to this message's :Memory node, exactly like all other fabric
+    # ingestion. Fire-and-forget: chat latency is unaffected.
+    if CHAT_ENTITY_EXTRACT:
+        try:
+            asyncio.create_task(_ingest_message_entities(
+                human_id, human_text, "human", session_id, agent_name))
+            asyncio.create_task(_ingest_message_entities(
+                ai_id, ai_text, "ai", session_id, agent_name))
+        except Exception as _e:
+            log.debug("chat entity ingest schedule: %s", _e)
 
     await _update_session_last(session_id, ai_id)
     log.debug("memory_hooks: agent turn %s→ai saved (%s/%s)",

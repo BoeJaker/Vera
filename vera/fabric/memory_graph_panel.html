@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <title>Memory Graph</title>
 <style>
@@ -20,7 +25,8 @@
 
 html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--t1); font-family: var(--sans); font-size: 13px; }
 
-#app { display: grid; grid-template-rows: 42px 1fr; grid-template-columns: 230px 1fr 300px; height: 100vh; }
+#app { display: grid; grid-template-rows: 42px 1fr; grid-template-columns: 1fr 320px; height: 100vh; }
+#app.side-min { grid-template-columns: 1fr 28px; }
 
 /* ── Topbar ── */
 #topbar {
@@ -44,8 +50,25 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 #status-msg.err  { color: var(--ac4); }
 #status-msg.busy { color: var(--ac3); }
 
-/* ── Left ── */
-#left { background: var(--s1); border-right: 1px solid var(--bd); display: flex; flex-direction: column; overflow: hidden; }
+/* ── Side panel chrome (Details | Config tabs + collapse) ── */
+#side-hdr { display: flex; align-items: center; gap: 3px; padding: 4px 6px; border-bottom: 1px solid var(--bd); flex-shrink: 0; }
+.side-tab {
+  font-family: var(--mono); font-size: 9px; padding: 3px 10px; letter-spacing: .08em;
+  text-transform: uppercase; border-radius: 3px; background: transparent;
+  border: 1px solid transparent; color: var(--t2); cursor: pointer; transition: all .12s;
+}
+.side-tab:hover { color: var(--ac); }
+.side-tab.on { background: var(--s2); border-color: var(--bd); color: var(--ac2); }
+#side-collapse {
+  font-family: var(--mono); font-size: 11px; padding: 2px 7px; background: transparent;
+  border: 1px solid var(--bd); color: var(--t2); border-radius: 3px; cursor: pointer; transition: all .12s;
+}
+#side-collapse:hover { border-color: var(--ac); color: var(--ac); }
+.side-page { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+/* Collapsed: 28px strip — hide everything except the expand chevron */
+#app.side-min .side-page { display: none !important; }
+#app.side-min #side-hdr { flex-direction: column; padding: 4px 2px; border-bottom: none; }
+#app.side-min .side-tab { display: none; }
 .ph { padding: 8px 12px 6px; border-bottom: 1px solid var(--bd);
   font-family: var(--mono); font-size: 9px; letter-spacing: .1em; color: var(--t3); text-transform: uppercase; flex-shrink: 0; }
 .pb { flex: 1; overflow-y: auto; padding: 8px 10px; }
@@ -347,9 +370,10 @@ input[type=text]:focus, input[type=search]:focus { border-color: var(--ac); }
     <div id="stats-modal-body">…</div>
   </div>
 
-  <!-- LEFT -->
-  <div id="left">
-    <div class="ph">Filters &amp; Layout</div>
+  <!-- CONFIG page (filters & layout — the old left panel). Declared here and
+       reparented into #right at boot so the grid only has canvas + side panel;
+       display:none prevents any flash before the move. -->
+  <div id="side-config" class="side-page" style="display:none">
     <div class="pb">
 
       <div class="sl">Node Types <span id="type-count" style="color:var(--t3);font-size:8.5px"></span></div>
@@ -463,9 +487,15 @@ input[type=text]:focus, input[type=search]:focus { border-color: var(--ac); }
     <div id="drop-hint">Drag node → cap input to fill</div>
   </div>
 
-  <!-- RIGHT -->
+  <!-- RIGHT — combined side panel: Details (node info) | Config (filters & layout) -->
   <div id="right">
-    <div class="ph">Node Info</div>
+    <div id="side-hdr">
+      <button class="side-tab on" id="stab-details" onclick="sideTab('details')">Details</button>
+      <button class="side-tab"    id="stab-config"  onclick="sideTab('config')">Config</button>
+      <span style="flex:1"></span>
+      <button id="side-collapse" onclick="toggleSide()" title="Collapse side panel">⇥</button>
+    </div>
+    <div id="side-details" class="side-page">
     <div id="info-scroll">
       <div id="placeholder">Click a node<br>to inspect it</div>
       <div id="node-detail" style="display:none"></div>
@@ -493,6 +523,7 @@ input[type=text]:focus, input[type=search]:focus { border-color: var(--ac); }
     <!-- Live log -->
     <div class="ph" style="border-top:1px solid var(--bd)">Live</div>
     <div id="live-log"></div>
+    </div><!-- /side-details -->
   </div>
 
 </div>
@@ -501,20 +532,31 @@ input[type=text]:focus, input[type=search]:focus { border-color: var(--ac); }
 'use strict';
 
 // ─── Backend base URL ────────────────────────────────────────────────────────
+// This panel may be nested more than one frame deep (harness → Fabric panel →
+// here), so walk the whole ancestor chain for harness globals instead of
+// assuming window.parent IS the harness. Cross-origin ancestors throw on
+// property access — caught and skipped.
+function _ancestorWith(prop) {
+  let w = window;
+  for (let guard = 0; guard < 8 && w.parent && w.parent !== w; guard++) {
+    w = w.parent;
+    try { if (w[prop] !== undefined && w[prop] !== null) return w; } catch(_) { break; }
+  }
+  return null;
+}
 function base() {
   try {
-    if (window.parent && window.parent !== window && window.parent._veraBase)
-      return window.parent._veraBase.replace(/\/$/, '');
+    const w = _ancestorWith('_veraBase');
+    if (w) return w._veraBase.replace(/\/$/, '');
   } catch(_) {}
   return location.origin;
 }
 function sessionId() {
   try {
-    if (window.parent && window.parent !== window) {
-      // Prefer the canonical name; fall back to the legacy alias so panels
-      // loaded before the Option-A refactor completed keep working.
-      return window.parent._veraSessionId || window.parent._chatSessionId || '';
-    }
+    // Prefer the canonical name; fall back to the legacy alias so panels
+    // loaded before the Option-A refactor completed keep working.
+    const w = _ancestorWith('_veraSessionId') || _ancestorWith('_chatSessionId');
+    if (w) return w._veraSessionId || w._chatSessionId || '';
   } catch(_) {}
   try { return localStorage.getItem('vera_session_id') || ''; } catch(_) { return ''; }
 }
@@ -531,7 +573,7 @@ function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt
 // Read CSS vars from parent frame so our canvas colours match the active theme
 function themeColor(v, fallback) {
   try {
-    const s = getComputedStyle(window.parent.document.documentElement)
+    const s = getComputedStyle(window.top.document.documentElement)
                 .getPropertyValue(v).trim();
     if (s) return s;
   } catch(_) {}
@@ -541,8 +583,8 @@ function applyParentTheme() {
   try {
     const vars = ['--bg','--s1','--s2','--s3','--bd','--bd2','--t1','--t2','--t3',
                   '--ac','--ac2','--ac3','--ac4','--ac5'];
-    const pStyle = window.parent.document.documentElement.style;
-    const pComp  = getComputedStyle(window.parent.document.documentElement);
+    const pStyle = window.top.document.documentElement.style;
+    const pComp  = getComputedStyle(window.top.document.documentElement);
     vars.forEach(v => {
       const val = pStyle.getPropertyValue(v) || pComp.getPropertyValue(v);
       if (val.trim()) document.documentElement.style.setProperty(v, val.trim());
@@ -2038,6 +2080,9 @@ function _makeToken(key, val, mono=false) {
 function selectNode(id) {
   selectedId = id;
   const nd = nodes[id]; if (!nd) return;
+  // Inspecting a node always means the user wants Details — pop the panel
+  // open (if collapsed) and switch off the Config tab.
+  toggleSide(false); sideTab('details');
   const r  = nd.rec || {};
   const col = nodeCol(nd.type);
   const edgesOut = edges.filter(e => e.from===id).length;
@@ -2598,6 +2643,32 @@ function addLog(type, msg) {
   while (log.children.length > 40) log.removeChild(log.lastChild);
 }
 
+// ─── Side panel (Details | Config tabs + collapse) ────────────────────────────
+// The Config page (#side-config) is declared before the canvas in the HTML so
+// the old left-panel markup diff stays small — reparent it into #right here.
+document.getElementById('right').appendChild(document.getElementById('side-config'));
+
+function sideTab(name) {
+  document.getElementById('stab-details').classList.toggle('on', name === 'details');
+  document.getElementById('stab-config' ).classList.toggle('on', name === 'config');
+  document.getElementById('side-details').style.display = name === 'details' ? 'flex' : 'none';
+  document.getElementById('side-config' ).style.display = name === 'config'  ? 'flex' : 'none';
+  try { localStorage.setItem('mg_side_tab', name); } catch(_) {}
+}
+function toggleSide(force) {
+  const app = document.getElementById('app');
+  const min = (force !== undefined) ? !!force : !app.classList.contains('side-min');
+  app.classList.toggle('side-min', min);
+  document.getElementById('side-collapse').textContent = min ? '⇤' : '⇥';
+  document.getElementById('side-collapse').title = min ? 'Expand side panel' : 'Collapse side panel';
+  try { localStorage.setItem('mg_side_min', min ? '1' : '0'); } catch(_) {}
+}
+// Restore persisted tab + collapse state
+try {
+  sideTab(localStorage.getItem('mg_side_tab') === 'config' ? 'config' : 'details');
+  if (localStorage.getItem('mg_side_min') === '1') toggleSide(true);
+} catch(_) { sideTab('details'); }
+
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 loop();
 loadCaps();
@@ -2607,23 +2678,32 @@ connectWS();
 // objects above so clicking Recent/All before the session load fires is safe.
 setTimeout(async () => {
   applyParentTheme();
-  const sid = sessionId();
+  // Wait (up to ~3s) for the parent to expose the session id — the panel
+  // bridge sets it asynchronously after mount, so a single read at t+400ms
+  // often came back empty; session-mode then queried with sid='' and drew
+  // nothing until the user pressed ↻ (by which time the id existed).
+  let sid = sessionId();
+  for (let i = 0; !sid && i < 10; i++) {
+    await new Promise(r => setTimeout(r, 300));
+    sid = sessionId();
+  }
   if (sid) {
     // Register current session with the backend so recording works
     try { await api('/cap_tracking/session','POST',{session_id: sid}); } catch(_) {}
   }
-  await loadGraph('session');
-  // Auto-retry: if graph came back empty (common on first load when backend
-  // connections are still initialising), retry after a short delay. This
-  // addresses the "must reload" issue.
-  const nodeCount = Object.keys(nodes).length;
-  if (nodeCount === 0) {
+  // No session id at all (panel opened standalone) — session mode can only
+  // come back empty, so boot straight into Recent instead of a blank canvas.
+  await loadGraph(sid ? 'session' : 'recent');
+  // Auto-retry: if the graph came back empty (backend connections still
+  // warming up, or a brand-new session with no records yet), retry once,
+  // then fall back to Recent so the first paint always shows something.
+  if (Object.keys(nodes).length === 0) {
     addLog('sys', 'graph empty — retrying in 2s…');
     setTimeout(async () => {
-      await loadGraph('session');
-      // If still empty after second try, try once more
-      if (Object.keys(nodes).length === 0) {
-        setTimeout(() => loadGraph('session'), 4000);
+      if (Object.keys(nodes).length === 0) await loadGraph(_mode);
+      if (Object.keys(nodes).length === 0 && _mode === 'session') {
+        addLog('sys', 'session graph still empty — showing recent instead');
+        await loadGraph('recent');
       }
     }, 2000);
   }

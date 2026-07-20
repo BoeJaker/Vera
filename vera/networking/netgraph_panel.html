@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="dusk">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Vera / Net Policy</title>
@@ -19,7 +24,7 @@ input{font:inherit;color:inherit;background:var(--bg0);border:1px solid var(--bo
 #top{display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--bg1);border-bottom:1px solid var(--border);flex-wrap:wrap;flex-shrink:0}
 .logo{color:var(--acc);font-weight:700;white-space:nowrap}
 .btn{display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border-radius:6px;background:var(--bg3);border:1px solid var(--border2);color:var(--text);font-size:12px;white-space:nowrap}
-.btn:hover{border-color:var(--acc)}.btn.on{background:var(--acc);border-color:var(--acc);color:#06121c;font-weight:700}
+.btn:hover{border-color:var(--acc)}.btn.on{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#06121c);font-weight:700}
 .btn.sm{padding:5px 9px;font-size:11px}.btn.danger{color:var(--err);border-color:var(--err)}.btn:disabled{opacity:.4}
 .spacer{flex:1}
 #main{flex:1;position:relative;min-height:0}
@@ -80,13 +85,13 @@ function hint(m){const h=$('#hint');if(m){h.textContent=m;h.className='on';}else
 async function api(p,m='POST',b){const o={method:m,headers:{'Content-Type':'application/json'}};if(b!==undefined)o.body=JSON.stringify(b||{});const r=await fetch(p,o);if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}
 
 let cy=null, TOPO=null, connectMode=false, armed=null, selEdge=null;
-const KCOL={pve_node:'#fb923c',guest:'#6ea8d8',dnet:'#38bdf8',container:'#a78bfa',cidr:'#8a8f98'};
+const KCOL={pve_node:'#fb923c',guest:'#6ea8d8',dnet:'#38bdf8',container:'#a78bfa',cidr:'#8a8f98',docker_host:'#4cc9b0'};
 
 async function boot(){
   let cl={}; try{ cl=await api('/proxmox/cluster/list','GET'); }catch(e){}
   const cs=cl.clusters||[]; $('#clusterSel').innerHTML=cs.map(c=>`<option value="${esc(c.id)}">${esc(c.label||c.id)}</option>`).join('')||'<option value="">no cluster</option>';
   let dh={}; try{ dh=await api('/workers/docker/hosts/list','GET'); }catch(e){ try{ dh=await api('/docker/hosts/list','GET'); }catch(_){ } }
-  const hosts=(dh.hosts||dh.items||[]); $('#dockerSel').innerHTML='<option value="">no docker host</option>'+hosts.map(h=>`<option value="${esc(h.id)}">${esc(h.label||h.id)}</option>`).join('');
+  const hosts=(dh.hosts||dh.items||[]); $('#dockerSel').innerHTML='<option value="">all docker hosts</option>'+hosts.map(h=>`<option value="${esc(h.id)}">${esc(h.label||h.id)}</option>`).join('');
   load();
 }
 
@@ -161,9 +166,12 @@ async function doConnect(a,b){
   // Docker: container ↔ network
   const pair=[ka,kb].sort().join('+');
   if(pair==='container+dnet'){
-    const cont=(ka==='container'?a:b).data('container_id');
-    const net=(ka==='dnet'?a:b).data('net_id');
-    const host=$('#dockerSel').value; if(!host) return toast('select a docker host',true);
+    const cnode=(ka==='container'?a:b), nnode=(ka==='dnet'?a:b);
+    const cont=cnode.data('container_id'), net=nnode.data('net_id');
+    const host=cnode.data('host_id')||$('#dockerSel').value;
+    if(!host) return toast('select a docker host',true);
+    if(nnode.data('host_id')&&cnode.data('host_id')&&nnode.data('host_id')!==cnode.data('host_id'))
+      return toast('container and network are on different docker hosts',true);
     try{ const r=await api('/netgraph/edge/allow','POST',{kind:'docker',host_id:host,container:cont,network:net});
       if(r.error) return toast(r.error,true); toast('connected'); load(); }catch(e){ toast(e.message,true); }
     return;
@@ -197,7 +205,7 @@ async function cutSelected(){
   if(!selEdge) return;
   const e=selEdge, m=e.data('meta')||{};
   if(e.data('rel')==='member'){
-    const host=$('#dockerSel').value;
+    const host=e.source().data('host_id')||$('#dockerSel').value;
     const cont=e.source().data('container_id'), net=e.target().data('net_id');
     try{ const r=await api('/netgraph/edge/deny','POST',{kind:'docker',host_id:host,container:cont,network:net});
       if(r.error) return toast(r.error,true); toast('disconnected'); load(); }catch(ex){ toast(ex.message,true); }

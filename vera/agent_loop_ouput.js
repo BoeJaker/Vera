@@ -72,6 +72,61 @@
       .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
 
+  /* Sticky-bottom auto-scroll. Only follows new content when the user is already
+     pinned to (near) the bottom of `el`; if they've scrolled up to read, their
+     position is preserved. A scroll listener (wired once per element) tracks the
+     pinned state, so appending content never yanks the viewport away from the
+     user. Replaces the old unconditional `el.scrollTop = el.scrollHeight`. */
+  function _follow(el){
+    if(!el) return;
+    if(!el.__aloStickWired){
+      el.__aloStickWired = true;
+      el.__aloStick = true;   // start pinned so the first cards auto-follow
+      el.addEventListener('scroll', function(){
+        el.__aloStick = (el.scrollHeight - el.scrollTop - el.clientHeight) <= 48;
+      }, {passive:true});
+    }
+    if(el.__aloStick !== false) el.scrollTop = el.scrollHeight;
+  }
+
+  /* Balance a PARTIAL JSON stream so it renders as (near-)valid while it builds:
+     close any open string and unmatched {} / [] — the same idea as auto-closing
+     a code block mid-stream. Display only; the real plan replaces it when done. */
+  function _autoCloseStructured(s){
+    if(!s) return '';
+    let inStr=false, esc=false; const stack=[];
+    for(let i=0;i<s.length;i++){
+      const c=s[i];
+      if(esc){esc=false;continue;}
+      if(c==='\\'&&inStr){esc=true;continue;}
+      if(c==='"'){inStr=!inStr;continue;}
+      if(inStr) continue;
+      if(c==='{'||c==='[') stack.push(c);
+      else if(c==='}'||c===']') stack.pop();
+    }
+    let out=s;
+    if(inStr) out+='"';
+    for(let i=stack.length-1;i>=0;i--) out += (stack[i]==='{'?'}':']');
+    return out;
+  }
+
+  /** Rolling "thinking" phrases shown during planning / long waits.
+      Shares the chat panel's localStorage list (vera_think_phrases) so a
+      user-themed set applies to both the chat throbber and the loop. */
+  const ALO_PHRASE_DEFAULTS = [
+    'thinking through the plan','weighing the options','lining up the steps',
+    'consulting the capability catalog','sketching the route','sequencing the work',
+    'sizing up the goal','checking what tools fit','tracing dependencies',
+    'letting it percolate','sharpening the plan','mapping the terrain',
+  ];
+  function ALO_THINK_PHRASES(){
+    try{
+      const l = JSON.parse(localStorage.getItem('vera_think_phrases')||'null');
+      if(Array.isArray(l) && l.length > 2) return l;
+    }catch(_){}
+    return ALO_PHRASE_DEFAULTS;
+  }
+
   /** Pretty-format args as readable pills/spans instead of raw JSON. */
   function _fmtArgs(args, maxLen){
     maxLen = maxLen || 280;
@@ -83,16 +138,22 @@
     for(const k of keys){
       let v = args[k];
       if(v === undefined || v === null) continue;
-      let vs;
+      let vfull, vs;
       if(typeof v === 'string'){
-        vs = v.length > 80 ? v.slice(0,77)+'…' : v;
+        vfull = v;
       } else if(typeof v === 'boolean' || typeof v === 'number'){
-        vs = String(v);
+        vfull = String(v);
       } else {
-        vs = JSON.stringify(v);
-        if(vs.length > 80) vs = vs.slice(0,77)+'…';
+        vfull = JSON.stringify(v);
       }
-      const part = `<span class="alo-arg-pill"><span class="alo-arg-key">${_esc(k)}</span><span class="alo-arg-val">${_esc(vs)}</span></span>`;
+      vs = vfull.length > 80 ? vfull.slice(0,77)+'…' : vfull;
+      const isTrunc = vfull.length > vs.length;
+      // Truncated pills carry the full value + short form so a delegated click
+      // handler can toggle them open (key info is often past the 80-char cut).
+      const attrs = isTrunc
+        ? ` class="alo-arg-pill trunc" data-full="${_esc(vfull.slice(0,6000))}" data-short="${_esc(vs)}" title="click to expand"`
+        : ' class="alo-arg-pill"';
+      const part = `<span${attrs}><span class="alo-arg-key">${_esc(k)}</span><span class="alo-arg-val">${_esc(vs)}</span></span>`;
       total += k.length + vs.length + 4;
       if(total > maxLen && parts.length > 0){ parts.push('<span class="alo-arg-ellip">…</span>'); break; }
       parts.push(part);
@@ -168,6 +229,17 @@
     s = s.replace(/(?:^|\s)\*([^*\n]+?)\*(?=[\s.,!?:;)]|$)/g, ' <em>$1</em>');
     s = s.replace(/\[([^\]]+?)\]\(([^)]+?)\)/g,
       (_, text, url) => `<a class="md-link" href="${_esc(url)}" target="_blank" rel="noopener">${text}</a>`);
+    // GitHub-style tables: a header row, a |---|---| separator, then body rows.
+    // Runs after inline formatting so cell contents (bold/code/links) are ready;
+    // the paragraph splitter below skips blocks that already start with <table>.
+    s = s.replace(/(?:^\|.+\|[ \t]*\n)(?:^\|[ \t:|\-]+\|[ \t]*\n)(?:^\|.*\|[ \t]*\n?)*/gm, block => {
+      const rows = block.trim().split('\n').filter(r => r.trim());
+      if(rows.length < 2) return block;
+      const cells = r => r.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+      const th = cells(rows[0]).map(c => `<th>${c}</th>`).join('');
+      const body = rows.slice(2).map(r => `<tr>${cells(r).map(c => `<td>${c}</td>`).join('')}</tr>`).join('');
+      return `<table class="md-table"><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table>\n`;
+    });
     s = s.replace(/^(?:[-*•]\s+.+(?:\n|$))+/gm, m => {
       const items = m.trim().split(/\n/).map(line => {
         const content = line.replace(/^[-*•]\s+/, '');
@@ -190,12 +262,77 @@
     return s;
   }
 
+  /* Syntax-highlight an already-pretty-printed JSON string. Wraps keys, strings,
+     numbers, booleans and null in coloured spans. Input is raw JSON text; it is
+     HTML-escaped here so callers pass the plain string. */
+  function _highlightJson(jsonStr){
+    return _esc(jsonStr).replace(
+      /(&quot;(?:\\.|[^\\&]|&(?!quot;))*&quot;)(\s*:)?|\b(true|false)\b|\b(null)\b|(-?\d+(?:\.\d+)?(?:[eE][+\-]?\d+)?)/g,
+      (m, str, colon, bool, nul, num) => {
+        if(str != null) return `<span class="${colon ? 'j-key' : 'j-str'}">${str}</span>${colon || ''}`;
+        if(bool != null) return `<span class="j-bool">${bool}</span>`;
+        if(nul != null)  return `<span class="j-null">${nul}</span>`;
+        if(num != null)  return `<span class="j-num">${num}</span>`;
+        return m;
+      });
+  }
+
+  /* Smart-render a step / tool OUTPUT the way chat does: pretty-printed +
+     highlighted JSON, markdown (incl. fenced code), or plain text — always the
+     FULL content (no truncation). The caller places the result inside a
+     capped-height, internally-scrollable container so long output stays in-card
+     instead of overflowing. */
+  function _smartRender(text){
+    if(text == null) return '';
+    const raw = String(text);
+    const trimmed = raw.trim();
+    // 1) A whole-body JSON object/array → pretty-print + highlight, BUT if the
+    //    object is really just a wrapper around one big text/markdown field
+    //    (the common {"text":"# …\n…"} shape), render THAT field as markdown and
+    //    show the remaining scalar keys as pills — so prose/tables/code inside a
+    //    JSON envelope read properly instead of as an escaped one-line blob.
+    if((trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+       (trimmed.startsWith('[') && trimmed.endsWith(']'))){
+      try{
+        const parsed = JSON.parse(trimmed);
+        if(parsed && typeof parsed === 'object' && !Array.isArray(parsed)){
+          const TEXT_KEYS = ['text','output','content','answer','summary','result','stdout','markdown','body','message','report'];
+          let bodyKey = null;
+          for(const k of TEXT_KEYS){
+            if(typeof parsed[k] === 'string' && parsed[k].length > 40){ bodyKey = k; break; }
+          }
+          if(bodyKey){
+            const meta = {};
+            for(const k of Object.keys(parsed)){
+              if(k === bodyKey) continue;
+              const v = parsed[k];
+              if(v !== null && typeof v !== 'object') meta[k] = v;
+            }
+            const pills = Object.keys(meta).length
+              ? `<div class="alo-arg-row" style="margin-bottom:4px">${_fmtArgs(meta, 600)}</div>` : '';
+            return pills + `<div class="alo-md">${_renderMarkdown(String(parsed[bodyKey]))}</div>`;
+          }
+        }
+        const pretty = JSON.stringify(parsed, null, 2);
+        return `<pre class="alo-json">${_highlightJson(pretty)}</pre>`;
+      }catch(_){ /* not valid JSON — fall through to markdown/plain */ }
+    }
+    // 2) Markdown signals (headings, lists, fenced code, bold, tables, links).
+    if(/(^|\n)\s{0,3}(#{1,6}\s|[-*+]\s|\d+\.\s|>\s|```)/.test(raw)
+       || /```/.test(raw) || /\*\*[^*\n]+\*\*/.test(raw)
+       || /\[[^\]]+\]\([^)]+\)/.test(raw) || /(^|\n)\|.+\|/.test(raw)){
+      return `<div class="alo-md">${_renderMarkdown(raw)}</div>`;
+    }
+    // 3) Plain text — preserve newlines, escape everything.
+    return `<div class="alo-plain">${_esc(raw)}</div>`;
+  }
+
   // ───────────────────────── Stylesheet (one shared <style>) ────────────────
   // Class names use an `.alo-` prefix to avoid conflicts with host pages that
   // also use `.al-*` classes (the original DAG workshop). All colours come
   // from CSS custom properties so the host theme drives the appearance.
   const STYLE = `
-:host{display:block;width:100%;color:var(--text,#ddd5c8);font-family:var(--mono,'IBM Plex Mono',monospace);font-size:11px}
+:host{display:block;width:100%;max-width:100%;box-sizing:border-box;min-width:0;color:var(--text,#ddd5c8);font-family:var(--mono,'IBM Plex Mono',monospace);font-size:11px}
 :host([hidden]){display:none}
 .alo-root{display:flex;flex-direction:column;gap:6px;min-height:0;width:100%}
 
@@ -235,6 +372,21 @@
 .alo-cycle.step{border-left:3px solid var(--acc2,#a8c87a);background:rgba(168,200,122,.05)}
 .alo-cycle.step .alo-cycle-dot{border-color:var(--acc2,#a8c87a);background:var(--acc2,#a8c87a)}
 .alo-step-meta{font-family:var(--mono,monospace);font-size:9px;color:var(--dim,#a89f92);margin-top:3px}
+/* v5: exact-context reveal — the verbatim prompt + layered breakdown a step got */
+.alo-ctx-reveal{margin-top:5px;border-top:1px dashed var(--border2,#3a3530);padding-top:4px}
+.alo-ctx-reveal>summary{cursor:pointer;font-size:9px;color:var(--acc4,#a07ec1);user-select:none;list-style:none;display:flex;align-items:center;gap:5px}
+.alo-ctx-reveal>summary::-webkit-details-marker{display:none}
+.alo-ctx-reveal>summary::before{content:"▸";display:inline-block;transition:transform .15s;opacity:.7}
+.alo-ctx-reveal[open]>summary::before{transform:rotate(90deg)}
+.alo-ctx-body{margin-top:5px;display:flex;flex-direction:column;gap:5px}
+.alo-ctx-layer{border:1px solid var(--border,#33312c);border-radius:4px;overflow:hidden;background:var(--bg0,#181614)}
+.alo-ctx-layer.pulse{animation:aloCtxPulse 1.1s ease-in-out infinite;border-color:var(--acc,#5a9e8f)}
+@keyframes aloCtxPulse{0%,100%{box-shadow:0 0 0 0 rgba(90,158,143,0)}50%{box-shadow:0 0 0 3px rgba(90,158,143,.28)}}
+.alo-ctx-layer>.h{font-size:8.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--acc,#5a9e8f);padding:3px 7px;background:var(--panel3,#211f1b);display:flex;justify-content:space-between;align-items:center;gap:6px}
+.alo-ctx-layer>.h .src{color:var(--info,#7eb8d9);font-family:var(--mono,monospace);text-transform:none;letter-spacing:0}
+.alo-ctx-pre{font-family:var(--mono,monospace);font-size:9px;line-height:1.45;color:var(--text2,#bfb6a8);background:var(--bg0,#181614);padding:6px 8px;margin:0;max-height:260px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.alo-ctx-copy{cursor:pointer;font-size:8px;color:var(--dim,#a89f92);border:1px solid var(--border,#33312c);border-radius:3px;padding:1px 5px;background:transparent}
+.alo-ctx-copy:hover{color:var(--text,#ddd5c8);border-color:var(--acc,#5a9e8f)}
 /* v5: joined thought-only "reasoning" card — muted, not an error/result. */
 .alo-cycle.thinking{border-style:dashed;border-color:var(--border2,#3a3530);background:transparent}
 .alo-cycle.thinking .alo-cycle-dot{border-color:var(--dim2,#8a7e70)}
@@ -280,7 +432,35 @@
 .alo-arg-key{padding:1px 4px;background:var(--bg3,#2a2622);color:var(--acc2,#a8c87a);font-weight:500;border-right:1px solid var(--border,#3a3530)}
 .alo-arg-val{padding:1px 5px;color:var(--text2,#bfb6a8);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .alo-arg-ellip{color:var(--dim2,#8a7e70);font-size:9px}
+/* Truncated arg pills expand on click to reveal the full value (wraps, full width). */
+.alo-arg-pill.trunc{cursor:pointer}
+.alo-arg-pill.trunc:hover{border-color:var(--acc,#5a9e8f)}
+.alo-arg-pill.expanded{flex-basis:100%;max-width:100%;align-items:flex-start}
+.alo-arg-pill.expanded .alo-arg-val{max-width:none;white-space:pre-wrap;word-break:break-word;overflow:visible;text-overflow:clip}
 .alo-cycle-preview{font-size:9.5px;color:var(--dim,#a89f92);background:var(--bg0,#181614);padding:5px 7px;border-radius:3px;max-height:80px;overflow-y:auto;white-space:pre-wrap;line-height:1.4}
+/* Step OUTPUT summary: shows the FULL smart-rendered output, capped in height
+   with its own scroll so long output stays inside the card instead of spilling
+   out. Overrides the tiny 80px preview cap it inherits. */
+.alo-step-summary{max-height:var(--alo-output-maxh,320px);white-space:normal;color:var(--text2,#bfb6a8)}
+.alo-step-summary .alo-plain{white-space:pre-wrap;word-break:break-word}
+/* Pretty-printed + highlighted JSON output block. */
+.alo-json{margin:2px 0;padding:6px 8px;background:var(--bg2,#252220);border-radius:3px;font-family:var(--mono,monospace);font-size:9.5px;line-height:1.5;white-space:pre;overflow-x:auto;color:var(--text2,#bfb6a8)}
+.alo-json .j-key{color:var(--acc4,#a07ec1)}
+.alo-json .j-str{color:var(--acc2,#a8c87a)}
+.alo-json .j-num{color:var(--acc,#5a9e8f)}
+.alo-json .j-bool{color:#c79a5a}
+.alo-json .j-null{color:var(--dim,#a89f92);font-style:italic}
+/* Markdown-rendered output block (mirrors the handover body's styling). */
+.alo-md{font-family:system-ui,-apple-system,Segoe UI,sans-serif;font-size:10.5px;line-height:1.5;color:var(--text2,#bfb6a8);word-break:break-word}
+.alo-md h1,.alo-md .md-h1{font-size:13px;font-weight:600;color:var(--acc,#5a9e8f);margin:6px 0 3px}
+.alo-md h2,.alo-md .md-h2{font-size:12px;font-weight:600;color:var(--acc2,#a8c87a);margin:6px 0 3px}
+.alo-md h3,.alo-md .md-h3,.alo-md h4,.alo-md .md-h4{font-size:11px;font-weight:600;color:var(--text,#ddd5c8);margin:5px 0 2px}
+.alo-md p{margin:3px 0}
+.alo-md ul,.alo-md ol,.alo-md .md-ul,.alo-md .md-ol{margin:3px 0 3px 16px;padding:0}
+.alo-md li{margin:1px 0}
+.alo-md code,.alo-md .md-inline{background:var(--bg2,#252220);padding:0 3px;border-radius:2px;font-family:var(--mono,monospace);font-size:9.5px}
+.alo-md pre,.alo-md .md-code{background:var(--bg2,#252220);padding:6px 8px;border-radius:3px;font-family:var(--mono,monospace);font-size:9.5px;color:var(--text2,#bfb6a8);margin:4px 0;overflow-x:auto;white-space:pre;line-height:1.4}
+.alo-md a,.alo-md .md-link{color:var(--acc4,#a07ec1)}
 .alo-cycle-result{margin-top:6px;border:1px solid var(--border,#3a3530);border-radius:3px;background:var(--bg0,#181614);overflow:hidden}
 .alo-result-h{font-size:9px;text-transform:uppercase;letter-spacing:.4px;padding:3px 6px;font-weight:500}
 .alo-result-h.ok{background:rgba(90,158,143,.13);color:var(--ok,var(--acc,#5a9e8f))}
@@ -289,6 +469,16 @@
 .alo-result-body{margin:0;padding:6px 8px;font-family:var(--mono,monospace);font-size:10px;color:var(--text2,#bfb6a8);max-height:200px;overflow:auto;white-space:pre-wrap;line-height:1.6;word-break:break-word;display:flex;flex-wrap:wrap;gap:3px 5px;align-items:flex-start}
 .alo-result-body.err{color:#ff9999}
 .alo-result-body.empty{color:#c9a45a}
+/* Smart-rendered tool OUTPUT: full content (no truncation), height-capped with
+   its own scroll, and user-draggable taller via the native resize handle. */
+.alo-result-render{margin:0;padding:6px 8px;font-size:10px;color:var(--text2,#bfb6a8);max-height:300px;min-height:22px;overflow:auto;resize:vertical;line-height:1.5;word-break:break-word}
+.alo-result-render.err{color:#ff9999;white-space:pre-wrap;font-family:var(--mono,monospace)}
+.alo-result-render.empty{color:#c9a45a;white-space:pre-wrap}
+.alo-result-render .alo-plain{white-space:pre-wrap;word-break:break-word}
+/* Markdown tables (GitHub-style) inside rendered output. */
+.alo-md .md-table{border-collapse:collapse;margin:5px 0;font-size:9.5px;max-width:100%;display:block;overflow-x:auto}
+.alo-md .md-table th,.alo-md .md-table td{border:1px solid var(--border,#3a3530);padding:2px 6px;text-align:left;vertical-align:top}
+.alo-md .md-table th{background:var(--bg2,#252220);color:var(--text,#ddd5c8);font-weight:600;white-space:nowrap}
 
 /* Cycle thinking block */
 .alo-cycle-think{margin-top:3px;font-size:9px;color:var(--dim2,#8a7e70)}
@@ -325,6 +515,10 @@
 .alo-hitl-pause{margin:6px 0;padding:9px 11px;background:rgba(217,119,87,.08);border:1.5px solid var(--warn,#c9a45a);border-radius:3px;display:flex;flex-direction:column;gap:7px}
 .alo-hitl-pause-h{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--warn,#c9a45a);font-weight:600}
 .alo-hitl-pause-h .pulse{width:7px;height:7px;border-radius:50%;background:var(--warn,#c9a45a);animation:alo-pulse 1.4s ease-in-out infinite}
+/* Rolling thinking phrase (planning / long waits) */
+@keyframes aloPhraseIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.alo-phrase{font-style:italic;display:inline-block;animation:aloPhraseIn .5s ease}
+.alo-phrase.swap{animation:aloPhraseIn .5s ease}
 .alo-hitl-pause-thought{font-size:10.5px;color:var(--text2,#bfb6a8);font-style:italic;padding:4px 6px;background:var(--bg2,#252220);border-radius:3px;border-left:2px solid var(--warn,#c9a45a)}
 .alo-hitl-pause-tool{font-family:var(--mono,monospace);font-size:11px;color:var(--acc2,#a8c87a)}
 .alo-hitl-pause-args{font-family:var(--mono,monospace);font-size:10px;color:var(--text,#ddd5c8);background:var(--bg0,#181614);border:1px solid var(--border,#3a3530);border-radius:3px;padding:6px 8px;min-height:60px;width:100%;resize:vertical;white-space:pre-wrap;box-sizing:border-box}
@@ -453,6 +647,10 @@
     }
 
     connectedCallback(){
+      // (Re)start the phrase rotator every time we (re)enter the DOM — a
+      // plain appendChild move disconnects/reconnects the element, and the
+      // timer is cleared on disconnect.
+      this._startPhraseTimer();
       if(this._mounted) return;
       this._mounted = true;
       this._render();
@@ -461,13 +659,45 @@
       // component methods, so delegate from the shadow root).
       this._sr.addEventListener('click', (e) => {
         const btn = e.target.closest('.alo-card-expand');
-        if(btn) this._toggleCardExpand(btn);
+        if(btn){ this._toggleCardExpand(btn); return; }
+        // Expand/collapse a truncated argument pill to reveal its full value.
+        const pill = e.target.closest('.alo-arg-pill.trunc');
+        if(pill){
+          const val = pill.querySelector('.alo-arg-val');
+          if(!val) return;
+          const open = pill.classList.toggle('expanded');
+          val.textContent = open ? (pill.getAttribute('data-full') || val.textContent)
+                                  : (pill.getAttribute('data-short') || val.textContent);
+        }
       });
       // Pull initial attribute values
       if(this.hasAttribute('show-thinking')){
         this._showThinking = this.getAttribute('show-thinking') !== 'false';
       }
       this._applyMaxHeight();
+    }
+
+    disconnectedCallback(){
+      if(this._phraseTimer){ clearInterval(this._phraseTimer); this._phraseTimer = null; }
+    }
+
+    // Rolling thinking phrases — any .alo-phrase inside this instance fades
+    // through the shared phrase list (same localStorage list the chat's
+    // throbber uses, so a themed set applies everywhere) while planning /
+    // long waits are on screen.
+    _startPhraseTimer(){
+      if(this._phraseTimer) return;
+      this._phraseTimer = setInterval(() => {
+        const els = this._sr.querySelectorAll('.alo-phrase');
+        if(!els.length) return;
+        const pool = ALO_THINK_PHRASES();
+        els.forEach(el => {
+          const next = pool[Math.floor(Math.random()*pool.length)];
+          if(!next || next === el.textContent) return;
+          el.classList.remove('swap'); void el.offsetWidth;
+          el.textContent = next; el.classList.add('swap');
+        });
+      }, 2600);
     }
 
     // Toggle a single card between compact (fixed-height scroll) and full
@@ -662,6 +892,18 @@
         return;
       }
 
+      // v5 planning failure — orchestrator produced no usable plan. Shown as a
+      // dedicated error card (the final pane also renders the error row) so the
+      // failure is explicit rather than silently falling through to a default plan.
+      if(t === 'agent_loop_v5.error' || t === 'agent_loop_v6.error'){
+        const pc = this._sr.querySelector('.alo-cycle.planning[data-planning="1"]');
+        if(pc) pc.remove();
+        this._cycleEl(`<div class="alo-cycle-h"><span class="alo-cycle-tool">⚠ Planning failed</span></div>
+          <div class="alo-cycle-preview">${_esc(ev.error||'')}</div>`, 'error');
+        this.dispatchEvent(new CustomEvent('alo:error', {detail:{error: ev.error||''}, bubbles:true}));
+        return;
+      }
+
       // think events (any variant)
       if(t === 'agent_loop.think' || t === 'agent_loop_v2.think'
          || t === 'agent_loop_v3.think' || t === 'agent_loop_v4.think'
@@ -711,8 +953,16 @@
             + 'color:var(--dim2,#8a7e70);margin-top:3px;font-family:var(--mono,monospace)';
           host.appendChild(badge);
         }
-        badge.textContent = `⚙ node: ${node}${ev.model ? ' · ' + ev.model : ''}`;
-        badge.title = 'Ollama instance that served this request' + (ev.instance_url ? ' — ' + ev.instance_url : '');
+        const rt = ev.routing || {};
+        const jt = rt.job_type ? ` · ${rt.job_type}` : '';
+        const esc2 = rt.escalated ? ' · ⇧len-escalated' : '';
+        const est = (rt.est_seconds !== undefined && rt.est_seconds !== null) ? ` · ~${rt.est_seconds}s` : '';
+        badge.textContent = `⚙ node: ${node}${ev.model ? ' · ' + ev.model : ''}${jt}${esc2}${est}`;
+        badge.title = 'Ollama routing — instance that served this request'
+          + (ev.instance_url ? ' — ' + ev.instance_url : '')
+          + (rt.rule_source ? '\nrule: ' + rt.rule_source : '')
+          + (rt.prompt_chars ? '\nprompt: ' + rt.prompt_chars + ' chars' : '')
+          + ((rt.reason && rt.reason.length) ? '\n' + rt.reason.join('\n') : '');
         return;
       }
 
@@ -783,8 +1033,56 @@
         return;
       }
 
-      // ── v5-only: orchestrator step plan (step shape, not todos) ──────
-      if(t === 'agent_loop_v5.plan'){
+      // ── v5-only: orchestrator still planning (heartbeat during the long
+      //    blocking planner generation) — one self-updating "planning…" card ──
+      if(t === 'agent_loop_v5.planning'){
+        // Once the plan is streaming live, its builder card supersedes the
+        // heartbeat — don't add a second "planning…" card alongside it.
+        if(this._sr.querySelector('.alo-cycle.plan[data-plan-v5="1"]')) return;
+        let card = this._sr.querySelector('.alo-cycle.planning[data-planning="1"]');
+        const secs = ev.elapsed_s||0;
+        if(card){
+          // Update the elapsed counter only — the rolling .alo-phrase keeps
+          // its own rhythm (rebuilding innerHTML each heartbeat froze it).
+          const st = card.querySelector('.alo-cycle-status');
+          if(st) st.textContent = secs + 's';
+          return;
+        }
+        const pool = ALO_THINK_PHRASES();
+        const first = pool[Math.floor(Math.random()*pool.length)];
+        const inner = `<div class="alo-cycle-h">
+            <span class="alo-spinner"></span>
+            <span class="alo-cycle-tool">▤ Orchestrator planning…</span>
+            <span class="alo-cycle-status">${secs}s</span>
+          </div><div class="alo-cycle-thought"><span class="alo-phrase">${_esc(first)}</span></div>`;
+        card = this._cycleEl(inner, 'planning'); if(card) card.setAttribute('data-planning','1');
+        return;
+      }
+
+      // ── v6/V7: the plan STREAMING live, token by token (auto-closed JSON) ──
+      if(t === 'agent_loop_v6.plan_token'){
+        const body = _autoCloseStructured(ev.text||'');
+        const inner = `<div class="alo-cycle-h">
+            <span class="alo-cycle-tool">▤ Orchestrator planning…</span>
+            <span class="alo-cycle-status"><span class="alo-spinner"></span> building</span>
+          </div><pre class="alo-cycle-preview" style="white-space:pre-wrap;max-height:240px;overflow:auto;margin:0;font-size:9.5px">${_esc(body)}</pre>`;
+        let card = this._sr.querySelector('.alo-cycle.plan[data-plan-v5="1"]');
+        if(card){ card.innerHTML = inner; }
+        else {
+          // Replace the transient heartbeat card with the live plan builder.
+          const pc = this._sr.querySelector('.alo-cycle.planning[data-planning="1"]');
+          if(pc) pc.remove();
+          card = this._cycleEl(inner, 'plan');
+          if(card) card.setAttribute('data-plan-v5','1');
+        }
+        return;
+      }
+
+      // ── v5/v6: orchestrator step plan (step shape, not todos) ────────
+      if(t === 'agent_loop_v5.plan' || t === 'agent_loop_v6.plan'){
+        // The plan is ready — drop the transient "planning…" heartbeat card.
+        const pc = this._sr.querySelector('.alo-cycle.planning[data-planning="1"]');
+        if(pc) pc.remove();
         const steps = ev.steps||[];
         const rows = steps.map(s => {
           const caps = (s.caps||[]).map(_esc).join(', ');
@@ -800,13 +1098,92 @@
             + `</div>`;
         }).join('');
         const reason = ev.reason ? `<div class="alo-cycle-thought" style="font-style:italic">${_esc(ev.reason)}</div>` : '';
+        // v6 also declares a whole-goal completion criterion.
+        const dw = ev.done_when ? `<div class="alo-cycle-thought" style="color:var(--acc2,#a8c87a)">🎯 done when: ${_esc(ev.done_when)}</div>` : '';
         let card = this._sr.querySelector('.alo-cycle.plan[data-plan-v5="1"]');
         const inner = `<div class="alo-cycle-h">
             <span class="alo-cycle-tool">▤ Orchestrator plan</span>
             <span class="alo-cycle-status">${steps.length} step${steps.length===1?'':'s'}</span>
-          </div>${reason}<div class="alo-cycle-preview">${rows||'(empty plan)'}</div>`;
+          </div>${reason}${dw}<div class="alo-cycle-preview">${rows||'(empty plan)'}</div>`;
         if(card){ card.innerHTML = inner; }
         else { card = this._cycleEl(inner, 'plan'); if(card) card.setAttribute('data-plan-v5','1'); }
+        return;
+      }
+
+      // ── v6-only: adaptive controller assessment after a step ─────────
+      if(t === 'agent_loop_v6.assess'){
+        const ACT = {
+          continue: {ic:'→', lbl:'continue', cls:'expand'},
+          insert:   {ic:'⊕', lbl:'insert step(s)', cls:'warn'},
+          replan:   {ic:'↻', lbl:'replan remaining', cls:'warn'},
+          stop:     {ic:'■', lbl:'stop — goal met', cls:'done'},
+        };
+        const a = ACT[ev.action] || {ic:'•', lbl:ev.action||'', cls:'expand'};
+        const stepRows = (ev.steps||[]).map(s =>
+          `<div style="font-family:var(--mono,monospace);font-size:10px;color:var(--text2,#bfb6a8);margin:1px 0">`
+          + `<b>${_esc(String(s.id))}.</b> ${_esc(s.title||'')}`
+          + ((s.caps&&s.caps.length)?`<span style="color:var(--dim,#a89f92);font-size:9px"> — ${(s.caps||[]).map(_esc).join(', ')}</span>`:'')
+          + `</div>`).join('');
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">🧭 Controller · ${a.ic} ${a.lbl}</span>
+          <span class="alo-cycle-status">after step ${_esc(String(ev.after_step||'?'))}</span>
+        </div>${ev.assessment?`<div class="alo-cycle-thought" style="font-style:italic">${_esc(ev.assessment)}</div>`:''}${stepRows?`<div class="alo-cycle-preview">${stepRows}</div>`:''}`, a.cls);
+        return;
+      }
+
+      // ── v6-only: per-step success-criterion verification verdict ─────
+      if(t === 'agent_loop_v6.verify'){
+        const met = !!ev.met;
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">🎯 Success check · step ${_esc(String(ev.step_id||'?'))} — ${met?'met':'NOT met'}</span>
+          <span class="alo-cycle-status">${met?'✓':'⚠'}</span>
+        </div>${ev.criterion?`<div class="alo-cycle-thought">bar: ${_esc(ev.criterion)}</div>`:''}${ev.reason?`<div class="alo-cycle-preview" style="font-style:italic">${_esc(ev.reason)}</div>`:''}`,
+          met?'done':'warn');
+        return;
+      }
+
+      // ── v6-only: shared ledger snapshot (progress across the run) ────
+      if(t === 'agent_loop_v6.ledger'){
+        const done = ev.done||[];
+        const ok = done.filter(d=>d.ok && d.met!==false).length;
+        const unmet = done.filter(d=>d.ok && d.met===false).length;
+        const rows = done.map(d => {
+          const mark = !d.ok ? '✗' : (d.met===false ? '⚠' : '✓');
+          const col  = !d.ok ? 'var(--err,#c75a5a)'
+                     : (d.met===false ? 'var(--warn,#c7a15a)' : 'var(--ok,#5a9e8f)');
+          const tip  = (d.title||'') + (d.met===false ? ' — success bar NOT met' : '');
+          return `<span title="${_esc(tip)}" style="color:${col}">${mark}${_esc(String(d.id))}</span>`;
+        }).join(' ');
+        const pend = (ev.pending||[]).map(s=>`${s.id}`).join(' ') || '—';
+        let card = this._sr.querySelector('.alo-cycle.ledger[data-ledger="1"]');
+        const inner = `<div class="alo-cycle-h">
+            <span class="alo-cycle-tool">🗒 Ledger</span>
+            <span class="alo-cycle-status">${ok}/${done.length} ok${unmet?` · ${unmet} unmet`:''} · ${(ev.pending||[]).length} pending</span>
+          </div><div class="alo-cycle-preview" style="font-family:var(--mono,monospace);font-size:10px">done: ${rows||'—'}<br>pending: ${_esc(pend)}</div>`;
+        if(card){ card.innerHTML = inner; }
+        else { card = this._cycleEl(inner, 'ledger'); if(card) card.setAttribute('data-ledger','1'); }
+        return;
+      }
+
+      // ── v6-only: delivery agent's final markdown deliverable ─────────
+      if(t === 'agent_loop_v6.deliverable'){
+        const md = ev.markdown||'';
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">📦 Deliverable</span>
+          <span class="alo-cycle-status">${md.length} chars</span>
+        </div><div class="alo-handover-body" style="margin-top:4px">${_renderMarkdown(md)}</div>`, 'done');
+        return;
+      }
+
+      // ── v6-only: final completion gate ───────────────────────────────
+      if(t === 'agent_loop_v6.gate'){
+        const complete = !!ev.complete;
+        const miss = (ev.missing||[]).map(m=>`<div>• ${_esc(m)}</div>`).join('');
+        const fu = (ev.follow_up||[]).map(s=>`${s.id}. ${_esc(s.title||'')}`).join(' › ');
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">${complete?'✓ Completion gate passed':'⚠ Completion gate — goal not fully met'}</span>
+        </div>${(!complete&&miss)?`<div class="alo-cycle-preview">${miss}</div>`:''}${fu?`<div class="alo-cycle-thought">follow-up: ${_esc(fu)}</div>`:''}`,
+          complete?'done':'warn');
         return;
       }
 
@@ -830,6 +1207,21 @@
         return;
       }
 
+      // ── v5-only: the EXACT context/configuration a step's specialist got ──
+      // Attaches a reveal to the step card showing the verbatim system prompt
+      // plus a structured breakdown (caps, skills, prior-step context). Stored
+      // so the loop graph / context layer can link to it.
+      if(t === 'agent_loop_v5.step_context'){
+        this._stepContext = this._stepContext || {};
+        this._stepContext[ev.step_id] = ev;
+        const card = this._sr.querySelector(`.alo-cycle.step[data-step="${ev.step_id}"]`);
+        if(card && !card.querySelector('.alo-ctx-reveal')){
+          card.appendChild(this._buildCtxReveal(ev));
+        }
+        this.dispatchEvent(new CustomEvent('alo:step-context', {detail:ev, bubbles:true}));
+        return;
+      }
+
       // ── v5-only: a step's v4-style phase cadence (explore/think/act/verify) ──
       if(t === 'agent_loop_v5.phases'){
         const PH = {explore:'🔍 explore (recon)', think:'💭 think', act:'⚙ act', verify:'✓ verify'};
@@ -841,15 +1233,391 @@
         return;
       }
 
-      // ── v5-only: extreme-goal long-form master plan (specialist planner) ──
-      if(t === 'agent_loop_v5.master_plan'){
+      // ── v6/V7: the long-form master plan STREAMING live, token by token ──
+      if(t === 'agent_loop_v6.master_plan_token'){
+        const inner = `<div class="alo-cycle-h">
+            <span class="alo-cycle-tool">🧠 Strategising…</span>
+            <span class="alo-cycle-status"><span class="alo-spinner"></span> ${_esc(String((ev.text||'').length))} chars</span>
+          </div>${ev.persona?`<div class="alo-cycle-thought" style="font-style:italic">${_esc(ev.persona)}</div>`:''}
+          <div class="alo-cycle-preview" style="white-space:pre-wrap;max-height:260px;overflow:auto">${_esc(ev.text||'')}</div>`;
+        let card = this._sr.querySelector('.alo-cycle.masterplan[data-mp="1"]');
+        if(card){ card.innerHTML = inner; }
+        else { card = this._cycleEl(inner, 'masterplan'); if(card) card.setAttribute('data-mp','1'); }
+        return;
+      }
+
+      // ── v5/v6: extreme-goal long-form master plan (specialist planner) ──
+      if(t === 'agent_loop_v5.master_plan' || t === 'agent_loop_v6.master_plan'){
         const lf = ev.long_form||'';
+        const inner = lf
+          ? `<div class="alo-cycle-h">
+              <span class="alo-cycle-tool">🧠 Master plan (specialist planner)</span>
+              <span class="alo-cycle-status">${lf.length} chars</span>
+            </div>${ev.persona?`<div class="alo-cycle-thought" style="font-style:italic">${_esc(ev.persona)}</div>`:''}
+            <details style="margin-top:4px" open><summary style="cursor:pointer;font-size:9.5px;color:var(--dim,#a89f92)">long-form strategy</summary>
+            <div class="alo-md" style="max-height:380px;overflow:auto;resize:vertical;padding:2px 2px 2px 0">${_renderMarkdown(lf)}</div></details>`
+          : `<div class="alo-cycle-h">
+              <span class="alo-cycle-tool">🧠 Master plan — no strategy produced</span>
+              <span class="alo-cycle-status" style="color:var(--warn,#c7a15a)">⚠ empty</span>
+            </div><div class="alo-cycle-thought" style="font-style:italic">${_esc(ev.note||'the strategic planner returned nothing (generation failed or timed out) — proceeding with the structured plan')}</div>`;
+        // Reuse the live streaming card if it exists, else make a fresh one.
+        let card = this._sr.querySelector('.alo-cycle.masterplan[data-mp="1"]');
+        if(card){ card.innerHTML = inner; card.removeAttribute('data-mp'); }
+        else { this._cycleEl(inner, 'plan'); }
+        return;
+      }
+
+      // ── v5/v6/V7: piecewise master planning — the plan splits into ordered
+      //    pieces, each expanded into steps with the full plan in context ──
+      if(t === 'agent_loop_v5.master_plan_pieces' || t === 'agent_loop_v6.master_plan_pieces'){
+        const ps = (ev.pieces||[]).map(p=>{
+          const meta = [];
+          if(p.deliverable) meta.push(`<div><b>▸ deliverable:</b> ${_esc(p.deliverable)}</div>`);
+          if(p.success_metric) meta.push(`<div><b>◎ success:</b> ${_esc(p.success_metric)}</div>`);
+          if(p.dependencies && p.dependencies.length) meta.push(`<div><b>⇢ depends on piece(s):</b> ${_esc((p.dependencies||[]).join(', '))}</div>`);
+          if(p.timescale) meta.push(`<div><b>⏱</b> ${_esc(p.timescale)}</div>`);
+          const caps = (p.caps&&p.caps.length)?`<div style="color:var(--acc,#9ecb6b)">🧰 ${_esc((p.caps||[]).join(', '))}</div>`:'';
+          const defer = p.deferred?` <span style="color:var(--warn,#c7a15a)" title="deferred to a later dream cycle">· deferred</span>`:'';
+          return `<div style="margin:3px 0"><b>${_esc(String(p.id))}.</b> ${_esc(p.title||'')}${defer}`
+            +(p.objective?`<div style="color:var(--dim,#a89f92);font-size:9px;margin-left:12px">${_esc(p.objective)}</div>`:'')
+            +((meta.length||caps)?`<div style="color:var(--dim,#a89f92);font-size:8.5px;margin-left:12px">${meta.join('')}${caps}</div>`:'')
+            +`</div>`;
+        }).join('');
         this._cycleEl(`<div class="alo-cycle-h">
-          <span class="alo-cycle-tool">🧠 Master plan (specialist planner)</span>
-          <span class="alo-cycle-status">${lf.length} chars</span>
-        </div>${ev.persona?`<div class="alo-cycle-thought" style="font-style:italic">${_esc(ev.persona)}</div>`:''}
-        <details style="margin-top:4px"><summary style="cursor:pointer;font-size:9.5px;color:var(--dim,#a89f92)">show long-form strategy</summary>
-        <div class="alo-cycle-preview" style="white-space:pre-wrap">${_esc(lf)}</div></details>`, 'plan');
+          <span class="alo-cycle-tool">🧩 Piecewise planning · ${_esc(String((ev.pieces||[]).length))} pieces</span>
+          <span class="alo-cycle-status">one piece at a time, full plan in context</span>
+        </div><div class="alo-cycle-preview">${ps}</div>`, 'plan');
+        return;
+      }
+      if(t === 'agent_loop_v5.master_plan_piece_planned' || t === 'agent_loop_v6.master_plan_piece_planned'){
+        const ss = (ev.steps||[]).map(s=>
+          `<div style="margin:1px 0">${_esc(String(s.id))}. ${_esc(s.title||'')}`
+          +((s.caps&&s.caps.length)?` <span style="color:var(--dim,#a89f92);font-size:8.5px">[${_esc((s.caps||[]).join(', '))}]</span>`:'')
+          +`</div>`).join('') || '<div style="color:var(--warn,#c7a15a)">no steps produced for this piece</div>';
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">🧩 Piece ${_esc(String(ev.piece||'?'))} planned — ${_esc(ev.title||'')}</span>
+          <span class="alo-cycle-status">${_esc(String((ev.steps||[]).length))} step(s)</span>
+        </div><div class="alo-cycle-preview">${ss}</div>`, 'plan');
+        return;
+      }
+
+      // ── v5/v6/V7: agent-authored cap chain — a pipeline run in one turn, each
+      //    hop's output piped into the next. The hops themselves render as normal
+      //    tool cards; this is just the header marking them as chained. ──
+      if(t === 'agent_loop_v5.chain' || t === 'agent_loop_v6.chain'){
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">🔗 Chained ${_esc(String((ev.hops||[]).length))} caps</span>
+          <span class="alo-cycle-status">${_esc((ev.hops||[]).join(' → '))}</span>
+        </div>`, 'plan');
+        return;
+      }
+      if(t === 'agent_loop_v5.chain_skip' || t === 'agent_loop_v6.chain_skip'){
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">⤿ Chain hop skipped</span>
+          <span class="alo-cycle-status">${_esc(ev.tool||'')} · when ${_esc(ev.when||'')} = false</span>
+        </div>`, 'expand');
+        return;
+      }
+
+      // ── v6/V7: planning-tier classification (drives the strategic planner) ──
+      if(t === 'agent_loop_v6.tier'){
+        const TI = {single:{ic:'⚡',lbl:'single-cap'}, simple:{ic:'▸',lbl:'simple'},
+                    complex:{ic:'▤',lbl:'complex'}, strategic:{ic:'🧭',lbl:'strategic · multi-day'}};
+        const ti = TI[ev.tier] || {ic:'•', lbl:ev.tier||'?'};
+        const sup = ev.escalation_suppressed
+          ? ` <span style="color:var(--warn,#c7a15a)" title="auto-escalate off — held at complex">↯ escalation held</span>` : '';
+        const src = [];
+        if(ev.heuristic) src.push('heuristic: '+_esc(ev.heuristic));
+        if(ev.llm) src.push('llm: '+_esc(ev.llm));
+        const sug = (ev.suggested && ev.suggested !== ev.tier) ? ('suggested '+_esc(ev.suggested)) : '';
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">${ti.ic} Tier · ${_esc(ti.lbl)}${sup}</span>
+          <span class="alo-cycle-status">${sug}</span>
+        </div>${ev.reason?`<div class="alo-cycle-thought" style="font-style:italic">${_esc(ev.reason)}</div>`:''}${src.length?`<div class="alo-cycle-preview" style="font-size:9px;color:var(--dim,#a89f92)">${src.join(' · ')}</div>`:''}`, 'plan');
+        return;
+      }
+
+      // ── V7 fast path: a 'single' goal resolved by ONE cap, no orchestration ──
+      if(t === 'agent_loop_v6.fast_path'){
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">⚡ Fast path · ${_esc(ev.cap||'')}</span>
+          <span class="alo-cycle-status">single cap</span>
+        </div>${ev.preview?`<div class="alo-cycle-preview" style="white-space:pre-wrap">${_esc(String(ev.preview))}</div>`:''}`, 'done');
+        return;
+      }
+
+      // ── V7 consultation: clarifying questions asked before planning ──
+      if(t === 'agent_loop_v6.clarify_request'){
+        const qs = (ev.questions||[]).map(q=>`<div style="margin:2px 0">• ${_esc(q)}</div>`).join('');
+        const viaComms = ev.comms_address ? ` · also sent to ${_esc(ev.channel||'comms')}` : '';
+        const el = this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">❓ Clarify before planning</span>
+          <span class="alo-cycle-status">${_esc(String((ev.questions||[]).length))} question(s) · ${_esc(String(ev.timeout_secs||''))}s${viaComms}</span>
+        </div><div class="alo-cycle-preview">${qs}</div>
+        <div class="alo-clarify-answer" style="margin-top:5px">
+          <textarea class="alo-clarify-input" rows="2" placeholder="Answer (or leave blank to let it proceed on assumptions)…" style="width:100%;box-sizing:border-box;font-size:10px;background:var(--bg0,#181614);color:var(--text,#e8e0d4);border:1px solid var(--border,#3a352e);border-radius:4px;padding:4px;resize:vertical"></textarea>
+          <div style="display:flex;gap:5px;margin-top:3px">
+            <button class="alo-clarify-send" style="font-size:10px;padding:3px 9px;border-radius:4px;border:1px solid var(--acc,#9ecb6b);background:transparent;color:var(--acc,#9ecb6b);cursor:pointer">Send answer</button>
+            <button class="alo-clarify-skip" style="font-size:10px;padding:3px 9px;border-radius:4px;border:1px solid var(--border,#3a352e);background:transparent;color:var(--dim,#a89f92);cursor:pointer">Proceed without</button>
+          </div>
+        </div>`, 'warn');
+        if(el){
+          const step = (typeof ev.step === 'number') ? ev.step : -424242;
+          const send = (answer) => {
+            const box = el.querySelector('.alo-clarify-answer');
+            if(box) box.querySelectorAll('button,textarea').forEach(x=>x.disabled=true);
+            const base = this._apiBase || _apiBase();
+            fetch(base + this._hitlEndpoint, {
+              method:'POST', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({session_id:this._sessionId, step, decision:'continue', comment:answer||''}),
+            }).catch(()=>{});
+            if(box) box.innerHTML = `<span style="font-size:10px;color:var(--dim,#a89f92);font-style:italic">${answer?'answer sent':'proceeding without answers'}</span>`;
+          };
+          const ta = el.querySelector('.alo-clarify-input');
+          el.querySelector('.alo-clarify-send')?.addEventListener('click', ()=>send((ta&&ta.value||'').trim()));
+          el.querySelector('.alo-clarify-skip')?.addEventListener('click', ()=>send(''));
+        }
+        return;
+      }
+      if(t === 'agent_loop_v6.clarify_resolved'){
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">❓ Clarification ${ev.answered?'received':'skipped'}</span>
+          <span class="alo-cycle-status">${_esc(ev.decision||'')}</span>
+        </div>`, ev.answered?'done':'expand');
+        return;
+      }
+      // ── V7: a RUNNING STEP asks the user a question (ask_user) — same answer
+      //    affordance as the pre-plan clarify, keyed to the step's own HITL id. ──
+      if(t === 'agent_loop_v6.step_question'){
+        const viaComms = ev.comms_address ? ` · also sent to ${_esc(ev.channel||'comms')}` : '';
+        const el = this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">🙋 Step needs your input</span>
+          <span class="alo-cycle-status">step ${_esc(String(ev.step_id||'?'))} · ${_esc(String(ev.timeout_secs||''))}s${viaComms}</span>
+        </div><div class="alo-cycle-preview"><div style="margin:2px 0">• ${_esc(ev.question||'')}</div></div>
+        <div class="alo-clarify-answer" style="margin-top:5px">
+          <textarea class="alo-clarify-input" rows="2" placeholder="Answer (or leave blank to let the step proceed on assumptions)…" style="width:100%;box-sizing:border-box;font-size:10px;background:var(--bg0,#181614);color:var(--text,#e8e0d4);border:1px solid var(--border,#3a352e);border-radius:4px;padding:4px;resize:vertical"></textarea>
+          <div style="display:flex;gap:5px;margin-top:3px">
+            <button class="alo-clarify-send" style="font-size:10px;padding:3px 9px;border-radius:4px;border:1px solid var(--acc,#9ecb6b);background:transparent;color:var(--acc,#9ecb6b);cursor:pointer">Send answer</button>
+            <button class="alo-clarify-skip" style="font-size:10px;padding:3px 9px;border-radius:4px;border:1px solid var(--border,#3a352e);background:transparent;color:var(--dim,#a89f92);cursor:pointer">Proceed without</button>
+          </div>
+        </div>`, 'warn');
+        if(el){
+          const step = (typeof ev.step === 'number') ? ev.step : -424242;
+          const send = (answer) => {
+            const box = el.querySelector('.alo-clarify-answer');
+            if(box) box.querySelectorAll('button,textarea').forEach(x=>x.disabled=true);
+            const base = this._apiBase || _apiBase();
+            fetch(base + this._hitlEndpoint, {
+              method:'POST', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({session_id:this._sessionId, step, decision:'continue', comment:answer||''}),
+            }).catch(()=>{});
+            if(box) box.innerHTML = `<span style="font-size:10px;color:var(--dim,#a89f92);font-style:italic">${answer?'answer sent':'proceeding without answers'}</span>`;
+          };
+          const ta = el.querySelector('.alo-clarify-input');
+          el.querySelector('.alo-clarify-send')?.addEventListener('click', ()=>send((ta&&ta.value||'').trim()));
+          el.querySelector('.alo-clarify-skip')?.addEventListener('click', ()=>send(''));
+        }
+        return;
+      }
+      if(t === 'agent_loop_v6.step_question_resolved'){
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">🙋 Step input ${ev.answered?'received':'skipped'}</span>
+          <span class="alo-cycle-status">${_esc(ev.decision||'')}</span>
+        </div>`, ev.answered?'done':'expand');
+        return;
+      }
+      // ── V7 clarify mode = auto-raise: plan harder instead of asking ──
+      if(t === 'agent_loop_v6.clarify_auto_raise'){
+        const qs = (ev.questions||[]).map(q=>`<div style="margin:2px 0">• ${_esc(q)}</div>`).join('');
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">⤴ Auto-raise (uncertain — planning harder)</span>
+          <span class="alo-cycle-status">${_esc(String((ev.questions||[]).length))} open question(s)</span>
+        </div>${qs?`<div class="alo-cycle-preview">${qs}</div>`:''}`, 'plan');
+        return;
+      }
+      // ── V7 clarify mode = auto-accept: assume answers and proceed ──
+      if(t === 'agent_loop_v6.clarify_auto_accept'){
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">✔ Auto-accepted assumptions</span>
+          <span class="alo-cycle-status">proceeding</span>
+        </div>${ev.assumptions?`<div class="alo-cycle-preview" style="white-space:pre-wrap">${_esc(String(ev.assumptions))}</div>`:''}`, 'done');
+        return;
+      }
+      // ── V7 pre-step info gathering: gaps to fill before this step ──
+      if(t === 'agent_loop_v6.prestep_info'){
+        const gaps = (ev.gaps||[]).map(g=>`<div style="margin:1px 0">• ${_esc(g)}</div>`).join('');
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">🔎 Gather first · step ${_esc(String(ev.step_id||'?'))}</span>
+          <span class="alo-cycle-status">${_esc(String((ev.gaps||[]).length))} missing</span>
+        </div><div class="alo-cycle-preview">${gaps}</div>`, 'expand');
+        return;
+      }
+      // ── V7 multi-day escalation snapshot: notes + artifacts + thought loop ──
+      if(t === 'agent_loop_v6.strategic_escalated'){
+        const bits = [];
+        if(ev.notes) bits.push('agent notes');
+        if(ev.artifacts) bits.push('artifact snapshot');
+        if(ev.thought_loop) bits.push('thought loop');
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">📌 Handed to Dream · multi-day</span>
+          <span class="alo-cycle-status">${_esc(ev.slug||'')}</span>
+        </div><div class="alo-cycle-thought" style="font-style:italic">froze ${_esc(bits.join(' · ')||'escalation state')}; track it in 🎯 Goals</div>`, 'plan');
+        return;
+      }
+      // ── V7 progress report sent out over comms ──
+      if(t === 'agent_loop_v6.progress_report'){
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">📊 Progress reported · ${_esc(ev.channel||'')}</span>
+          <span class="alo-cycle-status">${_esc(ev.tier||'')}</span>
+        </div>`, 'done');
+        return;
+      }
+
+      // ── v6/V7: a strategic (multi-day) goal persisted as a dream project ──
+      if(t === 'agent_loop_v6.strategic_persisted'){
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">🌙 Strategic → dream project</span>
+          <span class="alo-cycle-status">${_esc(ev.slug||'')}</span>
+        </div><div class="alo-cycle-thought" style="font-style:italic">${_esc(ev.note||'documented plan persisted; the dream system will continue it over days')}</div>`, 'plan');
+        return;
+      }
+
+      // ── v6/V7: this session's progress folded back into the dream project ──
+      if(t === 'agent_loop_v6.strategic_progress'){
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">🌙 Progress saved to dream project</span>
+          <span class="alo-cycle-status">${_esc(ev.slug||'')} · ${_esc(String(ev.steps_run||0))} steps</span>
+        </div><div class="alo-cycle-thought" style="font-style:italic">the next dream cycle continues the remaining work</div>`, 'done');
+        return;
+      }
+
+      // ── v6/V7: a step's distilled, relevant-only finalised output ────
+      if(t === 'agent_loop_v6.step_finalized'){
+        const card = this._sr.querySelector(`.alo-cycle.step[data-step="${ev.step_id}"]`);
+        if(card && ev.summary){
+          let body = card.querySelector('.alo-step-summary');
+          if(!body){ body = document.createElement('div'); body.className='alo-cycle-preview alo-step-summary'; card.appendChild(body); }
+          // Tuck the raw step output (already shown by step_done) behind a reveal.
+          const prevRaw = body.getAttribute('data-raw') || (body.classList.contains('alo-finalised') ? '' : (body.textContent||''));
+          body.classList.add('alo-finalised');
+          body.setAttribute('data-raw', prevRaw);
+          body.innerHTML = `<div style="color:var(--acc2,#a8c87a);font-size:9px;margin-bottom:2px">✦ finalised · relevant-only</div>`
+            + `<div class="alo-output-body">${_smartRender(ev.summary)}</div>`
+            + (prevRaw ? `<details style="margin-top:3px"><summary style="cursor:pointer;font-size:9px;color:var(--dim,#a89f92)">show raw step output</summary><div class="alo-output-body" style="margin-top:3px">${_smartRender(prevRaw)}</div></details>` : '');
+        }
+        return;
+      }
+
+      // ── v6/V7: extra_step failure recovery — the failed step is ADJUSTED to
+      //    navigate the problem the verifier found (new tactic / caps / phases),
+      //    seeded with its own output, and inserted to run next. ────────────────
+      if(t === 'agent_loop_v6.recovery_step'){
+        const s = ev.step || {};
+        const adjusted = !!ev.adjusted;
+        const caps = (ev.caps||[]);
+        const phases = (ev.phases||[]);
+        const label = adjusted ? '⟳ Adjust' : '↻ Recover';
+        const meta = [];
+        if(caps.length) meta.push(`caps: ${caps.map(_esc).join(', ')}`);
+        if(phases.length) meta.push(`phases: ${phases.map(_esc).join('→')}`);
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">${label} · step ${_esc(String(s.id||'?'))}</span>
+          <span class="alo-cycle-status" style="color:var(--warn,#c7a15a)">${adjusted?'new tactic — ':''}from step ${_esc(String(ev.from_step||'?'))}</span>
+        </div>`
+        + `<div class="alo-cycle-preview">${_esc(s.title||'')}`
+        + (meta.length ? `<div style="margin-top:2px;color:var(--dim,#a89f92);font-size:9px">${_esc(meta.join(' · '))}</div>` : '')
+        + (ev.reason ? `<div style="margin-top:2px;color:var(--dim,#a89f92);font-style:italic">${_esc(ev.reason)}</div>` : '')
+        + `</div>`, 'plan');
+        return;
+      }
+
+      // ── v6/V7: a step's structured JOURNAL record — the goal-relevant outputs,
+      //    files/paths, tools and entities distilled for reuse (persisted to the
+      //    data fabric + a journal.json mirror). Complex/long-term runs only. ────
+      if(t === 'agent_loop_v6.journal'){
+        const e = ev.entry || {};
+        const rows = [];
+        (e.key_outputs||[]).slice(0,6).forEach(k => rows.push(`<div style="margin:1px 0">• ${_esc(k)}</div>`));
+        if((e.files||[]).length) rows.push(`<div style="margin:1px 0;color:var(--acc2,#a8c87a)">📄 ${(e.files||[]).slice(0,6).map(_esc).join(', ')}</div>`);
+        if((e.entities||[]).length) rows.push(`<div style="margin:1px 0;color:var(--dim,#a89f92)">◇ ${(e.entities||[]).slice(0,8).map(_esc).join(', ')}</div>`);
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">🗒 Journal · step ${_esc(String(ev.step_id||'?'))}</span>
+          <span class="alo-cycle-status">${_esc(String(ev.count||0))} entr${(ev.count===1)?'y':'ies'} → fabric</span>
+        </div>${rows.length?`<div class="alo-cycle-preview">${rows.join('')}</div>`:''}`, 'done');
+        return;
+      }
+
+      // ── Mid-run USER MESSAGE — a message the user sent into a running loop is
+      //    queued (agent_loop.user_message, pending) then folded into context at
+      //    the next step boundary (agent_loop_v5/v6.user_message). ─────────────
+      if(t.endsWith('.user_message')){
+        const msgs = (ev.messages && ev.messages.length) ? ev.messages
+                     : (ev.text ? [ev.text] : []);
+        const rows = msgs.map(m => `<div style="margin:1px 0">💬 ${_esc(m)}</div>`).join('');
+        const pending = !!ev.pending;
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">✉ User update${pending ? ' (queued)' : ''}</span>
+          <span class="alo-cycle-status" style="color:var(--acc,#c7a15a)">${pending ? 'waiting for next step' : 'folded into context'}</span>
+        </div>${rows ? `<div class="alo-cycle-preview">${rows}</div>` : ''}`, 'plan');
+        return;
+      }
+
+      // ── v6/V7 git-tree: a failed step forks an alternate-approach branch ──
+      if(t === 'agent_loop_v6.branch_open'){
+        const rows = (ev.steps||[]).map(s =>
+          `<div style="font-family:var(--mono,monospace);font-size:9.5px;color:var(--text2,#bfb6a8);margin:1px 0">`
+          + `<b>${_esc(String(s.id))}.</b> ${_esc(s.title||'')}`
+          + ((s.caps&&s.caps.length)?`<span style="color:var(--dim,#a89f92);font-size:9px"> — ${(s.caps||[]).map(_esc).join(', ')}</span>`:'')
+          + `</div>`).join('');
+        const el = this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">⑃ Branch · ${_esc(ev.label||'')}</span>
+          <span class="alo-cycle-status"><span class="alo-spinner"></span> from step ${_esc(String(ev.fork_step||'?'))}</span>
+        </div><div class="alo-cycle-preview">${rows||''}</div>`, 'branch');
+        if(el){
+          el.style.marginLeft = '16px';
+          el.style.borderLeft = '2px solid var(--warn,#c7a15a)';
+          this._branchCards = this._branchCards || {};
+          this._branchCards[`${ev.fork_step}::${ev.label}`] = el;
+        }
+        return;
+      }
+
+      // ── v6/V7 git-tree: a branch met the bar and MERGES back ─────────
+      if(t === 'agent_loop_v6.branch_merge'){
+        const el = (this._branchCards||{})[`${ev.fork_step}::${ev.label}`];
+        if(el){
+          el.classList.add('done');
+          el.style.borderLeft = '2px solid var(--ok,#5a9e8f)';
+          const st = el.querySelector('.alo-cycle-status');
+          if(st) st.innerHTML = `<span style="color:var(--ok,#5a9e8f)">⇄ merged ✓</span>`;
+          if(ev.summary){
+            const b = document.createElement('div');
+            b.className = 'alo-cycle-preview'; b.style.marginTop = '3px';
+            b.textContent = ev.summary;
+            el.appendChild(b);
+          }
+        }
+        return;
+      }
+
+      // ── v6/V7 git-tree: a branch failed and is PRUNED to a reason ────
+      if(t === 'agent_loop_v6.branch_prune'){
+        const el = (this._branchCards||{})[`${ev.fork_step}::${ev.label}`];
+        if(el){
+          el.classList.add('warn');
+          el.style.borderLeft = '2px solid var(--dim,#a89f92)';
+          el.style.opacity = '0.68';
+          const st = el.querySelector('.alo-cycle-status');
+          if(st) st.innerHTML = `<span style="color:var(--dim,#a89f92)">✕ pruned</span>`;
+          const tool = el.querySelector('.alo-cycle-tool');
+          if(tool) tool.style.textDecoration = 'line-through';
+          if(ev.reason){
+            const b = document.createElement('div');
+            b.className = 'alo-cycle-thought'; b.style.fontStyle = 'italic';
+            b.textContent = 'pruned: ' + ev.reason;
+            el.appendChild(b);
+          }
+        }
         return;
       }
 
@@ -865,9 +1633,40 @@
           if(ev.summary){
             let body = card.querySelector('.alo-step-summary');
             if(!body){ body = document.createElement('div'); body.className='alo-cycle-preview alo-step-summary'; card.appendChild(body); }
-            body.textContent = ev.summary;
+            // step_finalized may later replace this with a distilled version; keep
+            // the raw output recoverable via data-raw so its reveal still works.
+            if(!body.classList.contains('alo-finalised')){
+              body.innerHTML = _smartRender(ev.summary);
+              body.setAttribute('data-raw', ev.summary);
+            }
           }
         }
+        return;
+      }
+
+      // ── v5-only: LIVE reasoning stream (token-by-token while the turn's JSON
+      //    action is still generating). A transient per-turn card fills in live,
+      //    then is dropped by think_stream_end once the turn is parsed into its
+      //    real cycle card (tool_call / thinking). Keyed by step:turn. ──
+      if(t === 'agent_loop_v5.think_delta'){
+        if(!this._showThinking) return;
+        const key = `${ev.step_id}:${ev.turn}`;
+        let card = this._sr.querySelector(`.alo-cycle.think-stream[data-ts="${key}"]`);
+        if(!card){
+          card = this._cycleEl(`<div class="alo-cycle-h">
+              <span class="alo-cycle-tool">💭 reasoning…</span>
+              <span class="alo-cycle-status"><span class="alo-spinner"></span></span>
+            </div><div class="alo-think-join"></div>`, 'think-stream');
+          if(card) card.setAttribute('data-ts', key);
+        }
+        const body = card && card.querySelector('.alo-think-join');
+        if(body) body.textContent = ev.text || '';
+        return;
+      }
+      if(t === 'agent_loop_v5.think_stream_end'){
+        const key = `${ev.step_id}:${ev.turn}`;
+        const card = this._sr.querySelector(`.alo-cycle.think-stream[data-ts="${key}"]`);
+        if(card) card.remove();
         return;
       }
 
@@ -920,10 +1719,22 @@
           }
           return;
         }
+        const rnd = (ev.round && ev.max_rounds && ev.max_rounds > 1)
+          ? ` <span style="opacity:.6">· round ${ev.round}/${ev.max_rounds}</span>` : '';
         this._cycleEl(`<div class="alo-cycle-h">
-          <span class="alo-cycle-tool">🔍 recon · ${_esc(ev.cap||'')}</span>
+          <span class="alo-cycle-tool">🔍 recon · ${_esc(ev.cap||'')}${rnd}</span>
           <span class="alo-cycle-status"><span class="alo-spinner"></span> gathering…</span>
         </div>${ev.why?`<div class="alo-cycle-thought">${_esc(ev.why)}</div>`:''}`, 'recon');
+        return;
+      }
+
+      // ── v5+: a recoverable malformed call — retry the SAME cap with fixed
+      //    args instead of widening scope (keeps the prior step's work). ──
+      if(t === 'agent_loop_v5.arg_correction'){
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">↺ Retry ${_esc(String(ev.tool||''))} with corrected args${ev.step_id?` · step ${_esc(String(ev.step_id))}`:''}</span>
+          <span class="alo-cycle-status">no widen</span>
+        </div>${ev.reason?`<div class="alo-cycle-preview" style="color:var(--dim,#a89f92)">${_esc(ev.reason)}</div>`:''}`, 'expand');
         return;
       }
 
@@ -1121,9 +1932,9 @@
           : (ok ? (ev.preview || '') : (ev.error || ev.preview || ''));
         const body = document.createElement('div');
         body.className = 'alo-cycle-result';
-        const formatted = ok ? _fmtOutput(text, 600) : _esc(text||'(empty)');
+        const formatted = ok ? _smartRender(text) : _esc(text||'(empty)');
         body.innerHTML = `<div class="alo-result-h ${cls}">${label}</div>
-          <div class="alo-result-body ${cls}">${formatted}</div>`;
+          <div class="alo-result-render ${cls}">${formatted}</div>`;
         last.el.appendChild(body);
         return;
       }
@@ -1251,13 +2062,79 @@
       time.textContent = new Date().toLocaleTimeString([], {hour12:false});
       d.appendChild(time);
       host.appendChild(d);
-      host.scrollTop = host.scrollHeight;
+      _follow(host);
       const countEl = this._sr.querySelector('[data-part="cycles-count"]');
       if(countEl){
         const n = host.querySelectorAll('.alo-cycle').length;
         countEl.textContent = n + (n===1?' card':' cards');
       }
       return d;
+    }
+
+    // Build the per-step "exact context" reveal: a collapsible holding the
+    // verbatim system prompt plus each context layer (caps, skills, prior-step
+    // context). Each layer carries data-layer + data-step so the host (loop
+    // graph / context layer) can cross-link and pulse the active one.
+    _buildCtxReveal(ev){
+      const p = ev.parts || {};
+      const det = document.createElement('details');
+      det.className = 'alo-ctx-reveal';
+      det.setAttribute('data-step-ctx', String(ev.step_id));
+
+      const layer = (key, title, text, srcHtml) => {
+        if(!text) return '';
+        return `<div class="alo-ctx-layer" data-layer="${key}" data-step="${_esc(String(ev.step_id))}">
+            <div class="h"><span>${_esc(title)}</span>${srcHtml||''}</div>
+            <pre class="alo-ctx-pre">${_esc(text)}</pre>
+          </div>`;
+      };
+      const capsTxt = (p.caps&&p.caps.length) ? p.caps.join('\n') : '';
+      const skillsTxt = (p.skills&&p.skills.length) ? p.skills.join('\n') : '';
+      const recTxt = (p.recovery_caps&&p.recovery_caps.length) ? p.recovery_caps.join(', ') : '';
+      // Prior-step context: tag each source step so the host can link them.
+      const srcChips = (p.context_sources||[]).map(s =>
+        `<span class="src" data-ctx-src="${_esc(String(s.step_id))}">step ${_esc(String(s.step_id))}</span>`).join(' ');
+
+      det.innerHTML = `<summary>⚙ exact agent context (verbatim)</summary>
+        <div class="alo-ctx-body">
+          <div class="alo-ctx-layer" data-layer="system_prompt" data-step="${_esc(String(ev.step_id))}">
+            <div class="h"><span>Full system prompt</span>
+              <button class="alo-ctx-copy" data-copy>copy</button></div>
+            <pre class="alo-ctx-pre">${_esc(ev.system_prompt||'')}</pre>
+          </div>
+          ${layer('caps','Scoped capabilities', capsTxt)}
+          ${layer('cap_schemas','Capability schemas', p.cap_schemas)}
+          ${layer('skills','Skills', skillsTxt)}
+          ${layer('skill_prompt','Skill instructions', p.skill_prompt)}
+          ${layer('prior_context','Context from prior steps', p.prior_context, srcChips)}
+          ${layer('phase_guide','Phase guidance', p.phase_guide)}
+          ${layer('model_block','Model guidance', p.model_block)}
+          ${layer('code_note','Code autosave note', p.code_note)}
+          ${recTxt ? layer('recovery_caps','Requestable recovery caps', recTxt) : ''}
+        </div>`;
+
+      const copyBtn = det.querySelector('[data-copy]');
+      if(copyBtn){
+        copyBtn.addEventListener('click', (e) => {
+          e.preventDefault(); e.stopPropagation();
+          try{ navigator.clipboard.writeText(ev.system_prompt||''); copyBtn.textContent='copied'; }
+          catch(_){ copyBtn.textContent='select+copy'; }
+          setTimeout(()=>{ copyBtn.textContent='copy'; }, 1400);
+        });
+      }
+      return det;
+    }
+
+    // Public: the exact context payload(s) the specialist(s) were given.
+    getStepContext(stepId){ return (this._stepContext||{})[stepId] || null; }
+    getStepContexts(){ return {...(this._stepContext||{})}; }
+
+    // Pulse a step's context layer(s) on/off — used to show the active step is
+    // consuming its context (and to visually link the two in the host UI).
+    pulseStepContext(stepId, on){
+      const det = this._sr.querySelector(`.alo-ctx-reveal[data-step-ctx="${stepId}"]`);
+      if(!det) return;
+      det.querySelectorAll('.alo-ctx-layer').forEach(l => l.classList.toggle('pulse', !!on));
     }
 
     _renderStartCard(ev){
@@ -1330,11 +2207,52 @@
       if(!pre){ pre = document.createElement('pre'); thinkEl.appendChild(pre); }
       pre.textContent = text;
       // Keep the latest reasoning in view while it streams in.
-      pre.scrollTop = pre.scrollHeight;
+      _follow(pre);
+      this._dedupeCycleThought(ref);
+    }
+
+    // A productive cycle receives its reasoning twice: as the brief inline
+    // .alo-cycle-thought (from the tool_call event) AND inside the
+    // .alo-cycle-think dropdown (from the structured think event) — identical
+    // text in v4/v5. Show it once: a concise one-liner stays inline (always
+    // visible); longer reasoning keeps the collapsible dropdown. Idempotent —
+    // safe to call from both the think and tool_call handlers in any order.
+    _dedupeCycleThought(ref){
+      if(!ref || !ref.el) return;
+      const brief = ref.el.querySelector(':scope > .alo-cycle-thought');
+      const dd    = ref.el.querySelector(':scope > .alo-cycle-think');
+      if(!brief || !dd) return;
+      const pre = dd.querySelector('pre');
+      const norm = s => String(s==null?'':s).replace(/\s+/g,' ').trim();
+      const a = norm(brief.textContent);
+      const b = pre ? norm(pre.textContent) : '';
+      if(!a || !b) return;
+      // Same reasoning if one is a prefix of the other (covers the think
+      // event's char-cap truncation of a longer inline thought).
+      if(!(a === b || a.startsWith(b) || b.startsWith(a))) return;
+      if(Math.max(a.length, b.length) > 240) brief.remove();
+      else dd.remove();
+    }
+
+    // Lazily materialise a cycle card when a tool_call/tool_done arrives without a
+    // preceding cycle_planning — e.g. agent-chained cap hops (which don't emit one),
+    // or a reattach/restore where the planning event was trimmed from the replay
+    // list. This is what keeps EVERY tool cycle visible after a disconnect.
+    _ensureCycle(cycle){
+      if(cycle == null) return null;
+      let ref = this._cycleRefs.get(cycle);
+      if(ref) return ref;
+      const el = this._cycleEl(`<div class="alo-cycle-h">
+        <span class="alo-cycle-n">cycle ${_esc(String(cycle))}</span>
+        <span class="alo-cycle-tool">…</span>
+      </div>`);
+      ref = {el, progressEl:null, tokenBuffer:''};
+      this._cycleRefs.set(cycle, ref);
+      return ref;
     }
 
     _renderToolCall(ev){
-      const ref = this._cycleRefs.get(ev.cycle);
+      const ref = this._ensureCycle(ev.cycle);
       if(!ref) return;
       const isLong = !!ev.long_running;
       const argsHtml = ev.args ? _fmtArgs(ev.args, 300) : '';
@@ -1367,6 +2285,7 @@
       } else if(thought){
         thought.remove();
       }
+      this._dedupeCycleThought(ref);
 
       // Args
       let argsEl = ref.el.querySelector(':scope > .alo-cycle-args');
@@ -1386,7 +2305,7 @@
     }
 
     _renderToolDone(ev){
-      const ref = this._cycleRefs.get(ev.cycle);
+      const ref = this._ensureCycle(ev.cycle);
       if(!ref) return;
       const ok = ev.ok !== false;
       ref.el.classList.toggle('error', !ok);
@@ -1418,9 +2337,9 @@
         const text  = ev.empty_search
           ? 'Search returned 0 results — change the query or stop searching.'
           : (ok ? (ev.preview || '') : (ev.error || ev.preview || ''));
-        const formatted = ok ? _fmtOutput(text, 600) : _esc(text||'(empty)');
+        const formatted = ok ? _smartRender(text) : _esc(text||'(empty)');
         body.innerHTML = `<div class="alo-result-h ${cls}">${label}</div>
-          <div class="alo-result-body ${cls}">${formatted}</div>`;
+          <div class="alo-result-render ${cls}">${formatted}</div>`;
       }
       this.dispatchEvent(new CustomEvent('alo:tool-done', {detail:{cycle:ev.cycle, tool:ev.tool, ok:ok}, bubbles:true}));
     }
@@ -1487,7 +2406,7 @@
       details.innerHTML = `<summary>research report${data.tool?` · ${_esc(data.tool)}`:''}${jobShort?` · job <code>${_esc(jobShort)}</code>`:''}</summary>
         <div class="alo-research-report-body">${_renderMarkdown(report)}${citesHtml}</div>`;
       strip.appendChild(details);
-      strip.scrollTop = strip.scrollHeight;
+      _follow(strip);
     }
 
     _appendProgressLine(strip, kindClass, kindLabel, bodyHtml){
@@ -1495,7 +2414,7 @@
       line.className = 'alo-progress-line ' + (kindClass||'');
       line.innerHTML = `<span class="pkind">${_esc(kindLabel||'')}</span><span class="pbody">${bodyHtml||''}</span>`;
       strip.appendChild(line);
-      strip.scrollTop = strip.scrollHeight;
+      _follow(strip);
     }
 
     /** Like _appendProgressLine, but updates an existing line (keyed by `key`)
@@ -1512,7 +2431,7 @@
       }
       line.querySelector('.pkind').textContent = kindLabel||'';
       line.querySelector('.pbody').innerHTML = bodyHtml||'';
-      strip.scrollTop = strip.scrollHeight;
+      _follow(strip);
     }
 
     _addProgress(ev){
@@ -1553,7 +2472,7 @@
           const area = this._ensureResearchArea(strip, data.job_id);
           if(area){
             area.textContent += tok;
-            area.scrollTop = area.scrollHeight;
+            _follow(area);
             return;
           }
         }
@@ -1592,7 +2511,7 @@
         }
         ref.tokenBuffer = (ref.tokenBuffer||'') + tok;
         tokenEl.textContent = ref.tokenBuffer.slice(-1500);
-        tokenEl.scrollTop = tokenEl.scrollHeight;
+        _follow(tokenEl);
         return;
       }
       if(rt === 'stream.complete'){
@@ -1610,7 +2529,16 @@
         }else if(rt==='research.completed'){
           body = `✓ job <b>${_esc(data.job_id||'')}</b> done · ${data.elapsed?Math.round(data.elapsed)+'s':''} · ${data.cit_count||0} citations`;
         }else if(rt==='research.error'){
-          body = `<span style="color:var(--err,#c75a5a)">\u2717 research error: ${_esc(data.error||data.text||data.message||'unknown')}</span>`;
+          // Non-fatal: the job keeps running. Collapse repeats of the same
+          // message into one line with a \u00d7N counter instead of spamming.
+          const msg = (data.error||data.text||data.message||'unknown').trim();
+          let h = 0; for(let i=0;i<msg.length;i++) h = (h*31 + msg.charCodeAt(i))|0;
+          const key = 'res-err-'+(h>>>0);
+          const counts = strip._resErrCounts || (strip._resErrCounts = {});
+          const n = counts[key] = (counts[key]||0) + 1;
+          this._upsertProgressLine(strip, key, 'error',
+            `<span style="color:var(--err,#c75a5a)">\u2717 research error${n>1?' \u00d7'+n:''}: ${_esc(msg)}</span>`);
+          return;
         }else{
           body = _esc(JSON.stringify(data).slice(0,180));
         }
@@ -1673,7 +2601,7 @@
           strip.appendChild(thinkEl);
         }
         thinkEl.textContent += (data.text||'');
-        thinkEl.scrollTop = thinkEl.scrollHeight;
+        _follow(thinkEl);
         return;
       }
       if(rt === 'agent_loop.research_citations'){
@@ -1795,8 +2723,21 @@
         <span style="color:var(--info,#7eb8d9);font-size:9px">live research stream · job <code>${_esc((ev.job_id||'').slice(0,8))}</code><span class="alo-cur"></span></span>`;
       strip.appendChild(streamHdr);
       strip.appendChild(streamArea);
+      // The server builds ws_url from ITS OWN vantage point (often
+      // ws://localhost:<port>) — useless from the browser, and ws:// is
+      // mixed-content-blocked on an https page. The stream route lives on
+      // the same app that serves this UI, so rebuild it same-origin.
+      let wsUrl = ev.ws_url;
       try{
-        const ws = new WebSocket(ev.ws_url);
+        const u = new URL(ev.ws_url);
+        if(location.host && (u.hostname === 'localhost' || u.hostname === '127.0.0.1')){
+          wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + u.pathname;
+        }else if(location.protocol === 'https:' && u.protocol === 'ws:'){
+          wsUrl = 'wss://' + u.host + u.pathname;
+        }
+      }catch(_){}
+      try{
+        const ws = new WebSocket(wsUrl);
         const _wsJobId = ev.job_id;
         this._activeWsJobs.add(_wsJobId);
         ws.onmessage = e => {
@@ -1804,7 +2745,7 @@
             const m = JSON.parse(e.data);
             if(m.type === 'token' || m.type === 'thinking'){
               streamArea.textContent += (m.text||'');
-              streamArea.scrollTop = streamArea.scrollHeight;
+              _follow(streamArea);
             } else if(m.type === 'step'){
               const stepEl = document.createElement('div');
               stepEl.style.cssText = 'font-size:8.5px;color:var(--acc3,#c5a572);margin:2px 0';
@@ -1816,9 +2757,10 @@
               this._activeWsJobs.delete(_wsJobId);
               ws.close();
             } else if(m.type === 'error'){
-              streamArea.textContent += '\n⚠ '+_esc(m.text||'stream error');
-              this._activeWsJobs.delete(_wsJobId);
-              ws.close();
+              // Non-fatal sub-step failure (one source 500'd, an instance is
+              // down, …) — the job keeps running and will still send `done`.
+              // Closing here killed the live stream on the first hiccup.
+              streamArea.textContent += '\n⚠ '+(m.text||'stream error');
             }
           }catch(_){}
         };
@@ -1860,7 +2802,7 @@
         strip.appendChild(thinkEl);
       }
       thinkEl.textContent += (ev.text||'');
-      thinkEl.scrollTop = thinkEl.scrollHeight;
+      _follow(thinkEl);
     }
     _renderResearchCitations(ev){
       const strip = this._cycleRefs.get(ev.cycle)?.progressEl;
@@ -2001,7 +2943,7 @@
       pause._tick = tick;
 
       const cycles = this._sr.querySelector('.alo-cycles');
-      if(cycles) cycles.scrollTop = cycles.scrollHeight;
+      _follow(cycles);
     }
 
     async _hitlRespond(step, decision, btn){
@@ -2088,7 +3030,7 @@
         btn.addEventListener('click', ()=> this._budgetRespond(card, btn.dataset.budget, inc, stepId));
       });
       const cycles = this._sr.querySelector('.alo-cycles');
-      if(cycles) cycles.scrollTop = cycles.scrollHeight;
+      _follow(cycles);
       this.dispatchEvent(new CustomEvent('alo:budget-pause', {detail:{cycles:ev.cycles, max_cycles:ev.max_cycles}, bubbles:true}));
     }
 
@@ -2151,11 +3093,12 @@
         </div>`;
       }
 
-      if(ev.handover_output){
+      const deliv = ev.deliverable || ev.handover_output;
+      if(deliv){
         html += `<div class="alo-final-row">
-          <div class="alo-final-lbl" style="color:var(--acc,#5a9e8f)">★ Synthesised answer</div>
+          <div class="alo-final-lbl" style="color:var(--acc,#5a9e8f)">${ev.deliverable?'📦 Deliverable':'★ Synthesised answer'}</div>
           <div class="alo-final-val">
-            <div class="alo-handover-body">${_renderMarkdown(ev.handover_output)}</div>
+            <div class="alo-handover-body">${_renderMarkdown(deliv)}</div>
             ${summary?`<details style="margin-top:6px"><summary style="cursor:pointer;font-size:9.5px;color:var(--dim,#a89f92)">show original raw answer</summary>
               <div class="alo-final-val summary" style="margin-top:4px;font-size:10px">${_esc(summary)}</div>
             </details>`:''}

@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script>/* vera theme boot — paint cached theme before CSS parses */
+(function(){try{var d=document.documentElement,S=window.localStorage;
+var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vera / Network Ops</title>
+<style>
+:root{
+  --bg0:#080a0d;--bg1:#12161b;--bg2:#181d24;--bg3:#1e2530;
+  --border:#1e2633;--border2:#2a3444;
+  --text:#c8d4e0;--fg:#c8d4e0;--fg2:#7a8fa8;--dim:#4a5f78;--dim2:#7a8fa8;
+  --acc:#4cc9b0;--acc2:#4ade80;--acc3:#fb923c;--acc4:#c084fc;
+  --warn:#f59e0b;--err:#f87171;
+  --mono:ui-monospace,'SFMono-Regular','Menlo',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg0);color:var(--text);font:12px/1.45 var(--mono)}
+body{display:flex;overflow:hidden}
+button{font:inherit;cursor:pointer}
+.btn{display:inline-flex;align-items:center;gap:5px;padding:6px 11px;border-radius:5px;background:var(--bg2);border:1px solid var(--border2);color:var(--text);font-size:11px;white-space:nowrap}
+.btn:hover{border-color:var(--acc)}
+.btn.sm{padding:4px 8px;font-size:10px}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#04231d);font-weight:700}
+.btn.danger{color:var(--err);border-color:var(--err);background:transparent}
+#main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.topbar{display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--bg1);border-bottom:1px solid var(--border);flex-wrap:wrap;flex-shrink:0}
+.topbar select,.topbar input{background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font:inherit;font-size:11px;outline:none}
+.topbar select:focus,.topbar input:focus{border-color:var(--acc)}
+.ttl{font-weight:700;letter-spacing:.05em}
+.body{flex:1;overflow-y:auto;padding:12px}
+.sec{display:none}.sec.active{display:block}
+.note{background:color-mix(in srgb,var(--acc) 7%,transparent);border:1px solid color-mix(in srgb,var(--acc) 28%,transparent);border-radius:7px;padding:9px 11px;font-size:11px;color:var(--dim2);margin-bottom:12px;line-height:1.5}
+.note b{color:var(--text)}
+.hd{display:flex;align-items:center;gap:8px;margin:14px 2px 8px;color:var(--dim2);font-size:10px;letter-spacing:.08em;text-transform:uppercase}
+.hd::after{content:"";flex:1;height:1px;background:var(--border)}
+table{width:100%;border-collapse:collapse;font-size:11px}
+th{color:var(--dim2);text-align:left;font-weight:600;padding:6px 8px;border-bottom:1px solid var(--border2);font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+td{padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:hover td{background:rgba(255,255,255,.02)}
+.twrap{background:var(--bg1);border:1px solid var(--border);border-radius:8px;overflow-x:auto;margin-bottom:12px}
+.frow{display:flex;gap:9px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px}
+.field{display:flex;flex-direction:column;gap:4px;min-width:0}
+.field.sm{flex:0 0 90px}
+.field label{font-size:9px;color:var(--dim2);text-transform:uppercase;letter-spacing:.04em}
+.field input,.field select{background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:5px;font:inherit;font-size:11px;outline:none;width:100%}
+.field input:focus,.field select:focus{border-color:var(--acc)}
+.pill{font-size:9px;padding:2px 8px;border-radius:20px;border:1px solid;white-space:nowrap}
+.pill.ok{color:var(--acc2);border-color:var(--acc2)}
+.pill.err{color:var(--err);border-color:var(--err)}
+.pill.dim{color:var(--dim2);border-color:var(--dim)}
+.kv{font-size:10px;color:var(--dim2)}
+.empty{color:var(--dim2);text-align:center;padding:22px;font-size:11px}
+</style>
+<link rel="stylesheet" href="/ui/vera-panel.css">
+</head>
+<body>
+
+<aside id="sidebar" data-vera-lhm>
+  <div id="side-head">
+    <div class="ico">⇄</div>
+    <div><h1>Network</h1><div class="sub">Firewall &amp; traffic</div></div>
+  </div>
+  <nav id="nav">
+    <button class="nav-btn active" data-sec="fw" title="Proxmox firewall">
+      <span class="gl">🛡</span><span>Firewall</span>
+    </button>
+    <button class="nav-btn" data-sec="traffic" title="Live traffic via NWM-01">
+      <span class="gl">📡</span><span>Traffic (NWM-01)</span>
+    </button>
+  </nav>
+  <div id="status-tile">
+    <div class="lbl">Cluster</div>
+    <div class="row"><span class="dot" id="st-dot"></span><span id="st-cluster">—</span></div>
+  </div>
+</aside>
+
+<div id="main">
+  <div class="topbar">
+    <span class="ttl" id="sec-title">Firewall</span>
+    <span style="flex:1"></span>
+    <select id="selCluster" onchange="NO.clusterChanged()"></select>
+    <select id="selNode" onchange="NO.nodeChanged()"></select>
+    <button class="btn sm" onclick="NO.refresh()">↻</button>
+  </div>
+  <div class="body">
+
+    <!-- FIREWALL -->
+    <div class="sec active" id="sec-fw">
+      <div class="note"><b>Proxmox firewall.</b> Rules at cluster, node or per-guest scope
+        via the PVE firewall API — the same rules the Network graph shows as policy
+        edges (draw a line = ACCEPT, cut = delete).</div>
+      <div class="frow">
+        <div class="field sm"><label>Scope</label><select id="fwScope" onchange="NO.fwLoad()">
+          <option value="guest">guest</option><option value="node">node</option><option value="cluster">cluster</option></select></div>
+        <div class="field"><label>Guest</label><select id="fwGuest"></select></div>
+        <button class="btn" onclick="NO.fwLoad()">↻ Load rules</button>
+      </div>
+      <div class="twrap"><table id="fwTbl">
+        <thead><tr><th>Pos</th><th>Dir</th><th>Action</th><th>Source</th><th>Dest</th><th>Proto</th><th>DPort</th><th>On</th><th>Comment</th><th></th></tr></thead>
+        <tbody><tr><td colspan="10" class="empty">—</td></tr></tbody>
+      </table></div>
+      <div class="hd">Add rule</div>
+      <div class="frow">
+        <div class="field sm"><label>Action</label><select id="fwaAction"><option>ACCEPT</option><option>DROP</option><option>REJECT</option></select></div>
+        <div class="field sm"><label>Dir</label><select id="fwaType"><option value="in">in</option><option value="out">out</option></select></div>
+        <div class="field"><label>Source</label><input id="fwaSrc" placeholder="10.0.0.0/24"></div>
+        <div class="field"><label>Dest</label><input id="fwaDst" placeholder=""></div>
+        <div class="field sm"><label>Proto</label><input id="fwaProto" placeholder="tcp"></div>
+        <div class="field sm"><label>DPort</label><input id="fwaDport" placeholder="443"></div>
+        <div class="field"><label>Comment</label><input id="fwaComment"></div>
+        <button class="btn pri" onclick="NO.fwAdd()">+ Add</button>
+      </div>
+    </div>
+
+    <!-- TRAFFIC -->
+    <div class="sec" id="sec-traffic">
+      <div class="note"><b>NWM-01 traffic view.</b> All traffic routes through the monitor
+        container — sampled there. <b>Flows</b> reads the live conntrack table (top
+        connections + talkers, with byte counts when conntrack accounting is on);
+        <b>Capture</b> runs a timed tcpdump and aggregates conversations. Set the NWM-01
+        SSH credential in Storage → Setup (nwm_host_id).</div>
+      <div class="frow">
+        <button class="btn" onclick="NO.nwmFlows()">↻ Flows (conntrack)</button>
+        <div class="field sm"><label>Capture secs</label><input id="nwmSecs" type="number" value="10" min="2" max="60"></div>
+        <div class="field"><label>BPF filter (opt)</label><input id="nwmFilter" placeholder="not port 22"></div>
+        <button class="btn" onclick="NO.nwmCapture()">◉ Capture sample</button>
+        <span id="nwmInfo" class="kv"></span>
+      </div>
+      <div class="hd">Top talkers</div>
+      <div class="twrap"><table id="talkTbl">
+        <thead><tr><th>Host</th><th>Conns</th><th>Bytes</th></tr></thead>
+        <tbody><tr><td colspan="3" class="empty">—</td></tr></tbody>
+      </table></div>
+      <div class="hd">Flows</div>
+      <div class="twrap"><table id="flowTbl">
+        <thead><tr><th>Src</th><th>Dst</th><th>Proto</th><th>DPort</th><th>Conns</th><th>Bytes</th></tr></thead>
+        <tbody><tr><td colspan="6" class="empty">—</td></tr></tbody>
+      </table></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+'use strict';
+const NO={cluster:'',node:'',nodes:[],guests:[]};
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function fmtB(n){if(!n&&n!==0)return '—';const u=['B','K','M','G','T','P'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return n.toFixed(n<10&&i>0?1:0)+u[i];}
+async function api(path,method='GET',body){const o={method,headers:{'Content-Type':'application/json'}};if(body)o.body=JSON.stringify(body);const r=await fetch(path,o);if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}
+
+/* ── sidebar nav ── */
+function nav(sec){
+  document.querySelectorAll('.nav-btn').forEach(el=>el.classList.toggle('active',el.dataset.sec===sec));
+  document.querySelectorAll('.sec').forEach(el=>el.classList.toggle('active',el.id==='sec-'+sec));
+  const el=document.querySelector('.nav-btn[data-sec="'+sec+'"]');
+  $('sec-title').textContent=el?.querySelector('span:last-child')?.textContent||sec;
+  if(sec==='fw') NO.fwLoad();
+}
+document.querySelectorAll('.nav-btn[data-sec]').forEach(el=>{el.onclick=()=>nav(el.dataset.sec);});
+
+/* ── bootstrap ── */
+NO.init=async()=>{
+  let cl; try{ cl=await api('/proxmox/cluster/list'); }catch(e){ return; }
+  const cs=cl.clusters||[];
+  $('selCluster').innerHTML=cs.map(c=>`<option value="${esc(c.id)}">${esc(c.label||c.id)}</option>`).join('')||'<option value="">no clusters</option>';
+  if(cs.length){ NO.cluster=cs[0].id; await NO.clusterChanged(); }
+};
+NO.clusterChanged=async()=>{
+  NO.cluster=$('selCluster').value;
+  $('st-cluster').textContent=$('selCluster').selectedOptions[0]?.textContent||'—';
+  $('st-dot').className='dot on';
+  await NO.refresh();
+};
+NO.nodeChanged=()=>{ NO.node=$('selNode').value; NO.fwLoad(); };
+NO.refresh=async()=>{
+  if(!NO.cluster) return;
+  let s; try{ s=await api('/proxmox/status','POST',{cluster_id:NO.cluster}); }catch(e){ return; }
+  NO.guests=(s.guests||[]).filter(g=>!g.template);
+  NO.nodes=(s.nodes||[]).map(n=>n.node);
+  NO.node=NO.node||NO.nodes[0]||'';
+  $('selNode').innerHTML=NO.nodes.map(n=>`<option ${n===NO.node?'selected':''}>${esc(n)}</option>`).join('');
+  $('fwGuest').innerHTML=NO.guests.map(g=>`<option value="${g.vmid}|${esc(g.type)}|${esc(g.node)}">${esc(g.name||('vm'+g.vmid))} (#${g.vmid})</option>`).join('')||'<option value="">no guests</option>';
+  const active=document.querySelector('.nav-btn.active')?.dataset.sec;
+  if(active==='fw') NO.fwLoad();
+};
+
+/* ── firewall ── */
+NO.fwCtx=()=>{
+  const scope=$('fwScope').value;
+  const ctx={cluster_id:NO.cluster,scope,node:NO.node,guest_type:'',vmid:0};
+  if(scope==='guest'){
+    const v=($('fwGuest').value||'').split('|');
+    ctx.vmid=parseInt(v[0])||0; ctx.guest_type=v[1]==='lxc'?'lxc':'qemu'; ctx.node=v[2]||NO.node;
+  }
+  return ctx;
+};
+NO.fwLoad=async()=>{
+  if(!NO.cluster) return;
+  const ctx=NO.fwCtx();
+  const tb=$('fwTbl').querySelector('tbody');
+  if(ctx.scope==='guest'&&!ctx.vmid){ tb.innerHTML='<tr><td colspan="10" class="empty">pick a guest</td></tr>'; return; }
+  try{
+    const r=await api('/proxmox/fw/rules/list','POST',ctx);
+    if(r.error){ tb.innerHTML=`<tr><td colspan="10" class="empty">${esc(r.error)}</td></tr>`; return; }
+    tb.innerHTML=(r.rules||[]).map(u=>
+      `<tr><td>${u.pos}</td><td>${esc(u.type||'')}</td>
+       <td><span class="pill ${u.action==='ACCEPT'?'ok':'err'}">${esc(u.action||'')}</span></td>
+       <td class="kv">${esc(u.source||'any')}</td><td class="kv">${esc(u.dest||'any')}</td>
+       <td>${esc(u.proto||'any')}</td><td>${esc(u.dport||'any')}</td>
+       <td>${u.enable?'✓':'—'}</td><td class="kv">${esc(u.comment||'')}</td>
+       <td><button class="btn sm danger" onclick="NO.fwDel(${u.pos})">✕</button></td></tr>`
+    ).join('')||'<tr><td colspan="10" class="empty">no rules at this scope</td></tr>';
+  }catch(e){ tb.innerHTML=`<tr><td colspan="10" class="empty">${esc(e.message)}</td></tr>`; }
+};
+NO.fwAdd=async()=>{
+  try{
+    const r=await api('/proxmox/fw/rule/add','POST',{...NO.fwCtx(),
+      action:$('fwaAction').value,type:$('fwaType').value,
+      source:$('fwaSrc').value.trim(),dest:$('fwaDst').value.trim(),
+      proto:$('fwaProto').value.trim(),dport:$('fwaDport').value.trim(),
+      comment:$('fwaComment').value.trim()});
+    if(r.error) return alert(r.error);
+    $('fwaSrc').value=$('fwaDport').value=$('fwaComment').value=''; NO.fwLoad();
+  }catch(e){ alert(e.message); }
+};
+NO.fwDel=async(pos)=>{
+  if(!confirm('Delete rule at pos '+pos+'?')) return;
+  try{
+    const r=await api('/proxmox/fw/rule/delete','POST',{...NO.fwCtx(),pos});
+    if(r.error) return alert(r.error); NO.fwLoad();
+  }catch(e){ alert(e.message); }
+};
+
+/* ── NWM traffic ── */
+NO.nwmFlows=async()=>{
+  $('nwmInfo').textContent='sampling conntrack…';
+  try{
+    const r=await api('/pxstore/nwm/flows','POST',{cluster_id:NO.cluster});
+    if(r.error){ $('nwmInfo').textContent=''; return alert(r.error); }
+    $('nwmInfo').textContent=`tool: ${r.tool} · ${r.total_flows} flows`;
+    $('talkTbl').querySelector('tbody').innerHTML=(r.talkers||[]).map(t=>
+      `<tr><td><b>${esc(t.host)}</b></td><td>${t.conns}</td><td>${fmtB(t.bytes)}</td></tr>`
+    ).join('')||'<tr><td colspan="3" class="empty">—</td></tr>';
+    $('flowTbl').querySelector('tbody').innerHTML=(r.flows||[]).map(f=>
+      `<tr><td>${esc(f.src)}</td><td>${esc(f.dst)}</td><td>${esc(f.proto)}</td>
+       <td>${esc(f.dport)}</td><td>${f.conns}</td><td>${fmtB(f.bytes)}</td></tr>`
+    ).join('')||'<tr><td colspan="6" class="empty">—</td></tr>';
+  }catch(e){ $('nwmInfo').textContent=''; alert(e.message); }
+};
+NO.nwmCapture=async()=>{
+  const secs=parseInt($('nwmSecs').value)||10;
+  $('nwmInfo').textContent='capturing '+secs+'s…';
+  try{
+    const r=await api('/pxstore/nwm/capture','POST',{cluster_id:NO.cluster,seconds:secs,filter:$('nwmFilter').value.trim()});
+    if(r.error){ $('nwmInfo').textContent=''; return alert(r.error); }
+    $('nwmInfo').textContent=`${r.pkts_seen} packets in ${r.seconds}s`;
+    $('flowTbl').querySelector('tbody').innerHTML=(r.convs||[]).map(c=>
+      `<tr><td>${esc(c.src)}</td><td>${esc(c.dst)}</td><td colspan="2" class="kv">capture</td>
+       <td>${c.pkts}</td><td>${fmtB(c.bytes)}</td></tr>`
+    ).join('')||'<tr><td colspan="6" class="empty">no conversations parsed</td></tr>';
+  }catch(e){ $('nwmInfo').textContent=''; alert(e.message); }
+};
+
+NO.init();
+</script>
+<script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel.js"></script>
+</body>
+</html>

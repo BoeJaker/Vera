@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="ash">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Vera / Research</title>
@@ -1699,7 +1704,7 @@ body.rhm-resizing{cursor:col-resize;user-select:none}
             <div class="tgl" id="tgl-a-think" onclick="this.classList.toggle('on');saveCfg()"></div>
           </div>
         </div>
-        <div class="sr"><label>Backend URL</label><input class="si" id="cfg-url" value="" placeholder="http://host:8765" onchange="saveCfg()"></div>
+        <div class="sr"><label>Backend URL</label><input class="si" id="cfg-url" value="" placeholder="https://host:8999" onchange="saveCfg()"></div>
         <div class="sr"><label>Orchestrator URL</label><input class="si" id="cfg-orch-url" value="" placeholder="http://host:8999" onchange="saveCfg()" title="Vera capability backend URL (for NLP panel, graph, fabric)"></div>
         <button class="abtn" onclick="pushCfg()">Apply to backend</button>
       </div>
@@ -1758,32 +1763,30 @@ body.rhm-resizing{cursor:col-resize;user-select:none}
 /* ══════════════════════════════════════════════════════════════════════════
    State
 ══════════════════════════════════════════════════════════════════════════ */
+/* ── Researcher API base resolution ────────────────────────────────────────
+   researcher_api is co-located on the orchestrator that served this page, so
+   its /api/* routes live on THIS origin. The legacy standalone :8765 default
+   is dead in Vera mode (404) and, being http://, is mixed-content-blocked on
+   the https UI. Default to the harness base / same origin; only trust a stored
+   override when it is neither the dead :8765 port nor an https→http downgrade. */
+const _DEFAULT_API = (function(){
+  try{ if(window.parent!==window && window.parent._veraBase) return String(window.parent._veraBase).replace(/\/$/,''); }catch(e){}
+  try{ return window.location.origin; }catch(e){ return (window.__VERA_BASE__||''); }
+})();
+function _cleanBase(v){
+  if(!v) return '';
+  try{
+    const u=new URL(String(v).trim());
+    if(location.protocol==='https:' && u.protocol==='http:') return '';        // mixed-content
+    if(u.port==='8765' && location.port!=='8765') return '';                   // dead standalone port
+    return u.protocol+'//'+u.host;
+  }catch(e){ return ''; }
+}
 const S={
-  api: (()=>{
-    // When embedded in Vera harness iframe, use harness backend URL.
-    // Falls back to localStorage 'cfg-url' then default for standalone use.
-    try {
-      if (window.parent !== window && window.parent._veraBase)
-        return window.parent._veraBase;
-    } catch(e) {}
-    try {
-      const r = localStorage.getItem('cfg-url') || '';
-      const u = new URL(r || ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8765'));
-      return u.protocol + '//' + u.host;
-    } catch(e) { return ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8765'); }
-  })(),
-  // Orchestrator URL (capability backend :8999) — for /research/* capability endpoints
-  orchUrl: (()=>{
-    try {
-      if (window.parent !== window && window.parent._veraBase)
-        return window.parent._veraBase;
-    } catch(e) {}
-    try {
-      const r = localStorage.getItem('vera-orch-url') || '';
-      if (r) { const u = new URL(r); return u.protocol + '//' + u.host; }
-    } catch(e) {}
-    return (window.__VERA_BASE__||('http://'+location.hostname+':8999'));
-  })(),
+  // researcher_api base (/api/*) — resolved robustly in fixResearcherApiUrl().
+  api: _cleanBase(localStorage.getItem('cfg-url')) || _DEFAULT_API,
+  // Orchestrator URL (capability backend) — for /research/* capability endpoints.
+  orchUrl: _cleanBase(localStorage.getItem('vera-orch-url')) || _DEFAULT_API,
   mode:'single', om:'report', projOM:'report',
   jobId:null, ws:null, buf:'', cursor:null,
   cits:[], projId:null, projName:'',
@@ -1806,16 +1809,18 @@ Object.defineProperty(S, 'researchApi', {
   }
 });
 
-// ── S.api for direct /api/* calls: researcher_api server (:8765) ─────────────
-// researcher_api runs on :8765 and serves /api/history, /api/sources, /api/agents/status,
-// When loaded as an integrated Vera module, the research @app routes live on
-// the orchestrator (:8999) alongside everything else. S.api should point there.
-// When running standalone (:8765), S.api points to the researcher directly.
+// ── S.api for direct /api/* calls: researcher_api /api/* routes ──────────────
+// The research @app routes (/api/history, /api/sources, /api/notebooks, …) are
+// mounted on the orchestrator's APP and served from THIS origin (the :8999 TLS
+// listener in this deployment). The old standalone :8765 process is dead here
+// (returns 404, and http:// is mixed-content-blocked on the https UI). So S.api
+// should resolve to this page's own origin; only a genuine standalone deploy
+// (page itself served on :8765) points elsewhere.
 (function fixResearcherApiUrl() {
   // 1. If served from the orchestrator (via /research/panel), use same origin.
   //    The research @app routes are mounted on the orchestrator's APP now.
-  //    This MUST come before the _veraResearcherUrl check because the harness
-  //    always returns :8765 from that property regardless of integration mode.
+  //    Kept first as the most reliable signal; _cleanBase() below also rejects
+  //    a stale :8765 / mixed-content base if a later branch is reached.
   if (window.location.pathname === '/research/panel') {
     S.api = window.location.origin;
     return;
@@ -1829,19 +1834,21 @@ Object.defineProperty(S, 'researchApi', {
       return;
     }
   } catch(e) {} // cross-origin — skip
-  // 2. Explicit harness override (legacy standalone :8765 mode)
+  // 2. Explicit harness override — but only if it's a valid, reachable base
+  //    (not the dead standalone :8765 port or an https→http downgrade).
   try {
     if (window.parent !== window && window.parent._veraResearcherUrl) {
-      S.api = window.parent._veraResearcherUrl;
-      return;
+      const c = _cleanBase(window.parent._veraResearcherUrl);
+      if (c) { S.api = c; return; }
     }
   } catch(e) {}
   // 3. Fallback: cfg-url from localStorage (set in researcher settings panel)
   try {
-    const stored = localStorage.getItem('cfg-url');
-    if (stored) { S.api = new URL(stored).origin; return; }
+    const stored = _cleanBase(localStorage.getItem('cfg-url'));
+    if (stored) { S.api = stored; return; }
   } catch(e) {}
-  S.api = ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8765');
+  // 4. Last resort: this page's own origin (researcher_api is co-located here).
+  S.api = _DEFAULT_API;
 })();
 
 // ── Session ID — always reads the live harness session ────────────────────// ── Session ID — always reads the live harness session ────────────────────
@@ -3575,13 +3582,9 @@ async function exportDB(){
 ══════════════════════════════════════════════════════════════════════════ */
 
 function _sanitiseApiUrl(raw) {
-  // Strip trailing slashes and any path — only keep scheme://host:port
-  try {
-    const u = new URL(raw && raw.trim() ? raw.trim() : (S && S.api ? S.api : ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8765')));
-    return u.protocol + '//' + u.host;  // e.g. "http://host:8999"
-  } catch(e) {
-    return (window.__VERA_BASE__||('http://'+location.hostname+':8999'));
-  }
+  // Keep only scheme://host:port, and reject stale/broken bases (dead :8765
+  // standalone port, https→http downgrade) in favour of this page's origin.
+  return _cleanBase(raw) || _cleanBase(S && S.api) || _DEFAULT_API;
 }
 function _saveCfgInputs(){
   const ids=['cfg-url','cfg-orch-url','cfg-t-h','cfg-t-p','cfg-t-m','cfg-t-c','cfg-t-think-to',
@@ -3603,13 +3606,11 @@ function loadCfgUI(){
   // Step 1: restore cfg-url from localStorage so S.api is set immediately
   const saved=JSON.parse(localStorage.getItem('vera-cfg4')||'{}');
   const urlEl=document.getElementById('cfg-url');
-  if(urlEl) urlEl.value = saved['cfg-url'] || urlEl.value
-            || ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8765');
+  if(urlEl) urlEl.value = _cleanBase(saved['cfg-url']) || _cleanBase(urlEl.value) || _DEFAULT_API;
   S.api=_sanitiseApiUrl(urlEl?.value);
   const orchEl=document.getElementById('cfg-orch-url');
   if(orchEl){
-    orchEl.value = saved['cfg-orch-url'] || orchEl.value
-                 || (window.__VERA_BASE__||('http://'+location.hostname+':8999'));
+    orchEl.value = _cleanBase(saved['cfg-orch-url']) || _cleanBase(orchEl.value) || _DEFAULT_API;
     S.orchUrl=_sanitiseApiUrl(orchEl.value);
   }
 

@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Vera — Business</title>
+<style>
+:root{
+  --bg0:#141312;--bg1:#1b1917;--bg2:#242120;--bg3:#2e2a28;
+  --border:#38332f;--border2:#4a4540;
+  --acc:#5a9e8f;--acc2:#8fb87a;
+  --up:#3fd0a4;--dn:#e0705a;
+  --s1:#7aa2f7;--s2:#e8b34d;--s3:#b48ead;--s4:#5ec9b8;
+  --ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;
+  --text:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;
+  --mono:'JetBrains Mono','Fira Mono',monospace;
+  --sans:'Inter','IBM Plex Sans',system-ui,sans-serif;
+  --radius:6px;--radius-sm:4px;color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:13px}
+body{display:flex;flex-direction:column;overflow:hidden}
+button{font-family:var(--sans);cursor:pointer}
+a{color:var(--acc)}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:4px}
+::-webkit-scrollbar-track{background:transparent}
+
+/* Header */
+.hdr{display:flex;align-items:center;gap:12px;padding:8px 14px;border-bottom:1px solid var(--border);background:var(--bg1);flex-shrink:0}
+.hdr .brand{font-size:14px;font-weight:700;color:var(--acc);letter-spacing:.3px;white-space:nowrap}
+.hdr .chips{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}
+.chip{background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:3px 10px;font-size:11px;color:var(--dim2);white-space:nowrap}
+.chip b{color:var(--text);font-family:var(--mono)}
+
+/* Layout */
+.layout{flex:1;display:flex;min-height:0}
+nav.side{width:150px;flex-shrink:0;border-right:1px solid var(--border);background:var(--bg1);padding:8px;display:flex;flex-direction:column;gap:2px}
+nav.side button{background:none;border:none;color:var(--dim2);text-align:left;padding:8px 10px;border-radius:var(--radius);font-size:13px}
+nav.side button:hover{background:var(--bg2);color:var(--text)}
+nav.side button.active{background:var(--bg2);color:var(--acc);font-weight:600}
+main.content{flex:1;overflow:auto;padding:16px 18px}
+
+/* Toolbar / typography */
+h2{font-size:16px;font-weight:600;margin-bottom:2px}
+.sub{color:var(--dim2);font-size:11px;margin-bottom:14px}
+.toolbar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+input,select,textarea{background:var(--bg2);border:1px solid var(--border);color:var(--text);border-radius:var(--radius-sm);padding:6px 9px;font-family:var(--sans);font-size:13px;outline:none}
+input:focus,select:focus,textarea:focus{border-color:var(--acc)}
+textarea{width:100%;resize:vertical;font-family:var(--mono);font-size:12px}
+.btn{background:var(--bg2);border:1px solid var(--border2);color:var(--text);border-radius:var(--radius-sm);padding:6px 12px;font-size:12px}
+.btn:hover{background:var(--bg3)}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#0d0f12);font-weight:600}
+.btn.pri:hover{filter:brightness(1.08)}
+.btn.sm{padding:3px 8px;font-size:11px}
+.btn.danger{color:var(--err);border-color:var(--border)}
+
+/* Tables */
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;color:var(--dim2);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.3px;padding:6px 8px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg0)}
+td{padding:7px 8px;border-bottom:1px solid var(--border)}
+tr:hover td{background:var(--bg1)}
+.mono{font-family:var(--mono)}
+.right{text-align:right}
+.actions{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
+.pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:10px;background:var(--bg3);color:var(--dim2)}
+.pill.new{color:var(--s1)}.pill.paid,.pill.scheduled{color:var(--s2)}
+.pill.shipped,.pill.delivered,.pill.done{color:var(--up)}
+.pill.cancelled,.pill.refunded{color:var(--dn)}
+.pill.in_progress,.pill.packed{color:var(--s4)}
+.warn{color:var(--warn)}.err{color:var(--err)}.ok{color:var(--ok)}
+
+/* Cards */
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:18px}
+.card{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);padding:14px}
+.card .k{color:var(--dim2);font-size:11px;text-transform:uppercase;letter-spacing:.3px}
+.card .v{font-family:var(--mono);font-size:22px;font-weight:600;margin-top:6px}
+.card .v.small{font-size:16px}
+
+.grid2{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.conn{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);padding:12px}
+.conn h4{font-size:13px;display:flex;align-items:center;gap:6px}
+.conn .caps{color:var(--dim2);font-size:11px;margin:6px 0}
+.tag{font-size:10px;padding:1px 6px;border-radius:8px;background:var(--bg3)}
+.tag.real{color:var(--up)}.tag.stub{color:var(--dim)}
+
+.empty{color:var(--dim);text-align:center;padding:40px;font-size:13px}
+.result{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-top:10px;font-size:12px}
+
+/* Spinner */
+.vera-loading{display:flex;align-items:center;justify-content:center;padding:40px;color:var(--dim2)}
+.vera-loading::before{content:"";width:18px;height:18px;border:2px solid var(--border2);border-top-color:var(--acc);border-radius:50%;animation:spin .8s linear infinite;margin-right:10px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Modal */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:50}
+.modal-bg.on{display:flex}
+.modal{background:var(--bg1);border:1px solid var(--border2);border-radius:var(--radius);width:min(520px,92vw);max-height:88vh;overflow:auto;padding:18px}
+.modal h3{font-size:15px;margin-bottom:14px}
+.field{margin-bottom:11px}
+.field label{display:block;color:var(--dim2);font-size:11px;margin-bottom:4px}
+.field input,.field select,.field textarea{width:100%}
+.modal .foot{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+
+/* Toast */
+#toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius);padding:9px 16px;font-size:12px;z-index:80;opacity:0;transition:opacity .2s;pointer-events:none;max-width:70vw}
+#toast.on{opacity:1}
+#toast.err{border-color:var(--err);color:var(--err)}
+#toast.ok{border-color:var(--ok);color:var(--ok)}
+</style>
+</head>
+<body>
+  <div class="hdr">
+    <span class="brand">Business</span>
+    <div class="chips" id="hdrChips"></div>
+    <button class="btn sm" onclick="render()">↻ Refresh</button>
+  </div>
+  <div class="layout">
+    <nav class="side" id="nav"></nav>
+    <main class="content" id="content"><div class="vera-loading">Loading…</div></main>
+  </div>
+
+  <div class="modal-bg" id="modalBg"><div class="modal" id="modal"></div></div>
+  <div id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const el = (t, a={}, ...kids) => { const e=document.createElement(t);
+  for(const k in a){ if(k==='class')e.className=a[k]; else if(k==='html')e.innerHTML=a[k];
+    else if(k.startsWith('on'))e.addEventListener(k.slice(2),a[k]); else e.setAttribute(k,a[k]); }
+  for(const kid of kids){ if(kid==null)continue; e.append(kid.nodeType?kid:document.createTextNode(kid)); }
+  return e; };
+const money = (v,c='USD') => (v==null?'—':(c==='USD'?'$':'')+Number(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}));
+const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+
+async function api(path, body){
+  const opt = body ? {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)} : {};
+  const r = await fetch(path, opt);
+  const j = await r.json().catch(()=>({error:'bad response'}));
+  return j;
+}
+function qs(obj){ const p=new URLSearchParams(); for(const k in obj) if(obj[k]!==''&&obj[k]!=null) p.set(k,obj[k]); const s=p.toString(); return s?'?'+s:''; }
+
+let toastT;
+function toast(msg, kind=''){ const t=$('#toast'); t.textContent=msg; t.className='on '+kind;
+  clearTimeout(toastT); toastT=setTimeout(()=>t.className=t.className.replace('on',''),2600); }
+
+// ── Modal form builder ───────────────────────────────────────────────────────
+function closeModal(){ $('#modalBg').classList.remove('on'); $('#modal').innerHTML=''; }
+$('#modalBg').addEventListener('click', e=>{ if(e.target.id==='modalBg') closeModal(); });
+function openForm(title, fields, values, onSubmit){
+  const m = $('#modal'); m.innerHTML='';
+  m.append(el('h3',{},title));
+  const inputs={};
+  for(const f of fields){
+    const wrap = el('div',{class:'field'});
+    wrap.append(el('label',{},f.label));
+    let inp;
+    if(f.type==='select'){ inp=el('select'); for(const o of f.options){ const opt=el('option',{value:o.value!=null?o.value:o}); opt.textContent=o.label!=null?o.label:o; inp.append(opt);} }
+    else if(f.type==='textarea'){ inp=el('textarea',{rows:f.rows||3}); }
+    else { inp=el('input',{type:f.type||'text'}); if(f.step)inp.step=f.step; if(f.placeholder)inp.placeholder=f.placeholder; }
+    const v = values&&values[f.name]!=null?values[f.name]:(f.default!=null?f.default:'');
+    if(f.type==='textarea'&&typeof v==='object') inp.value=JSON.stringify(v,null,2); else inp.value=v;
+    inputs[f.name]=inp; wrap.append(inp); m.append(wrap);
+  }
+  const foot=el('div',{class:'foot'});
+  foot.append(el('button',{class:'btn',onclick:closeModal},'Cancel'));
+  const save=el('button',{class:'btn pri'},'Save');
+  save.addEventListener('click', async ()=>{
+    const out={}; for(const f of fields){ let val=inputs[f.name].value;
+      if(f.type==='number') val=val===''?null:Number(val); out[f.name]=val; }
+    save.disabled=true; save.textContent='Saving…';
+    try{ const r=await onSubmit(out); if(r&&r.error){ toast(r.error,'err'); save.disabled=false; save.textContent='Save'; return; } closeModal(); toast('Saved','ok'); render(); }
+    catch(e){ toast(String(e),'err'); save.disabled=false; save.textContent='Save'; }
+  });
+  foot.append(save); m.append(foot);
+  $('#modalBg').classList.add('on');
+}
+
+// ── Sections ─────────────────────────────────────────────────────────────────
+const SECTIONS = ['dashboard','inventory','pricing','orders','customers','service','platforms'];
+const LABELS = {dashboard:'Dashboard',inventory:'Inventory',pricing:'Pricing',orders:'Orders',customers:'Customers',service:'Service',platforms:'Platforms'};
+let current = location.hash.slice(1) || 'dashboard';
+if(!SECTIONS.includes(current)) current='dashboard';
+
+function buildNav(){ const n=$('#nav'); n.innerHTML='';
+  for(const s of SECTIONS){ n.append(el('button',{class:s===current?'active':'',onclick:()=>{current=s;location.hash=s;render();}},LABELS[s])); } }
+
+function loading(){ $('#content').innerHTML='<div class="vera-loading">Loading…</div>'; }
+function setContent(...nodes){ const c=$('#content'); c.innerHTML=''; c.append(...nodes); }
+
+async function render(){
+  buildNav(); loading();
+  try{ await RENDER[current](); }
+  catch(e){ setContent(el('div',{class:'empty err'},'Error: '+e)); }
+  refreshChips();
+}
+async function refreshChips(){
+  const d = await api('/business/store/dashboard');
+  const c=$('#hdrChips'); c.innerHTML='';
+  const chips=[['Inv value',money(d.inventory_cost_value)],['Low stock',d.low_stock],
+    ['Open orders',d.open_orders],['30d rev',money(d.revenue_30d)]];
+  for(const [k,v] of chips){ c.append(el('span',{class:'chip',html:k+' <b>'+esc(v)+'</b>'})); }
+}
+
+const RENDER = {};
+
+// Dashboard
+RENDER.dashboard = async ()=>{
+  const d = await api('/business/store/dashboard');
+  const low = await api('/business/product/low_stock');
+  const cards = el('div',{class:'cards'});
+  const stat = (k,v,sm)=>{ const c=el('div',{class:'card'}); c.append(el('div',{class:'k'},k),el('div',{class:'v'+(sm?' small':'')},v)); return c; };
+  cards.append(
+    stat('Products', d.products),
+    stat('Inventory value', money(d.inventory_cost_value), true),
+    stat('Retail value', money(d.inventory_retail_value), true),
+    stat('Low stock', d.low_stock),
+    stat('Open orders', d.open_orders),
+    stat('Revenue (30d)', money(d.revenue_30d), true),
+    stat('Service jobs', d.open_service_jobs),
+    stat('Customers', d.customers),
+  );
+  const nodes=[el('h2',{},'Dashboard'),el('div',{class:'sub'},'State of the business — for you and the agents'),cards];
+  // Platforms
+  nodes.push(el('h2',{},'Connected platforms'));
+  if((d.platforms||[]).length){ const t=el('table'); t.innerHTML='<tr><th>Connector</th><th>Label</th><th>Status</th></tr>';
+    for(const p of d.platforms){ t.append(el('tr',{html:`<td class="mono">${esc(p.connector)}</td><td>${esc(p.label||'')}</td><td><span class="pill ${esc(p.status)}">${esc(p.status)}</span></td>`})); }
+    nodes.push(t); }
+  else nodes.push(el('div',{class:'sub'},'No platforms connected. Go to Platforms to connect eBay.'));
+  // Low stock
+  if((low.products||[]).length){ nodes.push(el('h2',{style:'margin-top:18px'},'Needs restocking'));
+    const t=el('table'); t.innerHTML='<tr><th>SKU</th><th>Name</th><th class="right">Qty</th><th class="right">Reorder pt</th></tr>';
+    for(const p of low.products){ t.append(el('tr',{html:`<td class="mono">${esc(p.sku)}</td><td>${esc(p.name)}</td><td class="right warn mono">${p.qty_on_hand}</td><td class="right mono">${p.reorder_point}</td>`})); }
+    nodes.push(t); }
+  setContent(...nodes);
+};
+
+// Inventory
+RENDER.inventory = async ()=>{
+  let q = RENDER._invq||'';
+  const data = await api('/business/product/list'+qs({q,limit:500}));
+  const bar = el('div',{class:'toolbar'});
+  const search=el('input',{type:'text',placeholder:'Search sku / name / upc…',value:q,style:'width:220px'});
+  search.addEventListener('keydown',e=>{ if(e.key==='Enter'){ RENDER._invq=search.value; render(); }});
+  bar.append(search, el('button',{class:'btn sm',onclick:()=>{RENDER._invq=search.value;render();}},'Search'),
+    el('button',{class:'btn pri',style:'margin-left:auto',onclick:()=>productForm()},'+ New product'));
+  const t=el('table');
+  t.innerHTML='<tr><th>SKU</th><th>Name</th><th>Category</th><th class="right">Cost</th><th class="right">Price</th><th class="right">Qty</th><th class="right">Actions</th></tr>';
+  for(const p of data.products){
+    const tr=el('tr');
+    const low = p.qty_on_hand<=p.reorder_point && (p.reorder_point>0||p.qty_on_hand<=0);
+    tr.innerHTML=`<td class="mono">${esc(p.sku)}</td><td>${esc(p.name)}</td><td>${esc(p.category||'')}</td>
+      <td class="right mono">${money(p.cost,p.currency)}</td><td class="right mono">${money(p.price,p.currency)}</td>
+      <td class="right mono ${low?'warn':''}">${p.qty_on_hand}</td>`;
+    const act=el('td',{class:'right'}); const a=el('div',{class:'actions'});
+    a.append(
+      el('button',{class:'btn sm',title:'Edit',onclick:()=>productForm(p)},'Edit'),
+      el('button',{class:'btn sm',title:'Adjust stock',onclick:()=>stockDialog(p)},'Stock±'),
+      el('button',{class:'btn sm',title:'Fetch market price',onclick:()=>priceDialog(p)},'Price'),
+      el('button',{class:'btn sm',title:'Push to a platform',onclick:()=>pushDialog(p)},'Push'),
+      el('button',{class:'btn sm danger',onclick:async()=>{ if(confirm('Delete '+p.name+'?')){ await api('/business/product/delete',{id:p.id}); toast('Deleted'); render(); }}},'✕'),
+    );
+    act.append(a); tr.append(act); t.append(tr);
+  }
+  const nodes=[el('h2',{},'Inventory'),el('div',{class:'sub'},data.count+' products'),bar];
+  nodes.push(data.products.length?t:el('div',{class:'empty'},'No products yet. Add one, or sync from a connected platform.'));
+  setContent(...nodes);
+};
+function productForm(p){
+  openForm(p?'Edit product':'New product',[
+    {name:'sku',label:'SKU'},{name:'name',label:'Name'},
+    {name:'category',label:'Category'},
+    {name:'cost',label:'Cost',type:'number',step:'0.01'},
+    {name:'price',label:'Price',type:'number',step:'0.01'},
+    {name:'currency',label:'Currency',default:'USD'},
+    {name:'qty_on_hand',label:'Qty on hand',type:'number'},
+    {name:'reorder_point',label:'Reorder point',type:'number'},
+    {name:'reorder_qty',label:'Reorder qty',type:'number'},
+    {name:'supplier',label:'Supplier'},{name:'location',label:'Location'},
+    {name:'upc',label:'UPC'},
+    {name:'description',label:'Description',type:'textarea'},
+  ], p||{}, vals=>{ if(p)vals.id=p.id; return api('/business/product/upsert',vals); });
+}
+function stockDialog(p){
+  openForm('Adjust stock — '+p.name,[
+    {name:'delta',label:'Delta (+ restock / − sale)',type:'number',default:0},
+    {name:'reason',label:'Reason',type:'select',options:['restock','sale','return','adjust','damage','sync'],default:'adjust'},
+    {name:'note',label:'Note'},
+  ], {}, vals=>api('/business/stock/adjust',{id:p.id,delta:vals.delta,reason:vals.reason,note:vals.note}));
+}
+async function priceDialog(p){
+  const r = await api('/business/price/lookup',{product_id:p.id});
+  if(r.error){ toast(r.error,'err'); return; }
+  const sug = await api('/business/price/suggest',{product_id:p.id});
+  const m=$('#modal'); m.innerHTML='';
+  m.append(el('h3',{},'Market price — '+p.name));
+  m.append(el('div',{class:'result',html:
+    `Source: <b>${esc(r.source)}</b> · ${r.sample_size} comps<br>
+     Low <b class="mono">${money(r.low)}</b> · Median <b class="mono">${money(r.median)}</b> · High <b class="mono">${money(r.high)}</b><br><br>
+     Your cost: <b class="mono">${money(p.cost)}</b> · Your price: <b class="mono">${money(p.price)}</b><br>
+     ${sug.error?'':`Suggested price: <b class="mono ok">${money(sug.suggested_price)}</b> <span class="sub">(${esc(sug.basis)})</span>`}`}));
+  const foot=el('div',{class:'foot'});
+  foot.append(el('button',{class:'btn',onclick:closeModal},'Close'));
+  if(!sug.error) foot.append(el('button',{class:'btn pri',onclick:async()=>{ await api('/business/product/upsert',{id:p.id,price:sug.suggested_price}); closeModal(); toast('Price updated','ok'); render(); }},'Apply suggested price'));
+  m.append(foot); $('#modalBg').classList.add('on');
+}
+async function pushDialog(p){
+  const acc = await api('/business/platform/accounts');
+  const opts = (acc.accounts||[]).map(a=>({value:a.id,label:(a.label||a.connector)+' ('+a.connector+')'}));
+  if(!opts.length){ toast('Connect a platform first (Platforms tab)','err'); return; }
+  openForm('Push "'+p.name+'" to platform',[
+    {name:'account_id',label:'Platform account',type:'select',options:opts},
+  ], {}, async vals=>{ const r=await api('/business/platform/listing/push',{account_id:vals.account_id,product_id:p.id});
+    if(r.error)return r; toast(r.note||'Pushed','ok'); return {}; });
+}
+
+// Pricing
+RENDER.pricing = async ()=>{
+  const snaps = await api('/business/price/snapshots'+qs({limit:60}));
+  const bar=el('div',{class:'toolbar'});
+  const q=el('input',{type:'text',placeholder:'Product title or UPC…',style:'width:280px'});
+  const go=el('button',{class:'btn pri'},'Fetch price');
+  const out=el('div',{});
+  go.addEventListener('click',async()=>{ if(!q.value.trim())return; go.disabled=true;go.textContent='…';
+    const r=await api('/business/price/lookup',{query:q.value.trim()}); go.disabled=false;go.textContent='Fetch price';
+    if(r.error){ out.innerHTML=''; out.append(el('div',{class:'result err'},r.error)); return; }
+    out.innerHTML=''; out.append(el('div',{class:'result',html:`<b>${esc(q.value)}</b> — source <b>${esc(r.source)}</b>, ${r.sample_size} comps<br>Low <b class="mono">${money(r.low)}</b> · Median <b class="mono">${money(r.median)}</b> · High <b class="mono">${money(r.high)}</b>`}));
+    render();
+  });
+  bar.append(q,go);
+  const nodes=[el('h2',{},'Pricing'),el('div',{class:'sub'},'Real market comps — eBay Browse API when connected, else keyless web search'),bar,out];
+  nodes.push(el('h2',{style:'margin-top:16px'},'Recent snapshots'));
+  const t=el('table'); t.innerHTML='<tr><th>When</th><th>Query</th><th>Source</th><th class="right">Low</th><th class="right">Median</th><th class="right">High</th><th class="right">n</th></tr>';
+  for(const s of snaps.snapshots){ t.append(el('tr',{html:`<td class="mono">${esc((s.ts||'').slice(0,16).replace('T',' '))}</td><td>${esc(s.query)}</td><td class="mono">${esc(s.source)}</td><td class="right mono">${money(s.low)}</td><td class="right mono">${money(s.median)}</td><td class="right mono">${money(s.high)}</td><td class="right mono">${s.sample_size}</td>`})); }
+  nodes.push(snaps.snapshots.length?t:el('div',{class:'empty'},'No price lookups yet.'));
+  setContent(...nodes);
+};
+
+// Orders
+RENDER.orders = async ()=>{
+  const st = RENDER._ordst||'';
+  const data = await api('/business/order/list'+qs({status:st,limit:200}));
+  const bar=el('div',{class:'toolbar'});
+  const sel=el('select'); for(const o of ['','new','paid','packed','shipped','delivered','cancelled','refunded']){ const op=el('option',{value:o}); op.textContent=o||'all statuses'; if(o===st)op.selected=true; sel.append(op);}
+  sel.addEventListener('change',()=>{RENDER._ordst=sel.value;render();});
+  bar.append(sel, el('button',{class:'btn pri',style:'margin-left:auto',onclick:()=>orderForm()},'+ New order'));
+  const t=el('table'); t.innerHTML='<tr><th>Order</th><th>Source</th><th>Items</th><th class="right">Total</th><th>Status</th><th class="right">Actions</th></tr>';
+  for(const o of data.orders){
+    const tr=el('tr');
+    const nItems=(o.items||[]).reduce((a,b)=>a+(Number(b.qty)||1),0);
+    tr.innerHTML=`<td class="mono">${esc(o.external_id||o.id)}</td><td class="mono">${esc(o.source)}</td><td>${nItems} item(s)</td><td class="right mono">${money(o.total,o.currency)}</td><td><span class="pill ${esc(o.status)}">${esc(o.status)}</span></td>`;
+    const act=el('td',{class:'right'});const a=el('div',{class:'actions'});
+    a.append(el('button',{class:'btn sm',onclick:()=>statusDialog('order',o)},'Status'),
+      el('button',{class:'btn sm',onclick:()=>viewItems(o)},'View'));
+    act.append(a);tr.append(act);t.append(tr);
+  }
+  const nodes=[el('h2',{},'Orders'),el('div',{class:'sub'},data.count+' orders'),bar];
+  nodes.push(data.orders.length?t:el('div',{class:'empty'},'No orders. Create one manually or sync from a platform.'));
+  setContent(...nodes);
+};
+function orderForm(){
+  openForm('New order',[
+    {name:'customer_id',label:'Customer id (optional)'},
+    {name:'status',label:'Status',type:'select',options:['new','paid','packed','shipped','delivered'],default:'new'},
+    {name:'items',label:'Items — one per line: sku | qty | unit_price | name',type:'textarea',rows:4,placeholder:'ABC-1 | 2 | 19.99 | Widget'},
+    {name:'shipping',label:'Shipping',type:'number',step:'0.01',default:0},
+    {name:'notes',label:'Notes'},
+  ], {}, vals=>{
+    const items=(vals.items||'').split('\n').map(l=>l.trim()).filter(Boolean).map(l=>{
+      const [sku,qty,price,name]=l.split('|').map(x=>x.trim());
+      return {sku,qty:Number(qty)||1,unit_price:Number(price)||0,name:name||''};
+    });
+    return api('/business/order/upsert',{customer_id:vals.customer_id,status:vals.status,items,shipping:vals.shipping,notes:vals.notes,deduct_stock:true});
+  });
+}
+function viewItems(o){
+  const m=$('#modal');m.innerHTML='';m.append(el('h3',{},'Order '+(o.external_id||o.id)));
+  const t=el('table');t.innerHTML='<tr><th>SKU</th><th>Name</th><th class="right">Qty</th><th class="right">Unit</th></tr>';
+  for(const it of (o.items||[])) t.append(el('tr',{html:`<td class="mono">${esc(it.sku)}</td><td>${esc(it.name||'')}</td><td class="right mono">${it.qty}</td><td class="right mono">${money(it.unit_price)}</td>`}));
+  m.append(t);const foot=el('div',{class:'foot'});foot.append(el('button',{class:'btn',onclick:closeModal},'Close'));m.append(foot);$('#modalBg').classList.add('on');
+}
+function statusDialog(kind,row){
+  const opts = kind==='order'?['new','paid','packed','shipped','delivered','cancelled','refunded']:['new','scheduled','in_progress','done','cancelled'];
+  const fields=[{name:'status',label:'Status',type:'select',options:opts,default:row.status}];
+  if(kind==='order')fields.push({name:'tracking',label:'Tracking # (optional)',default:row.tracking||''});
+  openForm('Set status',fields,{},vals=>{
+    const ep=kind==='order'?'/business/order/set_status':'/business/service/set_status';
+    return api(ep,{id:row.id,status:vals.status,tracking:vals.tracking});
+  });
+}
+
+// Customers
+RENDER.customers = async ()=>{
+  const data=await api('/business/customer/list'+qs({limit:500}));
+  const bar=el('div',{class:'toolbar'});
+  bar.append(el('button',{class:'btn pri',style:'margin-left:auto',onclick:()=>customerForm()},'+ New customer'));
+  const t=el('table');t.innerHTML='<tr><th>Name</th><th>Email</th><th>Phone</th><th class="right">Actions</th></tr>';
+  for(const c of data.customers){ const tr=el('tr');
+    tr.innerHTML=`<td>${esc(c.name)}</td><td>${esc(c.email||'')}</td><td class="mono">${esc(c.phone||'')}</td>`;
+    const act=el('td',{class:'right'});const a=el('div',{class:'actions'});
+    a.append(el('button',{class:'btn sm',onclick:()=>customerForm(c)},'Edit'),
+      el('button',{class:'btn sm danger',onclick:async()=>{ if(confirm('Delete '+c.name+'?')){await api('/business/customer/delete',{id:c.id});toast('Deleted');render();}}},'✕'));
+    act.append(a);tr.append(act);t.append(tr); }
+  const nodes=[el('h2',{},'Customers'),el('div',{class:'sub'},data.count+' customers'),bar];
+  nodes.push(data.customers.length?t:el('div',{class:'empty'},'No customers yet.'));
+  setContent(...nodes);
+};
+function customerForm(c){
+  openForm(c?'Edit customer':'New customer',[
+    {name:'name',label:'Name'},{name:'email',label:'Email'},{name:'phone',label:'Phone'},
+    {name:'notes',label:'Notes',type:'textarea'},
+  ], c||{}, vals=>{ if(c)vals.id=c.id; return api('/business/customer/upsert',vals); });
+}
+
+// Service
+RENDER.service = async ()=>{
+  const st=RENDER._svcst||'';
+  const data=await api('/business/service/list'+qs({status:st,limit:200}));
+  const bar=el('div',{class:'toolbar'});
+  const sel=el('select'); for(const o of ['','new','scheduled','in_progress','done','cancelled']){const op=el('option',{value:o});op.textContent=o||'all statuses';if(o===st)op.selected=true;sel.append(op);}
+  sel.addEventListener('change',()=>{RENDER._svcst=sel.value;render();});
+  bar.append(sel,el('button',{class:'btn pri',style:'margin-left:auto',onclick:()=>serviceForm()},'+ New job'));
+  const t=el('table');t.innerHTML='<tr><th>Title</th><th>Assigned</th><th>Scheduled</th><th>Status</th><th class="right">Actions</th></tr>';
+  for(const j of data.jobs){ const tr=el('tr');
+    tr.innerHTML=`<td>${esc(j.title)}</td><td class="mono">${esc(j.assigned_to||'')}</td><td class="mono">${esc((j.scheduled_at||'').slice(0,16).replace('T',' '))}</td><td><span class="pill ${esc(j.status)}">${esc(j.status)}</span></td>`;
+    const act=el('td',{class:'right'});const a=el('div',{class:'actions'});
+    a.append(el('button',{class:'btn sm',onclick:()=>serviceForm(j)},'Edit'),
+      el('button',{class:'btn sm',onclick:()=>statusDialog('service',j)},'Status'));
+    act.append(a);tr.append(act);t.append(tr); }
+  const nodes=[el('h2',{},'Service jobs'),el('div',{class:'sub'},data.count+' work orders / bookings'),bar];
+  nodes.push(data.jobs.length?t:el('div',{class:'empty'},'No service jobs yet.'));
+  setContent(...nodes);
+};
+function serviceForm(j){
+  openForm(j?'Edit job':'New service job',[
+    {name:'title',label:'Title'},{name:'customer_id',label:'Customer id (optional)'},
+    {name:'status',label:'Status',type:'select',options:['new','scheduled','in_progress','done','cancelled'],default:'new'},
+    {name:'assigned_to',label:'Assigned to (agent or person)'},
+    {name:'scheduled_at',label:'Scheduled (ISO, e.g. 2026-07-10T14:00)'},
+    {name:'notes',label:'Notes',type:'textarea'},
+  ], j||{}, vals=>{ if(j)vals.id=j.id; return api('/business/service/upsert',vals); });
+}
+
+// Platforms
+RENDER.platforms = async ()=>{
+  const conns=await api('/business/platform/connectors');
+  const accs=await api('/business/platform/accounts');
+  const nodes=[el('h2',{},'Platforms'),el('div',{class:'sub'},'Connect marketplaces so Vera can sync listings & orders')];
+  const bar=el('div',{class:'toolbar'});
+  bar.append(el('button',{class:'btn pri',onclick:()=>connectForm()},'+ Connect eBay'));
+  nodes.push(bar);
+  // Connector registry
+  const grid=el('div',{class:'grid2'});
+  for(const c of conns.connectors){
+    const card=el('div',{class:'conn'});
+    card.append(el('h4',{html:`${esc(c.label)} <span class="tag ${c.real?'real':'stub'}">${c.real?'ready':'coming soon'}</span>`}));
+    const caps=Object.entries(c.capabilities).filter(([,v])=>v).map(([k])=>k).join(' · ')||'—';
+    card.append(el('div',{class:'caps'},'Capabilities: '+caps));
+    card.append(el('div',{class:'caps'},c.accounts+' account(s) connected'));
+    grid.append(card);
+  }
+  nodes.push(grid);
+  // Accounts
+  nodes.push(el('h2',{style:'margin-top:18px'},'Connected accounts'));
+  if((accs.accounts||[]).length){
+    const t=el('table');t.innerHTML='<tr><th>Label</th><th>Connector</th><th>Env</th><th>Status</th><th class="right">Actions</th></tr>';
+    for(const a of accs.accounts){ const tr=el('tr');
+      tr.innerHTML=`<td>${esc(a.label||'')}</td><td class="mono">${esc(a.connector)}</td><td class="mono">${esc(a.env)}</td><td><span class="pill ${a.connected?'done':'new'}">${a.connected?'connected':esc(a.status)}</span></td>`;
+      const act=el('td',{class:'right'});const box=el('div',{class:'actions'});
+      if(!a.connected && a.connector==='ebay') box.append(el('button',{class:'btn sm pri',onclick:()=>reauth(a)},'Authorize'));
+      box.append(
+        el('button',{class:'btn sm',onclick:()=>syncAcc('listings',a)},'Sync listings'),
+        el('button',{class:'btn sm',onclick:()=>syncAcc('orders',a)},'Sync orders'),
+        el('button',{class:'btn sm danger',onclick:async()=>{ if(confirm('Disconnect '+(a.label||a.connector)+'?')){await api('/business/platform/disconnect',{id:a.id});toast('Disconnected');render();}}},'✕'));
+      act.append(box);tr.append(act);t.append(tr); }
+    nodes.push(t);
+  } else nodes.push(el('div',{class:'empty'},'No accounts connected yet.'));
+  setContent(...nodes);
+};
+function connectForm(){
+  openForm('Connect eBay',[
+    {name:'label',label:'Label',default:'My eBay store'},
+    {name:'env',label:'Environment',type:'select',options:['production','sandbox'],default:'production'},
+    {name:'client_id',label:'Client ID (App ID)'},
+    {name:'client_secret',label:'Client Secret (Cert ID)',type:'password'},
+    {name:'ru_name',label:'RuName (redirect URL name from eBay dev console)'},
+  ], {}, async vals=>{
+    const r=await api('/business/platform/connect',{connector:'ebay',...vals});
+    if(r.error)return r;
+    if(r.auth_url){ window.open(r.auth_url,'_blank','width=640,height=760'); toast('Opened eBay authorization — approve, then Refresh','ok'); }
+    else toast(r.note||'Saved','ok');
+    return {};
+  });
+}
+async function reauth(a){
+  // Re-run connect with existing id to regenerate the auth url.
+  const r=await api('/business/platform/connect',{connector:'ebay',id:a.id,env:a.env});
+  if(r.auth_url){ window.open(r.auth_url,'_blank','width=640,height=760'); toast('Opened eBay authorization','ok'); }
+  else toast(r.note||r.error||'Add client_id + RuName first','err');
+}
+async function syncAcc(kind,a){
+  toast('Syncing '+kind+'…');
+  const ep = kind==='listings'?'/business/platform/listings/sync':'/business/platform/orders/sync';
+  const r=await api(ep,{account_id:a.id,limit:100});
+  if(r.error){ toast(r.error,'err'); return; }
+  toast(kind==='listings'?`Synced ${r.synced} listings`:`Orders: ${r.imported} new / ${r.updated} updated`,'ok');
+  render();
+}
+
+window.addEventListener('hashchange',()=>{ const h=location.hash.slice(1); if(SECTIONS.includes(h)&&h!==current){current=h;render();} });
+render();
+</script>
+</body>
+</html>

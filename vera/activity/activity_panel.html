@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vera — Activity</title>
+<style>
+:root{
+  --bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;
+  --border:#3a3530;--border2:#4a4540;
+  --acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--acc4:#b98adf;
+  --ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;
+  --text:#ddd5c8;--fg:#ddd5c8;--fg2:#b8ad9e;--fg3:#8a7e70;--dim:#6a6058;--dim2:#8a7e70;
+  --mono:'JetBrains Mono','Fira Mono',monospace;--sans:'Inter',system-ui,sans-serif;
+  --on-acc:#12100e;color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:12px}
+body{display:flex;flex-direction:column;overflow:hidden}
+header{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--border);background:var(--bg1);flex-shrink:0}
+header h1{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:2px;color:var(--acc)}
+header .sub{font-size:9.5px;color:var(--dim2)}
+header .flex{flex:1}
+header .live{font-size:9.5px;color:var(--dim2);display:flex;align-items:center;gap:5px;cursor:pointer}
+main{flex:1;display:flex;min-height:0}
+.side{width:230px;flex-shrink:0;border-right:1px solid var(--border);overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:3px}
+.side .grp{font-size:8.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim);margin:10px 4px 3px}
+.pl{display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:6px;cursor:pointer;font-size:11px;color:var(--fg2);border:1px solid transparent}
+.pl:hover{background:var(--bg2)}
+.pl.on{background:var(--bg2);border-color:var(--acc);color:var(--acc)}
+.pl .ic{width:16px;text-align:center;flex-shrink:0}
+.pl .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pl .st{font-size:8px;color:var(--dim);text-transform:uppercase}
+.right{flex:1;display:flex;flex-direction:column;min-width:0}
+vera-activity-timeline{flex:1;min-height:0}
+</style>
+<script>window.__VERA_BASE__=window.__VERA_BASE__||'';</script>
+</head>
+<body>
+<header>
+  <h1>ACTIVITY</h1>
+  <span class="sub">Unified timeline — dreams · loops · programs · tools</span>
+  <span class="flex"></span>
+  <label class="live"><input type="checkbox" id="autoTog" checked> auto-refresh (15s)</label>
+</header>
+<main>
+  <div class="side" id="side"><div style="color:var(--dim);font-size:10px;padding:8px">Loading…</div></div>
+  <div class="right">
+    <vera-activity-timeline id="tl" scope="all" show-picker="false"></vera-activity-timeline>
+  </div>
+</main>
+
+<script src="/ui/elements/vera_markdown.js"></script>
+<script src="/ui/elements/agent_loop_output.js"></script>
+<script src="/ui/elements/activity_timeline.js"></script>
+<script>
+const API=(()=>{try{if(window.parent!==window&&window.parent._veraBase)return window.parent._veraBase}catch(e){}return window.__VERA_BASE__||window.location.origin||''})();
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const ICON={all:'✦',project:'▣',goal:'🎯',program:'❖',dream:'☾'};
+let _scope='all';
+
+async function loadPipelines(){
+  let r=null;
+  try{const res=await fetch(API+'/activity/pipelines');if(res.ok)r=await res.json();}catch(e){}
+  const pls=(r&&r.pipelines)||[{scope:'all',label:'Everything',kind:'all'}];
+  const groups={all:[],project:[],goal:[],program:[],dream:[]};
+  pls.forEach(p=>{(groups[p.kind]||(groups[p.kind]=[])).push(p)});
+  const side=$('side');
+  let html='';
+  const section=(title,arr)=>{
+    if(!arr||!arr.length)return'';
+    let s='<div class="grp">'+esc(title)+'</div>';
+    s+=arr.map(p=>'<div class="pl'+(p.scope===_scope?' on':'')+'" data-scope="'+esc(p.scope)+'">'
+      +'<span class="ic">'+(ICON[p.kind]||'•')+'</span>'
+      +'<span class="nm" title="'+esc(p.label)+'">'+esc(p.label)+'</span>'
+      +(p.status?'<span class="st">'+esc(p.status)+'</span>':'')+'</div>').join('');
+    return s;
+  };
+  html+=section('Overview',groups.all);
+  html+=section('Goals',groups.goal);
+  html+=section('Projects',groups.project);
+  html+=section('V8 Programs',groups.program);
+  html+=section('Dream pipelines',groups.dream);
+  side.innerHTML=html||'<div style="color:var(--dim);font-size:10px;padding:8px">No pipelines yet.</div>';
+  side.querySelectorAll('.pl').forEach(el=>el.addEventListener('click',()=>{
+    _scope=el.getAttribute('data-scope');
+    side.querySelectorAll('.pl').forEach(x=>x.classList.toggle('on',x===el));
+    $('tl').setScope(_scope);
+  }));
+}
+
+$('autoTog').addEventListener('change',e=>$('tl').setAutoRefresh(e.target.checked?15:0));
+loadPipelines();
+// initial deep-link (#project:slug etc.)
+const h=(location.hash||'').replace(/^#/,'');
+if(h){_scope=decodeURIComponent(h);$('tl').setScope(_scope);}
+$('tl').setAutoRefresh(15);
+// refresh the pipeline list periodically so new goals/programs appear
+setInterval(loadPipelines,60000);
+</script>
+</body>
+</html>

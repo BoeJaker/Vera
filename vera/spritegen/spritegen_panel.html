@@ -1,0 +1,1518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Vera — Sprite Studio</title>
+<style>
+:root{
+  --bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;
+  --border:#3a3530;--border2:#4a4540;
+  --acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--acc4:#9e8fa0;
+  --ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;
+  --text:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;
+  --mono:'JetBrains Mono','Fira Mono',monospace;
+  --sans:'Inter','IBM Plex Sans',system-ui,sans-serif;
+  --radius:5px;--radius-sm:3px;color-scheme:dark;
+  --checker:conic-gradient(#2a2724 25%,#211e1c 0 50%,#2a2724 0 75%,#211e1c 0);
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:13px}
+body{display:flex;overflow:hidden}
+
+/* ── sidebar: settings LHM with pinned save footer ─────────────────────── */
+.side{width:308px;flex-shrink:0;border-right:1px solid var(--border);background:var(--bg1);
+  display:flex;flex-direction:column;min-height:0}
+.side-head{display:flex;align-items:center;gap:9px;padding:12px 12px 10px;border-bottom:1px solid var(--border)}
+.side-head .ico{width:26px;height:26px;flex-shrink:0;background:var(--bg2);border:1px solid var(--border2);
+  border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--acc);font-size:15px}
+.side-head h1{font-size:13px;font-weight:600;letter-spacing:.03em}
+.side-head .sub{font-size:9px;color:var(--dim);letter-spacing:.1em;text-transform:uppercase;margin-top:1px}
+.side-scroll{flex:1;min-height:0;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:8px}
+.side-foot{flex-shrink:0;border-top:1px solid var(--border);background:var(--bg1);padding:9px 10px}
+.side-foot .btn{width:100%}
+
+.card{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);padding:9px 10px}
+.side .card{background:var(--bg2)}
+.card h2{font-size:10.5px;font-weight:600;color:var(--acc2);text-transform:uppercase;letter-spacing:.5px}
+.card h2 .muted{text-transform:none;letter-spacing:0}
+.card h2+*,.card .sec-body{margin-top:7px}
+h3{font-size:11px;color:var(--acc3);font-weight:600}
+label{font-size:10px;color:var(--dim2);display:block;margin-bottom:3px}
+.row{display:flex;align-items:center;gap:6px;margin-bottom:7px}
+.row:last-child{margin-bottom:0}
+.row label{margin-bottom:0;min-width:78px}
+.row.two>*{flex:1}
+.row.wrap{flex-wrap:wrap}
+input,select,textarea{background:var(--bg0);border:1px solid var(--border);color:var(--text);
+  padding:5px 7px;border-radius:var(--radius-sm);font-family:var(--sans);font-size:11px;width:100%}
+textarea{resize:vertical;min-height:52px;line-height:1.45}
+input[type=checkbox]{width:auto}
+input[type=color]{padding:1px;height:26px;width:34px;cursor:pointer}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;padding:5px 11px;
+  border-radius:var(--radius-sm);background:var(--bg2);border:1px solid var(--border2);color:var(--text);
+  font-size:11px;cursor:pointer;font-family:var(--sans)}
+.btn:hover{border-color:var(--acc);color:var(--acc)}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#10201c);font-weight:600}
+.btn.primary:hover{filter:brightness(1.1);color:var(--on-acc,#10201c)}
+.btn.sm{padding:3px 7px;font-size:10px}
+.btn.danger:hover{border-color:var(--err);color:var(--err)}
+.btn.on{border-color:var(--acc);color:var(--acc);background:var(--bg3)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.status{font-size:10px;color:var(--dim2);margin-top:6px;min-height:13px;word-break:break-word}
+.status.ok{color:var(--ok)}.status.err{color:var(--err)}.status.warn{color:var(--warn)}
+.muted{color:var(--dim2);font-size:10px}
+.grid{display:flex;flex-wrap:wrap;gap:4px}
+.grid label{display:inline-flex;align-items:center;gap:3px;font-size:10px;color:var(--text);
+  background:var(--bg0);border:1px solid var(--border);border-radius:var(--radius-sm);padding:3px 6px;cursor:pointer;margin:0}
+
+/* ── main: tab strip + panes ───────────────────────────────────────────── */
+.main{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0}
+.mtabs{display:flex;gap:2px;align-items:center;padding:7px 10px 0;border-bottom:1px solid var(--border);
+  background:var(--bg1);flex-shrink:0}
+.mtab{padding:6px 13px 7px;border:1px solid transparent;border-bottom:none;border-radius:6px 6px 0 0;
+  background:transparent;color:var(--dim2);cursor:pointer;font-size:11.5px;font-family:var(--sans)}
+.mtab:hover{color:var(--text)}
+.mtab.active{background:var(--bg0);border-color:var(--border);color:var(--acc);font-weight:600}
+.mpane{flex:1;min-height:0;overflow-y:auto;padding:12px;display:none;flex-direction:column;gap:10px}
+.mpane.active{display:flex}
+
+.caps{font-size:10px;color:var(--dim2);display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.cap-pill{border:1px solid var(--border);border-radius:10px;padding:1px 7px;font-size:9.5px}
+.cap-pill.on{color:var(--ok);border-color:var(--ok)}
+.cap-pill.off{color:var(--dim);text-decoration:line-through}
+
+.thumbs{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.thumbs img{width:48px;height:48px;object-fit:contain;background:var(--checker) 0 0/14px 14px;
+  border:1px solid var(--border);border-radius:3px;image-rendering:pixelated}
+.preview img{max-width:160px;background:var(--checker) 0 0/16px 16px;
+  border:1px solid var(--border);border-radius:4px;image-rendering:pixelated}
+.animrow{border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px;margin-bottom:8px;background:var(--bg1)}
+.animrow .top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.animrow .top b{color:var(--acc2);min-width:64px;text-transform:capitalize}
+.sheetwrap{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start;margin-top:8px}
+.sheetwrap img{max-width:260px;background:var(--checker) 0 0/16px 16px;
+  border:1px solid var(--border);border-radius:4px;image-rendering:pixelated}
+a.dl{color:var(--acc3);font-size:11px}
+.bar{height:7px;background:var(--bg0);border:1px solid var(--border);border-radius:5px;overflow:hidden;margin-top:5px}
+.bar>i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--acc),var(--acc2));transition:width .25s}
+#livePreview img{max-width:240px;background:var(--checker) 0 0/16px 16px;
+  border:1px solid var(--border2);border-radius:4px;image-rendering:pixelated}
+
+/* ── pixel editor ──────────────────────────────────────────────────────── */
+.edWrap{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
+.edLeft{flex:0 0 auto;max-width:100%}
+.edRight{flex:1;min-width:220px;display:flex;flex-direction:column;gap:8px}
+#edCanvas{background:var(--checker) 0 0/16px 16px;border:1px solid var(--border2);border-radius:4px;
+  image-rendering:pixelated;cursor:crosshair;touch-action:none;display:block;max-width:100%}
+.edTools{display:flex;gap:4px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+.edSwatches{display:flex;gap:3px;flex-wrap:wrap}
+.edSw{width:18px;height:18px;border-radius:3px;border:1px solid var(--border2);cursor:pointer;padding:0}
+.edSw.on{outline:2px solid var(--acc)}
+#edFrames{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
+.edThumb{position:relative;border:1px solid var(--border);border-radius:3px;cursor:pointer;
+  background:var(--checker) 0 0/10px 10px;padding:2px;line-height:0}
+.edThumb.on{border-color:var(--acc);outline:1px solid var(--acc)}
+.edThumb img{width:42px;height:42px;object-fit:contain;image-rendering:pixelated}
+.edThumb span{position:absolute;right:2px;bottom:1px;font-size:8px;color:var(--dim2);line-height:1}
+#edPrev{background:var(--checker) 0 0/12px 12px;border:1px solid var(--border);border-radius:4px;
+  image-rendering:pixelated;width:128px;height:auto}
+</style>
+<link rel="stylesheet" href="/ui/vera-panel.css">
+</head>
+<body>
+
+<!-- ══ SIDEBAR — character definition (collapsible sections, pinned save) ══ -->
+<aside class="side" id="side">
+  <div class="side-head">
+    <span class="ico">◳</span>
+    <div><h1>Sprite Studio</h1><div class="sub">game-ready pixel characters</div></div>
+  </div>
+
+  <div class="side-scroll vp-controls">
+    <div class="card">
+      <h2 data-collapsible>Character</h2>
+      <div class="row"><select id="charSel" onchange="selectChar(this.value)"></select></div>
+      <div class="row">
+        <button class="btn sm" onclick="newChar()">+ New</button>
+        <button class="btn sm danger" onclick="delChar()">Delete</button>
+      </div>
+      <label>Name</label>
+      <div class="row"><input id="name" placeholder="e.g. Amelia"></div>
+      <label>Brief (freeform)</label>
+      <textarea id="brief" placeholder="female cyberpunk hacker, red ponytail, leather jacket, katana"></textarea>
+      <div class="row" style="margin-top:6px"><button class="btn sm" onclick="describe()">✦ Expand with AI</button></div>
+      <label>AI art-direction notes (steers Expand)</label>
+      <textarea id="notes" style="min-height:38px" placeholder="e.g. keep it low-detail, NES-era, no gradients"></textarea>
+      <label>Base prompt (fixed identity)</label>
+      <textarea id="base_prompt" placeholder="filled by Expand, or write your own"></textarea>
+      <label>Palette phrase</label>
+      <div class="row"><input id="palette" placeholder="muted neon teal & magenta"></div>
+    </div>
+
+    <div class="card">
+      <h2 data-collapsible data-collapsed="1">Prompts <span class="muted" style="font-weight:400">— long prompts supported</span></h2>
+      <div class="muted" style="margin-bottom:6px">Composed identity → pose → style → framing, so the important words always lead. There is no hard length cap.</div>
+      <label>Framing suffix (blank = default; walk/run auto-switch to side view)</label>
+      <textarea id="framing" style="min-height:38px" placeholder="full body sprite, front view, plain background"></textarea>
+      <label>Reference pose (blank = A-pose default — all four limbs visible &amp; separated, so ControlNet/img2img can actually re-pose them)</label>
+      <textarea id="base_pose" style="min-height:38px" placeholder="A-pose, arms held out at 45° from the body, hands open, legs apart, whole body in frame"></textarea>
+      <label>Style descriptor — what SD should <b>render</b> (clean flat art; the pipeline turns it into pixel art). Blank = the preset for the selected style, shown greyed below</label>
+      <textarea id="style_prompt" style="min-height:46px" placeholder=""></textarea>
+      <label>Negative prompt (style anti-realism terms are added automatically)</label>
+      <textarea id="negative_prompt" style="min-height:46px" placeholder="things to avoid"></textarea>
+      <div class="row" style="margin-top:6px"><button class="btn sm" onclick="previewPrompt('base')">Preview base prompt</button></div>
+      <pre id="pp-base" class="muted" style="white-space:pre-wrap;margin-top:6px;font-size:10px"></pre>
+    </div>
+
+    <div class="card">
+      <h2 data-collapsible data-collapsed="1">Pipeline stages</h2>
+      <div class="row two"><label style="min-width:0">Identity</label>
+        <select id="identity_tier">
+          <option value="auto">auto (best available)</option>
+          <option value="ipadapter">IP-Adapter (identity-lock)</option>
+          <option value="img2img">img2img (seed-lock)</option>
+          <option value="txt2img">txt2img (no reference)</option>
+        </select></div>
+      <div class="row two"><label style="min-width:0">Pose control</label>
+        <select id="pose_source" title="skeleton = procedural OpenPose stick figures drive ControlNet, so arms/legs actually articulate through walk/run/idle/jump cycles">
+          <option value="auto">auto (skeleton when ControlNet is live)</option>
+          <option value="skeleton">skeleton (ControlNet cycles)</option>
+          <option value="reference">reference pose only</option>
+          <option value="none">none (prompt only)</option>
+        </select></div>
+      <div class="row two"><label style="min-width:0">Centering</label>
+        <select id="auto_center" title="re-anchor each frame's silhouette to the cell centre + floor — stops the sprite teleporting when flipped for left/right walking">
+          <option value="centroid">centroid (recommended)</option>
+          <option value="bbox">bounding box</option>
+          <option value="none">off</option>
+        </select></div>
+      <div class="row two"><label style="min-width:0">BG removal</label>
+        <select id="bg_removal">
+          <option value="auto">auto</option>
+          <option value="rembg">rembg (AI)</option>
+          <option value="chroma">chroma-key</option>
+          <option value="none">none</option>
+        </select></div>
+      <div class="row"><label style="min-width:78px">BG strength</label>
+        <input id="chroma_tol" type="range" min="20" max="180" value="80"
+               oninput="$('ctv').textContent=this.value" style="flex:1">
+        <span id="ctv" class="muted">80</span></div>
+      <div class="row two"><label style="min-width:0">rembg model</label>
+        <select id="rembg_model">
+          <option value="">u2net (default)</option>
+          <option value="u2netp">u2netp (light)</option>
+          <option value="isnet-general-use">isnet (sharp)</option>
+          <option value="u2net_human_seg">human-seg</option>
+        </select></div>
+      <div class="row"><label><input type="checkbox" id="rembg_alpha_matting"> alpha matting (soft edges)</label></div>
+      <div class="row"><label><input type="checkbox" id="do_pixelize" checked> pixelize</label>
+        <label><input type="checkbox" id="do_upscale"> upscale ref</label></div>
+    </div>
+
+    <div class="card">
+      <h2 data-collapsible>Style &amp; pixels</h2>
+      <div class="row two"><label style="min-width:0">Style</label><select id="style"></select></div>
+      <div class="row two"><label style="min-width:0">Sprite px</label><select id="sprite_size"></select></div>
+      <div class="row two"><label style="min-width:0">Colors</label><input id="colors" type="number" value="32" min="0" max="256"></div>
+      <div class="row two"><label style="min-width:0">Downscale</label>
+        <select id="downscale" title="k-centroid keeps pixels crisp and flat; lanczos is soft/painterly">
+          <option value="kcentroid">k-centroid (crisp pixels)</option>
+          <option value="lanczos">lanczos (soft)</option>
+        </select></div>
+      <div class="row"><label title="quantize the whole animation to ONE palette — prevents frame-to-frame colour flicker"><input type="checkbox" id="shared_palette" checked> shared palette</label>
+        <label><input type="checkbox" id="outline"> outline</label></div>
+      <div class="row"><label><input type="checkbox" id="dither"> dither</label>
+        <label><input type="checkbox" id="transparent" checked> transparent</label></div>
+    </div>
+
+    <div class="card">
+      <h2 data-collapsible>Animations</h2>
+      <div class="grid" id="animGrid"></div>
+    </div>
+
+    <div class="card">
+      <h2 data-collapsible data-collapsed="1">Generation</h2>
+      <div class="row two"><label style="min-width:0">Seed</label>
+        <input id="seed" type="number" value="-1" style="flex:1">
+        <button class="btn sm" type="button" title="roll a fresh random seed" onclick="rerollSeed()" style="flex:0 0 auto">🎲</button></div>
+      <div class="row"><label style="min-width:0"><input type="checkbox" id="seed_lock"> lock seed (reproduce the same base)</label></div>
+      <div class="muted" style="margin-top:-4px;margin-bottom:6px">Unlocked, “Generate reference” re-rolls the seed each time → a new composition. Frames within one animation always share the seed, so they don't flicker.</div>
+      <div class="row two"><label style="min-width:0">Sampler</label>
+        <select id="scheduler" title="DPM++ 2M Karras is the strong pixel-art default">
+          <option value="dpmpp">DPM++ 2M Karras (recommended)</option>
+          <option value="euler">Euler</option>
+          <option value="euler_a">Euler Ancestral</option>
+          <option value="unipc">UniPC</option>
+          <option value="ddim">DDIM</option>
+          <option value="lcm">LCM (few-step)</option>
+          <option value="default">model default</option>
+        </select></div>
+      <div class="row two"><label style="min-width:0">Steps</label><input id="steps" type="number" value="28"></div>
+      <div class="row two"><label style="min-width:0">Guidance</label><input id="guidance" type="number" step="0.5" value="7.5"></div>
+      <div class="row two"><label style="min-width:0">Gen size</label>
+        <input id="gen_width" type="number" value="768"><input id="gen_height" type="number" value="768"></div>
+      <label>Link to companion agent (optional)</label>
+      <div class="row"><select id="agentSel"><option value="">— none —</option></select></div>
+    </div>
+  </div>
+
+  <div class="side-foot">
+    <button class="btn primary" onclick="saveDef()">💾 Save definition</button>
+    <div class="status" id="defStatus"></div>
+  </div>
+</aside>
+
+<!-- ══ MAIN — tabbed workspaces ══ -->
+<main class="main">
+  <div class="mtabs" id="mtabs">
+    <button class="mtab active" data-go="generate" onclick="mgo('generate')">▶ Generate</button>
+    <button class="mtab" data-go="anims" onclick="mgo('anims')">▦ Animations</button>
+    <button class="mtab" data-go="draw" onclick="mgo('draw')">✎ Draw</button>
+    <button class="mtab" data-go="import" onclick="mgo('import')">⇪ Import</button>
+    <button class="mtab" data-go="play" onclick="mgo('play')">◈ Play &amp; Bind</button>
+    <button class="mtab" data-go="export" onclick="mgo('export')">⬇ Export</button>
+  </div>
+
+  <!-- GENERATE -->
+  <section class="mpane active" id="mp-generate">
+    <div class="caps" id="capsBar"><span class="muted">probing tiers…</span></div>
+    <div class="card">
+      <h2>Pipeline</h2>
+      <div class="row wrap" style="margin-top:7px">
+        <button class="btn" onclick="genBase()">1 · Generate reference</button>
+        <button class="btn primary" onclick="runPipeline()">▶ Run full pipeline</button>
+        <label style="min-width:0"><input type="checkbox" id="regenRef"> regenerate reference</label>
+      </div>
+      <div class="muted">Run reuses the existing reference unless “regenerate” is ticked. Frames render one at a time so you can watch progress.</div>
+      <div class="status" id="runStatus"></div>
+      <div id="runLabel" class="muted" style="margin-top:4px;min-height:13px"></div>
+      <div class="bar"><i id="runBar"></i></div>
+      <div id="livePreview" style="margin-top:8px"></div>
+      <div class="preview" id="refPreview" style="margin-top:8px"></div>
+    </div>
+  </section>
+
+  <!-- ANIMATIONS -->
+  <section class="mpane" id="mp-anims">
+    <div class="card">
+      <h2>Animations &amp; sheets
+        <button class="btn sm" style="float:right" onclick="alignCells()"
+          title="re-pad every animation onto one shared frame cell — fixes the position jump when the character switches animations">⌗ Align cells</button>
+      </h2>
+      <div id="animList" style="margin-top:7px"><span class="muted">save a definition, then generate the reference.</span></div>
+      <div class="status" id="alignStatus"></div>
+    </div>
+
+    <div class="card">
+      <h2>Splice <span class="muted" style="font-weight:400">— compose a new animation from existing frames (no GPU)</span></h2>
+      <div id="spliceMsg" class="muted" style="margin-top:6px">build at least one animation first, then splice frames together here.</div>
+      <div id="spliceBody" style="display:none;margin-top:6px">
+        <div class="row wrap">
+          <label style="min-width:auto">name</label><input id="spName" placeholder="e.g. combo" style="width:120px">
+          <label style="min-width:auto">fps</label><input id="spFps" type="number" value="8" style="width:56px">
+          <label style="min-width:auto"><input type="checkbox" id="spLoop" checked> loop</label>
+          <label style="min-width:auto"><input type="checkbox" id="spReverse"> reverse</label>
+          <label style="min-width:auto"><input type="checkbox" id="spPingpong"> ping-pong</label>
+        </div>
+        <div class="muted" style="margin:6px 0 2px">Click frames to append them to the sequence:</div>
+        <div id="spSource" style="max-height:230px;overflow:auto"></div>
+        <div class="muted" style="margin:8px 0 2px">Sequence (<span id="spCount">0</span>) — plays left→right: <button class="btn sm" type="button" onclick="spClear()">clear</button></div>
+        <div id="spSeq" class="row wrap" style="gap:6px;min-height:48px;border:1px dashed var(--border);border-radius:4px;padding:6px"></div>
+        <button class="btn primary" type="button" onclick="doSplice()" style="margin-top:8px">Create animation</button>
+        <div class="status" id="spStatus"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DRAW — manual pixel editor -->
+  <section class="mpane" id="mp-draw">
+    <div class="card">
+      <h2>Pixel editor <span class="muted" style="font-weight:400">— draw sprites &amp; animations by hand, or touch up loaded frames</span></h2>
+      <div class="edTools" style="margin-top:8px">
+        <button class="btn sm on" id="tl-pen"    onclick="edTool('pen')"    title="pencil (drag to draw)">✏</button>
+        <button class="btn sm" id="tl-eraser"    onclick="edTool('eraser')" title="eraser">◻</button>
+        <button class="btn sm" id="tl-fill"      onclick="edTool('fill')"   title="flood fill">▨</button>
+        <button class="btn sm" id="tl-pick"      onclick="edTool('pick')"   title="eyedropper">⌖</button>
+        <button class="btn sm" id="tl-line"      onclick="edTool('line')"   title="line">╱</button>
+        <button class="btn sm" id="tl-rect"      onclick="edTool('rect')"   title="rectangle outline">▭</button>
+        <input type="color" id="edColor" value="#e8433f" oninput="edSetColor(this.value)">
+        <span style="width:8px"></span>
+        <button class="btn sm" onclick="edUndo()" title="undo (Ctrl+Z)">↶</button>
+        <button class="btn sm" onclick="edRedo()" title="redo (Ctrl+Y)">↷</button>
+        <button class="btn sm" onclick="edClearFrame()" title="clear this frame">🗑</button>
+        <span style="width:8px"></span>
+        <button class="btn sm" id="edMirrorBtn" onclick="edToggle('mirror',this)" title="mirror drawing across the vertical centre — symmetric characters in half the strokes">⇄ mirror</button>
+        <button class="btn sm on" id="edOnionBtn" onclick="edToggle('onion',this)" title="ghost of the previous frame">👁 onion</button>
+        <button class="btn sm on" id="edGridBtn" onclick="edToggle('grid',this)" title="pixel grid">▦ grid</button>
+      </div>
+      <div class="edSwatches" id="edSwatches" style="margin-bottom:8px"></div>
+
+      <div class="edWrap">
+        <div class="edLeft">
+          <canvas id="edCanvas" width="384" height="384"></canvas>
+          <div class="row wrap" style="margin-top:6px">
+            <label style="min-width:auto">canvas</label>
+            <input id="edW" type="number" value="32" min="8" max="256" style="width:56px">
+            <span class="muted">×</span>
+            <input id="edH" type="number" value="32" min="8" max="256" style="width:56px">
+            <button class="btn sm" onclick="edResize(+$('edW').value,+$('edH').value)" title="content stays bottom-centre anchored">resize</button>
+            <button class="btn sm" onclick="edMatchChar()" title="match the character's sprite size">match sprite px</button>
+            <label style="min-width:auto;margin-left:8px">zoom</label>
+            <input id="edZoom" type="range" min="2" max="24" value="12" style="width:90px" oninput="edSetZoom(+this.value)">
+          </div>
+        </div>
+        <div class="edRight">
+          <h3>Frames <span class="muted" id="edFrameInfo" style="font-weight:400">1/1</span></h3>
+          <div class="row wrap" style="margin-bottom:0">
+            <button class="btn sm" onclick="edAddFrame(false)" title="blank frame after this one">+ frame</button>
+            <button class="btn sm" onclick="edAddFrame(true)" title="duplicate this frame">⧉ dup</button>
+            <button class="btn sm" onclick="edMoveFrame(-1)" title="move frame earlier">◀</button>
+            <button class="btn sm" onclick="edMoveFrame(1)" title="move frame later">▶</button>
+            <button class="btn sm danger" onclick="edDelFrame()" title="delete this frame">✕</button>
+          </div>
+          <div id="edFrames"></div>
+          <h3 style="margin-top:6px">Preview</h3>
+          <div class="row">
+            <canvas id="edPrev" width="32" height="32"></canvas>
+            <div>
+              <div class="row"><button class="btn sm" id="edPlayBtn" onclick="edPlay(!ED.playing)">▶</button>
+                <label style="min-width:auto">fps</label><input id="edFps" type="number" value="8" style="width:52px" onchange="if(ED.playing)edPlay(true)"></div>
+              <label style="min-width:auto"><input type="checkbox" id="edLoop" checked> loop</label>
+            </div>
+          </div>
+          <h3 style="margin-top:6px">Load / save</h3>
+          <div class="row wrap">
+            <select id="edLoadSel" style="width:130px"><option value="">— load animation —</option></select>
+            <button class="btn sm" onclick="edLoad($('edLoadSel').value)">⤓ load frames</button>
+          </div>
+          <div class="row wrap">
+            <label style="min-width:auto">save as</label>
+            <input id="edAnim" placeholder="animation name (e.g. idle)" style="width:150px">
+          </div>
+          <div class="row wrap">
+            <input id="edCharName" placeholder="new character name (if none selected)" style="width:100%">
+          </div>
+          <button class="btn primary" onclick="edSave()">💾 Save animation to character</button>
+          <div class="status" id="edStatus"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- IMPORT -->
+  <section class="mpane" id="mp-import">
+    <div class="card">
+      <h2>Import sprite sheets <span class="muted" style="font-weight:400">— PNG / ZIP, no GPU</span></h2>
+      <div class="muted" style="margin:6px 0">
+        PNG sheet → one animation of the selected character (new character if none picked).
+        Grid auto-detects from transparent gutters / square cells — or set it below.
+        Solid backgrounds are keyed out automatically. ZIP → whole character
+        (exported Character.zip or any folder of sheet PNGs + optional atlas .json).
+        Imported animations are auto-aligned onto one shared cell so switching between
+        them doesn't shift the character.
+      </div>
+      <div class="row wrap">
+        <label style="min-width:auto">animation</label>
+        <select id="impAnim" style="width:110px"></select>
+        <label style="min-width:auto">cols</label><input id="impCols" type="number" value="0" style="width:52px" title="0 = auto">
+        <label style="min-width:auto">rows</label><input id="impRows" type="number" value="0" style="width:52px" title="0 = auto">
+        <label style="min-width:auto">frame px</label>
+        <input id="impFw" type="number" value="0" style="width:56px" title="frame width, 0 = auto">
+        <input id="impFh" type="number" value="0" style="width:56px" title="frame height, 0 = auto">
+        <label style="min-width:auto">fps</label><input id="impFps" type="number" value="0" style="width:48px" title="0 = animation default">
+        <select id="impProcess" style="width:130px" title="keep = pixels untouched; pixelize = downscale+palette to the sprite size">
+          <option value="auto">process: auto</option>
+          <option value="keep">process: keep</option>
+          <option value="pixelize">process: pixelize</option>
+        </select>
+      </div>
+      <div class="row wrap">
+        <button class="btn" onclick="$('impSheetFile').click()">Import sheet PNG…</button>
+        <input id="impSheetFile" type="file" accept="image/png,image/webp,image/gif" style="display:none" onchange="importSheetFile(this)">
+        <button class="btn" onclick="$('impZipFile').click()">Import ZIP…</button>
+        <input id="impZipFile" type="file" accept=".zip,application/zip" style="display:none" onchange="importZipFile(this)">
+        <label style="min-width:auto">new character name</label>
+        <input id="impName" placeholder="(uses selected character if any)" style="width:180px">
+      </div>
+      <div id="regionBox" style="display:none;margin-top:8px;border-top:1px solid var(--border);padding-top:8px">
+        <div class="muted" style="margin-bottom:4px">Drag on the image to select the region to import as this animation — or import the whole image. cols/rows above slice the selection into frames; the grid preview updates live.</div>
+        <div style="overflow:auto;max-width:100%;border:1px solid var(--border);border-radius:4px;background:var(--checker) 0 0/16px 16px">
+          <canvas id="regionCanvas" style="display:block;cursor:crosshair;image-rendering:pixelated"></canvas>
+        </div>
+        <div class="row wrap" style="margin-top:6px">
+          <button class="btn primary" type="button" onclick="doImportRegion(false)">Import selected region</button>
+          <button class="btn" type="button" onclick="doImportRegion(true)">Import whole image</button>
+          <button class="btn" type="button" onclick="closeRegion()">Cancel</button>
+          <span id="regionInfo" class="muted"></span>
+        </div>
+      </div>
+      <div class="status" id="impStatus"></div>
+    </div>
+
+    <div class="card">
+      <h2>Image → sprite <span class="muted" style="font-weight:400">— convert any picture into a sprite frame</span></h2>
+      <div class="muted" style="margin:6px 0">Photo, artwork or AI render → background removed (rembg tier → corner-colour key fallback) → pixelized to the character's sprite size and palette. Lands as one frame of the chosen animation — open it in Draw to touch up or extend into a cycle.</div>
+      <div class="row wrap">
+        <label style="min-width:auto">animation</label><select id="cvAnim" style="width:110px"></select>
+        <label style="min-width:auto">bg removal</label>
+        <select id="cvBg" style="width:150px">
+          <option value="">character setting</option>
+          <option value="rembg">rembg (AI)</option>
+          <option value="chroma">corner-colour key</option>
+          <option value="none">keep background</option>
+        </select>
+        <select id="cvProcess" style="width:130px">
+          <option value="pixelize">pixelize</option>
+          <option value="keep">keep pixels</option>
+          <option value="auto">auto</option>
+        </select>
+      </div>
+      <div class="row wrap">
+        <button class="btn" onclick="$('cvFile').click()">Choose image…</button>
+        <input id="cvFile" type="file" accept="image/*" style="display:none" onchange="convertImage(this)">
+        <label style="min-width:auto">new character name</label>
+        <input id="cvName" placeholder="(uses selected character if any)" style="width:180px">
+      </div>
+      <div class="status" id="cvStatus"></div>
+    </div>
+  </section>
+
+  <!-- PLAY & BIND -->
+  <section class="mpane" id="mp-play">
+    <div class="card">
+      <h2>Playground <span class="muted" style="font-weight:400">— live sprite · arrows/WASD walk · shift run · space action · drag to move</span></h2>
+      <div class="row wrap" style="gap:4px;margin-top:7px" id="pgBtns"><span class="muted">build a sheet to bring the sprite to life.</span></div>
+      <div class="row">
+        <label style="min-width:auto">scale</label>
+        <input id="pgScale" type="range" min="1" max="8" value="3" style="flex:0 0 110px" oninput="pgSetScale(this.value)">
+        <label style="min-width:auto"><input type="checkbox" id="pgKeys" checked onchange="pgSetKeys(this.checked)"> keyboard control</label>
+        <label style="min-width:auto"><input type="checkbox" id="pgAuto" onchange="pgSetAuto(this.checked)"> tamagotchi</label>
+      </div>
+      <div id="pgStage" style="position:relative;height:300px;border:1px solid var(--border);border-radius:4px;overflow:hidden;
+        background:conic-gradient(#22201d 25%,#1b1917 0 50%,#22201d 0 75%,#1b1917 0) 0 0/22px 22px"></div>
+    </div>
+
+    <div class="card">
+      <h2>Controls &amp; Buddy <span class="muted" style="font-weight:400">— bind ANY animation to activities, keys &amp; tamagotchi behaviour</span></h2>
+      <div id="bindMsg" class="muted" style="margin-top:6px">save a definition and build at least one animation first.</div>
+      <div id="bindBody" style="display:none;margin-top:6px">
+        <h3 style="margin:4px 0">Activity slots</h3>
+        <div class="muted" style="margin-bottom:6px">Which animation plays for each activity — the chat buddy reacts with these. Leave a slot on “default” to fall back automatically (e.g. <i>think→idle</i>). <i>move</i>/<i>run</i> drive walking; the rest are moods/actions you can map however you like.</div>
+        <div class="grid" id="slotGrid"></div>
+
+        <h3 style="margin:10px 0 4px">Action keys</h3>
+        <div class="muted" style="margin-bottom:6px">Press a key → play an animation once. The number of moves is the number of keys/combos you bind. Use <code>Space</code> for the spacebar.</div>
+        <div id="keyRows"></div>
+        <button class="btn sm" type="button" onclick="addKeyRow()">+ key</button>
+
+        <h3 style="margin:10px 0 4px">Movement keys</h3>
+        <div class="muted" style="margin-bottom:6px">Comma-separated keys per direction (defaults shown). The sprite flips for left/right and plays the <i>move</i>/<i>run</i> slot.</div>
+        <div class="grid" id="dirGrid"></div>
+
+        <h3 style="margin:10px 0 4px">Tamagotchi</h3>
+        <div class="muted" style="margin-bottom:6px">When idle for a while the buddy acts on its own — wanders around, plays a random emote, or rests.</div>
+        <label><input type="checkbox" id="au_enabled"> autonomous when idle</label>
+        <div class="row wrap" style="gap:10px">
+          <label style="min-width:auto"><input type="checkbox" id="au_wander" checked> wander</label>
+          <label style="min-width:auto"><input type="checkbox" id="au_emote" checked> emote</label>
+        </div>
+        <div class="row two"><label style="min-width:0">idle after (ms)</label><input id="au_idle" type="number" value="4000"></div>
+        <div class="row two"><label style="min-width:0">interval min/max (ms)</label>
+          <input id="au_min" type="number" value="2500"><input id="au_max" type="number" value="6000"></div>
+
+        <button class="btn primary" type="button" onclick="saveControls()" style="margin-top:8px">Save controls</button>
+        <div class="status" id="bindStatus"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- EXPORT -->
+  <section class="mpane" id="mp-export">
+    <div class="card">
+      <h2>Package</h2>
+      <div class="muted" style="margin:6px 0">Everything a game/engine needs: sprite sheets, atlas JSON (frame rects + fps/loop tags), GIF previews, the reference and metadata.json — zipped as Character.zip.</div>
+      <div class="row"><button class="btn" onclick="buildPackage()">Build Character/ package (.zip)</button></div>
+      <div class="status" id="pkgStatus"></div>
+      <div id="pkgFiles" class="muted" style="margin-top:6px"></div>
+    </div>
+  </section>
+</main>
+
+<script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel.js"></script>
+<script src="/ui/elements/sprite.js"></script>
+<script>
+const BASE=(window._veraBase||(window.parent&&window.parent._veraBase)||location.origin).toString().replace(/\/$/,'');
+const $=id=>document.getElementById(id);
+async function api(p,o){try{const r=await fetch(BASE+p,o);return await r.json();}catch(e){return{error:String(e)};}}
+const post=(p,b)=>api(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+const enc=encodeURIComponent;
+let CAPS=null, CURRENT=null, ANIMS=[], DESCS={};
+
+function setStatus(el,msg,cls){el.className='status '+(cls||'');el.textContent=msg||'';}
+
+/* ── main tab strip ── */
+function mgo(id){
+  document.querySelectorAll('.mtab').forEach(t=>t.classList.toggle('active',t.dataset.go===id));
+  document.querySelectorAll('.mpane').forEach(p=>p.classList.toggle('active',p.id==='mp-'+id));
+  if(id==='draw'&&!ED.frames.length)edInit();
+}
+
+async function init(){
+  CAPS=await api('/spritegen/capabilities'); renderCaps();
+  ANIMS=(CAPS&&CAPS.animations)||['idle','walk','attack'];
+  $('style').innerHTML=((CAPS&&CAPS.styles)||['pixel']).map(s=>`<option value="${s}">${s}</option>`).join('');
+  DESCS=(CAPS&&CAPS.style_descriptors)||{};
+  $('style').addEventListener('change',syncStyleDesc);
+  syncStyleDesc();
+  $('sprite_size').innerHTML=((CAPS&&CAPS.sprite_sizes)||[16,32,64,128]).map(s=>`<option value="${s}" ${s==64?'selected':''}>${s}px</option>`).join('');
+  $('animGrid').innerHTML=ANIMS.map(a=>`<label><input type="checkbox" value="${a}" ${['idle','walk','attack'].includes(a)?'checked':''}> ${a}</label>`).join('');
+  $('impAnim').innerHTML=ANIMS.map(a=>`<option value="${a}">${a}</option>`).join('');
+  $('cvAnim').innerHTML=ANIMS.map(a=>`<option value="${a}">${a}</option>`).join('');
+  // companion agents (optional link)
+  const ar=await api('/agents/list'); const agents=(ar&&ar.agents)||[];
+  $('agentSel').innerHTML='<option value="">— none —</option>'+agents.map(a=>`<option value="${a.id}">${(a.avatar||'🤖')} ${a.label||a.name}</option>`).join('');
+  await loadList();
+  edRenderSwatches();edBindPointer();
+}
+
+function renderCaps(){
+  const t=(CAPS&&CAPS.tiers)||{};
+  const pill=(k,on)=>`<span class="cap-pill ${on?'on':'off'}">${k}</span>`;
+  $('capsBar').innerHTML='<span class="muted">GPU tiers:</span>'
+    +pill('txt2img',t.txt2img!==false)+pill('img2img',!!t.img2img)
+    +pill('rembg',!!t.rembg)+pill('controlnet',!!t.controlnet)
+    +pill('ip-adapter',!!t.ipadapter)+pill('esrgan',!!t.upscale)
+    +pill('long-prompts',!!t.long_prompts)
+    +pill('skeleton-poses',!!t.controlnet)
+    +(t.device?`<span class="muted">· ${t.device} · ${t.model||''}</span>`:'');
+}
+
+async function loadList(sel){
+  const r=await api('/spritegen/list'); const list=(r&&r.characters)||[];
+  $('charSel').innerHTML='<option value="">— pick a character —</option>'+
+    list.map(c=>`<option value="${c.char_id}">${c.name||c.char_id}</option>`).join('');
+  if(sel){$('charSel').value=sel;}
+}
+
+function newChar(){
+  CURRENT=null; $('charSel').value='';
+  ['name','brief','base_prompt','base_pose','palette','notes','framing','negative_prompt','style_prompt'].forEach(k=>$(k).value='');
+  syncStyleDesc();
+  $('colors').value=32;$('seed').value=-1;$('seed_lock').checked=false;$('steps').value=28;$('guidance').value=7.5;
+  $('scheduler').value='dpmpp';
+  $('gen_width').value=768;$('gen_height').value=768;
+  $('outline').checked=false;$('dither').checked=false;$('transparent').checked=true;
+  $('downscale').value='kcentroid';$('shared_palette').checked=true;
+  $('identity_tier').value='auto';$('pose_source').value='auto';$('auto_center').value='centroid';
+  $('bg_removal').value='auto';$('chroma_tol').value=80;$('ctv').textContent='80';
+  $('rembg_model').value='';$('rembg_alpha_matting').checked=false;$('do_pixelize').checked=true;$('do_upscale').checked=false;
+  document.querySelectorAll('#animGrid input').forEach(c=>c.checked=['idle','walk','attack'].includes(c.value));
+  $('refPreview').innerHTML='';$('animList').innerHTML='<span class="muted">save a definition, then generate the reference.</span>';
+  $('pkgFiles').innerHTML='';SEQ=[];renderControls();renderSplice();renderDrawExtras();pgMount();
+  setStatus($('defStatus'),'new character — fill in and Save','');
+}
+
+async function selectChar(id){
+  if(!id){newChar();return;}
+  const rec=await api('/spritegen/get?char_id='+enc(id));
+  if(rec&&!rec.error) setChar(rec);
+}
+
+function setChar(rec){
+  CURRENT=rec;
+  $('name').value=rec.name||'';$('brief').value=rec.brief||'';
+  $('base_prompt').value=rec.base_prompt||'';$('base_pose').value=rec.base_pose||'';
+  $('palette').value=rec.palette||'';
+  $('framing').value=rec.framing||'';$('negative_prompt').value=rec.negative_prompt||'';
+  $('style').value=rec.style||'pixel';$('style_prompt').value=rec.style_prompt||'';syncStyleDesc();
+  $('sprite_size').value=rec.sprite_size||64;
+  $('colors').value=rec.colors;$('outline').checked=!!rec.outline;$('dither').checked=!!rec.dither;
+  $('downscale').value=rec.downscale||'kcentroid';$('shared_palette').checked=rec.shared_palette!==false;
+  $('transparent').checked=!!rec.transparent;$('seed').value=rec.seed;$('seed_lock').checked=!!rec.seed_lock;$('steps').value=rec.steps;
+  $('guidance').value=rec.guidance;$('gen_width').value=rec.gen_width;$('gen_height').value=rec.gen_height;
+  $('scheduler').value=(rec.scheduler===''||rec.scheduler==null)?(rec.scheduler===''?'default':'dpmpp'):rec.scheduler;
+  $('agentSel').value=rec.agent_id||'';
+  $('identity_tier').value=rec.identity_tier||'auto';
+  $('pose_source').value=rec.pose_source||'auto';$('auto_center').value=rec.auto_center||'centroid';
+  $('bg_removal').value=rec.bg_removal||'auto';
+  $('chroma_tol').value=rec.chroma_tol||80;$('ctv').textContent=rec.chroma_tol||80;
+  $('rembg_model').value=rec.rembg_model||'';$('rembg_alpha_matting').checked=!!rec.rembg_alpha_matting;
+  $('do_pixelize').checked=rec.do_pixelize!==false;$('do_upscale').checked=!!rec.do_upscale;
+  const have=Object.keys(rec.animations||{});
+  document.querySelectorAll('#animGrid input').forEach(c=>c.checked=have.includes(c.value));
+  SEQ=[];
+  renderReference();renderAnims();renderPackage();renderControls();renderSplice();renderDrawExtras();pgMount();
+}
+
+function rerollSeed(){$('seed').value=Math.floor(Math.random()*2147483646)+1;$('seed_lock').checked=false;}
+function syncStyleDesc(){$('style_prompt').placeholder=DESCS[$('style').value]||'';}
+
+/* ── Controls & Buddy ── */
+const SLOTS=['idle','move','run','talk','think','work','happy','error','sleep','greet','emote'];
+const DIRS=['up','down','left','right'];
+const DIR_DEFAULTS={up:['w','ArrowUp'],down:['s','ArrowDown'],left:['a','ArrowLeft'],right:['d','ArrowRight']};
+function bindAnims(){return Object.keys((CURRENT&&CURRENT.animations)||{});}
+function animOptions(sel){
+  return '<option value="">— default —</option>'+
+    bindAnims().map(a=>`<option value="${a}" ${a===sel?'selected':''}>${a}</option>`).join('');
+}
+function renderControls(){
+  const anims=bindAnims();
+  if(!CURRENT||!CURRENT.char_id||!anims.length){$('bindBody').style.display='none';$('bindMsg').style.display='';return;}
+  $('bindMsg').style.display='none';$('bindBody').style.display='';
+  const ev=(CURRENT.events)||{};
+  $('slotGrid').innerHTML=SLOTS.map(s=>
+    `<label style="min-width:0">${s}<select id="ev-${s}">${animOptions(ev[s]||'')}</select></label>`).join('');
+  const km=(CURRENT.keymap)||{}; $('keyRows').innerHTML='';
+  const keys=Object.keys(km);
+  if(!keys.length)addKeyRow(); else keys.forEach(k=>addKeyRow(k,km[k]));
+  const dm=(CURRENT.dirmap)||{}, byDir={up:[],down:[],left:[],right:[]};
+  Object.keys(dm).forEach(k=>{if(byDir[dm[k]])byDir[dm[k]].push(k);});
+  $('dirGrid').innerHTML=DIRS.map(d=>{
+    const v=(byDir[d].length?byDir[d]:DIR_DEFAULTS[d]).join(', ');
+    return `<label style="min-width:0">${d}<input id="dir-${d}" value="${v}" title="comma-separated keys"></label>`;
+  }).join('');
+  const au=(CURRENT.autonomy)||{};
+  $('au_enabled').checked=!!au.enabled;
+  $('au_wander').checked=au.wander!==false;$('au_emote').checked=au.emote!==false;
+  $('au_idle').value=au.idle_after||4000;$('au_min').value=au.min_ms||2500;$('au_max').value=au.max_ms||6000;
+  if($('pgAuto'))$('pgAuto').checked=!!au.enabled;
+}
+function addKeyRow(key,anim){
+  const div=document.createElement('div');
+  div.className='row';div.style.cssText='gap:4px;margin-bottom:4px';
+  div.innerHTML=`<input class="k-key" placeholder="key (e.g. j or Space)" value="${key||''}" style="width:150px">
+    <select class="k-anim">${animOptions(anim||'')}</select>
+    <button class="btn sm" type="button" title="remove" onclick="this.parentElement.remove()">✕</button>`;
+  $('keyRows').appendChild(div);
+}
+function collectControls(){
+  const events={};SLOTS.forEach(s=>{const v=$('ev-'+s).value;if(v)events[s]=v;});
+  const keymap={};document.querySelectorAll('#keyRows .row').forEach(r=>{
+    const k=r.querySelector('.k-key').value.trim(), a=r.querySelector('.k-anim').value;
+    if(k&&a)keymap[k]=a;
+  });
+  const dirmap={};DIRS.forEach(d=>{
+    ($('dir-'+d).value||'').split(',').map(s=>s.trim()).filter(Boolean).forEach(k=>{dirmap[k]=d;});
+  });
+  const autonomy={enabled:$('au_enabled').checked,wander:$('au_wander').checked,emote:$('au_emote').checked,
+    idle_after:+$('au_idle').value||4000,min_ms:+$('au_min').value||2500,max_ms:+$('au_max').value||6000};
+  return {events,keymap,dirmap,autonomy};
+}
+async function saveControls(){
+  if(!CURRENT||!CURRENT.char_id){setStatus($('bindStatus'),'save a definition first','warn');return;}
+  const c=collectControls();
+  setStatus($('bindStatus'),'saving…','');
+  const r=await post('/spritegen/set',{char_id:CURRENT.char_id,
+    events:JSON.stringify(c.events),keymap:JSON.stringify(c.keymap),
+    dirmap:JSON.stringify(c.dirmap),autonomy:JSON.stringify(c.autonomy)});
+  if(r.error){setStatus($('bindStatus'),r.error,'err');return;}
+  CURRENT=r;setStatus($('bindStatus'),'controls saved ✓','ok');
+  pgMount();   // reload the playground sprite so new bindings take effect
+}
+
+function rowSpec(a){
+  const cur=(CURRENT&&CURRENT.animations&&CURRENT.animations[a])||{};
+  const frEl=$('fr-'+a), poEl=$('po-'+a);
+  const spec={frames: frEl?+frEl.value:(cur.frames||4), fps:cur.fps||8, loop:cur.loop!==false, desc:cur.desc||''};
+  if(cur.view) spec.view=cur.view;
+  const poses = poEl ? poEl.value.split('\n').map(s=>s.trim()).filter(Boolean)
+                     : (Array.isArray(cur.poses)?cur.poses:[]);
+  if(poses.length) spec.poses=poses;
+  return spec;
+}
+function buildAnimsObj(){
+  const o={};
+  document.querySelectorAll('#animGrid input:checked').forEach(c=>{
+    const a=c.value;
+    o[a] = $('fr-'+a) ? rowSpec(a) : ((CURRENT&&CURRENT.animations&&CURRENT.animations[a])||{});
+  });
+  return o;
+}
+function collectDef(){
+  const b={
+    name:$('name').value,brief:$('brief').value,base_prompt:$('base_prompt').value,
+    base_pose:$('base_pose').value,
+    notes:$('notes').value,palette:$('palette').value,style:$('style').value,
+    style_prompt:$('style_prompt').value,
+    framing:$('framing').value,negative_prompt:$('negative_prompt').value,
+    sprite_size:+$('sprite_size').value,colors:+$('colors').value,
+    outline:$('outline').checked,dither:$('dither').checked,transparent:$('transparent').checked,
+    downscale:$('downscale').value,shared_palette:$('shared_palette').checked,
+    seed:+$('seed').value,seed_lock:$('seed_lock').checked,steps:+$('steps').value,guidance:+$('guidance').value,
+    scheduler:$('scheduler').value,
+    gen_width:+$('gen_width').value,gen_height:+$('gen_height').value,
+    animations:JSON.stringify(buildAnimsObj()),agent_id:$('agentSel').value,
+    identity_tier:$('identity_tier').value,pose_source:$('pose_source').value,
+    auto_center:$('auto_center').value,bg_removal:$('bg_removal').value,
+    chroma_tol:+$('chroma_tol').value,rembg_model:$('rembg_model').value,
+    rembg_alpha_matting:$('rembg_alpha_matting').checked,
+    do_pixelize:$('do_pixelize').checked,do_upscale:$('do_upscale').checked
+  };
+  if(CURRENT&&CURRENT.char_id) b.char_id=CURRENT.char_id;
+  return b;
+}
+async function saveQuiet(){
+  const r=await post('/spritegen/define',collectDef());
+  if(r&&!r.error){CURRENT=r;}
+  return r;
+}
+async function previewPrompt(stage){
+  if(!needChar()){ // allow preview on an unsaved draft by saving first
+    const r=await saveQuiet(); if(!r||r.error){return;} await loadList(CURRENT.char_id);
+  }
+  const pre = stage==='base' ? $('pp-base') : $('pp-'+stage);
+  if(pre) pre.textContent='composing…';
+  await saveQuiet();   // reflect unsaved prompt edits
+  const body={char_id:CURRENT.char_id,stage};
+  if(stage!=='base'){ const fr=$('fr-'+stage); body.frames=fr?+fr.value:0; }
+  const r=await post('/spritegen/preview_prompt',body);
+  if(!pre) return;
+  if(r.error){pre.textContent=r.error;return;}
+  pre.textContent=(r.prompts||[]).map((p,i)=>((r.prompts.length>1)?('['+i+'] '):'')+p).join('\n')
+    +'\n— negative: '+(r.negative_prompt||'');
+}
+
+async function describe(){
+  const brief=$('brief').value.trim(); if(!brief){setStatus($('defStatus'),'write a brief first','warn');return;}
+  setStatus($('defStatus'),'asking the LLM…','');
+  const r=await post('/spritegen/describe',{brief,style:$('style').value,notes:$('notes').value,
+    animations:[...document.querySelectorAll('#animGrid input:checked')].map(c=>c.value).join(',')});
+  if(r.error){setStatus($('defStatus'),r.error,'err');return;}
+  if(r.base_prompt)$('base_prompt').value=r.base_prompt;
+  if(r.name&&!$('name').value)$('name').value=r.name;
+  if(r.palette&&!$('palette').value)$('palette').value=r.palette;
+  if(r.negative_prompt&&!$('negative_prompt').value)$('negative_prompt').value=r.negative_prompt;
+  setStatus($('defStatus'),'identity expanded — review & Save','ok');
+}
+
+async function saveDef(){
+  setStatus($('defStatus'),'saving…','');
+  const r=await post('/spritegen/define',collectDef());
+  if(r.error){setStatus($('defStatus'),r.error,'err');return;}
+  setChar(r);await loadList(r.char_id);
+  setStatus($('defStatus'),'saved ✓ ('+r.char_id+')','ok');
+}
+
+async function delChar(){
+  if(!CURRENT||!CURRENT.char_id)return;
+  if(!confirm('Delete this character and all its assets?'))return;
+  await post('/spritegen/delete',{char_id:CURRENT.char_id});
+  newChar();await loadList();
+}
+
+function needChar(){if(!CURRENT||!CURRENT.char_id){setStatus($('runStatus'),'save a definition first','warn');return false;}return true;}
+
+/* ── live GPU progress ── */
+function newJobId(){return 'ui-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8);}
+function watchJob(jobId,label){
+  const timer=setInterval(async()=>{
+    const p=await api('/image/progress?job_id='+enc(jobId));
+    if(!p||p.phase==='unknown')return;
+    if(p.phase==='diffusion'&&p.total){
+      $('runLabel').textContent=(label||'')+' · diffusion '+(p.step||0)+'/'+p.total;
+      if(p.preview_b64)showLive(p.preview_b64,(label||'')+' · forming ('+(p.step||0)+'/'+p.total+')','jpeg');
+    }else if(p.phase&&p.phase!=='done'&&p.phase!=='error'){
+      $('runLabel').textContent=(label||'')+' · '+p.phase+'…';
+    }
+  },900);
+  return ()=>clearInterval(timer);
+}
+
+async function genBase(){
+  if(!needChar())return;
+  setStatus($('runStatus'),'generating reference (this can take a while)…','');
+  const jobId=newJobId(); const stopWatch=watchJob(jobId,'reference');
+  const r=await post('/spritegen/generate_base',{char_id:CURRENT.char_id,job_id:jobId});
+  stopWatch();
+  if(r.error){setStatus($('runStatus'),r.error,'err');return;}
+  setChar(r);setStatus($('runStatus'),'reference ready · bg: '+(r.bg_tier||'?')+' · '+(r.device||''),'ok');
+}
+
+function fmtETA(s){s=Math.max(0,Math.round(s));const m=Math.floor(s/60);return m?(m+'m'+(s%60).toString().padStart(2,'0')+'s'):(s+'s');}
+function setProgress(frac,label){const f=Math.max(0,Math.min(1,frac||0));$('runBar').style.width=(f*100).toFixed(1)+'%';if(label!=null)$('runLabel').textContent=label;}
+function showLive(b64,label,fmt){if(b64)$('livePreview').innerHTML='<label>'+(label||'latest frame')+'</label><img src="data:image/'+(fmt||'png')+';base64,'+b64+'">';}
+
+async function ensureRef(){
+  if(CURRENT&&CURRENT.reference)return true;
+  setStatus($('runStatus'),'generating reference…','');setProgress(0.02,'reference…');
+  const b=await post('/spritegen/generate_base',{char_id:CURRENT.char_id});
+  if(b.error){setStatus($('runStatus'),b.error,'err');return false;}
+  setChar(b);return true;
+}
+
+// Render an animation FRAME-BY-FRAME so each image shows as it's made, with an ETA.
+async function genAnim(anim,ctx){
+  if(!needChar())return false;
+  ctx=ctx||{};
+  const st=$('st-'+anim); setStatus(st,'saving…','');
+  await post('/spritegen/set',{char_id:CURRENT.char_id,animations:JSON.stringify(buildAnimsObj())});
+  if(!await ensureRef())return false;
+  const n=+($('fr-'+anim)?.value)||4;
+  const times=[]; let tier='';
+  for(let i=0;i<n;i++){
+    const t0=performance.now();
+    setStatus(st,'frame '+(i+1)+'/'+n+'…','');
+    const jobId=newJobId();
+    const stopWatch=watchJob(jobId,anim+' '+(i+1)+'/'+n);
+    const r=await post('/spritegen/generate_frame',{char_id:CURRENT.char_id,anim,index:i,total:n,clear:(i===0),job_id:jobId});
+    stopWatch();
+    if(r.error){setStatus(st,r.error,'err');return false;}
+    times.push(performance.now()-t0);tier=r.tier||tier;
+    showLive(r.image_b64,anim+' · frame '+(i+1)+'/'+n);
+    const avg=times.reduce((a,b)=>a+b,0)/times.length, remain=avg*(n-i-1)/1000;
+    const frac=(ctx.span!=null)?(ctx.base+ctx.span*(i+1)/n):((i+1)/n);
+    setProgress(frac,(ctx.prefix||'')+anim+' · frame '+(i+1)+'/'+n+' · '+(r.tier||'?')+' · ~'+fmtETA(remain)+' left');
+  }
+  setStatus(st,'packing sheet…','');
+  const bs=await post('/spritegen/build_sheet',{char_id:CURRENT.char_id,anim});
+  if(!bs.error)setChar(bs);
+  setStatus($('st-'+anim),anim+': '+n+' frames · '+tier+' ✓','ok');
+  return true;
+}
+
+async function buildSheet(anim){
+  if(!needChar())return;
+  const st=$('st-'+anim); setStatus(st,'packing sheet…','');
+  const r=await post('/spritegen/build_sheet',{char_id:CURRENT.char_id,anim});
+  if(r.error){setStatus(st,r.error,'err');return;}
+  setChar(r);setStatus($('st-'+anim),anim+' sheet built','ok');
+}
+
+async function editAnim(anim){
+  if(!needChar())return;
+  const instruction=($('ed-'+anim).value||'').trim();
+  if(!instruction){setStatus($('st-'+anim),'type what to change first','warn');return;}
+  const st=$('st-'+anim); setStatus(st,'editing '+anim+' with SD…','');
+  const jobId=newJobId(); const stopWatch=watchJob(jobId,'edit '+anim);
+  const r=await post('/spritegen/edit_animation',{char_id:CURRENT.char_id,anim,instruction,
+    strength:+$('eds-'+anim).value||0.45, frames:$('edf-'+anim).value||'', job_id:jobId});
+  stopWatch();
+  if(r.error){setStatus(st,r.error,'err');return;}
+  setChar(r);setStatus($('st-'+anim),anim+': edited '+(r.edited||0)+' frames ✓','ok');
+}
+
+async function alignCells(){
+  if(!CURRENT||!CURRENT.char_id){setStatus($('alignStatus'),'save a definition first','warn');return;}
+  setStatus($('alignStatus'),'aligning animation cells…','');
+  const r=await post('/spritegen/align_cells',{char_id:CURRENT.char_id});
+  if(r.error){setStatus($('alignStatus'),r.error,'err');return;}
+  setChar(r);
+  setStatus($('alignStatus'),(r.aligned&&r.aligned.length)
+    ? ('aligned '+r.aligned.join(', ')+' onto one '+r.cell[0]+'×'+r.cell[1]+' cell ✓')
+    : 'cells already uniform ✓','ok');
+}
+
+// Drive the whole pipeline client-side so each stage + frame reports live.
+async function runPipeline(){
+  if(!needChar())return;
+  await saveQuiet();
+  const anims=[...document.querySelectorAll('#animGrid input:checked')].map(c=>c.value);
+  if(!anims.length){setStatus($('runStatus'),'select at least one animation','warn');return;}
+  const regen=$('regenRef').checked;
+  const doBase=regen||!CURRENT.reference;
+  const total=(doBase?1:0)+anims.length*2+1;   // base + (frames+sheet)/anim + package
+  let done=0; const t0=performance.now();
+  setStatus($('runStatus'),'running pipeline…','');
+  if(doBase){
+    setProgress(0,'Stage 1/'+total+' · reference…');
+    if(regen){const b=await post('/spritegen/generate_base',{char_id:CURRENT.char_id});
+      if(b.error){setStatus($('runStatus'),b.error,'err');return;}setChar(b);}
+    else if(!await ensureRef())return;
+    done++;
+  }
+  for(const a of anims){
+    const ok=await genAnim(a,{prefix:'Stage '+(done+1)+'/'+total+' · ',base:done/total,span:1/total});
+    if(!ok){setStatus($('runStatus'),'stopped at '+a,'err');return;}
+    done+=2; setProgress(done/total,'Stage '+done+'/'+total+' · '+a+' ✓');
+  }
+  setProgress(done/total,'Stage '+(done+1)+'/'+total+' · packaging…');
+  const pk=await post('/spritegen/build_package',{char_id:CURRENT.char_id});
+  if(!pk.error)setChar(pk);
+  setProgress(1,'done · '+anims.length+' animations · '+fmtETA((performance.now()-t0)/1000));
+  setStatus($('runStatus'),'pipeline complete ✓','ok');
+}
+
+async function buildPackage(){
+  if(!needChar())return;
+  setStatus($('pkgStatus'),'assembling package…','');
+  const r=await post('/spritegen/build_package',{char_id:CURRENT.char_id});
+  if(r.error){setStatus($('pkgStatus'),r.error,'err');return;}
+  setChar(r);setStatus($('pkgStatus'),'package built ✓','ok');
+}
+
+function renderReference(){
+  const u=CURRENT&&CURRENT.urls&&CURRENT.urls.reference;
+  $('refPreview').innerHTML=u?`<label>reference</label><img src="${BASE+u}">`:'<span class="muted">no reference yet — click “Generate reference”.</span>';
+}
+
+function renderAnims(){
+  const anims=(CURRENT&&CURRENT.animations)||{};
+  const urls=(CURRENT&&CURRENT.urls)||{};
+  const names=Object.keys(anims);
+  if(!names.length){$('animList').innerHTML='<span class="muted">no animations selected.</span>';return;}
+  $('animList').innerHTML=names.map(a=>{
+    const spec=anims[a]||{};const frames=(urls.frames&&urls.frames[a])||[];
+    const sheet=(urls.sheets&&urls.sheets[a])||{};
+    const posesVal=Array.isArray(spec.poses)?spec.poses.join('\n'):(typeof spec.poses==='string'?spec.poses:'');
+    const thumbs=frames.map(f=>`<img src="${BASE+f}">`).join('')||'<span class="muted">no frames</span>';
+    const sheetimg=sheet.png?`<div><label>sheet</label><img src="${BASE+sheet.png}"></div>`:'';
+    const gif=sheet.gif?`<div><label>preview</label><img src="${BASE+sheet.gif}"></div>`:'';
+    return `<div class="animrow">
+      <div class="top">
+        <b>${a}</b>
+        <label style="min-width:0">frames</label><input id="fr-${a}" type="number" style="width:54px" value="${spec.frames||4}">
+        <button class="btn sm" onclick="genAnim('${a}')">Generate</button>
+        <button class="btn sm" onclick="repixel('${a}')" title="re-convert the stored hi-res frames with the current pixel settings (no GPU)">Repixel</button>
+        <button class="btn sm" onclick="buildSheet('${a}')">Sheet</button>
+        <button class="btn sm" onclick="previewPrompt('${a}')">Prompt</button>
+        <button class="btn sm" onclick="useAsCompanion('${a}')" title="Set this animation as the linked agent's companion">→ companion</button>
+      </div>
+      <label style="margin-top:6px">pose per frame (one per line — blank uses the built-in ${a} cycle)</label>
+      <textarea id="po-${a}" style="min-height:40px">${posesVal}</textarea>
+      <pre id="pp-${a}" class="muted" style="white-space:pre-wrap;margin-top:4px;font-size:10px"></pre>
+      <div class="row wrap" style="gap:4px;margin-top:4px">
+        <input id="ed-${a}" placeholder="edit with SD… e.g. add a red cape, make it night-time" style="flex:1;min-width:140px">
+        <label style="min-width:0" title="0 = tiny tweak, 1 = full restyle">str</label>
+        <input id="eds-${a}" type="number" min="0" max="1" step="0.05" value="0.45" style="width:56px">
+        <input id="edf-${a}" placeholder="frames (opt)" title="limit to these frame indices, e.g. 0,2 — blank = whole cycle" style="width:96px">
+        <button class="btn sm" onclick="editAnim('${a}')" title="edit the existing frames with Stable Diffusion (seed-locked img2img), then re-pixelize + repack">✎ Edit (SD)</button>
+      </div>
+      <div class="thumbs">${thumbs}</div>
+      <div class="sheetwrap">${sheetimg}${gif}</div>
+      <div class="status" id="st-${a}"></div>
+    </div>`;
+  }).join('');
+}
+
+async function repixel(anim){
+  if(!needChar())return;
+  const st=$('st-'+anim);setStatus(st,'saving settings…','');
+  await saveQuiet();
+  setStatus(st,'re-pixelizing…','');
+  const r=await post('/spritegen/repixelize',{char_id:CURRENT.char_id,anim});
+  if(r.error){setStatus(st,r.error,'err');return;}
+  const bs=await post('/spritegen/build_sheet',{char_id:CURRENT.char_id,anim});
+  if(bs.error){setStatus($('st-'+anim),bs.error,'err');return;}
+  setChar(bs);setStatus($('st-'+anim),anim+' re-pixelized ✓','ok');
+}
+
+/* ── playground ── */
+let PG=null;
+function pgMount(){
+  const stage=$('pgStage');
+  if(PG){PG.remove();PG=null;}
+  const hasSheets=CURRENT&&CURRENT.char_id&&Object.keys(CURRENT.sheets||{}).length;
+  if(!hasSheets){$('pgBtns').innerHTML='<span class="muted">build a sheet to bring the sprite to life.</span>';return;}
+  PG=document.createElement('vera-sprite');
+  PG.setAttribute('char-id',CURRENT.char_id);
+  PG.setAttribute('scale',$('pgScale').value);
+  PG.setAttribute('roam','');PG.setAttribute('draggable','');
+  if($('pgKeys').checked)PG.setAttribute('controls','');
+  if($('pgAuto')&&$('pgAuto').checked)PG.setAttribute('auto','');
+  PG.addEventListener('sprite:ready',e=>{
+    $('pgBtns').innerHTML=(e.detail.animations||[]).map(a=>
+      `<button class="btn sm" onclick="PG&&PG.play('${a}')">${a}</button>`).join('')
+      ||'<span class="muted">no sheets yet</span>';
+  });
+  stage.appendChild(PG);
+}
+function pgSetScale(v){if(PG)PG.setAttribute('scale',v);}
+function pgSetKeys(on){if(!PG)return;if(on)PG.setAttribute('controls','');else PG.removeAttribute('controls');}
+function pgSetAuto(on){if(!PG)return;if(on)PG.setAttribute('auto','');else PG.removeAttribute('auto');}
+
+async function useAsCompanion(anim){
+  if(!needChar())return;
+  const aid=$('agentSel').value;
+  if(!aid){setStatus($('st-'+anim),'link an agent (Generation → companion) first','warn');return;}
+  const sheets=(CURRENT&&CURRENT.urls&&CURRENT.urls.sheets)||{};
+  if(!sheets[anim]||!sheets[anim].png){setStatus($('st-'+anim),'build the '+anim+' sheet first','warn');return;}
+  setStatus($('st-'+anim),'linking to companion…','');
+  const r=await post('/character/use_sprite',{agent_id:aid,char_id:CURRENT.char_id,anim});
+  setStatus($('st-'+anim), r&&!r.error?('companion now plays '+anim+' ✓'):(r.error||'failed'), r&&!r.error?'ok':'err');
+}
+
+function renderPackage(){
+  const u=CURRENT&&CURRENT.urls&&CURRENT.urls.package_zip;
+  const files=(CURRENT&&CURRENT.package&&CURRENT.package.files)||[];
+  $('pkgFiles').innerHTML=(u?`<a class="dl" href="${BASE+u}" download>⬇ Character.zip</a> · `:'')
+    +(files.length?files.length+' files: '+files.join(', '):'no package built yet');
+}
+
+/* ── import: sheet PNG / zip / image→sprite ── */
+function fileToB64(file){
+  return new Promise((res,rej)=>{
+    const rd=new FileReader();
+    rd.onload=()=>res(String(rd.result).split(',')[1]||'');
+    rd.onerror=rej; rd.readAsDataURL(file);
+  });
+}
+
+let RG=null;   // {img, b64, scale, iw, ih, sel:{x,y,w,h}, drag}
+function importSheetFile(inp){
+  const file=inp.files&&inp.files[0]; inp.value='';
+  if(!file)return;
+  setStatus($('impStatus'),'reading '+file.name+'…','');
+  const rd=new FileReader();
+  rd.onload=()=>{
+    const dataURL=String(rd.result), b64=dataURL.split(',')[1]||'';
+    const img=new Image();
+    img.onload=()=>openRegion(img,b64);
+    img.onerror=()=>setStatus($('impStatus'),'could not load image','err');
+    img.src=dataURL;
+  };
+  rd.onerror=()=>setStatus($('impStatus'),'could not read file','err');
+  rd.readAsDataURL(file);
+}
+function openRegion(img,b64){
+  const maxW=520, scale=Math.min(1,maxW/img.naturalWidth);
+  RG={img,b64,scale,iw:img.naturalWidth,ih:img.naturalHeight,
+      sel:{x:0,y:0,w:img.naturalWidth,h:img.naturalHeight},drag:null};
+  const cv=$('regionCanvas');
+  cv.width=Math.max(1,Math.round(img.naturalWidth*scale));
+  cv.height=Math.max(1,Math.round(img.naturalHeight*scale));
+  $('regionBox').style.display='';
+  $('impCols').oninput=$('impRows').oninput=()=>redrawRegion();
+  bindRegionPointer();
+  redrawRegion();
+  setStatus($('impStatus'),'select a region (or import whole), then import','');
+}
+function redrawRegion(){
+  if(!RG)return;
+  const cv=$('regionCanvas'), ctx=cv.getContext('2d');
+  ctx.imageSmoothingEnabled=false;
+  ctx.clearRect(0,0,cv.width,cv.height);
+  ctx.drawImage(RG.img,0,0,cv.width,cv.height);
+  const s=RG.scale, sel=RG.sel, sx=sel.x*s, sy=sel.y*s, sw=sel.w*s, sh=sel.h*s;
+  ctx.fillStyle='rgba(0,0,0,.45)';
+  ctx.fillRect(0,0,cv.width,sy);
+  ctx.fillRect(0,sy+sh,cv.width,cv.height-(sy+sh));
+  ctx.fillRect(0,sy,sx,sh);
+  ctx.fillRect(sx+sw,sy,cv.width-(sx+sw),sh);
+  ctx.strokeStyle='#7fd6ff'; ctx.lineWidth=1.5; ctx.strokeRect(sx+.5,sy+.5,Math.max(0,sw-1),Math.max(0,sh-1));
+  const cols=Math.max(1,+$('impCols').value||1), rows=Math.max(1,+$('impRows').value||1);
+  ctx.strokeStyle='rgba(127,214,255,.5)'; ctx.lineWidth=1;
+  for(let c=1;c<cols;c++){const gx=sx+sw*c/cols;ctx.beginPath();ctx.moveTo(gx,sy);ctx.lineTo(gx,sy+sh);ctx.stroke();}
+  for(let r=1;r<rows;r++){const gy=sy+sh*r/rows;ctx.beginPath();ctx.moveTo(sx,gy);ctx.lineTo(sx+sw,gy);ctx.stroke();}
+  $('regionInfo').textContent='sel '+Math.round(sel.w)+'×'+Math.round(sel.h)+' · '+cols+'×'+rows+' = '+(cols*rows)+' frames';
+}
+function bindRegionPointer(){
+  const cv=$('regionCanvas');
+  if(cv._bound)return; cv._bound=true;
+  const toImg=e=>{const r=cv.getBoundingClientRect();
+    return {x:(e.clientX-r.left)/RG.scale,y:(e.clientY-r.top)/RG.scale};};
+  const clamp=(v,hi)=>Math.max(0,Math.min(hi,v));
+  cv.addEventListener('pointerdown',e=>{
+    if(!RG)return; cv.setPointerCapture(e.pointerId);
+    const p=toImg(e); RG.drag={x0:clamp(p.x,RG.iw),y0:clamp(p.y,RG.ih)};
+  });
+  cv.addEventListener('pointermove',e=>{
+    if(!RG||!RG.drag)return;
+    const p=toImg(e), x1=clamp(p.x,RG.iw), y1=clamp(p.y,RG.ih);
+    RG.sel={x:Math.min(RG.drag.x0,x1),y:Math.min(RG.drag.y0,y1),
+            w:Math.abs(x1-RG.drag.x0),h:Math.abs(y1-RG.drag.y0)};
+    redrawRegion();
+  });
+  const end=()=>{
+    if(RG&&RG.drag){ if(RG.sel.w<4||RG.sel.h<4)RG.sel={x:0,y:0,w:RG.iw,h:RG.ih};
+      RG.drag=null; redrawRegion(); }
+  };
+  cv.addEventListener('pointerup',end); cv.addEventListener('pointercancel',end);
+}
+function closeRegion(){RG=null;$('regionBox').style.display='none';$('regionInfo').textContent='';}
+async function doImportRegion(whole){
+  if(!RG){setStatus($('impStatus'),'pick an image first','warn');return;}
+  const body={image_b64:RG.b64, anim:$('impAnim').value,
+    char_id:(CURRENT&&CURRENT.char_id)||'', name:$('impName').value,
+    columns:+$('impCols').value||0, rows:+$('impRows').value||0,
+    frame_width:+$('impFw').value||0, frame_height:+$('impFh').value||0,
+    fps:+$('impFps').value||0, process:$('impProcess').value};
+  if(!whole){const s=RG.sel;
+    body.crop_x=Math.round(s.x);body.crop_y=Math.round(s.y);
+    body.crop_w=Math.round(s.w);body.crop_h=Math.round(s.h);}
+  setStatus($('impStatus'),'importing '+(whole?'whole image':'region')+'…','');
+  const r=await post('/spritegen/import_sheet',body);
+  if(r.error){setStatus($('impStatus'),r.error,'err');return;}
+  setChar(r); await loadList(r.char_id);
+  setStatus($('impStatus'),r.anim+': '+r.count+' frames imported ✓','ok');
+  closeRegion();
+}
+
+async function importZipFile(inp){
+  const file=inp.files&&inp.files[0]; inp.value='';
+  if(!file)return;
+  setStatus($('impStatus'),'reading '+file.name+'…','');
+  const b64=await fileToB64(file);
+  setStatus($('impStatus'),'importing package…','');
+  const r=await post('/spritegen/import_package',{
+    zip_b64:b64, char_id:(CURRENT&&CURRENT.char_id)||'', name:$('impName').value,
+    process:$('impProcess').value});
+  if(r.error){setStatus($('impStatus'),r.error,'err');return;}
+  const rec=await api('/spritegen/get?char_id='+enc(r.char_id));
+  if(rec&&!rec.error)setChar(rec);
+  await loadList(r.char_id);
+  const ok=Object.keys(r.imported||{}), bad=Object.entries(r.errors||{});
+  setStatus($('impStatus'),
+    (ok.length?('imported: '+ok.join(', ')+' ✓'):'nothing imported')
+    +(bad.length?(' · errors: '+bad.map(([a,e])=>a+' ('+e+')').join('; ')):''),
+    bad.length&&!ok.length?'err':'ok');
+}
+
+async function convertImage(inp){
+  const f=inp.files&&inp.files[0]; inp.value='';
+  if(!f)return;
+  setStatus($('cvStatus'),'reading '+f.name+'…','');
+  const b64=await fileToB64(f);
+  setStatus($('cvStatus'),'converting (bg removal + pixelize)…','');
+  const r=await post('/spritegen/from_image',{image_b64:b64,
+    char_id:(CURRENT&&CURRENT.char_id)||'', name:$('cvName').value,
+    anim:$('cvAnim').value||'idle', bg_removal:$('cvBg').value,
+    process:$('cvProcess').value});
+  if(r.error){setStatus($('cvStatus'),r.error,'err');return;}
+  setChar(r); await loadList(r.char_id);
+  setStatus($('cvStatus'),r.anim+': image converted (bg: '+(r.bg_tier||'?')+') ✓ — open it in Draw to touch up','ok');
+}
+
+/* ── Splice ── */
+let SEQ=[];   // [{anim,frame,url}]
+function renderSplice(){
+  const frames=(CURRENT&&CURRENT.urls&&CURRENT.urls.frames)||{};
+  const anims=Object.keys(frames).filter(a=>(frames[a]||[]).length);
+  if(!CURRENT||!CURRENT.char_id||!anims.length){$('spliceBody').style.display='none';$('spliceMsg').style.display='';return;}
+  $('spliceMsg').style.display='none';$('spliceBody').style.display='';
+  $('spSource').innerHTML=anims.map(a=>{
+    const thumbs=(frames[a]||[]).map((u,i)=>
+      `<img src="${BASE+u}" title="${a} #${i}" onclick="spAdd('${a}',${i},'${BASE+u}')"
+        style="height:40px;image-rendering:pixelated;border:1px solid var(--border);border-radius:3px;cursor:pointer;margin:2px;background:#111">`).join('');
+    return `<div style="margin-bottom:4px"><div class="muted" style="font-size:11px">${a}</div>`+
+           `<div class="row wrap" style="gap:0">${thumbs}</div></div>`;
+  }).join('');
+  renderSeq();
+}
+function spAdd(anim,frame,url){SEQ.push({anim,frame,url});renderSeq();}
+function spClear(){SEQ=[];renderSeq();}
+function spRemove(i){SEQ.splice(i,1);renderSeq();}
+function renderSeq(){
+  $('spCount').textContent=SEQ.length;
+  $('spSeq').innerHTML=SEQ.map((f,i)=>
+    `<span style="position:relative;display:inline-block">`+
+      `<img src="${f.url}" title="${f.anim} #${f.frame}" style="height:40px;image-rendering:pixelated;border:1px solid var(--border);border-radius:3px;background:#111">`+
+      `<button class="btn sm" type="button" onclick="spRemove(${i})" title="remove" style="position:absolute;top:-8px;right:-8px;padding:0 5px;line-height:1.5">✕</button>`+
+    `</span>`).join('')||'<span class="muted">click frames above to build a sequence</span>';
+}
+async function doSplice(){
+  if(!CURRENT||!CURRENT.char_id){setStatus($('spStatus'),'save a definition first','warn');return;}
+  const name=($('spName').value||'').trim();
+  if(!name){setStatus($('spStatus'),'name the new animation','warn');return;}
+  if(!SEQ.length){setStatus($('spStatus'),'add at least one frame','warn');return;}
+  setStatus($('spStatus'),'splicing…','');
+  const r=await post('/spritegen/splice',{char_id:CURRENT.char_id,anim:name,
+    picks:JSON.stringify(SEQ.map(f=>({anim:f.anim,frame:f.frame}))),
+    fps:+$('spFps').value||8,loop:$('spLoop').checked,
+    reverse:$('spReverse').checked,pingpong:$('spPingpong').checked});
+  if(r.error){setStatus($('spStatus'),r.error,'err');return;}
+  SEQ=[]; setChar(r); await loadList(r.char_id);
+  setStatus($('spStatus'),name+': '+r.count+' frames created ✓','ok');
+}
+
+/* ══ DRAW — pixel editor ══════════════════════════════════════════════════ */
+const ED={w:32,h:32,zoom:12,frames:[],cur:0,color:'#e8433f',tool:'pen',
+  mirror:false,onion:true,grid:true,undo:[],redo:[],playing:false,
+  shape:null,drawing:false,last:null,recent:[]};
+const ED_PAL=['#000000','#ffffff','#e8433f','#f7a41d','#f7e26b','#59c135','#14a02e',
+  '#1a7a3e','#249fde','#285cc4','#7b53ad','#b55088','#f2a2c4','#8c5a3c','#5a4e44','#a0938e'];
+let edPlayTimer=null;
+
+function edNewFrame(copyFrom){
+  const c=document.createElement('canvas');c.width=ED.w;c.height=ED.h;
+  if(copyFrom)c.getContext('2d').drawImage(copyFrom,0,0);
+  return c;
+}
+function edInit(){
+  const sz=(CURRENT&&+CURRENT.sprite_size)||32;
+  ED.w=ED.h=sz;$('edW').value=sz;$('edH').value=sz;
+  ED.frames=[edNewFrame()];ED.cur=0;ED.undo=[];ED.redo=[];
+  edFit();edRedraw();edStrip();edPrevDraw(0);
+}
+function edFit(){
+  ED.zoom=Math.max(2,Math.min(24,Math.floor(460/Math.max(ED.w,ED.h))||8));
+  $('edZoom').value=ED.zoom;
+  edApplyZoom();
+}
+function edApplyZoom(){
+  const cv=$('edCanvas');
+  cv.width=ED.w*ED.zoom;cv.height=ED.h*ED.zoom;
+  edRedraw();
+}
+function edSetZoom(z){ED.zoom=Math.max(2,Math.min(24,z||8));edApplyZoom();}
+function edSetColor(c){ED.color=c;edPushRecent(c);}
+function edPushRecent(c){
+  ED.recent=[c,...ED.recent.filter(x=>x!==c)].slice(0,8);
+  edRenderSwatches();
+}
+function edRenderSwatches(){
+  const host=$('edSwatches');if(!host)return;
+  host.innerHTML='';
+  [...ED.recent,...ED_PAL.filter(c=>!ED.recent.includes(c))].slice(0,24).forEach(c=>{
+    const b=document.createElement('button');
+    b.className='edSw'+(c===ED.color?' on':'');b.style.background=c;b.title=c;
+    b.onclick=()=>{ED.color=c;$('edColor').value=c;edRenderSwatches();};
+    host.appendChild(b);
+  });
+}
+function edTool(t){
+  ED.tool=t;
+  ['pen','eraser','fill','pick','line','rect'].forEach(k=>{
+    const b=$('tl-'+k);if(b)b.classList.toggle('on',k===t);
+  });
+}
+function edToggle(k,btn){ED[k]=!ED[k];btn.classList.toggle('on',ED[k]);edRedraw();}
+
+function edRedraw(){
+  const cv=$('edCanvas'),ctx=cv.getContext('2d');
+  ctx.imageSmoothingEnabled=false;
+  ctx.clearRect(0,0,cv.width,cv.height);
+  if(ED.onion&&ED.cur>0&&ED.frames[ED.cur-1]){
+    ctx.globalAlpha=.3;ctx.drawImage(ED.frames[ED.cur-1],0,0,cv.width,cv.height);ctx.globalAlpha=1;
+  }
+  if(ED.frames[ED.cur])ctx.drawImage(ED.frames[ED.cur],0,0,cv.width,cv.height);
+  if(ED.shape)edDrawShapeOverlay(ctx);
+  if(ED.grid&&ED.zoom>=6){
+    ctx.strokeStyle='rgba(140,130,120,.16)';ctx.lineWidth=1;ctx.beginPath();
+    for(let x=1;x<ED.w;x++){ctx.moveTo(x*ED.zoom+.5,0);ctx.lineTo(x*ED.zoom+.5,cv.height);}
+    for(let y=1;y<ED.h;y++){ctx.moveTo(0,y*ED.zoom+.5);ctx.lineTo(cv.width,y*ED.zoom+.5);}
+    ctx.stroke();
+  }
+}
+function edDrawShapeOverlay(ctx){
+  const s=ED.shape,z=ED.zoom;ctx.fillStyle=ED.color;ctx.globalAlpha=.6;
+  const dot=(x,y)=>{if(x>=0&&y>=0&&x<ED.w&&y<ED.h)ctx.fillRect(x*z,y*z,z,z);};
+  if(ED.tool==='line')edLinePts(s.x0,s.y0,s.x1,s.y1,dot);
+  else{edLinePts(s.x0,s.y0,s.x1,s.y0,dot);edLinePts(s.x0,s.y1,s.x1,s.y1,dot);
+       edLinePts(s.x0,s.y0,s.x0,s.y1,dot);edLinePts(s.x1,s.y0,s.x1,s.y1,dot);}
+  ctx.globalAlpha=1;
+}
+function edCell(e){
+  const r=$('edCanvas').getBoundingClientRect();
+  return {x:Math.floor((e.clientX-r.left)/ED.zoom),y:Math.floor((e.clientY-r.top)/ED.zoom)};
+}
+function edSet(fx,x,y,erase){
+  if(x<0||y<0||x>=ED.w||y>=ED.h)return;
+  if(erase)fx.clearRect(x,y,1,1);
+  else{fx.fillStyle=ED.color;fx.fillRect(x,y,1,1);}
+  if(ED.mirror){const mx=ED.w-1-x;
+    if(mx!==x){if(erase)fx.clearRect(mx,y,1,1);else fx.fillRect(mx,y,1,1);}}
+}
+function edLinePts(x0,y0,x1,y1,fn){
+  let dx=Math.abs(x1-x0),dy=Math.abs(y1-y0),sx=x0<x1?1:-1,sy=y0<y1?1:-1,err=dx-dy;
+  for(;;){fn(x0,y0);if(x0===x1&&y0===y1)break;const e2=2*err;
+    if(e2>-dy){err-=dy;x0+=sx;}if(e2<dx){err+=dx;y0+=sy;}}
+}
+function edHexRgba(hex){const h=hex.replace('#','');
+  return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16),255];}
+function edFill(x,y){
+  if(x<0||y<0||x>=ED.w||y>=ED.h)return;
+  const fx=ED.frames[ED.cur].getContext('2d');
+  const img=fx.getImageData(0,0,ED.w,ED.h),d=img.data;
+  const idx=(cx,cy)=>4*(cy*ED.w+cx);
+  const t=idx(x,y),target=[d[t],d[t+1],d[t+2],d[t+3]];
+  const col=edHexRgba(ED.color);
+  if(target[0]===col[0]&&target[1]===col[1]&&target[2]===col[2]&&target[3]===col[3])return;
+  const same=i=>d[i]===target[0]&&d[i+1]===target[1]&&d[i+2]===target[2]&&d[i+3]===target[3];
+  const st=[[x,y]];
+  while(st.length){
+    const [cx,cy]=st.pop();
+    if(cx<0||cy<0||cx>=ED.w||cy>=ED.h)continue;
+    const i=idx(cx,cy);if(!same(i))continue;
+    d[i]=col[0];d[i+1]=col[1];d[i+2]=col[2];d[i+3]=col[3];
+    st.push([cx+1,cy],[cx-1,cy],[cx,cy+1],[cx,cy-1]);
+  }
+  fx.putImageData(img,0,0);
+}
+function edPick(x,y){
+  if(x<0||y<0||x>=ED.w||y>=ED.h)return;
+  const p=ED.frames[ED.cur].getContext('2d').getImageData(x,y,1,1).data;
+  if(p[3]===0)return;
+  ED.color='#'+[p[0],p[1],p[2]].map(v=>v.toString(16).padStart(2,'0')).join('');
+  $('edColor').value=ED.color;edPushRecent(ED.color);
+}
+function edSnapshot(){
+  const fx=ED.frames[ED.cur].getContext('2d');
+  ED.undo.push({f:ED.cur,w:ED.w,h:ED.h,img:fx.getImageData(0,0,ED.w,ED.h)});
+  if(ED.undo.length>40)ED.undo.shift();
+  ED.redo=[];
+}
+function edUndo(){
+  const u=ED.undo.pop();if(!u||u.w!==ED.w||u.h!==ED.h||!ED.frames[u.f])return;
+  const fx=ED.frames[u.f].getContext('2d');
+  ED.redo.push({f:u.f,w:ED.w,h:ED.h,img:fx.getImageData(0,0,ED.w,ED.h)});
+  fx.putImageData(u.img,0,0);ED.cur=u.f;edRedraw();edStrip();
+}
+function edRedo(){
+  const r=ED.redo.pop();if(!r||r.w!==ED.w||r.h!==ED.h||!ED.frames[r.f])return;
+  const fx=ED.frames[r.f].getContext('2d');
+  ED.undo.push({f:r.f,w:ED.w,h:ED.h,img:fx.getImageData(0,0,ED.w,ED.h)});
+  fx.putImageData(r.img,0,0);ED.cur=r.f;edRedraw();edStrip();
+}
+function edClearFrame(){
+  if(!ED.frames[ED.cur])return;
+  edSnapshot();
+  ED.frames[ED.cur].getContext('2d').clearRect(0,0,ED.w,ED.h);
+  edRedraw();edStrip();
+}
+function edBindPointer(){
+  const cv=$('edCanvas');
+  if(cv._bound)return;cv._bound=true;
+  cv.addEventListener('pointerdown',e=>{
+    if(!ED.frames.length)return;
+    e.preventDefault();cv.setPointerCapture(e.pointerId);
+    const c=edCell(e);
+    if(ED.tool==='pick'){edPick(c.x,c.y);return;}
+    edSnapshot();
+    if(ED.tool==='fill'){edFill(c.x,c.y);edRedraw();edStrip();edPrevDraw(ED.cur);return;}
+    if(ED.tool==='line'||ED.tool==='rect'){ED.shape={x0:c.x,y0:c.y,x1:c.x,y1:c.y};edRedraw();return;}
+    ED.drawing=true;ED.last=c;
+    edSet(ED.frames[ED.cur].getContext('2d'),c.x,c.y,ED.tool==='eraser');
+    edRedraw();
+  });
+  cv.addEventListener('pointermove',e=>{
+    if(ED.shape){const c=edCell(e);ED.shape.x1=c.x;ED.shape.y1=c.y;edRedraw();return;}
+    if(!ED.drawing)return;
+    const c=edCell(e),fx=ED.frames[ED.cur].getContext('2d');
+    edLinePts(ED.last.x,ED.last.y,c.x,c.y,(x,y)=>edSet(fx,x,y,ED.tool==='eraser'));
+    ED.last=c;edRedraw();
+  });
+  const up=()=>{
+    if(ED.shape){
+      const fx=ED.frames[ED.cur].getContext('2d'),s=ED.shape;ED.shape=null;
+      const put=(x,y)=>edSet(fx,x,y,false);
+      if(ED.tool==='line')edLinePts(s.x0,s.y0,s.x1,s.y1,put);
+      else{edLinePts(s.x0,s.y0,s.x1,s.y0,put);edLinePts(s.x0,s.y1,s.x1,s.y1,put);
+           edLinePts(s.x0,s.y0,s.x0,s.y1,put);edLinePts(s.x1,s.y0,s.x1,s.y1,put);}
+      edRedraw();edStrip();edPrevDraw(ED.cur);
+    }
+    if(ED.drawing){ED.drawing=false;edStrip();edPrevDraw(ED.cur);}
+  };
+  cv.addEventListener('pointerup',up);cv.addEventListener('pointercancel',up);
+  document.addEventListener('keydown',e=>{
+    if(!$('mp-draw').classList.contains('active'))return;
+    if(e.target&&/^(input|textarea|select)$/i.test(e.target.tagName||''))return;
+    if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?edRedo():edUndo();}
+    else if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='y'){e.preventDefault();edRedo();}
+  });
+}
+function edStrip(){
+  const host=$('edFrames');host.innerHTML='';
+  ED.frames.forEach((f,i)=>{
+    const w=document.createElement('div');w.className='edThumb'+(i===ED.cur?' on':'');
+    const im=new Image();im.src=f.toDataURL();w.appendChild(im);
+    const lbl=document.createElement('span');lbl.textContent=i+1;w.appendChild(lbl);
+    w.onclick=()=>{ED.cur=i;edStrip();edRedraw();if(!ED.playing)edPrevDraw(i);};
+    host.appendChild(w);
+  });
+  $('edFrameInfo').textContent=(ED.cur+1)+'/'+Math.max(1,ED.frames.length);
+}
+function edAddFrame(dup){
+  if(!ED.frames.length){edInit();return;}
+  ED.frames.splice(ED.cur+1,0,edNewFrame(dup?ED.frames[ED.cur]:null));
+  ED.cur++;ED.undo=[];ED.redo=[];edStrip();edRedraw();
+}
+function edDelFrame(){
+  if(ED.frames.length<=1){edClearFrame();return;}
+  ED.frames.splice(ED.cur,1);ED.cur=Math.max(0,ED.cur-1);
+  ED.undo=[];ED.redo=[];edStrip();edRedraw();
+}
+function edMoveFrame(d){
+  const j=ED.cur+d;if(j<0||j>=ED.frames.length)return;
+  const [f]=ED.frames.splice(ED.cur,1);ED.frames.splice(j,0,f);ED.cur=j;edStrip();edRedraw();
+}
+function edResize(nw,nh){
+  nw=Math.max(8,Math.min(256,+nw||32));nh=Math.max(8,Math.min(256,+nh||32));
+  if(!ED.frames.length){ED.w=nw;ED.h=nh;edInit();return;}
+  if(nw===ED.w&&nh===ED.h)return;
+  ED.frames=ED.frames.map(f=>{
+    const c=document.createElement('canvas');c.width=nw;c.height=nh;
+    const cx=c.getContext('2d');cx.imageSmoothingEnabled=false;
+    cx.drawImage(f,Math.floor((nw-ED.w)/2),nh-ED.h);   // bottom-centre anchored
+    return c;
+  });
+  ED.w=nw;ED.h=nh;$('edW').value=nw;$('edH').value=nh;
+  ED.undo=[];ED.redo=[];edFit();edStrip();
+}
+function edMatchChar(){
+  const sz=(CURRENT&&+CURRENT.sprite_size)||+$('sprite_size').value||32;
+  edResize(sz,sz);
+}
+function edPlay(on){
+  ED.playing=on;$('edPlayBtn').textContent=on?'⏸':'▶';
+  clearInterval(edPlayTimer);edPlayTimer=null;
+  if(!on){edPrevDraw(ED.cur);return;}
+  let i=0;
+  const tick=()=>{if(!ED.frames.length)return;edPrevDraw(i%ED.frames.length);i++;};
+  tick();
+  edPlayTimer=setInterval(tick,1000/Math.max(1,+$('edFps').value||8));
+}
+function edPrevDraw(i){
+  const cv=$('edPrev');if(!cv||!ED.frames[i])return;
+  if(cv.width!==ED.w||cv.height!==ED.h){cv.width=ED.w;cv.height=ED.h;}
+  const ctx=cv.getContext('2d');
+  ctx.imageSmoothingEnabled=false;
+  ctx.clearRect(0,0,cv.width,cv.height);
+  ctx.drawImage(ED.frames[i],0,0);
+}
+function renderDrawExtras(){
+  const frames=(CURRENT&&CURRENT.urls&&CURRENT.urls.frames)||{};
+  const anims=Object.keys(frames).filter(a=>(frames[a]||[]).length);
+  $('edLoadSel').innerHTML='<option value="">— load animation —</option>'+
+    anims.map(a=>`<option value="${a}">${a}</option>`).join('');
+}
+async function edLoad(anim){
+  if(!anim){setStatus($('edStatus'),'pick an animation to load','warn');return;}
+  if(!CURRENT){setStatus($('edStatus'),'select a character first','warn');return;}
+  const urls=(CURRENT.urls&&CURRENT.urls.frames&&CURRENT.urls.frames[anim])||[];
+  if(!urls.length){setStatus($('edStatus'),'that animation has no frames','warn');return;}
+  setStatus($('edStatus'),'loading '+anim+'…','');
+  const imgs=await Promise.all(urls.map(u=>new Promise(res=>{
+    const im=new Image();im.onload=()=>res(im);im.onerror=()=>res(null);im.src=BASE+u;})));
+  const ok=imgs.filter(Boolean);
+  if(!ok.length){setStatus($('edStatus'),'could not load frames','err');return;}
+  ED.w=ok[0].naturalWidth;ED.h=ok[0].naturalHeight;
+  $('edW').value=ED.w;$('edH').value=ED.h;
+  ED.frames=ok.map(im=>{
+    const c=document.createElement('canvas');c.width=ED.w;c.height=ED.h;
+    c.getContext('2d').drawImage(im,0,0);return c;
+  });
+  ED.cur=0;ED.undo=[];ED.redo=[];
+  const spec=((CURRENT.animations||{})[anim])||{};
+  $('edAnim').value=anim;$('edFps').value=spec.fps||8;$('edLoop').checked=spec.loop!==false;
+  edFit();edStrip();edPrevDraw(0);
+  setStatus($('edStatus'),anim+': '+ok.length+' frames loaded — edit away','ok');
+}
+async function edSave(){
+  const anim=($('edAnim').value||'').trim().toLowerCase().replace(/[^a-z0-9_-]/g,'');
+  if(!anim){setStatus($('edStatus'),'name the animation (e.g. idle)','warn');return;}
+  if(!ED.frames.length){setStatus($('edStatus'),'draw something first','warn');return;}
+  const frames=ED.frames.map(f=>f.toDataURL('image/png').split(',')[1]);
+  setStatus($('edStatus'),'saving '+frames.length+' frames…','');
+  const r=await post('/spritegen/import_frames',{
+    char_id:(CURRENT&&CURRENT.char_id)||'', name:$('edCharName').value,
+    anim, frames_b64:JSON.stringify(frames),
+    fps:+$('edFps').value||8, loop:$('edLoop').checked,
+    process:'keep', center:false});
+  if(r.error){setStatus($('edStatus'),r.error,'err');return;}
+  setChar(r); await loadList(r.char_id);
+  setStatus($('edStatus'),anim+': '+r.count+' frames saved to '+(r.name||r.char_id)+' ✓','ok');
+}
+
+init();
+</script>
+</body>
+</html>

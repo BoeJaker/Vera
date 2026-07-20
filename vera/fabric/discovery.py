@@ -264,7 +264,27 @@ def _valid_proper(name: str) -> bool:
     return True
 
 
-def extract_entities2(text: str, content_type: str = "web") -> List[Dict]:
+async def _ner_offload(fn, *args):
+    """Run a blocking NER extraction fn off the event loop. Delegates to the
+    SHARED single-thread executor in fabric_web_acquisition so all transformer
+    inference across the app serialises on one thread (off the loop, thread-safe
+    for the shared model, no CPU oversubscription). Falls back to a plain thread
+    if the shared helper isn't available."""
+    if fn is None:
+        return None
+    try:
+        wa = _wa()
+        shared = getattr(wa, "ner_offload", None)
+        if shared is not None:
+            return await shared(fn, *args)
+    except Exception:
+        pass
+    import functools as _ft
+    return await asyncio.get_event_loop().run_in_executor(None, _ft.partial(fn, *args))
+
+
+def extract_entities2(text: str, content_type: str = "web",
+                      _precomputed: Optional[List[Dict]] = None) -> List[Dict]:
     """Unified entity extraction entry point.
 
     Delegates to the single canonical engine in fabric_web_acquisition
@@ -275,34 +295,44 @@ def extract_entities2(text: str, content_type: str = "web") -> List[Dict]:
     _extract_relationships_from_entities can sentence-scope typed relations
     correctly — stripping it degrades all relations to RELATED_TO/CO_OCCURS.
     Falls back to the local legacy extractor only if unavailable.
+
+    `_precomputed`: a raw entity list already produced by
+    _extract_entities_from_text. When given, the transformer is NOT re-run — the
+    list is just post-processed here. This lets a caller (extract_entities_for_record)
+    run the expensive NER model ONCE and derive both the node list (this) and the
+    position-preserving relation input from a single pass.
     """
-    if not text:
+    if _precomputed is None and not text:
         return []
     try:
-        fn = getattr(_wa(), "_extract_entities_from_text", None)
-        if fn is not None:
+        if _precomputed is not None:
+            ents = _precomputed or []
+        else:
+            fn = getattr(_wa(), "_extract_entities_from_text", None)
+            if fn is None:
+                raise LookupError("no canonical extractor")
             ents = fn(text, content_type) or []
-            if ents:
-                out = []
-                for e in ents:
-                    name = e.get("name")
-                    if not name:
-                        continue
-                    ent = {
-                        "name": name,
-                        "type": e.get("type", "named_entity"),
-                        "normalised": e.get("normalised") or name.lower(),
-                        "mention_count": e.get("mention_count", 1),
-                    }
-                    # Preserve position — required by _extract_relationships_from_entities
-                    # for sentence-scoped typed relation inference. Without it every
-                    # pair falls back to the RELATED_TO weak-edge path.
-                    if "position" in e:
-                        ent["position"] = e["position"]
-                    out.append(ent)
-                if out:
-                    out.sort(key=lambda e: e["mention_count"], reverse=True)
-                    return out[:80]
+        if ents:
+            out = []
+            for e in ents:
+                name = e.get("name")
+                if not name:
+                    continue
+                ent = {
+                    "name": name,
+                    "type": e.get("type", "named_entity"),
+                    "normalised": e.get("normalised") or name.lower(),
+                    "mention_count": e.get("mention_count", 1),
+                }
+                # Preserve position — required by _extract_relationships_from_entities
+                # for sentence-scoped typed relation inference. Without it every
+                # pair falls back to the RELATED_TO weak-edge path.
+                if "position" in e:
+                    ent["position"] = e["position"]
+                out.append(ent)
+            if out:
+                out.sort(key=lambda e: e["mention_count"], reverse=True)
+                return out[:80]
     except Exception as e:
         log.debug("canonical extractor unavailable, using legacy: %s", e)
     return _extract_entities_legacy(text, content_type)
@@ -412,7 +442,8 @@ def _cooccurrence_pairs(ents: List[Dict], max_pairs: int = 40) -> List[Dict]:
 async def extract_entities_for_record(text: str, record_id: str, dataset_id: str,
                                       content_type: str = "web",
                                       llm_assist: bool = False,
-                                      llm_struct: Optional[Dict] = None) -> int:
+                                      llm_struct: Optional[Dict] = None,
+                                      reconcile: bool = False) -> int:
     """Extract entities from one page and persist them, with their relations,
     into the shared entity-graph tables.
 
@@ -435,17 +466,25 @@ async def extract_entities_for_record(text: str, record_id: str, dataset_id: str
     if not persist or not text:
         return 0
     try:
-        # Always run the canonical extractor (spaCy/GLiNER) first — it returns
-        # entities WITH position data needed by the relation engine.
+        # Run the canonical extractor (spaCy/GLiNER) ONCE — offloaded, since the
+        # transformer must not run on the event loop. Its raw output (entities
+        # WITH position data) feeds the relation engine directly as
+        # canonical_ents, AND is post-processed into the deduped/counted node
+        # list below — so the expensive model runs a SINGLE time per record
+        # instead of twice (extract_entities2 previously re-ran the same model).
         canonical_ents = []
         if _e:
             try:
-                canonical_ents = _e(text, content_type) or []
+                canonical_ents = await _ner_offload(_e, text, content_type) or []
             except Exception as ex:
                 log.debug("canonical ents %s: %s", record_id, ex)
-
-        # extract_entities2 is used as a fallback / merge source
-        ents = extract_entities2(text, content_type)
+            # Pure post-processing of the SAME raw entities (dedup / mention_count
+            # / cap-80) — no second inference, so no offload needed.
+            ents = extract_entities2(text, content_type, _precomputed=canonical_ents)
+        else:
+            # No canonical fn available — let extract_entities2 resolve its own
+            # extractor (still offloaded so it never blocks the loop).
+            ents = await _ner_offload(extract_entities2, text, content_type) or []
         rels = None
 
         if llm_assist:
@@ -520,6 +559,19 @@ async def extract_entities_for_record(text: str, record_id: str, dataset_id: str
                     log.debug("upgrade weak edges %s: %s", record_id, ex)
 
         await persist(bag, rels, dataset_id)
+
+        # Discovery-first reconcile: when a record is being RE-processed with
+        # fresh data, unlink entities no longer present on it (and prune orphans)
+        # so the graph reflects the page's latest content. Additive (snippet)
+        # ingests leave reconcile=False so they never prune real crawl data.
+        if reconcile:
+            try:
+                _reconcile = getattr(_wa(), "reconcile_record_entities", None)
+                if _reconcile:
+                    await _reconcile(record_id, dataset_id, bag, prune_orphans=True)
+            except Exception as ex:
+                log.debug("reconcile %s: %s", record_id, ex)
+
         return len(bag)
     except Exception as e:
         log.debug("entity extract %s: %s", record_id, e)
@@ -678,6 +730,20 @@ def _ensure_tables():
                 created_at    TEXT,
                 updated_at    TEXT
             );
+            CREATE TABLE IF NOT EXISTS fabric_pages (
+                id            TEXT PRIMARY KEY,   -- page:<sha1(url)>
+                dataset_id    TEXT,
+                crawl_id      TEXT,
+                url           TEXT,
+                title         TEXT,
+                full_text     TEXT,
+                tags          TEXT,
+                headings      TEXT,               -- JSON list
+                word_count    INTEGER DEFAULT 0,
+                created_at    TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_pages_ds  ON fabric_pages(dataset_id);
+            CREATE INDEX IF NOT EXISTS idx_pages_url ON fabric_pages(url);
         """)
         conn.commit()
         _TABLES_READY = True
@@ -2018,6 +2084,7 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
     auto_pull    = bool(config.get("auto_pull", False))
     do_entities  = bool(config.get("extract_entities", True))
     entities_llm = bool(config.get("extract_entities_llm", True))
+    reconcile_ent = bool(config.get("reconcile_entities", False))
     llm_tagging  = bool(config.get("llm_tagging", False))
     min_relevance = float(config.get("min_relevance", 0.0) or 0.0)
     topic        = config.get("topic", "") or ""
@@ -2109,7 +2176,7 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
     # orients the brief (and therefore relevance/steering) toward producing the
     # data the goal needs. Enabling a goal implies the brief is on.
     goal = str(config.get("goal", "") or "").strip()
-    brief_on = (bool(config.get("topic_brief", False)) or bool(goal)) and bool(topic)
+    brief_on = (bool(config.get("topic_brief", True)) or bool(goal)) and bool(topic)
     brief_rounds = max(0, int(config.get("brief_rounds", 3)))
     brief_must: set = set()
     brief: Dict = {}
@@ -2203,7 +2270,7 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
                                         message=f"LLM entity extraction (bg): {jurl[:60]}")
                         n = await extract_entities_for_record(
                             jtext, jrid, jds, jck, llm_assist=llm_ent,
-                            llm_struct=_shared_struct)
+                            llm_struct=_shared_struct, reconcile=reconcile_ent)
                         if n:
                             entities_found += n
                             await _emit("entity_found", url=jurl, count=n,
@@ -2912,8 +2979,34 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
     _want_synth = (status == "done" and config.get("auto_synthesize")
                    and config.get("topic"))
     _want_consol = (do_entities and config.get("consolidate_entities", True))
-    if _want_synth or _want_consol:
+    # Stitch sub-table fragments into coherent tables once the crawl settles —
+    # this is what turns "20 Pokédex fragments across pages" into one table.
+    _want_stitch = (do_subtab and subtables_found >= 2
+                    and bool(config.get("stitch_subtables", True)))
+    # Knowledgebase build (3rd-order structured wiki) — defaults to following
+    # the auto_synthesize flag so topic pipelines get a KB without extra config.
+    _want_kb = (status == "done" and bool(config.get("topic"))
+                and bool(config.get("build_kb", config.get("auto_synthesize"))))
+    if _want_synth or _want_consol or _want_stitch or _want_kb:
         async def _finalize():
+            if _want_stitch:
+                try:
+                    await _emit("stitching", dataset_id=ds_id,
+                                message="stitching sub-table fragments into "
+                                        "coherent tables…")
+                    sres = await cap_subtables_stitch(
+                        parent_dataset=ds_id, crawl_id=crawl_id,
+                        use_llm=bool(config.get("stitch_llm", True)))
+                    if isinstance(sres, dict) and sres.get("stitched"):
+                        names = ", ".join(s.get("title", "?")
+                                          for s in sres["stitched"][:4])
+                        await _emit("stitched", dataset_id=ds_id,
+                                    count=len(sres["stitched"]),
+                                    tables=sres["stitched"],
+                                    message=f"stitched {len(sres['stitched'])} "
+                                            f"coherent table(s): {names}")
+                except Exception as e:
+                    log.warning("auto-stitch %s: %s", ds_id, e)
             if _want_consol:
                 try:
                     await _emit("consolidating", dataset_id=ds_id,
@@ -2964,6 +3057,30 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
                     log.warning("auto-synthesize %s: %s", ds_id, e)
                     await _emit("synthesize_error", dataset_id=ds_id,
                                 message=f"auto-synthesis failed: {e}")
+            if _want_kb:
+                try:
+                    await _emit("kb_building", dataset_id=ds_id,
+                                topic=config.get("topic", ""),
+                                message="building/extending the knowledgebase "
+                                        "from this crawl…")
+                    kres = await _call_cap(
+                        "fabric.kb.build", subject=config.get("topic", ""),
+                        dataset_id=ds_id, crawl_id=crawl_id,
+                        goal=str(config.get("goal", "") or ""))
+                    if isinstance(kres, dict) and not kres.get("error"):
+                        await _emit("kb_built", dataset_id=ds_id,
+                                    kb_id=kres.get("kb_id", ""),
+                                    articles=kres.get("article_count", 0),
+                                    facts=kres.get("fact_count", 0),
+                                    message=f"knowledgebase updated: "
+                                            f"{kres.get('article_count',0)} articles, "
+                                            f"{kres.get('fact_count',0)} facts "
+                                            f"— query with fabric.kb.query")
+                    elif isinstance(kres, dict):
+                        await _emit("kb_error", dataset_id=ds_id,
+                                    message=f"kb build failed: {kres.get('error')}")
+                except Exception as e:
+                    log.warning("auto-kb %s: %s", ds_id, e)
         asyncio.create_task(_finalize())
 
     return {
@@ -2988,6 +3105,336 @@ def _auto_ds(url: str) -> str:
     return f"web.{re.sub(r'[^a-z0-9]', '_', host.lower())[:30]}"
 
 
+def _page_rid(dataset_id: str, url: str) -> str:
+    """Stable per-page record id, matching the id the crawl engine assigns in
+    _run_crawl_impl._process — so a page upserts in place across the crawl,
+    web.fetch, and web.search paths instead of duplicating."""
+    return "p_" + hashlib.sha256(f"{dataset_id}:{url}".encode()).hexdigest()[:22]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DISCOVERY-FIRST REUSABLE API
+# ---------------------------------------------------------------------------
+# The per-page pipeline the crawl engine runs inline (store page → extract +
+# reconcile entities), plus recall, exposed so the web.* capabilities and the
+# research subsystem can all go "discovery-first": recall what the fabric knows,
+# run the live fetch/search, then refresh the discovery entity graph.
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def discover_ingest_page(
+    url: str, *, dataset_id: str = "", html: str = "", text: str = "",
+    title: str = "", structure: Optional[Dict] = None,
+    tags: Optional[List[str]] = None, extract_entities: bool = True,
+    llm: bool = False, reconcile: bool = False, full_fetch: bool = False,
+    crawl_id: str = "", parent_url: str = "", fetch: bool = False,
+    timeout: float = 20.0,
+) -> Dict:
+    """Store one web page into the fabric discovery store and (optionally)
+    extract + reconcile its entities — the reusable per-page pipeline the crawl
+    engine runs inline (_run_crawl_impl._process), exposed for the web.* caps
+    and research.
+
+    Provide content one of three ways:
+      • html=...              → structure/text/title derived from it
+      • text=..., title=...   → used directly (e.g. a search snippet)
+      • fetch=True            → this function fetches the URL itself
+
+    reconcile=True unlinks entities no longer present on the page and prunes
+    orphans (authoritative full-page refresh). Snippet-level callers leave
+    reconcile=False so a sparse snippet never prunes real crawl data.
+    """
+    url = (url or "").strip()
+    if not url:
+        return {"error": "url required"}
+    _ensure_tables()
+    wa = _wa()
+    ds_id = (re.sub(r"[^a-zA-Z0-9_.]", "_", dataset_id.strip())[:80]
+             if dataset_id.strip() else (_dataset_for_url(url) or _auto_ds(url)))
+
+    # Acquire content if asked to fetch
+    if fetch and not html and not text:
+        try:
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True,
+                                          headers=_HTTP_HEADERS) as c:
+                resp = await c.get(url)
+            if resp.status_code >= 400:
+                return {"error": f"HTTP {resp.status_code}", "url": url, "dataset_id": ds_id}
+            html = resp.text
+            full_fetch = True
+        except Exception as e:
+            return {"error": f"fetch: {e}", "url": url, "dataset_id": ds_id}
+
+    if html and structure is None:
+        try:
+            structure = wa._extract_page_structure(html, url, max_text=0)
+        except Exception as e:
+            log.debug("discover_ingest_page structure %s: %s", url, e)
+            structure = {}
+    structure = structure or {}
+    full_text = (text or structure.get("full_text", "") or "").strip()
+    title = (title or structure.get("title", "") or url.split("/")[-1]).strip()
+    if not full_text:
+        return {"error": "no text", "url": url, "dataset_id": ds_id}
+
+    headings = structure.get("headings", []) or []
+    links = structure.get("links", []) or []
+    word_count = structure.get("word_count", 0) or len(full_text.split())
+    extra_tags = list(tags or []) + ["web", "discovery"]
+
+    rid = _page_rid(ds_id, url)
+    record = {
+        "id": rid, "text": full_text, "title": title, "url": url,
+        "hostname": urlparse(url).netloc,
+        "headings": headings[:20],
+        "links": [{"url": ln.get("url", ""), "anchor": ln.get("anchor", "")[:80]}
+                  for ln in links[:100]],
+        "link_count": len(links), "word_count": word_count,
+        "source": "fabric_discovery", "tags": extra_tags,
+    }
+    try:
+        await _ingest()(ds_id, [record], source="fabric_discovery", tags=extra_tags)
+    except Exception as e:
+        log.warning("discover_ingest_page ingest %s: %s", url, e)
+        return {"error": f"ingest: {e}", "url": url, "dataset_id": ds_id}
+
+    # Mirror into fabric_pages so discover_recall / gather_discovery can find it
+    try:
+        conn = _sqlite_conn()
+        page_id = "page:" + hashlib.sha1(url.encode()).hexdigest()[:16]
+        conn.execute(
+            "INSERT OR REPLACE INTO fabric_pages "
+            "(id, dataset_id, crawl_id, url, title, full_text, tags, headings, "
+            " word_count, created_at) VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))",
+            (page_id, ds_id, crawl_id, url, title, full_text,
+             ",".join(extra_tags[:20]), json.dumps(headings[:40]), word_count)
+        )
+        conn.commit()
+    except Exception as e:
+        log.debug("discover_ingest_page fabric_pages %s: %s", url, e)
+
+    try:
+        _record_edge(crawl_id, ds_id, (parent_url or ds_id), url,
+                     ("LINKS_TO" if parent_url else "HAS_PAGE"), "Page")
+    except Exception:
+        pass
+
+    n_ent = 0
+    if extract_entities:
+        ck = "code" if (structure.get("code_blocks") and
+                        len(structure.get("code_blocks", [])) >= 2) else "web"
+        try:
+            n_ent = await extract_entities_for_record(
+                full_text, rid, ds_id, ck, llm_assist=llm, reconcile=reconcile)
+        except Exception as e:
+            log.debug("discover_ingest_page entities %s: %s", url, e)
+
+    return {
+        "ok": True, "record_id": rid, "dataset_id": ds_id, "url": url,
+        "title": title, "chars": len(full_text), "entities": n_ent,
+        "full_fetch": bool(full_fetch),
+    }
+
+
+async def discover_recall(query: str = "", urls: Optional[List[str]] = None,
+                          dataset_id: str = "", limit: int = 20) -> Dict:
+    """Pull already-processed discovery data (pages + entities) from the fabric.
+
+    Used by the web.* caps to return what the fabric already knows about a query
+    or set of URLs — in parallel with the live web search. Reads the fabric_pages
+    store (populated by crawls + discover_ingest_page) and the shared entity
+    graph (fabric_entity_mentions → fabric_entities).
+    Returns {pages:[...], entities:[...], hits, entity_count}.
+    """
+    _ensure_tables()
+    urls = [u for u in (urls or []) if u]
+    pages: List[Dict] = []
+    record_ids: List[str] = []
+    try:
+        conn = _sqlite_conn()
+        seen: Set[str] = set()
+        if urls:
+            qmarks = ",".join("?" for _ in urls)
+            rows = conn.execute(
+                f"SELECT url,title,full_text,tags,dataset_id,word_count "
+                f"FROM fabric_pages WHERE url IN ({qmarks}) "
+                f"ORDER BY rowid DESC LIMIT ?", (*urls, limit)
+            ).fetchall()
+            for r in rows:
+                d = dict(r)
+                if d.get("url") in seen:
+                    continue
+                seen.add(d.get("url")); pages.append(d)
+        if query and len(pages) < limit:
+            terms = [t for t in query.lower().split() if len(t) >= 3][:6] or [query[:40].lower()]
+            clauses, params = [], []
+            for t in terms:
+                clauses.append("(lower(full_text) LIKE ? OR lower(title) LIKE ?)")
+                params += [f"%{t}%", f"%{t}%"]
+            where = " OR ".join(clauses)
+            if dataset_id:
+                where = f"({where}) AND dataset_id = ?"; params.append(dataset_id)
+            rows = conn.execute(
+                f"SELECT url,title,full_text,tags,dataset_id,word_count "
+                f"FROM fabric_pages WHERE {where} ORDER BY rowid DESC LIMIT ?",
+                (*params, limit)
+            ).fetchall()
+            for r in rows:
+                d = dict(r)
+                if d.get("url") in seen:
+                    continue
+                seen.add(d.get("url")); pages.append(d)
+        for p in pages:
+            record_ids.append(_page_rid(p.get("dataset_id", "") or "", p.get("url", "") or ""))
+    except Exception as e:
+        log.debug("discover_recall pages: %s", e)
+
+    entities: List[Dict] = []
+    try:
+        conn = _sqlite_conn()
+        ent_seen: Set[str] = set()
+        if record_ids:
+            qmarks = ",".join("?" for _ in record_ids)
+            rows = conn.execute(
+                f"SELECT DISTINCT e.id AS id, e.name AS name, e.type AS type, "
+                f"e.mention_count AS mention_count "
+                f"FROM fabric_entity_mentions m JOIN fabric_entities e ON e.id=m.entity_id "
+                f"WHERE m.record_id IN ({qmarks}) "
+                f"ORDER BY e.mention_count DESC LIMIT ?", (*record_ids, limit * 3)
+            ).fetchall()
+            for r in rows:
+                d = dict(r)
+                if d.get("id") in ent_seen:
+                    continue
+                ent_seen.add(d.get("id")); entities.append(d)
+        if query and len(entities) < limit:
+            terms = [t for t in query.lower().split() if len(t) >= 3][:4]
+            if terms:
+                clauses = " OR ".join("lower(name) LIKE ?" for _ in terms)
+                params = [f"%{t}%" for t in terms]
+                rows = conn.execute(
+                    f"SELECT id,name,type,mention_count FROM fabric_entities "
+                    f"WHERE {clauses} ORDER BY mention_count DESC LIMIT ?",
+                    (*params, limit)
+                ).fetchall()
+                for r in rows:
+                    d = dict(r)
+                    if d.get("id") in ent_seen:
+                        continue
+                    ent_seen.add(d.get("id")); entities.append(d)
+    except Exception as e:
+        log.debug("discover_recall entities: %s", e)
+
+    return {"pages": pages, "entities": entities,
+            "hits": len(pages), "entity_count": len(entities)}
+
+
+async def discover_crawl_urls(
+    urls: List[str], *, dataset_id: str = "", topic: str = "",
+    max_pages: int = 0, max_depth: int = 1, breadth: int = 3,
+    same_domain: bool = False, extract_entities: bool = True,
+    reconcile: bool = True, job_id: str = "", tags: str = "", **cfg,
+) -> Dict:
+    """Crawl many seed URLs in ONE discovery run and return per-URL text.
+
+    Seeds the crawl frontier with every URL (like fabric.discover.from_dataset)
+    so callers such as research get full discovery processing — pages, entities,
+    surfaces, reconcile — in a single pass instead of N independent crawls, and
+    get the crawled text back for building citations.
+    Returns the crawl result dict plus {per_url_text:{url:text}, seeded_urls}.
+    """
+    urls = [u.strip() for u in (urls or []) if u and u.strip()]
+    if not urls:
+        return {"error": "urls required", "per_url_text": {}}
+    _ensure_tables()
+    seed_url = urls[0]
+    ds_id = (re.sub(r"[^a-zA-Z0-9_.]", "_", dataset_id.strip())[:80]
+             if dataset_id.strip() else _auto_ds(seed_url))
+    crawl_id = _new_crawl_id(seed_url, ds_id)
+    md = max(0, int(max_depth))
+    # Seed URLs at depth 0 (the crawl recurses while depth <= max_depth).
+    queue = [(-1.0, i, u, 0, 0, None) for i, u in enumerate(urls)]
+    _mp = int(max_pages) if int(max_pages) > 0 else min(400, max(len(urls),
+              len(urls) * (1 + md * max(1, int(breadth)))))
+    config = {
+        "max_pages": _mp, "max_depth": md, "same_domain": bool(same_domain),
+        "max_links_per_page": max(1, int(breadth)),
+        "topic": topic, "topic_dropoff": 3,
+        "detect_surfaces": bool(cfg.get("detect_surfaces", False)),
+        "extract_subtables": bool(cfg.get("extract_subtables", False)),
+        "extract_entities": bool(extract_entities),
+        "extract_entities_llm": bool(cfg.get("extract_entities_llm", False)),
+        "llm_tagging": bool(cfg.get("llm_tagging", False)),
+        "reconcile_entities": bool(reconcile),
+        "consolidate_entities": bool(cfg.get("consolidate_entities", False)),
+        "swallow_domains": False,
+        "tags": tags or "web,discovery",
+    }
+    result = await _run_crawl(crawl_id, ds_id, seed_url, config, queue, set())
+
+    # Read back stored text for each requested URL (records land in
+    # fabric_records with the logical url inside the data JSON).
+    per_url_text: Dict[str, str] = {}
+    want = set(urls)
+    try:
+        conn = _sqlite_conn()
+        rows = conn.execute(
+            "SELECT data FROM fabric_records WHERE dataset_id=? "
+            "ORDER BY rowid DESC LIMIT 20000", (ds_id,)
+        ).fetchall()
+        for r in rows:
+            try:
+                d = json.loads(r["data"] or "{}")
+            except Exception:
+                continue
+            u = d.get("url")
+            if u in want and u not in per_url_text:
+                txt = d.get("text") or d.get("full_text") or ""
+                if txt:
+                    per_url_text[u] = txt
+            if len(per_url_text) >= len(want):
+                break
+    except Exception as e:
+        log.debug("discover_crawl_urls readback: %s", e)
+
+    result = result if isinstance(result, dict) else {}
+    result.update({"dataset_id": ds_id, "crawl_id": crawl_id,
+                   "per_url_text": per_url_text, "seeded_urls": len(urls)})
+    return result
+
+
+async def discover_dataset_pages(dataset_id: str, limit: int = 200) -> List[Dict]:
+    """Return light page rows [{url,title,chars,word_count}] for a discovery
+    dataset (read from fabric_records) — used to shape web.crawl responses."""
+    ds_id = (dataset_id or "").strip()
+    if not ds_id:
+        return []
+    _ensure_tables()
+    out: List[Dict] = []
+    seen: Set[str] = set()
+    try:
+        rows = _sqlite_conn().execute(
+            "SELECT data FROM fabric_records WHERE dataset_id=? "
+            "ORDER BY rowid DESC LIMIT ?", (ds_id, max(1, int(limit)) * 4)
+        ).fetchall()
+        for r in rows:
+            try:
+                d = json.loads(r["data"] or "{}")
+            except Exception:
+                continue
+            u = d.get("url")
+            if not u or u in seen:
+                continue
+            seen.add(u)
+            txt = d.get("text") or d.get("full_text") or ""
+            out.append({"url": u, "title": d.get("title", ""),
+                        "chars": len(txt), "word_count": d.get("word_count", 0)})
+            if len(out) >= int(limit):
+                break
+    except Exception as e:
+        log.debug("discover_dataset_pages %s: %s", ds_id, e)
+    return out
+
+
 @capability(
     "fabric.discover.crawl",
     http_method="POST", http_path="/fabric/discover/crawl",
@@ -3002,6 +3449,8 @@ def _auto_ds(url: str) -> str:
                 "Input: url (str!), dataset_id (str — auto from host), topic (str), "
                 "topic_dropoff (int=3), max_pages (int=60), max_depth (int=4), "
                 "same_domain (bool=True), negative_words (str), negative_urls (str), "
+                "reconcile_entities (bool=False — on re-crawl, unlink entities no "
+                "longer present on a page and prune orphaned entities), "
                 "detect_surfaces (bool=True), extract_subtables (bool=True), "
                 "auto_promote (bool=False — register detected sources), "
                 "auto_pull (bool=False — pull promoted sources), tags (str). "
@@ -3015,6 +3464,7 @@ async def cap_discover_crawl(
     required_keyword: str = "", required_keyword_mode: str = "fuzzy",
     detect_surfaces: bool = True, extract_subtables: bool = True,
     extract_entities: bool = True, extract_entities_llm: bool = True,
+    reconcile_entities: bool = False,
     llm_tagging: bool = True, min_relevance: float = 0.0,
     auto_promote: bool = False, auto_pull: bool = False, tags: str = "",
     max_concurrency: int = 4, entity_workers: int = 3,
@@ -3022,7 +3472,7 @@ async def cap_discover_crawl(
     synth_infer_edges: bool = True, consolidate_entities: bool = True,
     drift_guard: bool = True, llm_drift_gate: bool = False,
     swallow_domains: bool = True, unlimited_depth: bool = False,
-    topic_brief: bool = False, brief_rounds: int = 3, goal: str = "",
+    topic_brief: bool = True, brief_rounds: int = 3, goal: str = "",
     crawl_id: str = "", user_agent: str = "", ua_rotate: bool = False,
     page_text_cap: int = 0, page_link_cap: int = 0, max_record_chars: int = 0,
     trace_id=None,
@@ -3039,7 +3489,8 @@ async def cap_discover_crawl(
     config = {
         "max_pages": max_pages, "max_depth": max_depth, "same_domain": same_domain,
         "topic": topic, "topic_dropoff": topic_dropoff,
-        "topic_description": topic_desc,
+        "topic_description": "",
+        "reconcile_entities": reconcile_entities,
         "negative_words": negative_words, "negative_urls": negative_urls,
         "required_keyword": required_keyword.strip(),
         "required_keyword_mode": required_keyword_mode or "fuzzy",
@@ -3814,8 +4265,327 @@ async def cap_subtables_list(
     return {"subtables": out, "count": len(out)}
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# SUB-TABLE STITCHING — merge fragments of the same logical table
+# ───────────────────────────────────────────────────────────────────────────
+# A structured table on the web rarely arrives in one piece: it is paginated,
+# split per variant (a Pokédex per generation), or repeated per page section.
+# Each fragment lands as its own sub-table dataset during discovery. Stitching
+# groups the fragments whose schemas match (Jaccard over normalised column
+# names), aligns their columns (optionally LLM-canonicalised when headers
+# disagree), merges the rows keyed on the best identifying column, and ingests
+# ONE coherent  <parent>.stitched.<slug>  dataset with per-row provenance
+# (_sources = the URLs the row's fragments came from).
+# ═══════════════════════════════════════════════════════════════════════════
+
+_STITCH_META_KEYS = {"text", "_row", "_links", "_source_url", "_source_table",
+                     "_sources", "_collection", "id", "tags", "relevance"}
+_STITCH_KEY_HINTS = ("name", "title", "id", "no", "number", "ndex", "term",
+                     "flag", "path", "slug", "symbol", "code")
+
+
+def _stitch_norm(c: str) -> str:
+    s = re.sub(r"\s+", " ", str(c or "")).strip().lower()
+    return re.sub(r"[^a-z0-9]+", "_", s).strip("_")[:50]
+
+
+def _stitch_jaccard(a: Set[str], b: Set[str]) -> float:
+    if not a or not b:
+        return 0.0
+    return len(a & b) / float(len(a | b))
+
+
+def _load_subtable_rows(sub_ds: str, limit: int = 5000) -> List[Dict]:
+    """Load one sub-table dataset's rows as plain dicts (data JSON)."""
+    out: List[Dict] = []
+    try:
+        rows = _sqlite_conn().execute(
+            "SELECT data FROM fabric_records WHERE dataset_id=? LIMIT ?",
+            (sub_ds, limit)).fetchall()
+        for r in rows:
+            try:
+                d = json.loads(r["data"]) if r["data"] else {}
+                if isinstance(d, dict):
+                    out.append(d)
+            except Exception:
+                continue
+    except Exception as e:
+        log.debug("stitch load %s: %s", sub_ds, e)
+    return out
+
+
+def _pick_key_column(cols: List[str], rows: List[Dict]) -> str:
+    """Choose the column that best identifies a row: present in most rows,
+    mostly unique, with a naming bonus for id/name-like columns."""
+    if not rows:
+        return ""
+    best, best_score = "", 0.0
+    n = float(len(rows))
+    for c in cols:
+        vals = [str(r.get(c, "")).strip().lower() for r in rows]
+        filled = [v for v in vals if v]
+        if not filled or len(filled) / n < 0.5:
+            continue
+        uniq = len(set(filled)) / float(len(filled))
+        bonus = 1.0
+        cl = c.lower()
+        if cl in _STITCH_KEY_HINTS or any(cl.endswith("_" + h) for h in _STITCH_KEY_HINTS):
+            bonus = 1.3
+        score = (len(filled) / n) * uniq * bonus
+        if score > best_score:
+            best, best_score = c, score
+    # A key must be reasonably unique or merging on it would fold real rows.
+    return best if best_score >= 0.4 else ""
+
+
+async def _stitch_group(parent_ds: str, members: List[Dict], use_llm: bool,
+                        key_column: str, crawl_id: str, name: str = "") -> Optional[Dict]:
+    """Merge one group of schema-compatible sub-tables into a stitched dataset."""
+    # Gather rows per member, tagging provenance.
+    member_rows: List[Tuple[Dict, List[Dict]]] = []
+    for m in members:
+        rows = _load_subtable_rows(m.get("sub_dataset", ""))
+        if rows:
+            member_rows.append((m, rows))
+    if not member_rows:
+        return None
+
+    # Column alignment: normalised name -> canonical (most frequent original).
+    col_freq: Dict[str, Dict[str, int]] = {}
+    for m, rows in member_rows:
+        for r in rows[:60]:
+            for k in r.keys():
+                if k in _STITCH_META_KEYS or k.startswith("_"):
+                    continue
+                nk = _stitch_norm(k)
+                if not nk:
+                    continue
+                col_freq.setdefault(nk, {})
+                col_freq[nk][k] = col_freq[nk].get(k, 0) + 1
+    canon: Dict[str, str] = {}
+    for nk, variants in col_freq.items():
+        canon[nk] = max(variants.items(), key=lambda kv: kv[1])[0]
+
+    # Optional LLM canonicalisation when the fragments' headers disagree
+    # (e.g. "pokemon" vs "pokemon_name") — maps raw keys onto shared names.
+    if use_llm and len(col_freq) > 3:
+        distinct_sets = {tuple(sorted(_stitch_norm(k) for k in r.keys()
+                                      if k not in _STITCH_META_KEYS and not k.startswith("_")))
+                         for _, rows in member_rows for r in rows[:3]}
+        if len(distinct_sets) > 1:
+            try:
+                samples = [dict(list({k: v for k, v in rows[0].items()
+                                      if k not in _STITCH_META_KEYS and not k.startswith("_")}.items())[:12])
+                           for _, rows in member_rows[:4] if rows]
+                fmap = await _llm_field_map(samples)
+                for raw, canon_name in (fmap or {}).items():
+                    cn = _stitch_norm(canon_name)
+                    rk = _stitch_norm(raw)
+                    if cn and rk and rk in canon:
+                        # remap this normalised key onto the LLM's canonical name
+                        canon[rk] = canon_name.strip() or canon[rk]
+            except Exception as e:
+                log.debug("stitch llm field map: %s", e)
+
+    # Re-key every row onto the canonical columns.
+    def _canon_row(r: Dict) -> Dict:
+        out = {}
+        for k, v in r.items():
+            if k in _STITCH_META_KEYS or k.startswith("_"):
+                continue
+            if v is None or isinstance(v, (dict, list)):
+                continue
+            nk = _stitch_norm(k)
+            if nk in canon:
+                out[canon[nk]] = v
+        return out
+
+    all_rows: List[Tuple[Dict, str]] = []   # (canonical row, source_url)
+    for m, rows in member_rows:
+        src = m.get("from_url", "") or m.get("sub_dataset", "")
+        for r in rows:
+            cr = _canon_row(r)
+            if cr:
+                all_rows.append((cr, src))
+    if len(all_rows) < 2:
+        return None
+
+    cols = sorted({k for cr, _ in all_rows for k in cr.keys()})
+    key_col = key_column if key_column in cols else _pick_key_column(cols, [cr for cr, _ in all_rows])
+
+    # Merge: identical keys fold together (later fragments fill gaps, never
+    # overwrite); no key -> exact-duplicate rows fold, others concatenate.
+    merged: Dict[str, Dict] = {}
+    order: List[str] = []
+    for cr, src in all_rows:
+        if key_col:
+            kv = str(cr.get(key_col, "")).strip().lower()
+            key = kv or ("_row%d" % len(order))
+        else:
+            key = hashlib.sha1(json.dumps(
+                {k: str(v).strip().lower() for k, v in sorted(cr.items())},
+                sort_keys=True).encode()).hexdigest()
+        hit = merged.get(key)
+        if hit is None:
+            rec = dict(cr)
+            rec["_sources"] = [src] if src else []
+            merged[key] = rec
+            order.append(key)
+        else:
+            for k, v in cr.items():
+                if k not in hit or hit[k] in ("", None):
+                    hit[k] = v
+            if src and src not in hit["_sources"]:
+                hit["_sources"] = (hit["_sources"] + [src])[:12]
+
+    out_rows: List[Dict] = []
+    for key in order:
+        rec = merged[key]
+        rec["text"] = " | ".join(f"{k}={rec[k]}" for k in cols
+                                 if rec.get(k) not in ("", None))[:4000]
+        out_rows.append(rec)
+
+    # Name + dataset id.
+    titles = [m.get("title", "") for m, _ in member_rows if m.get("title")]
+    base_name = (name or (titles and max(set(titles), key=titles.count)) or
+                 key_col or "table")
+    slug = _slug(str(base_name), "stitched")
+    stitched_ds = f"{parent_ds}.stitched.{slug}"[:120]
+
+    # Re-stitching rebuilds the dataset from the current fragments — clear any
+    # previous stitched rows first so re-runs stay idempotent (ingest_dataset
+    # assigns fresh record ids, so appending would duplicate every row).
+    try:
+        conn = _sqlite_conn()
+        conn.execute("DELETE FROM fabric_records WHERE dataset_id=?", (stitched_ds,))
+        conn.commit()
+    except Exception as e:
+        log.debug("stitch clear %s: %s", stitched_ds, e)
+    try:
+        await _ingest()(stitched_ds, out_rows, source="fabric_stitch",
+                        tags=["stitched", "table", "data"])
+    except Exception as e:
+        log.warning("stitch ingest %s: %s", stitched_ds, e)
+        return None
+
+    schema = _infer_schema(out_rows)
+    _store_subtable({
+        "id": "subt_" + hashlib.sha1(stitched_ds.encode()).hexdigest()[:18],
+        "crawl_id": crawl_id, "parent_dataset": parent_ds,
+        "sub_dataset": stitched_ds, "from_url": "",
+        "kind": "stitched", "title": str(base_name)[:80],
+        "columns": cols, "schema": schema, "row_count": len(out_rows),
+    })
+    await _link_graph(parent_ds, stitched_ds, "HAS_SUBTABLE",
+                      child_props={"kind": "stitched", "title": str(base_name)[:80],
+                                   "rows": len(out_rows)})
+    for m, _ in member_rows:
+        if m.get("sub_dataset"):
+            await _link_graph(stitched_ds, m["sub_dataset"], "STITCHED_FROM")
+    await emit_event({"type": "fabric.discover.subtable", "parent_dataset": parent_ds,
+                      "sub_dataset": stitched_ds, "kind": "stitched",
+                      "title": str(base_name)[:80], "rows": len(out_rows),
+                      "from_url": "", "crawl_id": crawl_id})
+    return {"dataset": stitched_ds, "title": str(base_name)[:80],
+            "rows": len(out_rows), "columns": cols, "key_column": key_col,
+            "members": [m.get("sub_dataset", "") for m, _ in member_rows]}
+
+
+@capability(
+    "fabric.subtables.stitch",
+    http_method="POST", http_path="/fabric/subtables/stitch",
+    http_tags=["fabric", "discover"], memory="on",
+    description="Stitch schema-compatible sub-table fragments into single coherent "
+                "tables. Groups a dataset's extracted sub-tables by column-schema "
+                "similarity, aligns headers (LLM-assisted when they disagree), merges "
+                "rows on the best identifying column with per-row provenance, and "
+                "ingests each group as <parent>.stitched.<slug>. "
+                "Input: parent_dataset (str) OR crawl_id (str), kind (str='table'), "
+                "min_similarity (float=0.5), key_column (str auto), name (str), "
+                "use_llm (bool=True), min_group (int=2). "
+                "Output: {stitched:[{dataset,title,rows,columns,members}], groups}.",
+)
+async def cap_subtables_stitch(
+    parent_dataset: str = "",
+    crawl_id: str = "",
+    kind: str = "table",
+    min_similarity: float = 0.5,
+    key_column: str = "",
+    name: str = "",
+    use_llm: bool = True,
+    min_group: int = 2,
+    trace_id=None,
+) -> Dict:
+    if not parent_dataset and not crawl_id:
+        return {"error": "parent_dataset or crawl_id required"}
+    _ensure_tables()
+    where, params = ["1=1"], []
+    if parent_dataset:
+        where.append("parent_dataset = ?"); params.append(parent_dataset)
+    if crawl_id:
+        where.append("crawl_id = ?"); params.append(crawl_id)
+    if kind:
+        where.append("kind = ?"); params.append(kind)
+    where.append("kind != 'stitched'")
+    try:
+        rows = _sqlite_conn().execute(
+            "SELECT * FROM fabric_subtables WHERE " + " AND ".join(where) +
+            " ORDER BY row_count DESC LIMIT 500", params).fetchall()
+    except Exception as e:
+        return {"error": str(e), "stitched": []}
+    subs = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["columns"] = json.loads(d.get("columns") or "[]")
+        except Exception:
+            d["columns"] = []
+        if d.get("sub_dataset") and d["columns"]:
+            subs.append(d)
+    if len(subs) < max(2, int(min_group)):
+        return {"stitched": [], "groups": 0,
+                "note": f"only {len(subs)} candidate sub-tables — nothing to stitch"}
+
+    # Greedy grouping by column-set similarity (largest tables seed groups).
+    groups: List[Dict] = []   # {colset, members}
+    for s in subs:
+        colset = {_stitch_norm(c) for c in s["columns"] if c} - {""}
+        if not colset:
+            continue
+        placed = False
+        for g in groups:
+            if _stitch_jaccard(colset, g["colset"]) >= float(min_similarity):
+                g["members"].append(s)
+                g["colset"] |= colset
+                placed = True
+                break
+        if not placed:
+            groups.append({"colset": set(colset), "members": [s]})
+
+    stitched = []
+    parent = parent_dataset or (subs[0].get("parent_dataset") if subs else "")
+    for g in groups:
+        if len(g["members"]) < max(2, int(min_group)):
+            continue
+        try:
+            res = await _stitch_group(parent, g["members"], use_llm,
+                                      key_column, crawl_id, name=name)
+            if res:
+                stitched.append(res)
+        except Exception as e:
+            log.warning("stitch group: %s", e)
+    await emit_event({"type": "fabric.discover.progress", "stage": "stitched",
+                      "dataset_id": parent, "acquisition_id": crawl_id,
+                      "count": len(stitched),
+                      "message": f"stitched {len(stitched)} coherent table(s) "
+                                 f"from {len(subs)} fragments"})
+    return {"stitched": stitched, "groups": len(groups),
+            "subtables_seen": len(subs)}
+
+
 log.info("fabric_discovery: discovery & sub-source detection loaded "
-         "(caps: discover.crawl/continue/from_dataset/detect, surfaces.*, subtables.list)")
+         "(caps: discover.crawl/continue/from_dataset/detect, surfaces.*, "
+         "subtables.list/stitch)")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -4023,38 +4793,50 @@ async def cap_discover_clear_history(dataset_id: str = "", status: str = "",
 
 
 def _page_labels_for(ds_id: str, urls: Set[str]) -> Dict[str, Dict]:
-    """Fetch title/word_count/text and metadata for page nodes from fabric_records."""
+    """Fetch title/word_count/text and metadata for page nodes from fabric_records.
+
+    Perf: the url is projected via json_extract so only rows that actually
+    match a wanted page URL get their (large) data blob json.loads'd — the
+    previous version parsed up to 8000 full-page records to label a few
+    hundred nodes. Text is truncated to a preview: the full body is fetched
+    on demand by the reader via /fabric/browse, and shipping full text for
+    every node made the graph payload many MB."""
     labels: Dict[str, Dict] = {}
     if not urls:
         return labels
     try:
         rows = _sqlite_conn().execute(
-            "SELECT data FROM fabric_records WHERE dataset_id=? ORDER BY json_extract(data, '$.relevance') DESC LIMIT 8000", (ds_id,)
+            "SELECT json_extract(data,'$.url') AS url, data FROM fabric_records "
+            "WHERE dataset_id=? ORDER BY json_extract(data, '$.relevance') DESC LIMIT 8000",
+            (ds_id,)
         ).fetchall()
     except Exception:
         return labels
     for r in rows:
+        u = _normalize_url(r["url"] or "")
+        if not u or u not in urls or u in labels:
+            continue
         try:
             d = json.loads(r["data"]) if r["data"] else {}
         except Exception:
             continue
-        u = _normalize_url(d.get("url") or "")
-        if u and u in urls and u not in labels:
-            labels[u] = {
-                "title":       d.get("title") or "",
-                "depth":       d.get("depth", 0),
-                "word_count":  d.get("word_count", 0),
-                "record_id":   d.get("id", ""),
-                "relevance":   d.get("relevance", 0.5),
-                "source_type": d.get("source_type", ""),
-                "tags":        d.get("tags", []),
-                "headings":    d.get("headings", [])[:20],
-                # Full text stored — browsers show it in the node content reader
-                "text":        (d.get("text") or ""),
-                # Outbound links stored in the record for the graph reader panel
-                "links":       d.get("links", [])[:100],
-                "link_count":  d.get("link_count", 0),
-            }
+        _txt = d.get("text") or ""
+        labels[u] = {
+            "title":       d.get("title") or "",
+            "depth":       d.get("depth", 0),
+            "word_count":  d.get("word_count", 0),
+            "record_id":   d.get("id", ""),
+            "relevance":   d.get("relevance", 0.5),
+            "source_type": d.get("source_type", ""),
+            "tags":        d.get("tags", []),
+            "headings":    d.get("headings", [])[:20],
+            # Preview only — the reader pulls the full body on demand
+            "text":        _txt[:2000],
+            "text_truncated": len(_txt) > 2000,
+            # Outbound links stored in the record for the graph reader panel
+            "links":       d.get("links", [])[:40],
+            "link_count":  d.get("link_count", 0),
+        }
     return labels
 
 
@@ -4073,6 +4855,25 @@ async def cap_discover_graph(
     crawl_id: str = "", dataset_id: str = "", max_nodes: int = 400,
     include_entities: bool = True, trace_id=None,
 ) -> Dict:
+    # The reconstruction below is pure synchronous SQLite + dict building — on
+    # a grown fabric it takes seconds, and running it on the event loop stalled
+    # EVERY other request (snapshots, memory graph, even the /ui JS assets)
+    # behind it. _sqlite_conn() opens a fresh check_same_thread=False
+    # connection per call, so the whole build is safe to push to a worker
+    # thread and the loop stays responsive.
+    try:
+        max_nodes = int(max_nodes)
+    except (TypeError, ValueError):
+        max_nodes = 400
+    if isinstance(include_entities, str):
+        include_entities = include_entities.lower() in ("1", "true", "yes", "on")
+    return await asyncio.to_thread(
+        _build_discover_graph, crawl_id, dataset_id, max_nodes, include_entities)
+
+
+def _build_discover_graph(crawl_id: str = "", dataset_id: str = "",
+                          max_nodes: int = 400,
+                          include_entities: bool = True) -> Dict:
     _ensure_tables()
     conn = _sqlite_conn()
     # Resolve crawl/dataset
@@ -4221,7 +5022,8 @@ async def cap_discover_graph(
                                       "source_type": d.get("source_type", ""),
                                       "tags": d.get("tags", []),
                                       "headings": d.get("headings", [])[:20],
-                                      "text": (d.get("text") or "")}}
+                                      "text": (d.get("text") or "")[:2000],
+                                      "text_truncated": len(d.get("text") or "") > 2000}}
                 edges.append({"from": ds_id, "to": u, "rel": "HAS_PAGE", "layer": "discover"})
         except Exception as e:
             log.debug("graph fallback: %s", e)
@@ -4243,19 +5045,21 @@ async def cap_discover_graph(
                 if meta.get("title"):
                     rec2title[rid] = meta["title"]
         try:
+            # json_extract projects the three fields inside SQLite (C code) —
+            # the previous full-blob SELECT + json.loads over up to 20k records
+            # (each carrying full page text) took seconds of pure Python parse.
             for rr in conn.execute(
-                "SELECT data FROM fabric_records WHERE dataset_id=? LIMIT 20000", (ds_id,)
+                "SELECT json_extract(data,'$.id') AS rid, "
+                "       json_extract(data,'$.url') AS url, "
+                "       json_extract(data,'$.title') AS title "
+                "FROM fabric_records WHERE dataset_id=? LIMIT 20000", (ds_id,)
             ).fetchall():
-                try:
-                    dd = json.loads(rr["data"]) if rr["data"] else {}
-                except Exception:
-                    continue
-                rid2 = dd.get("id")
-                u2 = _normalize_url(dd.get("url") or "")
+                rid2 = rr["rid"]
+                u2 = _normalize_url(rr["url"] or "")
                 if rid2 and u2:
                     rec2url.setdefault(rid2, u2)
-                    if dd.get("title"):
-                        rec2title.setdefault(rid2, dd["title"])
+                    if rr["title"]:
+                        rec2title.setdefault(rid2, rr["title"])
         except Exception as ex:
             log.debug("graph entity rec map: %s", ex)
         try:
@@ -4364,9 +5168,38 @@ async def _roll_topic_description(topic: str, prev: str, snippets: list) -> str:
     return out[:1200] if out else prev
 
 
+async def _llm_nlp_ok() -> bool:
+    """LLM-NLP gate for ALL of discovery's LLM traffic (tagging, steering,
+    structure extraction, page analysis). Allowed when:
+      • the system-wide LLM-NLP switch (fabric.nlp.set) is ON, or
+      • the call chain originates from a DIRECT human/UI HTTP request (a
+        person is synchronously waiting on this work).
+    Always DENIED inside background contexts (dream cycles, V8 programs,
+    fabric ingest tasks) while the switch is off — that traffic is exactly the
+    GPU-flooding "NLP request" storm the switch exists to stop."""
+    import Vera.vera.capability_orchestration as _orch
+    df = _df()
+    try:
+        if df is not None and hasattr(df, "llm_nlp_enabled") \
+                and await df.llm_nlp_enabled():
+            return True
+    except Exception:
+        pass
+    try:
+        if _orch.BACKGROUND_LLM.get(""):
+            return False
+        return bool(_orch.CURRENT_HTTP_CAP.get(""))
+    except Exception:
+        return False
+
+
 async def _llm_generate(prompt: str, system: str = "", timeout: float = 30.0) -> str:
     """Call the local Ollama cluster via llm.generate. Returns '' on any failure
-    so callers degrade gracefully to non-LLM behaviour."""
+    so callers degrade gracefully to non-LLM behaviour. Subject to the LLM-NLP
+    master switch: automatic/background pipelines get '' (→ regex/spaCy paths)
+    unless the switch is enabled system-wide."""
+    if not await _llm_nlp_ok():
+        return ""
     cap = CAPABILITY_REGISTRY.get("llm.generate")
     if not cap:
         return ""
@@ -5140,7 +5973,7 @@ async def cap_discover_topic(
     synth_infer_edges: bool = True, consolidate_entities: bool = True,
     drift_guard: bool = True, llm_drift_gate: bool = False,
     swallow_domains: bool = True, unlimited_depth: bool = False,
-    topic_brief: bool = False, brief_rounds: int = 3,
+    topic_brief: bool = True, brief_rounds: int = 3,
     loom: bool = True, loom_cross: bool = True, loom_max_datasets: int = 8,
     loom_min_score: float = 0.45,
     tags: str = "", crawl_id: str = "",
@@ -5476,7 +6309,7 @@ async def cap_discover_map_topic(
     synth_infer_edges: bool = True, consolidate_entities: bool = True,
     drift_guard: bool = True, llm_drift_gate: bool = False,
     swallow_domains: bool = True, unlimited_depth: bool = False,
-    topic_brief: bool = False, brief_rounds: int = 3,
+    topic_brief: bool = True, brief_rounds: int = 3,
     trace_id=None,
 ) -> Dict:
     if not topic or not topic.strip():

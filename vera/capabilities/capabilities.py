@@ -15,7 +15,7 @@ from Vera.vera.capability_orchestration import APP  # noqa
     import uvicorn; uvicorn.run(APP, ...)
 """
 
-import asyncio, base64, hashlib, json, logging, math, os, re, textwrap, time, uuid
+import asyncio, base64, hashlib, json, logging, math, os, re, sys, tempfile, textwrap, time, uuid
 from datetime import datetime, timezone
 from typing import Optional, Any
 from urllib.parse import urlparse
@@ -27,11 +27,14 @@ from Vera.vera.capability_orchestration import (
     OLLAMA_INSTANCES, OLLAMA_MODEL,
     UI_PANELS, register_ui,       # panel registry lives in orchestrator
     capability, emit_event, emit_stream,
+    enum_schema,                  # schema= helper: declare multiple-choice arg options
+    media_base, media_slot,       # media-node router (STT / TTS / image-gen)
     now_iso, ollama_generate, pick_instance, schedule,
 )
 
 from Vera.vera.config import cfg
 from Vera.vera.output_formats import apply_format, list_profiles
+from Vera.vera.delivery import list_channels
 
 log = logging.getLogger("vera.caps")
 
@@ -87,7 +90,7 @@ GPU_INFER_URL = cfg.GPU_INFER_URL
 async def gpu_health(trace_id=None):
     try:
         async with httpx.AsyncClient(timeout=5) as c:
-            r = await c.get(f"{GPU_INFER_URL}/health")
+            r = await c.get(f"{media_base('')}/health")
             r.raise_for_status()
             return r.json()
     except Exception as e:
@@ -118,10 +121,11 @@ async def stt_transcribe(
     if language:  data["language"] = language
     if translate: data["task"]     = "translate"
     try:
-        async with httpx.AsyncClient(timeout=60) as c:
-            r = await c.post(f"{GPU_INFER_URL}/stt", files=files, data=data)
-            r.raise_for_status()
-            resp = r.json()
+        async with media_slot("stt") as _mn:
+            async with httpx.AsyncClient(timeout=60) as c:
+                r = await c.post(f"{_mn['url']}/stt", files=files, data=data)
+                r.raise_for_status()
+                resp = r.json()
         return {
             "text":     resp.get("text", ""),
             "language": resp.get("language", ""),
@@ -141,6 +145,7 @@ async def stt_transcribe(
                 "Input: text (str), voice (voice_id e.g. af_heart), speed (float 0.5-2.0), engine (kokoro|coqui). "
                 "Output: {audio_b64, sample_rate, format}. "
                 "Returns base64-encoded WAV audio and sample_rate.",
+    schema=enum_schema(engine=["kokoro", "coqui"]),
 )
 async def tts_synthesize(
     text:     str,
@@ -154,10 +159,11 @@ async def tts_synthesize(
     if engine:   body["engine"]   = engine
     if language: body["language"] = language
     try:
-        async with httpx.AsyncClient(timeout=60) as c:
-            r = await c.post(f"{GPU_INFER_URL}/tts", json=body)
-            r.raise_for_status()
-            data = r.json()
+        async with media_slot("tts") as _mn:
+            async with httpx.AsyncClient(timeout=60) as c:
+                r = await c.post(f"{_mn['url']}/tts", json=body)
+                r.raise_for_status()
+                data = r.json()
         return {
             "audio_b64":   data.get("audio_b64", ""),
             "mime_type":   "audio/wav",
@@ -180,7 +186,7 @@ async def tts_synthesize(
 async def list_tts_voices(trace_id=None):
     try:
         async with httpx.AsyncClient(timeout=8) as c:
-            r = await c.get(f"{GPU_INFER_URL}/tts/voices")
+            r = await c.get(f"{media_base('tts')}/tts/voices")
             r.raise_for_status()
             return r.json()
     except Exception as e:
@@ -198,6 +204,21 @@ async def list_tts_voices(trace_id=None):
 
 
 # ── Stable Diffusion ──────────────────────────────────────────────────────────
+
+# job_id → media-node base URL: image jobs report progress on the node that
+# runs them, so image.progress must poll the same node the job landed on.
+# Bounded: pruned to the most recent ~200 jobs.
+_MEDIA_JOB_BASE: dict = {}
+
+
+def _track_media_job(job_id: str, base_url: str) -> None:
+    if not job_id or not base_url:
+        return
+    _MEDIA_JOB_BASE[job_id] = base_url
+    if len(_MEDIA_JOB_BASE) > 200:
+        for k in list(_MEDIA_JOB_BASE)[:-200]:
+            _MEDIA_JOB_BASE.pop(k, None)
+
 
 def _archive_image(image_b64: str, **meta):
     """Fire-and-forget: persist a generated image into the data fabric via the
@@ -234,19 +255,14 @@ async def image_generate(
     loras:           str   = "",   # e.g. "add_detail:0.8,skin_texture:0.6"
     transparent:     bool  = False,# chroma-key the background out to alpha
     bg_color:        str   = "",   # hex key colour; "" = default green
+    chroma_tol:      int   = 80,   # chroma-key aggressiveness (higher removes more)
     store:           bool  = True, # archive the result to the data fabric
+    job_id:          str   = "",   # optional: poll image.progress with this id while running
+    scheduler:       str   = "",   # per-job sampler (dpmpp|euler|euler_a|unipc|ddim|lcm); "" = default
     trace_id=None,
 ):
     # Parse loras string → list of {name, weight} dicts
-    lora_list = []
-    for part in loras.split(","):
-        part = part.strip()
-        if not part: continue
-        if ":" in part:
-            name, _, weight = part.partition(":")
-            lora_list.append({"name": name.strip(), "weight": float(weight.strip() or 1.0)})
-        else:
-            lora_list.append({"name": part, "weight": 1.0})
+    lora_list = _parse_loras(loras)
 
     body = {
         "prompt": prompt,
@@ -254,15 +270,18 @@ async def image_generate(
         "width": width, "height": height,
         "steps": steps, "guidance": guidance,
         "loras": lora_list,
-        "transparent": transparent, "bg_color": bg_color,
+        "transparent": transparent, "bg_color": bg_color, "chroma_tol": chroma_tol,
+        "job_id": job_id, "scheduler": scheduler,
     }
     if seed >= 0: body["seed"] = seed
 
     try:
-        async with httpx.AsyncClient(timeout=300) as c:
-            r = await c.post(f"{GPU_INFER_URL}/imagine", json=body)
-            r.raise_for_status()
-            data = r.json()
+        async with media_slot("imagegen") as _mn:
+            _track_media_job(job_id, _mn["url"])
+            async with httpx.AsyncClient(timeout=300) as c:
+                r = await c.post(f"{_mn['url']}/imagine", json=body)
+                r.raise_for_status()
+                data = r.json()
         img_b64 = data.get("image_b64", "")
         if store:
             _archive_image(img_b64, prompt=prompt, negative_prompt=negative_prompt,
@@ -294,11 +313,478 @@ async def image_generate(
 async def list_loras(trace_id=None):
     try:
         async with httpx.AsyncClient(timeout=8) as c:
-            r = await c.get(f"{GPU_INFER_URL}/sd/loras")
+            r = await c.get(f"{media_base('imagegen')}/sd/loras")
             r.raise_for_status()
             return r.json()
     except Exception as e:
         return {"error": str(e), "loras": []}
+
+
+CIVITAI_API = os.getenv("CIVITAI_API_BASE", "https://civitai.com/api/v1").rstrip("/")
+HF_API      = os.getenv("HF_API_BASE", "https://huggingface.co/api").rstrip("/")
+
+
+class _MarketUnavailable(Exception):
+    """A marketplace endpoint could not be used (geo-block, network, auth)."""
+    def __init__(self, msg: str, geo: bool = False):
+        super().__init__(msg)
+        self.geo = geo
+
+
+def _market_client(timeout: float = 20):
+    """httpx client for marketplace calls. Honours HTTPS_PROXY/HTTP_PROXY (httpx
+    trust_env default) plus an explicit CIVITAI_PROXY override for geo-blocked
+    hosts. `proxy=` is httpx>=0.26; older builds take `proxies=`."""
+    kw = {"timeout": timeout, "follow_redirects": True,
+          "headers": {"User-Agent": "vera-image-studio/1.0"}}
+    proxy = os.getenv("CIVITAI_PROXY", "").strip()
+    if proxy:
+        try:
+            return httpx.AsyncClient(proxy=proxy, **kw)
+        except TypeError:
+            return httpx.AsyncClient(proxies=proxy, **kw)
+    return httpx.AsyncClient(**kw)
+
+
+async def _market_get_json(url: str, params=None, headers=None, timeout: float = 20,
+                           retries: int = 2, host_label: str = "marketplace"):
+    """GET JSON with retries and explicit geo-block/HTML detection. Civitai
+    geo-blocks some regions (e.g. UK) — those come back as 401/403/451 or a
+    Cloudflare/consent HTML page instead of JSON."""
+    last = None
+    for attempt in range(max(1, retries)):
+        try:
+            async with _market_client(timeout) as c:
+                r = await c.get(url, params=params, headers=headers or {})
+            if r.status_code in (401, 403, 451):
+                raise _MarketUnavailable(
+                    f"{host_label} refused the request (HTTP {r.status_code} — likely "
+                    f"geo-restricted from this server or an invalid/required token). "
+                    f"Fixes: set CIVITAI_PROXY (or HTTPS_PROXY) to route around the "
+                    f"block, set CIVITAI_API_BASE to a reachable mirror, set "
+                    f"CIVITAI_TOKEN, or search provider=huggingface instead.",
+                    geo=r.status_code in (403, 451))
+            ctype = (r.headers.get("content-type") or "").lower()
+            if "json" not in ctype:
+                raise _MarketUnavailable(
+                    f"{host_label} returned {ctype or 'no content-type'} instead of JSON "
+                    f"(HTTP {r.status_code}) — usually a Cloudflare/geo-block interstitial. "
+                    f"Set CIVITAI_PROXY / HTTPS_PROXY or use provider=huggingface.",
+                    geo=True)
+            r.raise_for_status()
+            return r.json()
+        except _MarketUnavailable:
+            raise
+        except Exception as e:
+            last = e
+            if attempt + 1 < retries:
+                await asyncio.sleep(0.8 * (attempt + 1))
+    raise _MarketUnavailable(f"{host_label} unreachable: {last}")
+
+
+async def _civitai_search(query: str, limit: int, sort: str, base_model: str,
+                          nsfw: bool) -> list:
+    params = {"types": "LORA", "limit": min(max(1, int(limit)), 50),
+              "sort": sort, "nsfw": str(bool(nsfw)).lower()}
+    if query:
+        params["query"] = query
+    if base_model:
+        params["baseModels"] = base_model
+    headers = {}
+    tok = os.getenv("CIVITAI_TOKEN", "")
+    if tok:
+        headers["Authorization"] = f"Bearer {tok}"
+    data = await _market_get_json(f"{CIVITAI_API}/models", params=params,
+                                  headers=headers, host_label="Civitai")
+    out = []
+    for m in (data.get("items") or []):
+        vers = m.get("modelVersions") or []
+        if not vers:
+            continue
+        v = vers[0]
+        files = v.get("files") or []
+        f = next((x for x in files if x.get("type") == "Model"), files[0] if files else None)
+        if not f:
+            continue
+        thumb = next((i.get("url") for i in (v.get("images") or []) if i.get("url")), "")
+        stats = m.get("stats") or {}
+        out.append({
+            "name": m.get("name", ""), "id": m.get("id"), "version_id": v.get("id"),
+            "base_model": v.get("baseModel", ""), "thumb": thumb,
+            "download_url": f.get("downloadUrl") or v.get("downloadUrl", ""),
+            "filename": f.get("name", ""),
+            "size_mb": round((f.get("sizeKB") or 0) / 1024, 1),
+            "downloads": stats.get("downloadCount", 0), "rating": stats.get("rating", 0),
+            "nsfw": m.get("nsfw", False), "tags": (m.get("tags") or [])[:6],
+            "provider": "civitai",
+        })
+    return out
+
+
+_HF_BASE_HINTS = (("xl", "SDXL 1.0"), ("flux", "Flux.1 D"), ("pony", "Pony"),
+                  ("v1-5", "SD 1.5"), ("v1.5", "SD 1.5"), ("sd15", "SD 1.5"),
+                  ("stable-diffusion-3", "SD 3"), ("stable-diffusion-2", "SD 2.1"))
+
+
+async def _hf_search(query: str, limit: int, sort: str, base_model: str) -> list:
+    """LoRA search on the HuggingFace Hub — not geo-restricted, no key needed.
+    Used as the automatic fallback when Civitai is blocked."""
+    hf_sort = {"Most Downloaded": "downloads", "Highest Rated": "likes",
+               "Newest": "lastModified"}.get(sort, "downloads")
+    params = {"filter": "lora", "sort": hf_sort, "direction": "-1",
+              "limit": min(max(1, int(limit)), 50), "full": "true"}
+    if query:
+        params["search"] = query
+    headers = {}
+    tok = os.getenv("HF_TOKEN", "")
+    if tok:
+        headers["Authorization"] = f"Bearer {tok}"
+    data = await _market_get_json(f"{HF_API}/models", params=params,
+                                  headers=headers, host_label="HuggingFace")
+    out = []
+    for m in (data if isinstance(data, list) else []):
+        mid = m.get("modelId") or m.get("id") or ""
+        sibs = [s.get("rfilename") or "" for s in (m.get("siblings") or [])]
+        weights = [f for f in sibs if f.lower().endswith((".safetensors", ".pt", ".bin"))
+                   and "text_encoder" not in f.lower()]
+        if not mid or not weights:
+            continue
+        # Prefer an explicitly lora-named weight file, else the first one.
+        wfile = next((f for f in weights if "lora" in f.lower()), weights[0])
+        preview = next((f for f in sibs
+                        if f.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))), "")
+        tags = m.get("tags") or []
+        base = ""
+        base_tag = next((t for t in tags if t.startswith("base_model:")), "")
+        for hint, label in _HF_BASE_HINTS:
+            if hint in base_tag.lower():
+                base = label
+                break
+        nice_tags = [t for t in tags
+                     if ":" not in t and t not in ("lora", "diffusers", "safetensors")][:6]
+        out.append({
+            "name": mid.split("/")[-1], "id": mid, "version_id": "",
+            "base_model": base, "thumb":
+                f"https://huggingface.co/{mid}/resolve/main/{preview}" if preview else "",
+            "download_url": f"https://huggingface.co/{mid}/resolve/main/{wfile}",
+            "filename": wfile.split("/")[-1], "size_mb": 0,
+            "downloads": m.get("downloads", 0), "rating": m.get("likes", 0),
+            "nsfw": False, "tags": nice_tags, "provider": "huggingface",
+        })
+    # HF can't filter by SD base model server-side — apply a lenient local filter,
+    # but never filter down to nothing.
+    if base_model:
+        bl = base_model.lower().replace(" ", "")
+        kept = [o for o in out if not o["base_model"]
+                or bl.startswith(o["base_model"].lower().replace(" ", "")[:4])
+                or o["base_model"].lower().replace(" ", "")[:4] in bl]
+        if kept:
+            out = kept
+    return out
+
+
+# ── LoRA blob store (Garage/S3 via the data-fabric ObjectStore) ──────────────
+# LoRAs installed on a GPU node live only on that node's disk. Storing them in the
+# shared object store makes them durable and installable onto ANY GPU node, and
+# gives us a searchable "my store" provider. Layout in the default bucket:
+#   loras/<filename>       the .safetensors weights
+#   loras/<stem>.json      a metadata sidecar (name/base_model/tags/thumb/source/…)
+_LORA_PREFIX = "loras/"
+
+
+def _object_store():
+    """The data-fabric ObjectStore, or None when the blob store isn't configured."""
+    fab = sys.modules.get("data_fabric")
+    store = getattr(fab, "OBJECT_STORE", None) if fab else None
+    if store is None or getattr(fab, "FABRIC_OBJECT_STORE", "none") == "none":
+        return None
+    return store
+
+
+async def _obj_call(fn, *args):
+    """Run a blocking boto3/ObjectStore call off the event loop."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, lambda: fn(*args))
+
+
+def _lora_filename(url: str, filename: str = "") -> str:
+    name = (filename or "").strip() or os.path.basename(urlparse(url).path) or "lora.safetensors"
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
+    if not name.lower().endswith((".safetensors", ".pt", ".bin", ".ckpt")):
+        name += ".safetensors"
+    return name
+
+
+async def _lora_store_from_url(store, url: str, filename: str, meta: dict, token: str = "") -> dict:
+    """Stream-download a LoRA and put it (plus a JSON metadata sidecar) into the
+    object store. Returns {key, filename, size_mb, stored} or {error}."""
+    fname = _lora_filename(url, filename)
+    stem = fname.rsplit(".", 1)[0]
+    key = _LORA_PREFIX + fname
+    headers = {"User-Agent": "vera-image-studio/1.0"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    elif "civitai.com" in url and os.getenv("CIVITAI_TOKEN"):
+        headers["Authorization"] = f"Bearer {os.getenv('CIVITAI_TOKEN')}"
+    elif "huggingface.co" in url and os.getenv("HF_TOKEN"):
+        headers["Authorization"] = f"Bearer {os.getenv('HF_TOKEN')}"
+    tmp = os.path.join(tempfile.gettempdir(), f"vera_lora_{uuid.uuid4().hex}_{fname}")
+    size = 0
+    try:
+        async with httpx.AsyncClient(timeout=900, follow_redirects=True) as c:
+            async with c.stream("GET", url, headers=headers) as r:
+                if r.status_code >= 400:
+                    return {"error": f"download failed (HTTP {r.status_code}) — needs a token / gated repo?"}
+                with open(tmp, "wb") as fh:
+                    async for chunk in r.aiter_bytes(1 << 20):
+                        fh.write(chunk); size += len(chunk)
+        if size < 1024:
+            return {"error": "download too small — the URL likely returned an error page, not a model"}
+        size_mb = round(size / (1024 * 1024), 1)
+        if not await _obj_call(store.upload_file, key, tmp, "application/octet-stream"):
+            return {"error": "object-store upload failed (check FABRIC_S3_* and the bucket)"}
+        sidecar = {"name": meta.get("name") or stem, "filename": fname, "key": key,
+                   "base_model": meta.get("base_model", ""), "tags": meta.get("tags", []),
+                   "thumb": meta.get("thumb", ""), "nsfw": bool(meta.get("nsfw", False)),
+                   "source": meta.get("source", ""), "source_url": url,
+                   "size_mb": size_mb, "stored_at": now_iso()}
+        await _obj_call(store.put, _LORA_PREFIX + stem + ".json",
+                        json.dumps(sidecar).encode("utf-8"), "application/json")
+        return {"key": key, "filename": fname, "size_mb": size_mb, "stored": True,
+                "name": sidecar["name"]}
+    except Exception as e:
+        return {"error": f"store failed: {e}"}
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+async def _blob_search(store, query: str, base_model: str, nsfw: bool, limit: int) -> list:
+    """Search the object store's LoRA registry by reading the .json sidecars."""
+    keys = await _obj_call(store.list_prefix, _LORA_PREFIX)
+    q = (query or "").lower().strip()
+    bl = (base_model or "").lower().replace(" ", "")
+    out = []
+    for k in keys:
+        if not k.endswith(".json"):
+            continue
+        raw = await _obj_call(store.get, k)
+        if not raw:
+            continue
+        try:
+            m = json.loads(raw.decode("utf-8"))
+        except Exception:
+            continue
+        if not nsfw and m.get("nsfw"):
+            continue
+        hay = " ".join([m.get("name", ""), m.get("filename", ""),
+                        " ".join(m.get("tags", []) or []), m.get("base_model", "")]).lower()
+        if q and q not in hay:
+            continue
+        if bl and m.get("base_model") and bl[:4] not in m["base_model"].lower().replace(" ", ""):
+            continue
+        out.append({
+            "name": m.get("name", ""), "id": m.get("key", ""), "version_id": "",
+            "base_model": m.get("base_model", ""), "thumb": m.get("thumb", ""),
+            "download_url": "", "blob_key": m.get("key", ""),
+            "filename": m.get("filename", ""), "size_mb": m.get("size_mb", 0),
+            "downloads": 0, "rating": 0, "nsfw": bool(m.get("nsfw", False)),
+            "tags": (m.get("tags") or [])[:6], "provider": "blob",
+        })
+        if len(out) >= max(1, min(int(limit), 100)):
+            break
+    return out
+
+
+@capability(
+    "sd.lora_search",
+    http_method="GET", http_path="/sd/lora_search", http_tags=["gpu", "sd", "lora"],
+    memory="off",
+    description="Search LoRA sources. Inputs: query (str), limit (int<=50), sort "
+                "(Most Downloaded|Highest Rated|Newest), base_model ('SD 1.5', 'SDXL 1.0', "
+                "… optional filter), nsfw (bool), provider (auto|civitai|huggingface|blob). "
+                "'blob' searches YOUR object-store LoRA library (durable, cross-node). 'auto' "
+                "surfaces blob matches first, then tries Civitai and falls back to HuggingFace "
+                "when Civitai is geo-blocked/unreachable (it is blocked in some regions, e.g. "
+                "the UK). Output: {results:[{name, id, base_model, thumb, download_url, "
+                "blob_key, filename, size_mb, downloads, rating, nsfw, tags, provider}], count, "
+                "provider_used, warnings}. Env: CIVITAI_TOKEN, CIVITAI_PROXY/HTTPS_PROXY, "
+                "CIVITAI_API_BASE, HF_TOKEN, FABRIC_OBJECT_STORE/FABRIC_S3_*.",
+    schema=enum_schema(sort=["Most Downloaded", "Highest Rated", "Newest"],
+                       provider=["auto", "civitai", "huggingface", "blob"]),
+)
+async def sd_lora_search(query: str = "", limit: int = 24, sort: str = "Most Downloaded",
+                         base_model: str = "", nsfw: bool = False, provider: str = "auto",
+                         trace_id=None):
+    provider = (provider or "auto").lower()
+    warnings: list = []
+    results: list = []
+    used = ""
+    store = _object_store()
+    # blob store — your own durable LoRAs, searched first in 'auto'.
+    if provider == "blob":
+        if not store:
+            return {"error": "object store not configured (set FABRIC_OBJECT_STORE=garage + "
+                             "FABRIC_S3_*)", "results": [], "count": 0}
+        try:
+            results = await _blob_search(store, query, base_model, nsfw, limit)
+        except Exception as e:
+            return {"error": f"blob store search failed: {e}", "results": [], "count": 0}
+        return {"results": results, "count": len(results), "provider_used": "blob",
+                "warnings": warnings}
+    blob_results: list = []
+    if provider == "auto" and store:
+        try:
+            blob_results = await _blob_search(store, query, base_model, nsfw, limit)
+            if blob_results:
+                warnings.append(f"{len(blob_results)} from your blob store.")
+        except Exception:
+            pass
+    if provider in ("auto", "civitai"):
+        try:
+            results = await _civitai_search(query, limit, sort, base_model, nsfw)
+            used = "civitai"
+            if not results and provider == "auto":
+                warnings.append("Civitai returned no matches — also searching HuggingFace.")
+        except _MarketUnavailable as e:
+            if provider == "civitai":
+                return {"error": f"Civitai search failed: {e}", "results": [],
+                        "count": 0, "geo_blocked": e.geo, "warnings": warnings}
+            warnings.append(f"Civitai unavailable → falling back to HuggingFace. ({e})")
+        except Exception as e:
+            if provider == "civitai":
+                return {"error": f"Civitai search failed: {e}", "results": [], "count": 0,
+                        "warnings": warnings}
+            warnings.append(f"Civitai search failed → falling back to HuggingFace. ({e})")
+    if not results and provider in ("auto", "huggingface"):
+        try:
+            results = await _hf_search(query, limit, sort, base_model)
+            used = "huggingface"
+        except Exception as e:
+            msg = f"HuggingFace search failed: {e}"
+            if warnings:  # both providers down — surface everything
+                msg = " | ".join(warnings + [msg])
+            if not blob_results:
+                return {"error": msg, "results": [], "count": 0, "warnings": warnings}
+            warnings.append(msg)
+    results = blob_results + results
+    return {"results": results, "count": len(results),
+            "provider_used": used or ("blob" if blob_results else ""), "warnings": warnings}
+
+
+@capability(
+    "sd.lora_install",
+    http_method="POST", http_path="/sd/lora_install", http_tags=["gpu", "sd", "lora"],
+    memory="off",
+    description="Download a LoRA into the GPU node's SD_LORA_DIR so it can be used in "
+                "generation. Inputs: url (the .safetensors download URL — e.g. a Civitai "
+                "download_url), blob_key (install FROM your object store instead of a URL — "
+                "presigned and handed to the GPU node), filename (optional), token (optional "
+                "bearer; Civitai downloads may need one, else CIVITAI_TOKEN on the GPU host), "
+                "store_blob (bool — also save a durable copy to the object store). Output: "
+                "{name, filename, size_mb, blob?} or {error}. Large files can take a while.",
+)
+async def sd_lora_install(url: str = "", filename: str = "", token: str = "",
+                          store_blob: bool = False, blob_key: str = "", trace_id=None):
+    store = _object_store()
+    src_url = url
+    if blob_key:
+        if not store:
+            return {"error": "object store not configured — cannot install from blob"}
+        src_url = await _obj_call(store.presign, blob_key, "get", "", 3600)
+        if not src_url:
+            return {"error": f"could not presign blob '{blob_key}'"}
+        if not filename:
+            filename = os.path.basename(blob_key)
+    if not src_url:
+        return {"error": "url or blob_key required"}
+    try:
+        async with httpx.AsyncClient(timeout=900) as c:
+            r = await c.post(f"{media_base('imagegen')}/sd/loras/download",
+                             json={"url": src_url, "filename": filename, "token": token})
+            r.raise_for_status()
+            res = r.json()
+    except Exception as e:
+        return {"error": str(e)}
+    if isinstance(res, dict) and res.get("error"):
+        return res
+    # Opt-in: mirror the just-installed LoRA into the durable object store too.
+    if store_blob and url and store:
+        res["blob"] = await _lora_store_from_url(
+            store, url, filename or (res or {}).get("filename", ""),
+            {"name": (res or {}).get("name") or filename, "source": "install"}, token)
+    return res
+
+
+@capability(
+    "sd.lora_store",
+    http_method="POST", http_path="/sd/lora_store", http_tags=["gpu", "sd", "lora"],
+    memory="off",
+    description="Save a LoRA into Vera's object store (Garage/S3 blob store) for durable, "
+                "cross-node storage independent of any single GPU host — Vera streams the file "
+                "in and writes a searchable metadata sidecar. Later install it onto any GPU "
+                "node with sd.lora_install(blob_key=…), or find it via sd.lora_search "
+                "(provider=blob). Inputs: url (str! .safetensors URL), filename, name, "
+                "base_model, tags (csv), thumb, nsfw (bool), source, token (optional bearer). "
+                "Output: {key, filename, size_mb, stored} or {error}.",
+)
+async def sd_lora_store(url: str = "", filename: str = "", name: str = "", base_model: str = "",
+                        tags: str = "", thumb: str = "", nsfw: bool = False, source: str = "",
+                        token: str = "", trace_id=None):
+    if not url:
+        return {"error": "url required"}
+    store = _object_store()
+    if not store:
+        return {"error": "object store not configured (set FABRIC_OBJECT_STORE=garage + "
+                         "FABRIC_S3_ENDPOINT/ACCESS/SECRET)"}
+    meta = {"name": name or filename, "base_model": base_model,
+            "tags": [t.strip() for t in tags.split(",") if t.strip()],
+            "thumb": thumb, "nsfw": bool(nsfw), "source": source or "url"}
+    return await _lora_store_from_url(store, url, filename, meta, token)
+
+
+@capability(
+    "sd.lora_store_delete",
+    http_method="POST", http_path="/sd/lora_store_delete", http_tags=["gpu", "sd", "lora"],
+    memory="off",
+    description="Remove a LoRA (weights + metadata sidecar) from the object store. Input: "
+                "key (the blob_key, e.g. 'loras/foo.safetensors'). Output: {removed:[keys]}.",
+)
+async def sd_lora_store_delete(key: str = "", trace_id=None):
+    store = _object_store()
+    if not store:
+        return {"error": "object store not configured"}
+    if not key:
+        return {"error": "key required"}
+    base = key[len(_LORA_PREFIX):] if key.startswith(_LORA_PREFIX) else key
+    stem = base.rsplit(".", 1)[0]
+    removed = []
+    for k in (key if key.startswith(_LORA_PREFIX) else _LORA_PREFIX + key,
+              _LORA_PREFIX + stem + ".json"):
+        if await _obj_call(store.delete, k):
+            removed.append(k)
+    return {"removed": removed}
+
+
+@capability(
+    "sd.lora_delete",
+    http_method="POST", http_path="/sd/lora_delete", http_tags=["gpu", "sd", "lora"],
+    memory="off",
+    description="Delete an installed LoRA from the GPU node's SD_LORA_DIR. Input: name "
+                "(filename stem). Output: {removed:[filenames]} or {error}.",
+)
+async def sd_lora_delete(name: str, trace_id=None):
+    if not name:
+        return {"error": "name required"}
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.post(f"{media_base('imagegen')}/sd/loras/delete", json={"name": name})
+            r.raise_for_status()
+            return r.json()
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @capability(
@@ -326,19 +812,13 @@ async def image_img2img(
     loras:           str   = "",
     transparent:     bool  = False,# chroma-key the background out to alpha
     bg_color:        str   = "",   # hex key colour; "" = default green
+    chroma_tol:      int   = 80,   # chroma-key aggressiveness (higher removes more)
     store:           bool  = True, # archive the result to the data fabric
+    job_id:          str   = "",   # optional: poll image.progress with this id while running
+    scheduler:       str   = "",   # per-job sampler (dpmpp|euler|euler_a|unipc|ddim|lcm); "" = default
     trace_id=None,
 ):
-    lora_list = []
-    for part in (loras or "").split(","):
-        part = part.strip()
-        if not part:
-            continue
-        if ":" in part:
-            name, _, weight = part.partition(":")
-            lora_list.append({"name": name.strip(), "weight": float(weight.strip() or 1.0)})
-        else:
-            lora_list.append({"name": part, "weight": 1.0})
+    lora_list = _parse_loras(loras)
 
     body = {
         "prompt": prompt,
@@ -348,16 +828,19 @@ async def image_img2img(
         "width": width, "height": height,
         "steps": steps, "guidance": guidance,
         "loras": lora_list,
-        "transparent": transparent, "bg_color": bg_color,
+        "transparent": transparent, "bg_color": bg_color, "chroma_tol": chroma_tol,
+        "job_id": job_id, "scheduler": scheduler,
     }
     if seed >= 0:
         body["seed"] = seed
 
     try:
-        async with httpx.AsyncClient(timeout=300) as c:
-            r = await c.post(f"{GPU_INFER_URL}/img2img", json=body)
-            r.raise_for_status()
-            data = r.json()
+        async with media_slot("imagegen") as _mn:
+            _track_media_job(job_id, _mn["url"])
+            async with httpx.AsyncClient(timeout=300) as c:
+                r = await c.post(f"{_mn['url']}/img2img", json=body)
+                r.raise_for_status()
+                data = r.json()
         img_b64 = data.get("image_b64", "")
         if store:
             _archive_image(img_b64, prompt=prompt, negative_prompt=negative_prompt,
@@ -378,6 +861,60 @@ async def image_img2img(
 
 
 @capability(
+    "image.expression",
+    http_method="POST", http_path="/image/expression", http_tags=["gpu", "sd", "image"],
+    memory="off",
+    description="Change ONLY the face of a character image to a new expression, keeping "
+                "the background/body/framing identical (face-region img2img composited "
+                "back via face detection). Inputs: base_image_b64 (str!), prompt "
+                "(identity+expression), negative_prompt, strength (0-1), steps, guidance, "
+                "seed, face_box ('x,y,w,h' or omit to auto-detect), pad. Output: "
+                "{image_b64, face_detected, face_method, face_box, device}.",
+)
+async def image_expression(
+    base_image_b64:  str,
+    prompt:          str,
+    negative_prompt: str   = "blurry, low quality, distorted",
+    strength:        float = 0.5,
+    steps:           int   = 20,
+    guidance:        float = 7.5,
+    seed:            int   = -1,
+    face_box:        str   = "",   # "x,y,w,h" or empty = auto-detect
+    pad:             float = 0.45,
+    trace_id=None,
+):
+    body = {
+        "base_image_b64": base_image_b64, "prompt": prompt,
+        "negative_prompt": negative_prompt, "strength": strength,
+        "steps": steps, "guidance": guidance, "pad": pad,
+    }
+    if seed >= 0:
+        body["seed"] = seed
+    if face_box:
+        try:
+            body["face_box"] = [int(v) for v in face_box.split(",")][:4]
+        except Exception:
+            pass
+    try:
+        async with httpx.AsyncClient(timeout=300) as c:
+            r = await c.post(f"{media_base('imagegen')}/expression", json=body)
+            r.raise_for_status()
+            data = r.json()
+        return {
+            "image_b64":     data.get("image_b64", ""),
+            "mime_type":     "image/png",
+            "face_detected": data.get("face_detected"),
+            "face_method":   data.get("face_method"),
+            "face_box":      data.get("face_box"),
+            "device":        data.get("device"),
+            "format":        "png",
+        }
+    except Exception as e:
+        log.error("image.expression: %s", e)
+        return {"error": str(e), "image_b64": ""}
+
+
+@capability(
     "image.sd_capabilities",
     http_method="GET", http_path="/image/sd_capabilities", http_tags=["gpu", "sd"],
     memory="off",
@@ -389,7 +926,7 @@ async def image_img2img(
 async def image_sd_capabilities(trace_id=None):
     try:
         async with httpx.AsyncClient(timeout=8) as c:
-            r = await c.get(f"{GPU_INFER_URL}/sd/capabilities")
+            r = await c.get(f"{media_base('imagegen')}/sd/capabilities")
             r.raise_for_status()
             return r.json()
     except Exception as e:
@@ -398,6 +935,217 @@ async def image_sd_capabilities(trace_id=None):
             "txt2img": True, "img2img": False, "controlnet": False,
             "talking_head": False, "error": str(e),
         }
+
+
+@capability(
+    "image.progress",
+    http_method="GET", http_path="/image/progress", http_tags=["gpu", "sd", "image"],
+    memory="off", silent=True,
+    description="Live progress of an in-flight GPU image job that was started with a "
+                "job_id (image.generate / image.img2img / image.pose / image.ipadapter, "
+                "and the spritegen.generate_* caps). Input: job_id (str!). Output: "
+                "{phase: queue|diffusion|chroma-key|rembg|upscale|done|error, step, total, "
+                "preview_b64?} — preview_b64 is a small approximate render of the "
+                "diffusion state, refreshed every few steps, so a UI can show the image "
+                "forming. Returns {phase:'unknown'} until the GPU node has seen the job.",
+)
+async def image_progress(job_id: str = "", trace_id=None):
+    if not job_id:
+        return {"error": "job_id required", "phase": "unknown"}
+    try:
+        # Poll the node the job actually started on (see _MEDIA_JOB_BASE).
+        base = _MEDIA_JOB_BASE.get(job_id) or media_base("imagegen")
+        async with httpx.AsyncClient(timeout=6) as c:
+            r = await c.get(f"{base}/progress/{job_id}")
+            if r.status_code == 404:
+                return {"phase": "unknown", "job_id": job_id}
+            r.raise_for_status()
+            return r.json()
+    except Exception as e:
+        return {"error": str(e), "phase": "unknown", "job_id": job_id}
+
+
+def _parse_loras(loras: str):
+    out = []
+    for part in (loras or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if ":" in part:
+            name, _, weight = part.partition(":")
+            out.append({"name": name.strip(), "weight": float(weight.strip() or 1.0)})
+        else:
+            out.append({"name": part, "weight": 1.0})
+    return out
+
+
+@capability(
+    "image.rembg",
+    http_method="POST", http_path="/image/rembg", http_tags=["gpu", "sd", "image"],
+    memory="off",
+    description="Remove an image's background to transparent RGBA via rembg/SAM2 on the GPU "
+                "node (u2net by default). Input: image_b64 (base64 PNG/JPEG), model "
+                "(u2net|u2netp|isnet-general-use|...), alpha_matting (bool, refine soft/hair "
+                "edges), fg_threshold/bg_threshold/erode (alpha-matting tuning), post_process "
+                "(bool, clean the mask). Output: {image_b64, mime_type, device}. Returns {error} "
+                "if the server lacks rembg — callers should chroma-key instead.",
+)
+async def image_rembg(image_b64: str, model: str = "u2net", alpha_matting: bool = False,
+                      fg_threshold: int = 240, bg_threshold: int = 10, erode: int = 10,
+                      post_process: bool = False, trace_id=None):
+    try:
+        async with httpx.AsyncClient(timeout=180) as c:
+            r = await c.post(f"{media_base('imagegen')}/rembg",
+                             json={"image_b64": image_b64, "model": model,
+                                   "alpha_matting": alpha_matting, "fg_threshold": fg_threshold,
+                                   "bg_threshold": bg_threshold, "erode": erode,
+                                   "post_process": post_process})
+            r.raise_for_status()
+            data = r.json()
+        return {"image_b64": data.get("image_b64", ""), "mime_type": "image/png",
+                "device": data.get("device")}
+    except Exception as e:
+        log.error("image.rembg: %s", e)
+        return {"error": str(e), "image_b64": ""}
+
+
+@capability(
+    "image.pose",
+    http_method="POST", http_path="/image/pose", http_tags=["gpu", "sd", "image"],
+    memory="on",
+    description="Generate an image conditioned on a pose via ControlNet OpenPose on the GPU "
+                "node. Inputs: prompt, control_image_b64 (a pose/skeleton PNG) OR ref_image_b64 "
+                "(derive the OpenPose skeleton from it), ref_image_b64 (also used for IP-Adapter "
+                "identity when given), negative_prompt, strength, steps, guidance, seed, "
+                "width/height, loras ('name:weight' csv), transparent, bg_color. Output: "
+                "{image_b64, device}. Returns {error} if ControlNet is not installed.",
+)
+async def image_pose(
+    prompt:          str,
+    control_image_b64: str = "",
+    ref_image_b64:   str = "",
+    negative_prompt: str   = "blurry, low quality, distorted",
+    strength:        float = 1.0,
+    steps:           int   = 24,
+    guidance:        float = 7.5,
+    seed:            int   = -1,
+    width:           int   = 768,
+    height:          int   = 768,
+    loras:           str   = "",
+    transparent:     bool  = False,
+    bg_color:        str   = "",
+    chroma_tol:      int   = 80,
+    store:           bool  = False,
+    job_id:          str   = "",
+    scheduler:       str   = "",   # per-job sampler (dpmpp|euler|euler_a|unipc|ddim|lcm); "" = default
+    trace_id=None,
+):
+    body = {
+        "prompt": prompt, "control_image_b64": control_image_b64,
+        "ref_image_b64": ref_image_b64, "negative_prompt": negative_prompt,
+        "strength": strength, "width": width, "height": height,
+        "steps": steps, "guidance": guidance, "loras": _parse_loras(loras),
+        "transparent": transparent, "bg_color": bg_color, "chroma_tol": chroma_tol,
+        "job_id": job_id, "scheduler": scheduler,
+    }
+    if seed >= 0:
+        body["seed"] = seed
+    try:
+        async with httpx.AsyncClient(timeout=300) as c:
+            r = await c.post(f"{media_base('imagegen')}/controlnet/pose", json=body)
+            r.raise_for_status()
+            data = r.json()
+        img_b64 = data.get("image_b64", "")
+        if store:
+            _archive_image(img_b64, prompt=prompt, negative_prompt=negative_prompt,
+                           seed=int(data.get("seed") or -1), device=data.get("device") or "",
+                           steps=steps, guidance=guidance, width=width, height=height,
+                           source="controlnet")
+        return {"image_b64": img_b64, "mime_type": "image/png", "device": data.get("device")}
+    except Exception as e:
+        log.error("image.pose: %s", e)
+        return {"error": str(e), "image_b64": ""}
+
+
+@capability(
+    "image.ipadapter",
+    http_method="POST", http_path="/image/ipadapter", http_tags=["gpu", "sd", "image"],
+    memory="on",
+    description="Generate an identity-locked image from a reference via IP-Adapter on the GPU "
+                "node (keeps face/clothing/proportions consistent across new poses). Inputs: "
+                "prompt, ref_image_b64 (str!), scale (0-1 identity strength), negative_prompt, "
+                "steps, guidance, seed, width/height, loras, transparent, bg_color, "
+                "control_image_b64 (optional, combine with ControlNet pose). Output: "
+                "{image_b64, device}. Returns {error} if IP-Adapter is not installed.",
+)
+async def image_ipadapter(
+    prompt:          str,
+    ref_image_b64:   str,
+    scale:           float = 0.6,
+    control_image_b64: str = "",
+    negative_prompt: str   = "blurry, low quality, distorted",
+    steps:           int   = 24,
+    guidance:        float = 7.5,
+    seed:            int   = -1,
+    width:           int   = 768,
+    height:          int   = 768,
+    loras:           str   = "",
+    transparent:     bool  = False,
+    bg_color:        str   = "",
+    chroma_tol:      int   = 80,
+    store:           bool  = False,
+    job_id:          str   = "",
+    scheduler:       str   = "",   # per-job sampler (dpmpp|euler|euler_a|unipc|ddim|lcm); "" = default
+    trace_id=None,
+):
+    body = {
+        "prompt": prompt, "ref_image_b64": ref_image_b64, "scale": scale,
+        "control_image_b64": control_image_b64, "negative_prompt": negative_prompt,
+        "width": width, "height": height, "steps": steps, "guidance": guidance,
+        "loras": _parse_loras(loras), "transparent": transparent, "bg_color": bg_color,
+        "chroma_tol": chroma_tol, "job_id": job_id, "scheduler": scheduler,
+    }
+    if seed >= 0:
+        body["seed"] = seed
+    try:
+        async with httpx.AsyncClient(timeout=300) as c:
+            r = await c.post(f"{media_base('imagegen')}/ipadapter", json=body)
+            r.raise_for_status()
+            data = r.json()
+        img_b64 = data.get("image_b64", "")
+        if store:
+            _archive_image(img_b64, prompt=prompt, negative_prompt=negative_prompt,
+                           seed=int(data.get("seed") or -1), device=data.get("device") or "",
+                           steps=steps, guidance=guidance, width=width, height=height,
+                           source="ipadapter")
+        return {"image_b64": img_b64, "mime_type": "image/png", "device": data.get("device")}
+    except Exception as e:
+        log.error("image.ipadapter: %s", e)
+        return {"error": str(e), "image_b64": ""}
+
+
+@capability(
+    "image.upscale",
+    http_method="POST", http_path="/image/upscale", http_tags=["gpu", "sd", "image"],
+    memory="off",
+    description="Upscale an image with Real-ESRGAN on the GPU node. Inputs: image_b64 (str!), "
+                "scale (2|4), model (RealESRGAN_x4plus|RealESRGAN_x4plus_anime_6B|...). Output: "
+                "{image_b64, device}. Returns {error} if ESRGAN is not installed — callers "
+                "should fall back to a Lanczos resize.",
+    schema=enum_schema(scale=[2, 4]),
+)
+async def image_upscale(image_b64: str, scale: int = 4, model: str = "", trace_id=None):
+    try:
+        async with httpx.AsyncClient(timeout=300) as c:
+            r = await c.post(f"{media_base('imagegen')}/upscale",
+                             json={"image_b64": image_b64, "scale": scale, "model": model})
+            r.raise_for_status()
+            data = r.json()
+        return {"image_b64": data.get("image_b64", ""), "mime_type": "image/png",
+                "device": data.get("device")}
+    except Exception as e:
+        log.error("image.upscale: %s", e)
+        return {"error": str(e), "image_b64": ""}
 
 
 @capability(
@@ -411,6 +1159,10 @@ async def image_sd_capabilities(trace_id=None):
                 "guidance, seed, loras, title, subtitle, position (top|center|bottom), "
                 "text_color, stroke_color. Output: {image_b64, width, height, device}. "
                 "Archived to the data fabric (source=thumbnail).",
+    schema=enum_schema(
+        preset=["youtube", "youtube_hd", "shorts", "square", "twitter", "og"],
+        position=["top", "center", "bottom"],
+    ),
 )
 async def image_thumbnail(
     prompt:          str,
@@ -452,7 +1204,7 @@ async def image_thumbnail(
         body["seed"] = seed
     try:
         async with httpx.AsyncClient(timeout=300) as c:
-            r = await c.post(f"{GPU_INFER_URL}/thumbnail", json=body)
+            r = await c.post(f"{media_base('imagegen')}/thumbnail", json=body)
             r.raise_for_status()
             data = r.json()
         img_b64 = data.get("image_b64", "")
@@ -496,13 +1248,16 @@ async def gpu_chat_speak(
     try:
         # This endpoint returns streaming PCM — we just start it and return the session_id
         # The caller should separately connect to /chat/text/{session_id} for text tokens
-        # and stream audio from /chat/speak directly
+        # and stream audio from /chat/speak directly.
+        # Resolve the media node ONCE — the returned URLs are session-sticky and
+        # must all point at the same server.
+        base = media_base("tts")
         async with httpx.AsyncClient(timeout=10) as c:
             # HEAD request to validate connectivity first
-            h = await c.head(f"{GPU_INFER_URL}/health")
+            h = await c.head(f"{base}/health")
         return {
-            "url":        f"{GPU_INFER_URL}/chat/speak",
-            "text_url":   f"{GPU_INFER_URL}/chat/text/{{session_id}}",
+            "url":        f"{base}/chat/speak",
+            "text_url":   f"{base}/chat/text/{{session_id}}",
             "body":       body,
             "note":       "POST body to url for audio stream; GET text_url for SSE tokens",
         }
@@ -522,19 +1277,33 @@ async def gpu_chat_speak(
 )
 async def gpu_duplex_start(trace_id=None):
     try:
+        # Resolve ONCE and remember the node per session — duplex sessions are
+        # stateful on the server, so every follow-up call must hit the same one.
+        base = media_base("tts")
         async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.post(f"{GPU_INFER_URL}/duplex/start")
+            r = await c.post(f"{base}/duplex/start")
             r.raise_for_status()
             data = r.json()
         sid = data.get("session_id", "")
+        if sid:
+            _DUPLEX_SESSION_BASE[sid] = base
         return {
             "session_id": sid,
-            "audio_url":  f"{GPU_INFER_URL}/duplex/audio/{sid}",
-            "text_url":   f"{GPU_INFER_URL}/duplex/text/{sid}",
-            "query_url":  f"{GPU_INFER_URL}/duplex/query",
+            "audio_url":  f"{base}/duplex/audio/{sid}",
+            "text_url":   f"{base}/duplex/text/{sid}",
+            "query_url":  f"{base}/duplex/query",
         }
     except Exception as e:
         return {"error": str(e)}
+
+
+# Duplex sessions are stateful on the media server: remember which node each
+# session was started on so query/interrupt route to the same one.
+_DUPLEX_SESSION_BASE: dict = {}
+
+
+def _duplex_base(session_id: str) -> str:
+    return _DUPLEX_SESSION_BASE.get(session_id) or media_base("tts")
 
 
 @capability(
@@ -561,7 +1330,7 @@ async def gpu_duplex_query(
     if audio_b64: body["audio_b64"] = audio_b64
     try:
         async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.post(f"{GPU_INFER_URL}/duplex/query", json=body)
+            r = await c.post(f"{_duplex_base(session_id)}/duplex/query", json=body)
             r.raise_for_status()
             return r.json()
     except Exception as e:
@@ -578,7 +1347,7 @@ async def gpu_duplex_query(
 async def gpu_duplex_interrupt(session_id: str, trace_id=None):
     try:
         async with httpx.AsyncClient(timeout=5) as c:
-            r = await c.post(f"{GPU_INFER_URL}/duplex/interrupt/{session_id}")
+            r = await c.post(f"{_duplex_base(session_id)}/duplex/interrupt/{session_id}")
             r.raise_for_status()
             return r.json()
     except Exception as e:
@@ -1037,6 +1806,21 @@ async def llm_formats(trace_id=None):
     return {"formats": profiles, "count": len(profiles)}
 
 
+@capability("delivery.channels",
+    http_method="GET", http_path="/delivery/channels", http_tags=["llm", "delivery"],
+    memory="off", silent=True,
+    description="List the shared delivery channels output can be routed to (the "
+                "routing twin of llm.formats). Each: {id, label, cap, default_format, "
+                "needs_target, target_field, target_label, fixed_target, source "
+                "(builtin|skill)}. The dream deliver stage uses these as its "
+                "deliver_to set; new channels can be added as `delivery_channel` "
+                "skills and appear here automatically.",
+)
+async def delivery_channels(trace_id=None):
+    channels = list_channels()
+    return {"channels": channels, "count": len(channels)}
+
+
 @capability("llm.summarize",
     http_method="POST", http_path="/llm/summarize", http_tags=["llm", "text"],
     memory="on",
@@ -1471,6 +2255,7 @@ async def ollama_generate_raw(
     _req_id = str(uuid.uuid4())[:12]
     _t0 = _time.time()
     _prompt_preview = (prompt or "")[:120].replace("\n", " ")
+    _prompt_full = (prompt or "")[:16000]
     log.info("ollama_req [%s] model=%s inst=%s caller=capabilities:ollama_generate_raw prompt=%s",
              _req_id, use_mdl, chosen, _prompt_preview)
     try:
@@ -1480,7 +2265,7 @@ async def ollama_generate_raw(
             "instance_url": inst.get("url", ""),
             "caller_file": "capabilities.py", "caller_func": "ollama_generate_raw",
             "caller_module": "capabilities", "cap_name": "ollama.generate_raw",
-            "prompt_preview": _prompt_preview, "json_mode": False,
+            "prompt_preview": _prompt_preview, "prompt_full": _prompt_full, "json_mode": False,
             "prefer_gpu": prefer_gpu, "streaming": False,
         })
     except Exception:
@@ -1512,25 +2297,28 @@ async def ollama_generate_raw(
         return {"text":d.get("response",""),"model":use_mdl,"instance":chosen,"has_gpu":inst.get("has_gpu",False),
                 "eval_count":d.get("eval_count"),"total_duration":d.get("total_duration")}
     except Exception as e:
+        from Vera.vera.capability_orchestration import _err_text
         _elapsed = round(_time.time() - _t0, 2)
+        _err = _err_text(e)
         log.error("ollama_generate_raw [%s] FAILED after %.2fs inst=%s err=%s",
-                  _req_id, _elapsed, chosen, e)
+                  _req_id, _elapsed, chosen, _err)
         _ollama_log_append({
             "req_id": _req_id, "model": use_mdl, "instance": chosen,
             "caller_file": "capabilities.py", "caller_func": "ollama_generate_raw",
             "prompt_preview": _prompt_preview, "ts": now_iso(),
-            "status": "error", "elapsed_s": _elapsed, "error": str(e)[:200],
+            "status": "error", "elapsed_s": _elapsed, "error": _err,
         })
         try:
             await emit_event({
                 "type": "ollama.request_error", "req_id": _req_id,
                 "model": use_mdl, "instance_id": chosen,
                 "caller_file": "capabilities.py", "caller_func": "ollama_generate_raw",
-                "elapsed_s": _elapsed, "error": str(e)[:200],
+                "elapsed_s": _elapsed, "error": _err,
+                "error_type": type(e).__name__,
             })
         except Exception:
             pass
-        return {"error":str(e),"instance":chosen}
+        return {"error": _err, "instance": chosen}
     finally: inst["in_use"]=max(0,inst["in_use"]-1)
 
 
@@ -1603,6 +2391,7 @@ async def llm_stream_endpoint(request: _Request):
         _req_id = str(uuid.uuid4())[:12]
         _t0 = _time.monotonic()
         _prompt_preview = (prompt or "")[:120].replace("\n", " ")
+        _prompt_full = (prompt or "")[:16000]
         log.info("ollama_req [%s] model=%s inst=%s caller=capabilities:llm_stream prompt=%s",
                  _req_id, model, chosen, _prompt_preview)
         try:
@@ -1611,7 +2400,7 @@ async def llm_stream_endpoint(request: _Request):
                 "model": model, "instance_id": chosen, "instance_url": url,
                 "caller_file": "capabilities.py", "caller_func": "llm_stream_endpoint",
                 "caller_module": "capabilities", "cap_name": "llm.stream",
-                "prompt_preview": _prompt_preview, "json_mode": False,
+                "prompt_preview": _prompt_preview, "prompt_full": _prompt_full, "json_mode": False,
                 "prefer_gpu": prefer_gpu, "streaming": True,
             })
         except Exception:
@@ -1625,7 +2414,8 @@ async def llm_stream_endpoint(request: _Request):
                 async with c.stream("POST", f"{url}/api/generate", json=ollama_body) as resp:
                     if resp.status_code != 200:
                         err = await resp.aread()
-                        _error_text = err.decode()[:200]
+                        _error_text = (f"HTTP {resp.status_code} from {chosen}"
+                                       + (": " + err.decode()[:200] if err else ""))
                         yield f"data: {json.dumps({'type':'error','text':_error_text})}\n\n".encode()
                         return
                     async for line in resp.aiter_lines():
@@ -1639,7 +2429,8 @@ async def llm_stream_endpoint(request: _Request):
                             full.append(token)
                             yield f"data: {json.dumps({'type':'token','text':token})}\n\n".encode()
         except Exception as e:
-            _error_text = str(e)
+            from Vera.vera.capability_orchestration import _err_text
+            _error_text = _err_text(e)
             yield f"data: {json.dumps({'type':'error','text':_error_text})}\n\n".encode()
             return
         finally:

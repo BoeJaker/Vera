@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Vera — Companion</title>
@@ -23,7 +28,7 @@ body{display:flex;flex-direction:column;overflow:hidden}
 .hdr .sub{font-size:10px;color:var(--dim2)}
 .tabs{display:flex;gap:4px;margin-left:auto}
 .tab{padding:4px 12px;border-radius:var(--radius-sm);background:var(--bg2);border:1px solid var(--border);color:var(--dim2);cursor:pointer;font-size:11px}
-.tab.active{background:var(--acc);border-color:var(--acc);color:#10201c;font-weight:600}
+.tab.active{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#10201c);font-weight:600}
 .caps{font-size:10px;color:var(--dim2);padding:4px 12px;border-bottom:1px solid var(--border);background:var(--bg1);display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .cap-pill{border:1px solid var(--border);border-radius:10px;padding:1px 7px;font-size:9.5px}
 .cap-pill.on{color:var(--ok);border-color:var(--ok)}
@@ -42,8 +47,8 @@ input[type=checkbox]{width:auto}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;padding:5px 11px;border-radius:var(--radius-sm);background:var(--bg2);border:1px solid var(--border2);color:var(--text);font-size:11px;cursor:pointer;font-family:var(--sans)}
 .btn:hover{border-color:var(--acc);color:var(--acc)}
-.btn.primary{background:var(--acc);border-color:var(--acc);color:#10201c;font-weight:600}
-.btn.primary:hover{filter:brightness(1.1);color:#10201c}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#10201c);font-weight:600}
+.btn.primary:hover{filter:brightness(1.1);color:var(--on-acc,#10201c)}
 .btn.sm{padding:3px 7px;font-size:10px}
 .btn.danger:hover{border-color:var(--err);color:var(--err)}
 .btn:disabled{opacity:.5;cursor:not-allowed}
@@ -186,7 +191,8 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}
       <div class="muted" style="margin-bottom:6px">Regenerate one expression, preview it, then accept or reject. Edit the prompt to make each emotion distinct.</div>
       <div class="row"><label>State</label>
         <select id="refStateSel" onchange="loadRefinePrompt()"></select>
-        <label style="min-width:auto" title="img2img from the current frame — refine the existing look instead of a fresh take"><input type="checkbox" id="refEdit"> edit current</label>
+        <label style="min-width:auto" title="repaint ONLY the face on the neutral base — keeps the character &amp; scene identical, only the emotion changes"><input type="checkbox" id="refFace" checked> face-only</label>
+        <label style="min-width:auto" title="full-image img2img from the current frame"><input type="checkbox" id="refEdit"> edit current</label>
       </div>
       <label>Expression prompt</label>
       <textarea id="refPrompt" placeholder="vivid, exaggerated description of THIS emotion (face + body language)…"></textarea>
@@ -337,9 +343,10 @@ async function generate(){
     $('genStatus').textContent=err||'No frames were generated — check Stable Diffusion on the GPU node (GET /image/sd_capabilities).';
     return;
   }
-  $('genStatus').className='status ok';
+  const warn=(r.face_warnings>0)?(' · ⚠ '+r.face_warnings+' frame(s) had no clear face'):'';
+  $('genStatus').className=warn?'status warn':'status ok';
   $('genStatus').textContent='done — frames: '+frames.join(', ')+' (tier '+(r.sd_tier_used||'?')
-    +(r.render_device?' · '+(r.render_device==='cpu'?'on CPU':r.render_device):'')+')';
+    +(r.render_device?' · '+(r.render_device==='cpu'?'on CPU':r.render_device):'')+')'+warn;
   $('preview').reload(); loadStudio();
 }
 // Live progress via the event WS while the long generate request runs.
@@ -394,7 +401,7 @@ async function regenPreview(){
     base_prompt:$('baseIn').value, style:$('styleIn').value,
     seed:parseInt($('refSeed').value||'-1',10), steps:parseInt($('stepsIn').value||'22',10),
     transparent:$('transpIn').checked, bg_color:$('bgColorIn').value.trim(),
-    edit:$('refEdit').checked,
+    face:$('refFace').checked, edit:$('refEdit').checked,
   });
   $('refBtn').disabled=false;
   const err=r.error||r.detail;
@@ -402,7 +409,9 @@ async function regenPreview(){
   REF_CAND={state:st, image_b64:r.image_b64};
   $('refImg').src='data:image/png;base64,'+r.image_b64;
   $('refCandidate').style.display='';
-  $('refStatus').className='status'; $('refStatus').textContent='preview '+st+(r.device?(' · '+r.device):'')+' — accept or reject';
+  const noFace=(r.face_method==='cascade'&&r.face_detected===false)?' · ⚠ no clear face found':'';
+  $('refStatus').className=noFace?'status warn':'status';
+  $('refStatus').textContent='preview '+st+(r.device?(' · '+r.device):'')+noFace+' — accept or reject';
 }
 async function acceptPreview(){
   if(!REF_CAND)return;

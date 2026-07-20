@@ -23,6 +23,7 @@ Capabilities (group `cal.*`)
   cal.todos.list  / cal.todo.upsert  / cal.todo.toggle / cal.todo.delete
   cal.notes.list  / cal.note.upsert  / cal.note.delete
   cal.braindump   / cal.braindump.commit
+  cal.assistant.briefing / cal.assistant.config / cal.assistant.handover
   cal.sources.list / cal.source.upsert / cal.source.delete
   cal.sync.run    / cal.sync.status
   cal.google.auth_url / cal.google.auth_complete
@@ -1497,6 +1498,189 @@ async def cap_config_set(
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+#  SCHEDULING ASSISTANT  (agent integration / "scheduling mode")
+# ═════════════════════════════════════════════════════════════════════════════
+
+# The registry agent that fronts the diary (seeded in agents.py DEFAULT_AGENTS).
+ASSISTANT_AGENT_NAME = "secretary"
+
+# The capability toolkit the scheduling assistant works with. Single source of
+# truth — the panel's embedded agent dock fetches it via cal.assistant.config
+# and the server-side handover loop uses it as allowed_caps, so the two can
+# never drift apart.
+ASSISTANT_TOOLKIT = [
+    "cal.assistant.briefing",
+    "cal.events.list", "cal.event.upsert", "cal.event.delete",
+    "cal.todos.list", "cal.todo.upsert", "cal.todo.toggle", "cal.todo.delete",
+    "cal.notes.list", "cal.note.upsert", "cal.note.delete",
+    "cal.braindump", "cal.braindump.commit",
+    "cal.sync.run", "cal.sync.status",
+    "system.timestamp",
+]
+
+ASSISTANT_GREETING = ("Diary open. Ask me what's on, tell me what to arrange, "
+                      "or dump your day on me and I'll sort it.")
+
+
+def _slim_event(ev: Dict) -> Dict:
+    return {k: ev.get(k) for k in
+            ("id", "title", "start", "end", "all_day", "location", "source")}
+
+
+@capability(
+    "cal.assistant.briefing", http_method="GET", http_path="/cal/assistant/briefing",
+    http_tags=["calendar"], memory="off", silent=True,
+    description="Situational briefing for the scheduling assistant: current "
+                "time, today's + tomorrow's events, the upcoming week, open "
+                "todos (overdue / due today / by priority) and imminent "
+                "reminders — one call for full diary awareness before making "
+                "changes. Input: days_ahead (int, default 7). "
+                "Output: {now, today_human, tz, today, tomorrow, upcoming, "
+                "todos:{overdue,due_today,open,open_count}, reminders}.",
+)
+async def cap_assistant_briefing(days_ahead: int = 7, trace_id=None):
+    cfg = await _get_config()
+    now = _now()
+    day0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    days_ahead = max(1, min(31, int(days_ahead or 7)))
+
+    def _ts(d: _dt.datetime) -> float:
+        return d.replace(tzinfo=_dt.timezone.utc).timestamp()
+
+    today    = await _events_in_range(_ts(day0), _ts(day0 + _dt.timedelta(days=1)))
+    tomorrow = await _events_in_range(_ts(day0 + _dt.timedelta(days=1)),
+                                      _ts(day0 + _dt.timedelta(days=2)))
+    upcoming = await _events_in_range(_ts(day0 + _dt.timedelta(days=2)),
+                                      _ts(day0 + _dt.timedelta(days=days_ahead + 1)))
+
+    todos = await _hash_list(KEY_TODOS)
+    open_todos = [t for t in todos if not t.get("done")]
+    today_iso = day0.strftime("%Y-%m-%d")
+    overdue   = [t for t in open_todos if t.get("due") and t["due"][:10] < today_iso]
+    due_today = [t for t in open_todos if (t.get("due") or "")[:10] == today_iso]
+    open_todos.sort(key=lambda t: (-int(t.get("priority", 0) or 0),
+                                   t.get("due") or "9999"))
+
+    notes = await _hash_list(KEY_NOTES)
+    horizon = _ts(day0 + _dt.timedelta(days=2))
+    reminders = [n for n in notes
+                 if n.get("remind_at") and 0 < _epoch(n["remind_at"]) <= horizon]
+
+    return {
+        "now": now.isoformat() + "Z",
+        "today_human": now.strftime("%A %d %B %Y %H:%M UTC"),
+        "tz": cfg.get("tz", "UTC"),
+        "today":    [_slim_event(e) for e in today],
+        "tomorrow": [_slim_event(e) for e in tomorrow],
+        "upcoming": [_slim_event(e) for e in upcoming[:40]],
+        "todos": {
+            "overdue":    overdue[:20],
+            "due_today":  due_today[:20],
+            "open":       open_todos[:40],
+            "open_count": len(open_todos),
+        },
+        "reminders": reminders[:10],
+    }
+
+
+@capability(
+    "cal.assistant.config", http_method="GET", http_path="/cal/assistant/config",
+    http_tags=["calendar"], memory="off", silent=True,
+    description="Config for the Calendar panel's embedded assistant dock: the "
+                "agent name, its capability toolkit and greeting. "
+                "Output: {agent, toolkit, loop_version, greeting}.",
+)
+async def cap_assistant_config(trace_id=None):
+    return {"agent": ASSISTANT_AGENT_NAME, "toolkit": ASSISTANT_TOOLKIT,
+            "loop_version": "v3", "greeting": ASSISTANT_GREETING}
+
+
+@capability(
+    "cal.assistant.handover", http_method="POST", http_path="/cal/assistant/handover",
+    http_tags=["calendar", "agents"], memory="on",
+    description="Enter 'scheduling mode': hand a diary request over to the "
+                "Scheduling Assistant. Runs a scoped agentic loop over the "
+                "cal.* capabilities that inspects the calendar, applies the "
+                "requested changes (events / todos / notes) and reports back. "
+                "Call this from chat for any calendar/todo/diary request that "
+                "needs real changes — pass the user's ask verbatim. "
+                "Input: request (str!), context (str — optional extra context "
+                "from the conversation), max_cycles (int default 8), "
+                "session_id (str), require_approval (bool default False). "
+                "Output: {ok, summary, cycles, used_tools, session_id}.",
+)
+async def cap_assistant_handover(request: str = "", context: str = "",
+                                 max_cycles: int = 8, session_id: str = "",
+                                 require_approval: bool = False, trace_id=None):
+    if not (request or "").strip():
+        return {"error": "request is required"}
+    reg = getattr(_orch, "CAPABILITY_REGISTRY", {}) or {}
+    loop_cap = reg.get("dag.agent_loop_v3")
+    if not loop_cap:
+        return {"error": "agent loop unavailable — dag workshop module not loaded"}
+
+    cfg = await _get_config()
+    now = _now()
+    sid = session_id or f"sched-{uuid.uuid4().hex[:10]}"
+    goal = (
+        "[SCHEDULING MODE — you are Vera's scheduling assistant operating the "
+        f"user's diary. Now: {now.isoformat()}Z "
+        f"({now.strftime('%A %d %B %Y %H:%M')} UTC); user timezone: "
+        f"{cfg.get('tz', 'UTC')}. Resolve all relative dates against this. "
+        "Ground yourself first (cal.assistant.briefing or cal.events.list / "
+        "cal.todos.list), then apply the request with the cal.* capabilities — "
+        "meetings/appointments are events (cal.event.upsert), actions without a "
+        "fixed time are todos (cal.todo.upsert). Check the day before adding a "
+        "timed event so you never double-book silently. Finish with a short "
+        "summary of exactly what changed.]"
+        + (f"\n\n[Context from Vera: {context.strip()}]" if (context or "").strip() else "")
+        + f"\n\nRequest: {request.strip()}"
+    )
+
+    await emit_event({"type": "cal.assistant", "stage": "handover_start",
+                      "message": f"scheduling mode: {request.strip()[:140]}",
+                      "session_id": sid})
+    try:
+        res = await loop_cap["func"](
+            goal=goal,
+            allowed_caps=",".join(ASSISTANT_TOOLKIT),
+            max_cycles=max(1, min(16, int(max_cycles or 8))),
+            require_approval=bool(require_approval),
+            handover=True,
+            min_explore_cycles=1,
+            session_id=sid,
+        )
+    except Exception as e:
+        log.warning("cal.assistant.handover loop failed: %s", e)
+        await emit_event({"type": "cal.assistant", "stage": "handover_error",
+                          "message": str(e)[:300], "session_id": sid})
+        return {"error": f"scheduling assistant failed: {e}", "session_id": sid}
+
+    if not isinstance(res, dict):
+        res = {}
+    summary = (res.get("handover_output") or res.get("final") or "").strip()
+    used: List[str] = []
+    for cyc in (res.get("cycles") or []):
+        if not isinstance(cyc, dict):
+            continue
+        act = cyc.get("action")
+        t = (cyc.get("tool") or cyc.get("cap")
+             or (act.get("tool") if isinstance(act, dict) else ""))
+        if t and t not in used:
+            used.append(t)
+    ok = bool(res.get("done")) and not res.get("error")
+    await emit_event({"type": "cal.assistant", "stage": "handover_done", "ok": ok,
+                      "message": (summary or "scheduling run finished")[:300],
+                      "session_id": sid})
+    out = {"ok": ok, "summary": summary or "(no summary produced)",
+           "cycles": len(res.get("cycles") or []), "used_tools": used,
+           "session_id": sid}
+    if res.get("error"):
+        out["error"] = res["error"]
+    return out
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 #  PANEL
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -1579,6 +1763,7 @@ register_ui(
         "cal.todos.list", "cal.todo.upsert", "cal.todo.toggle", "cal.todo.delete",
         "cal.notes.list", "cal.note.upsert", "cal.note.delete",
         "cal.braindump", "cal.braindump.commit",
+        "cal.assistant.briefing", "cal.assistant.config", "cal.assistant.handover",
         "cal.sources.list", "cal.source.upsert", "cal.source.delete",
         "cal.sync.run", "cal.sync.status",
         "cal.google.auth_url", "cal.google.auth_complete", "cal.google.calendars",

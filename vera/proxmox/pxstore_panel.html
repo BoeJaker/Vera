@@ -1,0 +1,885 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script>/* vera theme boot — paint cached theme before CSS parses */
+(function(){try{var d=document.documentElement,S=window.localStorage;
+var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Vera / Storage Fabric</title>
+<style>
+:root{
+  /* canonical theme vars (live-populated by vera-ui.js; these are fallbacks) */
+  --bg0:#080a0d;--bg1:#12161b;--bg2:#181d24;--bg3:#222630;
+  --border:#1e2633;--border2:#2a3444;
+  --text:#d4dae4;--fg:#d4dae4;--dim:#3b4252;--dim2:#6b7585;
+  --acc:#6ea8d8;--acc2:#5ec9a0;--acc4:#a78bfa;--warn:#e09a55;--err:#e06060;
+  --mono:'ui-monospace','SFMono-Regular','Menlo',monospace;
+  --sans:'Inter','IBM Plex Sans',system-ui,sans-serif;
+  /* legacy dusk aliases → canonical, so existing content styles stay theme-aware */
+  --bg:var(--bg0);--s1:var(--bg1);--s2:var(--bg2);--s3:var(--bg3);
+  --bd:var(--border);--bd2:var(--border2);--t1:var(--text);--t2:var(--dim2);--t3:var(--dim);
+  --ac:var(--acc);--ok:var(--acc2);--ac5:var(--acc4);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+/* Base font matches the Workers & Ollama shell (sans); code/values stay mono */
+html,body{height:100%;background:var(--bg);color:var(--t1);font:12px/1.5 var(--sans)}
+pre,code,.kv{font-family:var(--mono)}
+body{overflow:hidden}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,select,textarea{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--bd);border-radius:5px;padding:7px 9px;outline:none}
+input:focus,select:focus{border-color:var(--ac)}
+::-webkit-scrollbar{width:7px;height:7px}
+::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:4px}
+a{color:var(--ac)}
+#shell{display:flex;flex-direction:row;height:100vh;height:100dvh;overflow:hidden}
+#main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+#top{display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--s1);border-bottom:1px solid var(--bd);flex-shrink:0;flex-wrap:wrap}
+#top .logo{color:var(--ac);font-weight:700;letter-spacing:.04em;white-space:nowrap}
+#top select{width:auto;min-width:110px;max-width:40vw}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border-radius:6px;background:var(--s3);border:1px solid var(--bd2);color:var(--t1);font-size:12px;white-space:nowrap}
+.btn:hover{border-color:var(--ac)}
+.btn.pri{background:var(--ac);border-color:var(--ac);color:#06121c;font-weight:700}
+.btn.sm{padding:5px 8px;font-size:11px}
+.btn.danger{color:var(--err);border-color:var(--err)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.spacer{flex:1}
+#body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px;padding-bottom:60px}
+.pane{display:none;max-width:1200px;margin:0 auto}
+.pane.on{display:block}
+.section-h{display:flex;align-items:center;gap:8px;margin:14px 2px 8px;color:var(--t2);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+.section-h::after{content:"";flex:1;height:1px;background:var(--bd)}
+.grid{display:grid;grid-template-columns:1fr;gap:10px;margin-bottom:14px}
+@media(min-width:640px){.grid{grid-template-columns:repeat(2,1fr)}}
+@media(min-width:1000px){.grid{grid-template-columns:repeat(3,1fr)}}
+.card{background:var(--s2);border:1px solid var(--bd);border-radius:9px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.card .hd{display:flex;align-items:center;gap:8px}
+.card .hd .nm{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card .hd .sub{color:var(--t3);font-size:11px;margin-left:auto;white-space:nowrap}
+.pill{font-size:10px;padding:2px 8px;border-radius:20px;border:1px solid;white-space:nowrap}
+.pill.ok{color:var(--ok);border-color:var(--ok);background:rgba(94,201,160,.08)}
+.pill.warn{color:var(--warn);border-color:var(--warn)}
+.pill.err{color:var(--err);border-color:var(--err)}
+.pill.dim{color:var(--t2);border-color:var(--t3)}
+.bar{height:7px;border-radius:4px;background:var(--s3);overflow:hidden}
+.bar>i{display:block;height:100%;border-radius:4px;background:var(--ac);transition:width .4s}
+.bar.hi>i{background:var(--err)}
+.bar.mid>i{background:var(--warn)}
+.metric .lab{display:flex;justify-content:space-between;font-size:10.5px;color:var(--t2);margin-bottom:3px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{color:var(--t2);text-align:left;font-weight:600;padding:7px 8px;border-bottom:1px solid var(--bd2);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+td{padding:7px 8px;border-bottom:1px solid var(--bd);vertical-align:middle}
+tr:hover td{background:rgba(255,255,255,.02)}
+.twrap{background:var(--s2);border:1px solid var(--bd);border-radius:9px;overflow-x:auto;margin-bottom:14px}
+.field{display:flex;flex-direction:column;gap:4px;min-width:0}
+.field label{font-size:10.5px;color:var(--t2);letter-spacing:.04em;text-transform:uppercase}
+.field .hint{font-size:10.5px;color:var(--t3)}
+.frow{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px}
+.frow .field{flex:1;min-width:150px}
+.frow .field.sm{flex:0 0 110px;min-width:90px}
+pre{background:var(--bg);border:1px solid var(--bd);border-radius:7px;padding:10px;font-size:11px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;max-height:340px;overflow-y:auto}
+.note{background:rgba(110,168,216,.06);border:1px solid rgba(110,168,216,.25);border-radius:7px;padding:10px 12px;font-size:12px;color:var(--t2);margin-bottom:12px}
+.note b{color:var(--t1)}
+.checkrow{display:flex;align-items:center;gap:8px}
+.checkrow input{width:auto}
+/* NUMA lanes */
+.numa{background:var(--s2);border:1px solid var(--bd);border-radius:9px;padding:10px;margin-bottom:10px}
+.numa .nlab{color:var(--t2);font-size:11px;margin-bottom:7px}
+.cpurow{display:flex;flex-wrap:wrap;gap:4px}
+.cpu{width:34px;height:30px;border-radius:5px;background:var(--s3);border:1px solid var(--bd);display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:9px;color:var(--t2);cursor:default}
+.cpu .own{font-size:8px;max-width:32px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cpu.res{border-color:var(--err);background:rgba(224,96,96,.14)}
+.cpu.used{border-color:var(--ac);background:rgba(110,168,216,.12)}
+.cpu.multi{border-color:var(--warn);background:rgba(224,154,85,.14)}
+.legend{display:flex;gap:14px;font-size:10.5px;color:var(--t2);margin:6px 2px 12px;flex-wrap:wrap}
+.legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:4px;vertical-align:-1px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:80;background:var(--s3);border:1px solid var(--bd2);color:var(--t1);padding:10px 16px;border-radius:8px;font-size:12px;box-shadow:0 8px 30px rgba(0,0,0,.5);opacity:0;transition:.2s;pointer-events:none;max-width:86vw}
+.toast.on{opacity:1}
+.toast.err{border-color:var(--err);color:var(--err)}
+.empty{color:var(--t2);text-align:center;padding:26px}
+.flagchip{font-size:9.5px;padding:1px 6px;border-radius:10px;border:1px solid var(--warn);color:var(--warn);margin-right:3px;white-space:nowrap}
+.flagchip.bad{border-color:var(--err);color:var(--err)}
+.kv{font-size:11px;color:var(--t2)}
+.kv b{color:var(--t1)}
+#status-tile .lbl{color:var(--t2);text-transform:uppercase;letter-spacing:.08em;font-size:9px;margin-bottom:5px}
+#status-tile .row{display:flex;align-items:center;gap:6px}
+</style>
+<link rel="stylesheet" href="/ui/vera-panel.css">
+</head>
+<body>
+<div id="shell">
+  <aside id="sidebar" data-vera-lhm>
+    <div id="side-head">
+      <div class="ico">⛁</div>
+      <div><h1>Storage</h1><div class="sub">Proxmox fabric</div></div>
+    </div>
+    <!-- Storage-only nav. CPU/NUMA stays as a pane but is reached from the
+         Workers panel's Proxmox pane via /pxstore/panel?solo=cpu; Backends
+         moved to Provision → Backends; VSCode targets moved to Remote IDE. -->
+    <nav id="nav">
+      <button class="nav-btn active" data-p="overview" onclick="P.show('overview',this)"><span class="gl">▤</span><span>Overview</span></button>
+      <button class="nav-btn" data-p="fs" onclick="P.show('fs',this)"><span class="gl">🗂</span><span>File Server</span></button>
+      <button class="nav-btn" data-p="store" onclick="P.show('store',this)"><span class="gl">◱</span><span>Model Store</span></button>
+      <button class="nav-btn" data-p="veradata" onclick="P.show('veradata',this)"><span class="gl">🗄</span><span>Vera Data</span></button>
+      <button class="nav-btn" data-p="estate" onclick="P.show('estate',this)"><span class="gl">⛃</span><span>Estate &amp; Backup</span></button>
+      <div class="sb-sep" style="height:1px;background:var(--border);margin:6px 8px"></div>
+      <button class="nav-btn" data-p="setup" onclick="P.show('setup',this)"><span class="gl">⚙</span><span>Setup</span></button>
+    </nav>
+    <div id="status-tile">
+      <div class="lbl">Node SSH</div>
+      <div class="row"><span class="dot" id="sshDot"></span><span id="sshState">unknown</span></div>
+    </div>
+  </aside>
+  <div id="main">
+  <div id="top">
+    <span class="logo" id="secTitle">Overview</span>
+    <span class="tb-sep" style="width:1px;height:16px;background:var(--bd);margin:0 2px"></span>
+    <select id="selCluster" onchange="P.clusterChanged()"></select>
+    <select id="selNode" onchange="P.nodeChanged()"></select>
+    <button class="btn sm" onclick="P.refresh()">↻ Refresh</button>
+  </div>
+  <div id="sshBanner" style="display:none;padding:9px 14px;background:rgba(224,96,96,.1);border-bottom:1px solid var(--err);color:var(--err);font-size:12px;line-height:1.5;flex-shrink:0"></div>
+  <div id="body">
+
+    <!-- OVERVIEW -->
+    <div class="pane on" id="p-overview">
+      <div class="section-h">Pools <span id="unallocLab" class="kv"></span></div>
+      <div class="grid" id="poolGrid"><div class="empty">Select a cluster + node…</div></div>
+      <div class="section-h">Guests (by name)</div>
+      <div class="twrap"><table id="guestTbl">
+        <thead><tr><th>Name</th><th>Type</th><th>Status</th><th>Backing dataset(s)</th><th>Used</th><th>Quota / size</th><th></th></tr></thead>
+        <tbody><tr><td colspan="7" class="empty">—</td></tr></tbody>
+      </table></div>
+      <div class="section-h">Non-ZFS mounts on host</div>
+      <div class="twrap"><table id="mountTbl">
+        <thead><tr><th>Mount</th><th>Device</th><th>FS</th><th>Used</th><th>Free</th></tr></thead>
+        <tbody><tr><td colspan="5" class="empty">—</td></tr></tbody>
+      </table></div>
+      <div class="section-h">Existing PVE storages (storage.cfg)</div>
+      <div class="twrap"><table id="pveStorTbl">
+        <thead><tr><th>Storage</th><th>Type</th><th>Backing</th><th>Content</th><th>Nodes</th><th></th></tr></thead>
+        <tbody><tr><td colspan="6" class="empty">—</td></tr></tbody>
+      </table></div>
+      <div class="section-h">Active NFS exports on host</div>
+      <div class="twrap"><table id="expTbl">
+        <thead><tr><th>Path</th><th>Clients</th></tr></thead>
+        <tbody><tr><td colspan="2" class="empty">—</td></tr></tbody>
+      </table></div>
+    </div>
+
+    <!-- FILE SERVER -->
+    <div class="pane" id="p-fs">
+      <div class="note"><b>One connection, real names.</b> Provision puts Samba on the
+        PVE host; Sync builds <b>/srv/vera-fs/&lt;guest-name&gt;</b> links straight onto each
+        container's ZFS subvol (host pools + non-ZFS drives appear under <b>_host/</b>).
+        Running VMs are attached live via sshfs when their SSH creds are enrolled
+        (VM disk images can't be host-mounted while running). The share uses samba
+        wide-links — treat it as a trusted-LAN admin share.</div>
+      <div class="frow">
+        <div class="field"><label>SMB user</label><input id="fsUser" value="vera"></div>
+        <div class="field"><label>SMB password (first run)</label><input id="fsPass" type="password" placeholder="set once"></div>
+        <div class="field"><label>Share root</label><input id="fsRoot" placeholder="/srv/vera-fs"></div>
+        <button class="btn pri" onclick="P.fsProvision()">Provision</button>
+        <button class="btn" onclick="P.fsSync()">↺ Sync share tree</button>
+        <label class="checkrow" style="font-size:11px;color:var(--t2)"><input type="checkbox" id="fsVMs"> mount running VMs (sshfs)</label>
+      </div>
+      <div id="fsShareInfo" class="kv" style="margin-bottom:10px"></div>
+      <div class="section-h">Share tree</div>
+      <div class="twrap"><table id="fsTbl">
+        <thead><tr><th>Entry</th><th>Kind</th><th>Target</th></tr></thead>
+        <tbody><tr><td colspan="3" class="empty">Provision + sync, then refresh</td></tr></tbody>
+      </table></div>
+    </div>
+
+    <!-- CPU / NUMA — shown via the Workers panel's Proxmox pane
+         (/pxstore/panel?solo=cpu); not in this panel's storage nav. -->
+    <div class="pane" id="p-cpu">
+      <div class="note"><b>NUMA-safe placement.</b> Reserved ranges (managed below —
+        e.g. the ollama / ollama-a / ollama-b cpusets) show red; the pinner refuses
+        sets that overlap them or span NUMA nodes. <b>Suggest</b> allocates from the
+        least-loaded node only.</div>
+      <div id="numaLanes"><div class="empty">Load a node…</div></div>
+      <div class="legend">
+        <span><i style="background:rgba(224,96,96,.5)"></i>reserved (ollama etc.)</span>
+        <span><i style="background:rgba(110,168,216,.5)"></i>pinned to one guest</span>
+        <span><i style="background:rgba(224,154,85,.5)"></i>pinned to multiple guests</span>
+        <span><i style="background:var(--s3)"></i>free</span>
+      </div>
+      <div class="frow">
+        <div class="field sm"><label>Cores needed</label><input id="cpuCount" type="number" value="4" min="1"></div>
+        <button class="btn" onclick="P.cpuSuggest()">✦ Suggest safe cpuset</button>
+        <span id="cpuSuggestOut" class="kv"></span>
+      </div>
+      <div class="section-h">Guest pinning</div>
+      <div class="twrap"><table id="cpuTbl">
+        <thead><tr><th>Guest</th><th>Type</th><th>Status</th><th>Pinned</th><th>Live</th><th>NUMA</th><th>Flags</th><th>New cpuset</th><th></th></tr></thead>
+        <tbody><tr><td colspan="9" class="empty">—</td></tr></tbody>
+      </table></div>
+      <div class="section-h">Reserved CPU ranges (never allocated to other guests)</div>
+      <div class="twrap"><table id="resTbl">
+        <thead><tr><th>Label</th><th>Node (blank = all)</th><th>CPUs</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+      <div class="frow">
+        <div class="field sm"><label>Label</label><input id="resLabel" placeholder="ollama"></div>
+        <div class="field sm"><label>Node</label><input id="resNode" placeholder=""></div>
+        <div class="field sm"><label>CPUs</label><input id="resCpus" placeholder="0-15"></div>
+        <button class="btn" onclick="P.resAdd()">+ Add</button>
+        <button class="btn pri" onclick="P.saveSettings()">Save reserved ranges</button>
+      </div>
+    </div>
+
+    <!-- MODEL STORE -->
+    <div class="pane" id="p-store">
+      <div class="note"><b>One copy of every model.</b> A central ZFS dataset holds
+        models / images / artifacts; consumer CTs get it as a <b>read-only bind mount</b>
+        (mpN,ro=1 — restart the CT to apply). Workflow for ollama, ollama-a, ollama-b:
+        ① Provision → ② Consolidate each CT (rsyncs its local models in, no downtime)
+        → ③ Attach ro to all three (keep <i>one</i> writer rw if you pull new models from
+        inside a CT) → ④ re-run Consolidate with <i>free source space</i> ticked.
+        <br><b>Gitea?</b> Not for model blobs — git (even LFS) is the wrong shape for
+        50 GB weights. Keep Gitea for code, use this dataset for models, and a Docker
+        registry (Gitea's built-in OCI registry works) for images.</div>
+      <div class="frow">
+        <div class="field"><label>Store dataset</label><input id="stDataset" value="rpool/data/vera-store"></div>
+        <div class="field sm"><label>Quota (opt)</label><input id="stQuota" placeholder="2T"></div>
+        <button class="btn pri" onclick="P.storeProvision()">① Provision store</button>
+        <span id="stInfo" class="kv"></span>
+      </div>
+      <div class="section-h">② Consolidate a CT's models into the store</div>
+      <div class="frow">
+        <div class="field"><label>Container</label><select id="conCT"></select></div>
+        <div class="field"><label>Model dir inside CT</label><input id="conSrc" value="/root/.ollama/models"></div>
+        <div class="field"><label>Store subdir</label><input id="conSub" value="models/ollama"></div>
+        <label class="checkrow" style="font-size:11px;color:var(--t2)"><input type="checkbox" id="conDel"> free source space (rename away after copy)</label>
+        <button class="btn" onclick="P.storeConsolidate()">Run rsync</button>
+      </div>
+      <pre id="conOut" style="display:none"></pre>
+      <div class="section-h">③ Attach store to a CT (read-only bind mount)</div>
+      <div class="frow">
+        <div class="field"><label>Container</label><select id="atCT"></select></div>
+        <div class="field"><label>Store subdir</label><input id="atSub" value="models/ollama"></div>
+        <div class="field"><label>Mount at (inside CT)</label><input id="atPath" value="/root/.ollama/models"></div>
+        <label class="checkrow" style="font-size:11px;color:var(--t2)"><input type="checkbox" id="atRO" checked> read-only</label>
+        <button class="btn" onclick="P.storeAttach()">Attach</button>
+      </div>
+      <div id="atOut" class="kv"></div>
+      <div class="section-h">Pull a model (store-aware)</div>
+      <div class="frow">
+        <div class="field"><label>Model</label><input id="plModel" placeholder="llama3.1:8b"></div>
+        <div class="field sm"><label>Via</label><select id="plVia"><option value="auto">auto</option><option value="store">store (writer)</option><option value="direct">direct</option></select></div>
+        <div class="field"><label>Instance (direct)</label><select id="plInst"></select></div>
+        <button class="btn pri" onclick="P.modelPull()">⇣ Pull</button>
+        <span id="plOut" class="kv"></span>
+      </div>
+      <div class="note" style="margin-top:6px">Via <b>store</b>: the pull runs on the
+        designated writer instance only — every read-only consumer sees the model
+        immediately, nothing is replicated. Via <b>direct</b>: classic per-instance
+        pull, for instances that can't share the store.</div>
+      <div class="section-h">Share the store over the network (hosts on other machines)</div>
+      <div class="frow">
+        <div class="field"><label>Allow client (IP/CIDR)</label><input id="sxClient" placeholder="192.168.0.0/24"></div>
+        <button class="btn" onclick="P.storeExport()">① NFS-export store</button>
+        <div class="field"><label>Remote host (SSH cred)</label><select id="sxHost"></select></div>
+        <div class="field"><label>PVE node IP</label><input id="sxServer" placeholder="192.168.0.245"></div>
+        <button class="btn" onclick="P.storeAttachRemote()">② Mount on remote host</button>
+      </div>
+      <div id="sxOut" class="kv"></div>
+    </div>
+
+    <!-- VERA DATA -->
+    <div class="pane" id="p-veradata">
+      <div class="note"><b>Stop Vera's VM filling up.</b> Creates a dedicated dataset on
+        the big pool and NFS-exports it to the Vera VM; the generated script then
+        stop-copy-symlinks Vera's data dirs onto it. Alternative (Path B): run the
+        generated docker-compose on a storage CT and point Vera's Redis/Postgres/Neo4j
+        URLs at it.</div>
+      <div class="frow">
+        <div class="field"><label>Dataset</label><input id="vdDataset" value="rpool/data/vera-data"></div>
+        <div class="field"><label>Vera VM IP / CIDR</label><input id="vdClient" placeholder="192.168.0.240"></div>
+        <div class="field sm"><label>Quota (opt)</label><input id="vdQuota" placeholder="4T"></div>
+        <button class="btn pri" onclick="P.vdProvision()">Provision + export</button>
+      </div>
+      <div id="vdMountCmd" class="kv" style="margin-bottom:12px"></div>
+      <div class="frow">
+        <button class="btn" onclick="P.vdPlan()">📋 Scan Vera's data dirs + build migration plan</button>
+      </div>
+      <div id="vdPlanOut"></div>
+    </div>
+
+    <!-- ESTATE & BACKUP — cross-estate storage (every PVE node + docker host),
+         scheduled share-tree sync and scheduled backups (nodes.* caps). -->
+    <div class="pane" id="p-estate">
+      <div class="note"><b>The whole estate in one place.</b> Scan lists ZFS pools,
+        datasets, <b>non-ZFS mounts</b>, per-guest (VM/CT) disk usage on every PVE node
+        <i>and</i> volume/image sizes on every Docker host. Below: keep the share tree
+        in sync on a schedule (daily by default) and back everything up to a
+        dedicated target (vzdump for guests, tarballs for docker volumes).</div>
+
+      <div class="section-h">Estate storage
+        <button class="btn sm" style="margin-left:10px" onclick="P.estateScan()">Scan estate</button></div>
+      <div id="estOut"><div class="empty">Click “Scan estate” — probes every mapped PVE node and Docker host.</div></div>
+
+      <div class="section-h">Share-tree auto-sync</div>
+      <div class="frow">
+        <label class="checkrow" style="font-size:11px;color:var(--t2)"><input type="checkbox" id="estSyncEn" onchange="P.estSyncSave()"> enabled</label>
+        <div class="field sm"><label>Every (hours)</label><input id="estSyncInt" type="number" min="1" value="24" onchange="P.estSyncSave()"></div>
+        <button class="btn" onclick="P.estSyncRun()">↺ Sync now</button>
+        <span id="estSyncLast" class="kv"></span>
+      </div>
+      <div id="estSyncMsg" class="kv" style="white-space:pre-wrap"></div>
+
+      <div class="section-h">Backups</div>
+      <div class="frow">
+        <label class="checkrow" style="font-size:11px;color:var(--t2)"><input type="checkbox" id="estBkEn" onchange="P.estBkSave()"> scheduled</label>
+        <div class="field sm"><label>Every (hours)</label><input id="estBkInt" type="number" min="1" value="24" onchange="P.estBkSave()"></div>
+        <div class="field"><label>PVE backup storage (vzdump target)</label><input id="estBkStorage" placeholder="e.g. backup-nfs" onchange="P.estBkSave()"></div>
+        <button class="btn pri" onclick="P.estBkRun()">Back up now</button>
+      </div>
+      <div class="frow">
+        <label class="checkrow" style="font-size:11px;color:var(--t2)"><input type="checkbox" id="estBkDk" onchange="P.estBkSave()"> docker volumes</label>
+        <div class="field"><label>Backup dir (on each docker host)</label><input id="estBkDest" value="/var/backups/vera" onchange="P.estBkSave()"></div>
+        <div class="field sm"><label>Volume prefix</label><input id="estBkInc" value="vera-" onchange="P.estBkSave()"></div>
+        <div class="field sm"><label>Keep</label><input id="estBkKeep" type="number" min="1" value="3" onchange="P.estBkSave()"></div>
+      </div>
+      <div class="note">Guests are vzdumped (snapshot mode, zstd) to the chosen PVE storage —
+        point it at your dedicated backup disk/NFS. Docker volumes matching the prefix are
+        tar'd with keep-N rotation; <code>vera-ollama</code> is excluded by default (models
+        re-pull from the central store).</div>
+      <div class="section-h">Recent backup runs</div>
+      <div id="estBkLog" class="kv">—</div>
+    </div>
+
+    <!-- SETUP -->
+    <div class="pane" id="p-setup">
+      <div class="note">Storage ops (ZFS, Samba, cpusets) run over <b>root SSH to each
+        PVE node</b> — map every node to an SSH credential below. Credentials themselves
+        are created and managed in <b>Workers &amp; Ollama → Connections</b> (the canonical
+        SSH store); tag a host <code>proxmox</code> and add it there, then it appears in
+        these dropdowns. Reserved CPU ranges are managed in the CPU / NUMA view
+        (Workers &amp; Ollama → Proxmox → CPU / NUMA).</div>
+      <div class="section-h">Node → SSH host mapping</div>
+      <div id="nodeMap"><div class="empty">Select a cluster…</div></div>
+      <div class="section-h">Store writer &amp; network monitor</div>
+      <div class="frow">
+        <div class="field"><label>Store writer instance (pulls land in the shared store)</label><select id="setWriter"></select></div>
+        <div class="field"><label>NWM-01 SSH credential</label><select id="setNwm"></select></div>
+      </div>
+      <div class="frow">
+        <div class="field"><label>Share root</label><input id="setRoot" placeholder="/srv/vera-fs"></div>
+        <label class="checkrow" style="font-size:11px;color:var(--t2)"><input type="checkbox" id="setVMs"> sshfs running VMs on sync</label>
+        <button class="btn pri" onclick="P.saveSettings()">Save settings</button>
+      </div>
+    </div>
+
+  </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+const P = {state:{clusters:[],cluster:'',node:'',nodes:[],inv:null,settings:null,sshHosts:[],cpuMap:null,sshConfig:''}};
+const $ = id => document.getElementById(id);
+const esc = s => String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+async function api(path, method='GET', body){
+  const o={method,headers:{'Content-Type':'application/json'}};
+  if(body) o.body=JSON.stringify(body);
+  const r=await fetch(path,o);
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  return r.json();
+}
+function toast(msg,err){const t=$('toast');t.textContent=msg;t.className='toast on'+(err?' err':'');clearTimeout(t._h);t._h=setTimeout(()=>t.className='toast',err?6000:3200);}
+function fmtB(n){ if(!n&&n!==0) return '—'; const u=['B','K','M','G','T','P']; let i=0; while(n>=1024&&i<u.length-1){n/=1024;i++;} return n.toFixed(n<10&&i>0?1:0)+u[i]; }
+function barClass(p){ return p>=88?'bar hi':p>=65?'bar mid':'bar'; }
+P.copy = async t => { try{ await navigator.clipboard.writeText(t); toast('Copied'); }catch(e){ toast('Copy failed','err'); } };
+
+P.show = (p,el)=>{
+  document.querySelectorAll('.pane').forEach(x=>x.classList.remove('on'));
+  document.querySelectorAll('#nav .nav-btn').forEach(x=>x.classList.remove('active'));
+  $('p-'+p).classList.add('on');
+  (el||document.querySelector('.nav-btn[data-p="'+p+'"]'))?.classList.add('active');
+  const t=document.querySelector('.nav-btn[data-p="'+p+'"] span:last-child');
+  if(t) $('secTitle').textContent=t.textContent;
+  if(p==='cpu'){ if(!P.state.cpuMap) P.cpuLoad(); P.renderSetup(); }
+  if(p==='fs') P.fsStatus();
+  if(p==='setup') P.renderSetup();
+  if(p==='store'&&!(P.state.workerRows||[]).length) P.wpLoad();
+  if(p==='estate') P.estateInit();
+};
+
+/* ── ESTATE & BACKUP — cross-estate storage + scheduled sync/backup (nodes.*) ── */
+P.estateInit = async ()=>{
+  try{
+    const [s,b]=await Promise.all([api('/nodes/sync'),api('/nodes/backup')]);
+    const sc=s.config||{};
+    $('estSyncEn').checked=!!sc.enabled;
+    $('estSyncInt').value=sc.interval_hours||24;
+    $('estSyncLast').textContent=sc.last_run?('last run '+new Date(sc.last_run*1000).toLocaleString()):'never run';
+    const bc=b.config||{}, pc=bc.proxmox||{}, dc=bc.docker||{};
+    $('estBkEn').checked=!!bc.enabled;
+    $('estBkInt').value=bc.interval_hours||24;
+    $('estBkStorage').value=pc.storage||'';
+    $('estBkDk').checked=!!dc.enabled;
+    $('estBkDest').value=dc.dest||'/var/backups/vera';
+    $('estBkInc').value=dc.include||'vera-';
+    $('estBkKeep').value=dc.keep||3;
+    $('estBkLog').innerHTML=(b.log||[]).slice(-8).reverse().map(e=>
+      `${esc((e.ts||'').slice(0,16))} ${e.ok?'✓ ok':'✗ errors'}`).join('<br>')||'no runs yet';
+  }catch(e){ toast('Estate config load failed: '+e.message,'err'); }
+};
+P.estateScan = async ()=>{
+  $('estOut').innerHTML='<div class="empty">Scanning estate (probes every node)…</div>';
+  let r; try{ r=await api('/nodes/storage','POST',{}); }
+  catch(e){ $('estOut').innerHTML='<div class="empty">scan failed: '+esc(e.message)+'</div>'; return; }
+  let h='';
+  (r.proxmox||[]).forEach(p=>{
+    h+=`<div class="section-h">PVE ${esc(p.node)} <span class="kv">(${esc(p.cluster_id)}) · unallocated ${fmtB(p.unallocated_bytes||0)}</span></div>`;
+    h+='<div class="twrap"><table><thead><tr><th>Kind</th><th>Name</th><th>Used / size</th><th>Detail</th></tr></thead><tbody>';
+    (p.pools||[]).forEach(x=>{ h+=`<tr><td>pool</td><td>${esc(x.name)}</td><td>${fmtB(x.alloc||0)} / ${fmtB(x.size||0)}</td><td>free ${fmtB(x.free||0)} · ${esc(x.health||'')}</td></tr>`; });
+    (p.mounts||[]).forEach(m=>{ h+=`<tr><td><b>non-ZFS mount</b></td><td>${esc(m.target||'')}</td><td>${fmtB(m.used||0)} / ${fmtB(m.size||0)}</td><td>${esc(m.fstype||'')} · ${esc(m.source||'')}</td></tr>`; });
+    (p.guests||[]).filter(g=>g.maxdisk).forEach(g=>{ h+=`<tr><td>${esc(g.type)}</td><td>${esc(g.name)}</td><td>${fmtB(g.disk||0)} / ${fmtB(g.maxdisk||0)}</td><td>${esc(g.status||'')}</td></tr>`; });
+    h+='</tbody></table></div>';
+  });
+  (r.docker||[]).forEach(d=>{
+    h+=`<div class="section-h">Docker ${esc(d.label||d.host_id)} <span class="kv">volumes ${d.volumes_gb}G · images ${d.images_gb}G · containers ${d.containers_gb}G</span></div>`;
+    h+='<div class="twrap"><table><thead><tr><th>Volume</th><th>Size</th><th>Refs</th></tr></thead><tbody>';
+    (d.volumes||[]).slice(0,20).forEach(v=>{ h+=`<tr><td>${esc(v.name)}</td><td>${fmtB(v.size||0)}</td><td>${v.refs||0}</td></tr>`; });
+    h+='</tbody></table></div>';
+  });
+  (r.errors||[]).forEach(e=>{ h+=`<div class="kv" style="color:var(--err)">⚠ ${esc(e)}</div>`; });
+  $('estOut').innerHTML=h||'<div class="empty">nothing found — map PVE nodes in Setup / register Docker hosts first</div>';
+};
+P.estSyncSave = async ()=>{
+  try{ await api('/nodes/sync/set','POST',{enabled:$('estSyncEn').checked,
+    interval_hours:parseInt($('estSyncInt').value)||24}); }
+  catch(e){ toast(e.message,'err'); }
+};
+P.estSyncRun = async ()=>{
+  $('estSyncMsg').textContent='syncing…';
+  try{
+    const r=await api('/nodes/sync/run','POST',{});
+    $('estSyncMsg').textContent=(r.results||[]).map(x=>x.cluster_id+'/'+x.node+' '+(x.ok?('✓ '+x.linked+' links'):('✗ '+(x.error||'')))).join('\n')
+      ||(r.error||'no clusters with node→SSH mappings — set them in Setup');
+  }catch(e){ $('estSyncMsg').textContent='✗ '+e.message; }
+  P.estateInit();
+};
+P.estBkSave = async ()=>{
+  try{ await api('/nodes/backup/set','POST',{
+    enabled:$('estBkEn').checked,
+    interval_hours:parseInt($('estBkInt').value)||24,
+    proxmox:{cluster_id:P.state.cluster||'',storage:$('estBkStorage').value.trim(),all:true},
+    docker:{enabled:$('estBkDk').checked,dest:$('estBkDest').value.trim()||'/var/backups/vera',
+            include:$('estBkInc').value.trim(),keep:parseInt($('estBkKeep').value)||3}}); }
+  catch(e){ toast(e.message,'err'); }
+};
+P.estBkRun = async ()=>{
+  if(!confirm('Run the estate backup now? vzdump of all guests can take a while.')) return;
+  $('estBkLog').textContent='running…';
+  await P.estBkSave();
+  try{ const r=await api('/nodes/backup/run','POST',{}); if(r.error) toast(r.error,'err'); }
+  catch(e){ toast(e.message,'err'); }
+  P.estateInit();
+};
+
+/* ── bootstrap ── */
+P.init = async ()=>{
+  try{
+    const [cl,hosts]=await Promise.all([api('/proxmox/cluster/list'),api('/exec/ssh/hosts')]);
+    P.state.clusters=cl.clusters||[]; P.state.sshHosts=hosts.hosts||[];
+  }catch(e){ toast('Load failed: '+e.message,'err'); return; }
+  try{ P.state.dockerHosts=(await api('/workers/docker/hosts')).hosts||[]; }catch(e){ P.state.dockerHosts=[]; }
+  const s=$('selCluster');
+  s.innerHTML=P.state.clusters.map(c=>`<option value="${esc(c.id)}">${esc(c.label||c.id)}</option>`).join('')||'<option value="">no clusters</option>';
+  if(P.state.clusters.length){ P.state.cluster=P.state.clusters[0].id; await P.clusterChanged(); }
+};
+
+P.clusterChanged = async ()=>{
+  P.state.cluster=$('selCluster').value; P.state.cpuMap=null;
+  try{
+    const st=await api('/pxstore/settings/get?cluster_id='+encodeURIComponent(P.state.cluster));
+    P.state.settings=st.settings||{};
+  }catch(e){ P.state.settings={}; }
+  await P.refresh();
+  P.renderSetup();
+};
+P.nodeChanged = ()=>{ P.state.node=$('selNode').value; P.state.cpuMap=null; P.refresh(); };
+
+P.refresh = async ()=>{
+  if(!P.state.cluster) return;
+  let inv;
+  try{ inv=await api('/pxstore/inventory','POST',{cluster_id:P.state.cluster,node:P.state.node}); }
+  catch(e){ toast('Inventory failed: '+e.message,'err'); return; }
+  if(inv.error){ toast(inv.error,'err'); return; }
+  P.state.inv=inv; P.state.node=inv.node; P.state.nodes=inv.nodes||[inv.node];
+  const sn=$('selNode');
+  sn.innerHTML=P.state.nodes.map(n=>`<option ${n===inv.node?'selected':''}>${esc(n)}</option>`).join('');
+  const ss=$('sshState'), sd=$('sshDot'), banner=$('sshBanner');
+  const err=inv.ssh_error||'';
+  const unmapped=/no SSH host mapped/i.test(err);
+  ss.textContent=inv.ssh_ok?'connected':(unmapped?'not mapped':'SSH failed');
+  ss.title=err;
+  if(sd) sd.className='dot '+(inv.ssh_ok?'on':'off');
+  if(inv.ssh_ok){
+    banner.style.display='none';
+  }else{
+    banner.style.display='block';
+    if(unmapped){
+      banner.innerHTML=`<b>Node “${esc(inv.node||'?')}” has no SSH credential mapped.</b> `+
+        `Go to <b>⚙ Setup</b> and pick a host for it under “Node → SSH host mapping”, then Save. `+
+        `Create the credential first in <b>Workers &amp; Ollama → Connections</b> if it isn’t listed.`;
+    }else{
+      banner.innerHTML=`<b>SSH to node “${esc(inv.node||'?')}” failed.</b> ${esc(err)||'no detail returned'} `+
+        `<span style="color:var(--t2)">— check the credential in Workers &amp; Ollama → Connections (use “Test reach”), or that root SSH is allowed on the node.</span>`;
+    }
+  }
+  P.renderOverview(); P.fillCTSelects();
+};
+
+/* ── overview ── */
+P.renderOverview = ()=>{
+  const inv=P.state.inv; if(!inv) return;
+  $('unallocLab').textContent = inv.pools.length?('· unallocated across pools: '+fmtB(inv.unallocated_bytes)):'';
+  $('poolGrid').innerHTML = inv.pools.map(p=>{
+    const pct=p.size?Math.round(p.alloc/p.size*100):0;
+    return `<div class="card"><div class="hd"><span class="nm">${esc(p.name)}</span>
+      <span class="pill ${p.health==='ONLINE'?'ok':'err'}">${esc(p.health)}</span>
+      <span class="sub">${fmtB(p.size)}</span></div>
+      <div class="metric"><div class="lab"><span>alloc ${fmtB(p.alloc)}</span><span>free ${fmtB(p.free)}</span></div>
+      <div class="${barClass(pct)}"><i style="width:${pct}%"></i></div></div></div>`;
+  }).join('')||'<div class="empty">No ZFS pools reported (node SSH unmapped? → ⚙ Setup)</div>';
+
+  $('guestTbl').querySelector('tbody').innerHTML = (inv.guests||[]).map(g=>{
+    const ds=(g.datasets||[]).map(d=>`<div class="kv">${esc(d.name)} <b>${fmtB(d.used)}</b>${d.quota?' / '+fmtB(d.quota):''}</div>`).join('')||'<span class="kv">—</span>';
+    const used=(g.datasets||[]).reduce((a,d)=>a+(d.used||0),0);
+    const diskKeys=Object.keys(g.disks||{}).filter(k=>k==='rootfs'||/^(scsi|virtio|sata|ide)\d+$/.test(k));
+    const dk=diskKeys[0]||(g.type==='lxc'?'rootfs':'scsi0');
+    return `<tr><td><b>${esc(g.name)}</b> <span class="kv">#${g.vmid}</span></td>
+      <td>${g.type==='lxc'?'CT':'VM'}</td>
+      <td><span class="pill ${g.status==='running'?'ok':'dim'}">${esc(g.status)}</span></td>
+      <td>${ds}</td><td>${fmtB(used||g.disk)}</td><td>${fmtB(g.maxdisk)}</td>
+      <td style="white-space:nowrap">
+        <input style="width:70px" placeholder="+10G" id="rz-${g.vmid}">
+        <button class="btn sm" onclick="P.resize(${g.vmid},'${esc(g.type)}','${esc(dk)}')">Grow ${esc(dk)}</button>
+      </td></tr>`;
+  }).join('')||'<tr><td colspan="7" class="empty">no guests</td></tr>';
+
+  $('mountTbl').querySelector('tbody').innerHTML = (inv.mounts||[]).filter(m=>m.fstype!=='zfs').map(m=>
+    `<tr><td>${esc(m.target)}</td><td>${esc(m.source)}</td><td>${esc(m.fstype)}</td>
+     <td>${fmtB(m.used)}</td><td>${fmtB(m.avail)}</td></tr>`
+  ).join('')||'<tr><td colspan="5" class="empty">none (or SSH unmapped)</td></tr>';
+
+  $('pveStorTbl').querySelector('tbody').innerHTML = (inv.storages||[]).map(s=>{
+    const backing = s.type==='zfspool'?('pool '+s.pool)
+      : s.type==='nfs'?(s.server+':'+s.export)
+      : s.type==='cifs'?('//'+s.server+'/'+s.share)
+      : (s.path||'—');
+    return `<tr><td><b>${esc(s.storage)}</b></td><td>${esc(s.type)}</td>
+      <td class="kv">${esc(backing)}</td><td class="kv">${esc(s.content)}</td>
+      <td class="kv">${esc(s.nodes||'all')}</td>
+      <td>${s.disabled?'<span class="pill dim">disabled</span>':'<span class="pill ok">active</span>'}</td></tr>`;
+  }).join('')||'<tr><td colspan="6" class="empty">—</td></tr>';
+
+  $('expTbl').querySelector('tbody').innerHTML = (inv.exports||[]).map(e=>
+    `<tr><td>${esc(e.path)}</td><td class="kv">${esc(e.clients)}</td></tr>`
+  ).join('')||'<tr><td colspan="2" class="empty">none</td></tr>';
+};
+
+P.resize = async (vmid,gtype,disk)=>{
+  const v=$('rz-'+vmid).value.trim();
+  if(!v) return toast('Enter a size like +10G','err');
+  try{
+    const r=await api('/pxstore/disk/resize','POST',{cluster_id:P.state.cluster,node:P.state.node,
+      guest_type:gtype,vmid,disk,size:v,grow_in_guest:gtype==='qemu'});
+    if(r.error) return toast(r.error,'err');
+    toast('Resized '+disk+' '+v+(r.guest_steps?' — check in-guest growth':''));
+    if(r.guest_grow) toast('guest: '+String(r.guest_grow).slice(0,120));
+    P.refresh();
+  }catch(e){ toast(e.message,'err'); }
+};
+
+/* ── file server ── */
+P.fsProvision = async ()=>{
+  try{
+    const r=await api('/pxstore/fs/provision','POST',{cluster_id:P.state.cluster,node:P.state.node,
+      smb_user:$('fsUser').value.trim(),smb_pass:$('fsPass').value,share_root:$('fsRoot').value.trim()});
+    if(r.error) return toast(r.error,'err');
+    toast('Samba provisioned on '+P.state.node); P.fsStatus();
+  }catch(e){ toast(e.message,'err'); }
+};
+P.fsSync = async ()=>{
+  toast('Syncing share tree…');
+  try{
+    const r=await api('/pxstore/fs/sync','POST',{cluster_id:P.state.cluster,node:P.state.node,
+      smb_user:$('fsUser').value.trim()||'vera',mount_vms:$('fsVMs').checked});
+    if(r.error) return toast(r.error,'err');
+    toast(`Synced: ${r.linked.length} CTs, ${r.vm_mounted.length} VMs, ${r.skipped.length} skipped`);
+    if(r.share) $('fsShareInfo').innerHTML=`Connect: <b>${esc(r.share.unc)}</b> (user ${esc(r.share.smb_user)}) — root ${esc(r.share.root)}`;
+    P.fsStatus();
+    if(r.skipped.length) console.log('skipped:',r.skipped);
+  }catch(e){ toast(e.message,'err'); }
+};
+P.fsStatus = async ()=>{
+  if(!P.state.cluster||!P.state.node) return;
+  try{
+    const r=await api('/pxstore/fs/status','POST',{cluster_id:P.state.cluster,node:P.state.node});
+    if(r.error) return;
+    if(r.share&&!$('fsShareInfo').innerHTML)
+      $('fsShareInfo').innerHTML=`Share: <b>${esc(r.share.unc)}</b> — smbd ${r.running?'<span style="color:var(--ok)">active</span>':'<span style="color:var(--err)">inactive</span>'}`;
+    $('fsTbl').querySelector('tbody').innerHTML=(r.entries||[]).map(e=>
+      `<tr><td>${esc(e.name)}</td><td><span class="pill ${e.kind==='mount'?'ok':'dim'}">${esc(e.kind)}</span></td><td class="kv">${esc(e.target)}</td></tr>`
+    ).join('')||'<tr><td colspan="3" class="empty">empty — run Sync</td></tr>';
+  }catch(e){}
+};
+
+/* ── cpu / numa ── */
+P.cpuLoad = async ()=>{
+  if(!P.state.cluster||!P.state.node) return;
+  try{
+    const r=await api('/pxstore/cpu/map','POST',{cluster_id:P.state.cluster,node:P.state.node});
+    if(r.error){ $('numaLanes').innerHTML=`<div class="empty">${esc(r.error)}</div>`; return; }
+    P.state.cpuMap=r; P.renderCpu();
+  }catch(e){ toast(e.message,'err'); }
+};
+P.renderCpu = ()=>{
+  const m=P.state.cpuMap; if(!m) return;
+  const owner={}, multi={};
+  m.guests.forEach(g=>(g.cpus||[]).forEach(c=>{ if(owner[c]!==undefined&&owner[c]!==g.name) multi[c]=1; owner[c]=g.name; }));
+  const reserved=new Set();
+  (m.reserved||[]).forEach(rr=>{ if(!rr.node||rr.node===P.state.node) String(rr.cpus).split(',').forEach(part=>{
+    const [a,b]=part.split('-').map(Number); if(isNaN(a))return;
+    for(let i=a;i<=(isNaN(b)?a:b);i++) reserved.add(i);
+  });});
+  $('numaLanes').innerHTML=Object.entries(m.topology.numa_nodes).map(([nn,cpus])=>
+    `<div class="numa"><div class="nlab">NUMA node ${esc(nn)} — ${cpus.length} cpus</div><div class="cpurow">`+
+    cpus.map(c=>{
+      const cls=reserved.has(c)?'res':multi[c]?'multi':owner[c]!==undefined?'used':'';
+      const t=reserved.has(c)?'reserved':owner[c]||'free';
+      return `<div class="cpu ${cls}" title="cpu ${c}: ${esc(t)}"><span>${c}</span><span class="own">${esc(owner[c]?owner[c].slice(0,6):'')}</span></div>`;
+    }).join('')+'</div></div>'
+  ).join('');
+  $('cpuTbl').querySelector('tbody').innerHTML=m.guests.map(g=>{
+    const flags=(g.flags||[]).map(f=>`<span class="flagchip ${f==='spans-numa'||f==='overlaps-reserved'?'bad':''}">${esc(f)}</span>`).join('')||'<span class="kv">ok</span>';
+    return `<tr><td><b>${esc(g.name)}</b> <span class="kv">#${g.vmid}</span></td>
+      <td>${g.type==='lxc'?'CT':'VM'}</td>
+      <td><span class="pill ${g.status==='running'?'ok':'dim'}">${esc(g.status)}</span></td>
+      <td>${esc(g.pinned||'—')}</td><td>${esc(g.live||'—')}</td>
+      <td>${(g.numa||[]).join(',')||'—'}</td><td>${flags}</td>
+      <td><input style="width:90px" id="pin-${g.vmid}" placeholder="${esc(g.pinned||'16-23')}"></td>
+      <td><button class="btn sm" onclick="P.cpuPin(${g.vmid},'${esc(g.type)}')">Pin</button></td></tr>`;
+  }).join('')||'<tr><td colspan="9" class="empty">no guests</td></tr>';
+};
+P.cpuPin = async (vmid,gtype)=>{
+  const v=$('pin-'+vmid).value.trim(); if(!v) return toast('Enter a cpuset like 16-23','err');
+  try{
+    const r=await api('/pxstore/cpu/pin','POST',{cluster_id:P.state.cluster,node:P.state.node,
+      guest_type:gtype,vmid,cpus:v});
+    if(r.error) return toast(r.error,'err');
+    toast('Pinned to '+r.cpus+(r.applied_live?' (live)':' (next start)')); P.cpuLoad();
+  }catch(e){ toast(e.message,'err'); }
+};
+P.cpuSuggest = async ()=>{
+  try{
+    const r=await api('/pxstore/cpu/suggest','POST',{cluster_id:P.state.cluster,node:P.state.node,
+      count:parseInt($('cpuCount').value)||1});
+    if(r.error) return $('cpuSuggestOut').innerHTML=`<span style="color:var(--err)">${esc(r.error)}</span>`;
+    $('cpuSuggestOut').innerHTML=`→ <b>${esc(r.cpus)}</b> on NUMA node ${r.numa_node} <button class="btn sm" onclick="P.copy('${esc(r.cpus)}')">⧉</button>`;
+  }catch(e){ toast(e.message,'err'); }
+};
+
+/* ── model store ── */
+P.fillCTSelects = ()=>{
+  const cts=(P.state.inv?.guests||[]).filter(g=>g.type==='lxc');
+  const opts=cts.map(g=>`<option value="${g.vmid}">${esc(g.name)} (#${g.vmid})</option>`).join('');
+  ['conCT','atCT'].forEach(id=>{ if($(id)) $(id).innerHTML=opts||'<option value="">no CTs</option>'; });
+  if($('sxHost')) $('sxHost').innerHTML=(P.state.sshHosts||[]).map(h=>`<option value="${esc(h.id)}">${esc(h.label||h.host)}</option>`).join('')||'<option value="">no SSH hosts</option>';
+  const st=P.state.settings||{};
+  if(st.store_mount) $('stInfo').innerHTML=`store: <b>${esc(st.store_dataset)}</b> @ ${esc(st.store_mount)}`;
+  if(st.share_root){ $('setRoot').placeholder=st.share_root; if(!$('fsRoot').value) $('fsRoot').placeholder=st.share_root; }
+  if($('setVMs')) $('setVMs').checked=!!st.mount_vms;
+  if($('fsVMs')) $('fsVMs').checked=!!st.mount_vms;
+};
+P.storeProvision = async ()=>{
+  try{
+    const r=await api('/pxstore/store/provision','POST',{cluster_id:P.state.cluster,node:P.state.node,
+      dataset:$('stDataset').value.trim(),quota:$('stQuota').value.trim()});
+    if(r.error) return toast(r.error,'err');
+    P.state.settings.store_dataset=r.dataset; P.state.settings.store_mount=r.mountpoint;
+    $('stInfo').innerHTML=`store: <b>${esc(r.dataset)}</b> @ ${esc(r.mountpoint)}`;
+    toast('Central store ready at '+r.mountpoint);
+  }catch(e){ toast(e.message,'err'); }
+};
+P.storeConsolidate = async ()=>{
+  const vmid=parseInt($('conCT').value); if(!vmid) return toast('Pick a CT','err');
+  toast('Rsync running — this can take a while for big model sets…');
+  try{
+    const r=await api('/pxstore/store/consolidate','POST',{cluster_id:P.state.cluster,node:P.state.node,
+      vmid,src_path:$('conSrc').value.trim(),subdir:$('conSub').value.trim(),
+      delete_source:$('conDel').checked});
+    const o=$('conOut'); o.style.display='block';
+    if(r.error){ o.textContent='ERROR: '+r.error+(r.log?'\n'+r.log:''); return toast(r.error,'err'); }
+    o.textContent=(r.stats||'done')+'\n\n'+r.freed_hint;
+    toast('Consolidated into '+r.dst);
+  }catch(e){ toast(e.message,'err'); }
+};
+P.storeAttach = async ()=>{
+  const vmid=parseInt($('atCT').value); if(!vmid) return toast('Pick a CT','err');
+  try{
+    const r=await api('/pxstore/store/attach','POST',{cluster_id:P.state.cluster,node:P.state.node,
+      vmid,subdir:$('atSub').value.trim(),ct_path:$('atPath').value.trim(),ro:$('atRO').checked});
+    if(r.error) return toast(r.error,'err');
+    $('atOut').innerHTML=r.already_attached
+      ?`Already attached as <b>${esc(r.mp_key)}</b>`
+      :`Attached as <b>${esc(r.mp_key)}</b>: ${esc(r.host_path)} → ${esc(r.ct_path)} ${r.ro?'(ro)':'(rw)'} — <b>restart the CT</b> to apply`;
+    toast('Attached'+(r.restart_required?' — restart CT '+vmid:''));
+  }catch(e){ toast(e.message,'err'); }
+};
+
+/* ── vera data ── */
+P.vdProvision = async ()=>{
+  const client=$('vdClient').value.trim(); if(!client) return toast('Enter the Vera VM IP','err');
+  try{
+    const r=await api('/pxstore/veradata/provision','POST',{cluster_id:P.state.cluster,node:P.state.node,
+      dataset:$('vdDataset').value.trim(),client,quota:$('vdQuota').value.trim()});
+    if(r.error) return toast(r.error,'err');
+    $('vdMountCmd').innerHTML=`Exported <b>${esc(r.mountpoint)}</b> → ${esc(client)}.<br>Run inside the Vera VM (replace &lt;node-ip&gt;): <pre>${esc(r.mount_cmd)}</pre>
+      <button class="btn sm" onclick="P.copy(${JSON.stringify(r.mount_cmd)})">⧉ Copy mount cmd</button>`;
+    toast('NFS export ready');
+  }catch(e){ toast(e.message,'err'); }
+};
+P.vdPlan = async ()=>{
+  try{
+    const r=await api('/pxstore/veradata/plan','POST',{});
+    if(r.error) return toast(r.error,'err');
+    const rows=(r.dirs||[]).map(d=>`<tr><td>${esc(d.path)}</td><td>${fmtB(d.bytes)}</td></tr>`).join('');
+    const disk=r.disk&&r.disk.total?`<div class="kv" style="margin:6px 0">Vera VM disk: <b>${fmtB(r.disk.used)}</b> used / ${fmtB(r.disk.total)} (${fmtB(r.disk.free)} free)</div>`:'';
+    $('vdPlanOut').innerHTML=`${disk}
+      <div class="twrap"><table><thead><tr><th>Data dir</th><th>Size</th></tr></thead><tbody>${rows||'<tr><td colspan=2 class=empty>none found</td></tr>'}</tbody></table></div>
+      <div class="section-h">Migration script (Path A — NFS + symlinks)</div>
+      <div class="frow"><button class="btn sm" onclick="P.copy(P.state._mig)">⧉ Copy script</button></div>
+      <pre>${esc(r.migrate_script)}</pre>
+      <div class="section-h">Docker data stack (Path B — optional)</div>
+      <div class="frow"><button class="btn sm" onclick="P.copy(P.state._compose)">⧉ Copy compose</button></div>
+      <pre>${esc(r.compose)}</pre>
+      <div class="note">${esc(r.note)}</div>`;
+    P.state._mig=r.migrate_script; P.state._compose=r.compose;
+  }catch(e){ toast(e.message,'err'); }
+};
+
+/* ── ollama instance registry ──
+   Fills the Model-Store pull select + Setup's store-writer select. Backend
+   switching (ollama⇄vLLM) lives in Workers & Ollama → Nodes; VSCode targets
+   moved to the Remote IDE panel. */
+P.wpLoad = async ()=>{
+  try{
+    const r=await api('/ollama/instances');   // {iid:{label,…}} keyed by id
+    P.state.workerRows=Object.entries(r||{}).filter(([,v])=>v&&typeof v==='object')
+      .map(([id,i])=>({id,label:i.label||id}));
+    if($('plInst')) $('plInst').innerHTML=P.state.workerRows.map(w=>`<option value="${esc(w.id)}">${esc(w.id)}</option>`).join('');
+    P.renderSetupSelects();
+  }catch(e){ toast(e.message,'err'); }
+};
+
+/* ── model pull + network store ── */
+P.modelPull = async ()=>{
+  const model=$('plModel').value.trim(); if(!model) return toast('Model required','err');
+  $('plOut').textContent='pulling…';
+  try{
+    const r=await api('/pxstore/models/pull','POST',{cluster_id:P.state.cluster,model,
+      via:$('plVia').value,instance_id:$('plInst').value});
+    if(r.error){ $('plOut').textContent=''; return toast(r.error,'err'); }
+    $('plOut').innerHTML=`✓ pulled on <b>${esc(r.routed_to)}</b> (via ${esc(r.via)})`;
+    toast('Model pulled on '+r.routed_to);
+  }catch(e){ $('plOut').textContent=''; toast(e.message,'err'); }
+};
+P.storeExport = async ()=>{
+  const client=$('sxClient').value.trim(); if(!client) return toast('Client IP/CIDR required','err');
+  try{
+    const r=await api('/pxstore/store/export','POST',{cluster_id:P.state.cluster,node:P.state.node,client});
+    if(r.error) return toast(r.error,'err');
+    $('sxOut').innerHTML='Exported: <b>'+esc(r.export)+'</b>';
+    toast('Store NFS-exported');
+  }catch(e){ toast(e.message,'err'); }
+};
+P.storeAttachRemote = async ()=>{
+  const host_id=$('sxHost').value, server=$('sxServer').value.trim();
+  if(!host_id||!server) return toast('Remote host and PVE node IP required','err');
+  try{
+    const r=await api('/pxstore/store/attach_remote','POST',{cluster_id:P.state.cluster,host_id,server});
+    if(r.error) return toast(r.error,'err');
+    $('sxOut').innerHTML='Mounted at <b>'+esc(r.mounted_at)+'</b> on remote — bind it into containers with -v '+esc(r.mounted_at)+'/models/ollama:/root/.ollama/models:ro';
+    toast('Store mounted on remote host');
+  }catch(e){ toast(e.message,'err'); }
+};
+
+/* ── setup ── */
+P.renderSetupSelects = ()=>{
+  const st=P.state.settings||{};
+  if($('setWriter')) $('setWriter').innerHTML='<option value="">— none (direct pulls) —</option>'+
+    (P.state.workerRows||[]).map(w=>`<option value="${esc(w.id)}" ${w.id===st.store_writer_instance?'selected':''}>${esc(w.id)} (${esc(w.label)})</option>`).join('');
+  if($('setNwm')) $('setNwm').innerHTML='<option value="">— not set —</option>'+
+    (P.state.sshHosts||[]).map(h=>`<option value="${esc(h.id)}" ${h.id===st.nwm_host_id?'selected':''}>${esc(h.label||h.host)}</option>`).join('');
+};
+P.renderSetup = async ()=>{
+  // Re-fetch the canonical SSH host list so credentials added in
+  // Workers & Ollama → Connections after this panel loaded show up here.
+  try{ P.state.sshHosts=(await api('/exec/ssh/hosts')).hosts||P.state.sshHosts||[]; }catch(e){}
+  const st=P.state.settings||{}; const hosts=P.state.sshHosts||[];
+  const hostOpts=hid=>['<option value="">— unmapped —</option>']
+    .concat(hosts.map(h=>`<option value="${esc(h.id)}" ${h.id===hid?'selected':''}>${esc(h.label||h.host)} (${esc(h.user)}@${esc(h.host)})</option>`)).join('');
+  $('nodeMap').innerHTML=(P.state.nodes.length?P.state.nodes:['?']).map(n=>
+    `<div class="frow"><div class="field sm"><label>Node</label><input value="${esc(n)}" disabled></div>
+     <div class="field"><label>Root SSH credential</label><select data-node="${esc(n)}" class="nodeSel">${hostOpts((st.node_hosts||{})[n]||'')}</select></div></div>`
+  ).join('');
+  $('resTbl').querySelector('tbody').innerHTML=(st.reserved_cpus||[]).map((r,i)=>
+    `<tr><td>${esc(r.label)}</td><td>${esc(r.node||'all')}</td><td>${esc(r.cpus)}</td>
+     <td><button class="btn sm danger" onclick="P.resDel(${i})">✕</button></td></tr>`
+  ).join('')||'<tr><td colspan="4" class="empty">none — add the ollama ranges</td></tr>';
+  if(st.share_root) $('setRoot').value=st.share_root;
+  $('setVMs').checked=!!st.mount_vms;
+  P.renderSetupSelects();
+  if(!(P.state.workerRows||[]).length) P.wpLoad();
+};
+P.resAdd = ()=>{
+  const st=P.state.settings; st.reserved_cpus=st.reserved_cpus||[];
+  const cpus=$('resCpus').value.trim(); if(!cpus) return toast('CPUs required','err');
+  st.reserved_cpus.push({label:$('resLabel').value.trim()||'reserved',node:$('resNode').value.trim(),cpus});
+  $('resLabel').value=$('resCpus').value='';
+  P.renderSetup();
+};
+P.resDel = i=>{ P.state.settings.reserved_cpus.splice(i,1); P.renderSetup(); };
+P.saveSettings = async ()=>{
+  const node_hosts={};
+  document.querySelectorAll('.nodeSel').forEach(s=>{ if(s.value) node_hosts[s.dataset.node]=s.value; });
+  try{
+    const r=await api('/pxstore/settings/save','POST',{cluster_id:P.state.cluster,node_hosts,
+      share_root:$('setRoot').value.trim(),reserved_cpus:P.state.settings.reserved_cpus||[],
+      mount_vms:$('setVMs').checked,
+      store_writer_instance:$('setWriter')?$('setWriter').value:'',
+      nwm_host_id:$('setNwm')?$('setNwm').value:''});
+    if(r.error) return toast(r.error,'err');
+    P.state.settings=r.settings; toast('Settings saved'); P.refresh();
+  }catch(e){ toast(e.message,'err'); }
+};
+
+/* Solo mode — ?solo=<pane> renders a single pane without the storage sidebar.
+   Used by the Workers panel's Proxmox pane to embed CPU / NUMA
+   (/pxstore/panel?solo=cpu) now that it's out of the storage nav. */
+const _solo=new URLSearchParams(location.search).get('solo')||'';
+if(_solo&&document.getElementById('p-'+_solo)){
+  const sb=document.getElementById('sidebar'); if(sb) sb.style.display='none';
+}
+P.init().then(()=>{
+  if(_solo&&document.getElementById('p-'+_solo)){
+    P.show(_solo);
+    $('secTitle').textContent=({cpu:'CPU / NUMA'})[_solo]||_solo;
+  }
+});
+</script>
+<script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel.js"></script>
+</body>
+</html>

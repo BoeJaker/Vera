@@ -130,9 +130,44 @@ FABRIC_S3_SECRET    = os.getenv("FABRIC_S3_SECRET",      "")
 FABRIC_S3_BUCKET    = os.getenv("FABRIC_S3_BUCKET",      "vera-data-fabric")
 FABRIC_S3_REGION    = os.getenv("FABRIC_S3_REGION",      "garage")
 FABRIC_VECTOR_DIM   = int(os.getenv("FABRIC_VECTOR_DIM", "768"))
+# In-RAM FAISS mirror of the Chroma vectors. OFF by default: it has no
+# persistence of its own (it was empty after every restart), it duplicates
+# Chroma's cosine search over the same vectors, and at ~190k×768 floats it
+# costs >1 GB RAM (each vector is stored twice: global shard + per-dataset
+# index). Set FABRIC_FAISS=1 to enable — it then HYDRATES from Chroma in the
+# background at startup so it is actually populated, and serves as a
+# low-latency in-RAM tier for fabric.query.
+FABRIC_FAISS_ENABLED = os.getenv("FABRIC_FAISS", "0") == "1"
 FABRIC_CACHE_TTL    = int(os.getenv("FABRIC_CACHE_TTL",  "3600"))
 FABRIC_STREAM_KEY   = os.getenv("FABRIC_STREAM_KEY",     "vera:fabric:ingest")
 SQLITE_PATH         = os.getenv("FABRIC_SQLITE", str(Path(__file__).parent / "vera_fabric.db"))
+# Retrieval relevance knobs (see execute_query). min_score is the cosine floor a
+# vector result must clear to be returned at all — the fix for unrelated dumps.
+# weak_below flags a whole result set as poor. RRF_K is the rank-fusion constant.
+FABRIC_MIN_SCORE    = float(os.getenv("FABRIC_MIN_SCORE",  "0.28"))
+FABRIC_WEAK_BELOW   = float(os.getenv("FABRIC_WEAK_BELOW", "0.42"))
+FABRIC_RRF_K        = int(os.getenv("FABRIC_RRF_K",       "60"))
+# Common stopwords stripped from KEYWORD queries so a natural-language query
+# ("how do I configure the mesh") ranks on its content words, not on 'the'/'how'
+# matching every record. Short technical terms (cve, ssh, dns, rce…) are NOT
+# here, so they survive. Semantic (vector) search is unaffected.
+_FABRIC_STOPWORDS = frozenset((
+    "the","and","for","are","but","not","you","all","any","can","how","why","who",
+    "was","has","had","its","our","out","use","with","this","that","from","have",
+    "your","what","when","where","which","into","than","then","them","they","will",
+    "would","could","should","about","there","their","been","were","does","doing",
+    "over","under","some","such","only","also","more","most","other","get","got",
+))
+
+def _fabric_keywords(query: str, limit: int = 12) -> List[str]:
+    """Content words (>2 chars, non-stopword) for keyword ranking. Falls back to
+    the raw phrase when a query is entirely short/stopwords."""
+    words = [w for w in re.split(r"\W+", (query or "").lower())
+             if len(w) > 2 and w not in _FABRIC_STOPWORDS]
+    if not words:
+        phrase = (query or "").strip().lower()
+        return [phrase] if phrase else []
+    return words[:limit]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SQLITE FALLBACK — init synchronously at import time
@@ -753,29 +788,99 @@ class DataRecord:
 # EMBEDDING
 # ─────────────────────────────────────────────────────────────────────────────
 
-_embed_failed = False
+_embed_failed     = False   # tripped flag — external callers reset it (worldview does)
+_embed_failed_at  = 0.0     # monotonic ts when tripped; cooldown re-opens the gate
+_EMBED_RETRY_SECS = 300.0
 
 async def _embed(text: str) -> Optional[List[float]]:
     """Generate embedding via the centralized ollama_embed (logged to Jobs).
 
-    Preserves the circuit-breaker (_embed_failed) so that if the cluster is
-    unreachable we stop hammering it, and the L2-normalisation behaviour.
+    Circuit-breaker with COOLDOWN: if the cluster is unreachable we stop
+    hammering it, but retry after _EMBED_RETRY_SECS. The old permanently-
+    latched breaker meant one bad window (embed node down/rebooting) silently
+    dropped vectors for every record ingested until the process restarted —
+    that is how fabric_records got tens of thousands of rows with no Chroma
+    vector. L2-normalisation behaviour preserved.
     """
-    global _embed_failed
-    if _embed_failed or not text.strip():
+    global _embed_failed, _embed_failed_at
+    if not text.strip():
+        return None
+    if _embed_failed and (time.monotonic() - _embed_failed_at) < _EMBED_RETRY_SECS:
         return None
     try:
+        # De-duplication + short-TTL caching now live inside ollama_embed (the
+        # single chokepoint shared with memory.embed_text and every other
+        # caller), so identical/concurrent embeds collapse to one request.
         from Vera.vera.capability_orchestration import ollama_embed
         vec = await ollama_embed(
             text, model=OLLAMA_EMBED_MODEL, normalize=HAS_NUMPY,
         )
         if vec is None:
+            if not _embed_failed:
+                log.warning("fabric embed unavailable — model '%s' unreachable; "
+                            "retrying every %ds. Backfill later with "
+                            "fabric.backfill_vectors / worldview.reembed_missing.",
+                            OLLAMA_EMBED_MODEL, int(_EMBED_RETRY_SECS))
             _embed_failed = True
+            _embed_failed_at = time.monotonic()
             return None
+        _embed_failed = False
         return vec
     except Exception as e:
         log.debug("fabric embed: %s", e)
         return None
+
+
+async def _embed_many(texts: List[str]) -> List[Optional[List[float]]]:
+    """Batch-embed via a single Ollama /api/embed call (list input) — one HTTP
+    roundtrip per ~64 texts instead of one per record, which is the dominant
+    cost of bulk ingests and backfills. Routing goes through pick_instance
+    (same rules/pinning as ollama_embed). Falls back to per-record _embed when
+    the batch path can't serve (fastembed provider, no routable node, old
+    Ollama without /api/embed list support). Vectors are L2-normalised to
+    match _embed's behaviour.
+    """
+    global _embed_failed
+    out: List[Optional[List[float]]] = [None] * len(texts)
+    idx = [i for i, t in enumerate(texts) if (t or "").strip()]
+    if not idx:
+        return out
+    if _embed_failed and (time.monotonic() - _embed_failed_at) < _EMBED_RETRY_SECS:
+        return out
+
+    url = ""
+    if getattr(_orch, "EMBED_PROVIDER", "ollama") != "fastembed":
+        try:
+            chosen = _orch.pick_instance(model=OLLAMA_EMBED_MODEL,
+                                         job_type="embedding")
+            inst = _orch.OLLAMA_INSTANCES.get(chosen or "", {}) or {}
+            url = (inst.get("url") or "").rstrip("/")
+        except Exception:
+            url = ""
+    if url:
+        try:
+            async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=600) as c:
+                r = await c.post(url + "/api/embed", json={
+                    "model": OLLAMA_EMBED_MODEL,
+                    "input": [texts[i][:4096] for i in idx]})
+            if r.status_code == 200:
+                embs = (r.json() or {}).get("embeddings") or []
+                if len(embs) == len(idx):
+                    for j, e in zip(idx, embs):
+                        if HAS_NUMPY:
+                            v = np.asarray(e, dtype="float32")
+                            n = float(np.linalg.norm(v)) or 1.0
+                            out[j] = (v / n).tolist()
+                        else:
+                            out[j] = e
+                    _embed_failed = False
+                    return out
+        except Exception as e:
+            log.debug("fabric batch embed (falling back to per-record): %s", e)
+
+    for j in idx:
+        out[j] = await _embed(texts[j])
+    return out
 
 
 def infer_schema(data: Any) -> Dict:
@@ -795,12 +900,17 @@ def infer_schema(data: Any) -> Dict:
 
 class ObjectStore:
     def __init__(self):
-        self._client = None
-        self._bucket = FABRIC_S3_BUCKET
-        self._mode   = FABRIC_OBJECT_STORE
+        self._client    = None
+        self._bucket    = FABRIC_S3_BUCKET
+        self._mode      = FABRIC_OBJECT_STORE
+        self.last_error = ""
 
     def connect(self) -> bool:
-        if self._mode == "none" or not HAS_BOTO:
+        if self._mode == "none":
+            self.last_error = "object store disabled (FABRIC_OBJECT_STORE=none)"
+            return False
+        if not HAS_BOTO:
+            self.last_error = "boto3 not installed"
             return False
         try:
             from botocore.config import Config as _BotoConfig
@@ -814,12 +924,28 @@ class ObjectStore:
             )
             try:
                 self._client.head_bucket(Bucket=self._bucket)
-            except Exception:
-                self._client.create_bucket(Bucket=self._bucket)
+            except Exception as he:
+                code = str((getattr(he, "response", None) or {})
+                           .get("Error", {}).get("Code", ""))
+                if code in ("404", "NoSuchBucket"):
+                    self._client.create_bucket(Bucket=self._bucket)
+                else:
+                    # 403/AccessDenied ("No such key: …") means the access key
+                    # was never provisioned in the store — e.g. the Garage
+                    # bootstrap (garage-init / provision.store.garage.bootstrap)
+                    # hasn't run. Creating the bucket would fail identically, so
+                    # surface the real cause instead of a misleading create error.
+                    raise
+            self.last_error = ""
             log.info("✓ ObjectStore (%s) bucket=%s", self._mode, self._bucket)
             return True
         except Exception as e:
-            log.warning("ObjectStore (%s) unavailable: %s", self._mode, e)
+            self.last_error = f"{type(e).__name__}: {e}"
+            log.warning("ObjectStore (%s) endpoint=%s bucket=%s unavailable: %s — "
+                        "if this is AccessDenied/'No such key', run the Garage "
+                        "bootstrap (garage-init sidecar or "
+                        "provision.store.garage.bootstrap).",
+                        self._mode, FABRIC_S3_ENDPOINT, self._bucket, e)
             self._client = None
             return False
 
@@ -833,11 +959,36 @@ class ObjectStore:
         except Exception as e:
             log.error("ObjectStore put %s: %s", key, e); return False
 
+    def upload_file(self, key: str, path: str, content_type: str = "application/octet-stream",
+                    bucket: str = "") -> bool:
+        """Stream a file from disk into the store WITHOUT reading it all into memory —
+        for large blobs (e.g. LoRA weights, which can be hundreds of MB)."""
+        if not self.ensure(): return False
+        try:
+            with open(path, "rb") as fh:
+                self._client.upload_fileobj(fh, bucket or self._bucket, key,
+                                            ExtraArgs={"ContentType": content_type})
+            return True
+        except Exception as e:
+            log.error("ObjectStore upload_file %s: %s", key, e); return False
+
     def get(self, key: str, bucket: str = "") -> Optional[bytes]:
         if not self.ensure(): return None
         try:
             return self._client.get_object(Bucket=bucket or self._bucket, Key=key)["Body"].read()
         except Exception: return None
+
+    def download_file(self, key: str, path: str, bucket: str = "") -> bool:
+        """Stream an object from the store to a file on disk WITHOUT reading it
+        all into memory — the download twin of upload_file (large blobs, e.g. a
+        session-workspace tarball)."""
+        if not self.ensure(): return False
+        try:
+            with open(path, "wb") as fh:
+                self._client.download_fileobj(bucket or self._bucket, key, fh)
+            return True
+        except Exception as e:
+            log.error("ObjectStore download_file %s: %s", key, e); return False
 
     def list_prefix(self, prefix: str, bucket: str = "") -> List[str]:
         if not self.ensure(): return []
@@ -956,6 +1107,11 @@ class FaissStore:
         return f"shard_{hash(dataset_id) % self.N_SHARDS}"
 
     def connect(self) -> bool:
+        if not FABRIC_FAISS_ENABLED:
+            log.info("FaissStore disabled (FABRIC_FAISS=0) — Chroma serves all "
+                     "fabric vector search; set FABRIC_FAISS=1 to enable the "
+                     "in-RAM tier (hydrates from Chroma at startup)")
+            return False
         if not HAS_FAISS or not HAS_NUMPY:
             return False
         try:
@@ -969,6 +1125,49 @@ class FaissStore:
         except Exception as e:
             log.error("FaissStore connect: %s", e)
             return False
+
+    def hydrate_from_chroma(self, chroma_store: "FabricChromaStore",
+                            page: int = 2000) -> int:
+        """Populate the in-RAM index from the persistent Chroma collection.
+
+        FAISS has no persistence of its own — without this it started empty on
+        every boot and only ever held records ingested during the current
+        process, so fabric.query's FAISS tier returned a misleading recent-only
+        subset. Blocking (chroma HTTP + numpy) — run in an executor.
+        """
+        if not self._available or not chroma_store.available:
+            return 0
+        col = chroma_store._col
+        added = offset = 0
+        while True:
+            try:
+                res = col.get(limit=page, offset=offset,
+                              include=["embeddings", "metadatas"]) or {}
+            except Exception as e:
+                log.warning("FAISS hydrate: chroma get failed at %d: %s", offset, e)
+                break
+            ids = res.get("ids") or []
+            if not len(ids):
+                break
+            embs  = res.get("embeddings")
+            metas = res.get("metadatas") or []
+            for i, rid in enumerate(ids):
+                try:
+                    emb = embs[i] if embs is not None else None
+                    if emb is None or not len(emb):
+                        continue
+                    ds = (metas[i] or {}).get("dataset_id", "") if i < len(metas) else ""
+                    if self.add(rid, ds, list(emb)):
+                        added += 1
+                except Exception:
+                    continue
+            offset += len(ids)
+            if added and added % 20000 < page:
+                log.info("FAISS hydrate: %d vectors loaded", added)
+            if len(ids) < page:
+                break
+        log.info("✓ FAISS hydrated from Chroma — %d vectors", added)
+        return added
 
     def add(self, record_id: str, dataset_id: str, embedding: List[float]) -> bool:
         if not self._available or not embedding: return False
@@ -1047,10 +1246,22 @@ FAISS_STORE = FaissStore()
 
 class FabricChromaStore:
     COLLECTION = "vera_fabric"
+    _COUNT_TTL = 30.0   # seconds — count() is an HTTP roundtrip; cache it
 
     def __init__(self):
         self._client = None
         self._col    = None
+        self._count_cache: Tuple[float, int] = (0.0, 0)
+
+    def _cached_count(self) -> int:
+        """Collection count with a short TTL — search() needed it on every call
+        purely to clamp n_results, which cost an extra roundtrip per query."""
+        ts, n = self._count_cache
+        now = time.monotonic()
+        if now - ts > self._COUNT_TTL:
+            n = self._col.count()
+            self._count_cache = (now, n)
+        return n
 
     def connect(self) -> bool:
         if not HAS_CHROMA: return False
@@ -1065,19 +1276,31 @@ class FabricChromaStore:
 
     def upsert(self, record: DataRecord) -> bool:
         if not self._col: return False
+        if not record.embedding:
+            # Without an explicit vector Chroma embeds server/client-side with
+            # its default MiniLM function (384-dim) — the wrong space for this
+            # collection, raising "expecting embedding with dimension of N, got
+            # M". The record stays in Postgres/SQLite; re-encode it later with
+            # fabric.backfill_vectors / worldview.reembed_missing.
+            return False
         try:
+            # Oversized fields are TRUNCATED, never skipped: unbounded tag bags
+            # or giant texts blow past chroma's request-size limit (HTTP 413)
+            # and would silently drop the vector. The full record is intact in
+            # Postgres/SQLite; the chroma document is a retrieval snippet and
+            # the embedding was computed from ≤4096 chars anyway.
+            tags_json = json.dumps(record.tags)
+            if len(tags_json) > 2000:
+                tags_json = "[]"
             meta = {
                 "dataset_id":   record.dataset_id,
                 "source":       record.source,
                 "created_at":   record.created_at,
-                "tags":         json.dumps(record.tags),
+                "tags":         tags_json,
                 "content_hash": record.content_hash,
             }
-            kwargs: dict = {"ids": [record.id], "documents": [record.text or ""],
-                            "metadatas": [meta]}
-            if record.embedding:
-                kwargs["embeddings"] = [record.embedding]
-            self._col.upsert(**kwargs)
+            self._col.upsert(ids=[record.id], documents=[(record.text or "")[:4000]],
+                             metadatas=[meta], embeddings=[record.embedding])
             return True
         except Exception as e:
             log.debug("FabricChroma upsert: %s", e); return False
@@ -1089,7 +1312,7 @@ class FabricChromaStore:
             where: dict = {}
             if dataset_id:
                 where["dataset_id"] = {"$eq": dataset_id}
-            n = min(top_k, max(1, self._col.count()))
+            n = min(top_k, max(1, self._cached_count()))
             kwargs: dict = {"n_results": n, "include": ["distances"],
                             "query_embeddings": [embedding]}
             if where:
@@ -1122,6 +1345,7 @@ class FabricChromaStore:
             self._client.delete_collection(self.COLLECTION)
             self._col = self._client.get_or_create_collection(
                 self.COLLECTION, metadata={"hnsw:space": "cosine"})
+            self._count_cache = (0.0, 0)
             log.info("FabricChromaStore: collection reset (was %d docs, now empty)", old_count)
             return {"ok": True, "old_count": old_count, "new_count": 0,
                     "collection": self.COLLECTION}
@@ -1244,20 +1468,47 @@ class FabricPostgres:
 
     async def search_text(self, query: str, dataset_id: Optional[str] = None,
                           limit: int = 10) -> List[Tuple[str, float]]:
-        if not self._pool: return []
+        """Keyword search ranked by how many DISTINCT query words a record
+        contains (0..1 overlap ratio). The old impl did a single whole-phrase
+        ILIKE %query% and scored every hit a flat 0.8 — a natural-language query
+        like 'how to configure the mesh' matched almost nothing as a literal
+        substring, and what did match was unranked noise fused into the results.
+        Word-level matching + an overlap score makes keyword search actually
+        useful and comparable across records."""
+        if not self._pool:
+            return []
+        words = _fabric_keywords(query)
+        if not words:
+            return []
+        patterns = [f"%{w}%" for w in words]
         try:
+            # Records matching ANY word; rank in Python by distinct-word overlap.
+            # Positional args: [dataset_id?] + patterns + limit; build $-indexes
+            # to match that order so the ILIKE OR-block and LIMIT line up.
+            base = 1 if dataset_id else 0
+            conds = " OR ".join(f"text ILIKE ${base + i + 1}" for i in range(len(words)))
+            limit_idx = base + len(words) + 1
             async with self._pool.acquire() as conn:
                 if dataset_id:
                     rows = await conn.fetch(
-                        "SELECT id FROM fabric_records "
-                        "WHERE dataset_id=$1 AND text ILIKE $2 LIMIT $3",
-                        dataset_id, f"%{query}%", limit)
+                        f"SELECT id, text FROM fabric_records "
+                        f"WHERE dataset_id=$1 AND ({conds}) LIMIT ${limit_idx}",
+                        dataset_id, *patterns, limit * 4)
                 else:
                     rows = await conn.fetch(
-                        "SELECT id FROM fabric_records WHERE text ILIKE $1 LIMIT $2",
-                        f"%{query}%", limit)
-            return [(r["id"], 0.8) for r in rows]
-        except Exception: return []
+                        f"SELECT id, text FROM fabric_records "
+                        f"WHERE ({conds}) LIMIT ${limit_idx}",
+                        *patterns, limit * 4)
+            scored: List[Tuple[str, float]] = []
+            for r in rows:
+                low = (r["text"] or "").lower()
+                hits = sum(1 for w in words if w in low)
+                if hits:
+                    scored.append((r["id"], hits / len(words)))
+            scored.sort(key=lambda x: x[1], reverse=True)
+            return scored[:limit]
+        except Exception:
+            return []
 
     async def get_by_ids(self, ids: List[str]) -> Dict[str, DataRecord]:
         if not self._pool or not ids: return {}
@@ -1714,6 +1965,11 @@ class NetGraphAdapter(GraphAdapter):
     async def query(self, cypher, params=None):
         return await self._neo.query(cypher, params)
 
+    async def query_graph(self, node_cypher, edge_cypher, params=None):
+        # Without this override the base-class stub returns an empty graph,
+        # which made /fabric/graphs/snapshot?graph=net always come back blank.
+        return await self._neo.query_graph(node_cypher, edge_cypher, params)
+
     @property
     def available(self):
         return self._neo.available
@@ -1923,7 +2179,10 @@ async def fabric_graphs_snapshot(graph: str = "fabric", limit: int = 200,
                   "Skill", "Ontology", "Agent", "DAG", "Entity",
                   "NetHost", "SshHost", "Subnet", "NetService",
                   "Container", "DockerHost"]
-    # else: no filter — show whatever is in the graph
+    else:
+        # Custom / user-registered graphs share the fabric Neo4j — scope to the
+        # labels they were registered with, otherwise they'd return the whole DB.
+        labels = list(adapter.describe().get("scope_labels") or [])
 
     # Build queries — use query_graph which preserves labels and rel types
     if dataset_id:
@@ -2110,7 +2369,10 @@ class VectorIndexStage(PipelineStage):
     async def process(self, record: DataRecord, ctx: Dict) -> DataRecord:
         if record.embedding:
             FAISS_STORE.add(record.id, record.dataset_id, record.embedding)
-            FABRIC_CHROMA.upsert(record)
+            # chroma's HTTP client is synchronous — keep it off the event loop
+            # (inline it blocked every other coroutine for the roundtrip).
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, FABRIC_CHROMA.upsert, record)
         return record
 
 class Neo4jStoreStage(PipelineStage):
@@ -2163,7 +2425,7 @@ async def ingest_dataset(
     tags:       List[str] = None,
     source_id:  str = "",
 ) -> Dict:
-    ingested = errors = 0
+    recs: List[DataRecord] = []
     for item in (data if isinstance(data, list) else [data]):
         if isinstance(item, str):
             text = item; item = {"text": item}
@@ -2173,23 +2435,53 @@ async def ingest_dataset(
                 text = " ".join(str(v) for v in item.values()
                                 if isinstance(v, str))[:2000]
 
-        rec = DataRecord(
+        recs.append(DataRecord(
             dataset_id = dataset_id,
             source     = source,
             source_id  = source_id,
             text       = text[:2000],
             data       = item if isinstance(item, dict) else {"value": item},
             tags       = tags or [],
-        )
-        try:
-            await DEFAULT_PIPELINE.run(rec)
-            ingested += 1
-        except Exception as e:
-            log.error("ingest [%s]: %s", dataset_id, e)
-            errors += 1
+        ))
 
+    # Batch pre-embed: one /api/embed call per ~64 records instead of one HTTP
+    # roundtrip per record inside EmbedStage (which then no-ops on records that
+    # already carry a vector). This is the dominant cost of bulk ingests.
+    if len(recs) > 1:
+        for i in range(0, len(recs), 64):
+            chunk = recs[i:i + 64]
+            vecs = await _embed_many([r.text for r in chunk])
+            for r, v in zip(chunk, vecs):
+                if v:
+                    r.embedding       = v
+                    r.embedding_model = OLLAMA_EMBED_MODEL
+
+    # Bounded-concurrency pipeline fan-out. Stores are independent per record
+    # (SQLite writes serialise through the single-writer queue; PG/Neo4j pool).
+    ingested = errors = 0
+    ingested_ids: List[str] = []
+    sem = asyncio.Semaphore(8)
+
+    async def _run_one(rec: DataRecord):
+        nonlocal ingested, errors
+        async with sem:
+            try:
+                await DEFAULT_PIPELINE.run(rec)
+                ingested += 1
+                if len(ingested_ids) < 200:
+                    ingested_ids.append(rec.id)
+            except Exception as e:
+                log.error("ingest [%s]: %s", dataset_id, e)
+                errors += 1
+
+    if recs:
+        await asyncio.gather(*[_run_one(r) for r in recs])
+
+    # record_ids lets downstream consumers (worldview stream worker) process
+    # exactly the new records instead of over-fetching latest-by-dataset.
     await emit_event({"type": "fabric.ingested", "dataset_id": dataset_id,
-                      "ingested": ingested, "errors": errors, "source": source})
+                      "ingested": ingested, "errors": errors, "source": source,
+                      "record_ids": ingested_ids})
 
     # ── Post-ingestion pipeline (async, non-blocking) ──────────────────────
     # Ensures every ingestion point gets: source registration, entity
@@ -2204,6 +2496,12 @@ async def _post_ingest_pipeline(
     dataset_id: str, source: str, source_id: str, record_count: int
 ):
     """Background post-ingestion tasks. Non-blocking — errors are logged, not raised."""
+    # Everything here is BACKGROUND work: any LLM call it makes (extraction,
+    # loom) is demoted off the GPU while a human is actively using the system.
+    try:
+        _orch.BACKGROUND_LLM.set(f"fabric:ingest:{dataset_id}")
+    except Exception:
+        pass
     try:
         # 1) Auto-create a source if none exists for this dataset
         await _ensure_dataset_source(dataset_id, source, source_id)
@@ -2217,18 +2515,39 @@ async def _post_ingest_pipeline(
                 from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY
                 extract_cap = CAPABILITY_REGISTRY.get("fabric.entity_graph.extract")
                 if extract_cap:
+                    # LLM extraction only when the dataset opts in AND the
+                    # system-wide LLM-NLP switch is on (default OFF → regex NLP).
+                    _use_llm = (bool(cfg.get("use_llm", False))
+                                and await llm_nlp_enabled())
                     ext_args = {
                         "dataset_id":   dataset_id,
                         "limit":        min(record_count, cfg.get("extract_limit", 500)),
                         "content_type": cfg.get("content_type", "text"),
-                        "use_llm":      cfg.get("use_llm", True),
+                        "use_llm":      _use_llm,
                         "persist":      True,
                     }
-                    await extract_cap["func"](**ext_args, trace_id=new_id())
+                    await extract_cap["func"](**ext_args, trace_id=_orch.new_id())
                     log.info("post-ingest entity extraction done: %s (%d records)",
                              dataset_id, record_count)
             except Exception as e:
                 log.warning("post-ingest entity extraction %s: %s", dataset_id, e)
+
+            # 3.5) Bridge the just-extracted entities into the memory graph for
+            #      records that carry a node_id (chat turns, capability activity,
+            #      notebook cells). Links each entity to its :Memory node via
+            #      MENTIONED_IN so those nodes become first-class citizens of the
+            #      entity graph and connect to everything else via shared entities.
+            if cfg.get("link_memory", True):
+                try:
+                    from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY
+                    link_cap = CAPABILITY_REGISTRY.get("fabric.entity_graph.link_memory")
+                    if link_cap:
+                        await link_cap["func"](
+                            dataset_id=dataset_id,
+                            limit=min(record_count, cfg.get("extract_limit", 500)),
+                            trace_id=_orch.new_id())
+                except Exception as e:
+                    log.warning("post-ingest link_memory %s: %s", dataset_id, e)
 
         # 4) Loom linking (if enabled for this dataset)
         if cfg.get("auto_loom", False) and record_count > 0:
@@ -2250,7 +2569,7 @@ async def _post_ingest_pipeline(
                         loom_args["dataset_b"] = ""  # empty = all datasets
                     else:
                         loom_args["dataset_b"] = dataset_id
-                    await loom_cap["func"](**loom_args, trace_id=new_id())
+                    await loom_cap["func"](**loom_args, trace_id=_orch.new_id())
                     log.info("post-ingest loom done: %s (scope=%s)",
                              dataset_id, loom_scope)
             except Exception as e:
@@ -2261,26 +2580,120 @@ async def _post_ingest_pipeline(
 
 async def _ensure_dataset_source(dataset_id: str, source: str, source_id: str):
     """Create a source record for this dataset if one doesn't exist."""
+    def _sync():
+        conn = _sqlite_conn()
+        try:
+            existing = conn.execute(
+                "SELECT source_id FROM fabric_sources WHERE dataset_id=? LIMIT 1",
+                (dataset_id,)
+            ).fetchone()
+            if existing:
+                return None
+            sid = source_id or f"auto_{dataset_id}"
+            conn.execute(
+                "INSERT OR IGNORE INTO fabric_sources "
+                "(source_id, source_type, url, dataset_id, schedule, enabled, config, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (sid, source or "api", "", dataset_id, "", 1,
+                 json.dumps({"auto_created": True, "source": source}), now_iso())
+            )
+            conn.commit()
+            return sid
+        finally:
+            conn.close()
     try:
-        conn = _write_conn()
-        existing = conn.execute(
-            "SELECT source_id FROM fabric_sources WHERE dataset_id=? LIMIT 1",
-            (dataset_id,)
-        ).fetchone()
-        if existing:
-            return
-        sid = source_id or f"auto_{dataset_id}"
-        conn.execute(
-            "INSERT OR IGNORE INTO fabric_sources "
-            "(source_id, source_type, url, dataset_id, schedule, enabled, config, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?)",
-            (sid, source or "api", "", dataset_id, "", 1,
-             json.dumps({"auto_created": True, "source": source}), now_iso())
-        )
-        conn.commit()
-        log.info("auto-created source %s for dataset %s", sid, dataset_id)
+        sid = await asyncio.to_thread(_sync)
+        if sid:
+            log.info("auto-created source %s for dataset %s", sid, dataset_id)
     except Exception as e:
         log.warning("ensure_dataset_source %s: %s", dataset_id, e)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LLM-NLP MASTER SWITCH — system-wide gate on LLM-driven NLP (entity/relation
+# extraction, page analysis, LLM tagging) in AUTOMATIC pipelines.
+#
+# Default OFF: ingestion, discovery crawls, collectors and agent loops run
+# regex/spaCy NLP only — no LLM (and therefore no GPU) traffic. LLM NLP runs
+# only when:
+#   • a HUMAN invokes it directly over HTTP with use_llm=true (a UI toggle —
+#     detected via CURRENT_HTTP_CAP: the cap being executed IS the cap that
+#     was called over HTTP, so internal/agentic callers can't fake it), or
+#   • the system-wide switch is enabled in settings (fabric.nlp.set).
+# ─────────────────────────────────────────────────────────────────────────────
+KEY_FABRIC_NLP = "vera:fabric:llm_nlp"
+_LLM_NLP_STATE: Dict[str, Any] = {"enabled": None, "ts": 0.0}
+
+
+async def llm_nlp_enabled() -> bool:
+    """The system-wide LLM-NLP switch (default False). Redis-backed, cached 30s."""
+    now = time.time()
+    if _LLM_NLP_STATE["enabled"] is None or now - _LLM_NLP_STATE["ts"] > 30:
+        val = False
+        r = _redis()
+        if r:
+            try:
+                raw = await r.get(KEY_FABRIC_NLP)
+                if raw:
+                    doc = json.loads(raw if isinstance(raw, str) else raw.decode())
+                    val = bool(doc.get("enabled"))
+            except Exception:
+                val = bool(_LLM_NLP_STATE["enabled"])
+        _LLM_NLP_STATE["enabled"] = val
+        _LLM_NLP_STATE["ts"] = now
+    return bool(_LLM_NLP_STATE["enabled"])
+
+
+async def llm_nlp_allowed(requested: bool, cap_name: str = "") -> bool:
+    """May THIS call use LLM NLP? True when the caller asked for it AND either
+    the system switch is on, or this is the human's own direct HTTP invocation
+    of `cap_name` (the UI toggle path)."""
+    if not requested:
+        return False
+    if await llm_nlp_enabled():
+        return True
+    if cap_name:
+        try:
+            if _orch.CURRENT_HTTP_CAP.get("") == cap_name:
+                return True
+        except Exception:
+            pass
+    return False
+
+
+@capability(
+    "fabric.nlp.get", memory="off", silent=True,
+    http_method="GET", http_path="/fabric/nlp/config", http_tags=["fabric", "nlp"],
+    description="Get the system-wide LLM-NLP master switch. When DISABLED "
+                "(default), automatic pipelines (ingestion, discovery crawls, "
+                "collectors, agent loops) use regex/spaCy NLP only — LLM entity/"
+                "relation extraction runs solely on a human's direct UI request. "
+                "Output: {enabled}.",
+)
+async def cap_fabric_nlp_get(trace_id=None) -> Dict:
+    return {"enabled": await llm_nlp_enabled()}
+
+
+@capability(
+    "fabric.nlp.set", memory="off",
+    http_method="POST", http_path="/fabric/nlp/set", http_tags=["fabric", "nlp"],
+    description="Set the system-wide LLM-NLP master switch (persisted). Input: "
+                "enabled (bool!). When false (default), LLM-driven NLP in "
+                "automatic pipelines is disabled everywhere; humans can still "
+                "run it per-call from the fabric UI. Output: {ok, enabled}.",
+)
+async def cap_fabric_nlp_set(enabled: bool = False, trace_id=None) -> Dict:
+    r = _redis()
+    if r:
+        try:
+            await r.set(KEY_FABRIC_NLP, json.dumps({"enabled": bool(enabled),
+                                                    "updated": now_iso()}))
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+    _LLM_NLP_STATE["enabled"] = bool(enabled)
+    _LLM_NLP_STATE["ts"] = time.time()
+    await emit_event({"type": "fabric.nlp.config", "enabled": bool(enabled)})
+    return {"ok": True, "enabled": bool(enabled)}
 
 
 async def _get_dataset_processing_config(dataset_id: str) -> Dict:
@@ -2289,30 +2702,39 @@ async def _get_dataset_processing_config(dataset_id: str) -> Dict:
     """
     defaults = {
         "auto_extract_entities": True,
+        "link_memory":          True,       # bridge entities → :Memory nodes (node_id records)
         "auto_loom":            False,      # off by default — can be heavy
         "extract_limit":        500,
         "content_type":         "text",
-        "use_llm":              True,       # LLM typed-triple extraction per record
+        # LLM typed-triple extraction per record — OFF by default; even when a
+        # dataset opts in it only actually runs while the system-wide LLM-NLP
+        # switch (fabric.nlp.set) is enabled.
+        "use_llm":              False,
         "loom_scope":           "internal", # internal = within dataset, cross = all datasets
         "loom_mode":            "hybrid",
         "loom_min_score":       0.4,
         "loom_max_matches":     100,
         "entity_scope":         "internal", # internal = only link entities within dataset
     }
+    def _sync():
+        conn = _sqlite_conn()
+        try:
+            # Ensure config table exists
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS fabric_dataset_config (
+                    dataset_id TEXT PRIMARY KEY,
+                    config     TEXT DEFAULT '{}',
+                    updated_at TEXT
+                )
+            """)
+            return conn.execute(
+                "SELECT config FROM fabric_dataset_config WHERE dataset_id=?",
+                (dataset_id,)
+            ).fetchone()
+        finally:
+            conn.close()
     try:
-        conn = _write_conn()
-        # Ensure config table exists
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS fabric_dataset_config (
-                dataset_id TEXT PRIMARY KEY,
-                config     TEXT DEFAULT '{}',
-                updated_at TEXT
-            )
-        """)
-        row = conn.execute(
-            "SELECT config FROM fabric_dataset_config WHERE dataset_id=?",
-            (dataset_id,)
-        ).fetchone()
+        row = await asyncio.to_thread(_sync)
         if row and row["config"]:
             stored = json.loads(row["config"])
             defaults.update(stored)
@@ -2360,8 +2782,17 @@ async def execute_query(q: Dict) -> Dict:
     dataset_id = q.get("dataset_id") or None
     v_weight   = float(q.get("vector_weight", 1.0))
     t_weight   = float(q.get("text_weight", 0.5))
+    # Relevance floor — THE fix for "fabric.query returns unrelated results".
+    # Vector search always returns the nearest top_k vectors no matter how far
+    # they are, so a query with no genuine match still yielded 20 "nearest"
+    # junk rows. We now keep a record only if its cosine similarity clears
+    # `min_score` (or it is a real keyword hit). Cosine sims are comparable
+    # because query + stored vectors are L2-normalised (see _embed).
+    min_score  = float(q.get("min_score", FABRIC_MIN_SCORE))
+    weak_below = float(q.get("weak_below", FABRIC_WEAK_BELOW))
 
-    scores: Dict[str, float] = {}
+    vec_scores:  Dict[str, float] = {}   # rid -> cosine similarity (0..1)
+    text_scores: Dict[str, float] = {}   # rid -> keyword overlap ratio (0..1)
     backends_used = []
 
     async def _safe(name, coro, timeout=8):
@@ -2380,6 +2811,10 @@ async def execute_query(q: Dict) -> Dict:
     if vector_q:
         embedding = await _safe("embed", _embed(vector_q), timeout=10)
     if embedding and v_weight > 0:
+        # FAISS and Chroma index the SAME vectors (FAISS is the optional in-RAM
+        # tier) — max-combine them instead of adding, otherwise a record present
+        # in both scored ~2x a record only in Chroma, biasing results toward
+        # whatever happened to be in the volatile FAISS index.
         try:
             faiss_res = (
                 FAISS_STORE.search_dataset(dataset_id, embedding, top_k * 2)
@@ -2389,30 +2824,60 @@ async def execute_query(q: Dict) -> Dict:
             if faiss_res:
                 backends_used.append("faiss")
                 for rid, score in faiss_res:
-                    scores[rid] = scores.get(rid, 0) + score * v_weight
+                    vec_scores[rid] = max(vec_scores.get(rid, 0), float(score))
         except Exception as e:
             log.debug("query faiss: %s", e)
         try:
-            chroma_res = FABRIC_CHROMA.search(embedding, dataset_id=dataset_id, top_k=top_k * 2)
+            # synchronous chroma HTTP client — keep it off the event loop
+            _loop = asyncio.get_running_loop()
+            chroma_res = await _safe(
+                "chroma",
+                _loop.run_in_executor(
+                    None, lambda: FABRIC_CHROMA.search(
+                        embedding, dataset_id=dataset_id, top_k=top_k * 2)),
+                timeout=10)
             if chroma_res:
                 backends_used.append("chroma")
                 for rid, score in chroma_res:
-                    scores[rid] = scores.get(rid, 0) + score * v_weight * 0.8
+                    vec_scores[rid] = max(vec_scores.get(rid, 0), float(score))
         except Exception as e:
             log.debug("query chroma: %s", e)
 
-    # Text search — Postgres (with timeout — most likely to hang)
+    # Text search — Postgres word-overlap (ranked, not a flat whole-phrase hit).
     if text_q and t_weight > 0 and FABRIC_PG.available:
         text_res = await _safe("pg_text",
-                                FABRIC_PG.search_text(text_q, dataset_id, limit=top_k * 2),
+                                FABRIC_PG.search_text(text_q, dataset_id, limit=top_k * 3),
                                 timeout=5)
         if text_res:
             backends_used.append("pg")
             for rid, score in text_res:
-                scores[rid] = scores.get(rid, 0) + score * t_weight
+                text_scores[rid] = max(text_scores.get(rid, 0), float(score))
 
-    # Fetch records — also bounded
-    ranked_ids  = sorted(scores, key=scores.get, reverse=True)[:top_k]
+    # ── Fuse with Reciprocal Rank Fusion (RRF) ────────────────────────────────
+    # Cosine sims (0..1) and keyword-overlap ratios (0..1) are DIFFERENT scales —
+    # adding them let a flat keyword hit outrank a genuine semantic match. RRF is
+    # scale-free: it fuses the two RANKINGS, weighted, so each backend contributes
+    # its ordering rather than its raw magnitude.
+    def _rank_map(scores: Dict[str, float]) -> Dict[str, int]:
+        return {rid: i for i, (rid, _) in enumerate(
+            sorted(scores.items(), key=lambda kv: kv[1], reverse=True))}
+    vrank = _rank_map(vec_scores)
+    trank = _rank_map(text_scores)
+    rrf: Dict[str, float] = {}
+    for rid, r in vrank.items():
+        rrf[rid] = rrf.get(rid, 0.0) + v_weight / (FABRIC_RRF_K + r)
+    for rid, r in trank.items():
+        rrf[rid] = rrf.get(rid, 0.0) + t_weight / (FABRIC_RRF_K + r)
+
+    # ── Relevance floor: drop records that are neither a decent semantic match
+    #    nor a keyword hit. This is what stops "nearest but unrelated" dumps. ──
+    def _passes(rid: str) -> bool:
+        return vec_scores.get(rid, 0.0) >= min_score or text_scores.get(rid, 0.0) > 0.0
+    kept_ids = [rid for rid in rrf if _passes(rid)]
+    kept_ids.sort(key=lambda rid: rrf[rid], reverse=True)
+    dropped_weak = len(rrf) - len(kept_ids)
+    ranked_ids = kept_ids[:top_k]
+
     records_map = {}
     if FABRIC_PG.available and ranked_ids:
         records_map = await _safe("pg_get_by_ids",
@@ -2422,7 +2887,9 @@ async def execute_query(q: Dict) -> Dict:
     results = []
     for rid in ranked_ids:
         rec   = records_map.get(rid)
-        entry = {"id": rid, "score": round(scores[rid], 5)}
+        entry = {"id": rid, "score": round(rrf.get(rid, 0.0), 6),
+                 "vector_score": round(vec_scores.get(rid, 0.0), 4),
+                 "text_score": round(text_scores.get(rid, 0.0), 4)}
         if rec:
             entry.update({"dataset_id": rec.dataset_id, "text": rec.text[:300],
                           "created_at": rec.created_at, "tags": rec.tags,
@@ -2431,39 +2898,45 @@ async def execute_query(q: Dict) -> Dict:
                 entry["data"] = rec.data
         results.append(entry)
 
-    # Fallback: if PG returned nothing (unavailable or empty), use SQLite
-    # Always try SQLite if we have a query but no results so far.
+    # Fallback: if PG returned nothing (unavailable or empty), use SQLite — with
+    # the SAME word-overlap ranking + floor so it never dumps unranked rows.
     if not results and (text_q or vector_q or dataset_id):
         backends_used.append("sqlite")
         sqlite_rows = await _safe("sqlite_query",
-                                   _sqlite_query(dataset_id=dataset_id or "", limit=top_k * 4),
+                                   _sqlite_query(dataset_id=dataset_id or "", limit=top_k * 6),
                                    timeout=8) or []
-        # Score by simple word overlap so we can rank
-        words = set((text_q or vector_q or "").lower().split())
+        words = set(_fabric_keywords(text_q or vector_q or ""))
         scored = []
         for row in sqlite_rows:
-            text = (row.get("text","") or "").lower()
-            if not words or any(w in text for w in words if len(w) > 2):
-                hits = sum(1 for w in words if w in text and len(w) > 2)
-                scored.append((hits, row))
+            text = (row.get("text", "") or "").lower()
+            if not words:
+                scored.append((0.0, row)); continue
+            hits = sum(1 for w in words if w in text)
+            if hits:
+                scored.append((hits / len(words), row))
         scored.sort(key=lambda x: -x[0])
-        sqlite_rows = [row for _, row in scored[:top_k]]
-        for row in sqlite_rows:
-            text = row.get("text","")
-            query_words = set((text_q or vector_q).lower().split())
-            if not query_words or any(w in text.lower() for w in query_words if len(w) > 2):
-                try:
-                    data = json.loads(row.get("data") or "{}")
-                    tags = json.loads(row.get("tags") or "[]")
-                except Exception:
-                    data, tags = {}, []
-                entry = {"id": row["id"], "score": 0.5,
-                         "dataset_id": row["dataset_id"],
-                         "text": text[:300], "created_at": row.get("created_at",""),
-                         "tags": tags, "source": row.get("source_id","")}
-                if q.get("include_data"):
-                    entry["data"] = data
-                results.append(entry)
+        for overlap, row in scored[:top_k]:
+            try:
+                data = json.loads(row.get("data") or "{}")
+                tags = json.loads(row.get("tags") or "[]")
+            except Exception:
+                data, tags = {}, []
+            entry = {"id": row["id"], "score": round(overlap, 4),
+                     "vector_score": 0.0, "text_score": round(overlap, 4),
+                     "dataset_id": row["dataset_id"],
+                     "text": (row.get("text", "") or "")[:300],
+                     "created_at": row.get("created_at", ""),
+                     "tags": tags, "source": row.get("source_id", "")}
+            if q.get("include_data"):
+                entry["data"] = data
+            results.append(entry)
+
+    # Weak-result signal: tell the caller (and the LLM) when the best match is
+    # poor, so a genuinely empty topic reads as "no relevant data" instead of
+    # being mistaken for authoritative context.
+    max_vec  = max(vec_scores.values(), default=0.0)
+    max_text = max(text_scores.values(), default=0.0)
+    weak = (not results) or (max_vec < weak_below and max_text < 1.0)
 
     output = {
         "results": results, "count": len(results),
@@ -2471,8 +2944,16 @@ async def execute_query(q: Dict) -> Dict:
         "backends": list(set(backends_used)) or ["sqlite"],
         "backends_available": {"faiss": FAISS_STORE.available, "chroma": FABRIC_CHROMA.available,
                                 "pg": FABRIC_PG.available, "neo4j": FABRIC_NEO.available},
+        "relevance": {"min_score": round(min_score, 3),
+                      "max_vector_score": round(max_vec, 4),
+                      "dropped_below_floor": dropped_weak, "weak": bool(weak)},
         "cached": False,
     }
+    if weak:
+        output["note"] = ("No strongly-relevant records — the best semantic match is "
+                          "below the relevance floor. Treat as little/no stored data on "
+                          "this topic rather than authoritative context; refine the query, "
+                          "widen with a lower min_score, or gather the information another way.")
     if q.get("cache", True):
         await _cache_set(_cache_key(q), output, int(q.get("cache_ttl", FABRIC_CACHE_TTL)))
     return output
@@ -2570,7 +3051,7 @@ async def _pull_rss(src: dict) -> List[dict]:
     body: bytes = b""
     final_url = url
     try:
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers=headers) as c:
+        async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True, headers=headers) as c:
             r = await c.get(url)
             final_url = str(r.url)
             # Tolerate 4xx — sometimes feeds 403 but still send the body
@@ -2623,7 +3104,7 @@ async def _pull_api(src: dict) -> List[dict]:
         if isinstance(headers, str): headers = {}
     except Exception:
         headers = {}
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}) as c:
+    async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}) as c:
         r = await c.get(src["url"], headers=headers); r.raise_for_status()
         data = r.json()
     jq = (src.get("jq_path") or "").strip()
@@ -2652,7 +3133,7 @@ async def _pull_wiki(src: dict) -> List[dict]:
     params = {"action":"query","titles":page,"prop":"extracts","exintro":"1",
               "explaintext":"1","format":"json","redirects":"1"}
     url = base + "/w/api.php?" + _up.urlencode(params)
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}) as c:
+    async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}) as c:
         r = await c.get(url); r.raise_for_status()
         data = r.json()
     results = []
@@ -2692,7 +3173,7 @@ async def _pull_scrape(src: dict) -> List[dict]:
         "Chrome/120.0 Safari/537.36 Vera-Fabric/1.0")
     headers.setdefault("Accept", "text/html,application/xhtml+xml")
 
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers=headers) as c:
+    async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True, headers=headers) as c:
         r = await c.get(url)
         # Tolerate non-2xx but only if there is a body — many sites return 403 with content
         if r.status_code >= 400 and not r.content:
@@ -2825,7 +3306,7 @@ async def _pull_recon(src: dict) -> List[dict]:
     # Fast path: we already discovered the API, just hit it
     if saved_endpoint and saved_endpoint.startswith(("http://","https://")):
         try:
-            async with httpx.AsyncClient(timeout=30, follow_redirects=True,
+            async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True,
                                           headers={**saved_headers,
                                                    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}) as c:
                 r = await c.get(saved_endpoint)
@@ -3086,7 +3567,7 @@ async def _pull_gitea(src: dict) -> List[dict]:
     if auth.get("token"):
         headers["Authorization"] = f"token {auth['token']}"
     items: list = []
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers=headers) as c:
+    async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True, headers=headers) as c:
         if mode == "issues":
             if owner and repo:
                 url = f"{base}/api/v1/repos/{owner}/{repo}/issues"
@@ -3148,7 +3629,7 @@ async def _pull_github(src: dict) -> List[dict]:
     if auth.get("token"):
         headers["Authorization"] = f"Bearer {auth['token']}"
     items: list = []
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers=headers) as c:
+    async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True, headers=headers) as c:
         if mode == "issues":
             url = (f"{base}/repos/{owner}/{repo}/issues" if (owner and repo)
                     else f"{base}/issues")
@@ -3205,7 +3686,7 @@ async def _pull_gitlab(src: dict) -> List[dict]:
     if auth.get("token"):
         headers["PRIVATE-TOKEN"] = auth["token"]
     items: list = []
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers=headers) as c:
+    async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True, headers=headers) as c:
         if mode == "issues":
             url = (f"{base}/api/v4/projects/{project_id}/issues" if project_id
                     else f"{base}/api/v4/issues")
@@ -3429,7 +3910,7 @@ async def _pull_elasticsearch(src: dict) -> List[dict]:
     elif auth.get("user"):
         auth_param = (auth["user"], auth.get("password",""))
     items: list = []
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True,
+    async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True,
                                    headers=headers, auth=auth_param) as c:
         r = await c.post(f"{url}/{index}/_search", json=body)
         r.raise_for_status()
@@ -3875,7 +4356,7 @@ async def _pull_index(src: dict) -> List[dict]:
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/120.0 Safari/537.36 Vera-Fabric/1.0")
 
-    async with httpx.AsyncClient(timeout=60, follow_redirects=True, headers=headers) as c:
+    async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=60, follow_redirects=True, headers=headers) as c:
         r = await c.get(url)
         if r.status_code >= 400 and not r.content:
             r.raise_for_status()
@@ -4389,18 +4870,27 @@ async def cap_fabric_ingest(dataset_id: str, records: str = "[]",
                 "Examples: fabric.query(text='CVE-2024', dataset_id='cve.nvd') — keyword search in CVE dataset; "
                 "fabric.query(vector='remote code execution', top_k=10) — semantic search across all data; "
                 "fabric.query(text='nginx', include_data=True) — return full record content not just summaries. "
+                "RELEVANCE: results below a similarity floor are DROPPED, so few/no results means the fabric "
+                "genuinely has little on the topic — do NOT invent context to fill the gap. Each result carries "
+                "vector_score + text_score; the response carries relevance.{max_vector_score, weak}. When weak=true "
+                "(or results is empty) treat it as 'no relevant stored data' and gather the info another way, or "
+                "retry with a lower min_score to widen. "
                 "Params: text (str), vector (str), dataset_id (str — restrict to one dataset), "
-                "top_k (int default 20), include_data (bool default False). "
-                "Output: {results:[{dataset_id, record_id, score, summary, data}], count, backends, cached}.",
+                "top_k (int default 20), min_score (float 0..1 — similarity floor, default 0.28; lower = wider/noisier), "
+                "include_data (bool default False). "
+                "Output: {results:[{dataset_id, id, score, vector_score, text_score, text, data}], count, "
+                "relevance:{min_score, max_vector_score, dropped_below_floor, weak}, backends, note?}.",
 )
 async def cap_fabric_query(query=None, text: str = "",
                               vector: str = "", dataset_id: str = "",
-                              top_k: int = 20, trace_id=None) -> Dict:
+                              top_k: int = 20, include_data: bool = False,
+                              min_score: float = -1.0,
+                              trace_id=None) -> Dict:
     """Accepts the query as:
       - a dict (JSON object via REST/MCP)
       - a JSON-encoded string (legacy compatibility)
       - a plain text string (auto-converted to text+vector search)
-      - or as expanded keyword args (text=, vector=, dataset_id=, top_k=)
+      - or as expanded keyword args (text=, vector=, dataset_id=, top_k=, include_data=)
     """
     q: Dict[str, Any] = {}
     if isinstance(query, dict):
@@ -4423,21 +4913,46 @@ async def cap_fabric_query(query=None, text: str = "",
     if vector:      q["vector"] = vector
     if dataset_id:  q["dataset_id"] = dataset_id
     if top_k != 20: q["top_k"] = top_k
+    try:
+        if float(min_score) >= 0:
+            q["min_score"] = float(min_score)
+    except (TypeError, ValueError):
+        pass
+    if isinstance(include_data, str):
+        include_data = include_data.lower() in ("1", "true", "yes")
+    if include_data: q["include_data"] = True
     if not q:
         return {"error": "empty query",
                 "hint": "Provide at least one of: text, vector, dataset_id."}
     return await execute_query(q)
 
 
+def _datasets_with_children(ids) -> set:
+    """Set of every dataset id that is a proper dotted-prefix of another id
+    (i.e. HAS children). Built in O(total segments) — replaces the old
+    `any(x.startswith(did + '.') for x in all_ids)` per-dataset scan, which was
+    O(datasets × ids): on a fabric with thousands of datasets (e.g. CVE feeds)
+    that nested scan ran on the event loop for 30s+, freezing every WebSocket
+    (the whole-UI reconnect flap). `did` has children ⟺ some id equals
+    `did + '.' + rest` ⟺ `did` is a proper dotted-prefix of that id.
+    """
+    parents = set()
+    for did in ids:
+        parts = did.split(".")
+        for i in range(1, len(parts)):
+            parents.add(".".join(parts[:i]))
+    return parents
+
+
 @capability(
     "fabric.datasets", memory="off",
     http_method="GET", http_path="/fabric/datasets", http_tags=["fabric"],
-    description="List all datasets stored in the data fabric with record counts. "
-                "USE FIRST before any fabric.query call to discover what data is available. "
-                "Datasets represent named collections of records (e.g. 'cve.nvd', 'streams.agent_loop_openclaw', 'web.pages'). "
-                "Optional param: parent (str) — filter to dot-prefixed children of a namespace (e.g. parent='cve' returns 'cve.nvd', 'cve.mitre'). "
-                "Output: {datasets: [{dataset_id, record_count, updated_at}], count}. "
-                "After calling this, use fabric.query(dataset_id='<id>', text='...') to search specific datasets.",
+    description="List datasets stored in the data fabric with record counts. "
+                "WARNING: there can be THOUSANDS of datasets — NEVER call this without parent= to 'see everything'. "
+                "Browse ONE namespace level at a time: parent='' is only for panels; agents should pass "
+                "parent='<namespace>' (e.g. parent='cve' returns 'cve.nvd', 'cve.mitre') or use memory.map instead, "
+                "and search with memory.seek(query=..., scope='<namespace>') rather than reading listings. "
+                "Output: {datasets: [{dataset_id, record_count, has_children, updated_at}], count}.",
 )
 async def cap_fabric_datasets(parent: str = "", trace_id=None) -> Dict:
     # Merge PG and SQLite datasets
@@ -4485,18 +5000,20 @@ async def cap_fabric_datasets(parent: str = "", trace_id=None) -> Dict:
                 # aggregate descendant record counts onto the group.
                 g["has_children"] = True
                 g["record_count"] = (g.get("record_count") or 0) + (d.get("record_count", 0) or 0)
-        # A real child can still have further real children beneath it.
+        # A real child can still have further real children beneath it. O(1)
+        # set membership instead of a per-group scan of all_ids.
+        _parents = _datasets_with_children(all_ids)
         for child_id, g in groups.items():
-            sub_prefix = child_id + "."
-            if any(x.startswith(sub_prefix) for x in all_ids):
+            if child_id in _parents:
                 g["has_children"] = True
         children = sorted(groups.values(), key=lambda x: x["dataset_id"])
         return {"datasets": children, "count": len(children), "parent": parent}
-    # Top-level call: annotate each dataset with has_children flag
+    # Top-level call: annotate each dataset with has_children flag. Build the
+    # prefix set ONCE (linear), then O(1) per dataset — see _datasets_with_children.
     all_ids = {d["dataset_id"] for d in all_ds}
+    _parents = _datasets_with_children(all_ids)
     for d in all_ds:
-        sub_prefix = d["dataset_id"] + "."
-        d["has_children"] = any(x.startswith(sub_prefix) for x in all_ids)
+        d["has_children"] = d["dataset_id"] in _parents
     return {"datasets": all_ds, "count": len(all_ds)}
 
 
@@ -4517,7 +5034,7 @@ async def cap_fabric_stats(trace_id=None) -> Dict:
     return {
         "postgres":     pg_stats,
         "faiss":        FAISS_STORE.stats(),
-        "chroma":       FABRIC_CHROMA.stats(),
+        "chroma":       await asyncio.to_thread(FABRIC_CHROMA.stats),
         "neo4j":        {"available": FABRIC_NEO.available},
         "sqlite":       {"available": True, "path": SQLITE_PATH},
         "object_store": {"available": OBJECT_STORE.available, "mode": FABRIC_OBJECT_STORE},
@@ -4552,7 +5069,8 @@ async def cap_fabric_schema(dataset_id: str, trace_id=None) -> Dict:
     description="Remove Chroma vectors for a dataset. Input: dataset_id (str!).",
 )
 async def cap_fabric_delete(dataset_id: str, trace_id=None) -> Dict:
-    chroma_ok = FABRIC_CHROMA.delete_dataset(dataset_id) if FABRIC_CHROMA.available else False
+    chroma_ok = (await asyncio.to_thread(FABRIC_CHROMA.delete_dataset, dataset_id)
+                 if FABRIC_CHROMA.available else False)
     return {"chroma_cleared": chroma_ok, "dataset_id": dataset_id}
 
 
@@ -4561,22 +5079,165 @@ async def cap_fabric_delete(dataset_id: str, trace_id=None) -> Dict:
     http_method="POST", http_path="/fabric/chroma_reset", http_tags=["fabric"],
     description="Delete and recreate the Chroma vector collection. Required when "
                 "switching embedding models (dimension mismatch). All vectors are "
-                "lost — use worldview.reembed_missing afterwards to rebuild. "
+                "lost — rebuild afterwards with fabric.backfill_vectors (from "
+                "Postgres) or worldview.reembed_missing (from SQLite, concurrent). "
                 "Input: confirm (bool, must be true).",
 )
 async def cap_fabric_chroma_reset(confirm: bool = False, trace_id=None) -> Dict:
     if not confirm:
-        stats = FABRIC_CHROMA.stats()
+        stats = await asyncio.to_thread(FABRIC_CHROMA.stats)
         return {"error": "Pass confirm=true to reset the Chroma collection.",
                 "current": stats,
-                "warning": "This deletes ALL vectors. Re-embed with worldview.reembed_missing after."}
+                "warning": "This deletes ALL vectors. Re-embed with "
+                           "fabric.backfill_vectors (or worldview.reembed_missing) after."}
     if not FABRIC_CHROMA.available:
         return {"error": "Chroma is not connected"}
-    result = FABRIC_CHROMA.reset_collection()
+    result = await asyncio.to_thread(FABRIC_CHROMA.reset_collection)
     if result.get("ok"):
         await emit_event({"type": "fabric.chroma_reset",
                           "old_count": result.get("old_count", 0)})
     return result
+
+
+@capability(
+    "fabric.backfill_vectors", memory="off",
+    http_method="POST", http_path="/fabric/backfill_vectors", http_tags=["fabric", "embed"],
+    description="Re-encode fabric records that exist in Postgres (source of truth) "
+                "but have NO vector in the shared vera_fabric Chroma collection — "
+                "use after a chroma_reset or an embedder outage that skipped "
+                "vectors. Embeds with the current model and upserts explicit "
+                "vectors (also feeds FAISS). DRY-RUN by default. Inputs: confirm "
+                "(bool — must be true to write), dataset_id (str — restrict to one "
+                "dataset), limit (int, 0=all missing), batch (int=64). Output: "
+                "{dry_run, pg_total, chroma_count, missing, no_text, backfilled, "
+                "errors, dim}. For a large concurrent rebuild from the SQLite "
+                "mirror, worldview.reembed_missing is the alternative.",
+)
+async def cap_fabric_backfill_vectors(confirm: bool = False, dataset_id: str = "",
+                                      limit: int = 0, batch: int = 64,
+                                      trace_id=None) -> Dict:
+    pool = getattr(FABRIC_PG, "_pool", None)
+    if pool is None:
+        return {"error": "fabric postgres not connected"}
+    if not FABRIC_CHROMA.available:
+        return {"error": "Chroma is not connected"}
+    col = FABRIC_CHROMA._col
+
+    probe = await _embed("vector space probe")
+    if probe is None:
+        return {"error": "embedder unavailable (_embed returned None) — check "
+                         "OLLAMA_EMBED_MODEL and the Ollama cluster"}
+    dim = len(probe)
+
+    # The scan query binds $1=last_id, so the dataset filter is $2 there but $1
+    # in the standalone COUNT.
+    cond, args = ("dataset_id=$2", [dataset_id]) if dataset_id else ("TRUE", [])
+    async with pool.acquire() as conn:
+        pg_total = await conn.fetchval(
+            "SELECT COUNT(*) FROM fabric_records WHERE "
+            + ("dataset_id=$1" if dataset_id else "TRUE"), *args)
+    try:
+        chroma_count = col.count()
+    except Exception as e:
+        return {"error": f"chroma count failed: {e}"}
+
+    # Prefetch every id already in the collection once (paginated) — per-chunk
+    # membership gets against a 100k+-doc collection are an order of magnitude
+    # slower — then keyset-scan Postgres and diff locally.
+    def _all_ids() -> set:
+        have: set = set()
+        offset = 0
+        while True:
+            res = col.get(limit=5000, offset=offset, include=[]) or {}
+            ids = res.get("ids") or []
+            if not ids:
+                break
+            have.update(ids)
+            offset += len(ids)
+            if len(ids) < 5000:
+                break
+        return have
+    try:
+        loop = asyncio.get_running_loop()
+        have = await loop.run_in_executor(None, _all_ids)
+    except Exception as e:
+        return {"error": f"chroma id prefetch failed: {e}"}
+
+    missing: List[str] = []
+    no_text = 0
+    last_id = ""
+    while True:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT id, (COALESCE(text,'') = '') AS empty FROM fabric_records "
+                f"WHERE {cond} AND id > $1 ORDER BY id LIMIT 500", last_id, *args)
+        if not rows:
+            break
+        last_id = rows[-1]["id"]
+        no_text += sum(1 for r in rows if r["empty"])
+        missing.extend(r["id"] for r in rows
+                       if not r["empty"] and r["id"] not in have)
+
+    target = missing if (not limit or limit <= 0) else missing[:int(limit)]
+    base = {"dim": dim, "pg_total": pg_total, "chroma_count": chroma_count,
+            "missing": len(missing), "no_text": no_text,
+            "dataset_id": dataset_id or "(all)"}
+    if not confirm:
+        return {"ok": True, "dry_run": True, **base,
+                "would_backfill": len(target),
+                "note": "Re-run with confirm=true to embed + upsert the missing "
+                        "records. no_text records have nothing to embed and are "
+                        "always skipped."}
+
+    await emit_event({"type": "fabric.backfill", "stage": "start",
+                      "missing": len(target), "dim": dim})
+    done = errors = 0
+    for i in range(0, len(target), max(1, int(batch))):
+        chunk = target[i:i + max(1, int(batch))]
+        async with pool.acquire() as conn:
+            # tags can be pathologically huge on some rows (hundreds of MB) —
+            # truncate/validate server-side rather than pulling the raw value.
+            rows = await conn.fetch(
+                "SELECT id, dataset_id, left(text, 4000) AS text, "
+                "CASE WHEN length(tags::text) <= 2000 THEN tags::text "
+                "ELSE '[]' END AS tags, source_id, created_at "
+                "FROM fabric_records WHERE id = ANY($1::text[])", chunk)
+        vecs = await _embed_many([(r["text"] or "").strip() for r in rows])
+        loop = asyncio.get_running_loop()
+        for row, vec in zip(rows, vecs):
+            text = (row["text"] or "").strip()
+            if not text:
+                continue
+            if not vec:
+                errors += 1
+                continue
+            tags = row["tags"]
+            if isinstance(tags, str):
+                try: tags = json.loads(tags)
+                except Exception: tags = []
+            rec = DataRecord(
+                id=row["id"], dataset_id=row["dataset_id"], text=text,
+                tags=tags or [], source_id=row["source_id"] or "",
+                created_at=row["created_at"].isoformat()
+                           if hasattr(row["created_at"], "isoformat")
+                           else str(row["created_at"] or ""),
+                embedding=vec, embedding_model=OLLAMA_EMBED_MODEL,
+            )
+            if await loop.run_in_executor(None, FABRIC_CHROMA.upsert, rec):
+                done += 1
+                try:
+                    FAISS_STORE.add(rec.id, rec.dataset_id, vec)
+                except Exception:
+                    pass
+            else:
+                errors += 1
+        await emit_event({"type": "fabric.backfill", "stage": "progress",
+                          "done": done, "of": len(target), "errors": errors})
+
+    await emit_event({"type": "fabric.backfill", "stage": "done",
+                      "backfilled": done, "errors": errors})
+    return {"ok": True, "dry_run": False, **base,
+            "backfilled": done, "errors": errors}
 
 
 @capability(
@@ -4646,14 +5307,15 @@ async def cap_fabric_aux_link(from_type: str, from_id: str,
                 "edges [{from,to,rel,props}]} — the latter two are usable directly by "
                 "graph visualisations.",
 )
-async def cap_fabric_aux_query(cypher: str, trace_id=None) -> Dict:
+async def cap_fabric_aux_query(cypher: str, params: Dict = None, trace_id=None) -> Dict:
     if not FABRIC_NEO.available:
         return {"error": "Neo4j not connected", "rows": [], "nodes": [], "edges": []}
     if re.search(r"\b(CREATE|MERGE|DELETE|SET|REMOVE|DROP)\b", cypher, re.I):
         return {"error": "Only read queries allowed"}
+    params = params if isinstance(params, dict) else {}
 
     # 1) Plain rows — for backwards-compatible callers
-    rows = await FABRIC_NEO.query(cypher)
+    rows = await FABRIC_NEO.query(cypher, params)
 
     # 2) Structured nodes/edges — re-run via raw session so we have neo objects.
     #    This is more expensive but only requested cyphers run here.
@@ -4661,7 +5323,7 @@ async def cap_fabric_aux_query(cypher: str, trace_id=None) -> Dict:
     edges: List[Dict] = []
     try:
         async with FABRIC_NEO._driver.session() as s:
-            res = await s.run(cypher)
+            res = await s.run(cypher, **params)
             async for record in res:
                 # Walk every value in the record
                 values = list(record.values())
@@ -4698,7 +5360,7 @@ async def cap_fabric_aux_query(cypher: str, trace_id=None) -> Dict:
         log.warning("aux query structured: %s", e)
 
     return {
-        "rows":  rows[:200],
+        "rows":  rows[:2000],
         "count": len(rows),
         "nodes": list(nodes_by_id.values()),
         "edges": edges,
@@ -4984,8 +5646,10 @@ async def _obj_run(fn, *a, **k):
     "fabric.objects.status", memory="off", silent=True,
     http_method="GET", http_path="/fabric/objects/status", http_tags=["fabric", "objects"],
     description="Object store (Garage/Ceph/S3) status. Output: "
-                "{enabled, available, mode, endpoint, default_bucket, has_boto}. "
-                "If enabled but not available, check FABRIC_S3_* env vars.",
+                "{enabled, available, mode, endpoint, default_bucket, has_boto, "
+                "last_error}. If enabled but not available, last_error says why "
+                "(AccessDenied/'No such key' = the Garage key/bucket bootstrap "
+                "never ran — see provision.store.garage.bootstrap).",
 )
 async def cap_objects_status(trace_id=None) -> Dict:
     available = await _obj_run(OBJECT_STORE.ensure) if FABRIC_OBJECT_STORE != "none" else False
@@ -4997,6 +5661,7 @@ async def cap_objects_status(trace_id=None) -> Dict:
         "default_bucket": OBJECT_STORE.default_bucket,
         "region":         FABRIC_S3_REGION,
         "has_boto":       HAS_BOTO,
+        "last_error":     OBJECT_STORE.last_error,
     }
 
 
@@ -5921,6 +6586,13 @@ async def fabric_extract_graph(
     if not dataset_id:
         return {"error": "dataset_id required"}
     limit = max(1, min(1000, limit))
+    # LLM-NLP gate: the llm/hybrid modes fall back to regex NLP unless the
+    # system-wide switch is on or a human invoked THIS cap directly (UI toggle).
+    llm_demoted = False
+    if mode in ("llm", "hybrid") and not await llm_nlp_allowed(
+            True, cap_name="fabric.extract_graph"):
+        mode = "nlp"
+        llm_demoted = True
 
     async def _emit(stage, **kw):
         try:
@@ -6214,6 +6886,7 @@ async def fabric_extract_graph(
         "ok":              True,
         "dataset_id":      dataset_id,
         "mode":            mode,
+        "llm_demoted":     llm_demoted,
         "entities":        list(entities.values())[:200],
         "relations":       relations[:300],
         "entity_count":    len(entities),
@@ -6569,21 +7242,26 @@ async def cap_dataset_config(dataset_id: str = "", config: dict = None,
         for k, v in config.items():
             if k in valid_keys:
                 merged[k] = v
-        try:
-            conn = _write_conn()
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS fabric_dataset_config (
-                    dataset_id TEXT PRIMARY KEY,
-                    config     TEXT DEFAULT '{}',
-                    updated_at TEXT
+        def _sync():
+            conn = _sqlite_conn()
+            try:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS fabric_dataset_config (
+                        dataset_id TEXT PRIMARY KEY,
+                        config     TEXT DEFAULT '{}',
+                        updated_at TEXT
+                    )
+                """)
+                conn.execute(
+                    "INSERT OR REPLACE INTO fabric_dataset_config "
+                    "(dataset_id, config, updated_at) VALUES (?,?,?)",
+                    (dataset_id, json.dumps(merged), now_iso())
                 )
-            """)
-            conn.execute(
-                "INSERT OR REPLACE INTO fabric_dataset_config "
-                "(dataset_id, config, updated_at) VALUES (?,?,?)",
-                (dataset_id, json.dumps(merged), now_iso())
-            )
-            conn.commit()
+                conn.commit()
+            finally:
+                conn.close()
+        try:
+            await asyncio.to_thread(_sync)
             current = merged
         except Exception as e:
             return {"error": str(e)}
@@ -7728,12 +8406,12 @@ async def cap_fabric_delete_record(
     except Exception as e:
         log.warning("fabric_delete_record sqlite: %s", e)
 
-    # Chroma delete
-    if FABRIC_CHROMA.available and dataset_id:
+    # Chroma delete — vectors live in the shared vera_fabric collection.
+    # (This used to get_or_create a per-dataset collection, which never held
+    # the vector and left stray empty collections behind.)
+    if FABRIC_CHROMA.available:
         try:
-            col = FABRIC_CHROMA._client.get_or_create_collection(
-                dataset_id.replace(".", "_").replace("/", "_"))
-            col.delete(ids=[record_id])
+            await asyncio.to_thread(FABRIC_CHROMA._col.delete, ids=[record_id])
             backends.append("chroma")
         except Exception as e:
             log.debug("fabric_delete_record chroma: %s", e)
@@ -7774,7 +8452,7 @@ async def cap_fabric_clear_dataset(dataset_id: str, trace_id=None) -> Dict:
     # Chroma
     if FABRIC_CHROMA.available:
         try:
-            FABRIC_CHROMA.delete_dataset(dataset_id)
+            await asyncio.to_thread(FABRIC_CHROMA.delete_dataset, dataset_id)
             backends.append("chroma")
         except Exception as e:
             log.debug("fabric_clear_dataset chroma: %s", e)
@@ -7870,6 +8548,13 @@ async def _startup():
     asyncio.create_task(_auto_pull_loop())
     asyncio.create_task(_sqlite_index_migration_async())
 
+    # Hydrate the optional in-RAM FAISS tier from Chroma (background) — without
+    # this the index started empty every boot and only ever held records
+    # ingested during the current process.
+    if FAISS_STORE.available and FABRIC_CHROMA.available:
+        asyncio.create_task(_try(loop.run_in_executor(
+            None, FAISS_STORE.hydrate_from_chroma, FABRIC_CHROMA)))
+
     active = [n for n, ok in [("faiss", FAISS_STORE.available),
                                ("chroma", FABRIC_CHROMA.available),
                                ("postgres", FABRIC_PG.available),
@@ -7955,7 +8640,7 @@ async def fabric_dataset_delete(dataset_id: str, trace_id=None) -> Dict:
     # Chroma
     if FABRIC_CHROMA.available:
         try:
-            FABRIC_CHROMA.delete_dataset(dataset_id)
+            await asyncio.to_thread(FABRIC_CHROMA.delete_dataset, dataset_id)
             backends.append("chroma")
         except Exception:
             pass
@@ -8001,7 +8686,7 @@ async def fabric_rss_fetch_content(source_id: str, max_articles: int = 10, trace
 
     limit = min(max_articles, src.get("limit", 50))
     records = []
-    async with httpx.AsyncClient(timeout=20, follow_redirects=True,
+    async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=20, follow_redirects=True,
                                   headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}) as client:
         for entry in feed.entries[:limit]:
             link = entry.get("link", "")

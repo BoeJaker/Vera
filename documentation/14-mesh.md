@@ -40,8 +40,22 @@ A node tells the server what it *can* do via `hello.modules`. The server stores 
 | `web_fetch` | Fetches a URL on the node's behalf |
 | `watch` | Polls a target on an interval; alerts on failure |
 | `alert` | Buzzer / LED / screen alert |
-| `kiosk` | Drives a touchscreen display |
+| `kiosk` | Drives a display — the Arduino + MicroPython reference firmwares include a self-contained driver for the 3.5" Arduino-Uno TFT shield (ILI9488, 320x480, 8-bit parallel) on ESP32-S3 Uno-footprint boards: boot status dashboard, `kiosk_set` text/BMP/status modes, runtime pin remap via `config.io.tft` |
+| `storage` | SD card (the TFT shield's SPI slot): `sd_list`/`sd_read`/`sd_write`/`sd_delete` jobs + `sd_total_mb`/`sd_used_mb` telemetry; pins via `config.io.sd` |
 | `control` | Actuates a GPIO / relay channel |
+| `rgb` | On-board WS2812/NeoPixel (`mesh.rgb`, effects; pin via `config.io.neopixel` or `mesh.rgb.probe`) |
+| `ble` | BLE scan (`mesh.ble.scan`) → devices ingested to the Network Map + positioning |
+| `toolkit` | ESP32-S3 swiss-army knife: CSI motion, Wi-Fi promiscuous sniff, I2C scan, touch, internal temp, channel survey, ESP-NOW ranging, deep-sleep, sysinfo |
+| `position` | RF positioning: node coordinates + `rf_range` RSSI reports feed `mesh.locate` multilateration |
+
+### ESP32-S3 toolkit + CSI positioning + Network Map
+
+`vera/mesh/mesh_toolkit_capabilities.py` turns a mesh of headless S3 nodes into a distributed RF sensor grid. Job types are in [PROTOCOL.md](../vera/mesh/PROTOCOL.md); the highlights:
+
+- **Distributed sensing**: `mesh.sniff` (anonymous Wi-Fi frame/MAC density — foot-traffic), `mesh.csi.start` (device-free human motion via Channel State Information; Arduino/IDF firmware only), `mesh.ble.scan`, `mesh.channel.survey`.
+- **RF positioning**: place anchor nodes with `mesh.node.position` (x,y metres), broadcast `mesh.rf.range` so several nodes report RSSI to a target MAC/BSSID, then `mesh.locate` multilaterates its (x,y) with a log-distance path-loss model + weighted least-squares. CSI presence per node via `mesh.presence`.
+- **Network Map bridge**: WiFi scans (`netscan.wifi.ingest`) and BLE scans (`netscan.ble.ingest`) feed the same aux graph the Network Map renders; `mesh.netmap.sync` (also on a 4-min timer) projects every node as a `:NetHost` so the fleet + what each node hears appear on the map, and located targets drop in as `:LocatedTarget`.
+- **Board bring-up**: `mesh.rgb` / `mesh.rgb.probe` (find an unknown NeoPixel pin), `mesh.i2c.scan`, `mesh.touch`, `mesh.sysinfo`, `mesh.deep_sleep`.
 
 ---
 

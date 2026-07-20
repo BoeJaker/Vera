@@ -94,7 +94,8 @@ def _chroma_col():
                 "embedding dimension, model name, and alignment status.",
 )
 async def cap_vectors_overview(trace_id=None) -> Dict:
-    chroma_stats = FABRIC_CHROMA.stats()
+    # FABRIC_CHROMA / col.peek are synchronous HTTP — keep them off the loop.
+    chroma_stats = await asyncio.to_thread(FABRIC_CHROMA.stats)
     faiss_stats  = FAISS_STORE.stats()
 
     # Try to detect actual Chroma dimension from a sample
@@ -102,7 +103,7 @@ async def cap_vectors_overview(trace_id=None) -> Dict:
     col = _chroma_col()
     if col:
         try:
-            sample = col.peek(limit=1)
+            sample = await asyncio.to_thread(col.peek, limit=1)
             sample_embs = sample.get("embeddings") if sample else None
             if _has_emb(sample_embs) and _has_emb(sample_embs[0]):
                 chroma_dim = len(sample_embs[0])
@@ -695,6 +696,7 @@ _reg_ui(
         "fabric.vectors.chroma.get", "fabric.vectors.chroma.datasets",
         "fabric.vectors.faiss.shards", "fabric.vectors.faiss.sample",
         "fabric.vectors.audit", "fabric.vectors.compare",
+        "fabric.backfill_vectors",
     ],
     mode="inject",   # hosted as a sub-section in the Data Fabric panel
     tab_order=36,

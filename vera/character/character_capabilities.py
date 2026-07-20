@@ -110,11 +110,14 @@ STYLE_DESCRIPTOR = {
 
 # Framing suffix appended to every prompt so frames stay consistent and overlay
 # cleanly in the rounded character card.
-_FRAMING = ("centered head-and-shoulders character portrait, "
-            "single character, plain flat solid background, consistent design")
+_FRAMING = ("centered head-and-shoulders character portrait, single character, "
+            "clear fully visible face looking at the viewer, both eyes and mouth "
+            "visible, front view, plain flat solid background, consistent design")
 
-_DEFAULT_NEGATIVE = ("blurry, low quality, distorted, deformed, extra limbs, "
-                     "watermark, text, multiple characters, cropped")
+_DEFAULT_NEGATIVE = ("blurry, low quality, distorted, deformed, extra limbs, watermark, "
+                     "text, multiple characters, cropped, back turned, facing away, "
+                     "profile view, face hidden, no face, obscured face, masked face, "
+                     "helmet covering face, looking away")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -371,6 +374,19 @@ def _build_prompt(rec: CharacterRecord, state: str, *,
     return ", ".join(p for p in parts if p)
 
 
+def _build_face_prompt(rec: CharacterRecord, state: str) -> str:
+    """Prompt for a face-region edit (image.expression): identity + the target
+    emotion only — no framing/background words, since we repaint just the face."""
+    suffix = (rec.expression_prompts.get(state)
+              or DEFAULT_EXPRESSION_SUFFIX.get(state)
+              or DEFAULT_EXPRESSION_SUFFIX["neutral"])
+    style = STYLE_DESCRIPTOR.get(rec.style, rec.style or "")
+    return ", ".join(p for p in [
+        rec.base_prompt.strip(), suffix,
+        "expressive emotional face, clear distinct facial expression, looking at viewer",
+        style] if p)
+
+
 def _write_frame(agent_id: str, state: str, image_b64: str) -> Optional[str]:
     if not image_b64:
         return None
@@ -573,9 +589,9 @@ async def character_generate(
     if "neutral" not in want:
         want = ["neutral"] + want
 
-    # Probe SD tier once.
-    caps = await _call_cap("image.sd_capabilities")
-    img2img_live = bool(caps.get("img2img")) and consistency != "txt2img"
+    # Default ("auto"/"face"): keep the neutral image fixed and only repaint the
+    # face per expression — same character, same scene, just a new emotion.
+    use_face = consistency in ("auto", "face")
 
     total = len(want)
     await emit_event({"type": "character.generate.start", "agent_id": agent_id,
@@ -585,16 +601,18 @@ async def character_generate(
         rec.frames = {}
         rec.states = []
 
-    base_b64 = None          # neutral frame bytes, reused as img2img init
+    base_b64 = None          # neutral frame bytes — the shared base everything edits
     tier_used = "txt2img"
     render_device = ""       # 'cuda' | 'cpu' — device the GPU node actually used
+    face_warnings = 0        # expressions where the detector found no clear face
 
     for i, state in enumerate(want):
-        prompt = _build_prompt(rec, state, transparent=rec.transparent, bg_color=rec.bg_color)
         await emit_event({"type": "character.generate.progress", "agent_id": agent_id,
                           "state": state, "index": i, "total": total})
+        prompt = _build_prompt(rec, state, transparent=rec.transparent, bg_color=rec.bg_color)
         try:
-            if state == "neutral" or base_b64 is None or not img2img_live:
+            if state == "neutral" or base_b64 is None or consistency == "txt2img":
+                # Fresh full image — the neutral frame becomes the shared base.
                 res = await _call_cap(
                     "image.generate",
                     prompt=prompt, negative_prompt=rec.negative_prompt,
@@ -602,13 +620,35 @@ async def character_generate(
                     guidance=rec.guidance, seed=rec.seed, loras=rec.loras,
                     transparent=rec.transparent, bg_color=rec.bg_color,
                 )
-            else:
-                # Derive this expression from the neutral frame for consistency,
-                # but at higher strength so the expression actually changes.
+            elif use_face:
+                # Repaint ONLY the face → identical character & background, new
+                # emotion. Falls back to full img2img if the GPU server is too old
+                # to expose /expression.
                 res = await _call_cap(
-                    "image.img2img",
-                    prompt=prompt, init_image_b64=base_b64, strength=float(expr_strength),
-                    negative_prompt=rec.negative_prompt,
+                    "image.expression",
+                    base_image_b64=base_b64, prompt=_build_face_prompt(rec, state),
+                    negative_prompt=rec.negative_prompt, strength=float(expr_strength),
+                    steps=rec.steps, guidance=rec.guidance, seed=rec.seed,
+                )
+                if (res or {}).get("image_b64"):
+                    tier_used = "face"
+                    if (res or {}).get("face_detected") is False and \
+                       (res or {}).get("face_method") == "cascade":
+                        face_warnings += 1
+                else:
+                    res = await _call_cap(
+                        "image.img2img", prompt=prompt, init_image_b64=base_b64,
+                        strength=float(expr_strength), negative_prompt=rec.negative_prompt,
+                        width=rec.width, height=rec.height, steps=rec.steps,
+                        guidance=rec.guidance, seed=rec.seed, loras=rec.loras,
+                        transparent=rec.transparent, bg_color=rec.bg_color,
+                    )
+                    tier_used = "img2img"
+            else:
+                # consistency == "img2img": derive the whole frame from neutral.
+                res = await _call_cap(
+                    "image.img2img", prompt=prompt, init_image_b64=base_b64,
+                    strength=float(expr_strength), negative_prompt=rec.negative_prompt,
                     width=rec.width, height=rec.height, steps=rec.steps,
                     guidance=rec.guidance, seed=rec.seed, loras=rec.loras,
                     transparent=rec.transparent, bg_color=rec.bg_color,
@@ -636,10 +676,11 @@ async def character_generate(
     await STORE.save(rec)
     await emit_event({"type": "character.generate.done", "agent_id": agent_id,
                       "frames": list(rec.frames.keys()), "tier": tier_used,
-                      "device": render_device})
+                      "device": render_device, "face_warnings": face_warnings})
 
     out = _record_with_urls(rec)
     out["render_device"] = render_device
+    out["face_warnings"] = face_warnings
     if not rec.frames:
         # Generation ran but the image endpoint returned nothing for every state.
         # Surface it instead of pretending success — almost always means SD isn't
@@ -684,7 +725,8 @@ async def character_preview(
     height:          int = 512,
     transparent:     bool = False,
     bg_color:        str = "",
-    edit:            bool = False,
+    face:            bool = True,    # face-only edit of the neutral base (non-neutral states)
+    edit:            bool = False,   # img2img from the current frame (full-image refine)
     strength:        float = 0.6,
     trace_id=None,
 ):
@@ -704,33 +746,55 @@ async def character_preview(
         tmp.expression_prompts[state] = prompt_override
     prompt = _build_prompt(tmp, state, transparent=transparent, bg_color=bg_color)
 
-    # `edit` derives from the current frame (img2img) so prompt tweaks refine the
-    # existing look; otherwise a fresh txt2img gives the expression the most room.
-    init_b64 = None
-    if edit:
-        cur = rec.frames.get(state) or rec.frames.get("neutral")
+    # Preferred: face-only edit of the neutral base for non-neutral states →
+    # the candidate keeps the exact character & scene, only the emotion changes.
+    res = None
+    base_for_face = None
+    if face and state != "neutral":
+        cur = rec.frames.get("neutral") or rec.frames.get(state)
         if cur:
             try:
-                init_b64 = base64.b64encode(
+                base_for_face = base64.b64encode(
                     (_CHARS_DIR / _safe(agent_id) / cur).read_bytes()).decode()
             except Exception:
-                init_b64 = None
+                base_for_face = None
+    if base_for_face:
+        res = await _call_cap(
+            "image.expression", base_image_b64=base_for_face,
+            prompt=_build_face_prompt(tmp, state), negative_prompt=tmp.negative_prompt,
+            strength=float(strength), steps=int(steps), guidance=float(guidance),
+            seed=int(seed))
+        if not (res or {}).get("image_b64"):
+            res = None  # fall through to the full-image path
 
-    common = dict(prompt=prompt, negative_prompt=tmp.negative_prompt,
-                  width=int(width), height=int(height), steps=int(steps),
-                  guidance=float(guidance), seed=int(seed), loras=rec.loras,
-                  transparent=transparent, bg_color=bg_color, store=False)
-    if init_b64:
-        res = await _call_cap("image.img2img", init_image_b64=init_b64,
-                              strength=float(strength), **common)
-    else:
-        res = await _call_cap("image.generate", **common)
+    if res is None:
+        # `edit` refines the current frame via full img2img; else fresh txt2img.
+        init_b64 = None
+        if edit:
+            cur = rec.frames.get(state) or rec.frames.get("neutral")
+            if cur:
+                try:
+                    init_b64 = base64.b64encode(
+                        (_CHARS_DIR / _safe(agent_id) / cur).read_bytes()).decode()
+                except Exception:
+                    init_b64 = None
+        common = dict(prompt=prompt, negative_prompt=tmp.negative_prompt,
+                      width=int(width), height=int(height), steps=int(steps),
+                      guidance=float(guidance), seed=int(seed), loras=rec.loras,
+                      transparent=transparent, bg_color=bg_color, store=False)
+        if init_b64:
+            res = await _call_cap("image.img2img", init_image_b64=init_b64,
+                                  strength=float(strength), **common)
+        else:
+            res = await _call_cap("image.generate", **common)
 
     b64 = (res or {}).get("image_b64", "")
     if not b64:
         return {"error": (res or {}).get("error", "generation failed"), "state": state}
     return {"image_b64": b64, "state": state, "prompt": prompt,
-            "device": (res or {}).get("device", "")}
+            "device": (res or {}).get("device", ""),
+            "face_detected": (res or {}).get("face_detected"),
+            "face_method": (res or {}).get("face_method")}
 
 
 @capability(
@@ -906,6 +970,61 @@ async def character_narrate(agent_id: str = "", events: str = "[]",
     return {"text": text, "mood": mood or "working"}
 
 
+@capability(
+    "character.use_sprite", memory="on",
+    http_method="POST", http_path="/character/use_sprite", http_tags=["character", "spritegen"],
+    description="Back an agent's companion with a generated spritegen sprite: links EVERY "
+                "built animation sheet (idle/walk/talk/…) and sets render_mode=spritesheet so "
+                "<vera-character> plays them (idle loop by default, talk while speaking). "
+                "Inputs: agent_id (str!), char_id (spritegen id, str!), anim (the DEFAULT "
+                "animation, default idle). At least that sheet must already be built in "
+                "Sprite Studio. Output: the updated character record.",
+)
+async def character_use_sprite(agent_id: str = "", char_id: str = "",
+                               anim: str = "idle", trace_id=None):
+    if not agent_id or not char_id:
+        return {"error": "agent_id and char_id required"}
+    try:
+        from Vera.vera.spritegen.definition import STORE as SPRITE_STORE
+    except Exception as e:
+        return {"error": f"spritegen not available: {e}"}
+    sdefn = await SPRITE_STORE.get(char_id)
+    if not sdefn or getattr(sdefn, "archived", False):
+        return {"error": f"no spritegen character {char_id}"}
+    built = {a: m for a, m in (sdefn.sheets or {}).items() if m.get("file")}
+    if not built:
+        return {"error": f"sprite '{char_id}' has no built sheets — "
+                         "build at least one in Sprite Studio first"}
+    if anim not in built:                       # default anim: idle → first built
+        anim = "idle" if "idle" in built else sorted(built)[0]
+
+    def _sheet_meta(a, m):
+        return {
+            "url": f"/spritegen/asset?char_id={char_id}&path={m['file']}",
+            "columns": m.get("columns"), "rows": m.get("rows"),
+            "frame_width": m.get("frame_width"), "frame_height": m.get("frame_height"),
+            "count": m.get("count"), "fps": m.get("fps"), "loop": m.get("loop", True),
+        }
+
+    rec = await STORE.get(agent_id) or CharacterRecord(agent_id=agent_id)
+    if not rec.display_name:
+        agent = await _get_agent(agent_id=agent_id)
+        rec.display_name = agent.get("label") or agent.get("name") or rec.display_name
+    rec.render_mode = "spritesheet"
+    rec.style = sdefn.style or rec.style
+    # Top-level fields describe the DEFAULT animation (back-compat with older
+    # renderers); `animations` carries every built sheet for the multi-anim player.
+    rec.sheet = {
+        "sprite_char_id": char_id, "anim": anim,
+        **_sheet_meta(anim, built[anim]),
+        "animations": {a: _sheet_meta(a, m) for a, m in built.items()},
+    }
+    await STORE.save(rec)
+    await emit_event({"type": "character.sprite.linked", "agent_id": agent_id,
+                      "char_id": char_id, "anim": anim})
+    return _record_with_urls(rec)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ASSET SERVING — read-only PNG frames (path-traversal guarded)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -954,7 +1073,7 @@ async def _character_panel_route():
 register_ui(
     panel_id="character-studio",
     label="Companion",
-    icon="🧚",
+    icon="✦",   # monochrome glyph to match the rest of the main-menu icons
     mode="tab",
     tab_order=58,
     html=('<div style="height:100%;display:flex;flex-direction:column;">'
@@ -964,7 +1083,7 @@ register_ui(
           '</div>'),
     ui_caps=["character.capabilities", "character.describe", "character.generate",
              "character.get", "character.set", "character.list", "character.delete",
-             "character.narrate", "agent.list", "agent.get"],
+             "character.narrate", "character.use_sprite", "agent.list", "agent.get"],
 )
 
 log.info("character_capabilities: ready (assets=%s)", _CHARS_DIR)

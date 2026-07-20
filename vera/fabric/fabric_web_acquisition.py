@@ -62,12 +62,21 @@ log = logging.getLogger("vera.web_acquisition")
 # ── Rate limiting ─────────────────────────────────────────────────────────
 _CRAWL_DELAY = float(os.getenv("FABRIC_CRAWL_DELAY_S", "2"))
 
-_HTTP_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
-}
+# Shared hardened fetch layer — full browser fingerprint (UA + Sec-CH-UA
+# client hints), HTTP/2 sessions, anti-bot interstitial detection and hostile-
+# domain rewrites (reddit→old.reddit). The partial header set that used to live
+# here was scoring as a bot on Cloudflare/DataDome-protected sites.
+try:
+    from Vera.vera.web import web_client as _webclient
+    _HTTP_HEADERS = _webclient.BROWSER_HEADERS
+except ImportError:
+    _webclient = None
+    _HTTP_HEADERS = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+    }
 
 # ── Lazy imports ──────────────────────────────────────────────────────────
 def _fabric_ingest():
@@ -754,6 +763,17 @@ def _canonical_key(name: str) -> str:
     return key if len(key) >= 3 else norm
 
 
+def _entity_id(name: str, etype: str) -> str:
+    """Canonical entity id used across the entity graph tables and Neo4j.
+
+    Single source of truth for the id scheme that _persist_entity_graph and
+    reconcile_record_entities both rely on: type-prefixed sha1 of the
+    canonical (space/punctuation-insensitive) key.
+    """
+    ckey = _canonical_key(name)
+    return f"{etype}:{hashlib.sha1(ckey.encode()).hexdigest()[:12]}"
+
+
 def _looks_org(name: str) -> bool:
     toks = re.sub(r"[.,]", "", (name or "").lower()).split()
     return bool(toks) and toks[-1] in _ORG_SUFFIX_WORDS
@@ -1061,6 +1081,28 @@ def _model_entities(text: str, content_type: str) -> List[Dict]:
     except Exception as ex:
         log.debug("model NER (%s): %s", kind, ex)
     return out
+
+
+import concurrent.futures as _futures
+import functools as _functools
+
+# Shared single-thread executor for spaCy/GLiNER inference — a full transformer
+# forward pass that must NEVER run on the event loop (the loop-stall watchdog
+# repeatedly caught gliner.predict_entities blocking every WebSocket for ~1s per
+# page). ONE worker across the whole app: off the loop, serialised access to the
+# shared model instance (torch modules aren't safe for concurrent forward
+# passes), and no CPU oversubscription. discovery.py delegates to this same
+# executor so there is a single serialisation point.
+_NER_EXECUTOR = _futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="vera-ner")
+
+
+async def ner_offload(fn, *args):
+    """Run a blocking NER extraction fn off the event loop on the shared NER
+    thread. Returns fn(*args); None-safe."""
+    if fn is None:
+        return None
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_NER_EXECUTOR, _functools.partial(fn, *args))
 
 
 def _extract_entities_from_text(text: str, content_type: str = "text") -> List[Dict]:
@@ -1413,9 +1455,9 @@ async def cap_web_acquire(
     except ImportError:
         _have_bs4 = False
 
-    async with httpx.AsyncClient(
-        timeout=20, follow_redirects=True, headers=_HTTP_HEADERS
-    ) as client:
+    async with (_webclient.new_session(20.0) if _webclient else
+                httpx.AsyncClient(timeout=20, follow_redirects=True,
+                                  headers=_HTTP_HEADERS)) as client:
         while queue and pages_fetched < max_pages:
             page_url, depth, dry_streak = queue.pop(0)
 
@@ -1445,10 +1487,11 @@ async def cap_web_acquire(
 
             visited.add(page_url)
 
-            # Fetch the page
+            # Fetch the page (hostile domains rewritten, e.g. reddit→old.reddit)
             try:
                 await asyncio.sleep(_CRAWL_DELAY)
-                resp = await client.get(page_url)
+                fetch_url = _webclient.rewrite_url(page_url) if _webclient else page_url
+                resp = await client.get(fetch_url)
                 if resp.status_code >= 400:
                     continue
                 ct = resp.headers.get("content-type", "").lower()
@@ -1457,6 +1500,12 @@ async def cap_web_acquire(
                 continue
 
             raw_text = resp.text
+
+            # Anti-bot / consent / CAPTCHA interstitial? Skip — challenge
+            # boilerplate must never be ingested as page content.
+            if _webclient and _webclient.detect_block(raw_text, resp.status_code):
+                pages_skipped += 1
+                continue
 
             # ── Data format detection ────────────────────────────────────
             # If the response looks like structured data (CSV / JSON / RSS /
@@ -1596,11 +1645,11 @@ async def cap_web_acquire(
                     "anchor":   link.get("anchor", ""),
                 })
 
-            # Entity extraction
+            # Entity extraction — offloaded (transformer NER must not run on loop)
             if extract_entities and full_text:
                 content_type = "code" if structure.get("code_blocks") else "text"
-                entities = _extract_entities_from_text(full_text, content_type)
-                relations = _extract_relationships_from_entities(entities, full_text)
+                entities = await ner_offload(_extract_entities_from_text, full_text, content_type) or []
+                relations = await ner_offload(_extract_relationships_from_entities, entities, full_text) or []
 
                 for ent in entities:
                     norm = ent["normalised"]
@@ -2041,6 +2090,203 @@ async def _persist_entity_graph(
     return persisted
 
 
+@capability(
+    "fabric.entity_graph.link_memory",
+    http_method="POST", http_path="/fabric/entity_graph/link_memory",
+    http_tags=["fabric", "graph", "entity", "memory"],
+    memory="off",
+    description="Bridge the fabric entity graph into the memory graph. For records "
+                "in a dataset that carry a `node_id` (the Neo4j :Memory node they "
+                "originated from — chat turns, capability activity, notebook cells), "
+                "link every entity mentioned in that record to the :Memory node via "
+                "MENTIONED_IN. The :Memory node is MATCHed (never created) so no stub "
+                "nodes appear. This makes chat / notes / events first-class citizens of "
+                "the entity graph, connecting them to everything else through shared "
+                "entities. Input: dataset_id (str!), limit (int default 500). "
+                "Output: {linked_nodes, edges, dataset_id}.",
+)
+async def cap_entity_graph_link_memory(
+    dataset_id: str,
+    limit:      int = 500,
+    trace_id=None,
+) -> Dict:
+    if not dataset_id:
+        return {"error": "dataset_id required"}
+    limit = max(1, min(2000, limit))
+
+    graph = _get_graph()
+    if not graph or not graph.available or not getattr(graph, "_driver", None):
+        return {"linked_nodes": 0, "edges": 0, "dataset_id": dataset_id,
+                "note": "neo4j unavailable"}
+
+    # 1) Recent records in this dataset that carry a node_id in their data JSON.
+    rid_to_node: Dict[str, str] = {}
+    try:
+        conn = _sqlite_conn()
+        rows = conn.execute(
+            "SELECT id, data FROM fabric_records WHERE dataset_id=? "
+            "ORDER BY created_at DESC LIMIT ?",
+            (dataset_id, limit)
+        ).fetchall()
+        for row in rows:
+            try:
+                d = json.loads(row["data"] or "{}")
+            except Exception:
+                continue
+            node_id = d.get("node_id") if isinstance(d, dict) else None
+            if node_id:
+                rid_to_node[row["id"]] = str(node_id)
+    except Exception as e:
+        log.debug("link_memory records %s: %s", dataset_id, e)
+        return {"linked_nodes": 0, "edges": 0, "dataset_id": dataset_id,
+                "error": str(e)}
+
+    if not rid_to_node:
+        return {"linked_nodes": 0, "edges": 0, "dataset_id": dataset_id,
+                "note": "no records carry a node_id"}
+
+    # 2) Entities mentioned in each of those records → link to the :Memory node.
+    #    MATCH (not MERGE) the Memory node so we never create stub memory nodes
+    #    for node_ids whose Memory record was never actually written.
+    pairs: List[Tuple[str, str]] = []   # (entity_id, node_id)
+    try:
+        conn = _sqlite_conn()
+        rids = list(rid_to_node.keys())
+        for i in range(0, len(rids), 400):
+            chunk = rids[i:i + 400]
+            qmarks = ",".join("?" * len(chunk))
+            mrows = conn.execute(
+                f"SELECT entity_id, record_id FROM fabric_entity_mentions "
+                f"WHERE record_id IN ({qmarks})", chunk
+            ).fetchall()
+            for mr in mrows:
+                nid = rid_to_node.get(mr["record_id"])
+                if nid:
+                    pairs.append((mr["entity_id"], nid))
+    except Exception as e:
+        log.debug("link_memory mentions %s: %s", dataset_id, e)
+
+    linked_edges = 0
+    linked_nodes: Set[str] = set()
+    if pairs:
+        try:
+            async with graph._driver.session() as s:
+                for eid, nid in pairs:
+                    try:
+                        res = await s.run(
+                            "MATCH (m:Memory {id:$nid}) "
+                            "MERGE (e:Entity {id:$eid}) "
+                            "MERGE (e)-[r:MENTIONED_IN]->(m) "
+                            "SET r.dataset_id=$ds, r.via='record', r.updated_at=$ts "
+                            "RETURN m.id AS mid",
+                            nid=nid, eid=eid, ds=dataset_id, ts=now_iso())
+                        row = await res.single()
+                        if row:
+                            linked_edges += 1
+                            linked_nodes.add(nid)
+                    except Exception as inner:
+                        log.debug("link_memory edge: %s", inner)
+        except Exception as e:
+            log.debug("link_memory session %s: %s", dataset_id, e)
+
+    if linked_edges:
+        try:
+            await emit_event({"type": "fabric.entity_graph.linked_memory",
+                              "dataset_id": dataset_id,
+                              "memory_nodes": len(linked_nodes),
+                              "edges": linked_edges})
+        except Exception:
+            pass
+
+    return {"linked_nodes": len(linked_nodes), "edges": linked_edges,
+            "dataset_id": dataset_id}
+
+
+async def reconcile_record_entities(
+    record_id: str,
+    dataset_id: str,
+    kept_entities: Dict[str, Dict],
+    prune_orphans: bool = True,
+) -> Dict:
+    """Reconcile the entity↔record links for a single re-processed record.
+
+    When a page/record is re-processed with fresh text (e.g. a discovery-first
+    web.fetch or research crawl of a URL already seen), some entities extracted
+    on a previous pass may no longer be present. This UNLINKS those stale
+    mentions from THIS record so the graph reflects the page's latest data, and
+    — when prune_orphans is set — deletes any entity left with no mentions
+    anywhere (its master row, its relations, and its Neo4j node).
+
+    `kept_entities` is the {normalised: {name, type, ...}} bag that was just
+    persisted for this record; every entity previously linked to the record but
+    NOT in this bag is treated as stale. SQLite is authoritative; the graph is
+    updated best-effort.
+    """
+    kept_ids: Set[str] = set()
+    for ent in kept_entities.values():
+        try:
+            kept_ids.add(_entity_id(ent.get("name") or ent.get("normalised", ""),
+                                    ent.get("type", "named_entity")))
+        except Exception:
+            continue
+
+    unlinked = 0
+    pruned = 0
+    stale: Set[str] = set()
+    orphans: List[str] = []
+    try:
+        conn = _sqlite_conn()
+        rows = conn.execute(
+            "SELECT DISTINCT entity_id FROM fabric_entity_mentions WHERE record_id=?",
+            (record_id,)
+        ).fetchall()
+        old_ids = {r["entity_id"] for r in rows}
+        stale = old_ids - kept_ids
+        for eid in stale:
+            conn.execute(
+                "DELETE FROM fabric_entity_mentions WHERE record_id=? AND entity_id=?",
+                (record_id, eid)
+            )
+            unlinked += 1
+            if prune_orphans:
+                remaining = conn.execute(
+                    "SELECT COUNT(*) AS c FROM fabric_entity_mentions WHERE entity_id=?",
+                    (eid,)
+                ).fetchone()
+                if remaining and remaining["c"] == 0:
+                    conn.execute("DELETE FROM fabric_entities WHERE id=?", (eid,))
+                    conn.execute(
+                        "DELETE FROM fabric_entity_relations WHERE from_id=? OR to_id=?",
+                        (eid, eid)
+                    )
+                    orphans.append(eid)
+                    pruned += 1
+        conn.commit()
+    except Exception as e:
+        log.warning("reconcile_record_entities sqlite [%s]: %s", record_id, e)
+
+    # Graph cleanup — best effort. The graph objects expose only query/upsert/
+    # link_many, so deletes go through Cypher via graph.query.
+    graph = _get_graph()
+    if graph and getattr(graph, "available", False) and (stale or orphans):
+        try:
+            if stale:
+                await graph.query(
+                    "MATCH (e:Entity)-[m:MENTIONED_IN]->(r:FabricRecord {id:$rid}) "
+                    "WHERE e.id IN $eids DELETE m",
+                    {"rid": record_id, "eids": list(stale)}
+                )
+            if orphans:
+                await graph.query(
+                    "MATCH (e:Entity) WHERE e.id IN $eids DETACH DELETE e",
+                    {"eids": orphans}
+                )
+        except Exception as e:
+            log.debug("reconcile_record_entities graph [%s]: %s", record_id, e)
+
+    return {"unlinked": unlinked, "pruned": pruned, "orphans": orphans}
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # CAPABILITY: ENTITY GRAPH QUERY
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2096,7 +2342,15 @@ def _llm_json(raw: str):
 
 async def _llm_call(prompt: str, system: str, timeout: int = 90) -> str:
     """Call the local LLM. Prefers ollama_generate (json mode); falls back to
-    the llm.generate capability. Returns '' on any failure."""
+    the llm.generate capability. Returns '' on any failure. Subject to the
+    LLM-NLP master switch (fabric.nlp.set): background/automatic acquisition
+    pipelines get '' — callers degrade to their non-LLM paths."""
+    try:
+        import Vera.vera.fabric.discovery as _disc
+        if hasattr(_disc, "_llm_nlp_ok") and not await _disc._llm_nlp_ok():
+            return ""
+    except Exception:
+        pass
     try:
         from Vera.vera.capability_orchestration import ollama_generate
         out = await asyncio.wait_for(
@@ -2823,9 +3077,10 @@ async def cap_entity_graph_extract(
         text = (rec.get("text") or "")[:8000]
         rid = rec["id"]
 
-        # heuristic engine — always runs, on every record
-        h_ents = _extract_entities_from_text(text, content_type)
-        h_rels = _extract_relationships_from_entities(h_ents, text)
+        # heuristic engine — always runs, on every record (offloaded: the NER
+        # transformer would otherwise block the loop per record)
+        h_ents = await ner_offload(_extract_entities_from_text, text, content_type) or []
+        h_rels = await ner_offload(_extract_relationships_from_entities, h_ents, text) or []
         _absorb(h_ents, h_rels, rid)
 
         # optional LLM augmentation — capped to bound cost/latency
@@ -3426,64 +3681,72 @@ async def cap_entity_graph_query(
     _ensure_acq_table()
     limit = max(1, min(500, limit))
 
-    conn = _sqlite_conn()
-
-    # Build query — if filtering by dataset, join via mentions table
-    if dataset_id:
-        conditions = ["m.dataset_id = ?"]
-        params: list = [dataset_id]
-        if search:
-            conditions.append("(e.normalised LIKE ? OR e.name LIKE ?)")
-            params.extend([f"%{search.lower()}%", f"%{search}%"])
-        if type:
-            conditions.append("e.type = ?")
-            params.append(type)
-        where = " AND ".join(conditions)
-        params.append(limit)
-        rows = conn.execute(
-            f"SELECT DISTINCT e.* FROM fabric_entities e "
-            f"JOIN fabric_entity_mentions m ON m.entity_id = e.id "
-            f"WHERE {where} "
-            f"ORDER BY e.mention_count DESC LIMIT ?",
-            tuple(params)
-        ).fetchall()
-    else:
-        conditions = []
-        params = []
-        if search:
-            conditions.append("(normalised LIKE ? OR name LIKE ?)")
-            params.extend([f"%{search.lower()}%", f"%{search}%"])
-        if type:
-            conditions.append("type = ?")
-            params.append(type)
-        where = " AND ".join(conditions) if conditions else "1=1"
-        params.append(limit)
-        rows = conn.execute(
-            f"SELECT * FROM fabric_entities WHERE {where} "
-            f"ORDER BY mention_count DESC LIMIT ?",
-            tuple(params)
-        ).fetchall()
-
-    entities = []
-    for row in rows:
-        r = dict(row)
+    # All SQLite work runs in a thread — the entity select + per-entity
+    # mention loop + relations fallback were >1s of blocking I/O on the loop.
+    def _fetch_entities():
+        conn = _sqlite_conn()
         try:
-            r["datasets"] = json.loads(r.get("datasets", "[]"))
-        except Exception:
-            r["datasets"] = []
-        try:
-            r["props"] = json.loads(r.get("props", "{}"))
-        except Exception:
-            r["props"] = {}
-        # Fetch per-record mentions from junction table
-        mention_rows = conn.execute(
-            "SELECT record_id, dataset_id FROM fabric_entity_mentions "
-            "WHERE entity_id = ? ORDER BY created_at DESC LIMIT 50",
-            (r["id"],)
-        ).fetchall()
-        r["record_ids"] = [mr["record_id"] for mr in mention_rows]
-        r["mention_datasets"] = list({mr["dataset_id"] for mr in mention_rows})
-        entities.append(r)
+            # Build query — if filtering by dataset, join via mentions table
+            if dataset_id:
+                conditions = ["m.dataset_id = ?"]
+                params: list = [dataset_id]
+                if search:
+                    conditions.append("(e.normalised LIKE ? OR e.name LIKE ?)")
+                    params.extend([f"%{search.lower()}%", f"%{search}%"])
+                if type:
+                    conditions.append("e.type = ?")
+                    params.append(type)
+                where = " AND ".join(conditions)
+                params.append(limit)
+                rows = conn.execute(
+                    f"SELECT DISTINCT e.* FROM fabric_entities e "
+                    f"JOIN fabric_entity_mentions m ON m.entity_id = e.id "
+                    f"WHERE {where} "
+                    f"ORDER BY e.mention_count DESC LIMIT ?",
+                    tuple(params)
+                ).fetchall()
+            else:
+                conditions = []
+                params = []
+                if search:
+                    conditions.append("(normalised LIKE ? OR name LIKE ?)")
+                    params.extend([f"%{search.lower()}%", f"%{search}%"])
+                if type:
+                    conditions.append("type = ?")
+                    params.append(type)
+                where = " AND ".join(conditions) if conditions else "1=1"
+                params.append(limit)
+                rows = conn.execute(
+                    f"SELECT * FROM fabric_entities WHERE {where} "
+                    f"ORDER BY mention_count DESC LIMIT ?",
+                    tuple(params)
+                ).fetchall()
+
+            out = []
+            for row in rows:
+                r = dict(row)
+                try:
+                    r["datasets"] = json.loads(r.get("datasets", "[]"))
+                except Exception:
+                    r["datasets"] = []
+                try:
+                    r["props"] = json.loads(r.get("props", "{}"))
+                except Exception:
+                    r["props"] = {}
+                # Fetch per-record mentions from junction table
+                mention_rows = conn.execute(
+                    "SELECT record_id, dataset_id FROM fabric_entity_mentions "
+                    "WHERE entity_id = ? ORDER BY created_at DESC LIMIT 50",
+                    (r["id"],)
+                ).fetchall()
+                r["record_ids"] = [mr["record_id"] for mr in mention_rows]
+                r["mention_datasets"] = list({mr["dataset_id"] for mr in mention_rows})
+                out.append(r)
+            return out
+        finally:
+            conn.close()
+
+    entities = await asyncio.to_thread(_fetch_entities)
 
     # Get relationships from Neo4j if available
     relationships = []
@@ -3517,14 +3780,22 @@ async def cap_entity_graph_query(
         try:
             entity_ids = [e["id"] for e in entities[:200]]
             ph = ",".join("?" for _ in entity_ids)
-            rel_rows = conn.execute(
-                f"SELECT r.from_id, r.to_id, r.rel, r.props "
-                f"FROM fabric_entity_relations r "
-                f"WHERE r.from_id IN ({ph}) OR r.to_id IN ({ph}) "
-                f"ORDER BY CAST(json_extract(r.props,'$.weight') AS INTEGER) DESC "
-                f"LIMIT 500",
-                tuple(entity_ids) + tuple(entity_ids)
-            ).fetchall()
+
+            def _fetch_rels():
+                conn = _sqlite_conn()
+                try:
+                    return conn.execute(
+                        f"SELECT r.from_id, r.to_id, r.rel, r.props "
+                        f"FROM fabric_entity_relations r "
+                        f"WHERE r.from_id IN ({ph}) OR r.to_id IN ({ph}) "
+                        f"ORDER BY CAST(json_extract(r.props,'$.weight') AS INTEGER) DESC "
+                        f"LIMIT 500",
+                        tuple(entity_ids) + tuple(entity_ids)
+                    ).fetchall()
+                finally:
+                    conn.close()
+
+            rel_rows = await asyncio.to_thread(_fetch_rels)
             # Build a name lookup from entities
             eid_name = {e["id"]: e.get("name", e["id"]) for e in entities}
             for rr in rel_rows:

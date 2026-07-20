@@ -128,3 +128,31 @@ log.info(
     "loop-graph: registered as injectable element "
     "(<vera-loop-graph>); JS at /ui/elements/loop_graph.js"
 )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Companion: <vera-agent-loop-config> — the UNIFIED agentic-loop config control.
+# One element exposing the full /workshop/agent_loop/stream body surface (engine,
+# v5 planning/recon/skills/code knobs, v2–v4 triage/phase/pipeline/HITL, long-
+# running + handover), so every panel that launches the loop gets identical,
+# complete controls. JS served at /ui/elements/agent_loop_config.js.
+# ─────────────────────────────────────────────────────────────────────────────
+_LOOP_CONFIG_INJECT_HTML = (
+    '<script id="vera-agent-loop-config-js-include" src="/ui/elements/agent_loop_config.js"></script>\n'
+    '<vera-agent-loop-config style="display:block;width:100%;height:100%;overflow:auto"></vera-agent-loop-config>'
+)
+
+register_ui(
+    panel_id="agent-loop-config",
+    label="Agent Loop Config",
+    icon="⚙",
+    mode="inject",
+    tab_order=206,
+    html=_LOOP_CONFIG_INJECT_HTML,
+    ui_caps=[],
+)
+
+log.info(
+    "agent-loop-config: registered as injectable element "
+    "(<vera-agent-loop-config>); JS at /ui/elements/agent_loop_config.js"
+)

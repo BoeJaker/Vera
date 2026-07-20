@@ -59,17 +59,7 @@
     "source": "server_text",
     "text_url": "/mesh/firmware?flavor=micropython",
     "upload_as": "main.py",
-    "note": "Pushed over the serial REPL after the runtime is flashed — no compiler. Board-robust pins (override via config.io)."
-  },
-  {
-    "id": "vera-worker-mpy",
-    "label": "Vera Worker — MicroPython (main.py)",
-    "kind": "script",
-    "runtime": "micropython",
-    "source": "server_text",
-    "text_url": "/mesh/firmware?flavor=micropython",
-    "upload_as": "main.py",
-    "note": "Same firmware; assign recurring edge tasks with mesh.worker.assign."
+    "note": "The one MicroPython node firmware — does everything. Pushed over the serial REPL after the runtime is flashed (no compiler). Board-robust pins (override via config.io). A 'worker' is just this same node with recurring edge tasks assigned at runtime via mesh.worker.assign (Worker tasks card) — no separate script. Includes the ESP32 toolkit (RGB/NeoPixel + probe, BLE scan, I2C/touch/temp, channel survey, ESP-NOW ranging, RF positioning, sysinfo, deep-sleep). CSI motion + Wi-Fi promiscuous sniff need the Arduino/IDF build."
   },
   {
     "id": "vera-node-arduino",
@@ -79,6 +69,6 @@
     "source": "server_text",
     "text_url": "/mesh/firmware?flavor=arduino",
     "needs_build": true,
-    "note": "Compile with arduino-cli (mesh.firmware.build) or the Arduino IDE, then flash the .bin over USB or OTA. Adjust LED/RELAY/ADC #defines per board."
+    "note": "Compile with arduino-cli (mesh.firmware.build) or the Arduino IDE, then flash the .bin over USB or OTA. Adjust LED/RELAY/ADC #defines per board. Includes a built-in ILI9488 3.5\" Uno-shield kiosk driver (8-bit parallel, 320x480) + SD storage — see USE_TFT_ILI9488_P8 / USE_SD_SPI toggles; pins remappable at runtime via config.io.tft / config.io.sd. Full ESP32-S3 toolkit incl. Wi-Fi CSI device-free motion sensing (TOOLKIT_CSI) + promiscuous RF density sniffer (TOOLKIT_SNIFF) + RGB/NeoPixel via rgbLedWrite; each behind a compile flag if a core/board disagrees."
   }
 ]

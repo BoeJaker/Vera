@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vera — Stack Monitor</title>
+<style>
+:root{
+  --bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;
+  --border:#3a3530;--border2:#4a4540;
+  --acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--gpu:#c97a5a;
+  --ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;
+  --text:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;
+  --mono:'JetBrains Mono','Fira Mono',monospace;--sans:'Inter',system-ui,sans-serif;
+  --radius:5px;--radius-lg:8px;color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:12px}
+body{overflow:hidden}
+
+/* ── window shell (docked = fill; floating = draggable card on the page) ── */
+#win{position:absolute;inset:0;display:flex;flex-direction:column;background:var(--bg0);overflow:hidden}
+#win.floating{inset:auto;top:36px;left:36px;width:min(880px,92vw);height:min(660px,86vh);
+  border:1px solid var(--border2);border-radius:var(--radius-lg);
+  box-shadow:0 18px 60px rgba(0,0,0,.6);resize:both;min-width:340px;min-height:240px}
+#win-body{flex:1;overflow-y:auto;padding:12px}
+
+.pane-tb{display:flex;align-items:center;gap:8px;padding:8px 12px;flex-wrap:wrap;
+  border-bottom:1px solid var(--border);background:var(--bg1)}
+#win.floating .pane-tb{cursor:move;user-select:none}
+.pane-tb-title{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:2px;color:var(--acc)}
+.tb-sep{width:1px;height:15px;background:var(--border2)}
+.status-hint{font-size:9px;color:var(--dim2);font-family:var(--mono);margin-left:auto}
+.btn{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:3px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);cursor:pointer;font-size:10.5px;font-weight:500;transition:all .14s}
+.btn:hover{border-color:var(--acc);color:var(--acc)}
+.btn.sm{padding:2px 7px;font-size:9.5px}
+.btn.on{border-color:var(--acc);color:var(--acc)}
+
+.stacks{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px}
+@media(max-width:820px){.stacks{grid-template-columns:1fr}}
+.stack{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;display:flex;flex-direction:column}
+.stack-hd{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--border);border-left:3px solid var(--dim)}
+.stack-hd.ok{border-left-color:var(--ok)}.stack-hd.warn{border-left-color:var(--warn)}.stack-hd.off{border-left-color:var(--err)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--dim);flex:none;box-shadow:0 0 0 3px rgba(0,0,0,.18)}
+.dot.ok{background:var(--ok)}.dot.warn{background:var(--warn)}.dot.off{background:var(--err)}
+.stack-name{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:var(--text)}
+.stack-state{margin-left:auto;font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim2)}
+.kpis{display:flex;border-bottom:1px solid var(--border)}
+.kpi{flex:1;padding:9px 6px;text-align:center;border-right:1px solid rgba(58,53,48,.5)}
+.kpi:last-child{border-right:none}
+.kpi-val{font-family:var(--mono);font-size:18px;font-weight:700;color:var(--acc)}
+.kpi-val.gpu{color:var(--gpu)}
+.kpi-sub{font-size:7.5px;color:var(--dim2);font-family:var(--mono);text-transform:uppercase;letter-spacing:.5px;margin-top:2px}
+.rows{flex:1;max-height:170px;overflow-y:auto}
+.row{display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid rgba(58,53,48,.32);font-family:var(--mono);font-size:10px}
+.row:last-child{border-bottom:none}
+.row .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.row .meta{color:var(--dim2);font-size:9px;white-space:nowrap}
+.tag{font-size:7.5px;padding:1px 6px;border-radius:7px;font-family:var(--mono);font-weight:600;white-space:nowrap}
+.t-ok{background:rgba(109,184,122,.1);color:var(--ok);border:1px solid rgba(109,184,122,.22)}
+.t-err{background:rgba(201,107,107,.1);color:var(--err);border:1px solid rgba(201,107,107,.22)}
+.t-warn{background:rgba(201,163,90,.1);color:var(--warn);border:1px solid rgba(201,163,90,.22)}
+.t-gpu{background:rgba(201,122,90,.1);color:var(--gpu);border:1px solid rgba(201,122,90,.22)}
+.t-dim{background:var(--bg2);color:var(--dim2);border:1px solid var(--border)}
+.empty{padding:16px;text-align:center;color:var(--dim);font-size:10px;font-family:var(--mono)}
+.banner{background:var(--bg1);border:1px solid var(--border);border-left:3px solid var(--err);border-radius:var(--radius);padding:8px 12px;font-size:10px;color:var(--err);font-family:var(--mono);margin-bottom:12px;display:none}
+
+/* ── charts ── */
+.sec-title{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:1.5px;color:var(--dim2);text-transform:uppercase;margin:2px 2px 9px;display:flex;align-items:center;gap:8px}
+.sec-title .hint{font-weight:400;letter-spacing:0;color:var(--dim);text-transform:none;font-size:9px}
+.charts{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
+.chart{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius-lg);padding:8px 10px 6px}
+.chart-hd{display:flex;align-items:baseline;gap:8px;margin-bottom:4px}
+.chart-title{font-family:var(--mono);font-size:9px;font-weight:600;letter-spacing:.4px;color:var(--dim2);text-transform:uppercase}
+.chart-leg{margin-left:auto;display:flex;gap:8px;font-family:var(--mono);font-size:9.5px}
+.chart-leg b{font-weight:700}
+.chart canvas{width:100%;height:72px;display:block}
+::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:3px}
+</style>
+</head>
+<body>
+
+<div id="win">
+  <div class="pane-tb" id="tb">
+    <span class="pane-tb-title">STACK MONITOR</span>
+    <span class="tb-sep"></span>
+    <button class="btn sm" onclick="MON.refresh(true)">↻ Refresh</button>
+    <button class="btn sm on" id="auto-btn" onclick="MON.toggleAuto()">Auto 8s</button>
+    <span class="tb-sep"></span>
+    <button class="btn sm" id="float-btn" onclick="MON.toggleFloat()" title="Detach as a floating window on this page">▣ Float</button>
+    <button class="btn sm" id="pop-btn" onclick="MON.popout()" title="Open this monitor in its own browser window">⤢ Window</button>
+    <span class="status-hint" id="ts">loading…</span>
+  </div>
+
+  <div id="win-body">
+    <div class="banner" id="banner"></div>
+
+    <div class="stacks">
+      <div class="stack">
+        <div class="stack-hd" id="pmx-hd"><span class="dot" id="pmx-dot"></span><span class="stack-name">Proxmox</span><span class="stack-state" id="pmx-state">—</span></div>
+        <div class="kpis">
+          <div class="kpi"><div class="kpi-val" id="pmx-running">—</div><div class="kpi-sub">running</div></div>
+          <div class="kpi"><div class="kpi-val" id="pmx-guests">—</div><div class="kpi-sub">guests</div></div>
+          <div class="kpi"><div class="kpi-val" id="pmx-nodes">—</div><div class="kpi-sub">nodes</div></div>
+        </div>
+        <div class="rows" id="pmx-rows"></div>
+      </div>
+      <div class="stack">
+        <div class="stack-hd" id="dkr-hd"><span class="dot" id="dkr-dot"></span><span class="stack-name">Docker</span><span class="stack-state" id="dkr-state">—</span></div>
+        <div class="kpis">
+          <div class="kpi"><div class="kpi-val" id="dkr-running">—</div><div class="kpi-sub">running</div></div>
+          <div class="kpi"><div class="kpi-val" id="dkr-conts">—</div><div class="kpi-sub">containers</div></div>
+          <div class="kpi"><div class="kpi-val" id="dkr-hosts">—</div><div class="kpi-sub">hosts up</div></div>
+        </div>
+        <div class="rows" id="dkr-rows"></div>
+      </div>
+      <div class="stack">
+        <div class="stack-hd" id="oll-hd"><span class="dot" id="oll-dot"></span><span class="stack-name">Ollama</span><span class="stack-state" id="oll-state">—</span></div>
+        <div class="kpis">
+          <div class="kpi"><div class="kpi-val" id="oll-online">—</div><div class="kpi-sub">online</div></div>
+          <div class="kpi"><div class="kpi-val gpu" id="oll-gpu">—</div><div class="kpi-sub">gpu</div></div>
+          <div class="kpi"><div class="kpi-val" id="oll-inuse">—</div><div class="kpi-sub">in use</div></div>
+        </div>
+        <div class="rows" id="oll-rows"></div>
+      </div>
+    </div>
+
+    <div class="sec-title">Over time <span class="hint" id="hist-hint"></span></div>
+    <div class="charts" id="charts"></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+const MON = (function(){
+const $ = id => document.getElementById(id);
+const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+let _timer=null, _auto=true, _history=[];
+
+// resolve theme CSS vars to concrete colours (canvas can't use var())
+const cssvar = n => getComputedStyle(document.documentElement).getPropertyValue('--'+n).trim() || '#888';
+const PAL = {}; ['acc','acc2','acc3','gpu','ok','err','warn','dim2'].forEach(n=>PAL[n]=cssvar(n));
+
+async function api(path){
+  const r = await fetch(path, {headers:{'Accept':'application/json'}});
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  return r.json();
+}
+
+/* ── chart config: each card draws one or more series from the history buffer ── */
+const CHARTS = [
+  {id:'res',  title:'CPU / Memory', fixed:[0,100], fmt:v=>Math.round(v)+'%',
+     series:[{key:'cpu',color:'acc',label:'cpu'},{key:'mem',color:'gpu',label:'ram'}]},
+  {id:'pmem', title:'Process RAM',  fmt:v=>Math.round(v)+'mb',
+     series:[{key:'proc_mb',color:'acc2',label:'rss'}]},
+  {id:'oll',  title:'Ollama nodes / load', fmt:v=>String(Math.round(v)),
+     series:[{key:'oll_online',color:'acc',label:'online'},{key:'oll_inuse',color:'acc3',label:'busy'}]},
+  {id:'run',  title:'Running guests / containers', fmt:v=>String(Math.round(v)),
+     series:[{key:'dkr_running',color:'acc2',label:'cntr'},{key:'pmx_running',color:'gpu',label:'gst'}]},
+  {id:'q',    title:'Task queue / workers', fmt:v=>String(Math.round(v)),
+     series:[{key:'queue',color:'acc3',label:'queue'},{key:'workers',color:'acc',label:'wrk'}]},
+];
+
+function buildCharts(){
+  $('charts').innerHTML = CHARTS.map(c=>`
+    <div class="chart">
+      <div class="chart-hd">
+        <span class="chart-title">${esc(c.title)}</span>
+        <span class="chart-leg" id="leg-${c.id}"></span>
+      </div>
+      <canvas id="cv-${c.id}"></canvas>
+    </div>`).join('');
+  CHARTS.forEach(c=>{ c.canvas=$('cv-'+c.id); });
+}
+
+function lastVal(key){
+  for(let i=_history.length-1;i>=0;i--){ const v=_history[i][key]; if(v!=null&&isFinite(v)) return v; }
+  return null;
+}
+
+function drawChart(c){
+  const cv=c.canvas; if(!cv) return;
+  const dpr=window.devicePixelRatio||1, w=cv.clientWidth||220, h=cv.clientHeight||72;
+  cv.width=w*dpr; cv.height=h*dpr;
+  const ctx=cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,w,h);
+
+  // legend (current values)
+  $('leg-'+c.id).innerHTML = c.series.map(s=>{
+    const v=lastVal(s.key);
+    return `<span style="color:${PAL[s.color]}">${esc(s.label)} <b>${v==null?'—':esc(c.fmt(v))}</b></span>`;
+  }).join('');
+
+  const S=_history;
+  if(S.length<2){
+    ctx.fillStyle=PAL.dim2; ctx.font='9px monospace'; ctx.textAlign='center';
+    ctx.fillText('collecting…', w/2, h/2); return;
+  }
+  // y-range
+  let lo,hi;
+  if(c.fixed){ lo=c.fixed[0]; hi=c.fixed[1]; }
+  else{
+    const vals=[]; c.series.forEach(s=>S.forEach(p=>{const v=p[s.key]; if(v!=null&&isFinite(v))vals.push(v);}));
+    if(!vals.length){lo=0;hi=1;} else{ lo=Math.min(0,...vals); hi=Math.max(...vals); }
+    if(hi<=lo) hi=lo+1; hi=hi*1.12;
+  }
+  const padT=5,padB=3,padX=1;
+  const X=i=> padX + i*(w-2*padX)/(S.length-1);
+  const Y=v=> h-padB - ((v-lo)/(hi-lo))*(h-padT-padB);
+
+  // grid
+  ctx.strokeStyle='rgba(74,69,64,.35)'; ctx.lineWidth=1;
+  [lo,(lo+hi)/2,hi].forEach(g=>{ const y=Y(g)+0.5; ctx.beginPath(); ctx.moveTo(padX,y); ctx.lineTo(w-padX,y); ctx.stroke(); });
+
+  // series
+  c.series.forEach(s=>{
+    ctx.strokeStyle=PAL[s.color]; ctx.lineWidth=1.5; ctx.lineJoin='round'; ctx.beginPath();
+    let pen=false, lx=null, ly=null;
+    S.forEach((p,i)=>{ const v=p[s.key];
+      if(v==null||!isFinite(v)){ pen=false; return; }
+      const x=X(i), y=Y(v); if(!pen){ctx.moveTo(x,y);pen=true;} else ctx.lineTo(x,y); lx=x; ly=y; });
+    ctx.stroke();
+    if(lx!=null){ ctx.fillStyle=PAL[s.color]; ctx.beginPath(); ctx.arc(lx,ly,1.9,0,7); ctx.fill(); }
+  });
+}
+function drawAll(){ CHARTS.forEach(drawChart); }
+
+/* ── stack cards ── */
+function light(ok, configured, healthy, total){
+  if(!configured) return 'dim';
+  if(!ok) return 'off';
+  if(total && healthy < total) return 'warn';
+  return 'ok';
+}
+function setHead(p, cls, state){
+  $(p+'-hd').className='stack-hd '+(cls==='dim'?'':cls);
+  $(p+'-dot').className='dot '+(cls==='dim'?'':cls);
+  $(p+'-state').textContent=state;
+}
+function renderProxmox(p){ p=p||{};
+  $('pmx-running').textContent=p.running ?? '—'; $('pmx-guests').textContent=p.guests ?? '—'; $('pmx-nodes').textContent=p.nodes ?? '—';
+  const up=(p.clusters||[]).filter(c=>c.ok).length;
+  setHead('pmx', !p.configured?'dim':light(p.ok,p.configured,up,p.configured), !p.configured?'no clusters':up+'/'+p.configured+' up');
+  const rows=$('pmx-rows');
+  if(!p.configured){ rows.innerHTML='<div class="empty">No Proxmox clusters saved.</div>'; return; }
+  rows.innerHTML=(p.clusters||[]).map(c=>{
+    const tag=c.ok?(c.quorate===false?'<span class="tag t-warn">no quorum</span>':'<span class="tag t-ok">up</span>'):'<span class="tag t-err">down</span>';
+    const meta=c.ok?`${c.running}/${c.guests} guests · ${c.nodes} node${c.nodes===1?'':'s'}`:esc(c.error||'unreachable');
+    return `<div class="row"><span class="nm" title="${esc(c.label)}">${esc(c.label)}</span><span class="meta">${esc(meta)}</span>${tag}</div>`;
+  }).join('');
+}
+function renderDocker(d){ d=d||{};
+  $('dkr-running').textContent=d.running ?? '—'; $('dkr-conts').textContent=d.containers ?? '—'; $('dkr-hosts').textContent=(d.reachable ?? 0)+'/'+(d.total_hosts ?? 0);
+  setHead('dkr', !d.total_hosts?'dim':light(d.ok,d.total_hosts,d.reachable,d.total_hosts), !d.total_hosts?'no hosts':d.reachable+'/'+d.total_hosts+' reachable');
+  const rows=$('dkr-rows');
+  if(d.error){ rows.innerHTML=`<div class="empty">Docker error:<br>${esc(d.error)}</div>`; return; }
+  if(!d.total_hosts){ rows.innerHTML='<div class="empty">No Docker hosts registered.</div>'; return; }
+  rows.innerHTML=(d.hosts||[]).map(h=>{
+    const tag=h.reachable?'<span class="tag t-ok">up</span>':'<span class="tag t-err">down</span>';
+    const meta=h.reachable?`${h.running}/${h.containers} running`:esc(h.error||'unreachable');
+    return `<div class="row"><span class="nm" title="${esc(h.label)}">${esc(h.label)}</span><span class="tag t-dim">${esc(h.kind||'?')}</span><span class="meta">${esc(meta)}</span>${tag}</div>`;
+  }).join('');
+}
+function renderOllama(o){ o=o||{};
+  $('oll-online').textContent=(o.online ?? 0)+'/'+(o.total ?? 0); $('oll-gpu').textContent=o.gpu ?? '—'; $('oll-inuse').textContent=o.in_use ?? '—';
+  setHead('oll', !o.total?'dim':light(o.ok,o.total,o.online,o.total), !o.total?'no nodes':o.online+'/'+o.total+' online');
+  const rows=$('oll-rows');
+  if(o.error){ rows.innerHTML=`<div class="empty">Ollama error:<br>${esc(o.error)}</div>`; return; }
+  if(!o.total){ rows.innerHTML='<div class="empty">No Ollama nodes configured.</div>'; return; }
+  rows.innerHTML=(o.nodes||[]).map(n=>{
+    const on=n.status==='online';
+    const tag=!n.enabled?'<span class="tag t-dim">disabled</span>':on?'<span class="tag t-ok">online</span>':'<span class="tag t-err">offline</span>';
+    const gpu=n.has_gpu?'<span class="tag t-gpu">gpu</span>':'';
+    const lat=(on&&n.latency_ms!=null)?Math.round(n.latency_ms)+'ms · ':'';
+    const meta=on?`${lat}${n.models} model${n.models===1?'':'s'}${n.in_use?' · '+n.in_use+' busy':''}`:'';
+    return `<div class="row"><span class="nm" title="${esc(n.url||n.label)}">${esc(n.label)}</span>${gpu}<span class="meta">${esc(meta)}</span>${tag}</div>`;
+  }).join('');
+}
+
+async function refresh(force){
+  $('ts').textContent='…';
+  try{
+    const [s,h] = await Promise.all([
+      api('/sysmon/status'+(force===true?'?fresh=true':'')),
+      api('/sysmon/history?limit=240') ]);
+    $('banner').style.display='none';
+    renderProxmox(s.proxmox); renderDocker(s.docker); renderOllama(s.ollama);
+    _history = (h.samples)||[];
+    $('hist-hint').textContent = _history.length
+      ? `${_history.length} samples · ${h.interval_s}s` + (h.psutil?'':' · psutil missing → no cpu/ram')
+      : '';
+    drawAll();
+    $('ts').textContent = (s.cached?'cached '+Math.round(s.age_s)+'s · ':'') + 'updated '+new Date().toLocaleTimeString();
+  }catch(e){
+    const b=$('banner'); b.style.display='block'; b.textContent='⛔ '+e.message; $('ts').textContent='error';
+  }
+}
+
+function toggleAuto(){
+  _auto=!_auto;
+  const b=$('auto-btn'); b.textContent=_auto?'Auto 8s':'Auto off'; b.className='btn sm'+(_auto?' on':'');
+  if(_timer){clearInterval(_timer);_timer=null;}
+  if(_auto) _timer=setInterval(refresh,8000);
+}
+function popout(){
+  window.open('/sysmon/panel','veraStackMonitor','width=1040,height=860,menubar=no,toolbar=no,location=no,status=no');
+}
+
+/* ── in-page float / detach ── */
+let _floating=false, _drag=null;
+function toggleFloat(){
+  _floating=!_floating;
+  const win=$('win'), b=$('float-btn');
+  win.classList.toggle('floating',_floating);
+  b.textContent=_floating?'▣ Dock':'▣ Float'; b.classList.toggle('on',_floating);
+  if(!_floating){ win.style.left=win.style.top=win.style.width=win.style.height=''; }
+  setTimeout(drawAll,60);
+}
+function dragStart(e){
+  if(!_floating) return;
+  if(e.target.closest('button')) return;       // don't drag when clicking toolbar buttons
+  const win=$('win'), r=win.getBoundingClientRect();
+  _drag={dx:e.clientX-r.left, dy:e.clientY-r.top};
+  win.style.left=r.left+'px'; win.style.top=r.top+'px';
+  document.addEventListener('mousemove',dragMove); document.addEventListener('mouseup',dragEnd);
+  e.preventDefault();
+}
+function dragMove(e){
+  if(!_drag) return; const win=$('win');
+  win.style.left=Math.max(0,Math.min(window.innerWidth-60,e.clientX-_drag.dx))+'px';
+  win.style.top =Math.max(0,Math.min(window.innerHeight-30,e.clientY-_drag.dy))+'px';
+}
+function dragEnd(){ _drag=null; document.removeEventListener('mousemove',dragMove); document.removeEventListener('mouseup',dragEnd); }
+
+window.addEventListener('DOMContentLoaded', ()=>{
+  buildCharts();
+  // When embedded as a dashboard widget (inside an iframe), the dashboard itself
+  // provides the float / new-window pop-out, so hide our own (confined) controls.
+  // Show them only when this page is opened standalone in its own tab/window.
+  let embedded=true; try{ embedded = window.self!==window.top; }catch(_){ embedded=true; }
+  if(embedded){ ['float-btn','pop-btn'].forEach(id=>{ const b=$(id); if(b) b.style.display='none'; }); }
+  else if(window.opener || window.name==='veraStackMonitor'){ const pb=$('pop-btn'); if(pb) pb.style.display='none'; }
+  $('tb').addEventListener('mousedown', dragStart);
+  refresh(); _timer=setInterval(refresh,8000);
+});
+let _rz=null;
+window.addEventListener('resize', ()=>{ clearTimeout(_rz); _rz=setTimeout(drawAll,120); });
+
+return { refresh, toggleAuto, popout, toggleFloat };
+})();
+</script>
+<script src="/ui/vera-ui.js"></script>
+</body>
+</html>

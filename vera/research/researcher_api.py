@@ -60,6 +60,16 @@ try:
 except ImportError:
     from research_fabric import DB
 
+# Shared hardened web-fetch layer (browser fingerprint, HTTP/2, per-domain
+# throttle, reddit→old.reddit rewrites, anti-bot detection, reader-proxy
+# fallback, platform-API switchover). The research pipeline's old
+# "Vera-Research/1.0" UA was an instant bot-block on Cloudflare/DataDome/
+# Reddit — all page fetches now go through web_client instead.
+try:
+    from Vera.vera.web import web_client as _webclient
+except ImportError:
+    _webclient = None
+
 # Orchestrator primitives — available when loaded as a capability module.
 # When running standalone (legacy), these are no-ops.
 try:
@@ -85,6 +95,43 @@ except ImportError:
         def register_ui(*a, **kw): pass
         def schedule(*a, **kw): pass
         CAPABILITY_REGISTRY = {}
+
+# ── Vera cluster routing — the research role profile ──────────────────────────
+# In Vera mode the researcher must NOT talk to hand-configured Ollama nodes:
+# it registers a "research" routing profile (thinker / writer / verifier) with
+# the orchestrator and resolves every generate call through the cluster router
+# (see get_instance). Roles are editable in the Model Routing page; a USER
+# override there wins. The static `instances` list below remains the per-tier
+# model/ctx/thinking DEFAULTS and the standalone-mode fallback.
+_resolve_role = None
+_VERA_NODES: dict = {}
+if _VERA_MODE:
+    try:
+        try:
+            from Vera.vera.capability_orchestration import (
+                register_routing_profile as _register_routing_profile,
+                resolve_role as _resolve_role,
+                OLLAMA_INSTANCES as _VERA_NODES,
+            )
+        except ImportError:
+            from capability_orchestration import (
+                register_routing_profile as _register_routing_profile,
+                resolve_role as _resolve_role,
+                OLLAMA_INSTANCES as _VERA_NODES,
+            )
+        _register_routing_profile("research", label="Research", owner="research", roles={
+            "thinker":  {"job_type": "research_planner", "prefer_gpu": True,
+                         "label": "Research · thinker"},
+            "writer":   {"job_type": "research_writer", "prefer_gpu": True,
+                         "label": "Research · writer"},
+            "verifier": {"job_type": "research_reader", "deny_gpu": True,
+                         "escalate_chars": 12000,
+                         "escalate": {"deny_gpu": False, "prefer_gpu": True},
+                         "label": "Research · verifier"},
+        })
+    except Exception as _rp_err:
+        logging.getLogger("vera.researcher").warning(
+            "research routing profile registration failed: %s", _rp_err)
 
 log = logging.getLogger("vera.researcher")
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -164,6 +211,10 @@ class OllamaInstance:
     # and never mixes them into the result buffer.
     enable_thinking: bool = False
     thinking_timeout: float = 0.0   # 0 = auto (8× base timeout)
+    # Set when this instance was resolved through Vera's cluster router: the
+    # orchestrator node id (e.g. "gpu-250"). Used to reserve/release routing
+    # load (in_use) around requests and to attribute events to the real node.
+    vera_iid: str = ""
 
     @property
     def base_url(self):  return f"http://{self.host}:{self.port}"
@@ -515,7 +566,8 @@ async def capture_screenshot(url: str) -> str:
         log.debug("Trying image extraction for: %s", url[:60])
         async with httpx.AsyncClient(
             timeout=10.0, follow_redirects=True,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; Vera/1.0)"},
+            headers=(_webclient.BROWSER_HEADERS if _webclient
+                     else {"User-Agent": "Mozilla/5.0"}),
         ) as c:
             r = await c.get(url)
             html = r.text[:80000]
@@ -759,14 +811,29 @@ async def deep_crawl_url(url: str, depth: int, breadth: int, timeout: float,
     collected: list[str] = []
     visited: set[str] = set()
 
+    # One browser-fingerprinted session for the whole walk (TLS + cookies
+    # persist across pages, like a real browser) instead of a bot-flagged
+    # client per page.
+    session = (_webclient.new_session(timeout) if _webclient
+               else httpx.AsyncClient(timeout=timeout, follow_redirects=True))
+
     async def fetch_one(u: str, remaining_depth: int):
         if u in visited or len(collected) > 20: return
         visited.add(u)
         try:
-            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as c:
-                r = await c.get(u, headers={"User-Agent":"Vera-Research/1.0"})
+            if _webclient:
+                fp = await _webclient.fetch_page(u, timeout=timeout, client=session)
+                if fp.get("error") or fp.get("blocked"):
+                    err = fp.get("error") or f"blocked: {fp.get('block_reason','')}"
+                    if job_id:
+                        await broadcast(job_id, {"type":"crawl_error","url":u,"error":err[:80]})
+                    return
+                html = fp.get("html", "")
+                text = fp.get("text", "")
+            else:
+                r = await session.get(u)
                 html = r.text
-            text = html_to_text(html)
+                text = html_to_text(html)
             if text:
                 collected.append(f"[{u}]\n{text[:3000]}")
                 if on_page:
@@ -782,7 +849,7 @@ async def deep_crawl_url(url: str, depth: int, breadth: int, timeout: float,
                         "chars": len(text),
                         "depth": depth - remaining_depth,
                     })
-            if remaining_depth > 0:
+            if remaining_depth > 0 and html:
                 child_links = extract_links(html, u)[:breadth]
                 await asyncio.gather(*[fetch_one(cl, remaining_depth-1) for cl in child_links],
                                      return_exceptions=True)
@@ -791,7 +858,10 @@ async def deep_crawl_url(url: str, depth: int, breadth: int, timeout: float,
                 await broadcast(job_id, {"type":"crawl_error","url":u,"error":str(e)[:80]})
             log.debug("crawl %s: %s", u, e)
 
-    await fetch_one(url, depth)
+    try:
+        await fetch_one(url, depth)
+    finally:
+        await session.aclose()
     return "\n\n---\n\n".join(collected)
 
 
@@ -934,9 +1004,10 @@ def _clean_search_url(url: str) -> str:
 
 async def search_ddg(query: str, limit: int) -> list[dict]:
     try:
+        _hdrs = _webclient.BROWSER_HEADERS if _webclient else {"User-Agent": "Mozilla/5.0"}
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as c:
             r = await c.get("https://html.duckduckgo.com/html/",
-                params={"q":query}, headers={"User-Agent":"Vera-Research/1.0"})
+                params={"q":query}, headers=_hdrs)
         links    = re.findall(r'class="result__a"[^>]+href="([^"]+)"[^>]*>([^<]+)<', r.text)
         snippets = re.findall(r'class="result__snippet"[^>]*>([^<]+)<', r.text)
         results = []
@@ -1215,19 +1286,51 @@ async def gather_web_search(query: str, job_id: str) -> list[Citation]:
                        snippet=snippet, source_type="web")
         citations.append(cit)
         shot_tasks.append(_safe_screenshot(url))
-        depth = max(1, web_cfg.crawl_depth)
-        _jid = job_id if isinstance(job_id, str) else ""
-        crawl_tasks.append(deep_crawl_url(url, depth,
-                                           web_cfg.crawl_breadth, web_cfg.crawl_timeout,
-                                           job_id=_jid))
 
-    shots, crawls = await asyncio.gather(
-        asyncio.gather(*shot_tasks, return_exceptions=True),
-        asyncio.gather(*crawl_tasks, return_exceptions=True),
-    )
-    for cit, shot, crawled in zip(citations, shots, crawls):
-        if isinstance(shot, str): cit.screenshot_path = shot
-        if isinstance(crawled, str) and crawled: cit.full_text = crawled
+    # ── Crawl the result URLs through the fabric DISCOVERY engine ────────────
+    # One discovery run over all citation URLs populates the shared discovery
+    # graph (pages + entities, reconciled to the pages' latest content) and
+    # hands back the crawled text for each citation body. deep_crawl_url is the
+    # per-URL fallback for anything discovery couldn't return (or when the
+    # discovery module isn't loaded).
+    depth = max(1, web_cfg.crawl_depth)
+    _jid  = job_id if isinstance(job_id, str) else ""
+    crawl_urls = [c.url for c in citations if c.url]
+
+    per_url_text: dict[str, str] = {}
+    disc = sys.modules.get("discovery")
+    if disc and crawl_urls and hasattr(disc, "discover_crawl_urls"):
+        try:
+            ds_slug = re.sub(r"[^a-z0-9]+", "_", query.lower()).strip("_")[:40] or "query"
+            cr = await disc.discover_crawl_urls(
+                crawl_urls, dataset_id=f"research.web.{ds_slug}", topic=query,
+                max_depth=depth, breadth=web_cfg.crawl_breadth,
+                max_pages=len(crawl_urls) * (web_cfg.crawl_breadth + 1),
+                same_domain=False, reconcile=True, job_id=_jid)
+            if isinstance(cr, dict):
+                per_url_text = cr.get("per_url_text", {}) or {}
+        except Exception as e:
+            log.debug("research discovery crawl: %s", e)
+
+    # Fallback crawl for any citation discovery didn't produce text for.
+    missing = [c.url for c in citations if c.url and not per_url_text.get(c.url)]
+    fallback_text: dict[str, str] = {}
+    if missing:
+        fb = await asyncio.gather(
+            *[deep_crawl_url(u, depth, web_cfg.crawl_breadth,
+                             web_cfg.crawl_timeout, job_id=_jid) for u in missing],
+            return_exceptions=True)
+        for u, res in zip(missing, fb):
+            if isinstance(res, str) and res:
+                fallback_text[u] = res
+
+    shots = await asyncio.gather(*shot_tasks, return_exceptions=True)
+    for cit, shot in zip(citations, shots):
+        if isinstance(shot, str):
+            cit.screenshot_path = shot
+        txt = per_url_text.get(cit.url) or fallback_text.get(cit.url)
+        if txt:
+            cit.full_text = txt
 
     return citations
 
@@ -1577,6 +1680,29 @@ async def query_chroma(query: str) -> list[Citation]:
             log.warning("chroma: no usable client configured")
             return []
 
+        # Embed the query once with Vera's embed model. Collections created by
+        # Vera hold that model's vectors (e.g. nomic 768-dim) — querying them
+        # with query_texts would use Chroma's default 384-dim embedder and raise
+        # "expecting embedding with dimension of N, got M". Per collection we
+        # peek its dimension: matching → query_embeddings; otherwise fall back
+        # to query_texts (correct for default-EF collections).
+        query_vec = None
+        try:
+            from Vera.vera.capability_orchestration import ollama_embed as _oe
+            query_vec = await _oe(query)
+        except Exception as e:
+            log.debug("chroma: query embed unavailable (%s) — using query_texts", e)
+
+        def _col_dim(col):
+            try:
+                peek = col.get(limit=1, include=["embeddings"])
+                embs = (peek or {}).get("embeddings")
+                if embs is not None and len(embs) > 0 and embs[0] is not None:
+                    return len(embs[0])
+            except Exception:
+                pass
+            return None
+
         cits = []
         for client, client_label in clients:
             try:
@@ -1597,7 +1723,12 @@ async def query_chroma(query: str) -> list[Citation]:
                             log.debug("chroma: collection %s is empty, skipping", col_name)
                             continue
                         k = min(n_results, count)
-                        results = col.query(query_texts=[query], n_results=k)
+                        dim = _col_dim(col)
+                        if query_vec is not None and dim == len(query_vec):
+                            results = col.query(query_embeddings=[list(query_vec)],
+                                                n_results=k)
+                        else:
+                            results = col.query(query_texts=[query], n_results=k)
                         docs  = results.get("documents", [[]])[0]
                         metas = results.get("metadatas",  [[]])[0]
                         ids   = results.get("ids",         [[]])[0]
@@ -1911,20 +2042,25 @@ async def _fetch_structured_url(url: str, job_id: str, timeout: float = 15.0) ->
     Preserves tables, infoboxes, lists for data-dense pages.
     """
     try:
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as c:
-            r = await c.get(url, headers={
-                "User-Agent": "Mozilla/5.0 (compatible; Vera-Research/2.0)",
-                "Accept": "text/html,application/xhtml+xml"
-            })
-            if r.status_code >= 400:
+        if _webclient:
+            # Structured pages can be data-dense — allow well past the default
+            # 16k page-char cap so tables/infoboxes survive into the citation.
+            fp = await _webclient.fetch_page(url, timeout=timeout, max_chars=60000)
+            if fp.get("error") or fp.get("blocked"):
                 return None
-            html = r.text
-        text = html_to_text(html, preserve_structure=True)
+            html, text = fp.get("html", ""), fp.get("text", "")
+            title = fp.get("title", "") or url
+        else:
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as c:
+                r = await c.get(url, headers={"Accept": "text/html,application/xhtml+xml"})
+                if r.status_code >= 400:
+                    return None
+                html = r.text
+            text = html_to_text(html, preserve_structure=True)
+            title_m = re.search(r"<title[^>]*>([^<]+)</title>", html, re.I)
+            title = title_m.group(1).strip() if title_m else url
         if not text or len(text) < 50:
             return None
-        # Extract title from <title> tag
-        title_m = re.search(r"<title[^>]*>([^<]+)</title>", html, re.I)
-        title = title_m.group(1).strip() if title_m else url
         from urllib.parse import urlparse
         domain = urlparse(url).netloc
         await broadcast(job_id, {
@@ -1961,18 +2097,28 @@ async def _doc_site_crawl(base_url: str, query: str, job_id: str,
     from urllib.parse import urlparse, urljoin
     base_domain = urlparse(base_url).netloc
 
+    # One shared browser-fingerprinted session for the whole doc crawl.
+    doc_session = (_webclient.new_session(timeout) if _webclient
+                   else httpx.AsyncClient(timeout=timeout, follow_redirects=True))
+
     async def _fetch_and_score(url: str):
         if url in visited or len(visited) >= max_pages: return
         visited.add(url)
         try:
-            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as c:
-                r = await c.get(url, headers={"User-Agent":"Vera-Research/2.0"})
+            if _webclient:
+                fp = await _webclient.fetch_page(url, timeout=timeout,
+                                                 client=doc_session, max_chars=60000)
+                if fp.get("error") or fp.get("blocked"): return
+                html, text = fp.get("html", ""), fp.get("text", "")
+                title = fp.get("title", "") or url
+            else:
+                r = await doc_session.get(url)
                 if r.status_code >= 400: return
                 html = r.text
-            text = html_to_text(html, preserve_structure=True)
+                text = html_to_text(html, preserve_structure=True)
+                title_m = re.search(r"<title[^>]*>([^<]+)</title>", html, re.I)
+                title = title_m.group(1).strip() if title_m else url
             if not text: return
-            title_m = re.search(r"<title[^>]*>([^<]+)</title>", html, re.I)
-            title = title_m.group(1).strip() if title_m else url
             # Score relevance
             text_lower = text.lower()
             hits = sum(1 for t in query_terms if t in text_lower)
@@ -1997,14 +2143,17 @@ async def _doc_site_crawl(base_url: str, query: str, job_id: str,
             log.debug("doc_crawl %s: %s", url, e)
 
     # BFS with concurrency
-    while queue and len(visited) < max_pages:
-        batch = []
-        while queue and len(batch) < 6:
-            url = queue.pop(0)
-            if url not in visited:
-                batch.append(url)
-        if batch:
-            await asyncio.gather(*[_fetch_and_score(u) for u in batch])
+    try:
+        while queue and len(visited) < max_pages:
+            batch = []
+            while queue and len(batch) < 6:
+                url = queue.pop(0)
+                if url not in visited:
+                    batch.append(url)
+            if batch:
+                await asyncio.gather(*[_fetch_and_score(u) for u in batch])
+    finally:
+        await doc_session.aclose()
 
     # Return top-scoring pages
     top = sorted(candidates, key=lambda x: -x[0])[:8]
@@ -3628,7 +3777,69 @@ async def _rerank_citations(query: str, cits: "list[Citation]") -> "list[Citatio
 #  Ollama helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
+# Research tier → routing-profile role. The analyst tier is the VERIFIER role
+# (review / fact-check / bulk digestion).
+_TIER_ROLE = {
+    ModelTier.THINKER: "thinker",
+    ModelTier.WRITER:  "writer",
+    ModelTier.ANALYST: "verifier",
+    ModelTier.AUTO:    "writer",
+}
+
+
+def _tier_defaults(tier: ModelTier) -> Optional[OllamaInstance]:
+    """The static per-tier config entry — model/ctx/thinking defaults."""
+    for inst in instances:
+        if inst.tier == tier:
+            return inst
+    return None
+
+
+def _vera_routed_instance(tier: ModelTier) -> Optional[OllamaInstance]:
+    """Resolve a research role through Vera's cluster router (role profile
+    'research'). Re-resolved on every call so requests load-balance across the
+    cluster and follow live routing-rule edits. Returns None when routing is
+    unavailable (standalone mode / no online node) — callers fall back to the
+    static instance list."""
+    if not (_VERA_MODE and _resolve_role):
+        return None
+    cfg_inst = _tier_defaults(tier)
+    role = _TIER_ROLE.get(tier, "writer")
+    try:
+        res = _resolve_role("research", role,
+                            model=(cfg_inst.model if cfg_inst else ""))
+    except Exception as e:
+        log.debug("vera route research/%s failed: %s", role, e)
+        return None
+    if not res or not res.get("url"):
+        return None
+    u = urlparse(res["url"])
+    if not u.hostname:
+        return None
+    model = res.get("model") or (cfg_inst.model if cfg_inst else "")
+    if not model:
+        node = _VERA_NODES.get(res.get("instance_id") or "", {})
+        model = next(iter(node.get("models") or []), "")
+    if not model:
+        return None
+    return OllamaInstance(
+        name=f"{res.get('label') or res.get('instance_id')} · {role}",
+        host=u.hostname, port=u.port or 11434, tier=tier, model=model,
+        ctx_size=cfg_inst.ctx_size if cfg_inst else 8192,
+        enabled=True,
+        enable_thinking=cfg_inst.enable_thinking if cfg_inst else False,
+        thinking_timeout=cfg_inst.thinking_timeout if cfg_inst else 0.0,
+        vera_iid=res.get("instance_id") or "",
+    )
+
+
 async def get_instance(tier: ModelTier) -> Optional[OllamaInstance]:
+    # Vera mode: resolve through the cluster router (research role profile) so
+    # research traffic obeys Vera's routing rules and load balancing instead of
+    # the hand-configured static node list.
+    routed = _vera_routed_instance(tier)
+    if routed:
+        return routed
     for inst in instances:
         if inst.tier == tier and inst.enabled: return inst
     for inst in instances:
@@ -3745,6 +3956,13 @@ async def stream_ollama(
             })
             _think_buf.clear()
 
+    # When Vera-routed, reserve load on the chosen node for the duration of the
+    # request so the cluster's least-busy picker sees this traffic and spreads
+    # concurrent research calls across nodes (released in the finally below).
+    _node = _VERA_NODES.get(inst.vera_iid) if (inst.vera_iid and _VERA_NODES) else None
+    if _node is not None:
+        _node["in_use"] = _node.get("in_use", 0) + 1
+
     async with httpx.AsyncClient(timeout=to) as client:
         try:
             async with client.stream("POST", inst.generate_url, json=payload) as resp:
@@ -3819,13 +4037,38 @@ async def stream_ollama(
 
         except httpx.ConnectError as e:
             err = f"\n\n⚠ Cannot reach {inst.name} at {inst.base_url}: {e}"
-            await broadcast(job_id, {"type":"error","text":err}); yield err
+            await _broadcast_error_once(job_id, err); yield err
         except (httpx.ReadTimeout, asyncio.TimeoutError):
             err = f"\n\n⚠ {inst.name} timed out after {eff_timeout:.0f}s"
-            await broadcast(job_id, {"type":"error","text":err}); yield err
+            await _broadcast_error_once(job_id, err); yield err
         except Exception as e:
             err = f"\n\n⚠ {inst.name}: {e}"
-            await broadcast(job_id, {"type":"error","text":err}); yield err
+            await _broadcast_error_once(job_id, err); yield err
+        finally:
+            if _node is not None:
+                _node["in_use"] = max(0, _node.get("in_use", 1) - 1)
+
+
+# A single research job fires many generate calls (sections, expansions,
+# parallel gathers). When an instance is down, every call fails within
+# seconds with the same message, and broadcasting each one spammed the UI
+# with identical "✗ research error" lines. The job itself keeps running —
+# these are non-fatal sub-step failures — so surface the first occurrence,
+# then stay quiet for a window unless the error text changes.
+_ERR_BROADCAST_WINDOW = 120.0
+_err_broadcast_last: dict[str, tuple[str, float]] = {}
+
+async def _broadcast_error_once(job_id: str, err: str):
+    now = time.time()
+    prev = _err_broadcast_last.get(job_id)
+    if prev and prev[0] == err and (now - prev[1]) < _ERR_BROADCAST_WINDOW:
+        return
+    if len(_err_broadcast_last) > 256:
+        for k in [k for k, (_, ts) in _err_broadcast_last.items()
+                  if now - ts > _ERR_BROADCAST_WINDOW]:
+            _err_broadcast_last.pop(k, None)
+    _err_broadcast_last[job_id] = (err, now)
+    await broadcast(job_id, {"type": "error", "text": err})
 
 
 async def collect_ollama(
@@ -3851,13 +4094,19 @@ async def collect_ollama(
                 "type":          "ollama.request",
                 "req_id":        req_id,
                 "model":         inst.model,
-                "instance_id":   inst.name,
+                "instance_id":   inst.vera_iid or inst.name,
                 "instance_url":  inst.base_url,
+                "job_type":      {"thinker": "research_planner",
+                                  "writer": "research_writer"}.get(
+                                     str(inst.tier.value if hasattr(inst.tier, "value")
+                                         else inst.tier), "research_reader"),
+                "routed_by":     "vera" if inst.vera_iid else "static",
                 "caller_file":   "researcher_api.py",
                 "caller_func":   "collect_ollama",
                 "caller_module": "researcher_api",
                 "cap_name":      "",
                 "prompt_preview": (prompt or "")[:120].replace("\n", " "),
+                "prompt_full":   (prompt or "")[:16000],
                 "json_mode":     False,
                 "prefer_gpu":    False,
                 "streaming":     True,
@@ -3883,7 +4132,7 @@ async def collect_ollama(
                 "type":          "ollama.request_done",
                 "req_id":        req_id,
                 "model":         inst.model,
-                "instance_id":   inst.name,
+                "instance_id":   inst.vera_iid or inst.name,
                 "caller_file":   "researcher_api.py",
                 "caller_func":   "collect_ollama",
                 "elapsed_s":     elapsed,
@@ -7313,12 +7562,20 @@ async def test_source(req: SourceTestRequest):
                 try:
                     cols=client.list_collections()
                     total_docs=sum(col.count() for col in cols)
-                    # Try a sample query on the first non-empty collection
+                    # Try a sample query on the first non-empty collection.
+                    # Query with one of the collection's OWN vectors — query_texts
+                    # would embed via Chroma's default 384-dim function and
+                    # dim-mismatch against model-versioned collections (768).
                     sample_ok=""
                     for col in cols:
                         if col.count()>0:
                             try:
-                                col.query(query_texts=["test"],n_results=1)
+                                peek=col.get(limit=1,include=["embeddings"])
+                                embs=(peek or {}).get("embeddings")
+                                if embs is not None and len(embs)>0 and embs[0] is not None:
+                                    col.query(query_embeddings=[list(embs[0])],n_results=1)
+                                else:
+                                    col.query(query_texts=["test"],n_results=1)
                                 sample_ok=" ✓ query OK"
                             except Exception as qe:
                                 sample_ok=f" ⚠ query failed: {qe}"
@@ -7893,6 +8150,7 @@ class CellCreateRequest(BaseModel):
     sort_order: int           = 0
     page_id:    Optional[str] = None
     title:      str           = ""
+    props:      dict          = Field(default_factory=dict)
 
 class CellUpdateRequest(BaseModel):
     content:    Optional[str]  = None
@@ -7907,6 +8165,7 @@ class CellUpdateRequest(BaseModel):
     parse_mode: Optional[str]  = None
     agent_mode: Optional[str]  = None
     thread:     Optional[list] = None
+    props:      Optional[dict] = None   # free-form per-cell config (cell-type, layout geometry, embed id, …)
 
 class CellChatRequest(BaseModel):
     message: str
@@ -7958,7 +8217,7 @@ async def add_cell(nb_id: str, req: CellCreateRequest):
             "sort_order":req.sort_order,"cell_type":req.cell_type,"lang":req.lang,
             "tag":req.tag,"content":req.content,"generated":"","thread":[],
             "citations":[],"page_id":req.page_id or None,"title":req.title or "",
-            "parse_mode":"whole","agent_mode":"single",
+            "parse_mode":"whole","agent_mode":"single","props":req.props or {},
             "created_at":time.time(),"updated_at":time.time()}
     await DB.save_cell(cell); return cell
 
@@ -8065,6 +8324,160 @@ async def auto_name_cell(nb_id: str, cell_id: str):
     cell["title"] = title; cell["updated_at"] = time.time()
     await DB.save_cell(cell)
     return {"title": title}
+
+
+# ── Notebook → knowledge graph & Gitea backup ───────────────────────────────
+
+def _nb_slug(title: str) -> str:
+    s = re.sub(r"[^A-Za-z0-9_.-]+", "-", (title or "notebook").strip().lower()).strip("-")
+    return s or "notebook"
+
+
+def _notebook_to_markdown(nb: dict) -> str:
+    """Render a notebook (title + ordered cells, grouped by page) to Markdown.
+    Mirrors the front-end exportNotebook('md') shape so the on-disk backup and
+    the in-app export match."""
+    out = [f"# {nb.get('title', 'Untitled Notebook')}\n"]
+    pages = {p["id"]: p.get("title", "") for p in (nb.get("pages") or [])}
+    seen_page = "\x00"
+    for c in (nb.get("cells") or []):
+        pg_id = c.get("page_id") or ""
+        if pg_id != seen_page:
+            seen_page = pg_id
+            pg_title = pages.get(pg_id, "")
+            if pg_title:
+                out.append(f"\n## {pg_title}\n")
+        title = (c.get("title") or "").strip()
+        if title:
+            out.append(f"\n### {title}\n")
+        ctype = c.get("cell_type", "markdown")
+        content = c.get("content", "") or ""
+        if ctype == "code":
+            out.append(f"```{c.get('lang', '')}\n{content}\n```\n")
+        elif ctype == "image":
+            out.append(f"![{title or 'image'}]({content})\n")
+        else:
+            out.append(content + "\n")
+        gen = (c.get("generated", "") or "").strip()
+        if gen:
+            out.append("\n> *AI output:*\n>\n> " + gen.replace("\n", "\n> ") + "\n")
+    return "\n".join(out)
+
+
+async def _notebook_gitea_push(nb: dict, repo: str = "", message: str = "") -> dict:
+    """Best-effort commit of a notebook's Markdown to a Gitea repo (one file per
+    notebook). No-op with a clear message if Gitea is unconfigured. Mirrors the
+    code store's _code_gitea_push flow."""
+    base  = (getattr(_vera_cfg, "GITEA_BASE_URL", "") or "").rstrip("/")
+    token = getattr(_vera_cfg, "GITEA_TOKEN", "") or ""
+    owner = getattr(_vera_cfg, "GITEA_OWNER", "") or ""
+    if not (base and token and owner):
+        return {"ok": False, "error": "gitea_not_configured",
+                "hint": "set GITEA_BASE_URL / GITEA_TOKEN / GITEA_OWNER"}
+    repo = re.sub(r"[^A-Za-z0-9_.-]", "-", repo or "vera-notebooks") or "vera-notebooks"
+    slug = _nb_slug(nb.get("title", "")) + "-" + str(nb.get("id", ""))[:12]
+    path = f"notebooks/{slug}.md"
+    content = _notebook_to_markdown(nb)
+    import base64 as _b64
+    b64 = _b64.b64encode(content.encode("utf-8", "replace")).decode()
+    headers = {"Authorization": f"token {token}", "Content-Type": "application/json"}
+    try:
+        async with httpx.AsyncClient(timeout=25) as c:
+            # Ensure the repo exists (idempotent — try org then user).
+            await c.post(f"{base}/api/v1/orgs/{owner}/repos", headers=headers,
+                         json={"name": repo, "auto_init": True, "private": True})
+            await c.post(f"{base}/api/v1/user/repos", headers=headers,
+                         json={"name": repo, "auto_init": True, "private": True})
+            url = f"{base}/api/v1/repos/{owner}/{repo}/contents/{path}"
+            existing = await c.get(url, headers=headers)
+            payload = {"content": b64,
+                       "message": message or f"notebook: update {nb.get('title', slug)}"}
+            if existing.status_code == 200:
+                payload["sha"] = existing.json().get("sha", "")
+                r = await c.put(url, headers=headers, json=payload)
+            else:
+                r = await c.post(url, headers=headers, json=payload)
+            if r.status_code in (200, 201):
+                j = r.json()
+                return {"ok": True, "path": path,
+                        "url": ((j.get("content") or {}).get("html_url")
+                                or f"{base}/{owner}/{repo}")}
+            return {"ok": False, "error": f"gitea {r.status_code}: {r.text[:200]}"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/notebooks/{nb_id}/sync_graph")
+async def notebook_sync_graph(nb_id: str, payload: dict = None):
+    """Ingest a notebook's cells into the data fabric so the entity engine
+    extracts entities (and — via link_memory — connects each cell into the
+    knowledge graph), turning notes into a graph of connected nodes. Each cell
+    becomes one fabric record carrying node_id='nbcell:<cell_id>'. Optional loom
+    (default on) cross-links the notebook to other datasets by shared entities."""
+    payload = payload or {}
+    nb = await DB.load_notebook(nb_id)
+    if not nb:
+        raise HTTPException(404, "Notebook not found")
+    fabric = sys.modules.get("data_fabric")
+    if not fabric or not hasattr(fabric, "ingest_dataset"):
+        raise HTTPException(503, "data_fabric not available")
+    dataset_id = "notebook:" + nb_id
+    pages = {p["id"]: p.get("title", "") for p in (nb.get("pages") or [])}
+    records = []
+    for c in (nb.get("cells") or []):
+        body = (c.get("content", "") or "").strip()
+        gen  = (c.get("generated", "") or "").strip()
+        text = (body + ("\n\n" + gen if gen else "")).strip()
+        if not text:
+            continue
+        records.append({
+            "text":        text[:8000],
+            "title":       c.get("title", "") or "",
+            "cell_id":     c["id"],
+            "cell_type":   c.get("cell_type", "markdown"),
+            "notebook_id": nb_id,
+            "notebook":    nb.get("title", ""),
+            "page":        pages.get(c.get("page_id") or "", ""),
+            "node_id":     "nbcell:" + c["id"],
+            "ts":          now_iso(),
+        })
+    if not records:
+        return {"ok": True, "ingested": 0, "dataset_id": dataset_id,
+                "note": "no non-empty cells to sync"}
+    try:
+        r = await fabric.ingest_dataset(dataset_id, records, source="notebook",
+                                        source_id=nb_id, tags=["notebook", nb_id])
+        ingested = (r or {}).get("ingested", 0) if isinstance(r, dict) else 0
+    except Exception as e:
+        raise HTTPException(500, f"fabric ingest failed: {e}")
+    # Best-effort loom so the notebook cross-links to other datasets by shared
+    # entities. Entity extraction + memory linking run automatically in the
+    # fabric's post-ingest pipeline, so we don't trigger those here.
+    loomed = False
+    if payload.get("loom", True):
+        try:
+            loom = (CAPABILITY_REGISTRY.get("fabric.loom.run") or {}).get("func")
+            if loom:
+                await loom(dataset_a=dataset_id, dataset_b="",
+                           mode="hybrid", min_score=0.4, max_matches=100,
+                           persist=True, trace_id=str(uuid.uuid4()))
+                loomed = True
+        except Exception as e:
+            log.debug("notebook sync loom %s: %s", nb_id, e)
+    return {"ok": True, "ingested": ingested, "cells": len(records),
+            "dataset_id": dataset_id, "loom": loomed}
+
+
+@app.post("/api/notebooks/{nb_id}/gitea")
+async def notebook_gitea(nb_id: str, payload: dict = None):
+    """Commit the notebook as Markdown to a configured Gitea repo (versioned
+    backup, one file per notebook). Returns {ok, url|error}."""
+    payload = payload or {}
+    nb = await DB.load_notebook(nb_id)
+    if not nb:
+        raise HTTPException(404, "Notebook not found")
+    return await _notebook_gitea_push(nb, repo=payload.get("repo", ""),
+                                      message=payload.get("message", ""))
 
 
 @app.post("/api/notebooks/from_job/{job_id}")

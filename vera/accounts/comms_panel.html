@@ -1,38 +1,64 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <title>Vera Comms</title>
 <style>
 :root{
-  --bg:#0d0f12; --bg1:#14181d; --bg2:#1a1f26; --border:#232a33; --border2:#2e3742;
+  --bg:#0d0f12; --bg1:#14181d; --bg2:#1a1f26; --bg3:#20262e;
+  --border:#232a33; --border2:#2e3742;
   --fg:#d8dde3; --fg2:#9aa3ad; --dim:#5f6975; --acc:#4a9eff;
 }
 *{ box-sizing:border-box; }
 html,body{ margin:0;padding:0;height:100%;background:var(--bg);color:var(--fg);overflow:hidden;
   font:12px/1.5 -apple-system,BlinkMacSystemFont,"Inter",system-ui,sans-serif; }
-#root{ display:flex;flex-direction:column;height:100vh;min-height:0; }
-#subbar{ height:42px;flex-shrink:0;display:flex;align-items:center;gap:4px;
-  padding:0 10px;border-bottom:1px solid var(--border);background:var(--bg1); }
-.subtab{ display:flex;align-items:center;gap:7px;padding:7px 14px;border-radius:7px;cursor:pointer;
-  color:var(--fg2);font-size:12px;font-weight:500;border:1px solid transparent;transition:.12s; }
+#root{ display:flex;height:100vh;min-height:0; }
+
+/* ── Left-hand menu ──────────────────────────────────── */
+#lhm{ width:184px;flex-shrink:0;background:var(--bg1);border-right:1px solid var(--border);
+  display:flex;flex-direction:column; }
+#lhm-head{ padding:14px 14px 10px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:8px; }
+#lhm-head .ico{ width:24px;height:24px;background:var(--bg2);border:1px solid var(--border2);
+  border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--acc);font-size:14px; }
+#lhm-head h1{ margin:0;font-size:12px;font-weight:600;letter-spacing:.04em; }
+#lhm-head .sub{ font-size:9px;color:var(--dim);letter-spacing:.12em;text-transform:uppercase;margin-top:1px; }
+#lhm-nav{ flex:1;padding:8px 6px;overflow-y:auto; }
+.subtab{ display:flex;align-items:center;gap:10px;width:100%;padding:9px 11px;border-radius:6px;
+  cursor:pointer;color:var(--fg2);font-size:12px;font-weight:500;border:1px solid transparent;
+  transition:.12s;margin-bottom:2px; }
 .subtab:hover{ background:var(--bg2);color:var(--fg); }
 .subtab.active{ background:var(--bg2);border-color:var(--border2);color:var(--fg); }
-.subtab .gl{ font-size:14px; }
+.subtab .gl{ width:18px;text-align:center;font-size:15px;opacity:.9; }
+.subtab.active .gl{ opacity:1; }
+
+/* ── Frames ──────────────────────────────────────────── */
 #frames{ flex:1;position:relative;min-height:0; }
 #frames iframe{ position:absolute;inset:0;width:100%;height:100%;border:none;background:var(--bg);
   opacity:0;pointer-events:none; }
 #frames iframe.active{ opacity:1;pointer-events:auto; }
 </style>
+<link rel="stylesheet" href="/ui/vera-panel.css">
 </head>
 <body>
 <div id="root">
-  <div id="subbar">
-    <div class="subtab" data-k="accounts"><span class="gl">👤</span> Accounts</div>
-    <div class="subtab" data-k="calendar"><span class="gl">🗓</span> Calendar</div>
-    <div class="subtab" data-k="email"><span class="gl">✉</span> Email</div>
-    <div class="subtab" data-k="telegram"><span class="gl">✈</span> Telegram</div>
-  </div>
+  <aside id="lhm" data-vera-lhm>
+    <div id="lhm-head">
+      <div class="ico">✦</div>
+      <div><h1>Comms</h1><div class="sub">Accounts &amp; Messaging</div></div>
+    </div>
+    <nav id="lhm-nav">
+      <div class="subtab" data-k="accounts"><span class="gl">👤</span> Accounts</div>
+      <div class="subtab" data-k="calendar"><span class="gl">🗓</span> Calendar</div>
+      <div class="subtab" data-k="email"><span class="gl">✉</span> Email</div>
+      <div class="subtab" data-k="telegram"><span class="gl">✈</span> Telegram</div>
+    </nav>
+  </aside>
   <div id="frames">
     <iframe data-k="accounts" data-src="/accounts/panel" allow="clipboard-read; clipboard-write"></iframe>
     <iframe data-k="calendar" data-src="/cal/panel" allow="clipboard-read; clipboard-write"></iframe>
@@ -59,5 +85,6 @@ try{ const s=localStorage.getItem(LS); if(s&&tabs.some(t=>t.dataset.k===s)) star
 show(start);
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel.js"></script>
 </body>
 </html>

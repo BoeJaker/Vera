@@ -1,0 +1,252 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vera — Performance & Diagnostics</title>
+<script src="/ui/vera-ui.js"></script>
+<style>
+  :root{--pad:12px}
+  html,body{height:100%;margin:0;background:var(--bg0,#141210);color:var(--text,#d6d9df);
+    font-family:var(--sans,ui-sans-serif,system-ui);font-size:12px}
+  *{box-sizing:border-box}
+  .mono{font-family:var(--mono,ui-monospace,monospace)}
+  .wrap{display:flex;flex-direction:column;height:100%}
+  .tabs{display:flex;gap:0;border-bottom:1px solid var(--border,#2a2622);flex-shrink:0;
+    background:var(--bg1,#1a1714)}
+  .tab{padding:9px 16px;font-size:11px;color:var(--dim2,#8a8278);cursor:pointer;
+    border-bottom:2px solid transparent;user-select:none}
+  .tab.on{color:var(--acc,#c9a45a);border-bottom-color:var(--acc,#c9a45a)}
+  .tab .b{display:inline-block;min-width:15px;text-align:center;font-size:9px;
+    padding:0 4px;border-radius:7px;margin-left:5px;background:var(--bg2,#241f1b)}
+  .body{flex:1;overflow:auto;padding:var(--pad)}
+  .view{display:none}.view.on{display:block}
+  .bar{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+  .btn{background:var(--bg2,#241f1b);border:1px solid var(--border,#2a2622);
+    color:var(--text);padding:5px 11px;border-radius:5px;cursor:pointer;font-size:11px}
+  .btn:hover{border-color:var(--acc,#c9a45a)}
+  .btn.pri{background:var(--acc,#c9a45a);color:#1a1512;border-color:var(--acc,#c9a45a);font-weight:600}
+  .btn.sm{padding:2px 8px;font-size:10px}
+  input,select{background:var(--bg0,#141210);border:1px solid var(--border,#2a2622);
+    color:var(--text);padding:4px 7px;border-radius:4px;font-size:11px;font-family:var(--mono,monospace)}
+  .muted{color:var(--dim2,#8a8278)}
+  .card{background:var(--bg1,#1a1714);border:1px solid var(--border,#2a2622);
+    border-radius:7px;padding:11px 13px;margin-bottom:9px}
+  .card.crit{border-left:3px solid #d9534f}
+  .card.warn{border-left:3px solid #d9a441}
+  .card.info{border-left:3px solid #4cc9b0}
+  .card.ok{border-left:3px solid #6db87a;opacity:.72}
+  .sev{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;
+    padding:1px 7px;border-radius:9px}
+  .sev.crit{background:rgba(217,83,79,.16);color:#e78682}
+  .sev.warn{background:rgba(217,164,65,.16);color:#e6bd66}
+  .sev.info{background:rgba(76,201,176,.14);color:#6fd6c0}
+  .sev.ok{background:rgba(109,184,122,.14);color:#88cf99}
+  .f-head{display:flex;align-items:center;gap:9px}
+  .f-title{font-weight:600;font-size:12px}
+  .f-area{font-size:9px;color:var(--dim2);text-transform:uppercase;letter-spacing:.5px}
+  .f-detail{margin-top:5px;color:var(--dim,#b3a89b);font-size:11px;line-height:1.5}
+  .f-rem{margin-top:6px;font-size:11px;color:var(--acc3,#7fb5d6);line-height:1.5}
+  .f-rem b{color:var(--dim2)}
+  table{width:100%;border-collapse:collapse;font-size:10.5px}
+  th{text-align:left;color:var(--dim2);font-weight:600;padding:5px 7px;
+    border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg0)}
+  td{padding:5px 7px;border-bottom:1px solid rgba(90,80,70,.15);vertical-align:top}
+  tr.hang td{color:#e6bd66}
+  .pill{font-size:9px;padding:1px 6px;border-radius:8px;background:var(--bg2)}
+  .pill.hang{background:rgba(217,164,65,.16);color:#e6bd66}
+  .pill.stall{background:rgba(120,140,201,.16);color:#9aa8e0}
+  .pill.note{background:rgba(76,201,176,.14);color:#6fd6c0}
+  pre.stack{margin:6px 0 0;max-height:340px;overflow:auto;white-space:pre-wrap;
+    word-break:break-word;background:var(--bg0,#0d0b0a);border:1px solid var(--border);
+    padding:8px 10px;border-radius:5px;font-size:9.5px;line-height:1.45;color:var(--dim)}
+  #logbox{background:#0c0a09;border:1px solid var(--border);border-radius:6px;
+    padding:9px 11px;height:calc(100vh - 130px);overflow:auto;font-size:10px;
+    line-height:1.5;white-space:pre-wrap;word-break:break-word}
+  .logline{padding:0}
+  .logline.ERROR,.logline.CRITICAL{color:#e78682}
+  .logline.WARNING{color:#e6bd66}
+  .logline.INFO{color:var(--dim,#b3a89b)}
+  .logline.DEBUG{color:var(--dim2,#6b645a)}
+  .empty{color:var(--dim2);text-align:center;padding:36px 10px;font-size:11px}
+  .sum{display:flex;gap:14px;margin-left:auto;font-size:10px}
+  .sum b{font-size:14px;display:block;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="tabs">
+    <div class="tab on" data-v="scan" onclick="P.tab('scan')">⚑ Scan <span class="b" id="tb-scan">–</span></div>
+    <div class="tab" data-v="stalls" onclick="P.tab('stalls')">⏱ Loop Stalls <span class="b" id="tb-stalls">0</span></div>
+    <div class="tab" data-v="logs" onclick="P.tab('logs')">▤ Logs</div>
+  </div>
+  <div class="body">
+    <!-- SCAN -->
+    <div class="view on" id="v-scan">
+      <div class="bar">
+        <button class="btn pri" onclick="P.scan()">⚑ Scan for issues</button>
+        <button class="btn sm" onclick="P.scan()" title="Re-run">↻</button>
+        <label class="muted" style="font-size:10px"><input type="checkbox" id="scan-auto" onchange="P.autoScan()"> auto (30s)</label>
+        <span class="muted mono" id="scan-ts"></span>
+        <div class="sum" id="scan-sum"></div>
+      </div>
+      <div id="scan-out"><div class="empty">Click “Scan for issues” to check the stack for performance &amp; health problems.</div></div>
+    </div>
+    <!-- STALLS -->
+    <div class="view" id="v-stalls">
+      <div class="bar">
+        <button class="btn sm" onclick="P.stalls()">↻ Refresh</button>
+        <span class="muted" id="stalls-info"></span>
+        <span class="muted" style="font-size:10px;margin-left:auto">Event-loop stalls block every WebSocket. 'hang' rows carry the blocking call's stack.</span>
+      </div>
+      <div id="stalls-out"><div class="empty">No stalls recorded.</div></div>
+    </div>
+    <!-- LOGS -->
+    <div class="view" id="v-logs">
+      <div class="bar">
+        <button class="btn sm" onclick="P.logs()">↻</button>
+        <label class="muted" style="font-size:10px"><input type="checkbox" id="log-auto" onchange="P.autoLog()"> live</label>
+        <input id="log-grep" placeholder="filter…" style="width:150px" oninput="P.logsDeb()">
+        <select id="log-file" onchange="P.logs()"><option value="">ring buffer (live)</option></select>
+        <input id="log-lines" type="number" value="300" style="width:64px" onchange="P.logs()" title="lines">
+        <button class="btn sm" onclick="P.copyLogs()">copy</button>
+        <span class="muted mono" id="log-src" style="margin-left:auto"></span>
+      </div>
+      <div id="logbox"><div class="empty">Loading log…</div></div>
+    </div>
+  </div>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+async function api(path, method, body){
+  try{
+    const o={method:method||'GET',headers:{'Content-Type':'application/json'}};
+    if(body) o.body=JSON.stringify(body);
+    const r=await fetch(path,o); return await r.json();
+  }catch(e){ return {error:String(e)}; }
+}
+let _cur='scan', _autoScanT=null, _autoLogT=null, _logDebT=null;
+
+function tab(v){
+  _cur=v;
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.v===v));
+  document.querySelectorAll('.view').forEach(el=>el.classList.remove('on'));
+  $('v-'+v).classList.add('on');
+  if(v==='stalls') stalls();
+  if(v==='logs'){ logFiles(); logs(); }
+}
+
+// ── Scan ──────────────────────────────────────────────────────────
+async function scan(){
+  $('scan-out').innerHTML='<div class="empty">Scanning…</div>';
+  const d=await api('/perf/scan');
+  if(!d||d.error){ $('scan-out').innerHTML='<div class="empty">Scan failed: '+esc(d&&d.error)+'</div>'; return; }
+  $('scan-ts').textContent='· '+(d.ts||'').replace('T',' ').slice(0,19);
+  const s=d.summary||{};
+  $('tb-scan').textContent=(s.crit||0)+(s.warn||0);
+  $('scan-sum').innerHTML=
+    '<span style="color:#e78682">'+'<b>'+(s.crit||0)+'</b>crit</span>'+
+    '<span style="color:#e6bd66"><b>'+(s.warn||0)+'</b>warn</span>'+
+    '<span style="color:#6fd6c0"><b>'+(s.info||0)+'</b>info</span>'+
+    '<span style="color:#88cf99"><b>'+(s.ok||0)+'</b>ok</span>';
+  const fs=d.findings||[];
+  if(!fs.length){ $('scan-out').innerHTML='<div class="empty">No findings.</div>'; return; }
+  $('scan-out').innerHTML=fs.map(f=>{
+    const sev=f.severity||'info';
+    const fix=(f.remediable&&f.remediation_id)
+      ? '<button class="btn sm pri" style="margin-top:7px" onclick="P.fix(\''+esc(f.remediation_id)+'\',this)">▶ Apply fix</button>' : '';
+    const rem=f.remediation?('<div class="f-rem"><b>Remediation:</b> '+esc(f.remediation)+'</div>'):'';
+    return '<div class="card '+sev+'">'+
+      '<div class="f-head"><span class="sev '+sev+'">'+sev+'</span>'+
+      '<span class="f-title">'+esc(f.title)+'</span>'+
+      '<span class="f-area" style="margin-left:auto">'+esc(f.area||'')+'</span></div>'+
+      (f.detail?'<div class="f-detail">'+esc(f.detail)+'</div>':'')+
+      rem+fix+'</div>';
+  }).join('');
+}
+async function fix(id, btn){
+  if(btn){ btn.disabled=true; btn.textContent='applying…'; }
+  const r=await api('/perf/remediate','POST',{remediation_id:id});
+  if(btn){
+    btn.textContent=(r&&r.ok)?('✓ '+(r.detail||'done')):('✗ '+((r&&r.error)||'failed'));
+    btn.classList.toggle('pri', !!(r&&r.ok));
+  }
+  setTimeout(scan, 1200);
+}
+function autoScan(){
+  if($('scan-auto').checked){ scan(); _autoScanT=setInterval(scan,30000); }
+  else { clearInterval(_autoScanT); _autoScanT=null; }
+}
+
+// ── Stalls ────────────────────────────────────────────────────────
+async function stalls(){
+  const d=await api('/perf/stalls?limit=200');
+  if(!d||d.error){ $('stalls-out').innerHTML='<div class="empty">'+esc(d&&d.error||'error')+'</div>'; return; }
+  $('tb-stalls').textContent=(d.hangs||0)+(d.stalls||0);
+  $('stalls-info').textContent=(d.count||0)+' event(s) · '+(d.hangs||0)+' hang · '+(d.stalls||0)+' stall · worst '+(d.worst_ms||0)+'ms';
+  const evs=d.events||[];
+  if(!evs.length){ $('stalls-out').innerHTML='<div class="empty">No loop stalls recorded — the event loop has been responsive. 🎉</div>'; return; }
+  let h='<table><thead><tr><th style="width:64px">Kind</th><th style="width:150px">Time</th><th style="width:80px">Duration</th><th>Where / message</th></tr></thead><tbody>';
+  evs.forEach((e,i)=>{
+    const kind=e.kind||'stall';
+    const dur=e.stalled_ms?(e.stalled_ms+'ms'):'';
+    const where=e.where||e.message||'';
+    const hasStack=!!e.stack;
+    h+='<tr class="'+(kind==='hang'?'hang':'')+'"'+(hasStack?' style="cursor:pointer" onclick="P.tglStack('+i+')"':'')+'>'+
+      '<td><span class="pill '+kind+'">'+esc(kind)+'</span></td>'+
+      '<td class="mono">'+esc((e.ts||'').replace('T',' ').slice(0,19))+'</td>'+
+      '<td class="mono">'+esc(dur)+'</td>'+
+      '<td class="mono">'+esc(where)+(hasStack?' <span class="muted">▸ stack</span>':'')+'</td></tr>';
+    if(hasStack) h+='<tr id="st-'+i+'" style="display:none"><td colspan="4"><pre class="stack">'+esc(e.stack)+'</pre></td></tr>';
+  });
+  h+='</tbody></table>';
+  $('stalls-out').innerHTML=h;
+}
+function tglStack(i){ const el=$('st-'+i); if(el) el.style.display=el.style.display==='none'?'table-row':'none'; }
+
+// ── Logs ──────────────────────────────────────────────────────────
+async function logFiles(){
+  const d=await api('/perf/log/files');
+  const sel=$('log-file'); if(!sel||!d||!d.files) return;
+  const cur=sel.value;
+  sel.innerHTML='<option value="">ring buffer (live)</option>'+
+    d.files.map(f=>'<option value="'+esc(f.name)+'">'+esc(f.name)+' ('+Math.round(f.bytes/1024)+'KB)</option>').join('');
+  sel.value=cur;
+}
+async function logs(){
+  const grep=$('log-grep').value.trim();
+  const file=$('log-file').value;
+  const lines=$('log-lines').value||300;
+  let q='/perf/log/tail?lines='+encodeURIComponent(lines);
+  if(grep) q+='&grep='+encodeURIComponent(grep);
+  if(file) q+='&file='+encodeURIComponent(file);
+  const d=await api(q);
+  const box=$('logbox');
+  if(!d||d.error){ box.innerHTML='<div class="empty">'+esc(d&&d.error||'error')+'</div>'; return; }
+  $('log-src').textContent=(d.source||'')+' · '+(d.count||0)+' lines';
+  const atBottom = box.scrollTop+box.clientHeight >= box.scrollHeight-40;
+  box.innerHTML=(d.lines||[]).map(ln=>{
+    const m=ln.match(/\s(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s/);
+    const cls=m?m[1]:'';
+    return '<div class="logline '+cls+'">'+esc(ln)+'</div>';
+  }).join('')||'<div class="empty">no lines</div>';
+  if(atBottom) box.scrollTop=box.scrollHeight;
+}
+function logsDeb(){ clearTimeout(_logDebT); _logDebT=setTimeout(logs,300); }
+function autoLog(){
+  if($('log-auto').checked){ logs(); _autoLogT=setInterval(logs,3000); }
+  else { clearInterval(_autoLogT); _autoLogT=null; }
+}
+function copyLogs(){
+  const t=[...document.querySelectorAll('#logbox .logline')].map(e=>e.textContent).join('\n');
+  navigator.clipboard&&navigator.clipboard.writeText(t);
+}
+
+window.P={tab,scan,fix,autoScan,stalls,tglStack,logs,logFiles,logsDeb,autoLog,copyLogs};
+// Initial load
+scan();
+stalls();
+</script>
+</body>
+</html>

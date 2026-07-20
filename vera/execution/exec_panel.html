@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="dusk">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Vera / Exec</title>
@@ -201,6 +206,34 @@ code{font-family:inherit;background:var(--s2);padding:1px 4px;border-radius:2px;
   <button class="tbtn" data-mode="ssh" onclick="setMode('ssh')">SSH</button>
   <button class="tbtn" data-mode="hosts" onclick="setMode('hosts')">Hosts</button>
   <button class="tbtn" data-mode="sandbox" onclick="setMode('sandbox')" title="Execution sandbox policy">⛉ Sandbox</button>
+  <select id="snippet-sel" onchange="insertSnippet(this.value)" class="tbtn" style="padding:3px 8px;max-width:160px" title="Insert a recon / OSINT command into the active box (edit the example host/CIDR first)">
+    <option value="">⌖ Recon snippets…</option>
+    <optgroup label="Scan (bash / ssh)">
+      <option value="for i in $(seq 1 254); do (ping -c1 -W1 192.168.1.$i >/dev/null 2>&amp;1 &amp;&amp; echo 192.168.1.$i up) &amp; done; wait">Ping sweep /24</option>
+      <option value="ip neigh show 2>/dev/null || arp -a">ARP neighbours</option>
+      <option value="ss -tulpn 2>/dev/null || netstat -tulpn">Listening sockets</option>
+      <option value="nmap -F 192.168.1.0/24">nmap quick /24</option>
+      <option value="nmap -sV -Pn 10.0.0.5">nmap -sV host</option>
+      <option value="masscan 192.168.1.0/24 -p1-1000 --rate 1000">masscan /24</option>
+      <option value="curl -sSIL http://10.0.0.5 | head -n 20">HTTP headers</option>
+      <option value="echo | openssl s_client -connect example.com:443 -servername example.com 2>/dev/null | openssl x509 -noout -subject -issuer -dates">TLS cert info</option>
+      <option value="traceroute 8.8.8.8 2>/dev/null || tracepath 8.8.8.8">traceroute</option>
+    </optgroup>
+    <optgroup label="OSINT (bash / ssh)">
+      <option value="whois example.com">whois</option>
+      <option value="dig +short example.com ANY">dig ANY</option>
+      <option value="dig +short -x 8.8.8.8">reverse DNS</option>
+      <option value="curl -s 'https://crt.sh/?q=%25.example.com&amp;output=json' | jq -r '.[].name_value' | sort -u">crt.sh subdomains</option>
+      <option value="curl -s -A Mozilla http://example.com | grep -Eio '(wordpress|nginx|apache|cloudflare|react|drupal|joomla)' | sort -u">detect tech</option>
+    </optgroup>
+    <optgroup label="PowerShell">
+      <option value="Test-NetConnection 10.0.0.5 -Port 443">Test port</option>
+      <option value="1..1024 | % { $r=Test-NetConnection 10.0.0.5 -Port $_ -WarningAction SilentlyContinue; if($r.TcpTestSucceeded){&quot;open $_&quot;} }">PS port sweep</option>
+      <option value="Get-NetNeighbor -State Reachable | Select IPAddress,LinkLayerAddress">ARP table</option>
+      <option value="Resolve-DnsName example.com">Resolve DNS</option>
+    </optgroup>
+  </select>
+  <button class="tbtn" onclick="sendToMap()" title="Open the Network Map with this host queued for recon">→ Map</button>
   <div style="flex:1"></div>
   <div class="layout-switch" id="layout-switch">
     <button id="lay-form" class="active" onclick="setLayout('form')">Form</button>
@@ -499,6 +532,38 @@ function clearCurrent(){
   if(_mode==='hosts'||_mode==='sandbox') return;
   if(_layout==='form'){ document.getElementById(_mode+'-out').innerHTML=''; }
   else { termClear(_mode); }
+}
+
+/* Insert a recon/OSINT snippet into the active command box. */
+function insertSnippet(cmd){
+  const sel=document.getElementById('snippet-sel');
+  if(!cmd){ return; }
+  let mode=_mode;
+  if(mode==='hosts'||mode==='sandbox'){ setMode('bash'); mode='bash'; }
+  if(_layout==='form'){
+    const ta=document.getElementById(mode+'-cmd');
+    if(ta){ ta.value=cmd; ta.focus(); }
+  } else {
+    const ti=document.getElementById(mode+'-term-input');
+    if(ti){ ti.value=cmd; ti.focus(); }
+  }
+  if(sel) sel.value='';
+}
+
+/* Hand a host/CIDR to the Network Map panel, queued for recon. */
+function sendToMap(){
+  let host='';
+  if(_mode==='ssh'){
+    const v=(document.getElementById('ssh-user-at').value||'').trim();
+    host = v.includes('@') ? v.split('@').pop() : v;
+    if(host.includes(':')) host=host.split(':')[0];
+  }
+  if(!host){ host=(prompt('Host / IP / CIDR to recon in the Network Map:')||'').trim(); }
+  if(!host) return;
+  try{
+    window.parent.postMessage({action:'vera-open-panel', panel_id:'netmap-panel', hash:'#recon:'+encodeURIComponent(host)}, '*');
+    window.parent.postMessage({action:'vera-netmap-recon', target:host}, '*');
+  }catch(e){}
 }
 
 /* ── SSE streaming helper ─────────────────────────────────────────────── */

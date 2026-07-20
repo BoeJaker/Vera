@@ -38,9 +38,19 @@
       }
       function $(s){return bodyEl.querySelector(s);}
       function setStatus(msg,type){
-        var el=$('.wv-status');if(!el)return;
-        el.textContent=msg||'';
-        el.style.color=type==='err'?'var(--err,#c96b6b)':type==='ok'?'var(--ok,#8fb87a)':type==='warn'?'var(--warn,#c9955a)':'var(--dim,#6a6058)';
+        var el=$('.wv-status');
+        if(el){
+          el.textContent=msg||'';
+          el.style.color=type==='err'?'var(--err,#c96b6b)':type==='ok'?'var(--ok,#8fb87a)':type==='warn'?'var(--warn,#c9955a)':'var(--dim,#6a6058)';
+        }
+        // Mirror meaningful (typed) status lines into the graph's shared
+        // bottom Terminal so worldview activity shows up with loom/discover.
+        if(type&&msg){
+          try{
+            if(graph&&graph.bottomDrawer&&graph.bottomDrawer.log)
+              graph.bottomDrawer.log('[worldview] '+msg,type);
+          }catch(_){}
+        }
       }
       function _cid(c){return c.idx!==undefined?c.idx:(c.id!==undefined?c.id:c.concept);}
 
@@ -51,8 +61,20 @@
         '<span class="wv-scope-label">global worldview</span>'+
         '<button class="wv-scope-sw" style="display:none">\u00d7 global</button></div>'+
 
+        // WORLDVIEWS \u2014 build from the loaded graph & select (FIRST: the panel's
+        // job is to construct a worldview from what's on screen, not to load one)
+        '<details class="wvs" open><summary class="wvs-hd">\u229a Worldviews \u2014 build &amp; select</summary><div class="wvs-body">'+
+          '<div style="font-size:8px;color:var(--dim,#6a6058);text-transform:uppercase;letter-spacing:.5px;margin:0 0 3px">Create from current graph</div>'+
+          '<input class="wv-newname" placeholder="sub-worldview name" style="width:100%;margin-bottom:4px">'+
+          '<div class="wv-graphinfo" style="font-size:8px;color:var(--dim,#6a6058);font-family:var(--mono,monospace);margin-bottom:4px"></div>'+
+          '<button class="wvb wvb-acc wv-create">Save graph + create &amp; train</button>'+
+          '<button class="wvb wv-match" title="Find (or auto-create) the sub-worldview matching the datasets/nodes currently on the graph">\u2315 Match current graph</button>'+
+          '<div style="font-size:8px;color:var(--dim,#6a6058);text-transform:uppercase;letter-spacing:.5px;margin:6px 0 3px">Existing</div>'+
+          '<div class="wv-sublist" style="max-height:130px;overflow-y:auto;margin-bottom:2px"></div>'+
+        '</div></details>'+
+
         // MAP
-        '<details class="wvs" open><summary class="wvs-hd">\u25c9 Latent Map \u2192 Graph</summary><div class="wvs-body">'+
+        '<details class="wvs"><summary class="wvs-hd">\u25c9 Latent Map \u2192 Graph</summary><div class="wvs-body">'+
           '<div class="wr"><label>Limit</label><input class="wv-maplimit" type="number" value="500" min="10" max="5000" step="50">'+
           '<label style="margin-left:6px">Method</label><select class="wv-method"><option value="pca">PCA</option><option value="umap">UMAP</option></select></div>'+
           '<div class="wr"><label>Concepts</label><select class="wv-concept-mode">'+
@@ -61,7 +83,7 @@
             '<option value="none">hide concepts</option>'+
           '</select></div>'+
           '<div style="display:flex;gap:3px;margin-top:4px">'+
-            '<button class="wvb wv-plot" style="flex:1">\u25b6 Map active view \u2192 graph</button>'+
+            '<button class="wvb wv-plot" style="flex:1">\u25b6︎ Map active view \u2192 graph</button>'+
             '<button class="wvb wv-clearmap" style="flex:0;padding:4px 8px" title="Clear worldview layer">\u2715</button>'+
           '</div>'+
           '<div class="wv-mapinfo" style="font-size:8px;color:var(--dim,#6a6058);font-family:var(--mono,monospace);margin-top:3px;min-height:10px"></div>'+
@@ -71,14 +93,14 @@
         '<details class="wvs"><summary class="wvs-hd">\u2315 Query</summary><div class="wvs-body">'+
           '<input class="wv-qtxt" placeholder="Search in latent space\u2026" style="width:100%;margin-bottom:4px">'+
           '<div class="wr"><label>Top K</label><input class="wv-qtopk" type="number" value="10" min="1" max="100"></div>'+
-          '<button class="wvb wv-qrun">\u25b6 Query \u2192 highlight graph</button>'+
+          '<button class="wvb wv-qrun">\u25b6︎ Query \u2192 highlight graph</button>'+
           '<div class="wv-qresults" style="max-height:150px;overflow-y:auto;margin-top:4px"></div>'+
         '</div></details>'+
 
         // ANOMALIES
-        '<details class="wvs"><summary class="wvs-hd">\u26a0 Anomalies</summary><div class="wvs-body">'+
+        '<details class="wvs"><summary class="wvs-hd">\u26a0︎ Anomalies</summary><div class="wvs-body">'+
           '<div class="wr"><label>Top K</label><input class="wv-atopk" type="number" value="20" min="1" max="100"></div>'+
-          '<button class="wvb wv-arun">\u26a0 Detect \u2192 highlight graph</button>'+
+          '<button class="wvb wv-arun">\u26a0︎ Detect \u2192 highlight graph</button>'+
           '<div class="wv-aresults" style="max-height:170px;overflow-y:auto;margin-top:4px"></div>'+
         '</div></details>'+
 
@@ -86,13 +108,13 @@
         '<details class="wvs"><summary class="wvs-hd">\u25cf Concepts</summary><div class="wvs-body">'+
           '<div style="display:flex;gap:3px;margin-bottom:4px">'+
             '<button class="wvb wv-cload" style="flex:1">Load concepts</button>'+
-            '<button class="wvb wv-clabel" style="flex:1">\u2699 AI label</button>'+
+            '<button class="wvb wv-clabel" style="flex:1">\u2699︎ AI label</button>'+
           '</div>'+
           '<div class="wv-clist" style="max-height:210px;overflow-y:auto"></div>'+
         '</div></details>'+
 
         // TRAINING
-        '<details class="wvs"><summary class="wvs-hd">\u2699 Training</summary><div class="wvs-body">'+
+        '<details class="wvs"><summary class="wvs-hd">\u2699︎ Training</summary><div class="wvs-body">'+
           '<div class="wv-lasttrained" style="font-size:8px;font-family:var(--mono,monospace);color:var(--dim,#6a6058);margin-bottom:5px;padding:3px 5px;background:var(--bg0,#181614);border:1px solid var(--border,#3a3530);border-radius:3px">Last trained: checking\u2026</div>'+
           '<div class="wr"><label>GNN epochs</label><input class="wv-gnn" type="number" value="20" min="0" max="200"></div>'+
           '<div class="wr"><label>Codebook</label><input class="wv-codebook" type="number" value="8" min="0" max="100"></div>'+
@@ -100,7 +122,7 @@
           '<div class="wr"><label>Max records</label><input class="wv-limit" type="number" value="5000" min="100" max="50000" step="500"></div>'+
           '<div class="wv-cbrow"><input class="wv-embed" type="checkbox" checked><span>Back-fill embeddings first</span></div>'+
           '<div class="wv-cbrow"><input class="wv-usenodes" type="checkbox" checked><span>Train on current graph nodes</span></div>'+
-          '<button class="wvb wvb-acc wv-train">\u25b6 Train active view</button>'+
+          '<button class="wvb wvb-acc wv-train">\u25b6︎ Train active view</button>'+
           '<div style="display:flex;gap:3px;margin-top:2px">'+
             '<button class="wvb wv-update" style="flex:1">\u21bb Update (incremental)</button>'+
             '<button class="wvb wv-update-global" style="flex:1">\u21bb Update global</button>'+
@@ -124,15 +146,6 @@
             '<div class="wv-lossout wvlog"></div>'+
           '</div>'+
           '<button class="wvb wv-losshistory" style="margin-top:3px">\u2197 Loss history</button>'+
-        '</div></details>'+
-
-        // SUBVIEWS
-        '<details class="wvs"><summary class="wvs-hd">\u229a Sub-worldviews</summary><div class="wvs-body">'+
-          '<div class="wv-sublist" style="max-height:130px;overflow-y:auto;margin-bottom:4px"></div>'+
-          '<div style="font-size:8px;color:var(--dim,#6a6058);text-transform:uppercase;letter-spacing:.5px;margin:6px 0 3px">Create from current graph</div>'+
-          '<input class="wv-newname" placeholder="sub-worldview name" style="width:100%;margin-bottom:4px">'+
-          '<div class="wv-graphinfo" style="font-size:8px;color:var(--dim,#6a6058);font-family:var(--mono,monospace);margin-bottom:4px"></div>'+
-          '<button class="wvb wvb-acc wv-create">Save graph + create &amp; train</button>'+
         '</div></details>'+
 
         // STATS
@@ -233,17 +246,36 @@
         var nodes=[],edges=[],positions={};
         var showCons=mode!=='none',zoneMode=mode==='zone';
 
+        // ── Concept positions ─────────────────────────────────────────────────
+        // A concept sits at the CENTROID of its member points in latent space,
+        // so it lands in the middle of its cluster and matches the node layout.
+        // Previously any concept the backend returned without its own x/y fell
+        // back to (0.5,0.5) → dead centre, which is why every concept piled up
+        // in the middle regardless of where its members were. We only trust the
+        // backend's own concept coords when present; otherwise derive them.
+        var _cenAcc={};   // concept id -> {x,y,n} accumulated from member points
+        pts.forEach(function(p){
+          if(p.concept===undefined||p.concept<0)return;
+          var a=_cenAcc[p.concept]||(_cenAcc[p.concept]={x:0,y:0,n:0});
+          a.x+=(p.x||0);a.y+=(p.y||0);a.n++;
+        });
         // Concept centroid nodes
         var conceptPos={};
         cons.forEach(function(c){
-          conceptPos[_cid(c)]={x:(c.x!=null?c.x:0.5)*SP,y:(c.y!=null?c.y:0.5)*SP};
+          var id=_cid(c);
+          var cx,cy;
+          if(c.x!=null&&c.y!=null){ cx=c.x; cy=c.y; }           // backend-supplied
+          else if(_cenAcc[id]&&_cenAcc[id].n){                    // member centroid
+            cx=_cenAcc[id].x/_cenAcc[id].n; cy=_cenAcc[id].y/_cenAcc[id].n;
+          } else { cx=0.5; cy=0.5; }                              // last resort
+          conceptPos[id]={x:cx*SP,y:cy*SP};
           if(showCons){
-            var cid='wv-concept-'+_cid(c);
-            nodes.push({id:cid,label:c.label||('C'+_cid(c)),type:'Concept',layer:'worldview',
-              x:conceptPos[_cid(c)].x,y:conceptPos[_cid(c)].y,
-              r:zoneMode?20:13,
-              props:{concept:_cid(c),members:c.count||c.size||0,label:c.label||''}});
-            positions[cid]=conceptPos[_cid(c)];
+            var cid='wv-concept-'+id;
+            nodes.push({id:cid,label:c.label||('C'+id),type:'Concept',layer:'worldview',
+              x:conceptPos[id].x,y:conceptPos[id].y,
+              r:zoneMode?20:15,
+              props:{concept:id,members:c.count||c.size||0,label:c.label||''}});
+            positions[cid]=conceptPos[id];
           }
         });
 
@@ -451,6 +483,21 @@
             (d.message||'');
           if(line.trim()){logEl.textContent+=line.trim()+'\n';logEl.scrollTop=logEl.scrollHeight;}
         }
+        // Mirror to the shared bottom terminal — stage transitions always,
+        // epoch ticks decimated to every 5th so training doesn't flood it.
+        try{
+          if(graph&&graph.bottomDrawer&&graph.bottomDrawer.log){
+            var isEpoch=/_epoch$/.test(stage);
+            if(!isEpoch||(d.epoch!==undefined&&d.epoch%5===0)){
+              var tline='['+stage+']'+
+                (d.epoch!==undefined?' ep'+d.epoch+'/'+(d.total||'?'):'')+
+                (d.loss!==undefined?' loss '+(typeof d.loss==='number'?d.loss.toFixed(4):d.loss):'')+
+                (d.message?' '+d.message:'');
+              graph.bottomDrawer.log('[worldview] '+tline,
+                stage==='done'||stage==='complete'?'ok':'dim');
+            }
+          }
+        }catch(_){}
       }
 
       // ── SSE direct connection (reliable path for training progress) ───────
@@ -523,11 +570,11 @@
         var saved=res.model_saved||res.saved||(res.model&&res.model.saved)||false;
         var view=res.active_subview||st.activeView||'global';
         if(!ts){
-          el.textContent='Last trained: never — \u26a0 model not persisted';
+          el.textContent='Last trained: never — \u26a0︎ model not persisted';
           el.style.color='var(--warn,#c9955a)';
         }else{
           var ago=_relTime(ts);
-          el.textContent='Last trained: '+ago+(saved?' \u2713 saved':' \u26a0 not saved')
+          el.textContent='Last trained: '+ago+(saved?' \u2713 saved':' \u26a0︎ not saved')
             +' \u00b7 '+view;
           el.style.color=saved?'var(--ok,#8fb87a)':'var(--warn,#c9955a)';
         }
@@ -711,14 +758,16 @@
         st.activeDatasets=(res&&res.datasets)||[];
         st.lastSnapshot=null; // invalidate — different model now
         _reflectActiveView();
-        setStatus('Active: '+(name||'global'),'ok');
+        // Deliberately NO auto-map here: activating selects the model to work
+        // with; mapping (which replaces the layout) is an explicit user action
+        // via "Map active view → graph".
+        setStatus('Active: '+(name||'global')+' — use Map / Train to apply','ok');
         await loadSubviews(true);
-        await plotSnapshot(); // auto-map the newly active view
       }
 
       function _reflectActiveView(){
         var btn=$('.wv-train');
-        if(btn)btn.textContent='\u25b6 Train '+(st.activeView?'\u201c'+st.activeView+'\u201d':'global');
+        if(btn)btn.textContent='\u25b6︎ Train '+(st.activeView?'\u201c'+st.activeView+'\u201d':'global');
         _updateScopeBanner();
       }
 
@@ -832,9 +881,14 @@
       $('.wv-losshistory').onclick  =fetchLossHistory;
       $('.wv-create').onclick       =createSubview;
       $('.wv-stats').onclick        =showStats;
+      // Explicit graph→worldview matching (was an implicit side-effect of
+      // opening the panel; now only runs when asked).
+      if($('.wv-match'))$('.wv-match').onclick=function(){loadSubviews(false);};
 
-      // Initial load
-      loadSubviews();_refreshGraphInfo();_reflectActiveView();_refreshLastTrained();
+      // Initial load — list only. Opening the panel must NOT auto-activate a
+      // sub-worldview, auto-create one, or map anything onto the graph: the
+      // panel's job is to BUILD a worldview from the loaded graph on demand.
+      loadSubviews(true);_refreshGraphInfo();_reflectActiveView();_refreshLastTrained();
 
       // Wire the Latent chip in the main toolbar to auto-load last snapshot
       // when clicked and no latent map is currently loaded.

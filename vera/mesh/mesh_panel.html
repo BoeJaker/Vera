@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Vera — Mesh</title>
@@ -41,8 +46,8 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;padding:5px 11px;border-radius:var(--radius-sm);
   background:var(--bg2);border:1px solid var(--border2);color:var(--text);font-size:11px;cursor:pointer;font-family:var(--sans)}
 .btn:hover{border-color:var(--acc);color:var(--acc)}
-.btn.primary{background:var(--acc);border-color:var(--acc);color:#10201c;font-weight:600}
-.btn.primary:hover{filter:brightness(1.1);color:#10201c}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#10201c);font-weight:600}
+.btn.primary:hover{filter:brightness(1.1);color:var(--on-acc,#10201c)}
 .btn.sm{padding:3px 7px;font-size:10px}
 .btn.danger:hover{border-color:var(--err);color:var(--err)}
 .btn:disabled{opacity:.4;cursor:not-allowed}
@@ -118,9 +123,20 @@ code{font-family:var(--mono);font-size:10px;background:var(--bg0);border:1px sol
       </div>
 
       <label style="margin-top:7px">Firmware / tool</label>
-      <select id="fwSel" style="margin-bottom:5px"><option>loading…</option></select>
+      <select id="fwSel" style="margin-bottom:5px" onchange="onFwChange()"><option>loading…</option></select>
+      <!-- Bake-at-flash options: set once, baked into the firmware that gets
+           flashed/pushed — no post-flash config step in the node panel. -->
+      <div class="row" id="fwOpts" style="gap:9px;flex-wrap:wrap;font-size:10px;margin-bottom:6px;align-items:center">
+        <span class="muted">Bake in:</span>
+        <label title="Enable the 3.5&quot; ILI9488 parallel TFT + boot status dashboard now, at flash time"><input type="checkbox" id="optDisplay" checked onchange="saveOnboard()"> 🖥 Display</label>
+        <label title="Enable the SD card slot"><input type="checkbox" id="optSd" checked onchange="saveOnboard()"> SD</label>
+        <label title="Arduino build only: Wi-Fi CSI device-free motion sensing"><input type="checkbox" id="optCsi" onchange="saveOnboard()"> CSI</label>
+        <label title="Bake the Wi-Fi SSID+password (typed above) into the firmware so the node joins on boot — no serial provisioning needed"><input type="checkbox" id="optWifi" onchange="saveOnboard()"> Wi-Fi</label>
+        <label title="Bake this board's pin map (display/SD/NeoPixel) into the firmware defaults">🧩 <select id="optBoard" style="font-size:10px" onchange="saveOnboard()"></select></label>
+      </div>
       <div class="row" style="gap:5px;flex-wrap:wrap">
-        <button class="btn sm primary" id="flashBtn" onclick="flashSelected()" disabled>⚡ Flash</button>
+        <button class="btn sm primary" id="onboardBtn" onclick="flashAndOnboard()" disabled title="One click: flash the runtime if needed, then push main.py with the options above, then it joins. Set things once here.">⚡ Flash &amp; Onboard</button>
+        <button class="btn sm" id="flashBtn" onclick="flashSelected()" disabled title="Flash only the selected item (no auto script push)">Flash only</button>
         <button class="btn sm" id="pushBtn" onclick="pushSelected()" disabled title="Send to selected node over Wi-Fi (OTA)">📡 OTA→node</button>
         <button class="btn sm" id="eraseBtn" onclick="eraseChip()" disabled>Erase</button>
         <button class="btn sm" id="uploadBtn" onclick="document.getElementById('binFile').click()">Upload .bin</button>
@@ -225,6 +241,7 @@ function ago(iso){ if(!iso) return '—'; const s=(Date.now()-Date.parse(iso))/1
 async function init(){
   await loadSettings();
   updateFwLinks();
+  loadBoards();
   if(!('serial' in navigator)){
     document.getElementById('serBtn').disabled = true;
     setStatus('serStatus','Web Serial unsupported here — use Chrome/Edge over https or localhost.','warn');
@@ -239,7 +256,8 @@ async function init(){
 }
 function serverUrl(){ return (document.getElementById('srvUrl').value||'').trim() || location.origin; }
 function updateFwLinks(){
-  const baked='&server='+encodeURIComponent(serverUrl()), o=location.origin;
+  const opts=(typeof fwOptsQuery==='function')?fwOptsQuery():'';
+  const baked='&server='+encodeURIComponent(serverUrl())+(opts?('&'+opts):''), o=location.origin;
   document.getElementById('fwArduino').href = o+'/mesh/firmware?flavor=arduino'+baked;
   document.getElementById('fwMicro').href   = o+'/mesh/firmware?flavor=micropython'+baked;
   document.getElementById('fwIdf').href     = o+'/mesh/firmware?flavor=esp-idf'+baked;
@@ -263,12 +281,53 @@ async function saveSettings(){
 async function loadCatalog(){
   const r = await api('/mesh/firmware/catalog');
   _catalog = (r && r.artifacts) || [];
+  _fwTools = (r && r.tools) || {};
   const sel = document.getElementById('fwSel');
   sel.innerHTML = _catalog.map((a,i)=>`<option value="${i}">${esc(a.label||a.id)}</option>`).join('')
     || '<option value="">no firmware in catalog</option>';
   // flash/erase acquire the USB port on demand; OTA targets the selected node — enable now
-  if('serial' in navigator){ ['flashBtn','eraseBtn'].forEach(id=>{const e=document.getElementById(id); if(e)e.disabled=false;}); }
+  if('serial' in navigator){ ['flashBtn','eraseBtn','onboardBtn'].forEach(id=>{const e=document.getElementById(id); if(e)e.disabled=false;}); }
   const pb=document.getElementById('pushBtn'); if(pb) pb.disabled=false;
+  loadOnboard();                       // restore the firmware pick + bake options from last time
+}
+
+// ── Onboard options: pick once, persist, bake into the firmware ──────────────
+const _LS_ONBOARD='vera_mesh_onboard';
+function saveOnboard(){
+  try{ localStorage.setItem(_LS_ONBOARD, JSON.stringify({
+    fw:document.getElementById('fwSel').value,
+    display:document.getElementById('optDisplay').checked,
+    sd:document.getElementById('optSd').checked,
+    csi:document.getElementById('optCsi').checked,
+    wifi:document.getElementById('optWifi').checked,
+    board:(document.getElementById('optBoard')||{}).value||'',
+  })); }catch(e){}
+}
+function loadOnboard(){
+  let s={}; try{ s=JSON.parse(localStorage.getItem(_LS_ONBOARD)||'{}'); }catch(e){}
+  const sel=document.getElementById('fwSel');
+  if(s.fw!=null && sel.querySelector('option[value="'+s.fw+'"]')) sel.value=s.fw;
+  if(s.display) document.getElementById('optDisplay').checked=true;
+  if(s.sd===false) document.getElementById('optSd').checked=false;
+  if(s.csi) document.getElementById('optCsi').checked=true;
+  if(s.wifi) document.getElementById('optWifi').checked=true;
+  const ob=document.getElementById('optBoard'); if(ob&&s.board&&ob.querySelector('option[value="'+s.board+'"]')) ob.value=s.board;
+}
+function onFwChange(){ saveOnboard(); }
+// Build the &display=..&sd=..&csi=..&wifi_ssid=.. query the server bakes into firmware.
+function fwOptsQuery(){
+  const q=[];
+  q.push('display='+(document.getElementById('optDisplay').checked?'1':'0'));
+  q.push('sd='+(document.getElementById('optSd').checked?'1':'0'));
+  q.push('csi='+(document.getElementById('optCsi').checked?'1':'0'));
+  const ob=document.getElementById('optBoard'); if(ob&&ob.value) q.push('board='+encodeURIComponent(ob.value));
+  if(document.getElementById('optWifi').checked){
+    const ssid=(document.getElementById('wifiSsid').value||'').trim();
+    const pass=document.getElementById('wifiPass').value||'';
+    if(ssid) q.push('wifi_ssid='+encodeURIComponent(ssid));
+    if(pass) q.push('wifi_pass='+encodeURIComponent(pass));
+  }
+  return q.join('&');
 }
 
 async function refresh(){
@@ -409,11 +468,34 @@ function svgPoint(svg,cx,cy){ const r=svg.getBoundingClientRect();
 function resetLayout(){ _drag={}; renderGraph(); }
 
 // ── Inspector ────────────────────────────────────────────────────────────────
+let _lastNodeJSON='';
 async function loadNode(id, quiet){
+  if(id!==_sel) _lastNodeJSON='';                 // switched nodes → force a render
   _sel=id; if(!quiet){ renderList(); renderGraph(); }
   const r=await api('/mesh/node?node_id='+encodeURIComponent(id));
-  if(!r||r.error){ document.getElementById('inspector').innerHTML=`<div class="card"><span class="status err">${esc(r&&r.error||'load failed')}</span></div>`; return; }
+  if(!r||r.error){
+    // A poll-driven refresh must NOT flash an error card in and out — that's the
+    // "RHM flickers, failed to connect" symptom. Keep the last good inspector
+    // and just dim it; only replace with an error on an explicit user click.
+    if(quiet){ markInspectorStale(true); return; }
+    _lastNodeJSON='';
+    document.getElementById('inspector').innerHTML=
+      `<div class="card"><span class="status err">${esc((r&&r.error)||'load failed')}</span>`
+      +`<div class="muted" style="margin-top:6px">If this is a USB board that can't reach the server over Wi-Fi, it isn't enrolled yet — click <b>🌉 Bridge</b> (not just Connect) to relay it into the mesh, or provision Wi-Fi.</div></div>`;
+    return;
+  }
+  markInspectorStale(false);
+  // Skip the re-render (and its flicker / focus-and-scroll loss) when the node
+  // hasn't actually changed since the last poll.
+  const j=JSON.stringify(r.node);
+  if(quiet && j===_lastNodeJSON) return;
+  _lastNodeJSON=j;
   renderInspector(r);
+}
+function markInspectorStale(on){
+  const i=document.getElementById('inspector'); if(!i) return;
+  i.style.opacity = on ? '0.5' : '';
+  i.style.transition='opacity .3s';
 }
 function renderInspector(r){
   const n=r.node, mods=n.modules||{}, cfg=n.config||{};
@@ -456,6 +538,8 @@ function renderInspector(r){
 
   ${mods.web_fetch||cfg.web_fetch?moduleWebFetch(n):''}
   ${mods.kiosk||cfg.kiosk?moduleKiosk(n):''}
+  ${mods.kiosk||cfg.kiosk||mods.storage||cfg.storage?moduleBoard(n):''}
+  ${mods.rgb||cfg.rgb?moduleNeopixel(n):''}
   ${mods.control||cfg.control?moduleControl(n):''}
   ${mods.alert||cfg.alert?moduleAlert(n):''}
   ${moduleIO(n)}
@@ -478,6 +562,7 @@ function renderInspector(r){
        || '<tr><td colspan="3" class="muted">No jobs.</td></tr>'}
     </tbody></table>
   </div>`;
+  const _bs=document.getElementById('boardSel'); if(_bs) fillBoardSelect(_bs);
   drawSparks(r.telemetry||[]);
 }
 
@@ -489,6 +574,55 @@ function moduleKiosk(n){return `<div class="card"><h2>🖥 Kiosk</h2>
   <div class="row"><label>Text</label><input id="kioText" placeholder="or a message"></div>
   <div class="row"><label>Bright</label><input id="kioBri" type="range" min="0" max="100" value="80"></div>
   <button class="btn sm" onclick="kioskSet('${esc(n.node_id)}')">Set display</button></div>`;}
+function moduleBoard(n){
+  const io=(n.config&&n.config.io)||{}, t=io.tft||{}, s=io.sd||{}, d=t.d||[];
+  const rot=(n.config&&n.config.kiosk&&n.config.kiosk.rotation);
+  const hasKiosk=!!(n.modules&&n.modules.kiosk);
+  const v=x=>x==null?'':x, P='style="width:42px" class="bpin"';
+  const di=i=>`<input ${P} id="bpD${i}" value="${v(d[i])}" title="D${i}">`;
+  const allp=[t.rst,t.cs,t.dc,t.wr,t.rd].concat(d).filter(x=>x!=null);
+  const usb=allp.filter(p=>p===19||p===20), flash=allp.filter(p=>p>=26&&p<=37);
+  let pinWarn='';
+  if(usb.length) pinWarn+=`<div class="status err" style="margin-bottom:6px">⛔ Pin(s) on GPIO ${usb.join('/')} = the S3's native <b>USB-Serial-JTAG</b> lines. While the USB console/REPL is active these are <b>stuck</b>, so the parallel bus is dead. On MicroPython (REPL is on USB) the display <b>cannot</b> work here — use the Arduino build with <b>USB CDC On Boot: Disabled</b>, or wire those LCD lines to other GPIOs.</div>`;
+  if(flash.length) pinWarn+=`<div class="status warn" style="margin-bottom:6px">⚠ Pin(s) on GPIO ${flash.join('/')} are usually SPI-flash/PSRAM (26-32, and 33-37 on -R8 octal-PSRAM boards) — not free GPIO. Verify against your board.</div>`;
+  return `<div class="card"><h2>🧩 Board / Pins</h2>
+   ${hasKiosk?'':'<div class="status warn" style="margin-bottom:6px">⚠ This node isn\'t advertising a display (no <b>kiosk</b> module) — it was almost certainly flashed with 🖥 Display <b>off</b>. Re-flash/re-push firmware with Display enabled; pin edits and the Test pattern do nothing until then.</div>'}
+   ${pinWarn}
+   <div class="row" style="gap:4px;margin:0">
+     <select id="boardSel" style="flex:1" onchange="onBoardPick()"></select>
+     <button class="btn sm" onclick="applyBoard('${esc(n.node_id)}')">Apply</button>
+   </div>
+   <div class="muted" id="boardNote" style="margin:4px 0;min-height:1em"></div>
+   <div class="row" style="gap:4px;align-items:center;flex-wrap:wrap;margin:0">
+     <b style="width:34px">TFT</b>RST${'<input '+P+' id="bpRST" value="'+v(t.rst)+'">'}
+     CS<input ${P} id="bpCS" value="${v(t.cs)}"> DC<input ${P} id="bpDC" value="${v(t.dc)}">
+     WR<input ${P} id="bpWR" value="${v(t.wr)}"> RD<input ${P} id="bpRD" value="${v(t.rd)}"></div>
+   <div class="row" style="gap:4px;align-items:center;flex-wrap:wrap;margin:4px 0 0">
+     <b style="width:34px">Data</b>${[0,1,2,3,4,5,6,7].map(di).join('')}</div>
+   <div class="row" style="gap:4px;align-items:center;flex-wrap:wrap;margin:4px 0 0">
+     <b style="width:34px">SD</b>CLK<input ${P} id="bpSCLK" value="${v(s.clk)}"> MISO<input ${P} id="bpSMISO" value="${v(s.miso)}">
+     MOSI<input ${P} id="bpSMOSI" value="${v(s.mosi)}"> CS<input ${P} id="bpSCS" value="${v(s.cs)}"></div>
+   <div class="row" style="gap:4px;align-items:center;flex-wrap:wrap;margin:4px 0 0">
+     <b style="width:34px">Neo</b><input ${P} id="bpNEO" value="${v(io.neopixel)}">
+     Rot<input ${P} id="bpROT" value="${rot==null?'':rot}"></div>
+   <div class="row" style="gap:5px;margin-top:6px;flex-wrap:wrap">
+     <button class="btn sm primary" onclick="pushPins('${esc(n.node_id)}')">Push pins</button>
+     <button class="btn sm" onclick="displayTest('${esc(n.node_id)}')">▦ Test pattern</button>
+     <button class="btn sm" onclick="displayProbe('${esc(n.node_id)}')">🔍 Probe controller</button>
+     <button class="btn sm" onclick="saveBoard()">💾 Save as…</button>
+   </div>
+   <div class="muted" style="margin-top:4px">Blank white screen? Push pins → Test pattern. Colour bars = the bus is alive; swapped colours = RGB/BGR; mirrored/rotated = change Rot. Save the map that works.</div>
+   <div class="status" id="boardStatus"></div></div>`;}
+function moduleNeopixel(n){return `<div class="card"><h2>🌈 NeoPixel</h2>
+   <div class="row" style="gap:6px;align-items:center;margin:0">
+     <input type="color" id="npCol" value="#00ff88" style="width:46px;height:28px;padding:2px">
+     <select id="npFx" style="width:auto"><option value="solid">solid</option><option value="blink">blink</option><option value="breathe">breathe</option><option value="rainbow">rainbow</option><option value="off">off</option></select>
+     <label style="min-width:auto">Bri</label><input id="npBri" type="range" min="0" max="255" value="180" style="flex:1"></div>
+   <div class="row" style="gap:5px;margin:6px 0 0">
+     <button class="btn sm primary" onclick="neoSet('${esc(n.node_id)}')">Set</button>
+     <button class="btn sm" onclick="neoProbe('${esc(n.node_id)}')">Probe pin</button></div>
+   <div class="muted" style="margin-top:4px">Drives the on-board WS2812. Unknown pin? Probe lights each candidate GPIO in turn — note which one lights, then set it in Board / Pins.</div>
+   <div class="status" id="neoStatus"></div></div>`;}
 function moduleControl(n){return `<div class="card"><h2>🎚 Control</h2>
   <div class="row"><label>Channel</label><input id="ctlCh" placeholder="relay1 / 26"></div>
   <div class="row"><label>Value</label>
@@ -577,6 +711,83 @@ async function assignWorker(id){
   setStatus('actStatus', r&&r.ok?'task assigned':(r&&r.error||'failed'), r&&r.ok?'ok':'err'); if(r&&r.ok) loadNode(id,true); }
 async function clearWorker(id){ const r=await api('/mesh/worker/assign','POST',{node_id:id, replace:true});
   setStatus('actStatus', r&&r.ok?'tasks cleared':'failed', r&&r.ok?'ok':'err'); if(r&&r.ok) loadNode(id,true); }
+// ── Board / Pins + NeoPixel ──────────────────────────────────────────────────
+let _boards=[]; let _fwTools={};
+async function loadBoards(){ const r=await api('/mesh/boards');
+  if(r&&r.boards){ _boards=r.boards;
+    const sel=document.getElementById('boardSel'); if(sel) fillBoardSelect(sel);
+    const ob=document.getElementById('optBoard');
+    if(ob){ let saved=''; try{ saved=(JSON.parse(localStorage.getItem(_LS_ONBOARD)||'{}').board)||''; }catch(e){}
+      const cur=ob.value||saved;
+      ob.innerHTML='<option value="">stock pins</option>'+
+        _boards.map(b=>`<option value="${esc(b.id)}">${esc(b.label)}${b.builtin?'':' ★'}</option>`).join('');
+      ob.value=cur; }
+  } }
+function fillBoardSelect(sel){ const cur=sel.value;
+  sel.innerHTML='<option value="">— board profile —</option>'+
+    _boards.map(b=>`<option value="${esc(b.id)}">${esc(b.label)}${b.builtin?'':' ★'}</option>`).join('');
+  if(cur) sel.value=cur; }
+function onBoardPick(){ const id=document.getElementById('boardSel').value, b=_boards.find(x=>x.id===id);
+  const note=document.getElementById('boardNote'); if(note) note.textContent=b?(b.note||''):'';
+  if(!b) return; const io=b.io||{}, t=io.tft||{}, s=io.sd||{}, d=t.d||[];
+  const set=(k,val)=>{ const e=document.getElementById(k); if(e) e.value=(val==null?'':val); };
+  set('bpRST',t.rst);set('bpCS',t.cs);set('bpDC',t.dc);set('bpWR',t.wr);set('bpRD',t.rd);
+  for(let i=0;i<8;i++) set('bpD'+i,d[i]);
+  set('bpSCLK',s.clk);set('bpSMISO',s.miso);set('bpSMOSI',s.mosi);set('bpSCS',s.cs);
+  set('bpNEO',io.neopixel); if(b.kiosk&&b.kiosk.rotation!=null) set('bpROT',b.kiosk.rotation); }
+function _collectPins(){ const g=k=>{ const e=document.getElementById(k), val=e?e.value.trim():''; return val===''?null:parseInt(val,10); };
+  const d=[]; for(let i=0;i<8;i++) d.push(g('bpD'+i));
+  const io={ tft:{rst:g('bpRST'),cs:g('bpCS'),dc:g('bpDC'),wr:g('bpWR'),rd:g('bpRD'),d},
+             sd:{clk:g('bpSCLK'),miso:g('bpSMISO'),mosi:g('bpSMOSI'),cs:g('bpSCS')} };
+  const neo=g('bpNEO'); if(neo!=null) io.neopixel=neo;
+  return { io, rot:g('bpROT') }; }
+async function applyBoard(id){ const bid=document.getElementById('boardSel').value;
+  if(!bid){ setStatus('boardStatus','pick a profile first','warn'); return; }
+  const r=await api('/mesh/boards/apply','POST',{node_id:id,board_id:bid});
+  setStatus('boardStatus', r&&r.ok?'applied & pushed — enroll must be live':(r&&r.error||'failed'), r&&r.ok?'ok':'err');
+  if(r&&r.ok) setTimeout(()=>{ if(!inspectorFocused()) loadNode(id,true); },900); }
+async function pushPins(id){ const {io,rot}=_collectPins();
+  const body={node_id:id, tft:io.tft, sd:io.sd}; if(io.neopixel!=null) body.neopixel=io.neopixel; if(rot!=null) body.rotation=rot;
+  const r=await api('/mesh/io/pins','POST',body);
+  setStatus('boardStatus', r&&r.ok?'pins pushed — bus re-inited':(r&&r.error||'failed'), r&&r.ok?'ok':'err'); }
+async function displayTest(id){ const {rot}=_collectPins(); const body={node_id:id}; if(rot!=null) body.rotation=rot;
+  const r=await api('/mesh/display/test','POST',body);
+  setStatus('boardStatus', r&&r.ok?'test pattern sent — look at the screen':(r&&r.error||'failed'), r&&r.ok?'ok':'err'); }
+async function displayProbe(id){ setStatus('boardStatus','probing controller…');
+  const r=await api('/mesh/display/probe','POST',{node_id:id});
+  if(!(r&&r.ok)){ setStatus('boardStatus',(r&&r.error)||'failed','err'); return; }
+  for(let i=0;i<7;i++){ await new Promise(res=>setTimeout(res,1200));
+    const nd=await api('/mesh/node?node_id='+encodeURIComponent(id));
+    const jobs=(nd&&nd.jobs)||[];
+    const done=jobs.find(j=>j.type==='display_probe'&&j.result);
+    const err=jobs.find(j=>j.type==='display_probe'&&j.status==='error');
+    if(done){ showProbe(done.result); return; }
+    if(err){ setStatus('boardStatus','probe: '+(err.error||'error'),'err'); return; } }
+  setStatus('boardStatus','probe sent — result will appear in Jobs shortly','warn'); }
+function showProbe(res){
+  let bytes=null;
+  if(typeof res.id_D3==='string'){ bytes=(res.id_D3.match(/.{2}/g)||[]).map(h=>parseInt(h,16)); }
+  else if(res.ids&&res.ids['0xD3']){ bytes=res.ids['0xD3']; }
+  if(!bytes||!bytes.length){ setStatus('boardStatus','probe returned no controller ID','warn'); return; }
+  const hex=bytes.map(b=>('0'+b.toString(16)).slice(-2)).join(' ');
+  const code=((bytes[bytes.length-2]<<8)|bytes[bytes.length-1]);
+  const names={0x9488:'ILI9488',0x9486:'ILI9486 — needs a different init sequence',0x9481:'ILI9481',0x9341:'ILI9341',0x7796:'ST7796',0x8357:'HX8357'};
+  const allF=bytes.every(b=>b===0xFF), all0=bytes.every(b=>b===0);
+  if(all0||allF){ setStatus('boardStatus','controller ID reads all '+(allF?'0xFF':'0x00')+' ('+hex+') → the bus/RD is not reading. Check WR/RD/CS/DC + data pins.','err'); return; }
+  const name=names[code]||('unknown 0x'+code.toString(16));
+  setStatus('boardStatus','controller: '+name+'  (D3='+hex+')', code===0x9488?'ok':'warn'); }
+async function saveBoard(){ const id=prompt('Save these pins as a board profile — id (e.g. my-s3-uno):'); if(!id) return;
+  const label=prompt('Label:',id)||id; const {io,rot}=_collectPins(); const kiosk=rot!=null?{rotation:rot}:{};
+  const r=await api('/mesh/boards/save','POST',{id,label,io,kiosk});
+  if(r&&r.boards){ _boards=r.boards; const sel=document.getElementById('boardSel'); if(sel){ fillBoardSelect(sel); sel.value=id; } }
+  setStatus('boardStatus', r&&r.ok?'saved':(r&&r.error||'failed'), r&&r.ok?'ok':'err'); }
+async function neoSet(id){ const hex=document.getElementById('npCol').value;
+  const r=parseInt(hex.substr(1,2),16), g=parseInt(hex.substr(3,2),16), b=parseInt(hex.substr(5,2),16);
+  const effect=document.getElementById('npFx').value, brightness=parseInt(document.getElementById('npBri').value,10);
+  const res=await api('/mesh/rgb','POST',{node_id:id,r,g,b,effect,brightness});
+  setStatus('neoStatus', res&&res.ok?'sent':(res&&res.error||'failed'), res&&res.ok?'ok':'err'); }
+async function neoProbe(id){ const res=await api('/mesh/rgb/probe','POST',{node_id:id});
+  setStatus('neoStatus', res&&res.ok?'probing — watch the LED, then set the pin above':(res&&res.error||'failed'), res&&res.ok?'ok':'err'); }
 async function wifiScan(id){
   const s=document.getElementById('wifiScanStatus'); if(s) s.textContent='scanning…';
   const r=await api('/mesh/wifi/scan','POST',{node_id:id});
@@ -666,8 +877,11 @@ async function toggleBridge(){
   startBridge();
   const b=document.getElementById('bridgeBtn'); if(b) b.textContent='🌉 Bridging';
 }
+let _bridgeWaited=0;
 function startBridge(){
   if(_bridgeTimer) return;
+  _bridgeWaited=0;
+  const enc=new TextEncoder();
   const tick=async ()=>{
     _bridgeTimer=null;
     if(!_serWriter) return;                       // bridge ended
@@ -675,13 +889,23 @@ function startBridge(){
       try{
         const r=await api('/mesh/poll?node_id='+encodeURIComponent(_bridgeNodeId)+'&wait=0','GET',null,8000);
         if(r && r.jobs && r.jobs.length)
-          await _serWriter.write(new TextEncoder().encode(JSON.stringify({jobs:r.jobs})+'\n'));
+          await _serWriter.write(enc.encode(JSON.stringify({jobs:r.jobs})+'\n'));
       }catch(e){}
+    } else {
+      // Board hasn't announced yet. Re-nudge every tick — it may have reset on USB
+      // connect (native-USB S3), booted late, or missed the first ping.
+      try{ await _serWriter.write(enc.encode(JSON.stringify({cmd:'serial_mode',on:true})+'\n')); }catch(e){}
+      try{ await _serWriter.write(enc.encode(JSON.stringify({cmd:'ping'})+'\n')); }catch(e){}
+      _bridgeWaited+=1.5;
+      if(_bridgeWaited===9)
+        setStatus('serStatus','Still no announce — re-pinging the board…','warn');
+      else if(_bridgeWaited>=15)
+        setStatus('serStatus','No announce over serial. The Vera firmware may not be running: open Serial console below and press Enter — if you see “>>>”, main.py isn\'t running (re-push it with Flash & Onboard). Native-USB S3 boards: tap Reset after Connect.','err');
     }
     _bridgeTimer=setTimeout(tick, 1500);
   };
   _bridgeTimer=setTimeout(tick, 400);
-  setStatus('serStatus', _bridgeNodeId? ('Bridging '+_bridgeNodeId+' ↔ Vera over USB'):'Bridge armed — waiting for the board to announce over serial…','ok');
+  setStatus('serStatus', _bridgeNodeId? ('Bridging '+_bridgeNodeId+' ↔ Vera over USB'):'Bridge armed — pinging the board to announce…','ok');
 }
 function stopBridge(){
   if(_bridgeTimer){ clearTimeout(_bridgeTimer); _bridgeTimer=null; }
@@ -709,6 +933,7 @@ async function handleSerialLine(line){
     setStatus('serStatus','Enrolled '+(msg.node_id||'node')+' via USB'+(_bridgeTimer?' (bridging)':''),'ok'); refresh(); }
   else if(msg.kind==='telemetry'){ await api('/mesh/telemetry','POST',msg); }
   else if(msg.kind==='result'){ await api('/mesh/result','POST',msg); }
+  else if(msg.kind==='ui_event'){ await api('/mesh/ui/event','POST',msg); }   // touch tap on a bridged node
 }
 async function serialSend(){
   const inp=document.getElementById('serInput'); const v=inp.value; if(!v||!_serWriter) return;
@@ -794,6 +1019,25 @@ function fetchTimeout(url, opts, ms){
   }
   return fetch(url,opts);
 }
+// Fetch firmware/script text robustly. Tries BASE (the parent-provided Vera URL)
+// first, then falls back to a same-origin relative URL — so a bad/unreachable
+// _veraBase no longer surfaces as a bare "Failed to fetch". Returns the text or
+// throws with the URL(s) it tried.
+async function fetchFirmwareText(path){
+  const tries=[]; const seen=new Set();
+  if(BASE) tries.push(BASE+path);
+  tries.push(path);                                // same-origin relative
+  let lastErr='';
+  for(const u of tries){
+    if(seen.has(u)) continue; seen.add(u);
+    try{
+      const r=await fetchTimeout(u,{},20000);
+      if(r.ok){ const t=await r.text(); if(t && t.length) return t; lastErr='empty response'; }
+      else lastErr='HTTP '+r.status;
+    }catch(e){ lastErr=(e&&e.name==='AbortError')?'timeout':String(e&&e.message||e); }
+  }
+  throw new Error(lastErr+' — tried '+tries.join(' , ')+'. Is Vera reachable from this browser?');
+}
 // Download in small byte-range chunks and reassemble, so a proxy/tunnel in front of
 // Vera can't reset the big single response. Each chunk has a timeout + retries so a
 // stalled tunnel fails fast (with the % reached) instead of hanging forever.
@@ -853,8 +1097,35 @@ async function diagnoseFetch(a, e){
     setStatus('serStatus','Download failed ('+(e&&e.message||e)+'). The probe endpoint is missing — restart Vera — or just Upload .bin.','err');
   }
 }
+// The Arduino build is a SKETCH that must be compiled (arduino-cli) — the browser
+// can't flash it and, with no compiler on the server, there's no .bin to fetch.
+// So hand the user the templated .ino source + the one IDE setting that matters.
+function fwSourceUrl(a){
+  const base=(a&&a.text_url)||'/mesh/firmware?flavor=arduino';
+  const o=fwOptsQuery();
+  return (BASE||'')+base+(base.includes('?')?'&':'?')+'server='+encodeURIComponent(serverUrl())+(o?('&'+o):'');
+}
+async function sketchBuildHelp(a){
+  // If the vera-builder container is up, compile on the server and flash the
+  // resulting .bin — no IDE needed. Otherwise fall back to the IDE instructions.
+  if(_fwTools && _fwTools.can_build){ return buildOnServer(a); }
+  const url=fwSourceUrl(a);
+  try{ window.open(url,'_blank'); }catch(e){}
+  setStatus('serStatus','This Arduino sketch must be compiled. No build service is running (start it with: docker compose up -d --build vera-builder), so build it in the Arduino IDE: opened the .ino in a new tab — Save As vera_mesh_node.ino → Arduino IDE → Tools ▸ USB CDC On Boot ▸ Disabled → pick your ESP32-S3 board → Upload. Source: '+url,'warn');
+}
+async function buildOnServer(a){
+  setStatus('serStatus','Building '+(a.label||'sketch')+' on the vera-builder container (first build pulls the ESP32 toolchains — can take a few minutes)…');
+  const r=await api('/mesh/firmware/build','POST',{},600000);   // long timeout: compile can be slow
+  if(!(r&&r.ok)){ setStatus('serStatus','build failed'+(r&&r.via?(' ('+r.via+')'):'')+': '+((r&&r.error)||'?')+(r&&r.log?(' — '+String(r.log).slice(-300)):''),'err'); return; }
+  await loadCatalog();
+  const idx=_catalog.findIndex(x=>x.id==='bin:'+r.name || (x.url&&x.url.endsWith('/'+r.name)));
+  if(idx>=0){ document.getElementById('fwSel').value=idx; }
+  setStatus('serStatus','✓ built '+r.name+' (USB-CDC-off S3 image) — flashing over USB…','ok');
+  await flashSelected();
+}
 async function flashSelected(){
   const a=selectedArtifact(); if(!a){ return; }
+  if(a.kind==='sketch' || a.needs_build){ return sketchBuildHelp(a); }   // Arduino: build in the IDE, not here
   if(a.kind==='script') return mpUploadScript(a);            // MicroPython main.py over REPL — no flashing
   try{
     setStatus('serStatus','fetching '+(a.label||a.id)+'…');
@@ -878,23 +1149,40 @@ async function flashSelected(){
         setStatus('serStatus','Runtime flashed ✓ — Connect, then click Flash to push '+_catalog[idx].label+' over the REPL.','ok'); } }
   }catch(e){ showBar(false); setStatus('serStatus','flash: '+(e.message||e),'err'); }
 }
-// MicroPython: push a source file over the serial REPL (raw mode). No compiler.
+function _serConsoleText(){ const el=document.getElementById('serConsole'); return el?el.textContent:''; }
+async function _serWaitFor(rx, ms){
+  const t0=Date.now(), mark=Math.max(0,_serConsoleText().length-4);
+  while(Date.now()-t0<ms){ if(rx.test(_serConsoleText().slice(mark))) return true; await sleep(40); }
+  return false;
+}
+// MicroPython: push a source file over the serial REPL (raw mode), then VERIFY the
+// on-device byte count so a dropped-byte upload fails loudly instead of silently
+// booting a corrupt main.py (which is what caused the SyntaxError boot-loop).
 async function mpUploadText(filename, content){
   if(!_serWriter){ await serialConnect(); }
   if(!_serWriter) throw new Error('serial not connected');
+  if(_bridgeTimer) stopBridge();                                   // bridge JSON must not collide with the REPL
   const w=_serWriter, enc=new TextEncoder();
-  await w.write(enc.encode('\r\x03\x03')); await sleep(120);       // Ctrl-C twice (interrupt)
-  await w.write(enc.encode('\r\x01')); await sleep(180);           // Ctrl-A (raw REPL)
+  const nbytes=enc.encode(content).length;                         // device file size = UTF-8 bytes
+  await w.write(enc.encode('\r\x03\x03')); await sleep(150);       // Ctrl-C twice (interrupt anything running)
+  await w.write(enc.encode('\x01'));                               // Ctrl-A (raw REPL)
+  await _serWaitFor(/raw REPL/, 1500); await sleep(120);           // wait for the banner before sending code
+  // One raw block: open → write chunks → close → print the size. Runs atomically at Ctrl-D.
   await w.write(enc.encode('f=open('+JSON.stringify(filename)+",'w')\r"));
-  for(let i=0;i<content.length;i+=180){
-    const chunk=content.slice(i,i+180);
-    await w.write(enc.encode('f.write('+JSON.stringify(chunk)+')\r'));
-    await sleep(14);
+  for(let i=0;i<content.length;i+=160){
+    await w.write(enc.encode('f.write('+JSON.stringify(content.slice(i,i+160))+')\r'));
+    await sleep(18);
   }
-  await w.write(enc.encode('f.close()\r')); await sleep(60);
-  await w.write(enc.encode('\x04')); await sleep(400);             // Ctrl-D (execute block)
-  await w.write(enc.encode('\x02')); await sleep(80);              // Ctrl-B (friendly REPL)
-  await w.write(enc.encode('\r\x04')); await sleep(80);            // soft reset → run main.py
+  await w.write(enc.encode('f.close()\r'));
+  await w.write(enc.encode("import os as _o\rprint('WROTE',_o.stat("+JSON.stringify(filename)+')[6])\r'));
+  await w.write(enc.encode('\x04'));                               // Ctrl-D → execute the block
+  const ok=await _serWaitFor(new RegExp('WROTE '+nbytes+'(\\D|$)'), 4000);
+  await w.write(enc.encode('\x02')); await sleep(120);             // Ctrl-B (friendly REPL)
+  if(!ok){
+    const m=(_serConsoleText().match(/WROTE (\d+)/)||[])[1];
+    throw new Error('upload verify failed — device has '+(m||'?')+' of '+nbytes+' bytes (dropped bytes). Re-push; if it repeats, unplug/replug and try again.');
+  }
+  await w.write(enc.encode('\r\x04')); await sleep(120);           // soft reset → run main.py
 }
 async function mpReplPresent(){
   if(!_serWriter) return false;
@@ -909,21 +1197,44 @@ async function mpUploadScript(a){
     if(!_serWriter){ setStatus('serStatus','connect the USB device first','warn'); return; }
     if(!(await mpReplPresent())){
       setStatus('serStatus','No MicroPython REPL — flash the “MicroPython runtime” first, then push this.','err'); return; }
-    const sep=(a.text_url||'').includes('?')?'&':'?';
-    const url=BASE+(a.text_url||'/mesh/firmware?flavor=micropython')+sep+'server='+encodeURIComponent(serverUrl());
+    const base=a.text_url||'/mesh/firmware?flavor=micropython';
+    const opts=fwOptsQuery();
+    const path=base+(base.includes('?')?'&':'?')+'server='+encodeURIComponent(serverUrl())+(opts?('&'+opts):'');
     setStatus('serStatus','fetching '+(a.label||a.id)+'…');
-    const text=await (await fetch(url)).text();
+    const text=await fetchFirmwareText(path);      // BASE then same-origin fallback + clear errors
+    const baked=[]; if(document.getElementById('optDisplay').checked) baked.push('display');
+    if(document.getElementById('optWifi').checked) baked.push('wifi');
     setStatus('serStatus','pushing '+(a.upload_as||'main.py')+' over REPL ('+text.length+' bytes)…');
     await mpUploadText(a.upload_as||'main.py', text);
-    setStatus('serStatus','✓ pushed '+(a.upload_as||'main.py')+' — node resetting & joining','ok');
+    setStatus('serStatus','✓ pushed — server '+serverUrl()+(baked.length?(' · baked: '+baked.join(', ')):'')+' — node resetting & joining','ok');
   }catch(e){ setStatus('serStatus','upload: '+(e.message||e),'err'); }
+}
+// One click: flash the runtime if the pick needs it, then push its main.py with
+// the baked options, then it joins. Configure once above, press this.
+async function flashAndOnboard(){
+  const a=selectedArtifact(); if(!a){ setStatus('serStatus','pick a firmware first','warn'); return; }
+  saveOnboard();
+  try{
+    if(a.kind==='script'){ await mpUploadScript(a); return; }   // already has a runtime → just push
+    if(a.kind!=='runtime'){ return flashSelected(); }           // a .bin → plain flash
+    // Runtime: flash it, then chain to its `then` MicroPython script automatically.
+    await flashSelected();
+    const nextId=a.then; const idx=nextId? _catalog.findIndex(x=>x.id===nextId):-1;
+    if(idx<0){ setStatus('serStatus','runtime flashed ✓ — no script linked to auto-push','ok'); return; }
+    document.getElementById('fwSel').value=idx; onFwChange();
+    setStatus('serStatus','runtime flashed — waiting for the board to reboot into MicroPython…');
+    await sleep(2600);
+    if(!_serWriter){ try{ await serialConnect(); await sleep(400); }catch(e){} }   // esptool released the port
+    await mpUploadScript(_catalog[idx]);
+  }catch(e){ showBar(false); setStatus('serStatus','onboard: '+(e.message||e)+' — try “Flash only”, Connect, then push','err'); }
 }
 // OTA: program the selected node over Wi-Fi
 async function pushSelected(){
   if(!_sel){ setStatus('serStatus','select a node in the graph first','warn'); return; }
   const a=selectedArtifact(); if(!a) return;
   let body;
-  if(a.kind==='script') body={node_id:_sel, mode:'file', filename:a.upload_as||'main.py', url:(a.text_url||'/mesh/firmware?flavor=micropython')};
+  if(a.kind==='script'){ const u=a.text_url||'/mesh/firmware?flavor=micropython'; const o=fwOptsQuery();
+    body={node_id:_sel, mode:'file', filename:a.upload_as||'main.py', url:u+(o?((u.includes('?')?'&':'?')+o):'')}; }
   else if(a.source==='local_bin' || (a.url && a.url.startsWith('/mesh/firmware/bin/'))) body={node_id:_sel, mode:'bin', url:a.url};
   else { setStatus('serStatus','remote runtimes must be flashed over USB; upload a .bin to OTA it','warn'); return; }
   const r=await api('/mesh/ota','POST',body);

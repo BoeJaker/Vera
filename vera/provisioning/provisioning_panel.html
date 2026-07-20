@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="dusk">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Vera / Security Suite</title>
@@ -20,7 +25,7 @@ input:focus,select:focus{border-color:var(--acc)}
 .spacer{flex:1}
 .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:6px;background:var(--bg3);border:1px solid var(--border2);color:var(--text);font-size:12px;white-space:nowrap}
 .btn:hover{border-color:var(--acc)}
-.btn.pri{background:var(--acc);border-color:var(--acc);color:#06121c;font-weight:700}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#06121c);font-weight:700}
 .btn.gho{background:transparent}
 .btn.sm{padding:6px 9px;font-size:11px}
 .btn.danger{color:var(--err);border-color:var(--err)}
@@ -52,7 +57,7 @@ input:focus,select:focus{border-color:var(--acc)}
 .step.fail .dot{border-color:var(--err);color:var(--err)}
 .kv-row,.cert-row{display:flex;align-items:center;gap:8px;padding:7px 9px;background:var(--bg1);border:1px solid var(--border);border-radius:6px;font-size:12px}
 .kv-row .k{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mono-out{background:#000;border:1px solid var(--border);border-radius:6px;padding:8px;font-size:11px;color:var(--text);white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto}
+.mono-out{background:var(--bg0);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:11px;color:var(--text);white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto}
 .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:80;background:var(--bg3);border:1px solid var(--border2);color:var(--text);padding:10px 16px;border-radius:8px;font-size:12px;opacity:0;transition:.2s;pointer-events:none}
 .toast.on{opacity:1}.toast.err{border-color:var(--err);color:var(--err)}
 </style>
@@ -70,6 +75,27 @@ input:focus,select:focus{border-color:var(--acc)}
 
   <div id="body">
     <div class="wrap">
+      <!-- ── Deploy backing services (secprov.*) ────────────────────────── -->
+      <div class="card span2">
+        <h3>⓪ Backing services — stand up the containers
+          <span class="spacer" style="flex:1"></span>
+          <select id="svcHost" onchange="svcLoad()" style="width:auto;min-width:150px"></select>
+          <button class="iconbtn" onclick="svcLoad()" title="Refresh">⟳</button>
+          <button class="btn sm pri" onclick="svcDeployAll()">Deploy all</button>
+        </h3>
+        <div class="hint" style="font-size:10.5px;color:var(--dim)">
+          Deploys the containers that back the four control systems —
+          <b>OpenBao</b> (Security · secrets), <b>step-ca</b> (Security / Enroll · private PKI + ACME),
+          <b>lldap</b> (Identity) and <b>OPA</b> (Net Policy) — onto any registered Docker host.
+          To run them on Proxmox: create a CT/VM with Docker (Provision → Software → Install),
+          register it as a Docker host, then pick it here. Generated secrets (root tokens, CA
+          passwords) are shown <b>once</b> in the output below and sealed (Fernet) into Redis.
+          After deploying, paste the endpoints into ① below and Adopt.
+        </div>
+        <div id="svcRows" style="display:flex;flex-direction:column;gap:6px"><span class="hint" style="color:var(--dim)">loading…</span></div>
+        <div id="svcOut" class="mono-out" style="display:none"></div>
+      </div>
+
       <!-- ── Connect / config ───────────────────────────────────────────── -->
       <div class="card span2">
         <h3>① Connect services <span id="cfg-badge" class="badge">edit &amp; save</span></h3>
@@ -215,7 +241,56 @@ async function issueCert(){ const fqdn=$('#certFqdn').value.trim(); if(!fqdn)ret
   }catch(e){ toast(e.message,true); } }
 async function loadCerts(){ try{ const r=await api('/provisioning/pki/cert/list'); $('#certList').innerHTML=(r.certs||[]).map(c=>`<div class="cert-row"><span class="k" style="flex:1">${esc(c.fqdn)}</span><span style="color:var(--dim);font-size:10.5px">${esc((c.issued_at||'').slice(0,10))}</span></div>`).join(''); }catch(e){} }
 
-(async()=>{ await loadConfig(); refresh(); })();
+/* ── Backing services (secprov.*) — deploy openbao / step-ca / lldap / opa ── */
+let _svcCat=[];
+async function svcHosts(){
+  try{ const j=await api('/workers/docker/hosts'); const hosts=j.hosts||[];
+    $('#svcHost').innerHTML=hosts.map(h=>`<option value="${esc(h.id)}"${h.id==='local'?' selected':''}>${esc(h.label||h.id)}</option>`).join('')||'<option value="local">local</option>';
+  }catch(e){ $('#svcHost').innerHTML='<option value="local">local</option>'; }
+}
+async function svcLoad(){
+  if(!_svcCat.length){ try{ _svcCat=(await api('/provision/security/services')).services||[]; }catch(e){ _svcCat=[]; } }
+  let st={};
+  try{ const s=await api('/provision/security/status','POST',{host_id:$('#svcHost').value||'local'});
+    (s.services||[]).forEach(x=>st[x.key]=x);
+  }catch(e){}
+  $('#svcRows').innerHTML=_svcCat.map(c=>{
+    const cur=st[c.key]||{}; const run=/running/i.test(cur.state||'');
+    return `<div class="kv-row" title="${esc(c.desc||'')}">
+      <span class="k"><b>${esc(c.label)}</b> <span style="color:var(--dim);font-size:10.5px">· ${esc(c.system)} · ${esc(c.image)}</span></span>
+      <span class="badge ${run?'ok':cur.state&&cur.state!=='absent'?'warn':''}">${esc(cur.state||'absent')}</span>
+      <span class="badge ${cur.reachable?'ok':''}">${cur.reachable?'reachable':'no probe'}</span>
+      <button class="btn sm ${run?'gho':'pri'}" onclick="svcDeploy('${esc(c.key)}')">${run?'Redeploy':'Deploy'}</button>
+      <button class="btn sm danger" onclick="svcRemove('${esc(c.key)}')">✕</button>
+    </div>`;
+  }).join('')||'<span class="hint" style="color:var(--dim)">service catalog unavailable (backend restart needed?)</span>';
+}
+async function svcDeploy(key){
+  const host=$('#svcHost').value||'local';
+  const o=$('#svcOut'); o.style.display='block'; o.textContent='deploying '+key+' on '+host+'… (image pull can take a while)';
+  try{ const r=await api('/provision/security/deploy','POST',{host_id:host,service:key});
+    o.textContent=JSON.stringify(r,null,2);
+    const svc=(r.services||{})[key]||{};
+    if(svc.secrets) toast('Secrets shown ONCE in the output — save them');
+    svcLoad(); refresh();
+  }catch(e){ o.textContent='Error: '+e.message; toast(e.message,true); }
+}
+async function svcDeployAll(){
+  const host=$('#svcHost').value||'local';
+  if(!confirm('Deploy ALL backing services (openbao, step-ca, lldap, opa) on '+host+'?')) return;
+  const o=$('#svcOut'); o.style.display='block'; o.textContent='deploying all services on '+host+'… (image pulls can take a while)';
+  try{ const r=await api('/provision/security/deploy','POST',{host_id:host,service:'all'});
+    o.textContent=JSON.stringify(r,null,2); toast('Deploy finished — any generated secrets are shown once above'); svcLoad(); refresh();
+  }catch(e){ o.textContent='Error: '+e.message; toast(e.message,true); }
+}
+async function svcRemove(key){
+  if(!confirm('Remove container vera-'+key+'? (named volumes are kept)')) return;
+  try{ const r=await api('/provision/security/remove','POST',{host_id:$('#svcHost').value||'local',service:key});
+    toast(r.ok?'removed':'remove failed',!r.ok); svcLoad();
+  }catch(e){ toast(e.message,true); }
+}
+
+(async()=>{ await loadConfig(); refresh(); await svcHosts(); svcLoad(); })();
 </script>
 </body>
 </html>

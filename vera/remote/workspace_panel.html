@@ -1,0 +1,539 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workspaces</title>
+<script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-terminal.js"></script>
+<style>
+  :root{ --bg0:#0d0f12; --bg1:#14171c; --bg2:#1b1f26; --fg:#d6dde6; --t2:#9aa4b2;
+         --t3:#6b7480; --acc:#5aa9ff; --line:#252b34; --run:#3ecf8e; --stop:#e05a5a; }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg0);color:var(--fg);
+    font:13px/1.45 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  #wrap{display:flex;height:100vh;overflow:hidden}
+  #side{width:220px;min-width:180px;border-right:1px solid var(--line);display:flex;
+    flex-direction:column;background:var(--bg1)}
+  #main{flex:1;display:flex;flex-direction:column;min-width:0}
+  header{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--line)}
+  .ttl{font-weight:600}
+  .spacer{flex:1}
+  .btn{background:var(--bg2);color:var(--fg);border:1px solid var(--line);border-radius:7px;
+    padding:5px 10px;font-size:12px;cursor:pointer}
+  .btn:hover{border-color:var(--acc)}
+  .btn.pri{background:var(--acc);color:var(--on-acc,#04121f);border-color:var(--acc);font-weight:600}
+  .btn.sm{padding:3px 7px;font-size:11px}
+  .btn.on{border-color:var(--acc);color:var(--acc)}
+  .btn.danger:hover{border-color:var(--stop);color:var(--stop)}
+  .list{flex:1;overflow:auto;padding:6px}
+  .wsrow{padding:8px 9px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;
+    cursor:pointer;background:var(--bg0)}
+  .wsrow:hover{border-color:var(--acc)}
+  .wsrow.sel{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc) inset}
+  .wsrow .nm{font-weight:600}
+  .wsrow .sub{color:var(--t3);font-size:11px;margin-top:2px}
+  #grid{flex:1;overflow:auto;padding:10px;display:grid;grid-template-columns:repeat(12,1fr);
+    grid-auto-rows:120px;gap:10px;align-content:start}
+  .tile{background:var(--bg1);border:1px solid var(--line);border-radius:9px;overflow:hidden;
+    display:flex;flex-direction:column;min-width:0}
+  .tile.editing{border-style:dashed;border-color:var(--acc)}
+  .tile .th{display:flex;align-items:center;gap:6px;padding:5px 8px;border-bottom:1px solid var(--line);
+    background:var(--bg2);font-size:12px;cursor:default;flex-shrink:0}
+  .tile.editing .th{cursor:move}
+  .tile .th .nm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tile .tb{flex:1;min-height:0;position:relative;overflow:hidden}
+  .tile .tb iframe{width:100%;height:100%;border:none;background:#000}
+  .tile vera-terminal{width:100%;height:100%}
+  #empty{flex:1;display:flex;align-items:center;justify-content:center;color:var(--t3);
+    flex-direction:column;gap:10px;text-align:center;padding:20px}
+  /* file explorer */
+  .fx{display:flex;flex-direction:column;height:100%;font-size:12px}
+  .fx .bar{display:flex;gap:4px;align-items:center;padding:4px 6px;border-bottom:1px solid var(--line);
+    background:var(--bg0);white-space:nowrap;overflow:auto}
+  .fx .crumb{color:var(--acc);cursor:pointer}
+  .fx .rows{flex:1;overflow:auto}
+  .fx .r{display:flex;gap:8px;padding:3px 8px;cursor:pointer;align-items:center}
+  .fx .r:hover{background:var(--bg2)}
+  .fx .r .sz{margin-left:auto;color:var(--t3);font-size:11px}
+  .fx .viewer{position:absolute;inset:0;background:var(--bg0);display:none;flex-direction:column;z-index:5}
+  .fx .viewer.on{display:flex}
+  .fx .viewer textarea{flex:1;background:var(--bg0);color:var(--fg);border:none;padding:8px;
+    font:12px/1.5 ui-monospace,monospace;resize:none;white-space:pre;overflow:auto}
+  /* metrics widget */
+  .mx{display:flex;flex-direction:column;height:100%;font-size:12px;overflow:hidden}
+  .mx-head{padding:6px 9px;border-bottom:1px solid var(--line);background:var(--bg0);display:flex;
+    flex-direction:column;gap:1px;flex-shrink:0}
+  .mx-os{font-weight:600}
+  .mx-meta{color:var(--t3);font-size:10.5px}
+  .mx-body{flex:1;overflow:auto;padding:8px 9px;display:flex;flex-direction:column;gap:7px}
+  .mx-wait,.mx-err{color:var(--t3);font-size:11px;padding:6px}
+  .mx-err{color:var(--stop)}
+  .mx-row{display:grid;grid-template-columns:1fr 90px 34px;gap:8px;align-items:center}
+  .mx-lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t2)}
+  .mx-lbl .mx-sub{color:var(--t3);font-size:10px;margin-left:5px}
+  .mx-track{height:8px;background:var(--bg0);border:1px solid var(--line);border-radius:5px;overflow:hidden}
+  .mx-fill{height:100%;border-radius:5px 0 0 5px;transition:width .4s}
+  .mx-pct{text-align:right;color:var(--t2);font-size:11px}
+  .mx-load{color:var(--t3);font-size:10.5px;margin-top:2px}
+  /* modal */
+  .ov{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;
+    justify-content:center;z-index:100}
+  .ov.on{display:flex}
+  .box{background:var(--bg1);border:1px solid var(--line);border-radius:12px;width:460px;max-width:94%;
+    max-height:88%;display:flex;flex-direction:column;overflow:hidden}
+  .box h3{margin:0;padding:12px 14px;border-bottom:1px solid var(--line);font-size:14px}
+  .box .bd{padding:12px 14px;overflow:auto}
+  .box .ft{padding:10px 14px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end}
+  .fld{margin-bottom:10px}
+  .fld label{display:block;font-size:11px;color:var(--t2);margin-bottom:3px}
+  .fld input,.fld select{width:100%;background:var(--bg0);border:1px solid var(--line);color:var(--fg);
+    border-radius:6px;padding:6px 8px;font-size:12px}
+  .typegrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+  .typebtn{padding:12px;border:1px solid var(--line);border-radius:8px;text-align:center;cursor:pointer;background:var(--bg0)}
+  .typebtn:hover,.typebtn.on{border-color:var(--acc)}
+  .typebtn .i{font-size:20px}
+  #toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--bg2);
+    border:1px solid var(--line);border-radius:8px;padding:8px 14px;opacity:0;transition:.2s;pointer-events:none;z-index:200}
+  #toast.on{opacity:1} #toast.err{border-color:var(--stop);color:var(--stop)}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="side">
+    <header><span class="ttl">▦ Workspaces</span><span class="spacer"></span>
+      <button class="btn sm" onclick="loadWorkspaces()">↻</button></header>
+    <div class="list" id="wslist"></div>
+    <div style="padding:8px;border-top:1px solid var(--line)">
+      <button class="btn pri" style="width:100%" onclick="newWorkspace()">+ New workspace</button>
+    </div>
+  </div>
+
+  <div id="main">
+    <header>
+      <span class="ttl" id="wsTitle">—</span>
+      <span class="spacer"></span>
+      <button class="btn sm" onclick="openApps()" title="Mount / manage web apps for the app widget">🌐 Apps</button>
+      <button class="btn sm" id="editBtn" onclick="toggleEdit()">✎ Edit</button>
+      <button class="btn sm" id="addBtn" onclick="openAdd()" style="display:none">+ Widget</button>
+      <button class="btn sm pri" id="saveBtn" onclick="saveWorkspace()" style="display:none">Save</button>
+    </header>
+    <div id="empty">
+      <div style="font-size:26px">▦</div>
+      <div>Create a workspace, then add terminal / file-explorer / app / panel widgets<br>bound to a container or VM.</div>
+      <button class="btn pri" onclick="newWorkspace()">+ New workspace</button>
+    </div>
+    <div id="grid" style="display:none"></div>
+  </div>
+</div>
+
+<!-- Add-widget modal -->
+<div class="ov" id="addOv">
+  <div class="box">
+    <h3>Add widget</h3>
+    <div class="bd">
+      <div class="typegrid" id="typeGrid">
+        <div class="typebtn" data-t="terminal" onclick="pickType('terminal')"><div class="i">⌨</div>Terminal</div>
+        <div class="typebtn" data-t="files" onclick="pickType('files')"><div class="i">🗂</div>File explorer</div>
+        <div class="typebtn" data-t="metrics" onclick="pickType('metrics')"><div class="i">📊</div>Host metrics</div>
+        <div class="typebtn" data-t="desktop" onclick="pickType('desktop')"><div class="i">🖥</div>Remote desktop</div>
+        <div class="typebtn" data-t="notebook" onclick="pickType('notebook')"><div class="i">📓</div>Notebook</div>
+        <div class="typebtn" data-t="app" onclick="pickType('app')"><div class="i">🌐</div>Mounted app</div>
+        <div class="typebtn" data-t="panel" onclick="pickType('panel')"><div class="i">🧩</div>Vera panel</div>
+      </div>
+      <div id="cfgConn" style="display:none">
+        <div class="fld"><label>Connection</label><select id="cfgConnSel"></select></div>
+        <div class="fld" id="cfgShellWrap"><label>Shell (blank = login shell)</label><input id="cfgShell" placeholder="sh"></div>
+      </div>
+      <div id="cfgApp" style="display:none">
+        <div class="fld"><label>Mounted app</label><select id="cfgAppSel"></select></div>
+        <div class="hint"><a href="#" onclick="closeAdd();openApps();return false" style="color:var(--acc)">＋ Mount a new app…</a></div>
+      </div>
+      <div id="cfgPanel" style="display:none">
+        <div class="fld"><label>Vera panel</label><select id="cfgPanelSel"></select></div>
+      </div>
+      <div id="cfgDesktop" style="display:none">
+        <div class="fld"><label>Remote-desktop URL</label>
+          <input id="cfgDeskUrl" placeholder="https://host:6080/vnc.html?autoconnect=1  ·  noVNC / Guacamole / web-RDP"></div>
+        <div class="hint">Embeds a <b>web-based</b> remote desktop (noVNC, Apache Guacamole, or an RDP-web gateway). For a raw VNC/RDP port, first expose it through such a gateway, or mount it as an app.</div>
+      </div>
+      <div id="cfgNotebook" style="display:none">
+        <div class="fld"><label>Notebook</label><select id="cfgNotebookSel"></select></div>
+        <div class="hint">Embeds a single notebook (focused — no notebook-list sidebar).</div>
+      </div>
+    </div>
+    <div class="ft">
+      <button class="btn" onclick="closeAdd()">Cancel</button>
+      <button class="btn pri" onclick="confirmAdd()">Add</button>
+    </div>
+  </div>
+</div>
+
+<!-- New-workspace modal -->
+<div class="ov" id="newOv">
+  <div class="box">
+    <h3>New workspace</h3>
+    <div class="bd">
+      <div class="fld"><label>Label</label><input id="nwLabel" placeholder="e.g. debian-vm ops"></div>
+      <div class="fld"><label>Bind to connection (optional — default target for terminals/files)</label>
+        <select id="nwConn"></select></div>
+    </div>
+    <div class="ft"><button class="btn" onclick="closeNew()">Cancel</button>
+      <button class="btn pri" onclick="createWorkspace()">Create</button></div>
+  </div>
+</div>
+
+<!-- Mount / manage apps modal (app.mount / app.detect / app.unmount) -->
+<div class="ov" id="appsOv">
+  <div class="box" style="width:460px">
+    <h3>Mounted apps</h3>
+    <div class="bd">
+      <div id="appsList" style="margin-bottom:12px"></div>
+      <div class="hint">Mount a web UI running on any reachable host — it becomes embeddable as an app widget and is reverse-proxied through Vera (usable off-LAN).</div>
+      <div style="display:flex;gap:8px">
+        <div class="fld" style="flex:2"><label>Host / IP</label><input class="f" id="amHost" placeholder="192.168.0.50"></div>
+        <div class="fld" style="width:90px"><label>Port</label><input class="f" id="amPort" placeholder="3000"></div>
+        <div class="fld" style="width:90px"><label>Scheme</label>
+          <select class="f" id="amScheme"><option value="http">http</option><option value="https">https</option></select></div>
+      </div>
+      <div class="fld"><label>Label</label><input class="f" id="amLabel" placeholder="e.g. Grafana"></div>
+      <div id="amDetect" class="hint"></div>
+    </div>
+    <div class="ft">
+      <button class="btn" onclick="appDetect()" title="Probe the host's common web ports">🔍 Detect</button>
+      <span class="spacer" style="flex:1"></span>
+      <button class="btn" onclick="closeApps()">Close</button>
+      <button class="btn pri" onclick="appMountGo()">Mount</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let WS=[], CUR=null, EDIT=false, CONNS=[], APPS=[], PANELS=[], NOTEBOOKS=[], addType='', dragIdx=-1;
+
+function toast(m,e){ const t=$('#toast'); t.textContent=m; t.className='toast on'+(e?' err':'');
+  clearTimeout(t._h); t._h=setTimeout(()=>t.className='toast',2600); }
+async function api(path,method='GET',body){
+  const o={method,headers:{'Content-Type':'application/json'}}; if(body)o.body=JSON.stringify(body);
+  const r=await fetch(path,o); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
+const uid = () => 'w'+Math.random().toString(36).slice(2,9);
+
+/* ── workspace list ─────────────────────────────────────────── */
+async function loadWorkspaces(){
+  try{ WS=(await api('/remote/workspace/list')).workspaces||[]; }catch(e){ WS=[]; }
+  const el=$('#wslist'); el.innerHTML = WS.length?'':'<div style="color:var(--t3);padding:8px;font-size:12px">No workspaces yet.</div>';
+  WS.forEach(w=>{
+    const d=document.createElement('div'); d.className='wsrow'+(CUR&&CUR.id===w.id?' sel':'');
+    d.innerHTML=`<div class="nm">${esc(w.label)}</div><div class="sub">${w.widget_count||0} widgets</div>`;
+    d.onclick=()=>openWorkspace(w.id);
+    const del=document.createElement('button'); del.className='btn sm danger'; del.textContent='✕';
+    del.style.cssText='float:right;margin-top:-20px'; del.onclick=(e)=>{e.stopPropagation();delWorkspace(w.id);};
+    d.appendChild(del); el.appendChild(d);
+  });
+}
+async function openWorkspace(id){
+  try{ const r=await api('/remote/workspace/get?id='+encodeURIComponent(id));
+    if(!r.ok) return toast('load failed',true);
+    CUR=r.workspace; CUR.widgets=CUR.widgets||[]; EDIT=false;
+    $('#empty').style.display='none'; $('#grid').style.display='';
+    $('#wsTitle').textContent=CUR.label; $('#addBtn').style.display='none'; $('#saveBtn').style.display='none';
+    $('#editBtn').classList.remove('on');
+    renderGrid(); loadWorkspaces();
+  }catch(e){ toast('load failed: '+e.message,true); }
+}
+async function delWorkspace(id){ if(!confirm('Delete workspace?'))return;
+  try{ await api('/remote/workspace/delete','POST',{id}); if(CUR&&CUR.id===id){CUR=null;$('#grid').style.display='none';$('#empty').style.display='';$('#wsTitle').textContent='—';}
+    toast('Deleted'); loadWorkspaces(); }catch(e){ toast('delete failed',true); } }
+
+/* ── new workspace ──────────────────────────────────────────── */
+async function newWorkspace(){
+  await ensureLists();
+  const sel=$('#nwConn'); sel.innerHTML='<option value="">— none —</option>'+
+    CONNS.map(c=>`<option value="${esc(c.id)}">${esc(c.label)} (${esc(c.kind)})</option>`).join('');
+  $('#nwLabel').value=''; $('#newOv').classList.add('on');
+}
+function closeNew(){ $('#newOv').classList.remove('on'); }
+async function createWorkspace(){
+  const label=$('#nwLabel').value.trim()||'workspace';
+  const connId=$('#nwConn').value;
+  const conn=CONNS.find(c=>c.id===connId);
+  const target = conn?{kind:conn.kind,conn_id:conn.id,label:conn.label}:{};
+  try{ const r=await api('/remote/workspace/save','POST',{label,target,widgets:[]});
+    if(!r.ok) return toast('create failed',true);
+    closeNew(); await loadWorkspaces(); openWorkspace(r.workspace.id);
+  }catch(e){ toast('create failed: '+e.message,true); }
+}
+
+/* ── edit / save ────────────────────────────────────────────── */
+function toggleEdit(){ EDIT=!EDIT; $('#editBtn').classList.toggle('on',EDIT);
+  $('#addBtn').style.display=EDIT?'':'none'; $('#saveBtn').style.display=EDIT?'':'none'; renderGrid(); }
+async function saveWorkspace(){
+  if(!CUR) return;
+  const widgets=CUR.widgets.map(w=>({id:w.id,type:w.type,w:w.w,h:w.h,config:w.config}));
+  try{ const r=await api('/remote/workspace/save','POST',{id:CUR.id,label:CUR.label,target:CUR.target,widgets});
+    if(!r.ok) return toast('save failed',true);
+    toast('Saved'); EDIT=false; $('#editBtn').classList.remove('on');
+    $('#addBtn').style.display='none'; $('#saveBtn').style.display='none';
+    renderGrid(); loadWorkspaces();
+  }catch(e){ toast('save failed: '+e.message,true); }
+}
+
+/* ── grid render ────────────────────────────────────────────── */
+function renderGrid(){
+  const g=$('#grid'); g.innerHTML='';
+  (CUR.widgets||[]).forEach((w,idx)=>{
+    w.w=w.w||6; w.h=w.h||3;
+    const t=document.createElement('div'); t.className='tile'+(EDIT?' editing':'');
+    t.style.gridColumn='span '+Math.max(1,Math.min(12,w.w));
+    t.style.gridRow='span '+Math.max(1,w.h);
+    t.draggable=EDIT;
+    t.ondragstart=()=>{dragIdx=idx;}; t.ondragover=(e)=>e.preventDefault();
+    t.ondrop=()=>{ if(dragIdx>=0&&dragIdx!==idx){ const m=CUR.widgets.splice(dragIdx,1)[0]; CUR.widgets.splice(idx,0,m); dragIdx=-1; renderGrid(); } };
+    const head=document.createElement('div'); head.className='th';
+    head.innerHTML=`<span>${wIcon(w.type)}</span><span class="nm">${esc(wTitle(w))}</span><span class="spacer" style="flex:1"></span>`;
+    if(EDIT){
+      head.innerHTML+=`<button class="btn sm" onclick="sz(${idx},'w',-1)">◀</button>`+
+        `<button class="btn sm" onclick="sz(${idx},'w',1)">▶</button>`+
+        `<button class="btn sm" onclick="sz(${idx},'h',-1)">▲</button>`+
+        `<button class="btn sm" onclick="sz(${idx},'h',1)">▼</button>`+
+        `<button class="btn sm danger" onclick="rmW(${idx})">✕</button>`;
+    }
+    const body=document.createElement('div'); body.className='tb';
+    t.appendChild(head); t.appendChild(body); g.appendChild(t);
+    if(!EDIT) mountWidget(w,body);
+    else body.innerHTML='<div style="padding:12px;color:var(--t3);font-size:12px">'+esc(wTitle(w))+' — exit edit mode to run</div>';
+  });
+  if(!CUR.widgets.length) g.innerHTML='<div style="grid-column:span 12;color:var(--t3);padding:20px;text-align:center">Empty — click Edit → + Widget.</div>';
+}
+function wIcon(t){ return t==='terminal'?'⌨':t==='files'?'🗂':t==='metrics'?'📊':t==='desktop'?'🖥':t==='notebook'?'📓':t==='app'?'🌐':t==='panel'?'🧩':'▦'; }
+function wTitle(w){ const c=w.config||{};
+  if(w.type==='terminal') return 'Terminal · '+(c.label||c.conn_id||'');
+  if(w.type==='files') return 'Files · '+(c.label||c.conn_id||'');
+  if(w.type==='metrics') return 'Metrics · '+(c.label||c.conn_id||'');
+  if(w.type==='desktop') return 'Desktop · '+(c.label||'');
+  if(w.type==='notebook') return 'Notebook · '+(c.label||c.nb_id||'');
+  if(w.type==='app') return 'App · '+(c.label||c.app_id||'');
+  if(w.type==='panel') return (c.label||c.panel_id||'Panel');
+  return w.type; }
+function sz(i,dim,d){ const w=CUR.widgets[i]; if(dim==='w') w.w=Math.max(2,Math.min(12,(w.w||6)+d*2)); else w.h=Math.max(2,(w.h||3)+d); renderGrid(); }
+function rmW(i){ CUR.widgets.splice(i,1); renderGrid(); }
+
+/* ── widget mounting ────────────────────────────────────────── */
+async function mountWidget(w,body){
+  const c=w.config||{};
+  if(w.type==='panel'){ body.innerHTML=`<iframe src="/ui/panel/window?id=${encodeURIComponent(c.panel_id)}" allow="microphone; clipboard-read; clipboard-write"></iframe>`; return; }
+  if(w.type==='app'){ body.innerHTML=`<iframe src="/remote/app/${encodeURIComponent(c.app_id)}/" allow="clipboard-read; clipboard-write"></iframe>`; return; }
+  if(w.type==='desktop'){ body.innerHTML=`<iframe src="${esc(c.url||'')}" allow="clipboard-read; clipboard-write; fullscreen"></iframe>`; return; }
+  if(w.type==='notebook'){ body.innerHTML=`<iframe src="/notebook/panel?embed=1&nb=${encodeURIComponent(c.nb_id||'')}" allow="clipboard-read; clipboard-write"></iframe>`; return; }
+  if(w.type==='metrics'){ mountMetrics(w,body); return; }
+  if(w.type==='terminal'){
+    try{ const r=await api('/remote/conn/open','POST',{conn_id:c.conn_id, shell:c.shell||''});
+      if(r.ok && r.ws_path){
+        const term=document.createElement('vera-terminal'); body.appendChild(term); term.connect(r.ws_path);
+      } else if(r.deeplink_url){
+        // Proxmox guest not enrolled to SSH → console-only. Offer the native console.
+        body.innerHTML='<div style="padding:14px;display:flex;flex-direction:column;gap:10px;color:var(--t2);font-size:12px">'
+          +'<div>This Proxmox guest has no in-Vera terminal yet. Enroll it to SSH (Remote panel) for a full terminal, or open its console:</div>'
+          +'<a class="btn pri" style="text-decoration:none;text-align:center;max-width:180px" href="'+esc(r.deeplink_url)+'" target="_blank">Open console ↗</a></div>';
+      } else {
+        body.innerHTML='<div style="padding:10px;color:var(--stop)">'+esc(r.error||'open failed')+'</div>';
+      }
+    }catch(e){ body.innerHTML='<div style="padding:10px;color:var(--stop)">'+esc(e.message)+'</div>'; }
+    return;
+  }
+  if(w.type==='files'){ mountFiles(w,body); return; }
+}
+
+/* ── file explorer widget ───────────────────────────────────── */
+function mountFiles(w,body){
+  const c=w.config||{}; const st={path:c.path||'/', conn:c.conn_id};
+  body.innerHTML=`<div class="fx"><div class="bar"></div><div class="rows"></div>
+    <div class="viewer"><div class="bar" style="justify-content:space-between">
+      <span class="vp" style="overflow:hidden;text-overflow:ellipsis"></span>
+      <span><button class="btn sm" data-a="save">Save</button>
+      <button class="btn sm" data-a="close">Close</button></span></div>
+      <textarea spellcheck="false"></textarea></div></div>`;
+  const fx=body.querySelector('.fx'), bar=fx.querySelector('.bar'), rows=fx.querySelector('.rows');
+  const viewer=fx.querySelector('.viewer'), ta=viewer.querySelector('textarea');
+  viewer.querySelector('[data-a=close]').onclick=()=>viewer.classList.remove('on');
+  viewer.querySelector('[data-a=save]').onclick=async()=>{
+    try{ const r=await api('/remote/fs/write','POST',{conn_id:st.conn,path:st.file,content:ta.value});
+      toast(r.ok?'Saved '+st.file:(r.error||'save failed'),!r.ok); }catch(e){ toast('save failed',true); } };
+  async function nav(p){
+    st.path=p;
+    const parts=p.split('/').filter(Boolean); let acc='';
+    bar.innerHTML=`<span class="crumb" data-p="/">/</span>`+parts.map(seg=>{acc+='/'+seg;return `<span class="crumb" data-p="${esc(acc)}">${esc(seg)}</span><span style="color:var(--t3)">/</span>`;}).join('');
+    bar.querySelectorAll('.crumb').forEach(cr=>cr.onclick=()=>nav(cr.dataset.p));
+    rows.innerHTML='<div style="padding:8px;color:var(--t3)">…</div>';
+    try{ const r=await api('/remote/fs/list','POST',{conn_id:st.conn,path:p});
+      if(!r.ok){ rows.innerHTML='<div style="padding:8px;color:var(--stop)">'+esc(r.error||'ls failed')+'</div>'; return; }
+      rows.innerHTML='';
+      if(p!=='/'){ const up=document.createElement('div'); up.className='r'; up.innerHTML='<span>⬆</span><span>..</span>';
+        up.onclick=()=>nav(p.replace(/\/[^/]+\/?$/,'')||'/'); rows.appendChild(up); }
+      r.entries.forEach(e=>{
+        const d=document.createElement('div'); d.className='r';
+        const ic=e.type==='dir'?'📁':e.type==='link'?'🔗':'📄';
+        d.innerHTML=`<span>${ic}</span><span>${esc(e.name)}</span><span class="sz">${e.type==='file'?fmtB(e.size):''}</span>`;
+        d.onclick=()=>{ const np=(p==='/'?'':p)+'/'+e.name; if(e.type==='dir'||e.type==='link') nav(np); else openFile(np); };
+        rows.appendChild(d);
+      });
+    }catch(e){ rows.innerHTML='<div style="padding:8px;color:var(--stop)">'+esc(e.message)+'</div>'; }
+  }
+  async function openFile(p){
+    st.file=p; viewer.querySelector('.vp').textContent=p; ta.value='loading…'; viewer.classList.add('on');
+    try{ const r=await api('/remote/fs/read','POST',{conn_id:st.conn,path:p});
+      ta.value = r.ok ? (r.binary?'[binary file]':r.text) : (r.error||'read failed'); ta.readOnly=!!(r&&r.binary);
+    }catch(e){ ta.value='read failed: '+e.message; } }
+  nav(st.path);
+}
+function fmtB(n){ if(!n)return'0'; const u=['B','K','M','G']; let i=0; while(n>=1024&&i<3){n/=1024;i++;} return n.toFixed(n<10&&i?1:0)+u[i]; }
+
+/* ── host metrics widget (polls operator.sysinfo for the bound connection) ─── */
+function _pct(n){ n=parseInt(n)||0; return Math.max(0,Math.min(100,n)); }
+function _bar(label,pct,sub){
+  const p=_pct(pct); const col = p>=90?'var(--stop)':p>=70?'#e0a94a':'var(--run)';
+  return `<div class="mx-row"><div class="mx-lbl">${esc(label)}<span class="mx-sub">${esc(sub||'')}</span></div>
+    <div class="mx-track"><div class="mx-fill" style="width:${p}%;background:${col}"></div></div>
+    <div class="mx-pct">${p}%</div></div>`;
+}
+function mountMetrics(w,body){
+  const c=w.config||{};
+  body.innerHTML='<div class="mx"><div class="mx-head"></div><div class="mx-body"><div class="mx-wait">loading metrics…</div></div></div>';
+  const head=body.querySelector('.mx-head'), pane=body.querySelector('.mx-body');
+  let stopped=false;
+  async function tick(){
+    if(stopped||!body.isConnected){ stopped=true; return; }
+    try{
+      const r=await api('/remote/operator/sysinfo','POST',{conn_id:c.conn_id});
+      if(!r.ok){ pane.innerHTML='<div class="mx-err">'+esc(r.error||'metrics unavailable')+'</div>'; }
+      else{
+        head.innerHTML=`<span class="mx-os">${esc(r.os||'host')}</span>`
+          +`<span class="mx-meta">${esc(r.kernel||'')} · ${r.cpus||'?'} cpu · up ${esc((r.uptime||'').replace(/^up\s*/,'').split(',')[0]||'')}</span>`;
+        const mem=r.mem||{}; const memPct = mem.total_mb? Math.round(100*(mem.total_mb-(mem.available_mb!=null?mem.available_mb:mem.total_mb-mem.used_mb))/mem.total_mb):0;
+        const load=(/load average[s]?:\s*([\d.]+)/i.exec(r.uptime||'')||[])[1];
+        let html='';
+        html+=_bar('Memory',memPct, mem.total_mb?`${fmtMB(mem.total_mb-(mem.available_mb!=null?mem.available_mb:0))} / ${fmtMB(mem.total_mb)}`:'');
+        (r.disks||[]).slice(0,4).forEach(d=>{ html+=_bar('Disk '+(d.mount||''), (d.use_pct||'').replace('%',''), d.size||''); });
+        if(load!=null) html+=`<div class="mx-load">load ${esc(load)}</div>`;
+        pane.innerHTML=html||'<div class="mx-wait">no metrics</div>';
+      }
+    }catch(e){ pane.innerHTML='<div class="mx-err">'+esc(e.message||'error')+'</div>'; }
+    if(!stopped) setTimeout(tick, 6000);
+  }
+  tick();
+}
+function fmtMB(mb){ mb=parseInt(mb)||0; return mb>=1024?(mb/1024).toFixed(1)+'G':mb+'M'; }
+
+/* ── mount / manage apps (app.mount / app.detect / app.unmount) ─ */
+async function openApps(){
+  try{ APPS=(await api('/remote/app/list')).apps||[]; }catch(e){}
+  appsRender(); $('#amDetect').textContent='';
+  $('#appsOv').classList.add('on'); $('#amHost').focus();
+}
+function closeApps(){ $('#appsOv').classList.remove('on'); }
+function appsRender(){
+  $('#appsList').innerHTML = APPS.length
+    ? APPS.map(a=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;margin-bottom:5px">
+        <span style="font-weight:600">${esc(a.label)}</span>
+        <span style="color:var(--t3);font-size:11px;flex:1">${esc(a.scheme)}://${esc(a.host)}:${a.port}</span>
+        <a class="btn sm" href="${esc(a.proxy_path||'#')}" target="_blank">Open</a>
+        <button class="btn sm danger" onclick="appUnmount('${esc(a.id)}')">✕</button>
+      </div>`).join('')
+    : '<div class="hint">No apps mounted yet.</div>';
+}
+async function appDetect(){
+  const host=$('#amHost').value.trim();
+  if(!host) return toast('enter a host first',true);
+  $('#amDetect').textContent='Scanning common web ports…';
+  try{
+    const r=await api('/remote/app/detect','POST',{host});
+    const apps=r.apps||[];
+    $('#amDetect').innerHTML = apps.length
+      ? 'Found: '+apps.map(a=>`<a href="#" onclick="$('#amPort').value='${a.port}';$('#amScheme').value='${esc(a.scheme)}';if(!$('#amLabel').value)$('#amLabel').value='${esc(a.label)}';return false" style="color:var(--acc)">${esc(a.label)} :${a.port}</a>`).join(' · ')
+      : 'Nothing detected — enter the port manually.';
+  }catch(e){ $('#amDetect').textContent='detect failed: '+e.message; }
+}
+async function appMountGo(){
+  const host=$('#amHost').value.trim(), port=parseInt($('#amPort').value)||0;
+  if(!host||!port) return toast('host and port required',true);
+  try{
+    const r=await api('/remote/app/mount','POST',{label:$('#amLabel').value.trim(),host,port,scheme:$('#amScheme').value});
+    if(!r.ok) return toast(r.error||'mount failed',true);
+    toast('Mounted '+(r.app&&r.app.label||''));
+    APPS=(await api('/remote/app/list')).apps||[]; appsRender();
+    $('#amLabel').value='';
+  }catch(e){ toast('mount failed: '+e.message,true); }
+}
+async function appUnmount(id){
+  if(!confirm('Unmount this app? Widgets using it will stop loading.')) return;
+  try{ await api('/remote/app/unmount','POST',{id}); APPS=APPS.filter(a=>a.id!==id); appsRender(); }
+  catch(e){ toast('unmount failed: '+e.message,true); }
+}
+
+/* ── add widget ─────────────────────────────────────────────── */
+async function ensureLists(){
+  try{ if(!CONNS.length) CONNS=(await api('/remote/conn/list')).connections||[]; }catch(e){}
+  try{ APPS=(await api('/remote/app/list')).apps||[]; }catch(e){}
+  try{ PANELS=(await api('/ui/panels'))||[]; }catch(e){}
+  try{ const r=await api('/research/notebook/list'); NOTEBOOKS=Array.isArray(r)?r:(r.notebooks||r.items||r.list||[]); }catch(e){ NOTEBOOKS=[]; }
+}
+async function openAdd(){ await ensureLists(); addType='';
+  document.querySelectorAll('.typebtn').forEach(b=>b.classList.remove('on'));
+  ['cfgConn','cfgApp','cfgPanel'].forEach(id=>$('#'+id).style.display='none');
+  $('#addOv').classList.add('on'); }
+function closeAdd(){ $('#addOv').classList.remove('on'); }
+function pickType(t){ addType=t;
+  document.querySelectorAll('.typebtn').forEach(b=>b.classList.toggle('on',b.dataset.t===t));
+  // Terminal, files and metrics are all bound to a connection.
+  $('#cfgConn').style.display=(t==='terminal'||t==='files'||t==='metrics')?'':'none';
+  $('#cfgShellWrap').style.display=(t==='terminal')?'':'none';
+  $('#cfgApp').style.display=(t==='app')?'':'none';
+  $('#cfgPanel').style.display=(t==='panel')?'':'none';
+  $('#cfgDesktop').style.display=(t==='desktop')?'':'none';
+  $('#cfgNotebook').style.display=(t==='notebook')?'':'none';
+  if(t==='terminal'||t==='files'||t==='metrics'){
+    const pre=(CUR.target&&CUR.target.conn_id)||'';
+    $('#cfgConnSel').innerHTML=CONNS.map(c=>`<option value="${esc(c.id)}" ${c.id===pre?'selected':''}>${esc(c.label)} (${esc(c.kind)})</option>`).join('')||'<option value="">no connections</option>';
+  }
+  if(t==='app') $('#cfgAppSel').innerHTML=APPS.map(a=>`<option value="${esc(a.id)}">${esc(a.label)}</option>`).join('')||'<option value="">no mounted apps</option>';
+  if(t==='panel') $('#cfgPanelSel').innerHTML=PANELS.filter(p=>p.id!=='workspaces').map(p=>`<option value="${esc(p.id)}">${esc(p.label||p.id)}</option>`).join('');
+  if(t==='notebook') $('#cfgNotebookSel').innerHTML=NOTEBOOKS.map(n=>`<option value="${esc(n.id)}">${esc(n.title||n.label||n.id)}</option>`).join('')||'<option value="">no notebooks yet</option>';
+}
+function confirmAdd(){
+  if(!addType) return toast('pick a widget type',true);
+  let config={};
+  let defW=6, defH=3;
+  if(addType==='terminal'||addType==='files'){
+    const id=$('#cfgConnSel').value; if(!id) return toast('no connection selected',true);
+    const c=CONNS.find(x=>x.id===id)||{}; config={conn_id:id,label:c.label};
+    if(addType==='terminal') config.shell=$('#cfgShell').value.trim();
+    else config.path='/';
+  } else if(addType==='metrics'){
+    const id=$('#cfgConnSel').value; if(!id) return toast('no connection selected',true);
+    const c=CONNS.find(x=>x.id===id)||{}; config={conn_id:id,label:c.label,kind:c.kind};
+    defW=4; defH=3;
+  } else if(addType==='desktop'){
+    const url=$('#cfgDeskUrl').value.trim(); if(!url) return toast('enter a remote-desktop URL',true);
+    config={url,label:'Remote desktop'}; defW=8; defH=5;
+  } else if(addType==='notebook'){
+    const id=$('#cfgNotebookSel').value; if(!id) return toast('no notebook selected',true);
+    const n=NOTEBOOKS.find(x=>x.id===id)||{}; config={nb_id:id,label:n.title||n.label||id}; defW=6; defH=5;
+  } else if(addType==='app'){
+    const id=$('#cfgAppSel').value; if(!id) return toast('no app selected',true);
+    const a=APPS.find(x=>x.id===id)||{}; config={app_id:id,label:a.label};
+  } else if(addType==='panel'){
+    const id=$('#cfgPanelSel').value; if(!id) return toast('no panel selected',true);
+    const p=PANELS.find(x=>x.id===id)||{}; config={panel_id:id,label:p.label||id};
+  }
+  CUR.widgets.push({id:uid(),type:addType,w:defW,h:defH,config});
+  closeAdd(); renderGrid();
+}
+
+loadWorkspaces();
+</script>
+</body>
+</html>

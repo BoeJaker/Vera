@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <title>Vera Agents</title>
 <style>
@@ -24,7 +29,7 @@ input[type=checkbox],input[type=range]{width:auto}
 select option{background:var(--bg2)}
 .btn{display:inline-flex;align-items:center;gap:3px;padding:3px 10px;border-radius:3px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);font-size:11px;font-weight:500;cursor:pointer;transition:all .14s;white-space:nowrap}
 .btn:hover{border-color:var(--acc);color:var(--acc)}
-.btn.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#fff)}
 .btn.pri:hover{filter:brightness(1.1);color:#fff}
 .btn.teal{background:rgba(143,184,122,.1);border-color:var(--acc2);color:var(--acc2)}
 .btn.amber{background:rgba(201,149,90,.1);border-color:var(--acc3);color:var(--acc3)}
@@ -388,6 +393,38 @@ input[type=range]{padding:0;accent-color:var(--acc3);cursor:pointer}
               <input id="f-memory_tags" placeholder="tag1, tag2 (blank = all)">
               <div class="hint">only recall memories with matching tags</div></div>
           </div>
+          <div class="sec">Session Memory Notes &amp; Context</div>
+          <div class="g2" style="margin-bottom:12px">
+            <div style="background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:10px">
+              <div style="font-size:10px;font-weight:600;margin-bottom:6px">Session memory notes</div>
+              <div class="row" style="margin-bottom:4px;gap:8px"><input type="checkbox" id="f-notes_inject" checked>
+                <span style="font-size:10px;color:var(--dim2)">Inject the agent-maintained memory note</span></div>
+              <div class="hint">A small structured file (goals, user instructions, key facts, mistakes to avoid, next steps) the agent updates via notes.* caps — injected into the system prompt each turn.</div>
+            </div>
+            <div style="background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:10px">
+              <div style="font-size:10px;font-weight:600;margin-bottom:6px">Capability mesh context</div>
+              <div class="row" style="margin-bottom:4px;gap:8px"><input type="checkbox" id="f-cap_ontology_inject">
+                <span style="font-size:10px;color:var(--dim2)">Inject cap-ontology relations for this agent's caps</span></div>
+              <div class="hint">Documented feeds_into / prerequisite_of / alternative_to relations between the agent's allowed capabilities (plus hidden-adjacent edges) from the Cap Ontology grid.</div>
+            </div>
+          </div>
+          <div class="g2" style="margin-bottom:12px">
+            <div style="background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:10px">
+              <div style="font-size:10px;font-weight:600;margin-bottom:6px">Quick opener (long prompts)</div>
+              <div class="row" style="margin-bottom:4px;gap:8px"><input type="checkbox" id="f-quick_opener">
+                <span style="font-size:10px;color:var(--dim2)">Instant one-line acknowledgement from a second endpoint</span></div>
+              <div class="hint">When the user's message exceeds the threshold, a second Ollama instance streams a one-sentence acknowledgement immediately while the main response generates. The main response is told to skip greetings and go straight to business.</div>
+            </div>
+            <div>
+              <div style="font-size:9.5px;color:var(--dim2);margin-bottom:3px">Trigger threshold (chars)</div>
+              <input id="f-quick_opener_threshold" type="number" value="1500" min="200" step="100">
+              <div style="font-size:9.5px;color:var(--dim2);margin:8px 0 3px">Opener model (blank = agent model)</div>
+              <input id="f-quick_opener_model" placeholder="e.g. llama3.2:1b">
+            </div>
+          </div>
+          <div class="sec">Agent Memory Note</div>
+          <script src="/ui/vera-notes.js"></script>
+          <vera-session-notes id="agent-notes-el" scope="agent" title="Agent memory" style="margin-bottom:12px;display:block"></vera-session-notes>
           <div class="sec">Session Tools</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
             <button class="btn sm" onclick="AP.memSearch()">Search memories</button>
@@ -539,6 +576,13 @@ const AP = (() => {
     document.getElementById('f-memory_inject').checked=!!a.memory_inject;
     document.getElementById('f-memory_inject_limit').value=a.memory_inject_limit??5;
     document.getElementById('f-memory_tags').value=a.memory_tags||'';
+    document.getElementById('f-notes_inject').checked=a.notes_inject!==false;
+    document.getElementById('f-cap_ontology_inject').checked=!!a.cap_ontology_inject;
+    document.getElementById('f-quick_opener').checked=!!a.quick_opener;
+    document.getElementById('f-quick_opener_threshold').value=a.quick_opener_threshold??1500;
+    document.getElementById('f-quick_opener_model').value=a.quick_opener_model||'';
+    const notesEl=document.getElementById('agent-notes-el');
+    if(notesEl){ if(a.name) notesEl.setAttribute('ref-id',a.name); else notesEl.removeAttribute('ref-id'); }
     document.getElementById('test-name').textContent=a.name||'assistant';
     document.getElementById('del-btn').style.display=a.id?'inline-flex':'none';
     document.getElementById('save-status').textContent='';
@@ -554,6 +598,8 @@ const AP = (() => {
       mirostat:0,stop:[],think:false,system_prompt:'',greeting:'',voice:'af_heart',tts_speed:1.0,
       domain_caps:[],domain_description:'',tool_mode:'none',
       memory_enabled:true,memory_inject:false,memory_inject_limit:5,memory_tags:'',
+      notes_inject:true,cap_ontology_inject:false,
+      quick_opener:false,quick_opener_threshold:1500,quick_opener_model:'',
       skill_ids:[],ontology_ids:[]});
     showEd();tab('identity',document.querySelector('.mtab'));
   }
@@ -576,6 +622,10 @@ const AP = (() => {
       skill_ids:[...selSk].join(','),ontology_ids:[...selOnt].join(','),
       memory_enabled:fc('f-memory_enabled'),memory_inject:fc('f-memory_inject'),
       memory_inject_limit:fi('f-memory_inject_limit'),memory_tags:fv('f-memory_tags'),
+      notes_inject:fc('f-notes_inject'),cap_ontology_inject:fc('f-cap_ontology_inject'),
+      quick_opener:fc('f-quick_opener'),
+      quick_opener_threshold:fi('f-quick_opener_threshold')||1500,
+      quick_opener_model:fv('f-quick_opener_model'),
     };
     const res=await api('/agents/create','POST',body);
     if(!res||res.error){st.textContent='Error: '+(res?.error||'failed');st.className='status err';return;}

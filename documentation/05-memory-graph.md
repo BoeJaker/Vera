@@ -106,6 +106,21 @@ The `VERA_ACTIVITY_RECORDING` env var defaults to `"0"`. Set it to `"1"` to enab
 | `memory.graph_stats` | `GET /memory/graph/stats` | Counts by label, category, edge type |
 | `memory.graph_clear` | `POST /memory/graph/clear` | Destructive: wipe everything (requires `confirm=true`) |
 | `memory.session_summary` | various | Summary helpers (categories, top nodes, etc.) |
+| `memory.reindex_embeddings` | `POST /memory/reindex_embeddings` | Re-embed vectors already IN Chroma with the current provider (dry-run by default) |
+| `memory.backfill_vectors` | `POST /memory/backfill_vectors` | Re-encode records in Postgres that are MISSING from the current Chroma collection — post-reset / model-switch / embedder-outage repair (dry-run by default) |
+
+### Vector hygiene
+
+The Chroma collection is **versioned per embed model**
+(`vera_memory__<model>`), because different models emit different dimensions
+(all-minilm = 384, nomic-embed-text = 768) and mixing them raises Chroma's
+"expecting embedding with dimension of N, got M". Records are only ever
+upserted with an **explicit vector** — when the embedder is offline the vector
+write is skipped (the record is safe in Postgres) instead of falling back to
+Chroma's built-in 384-dim default embedder. The embed circuit-breaker retries
+every 5 minutes rather than latching until restart. After an outage or a
+collection reset, run `memory.backfill_vectors` to re-encode the gap from
+Postgres.
 
 ### `memory.query`
 

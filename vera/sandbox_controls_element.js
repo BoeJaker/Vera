@@ -140,6 +140,26 @@
     .test .verdict.no{color:var(--sb-err)}
     .test .verdict .why{color:var(--sb-t3);font-size:10px}
 
+    .sbx{background:var(--sb-s1);border:1px solid var(--sb-bd);border-radius:6px;
+         padding:11px 13px;display:flex;flex-direction:column;gap:7px}
+    .sbx .s-head{display:flex;align-items:center;gap:8px}
+    .sbx .s-head .cnt{flex:1;color:var(--sb-t3);font-size:10px}
+    .sbx .s-head button{cursor:pointer;border:1px solid var(--sb-bd);background:var(--sb-s2);
+         color:var(--sb-t2);border-radius:4px;padding:3px 9px;font:inherit;font-size:10px}
+    .sbx .s-head button:hover{color:var(--sb-t1);border-color:var(--sb-bd2)}
+    .sbx .s-row{display:flex;align-items:center;gap:8px;padding:6px 8px;background:var(--sb-s2);
+         border:1px solid var(--sb-bd);border-radius:4px;font-size:10px}
+    .sbx .s-row .sid{font-weight:600;color:var(--sb-t1)}
+    .sbx .s-row .meta{flex:1;color:var(--sb-t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .sbx .s-row .badge{font-size:9px;padding:1px 6px;border-radius:8px;border:1px solid var(--sb-bd2)}
+    .sbx .s-row .badge.on{color:var(--sb-ok);border-color:var(--sb-ok)}
+    .sbx .s-row .badge.off{color:var(--sb-t3)}
+    .sbx .s-row button{cursor:pointer;border:1px solid var(--sb-bd);background:var(--sb-s1);
+         color:var(--sb-t2);border-radius:3px;padding:2px 7px;font:inherit;font-size:9px}
+    .sbx .s-row button:hover{color:var(--sb-t1);border-color:var(--sb-bd2)}
+    .sbx .s-row button.danger:hover{color:var(--sb-err);border-color:var(--sb-err)}
+    .sbx .s-empty{color:var(--sb-t3);font-size:10px}
+
     .foot{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--sb-s1);
           border-top:1px solid var(--sb-bd);flex-shrink:0}
     .foot .msg{flex:1;font-size:10px;color:var(--sb-t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -240,6 +260,34 @@
           <div class="verdict" data-test-verdict></div>
           <div class="hint" style="color:var(--sb-t3);font-size:9px">Client-side preview of the blocklist/allowlist + deny-path rules. The server is the source of truth.</div>
         </div>
+
+        <div class="sect-ttl">Container sandboxes · per-session Docker isolation</div>
+        <div class="sbx">
+          <div class="s-cfg" style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;padding-bottom:7px;border-bottom:1px solid var(--sb-bd)">
+            <div class="field" style="flex:0 0 auto;min-width:150px">
+              <label>Docker host · where containers run</label>
+              <select class="num" style="width:100%" data-sbx-host></select>
+            </div>
+            <div class="field" style="flex:1;min-width:140px">
+              <label>Base image</label>
+              <input class="num" style="width:100%" type="text" data-sbx-image spellcheck="false" placeholder="python:3.12-slim">
+            </div>
+            <div class="field" style="flex:0 0 auto">
+              <label>Idle sleep (min) · 0 = off</label>
+              <input class="num" style="width:80px" type="number" min="0" step="1" data-sbx-idle>
+            </div>
+            <label class="chk" title="System-wide default: any session that executes shell/code or writes artifacts gets its own container automatically — chat, agent loops, dream cycles, goals. Off = containers only where explicitly started."><input type="checkbox" data-sbx-autocreate> containers on by default</label>
+            <label class="chk" title="Keep agent-generated files in /workspace: HOME, temp and cache dirs are redirected into the workspace volume and the exec cwd defaults there, so 'pipe to /tmp' output lands in the browsable, synced workspace. Reads elsewhere in the container still work."><input type="checkbox" data-sbx-confine> confine writes to /workspace</label>
+            <label class="chk" title="When a session container is stopped, snapshot its /workspace to the blob store (Garage) and commit the image so the session can be fully restored later. Off = stop just removes the container (the /workspace volume is still kept)."><input type="checkbox" data-sbx-archive> archive on stop</label>
+            <button data-sbx-cfg-save title="Save the sandbox defaults (host, image, auto-create, idle sleep, archive)">Save defaults</button>
+          </div>
+          <div class="s-head">
+            <span class="cnt" data-sbx-count>—</span>
+            <button data-sbx-refresh>↻ Refresh</button>
+          </div>
+          <div data-sbx-list style="display:flex;flex-direction:column;gap:5px"></div>
+          <div class="hint" style="font-size:9px">While a sandbox is ACTIVE, its session's shell, code &amp; file IO run inside that container instead of this host (sandbox.session.*). Sleeping containers wake automatically on next use. Provision a dedicated desktopless Docker host with the <code>sandbox.host.provision</code> cap (Proxmox LXC + Docker).</div>
+        </div>
       </div>
       <div class="foot">
         <span class="msg" data-msg></span>
@@ -285,6 +333,178 @@
       this._el('[data-test-cmd]').addEventListener('keydown', (e) => {
         if (e.key === 'Enter') { e.preventDefault(); this._runTest(); }
       });
+      this._el('[data-sbx-refresh]').onclick = () => this._sbxRefresh();
+      this._el('[data-sbx-cfg-save]').onclick = () => this._sbxCfgSave();
+    }
+
+    async _sbxCfgLoad() {
+      // Docker host list + current sandbox defaults, loaded side by side.
+      try {
+        const [cr, hr] = await Promise.all([
+          fetch(this._api('/remote/sandbox/config'), { method: 'GET' }),
+          fetch(this._api('/workers/docker/hosts'), { method: 'GET' }),
+        ]);
+        const cfg = cr.ok ? await cr.json() : {};
+        const hosts = hr.ok ? ((await hr.json()).hosts || []) : [];
+        const sel = this._el('[data-sbx-host]');
+        if (sel) {
+          const cur = cfg.docker_host_id || 'local';
+          sel.innerHTML = (hosts.length ? hosts : [{ id: 'local', label: 'local' }])
+            .map((h) => `<option value="${this._esc(h.id)}"${h.id === cur ? ' selected' : ''}>${this._esc(h.label || h.id)}${h.kind ? ' · ' + this._esc(h.kind) : ''}</option>`)
+            .join('');
+          if (![...sel.options].some((o) => o.value === cur)) {
+            sel.insertAdjacentHTML('afterbegin',
+              `<option value="${this._esc(cur)}" selected>${this._esc(cur)}</option>`);
+          }
+        }
+        const img = this._el('[data-sbx-image]');
+        if (img) img.value = cfg.base_image || '';
+        const idle = this._el('[data-sbx-idle]');
+        if (idle) idle.value = Number(cfg.idle_sleep_minutes ?? 30);
+        const ac = this._el('[data-sbx-autocreate]');
+        if (ac) ac.checked = cfg.auto_create !== false;
+        const cf = this._el('[data-sbx-confine]');
+        if (cf) cf.checked = cfg.confine_writes !== false;
+        const cb = this._el('[data-sbx-archive]');
+        if (cb) cb.checked = cfg.archive_on_stop !== false;
+      } catch (e) { /* module may not be loaded */ }
+    }
+
+    async _sbxCfgSave() {
+      try {
+        const body = {
+          docker_host_id: this._el('[data-sbx-host]')?.value || 'local',
+          base_image: (this._el('[data-sbx-image]')?.value || '').trim(),
+          idle_sleep_minutes: Math.max(0, parseInt(this._el('[data-sbx-idle]')?.value, 10) || 0),
+          auto_create: !!this._el('[data-sbx-autocreate]')?.checked,
+          confine_writes: !!this._el('[data-sbx-confine]')?.checked,
+          archive_on_stop: !!this._el('[data-sbx-archive]')?.checked,
+        };
+        const r = await fetch(this._api('/remote/sandbox/config/set'), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const j = await r.json();
+        if (!r.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + r.status));
+        this._msg('sandbox defaults saved', 'ok');
+      } catch (e) { this._msg('sandbox defaults save failed: ' + e.message, 'err'); }
+    }
+
+    // ── container sandboxes (per-session Docker isolation) ──────────────────
+    async _sbxRefresh() {
+      const list = this._el('[data-sbx-list]');
+      const cnt = this._el('[data-sbx-count]');
+      if (!list) return;
+      this._sbxCfgLoad();   // archive-on-stop checkbox loads in parallel
+      let rows = [];
+      try {
+        const r = await fetch(this._api('/remote/sandbox/list'), { method: 'GET' });
+        if (r.ok) rows = (await r.json()).sandboxes || [];
+      } catch (e) { /* module may not be loaded — leave list empty */ }
+      cnt.textContent = rows.length
+        ? rows.length + ' session sandbox' + (rows.length === 1 ? '' : 'es') +
+          ' · ' + rows.filter((s) => s.active).length + ' active'
+        : 'no session sandboxes yet';
+      if (!rows.length) {
+        list.innerHTML = '<div class="s-empty">Nothing here — a sandbox appears when a session starts one (or via Docker → Session Sandboxes → ➕).</div>';
+        return;
+      }
+      list.innerHTML = rows.map((s) => {
+        const running = (s.state || '') === 'running';
+        const stateBadge = s.state
+          ? `<span class="badge ${running ? 'on' : 'off'}">${this._esc(s.state)}</span>` : '';
+        const kind = s.kind && s.kind !== 'session'
+          ? `<span class="badge" style="color:var(--sb-ac);border-color:var(--sb-ac)">${this._esc(s.kind)}</span>` : '';
+        const sleepWake = running
+          ? `<button data-sbx-sleep="${this._esc(s.session_id)}" title="docker-stop the container (kept + auto-wakes on next use)">Sleep</button>`
+          : `<button data-sbx-wake="${this._esc(s.session_id)}" title="Start the container back up (installed packages survive)">Wake</button>`;
+        return `
+        <div class="s-row">
+          <span class="sid" title="${this._esc(s.session_id)}">${this._esc(s.label || s.session_id)}</span>
+          ${kind}
+          <span class="meta">${this._esc(s.container || '')} · ${this._esc(s.image || '')} · ${this._esc(s.docker_host_id || 'local')}</span>
+          ${stateBadge}
+          <span class="badge ${s.active ? 'on' : 'off'}">${s.active ? 'active' : 'inactive'}</span>
+          <button data-sbx-toggle="${this._esc(s.session_id)}" title="${s.active ? 'Stop routing this session into the container' : 'Route this session’s exec/code into the container'}">${s.active ? 'Deactivate' : 'Activate'}</button>
+          ${sleepWake}
+          <button class="danger" data-sbx-stop="${this._esc(s.session_id)}" title="Stop the container (archived first when archiving is on)">Stop</button>
+        </div>`;
+      }).join('');
+      list.querySelectorAll('[data-sbx-toggle]').forEach((b) => {
+        b.onclick = () => this._sbxToggle(b.getAttribute('data-sbx-toggle'));
+      });
+      list.querySelectorAll('[data-sbx-stop]').forEach((b) => {
+        b.onclick = () => this._sbxStop(b.getAttribute('data-sbx-stop'));
+      });
+      list.querySelectorAll('[data-sbx-sleep]').forEach((b) => {
+        b.onclick = () => this._sbxSleep(b.getAttribute('data-sbx-sleep'));
+      });
+      list.querySelectorAll('[data-sbx-wake]').forEach((b) => {
+        b.onclick = () => this._sbxWake(b.getAttribute('data-sbx-wake'));
+      });
+    }
+
+    async _sbxSleep(sid) {
+      try {
+        const r = await fetch(this._api('/remote/sandbox/sleep'), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sid }),
+        });
+        const j = await r.json();
+        if (j.ok === false) this._msg('sleep failed: ' + (j.error || ''), 'err');
+        else this._msg('container sleeping — wakes on next use', 'ok');
+      } catch (e) { this._msg('sleep failed: ' + e.message, 'err'); }
+      this._sbxRefresh();
+    }
+
+    async _sbxWake(sid) {
+      try {
+        const r = await fetch(this._api('/remote/sandbox/start'), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sid, enable: true }),
+        });
+        const j = await r.json();
+        if (j.ok === false) this._msg('wake failed: ' + (j.error || ''), 'err');
+      } catch (e) { this._msg('wake failed: ' + e.message, 'err'); }
+      this._sbxRefresh();
+    }
+
+    async _sbxToggle(sid) {
+      const rowActive = !!(this.shadowRoot.querySelector(`[data-sbx-toggle="${CSS.escape(sid)}"]`)?.textContent === 'Deactivate');
+      try {
+        // Activate ensures the container exists + is running (start); deactivate
+        // only flips the routing flag (set_active) — no docker run/rm side effects.
+        const r = rowActive
+          ? await fetch(this._api('/remote/sandbox/set_active'), {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ session_id: sid, active: false }),
+            })
+          : await fetch(this._api('/remote/sandbox/start'), {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ session_id: sid, enable: true }),
+            });
+        const j = await r.json();
+        if (j.ok === false) this._msg('sandbox toggle failed: ' + (j.error || ''), 'err');
+      } catch (e) { this._msg('sandbox toggle failed: ' + e.message, 'err'); }
+      this._sbxRefresh();
+    }
+
+    async _sbxStop(sid) {
+      const arch = this._el('[data-sbx-archive]')?.checked;
+      if (!window.confirm('Stop sandbox "' + sid + '"?' + (arch
+        ? ' It is archived first (workspace → blob store, image commit) so it can be restored later.'
+        : ' Archiving is OFF — the container is removed (its /workspace volume is kept).'))) return;
+      try {
+        // sync/commit omitted on purpose: the server applies the global
+        // archive_on_stop config as the default.
+        const r = await fetch(this._api('/remote/sandbox/stop'), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sid, remove: true }),
+        });
+        const j = await r.json();
+        if (j.ok === false) this._msg('sandbox stop failed: ' + (j.error || ''), 'err');
+      } catch (e) { this._msg('sandbox stop failed: ' + e.message, 'err'); }
+      this._sbxRefresh();
     }
 
     _reflectEnabled() {
@@ -303,6 +523,7 @@
     // ── load ────────────────────────────────────────────────────────────────
     async refresh() {
       this._msg('loading…');
+      this._sbxRefresh();   // container-sandbox list loads in parallel
       try {
         const r = await fetch(this._api('/exec/sandbox'), { method: 'GET' });
         if (!r.ok) throw new Error('HTTP ' + r.status);

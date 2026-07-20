@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script>/* vera theme boot — paint cached theme before CSS parses */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<meta charset="UTF-8">
+<title>Vera — Web API Providers</title>
+<style>
+:root{
+  --bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;
+  --border:#3a3530;--border2:#4a4540;
+  --acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--acc4:#9e8fa0;
+  --ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;
+  --text:#ddd5c8;--fg:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;
+  --mono:'JetBrains Mono','Fira Mono',monospace;
+  --sans:'Inter','IBM Plex Sans',system-ui,sans-serif;
+  --radius:5px;--radius-sm:3px;--radius-lg:8px;color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:12px}
+body{overflow-y:auto;padding:12px}
+.pane-tb{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.pane-tb-title{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:2px;color:var(--acc4)}
+.tb-sep{width:1px;height:15px;background:var(--border2)}
+.status-hint{font-size:9px;color:var(--dim2);font-family:var(--mono);margin-left:auto}
+.btn{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg2);color:var(--dim2);cursor:pointer;font-family:var(--sans);font-size:10.5px;font-weight:500;transition:all .14s}
+.btn:hover{border-color:var(--acc);color:var(--acc)}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#fff);font-weight:600}
+.btn.primary:hover{filter:brightness(1.1)}
+.btn.sm{padding:2px 7px;font-size:9.5px}
+.btn.err-btn{border-color:var(--err);color:var(--err)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.intro{font-size:10.5px;color:var(--dim2);line-height:1.5;margin-bottom:12px;max-width:900px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:10px;margin-bottom:14px}
+.card{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius-lg);padding:11px 13px}
+.card.disabled{opacity:.62}
+.card-h{display:flex;align-items:center;gap:7px;margin-bottom:8px}
+.card-t{font-family:var(--mono);font-size:12px;font-weight:700;flex:1}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--dim);flex-shrink:0}
+.dot.ok{background:var(--ok);box-shadow:0 0 6px rgba(109,184,122,.5)}
+.dot.err{background:var(--err);box-shadow:0 0 6px rgba(201,107,107,.5)}
+.kind-badge{font-size:7.5px;font-family:var(--mono);font-weight:700;padding:2px 6px;border-radius:3px;background:var(--bg2);border:1px solid var(--border);color:var(--acc2);text-transform:uppercase;letter-spacing:.6px}
+.blurb{font-size:9px;color:var(--dim);line-height:1.45;margin-bottom:8px}
+.fld{display:flex;flex-direction:column;gap:2px;margin-bottom:7px}
+.fld label{font-size:8px;font-family:var(--mono);color:var(--dim2);text-transform:uppercase;letter-spacing:.7px}
+.fld input,.fld select,.fld textarea{background:var(--bg0);border:1px solid var(--border2);color:var(--text);padding:5px 8px;border-radius:var(--radius-sm);font-family:var(--mono);font-size:10px;width:100%}
+.fld input:focus,.fld select:focus,.fld textarea:focus{outline:none;border-color:var(--acc)}
+.fld-row{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.keyhint{font-size:8px;font-family:var(--mono)}
+.keyhint.has{color:var(--ok)}.keyhint.none{color:var(--dim)}
+.row-actions{display:flex;gap:5px;align-items:center;margin-top:8px;padding-top:7px;border-top:1px solid var(--border)}
+.test-out{font-size:9px;font-family:var(--mono);color:var(--dim2);margin-top:6px;min-height:13px;white-space:pre-wrap}
+.toggle{display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-size:9px;color:var(--dim2);font-family:var(--mono)}
+.toggle input{accent-color:var(--acc)}
+.sec-title{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:1.5px;color:var(--dim2);text-transform:uppercase;margin:4px 0 8px}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
+@media(max-width:820px){.two-col{grid-template-columns:1fr}}
+.play-out{background:var(--bg0);border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px;font-family:var(--mono);font-size:10px;white-space:pre-wrap;min-height:60px;max-height:280px;overflow-y:auto;color:var(--text);margin-top:7px}
+.res{padding:6px 0;border-bottom:1px solid rgba(58,53,48,.4)}
+.res a{color:var(--acc2);text-decoration:none;font-size:10.5px;font-weight:600}
+.res a:hover{text-decoration:underline}
+.res .snip{color:var(--dim2);font-size:9px;margin-top:2px;line-height:1.4}
+.res .eng{font-size:7.5px;color:var(--acc3);font-family:var(--mono)}
+.empty{padding:18px;text-align:center;color:var(--dim);font-size:11px}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:flex-start;justify-content:center;padding:40px 12px;z-index:50;overflow-y:auto}
+.modal-bg.on{display:flex}
+.modal{background:var(--bg1);border:1px solid var(--border2);border-radius:var(--radius-lg);padding:16px;width:100%;max-width:460px}
+.modal h3{font-family:var(--mono);font-size:12px;color:var(--acc4);margin-bottom:10px;letter-spacing:1px}
+::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:3px}
+</style>
+</head>
+<body>
+
+<div class="pane-tb">
+  <span class="pane-tb-title">WEB API PROVIDERS</span>
+  <span class="tb-sep"></span>
+  <button class="btn sm" onclick="P.reload()">↻ Refresh</button>
+  <button class="btn sm primary" onclick="P.openAdd()">+ Add provider</button>
+  <span class="status-hint" id="ts"></span>
+</div>
+
+<div class="intro">
+  Register a platform's own API here and Vera's web search &amp; fetch will
+  automatically use it instead of scraping — cleanest for sites that hard-block
+  crawlers (Reddit above all). A provider claims one or more <b>domains</b> (any
+  fetch of those hosts is served by the API) and optional <b>trigger keywords</b>
+  (a web search containing one, or a <code>site:</code> filter, runs the platform's
+  own search first). Credentials are sealed in Vera's vault.
+</div>
+
+<div class="sec-title">Providers</div>
+<div class="grid" id="providers"><div class="empty">Loading…</div></div>
+
+<div class="two-col">
+  <div>
+    <div class="sec-title">Search tester</div>
+    <div class="card">
+      <div class="fld-row">
+        <div class="fld"><label>Provider</label><select id="t-prov"></select></div>
+        <div class="fld"><label>Limit</label><input id="t-limit" type="number" value="8"></div>
+      </div>
+      <div class="fld"><label>Query</label><input id="t-query" placeholder="e.g. best mechanical keyboard"></div>
+      <button class="btn primary" style="width:100%" onclick="P.runSearch()">Search via API</button>
+      <div class="play-out" id="t-out">Results appear here…</div>
+    </div>
+  </div>
+  <div>
+    <div class="sec-title">Fetch tester</div>
+    <div class="card">
+      <div class="fld"><label>URL</label><input id="f-url" placeholder="https://www.reddit.com/r/…/comments/…"></div>
+      <button class="btn primary" style="width:100%" onclick="P.runFetch()">Fetch via API</button>
+      <div class="play-out" id="f-out">Fetched text appears here…</div>
+    </div>
+  </div>
+</div>
+
+<!-- Add-provider modal -->
+<div class="modal-bg" id="addbg">
+  <div class="modal">
+    <h3>Add API provider</h3>
+    <div class="fld"><label>Type</label><select id="add-kind" onchange="P.addKindChange()"></select></div>
+    <div class="blurb" id="add-blurb"></div>
+    <div class="fld"><label>Provider ID (unique)</label><input id="add-id" placeholder="reddit"></div>
+    <div id="add-fields"></div>
+    <div class="row-actions" style="border:none;justify-content:flex-end">
+      <button class="btn" onclick="P.closeAdd()">Cancel</button>
+      <button class="btn primary" onclick="P.createProvider()">Create</button>
+    </div>
+    <div class="test-out" id="add-err" style="color:var(--err)"></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+const P = (function(){
+const $ = id => document.getElementById(id);
+const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+async function api(path, method='GET', body=null){
+  const opts={method,headers:{'Content-Type':'application/json'}};
+  if(body) opts.body=JSON.stringify(body);
+  const r=await fetch(path,opts); return r.json();
+}
+
+let _providers=[], _drivers=[];
+
+function driverOf(kind){ return _drivers.find(d=>d.kind===kind)||{fields:[]}; }
+
+function fieldInput(pid, f, stored){
+  const iid=`f-${esc(pid)}-${esc(f.key)}`;
+  if(f.secret){
+    const ph = stored ? '•••••• (blank = keep)' : 'not set';
+    return `<div class="fld"><label>${esc(f.label)}</label>
+      <input id="${iid}" type="password" placeholder="${ph}" data-secret="1" data-key="${esc(f.key)}">
+      <span class="keyhint ${stored?'has':'none'}">${stored?'● stored':'○ empty'}</span></div>`;
+  }
+  return `<div class="fld"><label>${esc(f.label)}</label>
+    <input id="${iid}" value="${esc((cfgVal(pid,f.key)))}" data-key="${esc(f.key)}"></div>`;
+}
+let _cfgCache={};
+function cfgVal(pid,key){ return (_cfgCache[pid]||{})[key]||''; }
+
+function renderProviders(){
+  const el=$('providers');
+  if(!_providers.length){ el.innerHTML='<div class="empty">No providers yet — click “+ Add provider”. Reddit needs a script app from reddit.com/prefs/apps.</div>'; return; }
+  el.innerHTML=_providers.map(p=>{
+    _cfgCache[p.id]=p.config||{};
+    const fields=(p.fields||[]).map(f=>fieldInput(p.id,f,(p.has_secret||{})[f.key])).join('');
+    return `<div class="card ${p.enabled?'':'disabled'}" data-id="${esc(p.id)}">
+      <div class="card-h">
+        <span class="dot" id="dot-${esc(p.id)}"></span>
+        <span class="card-t">${esc(p.label||p.id)}</span>
+        <span class="kind-badge">${esc(p.kind)}</span>
+      </div>
+      ${p.blurb?`<div class="blurb">${esc(p.blurb)}</div>`:''}
+      <div class="fld"><label>Domains (comma-sep — hosts served by this API)</label>
+        <input id="dom-${esc(p.id)}" value="${esc((p.domains||[]).join(', '))}"></div>
+      <div class="fld"><label>Trigger keywords (comma-sep — search switchover)</label>
+        <input id="kw-${esc(p.id)}" value="${esc((p.keywords||[]).join(', '))}"></div>
+      ${fields}
+      <div class="row-actions">
+        <label class="toggle"><input type="checkbox" id="en-${esc(p.id)}" ${p.enabled?'checked':''}> enabled</label>
+        <span style="flex:1"></span>
+        <button class="btn sm" onclick="P.test('${esc(p.id)}')">Test</button>
+        <button class="btn sm primary" onclick="P.save('${esc(p.id)}')">Save</button>
+        <button class="btn sm err-btn" onclick="P.del('${esc(p.id)}')">✕</button>
+      </div>
+      <div class="test-out" id="test-${esc(p.id)}"></div>
+    </div>`;
+  }).join('');
+}
+
+function collectFields(pid){
+  const config={}, secrets={};
+  const card=document.querySelector(`.card[data-id="${CSS.escape(pid)}"]`);
+  if(!card) return {config,secrets};
+  card.querySelectorAll('input[data-key]').forEach(inp=>{
+    const k=inp.getAttribute('data-key');
+    if(inp.getAttribute('data-secret')){ if(inp.value) secrets[k]=inp.value; }
+    else config[k]=inp.value;
+  });
+  return {config,secrets};
+}
+
+async function save(pid){
+  const p=_providers.find(x=>x.id===pid); if(!p) return;
+  const {config,secrets}=collectFields(pid);
+  const domains=($(`dom-${pid}`).value||'').split(',').map(s=>s.trim()).filter(Boolean);
+  const keywords=($(`kw-${pid}`).value||'').split(',').map(s=>s.trim()).filter(Boolean);
+  const enabled=$(`en-${pid}`).checked;
+  $(`test-${pid}`).textContent='Saving…';
+  const r=await api('/web/api/save','POST',{id:pid,kind:p.kind,enabled,domains,keywords,config,secrets});
+  $(`test-${pid}`).textContent=r.ok?'✓ saved':('✕ '+(r.error||'error'));
+  await reload();
+}
+
+async function test(pid){
+  $(`test-${pid}`).textContent='Testing…';
+  const r=await api('/web/api/test','POST',{id:pid});
+  const dot=$(`dot-${pid}`);
+  if(r.ok){ dot.className='dot ok'; $(`test-${pid}`).textContent='✓ '+(r.info||'ok')+(r.latency_ms?` · ${r.latency_ms}ms`:''); }
+  else { dot.className='dot err'; $(`test-${pid}`).textContent='✕ '+(r.error||'failed'); }
+}
+
+async function del(pid){
+  if(!confirm(`Delete provider "${pid}"?`)) return;
+  await api('/web/api/delete','POST',{id:pid}); await reload();
+}
+
+/* ── Add modal ── */
+function openAdd(){ $('add-err').textContent=''; $('add-id').value=''; $('addbg').classList.add('on'); addKindChange(); }
+function closeAdd(){ $('addbg').classList.remove('on'); }
+function addKindChange(){
+  const d=driverOf($('add-kind').value);
+  $('add-blurb').textContent=d.blurb||'';
+  if(!$('add-id').value && d.kind) $('add-id').value=d.kind;
+  $('add-fields').innerHTML=(d.fields||[]).map(f=>
+    `<div class="fld"><label>${esc(f.label)}</label>
+      <input id="add-f-${esc(f.key)}" data-key="${esc(f.key)}" data-secret="${f.secret?1:0}"
+       type="${f.secret?'password':'text'}"></div>`).join('')
+    || '<div class="blurb">No credentials required.</div>';
+}
+async function createProvider(){
+  const kind=$('add-kind').value, id=($('add-id').value||'').trim();
+  if(!id){ $('add-err').textContent='provider id required'; return; }
+  const d=driverOf(kind), config={}, secrets={};
+  (d.fields||[]).forEach(f=>{
+    const v=($(`add-f-${f.key}`)||{}).value||'';
+    if(!v) return;
+    if(f.secret) secrets[f.key]=v; else config[f.key]=v;
+  });
+  const r=await api('/web/api/save','POST',{id,kind,enabled:true,config,secrets});
+  if(r.ok){ closeAdd(); await reload(); }
+  else $('add-err').textContent=r.error||'error';
+}
+
+/* ── Testers ── */
+async function runSearch(){
+  const id=$('t-prov').value, query=$('t-query').value, limit=+$('t-limit').value||8;
+  if(!query){ $('t-out').textContent='enter a query'; return; }
+  $('t-out').textContent='Searching…';
+  const r=await api('/web/api/search','POST',{id,query,limit});
+  if(r.error){ $('t-out').textContent='✕ '+r.error; return; }
+  if(!r.results||!r.results.length){ $('t-out').textContent='No results.'; return; }
+  $('t-out').innerHTML=r.results.map(x=>
+    `<div class="res"><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title||x.url)}</a>
+      <span class="eng"> ${esc(x.engine||'')}</span>
+      <div class="snip">${esc(x.snippet||'')}</div></div>`).join('');
+}
+async function runFetch(){
+  const url=$('f-url').value;
+  if(!url){ $('f-out').textContent='enter a URL'; return; }
+  $('f-out').textContent='Fetching…';
+  const r=await api('/web/api/fetch','POST',{url});
+  if(r.error){ $('f-out').textContent='✕ '+r.error; return; }
+  $('f-out').textContent=`[${r.provider}] ${r.title||''}\n\n${r.text||''}`;
+}
+
+async function reload(){
+  const [list,drv]=await Promise.all([api('/web/api/list'),api('/web/api/drivers')]);
+  _providers=list.providers||[]; _drivers=drv.drivers||[];
+  renderProviders();
+  $('add-kind').innerHTML=_drivers.map(d=>`<option value="${esc(d.kind)}">${esc(d.label)}</option>`).join('');
+  $('t-prov').innerHTML=_providers.map(p=>`<option value="${esc(p.id)}">${esc(p.label||p.id)}</option>`).join('')
+    || '<option value="">(no providers)</option>';
+  $('ts').textContent='updated '+new Date().toLocaleTimeString();
+}
+
+$('addbg').addEventListener('click',e=>{ if(e.target===$('addbg')) closeAdd(); });
+reload();
+return {reload,save,test,del,openAdd,closeAdd,addKindChange,createProvider,runSearch,runFetch};
+})();
+</script>
+</body>
+</html>

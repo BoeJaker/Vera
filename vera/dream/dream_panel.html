@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8"><title>Vera Dream</title>
 <style>
 :root{
@@ -126,7 +131,7 @@ label.fld{font-size:9.5px;color:var(--fg3);display:block;margin-bottom:3px;text-
 .sensor-card .sc-desc{font-size:9.5px;color:var(--fg2);line-height:1.4}
 .sensor-card .sc-check{position:absolute;top:8px;right:9px;width:14px;height:14px;
   border-radius:50%;border:1.5px solid var(--border2);display:flex;align-items:center;justify-content:center;font-size:8px}
-.sensor-card.selected .sc-check{background:var(--acc2);border-color:var(--acc2);color:#0a1a0f}
+.sensor-card.selected .sc-check{background:var(--acc2);border-color:var(--acc2);color:var(--on-acc,#0a1a0f)}
 .sc-params{margin-top:8px;display:none}
 .sensor-card.selected .sc-params{display:block}
 .sc-params textarea{font-size:9.5px;min-height:38px;margin-top:4px}
@@ -166,9 +171,10 @@ label.fld{font-size:9.5px;color:var(--fg3);display:block;margin-bottom:3px;text-
   padding:10px 12px;margin-bottom:8px;cursor:pointer;transition:.12s}
 .hist-item:hover{border-color:var(--border3)}
 .hist-item .hi-title{font-size:12px;font-weight:600;margin-bottom:4px;display:flex;align-items:baseline;gap:8px}
-.hist-item .hi-report{display:none;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);
-  white-space:pre-wrap;font-size:10.5px;line-height:1.6;max-height:380px;overflow-y:auto;color:var(--fg2)}
-.hist-item.open .hi-report{display:block}
+.hist-item .hi-report{display:block;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);
+  white-space:pre-wrap;font-size:10.5px;line-height:1.6;color:var(--fg2)}
+.hist-item.collapsed .hi-report{display:none}
+.hist-item .hi-title{cursor:pointer}
 .chip{font-size:8.5px;padding:1px 6px;border-radius:3px;background:var(--bg3);
   border:1px solid var(--border2);color:var(--fg3);font-family:var(--mono)}
 
@@ -180,6 +186,7 @@ label.fld{font-size:9.5px;color:var(--fg3);display:block;margin-bottom:3px;text-
 .cursor{display:inline-block;width:6px;height:12px;background:var(--acc);
   vertical-align:text-bottom;animation:blink 1s steps(2) infinite}
 @keyframes blink{50%{opacity:0}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 
 /* ── AGENT LOOP STEPS ── */
 .al-status{font-size:10px;font-family:var(--mono);color:var(--acc3);
@@ -205,7 +212,7 @@ label.fld{font-size:9.5px;color:var(--fg3);display:block;margin-bottom:3px;text-
 .projtab.on{color:var(--acc);border-bottom-color:var(--acc);font-weight:600}
 .plog-chip{font-size:11px;padding:5px 11px;border-radius:7px;border:1px solid var(--border);background:var(--bg2);cursor:pointer;color:var(--fg2)}
 .plog-chip:hover{border-color:var(--acc)}
-.plog-chip.on{background:var(--acc);color:#08121f;border-color:var(--acc);font-weight:600}
+.plog-chip.on{background:var(--acc);color:var(--on-acc,#08121f);border-color:var(--acc);font-weight:600}
 .git-card{border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px}
 .git-card .gr-name{font-size:12px;font-weight:600;font-family:var(--mono)}
 .git-card .gr-path{font-size:10px;color:var(--fg3);font-family:var(--mono);margin-top:2px}
@@ -238,9 +245,52 @@ label.fld{font-size:9.5px;color:var(--fg3);display:block;margin-bottom:3px;text-
 .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px}
 .form-grid .full{grid-column:1/-1}
 .form-row{display:flex;flex-direction:column;gap:3px}
+.form-section-h{grid-column:1/-1;font-size:9.5px;text-transform:uppercase;letter-spacing:.7px;
+  color:var(--acc);font-weight:600;margin:12px 0 2px;padding-bottom:5px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:7px}
+.form-section-h::before{content:'';width:3px;height:11px;background:var(--acc);border-radius:2px;opacity:.8}
+.form-section-h:first-child{margin-top:0}
+.form-section-h .hint{margin-left:auto;font-size:8.5px;font-weight:400;letter-spacing:.2px;
+  text-transform:none;color:var(--fg3)}
 .settings-section{margin-bottom:18px}
 .settings-section h4{font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--fg3);
   font-weight:600;margin-bottom:8px;padding-bottom:5px;border-bottom:1px solid var(--border)}
+
+/* ── LIVE DREAM PAGE + RUNNING INDICATORS ── */
+#badge-live{background:var(--acc2,#4ade80)}
+#badge-live.on{animation:pulse 1.4s ease-in-out infinite}
+/* "Now dreaming" banner on the dashboard */
+.dash-now{display:none;align-items:center;gap:12px;margin-bottom:12px;padding:9px 14px;border-radius:8px;
+  background:linear-gradient(135deg,rgba(109,158,235,.12),rgba(74,222,128,.06));border:1px solid rgba(109,158,235,.3)}
+.dash-now .dn-dot{width:8px;height:8px;border-radius:50%;background:var(--acc2,#4ade80);
+  box-shadow:0 0 8px rgba(74,222,128,.6);animation:pulse 1.4s ease-in-out infinite;flex-shrink:0}
+.dash-now .dn-label{font-size:8.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--fg3);font-weight:600}
+.dash-now .dn-name{font-size:13px;font-weight:600;color:var(--fg)}
+.dash-now .dn-trigger{font-family:var(--mono);font-size:9.5px;color:var(--acc)}
+.dash-now .dn-meta{font-family:var(--mono);font-size:10px;color:var(--fg3)}
+/* Live page hero */
+.live-hero{background:linear-gradient(135deg,rgba(109,158,235,.08),var(--bg1));
+  border:1px solid var(--border2);border-radius:10px;padding:16px 18px;margin-bottom:12px}
+.live-hero .lh-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.live-hero .lh-dot{width:10px;height:10px;border-radius:50%;background:var(--acc2,#4ade80);
+  box-shadow:0 0 10px rgba(74,222,128,.6);animation:pulse 1.4s ease-in-out infinite;flex-shrink:0}
+.live-hero .lh-name{font-size:20px;font-weight:700;letter-spacing:-.3px;color:var(--fg)}
+.live-hero .lh-trigger{font-family:var(--mono);font-size:11px;color:var(--acc);
+  background:rgba(109,158,235,.1);border:1px solid rgba(109,158,235,.25);border-radius:5px;padding:2px 8px}
+.live-hero .lh-elapsed{margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--fg2)}
+.live-hero .lh-stage{font-family:var(--mono);font-size:11px;color:var(--acc3);margin-top:2px}
+.live-progress{display:flex;gap:4px;flex-wrap:wrap;margin-top:12px}
+.live-progress .lp-seg{font-size:9px;font-family:var(--mono);padding:3px 9px;border-radius:4px;
+  background:var(--bg3);border:1px solid var(--border);color:var(--fg3);white-space:nowrap}
+.live-progress .lp-seg.done{background:rgba(74,222,128,.12);border-color:rgba(74,222,128,.3);color:var(--acc2,#4ade80)}
+.live-progress .lp-seg.active{background:rgba(109,158,235,.15);border-color:var(--acc);color:var(--acc);animation:pulse 1.5s infinite}
+.live-idle{text-align:center;color:var(--fg3);padding:48px 20px}
+.live-idle .li-icon{font-size:30px;opacity:.4;margin-bottom:8px}
+.live-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.live-grid .full{grid-column:1/-1}
+@media(max-width:860px){.live-grid{grid-template-columns:1fr}}
+.live-card{display:flex;flex-direction:column}
+.live-card .card-bd{flex:1;min-height:120px;display:flex;flex-direction:column}
 
 /* ── MODAL ── */
 .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9000;
@@ -261,8 +311,11 @@ label.fld{font-size:9.5px;color:var(--fg3);display:block;margin-bottom:3px;text-
 #sec-overview .dash-picker{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px}
 #sec-overview .pick-chip{font-size:9px;font-family:var(--mono);padding:2px 8px;border-radius:3px;background:var(--bg3);border:1px dashed var(--border2);color:var(--fg3);cursor:pointer}
 #sec-overview .pick-chip:hover{border-color:var(--acc);color:var(--acc)}
-#sec-overview .dash-grid{display:grid;grid-template-columns:repeat(12,1fr);grid-auto-rows:minmax(60px,auto);gap:10px;margin-bottom:14px}
-#sec-overview .dash-grid.editing{outline:1px dashed var(--border2);outline-offset:6px;border-radius:6px;background:repeating-linear-gradient(45deg,transparent 0 11px,rgba(255,255,255,.012) 11px 22px)}
+/* flex:0 0 auto guards against the grid being shrunk if this section is ever a
+   flex column; padding-bottom leaves scroll room to expand bottom-row widgets. */
+#sec-overview .dash-grid{display:grid;grid-template-columns:repeat(12,1fr);grid-auto-rows:minmax(60px,auto);gap:10px;margin-bottom:14px;flex:0 0 auto;padding-bottom:100px}
+/* Configuring → extra empty scroll space below to resize/drag widgets into. */
+#sec-overview .dash-grid.editing{outline:1px dashed var(--border2);outline-offset:6px;border-radius:6px;background:repeating-linear-gradient(45deg,transparent 0 11px,rgba(255,255,255,.012) 11px 22px);padding-bottom:240px}
 #sec-overview .widget{background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.35);display:flex;flex-direction:column;min-width:0;min-height:0;overflow:visible;position:relative;transition:border-color .15s,transform .15s}
 #sec-overview .widget:hover{border-color:var(--border2)}
 #sec-overview .widget.dragging{opacity:.45;transform:scale(.985)}
@@ -389,6 +442,11 @@ hr{border:none;border-top:1px solid var(--border);margin:10px 0}
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>
     <span>Overview</span>
   </button>
+  <button class="nav-btn" data-sec="live" title="Live dream output" style="position:relative">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2"/><path d="M4.5 4.5a5 5 0 000 7M11.5 4.5a5 5 0 010 7M2.5 2.5a8 8 0 000 11M13.5 2.5a8 8 0 010 11"/></svg>
+    <span>Live</span>
+    <span class="sb-badge" id="badge-live"></span>
+  </button>
   <button class="nav-btn" data-sec="triggers" title="Pipelines">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 2L5 9h4l-2 5 6-7H9l2-5z"/></svg>
     <span>Pipelines</span>
@@ -411,9 +469,13 @@ hr{border:none;border-top:1px solid var(--border);margin:10px 0}
     <span>Thoughts</span>
   </button>
   <div class="sb-sep"></div>
-  <button class="nav-btn" data-sec="history" title="History">
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/></svg>
-    <span>History</span>
+  <button class="nav-btn" data-sec="history" title="Timeline &amp; History — what ran, how long it took, what fires next">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13h12M4 9v4M7 5v8M10 7v6M13 3v10"/></svg>
+    <span>Timeline</span>
+  </button>
+  <button class="nav-btn" data-sec="activity" title="Activity — unified timeline of every dream, loop, program &amp; tool, live">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 8h3l2-5 2 10 2-5h3"/></svg>
+    <span>Activity</span>
   </button>
   <button class="nav-btn" data-sec="hitl" title="Approvals" style="position:relative">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 12a5 5 0 0110 0"/><circle cx="8" cy="5" r="2.5"/></svg>
@@ -423,10 +485,6 @@ hr{border:none;border-top:1px solid var(--border);margin:10px 0}
   <button class="nav-btn" data-sec="whitelist" title="Whitelist">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="12" height="10" rx="1"/><path d="M5 7l2 2 4-4"/></svg>
     <span>Whitelist</span>
-  </button>
-  <button class="nav-btn" data-sec="timeline" title="Timeline">
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13h12M4 9v4M7 5v8M10 7v6M13 3v10"/></svg>
-    <span>Timeline</span>
   </button>
   <button class="nav-btn" data-sec="director" title="Director">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="5" r="3"/><path d="M8 8c-3 0-5 1.5-5 4h10c0-2.5-2-4-5-4z"/><path d="M12 2l2 2-2 2M14 4h-3"/></svg>
@@ -467,6 +525,19 @@ hr{border:none;border-top:1px solid var(--border);margin:10px 0}
   <div class="dash-picker" id="dashHiddenPicker" style="display:none">
     <span style="font-size:9.5px;color:var(--fg3);align-self:center;margin-right:4px;letter-spacing:.5px;text-transform:uppercase">Hidden:</span>
     <span id="dashHiddenChips"></span>
+  </div>
+
+  <!-- Now-dreaming banner — shows the running dream's name; links to the Live page -->
+  <div class="dash-now" id="dash-now">
+    <span class="dn-dot"></span>
+    <div style="display:flex;flex-direction:column;gap:1px">
+      <span class="dn-label">Now dreaming</span>
+      <span class="dn-name" id="dash-now-name">—</span>
+    </div>
+    <span class="dn-trigger" id="dash-now-trigger"></span>
+    <span class="dn-meta" id="dash-now-stage"></span>
+    <span class="dn-meta" id="dash-now-elapsed" style="margin-left:auto"></span>
+    <button class="btn sm pri" onclick="nav('live')">Open live view &#8594;</button>
   </div>
 
   <div class="dash-grid" id="dashGrid">
@@ -577,78 +648,8 @@ hr{border:none;border-top:1px solid var(--border);margin:10px 0}
       <span class="w-resize" data-resize></span>
     </div>
 
-    <!-- LLM stream -->
-    <div class="widget w-w8 w-h2" data-wid="stream">
-      <div class="w-head">
-        <span class="w-grip">&#8942;&#8942;</span>
-        <span class="w-dot" id="wStreamDot"></span>
-        <span class="w-title">LLM Stream</span>
-        <span style="font-size:9px;color:var(--fg3)" id="str-stage"></span>
-        <span style="font-size:9px;color:var(--fg3);font-family:var(--mono)" id="str-cid"></span>
-        <span class="w-actions">
-          <button class="w-iconbtn" onclick="strClear()">&#8635;</button>
-          <button class="w-iconbtn" onclick="dashHideWidget('stream')">&times;</button>
-        </span>
-      </div>
-      <div class="w-body flush" style="display:flex;flex-direction:column;flex:1">
-        <div class="stream empty" id="str-pane" style="padding:10px;flex:1;min-height:60px">No active stream.</div>
-        <div style="display:flex;gap:12px;padding:4px 10px;font-size:9px;color:var(--fg3)">
-          <span id="str-cnt">0 tok</span><span id="str-rate"></span>
-        </div>
-      </div>
-      <span class="w-resize" data-resize></span>
-    </div>
-
-    <!-- Active dream detail -->
-    <div class="widget w-w6 w-h2 hidden" data-wid="active-detail" id="ov-active-card">
-      <div class="w-head">
-        <span class="w-grip">&#8942;&#8942;</span>
-        <span class="w-dot ok" style="animation:pulse 1.5s infinite"></span>
-        <span class="w-title">Active Dream</span>
-        <span style="font-size:9px;color:var(--fg3);font-family:var(--mono)" id="ov-active-trigger"></span>
-        <span class="w-actions">
-          <button class="w-iconbtn" onclick="loadActiveDreamDetail()">&#8635;</button>
-          <button class="w-iconbtn" onclick="dashHideWidget('active-detail')">&times;</button>
-        </span>
-      </div>
-      <div class="w-body" id="ov-active-body"><div class="empty">Waiting for data...</div></div>
-      <span class="w-resize" data-resize></span>
-    </div>
-
-    <!-- Agent loop output -->
-    <div class="widget w-w6 w-h3" data-wid="agent-loop">
-      <div class="w-head">
-        <span class="w-grip">&#8942;&#8942;</span>
-        <span class="w-dot" id="wALDot"></span>
-        <span class="w-title">Agent Loop</span>
-        <span id="al-engine-badge" style="font-size:8.5px;font-family:var(--mono);padding:1px 7px;border-radius:3px;background:rgba(251,146,60,.1);border:1px solid rgba(251,146,60,.25);color:var(--acc3);display:none"></span>
-        <span class="w-actions">
-          <button class="w-iconbtn" onclick="dreamLoopEl().reset();agentLoopStatusSet('')">&#8635;</button>
-          <button class="w-iconbtn" onclick="dashHideWidget('agent-loop')">&times;</button>
-        </span>
-      </div>
-      <div class="w-body flush" style="display:flex;flex-direction:column;flex:1">
-        <div class="al-status" id="al-status"></div>
-        <vera-agent-loop-output id="dream-alo" compact="true" show-toolkit="true" show-triage="true" style="flex:1;min-height:100px"></vera-agent-loop-output>
-      </div>
-      <span class="w-resize" data-resize></span>
-    </div>
-
-    <!-- Dream activity graph -->
-    <div class="widget w-w6 w-h4" data-wid="graph">
-      <div class="w-head">
-        <span class="w-grip">&#8942;&#8942;</span>
-        <span class="w-dot ok"></span>
-        <span class="w-title">Activity Graph</span>
-        <span class="w-actions">
-          <button class="w-iconbtn" onclick="dreamGraphClear()">&#8635;</button>
-          <button class="w-iconbtn" onclick="dreamGraphFit()" title="Re-layout">&#8634;</button>
-          <button class="w-iconbtn" onclick="dashHideWidget('graph')">&times;</button>
-        </span>
-      </div>
-      <div class="w-body flush"><div id="dream-graph-container" style="width:100%;min-height:240px;height:100%;position:relative"></div></div>
-      <span class="w-resize" data-resize></span>
-    </div>
+    <!-- Live dream output (LLM stream, active detail, agent loop, activity graph)
+         now lives on its own dedicated "Live" page — see #sec-live below. -->
 
     <!-- Most recent dream -->
     <div class="widget w-w6 w-h2" data-wid="last-dream">
@@ -679,6 +680,77 @@ hr{border:none;border-top:1px solid var(--border);margin:10px 0}
 
   </div><!-- /dash-grid -->
 </div><!-- /sec-overview -->
+
+<!-- ═══ LIVE DREAM ═══ -->
+<div class="sec" id="sec-live">
+
+  <!-- Hero: running dream identity + pipeline progress -->
+  <div class="live-hero" id="live-hero">
+    <div id="live-idle" class="live-idle">
+      <div class="li-icon">&#128564;</div>
+      <div style="font-size:13px;color:var(--fg2);margin-bottom:4px">No dream is currently running</div>
+      <div style="font-size:11px;margin-bottom:14px">Start one to watch its live output here — or review past runs in History.</div>
+      <button class="btn grn" onclick="runQuickCycle()">&#9654; Run a dream</button>
+    </div>
+    <div id="live-active" style="display:none">
+      <div class="lh-top">
+        <span class="lh-dot"></span>
+        <span class="lh-name" id="live-name">&mdash;</span>
+        <span class="lh-trigger" id="live-trigger"></span>
+        <span class="lh-elapsed" id="live-elapsed"></span>
+      </div>
+      <div class="lh-stage" id="live-stage"></div>
+      <div class="live-progress" id="live-progress"></div>
+    </div>
+  </div>
+
+  <div class="live-grid">
+    <!-- Active dream activity (refined goal + tool calls) -->
+    <div class="card live-card full">
+      <div class="card-hd"><h3>Activity</h3>
+        <span style="font-size:9.5px;color:var(--fg3)">refined goal &amp; tool calls from the running cycle</span>
+      </div>
+      <div class="card-bd" id="ov-active-body"><div class="empty">No active dream.</div></div>
+    </div>
+
+    <!-- LLM stream -->
+    <div class="card live-card">
+      <div class="card-hd"><h3>LLM Stream</h3>
+        <span style="font-size:9px;color:var(--fg3);margin-left:6px" id="str-stage"></span>
+        <span style="font-size:9px;color:var(--fg3);font-family:var(--mono)" id="str-cid"></span>
+        <button class="btn sm" onclick="strClear()" title="Clear">&#8635;</button>
+      </div>
+      <div class="card-bd p0" style="display:flex;flex-direction:column;flex:1">
+        <div class="stream empty" id="str-pane" style="padding:10px;flex:1;min-height:140px">No active stream.</div>
+        <div style="display:flex;gap:12px;padding:5px 10px;font-size:9px;color:var(--fg3);border-top:1px solid var(--border)">
+          <span id="str-cnt">0 tok</span><span id="str-rate"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Agent loop output -->
+    <div class="card live-card">
+      <div class="card-hd"><h3>Agent Loop</h3>
+        <span id="al-engine-badge" style="font-size:8.5px;font-family:var(--mono);padding:1px 7px;border-radius:3px;background:rgba(251,146,60,.1);border:1px solid rgba(251,146,60,.25);color:var(--acc3);display:none"></span>
+        <button class="btn sm" onclick="dreamLoopEl().reset();agentLoopStatusSet('')" title="Reset">&#8635;</button>
+      </div>
+      <div class="card-bd p0" style="display:flex;flex-direction:column;flex:1">
+        <div class="al-status" id="al-status"></div>
+        <vera-agent-loop-output id="dream-alo" compact="true" show-toolkit="true" show-triage="true" style="flex:1;min-height:160px"></vera-agent-loop-output>
+      </div>
+    </div>
+
+    <!-- Dream activity graph -->
+    <div class="card live-card full">
+      <div class="card-hd"><h3>Activity Graph</h3>
+        <span style="font-size:9.5px;color:var(--fg3);margin-left:6px">cycle &middot; stages &middot; tool calls</span>
+        <button class="btn sm" onclick="dreamGraphClear()" title="Clear">&#8635;</button>
+        <button class="btn sm" onclick="dreamGraphFit()" title="Re-layout">&#8634;</button>
+      </div>
+      <div class="card-bd p0"><div id="dream-graph-container" style="width:100%;min-height:300px;height:340px;position:relative"></div></div>
+    </div>
+  </div>
+</div><!-- /sec-live -->
 
 <!-- ═══ TRIGGERS ═══ -->
 <div class="sec" id="sec-triggers">
@@ -798,15 +870,27 @@ hr{border:none;border-top:1px solid var(--border);margin:10px 0}
 <!-- ═══ PROJECTS ═══ -->
 <div class="sec" id="sec-projects">
   <div class="projtabs">
-    <div class="projtab on" data-ptab="list" onclick="projTab('list')">Projects</div>
+    <div class="projtab on" data-ptab="list" onclick="projTab('list')">Projects &amp; goals</div>
     <div class="projtab" data-ptab="log" onclick="projTab('log')">Projects Log</div>
   </div>
   <div id="projtab-list">
-    <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
+    <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
       <button class="btn pri sm" onclick="openProjectEditor({},true)">+ New project</button>
+      <button class="btn sm" onclick="dedupeProjects()" title="Find & merge near-duplicate / branched projects one goal forked into many">&#9861; Merge similar</button>
       <div style="flex:1"></div>
-      <span style="font-size:10px;color:var(--fg3)">Projects scope dream cycles and maintain rolling context</span>
+      <span style="font-size:10px;color:var(--fg3)">Tick projects to merge them manually &middot; &#128451; archive &middot; &#128465; delete</span>
     </div>
+    <div id="proj-merge-bar" style="display:none;gap:8px;align-items:center;margin-bottom:8px;padding:6px 10px;border:1px solid var(--acc);border-radius:6px;background:var(--bg2)">
+      <span id="proj-merge-count" style="font-size:10px;color:var(--acc)"></span>
+      <span style="font-size:9.5px;color:var(--fg3)">Merge into:</span>
+      <select id="proj-merge-into" style="font-size:10px"></select>
+      <div style="flex:1"></div>
+      <button class="btn sm pri" onclick="mergeSelected(false)">Merge &amp; archive rest</button>
+      <button class="btn sm red" onclick="mergeSelected(true)">Merge &amp; delete rest</button>
+      <button class="btn sm" onclick="clearMergeSel()">Clear</button>
+    </div>
+    <div id="proj-dash" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px"></div>
+    <div id="proj-dreaming"></div>
     <div id="proj-list"><div class="empty">Loading...</div></div>
   </div>
   <div id="projtab-log" style="display:none">
@@ -820,8 +904,71 @@ hr{border:none;border-top:1px solid var(--border);margin:10px 0}
   </div>
 </div>
 
-<!-- ═══ HISTORY ═══ -->
+<!-- ═══ PROJECT / GOAL DETAIL PAGE (replaces the old modal) ═══ -->
+<div class="sec" id="sec-project">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+    <button class="btn sm" onclick="nav('projects')">&#8592; Projects</button>
+    <b id="project-page-title" style="font-size:15px">&mdash;</b>
+    <span id="project-page-badge"></span>
+    <div style="flex:1"></div>
+    <span id="project-page-actions" style="display:flex;gap:6px;flex-wrap:wrap"></span>
+  </div>
+  <div id="project-page-body"><div class="empty">Loading&hellip;</div></div>
+</div>
+
+<!-- ═══ ACTIVITY — unified timeline (dreams · loops · programs · tools) ═══ -->
+<div class="sec" id="sec-activity">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+    <b style="font-size:14px">Activity</b>
+    <span style="font-size:9.5px;color:var(--fg3)">Everything Vera is doing — including v8 / project-compose work running in the background right now. Pick a pipeline to scope it.</span>
+    <div style="flex:1"></div>
+    <button class="btn sm" onclick="window.open((window.__VERA_BASE__||'')+'/activity/panel','_blank')" title="Open the full Activity page">&#8599; Full page</button>
+  </div>
+  <!-- Live background work banner: v8 program + project_compose loops in flight -->
+  <div id="activity-bg-live" style="margin-bottom:8px"></div>
+  <div style="height:calc(100vh - 190px);min-height:420px;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+    <vera-activity-timeline id="dreamActivityTL" scope="all" auto="15" style="height:100%"></vera-activity-timeline>
+  </div>
+</div>
+
+<!-- ═══ TIMELINE & HISTORY (merged) ═══ -->
 <div class="sec" id="sec-history">
+  <!-- What actually ran: one lane per dream feature, bar width = real duration.
+       Click any bar to open the full cycle record. -->
+  <div class="card">
+    <div class="card-hd"><h3>Activity timeline</h3>
+      <label style="font-size:9.5px;color:var(--fg3)">Range:
+        <select id="atl-hrs" onchange="loadActivityTimeline()" style="padding:2px 5px">
+          <option value="12">12h</option>
+          <option value="24">24h</option>
+          <option value="48" selected>48h</option>
+          <option value="72">72h</option>
+          <option value="168">7d</option>
+        </select></label>
+      <button class="btn sm" onclick="loadActivityTimeline()">&#8635;</button>
+      <div style="flex:1"></div>
+      <span style="font-size:9px;color:var(--fg3)">bar length = real duration &middot; click a bar to open the record &middot; &#9670; = director thought</span>
+    </div>
+    <div class="card-bd" id="atl-body"><div class="empty">Loading...</div></div>
+  </div>
+
+  <!-- Projected fires: the compact hour-window gantt -->
+  <div class="card">
+    <div class="card-hd"><h3>Upcoming fire windows</h3>
+      <label style="font-size:9.5px;color:var(--fg3)">Range:
+        <select id="tl-gantt-hrs" onchange="loadTimelineGantt()" style="padding:2px 5px">
+          <option value="24">24h</option>
+          <option value="48" selected>48h</option>
+          <option value="72">72h</option>
+        </select></label>
+      <button class="btn sm" onclick="loadTimelineGantt()">&#8635;</button>
+      <div style="flex:1"></div>
+      <span style="font-size:9px;color:var(--fg3)">One lane per dream type &middot; &#9654; = projected fire (click to run now)</span>
+    </div>
+    <div class="card-bd" id="tl-gantt"><div class="empty">Loading...</div></div>
+  </div>
+
+  <!-- Searchable record list -->
   <div class="card">
     <div class="card-hd"><h3>Dream history</h3><button class="btn sm" onclick="loadHistory()">&#8635;</button></div>
     <div class="card-bd">
@@ -862,46 +1009,99 @@ hr{border:none;border-top:1px solid var(--border);margin:10px 0}
   </div>
 </div>
 
-<!-- ═══ TIMELINE ═══ -->
-<div class="sec" id="sec-timeline">
-  <div class="card">
-    <div class="card-hd"><h3>Upcoming fire windows</h3>
-      <label style="font-size:9.5px;color:var(--fg3)">Range:
-        <select id="tl-gantt-hrs" onchange="loadTimelineGantt()" style="padding:2px 5px">
-          <option value="24">24h</option>
-          <option value="48" selected>48h</option>
-          <option value="72">72h</option>
-        </select></label>
-      <button class="btn sm" onclick="loadTimelineGantt()">&#8635;</button>
-      <div style="flex:1"></div>
-      <span style="font-size:9px;color:var(--fg3)">One lane per dream type &middot; scroll &rarr; for later hours</span>
-    </div>
-    <div class="card-bd" id="tl-gantt"><div class="empty">Loading...</div></div>
-  </div>
-  <div class="card">
-    <div class="card-hd"><h3>Scheduled dreams</h3>
-      <label style="font-size:9.5px;color:var(--fg3)">Days:
-        <input id="tl-days" type="number" min="1" max="30" value="7" style="width:50px;display:inline;padding:2px 5px"></label>
-      <button class="btn sm" onclick="loadTimeline()">&#8635;</button>
-      <div style="flex:1"></div>
-      <span style="font-size:9px;color:var(--fg3)">Projected fires &middot; also on the Calendar tab</span>
-    </div>
-    <div class="card-bd" id="tl-body"><div class="empty">Loading...</div></div>
-  </div>
-  <div class="card" style="margin-top:12px">
-    <div class="card-hd"><h3>Trigger windows</h3>
-      <label style="font-size:9.5px;color:var(--fg3)">Hours:
-        <input id="tl-hrs" type="number" min="1" max="72" value="24" style="width:50px;display:inline;padding:2px 5px"></label>
-      <button class="btn sm" onclick="loadTimelineBars()">&#8635;</button>
-    </div>
-    <div class="card-bd" id="tl-bars"><div class="empty">Loading...</div></div>
-  </div>
-</div>
+<!-- (Timeline merged into History — see sec-history) -->
 
 <!-- ═══ DIRECTOR ═══ -->
 <div class="sec" id="sec-director">
+
+  <!-- Ambient director: status + last thought + controls -->
   <div class="card">
-    <div class="card-hd"><h3>Dream director</h3>
+    <div class="card-hd"><h3>Director — Vera's ambient mind</h3>
+      <button class="btn sm" onclick="dirReplyOpen('')" title="Write into the director's train of thought — it replies in place">💬 Reply</button>
+      <button class="btn sm" onclick="dirThinkNow()" title="Run one thought cycle immediately (ignores CPU backoff)">💭 Think now</button>
+      <button class="btn sm grn" id="dir-startstop" onclick="dirStartStop()">…</button>
+      <button class="btn sm" onclick="loadDirector()" title="Refresh">⟳</button>
+    </div>
+    <div class="card-bd">
+      <div id="dir-status" style="display:flex;gap:14px;margin-bottom:8px;flex-wrap:wrap"></div>
+      <div id="dir-last" style="font-size:11px;line-height:1.5"></div>
+    </div>
+  </div>
+
+  <!-- Timing + behaviour config -->
+  <div class="card">
+    <div class="card-hd"><h3>Timing &amp; behaviour</h3>
+      <button class="btn sm pri" onclick="dirCfgSave()">Save</button>
+      <span id="dir-cfg-status" style="font-size:9px;color:var(--fg3);font-family:var(--mono)"></span>
+    </div>
+    <div class="card-bd">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;font-size:10px">
+        <label>Enabled<select id="dcfg-enabled"><option value="true">yes</option><option value="false">no</option></select></label>
+        <label>Think every (s)<input id="dcfg-tick" type="number" min="60" title="Seconds between ambient thought cycles"></label>
+        <label>Active below idle (min)<input id="dcfg-active" type="number" step="0.5" title="User counts as ACTIVE when idle is under this — active thoughts focus on current work"></label>
+        <label>Deliver to chat<select id="dcfg-deliver"><option value="true">yes</option><option value="false">no</option></select></label>
+        <label>Speak thoughts<select id="dcfg-speak"><option value="true">yes</option><option value="false">no</option></select></label>
+        <label>Conversation window (min)<input id="dcfg-conv" type="number" step="1" title="How long a /vera reply keeps the director conversational (GPU) before returning to CPU reporting"></label>
+        <label>Max queued actions<input id="dcfg-queue" type="number" min="1"></label>
+        <label>Thought memory<input id="dcfg-thoughts" type="number" min="0" title="Recent thoughts fed back for continuity"></label>
+      </div>
+      <div style="font-size:9px;color:var(--fg3);margin-top:6px">Reporting mode runs on the CPU pool (job type <code>dream_director</code>, backs off under pressure); talking back via <code>/vera</code> in chat switches it conversational on the GPU for the window above.</div>
+    </div>
+  </div>
+
+  <!-- Persona + when-to-speak: make thoughts feel like a PA, not notifications -->
+  <div class="card">
+    <div class="card-hd"><h3>Persona &amp; when to speak</h3>
+      <button class="btn sm pri" onclick="dirCfgSave()">Save</button>
+      <span id="dir-persona-status" style="font-size:9px;color:var(--fg3);font-family:var(--mono)"></span>
+    </div>
+    <div class="card-bd">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;font-size:10px">
+        <label>Call you<input id="dcfg-name" type="text" placeholder="e.g. Boe (blank = no name)" title="What Vera calls you, so thoughts feel like a PA addressing you rather than a read-aloud notification"></label>
+        <label>Tone<input id="dcfg-tone" type="text" placeholder="warm" title="Conversational tone hint, e.g. warm / casual / professional"></label>
+        <label>Only speak when active<select id="dcfg-onlyactive" title="Only deliver a proactive spoken thought when you're active (recent activity). When off, Vera may also speak while you're idle."><option value="true">yes</option><option value="false">no</option></select></label>
+        <label>Quiet hours<input id="dcfg-quiet" type="text" placeholder="e.g. 22:00-07:00" title="No proactive delivery inside this window (server-local time; supports overnight ranges). Blank = never quiet. Direct /vera replies are unaffected."></label>
+      </div>
+      <div style="font-size:9px;color:var(--fg3);margin-top:6px">These shape proactive thoughts only — a direct <code>/vera</code> conversation always replies. Silenced thoughts are still journalled and any queued actions still fire.</div>
+    </div>
+  </div>
+
+  <!-- Thought log (dream journal id 'director') -->
+  <div class="card">
+    <div class="card-hd"><h3>Thought log</h3>
+      <button class="btn sm" onclick="dirJournal()" title="Refresh">⟳</button>
+    </div>
+    <div class="card-bd" id="dir-journal" style="max-height:260px;overflow:auto"><div class="empty">Loading…</div></div>
+  </div>
+
+  <!-- Queued orchestration actions -->
+  <div class="card">
+    <div class="card-hd"><h3>Queued actions <span style="font-weight:400;font-size:9px;color:var(--fg3)">(executed at idle handover: dreams · projects · thinking loops · agentic loops · business)</span></h3>
+      <button class="btn sm err" onclick="dirQueueClear()">Clear</button>
+    </div>
+    <div class="card-bd" id="dir-queue"><div class="empty">Loading…</div></div>
+  </div>
+
+  <!-- Project dreams + V8 programs — consolidated control -->
+  <div class="card">
+    <div class="card-hd"><h3>Project dreams &amp; goal advancement</h3>
+      <button class="btn sm" onclick="dirProjects()" title="Refresh">⟳</button>
+    </div>
+    <div class="card-bd">
+      <div id="dir-projects"><div class="empty">Loading…</div></div>
+      <div style="font-size:9px;color:var(--fg3);margin-top:4px">▶ fires one project_compose dream now · 🧬 hands the goal to a V8 loop program (clears its dream trigger so the program drives it).</div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-hd"><h3>V8 loop programs</h3>
+      <button class="btn sm" onclick="dirPrograms()" title="Refresh">⟳</button>
+    </div>
+    <div class="card-bd" id="dir-programs"><div class="empty">Loading…</div></div>
+  </div>
+
+  <!-- Legacy assess: trigger recommendations -->
+  <div class="card">
+    <div class="card-hd"><h3>Trigger assessment</h3>
       <button class="btn sm pri" onclick="runDir(false)">Assess</button>
       <button class="btn sm grn" onclick="runDir(true)">Assess + fire</button>
     </div>
@@ -955,6 +1155,13 @@ hr{border:none;border-top:1px solid var(--border);margin:10px 0}
 <!-- ═══ SETTINGS ═══ -->
 <div class="sec" id="sec-settings">
   <div class="card">
+    <div class="card-hd"><h3>Dream memory (agent-maintained)</h3></div>
+    <div class="card-bd">
+      <p style="font-size:10px;color:var(--fg3);margin-bottom:6px">A small structured note the dream engine can read and update (notes.* caps, scope=dream) to steer future cycles — goals, mistakes to avoid, next steps.</p>
+      <vera-session-notes scope="dream" ref-id="global" title="Dream memory" style="display:block"></vera-session-notes>
+    </div>
+  </div>
+  <div class="card">
     <div class="card-hd"><h3>Scheduler</h3></div>
     <div class="card-bd">
       <div class="settings-section">
@@ -997,28 +1204,9 @@ hr{border:none;border-top:1px solid var(--border);margin:10px 0}
         A trigger can override these via its <code>loop_settings</code>.
         <b style="color:var(--acc3)">v5</b> is the orchestrator + scoped-specialist engine (default).
       </p>
-      <div class="form-grid">
-        <div class="form-row"><label class="fld">Engine</label>
-          <select id="lp-version"><option value="v5">v5 — orchestrated specialists</option><option value="v2">v2 — ReAct</option><option value="v1">v1 — legacy</option></select></div>
-        <div class="form-row"><label class="fld">Max steps</label><input id="lp-maxsteps" type="number" min="1" max="20"></div>
-        <div class="form-row"><label class="fld">Step cycle budget (v5)</label><input id="lp-stepbudget" type="number" min="1" max="20"></div>
-        <div class="form-row"><label class="fld">Catalog size (v5)</label><input id="lp-catalog" type="number" min="8" max="80"></div>
-        <div class="form-row"><label class="fld">Max cycles (v1/v2)</label><input id="lp-maxcycles" type="number" min="1" max="40"></div>
-        <div class="form-row"><label class="fld">Satisfaction check</label>
-          <select id="lp-sat"><option value="true">on</option><option value="false">off</option></select></div>
-        <div class="form-row"><label class="fld">Re-plan on failure (v5)</label>
-          <select id="lp-replan"><option value="true">on</option><option value="false">off</option></select></div>
-        <div class="form-row"><label class="fld">Dynamic skills (v5)</label>
-          <select id="lp-dynskills"><option value="true">on</option><option value="false">off</option></select></div>
-        <div class="form-row"><label class="fld">Auto-suggest skills (v5)</label>
-          <select id="lp-autoskill"><option value="true">on</option><option value="false">off</option></select></div>
-        <div class="form-row"><label class="fld">Prefer GPU</label>
-          <select id="lp-gpu"><option value="true">on</option><option value="false">off</option></select></div>
-        <div class="form-row"><label class="fld">Skill allow (csv)</label><input id="lp-skillallow" type="text" placeholder="(any)"></div>
-        <div class="form-row"><label class="fld">Skill deny (csv)</label><input id="lp-skilldeny" type="text" placeholder="(none)"></div>
-        <div class="form-row"><label class="fld">Model (blank=default)</label><input id="lp-model" type="text" placeholder=""></div>
-        <div class="form-row"><label class="fld">Instance id</label><input id="lp-instance" type="text" placeholder=""></div>
-      </div>
+      <!-- Unified agentic-loop config control (shared across all panels). -->
+      <script id="vera-agent-loop-config-js-include" src="/ui/elements/agent_loop_config.js"></script>
+      <vera-agent-loop-config id="lp-config" version="v5"></vera-agent-loop-config>
       <div style="display:flex;justify-content:flex-end;gap:6px;margin-top:8px">
         <button class="btn sm" onclick="resetLoopSettings()">Reset defaults</button>
         <button class="btn pri" onclick="saveLoopSettings()">Save loop controls</button>
@@ -1066,8 +1254,9 @@ hr{border:none;border-top:1px solid var(--border);margin:10px 0}
 const API=(()=>{try{if(window.parent!==window&&window.parent._veraBase)return window.parent._veraBase}catch(e){}return''})();
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const md=s=>{// minimal markdown renderer
+const md=s=>{// markdown renderer — shared <vera-markdown> engine when loaded, minimal fallback
   if(!s)return'';
+  if(window.VeraMD)return window.VeraMD.render(s);
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/^### (.+)$/gm,'<h4 style="font-size:10.5px;color:var(--fg);font-weight:600;margin:8px 0 3px">$1</h4>')
     .replace(/^## (.+)$/gm,'<h3 style="font-size:11.5px;color:var(--fg);font-weight:600;margin:10px 0 4px;border-bottom:1px solid var(--border);padding-bottom:4px">$1</h3>')
@@ -1087,14 +1276,64 @@ $('modal-bg').addEventListener('click',e=>{if(e.target.id==='modal-bg')closeModa
 
 /* ═══ SIDEBAR NAV ═══ */
 function nav(sec){
+  if(sec==='timeline')sec='history';   // merged: history opens via the timeline
   document.querySelectorAll('.nav-btn').forEach(el=>el.classList.toggle('active',el.dataset.sec===sec));
   document.querySelectorAll('.sec').forEach(el=>el.classList.toggle('active',el.id==='sec-'+sec));
   const el=document.querySelector('.nav-btn[data-sec="'+sec+'"]');
   $('sec-title').textContent=el?.querySelector('span')?.textContent||sec;
   ({triggers:loadTriggers,history:loadHistory,hitl:loadHitl,whitelist:loadWl,
     timeline:loadTimeline,settings:loadSettings,sensors:()=>{},
-    pipeline:pipelineInit,projects:loadProjects,director:()=>{},
-    thoughts:loadThoughts})[sec]?.();
+    pipeline:pipelineInit,projects:loadProjects,director:loadDirector,
+    live:liveInit,thoughts:loadThoughts,activity:activityInit})[sec]?.();
+}
+// Activity page: (re)load the unified timeline + the live background-work banner
+// so v8 / project_compose runs happening in the background are visible + watchable.
+let _actBgTimer=null;
+function activityInit(){
+  const tl=$('dreamActivityTL');
+  if(tl&&tl.load)try{tl.load();}catch(_){}
+  activityBgLive();
+  if(_actBgTimer)clearInterval(_actBgTimer);
+  _actBgTimer=setInterval(()=>{ if($('sec-activity')?.classList.contains('active'))activityBgLive(); },12000);
+}
+// Banner of loops running in the BACKGROUND right now (v8 programs +
+// project_compose dream loops), each re-attachable so nothing is hidden.
+async function activityBgLive(){
+  const box=$('activity-bg-live');if(!box)return;
+  // NEVER rebuild while the user is watching a loop — re-rendering the banner
+  // would tear the mounted <vera-agent-loop-output> out from under them (the
+  // "opens then immediately closes" bug). Skip until the watch is closed.
+  if(Object.keys(_goalLoopReaders||{}).length)return;
+  const r=await api('/activity/timeline?scope=all&kinds=loop_live&limit=40').catch(()=>null);
+  const live=((r&&r.events)||[]).filter(e=>(e.extra&&e.extra.running)||e.status==='running');
+  // Skip the rebuild when the live-loop set hasn't changed (avoids needless
+  // DOM churn that also drops any open watch that was just mounted).
+  const sig=live.map(e=>e.session_id+':'+e.status).join('|');
+  if(sig===box.dataset.sig)return;
+  box.dataset.sig=sig;
+  if(!live.length){box.innerHTML='';return;}
+  box.innerHTML='<div class="card" style="border-left:3px solid var(--ok,#6db87a)"><div class="card-bd" style="padding:8px 10px">'
+    +'<div style="font-size:11px;font-weight:600;color:var(--ok,#6db87a);margin-bottom:5px">&#9673; '+live.length+' background loop'+(live.length>1?'s':'')+' running now</div>'
+    +live.slice(0,6).map(e=>{
+      const sid=esc(e.session_id||'');
+      const kind=sid.startsWith('v8:')?'V8 program':(sid.startsWith('dream:')?'Dream loop':'Loop');
+      // Each row is a .card wrapper carrying its own .goal-loop-view host so the
+      // shared watchGoalLoop() can mount the live agent-loop-output inline.
+      return '<div class="card" style="background:transparent;border:none;padding:0;margin:0">'
+        +'<div style="display:flex;gap:8px;align-items:center;font-size:9.5px;padding:2px 0;border-bottom:1px dotted var(--border)">'
+        +'<span style="color:var(--acc)">'+kind+'</span>'
+        +'<span style="flex:1;color:var(--fg2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(e.title||'')+'">'+esc(String(e.summary||e.title||'').slice(0,90))+'</span>'
+        +'<button class="btn sm" onclick="watchGoalLoop(\''+sid+'\',this)" title="Re-attach to this live run">&#9654; Watch</button>'
+        +'</div><div class="goal-loop-view"></div></div>';
+    }).join('')
+    +'</div></div>';
+}
+// Live page: pull current status so the hero reflects an already-running cycle
+// (e.g. after a page reload mid-dream), then re-fit the graph now that the
+// section is visible (it can't lay out while display:none).
+function liveInit(){
+  refreshStatus();
+  setTimeout(()=>{dreamGraphFit();const el=dreamLoopEl&&dreamLoopEl();if(el&&el.refresh)try{el.refresh()}catch(_){}} ,80);
 }
 document.querySelectorAll('.nav-btn[data-sec]').forEach(el=>{el.onclick=()=>nav(el.dataset.sec)});
 
@@ -1115,8 +1354,14 @@ async function refreshStatus(){
   const idleMin=Math.min(s.idle_minutes??0,99999);
   const idleStr=idleMin>=9999?'—':idleMin>1440?Math.round(idleMin/60)+'h':idleMin+'m';
   $('ov-idle').textContent=idleStr;$('ov-idle-sub').textContent='threshold '+(s.min_idle_minutes??'?')+'m';
-  $('ov-cyc').textContent=cyc?'Active':'Idle';$('ov-cyc-sub').textContent=s.running?.cycle_id||'';
-  if(cyc&&s.running?.cycle_id&&_sCid!==s.running.cycle_id)strStart(s.running.cycle_id);}
+  // The scheduler status reports the live cycle under `current_cycle` (which
+  // carries trigger name, friendly label, started_at and the pipeline). Route it
+  // through setRunningUI so the dashboard banner, KPI, sidebar badge and the
+  // Live page all reflect the running dream — including after a mid-cycle reload.
+  const cur=s.current_cycle||null;
+  setRunningUI(cur);
+  if(cur&&cur.cycle_id){if(_sCid!==cur.cycle_id)strStart(cur.cycle_id);}
+  else{refreshReviewActive();}}
 async function refreshAll(){
   await refreshStatus();
   const r=await api('/dream/triggers');if(r)$('ov-trigs').textContent=(r.triggers||[]).filter(t=>t.enabled).length+'/'+(r.triggers||[]).length;
@@ -1161,7 +1406,7 @@ async function runQuickCycle(){const r=await api('/dream/triggers');const t=(r?.
 let _sCid='',_sText='',_sSeq=0,_sPoll=null,_sT0=0;
 function strClear(){_sCid='';_sText='';_sSeq=0;_sT0=0;if(_sPoll){clearInterval(_sPoll);_sPoll=null}
   $('str-pane').className='stream empty';$('str-pane').textContent='No active stream.';$('str-stage').textContent='';$('str-cid').textContent='';$('str-cnt').textContent='0 tok';$('str-rate').textContent=''}
-function strStart(cid,stg){if(cid===_sCid)return;strClear();_sCid=cid;_sT0=Date.now();
+function strStart(cid,stg){if(cid===_sCid){if(stg)$('str-stage').textContent=String(stg).replace('dream.stage.','');_sT0=Date.now();_sSeq=0;return}strClear();_sCid=cid;_sT0=Date.now();
   $('str-pane').className='stream';$('str-pane').innerHTML='<span class="cursor"></span>';
   $('str-cid').textContent=cid;if(stg)$('str-stage').textContent=stg.replace('dream.stage.','');
   _sPoll=setInterval(strPoll,900);strPoll()}
@@ -1236,13 +1481,28 @@ function _isAgentLoopEvent(type){
       || type === 'error';
 }
 
+// Ownership check: the global __events__ feed carries EVERY loop run in the
+// system (chat, DAG workshop, other users' sessions) — not just the dream's.
+// Dream-owned runs are launched by _run_agent_loop with
+// session_id/trace_id "dream:<cycle_id>:<stage>", so only render events that
+// carry that prefix; anything else is another surface's run leaking in.
+function _dreamOwnsLoopEv(ev){
+  const sid = String(ev?.session_id || '');
+  if (sid.startsWith('dream:')) return true;
+  return String(ev?.trace_id || '').startsWith('dream:');
+}
+
 function handleEv(ev){
   if(!ev?.type) return;
   const t=ev.type;
   // Let through dream.* and agent_loop.* and stream.* and workshop.*
   if(!t.startsWith('dream.')&&!t.startsWith('agent_loop')&&!t.startsWith('stream.')&&!t.startsWith('workshop.'))return;
 
-  // ── Forward ALL agent loop events to the element ──────────────────────
+  // Loop-family events must belong to a dream run — drop foreign runs
+  // entirely (element forwarding AND the status-bar/step handlers below).
+  if(!t.startsWith('dream.')&&!_dreamOwnsLoopEv(ev)) return;
+
+  // ── Forward dream-owned agent loop events to the element ──────────────
   // This is the single forwarding path. The element handles tool_call,
   // tool_done, cycle_planning, triage, toolkit, long_running_await,
   // research_stream, stream.token, handover, done, etc. natively with
@@ -1267,6 +1527,7 @@ function handleEv(ev){
   if(t==='dream.llm.complete')strEnd();
   if(t==='dream.cycle.completed'){setTimeout(()=>{refreshAll();strEnd()},400);if(!ev.preview)toast('ok','Done: '+(ev.title||ev.trigger||''))}
   if(t==='dream.hitl.requested'){refreshHitl();toast('warn','HITL: '+(ev.label||ev.trigger||''))}
+  if(t==='dream.director.thought'&&(ev.thought||ev.text))dirThoughtNotify(ev);
 
   // ── Status bar updates ─────────────────────────────────────────────────
   if(t==='dream.agent_loop.start'||t==='dream.investigate.start'){
@@ -1381,9 +1642,50 @@ async function _loadSenStgMeta(){
 /* Trigger editor modal */
 const MODES=[{v:'synthesize_only',l:'Synthesize only — gather, write report, no action'},{v:'plan_execute',l:'Plan + execute — plan a DAG then run it'},{v:'oneshot',l:'Oneshot — immediate single LLM action'},{v:'stepwise',l:'Stepwise — agentic loop, one step at a time'}];
 const DEPTHS=['brief','standard','deep','exhaustive'];
+// ── Delivery channels (data-driven from vera.delivery) ──────────────────────
+// The deliver-to row used to be a hard-coded memory/telegram/notebook checkbox
+// set. It is now built from the shared delivery registry (cap delivery.channels)
+// so email / chat / skill-defined channels appear automatically, each with an
+// output-format override and (when needed) a target field.
+let _DLCH=null, _DLFMTS=null;
+async function _loadDeliveryMeta(){
+  if(!_DLCH){ try{const r=await api('/delivery/channels');_DLCH=(r&&r.channels)||[]}catch(_){_DLCH=[]} }
+  if(!_DLFMTS){ try{const r=await api('/llm/formats');_DLFMTS=(r&&r.formats)||[]}catch(_){_DLFMTS=[]} }
+  if(!_DLCH||!_DLCH.length){_DLCH=[
+    {id:'memory',label:'memory',needs_target:false,default_format:'',source:'builtin'},
+    {id:'telegram',label:'telegram',needs_target:false,default_format:'short',source:'builtin'},
+    {id:'notebook',label:'notebook',needs_target:false,default_format:'markdown',source:'builtin'}]}
+}
+function _deliverRowHtml(t, attr, live){
+  const sel=t.deliver_to||['memory'];
+  const cfg=t.deliver_config||{};
+  const ch1=live?' onchange="_pcfgUpdateDeliver()"':'';
+  const fmtOpts=(cur,def)=>['<option value="">'+(def?('default: '+esc(def)):'verbatim')+'</option>']
+    .concat((_DLFMTS||[]).map(f=>'<option value="'+esc(f.id)+'"'+(cur===f.id?' selected':'')+'>'+esc(f.label||f.id)+'</option>')).join('');
+  return (_DLCH||[]).map(ch=>{
+    const c=cfg[ch.id]||{};
+    const checked=sel.includes(ch.id)?'checked':'';
+    const badge=ch.source==='skill'?' <span style="color:var(--fg3);font-size:8.5px">skill</span>':'';
+    const tgt=ch.needs_target
+      ? '<input '+attr+'-target="'+esc(ch.id)+'" value="'+esc(c.target||ch.fixed_target||'')+'" placeholder="'+esc(ch.target_label||'target')+'" style="flex:1;min-width:130px;font-size:10px"'+(live?' oninput="_pcfgUpdateDeliver()"':'')+'>'
+      : '';
+    return '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:4px">'
+      +'<label style="display:flex;gap:5px;align-items:center;text-transform:none;font-size:10.5px;cursor:pointer;min-width:130px"><input type="checkbox" '+attr+'="'+esc(ch.id)+'" '+checked+ch1+' style="width:auto"> '+esc(ch.label||ch.id)+badge+'</label>'
+      +'<select '+attr+'-format="'+esc(ch.id)+'" style="width:140px;font-size:10px"'+ch1+'>'+fmtOpts(c.format||'',ch.default_format)+'</select>'
+      +tgt+'</div>';
+  }).join('');
+}
+function _collectDeliverConfig(attr){
+  const cfg={};
+  document.querySelectorAll('['+attr+'-format]').forEach(x=>{const id=x.getAttribute(attr+'-format');const v=(x.value||'').trim();if(v){(cfg[id]=cfg[id]||{}).format=v}});
+  document.querySelectorAll('['+attr+'-target]').forEach(x=>{const id=x.getAttribute(attr+'-target');const v=(x.value||'').trim();if(v){(cfg[id]=cfg[id]||{}).target=v}});
+  return cfg;
+}
+
 async function openTrigEditor(t={},isNew=true){
   await _loadSenStgMeta();
   await _loadAgentModels();
+  await _loadDeliveryMeta();
   _prewarmParamCaches();
   // Stash current trigger so the chip pickers can read/write its whitelist + no_hitl_caps
   _teTrigWl=[...(t.whitelist||[])];
@@ -1400,9 +1702,11 @@ async function openTrigEditor(t={},isNew=true){
   const stgHtml=_stgMeta.map(s=>{const sel=(t.pipeline||[]).includes(s.id||'');const ph=s.phase||'analyze';const col=PHASE_COLORS[ph]||'#888';return`<label style="display:flex;gap:7px;align-items:flex-start;padding:5px 7px;border-radius:5px;cursor:pointer;border:1px solid transparent;transition:.12s" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''"><input type="checkbox" data-stage="${esc(s.id||'')}" ${sel?'checked':''} style="width:auto;margin-top:1px"><div><div style="font-family:var(--mono);font-size:10px;color:${col}">${esc((s.id||'').replace('dream.stage.',''))}</div><div style="font-size:9px;color:var(--fg3)">${esc(s.phase||'')} &mdash; ${esc((s.description||'').slice(0,60))}</div></div></label>`}).join('');
   const html=`
 <div class="form-grid">
+  <div class="form-section-h">Identity</div>
   <div class="form-row"><label class="fld">Name (snake_case)</label><input id="te-n" type="text" value="${esc(t.name||'')}" ${isNew?'':'disabled'}></div>
   <div class="form-row"><label class="fld">Label</label><input id="te-l" type="text" value="${esc(t.label||'')}"></div>
   <div class="full form-row"><label class="fld">Description</label><input id="te-d" type="text" value="${esc(t.description||'')}"></div>
+  <div class="form-section-h">Execution &amp; agent <span class="hint">how the cycle runs and which model drives it</span></div>
   <div class="form-row"><label class="fld">Mode</label><select id="te-mode">${mOpts}</select></div>
   <div class="form-row"><label class="fld">Depth</label><select id="te-depth">${dOpts}</select></div>
   <div class="form-row"><label class="fld">Agent (LLM model — single)</label><select id="te-agent"><option value="">(default)</option>${(_agentModels.length?_agentModels:[t.agent].filter(Boolean)).map(m=>`<option value="${esc(m)}" ${t.agent===m?'selected':''}>${esc(m)}</option>`).join('')}</select></div>
@@ -1418,6 +1722,7 @@ async function openTrigEditor(t={},isNew=true){
   </div>
   <div class="form-row"><label class="fld">Project</label><input id="te-proj" type="text" value="${esc(t.project||'')}" placeholder="project slug (optional)"></div>
   <div class="form-row"><label class="fld">HITL approval</label><select id="te-hitl"><option value="false" ${!t.hitl?'selected':''}>off</option><option value="true" ${t.hitl?'selected':''}>on</option></select></div>
+  <div class="form-section-h">Scheduling &amp; gating <span class="hint">when this trigger is allowed to fire</span></div>
   <div class="form-row"><label class="fld">Director auto-fire <span style="font-weight:400;text-transform:none;color:var(--fg3)">(allow scheduler to override hours/cooldown)</span></label><select id="te-dm"><option value="false" ${!t.director_managed?'selected':''}>no — only fires on schedule</option><option value="true" ${t.director_managed?'selected':''}>yes — director may override schedule</option></select></div>
   <div class="form-row"><label class="fld">Hours start</label><input id="te-hs" type="number" min="0" max="23" value="${t.hours_start??0}"></div>
   <div class="form-row"><label class="fld">Hours end</label><input id="te-he" type="number" min="0" max="24" value="${t.hours_end??24}"></div>
@@ -1425,10 +1730,12 @@ async function openTrigEditor(t={},isNew=true){
   <div class="form-row"><label class="fld">Interval (m)</label><input id="te-mv" type="number" min="0" value="${t.min_interval_minutes??120}"></div>
   <div class="form-row"><label class="fld">Require signal (0–1)</label><input id="te-rs" type="number" step="0.05" min="0" max="1" value="${t.require_signal??0}"></div>
   <div class="form-row"><label class="fld">Max steps</label><input id="te-ms" type="number" min="1" max="30" value="${t.max_steps??6}"></div>
-  <div class="full form-row" style="border-top:1px dashed var(--border);padding-top:8px">
-    <label class="fld">Emit / output — deliver to</label>
-    <div style="display:flex;gap:12px">${['memory','telegram','notebook'].map(d=>`<label style="display:flex;gap:5px;align-items:center;text-transform:none;font-size:10.5px;cursor:pointer"><input type="checkbox" data-deliver="${d}" ${(t.deliver_to||['memory']).includes(d)?'checked':''} style="width:auto"> ${d}</label>`).join('')}</div>
+  <div class="form-section-h">Output <span class="hint">where results are delivered</span></div>
+  <div class="full form-row">
+    <label class="fld">Emit / output — deliver to <span style="font-weight:400;text-transform:none;color:var(--fg3)">(channel · output-format · target)</span></label>
+    <div id="te-deliver-row">${_deliverRowHtml(t,'data-deliver',false)}</div>
   </div>
+  <div class="form-section-h">Capabilities <span class="hint">caps the planner may call</span></div>
   <div class="full form-row"><label class="fld">Whitelist <span style="font-weight:400;text-transform:none;color:var(--fg3)">(caps the planner may use; empty = global default)</span></label>
     <div id="te-wl-chips" class="chip-list" style="margin-bottom:5px;min-height:20px"></div>
     <div style="display:flex;gap:5px"><input id="te-wl-q" type="text" placeholder="Search caps to add..." style="flex:1" oninput="teCapPickerFilter('wl')"><button class="btn sm" onclick="teCapPickerOpen('wl')" type="button">Browse</button></div>
@@ -1439,6 +1746,7 @@ async function openTrigEditor(t={},isNew=true){
     <div style="display:flex;gap:5px"><input id="te-nh-q" type="text" placeholder="Search caps to add..." style="flex:1" oninput="teCapPickerFilter('nh')"><button class="btn sm" onclick="teCapPickerOpen('nh')" type="button">Browse</button></div>
     <div class="picker" id="te-nh-picker" style="display:none;max-height:180px"></div>
   </div>
+  <div class="form-section-h">Instructions</div>
   <div class="full form-row"><label class="fld">Prompt</label><textarea id="te-pr" style="min-height:80px">${esc(t.prompt||'')}</textarea></div>
 </div>
 <hr style="margin:14px 0">
@@ -1520,10 +1828,11 @@ async function saveTrig(isNew){
   const sen=[...document.querySelectorAll('#te-sen-grid .sensor-card.selected')].map(el=>el.dataset.sid).filter(Boolean);
   const pipe=[...document.querySelectorAll('[data-stage]:checked')].map(x=>x.dataset.stage);
   const del=[...document.querySelectorAll('[data-deliver]:checked')].map(x=>x.dataset.deliver);
+  const delCfg=_collectDeliverConfig('data-deliver');
   const sp=collectSensorParams('te');
   const agents=(_msState['te-agents']||[]).map(it=>typeof it==='string'?it:it.id);
   const models=(_msState['te-models']||[]).map(it=>typeof it==='string'?it:it.id);
-  const rec={name:$('te-n').value.trim(),label:$('te-l').value.trim()||$('te-n').value.trim(),description:$('te-d').value.trim(),enabled:true,sensors:sen,pipeline:pipe,whitelist:[..._teTrigWl],no_hitl_caps:[..._teTrigNh],mode:$('te-mode').value,depth:$('te-depth').value,hitl:$('te-hitl').value==='true',director_managed:$('te-dm').value==='true',hours_start:+$('te-hs').value,hours_end:+$('te-he').value,min_idle_minutes:+$('te-mi').value,min_interval_minutes:+$('te-mv').value,require_signal:+$('te-rs').value,max_steps:+$('te-ms').value,deliver_to:del,prompt:$('te-pr').value,sensor_params:sp,agent:$('te-agent').value.trim(),agents,models,project:$('te-proj').value.trim()};
+  const rec={name:$('te-n').value.trim(),label:$('te-l').value.trim()||$('te-n').value.trim(),description:$('te-d').value.trim(),enabled:true,sensors:sen,pipeline:pipe,whitelist:[..._teTrigWl],no_hitl_caps:[..._teTrigNh],mode:$('te-mode').value,depth:$('te-depth').value,hitl:$('te-hitl').value==='true',director_managed:$('te-dm').value==='true',hours_start:+$('te-hs').value,hours_end:+$('te-he').value,min_idle_minutes:+$('te-mi').value,min_interval_minutes:+$('te-mv').value,require_signal:+$('te-rs').value,max_steps:+$('te-ms').value,deliver_to:del,deliver_config:delCfg,prompt:$('te-pr').value,sensor_params:sp,agent:$('te-agent').value.trim(),agents,models,project:$('te-proj').value.trim()};
   if(!rec.name){toast('err','Name required');return}
   const r=await post('/dream/trigger/upsert',rec);if(r&&r.ok!==false){toast('ok','Saved');closeModal();loadTriggers()}else $('te-st').textContent='Failed: '+(r?.error||'?')}
 
@@ -1592,7 +1901,11 @@ async function pipelineReload(){if($('pipeline-trig-sel'))pipelineInit()}
 async function pipelineLoadTrig(){const n=$('pipeline-trig-sel').value;
   if(!n){_pipeTrig=null;$('pipe-flow').innerHTML='<div class="empty">Select a trigger above.</div>';$('pipe-sensors').innerHTML='';$('pipe-cfg-card').style.display='none';return}
   const r=await api('/dream/trigger/get?name='+encodeURIComponent(n));_pipeTrig=r?.trigger||null;
-  if(_pipeTrig){renderPipelineFlow();pipeCanvasSync();renderPipelineSensors();renderPipelineConfig();$('pipe-cfg-card').style.display='block'}}
+  if(_pipeTrig){renderPipelineFlow();pipeCanvasSync();renderPipelineSensors();renderPipelineConfig();$('pipe-cfg-card').style.display='block';
+    // Canvas is the default builder view; compact list is the opt-out
+    // (remembered per user in localStorage).
+    if(!pipeCanvasActive()&&localStorage.getItem('dreamPipeCanvas')!=='0')pipeToggleCanvas();
+  }}
 
 /* Mirror of trigger-editor fields, but inline on the pipeline page so the user
    can change every option without opening a modal. Wired to update _pipeTrig
@@ -1609,9 +1922,11 @@ function renderPipelineConfig(){
   const mOpts=MODES.map(m=>'<option value="'+m.v+'" '+(t.mode===m.v?'selected':'')+'>'+m.l+'</option>').join('');
   const dOpts=DEPTHS.map(d=>'<option value="'+d+'" '+((t.depth||'standard')===d?'selected':'')+'>'+d+'</option>').join('');
   const html=`
+  <div class="form-section-h">Identity</div>
   <div class="form-row"><label class="fld">Name</label><input id="pcfg-n" type="text" value="${esc(t.name||'')}" disabled></div>
   <div class="form-row"><label class="fld">Label</label><input id="pcfg-l" type="text" value="${esc(t.label||'')}" oninput="_pipeTrig.label=this.value"></div>
   <div class="full form-row"><label class="fld">Description</label><textarea id="pcfg-d" style="min-height:36px" oninput="_pipeTrig.description=this.value">${esc(t.description||'')}</textarea></div>
+  <div class="form-section-h">Execution &amp; agent <span class="hint">how the cycle runs and which model drives it</span></div>
   <div class="form-row"><label class="fld">Mode</label><select id="pcfg-mode" onchange="_pipeTrig.mode=this.value">${mOpts}</select></div>
   <div class="form-row"><label class="fld">Depth</label><select id="pcfg-depth" onchange="_pipeTrig.depth=this.value">${dOpts}</select></div>
   <div class="form-row"><label class="fld">Output style</label><select id="pcfg-ostyle" onchange="_pipeTrig.output_style=this.value">
@@ -1621,9 +1936,16 @@ function renderPipelineConfig(){
     <option value="long" ${t.output_style==='long'?'selected':''}>long (800-1500 words)</option>
     <option value="audio" ${t.output_style==='audio'?'selected':''}>audio (spoken-word friendly)</option>
   </select></div>
+  <div class="form-row"><label class="fld">Illustrate</label><select id="pcfg-illustrate" title="Append one demonstrative image to the report (media.illustrate) — generated with Stable Diffusion or found on the web" onchange="const v=this.value;_pipeTrig.illustrate=!!v;_pipeTrig.illustrate_mode=v||'auto'">
+    <option value="" ${!t.illustrate?'selected':''}>off</option>
+    <option value="auto" ${t.illustrate&&(t.illustrate_mode||'auto')==='auto'?'selected':''}>auto (generate → search)</option>
+    <option value="generate" ${t.illustrate&&t.illustrate_mode==='generate'?'selected':''}>generate (Stable Diffusion)</option>
+    <option value="search" ${t.illustrate&&t.illustrate_mode==='search'?'selected':''}>search (web reference)</option>
+  </select></div>
   <div class="form-row"><label class="fld">Max continuation depth</label><input type="number" value="${t.max_continuation_depth||3}" min="0" max="10" onchange="_pipeTrig.max_continuation_depth=+this.value" style="width:60px" title="Max auto-continue loops (0 = disabled)"></div>
   <div class="form-row"><label class="fld">Handover to DAG</label><label style="display:flex;gap:6px;align-items:center;font-size:10.5px"><input type="checkbox" ${(t.handover||{}).enabled?'checked':''} onchange="if(!_pipeTrig.handover)_pipeTrig.handover={};_pipeTrig.handover.enabled=this.checked" style="width:auto">When cycle has next steps, save them as a DAG for later execution</label></div>
   <div class="form-row"><label class="fld">HITL approval</label><select id="pcfg-hitl" onchange="_pipeTrig.hitl=this.value==='true'"><option value="false" ${!t.hitl?'selected':''}>off</option><option value="true" ${t.hitl?'selected':''}>on</option></select></div>
+  <div class="form-section-h">Scheduling &amp; gating <span class="hint">when this trigger is allowed to fire</span></div>
   <div class="form-row"><label class="fld">Director auto-fire</label><select id="pcfg-dm" onchange="_pipeTrig.director_managed=this.value==='true'"><option value="false" ${!t.director_managed?'selected':''}>no — only on schedule</option><option value="true" ${t.director_managed?'selected':''}>yes — director may override</option></select></div>
   <div class="form-row"><label class="fld">Project (optional)</label><input id="pcfg-proj" type="text" value="${esc(t.project||'')}" placeholder="project slug" oninput="_pipeTrig.project=this.value.trim()"></div>
   <div class="form-row"><label class="fld">Hours start</label><input id="pcfg-hs" type="number" min="0" max="23" value="${t.hours_start??0}" oninput="_pipeTrig.hours_start=+this.value"></div>
@@ -1632,10 +1954,12 @@ function renderPipelineConfig(){
   <div class="form-row"><label class="fld">Interval (m)</label><input id="pcfg-mv" type="number" min="0" value="${t.min_interval_minutes??120}" oninput="_pipeTrig.min_interval_minutes=+this.value"></div>
   <div class="form-row"><label class="fld">Require signal (0–1)</label><input id="pcfg-rs" type="number" step="0.05" min="0" max="1" value="${t.require_signal??0}" oninput="_pipeTrig.require_signal=+this.value"></div>
   <div class="form-row"><label class="fld">Max steps</label><input id="pcfg-ms" type="number" min="1" max="30" value="${t.max_steps??6}" oninput="_pipeTrig.max_steps=+this.value"></div>
+  <div class="form-section-h">Output <span class="hint">where results are delivered</span></div>
   <div class="full form-row">
-    <label class="fld">Deliver to</label>
-    <div style="display:flex;gap:12px">${['memory','telegram','notebook'].map(d=>'<label style="display:flex;gap:5px;align-items:center;text-transform:none;font-size:10.5px;cursor:pointer"><input type="checkbox" data-pdeliver="'+d+'" '+((t.deliver_to||['memory']).includes(d)?'checked':'')+' onchange="_pcfgUpdateDeliver()" style="width:auto"> '+d+'</label>').join('')}</div>
+    <label class="fld">Deliver to <span style="font-weight:400;text-transform:none;color:var(--fg3)">(channel · output-format · target)</span></label>
+    <div id="pcfg-deliver-row">${_deliverRowHtml(t,'data-pdeliver',true)}</div>
   </div>
+  <div class="form-section-h">Agents &amp; capabilities <span class="hint">model pool and caps the planner may call</span></div>
   ${msField('pipe-agents','agents','Agents','(per-trigger override of pipeline agents — project may override)')}
   ${msField('pipe-models','models','LLM models','(per-trigger override of pipeline models — project may override)')}
   <div class="full form-row"><label class="fld">Whitelist <span style="font-weight:400;text-transform:none;color:var(--fg3)">(caps the planner may use; empty = global default)</span></label>
@@ -1648,6 +1972,11 @@ function renderPipelineConfig(){
     <div style="display:flex;gap:5px"><input id="te-nh-q" type="text" placeholder="Search caps to add..." style="flex:1" oninput="teCapPickerFilter('nh');_pcfgSyncNH()"><button class="btn sm" onclick="teCapPickerOpen('nh')" type="button">Browse</button></div>
     <div class="picker" id="te-nh-picker" style="display:none;max-height:180px"></div>
   </div>
+  <div class="form-section-h">Content collectors <span class="hint">data-gathering cap calls that feed the cycle — with these set, sensors only gate firing</span></div>
+  <div class="full form-row"><label class="fld">Collectors (JSON) <span style="font-weight:400;text-transform:none;color:var(--fg3)">[{"cap":"web.search","label":"AI news","args":{"query":"...","limit":10}}, …]</span></label>
+    <textarea id="pcfg-collect" style="min-height:60px;font-family:var(--mono);font-size:10px" oninput="try{const v=this.value.trim();_pipeTrig.collect=v?JSON.parse(v):[];this.style.borderColor=''}catch(e){this.style.borderColor='var(--err,#ef4444)'}">${esc(JSON.stringify(t.collect||[],null,1))}</textarea>
+  </div>
+  <div class="form-section-h">Instructions</div>
   <div class="full form-row"><label class="fld">Prompt</label><textarea id="pcfg-pr" style="min-height:80px" oninput="_pipeTrig.prompt=this.value">${esc(t.prompt||'')}</textarea></div>`;
   $('pipe-cfg-grid').innerHTML=html;
   setTimeout(()=>{
@@ -1655,11 +1984,15 @@ function renderPipelineConfig(){
     msRenderChips('pipe-agents');msRenderChips('pipe-models');
     // Cache cap list for the chip picker
     if(!_allCaps.length){api('/dream/caps/search?limit=500').then(cr=>{_allCaps=(cr?.caps||[])})}
+    // Channels may not have loaded when this row first rendered — refresh it
+    // from the shared delivery registry once available.
+    _loadDeliveryMeta().then(()=>{const el=$('pcfg-deliver-row');if(el){el.innerHTML=_deliverRowHtml(t,'data-pdeliver',true);_pcfgUpdateDeliver()}});
   },20);
 }
 function _pcfgUpdateDeliver(){
   if(!_pipeTrig)return;
   _pipeTrig.deliver_to=[...document.querySelectorAll('[data-pdeliver]:checked')].map(x=>x.dataset.pdeliver);
+  _pipeTrig.deliver_config=_collectDeliverConfig('data-pdeliver');
 }
 function _pcfgSyncWL(){if(_pipeTrig)_pipeTrig.whitelist=[..._teTrigWl]}
 function _pcfgSyncNH(){if(_pipeTrig)_pipeTrig.no_hitl_caps=[..._teTrigNh]}
@@ -1801,16 +2134,19 @@ function pfDragStart(e,i){_pfDragIdx=i;e.dataTransfer.effectAllowed='move'}
 function pfDragOver(e){e.preventDefault();e.dataTransfer.dropEffect='move'}
 function pfDrop(e,i){e.preventDefault();if(_pfDragIdx===i||!_pipeTrig)return;const p=[..._pipeTrig.pipeline];const item=p.splice(_pfDragIdx,1)[0];p.splice(i,0,item);_pipeTrig.pipeline=p;_pfDragIdx=-1;renderPipelineFlow()}
 async function pipelineSave(){if(!_pipeTrig){toast('warn','No trigger selected');return}
-  // Collect any updated sensor params from the rendered form
-  const sp=collectSensorParams('pipe');
-  if(Object.keys(sp).length)_pipeTrig.sensor_params={..._pipeTrig.sensor_params,...sp};
-  // Collect stage config params from rendered inputs
-  document.querySelectorAll('[data-param-stage]').forEach(el=>{
-    const stage=el.dataset.paramStage;const name=el.dataset.paramName;
-    if(!_pipeTrig.stage_params)_pipeTrig.stage_params={};
-    if(!_pipeTrig.stage_params[stage])_pipeTrig.stage_params[stage]={};
-    _pipeTrig.stage_params[stage][name]=el.value;
-  });
+  // Collect sensor + stage params from the compact (light-DOM) forms. In canvas
+  // mode those forms are hidden and stale — the inspector writes edits straight
+  // into _pipeTrig — so we skip the DOM scrape and trust the live model instead.
+  if(!pipeCanvasActive()){
+    const sp=collectSensorParams('pipe');
+    if(Object.keys(sp).length)_pipeTrig.sensor_params={..._pipeTrig.sensor_params,...sp};
+    document.querySelectorAll('[data-param-stage]').forEach(el=>{
+      const stage=el.dataset.paramStage;const name=el.dataset.paramName;
+      if(!_pipeTrig.stage_params)_pipeTrig.stage_params={};
+      if(!_pipeTrig.stage_params[stage])_pipeTrig.stage_params[stage]={};
+      _pipeTrig.stage_params[stage][name]=el.value;
+    });
+  }
   // Persist the full canvas graph (caps / wiring / conditions) so nothing is
   // lost on reload; sync sensors+pipeline first if the canvas is open.
   if(_pipeCanvasReady){ const fb=$('pipeFlowCanvas'); if(fb&&fb.getGraph){ if(pipeCanvasActive())_pipeSyncFromCanvas(); _pipeTrig.flow_graph=fb.getGraph(); } }
@@ -1886,29 +2222,171 @@ const dreamTriggerProvider={
     const mk=(t)=>({id:'n'+(++i), type:t, out:null, params:{}, output_map:null, condition:'', parallel_with:null, pos:null, meta:{}});
     return {nodes:[...sensors.map(mk), ...pipeline.map(mk)], meta:{}};
   },
+  // Generic wiring/condition/output-key controls are only meaningful for cap
+  // nodes (executed via "Run as DAG"). Sensors and stages run in the fixed
+  // dream-cycle order, so we suppress the wiring block for them — their full
+  // config is rendered inline by renderInspector below instead.
+  wiring(node){ const t=(node&&node.type)||''; return !t.startsWith(PIPE_SENSOR_PREFIX) && !t.startsWith(PIPE_STAGE_PREFIX); },
   renderInspector(node,ctx){
     const t=node.type||'';
     if(t.startsWith(PIPE_SENSOR_PREFIX)){
-      const s=(_senMeta||[]).find(x=>PIPE_SENSOR_PREFIX+x.id===t)||{};
-      return `<div class="insp-h">${ctx.esc(t.replace(PIPE_SENSOR_PREFIX,''))} <span style="font-size:8.5px;color:var(--acc,#6ea8fe)">sensor</span></div>
-        <div class="insp-desc">${ctx.esc(s.description||'Sensor — collects signal in the sense phase.')}</div>
-        <div class="insp-section"><div class="insp-section-h">Configure</div>
-          <div class="insp-row" style="font-size:10px;color:var(--dim,#7a8290)">Sensor params appear in the config panel below the canvas when selected.</div></div>`;
+      const short=t.replace(PIPE_SENSOR_PREFIX,'');
+      const meta=(_senMeta||[]).find(x=>x.id===short)||(_senMeta||[]).find(x=>PIPE_SENSOR_PREFIX+x.id===t)||{};
+      const cur=((_pipeTrig&&_pipeTrig.sensor_params)||{})[short]||{};
+      const html=`<div class="insp-h">${ctx.esc(short)} <span style="font-size:8.5px;color:var(--acc,#6ea8fe)">sensor</span></div>
+        <div class="insp-desc">${ctx.esc(meta.description||'Sensor — collects signal in the sense phase.')}</div>
+        ${_dreamInspSensorBody(meta,cur,short,t)}`;
+      return {html, bind:(host)=>_dreamHydrateInspSelects(host)};
     }
     if(t.startsWith(PIPE_STAGE_PREFIX)){
       const meta=(_stgMeta||[]).find(x=>x.id===t)||{};
-      return `<div class="insp-h">${ctx.esc(t.replace(PIPE_STAGE_PREFIX,''))}</div>
+      const html=`<div class="insp-h">${ctx.esc(t.replace(PIPE_STAGE_PREFIX,''))} <span style="font-size:8.5px;color:var(--acc2,#8fb87a)">${ctx.esc(meta.phase||'stage')}</span></div>
         <div class="insp-desc">${ctx.esc(meta.description||'')}</div>
-        <div class="insp-section"><div class="insp-section-h">Phase</div>
-          <div class="insp-row" style="font-family:var(--mono);color:var(--acc2,#8fb87a)">${ctx.esc(meta.phase||'analyze')}</div></div>
-        <div class="insp-section"><div class="insp-section-h">Configure</div>
-          <div class="insp-row" style="font-size:10px;color:var(--dim,#7a8290)">Detailed stage params appear in the config panel below the canvas when selected.</div></div>`;
+        ${_dreamInspStageBody(meta,t)}`;
+      return {html};
     }
     const sc=(window.VeraFlowCaps&&window.VeraFlowCaps.schemaFor(t))||{};
     return `<div class="insp-h">${ctx.esc(t.split('.').pop())} <span style="font-size:8.5px;color:var(--amber,#e6b450)">capability</span></div>
       <div class="insp-desc">${ctx.esc(sc.description||t)}</div>`;
   }
 };
+
+/* ── Canvas inspector: live-binding sensor & stage config (shadow-DOM safe) ──
+   These render INTO the flow-builder's shadow inspector, where document.* lookups
+   and the data-psp-* collection path don't reach. Every control therefore writes
+   straight into _pipeTrig (sensor_params / stage_params / stage_config) via the
+   global handlers below, so pipelineSave() persists them with no DOM scraping. */
+function _dreamInspSensorBody(meta,cur,short,fullId){
+  const params=(meta&&meta.params)||[];
+  const rows=params.length
+    ? params.map(p=>_dreamInspSensorRow(short,p,cur)).join('')
+    : '<div class="empty">No configurable parameters.</div>';
+  return `<div class="insp-section"><div class="insp-section-h">Parameters</div>${rows}</div>`
+    + _dreamInspSensorCond(short,cur)
+    + _dreamInspSensorPreview(fullId,short);
+}
+function _dreamInspSensorRow(short,p,cur){
+  const val=(p.name in cur)?cur[p.name]:(p.default!==undefined?p.default:'');
+  const d=`data-ins-sensor="${esc(short)}" data-ins-key="${esc(p.name)}" data-ins-type="${esc(p.type||'str')}"`;
+  const label=`<div class="insp-row-label">${esc(p.name)}<span class="ptype">${esc(p.type||'str')}</span>${p.help?`<span class="pdesc">${esc(p.help)}</span>`:''}</div>`;
+  let ctrl;
+  if(p.name==='dataset_id'){
+    ctrl=`<select ${d} data-ins-async="datasets" data-ins-val="${esc(String(val))}" onchange="dreamInspSensorParam(this)"><option value="">(loading datasets…)</option></select>`;
+  }else if(p.name==='workspace'){
+    ctrl=`<select ${d} data-ins-async="workspaces" data-ins-val="${esc(String(val))}" onchange="dreamInspSensorParam(this)"><option value="">(loading…)</option></select>`;
+  }else if(p.type==='int'||p.type==='number'){
+    ctrl=`<input type="number" ${d} value="${esc(String(val))}" oninput="dreamInspSensorParam(this)">`;
+  }else if(p.type==='bool'){
+    ctrl=`<label style="display:flex;gap:6px;align-items:center;font-size:11px"><input type="checkbox" ${d} ${(val===true||val==='true')?'checked':''} style="width:auto" onchange="dreamInspSensorParam(this)"> enabled</label>`;
+  }else{
+    const ph=p.name==='prefix'?'e.g. memory. or research.':(p.name==='session_id'?'session id or empty for any':'');
+    ctrl=`<input type="text" ${d} value="${esc(String(val))}" placeholder="${esc(ph)}" oninput="dreamInspSensorParam(this)">`;
+  }
+  return `<div class="insp-row">${label}${ctrl}</div>`;
+}
+function _dreamInspSensorCond(short,cur){
+  const d=k=>`data-ins-sensor="${esc(short)}" data-ins-key="${k}"`;
+  const m=cur.match||'',mf=cur.match_field||'all',mn=(cur.min_signal??''),ng=cur.negate===true||cur.negate==='true';
+  return `<div class="insp-section"><div class="insp-section-h">Fire condition <span style="text-transform:none;color:var(--dim,#7a8290)">— optional gate</span></div>
+    <div class="insp-row"><input type="text" ${d('match')} data-ins-type="str" value="${esc(String(m))}" placeholder="regex / text — fires only on a hit" oninput="dreamInspSensorParam(this)"></div>
+    <div class="insp-row" style="display:flex;gap:5px;align-items:center">
+      <select ${d('match_field')} data-ins-type="str" style="flex:1" onchange="dreamInspSensorParam(this)"><option value="all"${mf==='all'?' selected':''}>all</option><option value="sample"${mf==='sample'?' selected':''}>sample</option><option value="summary"${mf==='summary'?' selected':''}>summary</option></select>
+      <input type="number" step="0.05" min="0" max="1" ${d('min_signal')} data-ins-type="number" value="${esc(String(mn))}" placeholder="min sig" style="width:72px" oninput="dreamInspSensorParam(this)">
+      <label style="font-size:10px;display:flex;gap:4px;align-items:center;white-space:nowrap"><input type="checkbox" ${d('negate')} data-ins-type="bool"${ng?' checked':''} style="width:auto" onchange="dreamInspSensorParam(this)"> not</label>
+    </div></div>`;
+}
+function _dreamInspSensorPreview(fullId,short){
+  return `<div class="insp-section">
+    <button class="btn sm" type="button" onclick="dreamInspPreviewSensor('${esc(fullId)}','${esc(short)}',this)">Preview data</button>
+    <div data-ins-preview style="display:none;margin-top:6px;font-size:10px;background:var(--bg0,#0e1116);border:1px solid var(--border,#2a313e);border-radius:4px;padding:7px;max-height:200px;overflow:auto"></div>
+  </div>`;
+}
+function dreamInspSensorParam(el){
+  if(!_pipeTrig)return;
+  const s=el.dataset.insSensor,k=el.dataset.insKey,ty=el.dataset.insType||'str';
+  let v;
+  if(el.type==='checkbox')v=el.checked;
+  else if(ty==='int'||ty==='number')v=el.value===''?undefined:Number(el.value);
+  else v=el.value;
+  _pipeTrig.sensor_params=_pipeTrig.sensor_params||{};
+  _pipeTrig.sensor_params[s]=_pipeTrig.sensor_params[s]||{};
+  if(v===undefined||v===''||v===null)delete _pipeTrig.sensor_params[s][k];
+  else _pipeTrig.sensor_params[s][k]=v;
+}
+async function dreamInspPreviewSensor(fullId,short,btn){
+  const box=btn&&btn.parentElement&&btn.parentElement.querySelector('[data-ins-preview]');if(!box)return;
+  const params=((_pipeTrig&&_pipeTrig.sensor_params)||{})[short]||{};
+  box.style.display='block';box.innerHTML='<span style="color:var(--dim,#7a8290)">Running sensor…</span>';
+  const r=await api('/dream/sensor/preview',{method:'POST',body:JSON.stringify({sensor:fullId,params})});
+  if(!r||r.ok===false){box.innerHTML='<span style="color:var(--err,#c75a5a)">'+esc((r&&r.error)||'sensor failed')+'</span>';return}
+  const sig=(r.signal!=null)?Number(r.signal).toFixed(2):'—';
+  const would=(r.would_fire===true)?'<span style="color:var(--acc2,#5dd39e)">would fire ✓</span>':(r.would_fire===false?'<span style="color:var(--err,#c75a5a)">would NOT fire ✕</span>':'');
+  let sample=r.sample,sampleStr='';
+  try{sampleStr=typeof sample==='string'?sample:JSON.stringify(sample,null,1)}catch(e){sampleStr=String(sample)}
+  if(sampleStr&&sampleStr.length>1400)sampleStr=sampleStr.slice(0,1400)+'…';
+  box.innerHTML='<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:5px"><b>signal: '+sig+'</b>'
+    +(r.count!=null?'<span>count: '+esc(String(r.count))+'</span>':'')
+    +(r.source?'<span>source: '+esc(String(r.source))+'</span>':'')+would+'</div>'
+    +(r.summary?'<div style="color:var(--text2,#aab2c0);margin-bottom:5px">'+esc(String(r.summary).slice(0,400))+'</div>':'')
+    +(sampleStr?'<pre style="white-space:pre-wrap;font-family:var(--mono);font-size:9.5px;color:var(--dim,#7a8290);margin:0">'+esc(sampleStr)+'</pre>':'');
+}
+function _dreamInspStageBody(meta,t){
+  let html='';
+  const params=(meta&&meta.params)||[];
+  if(params.length){
+    html+='<div class="insp-section"><div class="insp-section-h">Parameters</div>'
+      +params.map(p=>{
+        const val=((_pipeTrig&&_pipeTrig.stage_params)||{})[t]?.[p.name]??p.default??'';
+        return `<div class="insp-row"><div class="insp-row-label">${esc(p.name)}<span class="ptype">${esc(p.type||'str')}</span></div><input type="text" data-ins-stage="${esc(t)}" data-ins-key="${esc(p.name)}" value="${esc(String(val))}" oninput="dreamInspStageParam(this)"></div>`;
+      }).join('')
+      +'</div>';
+  }
+  html+=_dreamInspStageConfig(t);
+  if(!html)html='<div class="insp-section"><div class="empty">No configurable parameters for this stage.</div></div>';
+  return html;
+}
+function _dreamInspStageConfig(t){
+  const sc=(_pipeTrig&&_pipeTrig.stage_config)||{};
+  if(t==='dream.stage.cap_execute'){
+    const cfg=sc.cap_execute||{};
+    return `<div class="insp-section"><div class="insp-section-h">Capability execution</div>
+      <div class="insp-row"><div class="insp-row-label">capability</div><input type="text" value="${esc(cfg.cap||'')}" placeholder="e.g. nlp.run" oninput="pipeUpdateStageConfig('cap_execute','cap',this.value)"></div>
+      <div class="insp-row"><div class="insp-row-label">params <span class="pdesc">JSON · use $key for state refs</span></div><textarea style="min-height:46px;font-family:var(--mono);font-size:10px" oninput="pipeUpdateStageConfigJSON('cap_execute','params',this.value)">${esc(JSON.stringify(cfg.params||{},null,2))}</textarea></div></div>`;
+  }
+  if(t==='dream.stage.dag_execute'){
+    const cfg=sc.dag_execute||{};
+    return `<div class="insp-section"><div class="insp-section-h">DAG execution</div>
+      <div class="insp-row"><div class="insp-row-label">dag_id <span class="pdesc">saved DAG name</span></div><input type="text" value="${esc(cfg.dag_id||'')}" placeholder="e.g. my_workflow" oninput="pipeUpdateStageConfig('dag_execute','dag_id',this.value)"></div>
+      <div class="insp-row"><div class="insp-row-label">inline steps <span class="pdesc">JSON array</span></div><textarea style="min-height:60px;font-family:var(--mono);font-size:10px" oninput="pipeUpdateStageConfigJSON('dag_execute','steps',this.value)">${esc(JSON.stringify(cfg.steps||[],null,2))}</textarea></div></div>`;
+  }
+  if(t==='dream.stage.synthesize'){
+    const cs=(_pipeTrig&&_pipeTrig.output_style)||'';
+    const opt=(v,l)=>`<option value="${v}"${cs===v?' selected':''}>${l}</option>`;
+    return `<div class="insp-section"><div class="insp-section-h">Output style</div>
+      <div class="insp-row"><select onchange="_pipeTrig.output_style=this.value">${opt('','standard')}${opt('quick','quick (2-4 sentences)')}${opt('short','short (1-2 paragraphs)')}${opt('long','long (detailed sections)')}${opt('audio','audio (spoken-word)')}</select></div></div>`;
+  }
+  return '';
+}
+function dreamInspStageParam(el){
+  if(!_pipeTrig)return;
+  const s=el.dataset.insStage,k=el.dataset.insKey;
+  _pipeTrig.stage_params=_pipeTrig.stage_params||{};
+  _pipeTrig.stage_params[s]=_pipeTrig.stage_params[s]||{};
+  _pipeTrig.stage_params[s][k]=el.value;
+}
+function _dreamHydrateInspSelects(host){
+  if(!host)return;
+  host.querySelectorAll('select[data-ins-async]').forEach(async sel=>{
+    const kind=sel.getAttribute('data-ins-async'),curv=sel.getAttribute('data-ins-val')||'';
+    if(kind==='datasets'){
+      const list=await _loadFabricDatasets();
+      sel.innerHTML='<option value="">— select dataset —</option>'+list.map(dd=>{const id=dd.dataset_id||dd.id||dd.name||'';const cnt=dd.record_count||dd.count||0;return `<option value="${esc(id)}"${curv===id?' selected':''}>${esc(id)} (${cnt})</option>`}).join('');
+    }else if(kind==='workspaces'){
+      const list=await _loadWorkspaces();
+      sel.innerHTML='<option value="">— any workspace —</option>'+list.map(w=>{const name=w.name||w.id||'';return `<option value="${esc(name)}"${curv===name?' selected':''}>${esc(name)}${w.path?' ('+esc(String(w.path).slice(0,40))+')':''}</option>`}).join('');
+    }
+  });
+}
 let _pipeCanvasReady=false, _pipeCanvasTrig=null;
 function pipeCanvasActive(){const w=$('pipe-canvas-wrap');return !!(w && w.style.display!=='none')}
 // In canvas mode the redundant compact cards (stage library = the palette,
@@ -1943,16 +2421,17 @@ function pipeToggleCanvas(){
     _pipeSyncFromCanvas();
     wrap.style.display='none'; $('pipe-flow').style.display=''; _pipeCanvasCards(true);
     if(btn)btn.innerHTML='&#8862; Canvas';
+    try{localStorage.setItem('dreamPipeCanvas','0')}catch(_){}
     renderPipelineFlow(); renderPipelineSensors(); return;
   }
   if(!_pipeTrig){toast('warn','Select a trigger first');return}
+  try{localStorage.setItem('dreamPipeCanvas','1')}catch(_){}
   if(!el.setProvider){toast('err','Flow builder not loaded — restart the server so /ui/elements/flow_builder.js registers');return}
   if(!_pipeCanvasReady){
     el.setProvider(dreamTriggerProvider);
     el.addEventListener('flow:change', _pipeSyncFromCanvas);
-    el.addEventListener('flow:select',e=>{ const n=e.detail&&e.detail.node; if(!n||!n.type)return;
-      if(n.type.indexOf('dream.sensor.')===0) pipeSelectSensor(n.type);
-      else if(n.type.indexOf('dream.stage.')===0) pipeSelectStage(n.type); });
+    // Node config is rendered live in the canvas inspector (see
+    // dreamTriggerProvider.renderInspector), so selection needs no extra wiring.
     _pipeCanvasReady=true;
   }
   // Only (re)load when the trigger changed or the canvas is empty — preserves
@@ -2206,27 +2685,129 @@ function renderPipelineStageLib(){const lib=$('pipe-stage-lib');if(!lib)return;
    PROJECTS
    ═══════════════════════════════════════════════════════════ */
 let _projects=[],_activeProj=null;
+// Find & merge near-duplicate / branched projects (one re-worded goal that
+// forked a dozen siblings each running their own dream/loop).
+async function dedupeProjects(){
+  toast('warn','Scanning for duplicate projects…');
+  const prev=await post('/dream/projects/dedupe',{apply:false});
+  if(!prev||!prev.ok){toast('err','Dedupe scan failed');return}
+  const groups=prev.groups||[];
+  if(!groups.length){toast('ok','No duplicate projects found');return}
+  const lines=groups.map(g=>'• keep "'+esc(g.canonical.name||g.canonical.slug)+'"  ←  merge '
+    +g.duplicates.map(d=>'"'+esc(d.name||d.slug)+'" ('+Math.round((d.score||0)*100)+'%)').join(', ')).join('\n');
+  if(!confirm('Found '+groups.length+' duplicate group(s), '+(prev.merged||0)+' project(s) to merge:\n\n'
+    +lines+'\n\nMerge each group into its richest project and archive the rest?'))return;
+  const r=await post('/dream/projects/dedupe',{apply:true});
+  if(r&&r.ok){toast('ok','Merged '+(r.merged||0)+' duplicate project(s)');loadProjects();}
+  else toast('err','Merge failed: '+((r&&r.error)||'?'));
+}
+// Manual multi-select merge — tick projects, choose the canonical, merge.
+function _mergeSel(){return Array.from(document.querySelectorAll('.proj-msel:checked')).map(c=>({slug:c.getAttribute('data-slug'),name:c.getAttribute('data-name')}));}
+function updateMergeBar(){
+  const sel=_mergeSel(),bar=$('proj-merge-bar');if(!bar)return;
+  if(sel.length<2){bar.style.display='none';return;}
+  bar.style.display='flex';
+  $('proj-merge-count').textContent=sel.length+' selected';
+  $('proj-merge-into').innerHTML=sel.map(s=>'<option value="'+esc(s.slug)+'">'+esc(s.name||s.slug)+'</option>').join('');
+}
+function clearMergeSel(){document.querySelectorAll('.proj-msel:checked').forEach(c=>c.checked=false);updateMergeBar();}
+async function mergeSelected(del){
+  const sel=_mergeSel();if(sel.length<2){toast('warn','Tick at least 2 projects');return;}
+  const into=$('proj-merge-into').value;
+  const others=sel.filter(s=>s.slug!==into).map(s=>s.name||s.slug);
+  if(!confirm('Merge '+others.join(', ')+'\n\ninto "'+(sel.find(s=>s.slug===into)?.name||into)+'"?\n\nTheir resources are absorbed; they are '+(del?'DELETED.':'archived.')))return;
+  const r=await post('/dream/projects/merge',{slugs:sel.map(s=>s.slug),into,delete:!!del});
+  if(r&&r.ok){toast('ok','Merged '+(r.merged||[]).length+' project(s) into '+r.into);loadProjects();}
+  else toast('err','Merge failed: '+((r&&r.error)||'?'));
+}
+async function archiveProject(slug){
+  if(!confirm('Archive "'+slug+'"? It keeps its record but stops dreaming.'))return;
+  const p=_projects.find(x=>x.slug===slug)||{};
+  const r=await post('/dream/projects/upsert',{name:p.name||slug,slug,status:'archived'});
+  if(r&&r.ok){toast('ok','Archived');loadProjects();}else toast('err','Archive failed');
+}
+async function deleteProjectFromList(slug,name){
+  if(!confirm('Delete project "'+(name||slug)+'" permanently? This cannot be undone.'))return;
+  const r=await post('/dream/projects/delete',{slug});
+  if(r&&r.ok){toast('ok','Deleted');loadProjects();}else toast('err','Delete failed: '+((r&&r.error)||'?'));
+}
 async function loadProjects(){
-  // Projects are stored in Redis under vera:dream:projects
-  const r=await api('/dream/projects/list').catch(()=>null);
+  // Projects are stored in Redis under vera:dream:projects. Goals are just
+  // strategic projects, so this ONE list shows both — merge live goal status.
+  const [r,gr,sched,progs]=await Promise.all([
+    api('/dream/projects/list').catch(()=>null),
+    api('/dream/goals/list').catch(()=>null),
+    api('/dream/scheduler/status').catch(()=>null),
+    api('/loops/program/list?status=active').catch(()=>null)]);
   const pl=$('proj-list');
   if(!r){pl.innerHTML='<div class="empty" style="padding:20px">Project system not yet available — run the system update to install project_capabilities.</div>';return}
   _projects=r.projects||[];
-  if(!_projects.length){pl.innerHTML='<div class="empty">No projects yet. Create one to get started.</div>';return}
-  pl.innerHTML=_projects.map(p=>`
+  const gmap={};for(const g of (gr?.goals||[]))gmap[g.slug]=g;
+  for(const p of _projects){
+    const g=gmap[p.slug];
+    p._isGoal=!!g||(p.tags||[]).includes('strategic')||(p.tags||[]).includes('v7');
+    if(g){p.loop_session=g.loop_session;p.loop_status=g.loop_status;p.dream_count=g.dream_count??p.dream_count;}
+  }
+  // ── Dashboard tiles ────────────────────────────────────────────────────────
+  try{
+    const dash=$('proj-dash');
+    if(dash){
+      const actives=_projects.filter(p=>(p.status||'active')==='active');
+      const goals=actives.filter(p=>p._isGoal);
+      const totalDreams=_projects.reduce((n,p)=>n+(+p.dream_count||0),0);
+      const recent=_projects.filter(p=>p.last_dream_at&&(Date.now()-new Date(p.last_dream_at).getTime())<7*864e5).length;
+      const v8n=(progs?.programs||[]).length;
+      const loopsLive=_projects.filter(p=>p.loop_status==='running').length;
+      const t=(lbl,val,col)=>'<div class="tile" style="flex:none"><div class="lbl">'+lbl+'</div><div class="val"'+(col?' style="color:'+col+'"':'')+'>'+val+'</div></div>';
+      dash.innerHTML=t('Active projects',actives.length,'')+t('Goals',goals.length,'var(--acc4)')
+        +t('Dream cycles',totalDreams,'')+t('Dreamed <7d',recent,'')
+        +t('V8 programs',v8n,v8n?'var(--acc2)':'')+t('Loops live',loopsLive,loopsLive?'var(--acc2)':'');
+    }
+    // ── Dreaming NOW — pin the actively-dreaming project to the top ────────
+    const dr=$('proj-dreaming');
+    if(dr){
+      const cur=sched?.current_cycle||null;
+      let slug='';
+      if(cur){
+        slug=cur.project||cur.project_slug||'';
+        // project journals are keyed project:<slug>
+        const cid=String(cur.cycle_id||'');
+        if(!slug&&cid.startsWith('project:'))slug=cid.slice(8);
+      }
+      const dp=slug?_projects.find(p=>p.slug===slug):null;
+      dr.innerHTML=cur?('<div class="card" style="border-left:3px solid var(--acc2);margin-bottom:8px"><div class="card-bd" style="display:flex;gap:10px;align-items:center">'
+        +'<span style="color:var(--acc2);font-size:13px">☾</span>'
+        +'<span style="flex:1;font-size:11px"><b>Dreaming now:</b> '+esc(dp?(dp.name||slug):(cur.trigger||'cycle'))
+        +(dp?' <span style="color:var(--fg3);font-size:9px">('+esc(cur.trigger||'')+')</span>':'')+'</span>'
+        +(dp?'<button class="btn sm pri" onclick="openProjectDetail(\''+esc(dp.slug)+'\')">Open project</button>':'')
+        +'<button class="btn sm" onclick="nav(\'live\')">▶ Watch live</button>'
+        +'</div></div>'):'';
+    }
+  }catch(_){}
+  if(!_projects.length){pl.innerHTML='<div class="empty">No projects yet. Create one, or give the system a broad goal in chat (it escalates to a strategic goal-project tracked here).</div>';return}
+  // Long-term goals first, then plain projects.
+  const sorted=[..._projects].sort((a,b)=>(b._isGoal?1:0)-(a._isGoal?1:0));
+  pl.innerHTML=sorted.map(p=>`
 <div class="proj-card ${p.slug===_activeProj?.slug?'active-proj':''}" onclick="openProjectDetail('${esc(p.slug)}')">
   <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:4px">
+    <input type="checkbox" class="proj-msel" data-slug="${esc(p.slug)}" data-name="${esc(p.name)}" onclick="event.stopPropagation();updateMergeBar()" title="Select to merge">
+    ${p._isGoal?'<span class="res-badge" style="color:var(--acc4);flex-shrink:0">&#127919; goal</span>':''}
     <div class="proj-name">${esc(p.name)}</div>
     <span style="font-size:9px;color:var(--fg3);font-family:var(--mono)">${esc(p.slug)}</span>
     <span style="font-size:9px;padding:1px 6px;border-radius:3px;background:var(--bg3);color:${p.status==='active'?'var(--acc2)':'var(--fg3)'};">${esc(p.status||'active')}</span>
+    ${p.loop_status==='running'?'<span style="font-size:9px;color:var(--acc2)">&#9654; loop live</span>':''}
     <div style="flex:1"></div>
-    <button class="btn sm" onclick="event.stopPropagation();runProjectDream('${esc(p.slug)}')" title="Run dream cycle for this project">&#9654; Dream</button>
+    ${p.loop_status==='running'?'<button class="btn sm pri" onclick="event.stopPropagation();openProjectDetail(\''+esc(p.slug)+'\')" title="Watch the running loop">&#9654; Watch</button>':''}
+    <button class="btn sm" onclick="event.stopPropagation();runProjectDream('${esc(p.slug)}')" title="${p._isGoal?'Advance this goal one dream cycle':'Run dream cycle for this project'}">&#9654; ${p._isGoal?'Advance':'Dream'}</button>
     <button class="btn sm pri" onclick="event.stopPropagation();openProjectChat('${esc(p.slug)}')" title="Chat with this project's context">&#128172; Chat</button>
     <button class="btn sm" onclick="event.stopPropagation();openProjectEditor(${esc(JSON.stringify(p))},false)" title="Edit">&#9998;</button>
+    <button class="btn sm" onclick="event.stopPropagation();archiveProject('${esc(p.slug)}')" title="Archive (keep record, stop dreams)">&#128451;</button>
+    <button class="btn sm red" onclick="event.stopPropagation();deleteProjectFromList('${esc(p.slug)}','${esc(p.name)}')" title="Delete permanently">&#128465;</button>
   </div>
   <div class="proj-desc">${esc(p.description||'')}</div>
   ${p.summary?'<div class="proj-summary-box">'+md((p.summary||'').slice(0,500))+'</div>':''}
   <div class="proj-resources">
+    ${p._isGoal&&p.dream_count?'<span class="res-badge" style="color:var(--acc4)">&#9790; '+p.dream_count+' cycle'+(p.dream_count===1?'':'s')+'</span>':''}
     ${(p.fabric_dataset_ids||[]).map(d=>'<span class="res-badge">&#128451; '+esc(d)+'</span>').join('')}
     ${(p.notebook_ids||[]).map(d=>'<span class="res-badge">&#128203; '+esc(d)+'</span>').join('')}
     ${(p.chat_ids||[]).map(d=>'<span class="res-badge">&#128172; '+esc(d.slice(-8))+'</span>').join('')}
@@ -2241,7 +2822,120 @@ function projTab(which){
   document.querySelectorAll('.projtab').forEach(t=>t.classList.toggle('on',t.dataset.ptab===which));
   $('projtab-list').style.display=which==='list'?'':'none';
   $('projtab-log').style.display=which==='log'?'':'none';
+  const g=$('projtab-goals'); if(g)g.style.display=which==='goals'?'':'none';
   if(which==='log')loadProjectsLog();
+  if(which==='goals')loadGoals();
+}
+
+// Long-term goals tracker — strategic goals persisted as dream projects.
+async function loadGoals(){
+  const el=$('goals-list'); if(!el)return;
+  const r=await api('/dream/goals/list').catch(()=>null);
+  const goals=(r&&r.goals)||[];
+  if(!goals.length){ el.innerHTML='<div class="empty" style="padding:14px">No long-term goals yet. Give the system a broad goal (e.g. "earn income") with the v7 loop — it escalates to a strategic dream project tracked here.</div>'; return; }
+  el.innerHTML=goals.map(g=>{
+    const when=g.last_dream_at?('last cycle '+_agoStr(g.last_dream_at)):'not started';
+    const statusCol=g.status==='active'?'var(--acc)':g.status==='paused'?'var(--warn,#c9a45a)':'var(--fg3)';
+    return '<div class="card" style="margin-bottom:8px">'
+      +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'
+      +'<b style="font-size:12px">'+esc(g.name||g.slug)+'</b>'
+      +'<span style="font-size:9px;color:'+statusCol+';text-transform:uppercase;letter-spacing:.4px">'+esc(g.status||'')+'</span>'
+      +'<div style="flex:1"></div>'
+      +'<span style="font-size:9px;color:var(--fg3)">'+g.dream_count+' cycle'+(g.dream_count===1?'':'s')+' · '+esc(when)+'</span>'
+      +'</div>'
+      +(g.description?'<div style="font-size:10.5px;color:var(--fg2);margin-bottom:5px">'+esc(g.description)+'</div>':'')
+      +'<details ontoggle="if(this.open)openGoalDetailDream(\''+esc(g.slug)+'\',this)"><summary style="cursor:pointer;font-size:9.5px;color:var(--fg3)">plan, notes, artifacts &amp; thoughts</summary>'
+      +'<div class="goalDetailBox"><pre style="white-space:pre-wrap;font-size:9.5px;color:var(--fg2);max-height:260px;overflow:auto;margin:4px 0 0;background:var(--bg0,#181614);padding:6px;border-radius:4px">'+esc(g.progress||'(loading…)')+'</pre></div></details>'
+      +'<div style="display:flex;gap:6px;margin-top:6px;align-items:center">'
+      +(g.loop_status==='running'
+          ? '<button class="btn sm pri" onclick="watchGoalLoop(\''+esc(g.loop_session)+'\',this)" title="Re-attach to this goal\'s running agentic loop and stream it live">▶ Watch live</button>'
+          : '')
+      +'<button class="btn sm pri" onclick="projTab(\'log\');setTimeout(()=>openProjectLog(\''+esc(g.slug)+'\'),120)">Open / live output</button>'
+      +'<button class="btn sm" onclick="runGoalCycle(\''+esc(g.slug)+'\')" title="Advance this goal one dream cycle now">Advance now</button>'
+      +(g.loop_status&&g.loop_status!=='running'?'<span style="font-size:9px;color:var(--fg3)">loop '+esc(g.loop_status)+'</span>':'')
+      +'</div>'
+      +'<div class="goal-loop-view" style="margin-top:6px"></div>'
+      +'</div>';
+  }).join('');
+}
+
+// Lazy-load a goal's full detail (documented plan + rolling progress, the
+// agent-notes standing brief, produced/snapshotted artifacts, and the background
+// thought loops RAGing its output) into the expanded card.
+async function openGoalDetailDream(slug, detailsEl){
+  const box=detailsEl&&detailsEl.querySelector('.goalDetailBox'); if(!box)return;
+  if(box.dataset.loaded==='1')return;
+  const d=await api('/dream/goals/detail?slug='+encodeURIComponent(slug)).catch(()=>null);
+  if(!d||d.error){ box.innerHTML='<div class="empty" style="padding:8px">detail unavailable</div>'; return; }
+  box.dataset.loaded='1';
+  const sec=(t,b)=> b?('<div style="margin-top:6px"><div style="font-size:9px;color:var(--acc);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">'+t+'</div>'+b+'</div>'):'';
+  const pre=(t)=>'<pre style="white-space:pre-wrap;font-size:9.5px;color:var(--fg2);max-height:240px;overflow:auto;margin:0;background:var(--bg0,#181614);padding:6px;border-radius:4px">'+esc(t)+'</pre>';
+  const arts=(d.artifacts||[]).map(a=>'<div style="font-size:9.5px;color:var(--fg2)">📄 '+esc(a.path)+' <span style="color:var(--fg3)">('+(a.bytes||0)+'b)</span></div>').join('')
+              || '<div style="font-size:9.5px;color:var(--fg3)">none yet</div>';
+  const thoughts=(d.thoughts||[]).map(t=>'<div style="font-size:9.5px;color:var(--fg2)">💭 '+esc(t.subject||t.name)+(t.last_run?' <span style="color:var(--fg3)">· last '+esc(String(t.last_run).slice(0,16))+'</span>':'')+'</div>').join('')
+              || '<div style="font-size:9.5px;color:var(--fg3)">no thought loop yet</div>';
+  box.innerHTML =
+      sec('Documented plan &amp; progress', pre(d.plan_progress||d.goal||'(none)'))
+    + sec('Agent notes (standing brief)', d.notes?pre(d.notes):'')
+    + sec('Artifacts', arts)
+    + sec('Background thought loops', thoughts);
+}
+
+// Re-attach to a goal's still-running dream-cycle agentic loop and stream it
+// live into an inline loop-output element. Mirrors the chat/DAG reattach path:
+// replay persisted history via /session_state, then tail /reattach (SSE).
+const _goalLoopReaders = {};
+async function watchGoalLoop(session, btn){
+  if(!session){ toast('warn','No live loop session'); return; }
+  const card = btn.closest('.card');
+  const host = (card&&card.querySelector('.goal-loop-view'))
+               || document.getElementById('project-page-loopview'); if(!host) return;
+  // toggle off if already watching this session
+  if(_goalLoopReaders[session]){ try{ _goalLoopReaders[session].abort(); }catch(_){}
+    delete _goalLoopReaders[session]; host.innerHTML=''; btn.textContent='▶ Watch live'; return; }
+  btn.textContent='■ Stop watching';
+  host.innerHTML='';
+  const el=document.createElement('vera-agent-loop-output');
+  if(typeof el.appendEvent!=='function'){ host.innerHTML='<span style="color:var(--fg3);font-size:10px">Loop renderer not loaded.</span>'; btn.textContent='▶ Watch live'; return; }
+  el.setAttribute('compact','true'); el.setAttribute('show-triage','true');
+  el.style.cssText='display:block;max-height:340px;overflow:auto';
+  host.appendChild(el);
+  try{ el.setApiBase(API); el.setSessionId(session); el.reset(); }catch(_){}
+  const ctrl=new AbortController(); _goalLoopReaders[session]=ctrl;
+  // 1) replay persisted history
+  let count=0;
+  try{
+    const st=await api('/workshop/agent_loop/session_state?session_id='+encodeURIComponent(session));
+    let events=(st&&st.events)||[];
+    // start from the most recent triage_start so we render one coherent run
+    for(let i=events.length-1;i>=0;i--){ if(String(events[i].type||'').endsWith('.triage_start')){ events=events.slice(i); break; } }
+    events.forEach(ev=>{ try{ el.appendEvent(ev); }catch(_){} });
+    count=(st&&st.count)||events.length;
+    if(st&&st.run&&st.run.status&&st.run.status!=='running'){
+      el.appendEvent({type:'agent_loop.note',note:'loop '+st.run.status}); }
+  }catch(_){}
+  // 2) tail live via SSE reattach
+  try{
+    const resp=await fetch(API+'/workshop/agent_loop/reattach?session_id='+encodeURIComponent(session)+'&since='+count,{signal:ctrl.signal});
+    if(!resp.ok||!resp.body){ throw new Error('HTTP '+resp.status); }
+    const reader=resp.body.getReader(); const dec=new TextDecoder(); let buf='';
+    while(true){
+      const {done,value}=await reader.read(); if(done) break;
+      buf+=dec.decode(value,{stream:true});
+      const lines=buf.split('\n'); buf=lines.pop();
+      for(const line of lines){
+        const s=line.trim(); if(!s.startsWith('data:')) continue;
+        const raw=s.slice(5).trim(); if(!raw||raw==='[DONE]') continue;
+        try{ el.appendEvent(JSON.parse(raw)); }catch(_){}
+      }
+    }
+  }catch(e){ if(e&&e.name==='AbortError'){ return; } }
+  finally{ if(_goalLoopReaders[session]===ctrl){ delete _goalLoopReaders[session]; btn.textContent='▶ Watch live'; } }
+}
+function _agoStr(iso){ try{ const d=new Date(iso), s=(Date.now()-d.getTime())/1000; if(s<60)return'just now'; if(s<3600)return Math.floor(s/60)+'m ago'; if(s<86400)return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago'; }catch(_){ return iso||''; } }
+async function runGoalCycle(slug){
+  const r=await post('/dream/projects/dream',{slug,mode:'compose'});
+  if(r&&r.ok!==false){ toast('ok','Dream cycle started for goal'); setTimeout(loadGoals,800); }
 }
 function plogSetActive(){document.querySelectorAll('#projlog-list .plog-chip').forEach(c=>c.classList.toggle('on',c.dataset.slug===_plogSlug));}
 async function loadProjectsLog(){
@@ -2374,12 +3068,32 @@ async function loadActiveProject(){
   const p=_projects.find(x=>x.status==='active')||_projects[0];if(!p)return;
   const b=$('ov-proj');
   b.innerHTML=`<div style="font-size:11.5px;font-weight:600;color:var(--fg);margin-bottom:3px">${esc(p.name)}</div><div style="font-size:10px;color:var(--fg2);margin-bottom:6px">${esc(p.description||'')}</div>${p.summary?'<div style="font-size:9.5px;line-height:1.5;color:var(--fg2);max-height:90px;overflow:hidden">'+md(p.summary.slice(0,300))+'</div>':'<div style="font-size:9.5px;color:var(--fg3)">No summary yet — run a dream cycle</div>'}<div style="margin-top:6px;display:flex;gap:5px"><button class="btn sm" onclick="nav(\'projects\')">All projects</button><button class="btn sm grn" onclick="runProjectDream('${esc(p.slug)}')">Dream</button></div>`}
-async function openProjectDetail(slug){const p=_projects.find(x=>x.slug===slug);if(!p)return;
-  const hist=await api('/dream/projects/dreams?slug='+encodeURIComponent(slug)+'&limit=5').catch(()=>null);
+// Open a project's full detail as a PAGE (not a modal). Goals are just strategic
+// projects, so this page also folds in the goal plan/progress when applicable.
+async function openProjectDetail(slug){
+  let p=_projects.find(x=>x.slug===slug);
+  if(!p){const r=await api('/dream/projects/list').catch(()=>null);if(r)_projects=r.projects||_projects;p=_projects.find(x=>x.slug===slug)}
+  if(!p)return;
+  const isGoal=((p.tags||[]).includes('strategic')||(p.tags||[]).includes('v7'));
+  const hist=await api('/dream/projects/dreams?slug='+encodeURIComponent(slug)+'&limit=10').catch(()=>null);
   const histHtml=hist?.cycles?.length?hist.cycles.map(c=>`<div style="padding:4px 0;border-bottom:1px solid var(--border);font-size:9.5px"><b>${esc(c.title||c.trigger||'dream')}</b> <span style="color:var(--fg3)">${esc((c.ended_at||'').slice(0,10))}</span></div>`).join(''):'<div style="color:var(--fg3);font-size:9.5px">No dreams yet.</div>';
-  openModal(p.name,`
+  $('project-page-title').textContent=p.name||p.slug;
+  $('project-page-badge').innerHTML=(isGoal?'<span class="res-badge" style="color:var(--acc4)">&#127919; long-term goal</span> ':'')
+    +'<span class="res-badge" style="color:'+(p.status==='active'?'var(--acc2)':'var(--fg3)')+'">'+esc(p.status||'active')+'</span>'
+    +'<span style="font-size:9px;color:var(--fg3);font-family:var(--mono);margin-left:6px">'+esc(p.slug)+'</span>';
+  $('project-page-actions').innerHTML=
+     (p.loop_status==='running'?'<button class="btn sm pri" onclick="watchGoalLoop(\''+esc(p.loop_session||'')+'\',this)" title="Re-attach to the running loop">&#9654; Watch live</button>':'')
+    +'<button class="btn sm grn" onclick="runProjectDream(\''+esc(p.slug)+'\',($(\'pj-detail-goal\')||{}).value||\'\')">&#9654; Dream now</button>'
+    +'<button class="btn sm pri" onclick="openProjectChat(\''+esc(p.slug)+'\')">&#128172; Chat</button>'
+    +'<button class="btn sm" onclick="browseProjectResources(\''+esc(p.slug)+'\')">Browse</button>'
+    +'<button class="btn sm" onclick="openProjectEditor('+esc(JSON.stringify(p))+',false)">Edit</button>'
+    +'<button class="btn sm red" onclick="deleteProject(\''+esc(p.slug)+'\')">Delete</button>';
+  $('project-page-body').innerHTML=`
 <div style="margin-bottom:10px">
   <div style="font-size:10.5px;color:var(--fg2);margin-bottom:8px">${esc(p.description||'')}</div>
+  <div id="pj-dreamlive"></div>
+  <div id="project-page-loopview" class="goal-loop-view" style="margin-bottom:10px"></div>
+  ${isGoal?'<div id="pj-goal-detail" style="margin-bottom:10px;padding:8px 10px;border:1px solid var(--border);border-left:3px solid var(--acc4);border-radius:5px"><div style="color:var(--fg3);font-size:9.5px">Loading goal plan&hellip;</div></div>':''}
   ${p.user_context?'<div style="font-size:10px;font-weight:600;color:var(--fg3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">User context (static)</div><div class="proj-summary-box">'+md(p.user_context)+'</div>':''}
   <div style="font-size:10px;font-weight:600;color:var(--fg3);text-transform:uppercase;letter-spacing:.5px;margin:10px 0 4px;display:flex;align-items:center;gap:6px">
     LLM context (rolling — updated by dream cycles)
@@ -2395,28 +3109,170 @@ async function openProjectDetail(slug){const p=_projects.find(x=>x.slug===slug);
     ${(p.ide_workspaces||[]).map(d=>'<span class="res-badge">ide: '+esc(d)+'</span>').join('')}
     ${(p.dream_trigger_names||[]).map(d=>'<span class="res-badge" style="color:var(--acc4)">trigger: '+esc(d)+'</span>').join('')}
   </div>
+  <div style="font-size:10px;font-weight:600;color:var(--fg3);text-transform:uppercase;letter-spacing:.5px;margin:10px 0 4px">Project memory (agent-maintained)</div>
+  <vera-session-notes scope="project" ref-id="${esc(p.slug)}" title="Project memory" style="display:block;margin-bottom:8px"></vera-session-notes>
+  <div style="font-size:10px;font-weight:600;color:var(--fg3);text-transform:uppercase;letter-spacing:.5px;margin:10px 0 4px">Activity timeline</div>
+  <div style="height:340px;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:10px">
+    <vera-activity-timeline id="pj-activity" scope="project:${esc(p.slug)}" auto="20" show-picker="false" compact style="height:100%"></vera-activity-timeline>
+  </div>
+  <div style="font-size:10px;font-weight:600;color:var(--fg3);text-transform:uppercase;letter-spacing:.5px;margin:10px 0 4px">Agentic loop history</div>
+  <div id="pj-loops" style="margin-bottom:10px"><div style="color:var(--fg3);font-size:9.5px">Loading&hellip;</div></div>
+  <div style="font-size:10px;font-weight:600;color:var(--fg3);text-transform:uppercase;letter-spacing:.5px;margin:10px 0 4px">Artifacts</div>
+  <div id="pj-artifacts" style="margin-bottom:10px"><div style="color:var(--fg3);font-size:9.5px">Loading&hellip;</div></div>
   <div style="font-size:10px;font-weight:600;color:var(--fg3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Recent dream cycles</div>
   ${histHtml}
   <div style="margin-top:10px"><label class="fld">Run with goal (optional)</label><input id="pj-detail-goal" type="text" placeholder="e.g. find the current bottleneck" style="width:100%"></div>
-</div>`,
-  '<button class="btn red sm" onclick="deleteProject(\''+esc(p.slug)+'\')">Delete</button>'
-  +'<button class="btn" onclick="closeModal()">Close</button>'
-  +'<button class="btn sm" onclick="closeModal();browseProjectResources(\''+esc(p.slug)+'\')">Browse</button>'
-  +'<button class="btn pri" onclick="closeModal();openProjectChat(\''+esc(p.slug)+'\')">&#128172; Chat</button>'
-  +'<button class="btn sm" onclick="closeModal();openProjectEditor('+esc(JSON.stringify(p))+',false)">Edit</button>'
-  +'<button class="btn grn" onclick="runProjectDream(\''+esc(p.slug)+'\',$(\'pj-detail-goal\').value);closeModal()">&#9654; Dream now</button>')}
+</div>`;
+  nav('project');
+  $('sec-title').textContent='Project';
+  document.querySelector('.nav-btn[data-sec="projects"]')?.classList.add('active');
+  loadProjectDetailExtras(slug);
+  if(isGoal)loadProjectGoalDetail(slug);
+}
+
+// Fold a strategic goal's documented plan/progress, standing brief, and thought
+// loops into the project page (goals are just strategic projects).
+async function loadProjectGoalDetail(slug){
+  const box=$('pj-goal-detail'); if(!box)return;
+  const [d,pl]=await Promise.all([
+    api('/dream/goals/detail?slug='+encodeURIComponent(slug)).catch(()=>null),
+    api('/dream/projects/plan?slug='+encodeURIComponent(slug)).catch(()=>null)]);
+  if(!d||d.error){box.innerHTML='<div style="font-size:9.5px;color:var(--fg3)">Goal detail unavailable.</div>';return}
+  // Rendered markdown with a built-in raw toggle (was a raw <pre> dump).
+  const pre=(t)=>'<div style="max-height:280px;overflow:auto;font-size:9.5px;background:var(--bg0,#181614);padding:6px;border-radius:4px"><vera-markdown>'+esc(t||'(none)')+'</vera-markdown></div>';
+  const thoughts=(d.thoughts||[]).map(t=>'<div style="font-size:9.5px;color:var(--fg2)">&#128173; '+esc(t.subject||t.name||'')+(t.last_run?' <span style="color:var(--fg3)">· last '+esc(String(t.last_run).slice(0,16))+'</span>':'')+'</div>').join('')||'<div style="font-size:9.5px;color:var(--fg3)">no thought loop yet</div>';
+  // Multi-session plan ledger — the portions the dream advances one at a time.
+  let planHtml='';
+  const ports=(pl&&pl.portions)||[];
+  if(ports.length){
+    const ic={done:'✓',active:'▶',pending:'○',blocked:'✗'};
+    const col={done:'var(--acc2,#4ade80)',active:'var(--acc)',pending:'var(--fg3)',blocked:'var(--err,#ef4444)'};
+    const remaining=ports.filter(p=>p.status==='pending'||p.status==='active').length;
+    planHtml='<div style="font-size:10px;font-weight:600;color:var(--fg3);text-transform:uppercase;letter-spacing:.5px;margin:8px 0 4px">Plan portions ('+(ports.length-remaining)+'/'+ports.length+' done)</div>'
+      +ports.map(p=>'<div style="font-size:9.5px;padding:3px 0;border-bottom:1px solid var(--border);display:flex;gap:7px;align-items:baseline">'
+        +'<span style="color:'+(col[p.status]||'var(--fg3)')+'">'+(ic[p.status]||'○')+'</span>'
+        +'<span style="flex:1;color:'+(p.status==='done'?'var(--fg3)':'var(--fg2)')+'">'+esc(p.title||'')+(p.note?'<span style="color:var(--fg3);display:block;font-size:9px">'+esc(String(p.note).slice(0,160))+'</span>':'')+'</span></div>').join('');
+  }
+  box.innerHTML='<div style="font-size:10px;font-weight:600;color:var(--acc4);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">&#127919; Goal plan &amp; progress</div>'
+    +pre(d.plan_progress||d.goal||'')
+    +planHtml
+    +(d.notes?'<div style="font-size:10px;font-weight:600;color:var(--fg3);text-transform:uppercase;letter-spacing:.5px;margin:8px 0 4px">Standing brief (agent notes)</div>'+pre(d.notes):'')
+    +'<div style="font-size:10px;font-weight:600;color:var(--fg3);text-transform:uppercase;letter-spacing:.5px;margin:8px 0 4px">Background thought loops</div>'+thoughts;
+}
+
+// Live dream-cycle progress for the open project: when the running cycle
+// belongs to this project, show its journal (stage-by-stage progress +
+// generated content) and keep refreshing while the page is open.
+let _pjLiveTimer=null;
+async function _pjDreamLive(slug){
+  const el=$('pj-dreamlive');if(!el)return;
+  try{
+    const st=await api('/dream/scheduler/status').catch(()=>null);
+    const cur=st?.current_cycle||null;
+    const curSlug=cur?(cur.project||cur.project_slug||''):'';
+    const mine=cur&&(curSlug===slug||String(cur.cycle_id||'').includes(slug));
+    const jr=await api('/dream/journal/read?journal_id=project:'+encodeURIComponent(slug)+'&limit=12').catch(()=>null);
+    const entries=jr?.entries||[];
+    if(!mine&&!entries.length){el.innerHTML='';return}
+    const rows=entries.slice(-8).map(e=>'<div style="font-size:9px;padding:2px 0;border-bottom:1px dotted var(--border)">'
+      +'<span style="color:var(--fg3)">'+esc(String(e.ts||'').slice(11,16))+' · <b>'+esc(e.stage||e.kind||'')+'</b></span> '
+      +'<span style="color:var(--fg2)">'+esc(String(e.text||'').slice(0,220))+'</span></div>').join('');
+    el.innerHTML='<div class="card" style="border-left:3px solid '+(mine?'var(--acc2)':'var(--border)')+';margin-bottom:10px">'
+      +'<div class="card-bd">'
+      +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'
+      +'<span style="font-size:11px"><b>'+(mine?'☾ Dreaming NOW ('+esc(cur.trigger||'')+')':'☾ Dream journal (latest)')+'</b></span>'
+      +'<div style="flex:1"></div>'
+      +(mine?'<button class="btn sm" onclick="nav(\'live\')">▶ Watch live</button>':'')
+      +'</div>'+(rows||'<div style="font-size:9px;color:var(--fg3)">No journal entries yet.</div>')
+      +'</div></div>';
+    // Auto-refresh while a cycle for this project is running and the page is visible.
+    if(_pjLiveTimer)clearTimeout(_pjLiveTimer);
+    if(mine&&el.isConnected)_pjLiveTimer=setTimeout(()=>_pjDreamLive(slug),8000);
+  }catch(_){}
+}
+
+// Full untruncated view of one loop run (context + every field).
+let _pjRuns=[];
+function pjRunFull(i){
+  const r=_pjRuns[i];if(!r)return;
+  // Markdown-bearing sections render through <vera-markdown> (raw toggle
+  // built in); structured/JSON sections stay as escaped <pre>.
+  const sec=(t,b)=>b?('<div style="font-size:10px;font-weight:600;color:var(--fg3);text-transform:uppercase;letter-spacing:.5px;margin:8px 0 3px">'+t+'</div>'
+    +'<div style="font-size:9.5px;max-height:32vh;overflow:auto;background:var(--bg0,#181614);padding:6px;border-radius:4px"><vera-markdown>'+esc(String(b))+'</vera-markdown></div>'):'';
+  const secRaw=(t,b)=>b?('<div style="font-size:10px;font-weight:600;color:var(--fg3);text-transform:uppercase;letter-spacing:.5px;margin:8px 0 3px">'+t+'</div>'
+    +'<pre style="white-space:pre-wrap;font-size:9.5px;max-height:32vh;overflow:auto;background:var(--bg0,#181614);padding:6px;border-radius:4px;color:var(--fg2)">'+esc(String(b))+'</pre>'):'';
+  openModal('Run — '+String(r.ts||'').slice(0,16).replace('T',' ')+' ('+(r.source||'')+')',
+    '<div style="font-size:9px;color:var(--fg3);margin-bottom:4px;font-family:var(--mono)">'
+    +(r.session_id?('session: '+esc(r.session_id)+' · '):'')+(r.steps_total||0)+' steps</div>'
+    +sec('Goal',r.goal)+sec('Plan',r.plan)
+    +secRaw('Steps',(r.steps||[]).map(s=>(s.ok===false?'✗ ':'✓ ')+(s.cap||'')+' — '+(s.title||'')).join('\n'))
+    +sec('Final output',r.final)
+    +secRaw('Everything (raw)',JSON.stringify(r,null,2)),
+    '<button class="btn" onclick="closeModal()">Close</button>');
+}
+
+// Lazy-load the project's structured agentic-loop history + artifact area (Stream A).
+async function loadProjectDetailExtras(slug){
+  _pjDreamLive(slug);
+  try{
+    const [lr,ar]=await Promise.all([
+      api('/dream/projects/loops?slug='+encodeURIComponent(slug)+'&limit=20').catch(()=>null),
+      api('/dream/projects/artifacts?slug='+encodeURIComponent(slug)+'&limit=80').catch(()=>null)]);
+    const le=$('pj-loops');
+    if(le){
+      const runs=lr?.runs||[];
+      _pjRuns=runs;
+      le.innerHTML=runs.length?runs.map((r,i)=>{
+        const steps=(r.steps||[]).map(s=>'<div style="font-size:9px;color:var(--fg3);padding-left:8px">'
+          +(s.ok===false?'✗':'✓')+' <span style="font-family:var(--mono);color:var(--acc)">'+esc(s.cap||'')+'</span> '+esc(String(s.title||'').slice(0,80))+'</div>').join('');
+        return '<details style="margin-bottom:5px;border:1px solid var(--border);border-radius:5px;padding:5px 8px">'
+          +'<summary style="font-size:9.5px;cursor:pointer"><b style="color:var(--acc4)">'+esc(r.source||'')+'</b> · '+esc(String(r.ts||'').slice(0,16).replace('T',' '))+' · '+(r.steps_total||0)+' steps · '+((r.artifact_ids||[]).length)+' artifacts'
+          +' <button class="btn sm" style="float:right" onclick="event.preventDefault();pjRunFull('+i+')" title="Full context — everything this run saw and produced">⤢ Full</button></summary>'
+          +(r.goal?'<div style="font-size:9.5px;color:var(--fg2);margin:4px 0">'+esc(r.goal)+'</div>':'')
+          +(r.plan?'<div style="font-size:9px;color:var(--fg3);white-space:pre-wrap;max-height:120px;overflow:auto;margin:4px 0">'+esc(String(r.plan).slice(0,1200))+'</div>':'')
+          +steps
+          +(r.final?'<div style="font-size:9.5px;margin-top:5px;max-height:200px;overflow:auto;border-top:1px solid var(--border);padding-top:4px"><vera-markdown>'+esc(String(r.final).slice(0,2000))+'</vera-markdown></div>':'')
+          +'</details>';
+      }).join(''):'<div style="color:var(--fg3);font-size:9.5px">No loop runs recorded yet — run a dream or let a chat goal escalate.</div>';
+    }
+    const ae=$('pj-artifacts');
+    if(ae){
+      const arts=ar?.artifacts||[];
+      ae.innerHTML=arts.length?arts.map(a=>'<div style="font-size:9.5px;padding:3px 0;border-bottom:1px solid var(--border);display:flex;gap:6px;align-items:baseline;cursor:pointer" onclick="viewArtifact(\''+esc(slug)+'\',\''+esc(a.id)+'\')" title="View full content">'
+        +'<span class="res-badge" style="flex-shrink:0">'+esc(a.type||'')+'</span>'
+        +'<span style="font-family:var(--mono);color:var(--acc);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(a.name||'')+'</span>'
+        +'<span style="color:var(--fg3);font-size:8.5px">'+(a.size||0)+'b</span></div>').join('')
+        :'<div style="color:var(--fg3);font-size:9.5px">No artifacts yet.</div>';
+    }
+  }catch(e){}
+}
+async function viewArtifact(slug,id){
+  const r=await api('/dream/projects/artifact/get?slug='+encodeURIComponent(slug)+'&id='+encodeURIComponent(id));
+  if(!r?.ok){toast('err','Artifact not found');return}
+  const a=r.artifact;
+  // JSON artifacts stay raw; anything text-like renders as markdown with the
+  // element's built-in raw toggle.
+  const isJson=/\.json$/i.test(a.name||'')||String(a.content||'').trim().startsWith('{')||String(a.content||'').trim().startsWith('[');
+  const body=isJson
+    ?'<pre style="white-space:pre-wrap;font-size:10px;line-height:1.5;max-height:60vh;overflow:auto;background:var(--bg0,#181614);padding:8px;border-radius:5px;color:var(--fg2)">'+esc(a.content||'')+'</pre>'
+    :'<div style="font-size:10.5px;max-height:60vh;overflow:auto;background:var(--bg0,#181614);padding:8px;border-radius:5px"><vera-markdown>'+esc(a.content||'')+'</vera-markdown></div>';
+  openModal(a.name||'artifact',
+    '<div style="font-size:9px;color:var(--fg3);margin-bottom:6px">'+esc(a.type||'')+(a.path?(' · '+esc(a.path)):'')+(a.truncated?' · (truncated)':'')+'</div>'
+    +body,
+    '<button class="btn" onclick="closeModal()">Close</button>');
+}
 
 async function regenerateProjectContext(slug){
   if(!confirm('Regenerate LLM context for this project? This may take a minute and will overwrite the current state.'))return;
   toast('warn','Regenerating context\u2026');
   const r=await post('/dream/projects/context/regenerate',{slug});
-  if(r?.ok){toast('ok','Context regenerated ('+r.chars+' chars)');closeModal();loadProjects()}
+  if(r?.ok){toast('ok','Context regenerated ('+r.chars+' chars)');const rr=await api('/dream/projects/list').catch(()=>null);if(rr)_projects=rr.projects||_projects;openProjectDetail(slug)}
   else toast('err','Failed: '+(r?.error||'?'))
 }
 async function deleteProject(slug){
   if(!confirm('Delete project "'+slug+'"? This is permanent.'))return;
   const r=await post('/dream/projects/delete',{slug});
-  if(r?.ok){toast('ok','Project deleted');closeModal();loadProjects()}
+  if(r?.ok){toast('ok','Project deleted');closeModal();nav('projects');loadProjects()}
   else toast('err','Failed: '+(r?.error||'?'))
 }
 
@@ -2751,6 +3607,7 @@ async function saveProject(isNew){
     }
   }
   toast('ok','Project saved');closeModal();loadProjects();
+  if(document.getElementById('sec-project')?.classList.contains('active'))openProjectDetail(slug);
 }
 async function runProjectDream(slug,goal){
   const r=await post('/dream/projects/dream',{slug,goal:goal||''});
@@ -2830,6 +3687,7 @@ async function viewThought(name){
    ═══════════════════════════════════════════════════════════ */
 let _histOff=0;
 async function loadHistory(append){
+  if(!append){loadActivityTimeline();loadTimelineGantt();}
   if(!append){_histOff=0;$('hist-body').innerHTML='';$('hist-more').innerHTML=''}
   const q=($('hist-q')?.value||'').trim();const trig=($('hist-trig')?.value||'');
   let url='/dream/history?limit=20&offset='+_histOff;if(q)url+='&query='+encodeURIComponent(q);if(trig)url+='&trigger='+encodeURIComponent(trig);
@@ -2839,7 +3697,7 @@ async function loadHistory(append){
   const html=r.history.map(h=>{const th=(h.themes||[]).slice(0,7).map(t=>'<span class="chip">'+esc(t)+'</span>').join(' ');
     const safeTitle=(h.title||h.label||h.trigger||'dream').replace(/[\\\']/g,'');
     return'<div class="hist-item">'
-      +'<div class="hi-title" onclick="this.parentElement.classList.toggle(\'open\')"><b style="flex:1">'+esc(h.title||h.label||h.trigger||'dream')+'</b>'
+      +'<div class="hi-title" onclick="this.parentElement.classList.toggle(\'collapsed\')" title="Click to collapse/expand the report"><b style="flex:1">'+esc(h.title||h.label||h.trigger||'dream')+'</b>'
       +'<span style="font-size:9px;color:var(--acc);font-family:var(--mono)">'+esc(h.trigger||'')+'</span>'
       +'<span style="font-size:9px;color:var(--fg3);font-family:var(--mono)">'+esc((h.ended_at||'').slice(0,16).replace('T',' '))+'</span>'
       +'<span style="font-size:9px;color:var(--fg2)">'+h.elapsed_s+'s</span>'
@@ -2848,7 +3706,7 @@ async function loadHistory(append){
       +'<button class="btn sm org" onclick="event.stopPropagation();continueDream(\''+esc(h.cycle_id||'')+'\',\''+esc(h.trigger||'')+'\')" title="Continue from this cycle">Continue</button>'
       +'</div>'
       +(th?'<div style="margin-bottom:3px;display:flex;gap:3px;flex-wrap:wrap">'+th+'</div>':'')
-      +'<div class="hi-report">'+md(h.report||'(empty)')+'</div>'
+      +'<div class="hi-report">'+(h.report?md(h.report):('<span style="color:var(--fg3);font-style:italic">No report generated — '+esc((h.early_exit&&h.early_exit.reason)||'nothing to synthesize this cycle')+'.</span>'))+'</div>'
       +'</div>'}).join('');
   b.insertAdjacentHTML('beforeend',html);_histOff+=r.history.length;
   $('hist-more').innerHTML=r.has_more?'<button class="btn sm" onclick="loadHistory(true)">Load more ('+r.total+' total)</button>':''}
@@ -2974,6 +3832,19 @@ async function openCycleDetail(cycleId){
     html+=_detailSection('Delivery','<div style="font-size:10.5px">'+Object.entries(d.delivered).map(([k,v])=>esc(k)+': '+(v===true?'\u2713':esc(String(v)))).join(' \u00b7 ')+'</div>');
   }
 
+  // Output workspace files (collated on disk during the cycle)
+  try{
+    const fr=await api('/dream/cycle/files?cycle_id='+encodeURIComponent(cycleId));
+    const files=(fr&&fr.files)||d.files||[];
+    if(files.length){
+      html+=_detailSection('Output files ('+files.length+')',
+        '<div style="display:flex;flex-wrap:wrap;gap:5px">'
+        +files.map(f=>'<span class="chip" style="cursor:pointer" onclick="viewCycleFile(\''+esc(cycleId)+'\',\''+esc(f.name)+'\')" title="'+esc(f.mtime||'')+'">'
+          +esc(f.name)+' <span style="color:var(--fg3)">'+(f.bytes>=1024?(Math.round(f.bytes/102.4)/10+'k'):(f.bytes+'b'))+'</span></span>').join('')
+        +'</div>');
+    }
+  }catch(_){}
+
   openModal('Dream cycle detail \u2014 '+cycleId,
     '<div style="max-height:70vh;overflow-y:auto">'+html+'</div>',
     '<button class="btn org" onclick="closeModal();continueDream(\''+esc(cycleId)+'\',\''+esc(d.trigger||'')+'\')">Continue from here</button>'
@@ -3064,36 +3935,119 @@ function cpTog(n,el){if(_wl.includes(n)){_wl=_wl.filter(x=>x!==n);el.style.backg
 function cpAddAll(){document.querySelectorAll('#cp-list .pk-item').forEach(el=>{if(el.style.display!=='none'&&!_wl.includes(el.dataset.cap)){_wl.push(el.dataset.cap);el.style.background='rgba(74,222,128,.06)';el.querySelector('span:last-child').textContent='✓';el.querySelector('span:last-child').style.color='var(--acc2)'}});wlSave()}
 
 /* ═══ TIMELINE — scheduled dreams as event cards (grouped by day) ═══ */
+/* Merged view loader — the Timeline nav entry routes to History; both the
+   activity timeline (past, real durations) and the upcoming gantt live there. */
 async function loadTimeline(){
+  loadActivityTimeline();
   loadTimelineGantt();
-  loadTimelineBars();
-  const days=+($('tl-days')?.value||7);const b=$('tl-body');
-  const r=await api('/dream/schedule/events?days_ahead='+days+'&max_per_trigger=20');
-  if(!r){b.innerHTML='<div class="empty">Failed.</div>';return}
-  const evs=r.events||[];
-  if(!evs.length){b.innerHTML='<div class="empty">No scheduled dream fires in the next '+days+' day(s).</div>';return}
-  // Group by calendar day.
-  const groups={};
-  for(const ev of evs){const day=(ev.start||'').slice(0,10);(groups[day]=groups[day]||[]).push(ev)}
-  const today=new Date().toISOString().slice(0,10);
+}
+
+/* ═══ ACTIVITY TIMELINE — what actually ran ═══
+   One lane per dream feature (trigger), horizontal bars sized by the cycle's
+   REAL duration (elapsed_s), plus a lane of director thoughts (diamonds).
+   Clicking a bar opens the full cycle record (openCycleDetail) — this is how
+   history is opened now. Data: /dream/history + /dream/director/journal. */
+function _atlLaneColor(k){
+  k=String(k||'');
+  if(k==='project_compose'||k.startsWith('project'))return '#a78bfa';
+  if(k.startsWith('source_review')||k.startsWith('code_'))return '#f97316';
+  if(k.includes('security'))return '#ef4444';
+  if(k.startsWith('daily_')||k.includes('report')||k.includes('news')||k.includes('digest'))return '#4ade80';
+  if(k.includes('research'))return '#38bdf8';
+  return '#60a5fa';
+}
+function _atlDur(s){s=+s||0;return s>=3600?((s/3600).toFixed(1)+'h'):s>=60?(Math.round(s/60)+'m'):(Math.round(s)+'s')}
+async function loadActivityTimeline(){
+  const b=$('atl-body');if(!b)return;
+  const hrs=+($('atl-hrs')?.value||48);
+  const [hr,dj]=await Promise.all([
+    api('/dream/history?limit=200'),
+    api('/dream/director/journal?limit=120'),
+  ]);
+  const now=Date.now(),span=hrs*3600000,t0=now-span;
+  const cycles=((hr&&hr.history)||[]).filter(h=>{
+    const ts=Date.parse(h.started_at||h.ended_at||'');return !isNaN(ts)&&ts>=t0&&ts<=now});
+  const thoughts=((dj&&dj.entries)||[]).filter(e=>{
+    const ts=Date.parse(e.ts||'');return !isNaN(ts)&&ts>=t0&&ts<=now});
+  if(!cycles.length&&!thoughts.length){
+    b.innerHTML='<div class="empty">No dream activity in the last '+hrs+'h.</div>';return}
+  // Lanes: group cycles by trigger, most recently active first.
+  const lanes={};
+  for(const h of cycles){const k=h.trigger||'dream';(lanes[k]=lanes[k]||[]).push(h)}
+  const laneKeys=Object.keys(lanes).sort((a,b2)=>{
+    const la=Math.max(...lanes[a].map(h=>Date.parse(h.started_at||0)||0));
+    const lb=Math.max(...lanes[b2].map(h=>Date.parse(h.started_at||0)||0));
+    return lb-la});
+  // Hour gridlines as a repeating background on each track.
+  const tickPct=3600000/span*100;
+  const trackBg='background-image:repeating-linear-gradient(90deg,var(--border) 0,var(--border) 1px,transparent 1px,transparent '+tickPct+'%);';
+  const LBL=150;
   let h='';
-  for(const day of Object.keys(groups).sort()){
-    const d=new Date(day+'T00:00:00');
-    const lbl=day===today?'Today':d.toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'});
-    h+='<div style="font-size:10px;font-weight:700;color:var(--fg2);text-transform:uppercase;letter-spacing:.5px;margin:12px 0 6px">'+esc(lbl)+'</div>';
-    for(const ev of groups[day]){
-      const time=(ev.start||'').slice(11,16);
-      const proj=ev.project?'<span class="tag proj">'+esc(ev.project)+'</span>':'';
-      const mode=ev.mode?'<span style="font-size:8.5px;color:var(--fg3)">'+esc(ev.mode)+'</span>':'';
-      h+='<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;margin-bottom:5px;border-left:3px solid '+esc(ev.color||'#a78bfa')+';background:var(--bg2,#15171c);border-radius:4px">'
-        +'<span style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--fg);min-width:42px">'+esc(time)+'</span>'
-        +'<div style="flex:1"><div style="font-size:11px;font-weight:600">'+esc(ev.label||ev.trigger||'dream')+'</div>'
-        +'<div style="font-size:8.5px;color:var(--fg3);margin-top:1px">'+esc(ev.recurrence||'')+'</div></div>'
-        +proj+mode
-        +'<button class="btn sm grn" onclick="fireTrigger('+JSON.stringify(ev.trigger).replace(/"/g,"&quot;")+')" title="Run this dream now">&#9654;</button>'
-        +'</div>';
-    }
+  // Time axis header
+  const axisTicks=[];
+  const step=hrs<=24?3:hrs<=72?6:24;
+  for(let i=hrs;i>=0;i-=step){
+    const t=new Date(now-i*3600000);
+    const left=(1-i/hrs)*100;
+    axisTicks.push('<span style="position:absolute;left:'+left.toFixed(2)+'%;transform:translateX(-50%);font-size:8px;color:var(--fg3)">'
+      +(i===0?'now':(String(t.getHours()).padStart(2,'0')+':00'))+'</span>');
   }
+  h+='<div style="display:flex;align-items:center;margin-bottom:4px">'
+    +'<div style="width:'+LBL+'px;flex-shrink:0"></div>'
+    +'<div style="flex:1;position:relative;height:12px">'+axisTicks.join('')+'</div></div>';
+  const rows=[];
+  for(const k of laneKeys){
+    const col=_atlLaneColor(k);
+    const items=lanes[k];
+    const lbl=items[0].label||k;
+    let bars='';
+    for(const c of items){
+      const ts=Date.parse(c.started_at||'');if(isNaN(ts))continue;
+      const durMs=Math.max((+c.elapsed_s||1)*1000,1);
+      const left=Math.max(0,(ts-t0)/span*100);
+      const width=Math.max(durMs/span*100,0.6);
+      const bad=c.cancelled||c.early_exit;
+      const tip=(c.title||lbl)+' · '+_atlDur(c.elapsed_s)
+        +(c.early_exit?' · early-exit':'')+(c.cancelled?' · cancelled':'')
+        +' · '+new Date(ts).toLocaleString();
+      bars+='<div onclick="openCycleDetail(\''+esc(c.cycle_id||'')+'\')" title="'+esc(tip)+'"'
+        +' style="position:absolute;left:'+left.toFixed(2)+'%;width:'+Math.min(width,100-left).toFixed(2)+'%;top:3px;height:12px;'
+        +'background:'+(bad?'transparent':col)+';border:1px solid '+col+';border-radius:3px;cursor:pointer;'
+        +(bad?'opacity:.55;':'opacity:.9;')+'min-width:4px"></div>';
+    }
+    rows.push('<div style="display:flex;align-items:center;margin-bottom:2px">'
+      +'<div style="width:'+LBL+'px;flex-shrink:0;font-size:9.5px;color:var(--fg2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:8px" title="'+esc(k)+'">'
+      +'<span style="display:inline-block;width:7px;height:7px;border-radius:2px;background:'+col+';margin-right:5px"></span>'+esc(lbl)
+      +' <span style="color:var(--fg3);font-size:8.5px">×'+items.length+'</span></div>'
+      +'<div style="flex:1;position:relative;height:18px;border-left:1px solid var(--border);'+trackBg+'">'+bars+'</div></div>');
+  }
+  // Director thoughts lane — diamonds; click opens the reply popover on that thought.
+  if(thoughts.length){
+    let dots='';
+    for(let i=0;i<thoughts.length;i++){
+      const e=thoughts[i];
+      const ts=Date.parse(e.ts||'');if(isNaN(ts))continue;
+      const left=Math.max(0,(ts-t0)/span*100);
+      const txt=String(e.text||e.title||'').slice(0,220);
+      dots+='<span onclick="dirReplyOpen('+JSON.stringify(String(e.text||e.title||'').slice(0,900)).replace(/"/g,'&quot;')+')" title="'+esc(txt)+'"'
+        +' style="position:absolute;left:'+left.toFixed(2)+'%;top:4px;width:9px;height:9px;transform:rotate(45deg);background:var(--warn,#fbbf24);cursor:pointer;opacity:.85"></span>';
+    }
+    rows.push('<div style="display:flex;align-items:center;margin-top:4px">'
+      +'<div style="width:'+LBL+'px;flex-shrink:0;font-size:9.5px;color:var(--fg2)">'
+      +'<span style="display:inline-block;width:7px;height:7px;transform:rotate(45deg);background:var(--warn,#fbbf24);margin-right:5px"></span>Director thoughts'
+      +' <span style="color:var(--fg3);font-size:8.5px">×'+thoughts.length+'</span></div>'
+      +'<div style="flex:1;position:relative;height:18px;border-left:1px solid var(--border);'+trackBg+'">'+dots+'</div></div>');
+  }
+  h+=rows.join('');
+  h+='<div style="display:flex;gap:12px;font-size:8.5px;color:var(--fg3);margin-top:8px;flex-wrap:wrap">'
+    +'<span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#a78bfa"></i> projects/goals</span>'
+    +'<span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#4ade80"></i> reports/news</span>'
+    +'<span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#ef4444"></i> security</span>'
+    +'<span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#f97316"></i> source review</span>'
+    +'<span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#38bdf8"></i> research</span>'
+    +'<span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#60a5fa"></i> other dreams</span>'
+    +'<span style="opacity:.55"><i style="display:inline-block;width:8px;height:8px;border-radius:2px;border:1px solid #60a5fa"></i> early-exit / cancelled (outline)</span>'
+    +'</div>';
   b.innerHTML=h;
 }
 async function fireTrigger(name){
@@ -3154,15 +4108,241 @@ async function loadTimelineGantt(){
     +'<span style="margin-left:auto">Now: <b style="color:var(--fg)">'+(tl.current_hour)+':00</b> · idle <b style="color:var(--fg)">'+(tl.current_idle)+'m</b></span></div>';
 }
 
-/* Secondary view: per-trigger hour windows (the original bar chart). */
-async function loadTimelineBars(){const hrs=+($('tl-hrs')?.value||24);const r=await api('/dream/timeline?hours_ahead='+hrs);const b=$('tl-bars');if(!b)return;if(!r){b.innerHTML='<div class="empty">Failed.</div>';return}
-  if(!(r.triggers||[]).length){b.innerHTML='<div class="empty">No enabled triggers.</div>';return}
-  const nh=r.current_hour;let h='<div style="display:flex;gap:10px;font-size:9.5px;color:var(--fg3);margin-bottom:10px"><span>Now: <b style="color:var(--fg)">'+nh+':00</b></span><span>Idle: <b style="color:var(--fg)">'+r.current_idle+'m</b></span></div>';
-  for(const t of r.triggers){const bars=t.windows.slice(0,Math.min(hrs,48)).map(w=>{const bg=w.can_fire?'var(--acc2)':w.in_window?(w.blocked_cooldown?'var(--warn)':'var(--bg3)'):'var(--bg)';const brd=w.hour===nh?'2px solid var(--fg)':'1px solid var(--border)';return'<div title="'+w.time+' '+(w.can_fire?'CAN FIRE':w.blocked_cooldown?'cooldown':'outside window')+'" style="flex:1;height:14px;min-width:3px;background:'+bg+';border:'+brd+';border-radius:2px"></div>'}).join('');
-  h+='<div style="margin-bottom:12px"><div style="display:flex;gap:8px;align-items:baseline;margin-bottom:2px"><b style="font-size:11px">'+esc(t.label)+'</b><span style="font-size:9px;color:var(--fg3)">'+esc(t.hours_window)+'h window</span><span style="font-size:9px;color:var(--acc2);font-weight:600">'+esc(t.fires_in||'?')+'</span></div><div style="display:flex;gap:1px">'+bars+'</div></div>'}
-  h+='<div style="display:flex;gap:10px;font-size:8.5px;color:var(--fg3);flex-wrap:wrap"><span style="display:inline-flex;gap:3px;align-items:center"><span style="width:8px;height:8px;background:var(--acc2);border-radius:2px;display:inline-block"></span>can fire</span><span style="display:inline-flex;gap:3px;align-items:center"><span style="width:8px;height:8px;background:var(--warn);border-radius:2px;display:inline-block"></span>cooldown</span><span style="display:inline-flex;gap:3px;align-items:center"><span style="width:8px;height:8px;background:var(--bg3);border-radius:2px;display:inline-block"></span>in window</span></div>';b.innerHTML=h}
+/* (The old per-trigger hour-window bar chart and the "Scheduled dreams" list
+   were folded into the merged Timeline & History section — the activity
+   timeline + the upcoming gantt cover both.) */
 
-/* ═══ DIRECTOR ═══ */
+/* ═══ DIRECTOR THOUGHT NOTIFICATIONS + REPLY ═══
+   Every dream.director.thought event raises a small clickable notification
+   (bottom-right). Clicking it (or the 💬 button) opens a reply popover — type
+   back into the director's train of thought via /dream/director/reply and read
+   its answer in place. */
+let _dirNotifyEl=null,_dirNotifyTimer=null;
+function dirThoughtNotify(ev){
+  const thought=String(ev.thought||ev.text||'').trim();
+  if(!thought)return;
+  if(_dirNotifyTimer){clearTimeout(_dirNotifyTimer);_dirNotifyTimer=null}
+  if(!_dirNotifyEl){
+    _dirNotifyEl=document.createElement('div');
+    _dirNotifyEl.id='dir-notify';
+    _dirNotifyEl.style.cssText='position:fixed;right:14px;bottom:14px;z-index:9000;max-width:340px;'
+      +'background:var(--bg2,#15171c);border:1px solid var(--border);border-left:3px solid var(--acc,#a78bfa);'
+      +'border-radius:8px;padding:10px 12px;box-shadow:0 6px 22px rgba(0,0,0,.45);cursor:pointer;'
+      +'font-size:10.5px;line-height:1.5;color:var(--fg2)';
+    document.body.appendChild(_dirNotifyEl);
+  }
+  _dirNotifyEl.innerHTML='<div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">'
+    +'<span style="font-size:8.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--acc,#a78bfa);font-weight:700">💭 Director</span>'
+    +'<span style="flex:1"></span>'
+    +'<button class="btn sm" onclick="event.stopPropagation();dirNotifyClose()" title="Dismiss">✕</button></div>'
+    +'<div style="max-height:90px;overflow:hidden">'+esc(thought.slice(0,320))+(thought.length>320?'…':'')+'</div>'
+    +'<div style="margin-top:6px;font-size:9px;color:var(--fg3)">click to reply</div>';
+  _dirNotifyEl.style.display='block';
+  _dirNotifyEl.onclick=()=>{dirNotifyClose();dirReplyOpen(thought)};
+  _dirNotifyTimer=setTimeout(dirNotifyClose,30000);
+}
+function dirNotifyClose(){if(_dirNotifyEl)_dirNotifyEl.style.display='none';if(_dirNotifyTimer){clearTimeout(_dirNotifyTimer);_dirNotifyTimer=null}}
+let _dirReplyEl=null;
+function dirReplyOpen(thought){
+  if(!_dirReplyEl){
+    _dirReplyEl=document.createElement('div');
+    _dirReplyEl.id='dir-reply-pop';
+    _dirReplyEl.style.cssText='position:fixed;right:14px;bottom:14px;z-index:9001;width:360px;max-width:92vw;'
+      +'background:var(--bg2,#15171c);border:1px solid var(--border);border-left:3px solid var(--acc,#a78bfa);'
+      +'border-radius:8px;padding:12px;box-shadow:0 8px 28px rgba(0,0,0,.5);font-size:10.5px;color:var(--fg2)';
+    document.body.appendChild(_dirReplyEl);
+  }
+  _dirReplyEl.innerHTML='<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">'
+    +'<span style="font-size:8.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--acc,#a78bfa);font-weight:700">💬 Reply to the director</span>'
+    +'<span style="flex:1"></span>'
+    +'<button class="btn sm" onclick="dirReplyClose()">✕</button></div>'
+    +(thought?('<div style="max-height:120px;overflow:auto;padding:6px 8px;background:var(--bg3);border-radius:5px;margin-bottom:8px;line-height:1.5">'+esc(thought.slice(0,900))+'</div>'):'')
+    +'<div id="dir-reply-conv" style="max-height:180px;overflow:auto"></div>'
+    +'<div style="display:flex;gap:6px;margin-top:6px">'
+    +'<textarea id="dir-reply-txt" rows="2" placeholder="Type your reply… (Enter to send)" style="flex:1;resize:vertical;font-size:10.5px"></textarea>'
+    +'<button class="btn sm pri" onclick="dirReplySend()">Send</button></div>';
+  _dirReplyEl.style.display='block';
+  const ta=document.getElementById('dir-reply-txt');
+  if(ta){ta.focus();ta.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();dirReplySend()}}}
+}
+function dirReplyClose(){if(_dirReplyEl)_dirReplyEl.style.display='none'}
+async function dirReplySend(){
+  const ta=document.getElementById('dir-reply-txt');
+  const conv=document.getElementById('dir-reply-conv');
+  const msg=(ta&&ta.value||'').trim();
+  if(!msg)return;
+  ta.value='';
+  if(conv)conv.insertAdjacentHTML('beforeend','<div style="padding:5px 8px;margin:4px 0;background:rgba(74,222,128,.06);border-radius:5px"><b style="color:var(--acc2)">you:</b> '+esc(msg)+'</div>'
+    +'<div class="dir-pending" style="padding:5px 8px;margin:4px 0;color:var(--fg3)">director is thinking…</div>');
+  if(conv)conv.scrollTop=conv.scrollHeight;
+  const r=await post('/dream/director/reply',{message:msg});
+  if(conv){
+    const pend=conv.querySelector('.dir-pending');if(pend)pend.remove();
+    const reply=(r&&(r.reply||r.thought))||((r&&r.error)?('error: '+r.error):'(no reply)');
+    conv.insertAdjacentHTML('beforeend','<div style="padding:5px 8px;margin:4px 0;background:var(--bg3);border-radius:5px;line-height:1.5"><b style="color:var(--acc)">director:</b> '+esc(String(reply).slice(0,1200))+'</div>');
+    conv.scrollTop=conv.scrollHeight;
+  }
+  const sec=document.querySelector('.nav-btn.active')?.dataset.sec;
+  if(sec==='director')setTimeout(loadDirector,500);
+}
+
+/* ═══ DIRECTOR (ambient mind + consolidated dream/goal control) ═══ */
+let _dirRunning=false;
+function _tile(lbl,val,col){return '<div class="tile" style="flex:none"><div class="lbl">'+lbl+'</div><div class="val"'+(col?' style="color:'+col+'"':'')+'>'+val+'</div></div>'}
+async function loadDirector(){
+  const r=await api('/dream/director/status');if(!r)return;
+  _dirRunning=!!r.running;
+  const ss=$('dir-startstop');if(ss){ss.textContent=_dirRunning?'⏸ Stop':'▶ Start';ss.classList.toggle('grn',!_dirRunning);ss.classList.toggle('err',_dirRunning);}
+  const st=$('dir-status');
+  if(st)st.innerHTML=_tile('Running',_dirRunning?'Yes':'No',_dirRunning?'var(--acc2)':'var(--err)')
+    +_tile('Mode',r.conversational?'conversational (GPU)':'reporting (CPU)',r.conversational?'var(--warn)':'')
+    +(r.conversation?_tile('Conv. ends in',Math.round((r.conversation.seconds_left||0)/60)+'m',''):'')
+    +_tile('CPU pressure',r.cpu_pressure?'backing off':'clear',r.cpu_pressure?'var(--warn)':'var(--acc2)')
+    +_tile('Queue',(r.queue||[]).length,'');
+  const lt=r.last_thought||{};const el=$('dir-last');
+  if(el)el.innerHTML=lt.thought||lt.reply
+    ?'<div style="color:var(--fg3);font-size:9px;margin-bottom:3px">'+esc(lt.ts||'')+(lt.active?' · user active':' · idle')+(lt.delivered?' · delivered to chat':'')+((lt.queued||[]).length?' · queued: '+esc(lt.queued.join(', ')):'')+'</div>'
+      +'<div>'+esc(lt.thought||lt.reply)+'</div>'
+    :'<div class="empty">No thought yet — hit Think now.</div>';
+  const c=r.config||{};
+  const put=(id,v)=>{const e=$(id);if(e)e.value=String(v)};
+  put('dcfg-enabled',c.enabled!==false);put('dcfg-tick',c.tick_seconds??240);
+  put('dcfg-active',c.active_idle_below_min??6);put('dcfg-deliver',c.deliver_to_chat!==false);
+  put('dcfg-speak',c.speak!==false);put('dcfg-conv',c.conversation_window_min??12);
+  put('dcfg-queue',c.max_queue??12);put('dcfg-thoughts',c.thought_memory??8);
+  put('dcfg-name',c.user_name??'');put('dcfg-tone',c.tone??'warm');
+  put('dcfg-onlyactive',c.only_on_activity!==false);put('dcfg-quiet',c.quiet_hours??'');
+  dirRenderQueue(r.queue||[]);
+  dirJournal();dirProjects();dirPrograms();
+}
+async function dirStartStop(){await post(_dirRunning?'/dream/director/stop':'/dream/director/start',{});setTimeout(loadDirector,400)}
+async function dirThinkNow(){const el=$('dir-last');if(el)el.innerHTML='<div class="empty" style="color:var(--warn)">Thinking…</div>';await post('/dream/director/think',{});setTimeout(loadDirector,600)}
+async function dirCfgSave(){
+  const sts=[$('dir-cfg-status'),$('dir-persona-status')].filter(Boolean);
+  sts.forEach(s=>s.textContent='Saving…');
+  const r=await post('/dream/director/config',{
+    enabled:$('dcfg-enabled').value==='true',
+    tick_seconds:parseInt($('dcfg-tick').value||'240',10),
+    active_idle_below_min:parseFloat($('dcfg-active').value||'6'),
+    deliver_to_chat:$('dcfg-deliver').value==='true',
+    speak:$('dcfg-speak').value==='true',
+    conversation_window_min:parseFloat($('dcfg-conv').value||'12'),
+    max_queue:parseInt($('dcfg-queue').value||'12',10),
+    thought_memory:parseInt($('dcfg-thoughts').value||'8',10),
+    user_name:($('dcfg-name').value||'').trim(),
+    tone:($('dcfg-tone').value||'').trim()||'warm',
+    only_on_activity:$('dcfg-onlyactive').value==='true',
+    quiet_hours:($('dcfg-quiet').value||'').trim()});
+  const msg=(r&&!r.error)?'✓ saved':'✗ failed';
+  sts.forEach(s=>s.textContent=msg);setTimeout(()=>sts.forEach(s=>s.textContent=''),2500);
+}
+async function dirJournal(){
+  const el=$('dir-journal');if(!el)return;
+  const r=await api('/dream/director/journal?limit=40');
+  const es=(r&&r.entries)||[];
+  el.innerHTML=!es.length?'<div class="empty">No journal entries yet.</div>'
+    :es.slice().reverse().map(e=>'<div style="padding:5px 0;border-bottom:1px solid var(--border);font-size:10.5px">'
+      +'<div style="font-size:9px;color:var(--fg3)">'+esc((e.ts||'').slice(0,16).replace('T',' '))
+      +' · <b>'+esc(e.stage||e.kind||'')+'</b>'
+      +((e.data&&(e.data.actions||[]).length)?' · actions: '+esc(e.data.actions.join(', ')):'')
+      +((e.data&&e.data.delivered)?' · 💬 delivered':'')+'</div>'
+      +'<div style="white-space:pre-wrap">'+esc((e.text||'').slice(0,700))+'</div></div>').join('');
+}
+function dirRenderQueue(q){
+  const el=$('dir-queue');if(!el)return;
+  if(!q.length){el.innerHTML='<div class="empty">Queue empty — the director adds actions as it thinks; they fire at idle handover, auto-drain after they\'ve waited (see config), or via ▶ here.</div>';return}
+  const hd='<div style="display:flex;gap:8px;padding:3px 0;border-bottom:1px solid var(--border);font-size:8.5px;color:var(--fg3);text-transform:uppercase;letter-spacing:.4px">'
+    +'<span style="min-width:56px">Kind</span><span style="flex:1">Action</span>'
+    +'<span style="max-width:240px;flex:1">Why</span><span style="min-width:44px">Queued</span><span style="min-width:52px"></span></div>';
+  el.innerHTML=hd+q.map((c,i)=>'<div style="display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--border);font-size:10.5px">'
+      +'<span style="font-size:8.5px;font-weight:700;text-transform:uppercase;color:var(--acc);min-width:56px">'+esc(c.kind||'dream')+'</span>'
+      +'<span style="flex:1">'+esc(c.topic||c.target||(c.goal||'').slice(0,80))+'</span>'
+      +'<span style="font-size:9px;color:var(--fg3);max-width:240px;flex:1;overflow:hidden;text-overflow:ellipsis" title="'+esc(c.why||'')+'">'+esc(c.why||'')+'</span>'
+      +'<span style="font-size:9px;color:var(--fg3);min-width:44px">'+(c.created?_agoStr(c.created):'—')+'</span>'
+      +'<span style="min-width:52px;white-space:nowrap">'
+      +'<button class="btn sm" title="Execute this action now" onclick="dirQueueRun('+i+')">&#9654;</button>'
+      +'<button class="btn sm" title="Remove without executing" onclick="dirQueueRemove('+i+')">&#10005;</button>'
+      +'</span></div>').join('');
+}
+async function dirQueueRun(i){
+  const r=await post('/dream/director/queue/run',{index:i});
+  if(r&&r.error)toast('err','Run failed: '+r.error);
+  else toast('ok','Fired: '+(r.fired||''));
+  setTimeout(loadDirector,600);
+}
+async function dirQueueRemove(i){
+  await post('/dream/director/queue/remove',{index:i});
+  setTimeout(loadDirector,300);
+}
+async function dirQueueClear(){await post('/dream/director/queue/clear',{});loadDirector()}
+async function dirProjects(){
+  const el=$('dir-projects');if(!el)return;
+  const r=await api('/dream/projects/list');
+  const ps=((r&&(r.projects||r.items))||[]).filter(p=>(p.status||'active')==='active');
+  el.innerHTML=!ps.length?'<div class="empty">No active projects.</div>'
+    :ps.map(p=>{
+      const v8tag=(p.tags||[]).find(t=>String(t).startsWith('v8-program:'));
+      const trigs=(p.dream_trigger_names||[]).join(', ');
+      return '<div style="display:flex;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--border);font-size:10.5px">'
+        +'<span style="flex:1"><b>'+esc(p.name||p.slug)+'</b>'
+        +' <span style="font-size:9px;color:var(--fg3)">dreams:'+(p.dream_count||0)+' · last:'+esc((p.last_dream_at||'never').slice(0,16))+'</span>'
+        +(v8tag?' <span style="font-size:8.5px;color:var(--acc2)" title="Driven by a V8 loop program">🧬 '+esc(String(v8tag).split(':')[1])+'</span>'
+               :(trigs?' <span style="font-size:8.5px;color:var(--acc)">☾ '+esc(trigs)+'</span>':''))
+        +'</span>'
+        +'<button class="btn sm" title="Run a project_compose dream now" onclick="dirProjDream(\''+esc(p.slug)+'\')">▶</button>'
+        +(v8tag?'':'<button class="btn sm" title="Advance via a V8 loop program (clears the dream trigger)" onclick="dirProjV8(\''+esc(p.slug)+'\')">🧬</button>')
+        +'</div>'}).join('');
+}
+async function dirProjDream(slug){await post('/dream/projects/dream',{slug});setTimeout(dirProjects,800)}
+async function dirProjV8(slug){
+  if(!confirm('Hand "'+slug+'" to a V8 loop program? Its dream trigger is cleared; the program drives it from now on.'))return;
+  const r=await post('/dream/projects/advance_v8',{slug});
+  if(r&&r.error)alert('V8 handoff failed: '+r.error);
+  setTimeout(()=>{dirProjects();dirPrograms()},800);
+}
+async function dirPrograms(){
+  const el=$('dir-programs');if(!el)return;
+  const r=await api('/loops/program/list');
+  const ps=(r&&r.programs)||[];
+  el.innerHTML=!ps.length?'<div class="empty">No V8 programs. Create one from a goal: chat loop variant v8, a project\'s 🧬 button, or <code>loops.program.create</code>.</div>'
+    :'<div style="display:flex;justify-content:flex-end;margin-bottom:4px"><button class="btn sm" onclick="dirProgTick()" title="Advance the orchestrator one tick (fires the next due loop)">⏩ Tick now</button></div>'
+    +ps.map(p=>{
+      const act=p.status==='active';
+      const stCol={done:'var(--acc2)',running:'var(--acc)',waiting:'var(--warn,#c9a45a)',pending:'var(--fg3)',failed:'var(--err)',retired:'var(--fg3)'};
+      const loops=(p.loops||[]).map(l=>{
+        const lr=l.last_run;
+        const due=(l.status==='waiting'&&l.next_due_ts)?(' · due '+_agoStr(new Date(l.next_due_ts*1000).toISOString()).replace(' ago','')+(l.next_due_ts*1000>Date.now()?' from now':' overdue')):'';
+        return '<div style="font-size:9px;padding:2px 0 2px 8px;border-left:2px solid var(--border)">'
+          +'<b style="color:'+(stCol[l.status]||'var(--fg3)')+'">'+esc(l.status||'?')+'</b> '
+          +esc(l.name)+(l.persona?' <span style="color:var(--acc4)" title="Ephemeral persona">✨'+esc(l.persona)+'</span>':'')
+          +(l.runs?' · '+l.runs+' run'+(l.runs===1?'':'s'):'')
+          +(lr?' · last '+_agoStr(lr.ts)+(lr.ok?' ✓':' ✗')
+             +(lr.session_id?' <span style="color:var(--fg3);font-family:var(--mono)" title="Watch in the chat Loops pane">'+esc(lr.session_id)+'</span>':''):'')
+          +due
+          +(lr&&lr.summary?'<div style="color:var(--fg3);margin-left:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(lr.summary)+'">'+esc(lr.summary.slice(0,140))+'</div>':'')
+          +'</div>';
+      }).join('');
+      return '<div style="padding:5px 0;border-bottom:1px solid var(--border);font-size:10.5px">'
+        +'<div style="display:flex;gap:8px;align-items:center">'
+        +'<span style="flex:1"><b>'+esc(p.name||p.id)+'</b> <code style="font-size:8.5px">'+esc(p.id)+'</code>'
+        +' <span style="font-size:9px;color:'+(act?'var(--acc2)':'var(--fg3)')+'">'+esc(p.status||'')+'</span>'
+        +' <span style="font-size:9px;color:var(--fg3)">horizon '+esc(String(p.horizon_days||'?'))+'d</span></span>'
+        +'<button class="btn sm" onclick="dirProgAct(\''+esc(p.id)+'\',\''+(act?'pause':'resume')+'\')">'+(act?'⏸':'▶')+'</button>'
+        +'<button class="btn sm err" onclick="dirProgAct(\''+esc(p.id)+'\',\'delete\')">🗑</button></div>'
+        +loops
+        +(p.done_when?'<div style="font-size:9px;color:var(--fg3);margin-top:2px">done when: '+esc(p.done_when)+'</div>':'')
+        +'</div>'}).join('');
+}
+async function dirProgTick(){
+  const r=await post('/loops/program/tick',{});
+  toast(r&&!r.error?'ok':'err',r&&!r.error?('Ticked'+(r.in_flight?' — a loop is now running':' — nothing due')):'Tick failed');
+  setTimeout(dirPrograms,800);
+}
+async function dirProgAct(id,act){
+  if(act==='delete'&&!confirm('Delete program '+id+'?'))return;
+  await post('/loops/program/'+act,{id});setTimeout(dirPrograms,500);
+}
+
 async function runDir(fire){const b=$('dir-body');b.innerHTML='<div class="empty" style="color:var(--warn)">Assessing\u2026</div>';const r=await post('/dream/director/assess',{auto_fire:fire});if(!r){b.innerHTML='<div class="empty">Failed.</div>';return}
   const ss=r.system_state||{};let h='<div style="display:flex;gap:16px;margin-bottom:10px;flex-wrap:wrap">'
     +'<div class="tile" style="flex:none"><div class="lbl">Idle</div><div class="val">'+(ss.idle_minutes>=9999?'—':ss.idle_minutes+'m')+'</div></div>'
@@ -3194,18 +4374,13 @@ async function loadSettings(){const r=await api('/dream/config');if(!r?.config)r
   renderDefaultTrigList();
   loadLoopSettings();}
 async function loadLoopSettings(){const r=await api('/dream/loop/settings');if(!r?.settings)return;const s=r.settings;
-  const bv=(id,v)=>{const e=$(id);if(e)e.value=(v===true?'true':v===false?'false':(v??''))};
-  bv('lp-version',s.loop_version||'v5');bv('lp-maxsteps',s.max_steps);bv('lp-stepbudget',s.step_cycle_budget);
-  bv('lp-catalog',s.catalog_size);bv('lp-maxcycles',s.max_cycles);bv('lp-sat',s.satisfaction_check);
-  bv('lp-replan',s.enable_replan);bv('lp-dynskills',s.enable_dynamic_skills);bv('lp-autoskill',s.auto_suggest_skills);
-  bv('lp-gpu',s.prefer_gpu);bv('lp-skillallow',s.skill_allow);bv('lp-skilldeny',s.skill_deny);
-  bv('lp-model',s.model);bv('lp-instance',s.instance_id);}
-async function saveLoopSettings(){const b=(id)=>$(id)?.value==='true';const num=(id)=>+$(id).value;
-  const settings={loop_version:$('lp-version').value,max_steps:num('lp-maxsteps'),step_cycle_budget:num('lp-stepbudget'),
-    catalog_size:num('lp-catalog'),max_cycles:num('lp-maxcycles'),satisfaction_check:b('lp-sat'),
-    enable_replan:b('lp-replan'),enable_dynamic_skills:b('lp-dynskills'),auto_suggest_skills:b('lp-autoskill'),
-    prefer_gpu:b('lp-gpu'),skill_allow:$('lp-skillallow').value.trim(),skill_deny:$('lp-skilldeny').value.trim(),
-    model:$('lp-model').value.trim(),instance_id:$('lp-instance').value.trim()};
+  const el=$('lp-config');if(!el)return;
+  // The element accepts `loop_version` as an alias for `version`.
+  el.setConfig(s);}
+async function saveLoopSettings(){const el=$('lp-config');if(!el)return;
+  const cfg=el.getConfig();
+  // Persisted under `loop_version`; the backend filters to its known settings keys.
+  const settings={...cfg,loop_version:cfg.version};delete settings.version;
   const r=await post('/dream/loop/settings/set',{settings});if(r?.ok!==false){toast('ok','Loop controls saved')}}
 async function resetLoopSettings(){const r=await post('/dream/loop/settings/set',{reset:true});if(r?.ok!==false){toast('ok','Loop controls reset');loadLoopSettings()}}
 function _idleActiveList(){return _idleFollow?_idleEffective:_idlePrefixes}
@@ -3496,7 +4671,8 @@ function dashRenderHiddenChips(){
   const grid=document.getElementById('dashGrid');
   const widgets=grid?Array.from(grid.querySelectorAll('.widget')):[];
   host.innerHTML=Array.from(_dashState.hidden).map(wid=>{
-    const w=widgets.find(x=>x.dataset.wid===wid);const label=w?(w.querySelector('.w-title')?.textContent||wid):wid;
+    const w=widgets.find(x=>x.dataset.wid===wid);if(!w)return'';  // skip widgets no longer on the dashboard (e.g. moved to Live)
+    const label=w.querySelector('.w-title')?.textContent||wid;
     return '<span class="pick-chip" onclick="dashShowWidget(\''+esc(wid)+'\')">+ '+esc(label)+'</span>'}).join('');
 }
 function dashHideWidget(wid){_dashState.hidden.add(wid);dashSaveLayout();dashApplyLayout()}
@@ -3527,21 +4703,23 @@ function _dashOnDrop(e){if(!_dashState.editing||!_dashDragSrc)return;const targe
 function _dashOnDragEnd(e){if(_dashDragSrc)_dashDragSrc.classList.remove('dragging');document.querySelectorAll('#dashGrid .widget.drag-over').forEach(x=>x.classList.remove('drag-over'));_dashDragSrc=null}
 function _dashOnResizeMouseDown(e){if(!_dashState.editing)return;const handle=e.target.closest('.w-resize');if(!handle)return;e.preventDefault();e.stopPropagation();const widget=handle.closest('.widget');if(!widget)return;const startX=e.clientX,startY=e.clientY;const curW=parseInt((widget.className.match(/w-w(\d+)/)||[])[1]||'4',10);const curH=parseInt((widget.className.match(/w-h(\d+)/)||[])[1]||'1',10);const STEP_X=80,STEP_Y=70;const onMove=(ev)=>{const dx=ev.clientX-startX,dy=ev.clientY-startY;let newW=Math.max(2,Math.min(12,curW+Math.round(dx/STEP_X)));let newH=Math.max(1,Math.min(6,curH+Math.round(dy/STEP_Y)));const allowed=[2,3,4,6,8,12];let nearest=allowed[0],best=Infinity;for(const a of allowed){const d=Math.abs(a-newW);if(d<best){best=d;nearest=a}}newW=nearest;[2,3,4,6,8,12].forEach(n=>widget.classList.remove('w-w'+n));[1,2,3,4,5,6].forEach(n=>widget.classList.remove('w-h'+n));widget.classList.add('w-w'+newW);widget.classList.add('w-h'+newH);_dashState.sizes[widget.dataset.wid]={w:newW,h:newH}};const onUp=()=>{document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp);dashSaveLayout()};document.addEventListener('mousemove',onMove);document.addEventListener('mouseup',onUp)}
 
-// Init dashboard grid
-(function _dashInit(){
-  if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',_dashInit,{once:true});return}
-  const grid=document.getElementById('dashGrid');if(!grid)return;
-  grid.querySelectorAll('.widget').forEach(w=>{
-    w.setAttribute('draggable','false');  // only draggable in edit mode
-    w.addEventListener('dragstart',_dashOnDragStart);
-    w.addEventListener('dragover',_dashOnDragOver);
-    w.addEventListener('dragleave',_dashOnDragLeave);
-    w.addEventListener('drop',_dashOnDrop);
-    w.addEventListener('dragend',_dashOnDragEnd);
-  });
-  grid.addEventListener('mousedown',_dashOnResizeMouseDown);
-  if(dashLoadLayout())dashApplyLayout();
-  dashRenderHiddenChips();
+// ── Dashboard framework is now the shared VeraDash module ─────────────────────
+// (loaded via /ui/vera-dashboard.js). The bespoke dash* code above is inert; these
+// public entry points delegate to the VeraDash instance, which also adds pop-out.
+let _dashCtl=null;
+function dashToggleEdit(){ _dashCtl && _dashCtl.toggleEdit(); }
+function dashResetLayout(){ _dashCtl && _dashCtl.reset(); }
+function dashHideWidget(wid){ _dashCtl && _dashCtl.hide(wid); }
+function dashShowWidget(wid){ _dashCtl && _dashCtl.show(wid); }
+(function _dashBootVeraDash(){
+  function go(){
+    const g=document.getElementById('dashGrid'); if(!g) return;
+    if(!window.VeraDash){ return setTimeout(go,60); }   // wait for /ui/vera-dashboard.js
+    _dashCtl=VeraDash.init(g,{key:'dream',loader:false,popout:true,
+      editBtn:'dashEditBtn',hiddenPicker:'dashHiddenPicker',hiddenChips:'dashHiddenChips'});
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',go,{once:true});
+  else go();
 })();
 
 /* ═══ ADDITIONAL KPI TILES ═══ */
@@ -3593,115 +4771,388 @@ async function refreshDashKPIs(){
 const _origRefreshAll=refreshAll;
 refreshAll=function(){_origRefreshAll();refreshDashKPIs();dashTouch()};
 
-/* ═══ ACTIVE DREAM DETAIL ═══ */
+/* ═══ ACTIVE / LIVE DREAM ═══
+   Single source of truth: _activeDreamState. Mutated by live events
+   (updateActiveDreamDetail) and seeded from the scheduler status poll
+   (setRunningUI) so the running dream's name + activity show even after a
+   mid-cycle reload. renderActiveDream() is the only renderer — it drives the
+   sidebar badge, dashboard "now dreaming" banner, the Cycle KPI, and the
+   dedicated Live page hero + activity body. */
 let _activeDreamState={};
-function showActiveDreamCard(show){
-  const card=$('ov-active-card');
-  if(card){
-    if(show){card.classList.remove('hidden');_dashState.hidden.delete('active-detail')}
-    else{card.classList.add('hidden')}
+const _stageShort=x=>String(x||'').replace('dream.stage.','');
+
+/* live elapsed timer */
+let _liveTimer=null;
+function fmtElapsed(startISO){
+  if(!startISO)return'';
+  const ms=Date.now()-Date.parse(startISO);
+  if(isNaN(ms)||ms<0)return'';
+  const s=Math.floor(ms/1000),m=Math.floor(s/60),h=Math.floor(m/60);
+  return h>0?(h+'h '+(m%60)+'m'):(m+':'+String(s%60).padStart(2,'0'));
+}
+function liveTimerStart(){if(_liveTimer)return;_liveTimer=setInterval(liveTick,1000);liveTick()}
+function liveTimerStop(){if(_liveTimer){clearInterval(_liveTimer);_liveTimer=null}}
+function liveTick(){
+  const e=fmtElapsed(_activeDreamState.started_at);
+  const le=$('live-elapsed');if(le)le.textContent=e?('⏱ '+e):'';
+  const de=$('dash-now-elapsed');if(de)de.textContent=e;
+}
+
+/* Seed/merge state from the scheduler status `current_cycle` (poll path). */
+function setRunningUI(cyc){
+  if(cyc&&cyc.cycle_id){
+    if(_activeDreamState.cycle_id!==cyc.cycle_id){
+      _activeDreamState={trigger:cyc.trigger||'',label:cyc.label||'',cycle_id:cyc.cycle_id,
+        started_at:cyc.started_at||'',pipeline:cyc.pipeline||[],
+        stages_completed:[],stage_log:[],current_stage:'',refined_goal:null,tools_called:[],title:''};
+    }else{
+      if(cyc.label)_activeDreamState.label=cyc.label;
+      if(cyc.trigger)_activeDreamState.trigger=cyc.trigger;
+      if(cyc.started_at)_activeDreamState.started_at=cyc.started_at;
+      if((cyc.pipeline||[]).length&&!(_activeDreamState.pipeline||[]).length)_activeDreamState.pipeline=cyc.pipeline;
+    }
+  }else if(_activeDreamState.current_stage!=='done'&&_activeDreamState.kind!=='review'){
+    _activeDreamState={};   // idle — but never clobber a live source-review session
   }
+  renderActiveDream();
+}
+
+/* Seed/refresh the Live view from an in-flight deep source review (which runs as
+   a detached task, NOT a _run_cycle) so its progress + live reasoning show up in
+   the current/Live surface, not only in the Review tab. A real dream cycle always
+   takes precedence. */
+function reviewSeed(rv){
+  if(_activeDreamState.cycle_id&&_activeDreamState.kind!=='review')return; // real cycle wins
+  const cid='dream-review';
+  if(_activeDreamState.kind!=='review'){
+    _activeDreamState={kind:'review',cycle_id:cid,trigger:'source review',label:'Source review',
+      started_at:new Date().toISOString(),pipeline:[],stages_completed:[],stage_log:[],
+      current_stage:'reviewing',refined_goal:null,tools_called:[],title:'',review:{}};
+  }
+  _activeDreamState.review=Object.assign(_activeDreamState.review||{},rv||{});
+  renderActiveDream();
+  if(_sCid!=='dream-review')strStart('dream-review','source review');
+}
+async function refreshReviewActive(){
+  const rs=await api('/dream/review/status');
+  if(rs&&rs.running){
+    reviewSeed({done:rs.done||0,total:rs.total||0,generated:rs.generated||0,current:rs.current||''});
+  }else if(_activeDreamState.kind==='review'&&_activeDreamState.current_stage!=='done'){
+    _activeDreamState={};renderActiveDream();
+  }
+}
+
+/* ── Progress snapshot poller ─────────────────────────────────────────────
+   /dream/cycle/progress is the authoritative, server-side record of the
+   running cycle (per-stage status + elapsed, LLM token heartbeat, agent-loop
+   session, output files). Polling it keeps the Live view moving even when the
+   event-bus subscription drops or the loop runs under a foreign session id —
+   the exact cases where the panel used to show nothing while ollama was busy. */
+let _progTimer=null,_progBusy=false;
+function progressPollStart(){if(_progTimer)return;_progTimer=setInterval(progressPoll,3000);progressPoll()}
+function progressPollStop(){if(_progTimer){clearInterval(_progTimer);_progTimer=null}}
+async function progressPoll(){
+  if(_progBusy)return;_progBusy=true;
+  try{
+    const cid=(_activeDreamState.cycle_id&&_activeDreamState.kind!=='review')?_activeDreamState.cycle_id:'';
+    const r=await api('/dream/cycle/progress'+(cid?('?cycle_id='+encodeURIComponent(cid)):''));
+    const p=r&&r.progress;
+    if(!p||!p.cycle_id)return;
+    if(!_activeDreamState.cycle_id&&r.running){
+      // Adopt a running cycle the event feed never told us about.
+      _activeDreamState={trigger:p.trigger||'',label:p.label||'',cycle_id:p.cycle_id,
+        started_at:p.started_at||'',pipeline:p.pipeline||[],stages_completed:[],stage_log:[],
+        current_stage:p.stage||'',refined_goal:null,tools_called:[],title:''};
+    }
+    if(_activeDreamState.cycle_id!==p.cycle_id)return;
+    _activeDreamState.prog=p;
+    if(p.stage&&p.status==='running')_activeDreamState.current_stage=p.stage;
+    if((p.pipeline||[]).length&&!(_activeDreamState.pipeline||[]).length)_activeDreamState.pipeline=p.pipeline;
+    const done=Object.entries(p.stages||{}).filter(([k,v])=>v&&(v.status==='ok'||v.status==='error')).map(([k])=>k);
+    if(done.length>(_activeDreamState.stages_completed||[]).length)_activeDreamState.stages_completed=done;
+    renderActiveDream();
+  }finally{_progBusy=false}
+}
+async function viewCycleFile(cycleId,name){
+  const r=await api('/dream/cycle/file?cycle_id='+encodeURIComponent(cycleId)+'&name='+encodeURIComponent(name));
+  if(!r||r.error){toast('err',r?.error||'Could not read file');return}
+  const body='<div style="max-height:65vh;overflow:auto;font-size:11px;line-height:1.55">'
+    +(name.endsWith('.json')?('<pre style="white-space:pre-wrap;font-family:var(--mono);font-size:10px">'+esc(r.content)+'</pre>'):md(r.content))
+    +(r.truncated?'<div style="color:var(--warn);font-size:9.5px;margin-top:8px">(truncated)</div>':'')+'</div>';
+  openModal(name+' — '+cycleId,body);
+}
+/* The compact progress rail rendered into the Activity card from the snapshot. */
+function _progRailHtml(s){
+  const p=s.prog;if(!p)return'';
+  let html='';
+  const pipe=(p.pipeline||[]);
+  const stg=p.stages||{};
+  if(pipe.length){
+    html+='<div style="font-size:8.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--fg3);margin-bottom:4px">Pipeline progress</div>';
+    html+='<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px">';
+    for(const st of pipe){
+      const rec=stg[st]||{};
+      const running=rec.status==='running'||(p.stage===st&&p.status==='running');
+      const ic=rec.status==='ok'?'✓':rec.status==='error'?'✗':running?'⏳':'·';
+      const col=rec.status==='ok'?'var(--acc2,#4ade80)':rec.status==='error'?'var(--err,#ef4444)':running?'var(--acc)':'var(--fg3)';
+      const el=rec.elapsed_s?(' '+(rec.elapsed_s>=60?(Math.round(rec.elapsed_s/60)+'m'):(Math.round(rec.elapsed_s)+'s'))):'';
+      html+='<span title="'+esc((rec.summary||'').slice(0,300))+'" style="font-size:9.5px;font-family:var(--mono);padding:2px 7px;border-radius:3px;border:1px solid var(--border);color:'+col+';'+(running?'background:rgba(167,139,250,.08);':'')+'">'
+        +ic+' '+esc(st)+el+(p.iteration&&running?(' · iter '+p.iteration):'')+'</span>';
+    }
+    html+='</div>';
+  }
+  if(p.loop&&p.loop.session_id){
+    const l=p.loop;
+    const lcol=l.status==='done'?'var(--acc2,#4ade80)':l.status==='error'?'var(--err,#ef4444)':'var(--acc)';
+    html+='<div style="font-size:10px;display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">'
+      +'<span style="font-size:8.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--fg3)">Agent loop</span>'
+      +'<span style="font-family:var(--mono);color:'+lcol+'">'+esc(l.session_id)+'</span>'
+      +'<span style="color:var(--fg3)">'+esc(l.engine||'')+' · '+esc(l.status||'')+(l.steps?(' · '+l.steps+' steps'):'')+'</span>'
+      +(l.status==='running'?'<button class="btn sm" onclick="watchGoalLoop(\''+esc(l.session_id)+'\',this)">▶ Watch</button>':'')
+      +'</div>';
+  }
+  if(p.llm&&p.llm.tokens){
+    html+='<div style="font-size:9.5px;color:var(--fg3);margin-bottom:8px">LLM · <b style="color:var(--fg2)">'+esc(p.llm.stage||'')+'</b> · '
+      +p.llm.tokens+' tok'
+      +(p.llm.tail?('<div style="font-family:var(--mono);font-size:9px;color:var(--fg3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left">…'+esc(p.llm.tail)+'</div>'):'')
+      +'</div>';
+  }
+  if((p.files||[]).length){
+    html+='<div style="font-size:8.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--fg3);margin-bottom:3px">Output files</div>'
+      +'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px">'
+      +p.files.map(f=>'<span class="chip" style="cursor:pointer" onclick="viewCycleFile(\''+esc(p.cycle_id)+'\',\''+esc(f.name)+'\')" title="'+esc(f.mtime||'')+'">'+esc(f.name)+' <span style="color:var(--fg3)">'+(f.bytes>=1024?(Math.round(f.bytes/102.4)/10+'k'):f.bytes+'b')+'</span></span>').join('')
+      +'</div>';
+  }
+  return html;
 }
 
 function updateActiveDreamDetail(ev){
   if(ev.type==='dream.cycle.started'){
-    _activeDreamState={trigger:ev.trigger||'',cycle_id:ev.cycle_id||'',stages_completed:[],current_stage:'',gather:null,refined_goal:null,tools_called:[]};
-    $('ov-active-trigger').textContent=ev.trigger||'';
-    showActiveDreamCard(true);
+    _activeDreamState={trigger:ev.trigger||'',label:ev.label||'',cycle_id:ev.cycle_id||'',
+      started_at:ev.started_at||new Date().toISOString(),pipeline:ev.pipeline||[],
+      stages_completed:[],stage_log:[],current_stage:'',refined_goal:null,tools_called:[],title:''};
     renderActiveDream();
   }
-  if(ev.type==='dream.stage.started'){
-    _activeDreamState.current_stage=(ev.stage||'').replace('dream.stage.','');
-    renderActiveDream();
-  }
-  if(ev.type==='dream.stage.completed'){
-    const name=(ev.stage||'').replace('dream.stage.','');
-    if(!_activeDreamState.stages_completed)_activeDreamState.stages_completed=[];
-    _activeDreamState.stages_completed.push(name);
-    // Capture goal_refine output
-    if(name==='goal_refine'&&ev.goal){
-      _activeDreamState.refined_goal=ev.goal;
+  else if(ev.type==='dream.stage.summary'){
+    // Persistent, per-stage live activity — the running summary of every stage
+    // as it finishes (gather counts, themes, refined goal, report title, delivery
+    // targets, …). Kept in an accumulating log so completed stage activity stays
+    // visible instead of being dropped the moment the next stage starts.
+    if(_activeDreamState.cycle_id){
+      (_activeDreamState.stage_log=_activeDreamState.stage_log||[]).push({
+        stage:_stageShort(ev.stage),summary:String(ev.summary||''),
+        ok:ev.ok!==false,iter:ev.iteration||0});
+      if(_activeDreamState.stage_log.length>60)_activeDreamState.stage_log.shift();
+      renderActiveDream();
     }
-    renderActiveDream();
   }
-  if(ev.type.startsWith('agent_loop')&&ev.type.endsWith('.tool_call')){
-    if(!_activeDreamState.tools_called)_activeDreamState.tools_called=[];
-    _activeDreamState.tools_called.push({tool:ev.tool||ev.cap||'?',thought:ev.thought||'',status:'running'});
-    renderActiveDream();
+  else if(ev.type==='dream.stage.started'){
+    if(_activeDreamState.cycle_id){_activeDreamState.current_stage=_stageShort(ev.stage);renderActiveDream();}
   }
-  if(ev.type.startsWith('agent_loop')&&ev.type.endsWith('.tool_done')){
-    const tool=ev.tool||ev.cap||'?';
-    const calls=_activeDreamState.tools_called||[];
-    const last=[...calls].reverse().find(c=>c.tool===tool&&c.status==='running');
-    if(last){last.status=ev.ok===false?'error':'ok';last.preview=(ev.preview||'').slice(0,200)}
-    renderActiveDream();
+  else if(ev.type==='dream.stage.completed'){
+    if(_activeDreamState.cycle_id){
+      const name=_stageShort(ev.stage);
+      (_activeDreamState.stages_completed=_activeDreamState.stages_completed||[]).push(name);
+      if(name==='goal_refine'&&ev.goal)_activeDreamState.refined_goal=ev.goal;
+      renderActiveDream();
+    }
   }
-  if(ev.type==='dream.cycle.completed'){
+  else if(ev.type&&ev.type.startsWith('agent_loop')&&ev.type.endsWith('.tool_call')){
+    if(_activeDreamState.cycle_id){
+      (_activeDreamState.tools_called=_activeDreamState.tools_called||[]).push({tool:ev.tool||ev.cap||'?',thought:ev.thought||'',status:'running'});
+      renderActiveDream();
+    }
+  }
+  else if(ev.type&&ev.type.startsWith('agent_loop')&&ev.type.endsWith('.tool_done')){
+    if(_activeDreamState.cycle_id){
+      const tool=ev.tool||ev.cap||'?';
+      const calls=_activeDreamState.tools_called||[];
+      const last=[...calls].reverse().find(c=>c.tool===tool&&c.status==='running');
+      if(last){last.status=ev.ok===false?'error':'ok';last.preview=(ev.preview||'').slice(0,200)}
+      renderActiveDream();
+    }
+  }
+  else if(ev.type==='dream.cycle.completed'){
     _activeDreamState.current_stage='done';
-    _activeDreamState.title=ev.title||'';
+    _activeDreamState.title=ev.title||ev.label||'';
     renderActiveDream();
-    setTimeout(()=>showActiveDreamCard(false),10000);
+    // Linger on the completed summary briefly, then fall back to idle.
+    setTimeout(()=>{if(_activeDreamState.current_stage==='done'){_activeDreamState={};renderActiveDream();}},12000);
+  }
+  // ── Deep source-review session (detached task, not a cycle) ─────────────
+  else if(ev.type==='dream.review.run.start'){
+    if(_activeDreamState.cycle_id&&_activeDreamState.kind!=='review')return;
+    reviewSeed({done:0,total:ev.total||0,generated:0,current:''});
+  }
+  else if(ev.type==='dream.review.progress'){
+    if(_activeDreamState.cycle_id&&_activeDreamState.kind!=='review')return;
+    if(_activeDreamState.kind!=='review')reviewSeed({});
+    _activeDreamState.review=Object.assign(_activeDreamState.review||{},{
+      done:ev.done||0,total:ev.total||0,current:(ev.file||'')+(ev.style?(' · '+ev.style):'')});
+    (_activeDreamState.stage_log=_activeDreamState.stage_log||[]).push({
+      stage:(ev.file||'?').split('/').pop(),
+      summary:(ev.style||'')+(ev.area?(' · '+ev.area):'')+' · '+(ev.chunks||1)+' chunk(s)',ok:true});
+    if(_activeDreamState.stage_log.length>60)_activeDreamState.stage_log.shift();
+    renderActiveDream();
+  }
+  else if(ev.type==='dream.review.run.done'){
+    if(_activeDreamState.kind==='review'){
+      _activeDreamState.current_stage='done';
+      _activeDreamState.title=(ev.reports_generated||0)+' report(s) · '+(ev.files_reviewed||0)+' file(s)'
+        +(ev.incomplete?(' — '+(ev.stopped_reason||'yielded')):'');
+      if(_activeDreamState.review)_activeDreamState.review.generated=ev.reports_generated||_activeDreamState.review.generated||0;
+      renderActiveDream();
+      setTimeout(()=>{if(_activeDreamState.kind==='review'&&_activeDreamState.current_stage==='done'){_activeDreamState={};renderActiveDream();}},12000);
+    }
   }
 }
 
 function renderActiveDream(){
-  const b=$('ov-active-body');if(!b)return;
   const s=_activeDreamState;
-  let html='';
-  // Stage progress bar
-  const done=s.stages_completed||[];
-  const cur=s.current_stage||'';
-  html+='<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">';
-  for(const st of done){
-    html+='<span style="font-size:9px;padding:2px 8px;border-radius:3px;background:rgba(34,197,94,.15);color:var(--ok,#22c55e);font-family:var(--mono)">'+esc(st)+'</span>';
-  }
-  if(cur&&cur!=='done'){
-    html+='<span style="font-size:9px;padding:2px 8px;border-radius:3px;background:rgba(109,158,235,.15);color:var(--acc);font-family:var(--mono);animation:pulse 1.5s infinite">'+esc(cur)+'</span>';
-  }
-  html+='</div>';
-  // Refined goal
-  if(s.refined_goal){
-    html+='<div style="font-size:10.5px;padding:6px 10px;background:var(--bg3);border-left:3px solid var(--acc);border-radius:4px;margin-bottom:8px;line-height:1.4;color:var(--fg2)">'+esc(s.refined_goal)+'</div>';
-  }
-  // Tool calls
-  const calls=s.tools_called||[];
-  if(calls.length){
-    html+='<div style="font-size:9.5px;color:var(--fg3);margin-bottom:4px">'+calls.length+' tool calls</div>';
-    for(const c of calls.slice(-6)){
-      const col=c.status==='ok'?'var(--ok,#22c55e)':c.status==='error'?'var(--err,#ef4444)':'var(--acc)';
-      html+='<div style="font-size:10px;display:flex;gap:6px;align-items:baseline;padding:2px 0">'
-        +'<span style="color:'+col+'">'+(c.status==='running'?'\u23f3':c.status==='ok'?'\u2713':'\u2717')+'</span>'
-        +'<span style="font-family:var(--mono);color:var(--acc)">'+esc(c.tool)+'</span>'
-        +(c.preview?'<span style="color:var(--fg3);font-size:9px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.preview)+'</span>':'')
-        +'</div>';
+  const name=s.label||s.trigger||'dream';
+  const live=!!s.cycle_id&&s.current_stage!=='done';
+
+  // \u2500\u2500 Sidebar badge \u2500\u2500
+  const badge=$('badge-live');if(badge)badge.classList.toggle('on',live);
+
+  // \u2500\u2500 Dashboard "now dreaming" banner \u2500\u2500
+  const banner=$('dash-now');
+  if(banner){
+    banner.style.display=live?'flex':'none';
+    if(live){
+      const nn=$('dash-now-name');if(nn)nn.textContent=name;
+      const nt=$('dash-now-trigger');if(nt)nt.textContent=(s.trigger&&s.trigger!==name)?s.trigger:'';
+      const ns=$('dash-now-stage');if(ns)ns.textContent=s.current_stage?('\u00b7 '+s.current_stage):'';
     }
   }
-  b.innerHTML=html||'<div class="empty">Waiting for data...</div>';
+
+  // \u2500\u2500 Cycle KPI \u2500\u2500
+  const kv=$('ov-cyc');if(kv){kv.textContent=live?name:(s.current_stage==='done'?'Done':'Idle');
+    kv.title=live?(s.trigger||''):'';kv.style.fontSize=(live&&name.length>9)?'13px':'';}
+  const ks=$('ov-cyc-sub');if(ks)ks.textContent=live?(s.current_stage||''):'';
+
+  // \u2500\u2500 Live page hero \u2500\u2500
+  const idle=$('live-idle'),act=$('live-active');
+  if(idle&&act){idle.style.display=s.cycle_id?'none':'';act.style.display=s.cycle_id?'':'none';}
+  if(s.cycle_id){
+    const ln=$('live-name');if(ln)ln.textContent=s.current_stage==='done'?('\u2713 '+name):name;
+    const lt=$('live-trigger');if(lt)lt.textContent=s.trigger||'';
+    const lst=$('live-stage');if(lst)lst.textContent=s.current_stage==='done'
+      ?('Completed'+(s.title?' \u2014 '+s.title:'')):(s.current_stage?('Stage: '+s.current_stage):'starting\u2026');
+    const lp=$('live-progress');
+    if(lp){
+      const done=s.stages_completed||[],cur=s.current_stage||'';
+      const pipe=(s.pipeline||[]).map(_stageShort).filter(Boolean);
+      if(pipe.length){
+        lp.innerHTML=pipe.map(st=>{const cls=done.includes(st)?'done':(st===cur?'active':'');
+          return '<span class="lp-seg '+cls+'">'+esc(st)+'</span>'}).join('');
+      }else{
+        lp.innerHTML=done.map(st=>'<span class="lp-seg done">'+esc(st)+'</span>').join('')
+          +((cur&&cur!=='done')?'<span class="lp-seg active">'+esc(cur)+'</span>':'');
+      }
+    }
+  }
+
+  // \u2500\u2500 Activity body (refined goal + tool calls) \u2500\u2500
+  const b=$('ov-active-body');
+  if(b){
+    if(!s.cycle_id){b.innerHTML='<div class="empty">No active dream.</div>';}
+    else{
+      let html='';
+      // ── Source-review progress banner (when a deep review is the active session) ──
+      if(s.kind==='review'&&s.review){
+        const rv=s.review;
+        html+='<div style="font-size:11px;padding:7px 11px;background:var(--bg3);border-left:3px solid var(--acc3,#f97316);border-radius:4px;margin-bottom:10px;color:var(--fg2)">'
+          +'<span style="font-size:8.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--fg3);display:block;margin-bottom:3px">Source review</span>'
+          +'Reviewed '+(rv.done||0)+'/'+(rv.total||0)+' file·styles · '+(rv.generated||0)+' report(s)'
+          +(rv.current?'<br><span style="color:var(--fg3);font-size:9.5px">current: '+esc(rv.current)+'</span>':'')
+          +'<br><span style="color:var(--fg3);font-size:9px">live reasoning streams in the LLM Stream card →</span></div>';
+      }
+      // -- Poll-driven progress rail (event-loss-proof; from /dream/cycle/progress) --
+      html+=_progRailHtml(s);
+      // -- Live per-stage activity log (persists as the pipeline advances) --
+      const slog=s.stage_log||[];
+      const lastLogged=slog.length?slog[slog.length-1].stage:'';
+      const showRunning=s.current_stage&&s.current_stage!=='done'&&s.current_stage!==lastLogged;
+      if(slog.length||showRunning){
+        html+='<div style="font-size:8.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--fg3);margin-bottom:4px">Stage activity</div>';
+        html+='<div style="margin-bottom:12px">';
+        for(const st of slog.slice(-20)){
+          const ic=st.ok?'✓':'✗',col=st.ok?'var(--acc2,#4ade80)':'var(--err,#ef4444)';
+          html+='<div style="font-size:10px;display:flex;gap:7px;align-items:baseline;padding:2px 0;border-bottom:1px solid var(--border)">'
+            +'<span style="color:'+col+'">'+ic+'</span>'
+            +'<span style="font-family:var(--mono);color:var(--acc);flex-shrink:0">'+esc(st.stage)+(st.iter?('·'+st.iter):'')+'</span>'
+            +(st.summary?'<span style="color:var(--fg2);flex:1;line-height:1.4">'+esc(st.summary.slice(0,260))+'</span>':'')
+            +'</div>';
+        }
+        if(showRunning){
+          html+='<div style="font-size:10px;display:flex;gap:7px;align-items:baseline;padding:2px 0">'
+            +'<span style="color:var(--acc)">⏳</span>'
+            +'<span style="font-family:var(--mono);color:var(--acc)">'+esc(s.current_stage)+'</span>'
+            +'<span style="color:var(--fg3)">running…</span></div>';
+        }
+        html+='</div>';
+      }
+      if(s.refined_goal){
+        html+='<div style="font-size:11px;padding:7px 11px;background:var(--bg3);border-left:3px solid var(--acc);border-radius:4px;margin-bottom:10px;line-height:1.45;color:var(--fg2)">'
+          +'<span style="font-size:8.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--fg3);display:block;margin-bottom:3px">Refined goal</span>'+esc(s.refined_goal)+'</div>';
+      }
+      const calls=s.tools_called||[];
+      if(calls.length){
+        const okN=calls.filter(c=>c.status==='ok').length,errN=calls.filter(c=>c.status==='error').length,runN=calls.filter(c=>c.status==='running').length;
+        html+='<div style="font-size:9.5px;color:var(--fg3);margin-bottom:6px">'+calls.length+' tool call'+(calls.length===1?'':'s')
+          +' \u00b7 '+okN+' ok'+(errN?' \u00b7 '+errN+' err':'')+(runN?' \u00b7 '+runN+' running':'')+'</div>';
+        for(const c of calls.slice(-12)){
+          const col=c.status==='ok'?'var(--acc2,#4ade80)':c.status==='error'?'var(--err,#ef4444)':'var(--acc)';
+          const sub=c.preview||c.thought||'';
+          html+='<div style="font-size:10.5px;display:flex;gap:7px;align-items:baseline;padding:3px 0;border-bottom:1px solid var(--border)">'
+            +'<span style="color:'+col+'">'+(c.status==='running'?'\u23f3':c.status==='ok'?'\u2713':'\u2717')+'</span>'
+            +'<span style="font-family:var(--mono);color:var(--acc);flex-shrink:0">'+esc(c.tool)+'</span>'
+            +(sub?'<span style="color:var(--fg3);font-size:9.5px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(sub)+'</span>':'')
+            +'</div>';
+        }
+      }
+      if(!html)html='<div class="empty">'+(s.current_stage==='done'?'Cycle complete.':'Running '+(s.current_stage||'')+'\u2026 activity will appear here.')+'</div>';
+      b.innerHTML=html;
+    }
+  }
+
+  // \u2500\u2500 Elapsed timer lifecycle \u2500\u2500
+  if(live)liveTimerStart();else{liveTimerStop();liveTick()}
+  // \u2500\u2500 Progress-snapshot poller lifecycle \u2500\u2500
+  if(live&&s.kind!=='review')progressPollStart();else progressPollStop();
 }
 
 async function loadActiveDreamDetail(){
-  // Fetch running cycle details from the status endpoint
-  const s=await api('/dream/status');
-  if(s?.running?.cycle_id){
-    $('ov-active-trigger').textContent=s.running.trigger||'';
-    showActiveDreamCard(true);
-  }
+  const s=await api('/dream/scheduler/status');
+  setRunningUI(s&&s.current_cycle?s.current_cycle:null);
 }
 
 // Wire graph and active detail into event handler
 const _origHandleEv=handleEv;
 handleEv=function(ev){
+  // The global __events__ feed carries every loop run in the system; drop
+  // loop-family events that aren't dream-owned BEFORE any consumer (loop
+  // renderer, dream graph, active-cycle detail) sees them.
+  const _t=(ev&&ev.type)||'';
+  if(_t&&!_t.startsWith('dream.')
+     &&(_t.startsWith('agent_loop')||_t.startsWith('stream.')||_t.startsWith('workshop.')||_t==='start'||_t==='error')
+     &&!_dreamOwnsLoopEv(ev)) return;
   _origHandleEv(ev);
   dreamGraphHandleEvent(ev);
   updateActiveDreamDetail(ev);
 };
 </script>
+<script src="/ui/vera-dashboard.js"></script>
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/vera-panel.js"></script>
+<script src="/ui/elements/vera_markdown.js"></script>
+<script src="/ui/elements/activity_timeline.js"></script>
 <script src="/ui/elements/agent_loop_output.js"></script>
 <script src="/ui/elements/flow_builder.js"></script>
 <script src="/ui/elements/flow_caps.js"></script>
 <script src="/ui/vera-graph.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
+<script src="/ui/vera-notes.js"></script>
 </body>
 </html>

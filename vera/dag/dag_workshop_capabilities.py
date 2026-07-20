@@ -194,7 +194,7 @@ def rich_cap_signature(name: str, *, max_param_detail: int = 12) -> str:
     desc   = (cap.get("description") or "")[:300]
 
     short_params = ", ".join(
-        f"{p}:{v.get('type','str')}{'!' if p in req else ''}"
+        _orch._format_param_sig(p, v, req)
         for p, v in props.items() if p != "trace_id"
     )
     out: List[str] = [f"  {name}({short_params})"]
@@ -478,6 +478,7 @@ _EXPLORE_CAP_HINTS = {
     "fabric.query", "fabric.datasets", "fabric.stats", "caps.search",
     "caps.describe", "context.search_caps", "context.search_dags",
     "context.recall_fabric", "system.ping",
+    "memory.seek", "memory.read", "memory.map",
 }
 
 
@@ -675,8 +676,22 @@ def _resolve_researcher_url() -> str:
         except Exception:
             pass
         if in_vera:
-            port = _os.environ.get("VERA_ORCH_PORT", "8999").strip() or "8999"
-            url = f"http://localhost:{port}"
+            # Scheme + port must match how uvicorn actually serves the app.
+            # With TLS_ENABLED the orchestrator listens for TLS on the same
+            # port, so a ws://localhost dial is dropped mid-handshake with no
+            # HTTP response — which made every stream fall back to polling.
+            scheme = "http"
+            port = _os.environ.get("VERA_ORCH_PORT", "").strip()
+            try:
+                _cfg = getattr(_orch, "cfg", None)
+                if _cfg is not None:
+                    if getattr(_cfg, "TLS_ENABLED", False):
+                        scheme = "https"
+                    if not port:
+                        port = str(getattr(_cfg, "ORCHESTRATOR_PORT", "") or "")
+            except Exception:
+                pass
+            url = f"{scheme}://localhost:{port or '8999'}"
             log.info("research WS: in-process Vera mode — using orchestrator "
                      "URL %s", url)
 
@@ -727,6 +742,12 @@ async def _stream_research_websocket(*, job_id: str, cap_name: str,
         import websockets  # type: ignore
     except Exception:
         log.debug("websockets pkg not available, falling back to polling")
+        await emit_event({
+            "type":       "agent_loop.research_stream_failed",
+            "tool":       cap_name, "job_id": job_id,
+            "error":      "websockets package not installed",
+            "session_id": session_id, "cycle": cycle,
+        })
         return None
 
     # Resolve researcher URL — see _resolve_researcher_url() for the full
@@ -735,6 +756,17 @@ async def _stream_research_websocket(*, job_id: str, cap_name: str,
 
     ws_url = (_RURL.replace("http://", "ws://").replace("https://", "wss://")
               + "/ws/stream/" + job_id)
+
+    # For wss:// the orchestrator's cert is self-signed (see
+    # _ensure_self_signed_cert) — a default SSL context refuses it and the
+    # stream would silently fall back to polling. This is a loopback
+    # connection into our own process, so skip verification.
+    _ssl_ctx = None
+    if ws_url.startswith("wss://"):
+        import ssl as _ssl
+        _ssl_ctx = _ssl.create_default_context()
+        _ssl_ctx.check_hostname = False
+        _ssl_ctx.verify_mode = _ssl.CERT_NONE
 
     # Lazily resolve the loop's stream-token writer
     ctx_mod = _ctx()
@@ -761,7 +793,8 @@ async def _stream_research_websocket(*, job_id: str, cap_name: str,
 
     try:
         async with websockets.connect(ws_url, open_timeout=10,
-                                        ping_interval=30, close_timeout=5) as ws:
+                                        ping_interval=30, close_timeout=5,
+                                        ssl=_ssl_ctx) as ws:
             while True:
                 if time.monotonic() - started > max_wait_secs:
                     await emit_event({
@@ -1697,6 +1730,77 @@ _LOOP_VARIANTS = [
         "supports_plan":         True,
         "supports_verify":       False,
     },
+    {
+        "id":       "v6",
+        "cap":      "dag.agent_loop_v6",
+        "label":    "v6 — adaptive specialists",
+        "description": "Builds on v5: the orchestrator decomposes the goal into scoped "
+                        "steps — each with a checkable success criterion and a whole-goal "
+                        "done_when — then delegates each to an ephemeral specialist. An "
+                        "ADAPTIVE CONTROLLER inspects a shared ledger AFTER EVERY step (not "
+                        "just on failure) and decides the next move: continue, insert a "
+                        "remediation/gap step, replan the remaining work, or stop early "
+                        "once the goal is met. A final completion gate verifies done_when "
+                        "and appends follow-up steps if the goal isn't truly finished. "
+                        "Planning/DAG caps are blacklisted — planning is never delegated.",
+        "supports_satisfaction": True,
+        "supports_expand":       False,
+        "supports_progress":     True,
+        "supports_hitl":         False,
+        "supports_steps":        True,
+        "supports_plan":         True,
+        "supports_verify":       True,
+    },
+    {
+        "id":       "v7",
+        "cap":      "dag.agent_loop_v7",
+        "label":    "v7 — tiered + branching",
+        "description": "The v6 adaptive engine plus the full long-horizon machinery. A TIER "
+                        "CLASSIFIER (cheap heuristic + a less-prescriptive LLM pass) routes the "
+                        "goal single/simple/complex/strategic and drives the strategic master "
+                        "planner, so BROAD goals actually get a strategic long-form plan; "
+                        "'single' takes a fast path. Each step is FINALISED into a relevant-only "
+                        "output. A failed step BRANCHES like a git-tree: it forks from the last "
+                        "good point, explores alternate approaches (sequential or parallel), "
+                        "MERGES the first that meets the bar and PRUNES the rest to a one-line "
+                        "reason — engaging only on failure so clean runs are cost-neutral. A "
+                        "STRATEGIC (multi-day) goal persists its documented plan as a dream "
+                        "project and folds each session's progress back in, so the dream system "
+                        "continues it over days. Inherits v6's adaptive controller, per-step "
+                        "success check, final gate, delivery, recon, sub-plans and phases.",
+        "supports_satisfaction": True,
+        "supports_expand":       False,
+        "supports_progress":     True,
+        "supports_hitl":         False,
+        "supports_steps":        True,
+        "supports_plan":         True,
+        "supports_verify":       True,
+    },
+    {
+        "id":       "v8",
+        "cap":      "dag.agent_loop_v8",
+        "label":    "v8 — loop generator + program orchestrator",
+        "description": "A META layer over v5–v7 (see loop_orchestrator.py). A GENERATOR "
+                        "designs a custom multi-loop PROGRAM from a goal/brief/thought: each "
+                        "generated loop pins an engine (v5/v6/v7) or a specialist loop profile, "
+                        "a system agent persona, a scoped toolkit, a cadence (once/recurring) "
+                        "and dependencies. A PROGRAM ORCHESTRATOR then runs the loops over days "
+                        "to months — one at a time, dependency-ordered — and after every run a "
+                        "controller reviews progress against done_when and ADAPTS the program "
+                        "(add/retire/reschedule loops, finish early). Programs persist in Redis "
+                        "and are driven by a background tick, so they survive restarts. Not a "
+                        "streaming run: dag.agent_loop_v8 creates + starts a program and returns "
+                        "its state; each constituent loop run is a normal v5/v6/v7 run watchable "
+                        "via the Loops pane (session ids v8:<program>:<loop>).",
+        "supports_satisfaction": True,
+        "supports_expand":       False,
+        "supports_progress":     True,
+        "supports_hitl":         False,
+        "supports_steps":        True,
+        "supports_plan":         True,
+        "supports_verify":       True,
+        "long_horizon":          True,
+    },
 ]
 
 
@@ -1819,6 +1923,7 @@ async def _run_handover_stage(*, goal: str,
         "user explicitly asked about the process.\n"
         "  • Cite specific facts from the tool results when you make claims."
     )
+    sys = _now_context_line() + "\n\n" + sys  # ground the synthesis in real time
     user_prompt = (
         f"USER'S ORIGINAL GOAL:\n{goal.strip()}\n\n"
         f"GOAL CATEGORY: {cat}\n\n"
@@ -2123,18 +2228,44 @@ def _is_thinking_model(model: str) -> bool:
     return any(h in m for h in _THINKING_MODEL_HINTS)
 
 
+def _now_context_line() -> str:
+    """A short, authoritative 'current date/time' line to ground loop LLM calls.
+
+    Models otherwise infer 'today' from training data and get it badly wrong.
+    Uses the server's local timezone; format is plain-text and cross-platform
+    (no %-d / %#d, which differ between Linux and Windows)."""
+    from datetime import datetime
+    now = datetime.now().astimezone()
+    tz  = now.strftime("%Z") or "server local time"
+    return (f"Current date and time: {now.strftime('%A, %d %B %Y, %H:%M')} "
+            f"({tz}; ISO {now.isoformat(timespec='minutes')}).")
+
+
 async def _safe_ollama_generate_dw(prompt, *, system="", json_mode=True,
                                      model="", instance_id="", prefer_gpu=True,
-                                     stream_cb=None):
+                                     stream_cb=None, options=None, think=False):
     """Thinking-model-aware ollama_generate wrapper for dag_workshop callers.
 
     Lazily resolves ollama_generate via the context module so we don't have
-    a circular import. Disables json_mode for thinking models (they often
-    return empty under format=json), and retries without json_mode if the
-    response is empty. When `stream_cb` is given it is forwarded to
+    a circular import. When `stream_cb` is given it is forwarded to
     ollama_generate so callers can stream tokens live (the full text is still
     returned). The empty-retry is always non-streaming.
+
+    `think` defaults to **False**: these are structured JSON planner/agent calls,
+    and on a native-thinking model (qwen3 / deepseek-r1 / qwq …) the `<think>`
+    channel is slow — a huge reasoning dump over a big prompt blows the HTTP
+    timeout ("ollama.generate failed / unknown") and frequently leaves `response`
+    EMPTY under format=json. Forcing thinking OFF at the API level fixes both AND
+    lets us keep json_mode on even for a "thinking" model (json was only disabled
+    for them because the think channel ate the response). Reasoning still flows
+    through the explicit "thought" field in the JSON, not the native channel.
+    Pass think=None to restore the model's default (native thinking on, json off).
     """
+    # Ground EVERY loop LLM call (planner, controller, completion gate, step
+    # finaliser, branch strategist, delivery agent, every version v1–v7) in the
+    # real wall-clock time. This is the shared chokepoint all of them funnel
+    # through, so injecting here beats editing each _vN_system_prompt string.
+    system = _now_context_line() + ("\n\n" + system if system else "")
     import importlib
     try:
         ctx = importlib.import_module("Vera.vera.context")
@@ -2151,10 +2282,15 @@ async def _safe_ollama_generate_dw(prompt, *, system="", json_mode=True,
     if og is None:
         return ""
 
-    use_json = bool(json_mode) and not _is_thinking_model(model)
+    # Keep json_mode ON for a thinking model ONLY when we're explicitly turning
+    # its native thinking off (think is False) — otherwise its <think> output
+    # leaves an empty JSON response.
+    use_json = bool(json_mode) and (not _is_thinking_model(model) or think is False)
     _gen_kwargs = dict(system=system, json_mode=use_json,
                        model=model or None, instance_id=instance_id or None,
-                       prefer_gpu=bool(prefer_gpu))
+                       prefer_gpu=bool(prefer_gpu), think=think)
+    if options:
+        _gen_kwargs["options"] = dict(options)
     if stream_cb is not None:
         try:
             raw = await og(prompt, stream_cb=stream_cb, **_gen_kwargs)
@@ -2173,6 +2309,8 @@ async def _safe_ollama_generate_dw(prompt, *, system="", json_mode=True,
                 model=model or None,
                 instance_id=instance_id or None,
                 prefer_gpu=bool(prefer_gpu),
+                options=dict(options) if options else None,
+                think=think,
             )
         except Exception:
             pass
@@ -2312,16 +2450,70 @@ def _salvage_action(raw: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _trunc_marker(shown: int, total: int) -> str:
+    """Explicit truncation marker. A bare '[truncated]' after a half-open code
+    fence reads to the agent as 'the generation failed mid-way' — it then tries
+    to 're-complete' the code with another llm.generate call, looping forever.
+    Spell out that ONLY THE DISPLAY is cut and the call itself completed."""
+    return (f"\n[…display truncated at {shown} of {total} chars — the call COMPLETED and the "
+            "FULL output was captured. Do NOT re-run it or try to 'complete' this text.]")
+
+
 def _result_preview(result: Any, max_len: int = 1500) -> str:
     if result is None:
         return "null"
     if isinstance(result, str):
-        return result if len(result) <= max_len else result[:max_len] + "\n[truncated]"
+        return result if len(result) <= max_len else result[:max_len] + _trunc_marker(max_len, len(result))
     try:
         s = json.dumps(result, default=str, ensure_ascii=False)
     except Exception:
         s = str(result)
-    return s if len(s) <= max_len else s[:max_len] + "\n[truncated]"
+    return s if len(s) <= max_len else s[:max_len] + _trunc_marker(max_len, len(s))
+
+
+# ── Mid-run user messages ─────────────────────────────────────────────────────
+# A running loop can receive user messages WITHOUT being interrupted: they are
+# pushed to a per-session Redis list and DRAINED at the next step boundary, then
+# folded into the loop's context as authoritative mid-run updates. (Endpoint:
+# POST /workshop/agent_loop/message — defined next to the cancel endpoint.)
+def _loop_inbox_key(sid: str) -> str:
+    return f"vera:loop:inbox:{sid}"
+
+
+async def _drain_user_messages(sid: str) -> List[str]:
+    """Pop every user message queued for this session (oldest first). Best-effort:
+    returns [] if Redis is unavailable or the queue is empty."""
+    r = _redis()
+    if not r or not sid:
+        return []
+    out: List[str] = []
+    try:
+        for _ in range(50):     # bound — never spin on a flood
+            raw = await r.lpop(_loop_inbox_key(sid))
+            if not raw:
+                break
+            txt = ""
+            try:
+                obj = json.loads(_rd(raw))
+                txt = (str(obj.get("text") or "").strip()
+                       if isinstance(obj, dict) else str(obj).strip())
+            except Exception:
+                txt = str(_rd(raw)).strip()
+            if txt:
+                out.append(txt[:2000])
+    except Exception as e:
+        log.debug("loop inbox drain failed for %s: %s", sid, e)
+    return out
+
+
+def _user_updates_block(updates: List[str], *, max_chars: int = 1600) -> str:
+    """Format accumulated mid-run user messages as an authoritative context block
+    folded into each subsequent step's goal (and the controller's view)."""
+    if not updates:
+        return ""
+    body = "\n".join(f"  • {u}" for u in updates[-8:])[:max_chars]
+    return ("USER UPDATES (the user sent these MID-RUN — treat them as authoritative "
+            "adjustments to the goal; honor them in this and every following step):\n" + body)
 
 
 async def _await_hitl_decision(session_id: str, step: int, *,
@@ -2382,6 +2574,190 @@ async def workshop_hitl_respond(request: Request):
             pass
     fut.set_result(result)
     return {"resolved": True, "session_id": sid, "step": step, "decision": decision}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# RESUME — reconnect to an agentic-loop run after a page reload OR app restart.
+# emit_event persists every loop event to a per-session Redis list + a run-state
+# hash (see capability_orchestration._persist_loop_event). Redis outlives the app,
+# so these two endpoints let a returning client (a) fetch the run + its event log
+# to REPLAY the run's UI, and (b) re-attach to the LIVE event stream of a run
+# that's still in progress — WITHOUT starting a new run.
+# ═════════════════════════════════════════════════════════════════════════════
+def _rd(v):
+    return v.decode() if isinstance(v, (bytes, bytearray)) else v
+
+
+# Fallback staleness window (only used when there's no live in-process task, e.g.
+# after a server restart or on another worker): a 'running' run with no event this
+# recent is treated as INTERRUPTED. Generous so a long tool call between events on
+# another worker isn't misread as dead. The sessions zset score is the last-event epoch.
+_LOOP_STALE_SECS = int(os.getenv("VERA_LOOP_STALE_SECS", "600") or 600)
+
+
+async def _loop_run_is_stale(r, sid: str, run: dict) -> bool:
+    # Definitive liveness: a live task in THIS process means the run is genuinely
+    # going (never falsely 'interrupted' during a long step). After a server
+    # restart this in-memory registry is empty, so a 'running' run with no task is
+    # exactly the interrupted case we want to surface.
+    task = _AGENT_LOOP_TASKS.get(sid)
+    if task is not None and not task.done():
+        return False
+    try:
+        score = await r.zscore("vera:loop:sessions", sid)
+        if score is None:
+            return bool(run)   # a run record with no activity marker → treat as stale
+        return (time.time() - float(score)) > _LOOP_STALE_SECS
+    except Exception:
+        return False
+
+
+@APP.get("/workshop/agent_loop/session_state")
+async def workshop_loop_session_state(request: Request):
+    """The persisted run-state + event log for a session (for reload replay).
+    `since` (int) returns only events from that list index onward."""
+    sid   = request.query_params.get("session_id", "")
+    since = int(request.query_params.get("since", "0") or 0)
+    r = _redis()
+    if not r or not sid:
+        return {"run": {}, "events": [], "count": 0}
+    try:
+        run_raw = await r.hgetall(f"vera:loop:run:{sid}")
+        run = {_rd(k): _rd(v) for k, v in (run_raw or {}).items()}
+        # A run marked 'running' whose last event is stale is really INTERRUPTED
+        # (the process that was driving it died — e.g. a server restart). Surface
+        # that so the client shows it as interrupted instead of tailing forever.
+        run["stale"] = await _loop_run_is_stale(r, sid, run)
+        if run.get("status") == "running" and run["stale"]:
+            run["status"] = "interrupted"
+        total = await r.llen(f"vera:loop:events:{sid}")
+        raw = await r.lrange(f"vera:loop:events:{sid}", since, -1)
+        events = []
+        for x in raw or []:
+            try:
+                events.append(json.loads(_rd(x)))
+            except Exception:
+                pass
+        return {"run": run, "events": events, "count": int(total or 0), "since": since}
+    except Exception as e:
+        return {"run": {}, "events": [], "count": 0, "error": str(e)}
+
+
+@APP.get("/workshop/agent_loop/sessions")
+async def workshop_loop_sessions(request: Request):
+    """Recent loop sessions (newest first) with their run-state — lets a client
+    list resumable runs. `limit` caps the count; `status` filters (e.g. running)."""
+    r = _redis()
+    if not r:
+        return {"sessions": []}
+    limit = max(1, min(100, int(request.query_params.get("limit", "30") or 30)))
+    want  = (request.query_params.get("status", "") or "").strip()
+    try:
+        ids = await r.zrevrange("vera:loop:sessions", 0, limit * 2)
+        out = []
+        for iid in ids or []:
+            sid = _rd(iid)
+            run_raw = await r.hgetall(f"vera:loop:run:{sid}")
+            run = {_rd(k): _rd(v) for k, v in (run_raw or {}).items()}
+            if not run:
+                continue
+            if want and run.get("status") != want:
+                continue
+            out.append({"session_id": sid, **run})
+            if len(out) >= limit:
+                break
+        return {"sessions": out, "count": len(out)}
+    except Exception as e:
+        return {"sessions": [], "error": str(e)}
+
+
+@APP.get("/workshop/agent_loop/reattach")
+async def workshop_loop_reattach(request: Request):
+    """SSE: REPLAY a session's persisted loop events (from `since`) then TAIL the
+    live ones until the run finishes — so a reloaded client re-attaches to an
+    in-progress run without launching a new one."""
+    sid   = request.query_params.get("session_id", "")
+    since = int(request.query_params.get("since", "0") or 0)
+    r = _redis()
+
+    async def _gen():
+        if not r or not sid:
+            yield b'data: {"type":"error","error":"no redis/session"}\n\n'
+            yield b"data: [DONE]\n\n"
+            return
+        finished = False
+        try:
+            raw = await r.lrange(f"vera:loop:events:{sid}", since, -1)
+        except Exception:
+            raw = []
+        for x in raw or []:
+            s = _rd(x)
+            yield f"data: {s}\n\n".encode()
+            try:
+                if str(json.loads(s).get("type", "")).endswith(".done"):
+                    finished = True
+            except Exception:
+                pass
+        status = ""
+        stale = False
+        try:
+            run_raw = await r.hgetall(f"vera:loop:run:{sid}")
+            run = {_rd(k): _rd(v) for k, v in (run_raw or {}).items()}
+            status = run.get("status") or ""
+            stale = await _loop_run_is_stale(r, sid, run)
+        except Exception:
+            pass
+        # Finished, or a 'running' run whose driver died (restart) — nothing live to tail.
+        if finished or status in ("done", "error") or (status == "running" and stale):
+            if status == "running" and stale:
+                yield (b'data: {"type":"agent_loop.interrupted","reason":"run was interrupted '
+                       b'(server restart or its driver stopped) - no longer live"}\n\n')
+            yield b"data: [DONE]\n\n"
+            return
+        # Tail live events for this session until its done event.
+        pubsub = r.pubsub()
+        await pubsub.subscribe("vera:events:live")
+        try:
+            idle = 0
+            while True:
+                try:
+                    if await request.is_disconnected():
+                        break
+                except Exception:
+                    pass
+                try:
+                    msg = await asyncio.wait_for(
+                        pubsub.get_message(ignore_subscribe_messages=True, timeout=0.5),
+                        timeout=1.0)
+                except asyncio.TimeoutError:
+                    msg = None
+                if not msg or msg.get("type") != "message":
+                    idle += 1
+                    if idle > 1800:   # ~30 min silent → stop tailing
+                        break
+                    continue
+                idle = 0
+                s = _rd(msg.get("data"))
+                try:
+                    ev = json.loads(s)
+                except Exception:
+                    continue
+                if (ev.get("session_id") or "") != sid:
+                    continue
+                if not str(ev.get("type", "")).startswith("agent_loop"):
+                    continue
+                yield f"data: {s}\n\n".encode()
+                if str(ev.get("type", "")).endswith(".done"):
+                    break
+        finally:
+            try:
+                await pubsub.unsubscribe("vera:events:live")
+                await pubsub.close()
+            except Exception:
+                pass
+        yield b"data: [DONE]\n\n"
+
+    return StreamingResponse(_gen(), media_type="text/event-stream")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -2455,9 +2831,10 @@ CATEGORY_PREFIX_HINTS: Dict[str, List[str]] = {
                        "research.deep", "research.parallel", "research.academic",
                        "research.security", "research.code", "research.guide",
                        "web.search", "web.fetch", "http.get",
-                       "memory.recall", "scrape.fetch"],
+                       "memory.seek", "memory.recall", "scrape.fetch"],
     "web_check":      ["http.get", "http.head", "system.ping"],
-    "data_lookup":    ["fabric.query", "fabric.datasets", "fabric.search",
+    "data_lookup":    ["memory.seek", "memory.read", "memory.map",
+                       "fabric.query", "fabric.datasets", "fabric.search",
                        "fabric.stats", "data.", "memory.recall"],
     "file_edit":      ["text.", "ide.code.", "fs.", "data.json_"],
     "summarisation":  ["llm.summarize", "llm.generate", "text."],
@@ -2492,7 +2869,8 @@ CATEGORY_BASE_ESSENTIALS: Dict[str, List[str]] = {
     "research":       ["llm.generate", "llm.summarize", "research.run", "research.report",
                        "research.quick_search", "web.search", "http.get"],
     "web_check":      ["http.get", "system.ping"],
-    "data_lookup":    ["fabric.query", "fabric.datasets", "llm.generate"],
+    "data_lookup":    ["memory.seek", "memory.map", "fabric.query",
+                       "fabric.datasets", "llm.generate"],
     "file_edit":      ["llm.generate", "text.find_replace"],
     "summarisation":  ["llm.summarize", "llm.generate"],
     "analysis":       ["llm.analyze", "llm.summarize"],
@@ -2522,6 +2900,9 @@ CATEGORY_BASE_ESSENTIALS: Dict[str, List[str]] = {
 WORKSHOP_DISCOVERY_CAPS = [
     "caps.search", "caps.describe",
     "context.search_caps", "context.search_dags",
+    # Canonical memory retrieval — always available so agents reach stored data
+    # through one door instead of the raw fabric/memory read caps.
+    "memory.seek", "memory.read", "memory.map",
 ]
 
 # "Useful cap" detection by category. If the toolkit ALREADY contains any of
@@ -2530,6 +2911,7 @@ WORKSHOP_DISCOVERY_CAPS = [
 CATEGORY_USEFUL_CAP_PATTERNS: Dict[str, List[str]] = {
     "research":      ["research.run", "research.report", "research.deep",
                       "research.parallel", "research.quick_search", "web.search"],
+    "data_lookup":   ["memory.seek", "fabric.query"],
     "web_check":     ["http.get"],
     "network_scan":  ["netscan.target.ports", "netscan.target.tech",
                       "netscan.discover"],
@@ -3153,6 +3535,60 @@ def _coerce_to_known_category(cat: str, keywords: List[Any]) -> str:
     return "other"
 
 
+# Global default capability blacklist (mirrors context._AGENT_LOOP_BLACKLIST but
+# is ALWAYS applied, regardless of run config). Caps listed here never enter any
+# agent-loop toolkit/catalog, so the planner can't put them in plans and ephemeral
+# specialists can't see or request them.
+#   • llm.plan / dag.plan / dag.plan_and_run / dag.from_goal build or run *DAG
+#     WORKFLOWS* — handing one to a specialist mid-plan derails the goal (the
+#     sub-agent starts "planning a plan" instead of acting). The loop must do its
+#     OWN goal decomposition; planning is never delegated to a capability.
+#   • dag.run / dag.store_run execute stored DAGs — same handover problem.
+#   • dag.agent_loop* would recurse the loop into itself.
+_DEFAULT_CAP_BLACKLIST: set = {
+    "llm.plan",
+    "dag.plan", "dag.plan_and_run", "dag.from_goal",
+    "dag.run", "dag.store_run",
+    "dag.agent_loop", "dag.agent_loop_v2", "dag.agent_loop_v3",
+    "dag.agent_loop_v4", "dag.agent_loop_v5", "dag.agent_loop_v6",
+    "dag.agent_loop_v7",
+}
+
+
+def _gated_read_caps() -> set:
+    """Caps the canonical-retrieval gate (fabric/memory_retrieval.py) hides
+    from agent discovery. Soft gate: they stay callable when explicitly
+    invoked; empty set when the module isn't loaded or mode is 'full'."""
+    mr = (sys.modules.get("memory_retrieval")
+          or sys.modules.get("Vera.vera.fabric.memory_retrieval"))
+    try:
+        return mr.gated_discovery_caps() if mr else set()
+    except Exception:
+        return set()
+
+
+def _guard_filter_catalog(session_id: str, names: List[str]) -> List[str]:
+    """When a session cap-guard is registered (see context.set_session_cap_guard),
+    shape the planner/controller catalog to it: drop caps the guard would refuse
+    at execution time anyway, and surface the FULL allow-list so the planner sees
+    every approved tool (base_toolkit only floors the first few). Enforcement
+    itself lives in context._agent_loop_call_tool — this just stops the planner
+    from planning around tools the run can never call."""
+    try:
+        ctx = _ctx()
+        g = (ctx.get_session_cap_guard(session_id)
+             if ctx and hasattr(ctx, "get_session_cap_guard") else None)
+        if not g:
+            return names
+        kept = [n for n in names if not ctx._guard_blocks(g, n)]
+        for c in g.get("allow") or []:
+            if "*" not in c and c in CAPABILITY_REGISTRY and c not in kept:
+                kept.append(c)
+        return kept or names
+    except Exception:
+        return names
+
+
 async def _workshop_build_toolkit(*, allowed_caps: str, category: str,
                               categories: Optional[List[str]] = None,
                               keywords: List[str], top_k: int = 16,
@@ -3181,12 +3617,12 @@ async def _workshop_build_toolkit(*, allowed_caps: str, category: str,
 
     Truncates keyword-discovered caps to keep total ≤ top_k * 2.
     """
-    blacklist: set = set()
+    blacklist: set = set(_DEFAULT_CAP_BLACKLIST) | _gated_read_caps()
     try:
         ctx = _ctx()
         bl = getattr(ctx, "_AGENT_LOOP_BLACKLIST", None)
         if isinstance(bl, set):
-            blacklist = bl
+            blacklist = blacklist | bl
     except Exception:
         pass
 
@@ -4286,9 +4722,12 @@ async def cap_dag_agent_loop_v3(
         keywords=triage.get("keywords", []),
         model=model, instance_id=instance_id, prefer_gpu=bool(prefer_gpu),
     )
-    # Ensure fabric.query and fabric.datasets are in toolkit if datasets found
+    # Ensure the data-search caps are in the toolkit if datasets were found —
+    # canonical (memory.seek/map) when the retrieval gate is on, legacy otherwise.
     if relevant_datasets:
-        for ds_cap in ("fabric.datasets", "fabric.query"):
+        _ds_caps = (("memory.map", "memory.seek") if _gated_read_caps()
+                    else ("fabric.datasets", "fabric.query"))
+        for ds_cap in _ds_caps:
             if ds_cap in CAPABILITY_REGISTRY and ds_cap not in toolkit:
                 toolkit.insert(0, ds_cap)
 
@@ -4312,10 +4751,15 @@ async def cap_dag_agent_loop_v3(
             f"  • {d.get('dataset_id', '?')} ({d.get('record_count', 0)} records)"
             for d in relevant_datasets
         )
+        _ds_usage = (
+            "\nUse memory.seek(query=\"<query>\", scope=\"<name>\") to search these."
+            if _gated_read_caps() else
+            "\nUse fabric.query(dataset_id=\"<name>\", text=\"<query>\") to search these."
+        )
         ds_hint = (
             "\n\nRELEVANT DATASETS IN FABRIC:\n"
             + ds_lines
-            + "\nUse fabric.query(dataset_id=\"<name>\", text=\"<query>\") to search these."
+            + _ds_usage
         )
         ctx_extra = (ctx_extra.rstrip() + ds_hint) if ctx_extra else ds_hint.strip()
 
@@ -4451,6 +4895,10 @@ async def cap_dag_agent_loop_v3(
                 return {"ok": False, "error": f"Unknown cap: {cap_name}"}
             accepted = set(cap.get("schema", {}).get("properties", {}).keys()) | {"trace_id"}
             kwargs = {k: v for k, v in (args or {}).items() if k in accepted}
+            # Session plumb-through: caps that accept session_id get it, so
+            # sandbox routing / event scoping still work on the fallback shim.
+            if kw.get("session_id") and "session_id" in accepted:
+                kwargs.setdefault("session_id", kw["session_id"])
             try:
                 result = await cap["func"](**kwargs, trace_id=kw.get("trace_id", "") or "")
                 return {"ok": True, "result": result}
@@ -5906,7 +6354,7 @@ async def cap_dag_agent_loop_v4(
     try:
         import importlib as _il
         _exec_mod = _il.import_module("Vera.vera.execution.exec_capabilities")
-        artifact_dir_path = _exec_mod.artifact_dir(session_id=sid)
+        artifact_dir_path = await _exec_mod.artifact_dir_async(session_id=sid)
     except Exception as e:
         log.debug("v4 artifact dir resolve failed: %s", e)
     if artifact_dir_path:
@@ -5937,7 +6385,9 @@ async def cap_dag_agent_loop_v4(
 
     relevant_datasets, sel = await asyncio.gather(_ds_task(), _steps_task())
     if relevant_datasets:
-        for ds_cap in ("fabric.datasets", "fabric.query"):
+        _ds_caps = (("memory.map", "memory.seek") if _gated_read_caps()
+                    else ("fabric.datasets", "fabric.query"))
+        for ds_cap in _ds_caps:
             if ds_cap in CAPABILITY_REGISTRY and ds_cap not in toolkit:
                 toolkit.insert(0, ds_cap)
 
@@ -5955,8 +6405,11 @@ async def cap_dag_agent_loop_v4(
         ds_lines = "\n".join(
             f"  • {d.get('dataset_id', '?')} ({d.get('record_count', 0)} records)"
             for d in relevant_datasets)
-        ds_hint = ("\n\nRELEVANT DATASETS IN FABRIC:\n" + ds_lines
-                   + "\nUse fabric.query(dataset_id=\"<name>\", text=\"<query>\") to search these.")
+        _ds_usage = (
+            "\nUse memory.seek(query=\"<query>\", scope=\"<name>\") to search these."
+            if _gated_read_caps() else
+            "\nUse fabric.query(dataset_id=\"<name>\", text=\"<query>\") to search these.")
+        ds_hint = ("\n\nRELEVANT DATASETS IN FABRIC:\n" + ds_lines + _ds_usage)
         ctx_extra = (ctx_extra.rstrip() + ds_hint) if ctx_extra else ds_hint.strip()
     if artifact_dir_path:
         art_hint = ("\n\nARTIFACT DIRECTORY: write any generated files (code, documents, "
@@ -6088,6 +6541,10 @@ async def cap_dag_agent_loop_v4(
                 return {"ok": False, "error": f"Unknown cap: {cap_name}"}
             accepted = set(cap.get("schema", {}).get("properties", {}).keys()) | {"trace_id"}
             kwargs = {k: v for k, v in (args or {}).items() if k in accepted}
+            # Session plumb-through: caps that accept session_id get it, so
+            # sandbox routing / event scoping still work on the fallback shim.
+            if kw.get("session_id") and "session_id" in accepted:
+                kwargs.setdefault("session_id", kw["session_id"])
             try:
                 result = await cap["func"](**kwargs, trace_id=kw.get("trace_id", "") or "")
                 return {"ok": True, "result": result}
@@ -6917,6 +7374,13 @@ def _v5_seed_caps_for(goal: str) -> List[str]:
     seeds = list(_V5_CORE_SEED_CAPS)
     if _v5_goal_is_webby(goal):
         seeds += list(_V5_WEB_RESEARCH_SEED_CAPS)
+    # Canonical-retrieval gate: swap gated read seeds for their canonical
+    # replacements so a data goal still gets a guaranteed search avenue.
+    gated = _gated_read_caps()
+    if gated:
+        _canon = {"fabric.query": "memory.seek", "fabric.datasets": "memory.map"}
+        seeds = [(_canon.get(c, c) if c in gated else c) for c in seeds]
+        seeds = [c for c in seeds if c not in gated]
     out: List[str] = []
     for c in seeds:
         if c in CAPABILITY_REGISTRY and c not in out:
@@ -6941,6 +7405,41 @@ def _v5_deflood_catalog(catalog: List[str], goal: str, *, per_ns_cap: int = 6) -
             out.append(c)
     return out
 
+
+# Tightly-coupled cap "cohorts": siblings so interchangeable that granting ANY
+# member should offer the whole set. The motivating bug: a step handed
+# web.search + http.get would reach for web.fetch mid-cycle and be hard-blocked
+# because the planner hadn't listed it — recovery only fires AFTER a failure,
+# and web.fetch is only seeded for goals that trip the webby heuristic. Co-
+# offering the cohort puts the sibling's full schema in front of the specialist
+# up front, so it never has to fail-then-widen to reach an obvious neighbour.
+# Keep these TIGHT — only caps that are genuine drop-in alternatives for the
+# SAME intent, never a loose "related tools" dump (that's what the catalog is)
+# and never a different intent (e.g. fs.read → fs.write would widen a read-only
+# step into a mutating one — that stays the planner's explicit choice).
+_V5_CAP_COHORTS = (
+    ("web.search", "web.fetch", "http.get"),   # live-web access: query → page → raw URL
+    ("exec.bash.run", "exec.python.run"),      # run a command vs a script — same act, diff syntax
+)
+
+
+def _v5_expand_cohorts(caps: List[str]) -> List[str]:
+    """If `caps` contains any member of a cohort, append the cohort's other
+    members (registry-present only), preserving order and dropping dups. Returns
+    a new list — the input is not mutated. Gated to the registry, NOT the run
+    catalog, on purpose: cohorts are a short curated whitelist of safe siblings,
+    so web.fetch can be added even when the goal never looked 'webby'."""
+    out = list(dict.fromkeys(c for c in caps if c))
+    have = set(out)
+    for cohort in _V5_CAP_COHORTS:
+        if have & set(cohort):
+            for c in cohort:
+                if c in CAPABILITY_REGISTRY and c not in have:
+                    out.append(c)
+                    have.add(c)
+    return out
+
+
 # Pre-plan recon + one-level sub-plan bounds.
 _V5_RECON_MAX = 3                  # max read-only recon actions run before planning
 _V5_SUBPLAN_MAX_STEPS = 6          # max sub-steps a single "complex" step may expand into
@@ -6962,10 +7461,16 @@ _V5_PHASE_GUIDE = {
     "act":     ("PHASE: ACT. Carry out the actual work using your capabilities, building on the "
                 "prior phases' context. Emit `done` with the concrete result or the artifact you "
                 "produced."),
-    "verify":  ("PHASE: VERIFY. Check whether the ACT phase actually satisfied the step goal, "
-                "using read-only capabilities to inspect the result if helpful. Emit `done` "
-                "starting with 'PASS' if the goal is met, or 'FAIL: <what is wrong or missing>' "
-                "otherwise."),
+    "verify":  ("PHASE: VERIFY. PROVE whether the ACT phase actually satisfied the step goal — "
+                "do not eyeball it. When exec caps are available, write the SMALLEST test "
+                "script that decides it (usually <30 lines of python/bash): run the code / hit "
+                "the API / stat the file / grep the log, and make the SCRIPT print a verdict "
+                "line first then AT MOST ~10 lines of decision-relevant evidence (actual vs "
+                "expected, the failing case, the matching log line). Slice/grep/count/summarise "
+                "IN the script — never dump whole files, responses, or raw logs. Without exec "
+                "caps, inspect with read-only capabilities. Emit `done` starting with 'PASS' if "
+                "the goal is met, or 'FAIL: <what is wrong or missing>' otherwise, followed only "
+                "by the evidence."),
 }
 
 # Caps that only GENERATE/PROCESS text — they need a REAL model name (or none),
@@ -6984,7 +7489,7 @@ def _v5_is_generative(tool: str) -> bool:
 # step's recovery toolkit. Anti-verbs win (e.g. "fabric.objects.bucket_create").
 _V5_READONLY_TOKENS = ("search", "list", "get", "read", "describe", "query",
                        "inspect", "status", "fetch", "find", "lookup", "discover",
-                       "expand", "landscape")
+                       "expand", "landscape", "seek", "map", "recall")
 _V5_MUTATING_TOKENS = ("write", "create", "delete", "update", "set", "remove",
                        "run", "exec", "send", "build", "train", "deploy", "apply",
                        "install", "start", "stop", "kill", "save", "put", "post",
@@ -7005,6 +7510,361 @@ def _v5_is_read_only(cap_name: str) -> bool:
     return any(tok in n for tok in _V5_READONLY_TOKENS)
 
 
+# ── Recon shell allow-list ────────────────────────────────────────────────────
+# The pre-plan recon loop may run READ-ONLY exploratory shell via exec.bash.run /
+# exec.ps.run (ls, grep, cat, find …) so the planner can inspect the environment
+# before committing a plan. exec.* is NOT name-read-only, so these are gated by an
+# allow-list of safe commands + a deny pattern for anything that can write/execute.
+_V5_RECON_SHELL_CAPS = {"exec.bash.run", "exec.ps.run", "exec.sh.run"}
+_V5_RECON_SHELL_OK = {
+    "ls", "cat", "head", "tail", "grep", "egrep", "fgrep", "rg", "find", "pwd",
+    "whoami", "id", "env", "printenv", "echo", "stat", "file", "wc", "tree",
+    "which", "type", "hostname", "uname", "date", "uptime", "ps", "ss", "netstat",
+    "ip", "ifconfig", "sort", "uniq", "cut", "awk", "basename", "dirname",
+    "realpath", "readlink", "jq", "column", "nl", "tac", "md5sum", "sha256sum",
+    "sha1sum", "getent", "lsblk", "lscpu", "free", "df", "du", "ls-la",
+    # PowerShell read-only verbs (exec.ps.run)
+    "get-content", "get-childitem", "get-item", "get-location", "select-string",
+    "get-process", "test-path", "measure-object", "get-help", "resolve-path",
+}
+_V5_RECON_SHELL_DENY_RE = re.compile(
+    r"[>`]|\$\(|<\(|>\(|\bsudo\b|\bsystem\s*\(|\beval\b|-exec(?:dir)?\b|"
+    r"-delete\b|-fprint\w*\b|-ok(?:dir)?\b|\bset-content\b|\bout-file\b|"
+    r"\badd-content\b|\bremove-item\b",
+    re.IGNORECASE)
+
+
+def _v5_is_safe_readonly_shell(cmd: str) -> bool:
+    """True if a shell command is safe to run during read-only recon: no output
+    redirection / command-substitution / privilege escalation, and EVERY
+    operator-separated segment starts with an allow-listed read-only command. Pipes
+    between read-only filters (e.g. `grep x file | head`) are fine."""
+    c = (cmd or "").strip()
+    if not c or len(c) > 2000:
+        return False
+    if _V5_RECON_SHELL_DENY_RE.search(c):
+        return False
+    for seg in re.split(r"\|\||&&|[|;&]", c):
+        seg = seg.strip()
+        if not seg:
+            continue
+        toks = seg.split()
+        i = 0
+        while i < len(toks) and re.match(r"^[A-Za-z_]\w*=", toks[i]):  # skip VAR=val
+            i += 1
+        if i >= len(toks):
+            return False
+        exe = toks[i].rsplit("/", 1)[-1].rsplit("\\", 1)[-1].lower()
+        if exe not in _V5_RECON_SHELL_OK:
+            return False
+    return True
+
+
+def _v5_recon_action_ok(cap: str, args: Dict[str, Any], catalog_set: set) -> bool:
+    """Gate a single recon action. Name-read-only caps must be in the run catalog;
+    exec shell caps are allowed (catalog membership not required) ONLY when their
+    command passes the read-only shell gate."""
+    if not cap or cap not in CAPABILITY_REGISTRY:
+        return False
+    if cap in _V5_RECON_SHELL_CAPS:
+        a = args or {}
+        return _v5_is_safe_readonly_shell(str(a.get("command") or a.get("cmd") or a.get("script") or ""))
+    return cap in catalog_set and _v5_is_read_only(cap)
+
+
+def _v5_cap_key(name: str) -> str:
+    """Separator-insensitive key for a cap name: lowercased, with dots/underscores/
+    hyphens stripped. Lets `web_search`, `web-search`, `WebSearch` all resolve to
+    the real cap `web.search`."""
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+
+# Common GENERIC names models hallucinate for actions Vera exposes under a
+# different cap. Keyed by the separator-insensitive form (_v5_cap_key). The
+# target is only used if it is actually a registered cap — we never invent one.
+# This is what stops e.g. the v6 loop burning a cycle on a non-existent
+# `shell.execute`: there is no such cap and no prompt example uses that name; the
+# model simply guesses the generic shape, so we redirect it to the real cap.
+_V5_TOOL_ALIASES = {
+    # → exec.bash.run  (run a shell command)
+    "shellexecute": "exec.bash.run", "shellexec": "exec.bash.run",
+    "shellrun": "exec.bash.run", "shellcommand": "exec.bash.run",
+    "runshell": "exec.bash.run", "execshell": "exec.bash.run",
+    "bashexecute": "exec.bash.run", "bashrun": "exec.bash.run",
+    "runbash": "exec.bash.run", "systemshell": "exec.bash.run",
+    "terminalrun": "exec.bash.run", "commandrun": "exec.bash.run",
+    "runcommand": "exec.bash.run", "execcommand": "exec.bash.run",
+    "shell": "exec.bash.run", "bash": "exec.bash.run",
+    # → exec.python.run  (run python)
+    "pythonrun": "exec.python.run", "pythonexecute": "exec.python.run",
+    "runpython": "exec.python.run", "execpython": "exec.python.run",
+    # → exec.ps.run  (run powershell)
+    "powershellrun": "exec.ps.run", "psrun": "exec.ps.run",
+    "runpowershell": "exec.ps.run",
+    # → http.get  (fetch a URL)
+    "httprequest": "http.get", "httpfetch": "http.get", "fetchurl": "http.get",
+}
+
+
+def _v5_resolve_tool_name(tool: str, allowed: List[str], catalog: set) -> str:
+    """Map a model-emitted tool name onto a REAL cap name. Models routinely render
+    a dotted cap (`web.search`) with underscores (`web_search`) — the function-
+    calling convention — which otherwise gets rejected as 'not in this step's
+    scope' even though the cap is right there. Resolve separator-insensitively,
+    preferring the step's own scope, then the run catalog, then the full registry.
+    Exact, already-valid names short-circuit (no behaviour change for them)."""
+    if not tool or tool in CAPABILITY_REGISTRY:
+        return tool
+    key = _v5_cap_key(tool)
+    if not key:
+        return tool
+    # Well-known generic hallucinations → the canonical cap (only if it exists).
+    alias = _V5_TOOL_ALIASES.get(key)
+    if alias and alias in CAPABILITY_REGISTRY:
+        return alias
+    for pool in (allowed, list(catalog), list(CAPABILITY_REGISTRY.keys())):
+        for c in pool:
+            if _v5_cap_key(c) == key:
+                return c
+    return tool
+
+
+# Caps that look up NEW / EXTERNAL knowledge — a "research" unit of work.
+_V5_RESEARCH_CAPS = {"web.search", "web.fetch", "research.quick_search",
+                     "browser.navigate", "fabric.discover.crawl", "web.search_and_crawl"}
+# Caps that PRODUCE or RUN something — a "build / execute" unit of work.
+_V5_BUILD_CAPS = {"llm.generate", "exec.python.run", "exec.bash.run",
+                  "ml.agent.build_and_test", "ide.fs.write"}
+# Read-only/context caps that are useful to BOTH halves of a split.
+_V5_SHARED_READ_CAPS = ("ide.fs.read", "http.get", "fabric.query",
+                        "memory.seek", "memory.read")
+
+# A GENUINE "do X, THEN do Y" seam between two units of work. The split only fires
+# when one of these actually divides the goal prose — so a trivial single-action
+# goal that the planner happened to over-assign both a research and a build cap
+# (e.g. "get the current bash user" with web.search + exec.python.run) is NOT
+# mangled into a nonsense Research → Build pair. The second alternative uses a
+# look-ahead so the build verb stays in the build half ("…and build a scanner"
+# → build half = "build a scanner").
+_V5_COMPOUND_SEAM_RE = re.compile(
+    r"\b(?:then|and then|after that|afterwards?|once (?:you|it|that|done)|"
+    r"followed by|next)\b[,:]?\s+"
+    r"|\band\s+(?:then\s+)?(?=(?:build|creat|implement|writ|mak|test|run|"
+    r"generat|develop|appl|deploy|deliver)\w*\b)",
+    re.IGNORECASE)
+
+
+def _v5_split_compound_single_step(steps: List[Dict[str, Any]], goal: str) -> List[Dict[str, Any]]:
+    """Deterministic safety net for the planner's most common failure: collapsing a
+    'research X, THEN build/test Y' goal into ONE overloaded step. When the lone
+    step bundles a RESEARCH cap AND a BUILD/RUN cap AND the goal prose actually has
+    a sequencing seam, split it into a research step and a build step (wired with
+    `needs`) so each runs as its own scoped specialist — the research half can't
+    reach for code/exec caps, the build half builds on the research findings. No-op
+    unless the trigger is precise, so well-formed plans and genuinely single-unit
+    goals (the planner just over-assigned caps) are left untouched."""
+    if len(steps) != 1:
+        return steps
+    st = steps[0]
+    caps = st.get("caps") or []
+    research = [c for c in caps if c in _V5_RESEARCH_CAPS]
+    build = [c for c in caps if c in _V5_BUILD_CAPS]
+    if not (research and build):
+        return steps
+    g = str(st.get("goal") or goal)
+    # Only split on a REAL two-unit seam. No seam → one unit of work; leave it alone
+    # (the specialist can still widen scope mid-step via need_caps).
+    seam = _V5_COMPOUND_SEAM_RE.split(g, maxsplit=1)
+    if len(seam) < 2:
+        return steps
+    research_goal = seam[0].strip(" ,.;:-")[:400]
+    build_goal = seam[-1].strip(" ,.;:-")[:400]
+    if not research_goal or not build_goal:
+        return steps
+    shared = [c for c in caps if c in _V5_SHARED_READ_CAPS]
+
+    def _dedup(seq):
+        out = []
+        for x in seq:
+            if x not in out:
+                out.append(x)
+        return out
+
+    research_caps = _dedup(research + shared)[:8]
+    build_caps = _dedup(build + ["ide.fs.read"] + [c for c in shared if c != "ide.fs.read"])[:8]
+    return [
+        {"id": 1, "title": ("Research: " + research_goal)[:120], "goal": research_goal,
+         "caps": research_caps, "skills": [], "needs": [], "complex": False, "phases": []},
+        {"id": 2, "title": ("Build & apply: " + build_goal)[:120], "goal": build_goal,
+         "caps": build_caps, "skills": [], "needs": [1], "complex": False, "phases": []},
+    ]
+
+
+# Caps whose primary output is a long-form DOCUMENT/REPORT the specialist must read
+# in full (research reports, fabric syntheses, fetched pages, crawls). Their results
+# get a much larger preview budget so a report isn't chopped at the default length —
+# the source of "the agent loop truncates the research output". Ordinary caps keep
+# the lean default so routine results don't bloat the working context.
+_V5_LONGFORM_PREFIXES = ("research.", "fabric.synthesize.", "fabric.discover.")
+_V5_LONGFORM_EXACT = {"web.fetch", "web.search_and_crawl", "llm.summarize",
+                      # canonical retrieval caps self-size via max_chars — give
+                      # them the longform budget so the loop never re-truncates
+                      "memory.seek", "memory.read"}
+# File reads get their OWN generous budget: a small default truncates the
+# OBSERVATION of a read (not the file), the model reads that as "the file is
+# partial" and re-reads forever. Size these to fit a typical model context so a
+# normal file is shown in FULL. Env-tunable for larger/smaller context models.
+_V5_FILEREAD_CAPS = {"ide.fs.read", "code.read"}
+_V5_PREVIEW_DEFAULT = 2000          # ordinary cap result kept for the model
+_V5_PREVIEW_LONGFORM = int(os.getenv("V5_PREVIEW_LONGFORM", "12000") or 12000)   # report-style caps
+_V5_PREVIEW_FILEREAD = int(os.getenv("V5_PREVIEW_FILEREAD", "32000") or 32000)   # file reads (~8k tokens)
+_V5_CTX_PER_STEP = 3000             # prior-step summary carried into a dependent step
+_V5_CTX_TOTAL = 12000              # cap on the whole prior-context slice
+_V5_DONE_SUMMARY = 6000            # a step's own `done` summary (flows to later steps)
+
+# Args that don't change WHAT a call does — only how long it may run or where it
+# runs. A specialist that re-issues the SAME command with only a different
+# `timeout` (10 → 30 → 60) is not trying a new approach; it's stuck. Ignoring
+# these keys lets the loop recognise the repeat and serve the earlier result
+# instead of counting three "new" calls toward the stuck-loop guard.
+_V5_VOLATILE_ARG_KEYS = {"timeout", "timeout_secs", "timeout_ms", "timeout_s",
+                         "session_id", "sid", "trace_id", "stream_id", "cwd"}
+
+
+def _v5_call_sig(tool: str, args: Dict[str, Any]) -> str:
+    """Stable signature for a tool call that ignores cosmetic/volatile args
+    (timeout, cwd, session/trace ids) and normalises whitespace on strings, so a
+    redundant repeat of an already-successful call hashes to the same value."""
+    try:
+        clean: Dict[str, Any] = {}
+        for k, v in (args or {}).items():
+            if str(k).lower() in _V5_VOLATILE_ARG_KEYS:
+                continue
+            if isinstance(v, str):
+                v = v.strip()
+            clean[str(k)] = v
+        blob = json.dumps(clean, sort_keys=True, ensure_ascii=False, default=str)
+    except Exception:
+        blob = repr(args)
+    return f"{tool}::{blob}"
+
+
+def _v5_is_longform(tool: str) -> bool:
+    """True for caps that emit a long document/report (research, synthesis, crawl)."""
+    return bool(tool) and (tool in _V5_LONGFORM_EXACT
+                           or any(tool.startswith(p) for p in _V5_LONGFORM_PREFIXES))
+
+
+def _v5_preview_budget(tool: str) -> int:
+    """How many chars of a cap's result to retain for the specialist to read.
+    File reads get the largest budget so a normal file is shown IN FULL (a small
+    budget truncates the observation and triggers endless re-reads)."""
+    if tool in _V5_FILEREAD_CAPS:
+        return _V5_PREVIEW_FILEREAD
+    # Generative caps (llm.*/ollama.*/agent.chat*) emit long documents/reports just
+    # like the research caps — give them the longform budget so their output isn't
+    # cut at the 2 000-char default (the truncated-JSON-report problem in the UI).
+    return (_V5_PREVIEW_LONGFORM if (_v5_is_longform(tool) or _v5_is_generative(tool))
+            else _V5_PREVIEW_DEFAULT)
+
+
+# How much bigger than its preview budget a tool result must be before the
+# condenser fires (below this the plain truncated preview is fine).
+_V5_CONDENSE_TRIGGER_RATIO = 1.6
+_V5_CONDENSE_OUT_MAX = 2200
+
+
+async def _v5_condense_output(raw_text: str, tool: str, step_goal: str, *,
+                              model: str, instance_id: str, prefer_gpu: bool,
+                              max_out: int = _V5_CONDENSE_OUT_MAX) -> str:
+    """Condense a long tool/script output into a COMPACT but COMPREHENSIVE brief
+    that keeps every decision-relevant detail (numbers, ids, names, statuses,
+    errors, key lines) and drops only the bulk/noise — so the specialist reads
+    exactly what it needs to progress, instead of a preview cut mid-stream. Falls
+    back to a head+tail slice of the raw text on any LLM failure (never worse than
+    a plain truncation)."""
+    raw = raw_text or ""
+    sys = (
+        "You compress ONE tool/script output for an agent still working toward a GOAL. "
+        "Produce a faithful, information-DENSE brief of the output — NOT a vague summary. "
+        "KEEP every decision-relevant specific: exact numbers, ids, names, paths, counts, "
+        "statuses, error messages, and any line that changes what the agent should do next. "
+        "DROP only repetition, boilerplate and formatting noise. Preserve structure (short "
+        "headings/bullets). Never invent anything not in the output. If the output is an "
+        "error or a failure, lead with that. Be as short as possible WHILE losing no detail "
+        "that matters to the goal.")
+    prompt = (f"GOAL CONTEXT: {str(step_goal or '')[:400]}\n"
+              f"TOOL: {tool}\n\nOUTPUT TO CONDENSE (may be truncated):\n"
+              f"{raw[:16000]}\n\nWrite the condensed brief.")
+    try:
+        out = await _safe_ollama_generate_dw(
+            prompt, system=sys, model=model, instance_id=instance_id,
+            prefer_gpu=prefer_gpu, json_mode=False)
+        clean = _strip_think(out or "")[0].strip()
+        if clean:
+            return clean[:max_out]
+    except Exception as e:
+        log.debug("v5 condense failed for %s: %s", tool, e)
+    # Fallback: head + tail so the ends (often the signal) both survive.
+    if len(raw) <= max_out:
+        return raw
+    head = raw[: int(max_out * 0.7)]
+    tail = raw[-int(max_out * 0.25):]
+    return head + "\n…[middle elided]…\n" + tail
+
+
+# ── Generative-model LOCK ─────────────────────────────────────────────────────
+# By default the LOOP (not the specialist LLM) decides which model serves
+# generative caps: every llm.generate/llm.summarize/… call runs on the RUN's
+# model (the chat agent's model), and the specialist's own `model` argument is
+# overridden. Unlock via workshop.gen_model_lock to let specialists pick from
+# the cluster list again. Persisted in Redis; in-memory cached.
+KEY_GEN_MODEL_LOCK = "vera:workshop:gen_model_lock"
+_GEN_MODEL_LOCK = {"locked": True, "loaded": False}
+
+
+def _gen_model_locked() -> bool:
+    return bool(_GEN_MODEL_LOCK.get("locked", True))
+
+
+async def _gen_model_lock_hydrate() -> None:
+    if _GEN_MODEL_LOCK["loaded"]:
+        return
+    _GEN_MODEL_LOCK["loaded"] = True
+    r = _redis()
+    if not r:
+        return
+    try:
+        raw = await r.get(KEY_GEN_MODEL_LOCK)
+        if raw is not None:
+            _GEN_MODEL_LOCK["locked"] = str(
+                raw.decode() if isinstance(raw, bytes) else raw).strip() in ("1", "true", "True")
+    except Exception:
+        pass
+
+
+@capability(
+    "workshop.gen_model_lock", memory="off",
+    http_method="POST", http_path="/workshop/gen_model_lock", http_tags=["workshop"],
+    description="Get/set the agentic-loop GENERATIVE MODEL LOCK. Locked (default): every "
+                "generative cap call (llm.generate/summarize/…) inside a loop runs on the "
+                "RUN's model (the chat agent's model) — the specialist LLM cannot pick its "
+                "own. Unlocked: specialists may choose from the cluster model list. "
+                "Input: locked (bool — omit to just read). Output: {locked}. Persists.",
+)
+async def cap_workshop_gen_model_lock(locked: Optional[bool] = None, trace_id=None):
+    await _gen_model_lock_hydrate()
+    if locked is not None:
+        _GEN_MODEL_LOCK["locked"] = bool(locked)
+        r = _redis()
+        if r:
+            try:
+                await r.set(KEY_GEN_MODEL_LOCK, "1" if locked else "0")
+            except Exception:
+                pass
+    return {"locked": _gen_model_locked()}
+
+
 # Markers that a "successful" fetch actually returned an unusable page (consent
 # walls, bot checks, JS-required shells). Lets a step treat an ok-but-useless
 # result as a SOFT failure and pivot to a different query/URL/cap instead of
@@ -7023,6 +7883,88 @@ def _v5_looks_unhelpful(text: str) -> bool:
         return False
     low = text.lower()
     return any(m in low for m in _V5_UNHELPFUL_MARKERS)
+
+
+def _v5_embedded_error_ratio(result: Any) -> float:
+    """Fraction of a result's internal step/action entries that report an error.
+    Multi-action caps (e.g. browser.navigate) return ok=True with a `steps` list
+    whose entries each carry their own `error` — a call where most internal steps
+    errored is a soft failure even though the call itself 'succeeded'."""
+    if not isinstance(result, dict):
+        return 0.0
+    for key in ("steps", "results", "actions"):
+        items = result.get(key)
+        if isinstance(items, list):
+            dicts = [it for it in items if isinstance(it, dict)]
+            if len(dicts) >= 2:
+                errs = sum(1 for it in dicts if it.get("error"))
+                return errs / len(dicts)
+    return 0.0
+
+
+# Signatures of a RECOVERABLE malformed-call error: the specialist chose the
+# RIGHT cap but called it with a missing/extra/mis-typed argument. These want a
+# precise correction + retry of the SAME cap — NOT a scope-widen that throws
+# away the work that led here (e.g. a web.fetch missing its `url` right after a
+# web.search that produced the url). Distinct from a genuine failure where the
+# cap itself can't do the job (upstream error, not-found, unhelpful result).
+_V5_ARG_ERROR_MARKERS = (
+    "required positional argument",
+    "required keyword-only argument",
+    "unexpected keyword argument",
+    "got multiple values for",
+    "missing 1 required",
+    "missing 2 required",
+    "missing 3 required",
+    "positional arguments but",
+    "takes no arguments",
+    "is a required property",       # jsonschema
+    "is a required argument",
+    "field required",               # pydantic v2
+    "value is not a valid",         # pydantic
+    "validation error",
+    "invalid arguments",
+    "missing required argument",
+    "missing required field",
+)
+
+
+def _v5_arg_error_hint(tool: str, args: Any, err: str) -> str:
+    """If `err` is a recoverable malformed-call error, return a precise correction
+    telling the specialist to RETRY the same cap with fixed arguments (naming the
+    offending arg where we can extract it). Returns "" for genuine failures that
+    warrant widening scope instead."""
+    low = (err or "").lower()
+    if not low or not any(m in low for m in _V5_ARG_ERROR_MARKERS):
+        return ""
+    # Pull the offending argument name out of the common CPython / schema messages.
+    missing = ""
+    for pat in (r"argument:?\s*['\"]([^'\"]+)['\"]",     # ...argument: 'url'
+                r"property\s+['\"]([^'\"]+)['\"]",        # 'x' is a required property
+                r"['\"]([^'\"]+)['\"]\s+is a required"):  # 'x' is a required argument
+        m = re.search(pat, err or "")
+        if m:
+            missing = m.group(1)
+            break
+    try:
+        sig = rich_cap_signature(tool)
+    except Exception:
+        sig = tool
+    passed = ""
+    if isinstance(args, dict):
+        passed = ", ".join(sorted(args.keys())) or "(none)"
+    head = (f"Your call to `{tool}` was malformed — it's the RIGHT capability, "
+            f"just called with the wrong arguments, so DON'T switch to a different "
+            f"tool. ")
+    if missing:
+        head += f"You omitted the required `{missing}` argument. "
+    head += (f"Retry `{tool}` with the correct arguments"
+             + (f" — you passed: {passed}." if passed else ".")
+             + f"\nSignature: {sig}"
+             + "\nThe value you need is already in your previous results above "
+               "(e.g. the URL/id from the last successful call) — reuse it rather "
+               "than re-fetching it.")
+    return head
 
 
 async def _v5_available_models(trace_id: str = "", *, limit: int = 40) -> List[str]:
@@ -7207,16 +8149,14 @@ def _code_list_sync(scope: str, path: str) -> List[Dict[str, Any]]:
 
 async def _code_mirror_to_fs(session_id: str, path: str, content: str) -> str:
     """Write the LATEST content to the run's artifact dir so it is runnable and
-    readable via ide.fs.read. Returns the absolute fs path (or '')."""
+    readable via ide.fs.read. Sandbox-aware: when the session has an active
+    sandbox this lands in the container's /workspace (where its runs execute),
+    never on the host. Returns the absolute fs path (or '')."""
     try:
         import importlib as _il
         _exec = _il.import_module("Vera.vera.execution.exec_capabilities")
-        base = _exec.artifact_dir(session_id=session_id)
-        fp = os.path.join(base, *path.split("/"))
-        os.makedirs(os.path.dirname(fp) or base, exist_ok=True)
-        with open(fp, "w", encoding="utf-8") as fh:
-            fh.write(content)
-        return fp
+        return await _exec.write_artifact_file(
+            relpath=path, content=content, session_id=session_id)
     except Exception as e:
         log.debug("code mirror-to-fs failed for %s: %s", path, e)
         return ""
@@ -7459,6 +8399,58 @@ def _v5_gen_text(result: Any) -> str:
     return ""
 
 
+def _v7_result_text(result: Any) -> str:
+    """Readable text from ANY cap result — generative (text/content/…) OR action
+    (stdout/stderr/value/data), else compact JSON. Unlike _v5_gen_text (which is
+    generative-only and returns '' for e.g. exec.bash.run's {stdout,rc} — the bug
+    that made the fast path hand an EMPTY result to synthesis and hallucinate)."""
+    if isinstance(result, str):
+        return result
+    if isinstance(result, dict):
+        t = _v5_gen_text(result)
+        if t:
+            return t
+        for k in ("stdout", "value", "data", "body", "summary", "detail"):
+            v = result.get(k)
+            if isinstance(v, str) and v.strip():
+                return v
+        se = result.get("stderr")
+        if isinstance(se, str) and se.strip() and not result.get("ok", True):
+            return se
+        try:
+            slim = {k: v for k, v in result.items()
+                    if k not in ("image_b64", "images") and not isinstance(v, (bytes, bytearray))}
+            return json.dumps(slim, default=str)[:2000]
+        except Exception:
+            return str(result)[:2000]
+    return "" if result is None else str(result)[:2000]
+
+
+def _v5_stub_code_fences(text: str, saved: List[Dict[str, Any]]) -> str:
+    """After fenced code has been auto-saved, replace each block in the preview
+    text with a short 'saved, COMPLETE' stub. The agent must never see code cut
+    off by the preview budget — a half-open fence reads as a failed generation
+    and triggers endless 'complete the code' regenerate loops."""
+    if not text or "```" not in text:
+        return text
+    paths = [s.get("path") for s in (saved or [])]
+    idx = 0
+
+    def _sub(m):
+        nonlocal idx
+        code = m.group(2) or ""
+        if not code.strip():
+            return m.group(0)
+        n_lines = code.count("\n") + 1
+        path = paths[idx] if idx < len(paths) else None
+        idx += 1
+        where = f"auto-saved to code store as '{path}'" if path else "captured in full"
+        return (f"[✔ code block ({n_lines} lines, {len(code)} chars) {where} — it is COMPLETE, "
+                "not truncated. Use code.read to view it. Do NOT regenerate or 'complete' it.]")
+
+    return _CODE_FENCE_RE.sub(_sub, text)
+
+
 def _v5_extract_code_blocks(text: str) -> List[Dict[str, str]]:
     """Return [{lang, filename, code}] for each fenced block that looks like a
     file. Blocks with no derivable filename get a sensible default name."""
@@ -7587,11 +8579,237 @@ async def _v5_list_skills(trace_id: str = "", *, allow: Optional[set] = None,
     return []
 
 
+def _v5_first_json_array_of_objects(s: str) -> List[Dict[str, Any]]:
+    """Return the first balanced top-level ``[ ... ]`` whose elements are objects
+    (honouring string literals so brackets inside quotes don't confuse the scan).
+    Lets us recover a plan when the model emits a BARE array of steps instead of
+    the ``{"steps":[...]}`` object it was asked for."""
+    depth = 0
+    start = -1
+    in_str = False
+    esc = False
+    for i, ch in enumerate(s):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "[":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "]":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start >= 0:
+                    try:
+                        arr = json.loads(s[start:i + 1])
+                    except Exception:
+                        arr = None
+                    if isinstance(arr, list) and any(isinstance(x, dict) for x in arr):
+                        return [x for x in arr if isinstance(x, dict)]
+                    start = -1
+    return []
+
+
+def _v5_parse_plan(raw: str) -> Dict[str, Any]:
+    """Tolerantly extract a plan from a planner response. Small local models often
+    DON'T return the exact ``{"steps":[...]}`` schema — they emit a BARE array, use
+    an alternate key (``plan``/``tasks``), or wrap either in prose. Without this the
+    response yields no steps and the loop collapses to the single-step fallback for
+    EVERY task. Returns ``{"obj": <plan object or {}>, "steps": [<step dict>, ...]}``."""
+    s = _strip_think(raw or "")[0].strip()
+    obj = _extract_json(s)
+    if isinstance(obj, dict):
+        for k in ("steps", "plan", "tasks", "step_plan", "subtasks", "plan_steps"):
+            v = obj.get(k)
+            if isinstance(v, list) and any(isinstance(x, dict) for x in v):
+                return {"obj": obj, "steps": [x for x in v if isinstance(x, dict)]}
+    # Bare / prose-wrapped JSON array of step dicts.
+    arr = _v5_first_json_array_of_objects(s)
+    if arr:
+        return {"obj": obj if isinstance(obj, dict) else {}, "steps": arr}
+    # Several standalone step-like objects (each carries title/goal/caps).
+    step_objs = []
+    for o in _iter_balanced_json_objects(s):
+        p = _coerce_json_loads(o)
+        if isinstance(p, dict) and any(key in p for key in ("title", "goal", "caps")):
+            step_objs.append(p)
+    if len(step_objs) >= 2:
+        return {"obj": obj if isinstance(obj, dict) else {}, "steps": step_objs}
+    return {"obj": obj if isinstance(obj, dict) else {}, "steps": []}
+
+
+# Field-name aliases — small models label step fields inconsistently. Mapping them
+# onto canonical title/goal/caps/needs is what stops a well-formed plan written under
+# different keys from being read as a row of empty "Step N" placeholders with no caps.
+_V5_STEP_TITLE_KEYS = ("title", "step", "name", "label", "heading", "step_title")
+_V5_STEP_GOAL_KEYS = ("goal", "description", "task", "details", "objective",
+                      "action", "do", "summary", "desc", "instruction", "purpose")
+_V5_STEP_CAPS_KEYS = ("caps", "capabilities", "tools", "cap", "capability",
+                      "tool", "tool_names", "uses", "caps_needed")
+_V5_STEP_SKILL_KEYS = ("skills", "skill")
+_V5_STEP_NEEDS_KEYS = ("needs", "depends_on", "deps", "dependencies", "after",
+                       "requires", "needs_steps")
+# v6 asks the planner for a per-step verifiable completion criterion; small
+# models label it inconsistently, same as every other field.
+_V5_STEP_SUCCESS_KEYS = ("success", "success_criteria", "success_criterion",
+                         "done_when", "acceptance", "check", "verify")
+
+
+def _v5_first_str(d: Dict[str, Any], keys) -> str:
+    for k in keys:
+        v = d.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return ""
+
+
+def _v5_coerce_step(st: Dict[str, Any], i: int, goal: str,
+                    catalog_names: List[str], catalog_set: set,
+                    valid_skill_ids: set) -> Optional[Dict[str, Any]]:
+    """Normalise ONE raw step dict (tolerant of alternate field names) into the
+    canonical step shape. Returns None for a DEGENERATE step — one with no real
+    title/goal AND no resolvable caps — so empty placeholder rows never become
+    do-nothing 'reasoning only' steps. A step that has a real goal but no caps is
+    seeded with the goal's default toolkit so it can actually act."""
+    title = _v5_first_str(st, _V5_STEP_TITLE_KEYS)
+    sgoal = _v5_first_str(st, _V5_STEP_GOAL_KEYS)
+    # caps may be a list of strings, a single string, or dicts like {"name": ...}.
+    raw_caps: List[Any] = []
+    for k in _V5_STEP_CAPS_KEYS:
+        v = st.get(k)
+        if isinstance(v, list):
+            raw_caps = v
+            break
+        if isinstance(v, str) and v.strip():
+            raw_caps = [v]
+            break
+    caps: List[str] = []
+    for c in raw_caps:
+        if isinstance(c, dict):
+            c = c.get("name") or c.get("cap") or c.get("id") or ""
+        if not isinstance(c, str) or not c.strip():
+            continue
+        c = _v5_resolve_tool_name(c.strip(), catalog_names, catalog_set)
+        if c in CAPABILITY_REGISTRY and c not in caps:
+            caps.append(c)
+    caps = caps[:8]
+    # A title that's just "Step 3" / "step_3" carries no information — discard it.
+    if title and re.fullmatch(r"step[\s_\-]*\d+", title, re.IGNORECASE):
+        title = ""
+    # A "title" that is really a capability NAME or skill ID is not a description —
+    # a weak planner sometimes lists tool/skill names as the plan instead of
+    # describing the work (e.g. title "exec.python.run" / "sys-dag-creation"). Treat
+    # a bare, space-free identifier that IS a known cap or skill id as no title, so
+    # the step falls back to its goal text (or is dropped below as degenerate if it
+    # has no goal either) rather than rendering a tool name as a step.
+    if title and " " not in title.strip():
+        _t = title.strip()
+        if _v5_resolve_tool_name(_t, catalog_names, catalog_set) in CAPABILITY_REGISTRY \
+                or _t in valid_skill_ids:
+            title = ""
+    # Degenerate: no real title AND no real goal → not a usable step, even when
+    # caps are present. A caps-only step used to be kept — it inherited the WHOLE
+    # goal as its step goal and rendered as "Step N", so a weak planner response
+    # became a plan of unnamed, undifferentiated steps that each re-attack the
+    # entire goal. Worse, those steps made the plan look non-empty, masking the
+    # failure so the minimal-schema retry / master-plan / stepwise escalations
+    # never fired. Rejecting them lets the escalation ladder run.
+    if not title and not sgoal:
+        return None
+    # A real step with no caps would just "reason" forever — give it the goal's
+    # default toolkit so it can act (it can still widen scope via need_caps).
+    if not caps:
+        caps = [c for c in _v5_seed_caps_for(goal) if c in catalog_set][:6]
+    skills_raw: List[Any] = []
+    for k in _V5_STEP_SKILL_KEYS:
+        if isinstance(st.get(k), list):
+            skills_raw = st[k]
+            break
+    sk = [s for s in skills_raw if isinstance(s, str) and s in valid_skill_ids][:4]
+    needs_raw: List[Any] = []
+    for k in _V5_STEP_NEEDS_KEYS:
+        if isinstance(st.get(k), list):
+            needs_raw = st[k]
+            break
+    needs = [n for n in needs_raw if isinstance(n, int)]
+    phases = [p for p in _V5_PHASES if p in set(st.get("phases") or [])]
+    return {
+        "id": i + 1,
+        "title": (title or sgoal or f"Step {i+1}")[:120],
+        "goal": (sgoal or title or goal)[:400],
+        "caps": caps, "skills": sk, "needs": needs,
+        "complex": bool(st.get("complex")), "phases": phases,
+        "success": _v5_first_str(st, _V5_STEP_SUCCESS_KEYS)[:240],
+    }
+
+
+_V5_PLANNER_AGENT_NAME = "agentic-planner"
+
+
+async def _v5_planning_heartbeat(sid: str, stream_id: str, stop_evt: "asyncio.Event",
+                                 *, interval: float = 45.0) -> None:
+    """Emit a periodic 'still planning' event while the orchestrator LLM call runs.
+    Planning is a single blocking generation that can take 100s+ on a slow model,
+    during which NOTHING else fires — so the Jobs panel flags the run stale after
+    5 min ('stale_timeout: no update for …s') and the run looks dead. This keeps a
+    visible pulse (and resets that stale timer) until planning completes."""
+    elapsed = 0.0
+    while not stop_evt.is_set():
+        try:
+            await asyncio.wait_for(stop_evt.wait(), timeout=interval)
+            return
+        except asyncio.TimeoutError:
+            elapsed += interval
+            try:
+                await emit_event({"type": "agent_loop_v5.planning", "session_id": sid,
+                                  "stream_id": stream_id, "elapsed_s": int(elapsed),
+                                  "note": "orchestrator planning…"})
+            except Exception:
+                pass
+
+
+async def _v5_planner_agent_cfg() -> Dict[str, Any]:
+    """Model + Ollama tuning options + persona for the orchestrator's planning
+    call, sourced from the 'agentic-planner' agent in Vera's agent system. This
+    is how the planner is TUNED (low temp, large num_ctx, bounded output) without
+    changing the user's chosen model. Best-effort — returns empties if the agents
+    module isn't available, so planning degrades to the previous behaviour."""
+    try:
+        import sys as _sys, importlib
+        # The agents module is loaded by Vera's module loader under the bare name
+        # "vera_agents"; fall back to the package path if that isn't present.
+        am = _sys.modules.get("vera_agents")
+        if am is None:
+            am = importlib.import_module("Vera.vera.agents.agents")
+        resolve = getattr(am, "resolve_agent", None)
+        rec = await resolve(_V5_PLANNER_AGENT_NAME) if resolve else None
+        if rec:
+            return {"model": getattr(rec, "model", "") or "",
+                    "options": rec.ollama_options() or {},
+                    "persona": getattr(rec, "system_prompt", "") or ""}
+    except Exception as e:
+        log.debug("v5 planner agent load failed: %s", e)
+    return {"model": "", "options": {}, "persona": ""}
+
+
 async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List[Dict[str, Any]],
                                cap_skill_map: Optional[Dict[str, List[str]]] = None,
                                *, model: str = "", instance_id: str = "",
                                prefer_gpu: bool = True, max_steps: int = 8,
-                               recon_findings: str = "", master_plan: str = "") -> Dict[str, Any]:
+                               recon_findings: str = "", master_plan: str = "",
+                               minimal: bool = False,
+                               recon_rounds_left: int = 0,
+                               want_success: bool = False,
+                               phase_policy: str = "sparingly",
+                               allowed_phases: Optional[List[str]] = None,
+                               sid: str = "", stream_id: str = "") -> Dict[str, Any]:
     """ONE LLM call: decompose the goal into an ordered step plan. Each step names
     only the few caps and skills it needs. Folds triage+step-select+plan into a
     single call so the loop starts working almost immediately.
@@ -7607,6 +8825,14 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
     them. Skills with no cap link are still pickable from the skill catalog by
     their description."""
     cap_skill_map = cap_skill_map or {}
+    # Planner tuning from the 'agentic-planner' agent: keep the caller's model if
+    # one was pinned, otherwise inherit the agent's (empty = the user's default);
+    # apply the agent's sampling/num_ctx options; prepend its persona to the task
+    # instructions so the planning call is shaped for agentic-loop decomposition.
+    _pa = await _v5_planner_agent_cfg()
+    plan_model = model or _pa.get("model") or ""
+    plan_opts = _pa.get("options") or None
+    plan_persona = _pa.get("persona") or ""
     cap_line_parts = []
     for n in catalog_names:
         line = "  " + _v5_brief_cap_line(n)
@@ -7619,6 +8845,97 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         f"  {s['id']} — {s['description']}"
         f"{(' (teaches: ' + ', '.join(s['applies_to_caps']) + ')') if s.get('applies_to_caps') else ''}"
         for s in skills) or "  (none)"
+    # Stripped-down schema used as a RETRY when the full prompt yields no parseable
+    # steps — small models handle this minimal instruction far more reliably.
+    if minimal:
+        sys = (
+            "Break the GOAL into an ordered list of steps — ONE step per distinct unit of work, "
+            "research/lookup steps BEFORE the steps that use them (up to " + str(max_steps) + "). "
+            "For each step give a short PLAIN-LANGUAGE title describing the work (NOT a "
+            "capability name), a one-line goal, and the EXACT capability names it "
+            "needs from the catalog. Use web.search / web.fetch to look things up (NEVER "
+            "llm.generate for research); llm.generate to write code or text; exec.python.run / "
+            "exec.bash.run to run it.\n"
+            "Return ONLY this JSON object — no prose, no markdown, and NOT a bare array:\n"
+            '{"steps":[{"id":1,"title":"<plain-language description, not a cap name>",'
+            '"goal":"<what to achieve>",'
+            '"caps":["cap.name"],"needs":[]'
+            + (',"success":"<one-line checkable completion criterion>"' if want_success else '')
+            + '}]'
+            + (',"done_when":"<one-line criterion for the WHOLE goal>"' if want_success else '')
+            + '}'
+        )
+        prompt = (f"GOAL: {goal}\n\nAVAILABLE CAPABILITIES (name — description):\n{cap_lines}\n\n"
+                  "Produce the steps JSON object.")
+        if plan_persona:
+            sys = plan_persona + "\n\n" + sys
+        steps = []
+        done_when = ""
+        catalog_set = set(catalog_names)
+        try:
+            raw = await _safe_ollama_generate_dw(
+                prompt, system=sys, model=plan_model, instance_id=instance_id,
+                prefer_gpu=prefer_gpu, json_mode=True, options=plan_opts)
+            valid_skill_ids = {s["id"] for s in skills}
+            _pp = _v5_parse_plan(raw or "")
+            if isinstance(_pp.get("obj"), dict):
+                done_when = str(_pp["obj"].get("done_when") or "")[:300]
+            for st in _pp["steps"]:
+                if not isinstance(st, dict):
+                    continue
+                cs = _v5_coerce_step(st, len(steps), goal, catalog_names,
+                                     catalog_set, valid_skill_ids)
+                if cs:
+                    steps.append(cs)
+        except Exception as e:
+            log.debug("v5 orchestrate_plan (minimal) failed: %s", e)
+        return {"steps": steps[:max_steps], "reason": "", "complexity": "",
+                "recon": [], "done_when": done_when}
+    # STEP-PHASE policy — how strongly the planner is steered to give steps a
+    # phase cadence (explore/think/act/verify, each its own scoped sub-agent):
+    #   off         — phases disabled for this run; never emit a `phases` list.
+    #   sparingly   — phases are an occasional tool (the default; keeps simple
+    #                 goals fast — most steps run as one specialist).
+    #   encouraged  — a complex / long-horizon plan: PHASE any step that
+    #                 creates/changes something so it self-checks and self-
+    #                 corrects. This is what makes phases actually get used on
+    #                 the hard, multi-step, long-term work they were built for.
+    _pp_mode = (phase_policy or "sparingly").strip().lower()
+    if _pp_mode == "off":
+        _phase_block = (
+            "STEP PHASES: DISABLED for this run — do NOT give any step a `phases` list; leave it "
+            "empty. Each step runs as a single specialist.\n")
+    elif _pp_mode == "encouraged":
+        _phase_block = (
+            "STEP PHASES (USE THEM — this is a complex / long-horizon plan): a step may carry a "
+            "`phases` list drawn from \"explore\",\"think\",\"act\",\"verify\", and EACH phase runs "
+            "as its OWN scoped sub-agent in that order (explore = read-only recon, think = tool-free "
+            "reasoning/decision, act = do the work with full caps, verify = read-only check of the "
+            "result). For any step that CREATES or CHANGES something (writes/edits files, generates "
+            "then runs code, builds, deploys, configures, transforms data) GIVE IT PHASES — at "
+            "minimum [\"act\",\"verify\"], and [\"explore\",\"act\",\"verify\"] (add \"think\" for "
+            "hard design/decision work) whenever the step must first inspect the environment or the "
+            "prior findings before acting. Phasing makes a step self-verify and self-correct, which "
+            "matters on a big plan where a silent bad step derails everything after it. The ONLY "
+            "steps that should have NO phases are pure read-only lookups (all caps are "
+            "search/read/query) — they are already exploration, so phasing just repeats the same "
+            "query. When in doubt on a substantial step, PHASE it.\n")
+    else:  # "sparingly" (default)
+        _phase_block = (
+            "STEP PHASES (optional, use SPARINGLY): a step may carry a `phases` list — any of "
+            "\"explore\",\"think\",\"act\",\"verify\" — and EACH phase runs as its own scoped sub-agent "
+            "(explore = read-only recon, think = reasoning with no tools, act = do the work, verify = "
+            "read-only check). ONLY add phases when the phases are genuinely DIFFERENT kinds of work. "
+            "A step that is ITSELF just a search/lookup/query (all read-only caps) must have NO phases "
+            "— it is already exploration; adding explore→act just repeats the same search and wastes "
+            "cycles. Use `explore` only before a step that will then ACT on what it finds (e.g. read "
+            "config → modify it); use `verify` ONLY for steps that CREATE or CHANGE something (write "
+            "files, run a build, deploy, configure). Most steps need NO `phases` at all — leave it "
+            "empty and they run as one fast specialist.\n")
+    # Restrict the phase vocabulary when the caller allowed only a subset.
+    if _pp_mode != "off" and allowed_phases and set(allowed_phases) != set(_V5_PHASES):
+        _phase_block += ("ALLOWED PHASES: only use these phases (ignore the others): "
+                         + ", ".join(allowed_phases) + ".\n")
     sys = (
         "You are an ORCHESTRATOR. Turn the GOAL into a COMPLETE, ordered plan of steps. "
         "Each step is handed to a focused specialist sub-agent that can ONLY use the "
@@ -7634,6 +8951,13 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         "INFORMATION FIRST: when a later step depends on something you don't yet know (facts to "
         "research, files to read, the environment/data to inspect), put the information-gathering "
         "step BEFORE the step that uses it and wire them with `needs`.\n"
+        "WORKED EXAMPLE of right-sizing: GOAL 'look up novel network-scanning techniques, then "
+        "build and test a Python scanner that implements them' is THREE distinct units of work → "
+        "AT LEAST 3 steps, NOT one: (1) research the techniques with caps:[\"web.search\",\"web.fetch\"]; "
+        "(2) implement the scanner — caps:[\"llm.generate\"] to generate the code; (3) run & test it "
+        "with caps:[\"exec.python.run\"], needs:[2]. The research step uses WEB caps, NEVER "
+        "llm.generate, because the live/novel facts are not inside the model. Cramming research + "
+        "build + test into a single step is the exact failure to avoid.\n"
         "For each step choose the capabilities (by exact name from the catalog) it needs, plus "
         "any skills that would help. Each cap lists its SUGGESTED skills — include them when "
         "relevant; you may drop a suggestion or add a different (e.g. conceptual) skill. Only "
@@ -7642,24 +8966,25 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         "agent.chat/agent.chat_voice only GENERATE or PROCESS text. They CANNOT run "
         "commands, read/write files, query data, or call services. For any step that must "
         "DO something, assign a cap that actually performs it (e.g. exec.bash.run to run a "
-        "shell command, http.get to fetch a URL, fabric.query to search data). NEVER use "
+        "shell command, http.get to fetch a URL, memory.seek to search stored data). NEVER use "
         "llm.* or agent.chat to 'execute', 'run', 'fetch', or 'retrieve' — they will just "
         "make up an answer. Example: 'get the current bash user' → a step with "
         "caps:[\"exec.bash.run\"] running `whoami`, NOT agent.chat.\n"
-        "INTERNAL DATA vs the LIVE WEB: fabric.query / fabric.entity_graph.query search only "
-        "data ALREADY STORED in Vera's fabric — they do NOT browse the internet. For ANY external "
-        "lookup (a person, company, domain, website, news, current/online info) use the WEB caps: "
-        "web.search (search engine results), web.fetch / http.get (fetch a page as text), "
+        "INTERNAL DATA vs the LIVE WEB: memory.seek / fabric.query / fabric.entity_graph.query "
+        "search only data ALREADY STORED in Vera's fabric — they do NOT browse the internet. For ANY "
+        "external lookup (a person, company, domain, website, news, current/online info) use the WEB "
+        "caps: web.search (search engine results), web.fetch / http.get (fetch a page as text), "
         "browser.navigate (JS-heavy or cert-broken sites), research.quick_search (broader managed "
         "research), fabric.discover.crawl (crawl & ingest a site). A web/OSINT goal should LEAD "
-        "with web.search and only use fabric.query to check what Vera already knows — never rely "
-        "on fabric.query alone for web presence.\n"
-        "SCRIPTS: if a short bash or python SCRIPT would accomplish a step better than a chain of "
-        "individual cap calls (parsing, multi-command shell work, data wrangling, glue logic), "
-        "make the step GENERATE the script (it is auto-saved & versioned) and RUN it with "
-        "exec.python.run / exec.bash.run — give that step caps like "
-        "[\"llm.generate\",\"exec.python.run\"] (or exec.bash.run). Prefer this over forcing the "
-        "work through unsuitable caps.\n"
+        "with web.search and only use memory.seek to check what Vera already knows — never rely "
+        "on stored data alone for web presence.\n"
+        "SCRIPTS (only when genuinely needed): a bash/python script is for steps whose work IS "
+        "computation — parsing files, multi-command shell work, data wrangling, glue logic. If a "
+        "step needs one, make it GENERATE the script (auto-saved & versioned) and RUN it with "
+        "exec.python.run / exec.bash.run — caps like [\"llm.generate\",\"exec.python.run\"]. But "
+        "do NOT reach for exec.* on research/summarisation/writing/decision steps — those are "
+        "answered from search results and llm.generate directly; running python adds nothing. "
+        "Never plan an exec step 'just in case'.\n"
         "WRITING CODE / SCRIPTS / FILES / ARTIFACTS: just GENERATE the content with llm.generate "
         "— any fenced code it emits is AUTOMATICALLY saved to a file and VERSIONED for you, so do "
         "NOT add an ide.fs.write step for code. Tell llm.generate to label each file (a fenced "
@@ -7672,102 +8997,171 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         "(use code.versions / code.diff only if you explicitly need history). Do NOT use llm.plan "
         "to 'plan a DAG' for a coding task (llm.plan builds a DAG WORKFLOW, only for when the user "
         "explicitly asks for a DAG/pipeline).\n"
+        "DELIVERABLES / DOCUMENTS — COMPLETENESS IS THE POINT: when the goal calls for a document "
+        "(report, plan, article, spec, README…), the plan must end with a FINISHED FILE, not prose "
+        "in a summary. Method: (1) research/collect steps FIRST, each ending in concrete notes; "
+        "(2) a DRAFT step that writes the COMPLETE document — full sentences and sections, never "
+        "an outline, never placeholders like 'TBD' or '[expand here]' — as a fenced block labelled "
+        "```markdown file=<name>.md so it is saved & versioned; (3) for LONG documents, split by "
+        "SECTION: each step reads the saved file (code.read), APPENDS/COMPLETES its sections, and "
+        "re-emits the FULL updated file with the SAME file= label (a new version — nothing is "
+        "lost); (4) a final REVIEW step that reads the whole file, fixes gaps, and confirms every "
+        "section is complete. The saved file is the deliverable the user downloads.\n"
         "COMPLEX STEPS: if a single step is itself a big sub-project with several parts, mark it "
         "\"complex\": true and give it a clear `goal` plus the caps the whole sub-project may use "
         "— it will be expanded into its OWN sub-plan by a sub-orchestrator.\n"
-        "STEP PHASES (optional, use SPARINGLY): a step may carry a `phases` list — any of "
-        "\"explore\",\"think\",\"act\",\"verify\" — and EACH phase runs as its own scoped sub-agent "
-        "(explore = read-only recon, think = reasoning with no tools, act = do the work, verify = "
-        "read-only check). ONLY add phases when the phases are genuinely DIFFERENT kinds of work. "
-        "A step that is ITSELF just a search/lookup/query (all read-only caps) must have NO phases "
-        "— it is already exploration; adding explore→act just repeats the same search and wastes "
-        "cycles. Use `explore` only before a step that will then ACT on what it finds (e.g. read "
-        "config → modify it); use `verify` ONLY for steps that CREATE or CHANGE something (write "
-        "files, run a build, deploy, configure). Most steps need NO `phases` at all — leave it "
-        "empty and they run as one fast specialist.\n"
-        "RECON (optional, only when needed): if you cannot make a good plan without first "
-        "inspecting the environment/data/web, put up to " + str(_V5_RECON_MAX) + " READ-ONLY "
-        "actions in `recon` (e.g. caps.search, context.search_caps, fabric.query, http.get, "
-        "ide.fs.read). They run BEFORE the plan is finalised and their results are fed back to "
-        "you. For straightforward goals leave `recon` EMPTY and just produce the steps — do not "
-        "slow the simple path down. Recon actions MUST be safe and read-only (never write, run, "
-        "delete, or send).\n"
+        + _phase_block
+        + "RECON (optional, ITERATIVE — only when needed): if you cannot make a good plan without "
+        "first inspecting the environment/data/web, put up to " + str(_V5_RECON_MAX) + " READ-ONLY "
+        "actions in `recon`. Allowed recon: caps.search, context.search_caps, memory.seek, "
+        "memory.map, fabric.query, "
+        "http.get, ide.fs.read, AND read-only shell via exec.bash.run (args {\"command\":\"…\"}) "
+        "using ONLY exploratory commands — ls, cat, head, tail, grep/rg, find, pwd, whoami, env, "
+        "stat, wc (NO redirection >, pipes-to-writers, rm/mv/cp, or anything that writes/runs/"
+        "installs). Recon runs BEFORE the plan is finalised and the findings are fed back to you. "
+        "This is a LOOP: after you see the findings you may either (a) emit the final `steps` if "
+        "you now know enough, or (b) request a FURTHER small batch of recon to dig deeper — keep "
+        "exploring until you can write a confident, concrete plan. "
+        + (("You have " + str(recon_rounds_left) + " more recon round(s) available after this one.\n")
+           if recon_rounds_left > 0 else
+           ("This is the LAST recon round — you MUST now produce the final `steps` and leave "
+            "`recon` EMPTY.\n") if recon_findings else
+           "For straightforward/trivial goals leave `recon` EMPTY and just produce the steps — "
+           "do NOT slow the simple path down.\n")
+        + "Recon actions MUST be safe and read-only (never write, run, delete, install, or send).\n"
         "Set \"complexity\" to \"simple\", \"complex\", or \"extreme\" for the whole goal. Use "
         "\"extreme\" ONLY for very large, multi-domain, or research-heavy goals that warrant a "
         "strategic long-form plan before step breakdown (a specialist planner will draft one and "
         "hand it back to you). "
         "Use `needs` to list ids of EARLIER steps whose output a step depends on.\n"
-        'Respond ONLY with JSON:\n'
+        "TITLES: each step's `title` must be a SHORT PLAIN-LANGUAGE description of the "
+        "work (e.g. \"Research scanning techniques\", \"Generate the scanner script\", "
+        "\"Run & test the scanner\"). It must NOT be a capability name or skill id — the "
+        "caps/skills go in the `caps`/`skills` fields, never in the title.\n"
+        + ("SUCCESS CRITERIA: give each step a `success` field — ONE short, objectively "
+           "checkable criterion for that step (e.g. \"the script runs without errors and "
+           "prints the open ports\", NOT \"do the step well\"). Also give a top-level "
+           "`done_when` — one line stating when the WHOLE goal counts as achieved.\n"
+           if want_success else "")
+        + 'Respond ONLY with JSON:\n'
         '{"complexity":"simple|complex|extreme","recon":[{"cap":"cap.name","args":{},"why":"<short>"}],'
-        '"steps":[{"id":1,"title":"<short>","goal":"<what this step must achieve>",'
-        '"caps":["cap.name"],"skills":["skill_id"],"needs":[],"complex":false,"phases":[]}],'
-        '"reason":"<one sentence>"}'
+        '"steps":[{"id":1,"title":"<plain-language description of the work>",'
+        '"goal":"<what this step must achieve>",'
+        '"caps":["cap.name"],"skills":["skill_id"],"needs":[],"complex":false,"phases":[]'
+        + (',"success":"<one-line checkable criterion>"' if want_success else '')
+        + '}],'
+        + ('"done_when":"<one-line whole-goal criterion>",' if want_success else '')
+        + '"reason":"<one sentence>"}'
     )
+    # Piecewise mode: the caller is expanding ONE piece of the master plan at a
+    # time — the directive text already carries the full plan, the composed
+    # sub-plans from earlier pieces, and the "plan ONLY this piece" instruction.
+    _piecewise = bool(master_plan) and master_plan.startswith("[PIECEWISE]")
+    if _piecewise:
+        master_plan = master_plan[len("[PIECEWISE]"):]
     prompt = (f"GOAL: {goal}\n\n"
-              + (f"STRATEGIC MASTER PLAN (a specialist planner wrote this — BREAK IT INTO concrete, "
-                 f"ordered, executable steps; keep its intent and sequencing):\n{master_plan}\n\n"
+              + ((f"{master_plan}\n\n" if _piecewise else
+                  f"STRATEGIC MASTER PLAN (a specialist planner wrote this — BREAK IT INTO concrete, "
+                  f"ordered, executable steps; keep its intent and sequencing):\n{master_plan}\n\n")
                  if master_plan else "")
               + (f"RECON FINDINGS (already gathered — use these to inform the plan):\n{recon_findings}\n\n"
                  if recon_findings else "")
               + f"AVAILABLE CAPABILITIES (name — description [suggested skills]):\n{cap_lines}\n\n"
               f"AVAILABLE SKILLS (id — description):\n{skill_lines}\n\nProduce the plan.")
+    if plan_persona:
+        sys = plan_persona + "\n\n" + sys
     steps: List[Dict[str, Any]] = []
     reason = ""
     complexity = ""
+    done_when = ""
     recon_actions: List[Dict[str, Any]] = []
     catalog_set = set(catalog_names)
+    # Live plan streaming: forward the planner's tokens to the UI (throttled) so the
+    # plan visibly BUILDS instead of the UI stalling on a silent single LLM call.
+    # The renderer auto-closes the partial JSON as it streams. Only when a stream_id
+    # is supplied (the primary planning call), so re-plans don't spam the card.
+    _plan_acc = {"buf": "", "last": 0.0}
+    async def _plan_stream_cb(tok):
+        if not stream_id:
+            return
+        _plan_acc["buf"] += tok
+        now = time.monotonic()
+        if now - _plan_acc["last"] < 0.1:
+            return
+        _plan_acc["last"] = now
+        try:
+            await emit_event({"type": "agent_loop_v6.plan_token", "session_id": sid,
+                              "stream_id": stream_id, "text": _plan_acc["buf"][-6000:]})
+        except Exception:
+            pass
     try:
         raw = await _safe_ollama_generate_dw(
-            prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True)
-        parsed = _extract_json(_strip_think(raw or "")[0]) or {}
+            prompt, system=sys, model=plan_model, instance_id=instance_id,
+            prefer_gpu=prefer_gpu, json_mode=True, options=plan_opts,
+            stream_cb=(_plan_stream_cb if stream_id else None))
+        _pp = _v5_parse_plan(raw or "")
+        parsed = _pp["obj"] if isinstance(_pp.get("obj"), dict) else {}
+        raw_steps = _pp["steps"]
         reason = str(parsed.get("reason") or "")
         complexity = str(parsed.get("complexity") or "").strip().lower()
-        # Read-only recon actions — only honoured on the fast path (no findings yet).
-        if not recon_findings:
+        done_when = str(parsed.get("done_when") or "")[:300]
+        # Read-only recon actions. On the FAST path (no findings yet) the planner may
+        # request an initial batch; AFTER findings it may request a FOLLOW-UP batch as
+        # long as the caller still has recon rounds left (the agentic explore loop).
+        # When no rounds remain we drop any recon the model asked for so it commits.
+        if (not recon_findings) or recon_rounds_left > 0:
             for ra in (parsed.get("recon") or [])[:_V5_RECON_MAX]:
                 if not isinstance(ra, dict):
                     continue
                 rc = str(ra.get("cap") or "").strip()
-                if (rc in CAPABILITY_REGISTRY and rc in catalog_set
-                        and _v5_is_read_only(rc)):
+                rc = _v5_resolve_tool_name(rc, catalog_names, catalog_set)
+                ra_args = ra.get("args") if isinstance(ra.get("args"), dict) else {}
+                if _v5_recon_action_ok(rc, ra_args, catalog_set):
                     recon_actions.append({
-                        "cap": rc,
-                        "args": ra.get("args") if isinstance(ra.get("args"), dict) else {},
+                        "cap": rc, "args": ra_args,
                         "why": str(ra.get("why") or "")[:160]})
         valid_skill_ids = {s["id"] for s in skills}
-        for i, st in enumerate(parsed.get("steps") or []):
+        for st in raw_steps:
             if not isinstance(st, dict):
                 continue
-            caps = [c for c in (st.get("caps") or []) if isinstance(c, str) and c in CAPABILITY_REGISTRY][:8]
-            sk = [s for s in (st.get("skills") or []) if isinstance(s, str) and s in valid_skill_ids][:4]
-            needs = [n for n in (st.get("needs") or []) if isinstance(n, int)]
-            phases = [p for p in _V5_PHASES if p in set(st.get("phases") or [])]
-            steps.append({
-                "id": i + 1,
-                "title": str(st.get("title") or st.get("goal") or f"Step {i+1}")[:120],
-                "goal": str(st.get("goal") or st.get("title") or goal)[:400],
-                "caps": caps, "skills": sk, "needs": needs,
-                "complex": bool(st.get("complex")), "phases": phases,
-            })
+            cs = _v5_coerce_step(st, len(steps), goal, catalog_names,
+                                 catalog_set, valid_skill_ids)
+            if cs:
+                steps.append(cs)
     except Exception as e:
         log.debug("v5 orchestrate_plan failed: %s", e)
     return {"steps": steps[:max_steps], "reason": reason,
-            "complexity": complexity, "recon": recon_actions}
+            "complexity": complexity, "recon": recon_actions,
+            "done_when": done_when}
 
 
 async def _v5_run_recon(actions: List[Dict[str, Any]], *, session_id: str, stream_id: str,
-                        trace_id: Any, call_tool) -> str:
-    """Run the orchestrator's READ-ONLY recon actions before the plan is finalised,
-    and return a compact findings digest to feed back into planning. Bounded and
-    best-effort; only runs when the orchestrator actually requested recon (so the
-    simple path stays a single LLM call with no tool calls)."""
+                        trace_id: Any, call_tool, catalog_set: Optional[set] = None,
+                        round_idx: int = 1, max_rounds: int = 1) -> str:
+    """Run ONE round of the orchestrator's READ-ONLY recon actions and return a
+    compact findings digest to feed back into planning. Each action is re-validated
+    against the read-only gate (name-read-only caps, or exec.bash.run with a safe
+    exploratory command) so a malformed/unsafe action is skipped, not executed.
+    Bounded and best-effort; only runs when the orchestrator actually requested
+    recon (so the simple path stays a single LLM call with no tool calls)."""
+    catalog_set = catalog_set or set()
     findings: List[str] = []
     for a in actions[:_V5_RECON_MAX]:
         cap = a.get("cap"); args = a.get("args") or {}
+        # Emit start FIRST so every action (including a skipped one) has a paired
+        # start→done — the renderer closes the most-recent open recon card on done,
+        # so a lone done event would corrupt an unrelated card.
         await emit_event({"type": "agent_loop_v5.recon", "session_id": session_id,
                           "stream_id": stream_id, "cap": cap, "args": args,
+                          "round": round_idx, "max_rounds": max_rounds,
                           "why": a.get("why", ""), "phase": "start"})
+        if not _v5_recon_action_ok(cap, args, catalog_set):
+            await emit_event({"type": "agent_loop_v5.recon", "session_id": session_id,
+                              "stream_id": stream_id, "cap": cap, "ok": False,
+                              "round": round_idx, "max_rounds": max_rounds,
+                              "preview": "skipped — not a permitted read-only recon action",
+                              "phase": "done"})
+            continue
         ok = False
         try:
             inv = await call_tool(cap, args, session_id=session_id, trace_id=trace_id or "")
@@ -7782,6 +9176,7 @@ async def _v5_run_recon(actions: List[Dict[str, Any]], *, session_id: str, strea
         findings.append(f"[{cap}] {'ok' if ok else 'failed'}\n{preview[:700]}")
         await emit_event({"type": "agent_loop_v5.recon", "session_id": session_id,
                           "stream_id": stream_id, "cap": cap, "ok": ok,
+                          "round": round_idx, "max_rounds": max_rounds,
                           "preview": preview[:600], "phase": "done"})
     return "\n\n".join(findings)
 
@@ -7797,6 +9192,12 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                        long_running_timeout_secs: int = 1800,
                        enable_code_autosave: bool = True,
                        code_push_gitea: bool = False,
+                       enable_chaining: bool = True,
+                       enable_step_questions: bool = False,
+                       clarify_channel: str = "ui",
+                       question_timeout_secs: int = 180,
+                       prefer_terminal_tools: bool = False,
+                       condense_output: bool = False,
                        phase: str = "") -> Dict[str, Any]:
     """Run ONE step as an ephemeral scoped sub-agent. Sees only: full schemas for
     its assigned caps, dynamically-loaded skill instructions, and the outputs of
@@ -7833,9 +9234,15 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                 call_tool=call_tool, build_ctx=build_ctx, catalog_caps=catalog_caps,
                 available_models=available_models, await_long_running=await_long_running,
                 long_running_timeout_secs=long_running_timeout_secs,
-                enable_code_autosave=enable_code_autosave, code_push_gitea=code_push_gitea)
+                enable_code_autosave=enable_code_autosave, code_push_gitea=code_push_gitea,
+                enable_chaining=enable_chaining, enable_step_questions=enable_step_questions,
+                clarify_channel=clarify_channel, question_timeout_secs=question_timeout_secs,
+                prefer_terminal_tools=prefer_terminal_tools, condense_output=condense_output)
 
-    caps = list(dict.fromkeys(step.get("caps") or []))
+    # Co-offer tightly-coupled siblings (e.g. web.fetch when the step has
+    # web.search + http.get) so the specialist's schema block lists them up
+    # front instead of having to fail and trigger recovery to reach them.
+    caps = _v5_expand_cohorts(step.get("caps") or [])
     # Phase auto-scoping: explore/verify see only READ-ONLY caps; think has no
     # tools; act keeps the full set. If a read-only phase's step listed no
     # read-only caps, seed a few from the catalog so it can actually gather/check.
@@ -7905,7 +9312,8 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
     if not rel:
         rel = list(blackboard.values())  # no explicit deps → all prior results
     ctx_slice = "\n\n".join(
-        f"[from step {r['id']} · {r['title']}]\n{(r.get('summary') or '')[:800]}" for r in rel)
+        f"[from step {r['id']} · {r['title']}]\n{(r.get('summary') or '')[:_V5_CTX_PER_STEP]}"
+        for r in rel)[:_V5_CTX_TOTAL]
 
     await emit_event({"type": "agent_loop_v5.step_start", "session_id": sid, "stream_id": stream_id,
                       "step_id": step_id, "title": step["title"], "goal": step["goal"],
@@ -7913,8 +9321,11 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
 
     # Model guidance — only when the step actually uses a generative cap, so the
     # specialist picks a REAL cluster model (or omits it) instead of inventing one.
+    # When the generative-model LOCK is on (default), the specialist may not pick
+    # a model at all — every generative call runs on the run/agent model — so the
+    # model list is not even advertised.
     model_block = ""
-    if model_set and any(_v5_is_generative(c) for c in caps):
+    if model_set and not _gen_model_locked() and any(_v5_is_generative(c) for c in caps):
         sample = ", ".join(list(model_set)[:20])
         model_block = ("\nAVAILABLE MODELS for any `model` argument (this is an Ollama cluster): "
                        + sample + ".\nOMIT the `model` argument to use the cluster default "
@@ -7924,21 +9335,83 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
     # Code autosave note — only when the step can generate code.
     code_note = ""
     if enable_code_autosave and any(_v5_is_generative(c) for c in caps):
-        code_note = ("\nCODE AUTOSAVE: any fenced code block you generate is AUTOMATICALLY saved "
-                     "to a file and VERSIONED — you do NOT need ide.fs.write. Label each file with "
-                     "a fenced ```lang file=relative/path.ext (or a leading `# file: path.ext` "
-                     "line) so it saves to the intended path; output the COMPLETE file, not a "
-                     "snippet. Regenerating the same path creates a new version and you always see "
-                     "the LATEST. To run a saved file use exec.python.run(path=...).\n")
+        code_note = ("\nCODE/DOCUMENT AUTOSAVE: any fenced block you generate is AUTOMATICALLY "
+                     "saved to a file and VERSIONED — you do NOT need ide.fs.write. Label each "
+                     "file with a fenced ```lang file=relative/path.ext (or a leading "
+                     "`# file: path.ext` line) so it saves to the intended path; output the "
+                     "COMPLETE file, not a snippet. Regenerating the same path creates a new "
+                     "version and you always see the LATEST. To run a saved file use "
+                     "exec.python.run(path=...).\n"
+                     "FINISHED OUTPUT, NOT STUBS: if this step produces a document or file, it "
+                     "must be COMPLETE when you emit `done` — full sections/sentences, no "
+                     "outlines, no 'TBD'/'[expand]'/'…' placeholders, no trailing 'I would "
+                     "then…' prose. If the content is too long for one response, emit the first "
+                     "part now and CONTINUE next turn: code.read the saved file and re-emit the "
+                     "FULL updated file with the SAME file= label until it is finished. Your "
+                     "`done` summary must name the saved file(s) — the file IS the result later "
+                     "steps (and the user) rely on.\n")
+
+    # Terminal-tools preference (opt-in): steer the specialist to reach for
+    # grep/sed/awk/head/find over reading whole files or heavier caps. Only worth
+    # emitting when the step can actually run a shell.
+    terminal_note = ""
+    if prefer_terminal_tools and any(c.startswith("exec.") for c in caps):
+        terminal_note = ("\nPREFER TERMINAL TOOLS: to inspect files or process text, reach FIRST for "
+                         "terminal tools via exec.bash.run — grep/rg (search), sed/awk (extract/"
+                         "transform), head/tail (peek), wc, find — instead of reading whole files or "
+                         "spinning up heavier caps. They are faster and cheaper; pull only the lines "
+                         "you need.\n"
+                         "GATHER DETERMINISTICALLY & SELF-SUMMARISE: when a step's job is to FIND OUT "
+                         "something, gather it deterministically (read-only commands/queries, not "
+                         "guesswork). Make a script PRINT A CONCISE, COMPLETE SUMMARY of what it found "
+                         "— counts, key values/ids, PASS/FAIL, the handful of lines that matter — NOT a "
+                         "raw dump. e.g. pipe through `grep -c` / `sort | uniq -c` / `head` / `jq` and "
+                         "end with a short summary block, so the output you read back is exactly the "
+                         "signal you need to act on.\n")
 
     phase_guide = _V5_PHASE_GUIDE.get(phase, "")
+    _success = str(step.get("success") or "").strip()
+    _chain_help = (
+        '  {"thought":"<why>","chain":[{"name":"<cap>","input":{...}},'
+        '{"name":"<cap>","input":{...},"from":{"<arg>":"$0:code"}}]}  — PREFER THIS whenever your next '
+        "2–4 actions form a FIXED PIPELINE where each output just feeds the next: run them in ONE turn "
+        "instead of one cap per cycle (far cheaper — no re-inference between calls). Each hop's output "
+        "feeds the next via `from` refs: $N = hop N output, $N:code = its first code block, $N:json = "
+        "parsed JSON, $N.a.b = a field. YOU control the wiring: put fixed values you decide (like the "
+        "FILENAME) in `input`, and use `from` to pipe ONLY the field(s) that must come from a prior "
+        "hop; a hop with no `from` just runs on your `input` (unlinked). It is a DAG, not only a line: "
+        "a hop's `from` may pull from ANY earlier hop(s) — combine $0 AND $1 — and an optional "
+        '"when":"$1:json.ok" runs a hop ONLY if that ref is truthy (conditional branch/skip). '
+        'Examples — research→write→save: [{"name":"web.search","input":{"query":"..."}},'
+        '{"name":"web.fetch","from":{"url":"$0.results.0.url"}},{"name":"llm.generate",'
+        '"input":{"prompt":"Write a report from this source:"},"from":{"context":"$1"}},'
+        '{"name":"ide.fs.write","input":{"path":"report.md"},"from":{"content":"$2"}}]; '
+        'generate→run: [{"name":"llm.generate","input":{"prompt":"write a python script that..."}},'
+        '{"name":"exec.python.run","from":{"code":"$0:code"}}], OR\n'
+    ) if enable_chaining else ""
+    _ask_help = (
+        '  {"thought":"<why>","ask_user":"<question>"}  to ASK THE USER when the step is genuinely '
+        "blocked on a decision only they can make — it reaches them in the loop UI and any configured "
+        "comms channel, blocks briefly for a reply, then you proceed on assumptions, OR\n"
+    ) if enable_step_questions else ""
     sys = (
         "You are a FOCUSED SPECIALIST sub-agent. Complete ONE step of a larger task and "
         "nothing else. Stay strictly within the step goal.\n"
-        f"STEP GOAL: {step['goal']}\n\n"
+        f"STEP GOAL: {step['goal']}\n"
+        + (f"SUCCESS CRITERION (this step is only done when this is objectively true): {_success}\n"
+           if _success else "")
+        + "\n"
         + ((phase_guide + "\n\n") if phase_guide else "")
         + "You may use these capabilities (full schemas):\n" + sig_block + "\n"
-        + model_block + code_note
+        + model_block + code_note + terminal_note
+        + ("\nCAPABILITY REALITY — generative vs action: llm.*, ollama.*, and agent.chat* only "
+           "GENERATE or transform text from what YOU put in the prompt. They CANNOT look things "
+           "up, browse the web, run commands, read/write files, or query data — asked to "
+           "'research' or 'find' something they will just INVENT a plausible-sounding answer. "
+           "To RESEARCH or get current/novel/factual information use web.search (then web.fetch / "
+           "http.get to read a result) or research.quick_search; to RUN something use exec.*; to "
+           "read stored data use fabric.query. If the right tool isn't in your toolkit, REQUEST "
+           "it via need_caps — do NOT substitute llm.generate for a real lookup or action.\n")
         + (("\nRELEVANT SKILLS (follow this guidance):\n" + skill_prompt + "\n") if skill_prompt else "")
         + (("\nCONTEXT FROM PRIOR STEPS:\n" + ctx_slice + "\n") if ctx_slice else "")
         + (("\nARTIFACT DIRECTORY for generated files: " + artifact_dir_path + "\n") if artifact_dir_path else "")
@@ -7949,7 +9422,8 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
           '  {"thought":"<why>","need_caps":["cap.name"]}  to REQUEST extra capabilities when your '
           "assigned ones are insufficient or a tool keeps failing/returning unusable results "
           "(granted if they exist in the broader toolkit; their schemas are then provided), OR\n"
-          '  {"thought":"<one sentence>","done":"<concise result for the orchestrator>"}  when finished.\n'
+        + _chain_help + _ask_help
+        + '  {"thought":"<one sentence>","done":"<concise result for the orchestrator>"}  when finished.\n'
           "Only emit a tool_use when you can fill in ALL of that cap's REQUIRED inputs — never call a cap "
           "with empty or placeholder args (e.g. llm.generate with no `prompt`). If you don't yet have an "
           "argument, THINK first (no tool_use) to work it out, then act.\n"
@@ -7958,6 +9432,34 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
           "approach: a different URL/query, or request a different capability via need_caps. "
           "Use as many tool calls as the step genuinely needs; as soon as the goal is met, emit `done`."
     )
+
+    # ── Full context disclosure ──────────────────────────────────────────────
+    # Emit the EXACT system prompt this ephemeral specialist was given, plus the
+    # structured pieces that compose it, so the UI can reveal a step's complete
+    # configuration AND render context as a linkable, pulsable layer. The prior-
+    # step context slice is broken out per-source step so the loop graph can draw
+    # an edge from each contributing step to this one.
+    ctx_sources = [{"step_id": r["id"], "title": r.get("title", ""),
+                    "summary": (r.get("summary") or "")[:_V5_CTX_PER_STEP]} for r in rel]
+    await emit_event({
+        "type": "agent_loop_v5.step_context", "session_id": sid, "stream_id": stream_id,
+        "step_id": step_id, "phase": phase, "title": step.get("title", ""),
+        "goal": step.get("goal", ""),
+        "system_prompt": sys,
+        "parts": {
+            "caps": caps,
+            "cap_schemas": sig_block,
+            "skills": loaded_skills,
+            "skill_prompt": skill_prompt,
+            "prior_context": ctx_slice,
+            "context_sources": ctx_sources,
+            "model_block": model_block.strip(),
+            "code_note": code_note.strip(),
+            "phase_guide": phase_guide,
+            "recovery_caps": recovery_caps,
+            "artifact_dir": artifact_dir_path,
+        },
+    })
 
     history: List[Dict[str, Any]] = []
     outputs: Dict[str, Any] = {}
@@ -7977,6 +9479,239 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
     streak_thoughts: List[str] = []
     tool_calls: Dict[str, int] = {}       # per-tool call count (stuck-loop guard)
     _MAX_SAME_TOOL = 3                     # break the step after this many calls to one cap
+    denied_req_turns = 0                   # consecutive request-only turns that granted nothing
+    denied_req_caps: List[str] = []        # every cap ever denied (for the stall summary)
+    _MAX_DENIED_REQ_TURNS = 3              # break the step after this many fruitless request turns
+    empty_exec_calls = 0                   # exec.* calls with nothing to run (caught pre-invoke)
+    arg_fix_attempts: Dict[str, int] = {}  # per-tool recoverable-arg-error corrections (bounds no-widen retries)
+    _MAX_ARG_FIX = 2                       # give a precise arg correction this many times before widening scope
+    success_sigs: Dict[str, str] = {}      # call-signature -> cached preview of a SUCCESSFUL identical call
+    dup_call_hits = 0                       # redundant repeats of an already-successful call
+    _MAX_DUP_HITS = 2                       # after this many redundant repeats, end the step cleanly
+    step_questions_asked = 0               # ask_user calls made this step (bounded)
+    _MAX_STEP_QUESTIONS = 2
+    _MAX_CHAIN_HOPS = 5
+    _step_q_key = -500000 - int(step_id)   # reserved HITL key for this step's ask_user questions
+
+    async def _ask_user(question: str) -> str:
+        """Ask the user a question mid-step via the loop UI (and, if configured, a
+        comms channel), blocking until an answer or timeout. Reuses the same HITL
+        future + comms round-trip the whole-goal clarify uses; a per-step negative
+        key keeps each step's question distinct."""
+        nonlocal step_questions_asked
+        q = str(question or "").strip()
+        if not q:
+            return ""
+        step_questions_asked += 1
+        _ch = (clarify_channel or "ui").strip().lower()
+        comms_addr = ""
+        if _ch and _ch not in ("", "ui"):
+            try:
+                comms_addr = await _v7_route_question_to_comms(
+                    q, session_id=sid, step=_step_q_key, channel=_ch,
+                    ttl_secs=float(max(15, question_timeout_secs)))
+            except Exception as e:
+                log.debug("v5 step ask_user comms route failed: %s", e)
+        await emit_event({"type": "agent_loop_v6.step_question", "session_id": sid,
+                          "stream_id": stream_id, "step_id": step_id, "step": _step_q_key,
+                          "question": q, "channel": _ch or "ui", "comms_address": comms_addr,
+                          "timeout_secs": int(question_timeout_secs),
+                          "hint": "POST /workshop/agent_loop/hitl/respond "
+                                  f"{{session_id, step:{_step_q_key}, decision:'continue', "
+                                  "comment:'<answer>'}"})
+        decision = await _await_hitl_decision(
+            sid, _step_q_key, timeout=float(max(15, question_timeout_secs)))
+        try:
+            import Vera.vera.comms_inbox as _inbox
+            _inbox.clear_session(sid)
+        except Exception:
+            pass
+        ans = (decision.get("comment") or "").strip()
+        if not ans and isinstance(decision.get("args"), dict):
+            ans = str(decision["args"].get("answers")
+                      or decision["args"].get("answer") or "").strip()
+        await emit_event({"type": "agent_loop_v6.step_question_resolved", "session_id": sid,
+                          "stream_id": stream_id, "step_id": step_id,
+                          "answered": bool(ans), "decision": decision.get("decision", "")})
+        return ans
+
+    def _chain_ref(ref: Any, chain_out: List[Any]) -> Any:
+        """Resolve a `from` reference against prior chain-hop outputs. Forms:
+          $N        → hop N's output as text            $N.a.b → dict-path walk
+          $N:code   → first fenced code block (text)    $N:json → parsed JSON
+        A non-$ string is returned literally (pass-through)."""
+        s = str(ref or "").strip()
+        m = re.match(r"^\$(\d+)([:.].*)?$", s)
+        if not m:
+            return ref
+        idx = int(m.group(1))
+        if idx >= len(chain_out):
+            return ""
+        raw = chain_out[idx]
+        suffix = m.group(2) or ""
+        if suffix.startswith(":"):
+            mode = suffix[1:].strip().lower()
+            txt = _v7_result_text(raw)
+            if mode == "code":
+                try:
+                    blocks = _v5_extract_code_blocks(txt)
+                    return blocks[0]["code"] if blocks else txt
+                except Exception:
+                    return txt
+            if mode == "json":
+                return _extract_json(txt) or txt
+            return txt
+        if suffix.startswith("."):
+            cur = raw
+            for key in [k for k in suffix[1:].split(".") if k]:
+                if isinstance(cur, dict) and key in cur:
+                    cur = cur[key]
+                else:
+                    return ""
+            return cur
+        return _v7_result_text(raw)
+
+    async def _run_chain(hops: List[Dict[str, Any]]) -> bool:
+        """Run an agent-authored pipeline of cap calls deterministically, piping each
+        hop's output into the next via its `from` map — NO inference between hops (the
+        whole point: e.g. llm.generate → ide.fs.write in one turn). Each hop renders as
+        a normal tool card. Returns True if at least one hop produced a usable result."""
+        nonlocal gc, dynamic_caps_block, ok, had_useful
+        spec = [h for h in (hops or []) if isinstance(h, dict) and str(h.get("name") or "").strip()]
+        spec = spec[:_MAX_CHAIN_HOPS]
+        if not spec:
+            return False
+        await emit_event({"type": "agent_loop_v5.chain", "session_id": sid, "stream_id": stream_id,
+                          "step_id": step_id, "hops": [str(h.get("name")) for h in spec]})
+
+        def _truthy_cond(v: Any) -> bool:
+            if v is None:
+                return False
+            if isinstance(v, bool):
+                return v
+            if isinstance(v, (int, float)):
+                return v != 0
+            if isinstance(v, str):
+                return v.strip().lower() not in ("", "false", "0", "no", "none", "null")
+            return bool(v)
+
+        chain_out: List[Any] = []
+        any_ok = False
+        for hop in spec:
+            # Conditional edge (optional): run this hop only when its `when` ref is
+            # truthy — lets the pipeline BRANCH/skip. A skipped hop still appends a
+            # None to keep $N indices stable for later hops.
+            _when = hop.get("when")
+            if _when is not None and str(_when).strip():
+                if not _truthy_cond(_chain_ref(_when, chain_out)):
+                    chain_out.append(None)
+                    await emit_event({"type": "agent_loop_v5.chain_skip", "session_id": sid,
+                                      "stream_id": stream_id, "step_id": step_id,
+                                      "tool": str(hop.get("name") or ""), "when": str(_when)[:120]})
+                    continue
+            hop_tool = _v5_resolve_tool_name(str(hop.get("name")).strip(), allowed, catalog_set)
+            # Auto-grant a catalog cap the chain reaches for (chaining implies intent).
+            if hop_tool not in allowed:
+                if hop_tool in catalog_set and hop_tool in CAPABILITY_REGISTRY:
+                    allowed.append(hop_tool)
+                    _sig = rich_cap_signature(hop_tool)
+                    dynamic_caps_block = (dynamic_caps_block + "\n" + _sig) if dynamic_caps_block else _sig
+                else:
+                    gc += 1
+                    _msg = f"chain hop '{hop_tool}' is not in the toolkit — chain stopped."
+                    history.append({"tool": f"(denied {hop_tool})", "ok": False, "preview": _msg,
+                                    "args": {}, "ms": 0})
+                    await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
+                                      "cycle": gc, "step_id": step_id, "tool": hop_tool, "ok": False,
+                                      "elapsed_ms": 0, "preview": _msg, "error": _msg, "session_id": sid})
+                    break
+            h_args = dict(hop.get("input") or {})
+            for field, ref in (hop.get("from") or {}).items():
+                h_args[field] = _chain_ref(ref, chain_out)
+            h_args, _cn = _coerce_args(hop_tool, h_args)
+            if model_set and _v5_is_generative(hop_tool):
+                _m = str(h_args.get("model") or "").strip()
+                if _m and _m not in model_set:
+                    h_args.pop("model", None)
+            if (artifact_dir_path and hop_tool in ("exec.bash.run", "exec.ps.run", "exec.code.run")
+                    and isinstance(h_args, dict) and not str(h_args.get("cwd") or "").strip()):
+                h_args["cwd"] = artifact_dir_path
+            gc += 1
+            cur = gc
+            await emit_event({"type": "agent_loop_v5.tool_call", "stream_id": stream_id,
+                              "cycle": cur, "step_id": step_id, "tool": hop_tool, "args": h_args,
+                              "thought": "(chained)", "session_id": sid})
+            t0 = time.monotonic()
+            invoke = await call_tool(hop_tool, h_args, session_id=sid, trace_id=trace_id or "")
+            if invoke.get("ok") and isinstance(invoke.get("result"), dict) and invoke["result"].get("error"):
+                invoke["ok"] = False
+                invoke["error"] = str(invoke["result"]["error"])
+            if (invoke.get("ok") and await_long_running and isinstance(invoke.get("result"), dict)
+                    and _detect_job_id(invoke["result"])):
+                try:
+                    awaited = await _universal_await_job(
+                        cap_name=hop_tool, immediate=invoke["result"], session_id=sid,
+                        trace_id=trace_id or "", cycle=cur,
+                        max_wait_secs=float(long_running_timeout_secs), stream_id=stream_id)
+                    if isinstance(awaited, dict):
+                        invoke["result"] = awaited
+                        if awaited.get("_await_error"):
+                            invoke["ok"] = False
+                            invoke["error"] = str(awaited["_await_error"])
+                except Exception as e:
+                    log.debug("v5 chain long-running await failed for %s: %s", hop_tool, e)
+            elapsed = round((time.monotonic() - t0) * 1000)
+            _budget = _v5_preview_budget(hop_tool)
+            invoke_ok = bool(invoke.get("ok"))
+            hop_unhelpful = False
+            if invoke_ok:
+                preview = _result_preview(invoke["result"], max_len=_budget)
+                if "<think>" in preview:
+                    _clean_prev, _think_prev = _strip_think(preview)
+                    if _clean_prev.strip():
+                        preview = _clean_prev
+                        if _think_prev.strip():
+                            await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
+                                              "cycle": cur, "step_id": step_id,
+                                              "thought": _think_prev[:1500], "session_id": sid})
+                hop_unhelpful = _v5_looks_unhelpful(preview) or _v5_embedded_error_ratio(invoke.get("result")) >= 0.5
+                if not hop_unhelpful:
+                    outputs[hop_tool] = preview[:_budget]
+                    had_useful = True
+                    ok = True
+                    any_ok = True
+            else:
+                preview = "ERROR: " + str(invoke.get("error", "unknown error"))
+            # Auto-save any generated code (same as the single-tool path).
+            if invoke_ok and enable_code_autosave and _v5_is_generative(hop_tool):
+                try:
+                    _blocks = _v5_extract_code_blocks(_v5_gen_text(invoke.get("result")))
+                except Exception:
+                    _blocks = []
+                for _blk in _blocks[:6]:
+                    try:
+                        _r = await code_store_save(
+                            _blk["filename"], _blk["code"], session_id=sid,
+                            message=f"v5 step {step_id} chain: {str(step.get('title',''))[:80]}",
+                            lang=_blk["lang"], push_gitea=code_push_gitea)
+                        if _r.get("ok"):
+                            outputs[f"file:{_r['path']}"] = f"saved v{_r['version']} → {_r.get('fs_path','')}"
+                    except Exception as e:
+                        log.debug("v5 chain auto-save failed for %s: %s", _blk.get("filename"), e)
+            chain_out.append(invoke.get("result"))
+            entry_ok = invoke_ok and not hop_unhelpful
+            history.append({"tool": hop_tool, "ok": entry_ok, "preview": preview[:_budget],
+                            "args": h_args, "ms": elapsed})
+            await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
+                              "cycle": cur, "step_id": step_id, "tool": hop_tool, "ok": entry_ok,
+                              "elapsed_ms": elapsed, "preview": preview[:_budget],
+                              "error": (str(invoke.get("error", "")) if not invoke_ok
+                                        else ("unusable result" if hop_unhelpful else "")),
+                              "session_id": sid})
+            if not entry_ok:
+                # A broken hop poisons everything downstream — stop the pipeline.
+                break
+        return any_ok
 
     while productive < max(1, cycle_budget) and turns < max_turns:
         turns += 1
@@ -7993,12 +9728,61 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                         if dynamic_caps_block else "")
         _note = ("\n\n" + pending_note) if pending_note else ""
         pending_note = ""
-        user_msg = (f"STEP GOAL: {step['goal']}\n\nYour results so far:\n{obs}{_rep_hint}{_note}{_grant_block}\n\n"
+        # Feed the model its OWN recent reasoning back in: during a thinking
+        # streak (no new tool result, so `obs` is unchanged) this is the only
+        # fresh signal, and lets it build on the last thought instead of
+        # re-deriving it; otherwise just the single most-recent thought, for
+        # continuity. Bounded to the active streak / last line — never the full
+        # thought log — to keep the prompt tight and responses fast.
+        _recent = streak_thoughts[-2:] if streak_thoughts else all_thoughts[-1:]
+        _think_back = ""
+        if _recent:
+            _tb = "\n".join(f"- {t.strip()}" for t in _recent if t and t.strip())
+            if _tb:
+                _think_back = ("\n\nYOUR RECENT REASONING (build on this — do NOT repeat it):\n"
+                               + _tb[:700])
+        user_msg = (f"STEP GOAL: {step['goal']}\n\nYour results so far:\n{obs}{_think_back}{_rep_hint}{_note}{_grant_block}\n\n"
                     "Reply with ONE JSON action, or a `done` summary if the step goal is met.")
+
+        # Live reasoning streaming: forward the model's thought to the UI
+        # token-by-token as it generates, so the card fills in live instead of
+        # appearing only once the whole JSON action is done. Reasoning may live in
+        # a <think> block OR the JSON "thought" field — extract from both (same
+        # technique as v4). A transient per-turn card shows it while generating and
+        # is dropped once the turn is parsed into its real cycle card below.
+        _ts_stream = {"acc": "", "emitted": 0}
+
+        async def _cycle_stream_cb(tok, _ts=_ts_stream, _turn=turns):
+            if not stream_id:
+                return
+            try:
+                _ts["acc"] += tok
+                s = _ts["acc"]
+                parts = []
+                tm = re.search(r"<think>(.*?)(?:</think>|$)", s, re.DOTALL)
+                if tm and tm.group(1).strip():
+                    parts.append(tm.group(1).strip())
+                jm = re.search(r'"thought"\s*:\s*"((?:[^"\\]|\\.)*)', s)
+                if jm and jm.group(1).strip():
+                    parts.append(jm.group(1).strip())
+                reasoning = "\n".join(parts).strip()
+                if reasoning and len(reasoning) - _ts["emitted"] >= 20:
+                    _ts["emitted"] = len(reasoning)
+                    await emit_event({"type": "agent_loop_v5.think_delta",
+                                      "stream_id": stream_id, "step_id": step_id,
+                                      "turn": _turn, "text": reasoning[:4000],
+                                      "session_id": sid})
+            except Exception:
+                pass
 
         raw = await _safe_ollama_generate_dw(
             user_msg, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True)
+            prefer_gpu=prefer_gpu, json_mode=True,
+            stream_cb=(_cycle_stream_cb if stream_id else None))
+        if stream_id:
+            await emit_event({"type": "agent_loop_v5.think_stream_end",
+                              "stream_id": stream_id, "step_id": step_id,
+                              "turn": turns, "session_id": sid})
         clean, think_text = _strip_think(raw or "")
         raw_obj = _extract_json(clean) or {}
         action = _canonicalise_tool_use_payload(raw_obj) or {}
@@ -8012,17 +9796,76 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
 
         # Step complete?
         if done_val:
-            result_summary = str(done_val)[:1500]
+            result_summary = str(done_val)[:_V5_DONE_SUMMARY]
             ok = True
             break
+
+        # ── Ask the user a question mid-step (loop UI + optional comms), bounded.
+        #    A blocking consult that does NOT consume the productive budget. ──────
+        _ask_q = raw_obj.get("ask_user") or action.get("ask_user")
+        if isinstance(_ask_q, dict):
+            _ask_q = _ask_q.get("question") or _ask_q.get("text") or ""
+        if isinstance(_ask_q, list):
+            _ask_q = "; ".join(str(x) for x in _ask_q if str(x).strip())
+        if _ask_q and str(_ask_q).strip():
+            if not enable_step_questions:
+                pending_note = ("Asking the user is disabled for this run — proceed on your best "
+                                "assumption and state it, or emit `done`.")
+            elif step_questions_asked >= _MAX_STEP_QUESTIONS:
+                pending_note = ("You have already asked the maximum questions for this step — "
+                                "proceed on your best assumption now.")
+            else:
+                if thought:
+                    await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
+                                      "cycle": (gc + 1), "step_id": step_id,
+                                      "thought": thought[:1500], "session_id": sid})
+                _answer = await _ask_user(str(_ask_q).strip())
+                pending_note = (("The user answered: " + _answer) if _answer
+                                else ("No answer within the time limit — proceed with your best "
+                                      "assumption, and note the assumption you made."))
+            continue
+
+        # ── Chain: run an agent-authored pipeline of caps in ONE turn, piping each
+        #    output into the next (no inference between hops). Counts as one cycle. ─
+        _chain = raw_obj.get("chain") or action.get("chain")
+        if isinstance(_chain, list) and _chain:
+            if not enable_chaining:
+                pending_note = "Chaining is disabled for this run — make ONE tool_use per turn."
+                continue
+            productive += 1
+            if thought:
+                await emit_event({"type": "agent_loop_v5.think", "stream_id": stream_id,
+                                  "cycle": (gc + 1), "step_id": step_id,
+                                  "thought": thought[:1500], "session_id": sid})
+            await _run_chain(_chain)
+            continue
 
         tu = action.get("tool_use") or action.get("tool_call") or {}
         if not isinstance(tu, dict):
             tu = {}
         tool = (tu.get("name") or action.get("tool") or action.get("capability") or "").strip()
+        # Normalise underscore/hyphen tool names (web_search → web.search) so a
+        # perfectly-available cap isn't rejected as 'not in scope'.
+        if tool:
+            tool = _v5_resolve_tool_name(tool, allowed, catalog_set)
         args = tu.get("input") or action.get("args") or action.get("arguments") or {}
         if not isinstance(args, dict):
             args = {}
+
+        # Some models emit the capability request AS a tool call
+        # ({"tool_use":{"name":"need_caps","input":{"caps":[...]}}}) — fold it
+        # into the normal need_caps path instead of failing it 'not in scope'.
+        if tool in ("need_caps", "request_caps"):
+            _flat: List[str] = []
+            for v in (args or {}).values():
+                if isinstance(v, str):
+                    _flat.extend(x.strip() for x in v.replace(",", " ").split() if x.strip())
+                elif isinstance(v, list):
+                    _flat.extend(str(x).strip() for x in v if str(x).strip())
+            _prev = raw_obj.get("need_caps")
+            _prev = _prev if isinstance(_prev, list) else ([_prev] if _prev else [])
+            raw_obj["need_caps"] = _prev + _flat
+            tool, args = "", {}
 
         # ── Capability request — widen this step's scope on demand, bounded to
         #    the run's catalog. Lets an under-scoped/stuck specialist pivot
@@ -8036,6 +9879,9 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                 rc = str(rc).strip()
                 if not rc or rc in allowed:
                     continue
+                rc = _v5_resolve_tool_name(rc, allowed, catalog_set)
+                if rc in allowed:        # normalised onto an already-granted cap
+                    continue
                 if rc in catalog_set and rc in CAPABILITY_REGISTRY:
                     allowed.append(rc); granted.append(rc)
                 else:
@@ -8047,12 +9893,44 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                                   "stream_id": stream_id, "step_id": step_id,
                                   "added": granted, "reason": "requested"})
             if granted or denied:
+                _gen_caution = ((" NOTE: generative caps (llm.*/ollama.*/agent.chat*) only write or "
+                                 "transform text you supply — they CANNOT look up, browse, fetch, run, "
+                                 "or read. For research/lookup use web.search/web.fetch/research.quick_search; "
+                                 "for actions use exec.*/http.get.")
+                                if any(_v5_is_generative(c) for c in granted) else "")
                 pending_note = ("Scope updated. "
                                 + (f"Now also available: {', '.join(granted)}. " if granted else "")
-                                + (f"Not in the toolkit (denied): {', '.join(denied)}." if denied else ""))
+                                + (f"Not in the toolkit (denied): {', '.join(denied)}." if denied else "")
+                                + ((f" STOP requesting caps — you ALREADY have: {', '.join(allowed[:8])}. "
+                                    "USE one of those now or emit a `done` summary.")
+                                   if denied and not granted else "")
+                                + _gen_caution)
             # A request-only turn (no tool/done) is the whole turn — loop again
-            # so the specialist can act with its widened scope.
+            # so the specialist can act with its widened scope. But a specialist
+            # that keeps requesting caps that DON'T exist is stalled, not working:
+            # after a few fruitless request-only turns, end the step as FAILED so
+            # the controller can remediate, instead of burning every turn on
+            # denials and then reporting the step as fine.
             if not tool:
+                if granted:
+                    denied_req_turns = 0
+                else:
+                    denied_req_turns += 1
+                    denied_req_caps.extend(str(d) for d in denied)
+                    if denied_req_turns >= _MAX_DENIED_REQ_TURNS and not had_useful:
+                        _uniq = ", ".join(dict.fromkeys(denied_req_caps)) or "(none)"
+                        result_summary = (
+                            "STEP STALLED: spent its turns requesting capabilities that are not in "
+                            f"the toolkit ({_uniq}) instead of using its assigned caps "
+                            f"({', '.join(caps) or 'none'}). No work was done.")
+                        ok = False
+                        await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
+                                          "cycle": (gc + 1), "step_id": step_id,
+                                          "thought": "(auto-stopped: repeated requests for "
+                                                     "unavailable capabilities — ending the step "
+                                                     "as failed so the plan can adapt.)",
+                                          "session_id": sid})
+                        break
                 continue
 
         # ── Thought-only turn — NOT an error and NOT a real cycle. Join the
@@ -8069,6 +9947,14 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                                   "cycle": think_cycle, "step_id": step_id,
                                   "thought": "\n\n".join(streak_thoughts)[:4000],
                                   "session_id": sid})
+                # Back-to-back pure thinking accomplishes nothing actionable and
+                # tends to loop on the same reasoning — after a couple of
+                # thought-only turns, push the model to act, request a cap, or
+                # finish (consumed as a note on the next turn).
+                if len(streak_thoughts) >= 2:
+                    pending_note = ("You have reasoned for several turns without acting. Do NOT just "
+                                    "think again — now either make a concrete tool_use, request a "
+                                    "capability via need_caps, or emit a `done` summary.")
             continue
 
         # ── Productive turn (a tool attempt) — opens a real cycle + budget. ───
@@ -8112,15 +9998,97 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
         if (artifact_dir_path and tool in ("exec.bash.run", "exec.ps.run", "exec.code.run")
                 and isinstance(args, dict) and not str(args.get("cwd") or "").strip()):
             args["cwd"] = artifact_dir_path
-        # Safety net for generative caps: never let an INVENTED model name through
-        # (e.g. 'gpt-3.5-turbo' on an Ollama cluster → 0 tokens). Drop it so the
-        # cluster default is used. pending_note was just consumed, so this won't
-        # clobber a later failure note (which would correctly take precedence).
-        if model_set and _v5_is_generative(tool):
+        # Generative caps and the `model` argument:
+        #   LOCKED (default) — the specialist may NOT pick a model. Every
+        #   generative call runs on the RUN's model (the chat agent's); with no
+        #   run model, any specialist-chosen model is stripped so routing/agent
+        #   defaults apply. Unlock via workshop.gen_model_lock.
+        #   UNLOCKED — keep the old safety net: never let an INVENTED model
+        #   name through (e.g. 'gpt-3.5-turbo' on an Ollama cluster → 0 tokens).
+        if _v5_is_generative(tool):
+            await _gen_model_lock_hydrate()
             _m = str(args.get("model") or "").strip()
-            if _m and _m not in model_set:
+            if _gen_model_locked():
+                if model:
+                    if _m and _m != model:
+                        pending_note = (f"(note: model '{_m}' ignored — generative calls are "
+                                        f"locked to the run's model '{model}')")
+                    args["model"] = model
+                elif _m:
+                    args.pop("model", None)
+                    pending_note = ("(note: model choice is locked — the routed default "
+                                    "model was used)")
+            elif model_set and _m and _m not in model_set:
                 args.pop("model", None)
                 pending_note = f"(note: dropped unknown model '{_m}' — used the cluster default instead)"
+
+        # ── Fast-fail: an exec cap with nothing to run would just bounce off the
+        #    backend ("empty code"). Catch it BEFORE invoking, hand back a precise
+        #    correction, and after a repeat push the specialist to reconsider
+        #    whether a script is needed at all (over-eager scripting guard). ────
+        _empty_exec_msg = ""
+        if tool in ("exec.python.run", "exec.node.run", "exec.ruby.run", "exec.php.run",
+                    "exec.perl.run", "exec.go.run", "exec.lua.run", "exec.code.run"):
+            if not (str(args.get("code") or "").strip() or str(args.get("path") or "").strip()):
+                _empty_exec_msg = (f"You called {tool} with NO `code` and NO `path` — there is "
+                                   "nothing to run. Either pass the FULL script inline in `code`, "
+                                   "or pass `path` to a previously saved file.")
+        elif tool in ("exec.bash.run", "exec.ps.run", "exec.ssh.run"):
+            if not str(args.get("command") or args.get("cmd") or "").strip():
+                _empty_exec_msg = (f"You called {tool} with an empty `command` — there is nothing "
+                                   "to run. Pass the full command string in `command`.")
+        if _empty_exec_msg:
+            empty_exec_calls += 1
+            tool_calls[tool] = max(0, tool_calls.get(tool, 1) - 1)  # don't count no-ops toward stuck-loop
+            if empty_exec_calls >= 2:
+                _empty_exec_msg += (" You have now done this twice — STOP. Ask yourself whether this "
+                                    "step actually needs to execute anything: if the results you "
+                                    "already have answer the step, emit a `done` summary instead of "
+                                    "running a script.")
+            history.append({"tool": f"(empty {tool})", "ok": False,
+                            "preview": _empty_exec_msg, "args": args, "ms": 0})
+            pending_note = _empty_exec_msg
+            await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
+                              "cycle": cur_cycle, "step_id": step_id, "tool": tool, "ok": False,
+                              "elapsed_ms": 0, "preview": _empty_exec_msg,
+                              "error": "nothing to run (caught before invoke)", "session_id": sid})
+            continue
+
+        # ── Duplicate-call short-circuit: the specialist re-issued a call that
+        #    ALREADY succeeded (same command, only a cosmetic arg like `timeout`
+        #    changed). Re-running it produces nothing new and is the classic
+        #    stuck-loop (cat the same file at timeout 10 → 30 → 60). Serve the
+        #    cached result, tell it firmly to move on, and don't count it as a
+        #    fresh attempt. After a second redundant repeat, end the step as
+        #    DONE (the needed result is already in hand). ──────────────────────
+        _call_sig = _v5_call_sig(tool, args)
+        _cached_preview = success_sigs.get(_call_sig)
+        if _cached_preview is not None:
+            dup_call_hits += 1
+            tool_calls[tool] = max(0, tool_calls.get(tool, 1) - 1)  # a repeat isn't a new attempt
+            outputs[tool] = _cached_preview
+            had_useful = True
+            ok = True
+            await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
+                              "cycle": cur_cycle, "step_id": step_id, "tool": tool, "ok": True,
+                              "elapsed_ms": 0, "preview": _cached_preview,
+                              "error": "", "note": "duplicate call — served the earlier result",
+                              "session_id": sid})
+            if dup_call_hits >= _MAX_DUP_HITS:
+                result_summary = _cached_preview[:_V5_DONE_SUMMARY]
+                await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
+                                  "cycle": (gc + 1), "step_id": step_id,
+                                  "thought": (f"(auto-completed: `{tool}` already produced this "
+                                              "result — ending the step so the run moves on instead "
+                                              "of re-running the same command.)"),
+                                  "session_id": sid})
+                break
+            pending_note = (f"You already ran `{tool}` with these arguments and it SUCCEEDED — the "
+                            "result is unchanged and shown here. Re-running it (even with a different "
+                            "timeout) will NOT produce anything new. Use this result to take the NEXT "
+                            "action toward the step goal, or emit a `done` summary. Do NOT run this "
+                            "same command again.\n\n" + _cached_preview[:_v5_preview_budget(tool)])
+            continue
 
         await emit_event({"type": "agent_loop_v5.tool_call", "stream_id": stream_id,
                           "cycle": cur_cycle, "step_id": step_id, "tool": tool, "args": args,
@@ -8159,15 +10127,85 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
         # A call can SUCCEED yet return junk (consent/captcha/redirect page). Treat
         # that as a soft failure so the step pivots instead of declaring victory.
         unhelpful = False
+        _budget = _v5_preview_budget(tool)
         if invoke_ok:
-            preview = _result_preview(invoke["result"])
+            preview = _result_preview(invoke["result"], max_len=_budget)
+            # A reasoning model invoked as a generative cap (llm.*/ollama.*/agent.chat*)
+            # returns its chain-of-thought in <think>…</think>. That reasoning must
+            # NOT become the step's output/answer — strip it out, keep only the real
+            # answer, and surface the reasoning as a separate thinking card.
+            if "<think>" in preview:
+                _clean_prev, _think_prev = _strip_think(preview)
+                if _clean_prev.strip():
+                    preview = _clean_prev
+                    if _think_prev.strip():
+                        all_thoughts.append(_think_prev[:1500])
+                        await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
+                                          "cycle": cur_cycle, "step_id": step_id,
+                                          "thought": _think_prev[:1500], "session_id": sid})
             unhelpful = _v5_looks_unhelpful(preview)
             if unhelpful:
                 preview = "(result looks like a consent/blocked/login page — not usable)\n" + preview
             else:
-                outputs[tool] = preview[:1000]
-                had_useful = True
-                ok = True
+                # A multi-action cap can return ok=True while most of its internal
+                # steps errored (e.g. browser.navigate) — that's a soft failure.
+                _err_ratio = _v5_embedded_error_ratio(invoke.get("result"))
+                if _err_ratio >= 0.5:
+                    unhelpful = True
+                    preview = (f"(call returned ok but {int(round(_err_ratio * 100))}% of its "
+                               "internal steps reported errors — treat as failed/partial and "
+                               "pivot)\n") + preview
+                else:
+                    # ── Long-output condenser (opt-in): a big tool/script result
+                    #    would be HARD-TRUNCATED to _budget, losing the tail. When
+                    #    enabled, condense the FULL output into a dense brief that
+                    #    keeps the decision-relevant detail, and preserve the raw
+                    #    output on disk so the agent can pull the full data on
+                    #    demand (grep/sed/cat) — deterministic, no context bloat. ──
+                    if condense_output and not _v5_is_generative(tool) \
+                            and tool not in _V5_FILEREAD_CAPS:
+                        try:
+                            _full = _result_preview(invoke["result"], max_len=60000)
+                        except Exception:
+                            _full = preview
+                        if len(_full) > int(_budget * _V5_CONDENSE_TRIGGER_RATIO):
+                            # Persist the FULL output SANDBOX-AWARE: when the run
+                            # is sandboxed the artifact dir is the container's
+                            # /workspace, which this host can't see — a raw open()
+                            # there fails ("can't find workspace"). write_artifact_file
+                            # routes the write INTO the container (else host disk).
+                            _full_path = ""
+                            try:
+                                import importlib as _il2
+                                _ex = _il2.import_module("Vera.vera.execution.exec_capabilities")
+                                _fn = f"_output_{tool.replace('.', '_')}_{cur_cycle}.txt"
+                                _full_path = await _ex.write_artifact_file(
+                                    relpath=_fn, content=_full, session_id=sid)
+                            except Exception as _e:
+                                log.debug("condense full-output write failed: %s", _e)
+                                _full_path = ""
+                            _cond = await _v5_condense_output(
+                                _full, tool, step.get("goal") or goal,
+                                model=model, instance_id=instance_id, prefer_gpu=prefer_gpu)
+                            _tail = (f"\n\n[output condensed from {len(_full):,} chars — "
+                                     + (f"FULL output saved to {_full_path}; inspect specific "
+                                        "parts with exec.bash.run grep/sed/cat if you need more."
+                                        if _full_path else
+                                        "full output could NOT be persisted this run — if you need "
+                                        "detail beyond this brief, re-run the tool.") + "]")
+                            preview = _cond + _tail
+                            # Keep the condensed brief intact — don't let the
+                            # tool's normal preview budget re-truncate it below.
+                            _budget = max(_budget, len(preview))
+                            await emit_event({"type": "agent_loop_v5.output_condensed",
+                                              "session_id": sid, "stream_id": stream_id,
+                                              "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                                              "raw_chars": len(_full), "condensed_chars": len(_cond),
+                                              "full_path": _full_path})
+                    outputs[tool] = preview[:_budget]
+                    had_useful = True
+                    ok = True
+                    success_sigs[_call_sig] = preview[:_budget]   # remember for dup short-circuit
         else:
             preview = "ERROR: " + str(invoke.get("error", "unknown error"))
             if coerce_notes:
@@ -8198,6 +10236,17 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                 ok = True
                 _slist = "; ".join(f"{s['path']} v{s['version']}"
                                    + (" (unchanged)" if s.get("unchanged") else "") for s in saved)
+                # Rebuild the preview with the saved code fences stubbed out —
+                # the agent sees "saved, COMPLETE" notes instead of code that
+                # the preview budget may have cut mid-fence (the #1 trigger for
+                # 'complete the truncated code' regenerate loops).
+                try:
+                    _stubbed = _v5_stub_code_fences(_v5_gen_text(invoke.get("result")), saved)
+                    if _stubbed:
+                        preview = _result_preview(_stubbed, max_len=_budget)
+                        outputs[tool] = preview[:_budget]
+                except Exception:
+                    pass
                 preview = preview + f"\n\n[auto-saved & versioned: {_slist}]"
                 for s in saved:
                     outputs[f"file:{s['path']}"] = f"saved v{s['version']} → {s.get('fs_path','')}"
@@ -8214,65 +10263,112 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                                 f"version. To run, use exec.python.run(path='{_run_hint}'). Do NOT "
                                 "ide.fs.write them — that is automatic.")
 
+        # File-read truncation guidance: a capped file-read display used to make the
+        # specialist re-read the file forever (it read the cut display as "the file
+        # is partial"). Tell it the read COMPLETED and how to see the rest without
+        # re-reading the whole thing.
+        if invoke_ok and tool in _V5_FILEREAD_CAPS and "display truncated" in (preview or ""):
+            pending_note = ("The file was read IN FULL — only the DISPLAY was capped to fit context. "
+                            "Do NOT re-read the whole file. To inspect a specific part use exec.bash.run "
+                            "with grep -n / sed -n '<a>,<b>p' / head / tail on the path.")
+
         entry_ok = invoke_ok and not unhelpful
-        history.append({"tool": tool, "ok": entry_ok, "preview": preview[:1200],
+        history.append({"tool": tool, "ok": entry_ok, "preview": preview[:_budget],
                         "args": args, "ms": elapsed})
         await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
                           "cycle": cur_cycle, "step_id": step_id, "tool": tool,
                           "ok": entry_ok, "elapsed_ms": elapsed,
-                          "preview": preview[:1800],
+                          "preview": preview[:_budget],
                           "error": (str(invoke.get("error", "")) if not invoke_ok
                                     else ("unusable result" if unhelpful else "")),
                           "session_id": sid})
 
-        # ── Self-correction: a hard failure OR an ok-but-useless result widens
-        #    the step's scope to its recovery toolkit so it can try another cap. ─
+        # ── Self-correction ──────────────────────────────────────────────────
+        # Two very different failure modes are handled differently:
+        #   1. RECOVERABLE malformed call (missing/extra/bad arg) — the right cap
+        #      was chosen but called wrong. Hand back a precise correction and let
+        #      it RETRY the same cap, keeping the work that led here. Widening
+        #      scope here would throw that work away (the reported bug: a web.fetch
+        #      missing its `url` got "scoped up" to 10 broad discovery caps right
+        #      after a web.search had produced the url).
+        #   2. GENUINE failure / unusable result — the cap itself couldn't do the
+        #      job. Only THEN widen scope to the recovery toolkit.
         if not entry_ok:
-            newly = [c for c in recovery_caps if c not in allowed]
-            if newly:
-                allowed.extend(newly)
-                show = newly[:8]
-                new_sigs = "\n".join(rich_cap_signature(c) for c in show)
-                dynamic_caps_block = (dynamic_caps_block + "\n" + new_sigs) if dynamic_caps_block else new_sigs
-                await emit_event({"type": "agent_loop_v5.scope_widened", "session_id": sid,
-                                  "stream_id": stream_id, "step_id": step_id,
-                                  "added": newly, "reason": "auto (last call failed)"})
-                pending_note = ("The last call did not yield a usable result. You may now also use: "
-                                + ", ".join(show) + ". Try a DIFFERENT approach.")
+            _err_txt = str(invoke.get("error", "")) if not invoke_ok else ""
+            _arg_hint = _v5_arg_error_hint(tool, args, _err_txt)
+            if _arg_hint and arg_fix_attempts.get(tool, 0) < _MAX_ARG_FIX:
+                arg_fix_attempts[tool] = arg_fix_attempts.get(tool, 0) + 1
+                tool_calls[tool] = max(0, tool_calls.get(tool, 1) - 1)  # a bad-args call isn't a real attempt
+                pending_note = _arg_hint
+                await emit_event({"type": "agent_loop_v5.arg_correction", "session_id": sid,
+                                  "stream_id": stream_id, "step_id": step_id, "tool": tool,
+                                  "reason": "recoverable arg error — retry same cap, no scope widen"})
             else:
-                pending_note = ("The last call did not yield a usable result — try a different "
-                                "query/URL, or request another capability via need_caps.")
+                newly = [c for c in recovery_caps if c not in allowed]
+                if newly:
+                    allowed.extend(newly)
+                    show = newly[:8]
+                    new_sigs = "\n".join(rich_cap_signature(c) for c in show)
+                    dynamic_caps_block = (dynamic_caps_block + "\n" + new_sigs) if dynamic_caps_block else new_sigs
+                    await emit_event({"type": "agent_loop_v5.scope_widened", "session_id": sid,
+                                      "stream_id": stream_id, "step_id": step_id,
+                                      "added": newly, "reason": "auto (last call failed)"})
+                    pending_note = ("The last call did not yield a usable result. You may now also use: "
+                                    + ", ".join(show) + ". Try a DIFFERENT approach.")
+                else:
+                    pending_note = ("The last call did not yield a usable result — try a different "
+                                    "query/URL, or request another capability via need_caps.")
 
-        # Stuck-loop guard: the specialist keeps hammering one cap without
-        # finishing. Stop the step and keep the best result it produced.
+        # Stuck-loop guard: the specialist keeps hammering one cap. Stop the step
+        # and keep the best result it produced. The message distinguishes the two
+        # real cases so the UI card isn't misleading: (a) the calls SUCCEEDED and
+        # the specialist just kept re-running — that's a completion, not a
+        # failure; (b) the calls never produced a usable result — that's a genuine
+        # give-up-and-move-on.
         if tool_calls[tool] >= _MAX_SAME_TOOL:
-            result_summary = (outputs.get(tool) or preview)[:1500]
+            _got = outputs.get(tool)
+            result_summary = (_got or preview)[:_V5_DONE_SUMMARY]
             ok = ok or had_useful
+            if _got:
+                _wrap = (f"(auto-completed: `{tool}` already returned a usable result — ending the "
+                         f"step after {tool_calls[tool]} calls so the run moves on instead of "
+                         "re-running it.)")
+            else:
+                _wrap = (f"(auto-wrapped: `{tool}` was called {tool_calls[tool]}× without a usable "
+                         "result — using the best result so far.)")
             await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
                               "cycle": (gc + 1), "step_id": step_id,
-                              "thought": f"(auto-wrapped: '{tool}' was called {tool_calls[tool]}× "
-                                         "without finishing — using the best result so far.)",
-                              "session_id": sid})
+                              "thought": _wrap, "session_id": sid})
             break
 
     if not result_summary:
         if outputs:
             # Prefer the last genuinely useful tool output over a trailing error.
-            result_summary = list(outputs.values())[-1][:800]
+            result_summary = list(outputs.values())[-1][:_V5_DONE_SUMMARY]
         elif history:
-            result_summary = history[-1]["preview"][:800]
+            result_summary = history[-1]["preview"][:_V5_DONE_SUMMARY]
         elif all_thoughts:
-            # A reasoning-only step (e.g. analysis) never called a tool — its
-            # reasoning IS the deliverable, so keep it and don't mark it failed.
-            result_summary = ("\n\n".join(all_thoughts))[:1200]
-            ok = True
+            if not caps:
+                # A reasoning-only step (no caps assigned) never calls a tool —
+                # its reasoning IS the deliverable, so keep it and don't fail it.
+                result_summary = ("\n\n".join(all_thoughts))[:_V5_DONE_SUMMARY]
+                ok = True
+            else:
+                # The step HAD capabilities but never completed a successful call
+                # — thoughts alone don't meet an actionable step's goal. Mark it
+                # FAILED so the controller/replan reacts, instead of the run
+                # silently 'succeeding' on pure reasoning.
+                result_summary = ("STEP DID NOT ACT: no successful tool call was made "
+                                  f"(assigned caps: {', '.join(caps)}). Reasoning only:\n"
+                                  + ("\n\n".join(all_thoughts))[:_V5_DONE_SUMMARY - 200])
+                ok = False
         else:
             result_summary = "Step finished with no explicit result."
     res = {"id": step_id, "title": step["title"], "ok": ok,
            "summary": result_summary, "outputs": outputs, "cycle_end": gc,
            "history": history}
     await emit_event({"type": "agent_loop_v5.step_done", "session_id": sid, "stream_id": stream_id,
-                      "step_id": step_id, "ok": ok, "summary": result_summary[:1500]})
+                      "step_id": step_id, "ok": ok, "summary": result_summary[:_V5_DONE_SUMMARY]})
     return res
 
 
@@ -8285,7 +10381,13 @@ async def _v5_run_phased_step(step: Dict[str, Any], phases: List[str], *, goal: 
                               await_long_running: bool = True,
                               long_running_timeout_secs: int = 1800,
                               enable_code_autosave: bool = True,
-                              code_push_gitea: bool = False) -> Dict[str, Any]:
+                              code_push_gitea: bool = False,
+                              enable_chaining: bool = True,
+                              enable_step_questions: bool = False,
+                              clarify_channel: str = "ui",
+                              question_timeout_secs: int = 180,
+                              prefer_terminal_tools: bool = False,
+                              condense_output: bool = False) -> Dict[str, Any]:
     """Run a step as a v4-style cadence: each chosen phase (explore/think/act/verify)
     is handed to its OWN scoped ephemeral sub-agent, in canonical order, threading
     each phase's output to the next. Aggregates into a single step result; a VERIFY
@@ -8315,7 +10417,10 @@ async def _v5_run_phased_step(step: Dict[str, Any], phases: List[str], *, goal: 
             call_tool=call_tool, build_ctx=build_ctx, catalog_caps=catalog_caps,
             available_models=available_models, await_long_running=await_long_running,
             long_running_timeout_secs=long_running_timeout_secs,
-            enable_code_autosave=enable_code_autosave, code_push_gitea=code_push_gitea, phase=ph)
+            enable_code_autosave=enable_code_autosave, code_push_gitea=code_push_gitea,
+            enable_chaining=enable_chaining, enable_step_questions=enable_step_questions,
+            clarify_channel=clarify_channel, question_timeout_secs=question_timeout_secs,
+            prefer_terminal_tools=prefer_terminal_tools, condense_output=condense_output, phase=ph)
         gc = r.get("cycle_end", gc)
         merged_bb[sub_id] = r
         phase_results.append(r)
@@ -8324,22 +10429,29 @@ async def _v5_run_phased_step(step: Dict[str, Any], phases: List[str], *, goal: 
     verify_failed = any(ph == "verify" and str(r.get("summary") or "").strip().upper().startswith("FAIL")
                         for ph, r in zip(phases, phase_results))
     agg_ok = bool(phase_results) and all(r.get("ok") for r in phase_results) and not verify_failed
-    summary = "\n\n".join(f"[{ph}] {(r.get('summary') or '')[:500]}"
-                          for ph, r in zip(phases, phase_results))[:1800]
+    summary = "\n\n".join(f"[{ph}] {(r.get('summary') or '')[:_V5_CTX_PER_STEP]}"
+                          for ph, r in zip(phases, phase_results))[:_V5_DONE_SUMMARY]
     await emit_event({"type": "agent_loop_v5.step_done", "session_id": sid, "stream_id": stream_id,
-                      "step_id": parent_id, "ok": agg_ok, "summary": summary[:1500]})
+                      "step_id": parent_id, "ok": agg_ok, "summary": summary[:_V5_DONE_SUMMARY]})
     return {"id": parent_id, "title": step["title"], "ok": agg_ok, "summary": summary,
             "outputs": {}, "cycle_end": gc, "history": history, "phased": True,
             "phase_results": phase_results}
 
 
-async def _v5_master_plan(goal: str, catalog_brief: str, *, model: str = "",
-                          instance_id: str = "", prefer_gpu: bool = True) -> Dict[str, str]:
+async def _v5_master_plan(goal: str, catalog_brief: str = "", *, model: str = "",
+                          instance_id: str = "", prefer_gpu: bool = True,
+                          sid: str = "", stream_id: str = "") -> Dict[str, str]:
     """For an EXTREME goal, build a specialist planner ON THE FLY and have it write
     a long-form strategic plan. Two cheap calls: (1) generate a domain-expert
     planner persona tailored to this goal, (2) use that persona to produce a
     comprehensive prose/outline plan. The normal orchestrator then breaks the
-    long-form plan into actionable steps (passed in as `master_plan`)."""
+    long-form plan into actionable steps (passed in as `master_plan`).
+
+    The strategist is deliberately CAP-AGNOSTIC: it never sees the capability
+    catalog and must not name specific caps in its strategy. Tooling is chosen
+    downstream by PIECEWISE planning (`_v5_split_master_plan` suggests caps per
+    piece; the piece→step expansion assigns them). `catalog_brief` is accepted for
+    back-compat but intentionally IGNORED."""
     persona = ("a world-class strategic planner with deep, relevant domain expertise for the goal")
     try:
         p_raw = await _safe_ollama_generate_dw(
@@ -8355,20 +10467,424 @@ async def _v5_master_plan(goal: str, catalog_brief: str, *, model: str = "",
     except Exception as e:
         log.debug("v5 master-planner persona build failed: %s", e)
 
+    # Stream the long-form generation live. This BOTH shows the strategy building
+    # in the UI (token by token) AND avoids the buffered-response timeout that a big
+    # non-streamed "be thorough" generation used to hit (ollama.generate returning
+    # empty/timing out) — which left long_form empty, so nothing displayed and the
+    # normal planner had no master plan to break into steps.
+    _mp_acc = {"buf": "", "last": 0.0}
+    async def _mp_stream_cb(tok):
+        if not stream_id:
+            return
+        _mp_acc["buf"] += tok
+        now = time.monotonic()
+        if now - _mp_acc["last"] < 0.12:
+            return
+        _mp_acc["last"] = now
+        try:
+            await emit_event({"type": "agent_loop_v6.master_plan_token", "session_id": sid,
+                              "stream_id": stream_id, "persona": persona,
+                              "text": _strip_think(_mp_acc["buf"])[0][-6000:]})
+        except Exception:
+            pass
     long_form = ""
     try:
         lf_raw = await _safe_ollama_generate_dw(
-            (f"GOAL: {goal}\n\nAVAILABLE CAPABILITY AREAS (for grounding):\n{catalog_brief}\n\n"
-             "Write a COMPREHENSIVE long-form plan: the overall strategy, the major phases/"
-             "work-streams in order, key sub-goals and their dependencies, milestones, the main "
-             "risks/unknowns and how to de-risk them, and clear success criteria. Prose and "
-             "outline — NOT JSON. Be thorough; this will be broken into concrete executable steps."),
-            system=(f"You are {persona}. Produce rigorous, actionable strategic plans."),
-            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu, json_mode=False)
+            (f"GOAL: {goal}\n\n"
+             "Write a COMPREHENSIVE long-form plan. This is a MULTI-DAY, multi-session strategy: "
+             "it will NOT be executed in one run. An agentic loop executes ONE section per session "
+             "until that section produces a concrete DELIVERABLE, then the background 'dream' system "
+             "picks the plan up and continues the next section on a later session/day. Plan for that "
+             "reality:\n"
+             "  • OVERALL STRATEGY & THESIS — the core approach and why it wins.\n"
+             "  • MAJOR PHASES / WORK-STREAMS in execution order. For EACH one give: an explicit "
+             "TIMESCALE (e.g. 'Day 1', 'Days 2–4', 'Week 2', 'ongoing/weekly'), its concrete "
+             "DELIVERABLE (what tangible artifact/outcome marks it done), the key SUB-GOALS, and its "
+             "DEPENDENCIES on earlier phases. Size each phase so it can produce its deliverable "
+             "within a SINGLE focused session where possible; if a phase is itself a big "
+             "sub-project, SAY SO explicitly (it will be sub-planned in its own right) rather than "
+             "glossing it.\n"
+             "  • MILESTONES with target timescales, the main RISKS/UNKNOWNS and how to de-risk "
+             "them, and clear SUCCESS CRITERIA (per phase and for the whole goal).\n"
+             "  • SCHEDULED DREAM SESSIONS — a short list of aspects/tasks that warrant RECURRING "
+             "background dream sessions (e.g. 'daily: refresh the lead list', 'weekly: review "
+             "conversion metrics and adjust the offer'), each with a suggested cadence and what it "
+             "should check or advance. These are the long-running threads the dream orchestrator "
+             "will schedule and steer across days.\n"
+             "Prose and outline — NOT JSON. Be thorough and rigorous; DEPTH matters more than "
+             "brevity — every phase will be broken into concrete executable (or sub-planable) steps, "
+             "so do not compress detail out of it. Focus on STRATEGY, not tooling: describe WHAT each "
+             "phase must achieve and WHY, in plain terms — do NOT prescribe specific software tools, "
+             "APIs, or internal capability names (the executor picks the tools per phase later)."),
+            system=(f"You are {persona}. Produce rigorous, actionable, DEPTH-rich strategic plans "
+                    "with explicit timescales, per-phase deliverables, and recurring dream-session "
+                    "recommendations. Never summarise away detail — the plan is executed section by "
+                    "section over many days, so each section must carry enough substance to expand "
+                    "into real work on its own."),
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu, json_mode=False,
+            stream_cb=(_mp_stream_cb if stream_id else None))
         long_form = _strip_think(lf_raw or "")[0].strip()[:6000]
     except Exception as e:
         log.debug("v5 master-planner long-form build failed: %s", e)
     return {"persona": persona, "long_form": long_form}
+
+
+# ── Piecewise master-plan decomposition ───────────────────────────────────────
+# A large long-form plan is NOT broken into steps in one shot (which flattens
+# and drops most of it). Instead: split it into ordered PIECES (phases/work-
+# streams), then expand ONE piece at a time into executable steps — with the
+# ENTIRE master plan in context and the composed sub-plans of the earlier
+# pieces visible — and concatenate the sub-plans into the final step list.
+
+_MP_HEADING_RE = re.compile(
+    r"^\s*(?:#{1,4}\s+|(?:\*\*)?(?:phase|part|stage|work[- ]?stream|milestone|step)\s*[\dIVX]+"
+    r"|[\dIVX]+[.):]\s+\S)", re.IGNORECASE)
+
+
+def _v5_split_master_plan_heuristic(long_form: str) -> List[Dict[str, Any]]:
+    """Fallback splitter: break the long-form plan on phase-like headings."""
+    pieces: List[Dict[str, Any]] = []
+    cur_title, cur_lines = "", []
+    for ln in (long_form or "").splitlines():
+        if _MP_HEADING_RE.match(ln) and len(ln.strip()) < 120:
+            if cur_lines and (cur_title or pieces):
+                pieces.append({"id": len(pieces) + 1,
+                               "title": (cur_title or f"Part {len(pieces)+1}")[:120],
+                               "objective": " ".join(cur_lines)[:600]})
+            cur_title = ln.strip().lstrip("#* ").rstrip(":* ")
+            cur_lines = []
+        else:
+            if ln.strip():
+                cur_lines.append(ln.strip())
+    if cur_lines:
+        pieces.append({"id": len(pieces) + 1,
+                       "title": (cur_title or f"Part {len(pieces)+1}")[:120],
+                       "objective": " ".join(cur_lines)[:600]})
+    return pieces[:8]
+
+
+async def _v5_split_master_plan(goal: str, long_form: str, *, model: str = "",
+                                instance_id: str = "", prefer_gpu: bool = True,
+                                catalog_names: Optional[List[str]] = None,
+                                max_caps_per_piece: int = 6,
+                                max_split_pieces: int = 6) -> List[Dict[str, Any]]:
+    """Split the long-form master plan into ordered pieces (one per phase /
+    work-stream) — up to `max_split_pieces`. LLM first; heading heuristic as
+    fallback; [] means 'do not bother — plan it in one shot' (short/simple plans).
+
+    This is where TOOLING enters (the strategist upstream stays cap-agnostic):
+    each piece is annotated with the caps most relevant to it (up to
+    `max_caps_per_piece`, validated against `catalog_names`), its cross-piece
+    `dependencies`, `deliverable`, `timescale`, and a key `success_metric`."""
+    if len(long_form or "") < 800:
+        return []
+    catalog_names = list(catalog_names or [])
+    catalog_set = set(catalog_names)
+    _mc = max(1, min(12, int(max_caps_per_piece or 6)))
+    _max_pieces = max(2, min(30, int(max_split_pieces or 6)))
+    cap_catalog = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:40])
+    cap_block = (("\n\nAVAILABLE CAPABILITIES (name — description) — pick each piece's caps BY "
+                  "EXACT NAME from this list only:\n" + cap_catalog) if cap_catalog else "")
+    try:
+        raw = await _safe_ollama_generate_dw(
+            (f"GOAL: {goal}\n\nMASTER PLAN:\n{long_form}{cap_block}\n\n"
+             f"Split this plan into its natural ORDERED pieces (phases / work-streams / major "
+             f"parts) — between 2 and {_max_pieces} of them, in execution order. Produce as many "
+             "DISTINCT phases as the plan genuinely has — do NOT artificially compress several real "
+             "phases into one. Do NOT summarise the plan "
+             "away: each piece must carry over ALL the substance the master plan gives it, because "
+             "it will later be expanded into real steps on its own. For each piece capture:\n"
+             "  • title — short label\n"
+             "  • objective — the FULL detail for this piece: its sub-goals, the concrete work, and "
+             "any specifics from the master plan (several sentences is fine — richer is better)\n"
+             "  • deliverable — the tangible artifact/outcome that marks this piece DONE\n"
+             "  • success_metric — the KEY measurable signal it succeeded (how you'd objectively "
+             "check it)\n"
+             "  • dependencies — ids of EARLIER pieces this one needs (e.g. [1] or []); a piece "
+             "depends on another when it consumes that piece's deliverable\n"
+             f"  • caps — up to {_mc} capability NAMES (exact, from the list above) most relevant to "
+             "THIS piece's work; [] if none clearly apply\n"
+             "  • timescale — the master plan's timescale for it (e.g. 'Day 1', 'Days 2–4', "
+             "'weekly'), or '' if none is stated\n"
+             'Respond ONLY with JSON: {"pieces":[{"id":1,"title":"<short>","objective":"<full '
+             'detail, several sentences>","deliverable":"<what marks it done>","success_metric":'
+             '"<measurable check>","dependencies":[],"caps":["cap.name"],"timescale":"<e.g. '
+             'Days 1-2>"}]}'),
+            system=("You segment strategic plans into their natural sequential pieces WITHOUT "
+                    "losing detail — each piece keeps the full substance the master plan assigned "
+                    "it, plus its deliverable, success metric, dependencies, and the caps it needs. "
+                    "Only ever name caps that appear in the provided catalog."),
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu, json_mode=True)
+        obj = _extract_json(_strip_think(raw or "")[0].strip())
+        obj = obj if isinstance(obj, dict) else {}
+        out = []
+        for p in (obj.get("pieces") or [])[:_max_pieces]:
+            if isinstance(p, dict) and str(p.get("title") or "").strip():
+                pid = len(out) + 1
+                # caps — normalise + validate against the catalog, dedupe, bound.
+                _caps: List[str] = []
+                _raw_caps = p.get("caps")
+                if isinstance(_raw_caps, str):
+                    _raw_caps = [x.strip() for x in _raw_caps.replace(",", " ").split() if x.strip()]
+                for c in (_raw_caps or []):
+                    c = str(c).strip()
+                    if not c:
+                        continue
+                    if catalog_set and c not in catalog_set:
+                        c = _v5_resolve_tool_name(c, catalog_names, catalog_set)
+                    if (not catalog_set or c in catalog_set) and c not in _caps:
+                        _caps.append(c)
+                # dependencies — ints referring to EARLIER pieces only.
+                _deps: List[int] = []
+                _raw_deps = p.get("dependencies") or p.get("depends_on") or []
+                if isinstance(_raw_deps, (int, str)):
+                    _raw_deps = [_raw_deps]
+                for d in (_raw_deps if isinstance(_raw_deps, list) else []):
+                    try:
+                        di = int(d)
+                    except Exception:
+                        continue
+                    if 0 < di < pid and di not in _deps:
+                        _deps.append(di)
+                out.append({"id": pid,
+                            "title": str(p["title"]).strip()[:120],
+                            "objective": str(p.get("objective") or "").strip()[:1200],
+                            "deliverable": str(p.get("deliverable") or "").strip()[:400],
+                            "success_metric": str(p.get("success_metric")
+                                                  or p.get("success") or "").strip()[:400],
+                            "dependencies": _deps,
+                            "caps": _caps[:_mc],
+                            "timescale": str(p.get("timescale") or "").strip()[:60]})
+        if len(out) >= 2:
+            return out
+    except Exception as e:
+        log.debug("v5 master-plan split failed: %s", e)
+    heur = _v5_split_master_plan_heuristic(long_form)[:_max_pieces]
+    return heur if len(heur) >= 2 else []
+
+
+async def _v5_plan_master_piecewise(goal: str, catalog_names: List[str],
+                                    skills: List[Dict[str, Any]],
+                                    cap_skill_map: Optional[Dict[str, List[str]]], *,
+                                    long_form: str, model: str = "", instance_id: str = "",
+                                    prefer_gpu: bool = True, max_steps: int = 8,
+                                    want_success: bool = False, sid: str = "",
+                                    stream_id: str = "", max_pieces: Optional[int] = None,
+                                    max_caps_per_piece: int = 6, cap_override_mode: str = "off",
+                                    max_split_pieces: int = 6, phase_policy: str = "sparingly",
+                                    ev_prefix: str = "agent_loop_v6") -> Dict[str, Any]:
+    """Expand the master plan into steps ONE PIECE AT A TIME. Every piece's
+    planning call sees: the FULL master plan, the composed sub-plans of all
+    earlier pieces, and a directive to plan ONLY the current piece. Falls back
+    to the classic single-shot break-down when the plan doesn't split.
+
+    `max_pieces` caps how many pieces are expanded into steps THIS session (the
+    rest stay in the persisted master plan for the dream system to continue over
+    later sessions). For a strategic (multi-day) goal this is 1 — the loop turns
+    ONE section into full-depth, actionable/sub-planable steps and runs it until
+    its deliverable, rather than cramming the whole multi-day plan into one
+    shallow run. When None, every piece is expanded (a self-contained EXTREME
+    goal that genuinely completes in one session)."""
+    pieces = await _v5_split_master_plan(goal, long_form, model=model,
+                                         instance_id=instance_id, prefer_gpu=prefer_gpu,
+                                         catalog_names=catalog_names,
+                                         max_caps_per_piece=max_caps_per_piece,
+                                         max_split_pieces=max_split_pieces)
+    cap_override_mode = (cap_override_mode or "off").strip().lower()
+    _catalog_set = set(catalog_names)
+    if len(pieces) < 2:
+        return await _v5_orchestrate_plan(
+            goal, catalog_names, skills, cap_skill_map,
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+            max_steps=max_steps, master_plan=long_form, want_success=want_success,
+            phase_policy=phase_policy, sid=sid, stream_id=stream_id)
+
+    # Which pieces are expanded into steps NOW vs deferred to future dream cycles.
+    exec_pieces = pieces if not max_pieces else pieces[:max(1, int(max_pieces))]
+    deferred_pieces = pieces[len(exec_pieces):]
+
+    await emit_event({"type": f"{ev_prefix}.master_plan_pieces", "session_id": sid,
+                      "stream_id": stream_id,
+                      "pieces": [{"id": p["id"], "title": p["title"],
+                                  "objective": p["objective"],
+                                  "deliverable": p.get("deliverable", ""),
+                                  "success_metric": p.get("success_metric", ""),
+                                  "dependencies": p.get("dependencies", []),
+                                  "caps": p.get("caps", []),
+                                  "timescale": p.get("timescale", ""),
+                                  "deferred": p["id"] not in {q["id"] for q in exec_pieces}}
+                                 for p in pieces]})
+
+    # Depth budget. When only the first section runs this session, give it the
+    # FULL step budget so it is expanded deeply (not summarised); when the whole
+    # plan runs in one session, share the budget across pieces but keep a floor.
+    if max_pieces:
+        per_piece = max(max_steps, 8)
+    else:
+        per_piece = max(4, min(max_steps, (max_steps * 2) // len(pieces) + 1))
+    all_steps: List[Dict[str, Any]] = []
+    composed: List[str] = []        # brief sub-plan lines of already-planned pieces
+    piece_last_id: Dict[int, int] = {}   # piece id → id of its LAST scheduled step (for deps→needs)
+    done_when = ""
+    _HARD_CAP = max(max_steps * 2, 16)
+
+    for p in exec_pieces:
+        if len(all_steps) >= _HARD_CAP:
+            break
+        # Per-piece toolkit. cap_override_mode='piece' scopes this piece's steps to
+        # the piece's OWN suggested caps (the run's full catalog stays reachable via
+        # need_caps recovery); otherwise the orchestrator picks from the full catalog.
+        _piece_caps = [c for c in (p.get("caps") or []) if c in _catalog_set]
+        _override = (cap_override_mode == "piece" and bool(_piece_caps))
+        _piece_catalog = _piece_caps if _override else catalog_names
+        prior = ("SUB-PLANS ALREADY COMPOSED for the earlier pieces (steps already scheduled — "
+                 "build on them, do NOT repeat them):\n" + "\n".join(composed) + "\n\n"
+                 if composed else "")
+        _pdel = f"DELIVERABLE (this piece is DONE when): {p['deliverable']}\n" if p.get("deliverable") else ""
+        _pmet = f"KEY SUCCESS METRIC: {p['success_metric']}\n" if p.get("success_metric") else ""
+        _ptime = f"TIMESCALE: {p['timescale']}\n" if p.get("timescale") else ""
+        _pdep = ""
+        if p.get("dependencies"):
+            _dep_titles = "; ".join(
+                f"piece {d} ({next((q['title'] for q in pieces if q['id'] == d), '')})"
+                for d in p["dependencies"])
+            _pdep = f"DEPENDS ON (consumes their deliverables): {_dep_titles}\n"
+        _pcaphint = (f"SUGGESTED CAPS for this piece (prefer these): {', '.join(_piece_caps)}\n"
+                     if _piece_caps else "")
+        directive = (
+            "[PIECEWISE]"
+            f"FULL STRATEGIC MASTER PLAN (whole-strategy context — keep it in mind, but do NOT "
+            f"plan all of it now):\n{long_form}\n\n{prior}"
+            f">>> CURRENT PIECE ({p['id']} of {len(pieces)}): {p['title']}\n"
+            f"OBJECTIVE OF THIS PIECE: {p['objective']}\n"
+            f"{_pdel}{_pmet}{_pdep}{_ptime}{_pcaphint}"
+            "Turn THIS piece into concrete, FULL-DEPTH steps. Do NOT summarise or collapse it: "
+            "preserve every distinct unit of work the piece calls for, in order, up to and "
+            "including whatever produces its DELIVERABLE. Prefer more, well-scoped steps over a few "
+            "overloaded ones. If a step is ITSELF a sizeable sub-project, mark it \"complex\": true "
+            "and give it a clear goal + the caps it may use — it will be expanded into its OWN "
+            "sub-plan later — rather than flattening it into one shallow step. Plan steps ONLY for "
+            "this piece — do not re-plan earlier pieces and do not plan later pieces; they are "
+            "handled separately.")
+        try:
+            sub = await _v5_orchestrate_plan(
+                goal, _piece_catalog, skills, cap_skill_map,
+                model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+                max_steps=per_piece, master_plan=directive, want_success=want_success,
+                phase_policy=phase_policy, sid=sid, stream_id="")
+        except Exception as e:
+            log.debug("piecewise plan for piece %s failed: %s", p.get("id"), e)
+            sub = {}
+        sub_steps = sub.get("steps") or []
+        # Robustness: an intermittent planner miss leaves a piece with ZERO steps
+        # (the "no steps produced for this piece" stall). Retry once with the
+        # tolerant minimal schema, then fall back to one actionable step derived
+        # from the piece objective — so a piece is NEVER silently empty.
+        if not sub_steps:
+            try:
+                sub = await _v5_orchestrate_plan(
+                    goal, _piece_catalog, skills, cap_skill_map,
+                    model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+                    max_steps=per_piece, master_plan=directive, want_success=want_success,
+                    minimal=True, phase_policy=phase_policy, sid=sid, stream_id="")
+                sub_steps = sub.get("steps") or []
+            except Exception as e:
+                log.debug("piecewise minimal retry for piece %s failed: %s", p.get("id"), e)
+        if not sub_steps:
+            sub_steps = [_v5_piece_fallback_step(p, goal, _piece_catalog)]
+            await emit_event({"type": f"{ev_prefix}.master_plan_piece_fallback", "session_id": sid,
+                              "stream_id": stream_id, "piece": p["id"], "title": p["title"]})
+        offset = len(all_steps)
+        prev_last_id = all_steps[-1]["id"] if all_steps else None
+        # Cross-piece links: the first step of this piece needs the last step of the
+        # immediately-preceding piece (context flow) AND the last step of every piece
+        # this one explicitly DEPENDS ON (it consumes their deliverables).
+        _dep_last_ids = [piece_last_id[d] for d in (p.get("dependencies") or [])
+                         if d in piece_last_id]
+        for i, st in enumerate(sub_steps):
+            st["id"] = offset + i + 1
+            st["needs"] = [n + offset for n in (st.get("needs") or [])
+                           if isinstance(n, int) and 0 < n <= len(sub_steps)]
+            if i == 0:
+                for _pid in ([prev_last_id] + _dep_last_ids):
+                    if _pid and _pid not in st["needs"]:
+                        st["needs"].append(_pid)
+            # cap_override_mode='piece' — give every step the full piece toolkit so
+            # the specialist has all the piece's relevant caps (bounded by max).
+            if _override:
+                st["caps"] = list(dict.fromkeys(list(_piece_caps) + list(st.get("caps") or [])))
+            st["piece"] = p["id"]
+            st["piece_title"] = p["title"]
+            all_steps.append(st)
+        if all_steps:
+            piece_last_id[p["id"]] = all_steps[-1]["id"]
+        composed.append(f"piece {p['id']} — {p['title']}: "
+                        + ("; ".join(f"step {s['id']}: {s['title']}" for s in sub_steps)
+                           if sub_steps else "(no steps produced)"))
+        if not done_when:
+            done_when = str(sub.get("done_when") or "")
+        await emit_event({"type": f"{ev_prefix}.master_plan_piece_planned", "session_id": sid,
+                          "stream_id": stream_id, "piece": p["id"], "title": p["title"],
+                          "steps": [{"id": s["id"], "title": s["title"], "caps": s["caps"]}
+                                    for s in sub_steps]})
+
+    if not all_steps:
+        return {"steps": [], "reason": "piecewise planning produced no steps",
+                "complexity": "extreme", "recon": [], "done_when": done_when}
+    _reason = (f"piecewise master plan: section 1/{len(pieces)} '{exec_pieces[0]['title']}' "
+               f"→ {len(all_steps)} steps this session; {len(deferred_pieces)} section(s) deferred "
+               f"to the dream system"
+               if deferred_pieces else
+               f"piecewise master plan: {len(pieces)} pieces → {len(all_steps)} steps")
+    return {"steps": all_steps[:_HARD_CAP],
+            "reason": _reason,
+            "complexity": "extreme", "recon": [], "done_when": done_when,
+            "pieces": pieces, "exec_pieces": exec_pieces,
+            "deferred_pieces": deferred_pieces}
+
+
+def _v5_piece_fallback_step(piece: Dict[str, Any], goal: str,
+                            catalog_names: List[str]) -> Dict[str, Any]:
+    """When the planner returns NO steps for a master-plan piece (an intermittent
+    miss), synthesise ONE actionable step from the piece objective so the piece is
+    never silently empty and the strategy keeps moving."""
+    seed = ([c for c in _v5_seed_caps_for(goal) if c in set(catalog_names)][:6]
+            or list(catalog_names[:6]))
+    return {
+        "id": 1, "title": (piece.get("title") or "Piece")[:120],
+        "goal": (f"Make concrete progress on this part of the strategy: "
+                 f"{piece.get('objective', '') or piece.get('title', '')}. Take the FIRST real "
+                 "action toward it now, then state exactly what was achieved and what remains."),
+        "caps": seed, "skills": [], "needs": [], "complex": False, "phases": [],
+        "success": "a concrete result for this piece exists and what remains is stated",
+    }
+
+
+def _v5_stepwise_bootstrap_step(goal: str, catalog_names: List[str]) -> Dict[str, Any]:
+    """Last-resort STEPWISE bootstrap: every planning stage (structured plan,
+    minimal-schema retry, master-plan escalation) yielded no usable steps, so
+    fabricate ONE seeded first step and let the run proceed incrementally instead
+    of aborting. The step is explicitly framed as 'make the first concrete
+    progress and report what remains' — v6's adaptive controller then plans each
+    subsequent step from the evidence; v5 leans on its failure-triggered replan.
+    This is NOT the old goal-agnostic single-step fallback (removed deliberately):
+    it only fires after all planning escalations failed, and it is surfaced in the
+    timeline as stepwise mode rather than disguised as a real plan."""
+    catalog_set = set(catalog_names)
+    seed = ([c for c in _v5_seed_caps_for(goal) if c in catalog_set][:6]
+            or list(catalog_names[:6]))
+    return {
+        "id": 1,
+        "title": "Stepwise start — take the first concrete action",
+        "goal": ("Up-front planning could not decompose this goal, so it is being "
+                 "worked STEPWISE. Take the FIRST concrete action toward the goal "
+                 "now — gather the information or produce the first tangible "
+                 "artifact the next step will build on — then state exactly what "
+                 f"was achieved and what remains. GOAL: {goal}"),
+        "caps": seed, "skills": [], "needs": [],
+        "complex": False, "phases": [],
+        "success": "a concrete first result exists and what remains is stated",
+    }
 
 
 async def _v5_synthesize_final(goal: str, results: List[Dict[str, Any]], *,
@@ -8414,11 +10930,18 @@ async def _v5_synthesize_final(goal: str, results: List[Dict[str, Any]], *,
         "enable_dynamic_skills (bool default True), skill_allow (csv — only these skills are "
         "eligible), skill_deny (csv — exclude these skills), auto_suggest_skills (bool default "
         "True — soft-attach a cap's suggested skills when a step picks none), "
-        "enable_recon (bool default True — let the orchestrator run a few READ-ONLY recon "
+        "enable_recon (bool default True — let the orchestrator run READ-ONLY recon "
         "actions before finalising the plan when it needs grounding; the simple path stays one "
-        "LLM call), enable_subplans (bool default True — a step marked `complex` is expanded into "
+        "LLM call), recon_max_rounds (int default 3, 0–8 — max ITERATIVE recon→re-plan rounds; the "
+        "planner keeps exploring (read files, web, read-only shell like ls/grep/cat/find) until it "
+        "knows enough or rounds run out; 0 disables recon, 1 = legacy single pass), "
+        "enable_subplans (bool default True — a step marked `complex` is expanded into "
         "its own one-level sub-plan), enable_phases (bool default True — the planner may give a "
         "step a `phases` subset of explore/think/act/verify, each run as its own scoped sub-agent), "
+        "phase_policy (auto|encourage|sparing default auto — encourage forces heavy phasing), "
+        "phase_set (csv default 'explore,think,act,verify' — which step phases are allowed), "
+        "prefer_terminal_tools (bool default True — seed exec.bash.run + steer specialists to "
+        "grep/sed/awk over reading whole files), "
         "enable_master_planner (bool default True — an EXTREME goal is first handed to a specialist "
         "long-form planner built on the fly, whose strategy the orchestrator then breaks into "
         "steps), enable_code_autosave (bool default True — fenced code a generative cap emits is "
@@ -8458,8 +10981,12 @@ async def cap_dag_agent_loop_v5(
     skill_deny:         str  = "",
     auto_suggest_skills: bool = True,
     enable_recon:       bool = True,
+    recon_max_rounds:   int  = 3,
     enable_subplans:    bool = True,
     enable_phases:      bool = True,
+    phase_policy:       str  = "auto",     # auto|encourage|sparing (v5 has no tier, so auto≈sparing)
+    phase_set:          str  = "explore,think,act,verify",
+    prefer_terminal_tools: bool = True,
     enable_master_planner: bool = True,
     enable_code_autosave: bool = True,
     code_push_gitea:    bool = False,
@@ -8473,7 +11000,22 @@ async def cap_dag_agent_loop_v5(
     max_steps = max(1, min(20, int(max_steps)))
     step_cycle_budget = max(1, min(20, int(step_cycle_budget)))
     catalog_size = max(8, min(80, int(catalog_size)))
+    recon_max_rounds = max(0, min(8, int(recon_max_rounds)))
     long_running_timeout_secs = max(30, int(long_running_timeout_secs))
+    # Effective phase policy for v5 (no tier classifier): encourage forces heavy
+    # phasing, sparing/auto keep the light default, and enable_phases off wins.
+    _pp_user = (phase_policy or "auto").strip().lower()
+    if not enable_phases or _pp_user == "off":
+        phase_policy = "off"
+    elif _pp_user in ("encourage", "encouraged"):
+        phase_policy = "encouraged"
+    else:
+        phase_policy = "sparingly"
+    allowed_phases = [p for p in _V5_PHASES
+                      if p in {s.strip().lower()
+                               for s in (phase_set or "").replace(",", " ").split()}]
+    if not allowed_phases:
+        allowed_phases = list(_V5_PHASES)
 
     ctx = _ctx()
     ollama_generate = getattr(ctx, "ollama_generate", None) if ctx else None
@@ -8489,6 +11031,10 @@ async def cap_dag_agent_loop_v5(
                 return {"ok": False, "error": f"Unknown cap: {cap_name}"}
             accepted = set(cap.get("schema", {}).get("properties", {}).keys()) | {"trace_id"}
             kwargs = {k: v for k, v in (args or {}).items() if k in accepted}
+            # Session plumb-through: caps that accept session_id get it, so
+            # sandbox routing / event scoping still work on the fallback shim.
+            if kw.get("session_id") and "session_id" in accepted:
+                kwargs.setdefault("session_id", kw["session_id"])
             try:
                 result = await cap["func"](**kwargs, trace_id=kw.get("trace_id", "") or "")
                 return {"ok": True, "result": result}
@@ -8518,6 +11064,24 @@ async def cap_dag_agent_loop_v5(
     for _seed in reversed(_v5_seed_caps_for(goal)):
         if _seed not in catalog_names:
             catalog_names.insert(0, _seed)
+    # Pull in sibling caps for any cohort already represented (e.g. web.fetch
+    # alongside web.search/http.get) so they're available to every specialist's
+    # scope/recovery without a fail-then-widen round-trip.
+    catalog_names = _v5_expand_cohorts(catalog_names)
+    # Enforce the default cap blacklist on the final catalog — base_toolkit/seed
+    # caps are inserted directly above and bypass _workshop_build_toolkit's filter.
+    # This is what keeps llm.plan out of the orchestrator's plan AND out of every
+    # specialist's scope/need_caps/recovery toolkit (all derived from catalog_names).
+    _catalog_block = _DEFAULT_CAP_BLACKLIST | _gated_read_caps()
+    if _catalog_block:
+        catalog_names = [c for c in catalog_names if c not in _catalog_block]
+    # Prefer-terminal-tools: always keep exec.bash.run on the menu (front-seeded)
+    # so smart grep/sed/awk usage is available to every specialist.
+    if prefer_terminal_tools and "exec.bash.run" in CAPABILITY_REGISTRY \
+            and "exec.bash.run" not in _catalog_block and "exec.bash.run" not in catalog_names:
+        catalog_names.insert(0, "exec.bash.run")
+    # Session cap-guard (sandboxed run): plan over the approved toolkit only.
+    catalog_names = _guard_filter_catalog(sid, catalog_names)
     if not catalog_names:
         return {"error": "No capabilities available to orchestrate"}
 
@@ -8540,7 +11104,7 @@ async def cap_dag_agent_loop_v5(
     try:
         import importlib as _il
         _exec_mod = _il.import_module("Vera.vera.execution.exec_capabilities")
-        artifact_dir_path = _exec_mod.artifact_dir(session_id=sid)
+        artifact_dir_path = await _exec_mod.artifact_dir_async(session_id=sid)
     except Exception as e:
         log.debug("v5 artifact dir resolve failed: %s", e)
 
@@ -8563,9 +11127,54 @@ async def cap_dag_agent_loop_v5(
     available_models = await _v5_available_models(trace_id or "")
 
     # ── Orchestrate (ONE LLM call on the fast path) ───────────────────────────
+    # Planning is a long blocking generation; run a heartbeat alongside it so the
+    # run doesn't look stale (and the user sees a "planning…" pulse) meanwhile.
+    _plan_hb_stop = asyncio.Event()
+    _plan_hb_task = asyncio.create_task(
+        _v5_planning_heartbeat(sid, stream_id, _plan_hb_stop))
     plan = await _v5_orchestrate_plan(
         goal, catalog_names, skills, cap_skill_map,
-        model=model, instance_id=instance_id, prefer_gpu=prefer_gpu, max_steps=max_steps)
+        model=model, instance_id=instance_id, prefer_gpu=prefer_gpu, max_steps=max_steps,
+        phase_policy=phase_policy, allowed_phases=allowed_phases)
+    # Robustness retry: if the full schema yielded NO parseable steps (common with
+    # small local models that emit a bare array / alt key / prose), re-ask with a
+    # stripped-down schema before falling back to a single catch-all step.
+    if not plan.get("steps"):
+        retry = await _v5_orchestrate_plan(
+            goal, catalog_names, skills, cap_skill_map,
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+            max_steps=max_steps, minimal=True, phase_policy=phase_policy,
+            allowed_phases=allowed_phases)
+        if retry.get("steps"):
+            plan = retry
+    # Fall-through "complex planning mode": the structured plan AND its minimal-
+    # schema retry both yielded no usable steps — have the master planner write a
+    # verbose long-form plan document, then break THAT into steps via the normal
+    # orchestrator. A weak planner decomposes a concrete document far more
+    # reliably than an abstract goal. (The complexity=="extreme" branch below is
+    # the planner OPTING IN to the same machinery; this branch is the failure
+    # escalation.)
+    if not plan.get("steps") and enable_master_planner:
+        try:
+            catalog_brief = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:24])
+            mp = await _v5_master_plan(goal, catalog_brief, model=model,
+                                       instance_id=instance_id, prefer_gpu=prefer_gpu,
+                                       sid=sid, stream_id=stream_id)
+            await emit_event({"type": "agent_loop_v5.master_plan", "session_id": sid,
+                              "stream_id": stream_id, "persona": mp.get("persona", ""),
+                              "long_form": mp.get("long_form", ""),
+                              "note": "structured planning produced no usable steps — "
+                                      "escalated to long-form planning"})
+            if mp.get("long_form"):
+                plan2 = await _v5_plan_master_piecewise(
+                    goal, catalog_names, skills, cap_skill_map,
+                    long_form=mp["long_form"], model=model, instance_id=instance_id,
+                    prefer_gpu=prefer_gpu, max_steps=max_steps, phase_policy=phase_policy,
+                    sid=sid, stream_id=stream_id, ev_prefix="agent_loop_v5")
+                if plan2.get("steps"):
+                    plan = plan2
+        except Exception as e:
+            log.debug("v5 master-plan escalation failed: %s", e)
     complexity = (plan.get("complexity") or "").lower()
 
     # ── EXTREME goals: defer to a specialist long-form planner built ON THE FLY,
@@ -8576,46 +11185,93 @@ async def cap_dag_agent_loop_v5(
         try:
             catalog_brief = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:24])
             mp = await _v5_master_plan(goal, catalog_brief, model=model,
-                                       instance_id=instance_id, prefer_gpu=prefer_gpu)
+                                       instance_id=instance_id, prefer_gpu=prefer_gpu,
+                                       sid=sid, stream_id=stream_id)
             await emit_event({"type": "agent_loop_v5.master_plan", "session_id": sid,
                               "stream_id": stream_id, "persona": mp.get("persona", ""),
                               "long_form": mp.get("long_form", "")})
             if mp.get("long_form"):
-                plan2 = await _v5_orchestrate_plan(
+                plan2 = await _v5_plan_master_piecewise(
                     goal, catalog_names, skills, cap_skill_map,
-                    model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
-                    max_steps=max_steps, master_plan=mp["long_form"])
+                    long_form=mp["long_form"], model=model, instance_id=instance_id,
+                    prefer_gpu=prefer_gpu, max_steps=max_steps, phase_policy=phase_policy,
+                    sid=sid, stream_id=stream_id, ev_prefix="agent_loop_v5")
                 if plan2.get("steps"):
                     plan = plan2
         except Exception as e:
             log.debug("v5 master-planner stage failed: %s", e)
 
-    # Optional pre-plan recon: ONLY when the orchestrator actually asked for it, so
-    # simple goals stay a single LLM call with no tool calls. When recon runs, a
-    # SECOND orchestration call is made with the findings to finalise the plan.
+    # Optional pre-plan recon — an ITERATIVE read-only explore loop. ONLY entered
+    # when the orchestrator actually asked for recon, so simple/trivial goals stay a
+    # single LLM call with no tool calls. Each round runs the requested read-only
+    # actions, feeds the findings back, and lets the planner either commit a plan OR
+    # request a further batch — up to `recon_max_rounds` rounds. The planner is told
+    # how many rounds remain so it stops exploring once it knows enough.
+    # `single` tier is the fast path — skip recon entirely (one cap / one action
+    # needs no environment inspection before planning).
     recon = plan.get("recon") or []
-    if enable_recon and recon:
-        try:
-            findings = await _v5_run_recon(
-                recon, session_id=sid, stream_id=stream_id, trace_id=trace_id,
-                call_tool=_agent_loop_call_tool)
-            if findings:
+    if enable_recon and recon and recon_max_rounds > 0 and tier != "single":
+        catalog_set_for_recon = set(catalog_names)
+        accumulated: List[str] = []
+        rnd = 0
+        while recon and rnd < recon_max_rounds:
+            rnd += 1
+            rounds_left_after = recon_max_rounds - rnd
+            try:
+                findings = await _v5_run_recon(
+                    recon, session_id=sid, stream_id=stream_id, trace_id=trace_id,
+                    call_tool=_agent_loop_call_tool, catalog_set=catalog_set_for_recon,
+                    round_idx=rnd, max_rounds=recon_max_rounds)
+            except Exception as e:
+                log.debug("v5 recon round %d failed: %s", rnd, e)
+                break
+            if not findings:
+                break
+            accumulated.append(findings)
+            try:
                 plan2 = await _v5_orchestrate_plan(
                     goal, catalog_names, skills, cap_skill_map,
                     model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
-                    max_steps=max_steps, recon_findings=findings)
-                if plan2.get("steps"):
-                    plan = plan2
-        except Exception as e:
-            log.debug("v5 recon stage failed: %s", e)
+                    max_steps=max_steps, recon_findings="\n\n".join(accumulated),
+                    recon_rounds_left=rounds_left_after)
+            except Exception as e:
+                log.debug("v5 recon re-plan round %d failed: %s", rnd, e)
+                break
+            if plan2.get("steps"):
+                plan = plan2
+            # Continue exploring only if the planner asked for MORE recon AND rounds
+            # remain; otherwise commit to the plan we have.
+            recon = (plan2.get("recon") or []) if rounds_left_after > 0 else []
+    # Planning done (or failed) — stop the heartbeat.
+    _plan_hb_stop.set()
+    try:
+        await _plan_hb_task
+    except Exception:
+        pass
     steps = plan.get("steps") or []
     if not steps:
-        steps = [{"id": 1, "title": goal[:120], "goal": goal,
-                  "caps": list(catalog_names[:6]), "skills": [], "needs": [],
-                  "complex": False, "phases": []}]
-    if not enable_phases:
-        for s in steps:
+        # Every planning stage failed (structured plan, minimal-schema retry,
+        # master-plan escalation, any recon re-plan). Fall through to STEPWISE
+        # mode instead of aborting: one seeded bootstrap step makes the first
+        # concrete progress, and the failure-triggered replan can extend the run
+        # from there. Surfaced explicitly so it never masquerades as a real plan.
+        steps = [_v5_stepwise_bootstrap_step(goal, catalog_names)]
+        plan["steps"] = steps
+        plan["reason"] = plan.get("reason") or (
+            "planning could not decompose the goal — running STEPWISE from a "
+            "bootstrap step")
+        await emit_event({"type": "agent_loop_v5.planning", "session_id": sid,
+                          "stream_id": stream_id, "elapsed_s": 0,
+                          "note": "plan escalations exhausted — entering STEPWISE mode"})
+    # Deterministic backstop for the planner's habitual under-planning: split a lone
+    # step that bundles research + build/run into two scoped steps (research → build).
+    steps = _v5_split_compound_single_step(steps, goal)
+    # Enforce the phase policy: none when off, else only the user-allowed phases.
+    for s in steps:
+        if phase_policy == "off":
             s["phases"] = []
+        else:
+            s["phases"] = [p for p in allowed_phases if p in set(s.get("phases") or [])]
     # Soft-merge cap-suggested skills into steps that picked none (orchestrator
     # choices are preserved; this only fills gaps).
     _v5_apply_skill_suggestions(steps, cap_skill_map, eligible_skill_ids, auto_suggest_skills)
@@ -8630,6 +11286,7 @@ async def cap_dag_agent_loop_v5(
     blackboard: Dict[int, Dict[str, Any]] = {}
     results: List[Dict[str, Any]] = []
     flat_history: List[Dict[str, Any]] = []   # flat tool-call log → final-card stats
+    user_updates: List[str] = []              # mid-run user messages folded into context
     queue = list(steps)
     executed = 0
     gcycle = 0
@@ -8647,7 +11304,7 @@ async def cap_dag_agent_loop_v5(
         sub = await _v5_orchestrate_plan(
             cstep["goal"], sub_catalog, skills, cap_skill_map,
             model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
-            max_steps=min(_V5_SUBPLAN_MAX_STEPS, max_steps))
+            max_steps=min(_V5_SUBPLAN_MAX_STEPS, max_steps), phase_policy="off")
         sub_steps = sub.get("steps") or []
         if not sub_steps:
             # Nothing to decompose — fall back to a normal scoped mini-loop.
@@ -8659,7 +11316,8 @@ async def cap_dag_agent_loop_v5(
                 build_ctx=build_ctx, catalog_caps=sub_catalog, available_models=available_models,
                 await_long_running=await_long_running,
                 long_running_timeout_secs=long_running_timeout_secs,
-                enable_code_autosave=enable_code_autosave, code_push_gitea=code_push_gitea)
+                enable_code_autosave=enable_code_autosave, code_push_gitea=code_push_gitea,
+                prefer_terminal_tools=prefer_terminal_tools)
         # Renumber sub-steps to collision-free display ids and remap their needs.
         idmap: Dict[int, int] = {}
         for j, ss in enumerate(sub_steps):
@@ -8690,7 +11348,8 @@ async def cap_dag_agent_loop_v5(
                 catalog_caps=sub_catalog, available_models=available_models,
                 await_long_running=await_long_running,
                 long_running_timeout_secs=long_running_timeout_secs,
-                enable_code_autosave=enable_code_autosave, code_push_gitea=code_push_gitea)
+                enable_code_autosave=enable_code_autosave, code_push_gitea=code_push_gitea,
+                prefer_terminal_tools=prefer_terminal_tools)
             gc = r.get("cycle_end", gc)
             sub_bb[ss["id"]] = r
             sub_results.append(r)
@@ -8707,6 +11366,15 @@ async def cap_dag_agent_loop_v5(
     while queue and executed < max_steps:
         step = queue.pop(0)
         executed += 1
+        # Mid-run user messages: drain + fold into this and every following step.
+        _umsgs = await _drain_user_messages(sid)
+        if _umsgs:
+            user_updates.extend(_umsgs)
+            await emit_event({"type": "agent_loop_v5.user_message", "session_id": sid,
+                              "stream_id": stream_id, "messages": _umsgs,
+                              "count": len(user_updates)})
+        if user_updates:
+            step["goal"] = _user_updates_block(user_updates) + "\n\n" + str(step.get("goal", ""))
         if enable_subplans and step.get("complex"):
             res = await _run_complex_step(step, gcycle)
         else:
@@ -8718,7 +11386,8 @@ async def cap_dag_agent_loop_v5(
                 build_ctx=build_ctx, catalog_caps=catalog_names, available_models=available_models,
                 await_long_running=await_long_running,
                 long_running_timeout_secs=long_running_timeout_secs,
-                enable_code_autosave=enable_code_autosave, code_push_gitea=code_push_gitea)
+                enable_code_autosave=enable_code_autosave, code_push_gitea=code_push_gitea,
+                prefer_terminal_tools=prefer_terminal_tools)
         gcycle = res.get("cycle_end", gcycle)
         blackboard[step["id"]] = res
         results.append(res)
@@ -8789,6 +11458,3075 @@ async def cap_dag_agent_loop_v5(
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# v6 — ADAPTIVE ORCHESTRATED LOOP
+# ─────────────────────────────────────────────────────────────────────────────
+# v6 keeps v5's strengths (single-call orchestration → ephemeral scoped
+# specialists, recon, sub-plans, per-step phases, code autosave, self-correcting
+# steps) and adds the pieces v5 lacks:
+#
+#   • PER-STEP SUCCESS CRITERIA — the planner states an objective, checkable bar
+#     for each step and a `done_when` for the whole goal (want_success=True).
+#   • A SHARED LEDGER assessed AFTER EVERY STEP, not only on failure — a cheap
+#     controller call reads the accumulated evidence and decides the next move:
+#     continue as planned, REPLAN the remaining work, INSERT a remediation/gap
+#     step, or STOP early because the goal is already met. This is the core
+#     upgrade: continuous plan adaptation instead of v5's failure-only replan.
+#   • A FINAL COMPLETION GATE — before synthesising, the loop verifies `done_when`
+#     against the results and, if unmet with budget left, appends follow-up steps
+#     rather than declaring a half-done goal complete.
+#
+# It REUSES the v5 step/tool machinery verbatim (_v5_run_step et al. emit
+# agent_loop_v5.* events, which the shared renderer already handles), so v6 only
+# adds a thin controller layer that emits agent_loop_v6.* events.
+# ═════════════════════════════════════════════════════════════════════════════
+
+_V6_LEDGER_PER_STEP = 700      # chars of each step summary kept in the controller ledger
+_V6_LEDGER_TOTAL    = 9000     # cap on the whole ledger fed to the controller
+# The completion GATE needs to SEE the actual deliverable to judge it — a compact
+# 700-char excerpt cut a generated profile/report so the gate wrongly ruled the
+# goal unmet. Give the gate a far larger per-step + total budget (+ outputs).
+_V6_GATE_PER_STEP    = 4000
+_V6_GATE_LEDGER_TOTAL = 20000
+_V6_CONTROL_ACTIONS = {"continue", "replan", "insert", "stop"}
+
+
+def _v6_build_ledger(goal: str, done_when: str, results: List[Dict[str, Any]],
+                     queue: List[Dict[str, Any]], *,
+                     per_step: int = _V6_LEDGER_PER_STEP,
+                     include_outputs: bool = False,
+                     total: int = _V6_LEDGER_TOTAL) -> str:
+    """Compact, current view of the run for the adaptive controller: what each
+    executed step was meant to achieve (its success criterion), whether it met it,
+    and a trimmed result — plus the still-pending steps. This IS the working
+    memory the controller reasons over.
+
+    `per_step`/`total` size the excerpt (the COMPLETION GATE uses a far larger
+    budget so a generated DELIVERABLE — a written profile/report/script — is
+    actually visible to judge, instead of cut at the compact controller default).
+    `include_outputs` also folds each step's named outputs/artifacts in."""
+    done_lines = []
+    for r in results:
+        crit = str(r.get("success") or "").strip()
+        met = r.get("met")
+        status = "OK" if r.get("ok") else "FAILED"
+        if met is True:
+            status += " · success bar MET"
+        elif met is False:
+            status += " · success bar NOT MET"
+        line = (
+            f"[{r['id']}] {r.get('title','')} — {status}"
+            + (f"\n   success bar: {crit}" if crit else "")
+            + (f"\n   verifier: {str(r.get('met_reason'))[:200]}" if r.get("met_reason") else "")
+            + f"\n   result: {(r.get('summary') or '')[:per_step]}")
+        if include_outputs and r.get("outputs"):
+            outs = "; ".join(f"{k}={str(v)[:600]}"
+                             for k, v in list((r.get("outputs") or {}).items())[:6])
+            if outs:
+                line += f"\n   outputs/artifacts: {outs[:per_step]}"
+        done_lines.append(line)
+    done_block = "\n".join(done_lines) or "(nothing executed yet)"
+    pend = " › ".join(f"{s['id']}. {s.get('title','')}" for s in queue) or "(none)"
+    return (f"GOAL: {goal}\n"
+            + (f"DONE WHEN: {done_when}\n" if done_when else "")
+            + f"\nEXECUTED STEPS:\n{done_block}\n\nPENDING STEPS: {pend}")[:max(total, _V6_LEDGER_TOTAL)]
+
+
+def _v6_coerce_control_steps(raw_steps: Any, base_id: int, goal: str,
+                             catalog_names: List[str], valid_skill_ids: set) -> List[Dict[str, Any]]:
+    """Normalise controller-produced steps into canonical step dicts with fresh,
+    collision-free ids continuing after `base_id`."""
+    if not isinstance(raw_steps, list):
+        return []
+    catalog_set = set(catalog_names)
+    out: List[Dict[str, Any]] = []
+    for st in raw_steps:
+        if not isinstance(st, dict):
+            continue
+        cs = _v5_coerce_step(st, len(out), goal, catalog_names, catalog_set, valid_skill_ids)
+        if cs:
+            cs["id"] = base_id + len(out) + 1
+            cs["needs"] = []          # controller steps run in emitted order
+            cs["complex"] = False     # bound nesting — no fresh sub-plans mid-flight
+            out.append(cs)
+    return out
+
+
+async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
+                      queue: List[Dict[str, Any]], last: Dict[str, Any],
+                      *, catalog_names: List[str], valid_skill_ids: set,
+                      base_id: int, steps_left: int, model: str, instance_id: str,
+                      prefer_gpu: bool) -> Dict[str, Any]:
+    """ONE cheap controller call after a step: read the ledger, weigh what the
+    step actually FOUND against the goal, and decide the next move. Returns
+    {assessment, findings, goal_alignment, direction, goal_met, action, steps}.
+    `action` is one of continue|replan|insert|stop; steps (for replan/insert) are
+    already coerced to canonical, id-assigned step dicts. Best-effort — on any
+    failure it returns a plain 'continue' so the run never stalls on the
+    controller."""
+    ledger = _v6_build_ledger(goal, done_when, results, queue)
+    # The step that just ran gets its OWN, much larger excerpt — the compact
+    # ledger trims every step to ~700 chars, which is too little to actually
+    # evaluate fresh findings against the goal (numbers, ids, error details).
+    _last_view = str(last.get("summary") or "")[:2400]
+    if last.get("outputs"):
+        _outs = "; ".join(f"{k}={str(v)[:400]}"
+                          for k, v in list((last.get("outputs") or {}).items())[:6])
+        if _outs:
+            _last_view += f"\nOUTPUTS: {_outs[:1200]}"
+    if not last.get("ok") and last.get("error"):
+        _last_view += f"\nERROR: {str(last.get('error'))[:400]}"
+    cap_lines = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names) or "  (none)"
+    sys = (
+        "You are the ADAPTIVE CONTROLLER of an agentic loop. A plan is being executed "
+        "step by step against a GOAL. After each step you inspect the LEDGER (what has "
+        "been done, whether each step met its success bar, and what is still pending) and "
+        "decide the SINGLE best next move. You do NOT execute anything yourself.\n"
+        "WORK IN THIS ORDER:\n"
+        "  1. FINDINGS — extract the key facts the step that just ran actually produced "
+        "(numbers, ids, states, errors). Facts only, no interpretation.\n"
+        "  2. EVALUATE AGAINST THE GOAL — do those findings advance the goal, are they "
+        "irrelevant to it, do they contradict an assumption the plan was built on, or do "
+        "they reveal a blocker? A step can succeed technically yet move the run nowhere — "
+        "judge progress toward the GOAL, not tool success.\n"
+        "  3. DIRECTION — from that evaluation, state in one sentence what the run should "
+        "do next (and what it should STOP doing, e.g. abandon a tool that keeps erroring).\n"
+        "  4. Only then pick the action.\n"
+        "Choose ONE action:\n"
+        "  • \"continue\" — the plan is still the right path; run the pending steps as-is.\n"
+        "  • \"insert\"   — the plan is broadly right but a step is needed BEFORE the "
+        "pending ones (fill a gap, or remediate the step that just ran / partially failed). "
+        "Provide `steps` (they run first, then the existing pending steps).\n"
+        "  • \"replan\"   — the remaining plan no longer fits what the evidence shows; "
+        "REPLACE all pending steps. Provide `steps` for the remaining work only.\n"
+        "  • \"stop\"     — the GOAL (see DONE WHEN) is already fully achieved by the "
+        "executed steps; end now (no more steps needed).\n"
+        "Be decisive but conservative: prefer \"continue\" when the plan is on track; only "
+        "replan/insert when the evidence genuinely warrants it; only \"stop\" when the goal "
+        "is DEMONSTRABLY met. Do NOT invent artifacts the goal did not ask for.\n"
+        "For inserted/replanned steps use the SAME shape as the original plan: a plain-"
+        "language title, a goal, the exact `caps` names from the catalog, and a checkable "
+        "`success` criterion. NEVER put planning/DAG capabilities in a step.\n"
+        "VERIFICATION STEPS: when a claimed result needs PROOF (code that 'works', an API "
+        "that 'responds', an edit that 'applied', a system state), insert a verification "
+        "step with exec caps (exec.python.run / exec.bash.run + code.read/ide.fs.read) and "
+        "phase it [\"verify\"]; its goal must say: write the SMALLEST test script that "
+        "decides the claim and print a PASS/FAIL verdict plus at most ~10 lines of "
+        "decision-relevant evidence — never dump whole files/logs/responses.\n"
+        "INFO-GATHERING STEPS: when the run is missing a FACT it needs to proceed, insert a "
+        "step that gathers it DETERMINISTICALLY — read-only caps / queries / scripts, phase "
+        "[\"explore\"] — not guesswork. Its goal must say to print a CONCISE, COMPLETE summary "
+        "of what was found (the key values/ids/counts, not a raw dump) so the next step reads "
+        "exactly the signal it needs.\n"
+        f"You have room for about {max(0, steps_left)} more step(s).\n"
+        "AVAILABLE CAPABILITIES (name — description):\n" + cap_lines + "\n"
+        'Respond ONLY with JSON:\n'
+        '{"findings":"<key facts the last step produced>",'
+        '"goal_alignment":"advances|neutral|off_track|blocker",'
+        '"direction":"<one-sentence steer for the next step>",'
+        '"assessment":"<one or two sentences on the state of the run>",'
+        '"goal_met":false,"action":"continue|insert|replan|stop",'
+        '"steps":[{"title":"<plain-language>","goal":"<what to achieve>",'
+        '"caps":["cap.name"],"success":"<checkable criterion>"}]}'
+    )
+    _last_met = last.get("met")
+    prompt = (f"LEDGER:\n{ledger}\n\n"
+              f"THE STEP THAT JUST RAN: [{last.get('id')}] {last.get('title','')} — "
+              f"{'OK' if last.get('ok') else 'FAILED'}"
+              + ("" if _last_met is None else
+                 (" (verifier: success bar MET)" if _last_met
+                  else " (verifier: success bar NOT MET — treat as unresolved even if it "
+                       "reported ok; remediate or replan)"))
+              + f"\nWHAT IT PRODUCED (evaluate these findings against the GOAL):\n"
+              + (_last_view or "(no output captured)")
+              + "\n\nDecide the next move.")
+    try:
+        raw = await _safe_ollama_generate_dw(
+            prompt, system=sys, model=model, instance_id=instance_id,
+            prefer_gpu=prefer_gpu, json_mode=True)
+        obj = _extract_json(_strip_think(raw or "")[0]) or {}
+    except Exception as e:
+        log.debug("v6 control call failed: %s", e)
+        return {"assessment": "", "findings": "", "goal_alignment": "",
+                "direction": "", "goal_met": False, "action": "continue", "steps": []}
+    if not isinstance(obj, dict):
+        return {"assessment": "", "findings": "", "goal_alignment": "",
+                "direction": "", "goal_met": False, "action": "continue", "steps": []}
+    action = str(obj.get("action") or "continue").strip().lower()
+    if action not in _V6_CONTROL_ACTIONS:
+        action = "continue"
+    goal_met = bool(obj.get("goal_met")) or action == "stop"
+    steps: List[Dict[str, Any]] = []
+    if action in ("insert", "replan"):
+        steps = _v6_coerce_control_steps(obj.get("steps"), base_id, goal,
+                                         catalog_names, valid_skill_ids)
+        if not steps:
+            # An insert/replan with no usable steps is a no-op — fall back to
+            # continuing rather than stalling or wiping the queue.
+            action = "continue"
+    _align = str(obj.get("goal_alignment") or "").strip().lower()
+    if _align not in ("advances", "neutral", "off_track", "blocker"):
+        _align = ""
+    return {"assessment": str(obj.get("assessment") or "")[:600],
+            "findings": str(obj.get("findings") or "")[:800],
+            "goal_alignment": _align,
+            "direction": str(obj.get("direction") or "")[:400],
+            "goal_met": goal_met, "action": action, "steps": steps}
+
+
+async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]],
+                         *, catalog_names: List[str], valid_skill_ids: set,
+                         base_id: int, steps_left: int, model: str,
+                         instance_id: str, prefer_gpu: bool) -> Dict[str, Any]:
+    """Final completion gate: verify the whole GOAL is met (against `done_when`)
+    before synthesising the answer. If it is not — and there is step budget left —
+    return follow-up steps to close the gap. Returns {complete, missing,
+    follow_up}."""
+    ledger = _v6_build_ledger(goal, done_when, results, [], per_step=_V6_GATE_PER_STEP,
+                              include_outputs=True, total=_V6_GATE_LEDGER_TOTAL)
+    cap_lines = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names) or "  (none)"
+    sys = (
+        "You are the COMPLETION GATE for an agentic run. Judge whether the GOAL "
+        "has been achieved by the executed steps (use DONE WHEN as the bar). A goal that "
+        "was only partially done is NOT complete.\n"
+        "CRUCIAL — recognise DELIVERABLES: when the goal was to PRODUCE something (write a "
+        "profile / report / script / plan / email / code, generate content, draft copy), that "
+        "artifact EXISTING in the ledger's result/outputs and substantively addressing the "
+        "request MEANS THE GOAL IS MET. Do NOT rule it incomplete for lacking external "
+        "validation, publishing, delivery, or extra polish the goal did not explicitly ask for. "
+        "Judge the artifact that WAS produced, not an idealised one.\n"
+        + (f"There is room for about {max(0, steps_left)} follow-up step(s) if needed.\n"
+           if steps_left > 0 else "There is NO budget for further steps — just judge.\n")
+        + "If incomplete AND steps are allowed, provide `follow_up` steps (same shape as a "
+        "plan step: title, goal, exact `caps`, `success`) to finish the job. NEVER include "
+        "planning/DAG capabilities.\n"
+        "AVAILABLE CAPABILITIES (name — description):\n" + cap_lines + "\n"
+        'Respond ONLY with JSON:\n'
+        '{"complete":true,"missing":["<what is still missing>"],'
+        '"follow_up":[{"title":"<plain-language>","goal":"<achieve>","caps":["cap.name"],'
+        '"success":"<criterion>"}]}'
+    )
+    prompt = f"LEDGER:\n{ledger}\n\nIs the GOAL fully achieved? If not, what is missing?"
+    try:
+        raw = await _safe_ollama_generate_dw(
+            prompt, system=sys, model=model, instance_id=instance_id,
+            prefer_gpu=prefer_gpu, json_mode=True)
+        obj = _extract_json(_strip_think(raw or "")[0]) or {}
+    except Exception as e:
+        log.debug("v6 final gate failed: %s", e)
+        return {"complete": True, "missing": [], "follow_up": []}
+    if not isinstance(obj, dict):
+        return {"complete": True, "missing": [], "follow_up": []}
+    complete = bool(obj.get("complete", True))
+    missing = [str(m)[:200] for m in (obj.get("missing") or []) if str(m).strip()][:8]
+    follow_up: List[Dict[str, Any]] = []
+    if not complete and steps_left > 0:
+        follow_up = _v6_coerce_control_steps(obj.get("follow_up"), base_id, goal,
+                                             catalog_names, valid_skill_ids)
+    return {"complete": complete, "missing": missing, "follow_up": follow_up}
+
+
+async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
+                          model: str, instance_id: str, prefer_gpu: bool) -> Dict[str, Any]:
+    """ONE cheap judge call per step: did the step's RESULT objectively satisfy
+    its success criterion? A step can end ok=True (some tool returned something
+    usable) while the thing the planner actually asked for never happened — the
+    verifier catches exactly that gap and feeds it to the controller/ledger.
+    Returns {met: bool, reason}. Best-effort: on judge failure it trusts the
+    step's own ok flag so the run never stalls on verification."""
+    crit = str(step.get("success") or "").strip()
+    if not crit:
+        return {"met": bool(res.get("ok")), "reason": ""}
+    outs = "\n".join(f"- {k}: {str(v)[:300]}"
+                     for k, v in list((res.get("outputs") or {}).items())[:8])
+    hist = "\n".join(f"- {h.get('tool')} → {'ok' if h.get('ok') else 'FAILED'}"
+                     for h in (res.get("history") or [])[-10:]
+                     if h.get("tool"))
+    sys = ("You judge whether ONE step of an agentic run met its SUCCESS CRITERION. "
+           "Judge STRICTLY on the evidence: if the evidence does not show the criterion "
+           "objectively satisfied, it is NOT met — errors, stalls, denials, or output "
+           "unrelated to the criterion all mean NOT met. A step that merely produced "
+           "'some result' has not met a criterion that asked for something specific.\n"
+           'Respond ONLY with JSON: {"met":true,"reason":"<one sentence of evidence>"}')
+    prompt = (f"SUCCESS CRITERION: {crit}\n\nSTEP GOAL: {step.get('goal', '')}\n"
+              f"STEP ENDED ok={bool(res.get('ok'))}\n"
+              + (f"TOOL CALLS:\n{hist}\n" if hist else "")
+              + (f"OUTPUTS:\n{outs}\n" if outs else "")
+              + f"RESULT SUMMARY:\n{(res.get('summary') or '')[:2000]}\n\n"
+                "Was the criterion met?")
+    try:
+        raw = await _safe_ollama_generate_dw(
+            prompt, system=sys, model=model, instance_id=instance_id,
+            prefer_gpu=prefer_gpu, json_mode=True)
+        obj = _extract_json(_strip_think(raw or "")[0]) or {}
+        if isinstance(obj, dict) and "met" in obj:
+            return {"met": bool(obj.get("met")),
+                    "reason": str(obj.get("reason") or "")[:300]}
+    except Exception as e:
+        log.debug("v6 step verify failed: %s", e)
+    return {"met": bool(res.get("ok")), "reason": ""}
+
+
+_V6_FINALIZE_MIN_RAW = 400      # skip distillation below this — nothing to trim
+_V6_FINALIZE_OUT_MAX = 2500     # cap on a step's distilled output
+
+
+async def _v6_finalize_step(step: Dict[str, Any], res: Dict[str, Any], goal: str, *,
+                            model: str, instance_id: str, prefer_gpu: bool) -> None:
+    """Distil ONE finished step's cycles into a finalised, RELEVANT-ONLY output.
+
+    A step's raw `summary` is whatever the specialist last emitted (its `done`
+    string, or a trailing tool preview) — often verbose, full of intermediate
+    chatter, or a raw JSON blob. Downstream steps read this summary as their
+    context, and the branch merge/prune model compares steps on it, so it needs
+    to carry ONLY what achieves this step's goal or feeds a later step. This runs
+    one cheap synthesis pass and rewrites `res["summary"]` to the distilled form,
+    preserving the original as `res["raw_summary"]`. Best-effort and mutating:
+    on any failure the step keeps its raw summary untouched. Skipped for steps
+    with little raw material (nothing to trim) so the fast path stays fast."""
+    raw = str(res.get("summary") or "")
+    # Nothing worth distilling: trivially short, or the step failed to act (the
+    # 'STEP DID NOT ACT' / no-result markers must reach the controller verbatim).
+    if len(raw) < _V6_FINALIZE_MIN_RAW:
+        return
+    if raw.startswith("STEP DID NOT ACT") or raw.startswith("Step finished with no explicit result"):
+        return
+    crit = str(step.get("success") or "").strip()
+    outs = "\n".join(f"- {k}: {str(v)[:400]}"
+                     for k, v in list((res.get("outputs") or {}).items())[:10])
+    sys = (
+        "You are a step FINALISER in an agentic run. A specialist sub-agent just finished ONE "
+        "step. Rewrite its raw output into the step's FINALISED result: keep ONLY the information "
+        "that objectively achieves this step's goal or that a LATER step would need — the concrete "
+        "findings, values, paths, decisions, and artifacts. STRIP intermediate reasoning, retries, "
+        "tool chatter, apologies, and restated instructions. Preserve exact identifiers verbatim "
+        "(file paths, URLs, IDs, numbers, code/command output). Do NOT invent or add anything that "
+        "is not in the raw output; do NOT pad. If the raw output is already tight, return it "
+        "essentially unchanged. Output the finalised result as plain text (or compact structured "
+        "text if the data is structured) — no preamble, no 'Here is', just the result.")
+    prompt = (f"OVERALL GOAL: {goal[:600]}\n"
+              f"THIS STEP'S GOAL: {step.get('goal', '')}\n"
+              + (f"THIS STEP'S SUCCESS CRITERION: {crit}\n" if crit else "")
+              + (f"\nSTRUCTURED OUTPUTS PRODUCED:\n{outs}\n" if outs else "")
+              + f"\nRAW STEP OUTPUT:\n{raw[:_V5_DONE_SUMMARY]}\n\n"
+                "Write the finalised, relevant-only result for this step.")
+    try:
+        out = await _safe_ollama_generate_dw(
+            prompt, system=sys, model=model, instance_id=instance_id,
+            prefer_gpu=prefer_gpu, json_mode=False)
+        out = _strip_think(out or "")[0].strip()
+    except Exception as e:
+        log.debug("v6 step finalize failed: %s", e)
+        return
+    # Guard against a degenerate pass (empty, or a refusal that lost the content).
+    if not out or len(out) < 24:
+        return
+    res["raw_summary"] = raw
+    res["summary"] = out[:_V6_FINALIZE_OUT_MAX]
+    res["finalized"] = True
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# STEP ADJUSTMENT ON VERIFICATION FAILURE (the `extra_step` recovery)
+# ─────────────────────────────────────────────────────────────────────────────
+# When a step runs but its result FAILS its success bar (ok=False, or the verifier
+# rules the bar not met), the loop does not just re-run the same step or push on:
+# it builds an ADJUSTED version of the step that navigates the SPECIFIC problem the
+# verifier found — a changed tactic, possibly different/additional caps, and (for a
+# step that creates or changes something) an explore→act→verify phase cadence so
+# the retry inspects the failure before acting and checks itself after. It is
+# seeded with what the step already produced so it builds forward instead of
+# restarting. One cheap LLM call; on any miss it falls back to a plain
+# continuation step. Bounded by the run's recovery budget (max_branches).
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _v6_make_recovery_step(failed_step: Dict[str, Any], failed_res: Dict[str, Any],
+                           new_id: int) -> Dict[str, Any]:
+    """Plain continuation step for the `extra_step` failure strategy — the static
+    fallback when LLM step-adjustment is unavailable or fails. Unlike a branch
+    (which explores a DIFFERENT approach from a clean fork), this CONTINUES the
+    failed step's own line: it inherits the live blackboard and is seeded with a
+    digest of the failed step's output plus WHY it fell short, so the specialist
+    does the specific missing work rather than restarting from scratch."""
+    why = (str(failed_res.get("met_reason") or "")
+           or str(failed_res.get("summary") or ""))[:600]
+    prior = str(failed_res.get("summary")
+                or failed_res.get("raw_summary") or "")[:2000]
+    crit = str(failed_step.get("success") or "").strip()
+    goal_txt = (
+        "CONTINUE the previous step toward its goal — it ran but did NOT yet meet its "
+        "success bar. Do the SPECIFIC missing work and build DIRECTLY on what the "
+        "previous step already produced; do NOT restart from scratch or re-collect "
+        "anything you already have.\n\n"
+        f"PREVIOUS STEP: {str(failed_step.get('title', ''))[:120]}\n"
+        f"  its goal: {str(failed_step.get('goal', ''))[:600]}\n"
+        + (f"  why it fell short: {why}\n" if why else "")
+        + (f"\nOUTPUT SO FAR (build on this — this is what the previous step returned):\n{prior}\n"
+           if prior else ""))
+    return {
+        "id": new_id,
+        "title": f"Recover: {str(failed_step.get('title', ''))[:90]}",
+        "goal": goal_txt,
+        "caps": list(failed_step.get("caps") or []),
+        "skills": list(failed_step.get("skills") or []),
+        "needs": [], "complex": False, "phases": [],
+        "success": crit,
+        "_recovery": True,
+        "_prereq_done": True,   # context is already embedded; skip prestep-info
+    }
+
+
+async def _v6_adjust_step(failed_step: Dict[str, Any], failed_res: Dict[str, Any],
+                          goal: str, *, catalog_names: List[str], valid_skill_ids: set,
+                          new_id: int, phase_policy: str = "sparingly",
+                          allowed_phases: Optional[List[str]] = None,
+                          model: str, instance_id: str, prefer_gpu: bool) -> Dict[str, Any]:
+    """Produce an ADJUSTED retry of a step that failed its success bar, tuned to get
+    PAST the specific problem the verifier reported. One cheap call returns a new
+    tactic (reframed goal), the caps it should use (its own plus any better-suited
+    ones from the catalog), and — for a create/change step — a phase cadence so the
+    retry inspects the failure first and verifies itself after. Seeded with the
+    step's own prior output so it builds forward. Falls back to a plain continuation
+    step on any failure. Returns a canonical step dict with id == new_id."""
+    fallback = _v6_make_recovery_step(failed_step, failed_res, new_id)
+    crit = str(failed_step.get("success") or "").strip()
+    why = (str(failed_res.get("met_reason") or "")[:400]
+           or str(failed_res.get("raw_summary") or failed_res.get("summary") or "")[:500])
+    prior = str(failed_res.get("summary") or failed_res.get("raw_summary") or "")[:1800]
+    cur_caps = list(failed_step.get("caps") or [])
+    cap_lines = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names) or "  (none)"
+    _phase_hint = ("You MAY set `phases` (a subset of explore/think/act/verify, run as ordered "
+                   "scoped sub-agents) when the retry should INSPECT the failure before acting and "
+                   "CHECK itself after — for a step that creates or changes something prefer "
+                   '["explore","act","verify"]. Leave `phases` empty for a pure lookup.'
+                   if (phase_policy or "sparingly").strip().lower() != "off"
+                   else "Do NOT set `phases` — leave it empty.")
+    sys = (
+        "You REPAIR one failed step of an agentic run. The step ran but did NOT meet its success "
+        "bar. Design an ADJUSTED version of the step that navigates the SPECIFIC problem the "
+        "verifier reported — change the TACTIC, not just the wording: pick a different/additional "
+        "capability, a different data source or decomposition, or a safer sequence. Build on what "
+        "the step already produced (do NOT restart from scratch or re-collect what it already "
+        "has). Keep the SAME success criterion. Use ONLY the available capabilities (by exact "
+        "name). " + _phase_hint + "\n"
+        'Respond ONLY with JSON: {"title":"<plain-language>","goal":"<the adjusted approach, '
+        'naming what went wrong and how this navigates it>","caps":["cap.name"],"phases":[],'
+        '"success":"<same checkable criterion>"}')
+    prompt = (f"OVERALL GOAL: {goal[:600]}\n\n"
+              f"FAILED STEP: {str(failed_step.get('title',''))[:120]}\n"
+              f"  its goal: {str(failed_step.get('goal',''))[:600]}\n"
+              + (f"  success bar: {crit}\n" if crit else "")
+              + (f"  caps it used: {', '.join(cur_caps)}\n" if cur_caps else "")
+              + f"  WHY IT FAILED: {why}\n\n"
+              + (f"OUTPUT SO FAR (build on this):\n{prior}\n\n" if prior else "")
+              + f"AVAILABLE CAPABILITIES:\n{cap_lines}\n\nDesign the adjusted step.")
+    try:
+        raw = await _safe_ollama_generate_dw(
+            prompt, system=sys, model=model, instance_id=instance_id,
+            prefer_gpu=prefer_gpu, json_mode=True)
+        obj = _extract_json(_strip_think(raw or "")[0]) or {}
+    except Exception as e:
+        log.debug("v6 adjust step failed: %s", e)
+        return fallback
+    if not isinstance(obj, dict) or not (obj.get("goal") or obj.get("title")):
+        return fallback
+    catalog_set = set(catalog_names)
+    # caps — the step's own PLUS whatever the adjuster picked, validated + bounded.
+    caps: List[str] = list(cur_caps)
+    _raw_caps = obj.get("caps")
+    if isinstance(_raw_caps, str):
+        _raw_caps = [x.strip() for x in _raw_caps.replace(",", " ").split() if x.strip()]
+    for c in (_raw_caps or []):
+        c = str(c).strip()
+        if not c:
+            continue
+        if catalog_set and c not in catalog_set:
+            c = _v5_resolve_tool_name(c, catalog_names, catalog_set)
+        if (not catalog_set or c in catalog_set) and c not in caps:
+            caps.append(c)
+    caps = caps[:8] or list(cur_caps)
+    # phases — respect the run's policy + the allowed phase set.
+    phases: List[str] = []
+    if (phase_policy or "sparingly").strip().lower() != "off":
+        _allowed = set(allowed_phases or _V5_PHASES)
+        phases = [p for p in _V5_PHASES if p in set(obj.get("phases") or []) and p in _allowed]
+    # Embed the prior output + failure reason directly into the goal so the retry
+    # builds forward (and so prestep-info can be skipped — context is already here).
+    adj_goal = str(obj.get("goal") or failed_step.get("goal") or "")[:700]
+    seed = (f"\n\nThe previous attempt at this step did NOT meet its bar.\n"
+            + (f"WHY IT FAILED: {why}\n" if why else "")
+            + (f"\nOUTPUT SO FAR (build on this — do NOT re-collect it):\n{prior}\n" if prior else ""))
+    return {
+        "id": new_id,
+        "title": (str(obj.get("title") or failed_step.get("title") or "Adjust step")[:120]),
+        "goal": (adj_goal + seed)[:2600],
+        "caps": caps,
+        "skills": list(failed_step.get("skills") or []),
+        "needs": [], "complex": False, "phases": phases,
+        "success": crit or str(obj.get("success") or "")[:240],
+        "_recovery": True,
+        "_adjusted": True,
+        "_prereq_done": True,
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# STRUCTURED RUN JOURNAL (complex / long-term mode → the data fabric)
+# ─────────────────────────────────────────────────────────────────────────────
+# On a complex or long-horizon run the loop keeps a rolling STRUCTURED record of
+# the outputs that matter: the goal-relevant findings/values, the files and
+# artifact paths produced, the tools/caps used, and the key entities/apps
+# involved. Each finished step contributes one record. The journal is:
+#   • persisted to the DATA FABRIC (dataset `agent_loop.journal`, tagged by
+#     session/goal/tier/slug) so it is searchable and survives the run;
+#   • mirrored to a JSON file (`journal.json`) in the run's artifact dir;
+#   • folded back into LATER steps as a compact digest, so the run reuses its own
+#     accumulated outputs, paths, and findings instead of re-deriving them — and
+#     an ephemeral step sub-agent sees exactly the context it needs.
+# All best-effort; a journal failure never affects the run.
+# ═════════════════════════════════════════════════════════════════════════════
+
+_V6_JOURNAL_DATASET = "agent_loop.journal"
+_V6_JOURNAL_DIGEST_MAX = 2600           # chars of journal digest folded into a step
+_V6_JOURNAL_DIGEST_ENTRIES = 12         # most-recent entries included in the digest
+
+
+def _v6_journal_derive(res: Dict[str, Any]) -> Dict[str, List[str]]:
+    """Heuristic, no-LLM extraction from a step result: the caps/tools it actually
+    called (from history) and any file/artifact paths in its outputs. These are
+    facts we already have, so we never pay a model to recover them."""
+    tools: List[str] = []
+    for h in (res.get("history") or []):
+        t = h.get("tool") if isinstance(h, dict) else None
+        if t and t not in tools:
+            tools.append(str(t))
+    files: List[str] = []
+    for k, v in list((res.get("outputs") or {}).items()):
+        sv = str(v)
+        # Treat path-looking output values (and any 'path'/'file' keyed output) as artifacts.
+        if ("path" in str(k).lower() or "file" in str(k).lower()
+                or re.search(r"[\\/][\w.\-]+\.\w{1,6}\b", sv)):
+            cand = sv.strip().splitlines()[0][:200] if sv.strip() else ""
+            if cand and cand not in files:
+                files.append(cand)
+    return {"tools": tools[:12], "files": files[:12]}
+
+
+async def _v6_journal_extract(step: Dict[str, Any], res: Dict[str, Any], goal: str, *,
+                              model: str, instance_id: str, prefer_gpu: bool) -> Dict[str, Any]:
+    """Distil ONE finished step into a structured journal record. Heuristic parts
+    (tools, files) come straight from the result; a single cheap LLM pass pulls the
+    goal-relevant key outputs, entities/apps, and a one-line note. Best-effort —
+    returns at least the heuristic record on any failure."""
+    derived = _v6_journal_derive(res)
+    rec: Dict[str, Any] = {
+        "step_id": step.get("id"),
+        "title": str(step.get("title") or "")[:160],
+        "ok": bool(res.get("ok")),
+        "met": res.get("met"),
+        "ts": now_iso(),
+        "key_outputs": [],
+        "files": derived["files"],
+        "tools": derived["tools"],
+        "entities": [],
+        "note": "",
+    }
+    summary = str(res.get("summary") or res.get("raw_summary") or "")
+    if len(summary) < 40:
+        return rec
+    sys = (
+        "You maintain a STRUCTURED JOURNAL of an agentic run. From ONE finished step's output, "
+        "extract ONLY what a LATER step or the final answer would need to reuse — concrete, "
+        "reusable facts, never chatter. Return:\n"
+        "  • key_outputs — the specific results/values/decisions this step produced that matter "
+        "for the GOAL (short strings; exact numbers/IDs/URLs verbatim; [] if none)\n"
+        "  • files — file or artifact PATHS it produced or wrote (in addition to any already "
+        "known; [] if none)\n"
+        "  • entities — the key named things it touched: apps, services, hosts, tools, datasets, "
+        "people, domains ([] if none)\n"
+        "  • note — ONE short line on what this step contributes to the goal\n"
+        'Respond ONLY with JSON: {"key_outputs":[],"files":[],"entities":[],"note":""}')
+    prompt = (f"OVERALL GOAL: {goal[:500]}\n"
+              f"THIS STEP: {str(step.get('title',''))[:120]}\n"
+              f"STEP GOAL: {str(step.get('goal',''))[:400]}\n\n"
+              f"STEP OUTPUT:\n{summary[:_V5_DONE_SUMMARY]}\n\n"
+              "Extract the journal record.")
+    try:
+        raw = await _safe_ollama_generate_dw(
+            prompt, system=sys, model=model, instance_id=instance_id,
+            prefer_gpu=prefer_gpu, json_mode=True)
+        obj = _extract_json(_strip_think(raw or "")[0]) or {}
+    except Exception as e:
+        log.debug("v6 journal extract failed: %s", e)
+        obj = {}
+    if isinstance(obj, dict):
+        def _strs(x, n, cap):
+            if isinstance(x, str):
+                x = [x]
+            return [str(i).strip()[:cap] for i in x if str(i).strip()][:n] if isinstance(x, list) else []
+        rec["key_outputs"] = _strs(obj.get("key_outputs"), 8, 400)
+        rec["entities"] = _strs(obj.get("entities"), 12, 80)
+        rec["note"] = str(obj.get("note") or "")[:240]
+        for f in _strs(obj.get("files"), 8, 200):
+            if f not in rec["files"]:
+                rec["files"].append(f)
+    return rec
+
+
+def _v6_journal_digest(journal: List[Dict[str, Any]], *,
+                       limit: int = _V6_JOURNAL_DIGEST_ENTRIES,
+                       max_chars: int = _V6_JOURNAL_DIGEST_MAX) -> str:
+    """Compact, reusable view of the journal to fold into a later step's context."""
+    lines: List[str] = []
+    for e in journal[-limit:]:
+        head = f"• [{e.get('step_id')}] {e.get('title','')}".rstrip()
+        lines.append(head)
+        for ko in (e.get("key_outputs") or [])[:6]:
+            lines.append(f"    - {ko}")
+        if e.get("files"):
+            lines.append(f"    files: {', '.join(e['files'][:6])}")
+        if e.get("entities"):
+            lines.append(f"    entities: {', '.join(e['entities'][:8])}")
+    return "\n".join(lines)[:max_chars]
+
+
+async def _v6_journal_persist(entry: Dict[str, Any], journal: List[Dict[str, Any]], *,
+                              session_id: str, goal: str, done_when: str,
+                              artifact_dir_path: str, slug: str, tier: str) -> None:
+    """Persist the journal: ingest this entry into the data fabric (searchable,
+    survives the run) and rewrite the full JSON mirror in the artifact dir. Best-
+    effort and non-fatal."""
+    # 1) Data fabric — one record per step entry.
+    try:
+        fabric = sys.modules.get("data_fabric")
+        if fabric:
+            text = (f"[journal] {entry.get('title','')} — "
+                    + "; ".join(entry.get("key_outputs") or [])[:600]
+                    + (f" | files: {', '.join(entry.get('files') or [])}" if entry.get("files") else "")
+                    + (f" | entities: {', '.join(entry.get('entities') or [])}" if entry.get("entities") else ""))
+            await fabric.ingest_dataset(
+                dataset_id=_V6_JOURNAL_DATASET,
+                data=[{"text": text[:2000], "session_id": session_id, "goal": goal[:300],
+                       "step_id": entry.get("step_id"), "title": entry.get("title"),
+                       "key_outputs": entry.get("key_outputs"), "files": entry.get("files"),
+                       "tools": entry.get("tools"), "entities": entry.get("entities"),
+                       "note": entry.get("note"), "tier": tier, "slug": slug,
+                       "ts": entry.get("ts")}],
+                source="agent_loop_journal", source_id=session_id or slug,
+                tags=["agent-loop", "journal", tier] + ([slug] if slug else []))
+    except Exception as e:
+        log.debug("v6 journal fabric ingest failed: %s", e)
+    # 2) JSON file mirror — the whole journal, rewritten each step. Written via
+    # the sandbox-aware artifact writer so a sandboxed session's journal lands
+    # INSIDE its container (/workspace) instead of creating a host directory.
+    if artifact_dir_path:
+        try:
+            doc = {"goal": goal, "done_when": done_when, "session_id": session_id,
+                   "slug": slug, "tier": tier, "updated": now_iso(), "entries": journal}
+            payload = json.dumps(doc, ensure_ascii=False, indent=2, default=str)
+            wrote = False
+            try:
+                import importlib as _il
+                _exec_mod = _il.import_module("Vera.vera.execution.exec_capabilities")
+                await _exec_mod.write_artifact_file(
+                    relpath="journal.json", content=payload, session_id=session_id)
+                wrote = True
+            except Exception as e:
+                log.debug("v6 journal artifact-writer mirror failed: %s", e)
+            if not wrote and not str(artifact_dir_path).replace("\\", "/").startswith("/workspace"):
+                path = os.path.join(artifact_dir_path, "journal.json")
+                def _write():
+                    os.makedirs(artifact_dir_path, exist_ok=True)
+                    with open(path, "w", encoding="utf-8") as fh:
+                        fh.write(payload)
+                await asyncio.to_thread(_write)
+        except Exception as e:
+            log.debug("v6 journal file mirror failed: %s", e)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# BRANCHING EXECUTOR (the "git-tree")
+# ─────────────────────────────────────────────────────────────────────────────
+# When a step fails its success bar, the linear controller's only recourse is a
+# single in-place replan. The branching executor instead FORKS from the last good
+# point and explores up to `fanout` DISTINCT alternate approaches as sibling
+# branches. Each branch runs on an ANCESTOR-CHAIN-ISOLATED blackboard — it sees
+# the fork point's ancestors but NOT the failed attempt and NOT its siblings — so
+# a branch that dies can be pruned cleanly, keeping only a one-line record of the
+# approach and why it failed (which is fed back so the strategist won't re-suggest
+# it). The first branch that satisfies the failed step's success bar MERGES: its
+# finalised outputs stand in for the step and the main line continues. Branches
+# may run sequentially (cheap, default) or concurrently (parallel ephemeral
+# agents). Branching only engages ON FAILURE, so a clean run is cost-neutral.
+# ═════════════════════════════════════════════════════════════════════════════
+
+_V6_BRANCH_STEP_MAX = 3        # steps an alternate approach may propose
+
+
+async def _v6_branch_strategist(goal: str, failed_step: Dict[str, Any],
+                                failed_res: Dict[str, Any], inherited: str,
+                                prune_records: List[Dict[str, Any]], *,
+                                fanout: int, catalog_names: List[str],
+                                valid_skill_ids: set, base_id: int,
+                                model: str, instance_id: str,
+                                prefer_gpu: bool) -> List[Dict[str, Any]]:
+    """Propose up to `fanout` DISTINCT alternate approaches to get PAST a failed
+    step toward its goal. Each approach is {label, steps:[canonical step dicts]}.
+    `prune_records` lists approaches already tried at this fork (with why they
+    failed) so the strategist avoids repeating them. Best-effort: [] on failure."""
+    crit = str(failed_step.get("success") or "").strip()
+    why = (str(failed_res.get("met_reason") or "")[:300]
+           or str(failed_res.get("raw_summary") or failed_res.get("summary") or "")[:500])
+    tried = "\n".join(f"  ✗ {p.get('label','?')} — {str(p.get('reason',''))[:180]}"
+                      for p in (prune_records or [])) or "  (none yet)"
+    cap_lines = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names) or "  (none)"
+    sys = (
+        "You are a BRANCH STRATEGIST in an agentic run. ONE step just FAILED to meet its bar. "
+        "Propose GENUINELY DIFFERENT alternate approaches to accomplish THAT step's goal — not "
+        "reworded retries of the failed approach, and not repeats of approaches already tried "
+        "(listed below). Each approach must attack the goal from a different angle: a different "
+        "capability, a different data source/tool, a different decomposition. Keep each approach "
+        f"SHORT — at most {_V6_BRANCH_STEP_MAX} steps. Use only the AVAILABLE CAPABILITIES.\n"
+        f"Propose at most {max(1, fanout)} approaches, ordered best-first.\n"
+        'Respond ONLY with JSON: {"approaches":[{"label":"<short distinct name>","steps":['
+        '{"title":"<plain-language>","goal":"<what this step achieves>","caps":["cap.name"],'
+        '"skills":[],"success":"<one-line checkable criterion>"}]}]}')
+    prompt = (f"OVERALL GOAL: {goal[:600]}\n\n"
+              f"FAILED STEP: {failed_step.get('title','')}\n"
+              f"  goal: {failed_step.get('goal','')}\n"
+              + (f"  success bar: {crit}\n" if crit else "")
+              + f"  why it failed: {why}\n\n"
+              f"APPROACHES ALREADY TRIED AT THIS FORK (do NOT repeat):\n{tried}\n\n"
+              + (f"CONTEXT AVAILABLE AT THE FORK POINT (from earlier good steps — branches "
+                 f"inherit all of this):\n{inherited[:4000]}\n\n"
+                 if inherited else "")
+              + f"AVAILABLE CAPABILITIES:\n{cap_lines}\n\nPropose the alternate approaches.")
+    try:
+        raw = await _safe_ollama_generate_dw(
+            prompt, system=sys, model=model, instance_id=instance_id,
+            prefer_gpu=prefer_gpu, json_mode=True)
+        obj = _extract_json(_strip_think(raw or "")[0]) or {}
+    except Exception as e:
+        log.debug("v6 branch strategist failed: %s", e)
+        return []
+    approaches_raw = obj.get("approaches") if isinstance(obj, dict) else None
+    if not isinstance(approaches_raw, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    next_base = base_id
+    for ap in approaches_raw[:max(1, fanout)]:
+        if not isinstance(ap, dict):
+            continue
+        steps = _v6_coerce_control_steps(
+            (ap.get("steps") or [])[:_V6_BRANCH_STEP_MAX],
+            next_base, failed_step.get("goal") or goal, catalog_names, valid_skill_ids)
+        if not steps:
+            continue
+        next_base = max(s["id"] for s in steps)
+        out.append({"label": str(ap.get("label") or f"approach {len(out)+1}")[:60],
+                    "steps": steps})
+    return out
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TIER CLASSIFIER (V7 — the reason "complex planning" now fires)
+# ─────────────────────────────────────────────────────────────────────────────
+# v6 only ran the strategic master planner when the planning LLM self-classified
+# a goal as "extreme" — which it was told to do almost never, so broad goals got
+# a flat step breakdown and never a strategic plan. The tier classifier replaces
+# that single rare signal with TWO triggers: a cheap heuristic floor AND a
+# less-prescriptive LLM pre-pass that may knock out quick wins normally but
+# escalate the genuinely large/multi-day remainder. The higher of the two drives
+# whether the master planner fires. `auto_escalate` gates whether the loop may
+# SILENTLY run the heaviest (strategic / multi-day) tier or only recommend it.
+#   single    → one cap / trivial: fast path, skip recon + master planner
+#   simple    → a few steps, no strategic plan needed
+#   complex   → multi-step / multi-domain: draft a strategic long-form plan first
+#   strategic → large or multi-day: strategic plan (+ future dream persistence)
+# ═════════════════════════════════════════════════════════════════════════════
+
+_V7_TIERS = ("single", "simple", "complex", "strategic")
+
+_V7_STRATEGIC_HINTS = (
+    "over the next", "next week", "next few days", "coming weeks", "over days",
+    "over the coming", "long-term", "long term", "multi-day", "multi day", "over weeks",
+    "ongoing", "continuously", "roadmap", "milestone", "phased", "each day", "daily",
+    "week-long", "several days", "over the week",
+    # Open-ended / long-horizon OBJECTIVES (no single cap or session finishes them).
+    "earn income", "earn money", "make money", "generate income", "passive income",
+    "grow a business", "start a business", "build a business", "grow revenue",
+    "become profitable", "financial independence", "side income", "monetize")
+# Substring hints miss inflected variants ('earning money', 'ways to make an
+# income', 'monetise', 'income streams'). This regex catches the open-ended
+# MONETIZATION / EARNING / BUSINESS-GROWTH family robustly so those goals reach
+# the 'strategic' tier (and thus dream persistence) regardless of phrasing.
+_V7_STRATEGIC_RE = re.compile(
+    r"\b("
+    r"earn(?:ing)?\s+(?:money|income|revenue|cash)"
+    r"|mak(?:e|ing)\s+(?:money|an?\s+income)"
+    r"|generat(?:e|ing)\s+(?:income|revenue|money)"
+    r"|moneti[sz]\w*"
+    r"|passive\s+income|side\s+income|side\s+hustle"
+    r"|(?:income|revenue)\s+stream|stream(?:s)?\s+of\s+income"
+    r"|financial(?:ly)?\s+(?:independen|freedom)"
+    r"|(?:grow|start|build|launch|scale|run)\s+(?:a\s+|my\s+|the\s+)?"
+    r"(?:business|start-?up|store|shop|brand|company)"
+    r"|become\s+profitable|turn\s+a\s+profit"
+    r")\b", re.I)
+_V7_COMPLEX_HINTS = (
+    "full system", "end-to-end", "end to end", "entire", "comprehensive", "whole",
+    "production-ready", "production ready", "platform", "pipeline", "suite", "architecture",
+    "design and build", "research", "investigate", "benchmark", "evaluate", "compare",
+    "integrate", "orchestrate", "audit", "migrate", "refactor the", "build a system")
+_V7_SIMPLE_HINTS = (
+    "what is", "who is", "when is", "where is", "define", "explain", "show me", "list ",
+    "check ", "run ", "get ", "fetch", "look up", "convert", "count", "find the", "how many")
+
+
+def _v7_tier_rank(t: str) -> int:
+    try:
+        return _V7_TIERS.index(t)
+    except ValueError:
+        return 1
+
+
+def _v7_tier_heuristic(goal: str) -> str:
+    """Cheap, deterministic tier floor from the goal text alone — no LLM call."""
+    g = (goal or "").lower().strip()
+    if not g:
+        return "simple"
+    words = len(g.split())
+    conj = g.count(" and ") + g.count(" then ") + g.count(";") + g.count("\n") + g.count(", ")
+    if any(h in g for h in _V7_STRATEGIC_HINTS) or _V7_STRATEGIC_RE.search(g):
+        return "strategic"
+    if any(h in g for h in _V7_COMPLEX_HINTS) or conj >= 3 or words >= 60:
+        return "complex"
+    if words <= 12 and conj == 0 and any(h in g for h in _V7_SIMPLE_HINTS):
+        return "single"
+    if words <= 24 and conj <= 1:
+        return "simple"
+    return "complex" if words >= 40 else "simple"
+
+
+async def _v7_classify_tier(goal: str, heuristic_tier: str, catalog_brief: str, *,
+                            model: str, instance_id: str, prefer_gpu: bool) -> Dict[str, Any]:
+    """Less-prescriptive LLM tier pre-pass. Returns {tier, reason}. It may keep a
+    goal at a low tier (quick wins run normally) OR raise it when there is a
+    genuinely large / multi-day / multi-domain body of work. Best-effort: on any
+    failure it falls back to the heuristic tier so planning never stalls."""
+    sys = (
+        "You TRIAGE an agentic goal into ONE planning tier. Be pragmatic, NOT prescriptive: "
+        "most goals are 'single' or 'simple' and should just be done — only raise the tier when "
+        "the work genuinely warrants it.\n"
+        "  • single    — achievable with essentially ONE capability / one action.\n"
+        "  • simple     — a handful of straightforward steps, no upfront strategy needed.\n"
+        "  • complex    — a SUBSTANTIAL but CONCRETE job that FINISHES this session: multi-step and "
+        "multi-domain, or research/analysis heavy (e.g. 'look up X then build/write Y from it'). It "
+        "gets a thorough NORMAL multi-step plan — NOT a long-form strategy. Most research→build→write "
+        "goals are 'complex', not 'strategic'. Do NOT over-escalate a concrete task to 'strategic'.\n"
+        "  • strategic  — large-scale, spanning MULTIPLE SESSIONS / DAYS, or OPEN-ENDED with no "
+        "single finish line (e.g. 'earn income', 'grow X', 'keep Y up to date'): needs a "
+        "documented, phased plan executed a portion at a time and persisted so it continues "
+        "across sessions.\n"
+        "IMPORTANT: any goal about EARNING or MAKING money, GENERATING income/revenue, "
+        "MONETIZING, building/growing/launching a BUSINESS, or reaching FINANCIAL INDEPENDENCE "
+        "is 'strategic' — these are open-ended objectives that no single session finishes — "
+        "UNLESS it is merely a factual lookup ABOUT such a topic (e.g. 'what is dropshipping'), "
+        "which is 'single' or 'simple'. Do NOT downgrade an open-ended earning goal to 'complex' "
+        "just because it also involves research.\n"
+        "Prefer the LOWEST tier that fits. A goal can contain quick wins AND a deeper core — tier "
+        "it by its HARDEST necessary work.\n"
+        'Respond ONLY with JSON: {"tier":"single|simple|complex|strategic","reason":"<one sentence>"}')
+    prompt = (f"GOAL: {goal[:1200]}\n\n"
+              f"A cheap heuristic suggests: {heuristic_tier}.\n"
+              f"AVAILABLE CAPABILITIES (sample):\n{catalog_brief[:1400]}\n\n"
+              "Which tier best fits this goal?")
+    try:
+        raw = await _safe_ollama_generate_dw(
+            prompt, system=sys, model=model, instance_id=instance_id,
+            prefer_gpu=prefer_gpu, json_mode=True)
+        obj = _extract_json(_strip_think(raw or "")[0]) or {}
+        tier = str(obj.get("tier") or "").strip().lower()
+        if tier in _V7_TIERS:
+            return {"tier": tier, "reason": str(obj.get("reason") or "")[:300]}
+    except Exception as e:
+        log.debug("v7 tier classify failed: %s", e)
+    return {"tier": heuristic_tier, "reason": ""}
+
+
+async def _v7_decide_tier(goal: str, catalog_brief: str, *, plan_tier: str,
+                          auto_escalate: bool, use_llm: bool, model: str,
+                          instance_id: str, prefer_gpu: bool) -> Dict[str, Any]:
+    """Combine the heuristic floor and the LLM pre-pass into the effective tier.
+    A forced `plan_tier` (anything but 'auto') short-circuits classification.
+    Without `auto_escalate`, a 'strategic' suggestion is capped at 'complex' and
+    flagged so the loop RECOMMENDS the heavier tier rather than silently running
+    it. Returns {tier, suggested, heuristic, llm, reason, escalation_suppressed}."""
+    forced = (plan_tier or "auto").strip().lower()
+    if forced in _V7_TIERS:
+        return {"tier": forced, "suggested": forced, "heuristic": forced, "llm": "",
+                "reason": "forced by plan_tier", "escalation_suppressed": False}
+    heur = _v7_tier_heuristic(goal)
+    llm = ""
+    reason = ""
+    if use_llm:
+        c = await _v7_classify_tier(goal, heur, catalog_brief, model=model,
+                                    instance_id=instance_id, prefer_gpu=prefer_gpu)
+        llm = c["tier"]; reason = c["reason"]
+    suggested = heur if _v7_tier_rank(heur) >= _v7_tier_rank(llm or heur) else llm
+    tier = suggested
+    suppressed = False
+    if suggested == "strategic" and not auto_escalate:
+        tier = "complex"
+        suppressed = True
+    return {"tier": tier, "suggested": suggested, "heuristic": heur, "llm": llm,
+            "reason": reason, "escalation_suppressed": suppressed}
+
+
+_V7_GOAL_STOPWORDS = {
+    "the", "a", "an", "to", "of", "and", "or", "for", "in", "on", "with", "my",
+    "our", "your", "based", "using", "via", "that", "this", "into", "from",
+    "develop", "create", "build", "make", "design", "plan", "strategy",
+    "personalized", "personalised", "system", "help", "please", "want", "would",
+    "like", "need", "get", "set", "up", "new", "some", "any", "over", "across",
+}
+
+
+def _v7_goal_tokens(goal: str) -> set:
+    """Content-word token set for a goal, for fuzzy dedupe. Strips punctuation
+    and generic scaffolding words ('develop a personalized strategy to …') so
+    'earn income' and 'develop a personalized strategy to earn income based on
+    my skills' collapse to the same core {earn, income, skills}."""
+    words = re.findall(r"[a-z0-9]+", (goal or "").lower())
+    return {w for w in words if len(w) > 2 and w not in _V7_GOAL_STOPWORDS}
+
+
+def _v7_goal_similarity(a: str, b: str) -> float:
+    """Jaccard overlap of two goals' content tokens (0..1)."""
+    ta, tb = _v7_goal_tokens(a), _v7_goal_tokens(b)
+    if not ta or not tb:
+        return 0.0
+    inter = len(ta & tb)
+    return inter / float(len(ta | tb))
+
+
+async def _v7_find_existing_strategic(goal: str, *, exclude_slug: str = "") -> str:
+    """Return the slug of an EXISTING strategic goal-project that already covers
+    `goal` (exact core-token match OR high Jaccard overlap), or '' if none. This
+    is what stops one broad goal spawning 2-3 near-duplicate dream projects: the
+    original run's raw phrasing and a later dream cycle's re-worded phrasing map
+    to the same underlying goal and must reuse the first project, not fork a new
+    one. Best-effort; never raises."""
+    lister = CAPABILITY_REGISTRY.get("project.list")
+    if not lister or not lister.get("func"):
+        return ""
+    try:
+        res = await lister["func"]()
+    except Exception as e:
+        log.debug("v7 dedupe list failed: %s", e)
+        return ""
+    projs = (res or {}).get("projects") if isinstance(res, dict) else None
+    if not projs:
+        return ""
+    best_slug, best_sim = "", 0.0
+    for p in projs:
+        tags = p.get("tags") or []
+        if "strategic" not in tags and "v7" not in tags:
+            continue
+        slug = p.get("slug") or ""
+        if not slug or slug == exclude_slug:
+            continue
+        # Compare against the project's ORIGINAL goal (user_context) and its name.
+        for cand in (p.get("user_context") or "", p.get("name") or "",
+                     p.get("description") or ""):
+            sim = _v7_goal_similarity(goal, cand)
+            if sim > best_sim:
+                best_sim, best_slug = sim, slug
+    # 0.5 overlap of content words is a confident "same goal, different words".
+    # Lowered from 0.6: re-worded escalations of the same goal were scoring in
+    # the 0.5-0.6 band and forking sibling strategic projects (the "20 branched
+    # things doing the same thing"). At 0.5 they reuse the existing goal-project.
+    return best_slug if best_sim >= 0.5 else ""
+
+
+async def _v7_persist_strategic(goal: str, master_plan: str, done_when: str, *,
+                                existing_slug: str = "") -> str:
+    """Persist a strategic (multi-day) goal + its documented master plan as a DREAM
+    PROJECT so the dream system can execute it a portion at a time across sessions
+    and days — the long-horizon half of V7. Best-effort: returns the project slug,
+    or '' if the project subsystem isn't loaded. The dream scheduler / a
+    project.dream.run cycle picks the project up from here; this call only seeds it.
+
+    IDEMPOTENT: if a strategic project already covers this goal (passed in as
+    `existing_slug`, or discovered by fuzzy match), it UPDATES that project in
+    place instead of creating a near-duplicate — the fix for one goal producing
+    2-3 sibling long-term goals.
+
+    V8 HANDOFF: when the V8 program orchestrator is available AND this is a NEW
+    goal, the master plan becomes a V8 LOOP PROGRAM (generated loops run and
+    adapt over days/months) and the goal-project is persisted WITHOUT dream
+    triggers — tracking only — so the dream scheduler doesn't double-execute
+    what the program is already advancing. Without V8 (or for an existing
+    dream-driven goal) the classic dream-project path is kept."""
+    up = CAPABILITY_REGISTRY.get("project.upsert")
+    if not up or not up.get("func"):
+        return ""
+    name = ((goal or "").strip().split("\n")[0])[:70] or "Strategic goal"
+    # Reuse an existing goal-project when this goal is the same as one already
+    # tracked (exact or fuzzy) — never fork a second project for the same goal.
+    slug = (existing_slug or "").strip() or await _v7_find_existing_strategic(goal)
+    # ── Background-creation guard ───────────────────────────────────────────
+    # A BACKGROUND run (a dream cycle, a V8 program loop, the director) must NOT
+    # spawn a brand-new top-level goal/project — only a HUMAN starts new goals.
+    # Background work may advance/sub-goal EXISTING projects, but left free to
+    # mint new ones it proliferates near-duplicate goals with no real progress.
+    # So: if we're in a background context and this goal doesn't match an
+    # existing project, refuse to create — update the existing project only.
+    if not slug:
+        try:
+            if _orch.BACKGROUND_LLM.get(""):
+                log.info("v7 strategic: background context — NOT creating a new "
+                         "top-level goal for %r (no existing match)", name)
+                return ""
+        except Exception:
+            pass
+    # Prospective slug for a NEW goal — project.upsert slugifies the name, so we
+    # can compute it up front and hand it to the V8 program as its owner. That
+    # LINKS the program's loops to the goal (sandbox goal-<slug>, owner_ref) so a
+    # goal's activity timeline actually shows its V8 work (previously it didn't).
+    def _slugify_local(s: str) -> str:
+        import re as _re
+        return _re.sub(r"[^a-z0-9]+", "-", (s or "").lower()).strip("-")[:60] or "goal"
+    goal_slug = slug or _slugify_local(name)
+    # ── V8 program handoff (new goals only — existing goals keep their driver) ──
+    program_id = ""
+    v8 = CAPABILITY_REGISTRY.get("loops.program.create")
+    if not slug and v8 and v8.get("func"):
+        try:
+            brief = (f"STRATEGIC GOAL: {goal}\n\n"
+                     + (f"DONE WHEN: {done_when}\n\n" if done_when else "")
+                     + (f"DOCUMENTED MASTER PLAN (follow its intent and sequencing):\n"
+                        f"{master_plan[:4000]}" if master_plan else ""))
+            res = await v8["func"](brief=brief, autostart=True,
+                                   sandbox_owner=f"goal-{goal_slug}",
+                                   owner_ref=goal_slug)
+            if isinstance(res, dict) and res.get("id"):
+                program_id = str(res["id"])
+        except Exception as e:
+            log.debug("v7 strategic → v8 program failed (dream-project fallback): %s", e)
+    llm_context = (
+        f"STRATEGIC GOAL: {goal}\n\n"
+        + (f"DONE WHEN: {done_when}\n\n" if done_when else "")
+        + ("DOCUMENTED STRATEGIC PLAN (execute a PORTION at a time; each dream cycle should "
+           "continue the next unfinished part and record progress):\n" + master_plan + "\n\n"
+           if master_plan else "")
+        + ((f"EXECUTION: this goal is driven by V8 loop program {program_id} "
+            "(loops.program.get for state) — dream cycles should REVIEW its progress and "
+            "record notes, not re-execute the plan.")
+           if program_id else
+           ("DREAM ORCHESTRATOR PROTOCOL (this project is owned by the dream-orchestrator + "
+            "dream-auditor agents): on each cycle, read the plan and the progress log, pick the "
+            "SINGLE next unfinished portion that fits one session, execute it, then record what "
+            "was done and what remains. Do NOT try to finish everything at once. The dream-auditor "
+            "judges progress against DONE WHEN and decides continue / replan / complete.")))
+    try:
+        # Owned by the dream-process experts so the long-horizon plan advances one
+        # portion per cycle across days (see DEFAULT_AGENTS in agents.py). Passing
+        # `slug` makes project.upsert update-in-place when we matched an existing
+        # goal; blank slug lets it slugify the name for a genuinely new goal.
+        res = await up["func"](
+            name=name, slug=(slug or goal_slug), description=(goal or "")[:1000], user_context=goal,
+            llm_context=llm_context, status="active",
+            dream_trigger_names=([] if program_id else ["project_compose"]),
+            agents=["dream-orchestrator", "dream-auditor"],
+            tags=(["strategic", "v7", "agent-loop"]
+                  + ([f"v8-program:{program_id}"] if program_id else [])))
+        if isinstance(res, dict):
+            return (res.get("project") or {}).get("slug", "") or ""
+    except Exception as e:
+        log.debug("v7 strategic persist failed: %s", e)
+    return ""
+
+
+async def _v7_record_strategic_progress(slug: str, results: List[Dict[str, Any]],
+                                        outcome: str, done_when: str, *,
+                                        session_id: str = "", artifact_dir_path: str = "",
+                                        engine: str = "v6", goal: str = "",
+                                        source: str = "session",
+                                        sections: Optional[Dict[str, Any]] = None) -> bool:
+    """Fold this session's progress into the strategic project's rolling context
+    (project.note.add — the same path dream cycles read), so the NEXT cycle
+    continues from where this one left off. ALSO persist the full structured loop
+    run (plan/steps/final) + its artifacts to the project so the project page has a
+    real loop history and the next dream can ground on a clean handoff. Best-effort.
+
+    `sections` (optional) = {"done": "<section title run this session>",
+    "next": ["<deferred section title>", ...]} — lets the note name exactly which
+    documented section was advanced and which remain, so the dream orchestrator
+    steers to the right next portion instead of guessing from prose."""
+    ok_any = False
+    note = CAPABILITY_REGISTRY.get("project.note.add")
+    if note and note.get("func") and slug:
+        met = sum(1 for r in results if r.get("ok") and r.get("met") is not False)
+        stamp = time.strftime("%Y-%m-%d %H:%M")
+        _done_sec = (sections or {}).get("done") or ""
+        _next_secs = (sections or {}).get("next") or []
+        _sec_line = (f"SECTION ADVANCED THIS SESSION: {_done_sec}\n" if _done_sec else "")
+        _next_line = ("NEXT SECTION(S) TO CONTINUE (in order): "
+                      + "; ".join(str(s) for s in _next_secs) + "\n"
+                      if _next_secs else
+                      "NEXT: continue the remaining unfinished parts of the documented plan in the next cycle.")
+        content = (
+            f"SESSION PROGRESS ({stamp}): completed {met}/{len(results)} steps this session.\n"
+            + (f"GOAL DONE WHEN: {done_when}\n" if done_when else "")
+            + _sec_line
+            + f"OUTCOME SO FAR:\n{(outcome or '')[:1800]}\n"
+            + _next_line)
+        try:
+            await note["func"](slug=slug, content=content, source="agent-loop-v6")
+            ok_any = True
+        except Exception as e:
+            log.debug("v7 strategic progress note failed: %s", e)
+
+    # Structured loop-run + artifact capture. Dream-cycle runs are captured by the
+    # dream-complete hook (which owns the cycle's own step state), so only record
+    # here for genuine chat/session runs to avoid double-recording.
+    if source != "dream_cycle":
+        rec = CAPABILITY_REGISTRY.get("project.loop.record")
+        if rec and rec.get("func") and slug:
+            try:
+                await rec["func"](
+                    slug=slug, source=source, engine=engine, goal=goal,
+                    steps=json.dumps(results or [], default=str),
+                    final=(outcome or ""), artifact_dir=artifact_dir_path,
+                    run_id=session_id)
+                ok_any = True
+            except Exception as e:
+                log.debug("v7 strategic loop.record failed: %s", e)
+    return ok_any
+
+
+async def _v7_single_cap_shortcut(goal: str, catalog_names: List[str], *, call_tool,
+                                  model: str, instance_id: str, prefer_gpu: bool,
+                                  trace_id: Any, session_id: str = ""
+                                  ) -> Optional[Dict[str, Any]]:
+    """FAST PATH for a 'single' tier goal: pick THE one capability that satisfies the
+    goal in a SINGLE cheap call (like the chat command bar's quick cap selection),
+    fill its args, and run it — bypassing the orchestrator + specialist machinery.
+    Returns {cap, args, result} on success, or None to FALL THROUGH to full planning
+    (the LLM declined a single cap, picked an unknown one, or the call failed)."""
+    cand = [c for c in (catalog_names or []) if c in CAPABILITY_REGISTRY][:16]
+    if not cand:
+        return None
+    sigs = "\n".join(rich_cap_signature(c) for c in cand)
+    sys = (
+        "Pick THE SINGLE capability that FULLY satisfies the goal in ONE call, and fill ALL its "
+        "required args from the goal. Choose only from the listed capabilities. If the goal needs "
+        "MORE THAN ONE step/cap, or nothing listed fully fits, or you'd have to guess a required "
+        "arg, return {\"cap\":\"\"} so a full planner takes over. Do NOT use a generative cap "
+        "(llm.*/ollama.*) to 'look things up' — those only transform text.\n"
+        'Respond ONLY with JSON: {"cap":"<name or empty>","args":{...}}')
+    prompt = f"GOAL: {goal}\n\nCAPABILITIES:\n{sigs}\n\nPick the one cap + args, or empty to defer."
+    try:
+        raw = await _safe_ollama_generate_dw(
+            prompt, system=sys, model=model, instance_id=instance_id,
+            prefer_gpu=prefer_gpu, json_mode=True)
+        obj = _extract_json(_strip_think(raw or "")[0]) or {}
+    except Exception as e:
+        log.debug("v7 single-cap pick failed: %s", e)
+        return None
+    cap = str((obj or {}).get("cap") or "").strip()
+    args = (obj or {}).get("args") or {}
+    if not cap:
+        return None
+    cap = _v5_resolve_tool_name(cap, cand, set(catalog_names))
+    if cap not in CAPABILITY_REGISTRY or cap not in set(catalog_names) or not isinstance(args, dict):
+        return None
+    if _v5_is_generative(cap):     # generative caps can't be the whole answer to a real task
+        return None
+    try:
+        inv = await call_tool(cap, args, session_id=session_id, trace_id=trace_id)
+    except Exception as e:
+        log.debug("v7 single-cap exec failed: %s", e)
+        return None
+    ok = bool(inv.get("ok"))
+    result = inv.get("result") if ok else None
+    if not ok or result is None:
+        return None
+    # Guard against an ok-but-useless result (login/consent/empty) — better to plan.
+    if _v5_looks_unhelpful(_v5_gen_text(result)):
+        return None
+    return {"cap": cap, "args": args, "result": result}
+
+
+async def _v7_generate_clarifications(goal: str, done_when: str, tier: str, *, max_q: int,
+                                      model: str, instance_id: str,
+                                      prefer_gpu: bool) -> List[str]:
+    """Sliding-scale CONSULTATION: produce up to `max_q` high-value clarifying
+    questions about a broad goal BEFORE committing to a documented plan — only the
+    questions whose answers would actually change scope/priorities/constraints/
+    acceptance. Returns [] when the goal is already clear enough to proceed."""
+    if max_q <= 0:
+        return []
+    sys = (
+        "You are about to commit to a MULTI-STEP plan for a user's goal. Ask ONLY the "
+        f"HIGHEST-VALUE clarifying questions (at most {max_q}) whose answers would materially "
+        "CHANGE the plan — scope boundaries, priorities/ordering, hard constraints, the target "
+        "system/environment, or the acceptance bar. Do NOT ask trivia, do NOT ask things you can "
+        "reasonably assume, and if the goal is already clear enough to proceed, return an EMPTY "
+        "list. Prefer fewer, sharper questions.\n"
+        'Respond ONLY with JSON: {"questions":["...","..."]}')
+    prompt = (f"GOAL: {goal[:1500]}\n"
+              + (f"STATED DONE-WHEN: {done_when}\n" if done_when else "")
+              + f"PLAN TIER: {tier}\n\nWhat must you clarify first (or none)?")
+    try:
+        raw = await _safe_ollama_generate_dw(
+            prompt, system=sys, model=model, instance_id=instance_id,
+            prefer_gpu=prefer_gpu, json_mode=True)
+        obj = _extract_json(_strip_think(raw or "")[0]) or {}
+        qs = obj.get("questions") if isinstance(obj, dict) else None
+        if isinstance(qs, list):
+            return [str(q).strip() for q in qs if str(q).strip()][:max_q]
+    except Exception as e:
+        log.debug("v7 clarify generation failed: %s", e)
+    return []
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# V7 MULTI-DAY ESCALATION — notes + artifact snapshot + a per-goal thought loop
+# ─────────────────────────────────────────────────────────────────────────────
+# When a goal escalates to STRATEGIC (multi-day) we take a one-time snapshot of
+# the moment it handed over to the dream system:
+#   • an agent-notes file scoped to the goal-project (Goals / plan / Next Steps),
+#     so every dream cycle steering the goal starts from the same standing brief;
+#   • a copy of this session's artifact directory into a goal-scoped artifact
+#     area, frozen at the escalation point (later cycles produce their own);
+#   • a background THOUGHT LOOP registered for the goal (dream.think.create,
+#     scoped to the project) that RAGs the goal's accumulating output — the base
+#     perspective is the latest progress, but it can pull the whole record.
+# All best-effort and idempotent (notes.set / think.create upsert by name).
+
+def _v7_goal_artifact_dir(slug: str, *, create: bool = False) -> str:
+    """Stable goal-scoped artifact directory: <artifact_root>/goal/<slug>. Computed
+    directly from the artifact root (NOT via artifact_dir(), whose path depends on
+    the sandbox's artifact_scope) so the escalation snapshot and goals.detail always
+    agree on the location. Returns '' if the exec module isn't available."""
+    try:
+        import importlib as _il
+        _exec_mod = _il.import_module("Vera.vera.execution.exec_capabilities")
+        root = _exec_mod._artifact_root()
+        path = os.path.join(root, "goal", _exec_mod._safe_seg(slug))
+        if create:
+            os.makedirs(path, exist_ok=True)
+        return path
+    except Exception as e:
+        log.debug("v7 goal artifact dir resolve failed: %s", e)
+        return ""
+
+
+async def _v7_escalation_snapshot(slug: str, *, session_id: str, goal: str,
+                                  done_when: str, master_plan: str,
+                                  artifact_dir_path: str,
+                                  register_thought_loop: bool = True) -> Dict[str, Any]:
+    """Freeze the escalation moment for a strategic goal-project. Returns a small
+    dict of what was captured (for the escalation event)."""
+    out: Dict[str, Any] = {"notes": False, "artifacts": "", "thought_loop": ""}
+    if not slug:
+        return out
+
+    # 1) Agent notes — a standing brief the dream cycles read (scope=project).
+    notes_set = CAPABILITY_REGISTRY.get("notes.set")
+    if notes_set and notes_set.get("func"):
+        first_steps = ""
+        # Pull the plan's leading lines as an initial Next-Steps seed.
+        plan_head = "\n".join((master_plan or "").strip().splitlines()[:24])
+        note_md = (
+            "# Session Memory\n\n"
+            "## Goals\n"
+            f"- {(goal or '').strip()[:400]}\n"
+            + (f"- DONE WHEN: {done_when.strip()[:400]}\n" if done_when else "")
+            + "\n## User Instructions & Preferences\n\n"
+            "## Key Facts & Decisions\n"
+            "- Escalated to a multi-day strategic goal; the dream system continues it a "
+            "portion per cycle.\n"
+            + (f"\n## Documented Plan (snapshot at escalation)\n{plan_head[:1800]}\n" if plan_head else "")
+            + "\n## Mistakes To Avoid\n\n"
+            "## Next Steps\n"
+            "- Begin the first unfinished portion of the documented plan.\n")
+        try:
+            await notes_set["func"](scope="project", ref_id=slug, content=note_md,
+                                    updated_by="agent-loop-v7")
+            out["notes"] = True
+        except Exception as e:
+            log.debug("v7 escalation notes failed: %s", e)
+
+    # 2) Artifact snapshot — copy this run's artifact dir into a goal-scoped area.
+    #    Uses a STABLE <artifact_root>/goal/<slug> path (independent of the
+    #    sandbox's artifact_scope) so goals.detail can find it again.
+    if artifact_dir_path:
+        try:
+            import shutil
+            dst_root = _v7_goal_artifact_dir(slug, create=True)
+            src_dir = artifact_dir_path
+            tmp_export = ""
+            # Sandboxed session → the artifact dir is the container's /workspace,
+            # which this host can't see. Export it (docker cp → temp) first.
+            if str(artifact_dir_path).replace("\\", "/").startswith("/workspace") \
+                    and session_id:
+                sbx = sys.modules.get("session_sandbox_capabilities")
+                if sbx is None:
+                    for _n, _m in list(sys.modules.items()):
+                        if _m is not None and _n.endswith("session_sandbox_capabilities") \
+                                and hasattr(_m, "export_workspace"):
+                            sbx = _m
+                            break
+                if sbx is not None and hasattr(sbx, "export_workspace"):
+                    tmp_export = await sbx.export_workspace(session_id) or ""
+                    src_dir = tmp_export
+            try:
+                if dst_root and src_dir and os.path.isdir(src_dir) and os.listdir(src_dir):
+                    snap_dir = os.path.join(dst_root, "escalation-" + time.strftime("%Y%m%d-%H%M%S"))
+                    shutil.copytree(src_dir, snap_dir, dirs_exist_ok=True)
+                    out["artifacts"] = snap_dir
+            finally:
+                if tmp_export:
+                    shutil.rmtree(tmp_export, ignore_errors=True)
+        except Exception as e:
+            log.debug("v7 escalation artifact snapshot failed: %s", e)
+
+    # 2b) Shared goal sandbox — from escalation on, all of this goal's runs
+    #     (dream cycles included) execute in ONE container keyed goal-<slug>, so
+    #     installed tools and working files persist across cycles. Linked AFTER
+    #     the artifact snapshot so the export above still reads THIS run's own
+    #     container.
+    if session_id:
+        try:
+            for _n, _m in list(sys.modules.items()):
+                if _m is not None and _n.endswith("session_sandbox_capabilities") \
+                        and hasattr(_m, "link_session"):
+                    await _m.link_session(session_id, f"goal-{slug}", kind="goal",
+                                          label=(goal or "").strip()[:60])
+                    out["sandbox"] = f"goal-{slug}"
+                    break
+        except Exception as e:
+            log.debug("v7 escalation sandbox link failed: %s", e)
+
+    # 3b) Seed the project's loop history with the ORIGIN run — the plan the loop
+    #     documented at escalation. Steps + final output arrive later, recorded at
+    #     loop completion by _v7_record_strategic_progress.
+    rec = CAPABILITY_REGISTRY.get("project.loop.record")
+    if rec and rec.get("func"):
+        try:
+            await rec["func"](slug=slug, source="escalation", engine="v7",
+                              goal=goal, plan=master_plan, run_id=session_id)
+            out["loop_run"] = True
+        except Exception as e:
+            log.debug("v7 escalation loop.record failed: %s", e)
+
+    # 3) Per-goal background thought loop — RAGs the goal's growing output.
+    if register_thought_loop:
+        think_create = CAPABILITY_REGISTRY.get("dream.think.create")
+        if think_create and think_create.get("func"):
+            try:
+                subject = ((goal or "").strip().split("\n")[0])[:80] or slug
+                await think_create["func"](
+                    subject=subject,
+                    goal=("Deepen and de-risk this long-term goal: surface what the latest "
+                          "progress implies, what to do next, blockers, and opportunities. "
+                          "Base perspective = the most recent progress; widen to the whole "
+                          "record when useful."),
+                    source="",                    # topic_research: RAGs fabric + web
+                    name=f"goal-{slug}",
+                    project_slug=slug,
+                    idle_minutes=15, interval_minutes=90, enabled=True)
+                out["thought_loop"] = f"goal-{slug}"
+            except Exception as e:
+                log.debug("v7 escalation thought loop failed: %s", e)
+
+    return out
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# V7 CLARIFY MODES + COMMS ROUND-TRIP
+# ─────────────────────────────────────────────────────────────────────────────
+# The clarify stage can now run in four MODES and route its questions to the UI
+# and/or a comms channel (Telegram) with a timeout up to 24h:
+#   off         — never ask (silent, assume + proceed).
+#   ask         — ask the high-value questions and WAIT (block until answered or
+#                 the timeout elapses, then proceed with assumptions).
+#   auto_raise  — don't interrupt the user; when the goal is genuinely uncertain,
+#                 raise the plan tier instead (more planning, no question).
+#   auto_accept — draft the questions AND their most reasonable assumed answers,
+#                 fold the assumptions straight into the goal, and proceed.
+# `clarify_scope` (whole|piece|step) is surfaced to callers; the loop applies the
+# whole-goal consultation here and records the scope so piece/step planners can
+# consult at their level.
+
+_V7_CLARIFY_MODES = ("off", "ask", "auto_raise", "auto_accept")
+
+
+def _v7_clarify_mode(clarify_mode: str, clarify_level: int, auto_escalate: bool) -> str:
+    """Resolve the effective clarify mode. Explicit `clarify_mode` wins; otherwise
+    derive from `clarify_level` alone (>0 ⇒ ask). NOTE: `auto_escalate` no longer
+    forces 'off' — it governs TIER escalation, not whether we may ask the user; the
+    old coupling meant v7 (auto_escalate defaults on) never asked. When to actually
+    ask is still gated by tier/level in the caller."""
+    m = (clarify_mode or "").strip().lower()
+    if m in _V7_CLARIFY_MODES:
+        return m
+    if clarify_level <= 0:
+        return "off"
+    return "ask"
+
+
+async def _v7_assume_answers(goal: str, questions: List[str], tier: str, *,
+                             model: str, instance_id: str, prefer_gpu: bool) -> str:
+    """auto_accept: answer the clarifying questions ourselves with the most
+    reasonable assumptions, returned as a compact block to fold into the goal."""
+    if not questions:
+        return ""
+    qlist = "\n".join(f"- {q}" for q in questions)
+    sys = ("For each question about a goal, state the MOST REASONABLE default "
+           "assumption a competent operator would make, briefly. Do not ask "
+           "anything back. Output plain lines 'Q → assumed answer'.")
+    prompt = f"GOAL: {goal[:1200]}\nTIER: {tier}\n\nQUESTIONS:\n{qlist}\n\nAssumptions:"
+    try:
+        raw = await _safe_ollama_generate_dw(
+            prompt, system=sys, model=model, instance_id=instance_id,
+            prefer_gpu=prefer_gpu, json_mode=False)
+        return _strip_think(raw or "")[0].strip()[:1600]
+    except Exception as e:
+        log.debug("v7 assume answers failed: %s", e)
+        return ""
+
+
+async def _v7_route_question_to_comms(text: str, *, session_id: str, step: int,
+                                      channel: str, ttl_secs: float) -> str:
+    """Send a clarifying question OUT to a comms channel and register the pending
+    reply so the channel's inbound handler can resolve this loop's HITL future
+    (session_id, step). Returns the channel address it was sent to, or ''.
+    Currently wired for Telegram (tg.notify → admin chat); other channels can be
+    added by mapping to their send cap + reply address."""
+    ch = (channel or "").strip().lower()
+    if ch not in ("telegram", "tg"):
+        return ""
+    tg_cfg = CAPABILITY_REGISTRY.get("tg.config.get")
+    tg_notify = CAPABILITY_REGISTRY.get("tg.notify")
+    if not tg_notify or not tg_notify.get("func"):
+        return ""
+    addr = ""
+    try:
+        cfg = await tg_cfg["func"]() if tg_cfg and tg_cfg.get("func") else {}
+        conf = (cfg or {}).get("config", cfg) or {}
+        addr = str(conf.get("admin_chat_id") or "").strip()
+    except Exception:
+        addr = ""
+    try:
+        await tg_notify["func"](text="🤔 Vera needs steering:\n\n" + text
+                                + "\n\n(Reply to this message with your answer.)")
+    except Exception as e:
+        log.debug("v7 comms question send failed: %s", e)
+        return ""
+    if addr:
+        try:
+            import Vera.vera.comms_inbox as _inbox
+            _inbox.register(addr, session_id=session_id, step=step, question=text,
+                            channel="telegram", kind="clarify", ttl_secs=ttl_secs)
+        except Exception as e:
+            log.debug("v7 comms inbox register failed: %s", e)
+    return addr
+
+
+def resolve_comms_reply(session_id: str, step: int, text: str) -> bool:
+    """Resolve a loop's pending HITL/clarify future from an inbound comms reply.
+    Called by the comms channel (e.g. telegram) when a human answers a question
+    that was routed out via _v7_route_question_to_comms. Returns True if a
+    pending future was resolved."""
+    try:
+        pending = _HITL_PENDING_LOOP.get(session_id, {})
+        fut = pending.get(int(step))
+        if not fut or fut.done():
+            return False
+        fut.set_result({"decision": "continue", "args": {}, "comment": str(text or "")})
+        return True
+    except Exception as e:
+        log.debug("resolve_comms_reply failed: %s", e)
+        return False
+
+
+_V7_CLARIFY_STEP = -424242   # HITL step id reserved for the whole-goal clarify wait
+
+
+async def _v7_run_clarify(goal: str, done_when: str, tier: str, *, mode: str,
+                          scope: str, channel: str, timeout_secs: float,
+                          max_q: int, sid: str, stream_id: str,
+                          model: str, instance_id: str, prefer_gpu: bool) -> Dict[str, Any]:
+    """Execute the whole-goal clarify stage under the resolved `mode`. Returns
+    {goal, raised, answered, questions} — `goal` may have clarifications folded
+    in; `raised` asks the caller to bump the tier (auto_raise)."""
+    result = {"goal": goal, "raised": False, "answered": False, "questions": []}
+    if mode == "off":
+        return result
+    questions = await _v7_generate_clarifications(
+        goal, done_when, tier, max_q=max_q, model=model,
+        instance_id=instance_id, prefer_gpu=prefer_gpu)
+    if not questions:
+        return result
+    result["questions"] = questions
+
+    if mode == "auto_raise":
+        # Don't interrupt — signal the caller to plan harder instead.
+        await emit_event({"type": "agent_loop_v6.clarify_auto_raise", "session_id": sid,
+                          "stream_id": stream_id, "tier": tier, "questions": questions})
+        result["raised"] = True
+        return result
+
+    if mode == "auto_accept":
+        assumed = await _v7_assume_answers(
+            goal, questions, tier, model=model, instance_id=instance_id, prefer_gpu=prefer_gpu)
+        await emit_event({"type": "agent_loop_v6.clarify_auto_accept", "session_id": sid,
+                          "stream_id": stream_id, "questions": questions,
+                          "assumptions": assumed[:1200]})
+        if assumed:
+            result["goal"] = (goal + "\n\nASSUMED ANSWERS (auto-accepted — proceed on these "
+                              "unless corrected):\n" + assumed)
+            result["answered"] = True
+        return result
+
+    # mode == "ask": route to UI and (optionally) comms, then wait.
+    comms_addr = ""
+    if channel and channel.strip().lower() not in ("", "ui"):
+        comms_addr = await _v7_route_question_to_comms(
+            "\n".join(f"{i+1}. {q}" for i, q in enumerate(questions)),
+            session_id=sid, step=_V7_CLARIFY_STEP, channel=channel, ttl_secs=timeout_secs)
+    await emit_event({"type": "agent_loop_v6.clarify_request", "session_id": sid,
+                      "stream_id": stream_id, "tier": tier, "questions": questions,
+                      "scope": scope, "channel": channel or "ui",
+                      "comms_address": comms_addr, "timeout_secs": timeout_secs,
+                      "hint": "POST /workshop/agent_loop/hitl/respond "
+                              "{session_id, step:-424242, decision:'continue', "
+                              "comment:'<answers>'}"})
+    decision = await _await_hitl_decision(
+        sid, _V7_CLARIFY_STEP, timeout=float(max(15, timeout_secs)))
+    # If we answered via UI, drop any dangling comms pending for this session.
+    try:
+        import Vera.vera.comms_inbox as _inbox
+        _inbox.clear_session(sid)
+    except Exception:
+        pass
+    answers = (decision.get("comment") or "").strip()
+    if not answers and isinstance(decision.get("args"), dict):
+        answers = str(decision["args"].get("answers") or "").strip()
+    await emit_event({"type": "agent_loop_v6.clarify_resolved", "session_id": sid,
+                      "stream_id": stream_id, "answered": bool(answers),
+                      "decision": decision.get("decision", "")})
+    if answers:
+        result["goal"] = (goal + "\n\nUSER CLARIFICATIONS (incorporate into the plan):\n"
+                          + answers[:2000])
+        result["answered"] = True
+    return result
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# V7 PRE-STEP INFO GATHERING
+# ─────────────────────────────────────────────────────────────────────────────
+# Before a step runs, identify the concrete information it NEEDS that has not
+# already been collected by earlier steps — so the step gathers the missing
+# pieces first instead of assuming, WITHOUT re-collecting what the run already
+# holds. Implemented as a light prompt returning a short list of gaps; the loop
+# folds the gaps + a digest of what's already known into the step's goal.
+
+async def _v7_prestep_info(step: Dict[str, Any], results: List[Dict[str, Any]],
+                           goal: str, *, model: str, instance_id: str,
+                           prefer_gpu: bool) -> Dict[str, Any]:
+    """Return {gaps:[...], known_digest:str}. `gaps` are the info items the step
+    needs that aren't already collected; empty when the step is self-sufficient
+    or everything is already known."""
+    known = "\n".join(
+        f"- step {r.get('id')} ({r.get('title','')}): {(r.get('summary') or '')[:280]}"
+        for r in results if r.get("ok") is not False)[:4000]
+    sys = (
+        "You prepare ONE step of a larger run. List ONLY the concrete pieces of "
+        "information this step NEEDS before it can start and that are NOT already "
+        "present in ALREADY-COLLECTED. Do not restate what is already collected. "
+        "If the step already has what it needs, return an empty list. Be specific "
+        "(name the datum), never generic ('more research').\n"
+        'Respond ONLY with JSON: {"gaps":["...","..."]}')
+    prompt = (f"OVERALL GOAL: {goal[:600]}\n"
+              f"THIS STEP: {step.get('title','')}\n"
+              f"STEP OBJECTIVE: {step.get('goal','')[:600]}\n\n"
+              f"ALREADY COLLECTED (do NOT re-collect):\n{known or '(nothing yet)'}\n\n"
+              "What must be gathered first (or none)?")
+    try:
+        raw = await _safe_ollama_generate_dw(
+            prompt, system=sys, model=model, instance_id=instance_id,
+            prefer_gpu=prefer_gpu, json_mode=True)
+        obj = _extract_json(_strip_think(raw or "")[0]) or {}
+        gaps = obj.get("gaps") if isinstance(obj, dict) else None
+        gaps = [str(g).strip() for g in gaps if str(g).strip()][:5] if isinstance(gaps, list) else []
+    except Exception as e:
+        log.debug("v7 prestep info failed: %s", e)
+        gaps = []
+    return {"gaps": gaps, "known_digest": known}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# V7 PROGRESS REPORTS VIA COMMS
+# ─────────────────────────────────────────────────────────────────────────────
+# Report REAL progress toward a goal out to a comms channel, gated by mode:
+#   off            — never.
+#   long_term_only — only for strategic (multi-day) goals.
+#   not_quick      — anything except the single-cap fast path / 'single' tier.
+#   all            — every run.
+
+_V7_PROGRESS_MODES = ("off", "long_term_only", "not_quick", "all")
+
+
+def _v7_should_report_progress(mode: str, tier: str, *, fast_path: bool) -> bool:
+    m = (mode or "off").strip().lower()
+    if m not in _V7_PROGRESS_MODES or m == "off":
+        return False
+    if m == "all":
+        return True
+    if m == "long_term_only":
+        return tier == "strategic"
+    if m == "not_quick":
+        return not (fast_path or tier == "single")
+    return False
+
+
+async def _v7_send_progress(goal: str, tier: str, report: str, *, channel: str,
+                            session_id: str, stream_id: str) -> bool:
+    """Send a progress report out to a comms channel via the delivery registry."""
+    if not report:
+        return False
+    ch = (channel or "telegram").strip().lower()
+    try:
+        import Vera.vera.delivery as _delivery
+        channel_rec = _delivery.get_channel(ch)
+        header = f"📊 Progress — {(goal or '').strip().splitlines()[0][:60]}"
+        rendered = header + "\n\n" + report[:3200]
+        if channel_rec:
+            cap_name = channel_rec.get("cap", "")
+            args = _delivery.build_args(ch, rendered, {"label": header})
+            cap = CAPABILITY_REGISTRY.get(cap_name)
+            if cap and cap.get("func"):
+                await cap["func"](**args)
+                await emit_event({"type": "agent_loop_v6.progress_report",
+                                  "session_id": session_id, "stream_id": stream_id,
+                                  "channel": ch, "tier": tier})
+                return True
+    except Exception as e:
+        log.debug("v7 send progress failed: %s", e)
+    # Fallback: telegram notify directly.
+    tg = CAPABILITY_REGISTRY.get("tg.notify")
+    if tg and tg.get("func"):
+        try:
+            await tg["func"](text="📊 Progress — " + report[:3200])
+            return True
+        except Exception:
+            pass
+    return False
+
+
+_V6_DELIVER_EVIDENCE_MAX = 14000   # chars of run evidence fed to the delivery agent
+_V6_DELIVER_OUT_MAX      = 16000   # cap on the produced deliverable
+
+
+async def _v6_deliver(goal: str, done_when: str, results: List[Dict[str, Any]],
+                      final: str, *, model: str, instance_id: str,
+                      prefer_gpu: bool) -> str:
+    """DELIVERY stage — a dedicated final agent that turns the whole run (goal,
+    per-step evidence, artifacts) into the definitive user-facing deliverable in
+    MARKDOWN. Where the cap calls themselves were the point (code edits, deploys)
+    it documents what was done and how to use it; where the goal was a question
+    it leads with the answer. Returns '' on failure — the caller then falls back
+    to the plain synthesised final."""
+    lines: List[str] = []
+    artifacts: List[str] = []
+    for r in results:
+        met = r.get("met")
+        status = ("ok" if r.get("ok") else "FAILED") + (
+            "" if met is None else (", success bar met" if met else ", success bar NOT met"))
+        tools = ", ".join(dict.fromkeys(
+            f"{h.get('tool')}{'' if h.get('ok') else ' ✗'}"
+            for h in (r.get("history") or [])
+            if h.get("tool") and not str(h.get("tool")).startswith("(")))
+        lines.append(f"STEP {r['id']} — {r.get('title', '')} [{status}]"
+                     + (f"\n  tools: {tools}" if tools else "")
+                     + f"\n  outcome: {(r.get('summary') or '')[:700]}")
+        for k, v in (r.get("outputs") or {}).items():
+            if str(k).startswith("file:"):
+                artifacts.append(f"{str(k)[5:]} — {str(v)[:150]}")
+    block = "\n\n".join(lines)[:_V6_DELIVER_EVIDENCE_MAX] or "(no steps executed)"
+    art_block = "\n".join(f"- {a}" for a in dict.fromkeys(artifacts)) or "(none recorded)"
+    sys = (
+        "You are the DELIVERY agent — the last stage of an agentic run. You take the GOAL "
+        "and the full run evidence and produce the definitive FINAL DELIVERABLE the user "
+        "will read, in clean MARKDOWN.\n"
+        "Structure (omit a section when it has no content):\n"
+        "  ## Result — lead with the direct answer/outcome of the goal: the substance, "
+        "not the process. If the goal was not fully achieved, say so plainly here.\n"
+        "  ## What was done — a faithful, concrete account of the actions taken, step by "
+        "step in plain language: what ran, what it found or changed, and any failures and "
+        "how they were worked around. Do NOT gloss over failed steps.\n"
+        "  ## Artifacts — files/outputs produced, with their paths.\n"
+        "  ## Usage — ONLY if the run produced code, configuration, or something deployed: "
+        "a brief practical guide for a developer on how to run/use what was built.\n"
+        "Use only facts from the evidence — NEVER invent results, file paths, or details "
+        "the run did not produce."
+    )
+    prompt = (f"GOAL: {goal}\n"
+              + (f"DONE WHEN: {done_when}\n" if done_when else "")
+              + f"\nRUN EVIDENCE:\n{block}\n\nARTIFACTS RECORDED:\n{art_block}\n"
+              + (f"\nDRAFT ANSWER (from the synthesiser — improve on it, don't just copy "
+                 f"it):\n{final[:3000]}\n" if final else "")
+              + "\nWrite the final markdown deliverable.")
+    try:
+        raw = await _safe_ollama_generate_dw(
+            prompt, system=sys, model=model, instance_id=instance_id,
+            prefer_gpu=prefer_gpu, json_mode=False)
+        return _strip_think(raw or "")[0].strip()[:_V6_DELIVER_OUT_MAX]
+    except Exception as e:
+        log.debug("v6 delivery stage failed: %s", e)
+        return ""
+
+
+@capability(
+    "dag.agent_loop_v6",
+    http_method="POST", http_path="/dag/agent_loop_v6",
+    http_tags=["dag", "agents"],
+    memory="on",
+    streams=["dag.agent_loop_v6"],
+    description=(
+        "v6 agent loop — ADAPTIVE orchestrated specialists. Builds on v5: an ORCHESTRATOR "
+        "decomposes the goal into an ordered step plan in a single call (each step names only "
+        "the few caps/skills it needs AND a checkable success criterion), then hands each step "
+        "to an EPHEMERAL SCOPED SPECIALIST sub-agent. What v6 adds over v5: (1) per-step "
+        "success criteria + a whole-goal `done_when`; (2) an ADAPTIVE CONTROLLER that inspects "
+        "a shared ledger AFTER EVERY step (not just on failure) and decides the next move — "
+        "continue, insert a remediation/gap step, replan the remaining work, or stop early "
+        "because the goal is already met; (3) a FINAL COMPLETION GATE that verifies the goal "
+        "is truly met before synthesising and appends follow-up steps if not. Planning/DAG "
+        "capabilities are blacklisted so the loop never hands planning to a capability. "
+        "Inherits v5's recon, sub-plans, per-step phases, code autosave, long-running awaiting, "
+        "and self-correcting steps (need_caps / auto-recovery). "
+        "Inputs: goal (str!), allowed_caps (csv), base_toolkit (csv), max_steps (int default 8), "
+        "step_cycle_budget (int default 6), catalog_size (int default 40), enable_adaptive "
+        "(bool default True — run the controller after each step), enable_step_verify (bool "
+        "default True — one cheap judge call per step checks its success criterion was "
+        "OBJECTIVELY met, so an 'ok' step that missed its bar is caught), require_step_completion "
+        "(bool default False here / True on v7 — when a step misses its bar, re-attempt the SAME "
+        "step IN PLACE with an adjusted tactic and minimal new tools, up to step_max_attempts "
+        "(int default 2), before advancing; stops the run steam-rolling past a failed step), "
+        "condense_output (bool default False here / True on v7 — long tool/script outputs are "
+        "LLM-condensed to a dense brief that keeps the key detail, with the full output saved to "
+        "the artifact dir for on-demand grep/sed inspection), enable_final_gate "
+        "(bool default True), enable_delivery (bool default True — a dedicated DELIVERY agent "
+        "turns the run evidence into a markdown deliverable: the answer, a faithful account of "
+        "the actions taken, artifacts, and a usage guide when code was produced), "
+        "max_total_steps (int default 0 = auto: 2×max_steps capped at 40 — hard "
+        "ceiling on inserted/replanned steps), enable_dynamic_skills (bool default True), "
+        "skill_allow/skill_deny (csv), auto_suggest_skills (bool default True), enable_recon "
+        "(bool default True), recon_max_rounds (int default 3), enable_subplans (bool default "
+        "True), enable_phases (bool default True), phase_policy (auto|encourage|sparing default "
+        "auto — auto phases heavily on a complex/strategic goal, encourage forces it on any run), "
+        "phase_set (csv default 'explore,think,act,verify' — which step phases the planner may "
+        "use), prefer_terminal_tools (bool default True — seed exec.bash.run + steer specialists "
+        "to grep/sed/awk), enable_master_planner (bool default True), enable_journal (bool default "
+        "False — distil each step into a structured record persisted to the data fabric + a "
+        "journal.json mirror and fold it back into later steps), journal_all_tiers (bool default "
+        "False — journal even on simple runs; otherwise complex/long-term only), "
+        "enable_code_autosave (bool default True), code_push_gitea (bool default False), "
+        "await_long_running (bool default True), long_running_timeout_secs (int default 1800), "
+        "handover (bool), handover_max_chars (int), plus model/instance_id/prefer_gpu/session_id. "
+        "Output: {goal, steps, blackboard, history, cycles, final, toolkit, stream_id, done}."
+    ),
+)
+async def cap_dag_agent_loop_v6(
+    goal:               str,
+    allowed_caps:       str  = "",
+    max_cycles:         int  = 12,
+    model:              str  = "",
+    instance_id:        str  = "",
+    prefer_gpu:         bool = True,
+    attach_skills:      str  = "",
+    attach_ontologies:  str  = "",
+    session_id:         str  = "",
+    triage_top_k:       int  = 16,
+    base_toolkit:       str  = "",
+    handover:           bool = False,
+    handover_max_chars: int  = 20000,
+    max_steps:          int  = 8,
+    step_cycle_budget:  int  = 6,
+    catalog_size:       int  = _V5_CATALOG_MAX_DEFAULT,
+    enable_adaptive:    bool = True,
+    enable_step_verify: bool = True,
+    # Step-completion gate: when a step misses its success bar, re-attempt the
+    # SAME step IN PLACE (adjusted tactic, minimal new tools) up to
+    # step_max_attempts times before the run is allowed to advance — so the loop
+    # LOOPS ON A DELIVERABLE instead of steam-rolling past a failed step onto a
+    # tangent. V7-defining (default OFF here; dag.agent_loop_v7 + the SSE
+    # endpoint turn it on for version="v7").
+    require_step_completion: bool = False,
+    step_max_attempts:  int  = 2,          # in-place retries after the first try (0 disables)
+    step_retry_max_new_caps: int = 2,      # cap on tools a retry may add (keeps expansion minimal)
+    # V7-defining features — default OFF here so the v6 engine stays PURE adaptive.
+    # dag.agent_loop_v7 turns them on (and the SSE endpoint defaults them on for
+    # version="v7"). They remain per-run overridable on either engine.
+    enable_step_finalize: bool = False,
+    enable_branching:   bool = False,
+    branch_fanout:      int  = 2,
+    max_branches:       int  = 6,
+    branch_parallel:    bool = False,
+    failure_strategy:   str  = "",         # ''|extra_step|branch|default — how a step that misses its bar recovers
+
+    enable_final_gate:  bool = True,
+    enable_delivery:    bool = True,
+    max_total_steps:    int  = 0,
+    enable_dynamic_skills: bool = True,
+    skill_allow:        str  = "",
+    skill_deny:         str  = "",
+    auto_suggest_skills: bool = True,
+    enable_recon:       bool = True,
+    recon_max_rounds:   int  = 3,
+    enable_subplans:    bool = True,
+    enable_phases:      bool = True,
+    phase_policy:       str  = "auto",     # auto|encourage|sparing — how hard to phase steps (auto = tier-aware)
+    phase_set:          str  = "explore,think,act,verify",  # which step phases the planner may assign
+    prefer_terminal_tools: bool = True,    # seed exec.bash.run + steer specialists to grep/sed/awk
+    enable_master_planner: bool = True,
+    enable_tiering:     bool = False,      # V7-defining (see note above); v7 turns on
+    plan_tier:          str  = "auto",
+    auto_escalate:      bool = True,
+    enable_fast_path:   bool = False,      # V7-defining; v7 turns on ('single' tier shortcut)
+    clarify_level:      int  = 1,          # sliding-scale consultation (0-3); back-compat when clarify_mode is ''
+    clarify_timeout_secs: int = 180,       # up to 86400 (24h)
+    clarify_mode:       str  = "",         # off|ask|auto_raise|auto_accept ('' → derive from clarify_level/auto_escalate)
+    clarify_scope:      str  = "whole",    # whole|piece|step — level the consultation applies at
+    clarify_channel:    str  = "ui",       # ui|telegram — where clarify questions are asked
+    max_caps_per_piece: int  = 6,          # piecewise: how many caps each stage (piece) may suggest
+    max_plan_pieces:    int  = 6,          # piecewise: how many phases the master plan splits into (2..30)
+    cap_override_mode:  str  = "off",      # off|piece — 'piece' scopes each piece's steps to its own caps
+    enable_chaining:    bool = True,       # stage agents may chain caps in one turn (output→input)
+    condense_output:    bool = False,      # long tool outputs → LLM-condensed (keep key detail), full kept on disk
+    enable_step_questions: bool = False,   # V7-defining; v7 turns on — a step may ask the user (ask_user)
+    question_timeout_secs: int = 180,      # how long a step's ask_user waits for a reply (15–86400s)
+    enable_prestep_info: bool = False,     # V7-defining; v7 turns on — gather missing info before a step
+    progress_report_mode: str = "off",     # off|long_term_only|not_quick|all — report progress via comms
+    progress_channel:   str  = "telegram", # comms channel for progress reports
+    strategic_slug:     str  = "",         # set by a dream cycle running an EXISTING goal-project (no re-persist)
+    enable_dream_persistence: bool = False,  # V7-defining; v7 turns on
+    enable_journal:     bool = False,      # V7-defining; v7 turns on — structured run journal (complex/strategic only)
+    journal_all_tiers:  bool = False,      # keep the journal even on simple/quick runs (else complex/long-term only)
+    enable_code_autosave: bool = True,
+    code_push_gitea:    bool = False,
+    await_long_running: bool = True,
+    long_running_timeout_secs: int = 1800,
+    trace_id=None,
+):
+    if not goal:
+        return {"error": "goal required"}
+    sid = session_id or str(uuid.uuid4())
+    max_steps = max(1, min(20, int(max_steps)))
+    step_cycle_budget = max(1, min(20, int(step_cycle_budget)))
+    catalog_size = max(8, min(80, int(catalog_size)))
+    recon_max_rounds = max(0, min(8, int(recon_max_rounds)))
+    long_running_timeout_secs = max(30, int(long_running_timeout_secs))
+    # Hard ceiling on total executed steps (guards adaptive insert/replan from
+    # ever running away). Auto = 2×max_steps, capped at 40.
+    hard_cap = int(max_total_steps) if int(max_total_steps) > 0 else max_steps * 2
+    hard_cap = max(max_steps, min(40, hard_cap))
+    branch_fanout = max(1, min(4, int(branch_fanout)))
+    max_branches  = max(0, min(20, int(max_branches)))
+    step_max_attempts = max(0, min(5, int(step_max_attempts)))
+    step_retry_max_new_caps = max(0, min(6, int(step_retry_max_new_caps)))
+    # Failure-recovery strategy for a step that misses its success bar:
+    #   branch     — fork alternate approaches (the v7-era default; can wander)
+    #   extra_step — insert ONE recovery step seeded with the failed step's output
+    #                as context, so it CONTINUES the missing work instead of restarting
+    #   default    — no branching / no insert; the adaptive controller steers (pre-v7)
+    # An explicit strategy wins; otherwise fall back to the legacy enable_branching
+    # flag so existing callers keep their behaviour. `enable_branching` is then kept
+    # in sync so the branch code path only engages when 'branch' is selected.
+    failure_strategy = (failure_strategy or "").strip().lower()
+    if failure_strategy not in ("extra_step", "branch", "default"):
+        failure_strategy = "branch" if enable_branching else "default"
+    enable_branching = (failure_strategy == "branch")
+    clarify_timeout_secs = max(0, min(86400, int(clarify_timeout_secs or 0)))
+    clarify_scope = (clarify_scope or "whole").strip().lower()
+    clarify_channel = (clarify_channel or "ui").strip().lower()
+    cap_override_mode = (cap_override_mode or "off").strip().lower()
+    if cap_override_mode not in ("off", "piece"):
+        cap_override_mode = "off"
+    max_caps_per_piece = max(1, min(12, int(max_caps_per_piece or 6)))
+    max_plan_pieces = max(2, min(30, int(max_plan_pieces or 6)))
+    question_timeout_secs = max(15, min(86400, int(question_timeout_secs or 180)))
+    # Which step phases the planner may assign (subset of explore/think/act/verify,
+    # in canonical order). Empty/invalid → the full set.
+    allowed_phases = [p for p in _V5_PHASES
+                      if p in {s.strip().lower()
+                               for s in (phase_set or "").replace(",", " ").split()}]
+    if not allowed_phases:
+        allowed_phases = list(_V5_PHASES)
+    # Bundle the executor-facing step knobs so each _v5_run_step call site stays tidy.
+    _step_q_kw = dict(enable_chaining=bool(enable_chaining),
+                      enable_step_questions=bool(enable_step_questions),
+                      clarify_channel=clarify_channel,
+                      question_timeout_secs=question_timeout_secs,
+                      prefer_terminal_tools=bool(prefer_terminal_tools),
+                      condense_output=bool(condense_output))
+    # A dream cycle executes a strategic goal-project under session id
+    # `dream:{cid}:{stage}` (or by passing strategic_slug). In that case the goal
+    # is ALREADY a persisted long-term goal — never persist a second one; only
+    # fold progress back into the existing project.
+    _is_dream_exec = bool(strategic_slug) or str(session_id or "").startswith("dream:")
+
+    ctx = _ctx()
+    ollama_generate = getattr(ctx, "ollama_generate", None) if ctx else None
+    if ollama_generate is None:
+        return {"error": "context module not loaded — ollama_generate missing"}
+
+    _agent_loop_call_tool = getattr(ctx, "_agent_loop_call_tool", None)
+    if _agent_loop_call_tool is None:
+        async def _call(cap_name, args, **kw):
+            cap = CAPABILITY_REGISTRY.get(cap_name)
+            if not cap:
+                return {"ok": False, "error": f"Unknown cap: {cap_name}"}
+            accepted = set(cap.get("schema", {}).get("properties", {}).keys()) | {"trace_id"}
+            kwargs = {k: v for k, v in (args or {}).items() if k in accepted}
+            # Session plumb-through: caps that accept session_id get it, so
+            # sandbox routing / event scoping still work on the fallback shim.
+            if kw.get("session_id") and "session_id" in accepted:
+                kwargs.setdefault("session_id", kw["session_id"])
+            try:
+                result = await cap["func"](**kwargs, trace_id=kw.get("trace_id", "") or "")
+                return {"ok": True, "result": result}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+        _agent_loop_call_tool = _call  # type: ignore
+    build_ctx = getattr(ctx, "build_context_prompt", None) if enable_dynamic_skills else None
+
+    await emit_event({"type": "agent_loop_v6.triage_start", "goal": goal[:200], "session_id": sid})
+
+    # ── Catalog (identical construction to v5) ────────────────────────────────
+    base_caps = [c.strip() for c in (base_toolkit or "").replace(",", " ").split() if c.strip()]
+    try:
+        catalog_names = await _workshop_build_toolkit(
+            allowed_caps=allowed_caps, category="other", keywords=[],
+            top_k=max(8, catalog_size // 2), goal=goal, base_caps=base_caps[:8])
+    except Exception as e:
+        log.debug("v6 catalog build failed: %s", e)
+        catalog_names = list(base_caps[:8])
+    catalog_names = _v5_deflood_catalog(catalog_names, goal)
+    catalog_names = catalog_names[:catalog_size]
+    for _seed in reversed(_v5_seed_caps_for(goal)):
+        if _seed not in catalog_names:
+            catalog_names.insert(0, _seed)
+    catalog_names = _v5_expand_cohorts(catalog_names)
+    _catalog_block = _DEFAULT_CAP_BLACKLIST | _gated_read_caps()
+    if _catalog_block:
+        catalog_names = [c for c in catalog_names if c not in _catalog_block]
+    # Prefer-terminal-tools: guarantee exec.bash.run is on the menu so smart
+    # grep/sed/awk usage is always available (seeded at the front), mirroring v4.
+    if prefer_terminal_tools and "exec.bash.run" in CAPABILITY_REGISTRY \
+            and "exec.bash.run" not in _catalog_block and "exec.bash.run" not in catalog_names:
+        catalog_names.insert(0, "exec.bash.run")
+    # Session cap-guard (sandboxed run): plan over the approved toolkit only.
+    catalog_names = _guard_filter_catalog(sid, catalog_names)
+    if not catalog_names:
+        return {"error": "No capabilities available to orchestrate"}
+
+    _skill_allow = {s.strip() for s in (skill_allow or "").replace(",", " ").split() if s.strip()}
+    _skill_deny = {s.strip() for s in (skill_deny or "").replace(",", " ").split() if s.strip()}
+    skills = (await _v5_list_skills(trace_id or "", allow=_skill_allow, deny=_skill_deny)
+              if enable_dynamic_skills else [])
+    cap_skill_map = _v5_cap_skill_map(skills)
+    eligible_skill_ids = {s["id"] for s in skills}
+    valid_skill_ids = set(eligible_skill_ids)
+
+    await emit_event({"type": "agent_loop_v6.triage_done", "session_id": sid,
+                      "triage": {"category": "orchestrated", "keywords": [],
+                                 "reasoning": "v6 plans steps with success criteria and adapts the plan after each step"}})
+    await emit_event({"type": "agent_loop_v6.toolkit", "stream_id": "", "session_id": sid,
+                      "toolkit": list(catalog_names)})
+
+    artifact_dir_path = ""
+    try:
+        import importlib as _il
+        _exec_mod = _il.import_module("Vera.vera.execution.exec_capabilities")
+        artifact_dir_path = await _exec_mod.artifact_dir_async(session_id=sid)
+    except Exception as e:
+        log.debug("v6 artifact dir resolve failed: %s", e)
+
+    stream_register = getattr(ctx, "stream_register", None)
+    stream_complete = getattr(ctx, "stream_complete", None)
+    stream_id = ""
+    if stream_register:
+        try:
+            stream_id = await stream_register(
+                kind="agent_loop_v6", source_cap="dag.agent_loop_v6",
+                session_id=sid, label=goal[:80], persist_full=True,
+                fabric_dataset="streams.agent_loop_v6",
+                metadata={"goal": goal, "catalog": list(catalog_names), "max_steps": max_steps})
+        except Exception:
+            stream_id = ""
+
+    available_models = await _v5_available_models(trace_id or "")
+
+    # ── Tier classification (V7): heuristic floor + less-prescriptive LLM pass. ─
+    # Drives whether the strategic master planner fires (fixes v6's "complex
+    # planning never triggers" — it was gated on the LLM self-labelling a goal
+    # 'extreme', which it almost never did). `single` also skips recon.
+    tier = "simple"
+    tier_info: Dict[str, Any] = {}
+    if enable_tiering:
+        _tier_catalog_brief = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:24])
+        tier_info = await _v7_decide_tier(
+            goal, _tier_catalog_brief, plan_tier=plan_tier, auto_escalate=auto_escalate,
+            use_llm=(plan_tier or "auto").strip().lower() == "auto",
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu)
+        tier = tier_info.get("tier", "simple")
+        await emit_event({"type": "agent_loop_v6.tier", "session_id": sid,
+                          "stream_id": stream_id, "tier": tier,
+                          "suggested": tier_info.get("suggested", tier),
+                          "heuristic": tier_info.get("heuristic", ""),
+                          "llm": tier_info.get("llm", ""),
+                          "reason": tier_info.get("reason", ""),
+                          "escalation_suppressed": tier_info.get("escalation_suppressed", False)})
+    # The strategic MASTER PLANNER (long-form specialist plan) fires ONLY for a
+    # 'strategic' (open-ended / multi-day) goal now. 'complex' is the middle layer:
+    # a thorough MULTI-STEP normal plan from the orchestrator, NO master planner —
+    # so a concrete job like "reddit trends → youtube scripts" isn't blown up into
+    # a market-research strategy. (A planner self-label of 'extreme' still escalates.)
+    tier_wants_master = _v7_tier_rank(tier) >= _v7_tier_rank("strategic")
+
+    # ── FAST PATH: a 'single' tier goal is resolved by ONE cap in one cheap call,
+    #    bypassing the orchestrator entirely (mirrors the chat command bar). On a
+    #    miss it falls through to normal planning below. ────────────────────────
+    if enable_fast_path and tier == "single":
+        shortcut = await _v7_single_cap_shortcut(
+            goal, catalog_names, call_tool=_agent_loop_call_tool,
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+            trace_id=trace_id, session_id=sid)
+        if shortcut:
+            _cap = shortcut["cap"]
+            # REAL result text (handles action caps like exec.bash.run → stdout;
+            # _v5_gen_text alone returned '' for those → empty summary → synthesis
+            # hallucinated the answer).
+            _res_txt = _v7_result_text(shortcut["result"])
+            _title = f"Ran {_cap}"
+            # Emit the SAME v5 step/tool events a normal step would, so the shared
+            # renderer shows a real step card + tool result + correct stats instead
+            # of "0 cycles / 0 ok / 0 tools".
+            await emit_event({"type": "agent_loop_v5.step_start", "session_id": sid,
+                              "stream_id": stream_id, "step_id": 1, "title": _title,
+                              "goal": goal, "caps": [_cap], "skills": [], "phase": ""})
+            await emit_event({"type": "agent_loop_v5.tool_done", "session_id": sid,
+                              "stream_id": stream_id, "cycle": 1, "step_id": 1,
+                              "tool": _cap, "ok": True, "elapsed_ms": 0,
+                              "args": shortcut["args"], "preview": _res_txt[:600], "error": ""})
+            await emit_event({"type": "agent_loop_v6.fast_path", "session_id": sid,
+                              "stream_id": stream_id, "cap": _cap,
+                              "args": shortcut["args"], "preview": _res_txt[:600]})
+            await emit_event({"type": "agent_loop_v5.step_done", "session_id": sid,
+                              "stream_id": stream_id, "step_id": 1, "ok": True,
+                              "summary": _res_txt[:_V5_DONE_SUMMARY]})
+            final = await _v5_synthesize_final(
+                goal, [{"id": 1, "title": _title, "ok": True,
+                        "summary": _res_txt[:_V5_DONE_SUMMARY]}],
+                model=model, instance_id=instance_id, prefer_gpu=prefer_gpu)
+            await emit_event({"type": "agent_loop_v6.done", "stream_id": stream_id,
+                              "session_id": sid, "summary": final, "cycles": 1,
+                              "steps_run": 1, "reason": "fast_path"})
+            if stream_complete and stream_id:
+                try:
+                    await stream_complete(stream_id, final)
+                except Exception:
+                    pass
+            return {
+                "goal": goal, "tier": tier, "fast_path": True,
+                "steps": [{"id": 1, "title": _title, "ok": True,
+                           "cap": _cap, "args": shortcut["args"],
+                           "summary": _res_txt[:_V5_DONE_SUMMARY]}],
+                "toolkit": list(catalog_names), "history": [], "cycles": 1,
+                "final": final, "summary": final,
+                "stream_id": stream_id, "session_id": sid, "done": True,
+            }
+
+    # ── CONSULTATION (modes): for a complex/strategic goal, ask the user
+    #    clarifying/steering questions BEFORE committing to a documented plan.
+    #    Resolved mode (off|ask|auto_raise|auto_accept) drives behaviour; questions
+    #    route to the UI and/or a comms channel (Telegram) with a timeout up to 24h.
+    #    A dream cycle re-running an existing goal never re-consults. ─────────────
+    _clar_mode = _v7_clarify_mode(clarify_mode, clarify_level, auto_escalate)
+    _clar_gate = (_clar_mode != "off" and not _is_dream_exec
+                  and ((_clar_mode == "auto_raise")
+                       or (clarify_level >= 3)
+                       or (clarify_level >= 2 and _v7_tier_rank(tier) >= _v7_tier_rank("complex"))
+                       or (clarify_level >= 1 and tier == "strategic")
+                       or (clarify_mode and _v7_tier_rank(tier) >= _v7_tier_rank("complex"))))
+    if _clar_gate:
+        _clar = await _v7_run_clarify(
+            goal, done_when="", tier=tier, mode=_clar_mode, scope=clarify_scope,
+            channel=clarify_channel, timeout_secs=clarify_timeout_secs,
+            max_q=min(5, 1 + max(1, clarify_level)), sid=sid, stream_id=stream_id,
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu)
+        goal = _clar["goal"]
+        if _clar.get("raised") and _v7_tier_rank(tier) < _v7_tier_rank("strategic"):
+            # auto_raise: plan one tier harder instead of interrupting the user.
+            tier = _V7_TIERS[min(len(_V7_TIERS) - 1, _v7_tier_rank(tier) + 1)]
+            # master planner is strategic-tier only (see the primary assignment above)
+            tier_wants_master = _v7_tier_rank(tier) >= _v7_tier_rank("strategic")
+            await emit_event({"type": "agent_loop_v6.tier", "session_id": sid,
+                              "stream_id": stream_id, "tier": tier,
+                              "reason": "auto-raised by clarify (uncertain goal)"})
+
+    # STEP-PHASE POLICY (effective): the user control `phase_policy` (auto|encourage|
+    # sparing) resolves against the tier into the orchestrator's policy string
+    # (off|sparingly|encouraged). AUTO = tier-aware (phase heavily on a complex/
+    # strategic goal, sparingly otherwise — this is what puts the phase machinery to
+    # work on the hard, long-term tasks). ENCOURAGE forces heavy phasing on ANY run
+    # (so a v6 goal, which has no tier classifier, can still get phases); SPARING
+    # forces the light default. Master toggle `enable_phases` off wins over all.
+    _pp_user = (phase_policy or "auto").strip().lower()
+    if not enable_phases or _pp_user == "off":
+        phase_policy = "off"
+    elif _pp_user in ("encourage", "encouraged"):
+        phase_policy = "encouraged"
+    elif _pp_user in ("sparing", "sparingly"):
+        phase_policy = "sparingly"
+    else:  # auto
+        phase_policy = ("encouraged" if _v7_tier_rank(tier) >= _v7_tier_rank("complex")
+                        else "sparingly")
+    # STRUCTURED JOURNAL: a rolling structured record (key outputs, files/paths,
+    # tools used, entities) distilled from each step, persisted to the data fabric
+    # (+ a JSON mirror in the artifact dir) and folded back into later steps so the
+    # run reuses its own findings instead of re-deriving them. Reserved for
+    # complex/long-term runs by default (the per-step extraction has a cost);
+    # `journal_all_tiers` forces it for any run (e.g. a v6 engine with no tier).
+    journal_on = bool(enable_journal) and (
+        journal_all_tiers or _v7_tier_rank(tier) >= _v7_tier_rank("complex"))
+
+    # ── Orchestrate (want_success=True so steps carry success criteria) ───────
+    _plan_hb_stop = asyncio.Event()
+    _plan_hb_task = asyncio.create_task(_v5_planning_heartbeat(sid, stream_id, _plan_hb_stop))
+    plan = await _v5_orchestrate_plan(
+        goal, catalog_names, skills, cap_skill_map,
+        model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+        max_steps=max_steps, want_success=True, phase_policy=phase_policy,
+        allowed_phases=allowed_phases, sid=sid, stream_id=stream_id)
+    if not plan.get("steps"):
+        retry = await _v5_orchestrate_plan(
+            goal, catalog_names, skills, cap_skill_map,
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+            max_steps=max_steps, minimal=True, want_success=True,
+            phase_policy=phase_policy)
+        if retry.get("steps"):
+            plan = retry
+    # Fall-through "complex planning mode": both plan passes yielded no usable
+    # steps — escalate to a long-form master plan and re-break it into steps (a
+    # weak planner decomposes a concrete document far more reliably than an
+    # abstract goal). Distinct from the complexity=="extreme" opt-in below.
+    _master_ran = False
+    if not plan.get("steps") and enable_master_planner:
+        try:
+            catalog_brief = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:24])
+            mp = await _v5_master_plan(goal, catalog_brief, model=model,
+                                       instance_id=instance_id, prefer_gpu=prefer_gpu,
+                                       sid=sid, stream_id=stream_id)
+            await emit_event({"type": "agent_loop_v6.master_plan", "session_id": sid,
+                              "stream_id": stream_id, "persona": mp.get("persona", ""),
+                              "long_form": mp.get("long_form", ""),
+                              "note": "structured planning produced no usable steps — "
+                                      "escalated to long-form planning"})
+            if mp.get("long_form"):
+                _master_ran = True
+                plan2 = await _v5_plan_master_piecewise(
+                    goal, catalog_names, skills, cap_skill_map,
+                    long_form=mp["long_form"], model=model, instance_id=instance_id,
+                    prefer_gpu=prefer_gpu, max_steps=max_steps, want_success=True,
+                    max_caps_per_piece=max_caps_per_piece, cap_override_mode=cap_override_mode,
+                    max_split_pieces=max_plan_pieces, phase_policy=phase_policy,
+                    sid=sid, stream_id=stream_id, ev_prefix="agent_loop_v6")
+                if plan2.get("steps"):
+                    plan = plan2
+        except Exception as e:
+            log.debug("v6 master-plan escalation failed: %s", e)
+    complexity = (plan.get("complexity") or "").lower()
+    done_when = str(plan.get("done_when") or "")
+    # Preserve any slug passed in by a dream cycle (executing an existing goal);
+    # otherwise this is set when a NEW strategic goal is persisted below.
+    strategic_slug = (strategic_slug or "").strip()
+
+    # Strategic master planner fires when EITHER the tier classifier says the goal
+    # is complex/strategic OR the planner self-labelled it 'extreme'. (v6 only had
+    # the latter, which almost never triggered — the whole reason complex planning
+    # wasn't firing.) It drafts a domain-expert long-form plan and re-breaks it.
+    # Skipped if the no-steps fall-through above already ran it.
+    if (enable_master_planner and not _master_ran and plan.get("steps")
+            and (tier_wants_master or complexity == "extreme")):
+        try:
+            catalog_brief = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:24])
+            mp = await _v5_master_plan(goal, catalog_brief, model=model,
+                                       instance_id=instance_id, prefer_gpu=prefer_gpu,
+                                       sid=sid, stream_id=stream_id)
+            await emit_event({"type": "agent_loop_v6.master_plan", "session_id": sid,
+                              "stream_id": stream_id, "persona": mp.get("persona", ""),
+                              "long_form": mp.get("long_form", "")})
+            if mp.get("long_form"):
+                # A STRATEGIC (multi-day) goal persists its documented plan as a
+                # dream project so it continues a portion at a time over sessions.
+                # This session still executes the first portion inline below. A
+                # dream cycle re-running an existing goal does NOT create a second
+                # project — it already knows its slug and only records progress.
+                if enable_dream_persistence and tier == "strategic" and not _is_dream_exec:
+                    strategic_slug = await _v7_persist_strategic(
+                        goal, mp["long_form"], done_when)
+                    if strategic_slug:
+                        await emit_event({"type": "agent_loop_v6.strategic_persisted",
+                                          "session_id": sid, "stream_id": stream_id,
+                                          "slug": strategic_slug,
+                                          "note": "documented plan persisted as a dream project — "
+                                                  "the dream system will continue it over days"})
+                        # Freeze the escalation moment: agent notes + an artifact
+                        # snapshot + a per-goal background thought loop that RAGs
+                        # the goal's accumulating output.
+                        try:
+                            snap = await _v7_escalation_snapshot(
+                                strategic_slug, session_id=sid, goal=goal,
+                                done_when=done_when, master_plan=mp["long_form"],
+                                artifact_dir_path=artifact_dir_path)
+                            await emit_event({"type": "agent_loop_v6.strategic_escalated",
+                                              "session_id": sid, "stream_id": stream_id,
+                                              "slug": strategic_slug, **snap})
+                        except Exception as _e:
+                            log.debug("v7 escalation snapshot failed: %s", _e)
+                elif _is_dream_exec and strategic_slug:
+                    # Keep the existing goal-project's documented plan fresh.
+                    await _v7_persist_strategic(goal, mp["long_form"], done_when,
+                                                existing_slug=strategic_slug)
+                # STRATEGIC (multi-day) goals expand and run only the FIRST
+                # section this session (until its deliverable); the rest of the
+                # documented plan stays persisted for the dream system to continue
+                # over later sessions. A self-contained EXTREME goal that finishes
+                # in one session still expands every piece (max_pieces=None).
+                _mp_cap = 1 if tier == "strategic" else None
+                plan2 = await _v5_plan_master_piecewise(
+                    goal, catalog_names, skills, cap_skill_map,
+                    long_form=mp["long_form"], model=model, instance_id=instance_id,
+                    prefer_gpu=prefer_gpu, max_steps=max_steps, want_success=True,
+                    max_pieces=_mp_cap,
+                    max_caps_per_piece=max_caps_per_piece, cap_override_mode=cap_override_mode,
+                    max_split_pieces=max_plan_pieces, phase_policy=phase_policy,
+                    sid=sid, stream_id=stream_id, ev_prefix="agent_loop_v6")
+                if plan2.get("steps"):
+                    plan = plan2
+                    done_when = str(plan2.get("done_when") or done_when)
+                    _deferred = plan2.get("deferred_pieces") or []
+                    if _deferred:
+                        await emit_event({
+                            "type": "agent_loop_v6.strategic_sectioned", "session_id": sid,
+                            "stream_id": stream_id, "slug": strategic_slug,
+                            "running_section": (plan2.get("exec_pieces") or [{}])[0].get("title", ""),
+                            "deferred_sections": [{"id": d["id"], "title": d["title"],
+                                                   "timescale": d.get("timescale", "")}
+                                                  for d in _deferred],
+                            "note": "running one section to a deliverable this session; the dream "
+                                    "system continues the remaining sections over later cycles"})
+        except Exception as e:
+            log.debug("v6 master-planner stage failed: %s", e)
+
+    recon = plan.get("recon") or []
+    if enable_recon and recon and recon_max_rounds > 0:
+        catalog_set_for_recon = set(catalog_names)
+        accumulated: List[str] = []
+        rnd = 0
+        while recon and rnd < recon_max_rounds:
+            rnd += 1
+            rounds_left_after = recon_max_rounds - rnd
+            try:
+                findings = await _v5_run_recon(
+                    recon, session_id=sid, stream_id=stream_id, trace_id=trace_id,
+                    call_tool=_agent_loop_call_tool, catalog_set=catalog_set_for_recon,
+                    round_idx=rnd, max_rounds=recon_max_rounds)
+            except Exception as e:
+                log.debug("v6 recon round %d failed: %s", rnd, e)
+                break
+            if not findings:
+                break
+            accumulated.append(findings)
+            try:
+                plan2 = await _v5_orchestrate_plan(
+                    goal, catalog_names, skills, cap_skill_map,
+                    model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+                    max_steps=max_steps, recon_findings="\n\n".join(accumulated),
+                    recon_rounds_left=rounds_left_after, want_success=True,
+                    phase_policy=phase_policy, allowed_phases=allowed_phases)
+            except Exception as e:
+                log.debug("v6 recon re-plan round %d failed: %s", rnd, e)
+                break
+            if plan2.get("steps"):
+                plan = plan2
+                done_when = str(plan2.get("done_when") or done_when)
+            recon = (plan2.get("recon") or []) if rounds_left_after > 0 else []
+    _plan_hb_stop.set()
+    try:
+        await _plan_hb_task
+    except Exception:
+        pass
+
+    steps = plan.get("steps") or []
+    if not steps:
+        # Every planning stage failed (structured plan, minimal-schema retry,
+        # master-plan escalation, recon re-plans). Fall through to STEPWISE mode:
+        # one seeded bootstrap step makes the first concrete progress, then v6's
+        # adaptive controller plans each subsequent step from the accumulated
+        # evidence — exactly the incremental recovery the loop is built for.
+        steps = [_v5_stepwise_bootstrap_step(goal, catalog_names)]
+        plan["steps"] = steps
+        plan["reason"] = plan.get("reason") or (
+            "planning could not decompose the goal — running STEPWISE from a "
+            "bootstrap step; the controller will plan each next step from evidence")
+        await emit_event({"type": "agent_loop_v5.planning", "session_id": sid,
+                          "stream_id": stream_id, "elapsed_s": 0,
+                          "note": "plan escalations exhausted — entering STEPWISE mode"})
+
+    steps = _v5_split_compound_single_step(steps, goal)
+    # Enforce the phase policy on the plan: none when phases are off, else keep only
+    # the phases the user allowed (phase_set) in canonical order.
+    for s in steps:
+        if phase_policy == "off":
+            s["phases"] = []
+        else:
+            s["phases"] = [p for p in allowed_phases if p in set(s.get("phases") or [])]
+    _v5_apply_skill_suggestions(steps, cap_skill_map, eligible_skill_ids, auto_suggest_skills)
+    await emit_event({"type": "agent_loop_v6.plan", "session_id": sid, "stream_id": stream_id,
+                      "steps": [{"id": s["id"], "title": s["title"], "caps": s["caps"],
+                                 "skills": s["skills"], "complex": bool(s.get("complex")),
+                                 "phases": s.get("phases") or [],
+                                 "success": s.get("success", "")} for s in steps],
+                      "reason": plan.get("reason", ""),
+                      "complexity": plan.get("complexity", ""),
+                      "done_when": done_when})
+
+    # ── Execute over a shared ledger with an adaptive controller ──────────────
+    blackboard: Dict[int, Dict[str, Any]] = {}
+    results: List[Dict[str, Any]] = []
+    flat_history: List[Dict[str, Any]] = []
+    journal: List[Dict[str, Any]] = []     # structured run journal (complex/long-term only)
+    user_updates: List[str] = []           # mid-run user messages folded into context
+    queue = list(steps)
+    executed = 0
+    gcycle = 0
+    branches_used = 0                      # total alternate branches explored this run
+    extra_steps_used = 0                    # total extra_step recovery inserts this run
+    max_id = max((s["id"] for s in steps), default=0)
+
+    async def _recovery_step(failed_step, failed_res, new_id):
+        """Build the `extra_step` recovery step. A verification failure should lead
+        to an ADJUSTMENT of the step that navigates the specific problem, so this
+        asks the step-adjuster for a reframed tactic (new/added caps, optional
+        explore→act→verify phases) and falls back to a plain continuation step."""
+        return await _v6_adjust_step(
+            failed_step, failed_res, goal, catalog_names=catalog_names,
+            valid_skill_ids=valid_skill_ids, new_id=new_id, phase_policy=phase_policy,
+            allowed_phases=allowed_phases, model=model, instance_id=instance_id,
+            prefer_gpu=prefer_gpu)
+
+    async def _journal_step(step, res):
+        """Fold a finished step into the structured journal (complex/long-term
+        runs only): extract its record, persist to the fabric + JSON mirror, and
+        surface it on the stream. Best-effort — never affects the run."""
+        if not journal_on:
+            return
+        try:
+            entry = await _v6_journal_extract(
+                step, res, goal, model=model, instance_id=instance_id, prefer_gpu=prefer_gpu)
+            journal.append(entry)
+            await emit_event({"type": "agent_loop_v6.journal", "session_id": sid,
+                              "stream_id": stream_id, "step_id": step.get("id"),
+                              "entry": entry, "count": len(journal)})
+            await _v6_journal_persist(
+                entry, journal, session_id=sid, goal=goal, done_when=done_when,
+                artifact_dir_path=artifact_dir_path, slug=strategic_slug, tier=tier)
+        except Exception as _e:
+            log.debug("v6 journal step failed: %s", _e)
+
+    async def _run_one(step, gc_in):
+        """Run a step exactly as v5 does (reusing _v5_run_step / complex subplan
+        via the v5 helpers), returning its result dict. v6 does not re-implement
+        step execution — only the control layer around it."""
+        if enable_subplans and step.get("complex"):
+            # Expand into a one-level sub-plan just like v5's _run_complex_step,
+            # but inline (the v5 helper is nested in the v5 cap). Fall back to a
+            # flat scoped mini-loop if decomposition yields nothing.
+            parent_id = step["id"]
+            sub_catalog = list(dict.fromkeys(
+                list(step.get("caps") or []) + list(catalog_names)))[:catalog_size]
+            await emit_event({"type": "agent_loop_v5.step_start", "session_id": sid,
+                              "stream_id": stream_id, "step_id": parent_id,
+                              "title": step["title"], "goal": step["goal"],
+                              "caps": step.get("caps") or [], "skills": []})
+            sub = await _v5_orchestrate_plan(
+                step["goal"], sub_catalog, skills, cap_skill_map,
+                model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+                max_steps=min(_V5_SUBPLAN_MAX_STEPS, max_steps), want_success=True,
+                phase_policy="off")   # sub-steps run flat (phases stripped below) — don't plan them
+            sub_steps = sub.get("steps") or []
+            if not sub_steps:
+                return await _v5_run_step(
+                    step, goal=goal, blackboard=blackboard, model=model, instance_id=instance_id,
+                    prefer_gpu=prefer_gpu, session_id=sid, stream_id=stream_id, trace_id=trace_id,
+                    cycle_budget=step_cycle_budget, cycle_offset=gc_in,
+                    artifact_dir_path=artifact_dir_path, call_tool=_agent_loop_call_tool,
+                    build_ctx=build_ctx, catalog_caps=sub_catalog, available_models=available_models,
+                    await_long_running=await_long_running,
+                    long_running_timeout_secs=long_running_timeout_secs,
+                    enable_code_autosave=enable_code_autosave, code_push_gitea=code_push_gitea,
+                    **_step_q_kw)
+            idmap: Dict[int, int] = {}
+            for j, ss in enumerate(sub_steps):
+                idmap[ss.get("id", j + 1)] = parent_id * 100 + j + 1
+            for j, ss in enumerate(sub_steps):
+                ss["id"] = parent_id * 100 + j + 1
+                ss["needs"] = [idmap.get(n, n) for n in (ss.get("needs") or [])]
+                ss["title"] = (f"{parent_id}.{j + 1} " + str(ss.get("title") or "")).strip()[:120]
+                ss["complex"] = False
+                ss["phases"] = []
+            _v5_apply_skill_suggestions(sub_steps, cap_skill_map, eligible_skill_ids, auto_suggest_skills)
+            await emit_event({"type": "agent_loop_v5.subplan", "session_id": sid, "stream_id": stream_id,
+                              "parent_id": parent_id, "title": step["title"],
+                              "steps": [{"id": s["id"], "title": s["title"], "caps": s["caps"]}
+                                        for s in sub_steps],
+                              "reason": sub.get("reason", "")})
+            sub_bb: Dict[int, Dict[str, Any]] = {}
+            sub_results: List[Dict[str, Any]] = []
+            sub_history: List[Dict[str, Any]] = []
+            gc = gc_in
+            for ss in sub_steps:
+                r = await _v5_run_step(
+                    ss, goal=step["goal"], blackboard={**blackboard, **sub_bb},
+                    model=model, instance_id=instance_id, prefer_gpu=prefer_gpu, session_id=sid,
+                    stream_id=stream_id, trace_id=trace_id, cycle_budget=step_cycle_budget,
+                    cycle_offset=gc, artifact_dir_path=artifact_dir_path,
+                    call_tool=_agent_loop_call_tool, build_ctx=build_ctx,
+                    catalog_caps=sub_catalog, available_models=available_models,
+                    await_long_running=await_long_running,
+                    long_running_timeout_secs=long_running_timeout_secs,
+                    enable_code_autosave=enable_code_autosave, code_push_gitea=code_push_gitea,
+                    **_step_q_kw)
+                gc = r.get("cycle_end", gc)
+                sub_bb[ss["id"]] = r
+                sub_results.append(r)
+                sub_history.extend(r.get("history") or [])
+            agg_ok = all(r.get("ok") for r in sub_results) if sub_results else False
+            agg_summary = "\n\n".join(
+                f"[{r['title']}] {(r.get('summary') or '')[:500]}" for r in sub_results)[:1800]
+            await emit_event({"type": "agent_loop_v5.step_done", "session_id": sid,
+                              "stream_id": stream_id, "step_id": parent_id,
+                              "ok": agg_ok, "summary": agg_summary[:1500]})
+            return {"id": parent_id, "title": step["title"], "ok": agg_ok, "summary": agg_summary,
+                    "outputs": {}, "cycle_end": gc, "history": sub_history, "subplan": True,
+                    "sub_steps": sub_results}
+        return await _v5_run_step(
+            step, goal=goal, blackboard=blackboard, model=model, instance_id=instance_id,
+            prefer_gpu=prefer_gpu, session_id=sid, stream_id=stream_id, trace_id=trace_id,
+            cycle_budget=step_cycle_budget, cycle_offset=gc_in,
+            artifact_dir_path=artifact_dir_path, call_tool=_agent_loop_call_tool,
+            build_ctx=build_ctx, catalog_caps=catalog_names, available_models=available_models,
+            await_long_running=await_long_running,
+            long_running_timeout_secs=long_running_timeout_secs,
+            enable_code_autosave=enable_code_autosave, code_push_gitea=code_push_gitea,
+            **_step_q_kw)
+
+    async def _finalize_one(step, res):
+        """Distil the step's cycles into a finalised, relevant-only output BEFORE
+        it lands in the ledger — so downstream steps read the clean version and
+        the verifier judges it, not the raw cycle transcript."""
+        if not enable_step_finalize:
+            return
+        await _v6_finalize_step(step, res, goal, model=model,
+                                instance_id=instance_id, prefer_gpu=prefer_gpu)
+        if res.get("finalized"):
+            await emit_event({"type": "agent_loop_v6.step_finalized", "session_id": sid,
+                              "stream_id": stream_id, "step_id": step["id"],
+                              "summary": str(res.get("summary") or "")[:_V6_FINALIZE_OUT_MAX]})
+
+    async def _verify_one(step, res):
+        """Judge the step's result against its success criterion (one cheap call)
+        and stamp met/met_reason onto the result for the ledger + controller."""
+        if not (enable_step_verify and str(step.get("success") or "").strip()):
+            res["met"] = None
+            return
+        v = await _v6_verify_step(step, res, model=model,
+                                  instance_id=instance_id, prefer_gpu=prefer_gpu)
+        res["met"] = v["met"]
+        res["met_reason"] = v["reason"]
+        await emit_event({"type": "agent_loop_v6.verify", "session_id": sid,
+                          "stream_id": stream_id, "step_id": step["id"],
+                          "ok": bool(res.get("ok")), "met": v["met"],
+                          "criterion": str(step.get("success") or "")[:300],
+                          "reason": v["reason"]})
+
+    async def _complete_step(step, res, gc_in):
+        """STEP-COMPLETION GATE: loop on a step's deliverable until it meets its
+        success bar. When a step ends unmet, re-attempt the SAME step IN PLACE —
+        an adjusted tactic seeded with the prior attempt's output and WHY it fell
+        short, with only a couple of new tools (minimal expansion) — up to
+        `step_max_attempts` times. This is what stops the run steam-rolling past a
+        failed step onto a tangent. Returns (res, gc). The result keeps the
+        ORIGINAL step id so the ledger/blackboard stay coherent; on final failure
+        it is stamped `unmet_final` so the controller sees an honest miss."""
+        gc = gc_in
+        attempt = 0
+        base_caps = set(step.get("caps") or [])
+        while ((res.get("met") is False or res.get("ok") is False)
+               and attempt < step_max_attempts and executed < hard_cap):
+            attempt += 1
+            adj = await _v6_adjust_step(
+                step, res, goal, catalog_names=catalog_names,
+                valid_skill_ids=valid_skill_ids, new_id=step["id"],
+                phase_policy=phase_policy, allowed_phases=allowed_phases,
+                model=model, instance_id=instance_id, prefer_gpu=prefer_gpu)
+            # Minimal expansion: keep the step's own caps + at most N new ones.
+            adj_caps = [c for c in (adj.get("caps") or []) if c in base_caps]
+            for c in (adj.get("caps") or []):
+                if c not in base_caps and len(adj_caps) < len(base_caps) + step_retry_max_new_caps:
+                    adj_caps.append(c)
+            adj["caps"] = adj_caps or list(base_caps)
+            adj["id"] = step["id"]
+            adj["title"] = step.get("title", adj.get("title", ""))
+            await emit_event({"type": "agent_loop_v6.step_retry", "session_id": sid,
+                              "stream_id": stream_id, "step_id": step["id"],
+                              "attempt": attempt, "max_attempts": step_max_attempts,
+                              "caps": adj["caps"], "phases": adj.get("phases") or [],
+                              "reason": str(res.get("met_reason")
+                                            or res.get("summary") or "")[:300]})
+            res2 = await _run_one(adj, gc)
+            res2["success"] = step.get("success", "")
+            res2["id"] = step["id"]
+            res2["title"] = step.get("title", "")
+            await _finalize_one(adj, res2)
+            await _verify_one(adj, res2)
+            gc = res2.get("cycle_end", gc)
+            res = res2
+            if res.get("met") is not False and res.get("ok") is not False:
+                break
+        if res.get("met") is False or res.get("ok") is False:
+            res["unmet_final"] = True
+            res["attempts"] = attempt + 1
+            await emit_event({"type": "agent_loop_v6.step_unmet", "session_id": sid,
+                              "stream_id": stream_id, "step_id": step["id"],
+                              "attempts": attempt + 1,
+                              "reason": str(res.get("met_reason")
+                                            or res.get("summary") or "")[:300]})
+        elif attempt:
+            res["attempts"] = attempt + 1
+            await emit_event({"type": "agent_loop_v6.step_completed", "session_id": sid,
+                              "stream_id": stream_id, "step_id": step["id"],
+                              "attempts": attempt + 1})
+        return res, gc
+
+    async def _run_branch(label, branch_steps, base_bb, gc):
+        """Run ONE alternate branch's steps on an ancestor-chain-isolated
+        blackboard (a COPY of the fork snapshot; the branch's own results overlay
+        it, and sibling branches never see each other). Returns an aggregate
+        result dict {ok, summary, outputs, history, met, cycle_end}. The branch
+        steps run flat (no sub-plans) — a branch is already a decomposition."""
+        local_bb: Dict[int, Dict[str, Any]] = dict(base_bb)   # isolated copy
+        branch_results: List[Dict[str, Any]] = []
+        agg_outputs: Dict[str, Any] = {}
+        agg_history: List[Dict[str, Any]] = []
+        # Ancestor visibility: strategist-proposed steps carry no `needs` into
+        # the pre-fork blackboard, so without this the branch specialists ran
+        # BLIND to everything gathered before the fork (and re-collected it or
+        # hallucinated). Wire every branch step to the last few ancestor results
+        # + its branch-local predecessors. Sibling branches still never see each
+        # other — each works on its own copy of the ANCESTOR chain only.
+        anc_ids = [i for i in sorted(base_bb.keys()) if base_bb.get(i, {}).get("ok")][-5:]
+        branch_ids: List[int] = []
+        for bs in branch_steps:
+            bs = dict(bs)
+            bs["needs"] = sorted(set((bs.get("needs") or []) + anc_ids + branch_ids))
+            r = await _v5_run_step(
+                bs, goal=goal, blackboard=local_bb, model=model, instance_id=instance_id,
+                prefer_gpu=prefer_gpu, session_id=sid, stream_id=stream_id, trace_id=trace_id,
+                cycle_budget=step_cycle_budget, cycle_offset=gc,
+                artifact_dir_path=artifact_dir_path, call_tool=_agent_loop_call_tool,
+                build_ctx=build_ctx, catalog_caps=catalog_names, available_models=available_models,
+                await_long_running=await_long_running,
+                long_running_timeout_secs=long_running_timeout_secs,
+                enable_code_autosave=enable_code_autosave, code_push_gitea=code_push_gitea,
+                **_step_q_kw)
+            r["success"] = bs.get("success", "")
+            await _finalize_one(bs, r)
+            gc = r.get("cycle_end", gc)
+            local_bb[bs["id"]] = r
+            branch_ids.append(bs["id"])
+            branch_results.append(r)
+            agg_outputs.update(r.get("outputs") or {})
+            agg_history.extend(r.get("history") or [])
+            # A branch step that hard-fails ends the branch early — this approach
+            # is not working; prune it and let the strategist try another angle.
+            if r.get("ok") is False:
+                break
+        agg_ok = bool(branch_results) and all(r.get("ok") for r in branch_results)
+        agg_summary = "\n\n".join(
+            f"[{r['title']}] {(r.get('summary') or '')[:600]}" for r in branch_results)[:_V6_FINALIZE_OUT_MAX]
+        return {"ok": agg_ok, "summary": agg_summary, "outputs": agg_outputs,
+                "history": agg_history, "cycle_end": gc, "branch_steps": branch_results}
+
+    async def _resolve_branches(failed_step, failed_res, pre_bb, gc):
+        """Fork from the last good point (pre_bb — the ancestor chain, WITHOUT the
+        failed attempt) and explore alternate approaches. First branch to satisfy
+        the failed step's success bar MERGES (returns a winning step result);
+        the rest PRUNE to a one-line record. Returns
+        {won, res, gcycle, used, records}."""
+        nonlocal branches_used
+        budget = max_branches - branches_used
+        if budget <= 0:
+            return {"won": False, "res": None, "gcycle": gc, "used": 0, "records": []}
+        inherited = "\n".join(
+            f"[{r.get('id')}] {r.get('title','')}: {(r.get('summary') or '')[:500]}"
+            for r in list(pre_bb.values())[-8:])
+        prune_records: List[Dict[str, Any]] = []
+        approaches = await _v6_branch_strategist(
+            goal, failed_step, failed_res, inherited, prune_records,
+            fanout=min(budget, branch_fanout), catalog_names=catalog_names,
+            valid_skill_ids=valid_skill_ids, base_id=max_id, model=model,
+            instance_id=instance_id, prefer_gpu=prefer_gpu)
+        if not approaches:
+            return {"won": False, "res": None, "gcycle": gc, "used": 0, "records": []}
+        approaches = approaches[:budget]
+        for ap in approaches:
+            await emit_event({"type": "agent_loop_v6.branch_open", "session_id": sid,
+                              "stream_id": stream_id, "fork_step": failed_step["id"],
+                              "label": ap["label"],
+                              "steps": [{"id": s["id"], "title": s["title"], "caps": s["caps"]}
+                                        for s in ap["steps"]]})
+
+        async def _try(ap, offset):
+            br = await _run_branch(ap["label"], ap["steps"], pre_bb, offset)
+            met = br["ok"]
+            reason = ""
+            crit = str(failed_step.get("success") or "").strip()
+            if br["ok"] and crit:
+                v = await _v6_verify_step(
+                    {"goal": failed_step.get("goal", ""), "success": crit},
+                    {"ok": True, "summary": br["summary"], "outputs": br["outputs"],
+                     "history": br["history"]},
+                    model=model, instance_id=instance_id, prefer_gpu=prefer_gpu)
+                met = bool(v["met"]); reason = v["reason"]
+            return ap, br, met, reason
+
+        winner = None
+        used = 0
+        if branch_parallel and len(approaches) > 1:
+            # Distinct cycle-offset lane per branch so their live cycle cards don't
+            # collide in the shared renderer (which keys cards by cycle number).
+            stride = max(1, step_cycle_budget) * _V6_BRANCH_STEP_MAX + 4
+            tries = await asyncio.gather(
+                *[_try(ap, gc + i * stride) for i, ap in enumerate(approaches)])
+            used = len(tries)
+            gc = max([t[1]["cycle_end"] for t in tries] + [gc])
+            for ap, br, met, reason in tries:
+                if met and winner is None:
+                    winner = (ap, br)
+                else:
+                    prune_records.append({"label": ap["label"],
+                                          "reason": reason or "did not meet the step's bar"})
+                    await emit_event({"type": "agent_loop_v6.branch_prune", "session_id": sid,
+                                      "stream_id": stream_id, "fork_step": failed_step["id"],
+                                      "label": ap["label"],
+                                      "reason": reason or "did not meet the step's bar"})
+        else:
+            for ap in approaches:
+                _ap, br, met, reason = await _try(ap, gc)
+                used += 1
+                gc = br["cycle_end"]
+                if met:
+                    winner = (ap, br)
+                    break
+                prune_records.append({"label": ap["label"],
+                                      "reason": reason or "did not meet the step's bar"})
+                await emit_event({"type": "agent_loop_v6.branch_prune", "session_id": sid,
+                                  "stream_id": stream_id, "fork_step": failed_step["id"],
+                                  "label": ap["label"],
+                                  "reason": reason or "did not meet the step's bar"})
+        branches_used += used
+        if not winner:
+            return {"won": False, "res": None, "gcycle": gc, "used": used,
+                    "records": prune_records}
+        ap, br = winner
+        await emit_event({"type": "agent_loop_v6.branch_merge", "session_id": sid,
+                          "stream_id": stream_id, "fork_step": failed_step["id"],
+                          "label": ap["label"], "summary": br["summary"][:_V6_FINALIZE_OUT_MAX]})
+        merged = {"id": failed_step["id"], "title": failed_step["title"], "ok": True,
+                  "summary": br["summary"], "outputs": br["outputs"], "cycle_end": gc,
+                  "history": br["history"], "finalized": True, "met": True,
+                  "met_reason": f"met via branch '{ap['label']}'",
+                  "success": failed_step.get("success", ""),
+                  "via_branch": ap["label"],
+                  "pruned_branches": prune_records}
+        return {"won": True, "res": merged, "gcycle": gc, "used": used,
+                "records": prune_records}
+
+    while queue and executed < hard_cap:
+        step = queue.pop(0)
+        executed += 1
+        # ── Mid-run user messages: drain anything the user sent since the last
+        #    step and fold it into the run as authoritative context. It reaches
+        #    THIS step's goal and every following step (+ the controller). ───────
+        _umsgs = await _drain_user_messages(sid)
+        if _umsgs:
+            user_updates.extend(_umsgs)
+            await emit_event({"type": "agent_loop_v6.user_message", "session_id": sid,
+                              "stream_id": stream_id, "messages": _umsgs,
+                              "count": len(user_updates)})
+        if user_updates:
+            step["goal"] = _user_updates_block(user_updates) + "\n\n" + str(step.get("goal", ""))
+        # ── Structured journal → step context: fold the run's accumulated
+        #    structured record (key outputs, files/paths, entities) into this
+        #    step's goal so the ephemeral specialist reuses what the run already
+        #    produced instead of re-deriving it. Complex/long-term runs only. ────
+        if journal_on and journal and not step.get("_journal_injected"):
+            _jdig = _v6_journal_digest(journal)
+            if _jdig:
+                step["goal"] = (
+                    str(step.get("goal", "")) +
+                    "\n\nRUN JOURNAL (structured context already produced by earlier steps — "
+                    "reuse these outputs, files, and findings; do NOT re-derive them):\n" + _jdig)
+            step["_journal_injected"] = True
+        # ── Pre-step info gathering: identify the concrete info this step needs
+        #    that earlier steps did NOT already collect, and fold both the gaps and
+        #    a digest of what's already known into the step goal — so the step
+        #    gathers only the missing pieces (never re-collects). ────────────────
+        if enable_prestep_info and not step.get("_prereq_done"):
+            try:
+                pinfo = await _v7_prestep_info(
+                    step, results, goal, model=model,
+                    instance_id=instance_id, prefer_gpu=prefer_gpu)
+                if pinfo.get("gaps"):
+                    step["goal"] = (
+                        str(step.get("goal", "")) +
+                        "\n\nBEFORE acting, make sure you have these (gather ONLY what's "
+                        "missing — do NOT re-collect anything already known):\n"
+                        + "\n".join(f"  • {g}" for g in pinfo["gaps"])
+                        + ("\n\nALREADY KNOWN (reuse; don't re-fetch):\n"
+                           + pinfo["known_digest"][:1500] if pinfo.get("known_digest") else ""))
+                    await emit_event({"type": "agent_loop_v6.prestep_info", "session_id": sid,
+                                      "stream_id": stream_id, "step_id": step["id"],
+                                      "gaps": pinfo["gaps"]})
+                step["_prereq_done"] = True
+            except Exception as _e:
+                log.debug("v6 prestep info failed: %s", _e)
+        # Fork snapshot = the ancestor chain WITHOUT this step's attempt. A branch
+        # spawned on failure inherits this and never sees the failed try (or siblings).
+        pre_bb = dict(blackboard)
+        res = await _run_one(step, gcycle)
+        # Carry the step's success criterion onto the result so the ledger/controller
+        # can judge it against the bar the planner set.
+        res["success"] = step.get("success", "")
+        await _finalize_one(step, res)
+        await _verify_one(step, res)
+        gcycle = res.get("cycle_end", gcycle)
+        # ── Step-completion gate: loop on the deliverable IN PLACE (adjusted
+        #    tactic, minimal expansion) until it meets its bar, BEFORE the run is
+        #    allowed to move on. This is the primary fix for steam-rolling — the
+        #    branch/extra_step recovery below only engages if the step is STILL
+        #    unmet after these in-place attempts.
+        if require_step_completion and step_max_attempts > 0:
+            res, gcycle = await _complete_step(step, res, gcycle)
+        # ── Failure recovery: a step that misses its bar either forks alternate
+        #    approaches (branch), gets one continuation step seeded with its own
+        #    output (extra_step), or is left to the adaptive controller (default).
+        step_failed = (res.get("ok") is False) or (res.get("met") is False)
+        if enable_branching and step_failed and branches_used < max_branches:
+            br = await _resolve_branches(step, res, pre_bb, gcycle)
+            gcycle = br["gcycle"]
+            if br["won"]:
+                res = br["res"]           # merged winning branch stands in for the step
+            elif br["records"]:
+                res["pruned_branches"] = br["records"]
+        elif (failure_strategy == "extra_step" and step_failed
+              and extra_steps_used < max_branches and executed < hard_cap):
+            extra_steps_used += 1
+            max_id += 1
+            rec = await _recovery_step(step, res, max_id)
+            queue.insert(0, rec)          # runs next, before the rest of the plan
+            await emit_event({"type": "agent_loop_v6.recovery_step", "session_id": sid,
+                              "stream_id": stream_id, "from_step": step["id"],
+                              "step": {"id": rec["id"], "title": rec["title"]},
+                              "adjusted": bool(rec.get("_adjusted")),
+                              "caps": rec.get("caps") or [], "phases": rec.get("phases") or [],
+                              "reason": str(res.get("met_reason")
+                                            or res.get("summary") or "")[:300]})
+        blackboard[step["id"]] = res
+        results.append(res)
+        flat_history.extend(res.get("history") or [])
+        max_id = max(max_id, step["id"])
+        await _journal_step(step, res)
+
+        await emit_event({"type": "agent_loop_v6.ledger", "session_id": sid,
+                          "stream_id": stream_id, "executed": executed,
+                          "done": [{"id": r["id"], "title": r["title"], "ok": bool(r.get("ok")),
+                                    "met": r.get("met")}
+                                   for r in results],
+                          "pending": [{"id": s["id"], "title": s["title"]} for s in queue]})
+
+        # ── Adaptive controller: assess after EVERY step and steer. ──────────
+        if enable_adaptive and executed < hard_cap:
+            steps_left = hard_cap - executed
+            # Mid-run user updates steer replanning too (append to the goal view).
+            _ctrl_goal = (goal + "\n\n" + _user_updates_block(user_updates)
+                          if user_updates else goal)
+            ctrl = await _v6_control(
+                _ctrl_goal, done_when, results, queue, res,
+                catalog_names=catalog_names, valid_skill_ids=valid_skill_ids,
+                base_id=max_id, steps_left=steps_left, model=model,
+                instance_id=instance_id, prefer_gpu=prefer_gpu)
+            await emit_event({"type": "agent_loop_v6.assess", "session_id": sid,
+                              "stream_id": stream_id, "after_step": step["id"],
+                              "assessment": ctrl.get("assessment", ""),
+                              "findings": ctrl.get("findings", ""),
+                              "goal_alignment": ctrl.get("goal_alignment", ""),
+                              "direction": ctrl.get("direction", ""),
+                              "action": ctrl.get("action", "continue"),
+                              "goal_met": bool(ctrl.get("goal_met")),
+                              "steps": [{"id": s["id"], "title": s["title"], "caps": s["caps"]}
+                                        for s in ctrl.get("steps", [])]})
+            action = ctrl.get("action", "continue")
+            new_steps = ctrl.get("steps", [])
+            if action == "stop":
+                break
+            elif action == "replan" and new_steps:
+                for ns in new_steps:
+                    max_id = max(max_id, ns["id"])
+                queue = new_steps
+            elif action == "insert" and new_steps:
+                for ns in new_steps:
+                    max_id = max(max_id, ns["id"])
+                queue = new_steps + queue
+            # Feed the controller's goal-evaluation of the last step INTO the
+            # next step — previously the assessment only reached the event
+            # stream, so a "continue" verdict never actually steered anything.
+            _steer = str(ctrl.get("direction") or "").strip()
+            if queue and _steer:
+                _prev_note = queue[0].pop("_ctrl_steer", "")
+                if _prev_note and _prev_note in str(queue[0].get("goal", "")):
+                    queue[0]["goal"] = str(queue[0]["goal"]).replace(_prev_note, "").rstrip()
+                _note = (f"\n\nCONTROLLER STEER (after step {step['id']}, "
+                         f"alignment: {ctrl.get('goal_alignment') or 'n/a'}): {_steer}")
+                queue[0]["goal"] = str(queue[0].get("goal", "")) + _note
+                queue[0]["_ctrl_steer"] = _note
+
+    # ── Final completion gate ─────────────────────────────────────────────────
+    if enable_final_gate and executed < hard_cap:
+        _gate_goal = (goal + "\n\n" + _user_updates_block(user_updates)
+                      if user_updates else goal)
+        gate = await _v6_final_gate(
+            _gate_goal, done_when, results, catalog_names=catalog_names,
+            valid_skill_ids=valid_skill_ids, base_id=max_id,
+            steps_left=hard_cap - executed, model=model,
+            instance_id=instance_id, prefer_gpu=prefer_gpu)
+        await emit_event({"type": "agent_loop_v6.gate", "session_id": sid,
+                          "stream_id": stream_id, "complete": bool(gate.get("complete")),
+                          "missing": gate.get("missing", []),
+                          "follow_up": [{"id": s["id"], "title": s["title"]}
+                                        for s in gate.get("follow_up", [])]})
+        follow_up = gate.get("follow_up") or []
+        while follow_up and executed < hard_cap:
+            step = follow_up.pop(0)
+            executed += 1
+            _umsgs = await _drain_user_messages(sid)
+            if _umsgs:
+                user_updates.extend(_umsgs)
+                await emit_event({"type": "agent_loop_v6.user_message", "session_id": sid,
+                                  "stream_id": stream_id, "messages": _umsgs,
+                                  "count": len(user_updates)})
+            if user_updates:
+                step["goal"] = _user_updates_block(user_updates) + "\n\n" + str(step.get("goal", ""))
+            if journal_on and journal and not step.get("_journal_injected"):
+                _jdig = _v6_journal_digest(journal)
+                if _jdig:
+                    step["goal"] = (
+                        str(step.get("goal", "")) +
+                        "\n\nRUN JOURNAL (structured context already produced by earlier steps — "
+                        "reuse these outputs, files, and findings; do NOT re-derive them):\n" + _jdig)
+                step["_journal_injected"] = True
+            pre_bb = dict(blackboard)
+            res = await _run_one(step, gcycle)
+            res["success"] = step.get("success", "")
+            await _finalize_one(step, res)
+            await _verify_one(step, res)
+            gcycle = res.get("cycle_end", gcycle)
+            if require_step_completion and step_max_attempts > 0:
+                res, gcycle = await _complete_step(step, res, gcycle)
+            step_failed = (res.get("ok") is False) or (res.get("met") is False)
+            if enable_branching and step_failed and branches_used < max_branches:
+                br = await _resolve_branches(step, res, pre_bb, gcycle)
+                gcycle = br["gcycle"]
+                if br["won"]:
+                    res = br["res"]
+                elif br["records"]:
+                    res["pruned_branches"] = br["records"]
+            elif (failure_strategy == "extra_step" and step_failed
+                  and extra_steps_used < max_branches and executed < hard_cap):
+                extra_steps_used += 1
+                max_id += 1
+                rec = await _recovery_step(step, res, max_id)
+                follow_up.insert(0, rec)
+                await emit_event({"type": "agent_loop_v6.recovery_step", "session_id": sid,
+                                  "stream_id": stream_id, "from_step": step["id"],
+                                  "step": {"id": rec["id"], "title": rec["title"]},
+                                  "adjusted": bool(rec.get("_adjusted")),
+                                  "caps": rec.get("caps") or [], "phases": rec.get("phases") or [],
+                                  "reason": str(res.get("met_reason")
+                                                or res.get("summary") or "")[:300]})
+            blackboard[step["id"]] = res
+            results.append(res)
+            flat_history.extend(res.get("history") or [])
+            max_id = max(max_id, step["id"])
+            await _journal_step(step, res)
+
+    # ── Synthesize final ──────────────────────────────────────────────────────
+    final = await _v5_synthesize_final(
+        goal, results, model=model, instance_id=instance_id, prefer_gpu=prefer_gpu)
+    handover_output = ""
+    if handover and results:
+        try:
+            ho = await _run_handover_stage(
+                goal=goal,
+                history=[{"tool": f"step{r['id']}:{r['title']}", "args": {},
+                          "ok": r.get("ok"), "preview": r.get("summary") or ""} for r in results],
+                triage={}, cur_final=final, model=model, instance_id=instance_id,
+                prefer_gpu=prefer_gpu, max_chars=int(handover_max_chars), session_id=sid)
+            handover_output = ho or ""
+            if handover_output:
+                final = handover_output
+        except Exception as e:
+            log.debug("v6 handover stage failed: %s", e)
+
+    # ── Delivery stage: dedicated final agent → markdown deliverable ─────────
+    deliverable = ""
+    if enable_delivery and results:
+        deliverable = await _v6_deliver(
+            goal, done_when, results, final,
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu)
+        if deliverable:
+            await emit_event({"type": "agent_loop_v6.deliverable", "session_id": sid,
+                              "stream_id": stream_id, "markdown": deliverable,
+                              "steps_run": len(results)})
+
+    # ── Strategic continuation: fold this session's progress into the dream
+    #    project so the next cycle picks up the remaining work over days. ──────
+    if strategic_slug:
+        _exec_secs = plan.get("exec_pieces") or []
+        _def_secs = plan.get("deferred_pieces") or []
+        _sections = ({"done": _exec_secs[0].get("title", "") if _exec_secs else "",
+                      "next": [d.get("title", "") for d in _def_secs]}
+                     if (_exec_secs or _def_secs) else None)
+        ok = await _v7_record_strategic_progress(
+            strategic_slug, results, deliverable or final, done_when,
+            session_id=sid, artifact_dir_path=artifact_dir_path,
+            engine="v6", goal=goal,
+            source=("dream_cycle" if _is_dream_exec else "session"),
+            sections=_sections)
+        if ok:
+            await emit_event({"type": "agent_loop_v6.strategic_progress", "session_id": sid,
+                              "stream_id": stream_id, "slug": strategic_slug,
+                              "steps_run": len(results)})
+
+    # ── Progress report via comms (Telegram etc.), gated by mode. ─────────────
+    if _v7_should_report_progress(progress_report_mode, tier, fast_path=False):
+        try:
+            await _v7_send_progress(
+                goal, tier, deliverable or final, channel=progress_channel,
+                session_id=sid, stream_id=stream_id)
+        except Exception as _e:
+            log.debug("v6 progress report failed: %s", _e)
+
+    await emit_event({"type": "agent_loop_v6.done", "stream_id": stream_id, "session_id": sid,
+                      "summary": final, "cycles": gcycle, "steps_run": len(results),
+                      "reason": "complete"})
+    if stream_complete and stream_id:
+        try:
+            await stream_complete(stream_id, deliverable or final)
+        except Exception:
+            pass
+
+    return {
+        "goal": goal, "steps": results,
+        "blackboard": {str(k): v for k, v in blackboard.items()},
+        "toolkit": list(catalog_names), "plan": steps,
+        "history": flat_history, "cycles": gcycle,
+        "final": final, "summary": final, "handover_output": handover_output,
+        "deliverable": deliverable,
+        "done_when": done_when, "tier": tier, "phase_policy": phase_policy,
+        "journal": journal,
+        "stream_id": stream_id, "session_id": sid, "done": True,
+    }
+
+
+@capability(
+    "dag.agent_loop_v7",
+    http_method="POST", http_path="/dag/agent_loop_v7",
+    http_tags=["dag", "agents"],
+    memory="on",
+    streams=["dag.agent_loop_v7"],
+    description=(
+        "v7 agent loop — TIERED + BRANCHING. The v6 adaptive engine with the full V7 machinery "
+        "ON by default (all per-run overridable): (1) a TIER CLASSIFIER — a cheap heuristic AND a "
+        "less-prescriptive LLM pass route the goal single/simple/complex/strategic and drive the "
+        "strategic master planner, so BROAD goals actually get a strategic long-form plan (v6 "
+        "only did on a rare 'extreme' self-label); 'single' takes a fast path (skips recon). "
+        "(2) PER-STEP FINALISATION — each step is distilled to a relevant-only output that "
+        "downstream steps and the verifier read (raw kept for the UI). (3) BRANCHING (git-tree) — "
+        "when a step fails its success bar the loop forks from the last good point, explores "
+        "alternate approaches (sequential or parallel), MERGES the first that meets the bar and "
+        "PRUNES the rest to a one-line reason (fed back so dead ends aren't retried); engages only "
+        "ON failure so clean runs are cost-neutral. (4) STRATEGIC DREAM PERSISTENCE — a "
+        "'strategic' (multi-day) goal persists its documented plan as a dream project and folds "
+        "each session's progress back in, so the dream system continues it a portion at a time "
+        "over days. Inherits the ENTIRE v6 surface (adaptive controller, per-step success check, "
+        "final completion gate, delivery agent, recon, sub-plans, per-step phases, code autosave, "
+        "self-correcting steps). Extra inputs over v6: enable_tiering/plan_tier/auto_escalate, "
+        "enable_step_finalize, enable_branching/branch_fanout/max_branches/branch_parallel, "
+        "enable_dream_persistence, enable_journal (structured run journal → data fabric for "
+        "complex/long-term goals). Output: same shape as v6."),
+)
+async def cap_dag_agent_loop_v7(goal: str, **kwargs):
+    """V7 delegates to the shared v6 runner with the V7-defining features ON. Keeping
+    ONE runner means v7 automatically inherits every v6 fix; the engines differ only
+    in which features default on. Callers may still override any of them."""
+    v6 = CAPABILITY_REGISTRY.get("dag.agent_loop_v6")
+    if not v6 or not v6.get("func"):
+        return {"error": "dag.agent_loop_v6 not registered — v7 delegates to it"}
+    kwargs.setdefault("enable_tiering", True)
+    kwargs.setdefault("enable_step_finalize", True)
+    # v7 default failure recovery is 'extra_step' (continue-from-partial-output) —
+    # cheaper and less prone to wandering than branching. A caller may still pass
+    # failure_strategy explicitly, or the legacy enable_branching flag (which the
+    # runner maps to 'branch') — only supply the default when neither is given.
+    if "failure_strategy" not in kwargs and "enable_branching" not in kwargs:
+        kwargs["failure_strategy"] = "extra_step"
+    kwargs.setdefault("enable_dream_persistence", True)
+    kwargs.setdefault("enable_journal", True)
+    kwargs.setdefault("enable_fast_path", True)
+    kwargs.setdefault("enable_prestep_info", True)
+    # V7-defining: loop on each step's deliverable until it meets its bar (bounded
+    # in-place retries) before advancing — the anti-steamroll gate.
+    kwargs.setdefault("require_step_completion", True)
+    # V7-defining: piecewise planning suggests the caps, stage agents may chain caps
+    # in one turn, may ask the user mid-step, and each piece's steps are scoped to
+    # that piece's own suggested caps (full catalog still reachable via need_caps).
+    kwargs.setdefault("cap_override_mode", "piece")
+    kwargs.setdefault("enable_chaining", True)
+    kwargs.setdefault("enable_step_questions", True)
+    return await v6["func"](goal=goal, **kwargs)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # UNIFIED SSE WRAPPER FOR ALL THREE LOOP VARIANTS
 # ─────────────────────────────────────────────────────────────────────────────
 # Body: {goal, version: "v1"|"v2"|"v3", ...other args}
@@ -8828,12 +14566,63 @@ async def workshop_agent_loop_cancel(request: Request):
             "note": "no running loop for this session"}
 
 
+@APP.post("/workshop/agent_loop/message")
+async def workshop_agent_loop_message(request: Request):
+    """Message a RUNNING agent loop WITHOUT interrupting it. The text is queued to
+    a per-session Redis inbox and folded into the loop's context at the next step
+    boundary — the loop reads it as an authoritative mid-run user update (v5/v6/v7).
+    Body: {session_id: str!, text: str!}."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    sid  = (body.get("session_id") or "").strip()
+    text = str(body.get("text") or "").strip()
+    if not sid or not text:
+        return {"ok": False, "error": "session_id and text are required"}
+    r = _redis()
+    if not r:
+        return {"ok": False, "error": "redis unavailable — cannot queue message"}
+    task = _AGENT_LOOP_TASKS.get(sid)
+    running = bool(task and not task.done())
+    try:
+        await r.rpush(_loop_inbox_key(sid), json.dumps({"text": text[:2000], "ts": now_iso()}))
+        await r.expire(_loop_inbox_key(sid), 86400)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    # Surface it on the live stream so the sender sees it land immediately.
+    try:
+        await emit_event({"type": "agent_loop.user_message", "session_id": sid,
+                          "text": text[:2000], "pending": True, "running": running})
+    except Exception:
+        pass
+    return {"ok": True, "session_id": sid, "queued": True, "running": running,
+            "note": ("folded in at the next step boundary" if running
+                     else "queued — will be seen if a loop resumes this session")}
+
+
 @APP.post("/workshop/agent_loop/stream")
 async def workshop_agent_loop_stream(request: Request):
     try:
         body = await request.json()
     except Exception:
         body = {}
+
+    # ── Loop PROFILE preset ─────────────────────────────────────────────────
+    # A specialised loop (fabric-discovery, coding, devops, ide, networking,
+    # long-term-scheduling, …) is just a body preset from loop_profiles. Merge
+    # it UNDER the explicit body so the caller always wins; cap/skill CSVs union.
+    _profile_id = (body.get("profile") or body.get("loop_profile") or "").strip()
+    if _profile_id:
+        try:
+            _lp = (sys.modules.get("loop_profiles")
+                   or sys.modules.get("Vera.vera.dag.loop_profiles"))
+            if _lp is not None:
+                _pb = _lp.profile_stream_body(_profile_id)
+                if _pb:
+                    body = _lp.merge_profile_into_body(_pb, body)
+        except Exception as _e:
+            log.debug("loop profile merge failed for %s: %s", _profile_id, _e)
 
     goal               = body.get("goal", "")
     allowed_caps       = body.get("allowed_caps", "")
@@ -8859,6 +14648,13 @@ async def workshop_agent_loop_stream(request: Request):
     handover_max_chars = int(body.get("handover_max_chars", 20000))
     agent_name         = body.get("agent_name", "") or ""
     run_id             = body.get("run_id", "") or ""
+    # Opt-in chat-history recording: persist the goal + final answer into the
+    # session's fabric message records (same shape as a normal chat turn) so
+    # the run shows up when the chat session is reloaded. record_agent_name is
+    # labelling only — unlike agent_name it does NOT merge the agent's
+    # domain_caps into allowed_caps.
+    record_history     = bool(body.get("record_history", False))
+    record_agent_name  = body.get("record_agent_name", "") or ""
     max_search_calls   = int(body.get("max_search_calls", 2) or 2)
     max_expands        = int(body.get("max_expands", 1) or 1)
     count_failed_cycles = bool(body.get("count_failed_cycles", False))
@@ -8889,11 +14685,108 @@ async def workshop_agent_loop_stream(request: Request):
     v5_skill_deny       = body.get("skill_deny", "") or ""
     v5_auto_suggest_skills = bool(body.get("auto_suggest_skills", True))
     v5_enable_recon     = bool(body.get("enable_recon", True))
+    v5_recon_max_rounds = int(body.get("recon_max_rounds", 3) or 3)
     v5_enable_subplans  = bool(body.get("enable_subplans", True))
     v5_enable_phases    = bool(body.get("enable_phases", True))
+    v5_phase_policy     = (body.get("phase_policy", "auto") or "auto").strip().lower()
+    v5_phase_set        = (body.get("phase_set", "explore,think,act,verify")
+                           or "explore,think,act,verify")
+    # Prefer terminal tools (grep/sed/awk) — a v4 knob now shared by v5/v6/v7.
+    v5_prefer_terminal_tools = bool(body.get("prefer_terminal_tools", True))
     v5_enable_master_planner = bool(body.get("enable_master_planner", True))
     v5_enable_code_autosave  = bool(body.get("enable_code_autosave", True))
     v5_code_push_gitea  = bool(body.get("code_push_gitea", False))
+    # ── v6-specific (adaptive controller + completion gate) ────────────────────
+    # The V7-defining features (tiering, per-step finalise, branching, dream
+    # persistence) default ON for version="v7" and OFF for "v6" — so v6 is the
+    # pure adaptive engine and v7 is the full tiered+branching one. Either can
+    # override any of them explicitly in the body.
+    _v7_default = (version == "v7")
+    v6_enable_adaptive   = bool(body.get("enable_adaptive", True))
+    v6_enable_step_verify = bool(body.get("enable_step_verify", True))
+    # Step-completion gate — loop on each deliverable until met (v7 default ON).
+    v6_require_step_completion = bool(body.get("require_step_completion", _v7_default))
+    v6_step_max_attempts = int(body.get("step_max_attempts", 2) or 0)
+    v6_step_retry_max_new_caps = int(body.get("step_retry_max_new_caps", 2) or 0)
+    v6_enable_step_finalize = bool(body.get("enable_step_finalize", _v7_default))
+    v6_enable_branching  = bool(body.get("enable_branching", _v7_default))
+    v6_branch_fanout     = int(body.get("branch_fanout", 2) or 2)
+    v6_max_branches      = int(body.get("max_branches", 6) or 6)
+    v6_branch_parallel   = bool(body.get("branch_parallel", False))
+    # Failure-recovery strategy (extra_step|branch|default). v7 defaults to
+    # 'extra_step' (continue-from-partial-output); v6 leaves it '' so the runner
+    # derives it from enable_branching (off → 'default'). An explicit value wins
+    # over enable_branching in the runner.
+    v6_failure_strategy  = (body.get("failure_strategy",
+                                     "extra_step" if _v7_default else "") or "").strip().lower()
+    v6_enable_tiering    = bool(body.get("enable_tiering", _v7_default))
+    v6_plan_tier         = (body.get("plan_tier", "auto") or "auto").strip().lower()
+    v6_auto_escalate     = bool(body.get("auto_escalate", True))
+    v6_enable_fast_path  = bool(body.get("enable_fast_path", _v7_default))
+    v6_clarify_level     = int(body.get("clarify_level", 1) or 0)
+    v6_clarify_timeout_secs = int(body.get("clarify_timeout_secs", 180) or 180)
+    v6_clarify_mode      = (body.get("clarify_mode", "") or "").strip().lower()
+    v6_clarify_scope     = (body.get("clarify_scope", "whole") or "whole").strip().lower()
+    v6_clarify_channel   = (body.get("clarify_channel", "ui") or "ui").strip().lower()
+    v6_enable_prestep_info = bool(body.get("enable_prestep_info", _v7_default))
+    v6_progress_report_mode = (body.get("progress_report_mode", "off") or "off").strip().lower()
+    v6_progress_channel  = (body.get("progress_channel", "telegram") or "telegram").strip().lower()
+    v6_strategic_slug    = (body.get("strategic_slug", "") or "").strip()
+    v6_enable_dream_persistence = bool(body.get("enable_dream_persistence", _v7_default))
+    v6_enable_journal    = bool(body.get("enable_journal", _v7_default))
+    v6_journal_all_tiers = bool(body.get("journal_all_tiers", False))
+    v6_enable_final_gate = bool(body.get("enable_final_gate", True))
+    v6_enable_delivery   = bool(body.get("enable_delivery", True))
+    v6_max_total_steps   = int(body.get("max_total_steps", 0) or 0)
+    v6_max_caps_per_piece = int(body.get("max_caps_per_piece", 6) or 6)
+    v6_max_plan_pieces   = int(body.get("max_plan_pieces", 6) or 6)
+    v6_cap_override_mode = (body.get("cap_override_mode", "piece" if _v7_default else "off")
+                            or "off").strip().lower()
+    v6_enable_chaining   = bool(body.get("enable_chaining", True))
+    v6_condense_output   = bool(body.get("condense_output", _v7_default))
+    v6_enable_step_questions = bool(body.get("enable_step_questions", _v7_default))
+    v6_question_timeout_secs = int(body.get("question_timeout_secs", 180) or 180)
+
+    # ── Cap guard — a HARD sandbox for this run ─────────────────────────────
+    # {label, allow:[cap names/globs], deny:[...], pin_args:{pattern:{arg:val}}}.
+    # Registered per-session in context.py and enforced at EXECUTION time in
+    # _agent_loop_call_tool: caps outside `allow` are refused (so expansion /
+    # need_caps grants can never escape) and pinned args override whatever the
+    # LLM supplied (so e.g. a business-sim run can never reach is_sim=0 data).
+    cap_guard = body.get("cap_guard") or {}
+    _guard_token = ""
+    if cap_guard:
+        # A guarded run has locked expansion only when the guard carries an
+        # allowlist — pin-only guards (e.g. live-mode is_sim=0) keep the
+        # caller's expansion setting.
+        if cap_guard.get("allow"):
+            enable_expand = False
+            max_expands = 0
+        _g_allow = [str(c).strip() for c in (cap_guard.get("allow") or []) if str(c).strip()]
+        if _g_allow and not allowed_caps:
+            allowed_caps = ",".join(_g_allow)
+        try:
+            _gctx = _ctx()
+            if _gctx and hasattr(_gctx, "set_session_cap_guard"):
+                _guard_token = _gctx.set_session_cap_guard(
+                    session_id, cap_guard).get("token", "")
+            else:
+                log.warning("cap_guard requested but context module lacks "
+                            "set_session_cap_guard — run refused")
+                cap_guard = {"_unenforceable": True}
+        except Exception as _e:
+            log.warning("cap_guard registration failed: %s", _e)
+            cap_guard = {"_unenforceable": True}
+
+    def _clear_cap_guard():
+        if not cap_guard:
+            return
+        try:
+            _gctx = _ctx()
+            if _gctx and hasattr(_gctx, "clear_session_cap_guard"):
+                _gctx.clear_session_cap_guard(session_id, token=_guard_token)
+        except Exception:
+            pass
 
     def _phase_kwargs():
         return dict(
@@ -8935,8 +14828,72 @@ async def workshop_agent_loop_stream(request: Request):
             enable_dynamic_skills=v5_enable_dynamic_skills,
             skill_allow=v5_skill_allow, skill_deny=v5_skill_deny,
             auto_suggest_skills=v5_auto_suggest_skills,
-            enable_recon=v5_enable_recon, enable_subplans=v5_enable_subplans,
+            enable_recon=v5_enable_recon, recon_max_rounds=v5_recon_max_rounds,
+            enable_subplans=v5_enable_subplans,
             enable_phases=v5_enable_phases,
+            phase_policy=v5_phase_policy, phase_set=v5_phase_set,
+            prefer_terminal_tools=v5_prefer_terminal_tools,
+            enable_master_planner=v5_enable_master_planner,
+            enable_code_autosave=v5_enable_code_autosave,
+            code_push_gitea=v5_code_push_gitea,
+            await_long_running=await_long_running,
+            long_running_timeout_secs=long_running_timeout_secs,
+        )
+
+    def _v6_kwargs():
+        # v6 shares v5's planning/skills/recon/code/long-running surface and adds
+        # the adaptive-controller + completion-gate knobs. It does NOT take v5's
+        # enable_replan (the adaptive controller subsumes failure-only replanning).
+        return dict(
+            triage_top_k=triage_top_k, base_toolkit=base_toolkit,
+            handover=handover, handover_max_chars=handover_max_chars,
+            max_steps=v5_max_steps, step_cycle_budget=v5_step_cycle_budget,
+            catalog_size=v5_catalog_size,
+            enable_adaptive=v6_enable_adaptive,
+            enable_step_verify=v6_enable_step_verify,
+            require_step_completion=v6_require_step_completion,
+            step_max_attempts=v6_step_max_attempts,
+            step_retry_max_new_caps=v6_step_retry_max_new_caps,
+            enable_step_finalize=v6_enable_step_finalize,
+            enable_branching=v6_enable_branching,
+            branch_fanout=v6_branch_fanout,
+            max_branches=v6_max_branches,
+            branch_parallel=v6_branch_parallel,
+            failure_strategy=v6_failure_strategy,
+            enable_tiering=v6_enable_tiering,
+            plan_tier=v6_plan_tier,
+            auto_escalate=v6_auto_escalate,
+            enable_fast_path=v6_enable_fast_path,
+            clarify_level=v6_clarify_level,
+            clarify_timeout_secs=v6_clarify_timeout_secs,
+            clarify_mode=v6_clarify_mode,
+            clarify_scope=v6_clarify_scope,
+            clarify_channel=v6_clarify_channel,
+            max_caps_per_piece=v6_max_caps_per_piece,
+            max_plan_pieces=v6_max_plan_pieces,
+            cap_override_mode=v6_cap_override_mode,
+            enable_chaining=v6_enable_chaining,
+            condense_output=v6_condense_output,
+            enable_step_questions=v6_enable_step_questions,
+            question_timeout_secs=v6_question_timeout_secs,
+            enable_prestep_info=v6_enable_prestep_info,
+            progress_report_mode=v6_progress_report_mode,
+            progress_channel=v6_progress_channel,
+            strategic_slug=v6_strategic_slug,
+            enable_dream_persistence=v6_enable_dream_persistence,
+            enable_journal=v6_enable_journal,
+            enable_final_gate=v6_enable_final_gate,
+            enable_delivery=v6_enable_delivery,
+            max_total_steps=v6_max_total_steps,
+            enable_dynamic_skills=v5_enable_dynamic_skills,
+            skill_allow=v5_skill_allow, skill_deny=v5_skill_deny,
+            auto_suggest_skills=v5_auto_suggest_skills,
+            enable_recon=v5_enable_recon, recon_max_rounds=v5_recon_max_rounds,
+            enable_subplans=v5_enable_subplans,
+            enable_phases=v5_enable_phases,
+            phase_policy=v5_phase_policy, phase_set=v5_phase_set,
+            prefer_terminal_tools=v5_prefer_terminal_tools,
+            journal_all_tiers=v6_journal_all_tiers,
             enable_master_planner=v5_enable_master_planner,
             enable_code_autosave=v5_enable_code_autosave,
             code_push_gitea=v5_code_push_gitea,
@@ -8948,6 +14905,36 @@ async def workshop_agent_loop_stream(request: Request):
         if run_id and isinstance(payload, dict):
             payload = {**payload, "run_id": run_id}
         return f"data: {json.dumps(payload, default=str)}\n\n".encode()
+
+    def _record_history_turn(result):
+        """Persist this loop run into the chat session history (fabric message
+        records via memory_hooks.record_agent_turn — the same recorder the
+        normal chat stream uses) so reloading the session shows the run.
+        Fire-and-forget; never blocks or fails the SSE stream."""
+        if not record_history or not session_id or not goal:
+            return
+        try:
+            mem_hooks = sys.modules.get("memory_hooks")
+            if not mem_hooks:
+                return
+            r = result if isinstance(result, dict) else {}
+            final_text = (r.get("deliverable") or r.get("handover_output")
+                          or r.get("summary") or r.get("final") or r.get("answer") or "")
+            if not final_text:
+                err = r.get("error")
+                final_text = (f"[agentic loop {version}] run ended without a "
+                              f"final answer" + (f": {err}" if err else ""))
+            asyncio.create_task(mem_hooks.record_agent_turn(
+                session_id = session_id,
+                agent_name = record_agent_name or agent_name or f"loop-{version}",
+                agent_id   = "",
+                human_text = goal,
+                ai_text    = str(final_text),
+                model      = model,
+                tags       = ["agent_loop", version],
+            ))
+        except Exception as e:
+            log.debug("agent loop history record failed: %s", e)
 
     # ── Agent resolution — if caller picked an agent, merge its config ──────
     # Precedence: explicit body params > agent record fields.
@@ -8983,12 +14970,23 @@ async def workshop_agent_loop_stream(request: Request):
         "v3":       "dag.agent_loop_v3",
         "v4":       "dag.agent_loop_v4",
         "v5":       "dag.agent_loop_v5",
+        "v6":       "dag.agent_loop_v6",
+        "v7":       "dag.agent_loop_v7",
     }
     cap_name = cap_name_map.get(version, "dag.agent_loop_v2")
 
     async def _gen():
         if not goal:
             yield _sse({"type": "error", "error": "goal is required"})
+            yield b"data: [DONE]\n\n"
+            return
+
+        if cap_guard and cap_guard.get("_unenforceable"):
+            # The caller asked for a sandbox we cannot enforce — refuse rather
+            # than run the goal with real, unguarded tool access.
+            yield _sse({"type": "error",
+                        "error": "cap_guard requested but not enforceable "
+                                 "(context.set_session_cap_guard unavailable) — run refused"})
             yield b"data: [DONE]\n\n"
             return
 
@@ -9008,6 +15006,7 @@ async def workshop_agent_loop_stream(request: Request):
             "session_id":       session_id,
             "require_approval": require_approval,
             "agent_name":       agent_name,
+            "cap_guard":        (cap_guard.get("label") or "sandbox") if cap_guard else "",
         })
 
         r = _redis()
@@ -9022,6 +15021,7 @@ async def workshop_agent_loop_stream(request: Request):
                     attach_skills=attach_skills,
                     attach_ontologies=attach_ontologies,
                     session_id=session_id,
+                    trace_id=session_id,
                 )
                 if version == "v1":
                     kwargs["await_long_running"] = await_long_running
@@ -9061,6 +15061,8 @@ async def workshop_agent_loop_stream(request: Request):
                     kwargs.update(_v4_kwargs())
                 elif version == "v5":
                     kwargs.update(_v5_kwargs())
+                elif version in ("v6", "v7"):
+                    kwargs.update(_v6_kwargs())
                 result = await cap["func"](**kwargs)
                 # Run handover post-hoc for v1/v2 if requested (they don't
                 # accept a handover param themselves).
@@ -9083,9 +15085,12 @@ async def workshop_agent_loop_stream(request: Request):
                             result["summary"] = ho
                     except Exception as e:
                         log.debug("handover (v1/v2) failed: %s", e)
+                _record_history_turn(result)
                 yield _sse({"type": "result", **(result or {})})
             except Exception as e:
                 yield _sse({"type": "error", "error": str(e)})
+            finally:
+                _clear_cap_guard()
             yield b"data: [DONE]\n\n"
             return
 
@@ -9150,12 +15155,16 @@ async def workshop_agent_loop_stream(request: Request):
             "agent_loop_v5.triage_start",
             "agent_loop_v5.triage_done",
             "agent_loop_v5.toolkit",
+            "agent_loop_v5.error",
             "agent_loop_v5.recon",
             "agent_loop_v5.master_plan",
+            "agent_loop_v5.master_plan_pieces",
+            "agent_loop_v5.master_plan_piece_planned",
             "agent_loop_v5.plan",
             "agent_loop_v5.subplan",
             "agent_loop_v5.phases",
             "agent_loop_v5.step_start",
+            "agent_loop_v5.step_context",
             "agent_loop_v5.step_done",
             "agent_loop_v5.replan",
             "agent_loop_v5.scope_widened",
@@ -9165,7 +15174,43 @@ async def workshop_agent_loop_stream(request: Request):
             "agent_loop_v5.code_saved",
             "agent_loop_v5.think",
             "agent_loop_v5.thinking",
+            "agent_loop_v5.user_message",
             "agent_loop_v5.done",
+            # v6 — adaptive controller layer (reuses v5.* step/tool events, adds
+            # its own ledger/assess/gate/plan events on top)
+            "agent_loop_v6.triage_start",
+            "agent_loop_v6.triage_done",
+            "agent_loop_v6.toolkit",
+            "agent_loop_v6.error",
+            "agent_loop_v6.master_plan",
+            "agent_loop_v6.master_plan_token",
+            "agent_loop_v6.master_plan_pieces",
+            "agent_loop_v6.master_plan_piece_planned",
+            "agent_loop_v6.master_plan_piece_fallback",
+            "agent_loop_v6.plan_token",
+            "agent_loop_v6.plan",
+            "agent_loop_v6.ledger",
+            "agent_loop_v6.assess",
+            "agent_loop_v6.verify",
+            "agent_loop_v6.gate",
+            "agent_loop_v6.deliverable",
+            "agent_loop_v6.done",
+            # V7 tier/branching + strategic persistence
+            "agent_loop_v6.tier",
+            "agent_loop_v6.fast_path",
+            "agent_loop_v6.clarify_request",
+            "agent_loop_v6.clarify_resolved",
+            "agent_loop_v6.step_finalized",
+            "agent_loop_v6.prestep_info",
+            "agent_loop_v6.recovery_step",
+            "agent_loop_v6.journal",
+            "agent_loop_v6.user_message",
+            "agent_loop.user_message",
+            "agent_loop_v6.branch_open",
+            "agent_loop_v6.branch_merge",
+            "agent_loop_v6.branch_prune",
+            "agent_loop_v6.strategic_persisted",
+            "agent_loop_v6.strategic_progress",
             # phase model + continue (v2/v3)
             "agent_loop_v3.phase",
             "agent_loop_v3.budget_pause",
@@ -9274,6 +15319,11 @@ async def workshop_agent_loop_stream(request: Request):
                     attach_skills=attach_skills,
                     attach_ontologies=attach_ontologies,
                     session_id=session_id,
+                    # trace_id threads through every tool/LLM call the loop
+                    # makes, so cross-published stream.token frames carry it —
+                    # the bridge above uses it to keep this run's tokens and
+                    # drop everyone else's.
+                    trace_id=session_id,
                 )
                 if version == "v1":
                     kwargs["await_long_running"] = await_long_running
@@ -9313,6 +15363,8 @@ async def workshop_agent_loop_stream(request: Request):
                     kwargs.update(_v4_kwargs())
                 elif version == "v5":
                     kwargs.update(_v5_kwargs())
+                elif version in ("v6", "v7"):
+                    kwargs.update(_v6_kwargs())
                 result = await cap["func"](**kwargs)
                 # Post-hoc handover for v1/v2 (they don't have the param)
                 if handover and version in ("v1", "v2") and isinstance(result, dict):
@@ -9337,17 +15389,43 @@ async def workshop_agent_loop_stream(request: Request):
             except Exception as e:
                 log.exception("agent loop runner failed")
                 return {"error": str(e)}
+            finally:
+                _clear_cap_guard()
 
         runner = asyncio.create_task(_runner())
-        # Register this run so /workshop/agent_loop/cancel (or a client
-        # disconnect, handled in the finally below) can stop the loop and
-        # cancel the in-flight ollama request via task cancellation. Cancel any
-        # stale run for the same session first.
+        # Register this run so /workshop/agent_loop/cancel (the Stop button) can
+        # stop it. It runs DETACHED from this SSE connection: a client disconnect
+        # (reload / tab close) must NOT stop the loop — it keeps running and
+        # streaming to Redis so the user can /reattach later (loops only stop when
+        # the SERVER goes offline, or on an explicit cancel). The done-callback
+        # unregisters it so the registry doesn't leak once it finishes.
         if session_id:
             _prev = _AGENT_LOOP_TASKS.get(session_id)
             if _prev and not _prev.done():
                 _prev.cancel()
             _AGENT_LOOP_TASKS[session_id] = runner
+
+            _hist_recorded = {"v": False}
+
+            def _on_runner_done(_t, _sid=session_id):
+                if _AGENT_LOOP_TASKS.get(_sid) is _t:
+                    _AGENT_LOOP_TASKS.pop(_sid, None)
+                # Record the loop's final answer into chat history REGARDLESS of
+                # whether a client is still connected — so a loop that finished
+                # while the user was away still lands in their history.
+                if _hist_recorded["v"]:
+                    return
+                _hist_recorded["v"] = True
+                try:
+                    res = ({"error": "cancelled by user", "cancelled": True}
+                           if _t.cancelled() else _t.result())
+                except Exception as _e:
+                    res = {"error": str(_e)}
+                try:
+                    _record_history_turn(res)
+                except Exception:
+                    pass
+            runner.add_done_callback(_on_runner_done)
 
         # Track currently-running tool to tag progress events
         active_tool: Dict[str, Any] = {"name": "", "cycle": 0, "long": False}
@@ -9381,17 +15459,37 @@ async def workshop_agent_loop_stream(request: Request):
                 # Redis channel by a concurrent run would otherwise bleed into
                 # this run's output (e.g. two agentic-loop tasks running at
                 # once in chat).
-                if ev.get("session_id") and ev.get("session_id") != session_id:
+                ev_sid = ev.get("session_id") or ""
+                if ev_sid and ev_sid != session_id:
                     continue
 
                 # ollama.* events are global (published by every caller); only
                 # forward the ones this run stamped with its own session_id.
-                if ev_type.startswith("ollama.") and ev.get("session_id") != session_id:
+                if ev_type.startswith("ollama.") and ev_sid != session_id:
+                    continue
+
+                # Loop-family events are ALWAYS stamped with their run's
+                # session_id, so one arriving without it belongs to some other
+                # surface (a dream stage, another chat tab, another user) and
+                # must not render in this stream. Require an exact match.
+                if (ev_type.startswith(("agent_loop", "workshop.tool_"))
+                        and ev_sid != session_id):
+                    continue
+
+                # LLM token frames are cross-published by emit_stream without a
+                # session_id but carry the calling trace_id. The runner invokes
+                # the loop cap with trace_id=session_id (threaded down through
+                # every tool call), so only frames this run generated match —
+                # a concurrent chat reply / dream stage / other loop no longer
+                # bleeds its tokens into this stream.
+                if ev_type in ("stream.token", "stream.complete") and not (
+                        ev_sid == session_id
+                        or (ev.get("trace_id") or "") == session_id):
                     continue
 
                 if ev_type.startswith(("agent_loop.", "agent_loop_v2.",
                                          "agent_loop_v3.", "agent_loop_v4.",
-                                         "agent_loop_v5.")):
+                                         "agent_loop_v5.", "agent_loop_v6.")):
                     if ev_type.endswith(".tool_call"):
                         active_tool["name"]  = ev.get("tool", "")
                         active_tool["cycle"] = ev.get("cycle", 0)
@@ -9433,19 +15531,16 @@ async def workshop_agent_loop_stream(request: Request):
                 final = {"error": "cancelled by user", "cancelled": True}
             except Exception as e:
                 final = {"error": str(e)}
+            # History is recorded by the runner's done-callback (fires whether or
+            # not a client is connected); don't double-record here.
             yield _sse({"type": "result", **(final or {})})
         finally:
-            # Cancel the runner if it's still alive — this is what stops the
-            # loop and propagates CancelledError into the in-flight ollama
-            # await when the client disconnects (fetch abort). Idempotent with
-            # the explicit /cancel endpoint.
-            try:
-                if not runner.done():
-                    runner.cancel()
-            except Exception:
-                pass
-            if session_id and _AGENT_LOOP_TASKS.get(session_id) is runner:
-                _AGENT_LOOP_TASKS.pop(session_id, None)
+            # IMPORTANT: a client disconnect (reload / navigate away) closes this
+            # generator but MUST NOT stop the loop — the runner keeps going as a
+            # detached background task, persisting events to Redis so the user can
+            # reconnect via /workshop/agent_loop/reattach. Only the explicit Stop
+            # (/workshop/agent_loop/cancel) or the server going offline stops a run.
+            # We only tear down THIS connection's pubsub here.
             try:
                 await pubsub.unsubscribe("vera:events:live")
                 await pubsub.close()

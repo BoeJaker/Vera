@@ -92,11 +92,26 @@ def _slugify(name: str) -> str:
     return s or f"project-{uuid.uuid4().hex[:6]}"
 
 async def _llm_generate(prompt: str, system: str = "", prefer_gpu: bool = True) -> str:
+    # Prefer the dream module's helper: it streams (so long generations are
+    # kept alive token-by-token instead of hitting the whole-response timeout)
+    # and relays tokens to the panel when running inside a cycle stage.
+    dream = (sys.modules.get("Vera.vera.dream_capabilities")
+             or sys.modules.get("dream_capabilities") or _dream)
+    gen = getattr(dream, "_llm_generate", None) if dream else None
+    if gen:
+        try:
+            return str(await gen(prompt, system=system, prefer_gpu=prefer_gpu) or "")
+        except Exception as e:
+            log.debug("project llm (dream helper): %s", e)
+            return ""
     fn = getattr(_orch, "ollama_generate", None)
     if not fn:
         return ""
     try:
-        return str(await fn(prompt, system=system, prefer_gpu=prefer_gpu) or "")
+        async def _sink(tok: str):  # no UI channel — stream purely for keep-alive
+            pass
+        return str(await fn(prompt, system=system, prefer_gpu=prefer_gpu,
+                            stream_cb=_sink) or "")
     except Exception as e:
         log.debug("project llm: %s", e)
         return ""
@@ -201,6 +216,428 @@ async def _list_projects() -> List[Dict[str, Any]]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# PER-PROJECT AGENTIC-LOOP HISTORY + ARTIFACT STORE
+# ─────────────────────────────────────────────────────────────────────────────
+# The escalating agentic loop (v5/v6/v7) and each dream cycle produce structured
+# work — a plan, a step-by-step tool trace, a final output, and files/code. We
+# persist all of it PER PROJECT so (a) the project page can show a full loop
+# history + artifact area and (b) the project_context sensor can hand the dream a
+# CLEAN, high-signal continuation context instead of rebuilding it from noisy
+# memory_recent (the root cause of the weak/nonsense project dreams).
+
+KEY_PROJECT_LOOPS     = "vera:dream:project_loops"      # + :slug -> LIST loop-run JSON
+KEY_PROJECT_ARTIFACTS = "vera:dream:project_artifacts"  # + :slug -> LIST artifact JSON
+
+_MAX_PROJECT_LOOPS     = 100
+_MAX_PROJECT_ARTIFACTS = 250
+_ARTIFACT_CONTENT_CAP  = 8000
+
+_CODE_EXTS = {
+    ".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs", ".java", ".c", ".cc",
+    ".cpp", ".h", ".hpp", ".rb", ".php", ".sh", ".bash", ".sql", ".css",
+    ".html", ".vue", ".svelte", ".swift", ".kt", ".cs", ".lua", ".r", ".jl",
+    ".scala", ".ex", ".exs", ".pl", ".pm", ".yaml", ".yml", ".toml",
+}
+
+def _loops_key(slug: str) -> str:     return f"{KEY_PROJECT_LOOPS}:{slug}"
+def _artifacts_key(slug: str) -> str: return f"{KEY_PROJECT_ARTIFACTS}:{slug}"
+
+
+async def _record_artifact(slug: str, *, atype: str, name: str = "", path: str = "",
+                           content: str = "", ref: str = "", run_id: str = "",
+                           meta: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """Append one artifact (file|code|report|trace) to the project's artifact index."""
+    r = _redis()
+    if not r or not slug:
+        return None
+    rec = {
+        "id":      uuid.uuid4().hex[:12],
+        "type":    atype,
+        "name":    name or (os.path.basename(path) if path else atype),
+        "path":    path,
+        "ref":     ref,
+        "run_id":  run_id,
+        "size":    len(content or ""),
+        "content": (content or "")[:_ARTIFACT_CONTENT_CAP],
+        "truncated": len(content or "") > _ARTIFACT_CONTENT_CAP,
+        "ts":      now_iso(),
+        "meta":    meta or {},
+    }
+    try:
+        await r.rpush(_artifacts_key(slug), json.dumps(rec, default=str))
+        await r.ltrim(_artifacts_key(slug), -_MAX_PROJECT_ARTIFACTS, -1)
+    except Exception as e:
+        log.debug("record artifact: %s", e)
+    return rec
+
+
+async def _harvest_dir_artifacts(slug: str, dir_path: str, run_id: str = "",
+                                 limit: int = 20) -> List[str]:
+    """Snapshot files an agentic-loop run wrote into its artifact dir. Source files
+    are classified as 'code', everything else as 'file'. Returns artifact ids."""
+    ids: List[str] = []
+    if not dir_path or not os.path.isdir(dir_path):
+        return ids
+    try:
+        for root, _dirs, files in os.walk(dir_path):
+            for fn in sorted(files):
+                if len(ids) >= limit:
+                    return ids
+                fp = os.path.join(root, fn)
+                try:
+                    if os.path.getsize(fp) > 2_000_000:
+                        continue
+                    with open(fp, "r", encoding="utf-8", errors="replace") as fh:
+                        content = fh.read(_ARTIFACT_CONTENT_CAP)
+                except Exception:
+                    continue
+                rel = os.path.relpath(fp, dir_path)
+                ext = os.path.splitext(fn)[1].lower()
+                atype = "code" if ext in _CODE_EXTS else "file"
+                rec = await _record_artifact(slug, atype=atype, name=rel, path=fp,
+                                             content=content, run_id=run_id)
+                if rec:
+                    ids.append(rec["id"])
+    except Exception as e:
+        log.debug("harvest dir artifacts: %s", e)
+    return ids
+
+
+def _trim_steps(steps: List[Any], cap: int = 60) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for s in (steps or [])[:cap]:
+        if not isinstance(s, dict):
+            continue
+        out.append({
+            "id":      s.get("id"),
+            "title":   str(s.get("title") or "")[:200],
+            "cap":     s.get("cap") or s.get("tool") or "",
+            "ok":      s.get("ok"),
+            "summary": str(s.get("summary") or s.get("preview") or "")[:600],
+        })
+    return out
+
+
+async def _record_loop_run(slug: str, *, run_id: str = "", source: str = "dream_cycle",
+                           engine: str = "", goal: str = "", plan: str = "",
+                           steps: Optional[List[Any]] = None, final: str = "",
+                           artifact_ids: Optional[List[str]] = None,
+                           cycle_id: str = "", trigger: str = "") -> Optional[Dict[str, Any]]:
+    """Append one structured agentic-loop run to the project's loop history."""
+    r = _redis()
+    if not r or not slug:
+        return None
+    steps = steps or []
+    rec = {
+        "run_id":      run_id or uuid.uuid4().hex[:12],
+        "source":      source,          # escalation | session | dream_cycle
+        "engine":      engine,
+        "goal":        (goal or "")[:1000],
+        "plan":        (plan or "")[:6000],
+        "steps":       _trim_steps(steps),
+        "steps_total": len(steps),
+        "final":       (final or "")[:8000],
+        "artifact_ids": artifact_ids or [],
+        "cycle_id":    cycle_id,
+        "trigger":     trigger,
+        "ts":          now_iso(),
+    }
+    try:
+        await r.rpush(_loops_key(slug), json.dumps(rec, default=str))
+        await r.ltrim(_loops_key(slug), -_MAX_PROJECT_LOOPS, -1)
+        await emit_event({"type": "project.loop.recorded", "slug": slug,
+                          "source": source, "run_id": rec["run_id"],
+                          "steps": rec["steps_total"], "artifacts": len(rec["artifact_ids"])})
+    except Exception as e:
+        log.debug("record loop run: %s", e)
+    return rec
+
+
+async def _list_loop_runs(slug: str, limit: int = 50) -> List[Dict[str, Any]]:
+    r = _redis()
+    if not r or not slug:
+        return []
+    try:
+        raw = await r.lrange(_loops_key(slug), -int(limit), -1)
+        out = [json.loads(x.decode() if isinstance(x, bytes) else x) for x in (raw or [])]
+        out.reverse()
+        return out
+    except Exception:
+        return []
+
+
+async def _list_artifacts(slug: str, limit: int = 250) -> List[Dict[str, Any]]:
+    r = _redis()
+    if not r or not slug:
+        return []
+    try:
+        raw = await r.lrange(_artifacts_key(slug), -int(limit), -1)
+        out = [json.loads(x.decode() if isinstance(x, bytes) else x) for x in (raw or [])]
+        out.reverse()
+        return out
+    except Exception:
+        return []
+
+
+@capability(
+    "project.loop.record", memory="off", silent=True,
+    http_method="POST", http_path="/dream/projects/loop/record", http_tags=["project"],
+    description="Record a structured agentic-loop run against a project: its plan, "
+                "step trace, final output, and artifacts (report + trace are stored as "
+                "artifacts automatically; files under `artifact_dir` are harvested). "
+                "Called by the v5/v6/v7 loop on escalation + completion so the project "
+                "accumulates a full loop history the dream can continue from. Inputs: "
+                "slug (str!), source (escalation|session|dream_cycle), engine, goal, "
+                "plan, steps (JSON list str), final, artifact_dir, cycle_id, trigger, "
+                "run_id.",
+)
+async def project_loop_record(slug: str, source: str = "dream_cycle", engine: str = "",
+                              goal: str = "", plan: str = "", steps: str = "",
+                              final: str = "", artifact_dir: str = "",
+                              cycle_id: str = "", trigger: str = "", run_id: str = "",
+                              trace_id=None):
+    proj = await _get_project(slug)
+    if not proj:
+        return {"ok": False, "error": "project not found"}
+    if isinstance(steps, str):
+        try:
+            step_list = json.loads(steps) if steps.strip() else []
+        except Exception:
+            step_list = []
+    else:
+        step_list = steps or []
+    rid = run_id or uuid.uuid4().hex[:12]
+    art_ids: List[str] = []
+    if artifact_dir:
+        art_ids += await _harvest_dir_artifacts(slug, artifact_dir, run_id=rid)
+    if final:
+        rep = await _record_artifact(slug, atype="report",
+                                     name=((goal or "loop output").split("\n")[0])[:80],
+                                     content=final, run_id=rid)
+        if rep:
+            art_ids.append(rep["id"])
+    if step_list:
+        trace_txt = "\n".join(
+            f"[{s.get('id')}] {str(s.get('title',''))[:120]} → "
+            f"{'ok' if s.get('ok') else 'x'} "
+            f"{str(s.get('summary') or s.get('preview') or '')[:200]}"
+            for s in step_list if isinstance(s, dict))
+        tr = await _record_artifact(slug, atype="trace", name="step trace",
+                                    content=trace_txt, run_id=rid)
+        if tr:
+            art_ids.append(tr["id"])
+    rec = await _record_loop_run(slug, run_id=rid, source=source, engine=engine,
+                                 goal=goal, plan=plan, steps=step_list, final=final,
+                                 artifact_ids=art_ids, cycle_id=cycle_id, trigger=trigger)
+    # Bump the project's activity timestamp so it sorts fresh.
+    try:
+        proj["last_dream_at"] = now_iso()
+        await _save_project(proj)
+    except Exception:
+        pass
+    return {"ok": True, "run": rec, "artifacts": len(art_ids)}
+
+
+@capability(
+    "project.loops.list", memory="off", silent=True,
+    http_method="GET", http_path="/dream/projects/loops", http_tags=["project"],
+    description="Full agentic-loop history for a project (newest first): each run's "
+                "plan, step trace, final output, and artifact ids. Inputs: slug (str!), "
+                "limit (int, default 50).",
+)
+async def project_loops_list(slug: str = "", limit: int = 50, trace_id=None):
+    if not slug:
+        return {"ok": False, "error": "slug required"}
+    runs = await _list_loop_runs(slug, limit=limit)
+    return {"ok": True, "slug": slug, "runs": runs, "count": len(runs)}
+
+
+@capability(
+    "project.artifacts.list", memory="off", silent=True,
+    http_method="GET", http_path="/dream/projects/artifacts", http_tags=["project"],
+    description="Persistent artifacts for a project (files, code, reports, traces), "
+                "newest first, with content trimmed for the list view (fetch full via "
+                "project.artifact.get). Inputs: slug (str!), limit (int, default 250), "
+                "type (optional filter: file|code|report|trace).",
+)
+async def project_artifacts_list(slug: str = "", limit: int = 250, type: str = "",
+                                 trace_id=None):
+    if not slug:
+        return {"ok": False, "error": "slug required"}
+    arts = await _list_artifacts(slug, limit=limit)
+    if type:
+        arts = [a for a in arts if a.get("type") == type]
+    lite = [{k: v for k, v in a.items() if k != "content"} | {
+        "preview": (a.get("content") or "")[:400]} for a in arts]
+    return {"ok": True, "slug": slug, "artifacts": lite, "count": len(lite)}
+
+
+@capability(
+    "project.artifact.get", memory="off", silent=True,
+    http_method="GET", http_path="/dream/projects/artifact/get", http_tags=["project"],
+    description="Fetch ONE artifact with its full stored content. Inputs: slug (str!), "
+                "id (str!).",
+)
+async def project_artifact_get(slug: str = "", id: str = "", trace_id=None):
+    if not slug or not id:
+        return {"ok": False, "error": "slug and id required"}
+    for a in await _list_artifacts(slug, limit=1000):
+        if a.get("id") == id:
+            return {"ok": True, "artifact": a}
+    return {"ok": False, "error": "artifact not found"}
+
+
+@capability(
+    "project.artifact.add", memory="off", silent=True,
+    http_method="POST", http_path="/dream/projects/artifact/add", http_tags=["project"],
+    description="Add a single artifact to a project. Inputs: slug (str!), type "
+                "(file|code|report|trace), name, path, content, ref, run_id.",
+)
+async def project_artifact_add(slug: str = "", type: str = "file", name: str = "",
+                               path: str = "", content: str = "", ref: str = "",
+                               run_id: str = "", trace_id=None):
+    if not slug:
+        return {"ok": False, "error": "slug required"}
+    if not await _get_project(slug):
+        return {"ok": False, "error": "project not found"}
+    rec = await _record_artifact(slug, atype=type, name=name, path=path,
+                                 content=content, ref=ref, run_id=run_id)
+    return {"ok": bool(rec), "artifact": rec}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MULTI-SESSION PLAN LEDGER (Stream B)
+# ─────────────────────────────────────────────────────────────────────────────
+# A strategic project's documented plan is decomposed ONCE into discrete,
+# ordered PORTIONS (each completable in one session). Each project_compose dream
+# cycle reads this ledger, picks the single next unfinished portion, executes it,
+# and marks it done — so the goal advances a portion at a time across days.
+
+KEY_PROJECT_PLAN = "vera:dream:project_plan"   # + :slug -> JSON ledger
+
+def _plan_key(slug: str) -> str: return f"{KEY_PROJECT_PLAN}:{slug}"
+
+
+async def _get_plan_ledger(slug: str) -> Dict[str, Any]:
+    r = _redis()
+    if not r or not slug:
+        return {}
+    try:
+        v = await r.get(_plan_key(slug))
+        return json.loads(v.decode() if isinstance(v, bytes) else v) if v else {}
+    except Exception:
+        return {}
+
+
+async def _save_plan_ledger(slug: str, ledger: Dict[str, Any]) -> bool:
+    r = _redis()
+    if not r or not slug:
+        return False
+    try:
+        ledger["updated_at"] = now_iso()
+        await r.set(_plan_key(slug), json.dumps(ledger, default=str))
+        return True
+    except Exception:
+        return False
+
+
+@capability(
+    "project.plan.get", memory="off", silent=True,
+    http_method="GET", http_path="/dream/projects/plan", http_tags=["project"],
+    description="Get a project's multi-session plan ledger — the ordered portions the "
+                "dream advances one at a time, each with a status (pending|active|done). "
+                "Inputs: slug (str!).",
+)
+async def project_plan_get(slug: str = "", trace_id=None):
+    if not slug:
+        return {"ok": False, "error": "slug required"}
+    led = await _get_plan_ledger(slug)
+    return {"ok": True, "slug": slug, "portions": led.get("portions", []),
+            "plan_hash": led.get("plan_hash", ""), "updated_at": led.get("updated_at", "")}
+
+
+@capability(
+    "project.plan.set", memory="off", silent=True,
+    http_method="POST", http_path="/dream/projects/plan/set", http_tags=["project"],
+    description="Replace a project's plan-ledger portions (the multi-session work "
+                "breakdown). Inputs: slug (str!), portions (JSON list of "
+                "{title, detail, status?}), plan_hash (str — dedupe key for the source plan).",
+)
+async def project_plan_set(slug: str = "", portions: str = "", plan_hash: str = "",
+                           trace_id=None):
+    if not slug:
+        return {"ok": False, "error": "slug required"}
+    if isinstance(portions, str):
+        try:
+            plist = json.loads(portions) if portions.strip() else []
+        except Exception:
+            plist = []
+    else:
+        plist = portions or []
+    norm: List[Dict[str, Any]] = []
+    for i, p in enumerate(plist):
+        if isinstance(p, str):
+            p = {"title": p}
+        if not isinstance(p, dict):
+            continue
+        norm.append({
+            "id":       str(p.get("id") or f"p{i+1}"),
+            "title":    str(p.get("title") or "")[:300],
+            "detail":   str(p.get("detail") or "")[:1000],
+            "status":   p.get("status") or "pending",
+            "cycle_id": p.get("cycle_id", ""),
+            "note":     str(p.get("note") or "")[:1000],
+            "ts":       p.get("ts", ""),
+        })
+    led = await _get_plan_ledger(slug)
+    led["portions"] = norm
+    led["plan_hash"] = plan_hash or led.get("plan_hash", "")
+    await _save_plan_ledger(slug, led)
+    return {"ok": True, "slug": slug, "portions": norm}
+
+
+@capability(
+    "project.plan.advance", memory="off", silent=True,
+    http_method="POST", http_path="/dream/projects/plan/advance", http_tags=["project"],
+    description="Mark a plan portion's status (or append an emergent portion). Inputs: "
+                "slug (str!), portion_id (str), status (pending|active|done|blocked), "
+                "note, title (to add a new portion), detail, cycle_id.",
+)
+async def project_plan_advance(slug: str = "", portion_id: str = "", status: str = "done",
+                               note: str = "", title: str = "", detail: str = "",
+                               cycle_id: str = "", trace_id=None):
+    if not slug:
+        return {"ok": False, "error": "slug required"}
+    led = await _get_plan_ledger(slug)
+    ports = led.get("portions", [])
+    updated = None
+    for p in ports:
+        if p.get("id") == portion_id and portion_id:
+            p["status"] = status or p.get("status")
+            if note:
+                p["note"] = note[:1000]
+            if cycle_id:
+                p["cycle_id"] = cycle_id
+            p["ts"] = now_iso()
+            updated = p
+            break
+    if updated is None and (title or portion_id):
+        updated = {
+            "id":       portion_id or f"p{len(ports)+1}",
+            "title":    (title or portion_id)[:300],
+            "detail":   detail[:1000],
+            "status":   status or "pending",
+            "note":     note[:1000],
+            "cycle_id": cycle_id,
+            "ts":       now_iso(),
+        }
+        ports.append(updated)
+    led["portions"] = ports
+    await _save_plan_ledger(slug, led)
+    return {"ok": True, "portion": updated, "portions": ports}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # CRUD CAPABILITIES
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -220,6 +657,175 @@ async def project_list(trace_id=None):
             "summary":      p.get("summary", "")[:500],
         })
     return {"projects": light, "count": len(light)}
+
+
+_GOAL_LOOP_STAGES = ("project_action", "stepwise", "agent_loop", "investigate")
+
+
+async def _goal_active_loop(r, slug: str):
+    """Find a goal's dream-cycle agentic loop that is (or recently was) running,
+    so the UI can re-attach to it LIVE. The loop persists under session id
+    `dream:{cycle_id}:{stage}` (see _run_agent_loop); a goal's cycles are in
+    KEY_PROJECT_DREAMS:{slug}. Returns (session_id, status) or ("", "")."""
+    if not r or not slug:
+        return "", ""
+    try:
+        cids = await r.zrevrange(f"{KEY_PROJECT_DREAMS}:{slug}", 0, 2)
+    except Exception:
+        return "", ""
+    best = None   # (session, status, score) — best non-running fallback
+    for cid in cids or []:
+        cid = cid.decode() if isinstance(cid, bytes) else cid
+        for stage in _GOAL_LOOP_STAGES:
+            sess = f"dream:{cid}:{stage}"
+            try:
+                run = await r.hgetall(f"vera:loop:run:{sess}")
+            except Exception:
+                run = None
+            if not run:
+                continue
+            st = run.get(b"status") or run.get("status") or b""
+            st = st.decode() if isinstance(st, bytes) else st
+            try:
+                score = await r.zscore("vera:loop:sessions", sess)
+            except Exception:
+                score = None
+            fresh = (score is not None) and (time.time() - float(score) < 600)
+            if st == "running" and fresh:
+                # a live loop is the best possible answer — return immediately
+                return sess, "running"
+            eff = "interrupted" if st == "running" else st
+            cand = (sess, eff, float(score or 0))
+            if best is None or cand[2] > best[2]:
+                best = cand
+    return (best[0], best[1]) if best else ("", "")
+
+
+@capability(
+    "goals.list", memory="off", silent=True,
+    http_method="GET", http_path="/dream/goals/list", http_tags=["project", "goals"],
+    description="List the LONG-TERM GOALS the system is tracking — strategic goals a broad "
+                "request escalated to, persisted as dream projects (tagged 'strategic'). Each "
+                "carries its status, progress (dream-cycle count + last activity), a snippet of "
+                "the documented plan/progress, and any live loop it can re-attach to. Powers the "
+                "chat + dream goal trackers.",
+)
+async def goals_list(trace_id=None):
+    projs = await _list_projects()
+    r = _redis()
+    goals = []
+    for p in projs:
+        tags = p.get("tags") or []
+        if "strategic" not in tags and "v7" not in tags:
+            continue
+        slug = p.get("slug")
+        loop_session, loop_status = await _goal_active_loop(r, slug)
+        goals.append({
+            "slug":          slug,
+            "name":          p.get("name"),
+            "description":   (p.get("description") or "")[:400],
+            "status":        p.get("status", "active"),
+            "dream_count":   int(p.get("dream_count", 0) or 0),
+            "last_dream_at": p.get("last_dream_at", ""),
+            "created_at":    p.get("created_at", ""),
+            "progress":      (p.get("llm_context") or "")[:1200],
+            "tags":          tags,
+            "loop_session":  loop_session,
+            "loop_status":   loop_status,
+        })
+    goals.sort(key=lambda g: (g.get("last_dream_at") or g.get("created_at") or ""), reverse=True)
+    return {"goals": goals, "count": len(goals)}
+
+
+@capability(
+    "goals.detail", memory="off", silent=True,
+    http_method="GET", http_path="/dream/goals/detail", http_tags=["project", "goals"],
+    description="Full detail for ONE long-term goal (strategic dream project): its documented "
+                "plan + rolling progress (llm_context), its agent-notes standing brief, its "
+                "snapshotted/produced artifacts, its background thought loops, recent dream "
+                "cycles, and any live loop it can re-attach to. Powers the chat + dream goal "
+                "trackers' expanded view. Inputs: slug (str!).",
+)
+async def goals_detail(slug: str = "", trace_id=None):
+    if not slug:
+        return {"error": "slug required"}
+    p = await _get_project(slug)
+    if not p:
+        return {"error": f"goal not found: {slug}"}
+    r = _redis()
+    loop_session, loop_status = await _goal_active_loop(r, slug)
+
+    # Agent-notes standing brief (scope=project).
+    notes_md = ""
+    notes_get = CAPABILITY_REGISTRY.get("notes.get")
+    if notes_get and notes_get.get("func"):
+        try:
+            nres = await notes_get["func"](scope="project", ref_id=slug)
+            notes_md = (nres or {}).get("content", "") if isinstance(nres, dict) else ""
+        except Exception:
+            pass
+
+    # Background thought loops scoped to this goal.
+    thoughts: List[Dict[str, Any]] = []
+    think_list = CAPABILITY_REGISTRY.get("dream.think.list")
+    if think_list and think_list.get("func"):
+        try:
+            tres = await think_list["func"](project_slug=slug)
+            thoughts = (tres or {}).get("thoughts", []) if isinstance(tres, dict) else []
+        except Exception:
+            pass
+
+    # Recent dream cycles.
+    cycles: List[Dict[str, Any]] = []
+    hist_cap = CAPABILITY_REGISTRY.get("project.dream.history")
+    if hist_cap and hist_cap.get("func"):
+        try:
+            hres = await hist_cap["func"](slug=slug, limit=10)
+            cycles = (hres or {}).get("cycles", []) if isinstance(hres, dict) else []
+        except Exception:
+            pass
+
+    # Artifacts: list files under the goal-scoped artifact area (best-effort).
+    # Path mirrors _v7_goal_artifact_dir: <artifact_root>/goal/<slug>.
+    artifacts: List[Dict[str, Any]] = []
+    try:
+        import importlib as _il
+        import os as _os
+        _exec_mod = _il.import_module("Vera.vera.execution.exec_capabilities")
+        art_root = _os.path.join(_exec_mod._artifact_root(), "goal", _exec_mod._safe_seg(slug))
+        if art_root and _os.path.isdir(art_root):
+            for base, _dirs, files in _os.walk(art_root):
+                for fn in files:
+                    fp = _os.path.join(base, fn)
+                    try:
+                        rel = _os.path.relpath(fp, art_root)
+                        artifacts.append({"path": rel.replace("\\", "/"),
+                                          "bytes": _os.path.getsize(fp)})
+                    except Exception:
+                        continue
+                if len(artifacts) >= 100:
+                    break
+    except Exception:
+        pass
+
+    return {
+        "slug":          slug,
+        "name":          p.get("name"),
+        "description":   p.get("description", ""),
+        "status":        p.get("status", "active"),
+        "goal":          p.get("user_context", ""),
+        "plan_progress": p.get("llm_context", ""),
+        "notes":         notes_md,
+        "thoughts":      thoughts,
+        "cycles":        cycles,
+        "artifacts":     artifacts,
+        "dream_count":   int(p.get("dream_count", 0) or 0),
+        "last_dream_at": p.get("last_dream_at", ""),
+        "created_at":    p.get("created_at", ""),
+        "tags":          p.get("tags", []),
+        "loop_session":  loop_session,
+        "loop_status":   loop_status,
+    }
 
 
 @capability(
@@ -327,6 +933,170 @@ async def project_delete(slug: str, trace_id=None):
         return {"ok": True}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DEDUPE — fold the near-duplicate / branched projects one goal spawned into a
+# single canonical project. An escalation that re-worded a goal a few times can
+# fork a dozen sibling projects (each then running its own dream/loop); this
+# merges them: keep the richest one, absorb the others' resources, archive them.
+# ─────────────────────────────────────────────────────────────────────────────
+def _tokens(text: str) -> set:
+    import re as _re
+    stop = {"the", "a", "an", "and", "or", "to", "of", "for", "in", "on", "with",
+            "build", "create", "make", "set", "up", "using", "use", "project",
+            "goal", "system", "tool", "app", "that", "this", "is", "it"}
+    return {w for w in _re.findall(r"[a-z0-9]+", (text or "").lower())
+            if len(w) > 2 and w not in stop}
+
+
+def _project_similarity(a: Dict[str, Any], b: Dict[str, Any]) -> float:
+    """Jaccard over the token sets of name+description+user_context. 1.0 = same."""
+    ta = _tokens(" ".join(str(a.get(k) or "") for k in
+                          ("name", "description", "user_context")))
+    tb = _tokens(" ".join(str(b.get(k) or "") for k in
+                          ("name", "description", "user_context")))
+    if not ta or not tb:
+        return 0.0
+    inter = len(ta & tb)
+    return inter / float(len(ta | tb))
+
+
+def _project_richness(p: Dict[str, Any]) -> tuple:
+    """Sort key for choosing the canonical project in a duplicate group: most
+    dreams, then most resources, then oldest (established first)."""
+    res = sum(len(p.get(k) or []) for k in
+              ("fabric_dataset_ids", "notebook_ids", "chat_ids", "memory_ids",
+               "ide_workspaces", "git_repos"))
+    return (int(p.get("dream_count", 0) or 0), res,
+            -1 * len(str(p.get("created_at") or "")))  # non-empty created earlier
+
+
+async def _merge_projects(canon: Dict[str, Any], dupes: List[Dict[str, Any]],
+                          delete: bool) -> None:
+    """Absorb dupes' resource lists into canon, then archive (or delete) them."""
+    list_fields = ("fabric_dataset_ids", "fabric_record_ids", "notebook_ids",
+                   "chat_ids", "memory_ids", "ide_workspaces", "git_repos",
+                   "dream_trigger_names", "agents", "models", "tags")
+    for f in list_fields:
+        merged = list(canon.get(f) or [])
+        seen = {json.dumps(x, sort_keys=True) if isinstance(x, dict) else x
+                for x in merged}
+        for d in dupes:
+            for x in (d.get(f) or []):
+                key = json.dumps(x, sort_keys=True) if isinstance(x, dict) else x
+                if key not in seen:
+                    seen.add(key)
+                    merged.append(x)
+        canon[f] = merged
+    canon["dream_count"] = sum(int(p.get("dream_count", 0) or 0)
+                               for p in [canon, *dupes])
+    await _save_project(canon)
+    r = _redis()
+    for d in dupes:
+        d["status"] = "archived"
+        d["merged_into"] = canon["slug"]
+        await _save_project(d)
+        if delete and r:
+            try:
+                await r.hdel(KEY_PROJECTS, d["slug"])
+            except Exception:
+                pass
+
+
+@capability(
+    "project.dedupe", memory="off",
+    http_method="POST", http_path="/dream/projects/dedupe", http_tags=["project"],
+    description="Find and (optionally) merge near-duplicate / branched projects — "
+                "the sibling projects one re-worded goal can fork. Groups active "
+                "projects by content similarity; the richest project in each group "
+                "(most dreams/resources, oldest) becomes canonical, absorbs the "
+                "others' resources, and the rest are archived (or deleted). Inputs: "
+                "threshold (float 0-1, default 0.55), apply (bool=false — preview "
+                "only), delete (bool=false — hard-delete dupes instead of archive), "
+                "exclude_strategic (bool=false). Output: {ok, groups:[{canonical, "
+                "duplicates, scores}], merged, applied}.",
+)
+async def project_dedupe(threshold: float = 0.55, apply: bool = False,
+                         delete: bool = False, exclude_strategic: bool = False,
+                         trace_id=None):
+    projs = [p for p in await _list_projects()
+             if (p.get("status") or "active") != "archived"]
+    if exclude_strategic:
+        projs = [p for p in projs
+                 if not any(t in (p.get("tags") or []) for t in ("strategic", "v7"))]
+    thr = max(0.1, min(1.0, float(threshold)))
+    used = set()
+    groups = []
+    for i, p in enumerate(projs):
+        if p["slug"] in used:
+            continue
+        members = [p]
+        scores = {}
+        for q in projs[i + 1:]:
+            if q["slug"] in used:
+                continue
+            sim = _project_similarity(p, q)
+            if sim >= thr:
+                members.append(q)
+                scores[q["slug"]] = round(sim, 3)
+        if len(members) < 2:
+            continue
+        members.sort(key=_project_richness, reverse=True)
+        canon = members[0]
+        dupes = members[1:]
+        for m in members:
+            used.add(m["slug"])
+        groups.append({"canonical": {"slug": canon["slug"], "name": canon.get("name")},
+                       "duplicates": [{"slug": d["slug"], "name": d.get("name"),
+                                       "score": scores.get(d["slug"])} for d in dupes]})
+        if apply:
+            await _merge_projects(canon, dupes, delete)
+    merged = sum(len(g["duplicates"]) for g in groups)
+    if apply:
+        await emit_event({"type": "project.deduped", "groups": len(groups),
+                          "merged": merged, "deleted": bool(delete)})
+    return {"ok": True, "applied": bool(apply), "delete": bool(delete),
+            "threshold": thr, "groups": groups, "merged": merged}
+
+
+@capability(
+    "project.merge", memory="off",
+    http_method="POST", http_path="/dream/projects/merge", http_tags=["project"],
+    description="MANUALLY merge a chosen set of projects into one (vs project.dedupe "
+                "which auto-groups by similarity). The `into` project absorbs the "
+                "others' resources; the others are archived (or deleted). Inputs: "
+                "slugs (list[str]! or comma-str — the projects to merge), into (str — "
+                "canonical slug; default = the richest of `slugs`), delete (bool=false "
+                "— hard-delete the merged-away projects instead of archiving). "
+                "Output: {ok, into, merged}.",
+)
+async def project_merge(slugs: Optional[Any] = None, into: str = "",
+                        delete: bool = False, trace_id=None):
+    if isinstance(slugs, str):
+        slugs = [s.strip() for s in slugs.split(",") if s.strip()]
+    slugs = [s for s in (slugs or []) if isinstance(s, str) and s.strip()]
+    if len(slugs) < 2:
+        return {"ok": False, "error": "need at least 2 project slugs to merge"}
+    projs = []
+    for s in slugs:
+        p = await _get_project(s)
+        if p:
+            projs.append(p)
+    if len(projs) < 2:
+        return {"ok": False, "error": "fewer than 2 of those projects exist"}
+    canon = None
+    if into:
+        canon = next((p for p in projs if p["slug"] == into), None)
+        if not canon:
+            return {"ok": False, "error": f"'into' project {into} not in the selection"}
+    else:
+        canon = sorted(projs, key=_project_richness, reverse=True)[0]
+    dupes = [p for p in projs if p["slug"] != canon["slug"]]
+    await _merge_projects(canon, dupes, bool(delete))
+    await emit_event({"type": "project.merged", "into": canon["slug"],
+                      "merged": [d["slug"] for d in dupes], "deleted": bool(delete)})
+    return {"ok": True, "into": canon["slug"], "merged": [d["slug"] for d in dupes]}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -492,6 +1262,45 @@ async def project_context_update(slug: str, new_content: str = "",
 
 
 @capability(
+    "project.note.add", memory="off",
+    http_method="POST", http_path="/dream/projects/note/add", http_tags=["project"],
+    description="Capture a piece of text (e.g. a chat message) into a project, folding "
+                "it into the project's rolling llm_context via an incremental LLM update "
+                "(same path dream cycles use). Creates the project first when `name` is "
+                "given and no matching project exists, so 'add this to a new project' is "
+                "one call. Inputs: content (str!), slug (str — existing project), name "
+                "(str — find/create by name when slug omitted), source (str — label, "
+                "default 'chat'). Output: {ok, slug, name, created, llm_context}.",
+)
+async def project_note_add(content: str = "", slug: str = "", name: str = "",
+                           source: str = "chat", trace_id=None):
+    if not (content or "").strip():
+        return {"ok": False, "error": "content required"}
+    slug = (slug or "").strip()
+    name = (name or "").strip()
+    created = False
+    proj = await _get_project(slug) if slug else None
+    if not proj and name:
+        # Resolve by slugified name; create the project if it doesn't exist yet.
+        cand = _slugify(name)
+        proj = await _get_project(cand)
+        if not proj:
+            res = await project_upsert(name=name)
+            proj = res.get("project") if isinstance(res, dict) else None
+            created = bool(proj)
+        slug = (proj or {}).get("slug", cand)
+    if not proj:
+        return {"ok": False, "error": "provide an existing slug or a name to create"}
+    slug = proj.get("slug", slug)
+    upd = await project_context_update(slug=slug, new_content=content, source=source)
+    await emit_event({"type": "project.note.added", "slug": slug,
+                      "source": source, "created": created, "chars": len(content)})
+    return {"ok": bool(upd.get("ok")), "slug": slug, "name": proj.get("name"),
+            "created": created, "llm_context": upd.get("llm_context", ""),
+            **({"error": upd["error"]} if upd.get("error") else {})}
+
+
+@capability(
     "project.context.regenerate", memory="off",
     http_method="POST", http_path="/dream/projects/context/regenerate", http_tags=["project"],
     description="Fully regenerate a project's llm_context from scratch by surveying linked "
@@ -631,28 +1440,91 @@ async def project_dream_run(slug: str, trigger_name: str = "",
         return {"ok": False, "error": assemble["error"]}
     seed = assemble["seed"]
 
+    # Pre-assign this cycle's id and register the project->cycle link NOW, before
+    # the cycle runs. dream.cycle.run launches the cycle detached (it returns no
+    # cycle_id), so recording after it returns never worked; more importantly, a
+    # link recorded up front lets the goals UI re-attach to this cycle's agentic
+    # loops (session `dream:{cid}:{stage}`) while they're still live. _run_cycle
+    # honours seed["cycle_id"].
+    import uuid as _uuid
+    cid = _uuid.uuid4().hex[:8]
+    seed = dict(seed or {})
+    seed["cycle_id"] = cid
+
+    r = _redis()
+    if r:
+        try:
+            await r.zadd(f"{KEY_PROJECT_DREAMS}:{slug}", {cid: time.time()})
+        except Exception:
+            pass
+    proj["dream_count"] = int(proj.get("dream_count", 0)) + 1
+    proj["last_dream_at"] = now_iso()
+    await _save_project(proj)
+
     try:
         result = await cycle_run["func"](trigger_name=tname, seed=seed)
     except Exception as e:
         return {"ok": False, "error": f"dream.cycle.run failed: {e}"}
 
-    # Record the cycle
-    cid = (result or {}).get("cycle_id") if isinstance(result, dict) else None
-    if cid:
-        r = _redis()
-        if r:
-            try:
-                await r.zadd(f"{KEY_PROJECT_DREAMS}:{slug}", {cid: time.time()})
-            except Exception:
-                pass
-        proj["dream_count"] = int(proj.get("dream_count", 0)) + 1
-        proj["last_dream_at"] = now_iso()
-        await _save_project(proj)
-
     await emit_event({"type": "project.dream.started", "slug": slug,
                       "trigger": tname, "cycle_id": cid})
     return {"ok": True, "cycle_id": cid, "trigger": tname,
             "seed_chars": assemble.get("context_chars"), "result": result}
+
+
+@capability(
+    "project.advance.v8", memory="on",
+    http_method="POST", http_path="/dream/projects/advance_v8", http_tags=["project", "dag"],
+    description="Advance a project/goal via the V8 loop-program orchestrator: builds a "
+                "brief from the project's own context (objective, notes, progress) and "
+                "creates a V8 PROGRAM (generated v5/v6/v7 loops run and adapt over the "
+                "horizon). The project is tagged v8-program:<id> and its dream triggers "
+                "are cleared so dream cycles REVIEW progress instead of re-executing. "
+                "Inputs: slug (str!), horizon_days (int — 0 = generator's choice), "
+                "keep_dream_trigger (bool default False). Output: {ok, program, slug}.",
+)
+async def project_advance_v8(slug: str, horizon_days: int = 0,
+                             keep_dream_trigger: bool = False, trace_id=None):
+    proj = await _get_project(slug)
+    if not proj:
+        return {"ok": False, "error": f"project not found: {slug}"}
+    creator = CAPABILITY_REGISTRY.get("loops.program.create")
+    if not creator or not creator.get("func"):
+        return {"ok": False, "error": "V8 orchestrator (loops.program.create) not available"}
+    # Already driven by a program? Point at it instead of forking a second one.
+    for t in (proj.get("tags") or []):
+        if str(t).startswith("v8-program:"):
+            return {"ok": False, "error": f"project already driven by {t} — "
+                    "delete that program first to re-generate",
+                    "program_id": str(t).split(":", 1)[1]}
+    brief = (f"PROJECT: {proj.get('name')}\n"
+             f"OBJECTIVE: {proj.get('description') or proj.get('user_context') or ''}\n\n"
+             + (f"CURRENT STATE / PROGRESS:\n{(proj.get('llm_context') or '')[:3000]}\n\n"
+                if proj.get("llm_context") else "")
+             + "Advance this project toward its objective.")
+    try:
+        # Share the goal's sandbox container across every constituent run of
+        # the program (one container per goal — no per-run junk containers).
+        prog = await creator["func"](brief=brief, horizon_days=int(horizon_days),
+                                     autostart=True,
+                                     sandbox_owner=f"goal-{slug}",
+                                     owner_ref=slug)
+    except Exception as e:
+        return {"ok": False, "error": f"program creation failed: {e}"}
+    if not isinstance(prog, dict) or not prog.get("id"):
+        return {"ok": False, "error": "generator produced no program", "detail": prog}
+    tags = [t for t in (proj.get("tags") or [])] + [f"v8-program:{prog['id']}"]
+    proj["tags"] = tags
+    if not keep_dream_trigger:
+        proj["dream_trigger_names"] = []
+    proj["llm_context"] = ((proj.get("llm_context") or "")
+                           + f"\n\nEXECUTION: driven by V8 loop program {prog['id']} "
+                             "(loops.program.get for state) — dream cycles should REVIEW "
+                             "its progress, not re-execute the plan.")[:12000]
+    await _save_project(proj)
+    await emit_event({"type": "project.advance.v8", "slug": slug,
+                      "program": prog["id"]})
+    return {"ok": True, "slug": slug, "program": prog}
 
 
 @capability(
@@ -1150,7 +2022,8 @@ async def project_chat(
 )
 async def project_dream_complete_hook(slug: str, cycle_id: str = "",
                                        trigger: str = "", report: str = "",
-                                       trace_id=None):
+                                       steps: str = "", engine: str = "",
+                                       goal: str = "", trace_id=None):
     proj = await _get_project(slug)
     if not proj:
         return {"ok": False, "error": "project not found"}
@@ -1165,6 +2038,17 @@ async def project_dream_complete_hook(slug: str, cycle_id: str = "",
             }))
         except Exception:
             pass
+    # Persist the dream cycle as a structured loop run (report + step trace become
+    # artifacts) so the project page shows its full loop history alongside the
+    # session escalations. Best-effort; never blocks context update.
+    try:
+        await project_loop_record(
+            slug=slug, source="dream_cycle", engine=engine or "dream",
+            goal=goal or trigger,
+            steps=steps if isinstance(steps, str) else json.dumps(steps or [], default=str),
+            final=report or "", cycle_id=cycle_id, trigger=trigger, run_id=cycle_id)
+    except Exception as e:
+        log.debug("project dream loop record: %s", e)
     if report:
         await project_context_update(
             slug=slug, new_content=report,
@@ -1176,8 +2060,25 @@ async def project_dream_complete_hook(slug: str, cycle_id: str = "",
 # GIT REPO CAPABILITIES
 # ─────────────────────────────────────────────────────────────────────────────
 
+async def _git_run_async(repo_path: str, args: List[str], timeout: int = 30) -> Dict[str, Any]:
+    """Async wrapper for _git_run — runs the blocking subprocess in a thread so
+    it NEVER blocks the event loop. A git pull/push/clone is synchronous and can
+    take tens of seconds (clone: minutes); calling _git_run directly from an
+    async capability froze the whole event loop for that duration, which stalled
+    every WebSocket (the whole-UI 1005/1006 reconnect flap). Always prefer this
+    from async code."""
+    import functools as _ft
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None, _ft.partial(_git_run, repo_path, args, timeout))
+
+
 def _git_run(repo_path: str, args: List[str], timeout: int = 30) -> Dict[str, Any]:
-    """Run a git command in repo_path. Returns {ok, stdout, stderr, returncode}."""
+    """Run a git command in repo_path. Returns {ok, stdout, stderr, returncode}.
+
+    BLOCKING — do not call directly from async code; use _git_run_async so the
+    subprocess runs off the event loop.
+    """
     try:
         result = subprocess.run(
             ["git"] + args,
@@ -1219,10 +2120,10 @@ async def project_git_status(slug: str, repo_name: str = "", trace_id=None):
     if not path or not Path(path).is_dir():
         return {"ok": False, "error": f"repo path not found: {path}"}
 
-    status = _git_run(path, ["status", "--short", "--branch"])
-    log_r  = _git_run(path, ["log", "--oneline", "--decorate", "-20"])
-    remote = _git_run(path, ["remote", "get-url", "origin"])
-    branch = _git_run(path, ["rev-parse", "--abbrev-ref", "HEAD"])
+    status = await _git_run_async(path, ["status", "--short", "--branch"])
+    log_r  = await _git_run_async(path, ["log", "--oneline", "--decorate", "-20"])
+    remote = await _git_run_async(path, ["remote", "get-url", "origin"])
+    branch = await _git_run_async(path, ["rev-parse", "--abbrev-ref", "HEAD"])
 
     return {
         "ok":         True,
@@ -1253,7 +2154,7 @@ async def project_git_pull(slug: str, repo_name: str = "", trace_id=None):
     path = repo.get("path", "")
     if not path or not Path(path).is_dir():
         return {"ok": False, "error": f"repo path not found: {path}"}
-    r = _git_run(path, ["pull"], timeout=60)
+    r = await _git_run_async(path, ["pull"], timeout=60)
     return {"ok": r["ok"], "output": r["stdout"] or r["stderr"]}
 
 
@@ -1280,7 +2181,7 @@ async def project_git_push(slug: str, repo_name: str = "", remote: str = "origin
     args = ["push", remote]
     if branch:
         args.append(branch)
-    r = _git_run(path, args, timeout=60)
+    r = await _git_run_async(path, args, timeout=60)
     return {"ok": r["ok"], "output": r["stdout"] or r["stderr"]}
 
 
@@ -1302,7 +2203,7 @@ async def project_git_log(slug: str, repo_name: str = "", limit: int = 50, trace
     path = repo.get("path", "")
     if not path or not Path(path).is_dir():
         return {"ok": False, "error": f"repo path not found: {path}"}
-    r = _git_run(path, ["log", f"-{int(limit)}", "--pretty=format:%h %ad %an: %s", "--date=short"])
+    r = await _git_run_async(path, ["log", f"-{int(limit)}", "--pretty=format:%h %ad %an: %s", "--date=short"])
     return {"ok": r["ok"], "log": r["stdout"] if r["ok"] else r["stderr"]}
 
 
@@ -1435,7 +2336,7 @@ async def project_git_provision(
             clone_root.mkdir(parents=True, exist_ok=True)
             dest = clone_root / re.sub(r"[^A-Za-z0-9._-]", "_", repo_name)
             if (dest / ".git").is_dir():
-                r = _git_run(str(dest), ["pull"], timeout=120)
+                r = await _git_run_async(str(dest), ["pull"], timeout=120)
                 steps.append({"step": "clone", "action": "pull",
                               "ok": r["ok"], "detail": r["stdout"] or r["stderr"]})
             else:
@@ -1443,7 +2344,7 @@ async def project_git_provision(
                 if branch:
                     args += ["--branch", branch]
                 args += [remote_url, str(dest)]
-                r = _git_run(str(clone_root), args, timeout=300)
+                r = await _git_run_async(str(clone_root), args, timeout=300)
                 steps.append({"step": "clone", "action": "clone",
                               "ok": r["ok"], "detail": r["stdout"] or r["stderr"]})
             if (dest / ".git").is_dir():
@@ -1638,22 +2539,48 @@ PROJECT_ACTION_TRIGGER_DEFAULTS = {
 # Composite: groups deep-context gathering + execution + journalling + pivoting
 # into one automated, productive pipeline. This is the DEFAULT for project
 # dreams (project.dream.run with no explicit trigger/mode).
+# Caps for the composite project dream. Deliberately PROJECT-SCOPED: memory
+# caps replace the fabric caps (project dreams kept fixating on big, unrelated
+# fabric datasets instead of the project's own resources — fabric access is
+# hidden; a dataset only enters via the project context / linked resources).
+_PROJECT_COMPOSE_CAPS = [
+    # Memory — the primary knowledge substrate
+    "memory.search", "memory.recall", "memory.all_nodes", "memory.get",
+    "memory.session_history", "memory.seek", "memory.map",
+    "memory.create", "memory.update",
+    # Project's own surface
+    "project.list", "project.get", "project.browse_resources",
+    "project.dream.history", "project.context.assemble",
+    "project.context.update", "project.note.add",
+    # Linked workspaces / files (read) + notebooks (write)
+    "ide.workspace.list", "ide.fs.list", "ide.fs.tree", "ide.fs.read",
+    "notebook.write", "notebook.append",
+    # External grounding when the project genuinely needs a lookup
+    "web.search", "web.fetch",
+    # Analysis + journalling
+    "llm.summarize", "llm.qa", "llm.analyze", "llm.explain",
+    "llm.classify", "llm.brainstorm", "llm.generate",
+    "dream.journal.append",
+]
+
 PROJECT_COMPOSITE_TRIGGER_DEFAULTS = {
     "name":        "project_compose",
     "label":       "Project (Composite)",
-    "description": "Automated, productive project dream: assemble deep project "
-                   "context (memory graph + fabric), refine the next goal, EXECUTE "
-                   "it, then synthesise, journal, and decide whether to pivot into "
-                   "a follow-up dream — iterating until it converges.",
+    "description": "Automated, productive project dream: assemble the PROJECT'S OWN "
+                   "context (its notes, memory records, linked workspaces/notebooks), "
+                   "refine the next goal, EXECUTE it, then synthesise, journal, and "
+                   "decide whether to pivot into a follow-up dream — iterating until "
+                   "it converges. Deliberately project-scoped: memory caps, no fabric "
+                   "dataset spelunking.",
     "enabled":     True,
     "journal":     True,
-    "sensors":     ["dream.sensor.project_context",
-                    "dream.sensor.memory_recent",
-                    "dream.sensor.notebook_recent"],
+    # Project-scoped sensing only — the broad memory_recent / notebook_recent
+    # sensors fed the dream unrelated global activity (and fabric_explore fed
+    # it unrelated datasets), which it then fixated on instead of the goal.
+    "sensors":     ["dream.sensor.project_context"],
     "pipeline":    ["dream.stage.gather",
                     "dream.stage.load_workspace",
                     "dream.stage.memory_deep_traverse",
-                    "dream.stage.fabric_explore",
                     "dream.stage.enrich_context",
                     "dream.stage.themes",
                     "dream.stage.goal_refine",
@@ -1671,7 +2598,7 @@ PROJECT_COMPOSITE_TRIGGER_DEFAULTS = {
     "require_signal":       0.0,
     "max_steps":            8,
     "deliver_to":  ["notebook", "memory"],
-    "sensor_params": {"memory_recent": {"limit": 40}},
+    "sensor_params": {},
     "iterate": {
         "enabled": True, "max_iterations": 3, "min_iterations": 1,
         "iterate_stages": ["dream.stage.project_action"],
@@ -1681,15 +2608,21 @@ PROJECT_COMPOSITE_TRIGGER_DEFAULTS = {
         "enabled": True, "min_confidence": 0.6, "max_pivots": 2,
         "candidates": ["project_reflect", "source_review"],
     },
-    "no_hitl_caps": list(set(PROJECT_ACTION_TRIGGER_DEFAULTS["no_hitl_caps"] + [
-        "dream.journal.append",
-    ])),
+    # Explicit whitelist = the loop's toolkit (falls back to no_hitl_caps
+    # otherwise, which used to include the fabric caps).
+    "whitelist":    list(_PROJECT_COMPOSE_CAPS),
+    "no_hitl_caps": list(_PROJECT_COMPOSE_CAPS),
     "prompt": (
-        "Drive this project forward. You have deep context (project, memory graph, "
-        "fabric). Refine the single most valuable next goal and EXECUTE it with the "
-        "write capabilities — make real, grounded changes. Journal your reasoning "
-        "as you go. After acting, decide whether the work opens a worthwhile "
-        "follow-up dream. Never invent project scope, activity, or files."
+        "Drive this project forward using the PROJECT'S OWN resources: its context "
+        "and notes, its memory records, its linked workspaces and notebooks. Refine "
+        "the single most valuable next goal TOWARD THE PROJECT'S STATED OBJECTIVE "
+        "and EXECUTE it with the write capabilities — make real, grounded changes. "
+        "Journal your reasoning as you go. STAY ON GOAL: do not chase datasets, "
+        "records or topics merely because they are large or nearby — something is "
+        "relevant ONLY if the project context links it or the goal requires it. If "
+        "you need outside information, look up the SPECIFIC fact (web.search) and "
+        "return to the goal. After acting, decide whether the work opens a "
+        "worthwhile follow-up dream. Never invent project scope, activity, or files."
     ),
 }
 
@@ -1778,12 +2711,32 @@ async def _ensure_project_trigger():
         except Exception as e:
             log.debug("ensure project_action trigger: %s", e)
 
-        # Ensure the composite (default) trigger exists.
+        # Ensure the composite (default) trigger exists — and UPGRADE a stored
+        # copy that still has the old broad config (fabric_explore stage /
+        # fabric caps / global sensors): that config made project dreams fixate
+        # on big unrelated fabric datasets instead of the project's resources.
         try:
             comp = await get_t["func"](name="project_compose")
-            if not (comp and comp.get("trigger")):
+            comp_trig = comp.get("trigger") if comp else None
+            if not comp_trig:
                 await _safe_trigger_upsert(upsert_t["func"], PROJECT_COMPOSITE_TRIGGER_DEFAULTS)
                 log.info("project: created default project_compose trigger")
+            else:
+                pipe = comp_trig.get("pipeline") or []
+                caps_now = set((comp_trig.get("no_hitl_caps") or [])
+                               + (comp_trig.get("whitelist") or []))
+                needs_upgrade = ("dream.stage.fabric_explore" in pipe
+                                 or any(c.startswith("fabric.") for c in caps_now)
+                                 or not comp_trig.get("whitelist"))
+                if needs_upgrade:
+                    preserved = {k: comp_trig.get(k, PROJECT_COMPOSITE_TRIGGER_DEFAULTS[k])
+                                 for k in ("enabled", "hours_start", "hours_end",
+                                           "min_idle_minutes", "min_interval_minutes")}
+                    await _safe_trigger_upsert(
+                        upsert_t["func"],
+                        {**PROJECT_COMPOSITE_TRIGGER_DEFAULTS, **preserved})
+                    log.info("project: UPGRADED project_compose trigger to "
+                             "project-scoped config (fabric caps removed)")
         except Exception as e:
             log.debug("ensure project_compose trigger: %s", e)
 

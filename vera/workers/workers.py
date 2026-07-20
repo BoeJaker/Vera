@@ -40,9 +40,19 @@ async def _push_local_metrics():
         log.debug("psutil not installed — no local resource metrics")
         return
 
+    # Prime the CPU sampler. cpu_percent(interval=1) BLOCKS the thread with an
+    # internal time.sleep(1) to measure over a window — on the event loop that
+    # froze every WebSocket for 1s every 10s. interval=None is non-blocking:
+    # it returns %CPU since the PREVIOUS call, and this loop's own 10s cadence
+    # is the measurement window. The first priming call returns 0.0 (no baseline).
+    try:
+        psutil.cpu_percent(interval=None)
+    except Exception:
+        pass
+
     while True:
         try:
-            cpu  = psutil.cpu_percent(interval=1)
+            cpu  = psutil.cpu_percent(interval=None)
             ram  = psutil.virtual_memory()
             disk = psutil.disk_usage("/")
             metrics = {
@@ -133,6 +143,7 @@ async def _load_jobs(*, limit: int = 500, offset: int = 0):
                                     "consumer":   consumer,
                                     "idle_ms":    idle_ms,
                                     "msg_id":     msg_id,
+                                    "args_preview": dec(data.get(b"payload", data.get("payload", b"")))[:400],
                                 })
             except Exception:
                 # Fallback: xrange but filter out known running/done
@@ -147,6 +158,7 @@ async def _load_jobs(*, limit: int = 500, offset: int = 0):
                             "capability": dec(data.get(b"capability", data.get("capability", b"?"))),
                             "ts":         dec(data.get(b"ts", data.get("ts", b""))),
                             "trace_id":   dec(data.get(b"trace_id", data.get("trace_id", b""))),
+                            "args_preview": dec(data.get(b"payload", data.get("payload", b"")))[:400],
                         })
         except Exception as e:
             log.debug("load_jobs pending: %s", e)
@@ -402,6 +414,12 @@ register_ui(
         "ollama.pull", "ollama.generate", "cluster.nodes",
         "cluster.jobs", "worker.init", "worker.sync", "worker.drain",
         "cluster.job.stop",
+        # Unified provisioning (embedded Provision sub-tab) — one cap per group
+        # is enough for the chat's live cap-activity mirror to route the whole
+        # group's activity into this panel.
+        "nodes.list", "nodes.provision", "provision.overview",
+        "provision.apply", "provision.node.new", "docker.stack.deploy",
+        "secprov.deploy",
     ],
     mode="tab",
     tab_order=1,

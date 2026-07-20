@@ -45,19 +45,18 @@ def _redis():
 # THEME SYSTEM
 # ─────────────────────────────────────────────────────────────────────────────
 
-BUILTIN_THEMES = {
-    "ash":   {"label":"Ash",   "type":"light", "accent":"#2e6da4", "vars":{"--bg":"#f0ede8","--s1":"#e8e5df","--s2":"#dedbd4","--s3":"#d4d1c8","--bd":"rgba(0,0,0,.08)","--bd2":"rgba(0,0,0,.15)","--t1":"#1a1a18","--t2":"#6a6860","--t3":"#a8a69e","--ac":"#2e6da4","--ac2":"#228060","--ac3":"#c47020","--ac4":"#c03030","--ac5":"#6040a0","--ui-radius":"5px","--lhm-width":"184px","--lhm-collapsed-width":"46px"}},
-    "dusk":  {"label":"Dusk",  "type":"dark",  "accent":"#6ea8d8", "vars":{"--bg":"#0e0f12","--s1":"#13151a","--s2":"#1a1d24","--s3":"#222630","--bd":"rgba(255,255,255,.07)","--bd2":"rgba(255,255,255,.14)","--t1":"#d4dae4","--t2":"#6b7585","--t3":"#3b4252","--ac":"#6ea8d8","--ac2":"#5ec9a0","--ac3":"#e09a55","--ac4":"#e06060","--ac5":"#a78bfa","--ui-radius":"5px","--lhm-width":"184px","--lhm-collapsed-width":"46px"}},
-    "void":  {"label":"Void",  "type":"dark",  "accent":"#9b8dfa", "vars":{"--bg":"#000","--s1":"#070707","--s2":"#0d0d0d","--s3":"#141414","--bd":"rgba(255,255,255,.05)","--bd2":"rgba(255,255,255,.1)","--t1":"#e0e0e0","--t2":"#929292","--t3":"#636363","--ac":"#9b8dfa","--ac2":"#5ecab0","--ac3":"#dba355","--ac4":"#e06060","--ac5":"#f472b6","--ui-radius":"5px","--lhm-width":"184px","--lhm-collapsed-width":"46px"}},
-    "chalk": {"label":"Chalk", "type":"dark",  "accent":"#d4a96a", "vars":{"--bg":"#1c1c1e","--s1":"#242428","--s2":"#2c2c32","--s3":"#34343c","--bd":"rgba(255,255,255,.08)","--bd2":"rgba(255,255,255,.16)","--t1":"#e8e4d8","--t2":"#b6ac97","--t3":"#6e6b5b","--ac":"#d4a96a","--ac2":"#80c090","--ac3":"#c08878","--ac4":"#e07070","--ac5":"#9080c0","--ui-radius":"5px","--lhm-width":"184px","--lhm-collapsed-width":"46px"}},
-    "ice":   {"label":"Ice",   "type":"dark",  "accent":"#5ab0f0", "vars":{"--bg":"#090f18","--s1":"#0d1620","--s2":"#121e2c","--s3":"#182638","--bd":"rgba(80,160,255,.1)","--bd2":"rgba(80,160,255,.2)","--t1":"#c0d8f0","--t2":"#406880","--t3":"#1e3850","--ac":"#5ab0f0","--ac2":"#38d0b0","--ac3":"#e0b060","--ac4":"#e06868","--ac5":"#8070e0","--ui-radius":"5px","--lhm-width":"184px","--lhm-collapsed-width":"46px"}},
-}
+# Theme tables live in Vera.vera.theme_defs (single source of truth shared with
+# chat/chat_panels_capabilities.py). This module serves /ui/themes.css from the
+# same table, so the stylesheet and the JSON theme API stay in lockstep.
+from Vera.vera.theme_defs import (
+    BUILTIN_THEMES, DEFAULT_THEME, ensure_contrast,
+)
 
 # Custom themes stored at runtime (persisted to Redis if available)
 CUSTOM_THEMES: Dict[str, dict] = {}
 
 # Current active theme
-_ACTIVE_THEME = "dusk"
+_ACTIVE_THEME = DEFAULT_THEME
 
 
 def _all_themes() -> Dict[str, dict]:
@@ -167,6 +166,9 @@ async def cap_theme_create(id: str, label: str = "", type: str = "dark",
         return {"error": "vars must be valid JSON object"}
     if not id or not id.isalnum():
         return {"error": "id must be alphanumeric"}
+    # Repair unreadable colour choices (text ~ background, weak on-accent) so a
+    # saved custom theme is always legible.
+    var_dict = ensure_contrast(var_dict)
     CUSTOM_THEMES[id] = {
         "label": label or id,
         "type": type,
@@ -235,7 +237,11 @@ async def cap_theme_css(trace_id=None):
 async def _serve_theme_css():
     from fastapi.responses import Response
     css = _all_themes_css()
-    return Response(content=css, media_type="text/css")
+    # Off the critical path (active theme is painted from the inline var cache),
+    # so a short shared cache is safe and spares every iframe a fresh fetch.
+    # Custom-theme edits reflect within the window; the picker reads /ui/themes.
+    return Response(content=css, media_type="text/css",
+                    headers={"Cache-Control": "public, max-age=300"})
 
 
 # Serve vera-ui.js — the universal theme integration script
@@ -279,6 +285,90 @@ async def _serve_vera_panel_js():
                     media_type="application/javascript")
 
 
+# Serve vera-loader.js — configurable loading animation (default: evolving graph)
+@APP.get("/ui/vera-loader.js", include_in_schema=False)
+async def _serve_vera_loader_js():
+    from fastapi.responses import Response
+    from pathlib import Path
+    p = Path(__file__).parent.parent / "vera-loader.js"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
+    return Response(content="console.warn('vera-loader.js not found');",
+                    media_type="application/javascript")
+
+
+# ── Loading-animation config (mirrors the theme API) ─────────────────────────
+_LOADER_DEFAULT = {"type": "graph", "speed": 1, "density": 1, "sprite": None}
+_LOADER_CFG: Dict = dict(_LOADER_DEFAULT)
+_LOADER_LOADED = False
+
+
+async def _loader_cfg() -> Dict:
+    global _LOADER_LOADED, _LOADER_CFG
+    if not _LOADER_LOADED:
+        r = _redis()
+        if r:
+            try:
+                raw = await r.get("vera:ui:loader")
+                if raw:
+                    _LOADER_CFG = {**_LOADER_DEFAULT,
+                                   **json.loads(raw if isinstance(raw, str) else raw.decode())}
+            except Exception:
+                pass
+        _LOADER_LOADED = True
+    return _LOADER_CFG
+
+
+@capability(
+    "ui.loader.get",
+    http_method="GET", http_path="/ui/loader", http_tags=["ui"],
+    memory="off", silent=True,
+    description="Get the active loading-animation config {type,speed,density,"
+                "sprite}. type ∈ graph|pulse|orbit|spinner|sprite.",
+)
+async def cap_loader_get(trace_id=None):
+    return {"config": await _loader_cfg(),
+            "animations": ["graph", "pulse", "orbit", "spinner", "sprite"]}
+
+
+@capability(
+    "ui.loader.set",
+    http_method="POST", http_path="/ui/loader/set", http_tags=["ui"],
+    memory="off", silent=True,
+    description="Set the loading animation shown across the UI. Broadcasts to all "
+                "panels. Inputs: type (str — graph|pulse|orbit|spinner|sprite), "
+                "speed (float=1), density (float=1), sprite (dict — {url,frames,"
+                "fps,w,h} for type=sprite; url should be a data: URI under CSP). "
+                "Output: {config}.",
+)
+async def cap_loader_set(type: str = "", speed: Optional[float] = None,
+                         density: Optional[float] = None,
+                         sprite: Optional[Dict] = None, trace_id=None):
+    cfg = dict(await _loader_cfg())
+    if type:
+        if type not in ("graph", "pulse", "orbit", "spinner", "sprite"):
+            return {"error": f"unknown loader type: {type}"}
+        cfg["type"] = type
+    if speed is not None:
+        cfg["speed"] = max(0.1, min(4.0, float(speed)))
+    if density is not None:
+        cfg["density"] = max(0.3, min(3.0, float(density)))
+    if sprite is not None:
+        cfg["sprite"] = sprite or None
+    global _LOADER_CFG
+    _LOADER_CFG = cfg
+    r = _redis()
+    if r:
+        try:
+            await r.set("vera:ui:loader", json.dumps(cfg))
+        except Exception:
+            pass
+    await emit_event({"type": "ui.loader.changed", "config": cfg})
+    return {"config": cfg}
+
+
 # Serve vera-graph.js — the unified reusable graph element
 @APP.get("/ui/vera-graph.js", include_in_schema=False)
 async def _serve_vera_graph_js():
@@ -307,6 +397,24 @@ async def _serve_agent_loop_output_js():
                             headers={"Cache-Control": "no-cache"})
     return Response(
         content="console.warn('agent_loop_output element JS not found');",
+        media_type="application/javascript"
+    )
+
+
+# Serve vera_markdown.js — the shared <vera-markdown> renderer (+ VeraMD.render)
+# with its built-in rendered/raw toggle. Used anywhere a panel shows markdown
+# content (project context, goal plans, loop-run modals, artifacts, reports).
+@APP.get("/ui/elements/vera_markdown.js", include_in_schema=False)
+async def _serve_vera_markdown_js():
+    from fastapi.responses import Response
+    from pathlib import Path
+    p = Path(__file__).parent.parent / "vera_markdown_element.js"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
+    return Response(
+        content="console.warn('vera_markdown element JS not found');",
         media_type="application/javascript"
     )
 
@@ -341,6 +449,24 @@ async def _serve_sandbox_controls_js():
                         headers={"Cache-Control": "no-cache"})
     return Response(
         content="console.warn('sandbox_controls element JS not found');",
+        media_type="application/javascript"
+    )
+
+
+# Serve agent_loop_config.js — the <vera-agent-loop-config> unified config control.
+# Shared by every panel that launches the agentic loop (dream, netmap, chat, dag
+# workshop, …) so they all expose the SAME complete config surface.
+@APP.get("/ui/elements/agent_loop_config.js", include_in_schema=False)
+async def _serve_agent_loop_config_js():
+    from fastapi.responses import Response
+    from pathlib import Path
+    p = Path(__file__).parent.parent / "agent_loop_config_element.js"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
+    return Response(
+        content="console.warn('agent_loop_config element JS not found');",
         media_type="application/javascript"
     )
 
