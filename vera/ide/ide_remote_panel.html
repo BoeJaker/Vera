@@ -174,6 +174,13 @@
               </select></div>
             <div class="field" id="run-agent-wrap" style="display:none"><label>Vera agent</label>
               <select id="run-agent"><option value="writer">writer</option><option value="thinker">thinker</option><option value="analyser">analyser</option></select></div>
+            <div class="field" id="run-model-wrap"><label>Model</label>
+              <select id="run-model">
+                <option value="">CLI/client default</option>
+                <option value="opus">opus</option>
+                <option value="sonnet">sonnet</option>
+                <option value="haiku">haiku</option>
+              </select></div>
           </div>
           <div>
             <div class="field"><label>Task</label>
@@ -212,8 +219,8 @@
           dream/project goals can enqueue via <code class="inline">ide.remote.queue.add</code>.</div>
       </div>
       <table>
-        <thead><tr><th>Status</th><th>Task</th><th>Engine</th><th>Instance</th><th>Source</th><th>Summary</th><th></th></tr></thead>
-        <tbody id="q-body"><tr><td colspan="7" class="muted">No items.</td></tr></tbody>
+        <thead><tr><th>Status</th><th>Task</th><th>Engine</th><th>Model</th><th>Instance</th><th>Source</th><th>Summary</th><th></th></tr></thead>
+        <tbody id="q-body"><tr><td colspan="8" class="muted">No items.</td></tr></tbody>
       </table>
     </section>
 
@@ -384,7 +391,11 @@ function fillRunInstances(){
   sel.innerHTML=INSTANCES.map(i=>`<option value="${i.id}">${esc(i.label||i.id)} (${i.kind})</option>`).join('');
   if(cur) sel.value=cur;
 }
-$('#run-engine').onchange=()=>{ $('#run-agent-wrap').style.display = $('#run-engine').value==='vera-agent'?'block':'none'; };
+$('#run-engine').onchange=()=>{
+  const isAgent=$('#run-engine').value==='vera-agent';
+  $('#run-agent-wrap').style.display = isAgent?'block':'none';
+  $('#run-model-wrap').style.display = isAgent?'none':'block';
+};
 function termLine(cls,txt){ const t=$('#term'); const span=document.createElement('span');
   span.className=cls; span.textContent=txt+'\n'; t.appendChild(span); t.scrollTop=t.scrollHeight; }
 $('#btn-clear-term').onclick=()=>{ $('#term').innerHTML=''; };
@@ -408,7 +419,7 @@ $('#btn-run').onclick=async()=>{
   try{
     RUN_ABORT=new AbortController();
     const resp=await fetch('/ide-api/remote/run',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({instance_id,task}),signal:RUN_ABORT.signal});
+      body:JSON.stringify({instance_id,task,model:$('#run-model').value}),signal:RUN_ABORT.signal});
     const reader=resp.body.getReader(); const dec=new TextDecoder(); let buf='';
     while(true){
       const {done,value}=await reader.read(); if(done) break;
@@ -442,7 +453,7 @@ $('#btn-stop').onclick=()=>{ if(RUN_ABORT){ RUN_ABORT.abort(); termLine('sys','(
 $('#btn-enqueue').onclick=async()=>{
   const instance_id=$('#run-inst').value||'any', task=$('#run-task').value.trim();
   if(!task){ toast('Enter a task'); return; }
-  const r=await api('/ide/remote/queue/add','POST',{instance_id,task,engine:$('#run-engine').value,agent:$('#run-agent').value});
+  const r=await api('/ide/remote/queue/add','POST',{instance_id,task,engine:$('#run-engine').value,agent:$('#run-agent').value,model:$('#run-model').value});
   toast(r.ok?'Enqueued':'Error'); if(r.ok) $('#run-task').value='';
 };
 
@@ -454,10 +465,11 @@ async function loadQueue(){
   $('#q-conc').value=r.max_concurrency||1;
   const b=$('#q-body');
   const items=(r.items||[]).slice().reverse();
-  if(!items.length){ b.innerHTML='<tr><td colspan="7" class="muted">No items.</td></tr>'; return; }
+  if(!items.length){ b.innerHTML='<tr><td colspan="8" class="muted">No items.</td></tr>'; return; }
   b.innerHTML=items.map(i=>`<tr>
     <td><span class="st ${i.status}">${i.status}</span></td>
     <td>${esc((i.task||'').slice(0,80))}</td><td>${i.engine}</td>
+    <td class="muted">${esc(i.model||'—')}</td>
     <td>${esc(shortInst(i.instance_id))}</td><td>${i.source||''}</td>
     <td class="muted">${esc((i.summary||'').slice(0,90))}</td>
     <td>${(i.status==='queued'||i.status==='running')?`<button class="btn danger" data-cancel="${i.id}">Cancel</button>`:''}</td>

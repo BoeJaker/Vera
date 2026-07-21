@@ -686,7 +686,7 @@ _CLAUDE_PERMISSION_MODE = os.getenv("VERA_CLAUDE_PERMISSION_MODE", "acceptEdits"
 
 def _build_claude_cmd(workdir: str, task: str, api_key: str,
                       stream: bool, permission_mode: str = "",
-                      oauth_token: str = "") -> str:
+                      oauth_token: str = "", model: str = "") -> str:
     """Compose the remote shell command that runs Claude Code headless.
 
     Credentials (if any) are written to a 0600 env file and sourced, so they
@@ -708,12 +708,13 @@ def _build_claude_cmd(workdir: str, task: str, api_key: str,
     parts.append(f"cd {shlex.quote(workdir)} &&")
     parts.append("claude -p " + shlex.quote(task)
                  + f" --output-format {fmt}"
-                 + (f" --permission-mode {shlex.quote(pm)}" if pm else ""))
+                 + (f" --permission-mode {shlex.quote(pm)}" if pm else "")
+                 + (f" --model {shlex.quote(model)}" if model else ""))
     return " ".join(parts)
 
 
 async def _run_claude(inst: dict, task: str, permission_mode: str = "",
-                      timeout: int = 1800, workdir: str = "") -> dict:
+                      timeout: int = 1800, workdir: str = "", model: str = "") -> dict:
     """Blocking Claude Code run (used by the cap + dispatcher). Streaming lives
     in the /ide-api/remote/run SSE endpoint. `workdir` overrides the instance's
     project root for THIS run (e.g. Loop Lab pins edits to a branch worktree)."""
@@ -723,7 +724,8 @@ async def _run_claude(inst: dict, task: str, permission_mode: str = "",
         return {"ok": False, "error": "instance has no host_id"}
     key, oauth = await _claude_auth(inst)
     cmd = _build_claude_cmd(workdir, task, key, stream=False,
-                            permission_mode=permission_mode, oauth_token=oauth)
+                            permission_mode=permission_mode, oauth_token=oauth,
+                            model=model)
     res = await _ssh(host_id, cmd, timeout=timeout)
     raw = res.get("stdout", "") or ""
     summary, result_obj = "", None
@@ -891,7 +893,7 @@ async def _run_vera_agent(inst: dict, task: str, agent: str = "writer",
 async def _run_task(instance_id: str, task: str, engine: str = "claude",
                     agent: str = "writer", permission_mode: str = "",
                     session_id: str = "", source: str = "user",
-                    workdir: str = "") -> dict:
+                    workdir: str = "", model: str = "") -> dict:
     """Shared entry used by ide.remote.run AND the queue dispatcher. `workdir`
     (optional) overrides the instance's project root for this run — used by
     Loop Lab to pin edits to a branch WORKTREE so the real source is never
@@ -908,10 +910,11 @@ async def _run_task(instance_id: str, task: str, engine: str = "claude",
         out = await _run_vera_agent(inst, task, agent=agent, session_id=sid,
                                     workdir=workdir)
     elif inst.get("kind") == "vscode-client":
-        out = await _run_claude_client(inst, task, permission_mode=permission_mode)
+        out = await _run_claude_client(inst, task, permission_mode=permission_mode,
+                                       model=model)
     else:
         out = await _run_claude(inst, task, permission_mode=permission_mode,
-                                workdir=workdir)
+                                workdir=workdir, model=model)
     elapsed_ms = round((time.monotonic() - t0) * 1000)
     out["elapsed_ms"] = elapsed_ms
     out["instance_id"] = instance_id
@@ -947,7 +950,9 @@ async def _run_task(instance_id: str, task: str, engine: str = "claude",
                 "editing the remote FS over SSH. Every run is recorded to memory + fabric "
                 "(dataset ide.remote_runs) for dreaming/queries. "
                 "Input: instance_id (str!), task (str!), engine (claude|vera-agent), "
-                "agent (thinker|writer|analyser), permission_mode (str), session_id (str). "
+                "agent (thinker|writer|analyser), permission_mode (str), model (str — "
+                "e.g. 'opus'/'sonnet'/'haiku' or a full model id; engine=claude only, "
+                "blank lets the CLI's own default decide), session_id (str). "
                 "Output: {ok, engine, summary, changed, elapsed_ms}. "
                 "For live token streaming use POST /ide-api/remote/run instead.",
     schema=enum_schema(engine=["claude", "vera-agent"],
@@ -959,6 +964,7 @@ async def ide_remote_run(
     engine:          str = "claude",
     agent:           str = "writer",
     permission_mode: str = "",
+    model:           str = "",
     session_id:      str = "",
     trace_id=None,
 ):
@@ -967,7 +973,8 @@ async def ide_remote_run(
     if not task.strip():
         return {"ok": False, "error": "task required"}
     return await _run_task(instance_id, task, engine=engine, agent=agent,
-                           permission_mode=permission_mode, session_id=session_id)
+                           permission_mode=permission_mode, session_id=session_id,
+                           model=model)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1027,6 +1034,7 @@ async def ide_remote_run_stream(request: Request):
     instance_id = body.get("instance_id", "")
     task        = (body.get("task") or "").strip()
     permission  = body.get("permission_mode", "")
+    model       = (body.get("model") or "").strip()
     session_id  = body.get("session_id", "") or _ide_get_session_id()
 
     inst = _get_instance(instance_id)
@@ -1048,7 +1056,7 @@ async def ide_remote_run_stream(request: Request):
     workdir = inst.get("workdir", "") or "."
     key, oauth = await _claude_auth(inst)
     cmd = _build_claude_cmd(workdir, task, key, stream=True,
-                            permission_mode=permission, oauth_token=oauth)
+                            permission_mode=permission, oauth_token=oauth, model=model)
 
     # Gate the remote command through the shared exec sandbox (same as ide.run).
     sb = None
@@ -1318,17 +1326,18 @@ async def ide_remote_client_result(request: Request):
 
 
 async def _run_claude_client(inst: dict, task: str, permission_mode: str = "",
-                             timeout: int = 1800) -> dict:
+                             model: str = "", timeout: int = 1800) -> dict:
     """Run a Claude Code task inside a connected VS Code client window. The
     client spawns `claude -p` itself, so it authenticates with whatever the
-    user is signed in as there (subscription or key)."""
+    user is signed in as there (subscription or key). `model`, when given,
+    overrides the extension's own vera.clientDefaultModel for this task."""
     if not _client_alive(inst.get("id", "")):
         return {"ok": False, "engine": "claude",
                 "error": "vscode client is not connected (no recent poll)"}
-    r = await _client_dispatch(
-        inst["id"], "claude_task",
-        {"task": task, "permission_mode": permission_mode or _CLAUDE_PERMISSION_MODE},
-        wait=float(timeout))
+    args = {"task": task, "permission_mode": permission_mode or _CLAUDE_PERMISSION_MODE}
+    if model:
+        args["model"] = model
+    r = await _client_dispatch(inst["id"], "claude_task", args, wait=float(timeout))
     return {"ok": bool(r.get("ok")), "engine": "claude", "via": "vscode-client",
             "summary": (r.get("summary") or r.get("error") or "")[:4000],
             "result": r.get("result"), "error": r.get("error", "")}
@@ -1346,7 +1355,9 @@ _BUSY: set = set()          # instance_ids currently running a task
     memory="on",
     description="Enqueue a coding task for autonomous execution on a remote instance. "
                 "Input: task (str!), instance_id (str — or 'any'), engine (claude|vera-agent), "
-                "agent (writer|thinker|analyser), priority (int=5, lower=sooner), "
+                "agent (writer|thinker|analyser), model (str — e.g. 'opus'/'sonnet'/'haiku' "
+                "or a full model id; engine=claude only, blank lets the CLI's own default "
+                "decide), priority (int=5, lower=sooner), "
                 "source (user|dream|project), session_id (str), workdir (str — "
                 "override the instance's project root for this task, e.g. a Loop "
                 "Lab branch worktree). Output: {ok, item}.",
@@ -1359,6 +1370,7 @@ async def ide_remote_queue_add(
     instance_id: str = "any",
     engine:      str = "claude",
     agent:       str = "writer",
+    model:       str = "",
     priority:    int = 5,
     source:      str = "user",
     session_id:  str = "",
@@ -1369,7 +1381,8 @@ async def ide_remote_queue_add(
         return {"ok": False, "error": "task required"}
     item = {
         "id": str(uuid.uuid4()), "task": task, "instance_id": instance_id or "any",
-        "engine": (engine or "claude").lower(), "agent": agent, "priority": int(priority),
+        "engine": (engine or "claude").lower(), "agent": agent, "model": model or "",
+        "priority": int(priority),
         "source": source or "user", "session_id": session_id or _ide_get_session_id(),
         "workdir": workdir or "",
         "status": "queued", "created_at": now_iso(),
@@ -1501,7 +1514,8 @@ async def _run_queue_item(item: dict, inst: dict):
                               agent=item.get("agent", "writer"),
                               session_id=item.get("session_id", ""),
                               source=item.get("source", "user"),
-                              workdir=item.get("workdir", ""))
+                              workdir=item.get("workdir", ""),
+                              model=item.get("model", ""))
         # Respect a cancel that landed mid-run.
         cur = next((i for i in _load_queue() if i.get("id") == item["id"]), {})
         if cur.get("status") == "cancelled":

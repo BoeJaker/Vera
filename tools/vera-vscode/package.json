@@ -47,6 +47,11 @@
           "type": "string",
           "default": "",
           "description": "Optional shared secret for the client channel. Sent on register; Vera then requires it on every poll/result."
+        },
+        "vera.clientDefaultModel": {
+          "type": "string",
+          "default": "opus",
+          "description": "Model passed as `claude --model <value>` for client-mode Claude Code tasks when a task doesn't specify its own. Left unset, the local `claude` CLI's own default model is used, which may not be one your account has credits/entitlement for (client tasks then fail with a credits error instead of falling back). Set to an alias (sonnet/opus/haiku) or full model id; blank to let the CLI decide."
         }
       }
     },
@@ -54,6 +59,7 @@
       { "command": "vera.connectWorkspace", "title": "Vera: Connect this workspace (install MCP bridge)" },
       { "command": "vera.enqueueTask",     "title": "Vera: Enqueue a Claude Code task for this workspace" },
       { "command": "vera.toggleClientMode","title": "Vera: Toggle client mode (let Vera control this window)" },
+      { "command": "vera.forgetCertificate","title": "Vera: Forget trusted certificate (re-trust on next request)" },
       { "command": "vera.refresh",         "title": "Vera: Refresh", "icon": "$(refresh)" }
     ],
     "viewsContainers": {

@@ -7395,6 +7395,31 @@ def _ensure_self_signed_cert(certfile: str, keyfile: str) -> None:
         ips.add(socket.gethostbyname(host))
     except OSError:
         pass
+    # socket.gethostbyname(hostname) is unreliable in containers — Debian-based
+    # images map the container's own hostname to 127.0.1.1 in /etc/hosts, so the
+    # LAN-facing IP clients actually connect through (e.g. a Docker host's
+    # 192.168.x.x) never makes it into the SAN list, and hostname verification
+    # then fails for every non-loopback client. The UDP "connect" trick below
+    # asks the OS routing table for the local address it would use to reach the
+    # outside world — no packets are sent (UDP connect is local-only) — which is
+    # the actual LAN IP in the overwhelming majority of single-NIC deployments.
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            ips.add(s.getsockname()[0])
+    except OSError:
+        pass
+    # Explicit override/addition for anything auto-detection can't reach
+    # (a second NIC, a NAT'd Docker host IP, a hostname reverse-proxied from
+    # elsewhere): comma-separated DNS names and/or IPs.
+    for extra in os.getenv("TLS_EXTRA_SANS", "").split(","):
+        extra = extra.strip()
+        if not extra:
+            continue
+        try:
+            ips.add(str(ipaddress.ip_address(extra)))
+        except ValueError:
+            dns.add(extra)
     san = [x509.DNSName(n) for n in sorted(dns)]
     san += [x509.IPAddress(ipaddress.ip_address(ip)) for ip in sorted(ips)]
 

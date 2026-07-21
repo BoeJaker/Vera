@@ -385,6 +385,16 @@ report `claude_login` (whether `~/.claude/.credentials.json` exists) so the
 panel can show sign-in state. The one-time interactive `claude login` can be
 done through the embedded code-server terminal.
 
+**Model selection**: `ide.remote.run`/`ide.remote.queue.add` (engine=claude
+only) take a `model` param — an alias (`opus`/`sonnet`/`haiku`) or full model
+id — passed as `claude --model`. Left blank, the CLI's own default is used,
+which can be a paid/credit-gated model the signed-in account has no
+entitlement for (the task then fails with a credits error instead of quietly
+falling back). The Remote IDE panel's Console tab and the vera-vscode
+sidebar's enqueue flow both prompt for it; `vera.clientDefaultModel`
+(default `opus`) is the client extension's own fallback when a dispatched
+`claude_task` doesn't specify one.
+
 ## 14. Quick-connect (download-and-run) + self-packaged extension
 
 The IDE panel's **🔌 Connect** button (and `ide.vscode.connect.info`) opens a

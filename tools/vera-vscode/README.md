@@ -37,6 +37,7 @@ back into Vera (memory, fabric, IDE tools).
 | `vera.clientMode` | `false` | let Vera control this window (see above) |
 | `vera.clientLabel` | `` | label in Vera's instance list (default hostname · folder) |
 | `vera.clientToken` | `` | optional shared secret required on every poll/result |
+| `vera.clientDefaultModel` | `opus` | fallback `--model` for client-mode Claude Code tasks that don't specify their own (Vera's enqueue box and `ide.remote.queue.add`/`ide.remote.run` both take a per-task `model`) — pins to a model your account definitely has; blank lets the local `claude` CLI's own default decide (which can be a paid/credit-gated model you don't have entitlement for, failing the task instead of falling back) |
 
 ## Requirements
 
@@ -54,8 +55,10 @@ On the machine with your desktop VS Code, run the one-liner from Vera's connect
 page (`https://<vera>/vscode/connect`):
 
 ```powershell
-# Windows
-[Net.ServicePointManager]::ServerCertificateValidationCallback={$true};[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;iex (irm https://<vera>/vscode/connect/connect.ps1)
+# Windows (paste as-is; the branch below avoids a scriptblock cert callback,
+# which throws "no Runspace available" on the TLS I/O thread in Windows
+# PowerShell 5.1 and fails the handshake intermittently)
+if($PSVersionTable.PSVersion.Major -ge 6){$s=irm https://<vera>/vscode/connect/connect.ps1 -SkipCertificateCheck}else{if(-not ([Management.Automation.PSTypeName]'VeraTrustAll').Type){Add-Type -TypeDefinition 'using System.Net;using System.Security.Cryptography.X509Certificates;public class VeraTrustAll : ICertificatePolicy { public bool CheckValidationResult(ServicePoint sp,X509Certificate c,WebRequest r,int p){return true;} }'};[Net.ServicePointManager]::CertificatePolicy=New-Object VeraTrustAll;[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;$s=irm https://<vera>/vscode/connect/connect.ps1};iex $s
 ```
 
 ```bash

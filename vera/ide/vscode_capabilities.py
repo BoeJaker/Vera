@@ -1323,7 +1323,7 @@ _CONNECT_HTML = r'''<!DOCTYPE html><html lang="en"><head>
  <h2>One-line install</h2>
  <div class="card">
    <div class="os">Windows · PowerShell</div>
-   <div class="code"><button class="cp" onclick="cp(this)">copy</button><span class="t">[Net.ServicePointManager]::ServerCertificateValidationCallback={$true};[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;iex (irm __BASE__/vscode/connect/connect.ps1)</span></div>
+   <div class="code"><button class="cp" onclick="cp(this)">copy</button><span class="t">if($PSVersionTable.PSVersion.Major -ge 6){$s=irm __BASE__/vscode/connect/connect.ps1 -SkipCertificateCheck}else{if(-not ([Management.Automation.PSTypeName]'VeraTrustAll').Type){Add-Type -TypeDefinition 'using System.Net;using System.Security.Cryptography.X509Certificates;public class VeraTrustAll : ICertificatePolicy { public bool CheckValidationResult(ServicePoint sp,X509Certificate c,WebRequest r,int p){return true;} }'};[Net.ServicePointManager]::CertificatePolicy=New-Object VeraTrustAll;[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;$s=irm __BASE__/vscode/connect/connect.ps1};iex $s</span></div>
  </div>
  <div class="card">
    <div class="os">macOS · Linux</div>
@@ -1412,9 +1412,22 @@ async def ide_vscode_connect_info(trace_id=None):
             "cert": f"{base}/vscode/connect/cert",
         },
         "oneliners": {
-            "windows": ("[Net.ServicePointManager]::ServerCertificateValidationCallback={$true};"
-                        "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;"
-                        f"iex (irm {base}/vscode/connect/connect.ps1)"),
+            # Avoids a scriptblock ServerCertificateValidationCallback: .NET can
+            # invoke that callback on a TLS I/O thread with no PowerShell
+            # runspace attached, which throws and aborts the handshake — seen
+            # as "The underlying connection was closed: An unexpected error
+            # occurred on a send." PS7+ uses -SkipCertificateCheck instead;
+            # PS5.1 uses a compiled ICertificatePolicy type (no runspace needed).
+            "windows": (
+                "if($PSVersionTable.PSVersion.Major -ge 6){$s=irm "
+                f"{base}/vscode/connect/connect.ps1 -SkipCertificateCheck}}else{{"
+                "if(-not ([Management.Automation.PSTypeName]'VeraTrustAll').Type){Add-Type "
+                "-TypeDefinition 'using System.Net;using System.Security.Cryptography.X509Certificates;"
+                "public class VeraTrustAll : ICertificatePolicy { public bool CheckValidationResult"
+                "(ServicePoint sp,X509Certificate c,WebRequest r,int p){return true;} }'};"
+                "[Net.ServicePointManager]::CertificatePolicy=New-Object VeraTrustAll;"
+                "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;"
+                f"$s=irm {base}/vscode/connect/connect.ps1}};iex $s"),
             "unix": f"curl -fsSLk {base}/vscode/connect/connect.sh | bash",
         },
         "tls_cert": bool(_tls_cert_path()),

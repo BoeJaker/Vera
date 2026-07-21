@@ -28,6 +28,7 @@ function cfg() {
     clientMode: !!c.get("clientMode"),
     clientLabel: (c.get("clientLabel") || "").trim(),
     clientToken: (c.get("clientToken") || "").trim(),
+    clientDefaultModel: (c.get("clientDefaultModel") || "").trim(),
   };
 }
 
@@ -36,19 +37,97 @@ function workspaceDir() {
   return f && f.length ? f[0].uri.fsPath : "";
 }
 
+/* ---- self-signed CA pinning ----
+ * VS Code's bundled Node doesn't consult the OS certificate store, so
+ * importing Vera's cert into Cert:\CurrentUser\Root (what connect.ps1 does)
+ * fixes browsers/.NET but NOT this extension's own https.request() calls —
+ * they still reject Vera's self-signed cert ("self signed certificate; ...
+ * try running Node.js with --use-system-ca", which we can't pass to
+ * Electron's bundled Node). Instead we trust-on-first-use: fetch Vera's CA
+ * from /vscode/connect/cert (the same cert connect.ps1 installs) once,
+ * cache it, and pin it as the trusted `ca` for every request to this Vera. */
+let EXT_CTX = null;
+
+function certCachePath() {
+  if (!EXT_CTX) return null;
+  try {
+    const dir = EXT_CTX.globalStorageUri.fsPath;
+    fs.mkdirSync(dir, { recursive: true });
+    return path.join(dir, "vera-ca.crt");
+  } catch (e) { return null; }
+}
+
+function loadCachedCa() {
+  const p = certCachePath();
+  if (!p) return null;
+  try { return fs.readFileSync(p); } catch (e) { return null; }
+}
+
+function isCertTrustError(err) {
+  return /CERT|SELF.SIGNED|UNABLE_TO_VERIFY|DEPTH_ZERO/i.test(
+    String((err && err.code) || (err && err.message) || ""));
+}
+
+/** Hostname/IP-vs-SAN mismatch — distinct from (and checked AFTER) chain-of-
+ * trust, so a pinned `ca` alone doesn't fix it. Vera's self-signed cert often
+ * only lists loopback SANs (see docs/33 TLS notes) — connecting via a LAN IP
+ * or an unlisted hostname trips this even though the CA is the right one. */
+function isHostnameMismatchError(err) {
+  return /ALTNAME|altnames|Hostname.*does not match/i.test(
+    String((err && err.code) || (err && err.message) || ""));
+}
+
+/** One-shot insecure fetch of Vera's own CA cert (TOFU), cached to disk. */
+function bootstrapCa(base) {
+  return new Promise((resolve) => {
+    let u;
+    try { u = new URL(base + "/vscode/connect/cert"); } catch (e) { return resolve(null); }
+    const req = https.request(u, { method: "GET", rejectUnauthorized: false, timeout: 15000 },
+      (res) => {
+        const chunks = [];
+        res.on("data", (d) => chunks.push(d));
+        res.on("end", () => {
+          const pem = Buffer.concat(chunks);
+          if (res.statusCode === 200 && pem.includes("BEGIN CERTIFICATE")) {
+            const p = certCachePath();
+            if (p) { try { fs.writeFileSync(p, pem); } catch (e) {} }
+            resolve(pem);
+          } else resolve(null);
+        });
+      });
+    req.on("error", () => resolve(null));
+    req.on("timeout", () => { req.destroy(); resolve(null); });
+    req.end();
+  });
+}
+
 /* ---- tiny HTTP client (JSON + text) ---- */
-function request(url, method, body, asText) {
+function request(url, method, body, asText, _retried) {
   return new Promise((resolve, reject) => {
     let u;
     try { u = new URL(url); } catch (e) { return reject(e); }
-    const lib = u.protocol === "https:" ? https : http;
+    const isHttps = u.protocol === "https:";
+    const lib = isHttps ? https : http;
     const data = body ? Buffer.from(JSON.stringify(body)) : null;
-    const req = lib.request(u, {
+    const opts = {
       method,
       headers: Object.assign({ "Content-Type": "application/json" },
         data ? { "Content-Length": data.length } : {}),
       timeout: 120000,
-    }, (res) => {
+    };
+    if (isHttps) {
+      const ca = loadCachedCa();
+      if (ca) {
+        opts.ca = ca;
+        // Chain-of-trust against our own TOFU-pinned, single-purpose CA IS
+        // the security boundary here — a separate hostname/SAN match adds
+        // nothing (whoever holds that CA's key already owns the trust
+        // decision), so skip it. This is what makes a LAN IP or a hostname
+        // missing from the cert's SAN list work once the CA is pinned.
+        opts.checkServerIdentity = () => undefined;
+      }
+    }
+    const req = lib.request(u, opts, (res) => {
       let chunks = "";
       res.on("data", (d) => chunks += d);
       res.on("end", () => {
@@ -57,7 +136,20 @@ function request(url, method, body, asText) {
         catch (e) { resolve({ error: "bad response", raw: chunks.slice(0, 300) }); }
       });
     });
-    req.on("error", reject);
+    req.on("error", async (err) => {
+      if (isHttps && !_retried && (isCertTrustError(err) || isHostnameMismatchError(err))) {
+        const pem = await bootstrapCa(u.protocol + "//" + u.host);
+        if (pem) {
+          vscode.window.showInformationMessage(
+            "Vera: trusted its self-signed certificate for " + u.host +
+            " (first contact — cached locally; delete the file in this " +
+            "extension's storage and reconnect if that's unexpected).");
+          try { return resolve(await request(url, method, body, asText, true)); }
+          catch (e2) { return reject(e2); }
+        }
+      }
+      reject(err);
+    });
     req.on("timeout", () => { req.destroy(new Error("timeout")); });
     if (data) req.write(data);
     req.end();
@@ -119,6 +211,22 @@ async function connectWorkspace() {
 }
 
 /* ---- Enqueue a Claude Code task for this workspace ---- */
+async function pickModel() {
+  const dflt = cfg().clientDefaultModel || "(CLI default)";
+  const pick = await vscode.window.showQuickPick(
+    [
+      { label: "Use default (" + dflt + ")", model: "" },
+      { label: "opus", model: "opus" },
+      { label: "sonnet", model: "sonnet" },
+      { label: "haiku", model: "haiku" },
+      { label: "Custom model id…", model: "__custom__" },
+    ],
+    { placeHolder: "Model for this task" });
+  if (!pick) return undefined;                 // cancelled — caller should abort
+  if (pick.model !== "__custom__") return pick.model;
+  return (await vscode.window.showInputBox({ prompt: "Full model id" })) || "";
+}
+
 async function enqueueTask(preset) {
   const task = preset || await vscode.window.showInputBox({
     prompt: "Task for Claude Code to run on a remote Vera instance",
@@ -136,7 +244,10 @@ async function enqueueTask(preset) {
     if (!pick) return;
     instance_id = pick.id;
   }
-  const r = await apiPost("/ide/remote/queue/add", { task, instance_id, engine: "claude", source: "user" });
+  const model = await pickModel();
+  if (model === undefined) return;              // cancelled
+  const r = await apiPost("/ide/remote/queue/add",
+    { task, instance_id, engine: "claude", model, source: "user" });
   vscode.window.showInformationMessage(r.ok ? "Vera: task enqueued." : "Vera: " + (r.error || "error"));
 }
 
@@ -165,16 +276,29 @@ function jsonSafe(v) {
   catch (e) { return String(v); }
 }
 
+/** Env for the spawned `claude` process: this machine's own `claude login`
+ * (subscription) is the whole point of client mode — a stray ANTHROPIC_API_KEY
+ * left in the environment (e.g. from unrelated API work) silently shadows
+ * that login and bills the task against a Console key instead, which is easy
+ * to not notice until it fails with "Usage credits are required". */
+function claudeEnv() {
+  const env = Object.assign({}, process.env);
+  delete env.ANTHROPIC_API_KEY;
+  return env;
+}
+
 function runClaudeTask(args) {
   return new Promise((resolve) => {
     const dir = workspaceDir() || undefined;
     const pm = String(args.permission_mode || "acceptEdits");
+    const model = String(args.model || cfg().clientDefaultModel || "").trim();
     const argv = ["-p", "--output-format", "json", "--permission-mode", pm];
+    if (model) argv.push("--model", model);
     let child;
     try {
       // prompt goes via stdin, so no shell-quoting worries on any platform
       child = spawn("claude", argv, {
-        cwd: dir, env: process.env, windowsHide: true,
+        cwd: dir, env: claudeEnv(), windowsHide: true,
         shell: process.platform === "win32",
       });
     } catch (e) { return resolve({ ok: false, error: "spawn claude failed: " + e.message }); }
@@ -400,13 +524,22 @@ class VeraSidebar {
   }
 }
 
+async function forgetCertificate() {
+  const p = certCachePath();
+  if (p) { try { fs.unlinkSync(p); } catch (e) {} }
+  vscode.window.showInformationMessage(
+    "Vera: forgot the cached certificate — it will be re-trusted on the next request.");
+}
+
 function activate(ctx) {
+  EXT_CTX = ctx;
   const sidebar = new VeraSidebar(ctx);
   ctx.subscriptions.push(
     vscode.window.registerWebviewViewProvider("vera.sidebar", sidebar),
     vscode.commands.registerCommand("vera.connectWorkspace", connectWorkspace),
     vscode.commands.registerCommand("vera.enqueueTask", () => enqueueTask()),
     vscode.commands.registerCommand("vera.toggleClientMode", toggleClientMode),
+    vscode.commands.registerCommand("vera.forgetCertificate", forgetCertificate),
     vscode.commands.registerCommand("vera.refresh", () => sidebar.push()),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("vera.clientMode")) {

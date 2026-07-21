@@ -56,7 +56,14 @@ services:
       #    (persisted via the vera-tls volume below) — browsers show a one-time
       #    "not trusted" warning. Supply your own cert by mounting it and setting
       #    TLS_CERTFILE / TLS_KEYFILE to its path inside the container.
+      #    The container's own hostname often resolves to a loopback address
+      #    (Debian's /etc/hosts maps it to 127.0.1.1), so the auto-generated
+      #    cert's SAN list can miss the LAN IP clients actually connect
+      #    through — set TLS_EXTRA_SANS (comma-sep IPs/hostnames) if a client
+      #    reports "Hostname/IP does not match certificate's altnames", then
+      #    delete the vera-tls volume (or the cert/key inside it) and restart.
       TLS_ENABLED: "${TLS_ENABLED:-0}"
+      TLS_EXTRA_SANS: "${TLS_EXTRA_SANS:-}"
 
       # ── Backing services (point at compose service names)
       REDIS_URL: "redis://redis:6379"
