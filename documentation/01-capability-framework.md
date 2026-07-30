@@ -327,3 +327,15 @@ If a module isn't found or fails to import, the orchestrator logs the error and 
 - [Harness UI](./02-harness-ui.md) — how the registry drives the UI
 - [DAG Engine](./03-dag-engine.md) — composing capabilities into workflows
 - [Ollama Cluster](./04-ollama-cluster.md) — distributed LLM dispatch
+
+## Screenshots (operator-captured)
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_Regenerated from the live registry by `docs.build`. Run the documentation mission to populate this table._
+<!-- VERA:AUTO:capabilities END -->

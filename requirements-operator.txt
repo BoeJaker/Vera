@@ -1,0 +1,14 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Operator / documentation extras — NOT part of the runtime image.
+#
+#  The operator drives a real headless browser (Playwright) and the unit suite
+#  runs under pytest. These are kept out of requirements.txt so the production
+#  orchestrator image stays lean; install them where you run screenshot capture
+#  or the test suite:
+#
+#      pip install -r requirements-operator.txt
+#      playwright install chromium        # one-time browser download
+# ─────────────────────────────────────────────────────────────────────────────
+playwright>=1.44
+pytest>=8.0
+pillow>=10.0            # optional: screenshot post-processing / annotated refs

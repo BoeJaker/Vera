@@ -31,21 +31,29 @@ a{color:var(--acc)}
 ::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:4px}
 ::-webkit-scrollbar-track{background:transparent}
 
-/* One combined bar: brand + section tabs + chips + controls (no separate tab row) */
-.hdr{display:flex;align-items:center;gap:10px;padding:5px 14px;border-bottom:1px solid var(--border);background:var(--bg1);flex-shrink:0;flex-wrap:wrap}
-.hdr .brand{font-size:14px;font-weight:700;color:var(--acc);letter-spacing:.3px;white-space:nowrap}
-.hdr .chips{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto;align-items:center}
-.chip{background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:3px 10px;font-size:11px;color:var(--dim2);white-space:nowrap}
+/* One combined single-line bar: brand + scrolling section tabs + chips + controls */
+.hdr{display:flex;align-items:center;gap:10px;padding:5px 14px;border-bottom:1px solid var(--border);background:var(--bg1);flex-shrink:0;flex-wrap:nowrap;min-width:0}
+.hdr .brand{font-size:14px;font-weight:700;color:var(--acc);letter-spacing:.3px;white-space:nowrap;flex-shrink:0}
+.hdr .chips{display:flex;gap:8px;flex-wrap:nowrap;margin-left:auto;align-items:center;min-width:0;overflow-x:auto;scrollbar-width:none}
+.hdr .chips::-webkit-scrollbar{height:0}
+.chip{background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:3px 10px;font-size:11px;color:var(--dim2);white-space:nowrap;flex-shrink:0}
 .chip b{color:var(--text);font-family:var(--mono)}
-.simtag{background:var(--s3);color:var(--on-acc,#0d0f12);border-radius:20px;padding:3px 10px;font-size:10px;font-weight:700;display:none}
+.simtag{background:var(--s3);color:var(--on-acc,#0d0f12);border-radius:20px;padding:3px 10px;font-size:10px;font-weight:700;display:none;flex-shrink:0}
 body.sim .simtag{display:inline-block}
-.toggle{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dim2);cursor:pointer;user-select:none}
+.toggle{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dim2);cursor:pointer;user-select:none;white-space:nowrap;flex-shrink:0}
 .toggle input{accent-color:var(--s3)}
+.hdr>.btn{flex-shrink:0}
 
 .layout{flex:1;display:flex;min-height:0}
-nav.side{display:flex;flex-direction:row;flex-wrap:wrap;align-items:center;gap:2px;min-width:0}
-nav.side .grp{align-self:stretch;width:1px;padding:0;margin:2px 4px;background:var(--border);font-size:0}
-nav.side button{background:none;border:none;color:var(--dim2);text-align:left;padding:6px 11px;border-radius:var(--radius);font-size:12.5px;display:flex;align-items:center;gap:7px;white-space:nowrap}
+nav.side{display:flex;flex-direction:row;flex-wrap:nowrap;align-items:center;gap:2px;min-width:0;flex:1 1 auto;
+  overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-ms-overflow-style:none;scroll-behavior:smooth;overscroll-behavior-x:contain}
+nav.side::-webkit-scrollbar{height:0}
+/* fade hints: only shown on the side(s) that actually have off-screen tabs */
+nav.side.sc-l{-webkit-mask-image:linear-gradient(to right,transparent 0,#000 22px);mask-image:linear-gradient(to right,transparent 0,#000 22px)}
+nav.side.sc-r{-webkit-mask-image:linear-gradient(to left,transparent 0,#000 22px);mask-image:linear-gradient(to left,transparent 0,#000 22px)}
+nav.side.sc-l.sc-r{-webkit-mask-image:linear-gradient(to right,transparent 0,#000 22px,#000 calc(100% - 22px),transparent 100%);mask-image:linear-gradient(to right,transparent 0,#000 22px,#000 calc(100% - 22px),transparent 100%)}
+nav.side .grp{align-self:stretch;width:1px;padding:0;margin:2px 4px;background:var(--border);font-size:0;flex-shrink:0}
+nav.side button{background:none;border:none;color:var(--dim2);text-align:left;padding:6px 11px;border-radius:var(--radius);font-size:12.5px;display:flex;align-items:center;gap:7px;white-space:nowrap;flex-shrink:0}
 nav.side button:hover{background:var(--bg2);color:var(--text)}
 nav.side button.active{background:var(--bg2);color:var(--acc);font-weight:600}
 nav.side button .ic{width:16px;text-align:center}
@@ -249,16 +257,36 @@ const ALL_SECTIONS = NAV.flatMap(g=>g.items.map(i=>i[0]));
 let current = location.hash.slice(1) || 'dashboard';
 if(!ALL_SECTIONS.includes(current)) current='dashboard';
 
+// The tab strip lives on the header line and scrolls horizontally when it
+// overruns; keep the fade hints and the active tab in sync with its scroll.
+function _navFades(){ const n=$('#nav'); if(!n) return;
+  const max=n.scrollWidth-n.clientWidth;
+  n.classList.toggle('sc-l', n.scrollLeft>4);
+  n.classList.toggle('sc-r', max>4 && n.scrollLeft<max-4); }
+function navScrollUX(){ const n=$('#nav'); if(!n) return;
+  if(!n._scrollUX){ n._scrollUX=1;
+    n.addEventListener('scroll',_navFades,{passive:true});
+    n.addEventListener('wheel',e=>{                       // vertical wheel → sideways
+      if(Math.abs(e.deltaY)<=Math.abs(e.deltaX)) return;
+      if(n.scrollWidth-n.clientWidth<=0) return;
+      e.preventDefault(); n.scrollLeft+=e.deltaY; },{passive:false});
+    addEventListener('resize',_navFades);
+  }
+  const a=n.querySelector('button.active');
+  if(a) a.scrollIntoView({block:'nearest',inline:'nearest'});
+  _navFades(); }
+
 function buildNav(){ const n=$('#nav'); n.innerHTML='';
   if(STORE_OPEN){
     // Store mode: the header tabs become the store's tabs.
     n.append(el('button',{title:'Back to all stores',onclick:closeStore},'←'),
-      el('span',{style:'font-weight:700;color:var(--acc);padding:0 4px;white-space:nowrap'},
+      el('span',{style:'font-weight:700;color:var(--acc);padding:0 4px;white-space:nowrap;flex-shrink:0'},
         (STORE_OPEN.icon||'▣')+' '+(STORE_OPEN.name||'Store')),
       el('div',{class:'grp'}));
     for(const [id,ic,label] of STORE_SECTIONS)
       n.append(el('button',{class:id===storeCur?'active':'',onclick:()=>storeGo(id)},
         el('span',{class:'ic'},ic), label));
+    navScrollUX();
     return;
   }
   for(const g of NAV){ n.append(el('div',{class:'grp'},g.grp));
@@ -266,6 +294,7 @@ function buildNav(){ const n=$('#nav'); n.innerHTML='';
       n.append(el('button',{class:id===current?'active':'',onclick:()=>{current=id;location.hash=id;render();}},
         el('span',{class:'ic'},ic), label)); }
   }
+  navScrollUX();
 }
 function loading(){ $('#content').innerHTML='<div class="vera-loading">Loading…</div>'; }
 function setContent(...nodes){ const c=$('#content'); c.innerHTML=''; c.append(...nodes); }

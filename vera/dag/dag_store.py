@@ -534,6 +534,31 @@ class DagStore:
 
     _REDIS_PREFIX = "vera:dags:"
     _CACHE: Dict[str, DagRecord] = {}
+    # Cluster-shared backend: clear the local cache when another node edits a DAG.
+    # save() bumps a shared Redis counter; get() clears the cache when it changes.
+    _VER_KEY = "vera:cachever:dags"   # NOT under vera:dags:* — list_all globs that prefix
+    _CACHE_VER = [None]   # last-seen shared version
+
+    async def _sync_cache_ver(self):
+        """Drop the local cache if another node has mutated a DAG — cheap,
+        non-blocking Redis GET; no-op when Redis is unavailable."""
+        r = _redis()
+        if not r:
+            return
+        try:
+            ver = await r.get(self._VER_KEY)
+        except Exception:
+            return
+        if ver != self._CACHE_VER[0]:
+            self._CACHE.clear()
+            self._CACHE_VER[0] = ver
+
+    async def _bump_cache_ver(self):
+        """Signal every cluster node (incl. self) that the DAG store changed."""
+        r = _redis()
+        if r:
+            try: await r.incr(self._VER_KEY)
+            except Exception: pass
 
     async def _pg_init(self):
         pg = _pg()
@@ -658,9 +683,11 @@ class DagStore:
             except Exception as e:
                 log.warning("DagStore PG save: %s", e)
 
+        await self._bump_cache_ver()   # invalidate every cluster node's cache
         return rec
 
     async def get(self, dag_id: str) -> Optional[DagRecord]:
+        await self._sync_cache_ver()
         if dag_id in self._CACHE:
             return self._CACHE[dag_id]
         r = _redis()
@@ -697,19 +724,23 @@ class DagStore:
         if r:
             try:
                 keys = await r.keys(f"{self._REDIS_PREFIX}*")
-                for k in keys:
-                    raw = await r.hgetall(k)
-                    if raw:
-                        rec = self._from_redis(raw)
-                        if not include_archived and rec.archived:
-                            continue
-                        if category and rec.category != category:
-                            continue
-                        if tag and tag not in rec.tags:
-                            continue
-                        results.append(rec)
             except Exception as e:
                 log.warning("DagStore list_all: %s", e)
+                keys = []
+            for k in keys:
+                try:
+                    raw = await r.hgetall(k)
+                except Exception:
+                    continue   # skip non-hash keys sharing the prefix (e.g. a cache-version counter)
+                if raw:
+                    rec = self._from_redis(raw)
+                    if not include_archived and rec.archived:
+                        continue
+                    if category and rec.category != category:
+                        continue
+                    if tag and tag not in rec.tags:
+                        continue
+                    results.append(rec)
         results.sort(key=lambda x: x.updated_at, reverse=True)
         return results
 

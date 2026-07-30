@@ -60,10 +60,12 @@ from __future__ import annotations
 
 import asyncio
 import calendar
+import contextlib
 import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -183,6 +185,20 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # use" failure. Default 8998; override here (the panel exposes it) or via
     # env VERA_DEV_PORT.
     "dev_port":            int(os.getenv("VERA_DEV_PORT", "8998")),
+    # ── Tie the dev sandbox's lifecycle to THIS Vera ──────────────────────
+    # The sandbox is a SECOND, complete Vera: its own scheduler, its own worker,
+    # its own dream/evolve loops — sharing this host's Redis, Neo4j and Ollama
+    # nodes. Nothing brings it down, so it outlives every restart of the host
+    # Vera and keeps issuing work: found running 8 loops continuously since a
+    # restart two days earlier, re-loading Ollama within seconds of the cluster
+    # being cleared, while the operator believed "Vera is stopped".
+    #
+    # With this on, the sandbox comes UP when Vera starts and goes DOWN when Vera
+    # stops, so there is exactly one lifecycle to reason about. Default OFF: a
+    # sandbox deliberately left running to finish long work must not be killed
+    # by an unrelated restart. Env VERA_DEV_FOLLOW_HOST=1 presets it.
+    "sandbox_follow_host": os.getenv("VERA_DEV_FOLLOW_HOST", "").strip().lower()
+                           in ("1", "true", "yes"),
 }
 
 # Engine knobs the editor LLM is allowed to tune, with clamps. Anything the
@@ -326,7 +342,13 @@ async def evolve_config_get(trace_id=None):
                         "critic_provider, editor_provider, target_score, max_rounds, "
                         "allow_code_edits, default_profile, sandbox_mode "
                         "(off|prefer|require), test_denylist (list of cap prefixes), "
-                        "dev_port (sandbox host port, must differ from prod's 8999).")
+                        "dev_port (sandbox host port, must differ from prod's 8999), "
+                        "sandbox_follow_host (bool — bring the dev sandbox UP when Vera "
+                        "starts and DOWN when Vera stops. The sandbox is a second full "
+                        "Vera sharing this host's Redis/Neo4j/Ollama, and nothing "
+                        "otherwise stops it: left alone it outlives every restart and "
+                        "keeps driving the cluster. Default off so a sandbox deliberately "
+                        "left running is not killed by an unrelated restart).")
 async def evolve_config_set(critic_provider: str = None, editor_provider: str = None,
                             target_score: float = None, max_rounds: int = None,
                             allow_code_edits: bool = None, default_profile: str = None,
@@ -338,6 +360,7 @@ async def evolve_config_set(critic_provider: str = None, editor_provider: str = 
                             errors_autosync: bool = None, errors_autosync_s: int = None,
                             run_idle_timeout_s: int = None, run_max_s: int = None,
                             dev_port: int = None,
+                            sandbox_follow_host: bool = None,
                             trace_id=None):
     cfg = await _get_config()
     changed = []
@@ -349,6 +372,9 @@ async def evolve_config_set(critic_provider: str = None, editor_provider: str = 
     if default_profile is not None: cfg["default_profile"] = default_profile.strip()
     if sandbox_mode is not None and sandbox_mode in ("off", "prefer", "require"):
         cfg["sandbox_mode"] = sandbox_mode; changed.append(f"sandbox_mode={sandbox_mode}")
+    if sandbox_follow_host is not None:
+        cfg["sandbox_follow_host"] = bool(sandbox_follow_host)
+        changed.append(f"sandbox_follow_host={bool(sandbox_follow_host)}")
     if test_denylist is not None:
         cfg["test_denylist"] = [str(p) for p in test_denylist if str(p).strip()]
     if editq_enabled is not None:  cfg["editq_enabled"] = bool(editq_enabled); changed.append("editq_enabled")
@@ -1058,10 +1084,13 @@ async def evolve_tasks(tag: str = "", trace_id=None):
                         "(id!, label, type: loop|cap, goal/profile/allowed_caps or "
                         "cap/args, checks:[{type,value}], rubric, tags, max_steps, "
                         "timeout_s, enabled).")
-async def evolve_task_upsert(task: Optional[Dict[str, Any]] = None, trace_id=None,
-                             **fields):
+async def evolve_task_upsert(task: Optional[Dict[str, Any]] = None, trace_id=None):
+    # The full task record arrives via `task` (both the evolve panel and the
+    # markets seeder call with task=<dict>). A previous `**fields` catch-all was
+    # mis-rendered by the MCP bridge as a spurious REQUIRED `fields` string,
+    # which then leaked a junk "fields" key into the saved task and mangled
+    # non-ASCII labels (em-dash → mojibake). Take only the task dict.
     rec = dict(task or {})
-    rec.update({k: v for k, v in fields.items() if v is not None})
     if not rec.get("id"):
         return {"error": "task id required"}
     rec.setdefault("type", "loop")
@@ -1402,8 +1431,9 @@ async def _steps_from_events(run_id: str) -> List[Dict[str, Any]]:
         # DB VERA_DEV_REDIS_DB) — read them from there with a throwaway client.
         try:
             import redis.asyncio as _aredis
-            url = os.getenv("REDIS_URL", "redis://localhost:6379")
-            dev = _aredis.from_url(url, db=DEV_REDIS_DB)
+            url = _redis_url_with_db(os.getenv("REDIS_URL", "redis://localhost:6379"),
+                                     DEV_REDIS_DB)
+            dev = _aredis.from_url(url)
             try:
                 raw = await dev.lrange(key, 0, -1)
             finally:
@@ -1564,6 +1594,100 @@ async def _loop_activity(run_id: str, goal: str, t0_epoch: float) -> Tuple[str, 
     return (fp, n)
 
 
+def _dev_redis_client():
+    """A throwaway async client on the DEV sandbox's Redis DB (same server, DB
+    VERA_DEV_REDIS_DB). The sandbox persists its loop events + run-state there;
+    prod reads DB 0, so this bridges the two. Caller must aclose() it."""
+    try:
+        import redis.asyncio as _aredis
+        url = _redis_url_with_db(os.getenv("REDIS_URL", "redis://localhost:6379"),
+                                 DEV_REDIS_DB)
+        return _aredis.from_url(url)
+    except Exception:
+        return None
+
+
+async def _mirror_loop_session(run_id: str, stop: asyncio.Event) -> None:
+    """LIVE-mirror a sandbox loop's persisted state from the dev Redis DB into
+    prod's DB, so the prod UI at :8999 — which polls
+    /workshop/agent_loop/session_state against DB 0 — shows a SANDBOX run's
+    implementer timeline live, exactly like an in-process run. Without this the
+    events land only in the sandbox's DB 3 and the timeline stays empty.
+
+    Mirrors the three keys the UI reads for session evolve:<run_id>:
+      • vera:loop:run:<sid>     hash — run status / goal / counters
+      • vera:loop:events:<sid>  list — the step events (appended incrementally)
+      • vera:loop:sessions      zset — activity score (liveness + child discovery)
+    Runs until `stop` is set, then does ONE final pass so the terminal '…done'
+    event and the final status are never missed."""
+    dst = _redis()
+    src = _dev_redis_client()
+    if dst is None or src is None:
+        return
+    sid = f"evolve:{run_id}"
+    run_key = f"vera:loop:run:{sid}"
+    ev_key = f"vera:loop:events:{sid}"
+    try:
+        while True:
+            final = stop.is_set()
+            try:
+                h = await src.hgetall(run_key)
+                if h:
+                    await dst.hset(run_key, mapping=h)
+                # events: append only the new tail; full resync if it shrank
+                s_tot = int(await src.llen(ev_key) or 0)
+                d_tot = int(await dst.llen(ev_key) or 0)
+                if s_tot > d_tot:
+                    tail = await src.lrange(ev_key, d_tot, -1)
+                    if tail:
+                        await dst.rpush(ev_key, *tail)
+                elif s_tot < d_tot:
+                    await dst.delete(ev_key)
+                    allv = await src.lrange(ev_key, 0, -1)
+                    if allv:
+                        await dst.rpush(ev_key, *allv)
+                sc = await src.zscore("vera:loop:sessions", sid)
+                if sc is not None:
+                    await dst.zadd("vera:loop:sessions", {sid: sc})
+            except Exception as e:
+                log.debug("sandbox mirror %s: %s", sid, e)
+            if final:
+                return
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=0.7)
+            except asyncio.TimeoutError:
+                pass
+    finally:
+        try:
+            await src.aclose()
+        except Exception:
+            try:
+                await src.close()
+            except Exception:
+                pass
+
+
+@contextlib.asynccontextmanager
+async def _sandbox_mirror(run_id: str, use_sandbox: bool):
+    """Scope a live sandbox→prod loop-session mirror around a sandbox run so its
+    timeline streams into the prod UI. A no-op for in-process runs (their events
+    already land in prod's DB)."""
+    if not use_sandbox:
+        yield
+        return
+    stop = asyncio.Event()
+    task = asyncio.ensure_future(_mirror_loop_session(run_id, stop))
+    try:
+        yield
+    finally:
+        stop.set()
+        try:
+            await asyncio.wait_for(task, timeout=8)
+        except Exception:
+            if not task.done():
+                task.cancel()
+
+
 async def _run_loop_task(task: Dict[str, Any], variant: Optional[Dict[str, Any]],
                          run_id: str, timeout: int) -> Dict[str, Any]:
     kw = dict(task.get("overrides") or {})
@@ -1580,9 +1704,11 @@ async def _run_loop_task(task: Dict[str, Any], variant: Optional[Dict[str, Any]]
                 max_steps=int(task.get("max_steps", 6) or 6), **kw)
     use_sandbox = task.get("_sandbox", False)
     if not task.get("_indefinite"):
-        # bounded run (suite / benchmark / improve variant test)
-        coro = _exec_cap("loops.run", args, use_sandbox, http_timeout=timeout)
-        res = await asyncio.wait_for(coro, timeout=timeout)
+        # bounded run (suite / benchmark / improve variant test). Mirror the
+        # sandbox session into prod's Redis so its timeline shows in the :8999 UI.
+        async with _sandbox_mirror(run_id, use_sandbox):
+            coro = _exec_cap("loops.run", args, use_sandbox, http_timeout=timeout)
+            res = await asyncio.wait_for(coro, timeout=timeout)
         return res if isinstance(res, dict) else {"final": str(res)[:4000]}
 
     # ── Interactive test: ACTIVITY-AWARE watchdog, not a fixed clock ─────────
@@ -1597,39 +1723,42 @@ async def _run_loop_task(task: Dict[str, Any], variant: Optional[Dict[str, Any]]
     http_timeout = float(max_s) if max_s else None   # None = no client-side cap
     coro = _exec_cap("loops.run", args, use_sandbox, http_timeout=http_timeout)
     t0 = time.time()
-    runner = asyncio.ensure_future(coro)
-    last_fp, last_n, last_change = "", -1, time.time()
-    try:
-        while True:
-            done, _ = await asyncio.wait({runner}, timeout=10)
-            if done:
-                res = runner.result()
-                return res if isinstance(res, dict) else {"final": str(res)[:4000]}
-            fp, n = await _loop_activity(run_id, task.get("goal", ""), t0)
-            # fp ("" only on a Redis error) is the liveness signal — it changes
-            # on every event and, unlike a raw list length, never saturates.
-            if fp and fp != last_fp:
-                last_fp, last_n, last_change = fp, n, time.time()
-                _RUN_LIVE["events"] = n
-                _RUN_LIVE["last_activity"] = now_iso()
-            idle = time.time() - last_change
-            if max_s and (time.time() - t0) > max_s:
+    # Mirror the sandbox session into prod's Redis for the whole watchdog window
+    # so long-horizon sandbox runs stream their timeline into the :8999 UI live.
+    async with _sandbox_mirror(run_id, use_sandbox):
+        runner = asyncio.ensure_future(coro)
+        last_fp, last_n, last_change = "", -1, time.time()
+        try:
+            while True:
+                done, _ = await asyncio.wait({runner}, timeout=10)
+                if done:
+                    res = runner.result()
+                    return res if isinstance(res, dict) else {"final": str(res)[:4000]}
+                fp, n = await _loop_activity(run_id, task.get("goal", ""), t0)
+                # fp ("" only on a Redis error) is the liveness signal — it changes
+                # on every event and, unlike a raw list length, never saturates.
+                if fp and fp != last_fp:
+                    last_fp, last_n, last_change = fp, n, time.time()
+                    _RUN_LIVE["events"] = n
+                    _RUN_LIVE["last_activity"] = now_iso()
+                idle = time.time() - last_change
+                if max_s and (time.time() - t0) > max_s:
+                    runner.cancel()
+                    return {"error": f"exceeded run_max_s hard ceiling ({max_s}s) "
+                                     f"after {last_n} events"}
+                if idle > idle_s:
+                    runner.cancel()
+                    return {"error": f"no loop activity for {int(idle)}s "
+                                     f"(idle timeout; {last_n} events emitted) — "
+                                     "the loop stopped making progress"}
+        finally:
+            if not runner.done():
                 runner.cancel()
-                return {"error": f"exceeded run_max_s hard ceiling ({max_s}s) "
-                                 f"after {last_n} events"}
-            if idle > idle_s:
-                runner.cancel()
-                return {"error": f"no loop activity for {int(idle)}s "
-                                 f"(idle timeout; {last_n} events emitted) — "
-                                 "the loop stopped making progress"}
-    finally:
-        if not runner.done():
-            runner.cancel()
-            # swallow the cancellation so it doesn't leak as an unretrieved error
-            try:
-                await runner
-            except BaseException:
-                pass
+                # swallow the cancellation so it doesn't leak as an unretrieved error
+                try:
+                    await runner
+                except BaseException:
+                    pass
 
 
 # ── Sandbox-first execution helpers ───────────────────────────────────────────
@@ -1837,10 +1966,20 @@ async def _run_task(task: Dict[str, Any], variant: Optional[Dict[str, Any]] = No
     # trace from the persisted loop events so the reviewer (and Runs detail)
     # sees EVERY tool call, not just the last card. Also salvages the trace of
     # a timed-out run (partial progress is still in the event log).
-    if ttype in ("loop", "sim") and len(steps) < 2:
-        ev_steps = await _steps_from_events(run_id)
-        if len(ev_steps) > len(steps):
-            steps = ev_steps
+    # Fire not only when the result carried too FEW steps, but also when the
+    # steps it did carry name NO capability: engines emit phase/cycle markers
+    # with an empty `cap`, so a run that genuinely called its tool would still
+    # false-fail every cap_called check (observed: tool-echo returned the real
+    # echo payload yet scored `called: []` because it came back as 2 empty
+    # markers, so `len(steps) < 2` never tripped). Prefer whichever source
+    # names more real caps, with step count as the tie-breaker.
+    if ttype in ("loop", "sim"):
+        def _n_caps(_sts):
+            return sum(1 for _s in _sts if str(_s.get("cap") or "").strip())
+        if len(steps) < 2 or _n_caps(steps) == 0:
+            ev_steps = await _steps_from_events(run_id)
+            if _n_caps(ev_steps) > _n_caps(steps) or len(ev_steps) > len(steps):
+                steps = ev_steps
 
     elapsed = round(time.time() - t0, 1)
     checks = _run_checks(task, final, steps, elapsed, error=error)
@@ -2030,7 +2169,7 @@ async def _bg_run(task: Dict[str, Any], run_id: str, assess: bool, provider: str
             cfg = await _get_config()
             assessment = await _review_run(detail, task,
                                            provider or cfg["critic_provider"],
-                                           session="", round=0)
+                                           session="", rnd=0)
         # Signal completion AFTER review so the panel populates the critique /
         # adversarial failures / result from a fully-assessed run.
         await emit_event({"type": "evolve.workflow", "run_id": run_id,
@@ -2234,23 +2373,28 @@ async def _adversarial_pass(detail: Dict[str, Any], task: Dict[str, Any],
 
 
 async def _review_run(detail: Dict[str, Any], task: Dict[str, Any], provider: str,
-                      session: str = "", round: int = 0) -> Dict[str, Any]:
+                      session: str = "", rnd: int = 0) -> Dict[str, Any]:
     """The standard evaluation path: one scoring critic (stores + emits), then —
     when adversarial is on — N extra adversarial reviewers whose unioned failures
     harden the assessment. Emits evolve.workflow events so the live diagram
-    animates implementer → reviewers → fixer."""
+    animates implementer → reviewers → fixer.
+
+    NB: the round-number param is `rnd`, NOT `round` — a `round` parameter
+    shadows the builtin round() used just below to aggregate scores, so with
+    adversarial reviewers on (the default) every assessment died with
+    "'int' object is not callable"."""
     rid = detail.get("run_id", "")
     cfg = await _get_config()
     n = int(cfg.get("reviewers", 2)) if cfg.get("adversarial", True) else 1
 
     await emit_event({"type": "evolve.workflow", "session": session, "run_id": rid,
-                      "node": "reviewers", "state": "running", "round": round,
+                      "node": "reviewers", "state": "running", "round": rnd,
                       "count": n})
     # primary scoring critic (persists the assessment + emits evolve.assessed)
     assessment = await _assess_run(detail, task, provider)
     if assessment.get("error"):
         await emit_event({"type": "evolve.workflow", "session": session, "run_id": rid,
-                          "node": "reviewers", "state": "error", "round": round})
+                          "node": "reviewers", "state": "error", "round": rnd})
         return assessment
 
     if n > 1:
@@ -2267,7 +2411,7 @@ async def _review_run(detail: Dict[str, Any], task: Dict[str, Any], provider: st
                     adv_failures.append(f)
             await emit_event({"type": "evolve.workflow", "session": session,
                               "run_id": rid, "node": f"reviewer-{i+1}",
-                              "state": "found", "round": round,
+                              "state": "found", "round": rnd,
                               "failures": len(ap.get("failures") or [])})
         # harsher aggregate: min of critic + adversarial scores
         harsh = round(min(adv_scores), 1) if adv_scores else assessment.get("score")
@@ -2281,7 +2425,7 @@ async def _review_run(detail: Dict[str, Any], task: Dict[str, Any], provider: st
                                 "combined": combined, "reviewers": n})
 
     await emit_event({"type": "evolve.workflow", "session": session, "run_id": rid,
-                      "node": "reviewers", "state": "done", "round": round,
+                      "node": "reviewers", "state": "done", "round": rnd,
                       "score": assessment.get("score"),
                       "failures": len(assessment.get("failures") or [])})
     return assessment
@@ -3152,7 +3296,7 @@ async def _improve_worker(sess: Dict[str, Any]):
                 await emit_event({"type": "evolve.phase", "session": sid, "phase": "evaluate",
                                   "status": "start", "round": rnd, "task": t["id"],
                                   "run_id": detail["run_id"]})
-                a = await _review_run(detail, t, sess["critic"], session=sid, round=rnd)
+                a = await _review_run(detail, t, sess["critic"], session=sid, rnd=rnd)
                 await emit_event({"type": "evolve.phase", "session": sid, "phase": "evaluate",
                                   "status": "done", "round": rnd, "task": t["id"],
                                   "run_id": detail["run_id"], "score": a.get("score"),
@@ -3323,19 +3467,6 @@ async def _improve_worker(sess: Dict[str, Any]):
                           "code_suggestions": len(sess.get("code_suggestions") or [])})
 
 
-@capability("evolve.improve.start", memory="on",
-            http_method="POST", http_path="/evolve/improve/start", http_tags=["evolve"],
-            description="Start a background improvement session: TEST (run the "
-                        "agent loop) → EVALUATE (critic scores) → SYNTHESIZE "
-                        "(propose a better variant, on the background edit queue / "
-                        "gpt-oss:20b CPU node), repeated until target_score or "
-                        "max_rounds. Inputs: profile (str), goal_source "
-                        "(tasks|goals|generate), goals (list — explicit goals for "
-                        "goal_source=goals), generate_from (str — subsystem/goal "
-                        "for goal_source=generate), tag, critic, editor, "
-                        "max_rounds, target_score, base_variant. Output: {ok, "
-                        "session_id, tasks}. Poll evolve.improve.status.",
-            schema=enum_schema(goal_source=["tasks", "goals", "generate"]))
 async def _resolve_improve_tasks(profile: str, goal_source: str, goals: Any,
                                  generate_from: str, tag: str,
                                  cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -3378,6 +3509,19 @@ async def _resolve_improve_tasks(profile: str, goal_source: str, goals: Any,
             and (not tag or tag in (t.get("tags") or []))]
 
 
+@capability("evolve.improve.start", memory="on",
+            http_method="POST", http_path="/evolve/improve/start", http_tags=["evolve"],
+            description="Start a background improvement session: TEST (run the "
+                        "agent loop) → EVALUATE (critic scores) → SYNTHESIZE "
+                        "(propose a better variant, on the background edit queue / "
+                        "gpt-oss:20b CPU node), repeated until target_score or "
+                        "max_rounds. Inputs: profile (str), goal_source "
+                        "(tasks|goals|generate), goals (list — explicit goals for "
+                        "goal_source=goals), generate_from (str — subsystem/goal "
+                        "for goal_source=generate), tag, critic, editor, "
+                        "max_rounds, target_score, base_variant. Output: {ok, "
+                        "session_id, tasks}. Poll evolve.improve.status.",
+            schema=enum_schema(goal_source=["tasks", "goals", "generate"]))
 async def evolve_improve_start(profile: str = "", target: str = "", tag: str = "",
                                critic: str = "", editor: str = "", max_rounds: int = 0,
                                target_score: float = 0.0, base_variant: str = "",
@@ -3558,6 +3702,43 @@ async def _git(*args: str, timeout: int = 60) -> Dict[str, Any]:
     return await asyncio.get_event_loop().run_in_executor(None, _run)
 
 
+async def _default_branch() -> str:
+    """The repo's mainline branch — what Loop Lab should test against unless the
+    user deliberately picks a branch. Asks git rather than assuming 'main'."""
+    for args in (("symbolic-ref", "--short", "refs/remotes/origin/HEAD"),
+                 ("config", "--get", "init.defaultBranch")):
+        r = await _git(*args)
+        if r.get("ok"):
+            nm = (r.get("out") or "").strip().rsplit("/", 1)[-1]
+            if nm:
+                return nm
+    for cand in ("main", "master"):
+        r = await _git("rev-parse", "--verify", cand)
+        if r.get("ok"):
+            return cand
+    return "main"
+
+
+async def _refresh_worktree(wt_abs: str, branch: str) -> Dict[str, Any]:
+    """Fast-forward an EXISTING worktree to the latest commit on `branch`.
+
+    Without this, a worktree created once is frozen forever: _ensure_worktree
+    short-circuits on any healthy directory, so Loop Lab kept testing whatever
+    the mainline looked like the first time the sandbox came up. Only ever a
+    fast-forward — if the worktree has local commits or a dirty tree we leave it
+    alone and say so, rather than throwing away work."""
+    st = await _sh(_git_wt_argv(wt_abs, "status", "--porcelain"), cwd=wt_abs)
+    if (st.get("out") or "").strip():
+        return {"ok": False, "reason": "worktree has uncommitted changes — not refreshed"}
+    await _sh(_git_wt_argv(wt_abs, "fetch", "--quiet", "origin", branch), cwd=wt_abs)
+    ff = await _sh(_git_wt_argv(wt_abs, "merge", "--ff-only", f"origin/{branch}"), cwd=wt_abs)
+    if not ff.get("ok"):
+        # No remote / diverged: a local-only repo is normal here, not an error.
+        return {"ok": False, "reason": (ff.get("err") or "not fast-forwardable")[:160]}
+    head = await _sh(_git_wt_argv(wt_abs, "rev-parse", "--short", "HEAD"), cwd=wt_abs)
+    return {"ok": True, "head": (head.get("out") or "").strip()}
+
+
 async def _ensure_worktree(branch: str) -> Dict[str, Any]:
     """Materialise the branch's WORKTREE at <repo>/.loop-lab-worktrees/<branch>
     WITHOUT ever switching the real working tree — this is the ONLY place a
@@ -3567,7 +3748,25 @@ async def _ensure_worktree(branch: str) -> Dict[str, Any]:
     restores prod to main first."""
     wt_abs = _repo_root() / _WORKTREE_DIR / _safe_branch(branch)
     if wt_abs.exists():
-        return {"ok": True, "path": str(wt_abs)}
+        # A directory that exists is NOT proof of a healthy worktree. A clobbered
+        # or hand-copied dir (no .git link, or a registration git has since
+        # forgotten) passes .exists() yet git treats it as "not a repository" —
+        # and the container bind-mounts it anyway, serving stale/partial source
+        # (the exact "1024 caps, missing loops.run" failure this incident chased).
+        # Verify it's a REAL worktree; only short-circuit when it genuinely is.
+        chk = await _sh(_git_wt_argv(str(wt_abs), "rev-parse",
+                                     "--is-inside-work-tree"), cwd=str(wt_abs))
+        if (wt_abs / ".git").exists() and chk.get("ok") \
+                and (chk.get("out") or "").strip() == "true":
+            return {"ok": True, "path": str(wt_abs)}
+        # Broken: drop the stale dir + registration, then recreate below.
+        await _audit("sandbox.heal",
+                     f"{wt_abs} existed but was NOT a valid git worktree — "
+                     f"removed + recreating (it was serving a stale mount)")
+        try:
+            shutil.rmtree(wt_abs, ignore_errors=True)
+        except Exception:
+            pass
     await _git("worktree", "prune")
     wt = await _git("worktree", "add", str(wt_abs), branch, timeout=120)
     if not wt["ok"] and "already checked out" in (wt["err"] or ""):
@@ -3580,6 +3779,13 @@ async def _ensure_worktree(branch: str) -> Dict[str, Any]:
             wt = await _git("worktree", "add", str(wt_abs), branch, timeout=120)
     if not wt["ok"]:
         return {"error": f"git worktree add failed: {wt['err']}"}
+    # Mark the fresh worktree safe for the Vera process user's global config, so
+    # EVERY later git op there works (sandbox terminal, and any tool that shells
+    # git in the worktree) — not just the diff cap, which also guards per-call.
+    # git may be created by a different UID; without this it aborts with
+    # "detected dubious ownership". Best-effort — the per-call guard is the
+    # backstop.
+    await _git("config", "--global", "--add", "safe.directory", str(wt_abs))
     return {"ok": True, "path": str(wt_abs)}
 
 
@@ -4551,9 +4757,57 @@ async def _sh(cmd: List[str], cwd: Optional[str] = None,
     return await asyncio.get_event_loop().run_in_executor(None, _run)
 
 
+def _git_wt_argv(wt: str, *args: str) -> List[str]:
+    """git argv for a command run INSIDE a sandbox worktree, made resilient to
+    "detected dubious ownership". The worktree is often created by a different
+    UID than the Vera process runs as (the host shell / a manual repair), and
+    modern git then refuses every operation there — status/diff degrade into the
+    misleading `--no-index` usage dump ("git diff failed: … Not a git
+    repository"). Marking the path (and '*') safe per-invocation fixes it without
+    mutating global config or depending on any earlier heal having run."""
+    return ["git", "-c", f"safe.directory={wt}", "-c", "safe.directory=*", *args]
+
+
+def _host_for_docker(value: str) -> str:
+    """Rewrite loopback host references so they resolve from INSIDE a container:
+    prod (running natively on the host) reaches its backing services on
+    localhost's published ports, but 'localhost' inside the sandbox container is
+    the container itself. host.docker.internal is mapped to the docker
+    host-gateway via extra_hosts in the generated compose."""
+    return re.sub(r"(?<![\w.])(localhost|127\.0\.0\.1)(?![\w.])",
+                  "host.docker.internal", value or "")
+
+
+def _redis_url_with_db(url: str, db: int) -> str:
+    """Force the db path component of a redis URL. NEVER pass db= as a kwarg to
+    from_url alongside a URL that may carry its own /n path — redis-py's
+    ConnectionPool.from_url does kwargs.update(url_options), so the URL's db
+    silently wins and the 'isolated' client lands on the wrong database."""
+    m = re.match(r"^(rediss?://[^/?]+)", url or "")
+    return f"{m.group(1) if m else 'redis://localhost:6379'}/{int(db)}"
+
+
 def _dev_compose_yaml(worktree_rel: str) -> str:
     """A compose override defining vera-dev: prod image, branch source bind-
-    mounted, isolated port + Redis DB, shares the other backing services."""
+    mounted, isolated port + Redis DB, shares the other backing services.
+
+    Backing-service endpoints are INHERITED from prod's own live config, not
+    hard-coded compose service names: this estate runs redis/postgres/chroma in
+    a different compose project, so names like `redis:6379` don't resolve on
+    vera_vera-net — the sandbox came up with every backing service dead, its
+    loops persisted events nowhere, and the Loop Lab timeline sat on 'Waiting
+    for events…' until the idle watchdog killed the run. Loopback hosts are
+    rewritten to host.docker.internal (docker host-gateway) so the sandbox uses
+    the same published ports prod itself connects through."""
+    c = getattr(_orch, "cfg", None)
+    redis_url = _redis_url_with_db(
+        _host_for_docker(getattr(c, "REDIS_URL", "redis://localhost:6379")),
+        DEV_REDIS_DB)
+    pg_url = _host_for_docker(getattr(
+        c, "POSTGRES_URL", "postgresql://admin:admin@localhost:5433/postgres"))
+    chroma_host = _host_for_docker(getattr(c, "CHROMA_HOST", "localhost"))
+    chroma_port = int(getattr(c, "CHROMA_PORT", 8008) or 8008)
+    neo4j_uri = _host_for_docker(getattr(c, "NEO4J_URI", "bolt://localhost:7687"))
     return f"""# Auto-generated by Loop Lab (evolve.sandbox.up). Safe to delete.
 services:
   vera-dev:
@@ -4563,19 +4817,24 @@ services:
     command: ["python", "-m", "Vera.vera.capability_orchestration"]
     ports:
       - "{_DEV_PORT_ACTIVE}:8999"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       ORCHESTRATOR_HOST: "0.0.0.0"
       ORCHESTRATOR_PORT: "8999"
-      REDIS_URL: "redis://redis:6379/{DEV_REDIS_DB}"
-      POSTGRES_URL: "postgresql://admin:admin@postgres:5432/postgres"
-      CHROMA_HOST: "chromadb"
-      CHROMA_PORT: "8000"
-      NEO4J_URI: "bolt://neo4j:7687"
-      NEO4J_USER: "${{NEO4J_USER:-neo4j}}"
-      NEO4J_PASS: "${{NEO4J_PASS:-veraneo4j}}"
-      OLLAMA_GPU_URL: "${{OLLAMA_GPU_URL:-http://192.168.0.250:11435}}"
-      OLLAMA_CPU_A_URL: "${{OLLAMA_CPU_A_URL:-http://192.168.0.246:11435}}"
-      OLLAMA_CPU_B_URL: "${{OLLAMA_CPU_B_URL:-http://192.168.0.247:11435}}"
+      TLS_ENABLED: "0"
+      REDIS_URL: "{redis_url}"
+      POSTGRES_URL: "{pg_url}"
+      CHROMA_HOST: "{chroma_host}"
+      CHROMA_PORT: "{chroma_port}"
+      NEO4J_URI: "{neo4j_uri}"
+      NEO4J_USER: "{getattr(c, 'NEO4J_USER', 'neo4j')}"
+      NEO4J_PASS: "{getattr(c, 'NEO4J_PASS', 'neo4j')}"
+      OLLAMA_GPU_URL: "{_host_for_docker(getattr(c, 'OLLAMA_GPU_URL', 'http://192.168.0.250:11435'))}"
+      OLLAMA_CPU_A_URL: "{_host_for_docker(getattr(c, 'OLLAMA_CPU_A_URL', 'http://192.168.0.246:11435'))}"
+      OLLAMA_CPU_B_URL: "{_host_for_docker(getattr(c, 'OLLAMA_CPU_B_URL', 'http://192.168.0.247:11435'))}"
+      OLLAMA_EMBED_URL: "{_host_for_docker(getattr(c, 'OLLAMA_EMBED_URL', 'http://192.168.0.246:11435'))}"
+      OLLAMA_MODEL: "{getattr(c, 'OLLAMA_MODEL', '')}"
       VERA_IS_DEV_SANDBOX: "1"
       EMBED_CAPS_ON_START: "0"
       SYSLOG_MONITOR: "0"
@@ -4603,6 +4862,55 @@ def _dev_base_url() -> str:
 _SANDBOX_READY_CAP = os.getenv("VERA_SANDBOX_READY_CAP", "loops.run")
 
 
+async def _diagnose_stale(n_tools: int) -> Dict[str, Any]:
+    """The sandbox is up but MISSING its workhorse cap. The cap count alone can't
+    tell WHY — and the three causes need different fixes. Interrogate the worktree
+    on disk (which the orchestrator can read directly) to pick the right one:
+
+      • branch  — the worktree's branch is behind main, so its source genuinely
+                  predates the cap. Fix: update the branch (no image rebuild).
+      • mount   — the worktree source HAS the cap but the running container does
+                  not, i.e. the container is serving an OLD bind-mount. Fix:
+                  recreate the container (down → up; up now force-recreates).
+      • image   — the source doesn't have the cap and we can't attribute it to a
+                  behind branch: the baked image / checked-out code is stale.
+                  Fix: rebuild the image.
+
+    Returns {cause, error} merged into the probe result so callers (and the UI)
+    stop blaming the image by default."""
+    cap = _SANDBOX_READY_CAP
+    sb = await _get_sandbox()
+    branch = sb.get("branch", "?")
+    wt = sb.get("worktree", "")
+    behind: Optional[int] = None
+    src_has = False
+    if wt and Path(wt).exists():
+        rc = await _sh(_git_wt_argv(wt, "rev-list", "--count", "HEAD..main"), cwd=wt)
+        if rc.get("ok"):
+            try:
+                behind = int((rc.get("out") or "0").strip() or "0")
+            except Exception:
+                behind = None
+        # Is the cap defined anywhere in the worktree's tracked source?
+        g = await _sh(_git_wt_argv(wt, "grep", "-l", "-F", f'"{cap}"', "HEAD"), cwd=wt)
+        src_has = bool(g.get("ok") and (g.get("out") or "").strip())
+    if behind and behind > 0 and not src_has:
+        return {"cause": "branch",
+                "error": f"dev sandbox is missing '{cap}': its branch ({branch}) is "
+                         f"{behind} commit(s) behind main, so its source predates "
+                         f"the cap. Update the branch — no image rebuild needed."}
+    if src_has:
+        return {"cause": "mount",
+                "error": f"dev sandbox is up but its container is serving a STALE "
+                         f"MOUNT — the worktree source has '{cap}' but the running "
+                         f"container predates it. Recreate the container (sandbox "
+                         f"down → up; up force-recreates). No image rebuild needed."}
+    return {"cause": "image",
+            "error": f"dev sandbox is up but MISSING '{cap}' (only {n_tools} caps) — "
+                     f"the {DEV_IMAGE} image / checked-out source predates it. "
+                     f"Rebuild the image (🛠 Rebuild image & recreate)."}
+
+
 async def _sandbox_probe() -> Dict[str, Any]:
     """Confirm a HEALTHY, READY Vera is serving the dev-sandbox port before we
     route caps into it. A bare /health 2xx is NOT enough, and neither is a 200
@@ -4623,6 +4931,27 @@ async def _sandbox_probe() -> Dict[str, Any]:
             if h.status_code >= 400:
                 return {"reachable": False, "status_code": h.status_code,
                         "error": f"/health {h.status_code} — no healthy Vera on {base}"}
+            # /health answers 200 even with every backing service down — parse
+            # the body. Redis is a HARD requirement: the sandbox persists its
+            # loop run-state + events there and the prod mirror streams the
+            # timeline from it; without it a routed run executes blind (the UI
+            # sits on 'Waiting for events…' until the idle watchdog kills it).
+            hj: Dict[str, Any] = {}
+            try:
+                hj = h.json() if isinstance(h.json(), dict) else {}
+            except Exception:
+                hj = {}
+            if hj and not hj.get("redis", True):
+                dead = [k for k in ("redis", "postgres", "chroma", "neo4j")
+                        if not hj.get(k, True)]
+                return {"reachable": False, "stale": False, "cause": "services",
+                        "status_code": h.status_code, "services_down": dead,
+                        "error": f"dev sandbox is up but cannot reach its backing "
+                                 f"services ({', '.join(dead)}) — its loop events "
+                                 f"have nowhere to persist, so runs routed there "
+                                 f"stream nothing and die on the idle watchdog. "
+                                 f"Recreate it (evolve.sandbox.up) so the compose "
+                                 f"env is regenerated with prod's real endpoints."}
             # The /mcp/call route _sandbox_call uses lives on the same router as
             # /mcp/tools; if tools 404s the dev port is not a full Vera.
             t = await c.get(base + "/mcp/tools")
@@ -4643,15 +4972,16 @@ async def _sandbox_probe() -> Dict[str, Any]:
             names = set()
         n_tools = len(names)
         if _SANDBOX_READY_CAP and _SANDBOX_READY_CAP not in names:
+            diag = await _diagnose_stale(n_tools)
             return {"reachable": False, "stale": True, "status_code": t.status_code,
-                    "tool_count": n_tools,
-                    "error": f"dev sandbox is up but MISSING '{_SANDBOX_READY_CAP}' "
-                             f"(only {n_tools} caps registered) — it is running a "
-                             f"STALE {DEV_IMAGE} image that predates it. Rebuild the "
-                             f"image (docker.image.ensure force=true / rebuild "
-                             f"{DEV_IMAGE}), then tear the sandbox down and back up."}
+                    "tool_count": n_tools, **diag}
+        # Non-Redis services down = usable but degraded (loops that touch
+        # pg/chroma/neo4j will limp) — surface it without blocking.
+        degraded = [k for k in ("postgres", "chroma", "neo4j")
+                    if hj and not hj.get(k, True)]
         return {"reachable": True, "status_code": t.status_code,
-                "tool_count": n_tools, "stale": False, "error": ""}
+                "tool_count": n_tools, "stale": False, "error": "", "cause": "",
+                "services_degraded": degraded}
     except Exception as e:
         return {"reachable": False, "error": str(e)[:160]}
 
@@ -4861,15 +5191,30 @@ async def evolve_sandbox_snapshot(prefixes: str = "", trace_id=None):
                         "worktree of the branch, generate docker-compose.dev.yml, "
                         "start the vera-dev container (port VERA_DEV_PORT, isolated "
                         "Redis DB), and snapshot Loop Lab state into it. Requires "
-                        "docker on the orchestrator host. Inputs: branch (str! — a "
-                        "loop-lab/* branch), snapshot (bool default True), "
+                        "docker on the orchestrator host. Inputs: branch (str — "
+                        "OMIT to run against the CURRENT MAINLINE, which is "
+                        "fast-forwarded to latest first; that is the default so a "
+                        "Loop Lab test exercises today's Vera rather than whatever "
+                        "branch was last activated. Pass a branch name only to "
+                        "deliberately pin the sandbox to it — e.g. when re-running "
+                        "a specific improvement or test — and it is then left "
+                        "exactly where it is, never auto-moved), "
+                        "snapshot (bool default True), "
                         "rebuild_image (bool default False — force-rebuild "
                         "vera:latest from source first; use when the sandbox is "
                         "running a STALE image missing newer caps like loops.run).")
 async def evolve_sandbox_up(branch: str = "", snapshot: bool = True,
                             rebuild_image: bool = False, trace_id=None):
+    # ── Default to the LATEST mainline, not "whatever was last activated" ────
+    # Requiring an explicit branch meant Loop Lab always tested some branch's
+    # snapshot, and because _ensure_worktree short-circuits on an existing
+    # directory, that snapshot never moved. So a "Loop Lab test" could silently
+    # be exercising week-old code. The sensible default is the current mainline,
+    # refreshed; running against a BRANCH is the deliberate act (pass one
+    # explicitly — which is what re-running a specific improvement/test does).
+    _explicit = bool(branch)
     if not branch:
-        return {"error": "branch required"}
+        branch = await _default_branch()
     # Resolve the configured host port up front. Refuse the prod port outright —
     # binding it is the "port 8999 already in use" failure — and point at the fix.
     port = await _dev_port()
@@ -4890,6 +5235,16 @@ async def evolve_sandbox_up(branch: str = "", snapshot: bool = True,
         return {"error": wt_res["error"],
                 "hint": "is the branch checked out elsewhere? "
                         "(git worktree list) — prod must stay on main"}
+    # Bring the mainline worktree up to date. Only for the DEFAULT branch: a
+    # feature branch is a deliberate, pinned choice and must not be moved under
+    # the user. Best-effort — a local-only repo with no remote is normal.
+    refreshed = None
+    if not _explicit:
+        refreshed = await _refresh_worktree(str(wt_abs), branch)
+        await emit_event({"type": "evolve.sandbox.refresh", "branch": branch,
+                          "ok": bool(refreshed.get("ok")),
+                          "head": refreshed.get("head", ""),
+                          "reason": refreshed.get("reason", "")})
 
     # 2. Ensure the vera:latest image exists LOCALLY before compose touches it.
     #    vera:latest is local-only (not on any registry), so `docker compose up`
@@ -4922,13 +5277,16 @@ async def evolve_sandbox_up(branch: str = "", snapshot: bool = True,
         return {"error": f"could not write {_DEV_COMPOSE}: {e}"}
 
     # 4. docker compose up vera-dev — image is now present, so no pull attempt.
-    #    On a forced rebuild, --force-recreate so a container still running the
-    #    OLD image layers is replaced by one on the freshly-built image.
+    #    ALWAYS --force-recreate. The bind-mounted worktree can go stale
+    #    INDEPENDENT of the image — the branch source changed, or the worktree dir
+    #    was repaired — while compose still sees an unchanged service definition
+    #    and would leave the OLD container (serving the OLD mount) running. That
+    #    is exactly the "up but missing loops.run / 1024 caps" trap: a plain `up`
+    #    reported "up to date" and never remounted. Recreating is cheap (no
+    #    rebuild) and is the only reliable way `up` picks up new source.
     up_argv = ["docker", "compose", "-f", "docker-compose.yml",
-               "-f", _DEV_COMPOSE, "up", "-d", "--no-build"]
-    if rebuild_image:
-        up_argv.append("--force-recreate")
-    up_argv.append("vera-dev")
+               "-f", _DEV_COMPOSE, "up", "-d", "--no-build",
+               "--force-recreate", "vera-dev"]
     up = await _sh(up_argv, timeout=300)
     if not up["ok"]:
         return {"error": f"docker compose up failed: {up['err'] or up['out']}",
@@ -4953,6 +5311,26 @@ async def evolve_sandbox_up(branch: str = "", snapshot: bool = True,
             healthy = True
             break
 
+    # 5b. SELF-HEAL a genuinely stale image. We already force-recreated (so a
+    #     stale MOUNT is impossible) — if the sandbox is still missing its
+    #     workhorse cap AND the diagnosis is the baked image (not a behind
+    #     branch), the image itself is out of date. Rebuild it ONCE, automatically
+    #     — this is "keep the image up-to-date so it doesn't go stale": the
+    #     sandbox refreshes itself instead of parking on the ▲ STALE banner
+    #     waiting for someone to press the button. Bounded by the rebuild_image
+    #     guard (no recursion) and gated by config for operators who'd rather not
+    #     eat a multi-minute build inside `up`.
+    if not healthy and probe.get("cause") == "image" and not rebuild_image:
+        cfg = await _get_config()
+        if cfg.get("auto_rebuild_stale", True):
+            await emit_event({"type": "evolve.sandbox.image.autorebuild",
+                              "image": DEV_IMAGE, "branch": branch})
+            await _audit("sandbox.autorebuild",
+                         f"{branch}: image stale (missing {_SANDBOX_READY_CAP}) — "
+                         f"auto-rebuilding {DEV_IMAGE}")
+            return await evolve_sandbox_up(branch=branch, snapshot=snapshot,
+                                           rebuild_image=True, trace_id=trace_id)
+
     # 6. snapshot Loop Lab state into the dev DB
     snap = None
     if snapshot:
@@ -4962,16 +5340,18 @@ async def evolve_sandbox_up(branch: str = "", snapshot: bool = True,
                  branch=branch, healthy=healthy)
     await emit_event({"type": "evolve.sandbox.up.done", "branch": branch,
                       "healthy": healthy, "stale": bool(probe.get("stale"))})
-    # A stale image is a distinct, actionable failure — surface it (with the
-    # rebuild hint) rather than the generic "give it a moment".
+    # A stale sandbox is a distinct, actionable failure — surface the cause-
+    # specific diagnosis (branch behind / stale mount / stale image) rather than
+    # the generic "give it a moment".
     if healthy:
         note = ""
     elif probe.get("stale"):
-        note = probe.get("error") or "sandbox image is stale — rebuild it"
+        note = probe.get("error") or "sandbox is stale"
     else:
         note = "container started but not answering /health yet — give it a " \
                "moment, then re-check status"
-    return {"ok": True, "sandbox": sb, "healthy": healthy, "stale": bool(probe.get("stale")),
+    return {"ok": True, "sandbox": sb, "healthy": healthy,
+            "stale": bool(probe.get("stale")), "cause": probe.get("cause", ""),
             "url": _dev_base_url(), "snapshot": snap, "probe": probe, "note": note}
 
 
@@ -5099,10 +5479,10 @@ async def evolve_sandbox_diff(base: str = "main", file: str = "",
     max_bytes = int(max_bytes or 200000)
 
     # changed files: status letters + adds/dels, rename-aware
-    ns = await _sh(["git", "diff", base, "--name-status", "-M"], cwd=wt)
+    ns = await _sh(_git_wt_argv(wt, "diff", base, "--name-status", "-M"), cwd=wt)
     if not ns["ok"]:
         return {"error": f"git diff failed: {ns['err'] or ns['out']}"}
-    num = await _sh(["git", "diff", base, "--numstat", "-M"], cwd=wt)
+    num = await _sh(_git_wt_argv(wt, "diff", base, "--numstat", "-M"), cwd=wt)
     stats: Dict[str, Any] = {}
     for line in (num["out"] or "").splitlines():
         p = line.split("\t")
@@ -5116,7 +5496,7 @@ async def evolve_sandbox_diff(base: str = "main", file: str = "",
             files.append({"path": path, "status": p[0][:1],
                           **stats.get(path, {"adds": "?", "dels": "?"})})
 
-    st = await _sh(["git", "status", "--porcelain"], cwd=wt)
+    st = await _sh(_git_wt_argv(wt, "status", "--porcelain"), cwd=wt)
     untracked = [l[3:] for l in (st["out"] or "").splitlines() if l.startswith("??")]
 
     # the diff text itself (an untracked file has no git diff — synthesize one)
@@ -5128,7 +5508,7 @@ async def evolve_sandbox_diff(base: str = "main", file: str = "",
         except Exception as e:
             diff = f"(could not read untracked file: {e})"
     else:
-        args = ["git", "diff", base, "-M", f"-U{context}"]
+        args = _git_wt_argv(wt, "diff", base, "-M", f"-U{context}")
         if file:
             args += ["--", file]
         d = await _sh(args, cwd=wt)
@@ -5137,6 +5517,59 @@ async def evolve_sandbox_diff(base: str = "main", file: str = "",
     return {"ok": True, "branch": sb.get("branch", ""), "base": base,
             "worktree": wt, "files": files, "untracked": untracked,
             "diff": diff[:max_bytes], "truncated": truncated}
+
+
+@capability("evolve.sandbox.review", memory="on",
+            http_method="POST", http_path="/evolve/sandbox/review", http_tags=["evolve"],
+            description="Send Loop Lab's dev-sandbox changes to the shared Workspace "
+                        "Changes review panel (the same PR-style accept/reject UI used "
+                        "for loop/IDE edits): diffs the worktree's changed files against "
+                        "the base repo and creates a proposal — accepting a file writes "
+                        "the worktree version into the base checkout. Inputs: base (str, "
+                        "default 'main'). Output: {ok, proposal:{id, files, status}}.")
+async def evolve_sandbox_review(base: str = "main", trace_id=None):
+    sb = await _get_sandbox()
+    wt = sb.get("worktree", "")
+    if not wt or not Path(wt).exists():
+        return {"ok": False, "error": "no dev sandbox worktree — bring one up first"}
+    base = (base or "main").strip()
+    # Changed files (added/modified/renamed-new + untracked); deletions are not
+    # handled by the review UI, so they're skipped here.
+    ns = await _sh(_git_wt_argv(wt, "diff", base, "--name-status", "-M"), cwd=wt)
+    if not ns["ok"]:
+        return {"ok": False, "error": f"git diff failed: {ns['err'] or ns['out']}"}
+    paths: List[str] = []
+    for line in (ns["out"] or "").splitlines():
+        p = line.split("\t")
+        if len(p) >= 2 and p[0][:1] != "D":
+            paths.append(p[-1])                 # rename → new path
+    st = await _sh(_git_wt_argv(wt, "status", "--porcelain"), cwd=wt)
+    for l in (st["out"] or "").splitlines():
+        if l.startswith("??"):
+            paths.append(l[3:])
+    paths = sorted({p for p in paths if p})
+    if not paths:
+        return {"ok": True, "proposal": None, "note": "no changes to review"}
+    # Target = the MAIN worktree (first entry of `git worktree list`), where an
+    # accepted file is written.
+    wl = await _sh(_git_wt_argv(wt, "worktree", "list", "--porcelain"), cwd=wt)
+    target = ""
+    for line in (wl["out"] or "").splitlines():
+        if line.startswith("worktree "):
+            target = line[len("worktree "):].strip()
+            break
+    if not target or not Path(target).exists():
+        return {"ok": False, "error": "could not resolve base repo path from worktree"}
+    propose = CAPABILITY_REGISTRY.get("ide.workspace.changes.propose_dir")
+    if not propose or not propose.get("func"):
+        return {"ok": False, "error": "review proposal cap (ide.workspace.changes.propose_dir) unavailable"}
+    label = f"Loop Lab · {sb.get('branch', '') or base}"
+    res = await propose["func"](source_dir=wt, target_dir=target, paths=",".join(paths),
+                                source=f"loop-lab:{sb.get('branch', '') or base}",
+                                workspace=label)
+    await emit_event({"type": "evolve.sandbox.review", "branch": sb.get("branch", ""),
+                      "files": len(paths), "proposal": (res or {}).get("proposal")})
+    return res
 
 
 @capability("evolve.sandbox.code.attach", memory="on",
@@ -5385,8 +5818,68 @@ async def _errors_autosync_tick():
         log.debug("evolve errors autosync: %s", e)
 
 
+async def _sandbox_follow_up():
+    """Bring the dev sandbox up with this Vera, when configured to follow.
+
+    One-shot (long interval + guard). Best-effort and non-fatal: a sandbox that
+    fails to start must never stop the host Vera from finishing boot."""
+    global _FOLLOW_STARTED
+    if _FOLLOW_STARTED:
+        return
+    _FOLLOW_STARTED = True
+    try:
+        cfg = await _get_config()
+    except Exception:
+        return
+    if not cfg.get("sandbox_follow_host"):
+        return
+    try:
+        # No branch → current mainline, fast-forwarded (see evolve_sandbox_up).
+        res = await evolve_sandbox_up()
+        if res.get("error"):
+            log.warning("evolve: follow-host sandbox up failed: %s", res["error"])
+        else:
+            log.info("evolve: dev sandbox brought up with Vera (follow_host) on port %s",
+                     res.get("port"))
+    except Exception as e:
+        log.warning("evolve: follow-host sandbox up failed: %s", e)
+
+
+async def _sandbox_follow_down():
+    """Take the dev sandbox down when this Vera shuts down (follow mode only).
+
+    Registered as a shutdown hook so the second Vera cannot outlive the first —
+    the failure this exists to prevent. The worktree is LEFT in place: it may
+    hold uncommitted work, and it is cheap to reuse on the next boot."""
+    try:
+        cfg = await _get_config()
+    except Exception:
+        return
+    if not cfg.get("sandbox_follow_host"):
+        return
+    try:
+        res = await evolve_sandbox_down(remove_worktree=False)
+        log.info("evolve: dev sandbox taken down with Vera (follow_host): %s",
+                 "ok" if not res.get("error") else res.get("error"))
+    except Exception as e:
+        log.warning("evolve: follow-host sandbox down failed: %s", e)
+
+
+_FOLLOW_STARTED = False
+
 schedule(_startup, interval=999999, name="evolve_startup")
 schedule(_errors_autosync_tick, interval=120, name="evolve_errors_autosync")
+schedule(_sandbox_follow_up, interval=999999, name="evolve_sandbox_follow")
+
+# Shutdown hook. Registered via the orchestrator's SHUTDOWN_HOOKS, NOT
+# @APP.on_event("shutdown") — FastAPI ignores on_event handlers when the app is
+# built with a `lifespan` (it is), so that route would silently never run and the
+# sandbox would keep outliving Vera exactly as before.
+try:
+    from Vera.vera.capability_orchestration import register_shutdown_hook as _reg_sd
+    _reg_sd(_sandbox_follow_down)
+except Exception as _she:                          # pragma: no cover
+    log.debug("evolve: could not register sandbox shutdown hook: %s", _she)
 
 log.info("evolve: Loop Lab module loaded (%d default tasks, %d tunable knobs)",
          len(_default_tasks()), len(TUNABLE_KNOBS))

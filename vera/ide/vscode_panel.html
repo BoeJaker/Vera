@@ -76,6 +76,7 @@
       <button data-view="classic">Workbench</button>
       <button data-view="remotes">Remotes &amp; Queue</button>
       <button data-view="looplab" title="Loop Lab — CI/CD for the agent loops">🧪 Loop Lab</button>
+      <button data-view="dispatch" title="Dispatch — every connected Claude Code conversation">🗂 Dispatch</button>
     </div>
     <select id="inst-sel" title="VS Code instance"></select>
     <span class="chip" id="inst-status"><span class="dot"></span><span>—</span></span>
@@ -145,6 +146,12 @@
       <iframe id="looplab-frame" title="loop lab"
               allow="clipboard-read; clipboard-write"></iframe>
     </section>
+
+    <!-- DISPATCH (every connected Claude Code conversation — merged here, lazy) -->
+    <section class="view" id="v-dispatch">
+      <iframe id="dispatch-frame" title="dispatch"
+              allow="clipboard-read; clipboard-write"></iframe>
+    </section>
   </main>
 </div>
 <div class="toast" id="toast"></div>
@@ -170,6 +177,7 @@ function showView(v){
   if(v==='classic'&&!$('#classic-frame').src) $('#classic-frame').src='/ide/panel';
   if(v==='remotes'&&!$('#remotes-frame').src) $('#remotes-frame').src='/ide/remote/panel';
   if(v==='looplab'&&!$('#looplab-frame').src) $('#looplab-frame').src='/evolve/panel';
+  if(v==='dispatch'&&!$('#dispatch-frame').src) $('#dispatch-frame').src='/ide/claude_sessions/panel';
   $('#pwbar').style.display='none';
 }
 $$('#views button').forEach(b=>b.onclick=()=>showView(b.dataset.view));
@@ -298,7 +306,7 @@ $('#btn-deploy').onclick=async()=>{
 (function(){
   let v='vscode';
   try{ v=localStorage.getItem(LS_VIEW)||'vscode'; }catch(e){}
-  showView(['vscode','classic','remotes'].includes(v)?v:'vscode');
+  showView(['vscode','classic','remotes','looplab','dispatch'].includes(v)?v:'vscode');
   loadInstances();
   setInterval(()=>{ if($('#v-vscode').classList.contains('active')) probe(); }, 20000);
 })();

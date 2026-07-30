@@ -52,6 +52,7 @@ import difflib
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import uuid
@@ -62,6 +63,7 @@ import httpx
 from fastapi import Request
 from fastapi.responses import StreamingResponse
 
+import Vera.vera.capability_orchestration as _orch
 from Vera.vera.config import cfg
 from Vera.vera.capability_orchestration import (
     APP, CAPABILITY_REGISTRY, OLLAMA_INSTANCES, OLLAMA_MODEL,
@@ -120,6 +122,55 @@ async def _route_fs(fn: str, session_id: str, *args, **kwargs):
         return await getattr(sb, fn)(sid, *args, **kwargs)
     except Exception as e:
         log.debug("ide.fs sandbox route %s failed (host): %s", fn, e)
+        return None
+
+
+_CONTAINER_ROOTS = ("workspace", "data", "root")
+
+
+def _looks_like_container_path(path: str) -> bool:
+    """True for an absolute path that carries SANDBOX semantics — a '/workspace/…'
+    (or /data, /root) path. When sandbox routing is unavailable these cannot be
+    honoured literally on the (Linux) backend host: a non-root process EACCESes
+    trying to mkdir at the filesystem root, and a root one would create a real host
+    '/workspace' that in-container exec still can't see. Either way the write
+    belongs in the session's artifact dir, not at the host root."""
+    p = str(path or "").replace("\\", "/")
+    if not p.startswith("/"):
+        return False
+    low = p.lower().lstrip("/")
+    return any(low == r or low.startswith(r + "/") for r in _CONTAINER_ROOTS)
+
+
+def _container_relpath(path: str) -> str:
+    """Strip a leading sandbox root ('/workspace/…', '/data/…', '/home/<user>/…')
+    so the remainder can be written under the host artifact dir with its structure
+    preserved."""
+    p = str(path or "").replace("\\", "/").lstrip("/")
+    for root in _CONTAINER_ROOTS:
+        if p.lower().startswith(root + "/"):
+            return p[len(root) + 1:]
+    if p.lower().startswith("home/"):
+        parts = p.split("/", 2)
+        return parts[2] if len(parts) == 3 else p
+    return p
+
+
+async def _host_artifact_write(path: str, content: str, agent: str, sid: str) -> Optional[Dict]:
+    """Fallback for a sandbox-style absolute path when NO sandbox routing is
+    available (auto_create off / docker down): persist it under the session's host
+    artifact dir via the sandbox-aware artifact writer, so the write still lands
+    somewhere the loop can read back instead of failing with EACCES on '/workspace'."""
+    try:
+        import importlib as _il
+        _exec = _il.import_module("Vera.vera.execution.exec_capabilities")
+        rel = _container_relpath(path) or os.path.basename(str(path).replace("\\", "/"))
+        fs_path = await _exec.write_artifact_file(relpath=rel, content=content, session_id=sid)
+        asyncio.ensure_future(_ide_record_file(path, content, agent, sid))
+        return {"path": fs_path, "bytes": len((content or "").encode("utf-8", "replace")),
+                "created": True, "redirected_from": path}
+    except Exception as e:
+        log.debug("ide_fs_write artifact redirect failed for %s: %s", path, e)
         return None
 
 
@@ -1277,6 +1328,52 @@ def _unescape_collapsed(content: str) -> str:
                    .replace("\\t", "\t"))
 
 
+def _strip_wrapping_fence(content: str) -> str:
+    """Strip a SINGLE markdown code fence that wraps the ENTIRE payload — the
+    ```json / ```python fences an agent leaves on when it pipes a generative
+    cap's raw output straight into a write. Only strips when the fenced body has
+    no inner fences (so a real markdown/docs file that legitimately contains code
+    blocks is never mangled). Conservative — returns content unchanged otherwise."""
+    if not content:
+        return content
+    t = content.strip()
+    if not t.startswith("```"):
+        return content
+    nl = t.find("\n")
+    if nl == -1:
+        return content
+    body = t[nl + 1:].rstrip()
+    if not body.endswith("```"):
+        return content
+    inner = body[:-3].rstrip("\n")
+    if "```" in inner:            # inner fences → a real md/docs file, leave it
+        return content
+    return inner
+
+
+def _sanitize_file_content(content: str) -> str:
+    """Best-effort cleanup for content an agent piped straight from a generative
+    cap: unwrap a lone {"text"|"code"|"content"|"output": "..."} JSON envelope
+    (llm.generate's return shape), then strip a single fence wrapping the whole
+    payload. Prevents saved files from containing ```json braces or a `{"text":
+    "...\\n..."}` wrapper with escaped newlines. Leaves normal file content alone."""
+    if not content or not isinstance(content, str):
+        return content
+    s = content.strip()
+    if s[:1] == "{" and s[-1:] == "}" and '"' in s:
+        try:
+            obj = json.loads(s)
+            if isinstance(obj, dict):
+                for k in ("text", "code", "content", "output"):
+                    v = obj.get(k)
+                    if isinstance(v, str) and v.strip():
+                        content = v
+                        break
+        except Exception:
+            pass
+    return _strip_wrapping_fence(content)
+
+
 @capability(
     "ide.fs.write",
     http_method="POST", http_path="/ide/fs/write", http_tags=["ide", "fs"],
@@ -1286,7 +1383,7 @@ def _unescape_collapsed(content: str) -> str:
                 "Output: {path, bytes, created}.",
 )
 async def ide_fs_write(path: str, content: str, agent: str = "", session_id: str = "", trace_id=None):
-    content = _unescape_collapsed(content)
+    content = _sanitize_file_content(_unescape_collapsed(content))
     routed = await _route_fs("route_fs_write", session_id, path, content)
     if routed is not None:
         # Record the write to the graph/fabric even when it lands in the container.
@@ -1294,13 +1391,20 @@ async def ide_fs_write(path: str, content: str, agent: str = "", session_id: str
             asyncio.ensure_future(_ide_record_file(
                 path, content, agent, session_id or _ide_session_id()))
         return routed
+    sid = session_id or _ide_session_id()
+    # No sandbox routing (auto_create off / docker down). An absolute sandbox-style
+    # path can't be written literally on the host — redirect it into the session's
+    # host artifact dir rather than failing with EACCES on '/workspace'.
+    if _looks_like_container_path(path):
+        redirected = await _host_artifact_write(path, content, agent, sid)
+        if redirected is not None:
+            return redirected
     try:
         p = Path(path)
         created = not p.exists()
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
         size = len(content.encode("utf-8", errors="replace"))
-        sid = session_id or _ide_session_id()
         asyncio.ensure_future(_ide_record_file(path, content, agent, sid))
         return {"path": path, "bytes": size, "created": created}
     except Exception as e:
@@ -1647,9 +1751,389 @@ async def ide_workspace_create(
             if sb is not None and hasattr(sb, "link_session"):
                 await sb.link_session(sid, f"ws-{name}", kind="workspace", label=name)
                 rec["sandbox"] = f"ws-{name}"
+                # Seed the shared container from the workspace's HOST files so any
+                # session OR agentic loop working in ws-<name> sees the real
+                # project (applied when a fresh container comes up empty).
+                if hasattr(sb, "set_seed_path"):
+                    await sb.set_seed_path(f"ws-{name}", str(ws_path))
         except Exception as e:
             log.debug("workspace sandbox link failed for %s: %s", name, e)
     return rec
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WORKSPACE CHANGE PROPOSALS — PR-style, GATED write-back of a sandbox/loop's
+# work to the human's IDE workspace folder. An agentic loop operates on a CLONE
+# of the workspace in its container; on close (or on demand) its CHANGED files
+# become a reviewable PROPOSAL the human accepts or rejects per-file. Nothing is
+# ever written to the workspace without an explicit accept.
+# ─────────────────────────────────────────────────────────────────────────────
+KEY_WS_PROPOSALS   = "vera:ide:change_proposals"   # HASH id -> proposal JSON
+_WS_PROP_MAX_FILES = 300
+_WS_PROP_MAX_BYTES = 500_000        # per-file content cap; larger → not auto-appliable
+
+
+def _redis():
+    return getattr(_orch, "REDIS", None)
+
+
+def _within(base: str, target: str) -> bool:
+    """True when `target` resolves INSIDE `base` (blocks ../ escapes)."""
+    try:
+        b = os.path.realpath(base)
+        t = os.path.realpath(target)
+        return t == b or t.startswith(b + os.sep)
+    except Exception:
+        return False
+
+
+def _resolve_ws_host_path(workspace: str, host_path: str) -> str:
+    hp = (host_path or "").strip()
+    if hp and os.path.isdir(hp):
+        return hp
+    ws = (workspace or "").strip()
+    if ws:
+        for w in _load_workspaces():
+            if str(w.get("name") or "").strip().lower() == ws.lower():
+                p = str(w.get("path") or "")
+                if p and os.path.isdir(p):
+                    return p
+        if (("/" in ws) or ("\\" in ws)) and os.path.isdir(ws):
+            return ws
+    return ""
+
+
+def _build_ws_proposal_files(host_path: str, export_dir: str,
+                             only_paths=None) -> List[Dict]:
+    """Compare a NEW-versions dir (`export_dir` — a container export, or a git
+    worktree) against a TARGET dir (`host_path` — the workspace/repo to apply to)
+    and build per-file proposal entries (added/modified, with a unified diff).
+    `only_paths` limits the comparison to specific rel paths (used when the
+    source dir is huge, e.g. a repo worktree — pass the git-changed set); when
+    None the whole export_dir is walked. Unchanged / identical files are skipped."""
+    if only_paths is not None:
+        rels = sorted(str(p).replace("\\", "/").strip() for p in only_paths if str(p).strip())
+    else:
+        rels = []
+        for root, _dirs, fnames in os.walk(export_dir):
+            for fn in fnames:
+                rels.append(os.path.relpath(os.path.join(root, fn),
+                                            export_dir).replace("\\", "/"))
+        rels.sort()
+    files: List[Dict] = []
+    for rel in rels:
+        if rel == ".vera_seed_marker" or os.path.basename(rel) == ".vera_seed_marker":
+            continue
+        if rel.startswith(".git/") or "/.git/" in ("/" + rel):
+            continue
+        fp = os.path.join(export_dir, rel)
+        if not os.path.isfile(fp):
+            continue
+        try:
+            data = open(fp, "rb").read()
+        except Exception:
+            continue
+        try:
+            new_text = data.decode("utf-8")
+            is_text = True
+        except Exception:
+            new_text, is_text = "", False
+        host_file = os.path.join(host_path, rel)
+        exists = os.path.exists(host_file)
+        old_text = ""
+        if exists and is_text:
+            try:
+                old_text = open(host_file, "r", encoding="utf-8",
+                                errors="replace").read()
+            except Exception:
+                old_text = ""
+        if is_text and exists and old_text == new_text:
+            continue                          # genuinely unchanged
+        status = "modified" if exists else "added"
+        entry: Dict = {"rel": rel, "status": status, "bytes": len(data),
+                       "decision": "pending", "text": is_text}
+        if not is_text:
+            entry["binary"] = True            # recorded, not auto-appliable as text
+        else:
+            too_big = len(new_text) > _WS_PROP_MAX_BYTES
+            entry["truncated"] = too_big
+            entry["new_content"] = None if too_big else new_text
+            diff = "\n".join(difflib.unified_diff(
+                old_text.splitlines(), new_text.splitlines(),
+                fromfile=("a/" + rel if exists else "/dev/null"),
+                tofile="b/" + rel, lineterm=""))
+            entry["diff"] = diff[:20000]
+        files.append(entry)
+        if len(files) >= _WS_PROP_MAX_FILES:
+            break
+    return files
+
+
+async def _ws_proposal_get(pid: str) -> Optional[Dict]:
+    r = _redis()
+    if not r or not pid:
+        return None
+    try:
+        raw = await r.hget(KEY_WS_PROPOSALS, pid)
+        if raw:
+            return json.loads(raw.decode() if isinstance(raw, (bytes, bytearray)) else raw)
+    except Exception:
+        pass
+    return None
+
+
+async def _ws_proposal_save(prop: Dict) -> None:
+    r = _redis()
+    if r:
+        try:
+            await r.hset(KEY_WS_PROPOSALS, prop["id"], json.dumps(prop, default=str))
+        except Exception as e:
+            log.debug("ws proposal save: %s", e)
+
+
+@capability(
+    "ide.workspace.changes.propose", memory="off",
+    http_method="POST", http_path="/ide/workspace/changes/propose", http_tags=["ide", "workspace"],
+    description="Build a PR-style change PROPOSAL from a sandbox/loop container's "
+                "CHANGED files vs the human's IDE workspace folder — nothing is written "
+                "yet. Inputs: session_id (str! — the container/owner key, e.g. goal-<slug> "
+                "or ws-<name>), workspace (str — IDE workspace name) OR host_path (str), "
+                "source (str — who produced it, e.g. v8:<pid>). Output: {ok, proposal:{id, "
+                "files, status}}.",
+)
+async def ide_ws_changes_propose(session_id: str = "", workspace: str = "",
+                                 host_path: str = "", source: str = "", trace_id=None):
+    hp = _resolve_ws_host_path(workspace, host_path)
+    if not hp:
+        return {"ok": False, "error": "workspace/host_path not resolvable"}
+    sb = _sandbox_mod()
+    exp = getattr(sb, "export_workspace_changes", None) if sb else None
+    if not exp:
+        return {"ok": False, "error": "sandbox export unavailable"}
+    tmp = await exp(session_id)
+    if not tmp:
+        return {"ok": True, "proposal": None, "note": "no container to diff"}
+    try:
+        files = _build_ws_proposal_files(hp, tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if not files:
+        return {"ok": True, "proposal": None, "note": "no changes vs workspace"}
+    pid = uuid.uuid4().hex[:8]
+    prop = {"id": pid, "workspace": (workspace or "").strip(), "host_path": hp,
+            "source": (source or "").strip(), "created": now_iso(),
+            "status": "pending", "files": files}
+    await _ws_proposal_save(prop)
+    await emit_event({"type": "ide.workspace.changes.proposed", "id": pid,
+                      "workspace": prop["workspace"], "host_path": hp,
+                      "files": len(files), "source": prop["source"]})
+    return {"ok": True, "proposal": {"id": pid, "workspace": prop["workspace"],
+            "files": len(files), "status": "pending"}}
+
+
+@capability(
+    "ide.workspace.changes.propose_dir", memory="off",
+    http_method="POST", http_path="/ide/workspace/changes/propose_dir", http_tags=["ide", "workspace"],
+    description="Build a PR-style change PROPOSAL by diffing a NEW-versions host "
+                "directory against a TARGET directory — the general form used by any "
+                "code-change source (e.g. Loop Lab's git worktree vs the base repo), so "
+                "its changes land in the same Workspace Changes review panel. Inputs: "
+                "source_dir (str! — dir holding the new file versions), target_dir "
+                "(str! — dir the changes apply to; accept writes here), paths (csv of "
+                "rel paths to limit to — pass the changed set for a large source like a "
+                "repo worktree; empty = walk source_dir), source (str), workspace (str "
+                "— display label). Output: {ok, proposal:{id, files, status}}.",
+)
+async def ide_ws_changes_propose_dir(source_dir: str = "", target_dir: str = "",
+                                     paths: str = "", source: str = "",
+                                     workspace: str = "", trace_id=None):
+    if not source_dir or not os.path.isdir(source_dir):
+        return {"ok": False, "error": f"source_dir not found: {source_dir}"}
+    if not target_dir or not os.path.isdir(target_dir):
+        return {"ok": False, "error": f"target_dir not found: {target_dir}"}
+    only = {p.strip() for p in (paths or "").split(",") if p.strip()} or None
+    files = _build_ws_proposal_files(target_dir, source_dir, only_paths=only)
+    if not files:
+        return {"ok": True, "proposal": None, "note": "no changes vs target"}
+    pid = uuid.uuid4().hex[:8]
+    prop = {"id": pid, "workspace": (workspace or "").strip(), "host_path": target_dir,
+            "source": (source or "").strip(), "created": now_iso(),
+            "status": "pending", "files": files}
+    await _ws_proposal_save(prop)
+    await emit_event({"type": "ide.workspace.changes.proposed", "id": pid,
+                      "workspace": prop["workspace"], "host_path": target_dir,
+                      "files": len(files), "source": prop["source"]})
+    return {"ok": True, "proposal": {"id": pid, "workspace": prop["workspace"],
+            "files": len(files), "status": "pending"}}
+
+
+@capability(
+    "ide.workspace.changes.list", memory="off", silent=True,
+    http_method="GET", http_path="/ide/workspace/changes/list", http_tags=["ide", "workspace"],
+    description="List workspace change proposals awaiting review. Input: status "
+                "(pending|applied|rejected|partial, default pending; empty = all). "
+                "Output: {proposals:[{id, workspace, source, files, pending, status}]}.",
+)
+async def ide_ws_changes_list(status: str = "pending", trace_id=None):
+    r = _redis()
+    out: List[Dict] = []
+    if r:
+        try:
+            raw = await r.hgetall(KEY_WS_PROPOSALS)
+        except Exception:
+            raw = {}
+        for _k, v in (raw or {}).items():
+            try:
+                p = json.loads(v.decode() if isinstance(v, (bytes, bytearray)) else v)
+            except Exception:
+                continue
+            if status and p.get("status") != status:
+                continue
+            pend = sum(1 for f in p.get("files", []) if f.get("decision") == "pending")
+            out.append({"id": p.get("id"), "workspace": p.get("workspace"),
+                        "host_path": p.get("host_path"), "source": p.get("source"),
+                        "created": p.get("created"), "status": p.get("status"),
+                        "files": len(p.get("files", [])), "pending": pend})
+    out.sort(key=lambda x: str(x.get("created") or ""), reverse=True)
+    return {"proposals": out, "count": len(out)}
+
+
+@capability(
+    "ide.workspace.changes.get", memory="off", silent=True,
+    http_method="GET", http_path="/ide/workspace/changes/get", http_tags=["ide", "workspace"],
+    description="Full detail of one change proposal: every file with its status "
+                "(added/modified/binary), unified diff and per-file decision. Input: "
+                "id (str!). Output: the proposal (heavy file bodies omitted; use the diff).",
+)
+async def ide_ws_changes_get(id: str = "", trace_id=None):
+    prop = await _ws_proposal_get(id)
+    if not prop:
+        return {"error": f"unknown proposal: {id}"}
+    view = dict(prop)
+    view["files"] = [{k: v for k, v in f.items() if k != "new_content"}
+                     for f in prop.get("files", [])]
+    return view
+
+
+@capability(
+    "ide.workspace.changes.accept", memory="on",
+    http_method="POST", http_path="/ide/workspace/changes/accept", http_tags=["ide", "workspace"],
+    description="ACCEPT (write to the workspace) files from a change proposal — the "
+                "gated write-back. Inputs: id (str!), paths (csv of rels to accept), "
+                "apply_all (bool default False — accept every text file). Binary and "
+                "over-size files are skipped (returned in `skipped`). Output: {ok, "
+                "applied:[rel], skipped:[rel], status}.",
+)
+async def ide_ws_changes_accept(id: str = "", paths: str = "", apply_all: bool = False,
+                                trace_id=None):
+    prop = await _ws_proposal_get(id)
+    if not prop:
+        return {"ok": False, "error": f"unknown proposal: {id}"}
+    host_path = prop.get("host_path") or ""
+    if not host_path or not os.path.isdir(host_path):
+        return {"ok": False, "error": "workspace host path no longer exists"}
+    sel = {p.strip() for p in (paths or "").split(",") if p.strip()}
+    applied, skipped = [], []
+    for f in prop.get("files", []):
+        rel = f.get("rel")
+        if not (apply_all or rel in sel):
+            continue
+        if f.get("binary") or f.get("truncated") or f.get("new_content") is None:
+            skipped.append(rel)
+            continue
+        dest = os.path.join(host_path, rel)
+        if not _within(host_path, dest):
+            skipped.append(rel)
+            continue
+        try:
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "w", encoding="utf-8") as fh:
+                fh.write(f.get("new_content") or "")
+            f["decision"] = "accept"
+            applied.append(rel)
+        except Exception as e:
+            log.debug("ws accept write %s: %s", rel, e)
+            skipped.append(rel)
+    decs = [f.get("decision") for f in prop.get("files", [])]
+    if all(d != "pending" for d in decs):
+        prop["status"] = "applied" if any(d == "accept" for d in decs) else "rejected"
+    elif any(d == "accept" for d in decs):
+        prop["status"] = "partial"
+    await _ws_proposal_save(prop)
+    await emit_event({"type": "ide.workspace.changes.applied", "id": id,
+                      "applied": len(applied), "workspace": prop.get("workspace")})
+    return {"ok": True, "applied": applied, "skipped": skipped,
+            "status": prop.get("status")}
+
+
+@capability(
+    "ide.workspace.changes.reject", memory="on",
+    http_method="POST", http_path="/ide/workspace/changes/reject", http_tags=["ide", "workspace"],
+    description="REJECT files from a change proposal (discard — never written). "
+                "Inputs: id (str!), paths (csv of rels), reject_all (bool default "
+                "False — reject the whole proposal and delete it). Output: {ok, "
+                "rejected, status}.",
+)
+async def ide_ws_changes_reject(id: str = "", paths: str = "", reject_all: bool = False,
+                                trace_id=None):
+    prop = await _ws_proposal_get(id)
+    if not prop:
+        return {"ok": False, "error": f"unknown proposal: {id}"}
+    r = _redis()
+    if reject_all:
+        if r:
+            try:
+                await r.hdel(KEY_WS_PROPOSALS, id)
+            except Exception:
+                pass
+        await emit_event({"type": "ide.workspace.changes.rejected", "id": id,
+                          "workspace": prop.get("workspace"), "all": True})
+        return {"ok": True, "rejected": len(prop.get("files", [])), "status": "rejected"}
+    sel = {p.strip() for p in (paths or "").split(",") if p.strip()}
+    n = 0
+    for f in prop.get("files", []):
+        if f.get("rel") in sel:
+            f["decision"] = "reject"
+            n += 1
+    decs = [f.get("decision") for f in prop.get("files", [])]
+    if all(d != "pending" for d in decs):
+        prop["status"] = "applied" if any(d == "accept" for d in decs) else "rejected"
+    await _ws_proposal_save(prop)
+    return {"ok": True, "rejected": n, "status": prop.get("status")}
+
+
+_CHANGES_PANEL_FILE = _HERE / "ide_changes_panel.html"
+
+
+@capability(
+    "ide.workspace.changes.panel_html",
+    http_method="GET", http_path="/ide/changes/panel", http_tags=["ide", "workspace", "ui"],
+    memory="off", silent=True,
+    description="Serve the Workspace Changes review panel HTML (PR-style accept/reject "
+                "of a loop's edits before they touch the workspace). Loaded fresh from "
+                "disk each request so HTML edits need no restart.",
+)
+async def ide_ws_changes_panel_html(trace_id=None):
+    from fastapi.responses import HTMLResponse as _HR
+    try:
+        return _HR(_CHANGES_PANEL_FILE.read_text(encoding="utf-8"))
+    except Exception as e:
+        return _HR(f"<h3>Workspace Changes panel missing: {e}</h3>", status_code=500)
+
+
+register_ui(
+    "ide-workspace-changes", "Workspace Changes", "🔀",
+    """<div style="height:100%;display:flex;flex-direction:column;">
+      <iframe src="/ide/changes/panel"
+              style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#14161a);"
+              allow="clipboard-read; clipboard-write"></iframe>
+    </div>""",
+    "", ui_caps=["ide.workspace.changes.list", "ide.workspace.changes.get",
+                 "ide.workspace.changes.accept", "ide.workspace.changes.reject"],
+    mode="inject"
+)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _git(args: list, cwd: str) -> tuple[int, str, str]:

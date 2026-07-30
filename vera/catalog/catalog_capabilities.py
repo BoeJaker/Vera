@@ -261,6 +261,11 @@ def _fit(req: dict, node_hw: dict) -> dict:
         return {"verdict": "unknown"}
     vram = node_hw.get("vram_gb") or 0.0
     ram  = node_hw.get("ram_gb") or 0.0
+    if vram <= 0 and ram <= 0:
+        # Nothing detected for this node — "unknown", never "too big". Claiming
+        # a 1B model doesn't fit because we never probed the hardware is worse
+        # than saying so.
+        return {"verdict": "unknown", "reason": "hardware not detected"}
     gpu_ok = vram >= req["min_vram_gb"] and vram > 0
     cpu_ok = ram >= req["min_ram_gb"]
     if gpu_ok:
@@ -296,8 +301,19 @@ def _fit_target(req: dict, fits: str) -> dict:
 async def cap_catalog_search(search: str = "", filter: str = "text-generation",
                              sort: str = "downloads", limit: int = 30,
                              fits: str = "any", quant: str = "Q4_K_M",
-                             trace_id=None):
+                             author: str = "", trace_id=None):
     await _hydrate()
+    rows = await _hf_models(search=search, filt=filter, sort=sort, limit=limit,
+                            author=author, fits=fits, quant=quant)
+    if isinstance(rows, dict):
+        return rows
+    return {"results": rows, "count": len(rows), "fits": fits, "quant": quant}
+
+
+async def _hf_models(search: str = "", filt: str = "", sort: str = "downloads",
+                     limit: int = 30, author: str = "", fits: str = "any",
+                     quant: str = "Q4_K_M"):
+    """One normalised HF /api/models query. Returns rows, or an error dict."""
     params = {
         "limit": max(1, min(int(limit or 30), 100)),
         "sort": sort or "downloads",
@@ -306,15 +322,17 @@ async def cap_catalog_search(search: str = "", filter: str = "text-generation",
     }
     if search:
         params["search"] = search
-    if filter:
-        params["filter"] = filter
+    if filt:
+        params["filter"] = filt
+    if author:
+        params["author"] = author
     try:
         async with httpx.AsyncClient(timeout=25) as c:
             r = await c.get(f"{HF_API}/models", params=params, headers=_hf_headers())
             r.raise_for_status()
             data = r.json()
     except Exception as e:
-        return {"error": f"HF search failed: {e}", "results": []}
+        return {"error": f"HF query failed: {e}", "results": []}
 
     rows = []
     for m in data if isinstance(data, list) else []:
@@ -331,6 +349,7 @@ async def cap_catalog_search(search: str = "", filter: str = "text-generation",
         if params_b is None:
             params_b = _params_from_id(mid)
         req = _estimate_requirements(params_b, quant)
+        tags = [t for t in (m.get("tags") or []) if isinstance(t, str)]
         rows.append({
             "id": mid,
             "author": mid.split("/")[0] if "/" in mid else "",
@@ -339,12 +358,183 @@ async def cap_catalog_search(search: str = "", filter: str = "text-generation",
             "lastModified": m.get("lastModified", ""),
             "pipeline_tag": m.get("pipeline_tag", ""),
             "gated": m.get("gated", False),
-            "tags": [t for t in (m.get("tags") or []) if isinstance(t, str)][:12],
+            "tags": tags[:12],
+            "gguf": "gguf" in [t.lower() for t in tags],
             "est_params_b": params_b,
             "requirement": req,
             "fit": _fit_target(req, fits),
         })
-    return {"results": rows, "count": len(rows), "fits": fits, "quant": quant}
+    return rows
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BROWSE  —  curated entry points, so you can look around without knowing what
+# to type. Families/publishers are search shortcuts, not a hard-coded catalogue:
+# every tile just parameterises the same HF query, so new releases show up on
+# their own.
+# ─────────────────────────────────────────────────────────────────────────────
+FAMILIES: List[dict] = [
+    {"key": "qwen",      "label": "Qwen",        "search": "Qwen",
+     "blurb": "Alibaba · strong all-round + coder variants, 0.5B→235B"},
+    {"key": "llama",     "label": "Llama",       "search": "Llama",
+     "blurb": "Meta · the default general-purpose family"},
+    {"key": "mistral",   "label": "Mistral",     "search": "Mistral",
+     "blurb": "Mistral AI · efficient dense + MoE models"},
+    {"key": "gemma",     "label": "Gemma",       "search": "gemma",
+     "blurb": "Google · small, punchy, good on modest GPUs"},
+    {"key": "phi",       "label": "Phi",         "search": "phi",
+     "blurb": "Microsoft · tiny models that punch above their weight"},
+    {"key": "deepseek",  "label": "DeepSeek",    "search": "DeepSeek",
+     "blurb": "Reasoning + coding specialists, incl. distills"},
+    {"key": "glm",       "label": "GLM",         "search": "GLM",
+     "blurb": "Zhipu · bilingual general + agentic models"},
+    {"key": "command-r", "label": "Command-R",   "search": "command-r",
+     "blurb": "Cohere · RAG and tool-use oriented"},
+    {"key": "granite",   "label": "Granite",     "search": "granite",
+     "blurb": "IBM · enterprise/code models, permissive licences"},
+    {"key": "nemotron",  "label": "Nemotron",    "search": "Nemotron",
+     "blurb": "NVIDIA · tuned for instruction following + reward"},
+    {"key": "gpt-oss",   "label": "gpt-oss",     "search": "gpt-oss",
+     "blurb": "OpenAI open-weight models + community quants"},
+    {"key": "smol",      "label": "SmolLM",      "search": "SmolLM",
+     "blurb": "HF · very small models for CPU nodes"},
+    {"key": "coder",     "label": "Code models", "search": "coder",
+     "blurb": "Code-specialised checkpoints across vendors"},
+    {"key": "embed",     "label": "Embeddings",  "search": "embed",
+     "task": "feature-extraction", "gguf": False,
+     "blurb": "Embedding models for Fabric / memory / RAG"},
+    {"key": "vision",    "label": "Vision · VLM", "search": "VL",
+     "blurb": "Multimodal checkpoints (image understanding)"},
+]
+
+# Repos that publish reliable GGUF conversions — browsing by publisher is the
+# fastest route to something Ollama can actually pull.
+PUBLISHERS: List[dict] = [
+    {"key": "bartowski", "label": "bartowski", "blurb": "Broad, fast GGUF quants of new releases"},
+    {"key": "unsloth", "label": "unsloth", "blurb": "GGUF + dynamic quants, often day-one"},
+    {"key": "lmstudio-community", "label": "lmstudio-community", "blurb": "Curated, well-tested quants"},
+    {"key": "mradermacher", "label": "mradermacher", "blurb": "Huge coverage incl. imatrix quants"},
+    {"key": "TheBloke", "label": "TheBloke", "blurb": "The classic archive (older models)"},
+    {"key": "Qwen", "label": "Qwen (official)", "blurb": "First-party Qwen repos"},
+    {"key": "google", "label": "google", "blurb": "First-party Gemma repos"},
+    {"key": "meta-llama", "label": "meta-llama", "blurb": "First-party Llama repos (gated)"},
+    {"key": "mistralai", "label": "mistralai", "blurb": "First-party Mistral repos"},
+    {"key": "deepseek-ai", "label": "deepseek-ai", "blurb": "First-party DeepSeek repos"},
+]
+
+SIZE_BUCKETS: List[dict] = [
+    {"key": "tiny",   "label": "≤ 4B",    "min_b": 0,   "max_b": 4,
+     "blurb": "CPU-friendly · fast utility work"},
+    {"key": "small",  "label": "5 – 9B",  "min_b": 4.1, "max_b": 9,
+     "blurb": "The 8GB-VRAM sweet spot"},
+    {"key": "medium", "label": "10 – 20B", "min_b": 9.1, "max_b": 20,
+     "blurb": "Needs ~12–16GB VRAM at Q4"},
+    {"key": "large",  "label": "21 – 40B", "min_b": 20.1, "max_b": 40,
+     "blurb": "24GB+ GPUs, or slow-HQ CPU nodes"},
+    {"key": "xl",     "label": "40B +",   "min_b": 40.1, "max_b": 10000,
+     "blurb": "Multi-GPU, or patient offloaded inference"},
+]
+
+# Ollama's own library — plain `ollama pull <name>` refs. These need no HF repo
+# resolution at all, which is the shortest path from browsing to a running model.
+# Names + tags verified against ollama.com/library; cloud/MLX-only tags omitted.
+OLLAMA_LIBRARY: List[dict] = [
+    {"name": "qwen3.5", "tags": ["0.8b", "2b", "4b", "9b", "27b", "35b"],
+     "blurb": "Qwen 3.5 — the current all-round default", "group": "general"},
+    {"name": "qwen3", "tags": ["0.6b", "1.7b", "4b", "8b", "14b", "32b"],
+     "blurb": "Qwen 3 general / thinking", "group": "general"},
+    {"name": "gemma3", "tags": ["270m", "1b", "4b", "12b", "27b"],
+     "blurb": "Google Gemma 3 — multimodal, strong per GB", "group": "general"},
+    {"name": "llama3.3", "tags": ["70b"], "blurb": "Meta Llama 3.3 (big)", "group": "general"},
+    {"name": "llama3.2", "tags": ["1b", "3b"], "blurb": "Small Llama — fine on CPU", "group": "general"},
+    {"name": "mistral", "tags": ["7b"], "blurb": "Mistral 7B instruct", "group": "general"},
+    {"name": "mistral-nemo", "tags": ["12b"], "blurb": "12B with long context", "group": "general"},
+    {"name": "phi4", "tags": ["14b"], "blurb": "Microsoft Phi-4", "group": "general"},
+    {"name": "phi4-mini", "tags": ["3.8b"], "blurb": "Phi-4 mini — tiny + capable", "group": "general"},
+    {"name": "granite4", "tags": ["350m", "1b", "3b"], "blurb": "IBM Granite 4 — small, permissive", "group": "general"},
+    {"name": "gpt-oss", "tags": ["20b", "120b"], "blurb": "OpenAI open-weight models", "group": "general"},
+    {"name": "deepseek-r1", "tags": ["1.5b", "7b", "8b", "14b", "32b", "70b"],
+     "blurb": "Reasoning distills across every size", "group": "reasoning"},
+    {"name": "magistral", "tags": ["24b"], "blurb": "Mistral's reasoning model", "group": "reasoning"},
+    {"name": "qwen3-coder", "tags": ["30b"], "blurb": "Agentic coding", "group": "code"},
+    {"name": "qwen2.5-coder", "tags": ["1.5b", "7b", "14b", "32b"], "blurb": "Code completion + fixes", "group": "code"},
+    {"name": "devstral", "tags": ["24b"], "blurb": "Codebase-agent tuned", "group": "code"},
+    {"name": "codestral", "tags": ["22b"], "blurb": "Mistral's code model", "group": "code"},
+    {"name": "nomic-embed-text", "tags": ["latest"], "blurb": "Vera's default embedding model", "group": "embed"},
+    {"name": "embeddinggemma", "tags": ["300m"], "blurb": "Small, fast embeddings", "group": "embed"},
+    {"name": "qwen3-embedding", "tags": ["0.6b", "4b", "8b"], "blurb": "Higher-quality embeddings", "group": "embed"},
+    {"name": "qwen2.5vl", "tags": ["3b", "7b", "32b"], "blurb": "Vision-language", "group": "vision"},
+    {"name": "llava", "tags": ["7b", "13b"], "blurb": "Classic vision + language", "group": "vision"},
+    {"name": "minicpm-v", "tags": ["8b"], "blurb": "Compact multimodal", "group": "vision"},
+]
+
+
+@capability("catalog.browse.index", memory="off", silent=True,
+            http_method="GET", http_path="/catalog/browse/index", http_tags=["catalog"],
+            description="The browse entry points: model families, GGUF publishers, size "
+                        "buckets (annotated with what the cluster can actually run) and "
+                        "the Ollama library shortlist. Use with catalog.browse to list "
+                        "models without knowing a search term.")
+async def cap_catalog_browse_index(trace_id=None):
+    await _hydrate()
+    best = _best_gpu_hw()
+    ram = _best_cpu_ram()
+    buckets = []
+    for b in SIZE_BUCKETS:
+        mid = (b["min_b"] + min(b["max_b"], 80)) / 2 or 1
+        req = _estimate_requirements(mid, "Q4_K_M")
+        buckets.append({**b, "cluster_fit": _fit(req, {"vram_gb": best["vram_gb"],
+                                                       "ram_gb": max(best["ram_gb"], ram)})})
+    return {"families": FAMILIES, "publishers": PUBLISHERS, "sizes": buckets,
+            "ollama_library": OLLAMA_LIBRARY,
+            "cluster": {"best_gpu": best, "best_cpu_ram_gb": ram}}
+
+
+@capability("catalog.browse", memory="off", silent=True,
+            http_method="GET", http_path="/catalog/browse", http_tags=["catalog"],
+            description="Browse Hugging Face models without a search term. Query: mode "
+                        "(trending|popular|recent|family|publisher|size), family (str — a "
+                        "key from catalog.browse.index), publisher (str — HF author), "
+                        "min_b/max_b (float — parameter-count window for mode=size), gguf "
+                        "(bool, default true — only Ollama-pullable repos), task (str — HF "
+                        "pipeline tag when gguf is false), limit (int), fits "
+                        "(node_id|cluster|any), quant (str). Returns the same annotated "
+                        "rows as catalog.search.")
+async def cap_catalog_browse(mode: str = "trending", family: str = "", publisher: str = "",
+                             min_b: float = 0, max_b: float = 0, gguf: bool = True,
+                             task: str = "text-generation", limit: int = 40,
+                             fits: str = "any", quant: str = "Q4_K_M", trace_id=None):
+    await _hydrate()
+    fam = next((f for f in FAMILIES if f["key"] == family), None) if family else None
+    if fam and fam.get("gguf") is False:
+        gguf = False
+        task = fam.get("task", task)
+    filt = "gguf" if gguf else (task or "")
+    sort = {"trending": "trendingScore", "popular": "downloads",
+            "recent": "lastModified"}.get(mode, "downloads")
+    search, author = "", ""
+    fetch = int(limit or 40)
+    if mode == "family":
+        if not fam:
+            return {"error": f"unknown family: {family}", "results": []}
+        search = fam["search"]
+    elif mode == "publisher":
+        if not publisher:
+            return {"error": "publisher required for mode=publisher", "results": []}
+        author = publisher
+    elif mode == "size":
+        # Over-fetch, then window by estimated parameter count.
+        fetch = 100
+    rows = await _hf_models(search=search, filt=filt, sort=sort, limit=fetch,
+                            author=author, fits=fits, quant=quant)
+    if isinstance(rows, dict):
+        return rows
+    if mode == "size":
+        lo, hi = float(min_b or 0), float(max_b or 1e9)
+        rows = [r for r in rows if r.get("est_params_b") is not None
+                and lo <= r["est_params_b"] <= hi][:int(limit or 40)]
+    return {"results": rows, "count": len(rows), "mode": mode,
+            "family": family, "publisher": publisher, "fits": fits, "quant": quant}
 
 
 @capability("catalog.model", memory="off", silent=True,
@@ -495,21 +685,120 @@ def _node_view(iid: str, base: dict) -> dict:
     }
 
 
+async def _node_view_full(iid: str, base: dict) -> dict:
+    """_node_view plus disk figures and an SSH-host suggestion for unmapped nodes."""
+    v = _node_view(iid, base)
+    v.update(await _node_disk(iid))
+    v["ssh_host_suggest"] = await _ssh_host_suggest(iid)
+    return v
+
+
 @capability("catalog.nodes", memory="off", silent=True,
             http_method="GET", http_path="/catalog/nodes", http_tags=["catalog"],
             description="Unified per-node view for the catalog: Ollama + vLLM nodes with "
-                        "their detected/overridden hardware (VRAM/RAM/GPU), SSH mapping, "
-                        "installed models, and any 'slow-hq' class + pinned model.")
+                        "their detected/overridden hardware (VRAM/RAM/GPU), free DISK "
+                        "(root fs + the filesystem holding the Ollama model store), SSH "
+                        "mapping, installed models, and any 'slow-hq' class + pinned model.")
 async def cap_catalog_nodes(trace_id=None):
     await _hydrate()
-    nodes = [_node_view(iid, base) for iid, base in _all_nodes().items()]
+    nodes = [await _node_view_full(iid, base) for iid, base in _all_nodes().items()]
     nodes.sort(key=lambda n: (n["backend"], -(n.get("vram_gb") or 0), n["id"]))
     return {"nodes": nodes,
             "cluster": {"best_gpu": _best_gpu_hw(), "best_cpu_ram_gb": _best_cpu_ram()}}
 
 
+# Root filesystem + the filesystem that actually holds the Ollama blobs. Emitted
+# as pipe-delimited lines so a partial/garbled response still parses cleanly.
+_DISK_SCRIPT = r"""
+df -P -B1G / 2>/dev/null | awk 'NR==2{print "DISK|"$2"|"$4}'
+for p in "$OLLAMA_MODELS" /usr/share/ollama/.ollama/models /var/lib/ollama/.ollama/models \
+         "$HOME/.ollama/models" /root/.ollama/models /mnt/models/ollama; do
+  [ -n "$p" ] && [ -d "$p" ] || continue
+  echo "MPATH|$p"
+  df -P -B1G "$p" 2>/dev/null | awk 'NR==2{print "MDISK|"$2"|"$4}'
+  du -s -B1G "$p" 2>/dev/null | awk '{print "MUSED|"$1}'
+  break
+done
+"""
+
+
+def _parse_disk(txt: str) -> dict:
+    """Parse _DISK_SCRIPT output into disk_* fields (all GB, all best-effort)."""
+    out: Dict[str, Any] = {}
+    for ln in (txt or "").splitlines():
+        k, _, v = ln.strip().partition("|")
+        try:
+            if k == "DISK":
+                tot, _, free = v.partition("|")
+                out["disk_total_gb"] = round(float(re.sub(r"[^\d.]", "", tot) or 0), 1)
+                out["disk_free_gb"] = round(float(re.sub(r"[^\d.]", "", free) or 0), 1)
+            elif k == "MPATH":
+                out["models_path"] = v.strip()
+            elif k == "MDISK":
+                tot, _, free = v.partition("|")
+                out["models_disk_total_gb"] = round(float(re.sub(r"[^\d.]", "", tot) or 0), 1)
+                out["models_disk_free_gb"] = round(float(re.sub(r"[^\d.]", "", free) or 0), 1)
+            elif k == "MUSED":
+                out["models_dir_gb"] = round(float(re.sub(r"[^\d.]", "", v) or 0), 1)
+        except Exception:
+            continue
+    return out
+
+
+# nodes.list is a pure registry merge (no SSH), but it is not free — cache it
+# briefly so per-node disk lookups during a render don't rebuild it N times.
+_NODES_CACHE = {"at": 0.0, "rows": []}
+
+
+async def _estate_nodes() -> List[dict]:
+    if time.time() - _NODES_CACHE["at"] < 30 and _NODES_CACHE["rows"]:
+        return _NODES_CACHE["rows"]
+    fn = _cap("nodes.list")
+    rows = []
+    if fn:
+        try:
+            rows = (await fn() or {}).get("nodes", []) or []
+        except Exception as e:
+            log.debug("estate nodes: %s", e)
+    _NODES_CACHE.update(at=time.time(), rows=rows)
+    return rows
+
+
+async def _estate_lookup(iid: str) -> dict:
+    """The unified-estate node row that owns this Ollama/vLLM instance id."""
+    for n in await _estate_nodes():
+        for rt in (n.get("ollama") or []) + (n.get("vllm") or []):
+            if rt.get("id") == iid:
+                return n
+    return {}
+
+
+async def _node_disk(iid: str) -> dict:
+    """Disk figures for a node: catalog's own SSH probe first, else the estate's
+    cached detection facts (nodes.detect). Returns {} when nothing is known."""
+    hw = NODE_HW.get(iid, {})
+    keys = ("disk_total_gb", "disk_free_gb", "models_path",
+            "models_disk_total_gb", "models_disk_free_gb", "models_dir_gb")
+    own = {k: hw[k] for k in keys if hw.get(k) is not None}
+    if own.get("disk_free_gb") is not None or own.get("models_disk_free_gb") is not None:
+        return {**own, "disk_source": hw.get("source", "auto")}
+    node = await _estate_lookup(iid)
+    f = node.get("facts") or {}
+    fallback = {k: f[k] for k in ("disk_total_gb", "disk_free_gb") if f.get(k) is not None}
+    if fallback:
+        return {**fallback, "disk_source": "nodes.detect"}
+    return {}
+
+
+async def _ssh_host_suggest(iid: str) -> str:
+    """A plausible SSH host for an unmapped node, from the unified estate."""
+    if NODE_SSH.get(iid):
+        return ""
+    return (await _estate_lookup(iid)).get("ssh_host_id", "") or ""
+
+
 async def _detect_hw(host_id: str) -> dict:
-    """Probe VRAM/RAM/GPU/cores on an SSH host. Best-effort; missing tools tolerated."""
+    """Probe VRAM/RAM/GPU/cores/disk on an SSH host. Best-effort; missing tools tolerated."""
     ssh = _cap("exec.ssh.run")
     if not ssh:
         return {"error": "exec.ssh.run unavailable"}
@@ -552,6 +841,13 @@ async def _detect_hw(host_id: str) -> dict:
             out["cpu_cores"] = int(re.sub(r"[^\d]", "", txt) or 0)
     except Exception as e:
         log.debug("detect nproc %s: %s", host_id, e)
+    # Disk — root filesystem AND the filesystem holding the Ollama model store
+    # (often a separate mount; that is the one a pull actually fills up).
+    try:
+        r = await ssh(command=_DISK_SCRIPT, host_id=host_id, timeout=25)
+        out.update(_parse_disk((r or {}).get("stdout", "") if isinstance(r, dict) else ""))
+    except Exception as e:
+        log.debug("detect disk %s: %s", host_id, e)
     return out
 
 
@@ -627,6 +923,451 @@ async def cap_catalog_node_ssh_set(instance_id: str, host_id: str = "", trace_id
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# INSTALLED MODELS  —  what is ALREADY on each node, and what it costs on disk
+# ─────────────────────────────────────────────────────────────────────────────
+def _ssl():
+    return getattr(_orch, "_SSL_CTX", None) or True
+
+
+def _params_from_size_str(s: str) -> Optional[float]:
+    """Ollama reports parameter_size like '7.6B' / '32.8B' / '1.5B'."""
+    m = re.match(r"\s*(\d+(?:\.\d+)?)\s*([BbMm])", str(s or ""))
+    if not m:
+        return None
+    val = float(m.group(1))
+    return round(val / 1000.0, 2) if m.group(2).lower() == "m" else round(val, 1)
+
+
+async def _ollama_inventory(iid: str, url: str) -> dict:
+    """/api/tags + /api/ps for one Ollama node — installed models with their REAL
+    quant + parameter size (no estimating needed), and which are resident now."""
+    out: Dict[str, Any] = {"models": [], "running": [], "count": 0, "size_gb": 0.0}
+    try:
+        async with httpx.AsyncClient(timeout=8, verify=_ssl()) as c:
+            r = await c.get(f"{url}/api/tags")
+            r.raise_for_status()
+            tags = (r.json() or {}).get("models", []) or []
+    except Exception as e:
+        return {**out, "error": str(e)}
+    resident: Dict[str, dict] = {}
+    try:
+        async with httpx.AsyncClient(timeout=5, verify=_ssl()) as c:
+            r = await c.get(f"{url}/api/ps")
+            if r.status_code == 200:
+                for m in (r.json() or {}).get("models", []) or []:
+                    resident[m.get("name", "")] = {
+                        "vram_gb": round((m.get("size_vram") or 0) / 1e9, 2),
+                        "expires_at": m.get("expires_at", "")}
+    except Exception:
+        pass
+    total = 0.0
+    for m in tags:
+        name = m.get("name") or m.get("model") or ""
+        det = m.get("details") or {}
+        size_gb = round((m.get("size") or 0) / 1e9, 2)
+        total += size_gb
+        quant = det.get("quantization_level") or ""
+        params_b = _params_from_size_str(det.get("parameter_size", "")) or \
+            _params_from_id(name)
+        res = resident.get(name)
+        out["models"].append({
+            "name": name,
+            "size_gb": size_gb,
+            "quant": quant,
+            "family": det.get("family", ""),
+            "format": det.get("format", ""),
+            "params_b": params_b,
+            "modified_at": m.get("modified_at", ""),
+            "digest": (m.get("digest") or "")[:12],
+            "loaded": bool(res),
+            "vram_gb": (res or {}).get("vram_gb"),
+            "expires_at": (res or {}).get("expires_at", ""),
+            "requirement": _estimate_requirements(params_b, quant),
+            "source": "hf" if name.startswith("hf.co/") else "library",
+        })
+    out["models"].sort(key=lambda x: (not x["loaded"], -(x["size_gb"] or 0)))
+    out["running"] = [n for n in resident]
+    out["count"] = len(out["models"])
+    out["size_gb"] = round(total, 2)
+    return out
+
+
+@capability("catalog.installed", memory="off", silent=True,
+            http_method="GET", http_path="/catalog/installed", http_tags=["catalog"],
+            description="Models ALREADY installed on each node, with their real quant, "
+                        "parameter size, on-disk size, whether they are resident in VRAM "
+                        "right now, plus the node's free disk space and how much of it the "
+                        "model store occupies. Query: instance_id (str — one node, default "
+                        "all). This is the 'what do I already have' view for the catalog.")
+async def cap_catalog_installed(instance_id: str = "", trace_id=None):
+    await _hydrate()
+    allnodes = _all_nodes()
+    targets = ({instance_id: allnodes[instance_id]} if instance_id and instance_id in allnodes
+               else allnodes)
+
+    async def _one(iid: str, base: dict) -> dict:
+        node = await _node_view_full(iid, base)
+        if base.get("backend") == "ollama" and base.get("url"):
+            inv = await _ollama_inventory(iid, base["url"])
+        else:
+            # vLLM serves exactly what it was started with — no local tag store.
+            inv = {"models": [{"name": m, "size_gb": None, "quant": "", "family": "",
+                               "params_b": _params_from_id(str(m)), "loaded": True,
+                               "source": "vllm"} for m in (base.get("models") or [])],
+                   "running": list(base.get("models") or []),
+                   "count": len(base.get("models") or []), "size_gb": 0.0}
+        free = node.get("models_disk_free_gb")
+        if free is None:
+            free = node.get("disk_free_gb")
+        total = node.get("models_disk_total_gb")
+        if total is None:
+            total = node.get("disk_total_gb")
+        return {
+            "id": iid, "backend": base.get("backend", ""),
+            "label": base.get("label", iid), "url": base.get("url", ""),
+            "status": base.get("status", ""), "has_gpu": base.get("has_gpu", False),
+            "enabled": base.get("enabled", True),
+            "vram_gb": node.get("vram_gb"), "ram_gb": node.get("ram_gb"),
+            "gpu_name": node.get("gpu_name", ""),
+            "disk_free_gb": free, "disk_total_gb": total,
+            "disk_source": node.get("disk_source", ""),
+            "models_path": node.get("models_path", ""),
+            "models_dir_gb": node.get("models_dir_gb"),
+            "ssh_host": node.get("ssh_host", ""),
+            "ssh_host_suggest": node.get("ssh_host_suggest", ""),
+            **inv,
+        }
+
+    # Concurrently — one unreachable node must not stall the whole view.
+    done = await asyncio.gather(*[_one(iid, base) for iid, base in targets.items()],
+                                return_exceptions=True)
+    rows = []
+    for (iid, base), res in zip(targets.items(), done):
+        if isinstance(res, BaseException):
+            rows.append({"id": iid, "backend": base.get("backend", ""),
+                         "label": base.get("label", iid), "url": base.get("url", ""),
+                         "status": base.get("status", ""), "models": [], "running": [],
+                         "count": 0, "size_gb": 0.0, "error": str(res)[:200]})
+        else:
+            rows.append(res)
+    rows.sort(key=lambda r: (r["backend"], r["id"]))
+    return {"nodes": rows,
+            "total_models": sum(r.get("count") or 0 for r in rows),
+            "total_size_gb": round(sum(r.get("size_gb") or 0 for r in rows), 2)}
+
+
+@capability("catalog.model.delete", memory="off",
+            http_method="POST", http_path="/catalog/model/delete", http_tags=["catalog"],
+            description="Delete an installed model from an Ollama node, freeing its disk. "
+                        "Inputs: instance_id (str!), model (str! — the exact installed tag, "
+                        "e.g. 'qwen2.5:7b' or 'hf.co/author/repo:Q4_K_M').")
+async def cap_catalog_model_delete(instance_id: str, model: str, trace_id=None):
+    base = _all_nodes().get(instance_id)
+    if not base:
+        return {"error": f"unknown node: {instance_id}"}
+    if base.get("backend") != "ollama":
+        return {"error": "only Ollama nodes have a deletable local model store"}
+    url = base.get("url", "")
+    try:
+        async with httpx.AsyncClient(timeout=60, verify=_ssl()) as c:
+            r = await c.request("DELETE", f"{url}/api/delete", json={"name": model})
+            if r.status_code >= 400:
+                return {"error": f"HTTP {r.status_code}: {r.text[:200]}"}
+    except Exception as e:
+        return {"error": str(e)}
+    await emit_event({"type": "catalog.model.deleted",
+                      "instance_id": instance_id, "model": model})
+    return {"ok": True, "instance_id": instance_id, "model": model}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LIVE DOWNLOADS  —  streaming /api/pull with real progress, speed and ETA
+# ─────────────────────────────────────────────────────────────────────────────
+# Ollama's /api/pull emits NDJSON: one object per state change, and for each
+# blob a running {digest,total,completed}. We aggregate those into a single
+# progress record per pull so the UI can show a live bar instead of a spinner
+# that sits there for twenty minutes.
+KEY_PULLS = "vera:catalog:pulls"        # Redis hash: pull_id -> record JSON
+PULLS: Dict[str, dict] = {}             # this process's pulls (authoritative for them)
+_PULL_TASKS: Dict[str, asyncio.Task] = {}
+_PULL_SEQ = {"n": 0}
+_ACTIVE_STATES = ("starting", "downloading", "verifying")
+
+
+def _pull_id(instance_id: str) -> str:
+    _PULL_SEQ["n"] += 1
+    return f"{instance_id}-{int(time.time())}-{_PULL_SEQ['n']}"
+
+
+async def _pull_persist(rec: dict, force: bool = False) -> None:
+    """Mirror progress into Redis so any Vera instance in the cluster can report
+    it (the pull itself only runs on the node that accepted the request)."""
+    now = time.time()
+    if not force and now - rec.get("_persisted", 0) < 1.0:
+        return
+    rec["_persisted"] = now
+    r = _redis()
+    if not r:
+        return
+    try:
+        await r.hset(KEY_PULLS, rec["id"],
+                     json.dumps({k: v for k, v in rec.items() if not k.startswith("_")}))
+        await r.expire(KEY_PULLS, 86400)
+    except Exception as e:
+        log.debug("pull persist: %s", e)
+
+
+def _pull_public(rec: dict) -> dict:
+    return {k: v for k, v in rec.items() if not k.startswith("_")}
+
+
+async def _pull_worker(rec: dict, url: str) -> None:
+    """Stream one /api/pull and keep `rec` up to date until it terminates."""
+    layers: Dict[str, dict] = rec["layers"]
+    last_emit = 0.0
+    # Long downloads: no read timeout, but don't hang forever on a dead connect.
+    timeout = httpx.Timeout(connect=20.0, read=None, write=None, pool=None)
+    try:
+        async with httpx.AsyncClient(timeout=timeout, verify=_ssl()) as c:
+            async with c.stream("POST", f"{url}/api/pull",
+                                json={"name": rec["model"], "stream": True}) as resp:
+                if resp.status_code >= 400:
+                    body = (await resp.aread()).decode("utf-8", "replace")[:300]
+                    raise RuntimeError(f"HTTP {resp.status_code}: {body}")
+                async for line in resp.aiter_lines():
+                    line = (line or "").strip()
+                    if not line:
+                        continue
+                    try:
+                        msg = json.loads(line)
+                    except Exception:
+                        continue
+                    if msg.get("error"):
+                        raise RuntimeError(str(msg["error"]))
+                    status = str(msg.get("status") or "")
+                    rec["status"] = status
+                    digest = msg.get("digest")
+                    if digest and msg.get("total"):
+                        lay = layers.setdefault(digest, {"total": 0, "completed": 0})
+                        lay["total"] = int(msg.get("total") or lay["total"])
+                        lay["completed"] = int(msg.get("completed") or 0)
+                        rec["state"] = "downloading"
+                    elif status.startswith("verifying") or status.startswith("writing"):
+                        rec["state"] = "verifying"
+                    total = sum(l["total"] for l in layers.values())
+                    done = sum(min(l["completed"], l["total"]) for l in layers.values())
+                    rec["total_bytes"] = total
+                    rec["completed_bytes"] = done
+                    rec["pct"] = round(done / total * 100, 1) if total else (
+                        100.0 if rec["state"] == "verifying" else 0.0)
+                    rec["layers_done"] = sum(
+                        1 for l in layers.values() if l["total"] and l["completed"] >= l["total"])
+                    rec["layers_total"] = len(layers)
+                    now = time.time()
+                    dt = now - rec["_rate_at"]
+                    if dt >= 2.0:
+                        rec["speed_bps"] = max(0, int((done - rec["_rate_bytes"]) / dt))
+                        rec["_rate_at"], rec["_rate_bytes"] = now, done
+                        rec["eta_s"] = (int((total - done) / rec["speed_bps"])
+                                        if rec["speed_bps"] > 0 and total > done else None)
+                    rec["updated_at"] = now_iso()
+                    if now - last_emit >= 1.0:
+                        last_emit = now
+                        await _pull_persist(rec)
+                        await emit_event({"type": "catalog.pull.progress",
+                                          **{k: rec[k] for k in
+                                             ("id", "model", "instance_id", "state",
+                                              "status", "pct", "speed_bps", "eta_s",
+                                              "total_bytes", "completed_bytes")}})
+                    if status == "success":
+                        rec["state"] = "done"
+        if rec["state"] != "done":
+            rec["state"] = "done"          # stream ended cleanly without an explicit success
+        rec["ok"] = True
+        rec["pct"] = 100.0
+    except asyncio.CancelledError:
+        rec["state"] = "cancelled"
+        rec["ok"] = False
+        rec["error"] = "cancelled by operator"
+        raise
+    except Exception as e:
+        rec["state"] = "failed"
+        rec["ok"] = False
+        rec["error"] = str(e)[:400]
+    finally:
+        rec["finished_at"] = now_iso()
+        rec["updated_at"] = rec["finished_at"]
+        rec["eta_s"] = None
+        rec["speed_bps"] = 0
+        _PULL_TASKS.pop(rec["id"], None)
+        # Cancellation lands here too, and awaiting inside a cancelling task can
+        # be interrupted — run the final write as an independent task so the
+        # record never gets stuck showing "downloading".
+        try:
+            await asyncio.shield(asyncio.ensure_future(_pull_finalise(rec)))
+        except BaseException:
+            pass
+
+
+async def _pull_finalise(rec: dict) -> None:
+    await _pull_persist(rec, force=True)
+    await emit_event({"type": "catalog.pull.done", "id": rec["id"],
+                      "model": rec["model"], "instance_id": rec["instance_id"],
+                      "ok": bool(rec.get("ok")), "state": rec["state"],
+                      "error": rec.get("error", "")})
+
+
+async def _pull_start(model: str, instance_id: str, hf_id: str = "") -> dict:
+    """Kick off a streamed pull in the background; returns the progress record."""
+    base = _all_nodes().get(instance_id)
+    if not base:
+        return {"error": f"unknown node: {instance_id}"}
+    if base.get("backend") != "ollama":
+        return {"error": "streamed pulls are an Ollama-node operation"}
+    url = base.get("url", "")
+    if not url:
+        return {"error": f"node {instance_id} has no URL"}
+    for rec in PULLS.values():
+        if (rec["instance_id"] == instance_id and rec["model"] == model
+                and rec["state"] in _ACTIVE_STATES):
+            return rec                     # already downloading — join it
+    rec = {
+        "id": _pull_id(instance_id), "model": model, "hf_id": hf_id,
+        "instance_id": instance_id, "node_label": base.get("label", instance_id),
+        "state": "starting", "status": "queued", "ok": None, "error": "",
+        "total_bytes": 0, "completed_bytes": 0, "pct": 0.0,
+        "speed_bps": 0, "eta_s": None, "layers": {},
+        "layers_done": 0, "layers_total": 0,
+        "started_at": now_iso(), "updated_at": now_iso(), "finished_at": "",
+        "_rate_at": time.time(), "_rate_bytes": 0, "_persisted": 0.0,
+    }
+    PULLS[rec["id"]] = rec
+    _prune_pulls()
+    await _pull_persist(rec, force=True)
+    await emit_event({"type": "catalog.pull.start", "id": rec["id"],
+                      "model": model, "instance_id": instance_id})
+    _PULL_TASKS[rec["id"]] = asyncio.create_task(_pull_worker(rec, url))
+    return rec
+
+
+def _prune_pulls() -> None:
+    """Keep the in-memory log bounded: drop finished pulls beyond the newest 40."""
+    finished = sorted((r for r in PULLS.values() if r["state"] not in _ACTIVE_STATES),
+                      key=lambda r: r.get("finished_at") or r.get("started_at") or "")
+    for rec in finished[:-40]:
+        PULLS.pop(rec["id"], None)
+
+
+@capability("catalog.pull.start", memory="off",
+            http_method="POST", http_path="/catalog/pull/start", http_tags=["catalog"],
+            description="Start a model download on an Ollama node and return IMMEDIATELY "
+                        "with a pull id — progress is streamed in the background and read "
+                        "back via catalog.pull.status. Inputs: model (str! — an Ollama "
+                        "library name like 'qwen2.5:7b' or an 'hf.co/author/repo:QUANT' "
+                        "ref), instance_id (str!). Re-starting a pull that is already "
+                        "running joins the existing one.")
+async def cap_catalog_pull_start(model: str, instance_id: str, trace_id=None):
+    await _hydrate()
+    if not (model or "").strip():
+        return {"error": "model required"}
+    rec = await _pull_start(model.strip(), instance_id)
+    if rec.get("error"):
+        return rec
+    return {"ok": True, "pull_id": rec["id"], "pull": _pull_public(rec)}
+
+
+@capability("catalog.pull.status", memory="off", silent=True,
+            http_method="GET", http_path="/catalog/pull/status", http_tags=["catalog"],
+            description="Live status of model downloads: percent complete, bytes, speed, "
+                        "ETA, per-layer counts and the last Ollama status line. Query: "
+                        "pull_id (str — one pull), instance_id (str — filter), active_only "
+                        "(bool). Includes pulls started by other Vera instances in the "
+                        "cluster (mirrored through Redis).")
+async def cap_catalog_pull_status(pull_id: str = "", instance_id: str = "",
+                                  active_only: bool = False, trace_id=None):
+    merged: Dict[str, dict] = {}
+    r = _redis()
+    if r:
+        try:
+            raw = await r.hgetall(KEY_PULLS)
+            for k, v in (raw or {}).items():
+                k = k.decode() if isinstance(k, bytes) else k
+                v = v.decode() if isinstance(v, bytes) else v
+                try:
+                    merged[k] = json.loads(v)
+                except Exception:
+                    continue
+        except Exception as e:
+            log.debug("pull status redis: %s", e)
+    for pid, rec in PULLS.items():        # local records win — they are live
+        merged[pid] = _pull_public(rec)
+    rows = list(merged.values())
+    if pull_id:
+        rows = [x for x in rows if x.get("id") == pull_id]
+    if instance_id:
+        rows = [x for x in rows if x.get("instance_id") == instance_id]
+    if active_only:
+        rows = [x for x in rows if x.get("state") in _ACTIVE_STATES]
+    rows.sort(key=lambda x: x.get("started_at") or "", reverse=True)
+    active = [x for x in rows if x.get("state") in _ACTIVE_STATES]
+    return {"pulls": rows[:60], "active": len(active),
+            "active_ids": [x["id"] for x in active]}
+
+
+@capability("catalog.pull.cancel", memory="off",
+            http_method="POST", http_path="/catalog/pull/cancel", http_tags=["catalog"],
+            description="Cancel an in-flight model download. Inputs: pull_id (str!). Only "
+                        "the Vera instance that started the pull can cancel it; from "
+                        "another instance this reports where it is running.")
+async def cap_catalog_pull_cancel(pull_id: str, trace_id=None):
+    task = _PULL_TASKS.get(pull_id)
+    if not task:
+        if pull_id in PULLS:
+            return {"ok": True, "note": "already finished", "pull": _pull_public(PULLS[pull_id])}
+        return {"error": "pull not running on this Vera instance — cancel it from the "
+                         "instance that started it"}
+    task.cancel()
+    return {"ok": True, "pull_id": pull_id, "state": "cancelling"}
+
+
+@capability("catalog.pull.clear", memory="off",
+            http_method="POST", http_path="/catalog/pull/clear", http_tags=["catalog"],
+            description="Clear finished download records from the downloads list. "
+                        "Inputs: pull_id (str — one record; empty clears all finished).")
+async def cap_catalog_pull_clear(pull_id: str = "", trace_id=None):
+    ids = ([pull_id] if pull_id
+           else [pid for pid, rec in PULLS.items() if rec["state"] not in _ACTIVE_STATES])
+    cleared = 0
+    for pid in ids:
+        rec = PULLS.get(pid)
+        if rec and rec["state"] in _ACTIVE_STATES:
+            continue
+        PULLS.pop(pid, None)
+        cleared += 1
+    r = _redis()
+    if r:
+        try:
+            if pull_id:
+                await r.hdel(KEY_PULLS, pull_id)
+            else:
+                raw = await r.hgetall(KEY_PULLS)
+                stale = []
+                for k, v in (raw or {}).items():
+                    k = k.decode() if isinstance(k, bytes) else k
+                    v = v.decode() if isinstance(v, bytes) else v
+                    try:
+                        if json.loads(v).get("state") not in _ACTIVE_STATES:
+                            stale.append(k)
+                    except Exception:
+                        stale.append(k)
+                if stale:
+                    await r.hdel(KEY_PULLS, *stale)
+        except Exception as e:
+            log.debug("pull clear redis: %s", e)
+    return {"ok": True, "cleared": cleared}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # INSTALL  (delegates to ollama.pull / pxstore.models.pull / vllm.server.start)
 # ─────────────────────────────────────────────────────────────────────────────
 def _pick_gguf_variant(variants: List[dict], instance_id: str,
@@ -690,16 +1431,25 @@ async def cap_catalog_install_plan(id: str, instance_id: str, backend: str = "ol
             description="Install a model onto a node. Inputs: id (str! HF repo), backend "
                         "(ollama|vllm), instance_id (str!), quant (str — optional), via "
                         "(direct|store — Ollama only; 'store' pulls once to the shared "
-                        "model store). Delegates to ollama.pull / pxstore.models.pull / "
-                        "vllm.server.start.")
+                        "model store), wait (bool, default true — set false to return a "
+                        "pull_id immediately and track live progress via "
+                        "catalog.pull.status). Delegates to ollama.pull / "
+                        "pxstore.models.pull / vllm.server.start.")
 async def cap_catalog_install(id: str, instance_id: str, backend: str = "ollama",
-                              quant: str = "", via: str = "direct", trace_id=None):
+                              quant: str = "", via: str = "direct", wait: bool = True,
+                              trace_id=None):
     plan = await cap_catalog_install_plan(id=id, instance_id=instance_id,
                                           backend=backend, quant=quant)
     if not plan.get("ok"):
         return plan
     await emit_event({"type": "catalog.install.start", "id": id,
                       "instance_id": instance_id, "backend": backend, "plan": plan})
+    if backend == "ollama" and not wait and via != "store":
+        rec = await _pull_start(plan["ref"], instance_id, hf_id=id)
+        if rec.get("error"):
+            return rec
+        return {"ok": True, "backend": "ollama", "ref": plan["ref"],
+                "pull_id": rec["id"], "streaming": True, "plan": plan}
     if backend == "ollama":
         ref = plan["ref"]
         if via == "store" and _cap("pxstore.models.pull"):

@@ -113,6 +113,18 @@
     .pill.ok,.pill.done { color:var(--ok,#6db87a); border-color:var(--ok,#6db87a); }
     .pill.running,.pill.live { color:var(--ok,#6db87a); border-color:var(--ok,#6db87a); background:rgba(109,184,122,.12); }
     .pill.failed,.pill.error,.pill.interrupted { color:var(--err,#c96b6b); border-color:var(--err,#c96b6b); }
+    .pill.waiting,.pill.pending { color:var(--acc3,#c9955a); border-color:var(--acc3,#c9955a); }
+    .pill.retired { color:var(--dim,#6a6058); border-color:var(--dim,#6a6058); }
+    .loopplan { flex-shrink:0; padding:6px 10px; border-top:1px dotted var(--tl-bd);
+      display:flex; flex-direction:column; gap:4px; max-height:150px; overflow:auto; }
+    .loopplan .lp-hd { font-size:8.5px; text-transform:uppercase; letter-spacing:.5px; color:var(--dim,#6a6058); }
+    .lp-row { display:flex; align-items:center; gap:6px; font-size:9.5px; min-width:0;
+      cursor:pointer; padding:1px 3px; border-radius:4px; }
+    .lp-row:hover { background:var(--tl-bg2); }
+    .lp-row .lp-seq { color:var(--dim,#6a6058); width:14px; text-align:right; flex-shrink:0; }
+    .lp-row .lp-nm { color:var(--text,#ddd); font-weight:600; flex-shrink:0; max-width:110px;
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .lp-row .lp-goal { color:var(--dim2,#8a7e70); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
     .card-meta { font-size:9px; color:var(--dim,#6a6058); padding:4px 10px 0;
       display:flex; gap:8px; flex-wrap:wrap; flex-shrink:0; }
     .card-bd { flex:1 1 auto; padding:8px 10px; font-size:10px; line-height:1.5;
@@ -155,6 +167,7 @@
       this._kindFilter = new Set();
       this._pipelines = [];
       this._openWatch = new Set();   // session_ids currently being watched (persist across refresh)
+      this._drawerMode = null;       // 'files' | 'sandboxes' | null — kept in sync with the scope
       this._lastSig = '';
       this.attachShadow({ mode: 'open' });
     }
@@ -178,6 +191,12 @@
       const sel = this.shadowRoot.querySelector('#scopeSel'); if (sel) sel.value = this._scope;
       this._syncBar();
       this.load();
+      // Keep the open Files/Sandboxes drawer in sync with the NEW scope instead
+      // of forcing the user to close + reopen the panel to reload it.
+      if (this._drawerOpen()) {
+        if (this._drawerMode === 'files') this._openFiles();
+        else if (this._drawerMode === 'sandboxes') this._openSandboxes();
+      }
       this.dispatchEvent(new CustomEvent('activity:scope', { bubbles: true, detail: { scope: s } }));
     }
     setAutoRefresh(sec) {
@@ -317,12 +336,30 @@
         if (t.url) acts.push('<button class="a" data-open="' + esc(t.url) + '" title="' + esc(t.cap) + '">⇗ ' + esc(t.label) + '</button>');
       });
       const meta = [];
+      if (x.seq != null) meta.push('#' + x.seq);
       if (x.steps != null) meta.push(x.steps + ' steps');
       if (x.loops != null) meta.push(x.loops + ' loops');
       if (x.elapsed_s != null) meta.push(x.elapsed_s + 's');
       if (x.engine) meta.push(esc(x.engine));
       if (x.artifacts) meta.push(x.artifacts + ' artifacts');
       if (e.session_id) meta.push('<span title="' + esc(e.session_id) + '">' + esc(String(e.session_id).slice(0, 26)) + '</span>');
+      // V8 program: show the WHOLE loop plan (every loop + its state), so a
+      // program that declares N loops reads as N loops even before most run.
+      let planHtml = '';
+      if (e.kind === 'program' && Array.isArray(x.loop_plan) && x.loop_plan.length) {
+        planHtml = '<div class="loopplan"><span class="lp-hd">' +
+          x.loop_plan.length + ' loop' + (x.loop_plan.length === 1 ? '' : 's') + '</span>' +
+          x.loop_plan.map((l, li) => {
+            const ls = String(l.status || 'pending').toLowerCase();
+            return '<div class="lp-row" data-scope="program:' + esc(e.ref) + '" title="open this program\'s loops">' +
+              '<span class="lp-seq">' + (li + 1) + '</span>' +
+              '<span class="pill ' + esc(ls) + '">' + esc(l.status || 'pending') + '</span>' +
+              '<span class="lp-nm" title="' + esc(l.name || '') + '">' + esc(l.name || '') + '</span>' +
+              '<span class="lp-goal" title="' + esc(l.goal || '') + '">' + esc(l.goal || '') + '</span>' +
+              (l.runs ? '<span style="color:var(--dim);flex-shrink:0">×' + l.runs + '</span>' : '') +
+              '</div>';
+          }).join('') + '</div>';
+      }
       return '<div class="card' + (watching ? ' watching' : '') + '" data-card="' + i + '" style="border-top:2px solid ' + col + '">' +
         '<div class="card-hd"><span class="card-ic" style="color:' + col + '">' + m.i + '</span>' +
         '<span class="card-tt">' + esc(e.title) + '</span>' +
@@ -330,6 +367,7 @@
         '<div class="card-meta"><span data-time="' + i + '">' + esc(relTime(e.ts)) + '</span>' +
         meta.map(v => '<span>' + v + '</span>').join('') + '</div>' +
         (e.summary ? '<div class="card-bd">' + mdRender(e.summary) + '</div>' : '<div class="card-bd" style="color:var(--dim)">—</div>') +
+        planHtml +
         (acts.length ? '<div class="card-ft">' + acts.join('') + '</div>' : '') +
         '<div class="watchbox" data-watchbox="' + i + '"></div>' +
         '</div>';
@@ -455,21 +493,22 @@
       try { this._fetch('/activity/ping', 'POST', { source: 'activity-ui' }); } catch (e) {}
     }
 
-    _drawerToggle(on) {
-      const drawer = this.shadowRoot.querySelector('#drawer');
-      const inner = this.shadowRoot.querySelector('#drawerIn');
-      if (!drawer || !inner) return null;
-      if (on === false || (on == null && drawer.classList.contains('on'))) {
-        drawer.classList.remove('on'); return null;
-      }
-      drawer.classList.add('on');
-      return inner;
+    _drawerOpen() {
+      const d = this.shadowRoot.querySelector('#drawer');
+      return !!(d && d.classList.contains('on'));
+    }
+    _closeDrawer() {
+      const d = this.shadowRoot.querySelector('#drawer');
+      if (d) d.classList.remove('on');
+      this._drawerMode = null;
     }
 
     async _openSandboxes() {
       this._ping();
-      const inner = this._drawerToggle();
+      const d = this.shadowRoot.querySelector('#drawer'); if (d) d.classList.add('on');
+      const inner = this.shadowRoot.querySelector('#drawerIn');
       if (!inner) return;
+      this._drawerMode = 'sandboxes';
       inner.innerHTML = '<div class="empty">Loading sandboxes…</div>';
       const r = await this._fetch('/activity/sandboxes?scope=' + encodeURIComponent(this._scope));
       const boxes = (r && r.sandboxes) || [];
@@ -493,8 +532,10 @@
 
     async _openFiles(path) {
       this._ping();
-      const inner = (path == null) ? this._drawerToggle() : this.shadowRoot.querySelector('#drawerIn');
+      const d = this.shadowRoot.querySelector('#drawer'); if (d) d.classList.add('on');
+      const inner = this.shadowRoot.querySelector('#drawerIn');
       if (!inner) return;
+      this._drawerMode = 'files';
       inner.innerHTML = '<div class="empty">Loading files…</div>';
       const r = await this._fetch('/activity/files?scope=' + encodeURIComponent(this._scope) +
         (path ? '&path=' + encodeURIComponent(path) : ''));
@@ -615,8 +656,8 @@
       if (sel) sel.addEventListener('change', () => this.setScope(sel.value));
       const bind = (id, fn) => { const el = this.shadowRoot.querySelector(id); if (el) el.addEventListener('click', fn); };
       bind('#refresh', () => { this._ping(); this._lastSig = ''; this.load(); });
-      bind('#filesBtn', () => this._openFiles());
-      bind('#sbxBtn', () => this._openSandboxes());
+      bind('#filesBtn', () => { if (this._drawerMode === 'files' && this._drawerOpen()) this._closeDrawer(); else this._openFiles(); });
+      bind('#sbxBtn', () => { if (this._drawerMode === 'sandboxes' && this._drawerOpen()) this._closeDrawer(); else this._openSandboxes(); });
       bind('#flatBtn', () => this._flatten());
       bind('#stopBtn', () => this._stopAll());
       bind('#rmBtn', () => this._removeStream());

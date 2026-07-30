@@ -1225,11 +1225,14 @@ if _CAP_AVAILABLE and HAS_NUMPY:
         memory="off", silent=True,
         description="Dry-run a custom-indicator expression against real stored bars "
                     "without saving. Input: expr (str) OR series (object), "
-                    "dataset_id (str!), limit (int=300). "
-                    "Output: {ok, tail:{name:[last 10 values]}} or {error}.",
+                    "dataset_id (str!), limit (int=300), full (bool=False — also "
+                    "return the whole aligned series + timestamps for a live chart "
+                    "preview). Output: {ok, bars, tail:{name:[last 10 values]}, "
+                    "t?:[unix_sec], series?:{name:[values]}} or {error}.",
     )
     async def cap_custom_ind_test(expr: str = "", series=None, dataset_id: str = "",
-                                  limit: int = 300, trace_id=None) -> dict:
+                                  limit: int = 300, full: bool = False,
+                                  trace_id=None) -> dict:
         if not dataset_id:
             return {"error": "dataset_id required"}
         if isinstance(series, str):
@@ -1248,9 +1251,14 @@ if _CAP_AVAILABLE and HAS_NUMPY:
             out = eval_custom_series(arr, series)
         except SafeExprError as e:
             return {"error": str(e)}
-        return {"ok": True, "bars": int(len(arr["t"])),
-                "tail": {k: [None if math.isnan(x) else round(float(x), 6)
-                             for x in v[-10:]] for k, v in out.items()}}
+        res = {"ok": True, "bars": int(len(arr["t"])),
+               "tail": {k: [None if math.isnan(x) else round(float(x), 6)
+                            for x in v[-10:]] for k, v in out.items()}}
+        if full:
+            res["t"] = [int(x) for x in arr["t"]]
+            res["series"] = {k: [None if math.isnan(x) else round(float(x), 6)
+                                 for x in v] for k, v in out.items()}
+        return res
 
     # ── Annotations (chart drawings & key dates) ─────────────────────────────
 

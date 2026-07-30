@@ -463,49 +463,409 @@ def _compute_loss(y_pred, y_true, loss_fn: str) -> float:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GRADIENT COMPUTATION — numerical finite differences
-# Fast enough for small networks; exact gradients for dense/mlp layers
+# GRADIENT COMPUTATION
+# Primary path: exact gradients via a single forward+backward pass (reverse-
+# mode autodiff) for the node types below, in _forward_backward().
+# Fallback path: numerical finite differences, only for graphs that contain a
+# node type without an analytic backward (rnn/gru/lstm, attention, conv1d,
+# kan_layer, pooling) — offloaded to a worker thread so an O(num_params)
+# sweep of forward passes can never stall the event loop / WS pings.
 # ─────────────────────────────────────────────────────────────────────────────
 
+_BACKPROP_NODE_TYPES = {
+    "input", "dense", "linear_probe", "perceptron", "mlp", "activation",
+    "layer_norm", "rms_norm", "dropout", "add", "residual", "concat",
+    "embedding", "reshape", "output",
+}
+
+
+def _module_supports_backprop(module: dict) -> bool:
+    return all(n.get("type", "") in _BACKPROP_NODE_TYPES for n in module.get("nodes", []))
+
+
+def _act_backward(name: str, z: np.ndarray, y: np.ndarray, dy: np.ndarray) -> np.ndarray:
+    """dLoss/dz given dLoss/dy, a node's pre-activation input z and its output y=act(z)."""
+    if name == "softmax":
+        return y * (dy - (dy * y).sum(axis=-1, keepdims=True))
+    if name == "relu":
+        return dy * (z > 0)
+    if name == "gelu":
+        k, c = math.sqrt(2 / math.pi), 0.044715
+        u = k * (z + c * z ** 3)
+        t = np.tanh(u)
+        return dy * (0.5 * (1 + t) + 0.5 * z * (1 - t ** 2) * k * (1 + 3 * c * z ** 2))
+    if name == "sigmoid":
+        return dy * y * (1 - y)
+    if name in ("swish", "silu"):
+        s = _sigmoid(z)
+        return dy * (s + z * s * (1 - s))
+    if name == "tanh":
+        return dy * (1 - y ** 2)
+    if name == "step":
+        return np.zeros_like(dy)
+    return dy  # identity / linear / default
+
+
+def _loss_backward(y_pred: np.ndarray, y_true: np.ndarray, loss_fn: str) -> np.ndarray:
+    """dLoss/d(y_pred), matching the mean-reduction convention of each fn in LOSSES."""
+    if loss_fn == "mae":
+        return np.sign(y_pred - y_true) / y_pred.size
+    if loss_fn == "bce":
+        p = np.clip(y_pred, 1e-7, 1 - 1e-7)
+        return (p - y_true) / (p * (1 - p) * y_pred.size)
+    if loss_fn == "cross_entropy":
+        yt = y_true
+        if yt.ndim == 1:
+            oh = np.zeros_like(y_pred)
+            oh[np.arange(len(yt)), yt.astype(int)] = 1
+            yt = oh
+        p = _softmax(y_pred)
+        n = y_pred.shape[0] if y_pred.ndim > 1 else 1
+        return (p - yt) / n
+    if loss_fn == "huber":
+        delta = 1.0
+        diff = y_pred - y_true
+        return np.where(np.abs(diff) <= delta, diff, delta * np.sign(diff)) / y_pred.size
+    return 2.0 * (y_pred - y_true) / y_pred.size  # mse (default)
+
+
+def _accum(dOut: dict, nid, val) -> None:
+    if val is None:
+        return
+    dOut[nid] = val if dOut.get(nid) is None else dOut[nid] + val
+
+
+def _route_grad(dOut: dict, srcs: list, dx, sizes=None, axis=-1) -> None:
+    """Route a node's d(input) back to its source node(s), splitting on fan-in."""
+    if dx is None or not srcs:
+        return
+    if len(srcs) == 1:
+        _accum(dOut, srcs[0], dx)
+        return
+    cuts = np.cumsum(sizes)[:-1]
+    for s, part in zip(srcs, np.split(dx, cuts, axis=axis)):
+        _accum(dOut, s, part)
+
+
+def _forward_backward(module: dict, weights: dict, X: np.ndarray, y_true: np.ndarray,
+                       loss_fn: str) -> dict:
+    """
+    One forward + one backward pass over the module graph (reverse-mode
+    autodiff). Only called when _module_supports_backprop(module) is True.
+    Replaces the old O(num_params) finite-difference sweep for the common
+    case (dense/mlp networks), which is what was blocking the event loop.
+    """
+    nodes  = {n["id"]: n for n in module.get("nodes", [])}
+    edges  = [e for e in module.get("edges", []) if not e.get("skip")]
+    adj    = {nid: [] for nid in nodes}
+    in_deg = {nid: 0  for nid in nodes}
+    for e in edges:
+        adj[e["from"]].append(e["to"])
+        in_deg[e["to"]] = in_deg.get(e["to"], 0) + 1
+    queue = [nid for nid, d in in_deg.items() if d == 0]
+    order = []
+    while queue:
+        n = queue.pop(0); order.append(n)
+        for nxt in adj[n]:
+            in_deg[nxt] -= 1
+            if in_deg[nxt] == 0: queue.append(nxt)
+
+    cache: dict  = {}
+    fcache: dict = {}
+    output_nid   = None
+
+    for nid in order:
+        node  = nodes[nid]
+        ntype = node.get("type", "")
+        p     = node.get("params", {})
+        w     = weights.get(nid, {})
+
+        in_tensors = [cache[e["from"]] for e in edges if e["to"] == nid and e["from"] in cache]
+        srcs       = [e["from"]        for e in edges if e["to"] == nid and e["from"] in cache]
+        sizes      = [t.shape[-1] if t.ndim else 1 for t in in_tensors]
+
+        if not in_tensors:
+            x = X
+        elif len(in_tensors) == 1:
+            x = in_tensors[0]
+        else:
+            try:
+                x = np.concatenate(in_tensors, axis=-1)
+            except Exception:
+                x, srcs = in_tensors[0], srcs[:1]
+
+        act_name = p.get("activation", p.get("fn", "identity"))
+        act_fn   = _ACTS.get(act_name, _ACTS["identity"])
+
+        if ntype == "input":
+            cache[nid] = X
+            continue
+
+        elif ntype in ("dense", "linear_probe", "perceptron"):
+            if x.ndim == 1: x = x[np.newaxis, :]
+            W_stored = w.get("W")
+            if ntype == "perceptron":
+                b     = float(w.get("b", 0.0))
+                w_ok  = W_stored is not None and W_stored.shape[0] == x.shape[-1]
+                W     = W_stored if w_ok else np.ones(x.shape[-1]) * 0.5
+            else:
+                b     = w.get("b") if w.get("b") is not None else np.zeros(
+                            W_stored.shape[1] if W_stored is not None else x.shape[-1])
+                w_ok  = W_stored is not None and W_stored.shape[0] == x.shape[-1]
+                W     = W_stored if w_ok else np.eye(x.shape[-1])[:, :(
+                            W_stored.shape[1] if W_stored is not None else x.shape[-1])]
+            z   = x @ W + b
+            out = act_fn(z)
+            cache[nid] = out
+            fcache[nid] = dict(type=ntype, x=x, z=z, out=out, W=W, w_ok=w_ok,
+                                act=act_name, srcs=srcs, sizes=sizes)
+
+        elif ntype == "mlp":
+            layers = p.get("layers", [64, 64])
+            h        = x.reshape(x.shape[0], -1) if x.ndim > 1 else x[np.newaxis, :]
+            x_shape  = x.shape
+            layer_inputs, zs, outs, Ws, w_oks = [], [], [], [], []
+            for i in range(len(layers) - 1):
+                Wi_stored = w.get(f"W{i}")
+                bi        = w.get(f"b{i}", np.zeros(layers[i + 1]))
+                w_ok      = Wi_stored is not None and Wi_stored.shape[0] == h.shape[-1]
+                Wi        = Wi_stored if w_ok else np.random.randn(h.shape[-1], layers[i + 1]) * 0.01
+                zi        = h @ Wi + bi
+                hi_out    = act_fn(zi)
+                layer_inputs.append(h); zs.append(zi); outs.append(hi_out)
+                Ws.append(Wi); w_oks.append(w_ok)
+                h = hi_out
+            cache[nid] = h
+            fcache[nid] = dict(type=ntype, x_shape=x_shape, layer_inputs=layer_inputs, zs=zs,
+                                outs=outs, Ws=Ws, w_oks=w_oks, act=act_name, srcs=srcs,
+                                sizes=sizes, n_layers=len(layers) - 1)
+
+        elif ntype == "activation":
+            out = act_fn(x)
+            cache[nid] = out
+            fcache[nid] = dict(type=ntype, x=x, out=out, act=act_name, srcs=srcs, sizes=sizes)
+
+        elif ntype in ("layer_norm", "rms_norm"):
+            gamma = w.get("gamma", np.ones(x.shape[-1]))
+            beta  = w.get("beta",  np.zeros(x.shape[-1]))
+            if ntype == "rms_norm":
+                rms = np.sqrt((x ** 2).mean(-1, keepdims=True) + 1e-8)
+                out = gamma * x / rms + beta
+                fcache[nid] = dict(type=ntype, x=x, gamma=gamma, rms=rms, srcs=srcs, sizes=sizes)
+            else:
+                mu    = x.mean(-1, keepdims=True)
+                sigma = x.std(-1, keepdims=True) + 1e-5
+                out   = gamma * (x - mu) / sigma + beta
+                fcache[nid] = dict(type=ntype, x=x, gamma=gamma, mu=mu, sigma=sigma,
+                                    srcs=srcs, sizes=sizes)
+            cache[nid] = out
+
+        elif ntype == "dropout":
+            cache[nid] = x
+            fcache[nid] = dict(type=ntype, srcs=srcs, sizes=sizes)
+
+        elif ntype in ("add", "residual"):
+            if len(in_tensors) >= 2:
+                try:
+                    result, add_srcs = sum(in_tensors), srcs
+                except Exception:
+                    result, add_srcs = in_tensors[0], srcs[:1]
+            else:
+                result, add_srcs = x, srcs
+            cache[nid] = result
+            fcache[nid] = dict(type=ntype, srcs=add_srcs)
+
+        elif ntype == "concat":
+            dim = p.get("dim", -1)
+            try:
+                result   = np.concatenate(in_tensors, axis=dim)
+                c_sizes  = [t.shape[dim] for t in in_tensors]
+            except Exception:
+                result, c_sizes = x, sizes
+            cache[nid] = result
+            fcache[nid] = dict(type=ntype, srcs=srcs, sizes=c_sizes, dim=dim)
+
+        elif ntype == "embedding":
+            E   = w.get("E", np.eye(p.get("vocab_size", 100))[:, :p.get("dim", 64)])
+            idx = np.clip(x.astype(int).ravel(), 0, E.shape[0] - 1)
+            cache[nid] = E[idx]
+            fcache[nid] = dict(type=ntype, idx=idx, E_shape=E.shape)
+
+        elif ntype == "reshape":
+            orig_shape = x.shape
+            shape = [-1 if s == -1 else s for s in p.get("shape", [-1])]
+            try:
+                out = x.reshape(x.shape[0], *[s for s in shape if s != -1]) if x.ndim > 1 else x.ravel()
+            except Exception:
+                out = x.reshape(x.shape[0], -1) if x.ndim > 1 else x.ravel()
+            cache[nid] = out
+            fcache[nid] = dict(type=ntype, orig_shape=orig_shape, srcs=srcs, sizes=sizes)
+
+        elif ntype == "output":
+            out_act_name = p.get("activation", "identity")
+            out_act      = _ACTS.get(out_act_name, _ACTS["identity"])
+            out = out_act(x)
+            cache[nid] = out
+            fcache[nid] = dict(type=ntype, x=x, out=out, act=out_act_name, srcs=srcs, sizes=sizes)
+
+        else:
+            cache[nid] = x
+            fcache[nid] = dict(type="_passthrough", srcs=srcs, sizes=sizes)
+
+        output_nid = nid
+
+    final_out = cache[output_nid] if output_nid is not None else X
+    dOut  = {output_nid: _loss_backward(final_out, y_true, loss_fn)}
+    grads: dict = {}
+
+    for nid in reversed(order):
+        fc = fcache.get(nid)
+        dy = dOut.get(nid)
+        if fc is None or dy is None:
+            continue
+        typ = fc["type"]
+
+        if typ in ("dense", "linear_probe", "perceptron"):
+            dz = _act_backward(fc["act"], fc["z"], fc["out"], dy)
+            x, W = fc["x"], fc["W"]
+            if fc["w_ok"]:
+                grads.setdefault(nid, {})["W"] = x.T @ dz
+                grads[nid]["b"] = dz.sum(axis=0) if dz.ndim > 1 else np.array(dz.sum())
+            dx = (dz[:, None] * W[None, :]) if typ == "perceptron" else (dz @ W.T)
+            _route_grad(dOut, fc["srcs"], dx, fc["sizes"])
+
+        elif typ == "mlp":
+            dh = dy
+            for i in range(fc["n_layers"] - 1, -1, -1):
+                dzi = _act_backward(fc["act"], fc["zs"][i], fc["outs"][i], dh)
+                if fc["w_oks"][i]:
+                    grads.setdefault(nid, {})[f"W{i}"] = fc["layer_inputs"][i].T @ dzi
+                    grads[nid][f"b{i}"] = dzi.sum(axis=0)
+                dh = dzi @ fc["Ws"][i].T
+            _route_grad(dOut, fc["srcs"], dh.reshape(fc["x_shape"]), fc["sizes"])
+
+        elif typ in ("activation", "output"):
+            dx = _act_backward(fc["act"], fc["x"], fc["out"], dy)
+            _route_grad(dOut, fc["srcs"], dx, fc["sizes"])
+
+        elif typ == "rms_norm":
+            x, gamma, rms = fc["x"], fc["gamma"], fc["rms"]
+            n = x.shape[-1]
+            axes = tuple(range(x.ndim - 1))
+            grads.setdefault(nid, {})["gamma"] = np.sum(dy * x / rms, axis=axes) if axes else np.sum(dy * x / rms)
+            grads[nid]["beta"] = np.sum(dy, axis=axes) if axes else np.sum(dy)
+            dg = dy * gamma
+            S  = np.sum(dg * x, axis=-1, keepdims=True)
+            dx = dg / rms - x * S / (n * rms ** 3)
+            _route_grad(dOut, fc["srcs"], dx, fc["sizes"])
+
+        elif typ == "layer_norm":
+            x, gamma, mu, sigma = fc["x"], fc["gamma"], fc["mu"], fc["sigma"]
+            n = x.shape[-1]
+            axes = tuple(range(x.ndim - 1))
+            xhat = (x - mu) / sigma
+            grads.setdefault(nid, {})["gamma"] = np.sum(dy * xhat, axis=axes) if axes else np.sum(dy * xhat)
+            grads[nid]["beta"] = np.sum(dy, axis=axes) if axes else np.sum(dy)
+            dxhat = dy * gamma
+            dvar  = np.sum(dxhat * (x - mu), axis=-1, keepdims=True) * (-0.5) * sigma ** -3
+            dmu   = np.sum(-dxhat / sigma, axis=-1, keepdims=True) + \
+                    dvar * np.mean(-2 * (x - mu), axis=-1, keepdims=True)
+            dx    = dxhat / sigma + dvar * 2 * (x - mu) / n + dmu / n
+            _route_grad(dOut, fc["srcs"], dx, fc["sizes"])
+
+        elif typ == "dropout":
+            _route_grad(dOut, fc["srcs"], dy, fc["sizes"])
+
+        elif typ in ("add", "residual"):
+            for s in fc["srcs"]:
+                _accum(dOut, s, dy)
+
+        elif typ == "concat":
+            _route_grad(dOut, fc["srcs"], dy, fc["sizes"], axis=fc["dim"])
+
+        elif typ == "embedding":
+            dE = np.zeros(fc["E_shape"])
+            np.add.at(dE, fc["idx"], dy)
+            grads.setdefault(nid, {})["E"] = dE
+
+        elif typ == "reshape":
+            _route_grad(dOut, fc["srcs"], dy.reshape(fc["orig_shape"]), fc["sizes"])
+
+        # "_passthrough" / "input": no params, nothing to route further
+
+    return grads
+
+
+# ── Numerical fallback (rnn/gru/lstm, attention, conv1d, kan_layer, pool) ──
+
+def _weight_meta(weights: dict) -> list:
+    """(nid, key, start, end) for each flattened weight segment, matching
+    the sort order used by _flatten_weights/_unflatten_weights."""
+    meta, idx = [], 0
+    for nid in sorted(weights.keys()):
+        for k in sorted(weights[nid].keys()):
+            n = weights[nid][k].size
+            meta.append((nid, k, idx, idx + n))
+            idx += n
+    return meta
+
+
+def _perturb_weight(weights: dict, meta: list, flat_idx: int, delta: float) -> dict:
+    """Shallow-copied weights dict with a single scalar perturbed by delta —
+    avoids deep-copying the whole (potentially large) weights structure for
+    every one of the O(num_params) perturbations."""
+    for nid, k, start, end in meta:
+        if start <= flat_idx < end:
+            new_arr = weights[nid][k].copy()
+            new_arr.flat[flat_idx - start] += delta
+            new_w = {n: dict(w) for n, w in weights.items()}
+            new_w[nid][k] = new_arr
+            return new_w
+    return weights
+
+
 def _numerical_grad(module, weights, X, y_true, loss_fn, eps=1e-4):
-    """Compute gradients via finite differences. Returns grad dict (same shape as weights)."""
-    flat = _flatten_weights(weights)
-    grad_flat = np.zeros_like(flat)
-    for i in range(len(flat)):
-        flat_p = flat.copy(); flat_p[i] += eps
-        flat_m = flat.copy(); flat_m[i] -= eps
-        w_p = _unflatten_weights(flat_p, weights)
-        w_m = _unflatten_weights(flat_m, weights)
-        yp, _ = _forward_with_weights(module, w_p, X)
-        ym, _ = _forward_with_weights(module, w_m, X)
-        grad_flat[i] = (_compute_loss(yp, y_true, loss_fn) -
-                        _compute_loss(ym, y_true, loss_fn)) / (2 * eps)
-    return _unflatten_weights(grad_flat, weights)
-
-
-def _fast_grad(module, weights, X, y_true, loss_fn):
-    """
-    Exact gradients for linear layers via backprop.
-    Falls back to numerical grad for unsupported node types.
-    Uses numerical grad chunked in parallel for speed.
-    """
-    # For now, use numerical grads with chunked parallel approx
-    # (full backprop is module-dependent; this is the correct general approach)
+    """One-sided finite-difference gradient. Used only as a fallback for
+    node types _forward_backward doesn't cover; always invoked via a worker
+    thread (see _fast_grad) since it does one forward pass per parameter."""
     flat = _flatten_weights(weights)
     if flat.size == 0:
         return {}
-    eps = 1e-4
-    # Vectorised: perturb each param once
+    meta = _weight_meta(weights)
     y_base, _ = _forward_with_weights(module, weights, X)
-    loss_base  = _compute_loss(y_base, y_true, loss_fn)
-    grad_flat  = np.zeros_like(flat)
+    loss_base = _compute_loss(y_base, y_true, loss_fn)
+    grad_flat = np.zeros_like(flat)
     for i in range(len(flat)):
-        flat_p      = flat.copy()
-        flat_p[i]  += eps
-        wp          = _unflatten_weights(flat_p, weights)
-        yp, _       = _forward_with_weights(module, wp, X)
+        wp = _perturb_weight(weights, meta, i, eps)
+        yp, _ = _forward_with_weights(module, wp, X)
         grad_flat[i] = (_compute_loss(yp, y_true, loss_fn) - loss_base) / eps
     return _unflatten_weights(grad_flat, weights)
+
+
+async def _fast_grad(module, weights, X, y_true, loss_fn):
+    """
+    Gradient computation for one training batch.
+    Exact backprop (_forward_backward) for supported node types — a single
+    forward+backward pass. Modules containing a node type without an analytic
+    backward (rnn/gru/lstm, attention, conv1d, kan_layer, pooling) fall back to
+    _numerical_grad's O(num_params) sweep.
+
+    BOTH are offloaded to a worker thread. Exact backprop was previously run
+    inline as "cheap enough", but the loop-stall watchdog says otherwise: across
+    the retained logs, ~65% of all >1s event-loop hangs were NumPy frames from
+    this module (_forward_with_weights, _softmax, _cross_entropy, _relu,
+    _unflatten_weights). Each hang starves WebSocket/SSE frames and every
+    concurrent request — including agentic-loop event delivery — so a training
+    job made the whole system stutter. NumPy releases the GIL for these ops, so
+    the thread genuinely runs in parallel.
+    """
+    if not _flatten_weights(weights).size:
+        return {}
+    loop = asyncio.get_running_loop()
+    if _module_supports_backprop(module):
+        return await loop.run_in_executor(
+            None, _forward_backward, module, weights, X, y_true, loss_fn)
+    return await loop.run_in_executor(None, _numerical_grad, module, weights, X, y_true, loss_fn)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -935,8 +1295,8 @@ async def _train_loop(job_id: str, job: dict):
             Xb = X_sh[start:start+batch]
             yb = y_sh[start:start+batch]
 
-            # Gradient step (use fast 1-sided finite diff)
-            grads = _fast_grad(module, weights, Xb, yb, loss_fn)
+            # Gradient step (exact backprop; numerical fallback offloaded to a thread)
+            grads = await _fast_grad(module, weights, Xb, yb, loss_fn)
 
             # Gradient clipping
             flat_g = _flatten_weights(grads)
@@ -947,8 +1307,13 @@ async def _train_loop(job_id: str, job: dict):
 
             weights = opt.step(weights, grads, curr_lr)
 
-            # Compute batch loss
-            yp, _  = _forward_with_weights(module, weights, Xb)
+            # Compute batch loss. Offloaded like the gradient above — a forward
+            # pass is NumPy-bound and blocks the event loop for as long as it
+            # runs (see _fast_grad: these frames dominate the stall log).
+            # `await asyncio.sleep(0)` below only yields BETWEEN batches, which
+            # does nothing for a call that itself takes a second.
+            yp, _  = await asyncio.get_running_loop().run_in_executor(
+                None, _forward_with_weights, module, weights, Xb)
             bloss  = _compute_loss(yp, yb, loss_fn)
             epoch_losses.append(bloss)
 
@@ -957,14 +1322,17 @@ async def _train_loop(job_id: str, job: dict):
 
         train_loss = float(np.mean(epoch_losses)) if epoch_losses else 0.0
 
-        # Val pass
-        yp_val, _ = _forward_with_weights(module, weights, X_va)
+        # Val pass — the FULL validation set, so the worst offender of the three.
+        _loop_x = asyncio.get_running_loop()
+        yp_val, _ = await _loop_x.run_in_executor(
+            None, _forward_with_weights, module, weights, X_va)
         val_loss  = _compute_loss(yp_val, y_va, loss_fn)
 
         # Accuracy (if classification)
         train_acc = val_acc = 0.0
         if loss_fn in ("cross_entropy", "bce"):
-            yp_tr_f, _ = _forward_with_weights(module, weights, X_tr[:min(256, n_tr)])
+            yp_tr_f, _ = await _loop_x.run_in_executor(
+                None, _forward_with_weights, module, weights, X_tr[:min(256, n_tr)])
             train_acc  = _accuracy(yp_tr_f, y_tr[:min(256, n_tr)])
             val_acc    = _accuracy(yp_val, y_va)
 
@@ -1901,7 +2269,10 @@ if _CAP_AVAILABLE:
         except Exception as e:
             return {"error": f"JSON parse: {e}"}
 
-        y_pred, _ = _forward_with_weights(module, w, X)
+        # Offloaded: a caller-supplied test set can be arbitrarily large, and this
+        # runs inside the HTTP handler on the event loop (see _fast_grad).
+        y_pred, _ = await asyncio.get_running_loop().run_in_executor(
+            None, _forward_with_weights, module, w, X)
 
         metrics = {
             "loss":     round(_compute_loss(y_pred, y, loss_fn), 6),
@@ -1954,7 +2325,9 @@ if _CAP_AVAILABLE:
             Xarr = np.array(json.loads(X), dtype=np.float32)
         except Exception as e:
             return {"error": f"JSON parse: {e}"}
-        y_pred, _ = _forward_with_weights(module, w, Xarr)
+        # Offloaded: batch inference on a caller-supplied X, on the event loop.
+        y_pred, _ = await asyncio.get_running_loop().run_in_executor(
+            None, _forward_with_weights, module, w, Xarr)
         return {
             "ok":         True,
             "module_id":  module_id,

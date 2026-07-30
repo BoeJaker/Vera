@@ -388,6 +388,27 @@ LOOP_PROFILES: List[Dict[str, Any]] = [
                      "progress_report_mode": "long_term_only",
                      "progress_channel": "telegram"},
     },
+    {
+        "id": "operator",
+        "label": "Web Operator",
+        "icon": "🕹️",
+        "engine": "v7",
+        "agent": "operator",
+        "family": ["operator"],
+        "description": "Drives a web UI (or a web-served VM) toward a goal by "
+                       "observe→think→act: opens a browser session, observes the "
+                       "page (screenshot + element refs), and clicks/types/navigates "
+                       "until done. The dedicated operator.run loop is the default "
+                       "driver; this profile lets the general agent loop use the "
+                       "same primitives.",
+        "caps": ["operator.session.start", "operator.session.status",
+                 "operator.session.close", "operator.observe", "operator.read",
+                 "operator.screenshot", "operator.act", "operator.think"],
+        "skills": "",
+        "panels": True,
+        "defaults": {"prefer_terminal_tools": False, "enable_phases": False,
+                     "max_steps": 16},
+    },
 ]
 
 _BY_ID: Dict[str, Dict[str, Any]] = {p["id"]: p for p in LOOP_PROFILES}
@@ -628,10 +649,19 @@ async def cap_loops_run(profile: str = "", goal: str = "",
     # Filter to the engine cap's accepted parameters so unrelated stream-only
     # knobs (loop_profile marker, UI fields, etc.) don't raise TypeError.
     accepted = set(cap.get("schema", {}).get("properties", {}).keys()) | {"trace_id"}
+    # Every loop engine accepts session_id — v1–v6 as a named parameter, v7/v8
+    # via **kwargs — but v7/v8 don't DECLARE it in their schema, so a schema-only
+    # `accepted` filter silently drops it and the engine mints its own UUID
+    # session. The loop's events then persist under a key nothing maps back to
+    # the caller, so the Loop Lab timeline (which follows evolve:<run_id>) stays
+    # empty for every v7/v8-profile run — the exact "sandbox events aren't
+    # streamed to the UI" symptom (and it bites in-process runs too). Force
+    # session_id through so the caller's session id is always the loop's.
+    accepted.add("session_id")
     kwargs = {k: v for k, v in body.items() if k in accepted}
     kwargs["goal"] = goal
     kwargs["trace_id"] = session_id or trace_id
-    if session_id and "session_id" in accepted:
+    if session_id:
         kwargs["session_id"] = session_id
     try:
         result = await cap["func"](**kwargs)

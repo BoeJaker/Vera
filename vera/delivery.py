@@ -142,6 +142,22 @@ def _build_podcast(rendered: str, ctx: Dict[str, Any]) -> Dict[str, Any]:
     return args
 
 
+def _build_html(rendered: str, ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """Turn a rendered report into a rich, self-contained HTML document via
+    report.html — the report text becomes the document content and the header its
+    title. Served inline at /render/report/… and pinnable to the gallery."""
+    label = ctx.get("label") or ctx.get("name") or "Report"
+    args: Dict[str, Any] = {
+        "content": rendered or "",
+        "title": (label or "Report")[:140],
+        "mode": ctx.get("html_mode") or "auto",
+        "illustrate": int(ctx.get("illustrate") or 0),
+    }
+    if ctx.get("target"):
+        args["session_id"] = ctx["target"]
+    return args
+
+
 _BUILDERS: Dict[str, Callable[[str, Dict[str, Any]], Dict[str, Any]]] = {
     "tg.notify":        _build_telegram,
     "memory.store":     _build_memory,
@@ -150,6 +166,7 @@ _BUILDERS: Dict[str, Callable[[str, Dict[str, Any]], Dict[str, Any]]] = {
     "mail.send":        _build_email,
     "chat.deliver":     _build_chat,
     "podcast.generate": _build_podcast,
+    "report.html":      _build_html,
 }
 
 
@@ -187,6 +204,13 @@ DELIVERY_CHANNELS: Dict[str, Dict[str, Any]] = {
     "podcast": {
         # 'audio' format shapes the text for the ear before it's voiced.
         "label": "Podcast", "cap": "podcast.generate", "default_format": "audio",
+        "needs_target": False, "target_field": "", "target_label": "",
+    },
+    "html": {
+        # Rich, self-contained HTML document (report.html): themed layout,
+        # Mermaid diagrams, inline-SVG infographics, optional imagine images.
+        # Verbatim default_format — report.html shapes the content itself.
+        "label": "HTML report", "cap": "report.html", "default_format": "",
         "needs_target": False, "target_field": "", "target_label": "",
     },
 }

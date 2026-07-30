@@ -215,7 +215,8 @@ def run_backtest(arr: Dict[str, "np.ndarray"], entry: "np.ndarray",
             entry_px = fill
             pos, bars_in_pos = 1, 0
             cur = {"entry_t": int(t[i]), "entry_px": round(float(fill), 8),
-                   "side": "long"}
+                   "side": "long", "qty": round(float(qty), 8),
+                   "notional": round(float(qty * fill), 2)}
         elif pending == "exit" and pos == 1:
             fill = px_open * (1 - slip)
             cash += qty * fill * (1 - fee)
@@ -228,7 +229,8 @@ def run_backtest(arr: Dict[str, "np.ndarray"], entry: "np.ndarray",
             entry_px = fill
             pos, bars_in_pos = -1, 0
             cur = {"entry_t": int(t[i]), "entry_px": round(float(fill), 8),
-                   "side": "short"}
+                   "side": "short", "qty": round(float(sqty), 8),
+                   "notional": round(float(sqty * fill), 2)}
         elif pending == "exit_short" and pos == -1:
             fill = px_open * (1 + slip)
             cash -= sqty * fill * (1 + fee)
@@ -247,7 +249,8 @@ def run_backtest(arr: Dict[str, "np.ndarray"], entry: "np.ndarray",
             entry_px = fill
             pos, bars_in_pos = -1, 0
             cur = {"entry_t": int(t[i]), "entry_px": round(float(fill), 8),
-                   "side": "short"}
+                   "side": "short", "qty": round(float(sqty), 8),
+                   "notional": round(float(sqty * fill), 2)}
         elif pending == "flip_long" and pos == -1:
             fill = px_open * (1 + slip)
             cash -= sqty * fill * (1 + fee)
@@ -259,7 +262,8 @@ def run_backtest(arr: Dict[str, "np.ndarray"], entry: "np.ndarray",
             entry_px = fill
             pos, bars_in_pos = 1, 0
             cur = {"entry_t": int(t[i]), "entry_px": round(float(fill), 8),
-                   "side": "long"}
+                   "side": "long", "qty": round(float(qty), 8),
+                   "notional": round(float(qty * fill), 2)}
         pending = None
 
         # 2) intrabar stop-loss / take-profit
@@ -402,6 +406,7 @@ def _close_trade(cur, trades, ts, fill, bars, reason="signal"):
         cur["ret_pct"] = round((fill / cur["entry_px"] - 1.0) * 100.0, 4)
     cur["bars"] = bars
     cur["reason"] = reason
+    cur["pnl"] = round(cur.get("notional", 0.0) * cur["ret_pct"] / 100.0, 2)
     trades.append(cur)
 
 
@@ -1040,13 +1045,14 @@ if _CAP_AVAILABLE and HAS_NUMPY:
 
     # ── Strategies & backtesting ──────────────────────────────────────────────
 
-    async def _resolve_operand_factory(arr):
+    async def _resolve_operand_factory(arr, depth=0):
         """Returns an async-built sync resolver: operand -> aligned ndarray."""
         ma = _ma()
         cache: Dict[str, "np.ndarray"] = {}
         ml_cache: Dict[str, "np.ndarray"] = {}
         cx_cache: Dict[str, Dict[str, "np.ndarray"]] = {}
         ds_cache: Dict[str, "np.ndarray"] = {}
+        strat_cache: Dict[str, "np.ndarray"] = {}
 
         async def _load_dataset_series(ds: str):
             """External series (funding, open interest, long/short ratio, WSB
@@ -1089,6 +1095,17 @@ if _CAP_AVAILABLE and HAS_NUMPY:
                 await _load_dataset_series(str(operand["dataset"]))
             if isinstance(operand, str) and operand.strip().startswith("mkt."):
                 await _load_dataset_series(operand.strip())
+            if isinstance(operand, dict) and operand.get("strategy"):
+                sid = str(operand["strategy"])
+                if sid not in strat_cache:
+                    if depth >= 2:
+                        raise ValueError("strategy-operand chains nested too deep")
+                    loop = asyncio.get_running_loop()
+                    row = await loop.run_in_executor(None, _strategy_full_sync, sid)
+                    if not row:
+                        raise ValueError(f"strategy operand '{sid}' not found")
+                    e_, x_, se_, sx_ = await _spec_signals(arr, row["spec"], depth + 1)
+                    strat_cache[sid] = _position_series(e_, x_, se_, sx_)
 
         def resolve(operand):
             n = len(arr["c"])
@@ -1111,6 +1128,19 @@ if _CAP_AVAILABLE and HAS_NUMPY:
                 except Exception:
                     operand = {"kind": key}
             if isinstance(operand, dict):
+                if operand.get("strategy"):
+                    sid = str(operand["strategy"])
+                    if sid not in strat_cache:
+                        raise ValueError(f"strategy operand {sid} not preloaded")
+                    pos = strat_cache[sid]
+                    leg = str(operand.get("leg") or "").lower()
+                    if leg == "long":
+                        return (pos > 0).astype(float)
+                    if leg == "short":
+                        return (pos < 0).astype(float)
+                    if leg in ("flat", "out"):
+                        return (pos == 0).astype(float)
+                    return pos.astype(float)
                 if operand.get("value") is not None:
                     return np.full(n, float(operand["value"]))
                 if operand.get("dataset"):
@@ -1170,17 +1200,115 @@ if _CAP_AVAILABLE and HAS_NUMPY:
 
     def _spec_kind(spec: dict) -> str:
         k = str(spec.get("kind") or "").lower()
-        if k in ("rule", "ml", "fused", "regime"):
+        if k in ("rule", "ml", "fused", "regime", "dual"):
             return k
         if spec.get("regimes"):
             return "regime"
+        if spec.get("long") or spec.get("short"):
+            return "dual"
         if spec.get("ml_id"):
             return "ml"
         if spec.get("members"):
             return "fused"
         return "rule"
 
-    async def _spec_signals(arr, spec: dict, depth: int = 0):
+    def _position_series(entry, exit_, s_entry, s_exit):
+        """Causal position track (+1 long / -1 short / 0 flat) at each bar from a
+        strategy's signals — lets ANY strategy be used as a CONDITION operand
+        ({strategy:id, leg:'long'|'short'}) inside another (conditional linking)."""
+        n = len(entry)
+        out = np.zeros(n)
+        pos = 0
+        for i in range(n):
+            out[i] = pos
+            if pos == 0:
+                if entry[i]:
+                    pos = 1
+                elif s_entry is not None and s_entry[i]:
+                    pos = -1
+            elif pos == 1:
+                if exit_[i]:
+                    pos = 0
+                if s_entry is not None and s_entry[i]:
+                    pos = -1
+            else:
+                if s_exit is not None and s_exit[i]:
+                    pos = 0
+                if entry[i]:
+                    pos = 1
+        return out
+
+    def _regime_masks(arr, src):
+        """bull/bear/flat/any per-bar CAUSAL masks from a regime source
+        (sma slope+side | supertrend | pivots). Shared by regime strategies
+        and the generic regime_filter gate."""
+        ma = _ma()
+        c = arr["c"]; n = len(c); src = src or {}
+        method = str(src.get("method") or "sma").lower()
+        if method == "supertrend":
+            stv = ma.compute_indicator(arr, "supertrend", {
+                "n": int(src.get("n", 10)), "mult": float(src.get("mult", 3.0))})["st_dir"]
+            ok = ~np.isnan(stv); bull = ok & (stv > 0); bear = ok & (stv < 0)
+        elif method == "pivots":
+            pvd = ma.compute_indicator(arr, "pivotdir", {
+                "pct": float(src.get("pct", 5.0))})["pv_dir"]
+            ok = ~np.isnan(pvd); bull = ok & (pvd > 0); bear = ok & (pvd < 0)
+        else:
+            nS = int(src.get("n", 200))
+            sma = ma.compute_indicator(arr, "sma", {"n": nS})[f"sma{nS}"]
+            slope = np.diff(sma, prepend=sma[0] if len(sma) else 0.0)
+            ok = ~np.isnan(sma); bull = ok & (c > sma) & (slope > 0); bear = ok & (c < sma) & (slope < 0)
+        flat = ok & ~bull & ~bear
+        return {"bull": bull, "bear": bear, "flat": flat, "any": np.ones(n, dtype=bool)}
+
+    async def _spec_signals(arr, spec, depth: int = 0):
+        """Evaluate a spec, then apply its optional regime_filter gate — a
+        directional veto that blocks entries/exits in named regimes (e.g.
+        block_entry_in:['bear'], block_exit_in:['bull'] = 'don't buy in a bear,
+        don't sell in a bull'). Works on top of ANY strategy kind."""
+        entry, exit_, se, sx = await _spec_signals_core(arr, spec, depth)
+        rf = spec.get("regime_filter") if isinstance(spec, dict) else None
+        if rf:
+            n = len(arr["c"])
+            masks = _regime_masks(arr, rf.get("source") or {})
+
+            def _blk(names):
+                m = np.zeros(n, dtype=bool)
+                for nm in (names or []):
+                    mm = masks.get(str(nm).lower())
+                    if mm is not None:
+                        m = m | mm
+                return m
+            entry = entry & ~_blk(rf.get("block_entry_in"))
+            exit_ = exit_ & ~_blk(rf.get("block_exit_in"))
+            if se is not None:
+                se = se & ~_blk(rf.get("block_short_entry_in"))
+                if sx is not None:
+                    sx = sx & ~_blk(rf.get("block_short_exit_in"))
+        gates = {g: spec.get(g) for g in
+                 ("entry_gate", "exit_gate", "short_entry_gate", "short_exit_gate")
+                 if spec.get(g)} if isinstance(spec, dict) else {}
+        if gates:
+            # generalised conditional linking: entries/exits only fire while the
+            # gate conditions hold (ANDed). Operands are the full DSL — price,
+            # indicators, ML, external {dataset:…} series AND {strategy:id} (is
+            # another strategy currently long/short) — so any strategy can be
+            # conditioned on any signal, indicator or other strategy.
+            gr, gp = await _resolve_operand_factory(arr, depth)
+            for _lst in gates.values():
+                for _c in _lst:
+                    await gp(_c.get("left")); await gp(_c.get("right"))
+            if "entry_gate" in gates:
+                entry = entry & eval_conditions(arr, gates["entry_gate"], gr, "and")
+            if "exit_gate" in gates:
+                exit_ = exit_ & eval_conditions(arr, gates["exit_gate"], gr, "and")
+            if se is not None and "short_entry_gate" in gates:
+                se = se & eval_conditions(arr, gates["short_entry_gate"], gr, "and")
+            if sx is not None and "short_exit_gate" in gates:
+                sx = sx & eval_conditions(arr, gates["short_exit_gate"], gr, "and")
+        return entry, exit_, se, sx
+
+    async def _spec_signals_core(arr, spec: dict, depth: int = 0):
         """(entry, exit, short_entry, short_exit) boolean arrays for any
         strategy kind — the ONE evaluator shared by backtests and the live
         monitor, so what you test is exactly what gets monitored. The short
@@ -1362,10 +1490,50 @@ if _CAP_AVAILABLE and HAS_NUMPY:
                 s_exit = SX.all(axis=1) if str(spec.get("exit_combine") or "any").lower() == "all" \
                     else SX.any(axis=1)
             return entry, exit_, s_entry, s_exit
+        if kind == "dual":
+            # Compose one strategy on the LONG side with another on the SHORT
+            # side into a single long/short strategy (each leg is a strategy id
+            # or inline spec). If the short leg defines its own short side we
+            # use that; otherwise its long signals drive the short entries.
+            if depth >= 1:
+                raise ValueError("dual strategies cannot be nested")
+            loop = asyncio.get_running_loop()
+
+            async def _leg(m):
+                if not m:
+                    return None
+                sub = None
+                if isinstance(m, dict) and m.get("spec"):
+                    sub = m["spec"]
+                elif isinstance(m, dict) and m.get("strategy_id"):
+                    row = await loop.run_in_executor(None, _strategy_full_sync, str(m["strategy_id"]))
+                    sub = row["spec"] if row else None
+                elif isinstance(m, str):
+                    row = await loop.run_in_executor(None, _strategy_full_sync, m)
+                    sub = row["spec"] if row else None
+                elif isinstance(m, dict):
+                    sub = m
+                if not isinstance(sub, dict):
+                    raise ValueError("dual leg needs a strategy_id or inline spec")
+                return await _spec_signals(arr, sub, depth + 1)
+            L = await _leg(spec.get("long"))
+            S = await _leg(spec.get("short"))
+            if not L and not S:
+                raise ValueError("dual strategy needs a long and/or short leg")
+            z = np.zeros(n, dtype=bool)
+            entry = L[0] if L else z
+            exit_ = L[1] if L else z
+            s_entry = s_exit = None
+            if S:
+                if S[2] is not None:
+                    s_entry, s_exit = S[2], S[3]
+                else:
+                    s_entry, s_exit = S[0], S[1]
+            return entry, exit_, s_entry, s_exit
         # rule
         if not spec.get("entry") and not spec.get("short_entry"):
             raise ValueError("rule strategy needs entry:[…] (and/or short_entry:[…]) conditions")
-        resolve, prload = await _resolve_operand_factory(arr)
+        resolve, prload = await _resolve_operand_factory(arr, depth)
         for cond in (list(spec.get("entry") or []) + list(spec.get("exit") or []) +
                      list(spec.get("short_entry") or []) + list(spec.get("short_exit") or [])):
             await prload(cond.get("left")); await prload(cond.get("right"))
@@ -1383,7 +1551,7 @@ if _CAP_AVAILABLE and HAS_NUMPY:
     @capability(
         "markets.strategy.save", http_method="POST", http_path="/markets/strategy/save",
         http_tags=["markets"], memory="on",
-        schema=enum_schema(kind=["rule", "ml", "fused", "regime"]),
+        schema=enum_schema(kind=["rule", "ml", "fused", "regime", "dual"]),
         description="Save/update a trading strategy. Four kinds: "
                     "kind='rule' — spec {entry:[{left,op,right}…] ANDed, exit:[…] ORed, "
                     "short_entry:[…], short_exit:[…] (optional short side), "
@@ -1431,6 +1599,8 @@ if _CAP_AVAILABLE and HAS_NUMPY:
             return {"error": "fused strategy needs members:[…]"}
         if k == "regime" and not spec.get("regimes"):
             return {"error": "regime strategy needs spec.regimes:[{when, strategy_id|spec}]"}
+        if k == "dual" and not (spec.get("long") or spec.get("short")):
+            return {"error": "dual strategy needs spec.long and/or spec.short (strategy id or inline spec)"}
         await _ensure_tables()
         sid = id or uuid.uuid4().hex[:10]
 
@@ -1840,6 +2010,27 @@ if _CAP_AVAILABLE and HAS_NUMPY:
             pass
         return out
 
+    @capability(
+        "markets.backtest.delete", http_method="POST",
+        http_path="/markets/backtest/delete", http_tags=["markets"], memory="on",
+        description="Delete a stored backtest result (does not touch the strategy "
+                    "it came from). Input: id (str!). Output: {ok, id}.",
+    )
+    async def cap_backtest_delete(id: str = "", trace_id=None) -> dict:
+        if not id:
+            return {"error": "id required"}
+        await _ensure_tables()
+
+        def _del():
+            conn = _sqlite_conn()
+            try:
+                conn.execute("DELETE FROM mkt_backtests WHERE id=?", (id,))
+                conn.commit()
+            finally:
+                conn.close()
+        await asyncio.get_running_loop().run_in_executor(None, _del)
+        return {"ok": True, "id": id}
+
     # ── Signal preview & parameter sweep ──────────────────────────────────────
 
     async def _load_spec_and_arr(dataset_id: str, strategy_id: str, spec,
@@ -2132,11 +2323,23 @@ if _CAP_AVAILABLE and HAS_NUMPY:
         finally:
             conn.close()
 
+    _ALERT_ICON = {"entry": "🟢▲", "exit": "🔵▽", "short_entry": "🔴▼", "short_exit": "🟡△"}
+    _ALERT_ACT = {"entry": "BUY (open long)", "exit": "SELL (close long)",
+                  "short_entry": "SHORT (open)", "short_exit": "COVER (close short)"}
+
     async def _raise_alert(strategy: dict, direction: str, dataset_id: str,
-                           price: float, channels: List[str]):
+                           price: float, channels: List[str], extra: dict = None):
+        extra = extra or {}
         aid = uuid.uuid4().hex[:10]
-        msg = (f"{'▲' if direction == 'entry' else '▼'} {strategy.get('name')} "
-               f"{direction.upper()} signal on {dataset_id} @ {price}")
+        bits = [f"{_ALERT_ICON.get(direction, '•')} {strategy.get('name')} — "
+                f"{_ALERT_ACT.get(direction, direction.upper())}",
+                f"{str(dataset_id).replace('mkt.', '')} @ {price}"]
+        pnl = extra.get("pnl_pct")
+        if pnl is not None:
+            bits.append(f"{'🟩' if pnl >= 0 else '🟥'} P&L {'+' if pnl >= 0 else ''}{round(pnl, 2)}%")
+        if extra.get("account"):
+            bits.append(f"[{extra.get('mode', 'sim')}: {extra['account']}]")
+        msg = " · ".join(bits)
 
         def _ins():
             conn = _sqlite_conn()
@@ -2153,12 +2356,14 @@ if _CAP_AVAILABLE and HAS_NUMPY:
         await emit_event({"type": "markets.alert", "id": aid, "kind": "signal",
                           "strategy_id": strategy.get("id"), "name": strategy.get("name"),
                           "dataset_id": dataset_id, "direction": direction,
-                          "price": price, "message": msg})
+                          "price": price, "pnl_pct": pnl,
+                          "mode": extra.get("mode"), "account": extra.get("account"),
+                          "message": msg})
         if "telegram" in (channels or []):
             tg = sys.modules.get("telegram_capabilities")
             if tg and hasattr(tg, "tg_notify"):
                 try:
-                    await tg.tg_notify(text=msg)
+                    await tg.tg_notify(text="📈 " + msg)
                 except Exception as e:
                     log.debug("alert telegram: %s", e)
         return aid
@@ -2205,25 +2410,30 @@ if _CAP_AVAILABLE and HAS_NUMPY:
                 sim, sym_key, side, float(mon.get("sim_pct") or 25.0),
                 px_last, f"strategy:{row.get('id')}")
 
+        acct = mon.get("sim_account_id")
+        exa = {"account": acct, "mode": "sim"} if acct else {}
         if pos != "long" and bool(entry[-1]) and state.get("last_entry_ts") != ts_last:
-            await _raise_alert(row, "entry", ds, px_last, channels)
+            await _raise_alert(row, "entry", ds, px_last, channels, exa)
             await _sim_trade("buy")
-            state.update({"position": "long", "last_entry_ts": ts_last,
+            state.update({"position": "long", "last_entry_ts": ts_last, "entry_px": px_last,
                           "last_signal": "entry", "last_signal_at": now_iso()})
         elif pos == "long" and bool(exit_[-1]) and state.get("last_exit_ts") != ts_last:
-            await _raise_alert(row, "exit", ds, px_last, channels)
+            ep = state.get("entry_px")
+            pnl = ((px_last / ep - 1) * 100) if ep else None
+            await _raise_alert(row, "exit", ds, px_last, channels, dict(exa, pnl_pct=pnl))
             await _sim_trade("sell")
             state.update({"position": "flat", "last_exit_ts": ts_last,
                           "last_signal": "exit", "last_signal_at": now_iso()})
         elif s_entry is not None and pos == "flat" and bool(s_entry[-1]) and \
                 state.get("last_short_ts") != ts_last:
-            # short signals alert only — spot sim accounts can't short
-            await _raise_alert(row, "short_entry", ds, px_last, channels)
-            state.update({"position": "short", "last_short_ts": ts_last,
+            await _raise_alert(row, "short_entry", ds, px_last, channels, exa)
+            state.update({"position": "short", "last_short_ts": ts_last, "short_px": px_last,
                           "last_signal": "short_entry", "last_signal_at": now_iso()})
         elif s_exit is not None and pos == "short" and bool(s_exit[-1]) and \
                 state.get("last_short_exit_ts") != ts_last:
-            await _raise_alert(row, "short_exit", ds, px_last, channels)
+            sp = state.get("short_px")
+            pnl = ((sp / px_last - 1) * 100) if sp else None
+            await _raise_alert(row, "short_exit", ds, px_last, channels, dict(exa, pnl_pct=pnl))
             state.update({"position": "flat", "last_short_exit_ts": ts_last,
                           "last_signal": "short_exit", "last_signal_at": now_iso()})
         state["last_check"] = now_iso()
@@ -2622,6 +2832,132 @@ if _CAP_AVAILABLE and HAS_NUMPY:
                 "totals": {"value": round(tot_val, 2), "cost": round(tot_cost, 2),
                            "unrealized": round(tot_unrl, 2), "realized": round(tot_rl, 2)},
                 "count": len(out)}
+
+    @capability(
+        "markets.tax.uk_cgt", http_method="POST",
+        http_path="/markets/tax/uk_cgt", http_tags=["markets"], memory="on",
+        description="Estimate UK Capital Gains Tax on the portfolio ledger for a tax "
+                    "year (6 Apr–5 Apr), applying HMRC share/crypto matching rules in "
+                    "order: same-day, 30-day bed-&-breakfast, then the Section 104 "
+                    "pool (buy fees added to cost, sell fees deducted from proceeds). "
+                    "Input: tax_year (int — starting calendar year, e.g. 2024 = "
+                    "2024/25; default current), annual_exempt (float=3000), rate_basic "
+                    "(float=18), rate_higher (float=24), basic_band_left (float=0 — £ "
+                    "of basic-rate band unused). ESTIMATE, not tax advice. Output: "
+                    "{tax_year, proceeds, gains, losses, net_gain, taxable, "
+                    "tax_estimate, per_asset:[…], disposals:[…]}.",
+    )
+    async def cap_tax_uk_cgt(tax_year: int = 0, annual_exempt: float = 3000.0,
+                             rate_basic: float = 18.0, rate_higher: float = 24.0,
+                             basic_band_left: float = 0.0, trace_id=None) -> dict:
+        from datetime import datetime
+        await _ensure_tables()
+        r = await cap_portfolio_tx_list(limit=2000)
+        txs = r.get("transactions") or []
+        if not txs:
+            return {"error": "no transactions in the ledger to compute CGT on"}
+
+        def _parse(ts):
+            try:
+                return datetime.fromisoformat(str(ts).replace("Z", "+00:00")).replace(tzinfo=None)
+            except Exception:
+                return None
+
+        now = datetime.utcnow()
+        if not tax_year:
+            tax_year = now.year if (now.month, now.day) >= (4, 6) else now.year - 1
+        ty_start, ty_end = datetime(int(tax_year), 4, 6), datetime(int(tax_year) + 1, 4, 6)
+
+        by_asset: Dict[str, list] = {}
+        for t in txs:
+            d = _parse(t.get("ts"))
+            if d is None:
+                continue
+            try:
+                qty, price, fees = float(t.get("qty") or 0), float(t.get("price") or 0), float(t.get("fees") or 0)
+            except Exception:
+                continue
+            if qty <= 0:
+                continue
+            by_asset.setdefault(t["symbol_key"], []).append(
+                {"date": d, "day": d.date(), "side": t.get("side"),
+                 "qty": qty, "price": price, "fees": fees})
+
+        disposals: List[dict] = []
+        for key, items in by_asset.items():
+            items.sort(key=lambda x: x["date"])
+            for it in items:
+                it["rem"] = it["qty"]
+                it["total"] = (it["qty"] * it["price"] + it["fees"]) if it["side"] == "buy" \
+                    else (it["qty"] * it["price"] - it["fees"])
+            acqs = [x for x in items if x["side"] == "buy"]
+            disps = [x for x in items if x["side"] == "sell"]
+
+            def _match(d, a, q, rule):
+                cost = a["total"] * (q / a["qty"])
+                proceeds = d["total"] * (q / d["qty"])
+                a["rem"] -= q; d["rem"] -= q
+                disposals.append({"symbol_key": key, "date": d["date"], "qty": q,
+                                  "proceeds": round(proceeds, 2), "cost": round(cost, 2),
+                                  "gain": round(proceeds - cost, 2), "rule": rule})
+            for d in disps:
+                for a in acqs:
+                    if a["day"] == d["day"] and a["rem"] > 1e-12 and d["rem"] > 1e-12:
+                        _match(d, a, min(a["rem"], d["rem"]), "same-day")
+            for d in sorted(disps, key=lambda x: x["date"]):
+                if d["rem"] <= 1e-12:
+                    continue
+                for a in sorted(acqs, key=lambda x: x["date"]):
+                    if a["rem"] > 1e-12 and 0 < (a["date"] - d["date"]).days <= 30:
+                        _match(d, a, min(a["rem"], d["rem"]), "30-day")
+                        if d["rem"] <= 1e-12:
+                            break
+            pool_q, pool_c = 0.0, 0.0
+            for it in sorted(items, key=lambda x: x["date"]):
+                if it["rem"] <= 1e-12:
+                    continue
+                if it["side"] == "buy":
+                    pool_q += it["rem"]; pool_c += it["total"] * (it["rem"] / it["qty"]); it["rem"] = 0
+                else:
+                    q = min(it["rem"], pool_q)
+                    if q > 1e-12 and pool_q > 1e-12:
+                        cost = pool_c * (q / pool_q)
+                        proceeds = it["total"] * (q / it["qty"])
+                        disposals.append({"symbol_key": key, "date": it["date"], "qty": q,
+                                          "proceeds": round(proceeds, 2), "cost": round(cost, 2),
+                                          "gain": round(proceeds - cost, 2), "rule": "s104"})
+                        pool_q -= q; pool_c -= cost; it["rem"] -= q
+
+        in_year = [d for d in disposals if ty_start <= d["date"] < ty_end]
+        proceeds = round(sum(d["proceeds"] for d in in_year), 2)
+        gains = round(sum(d["gain"] for d in in_year if d["gain"] > 0), 2)
+        losses = round(-sum(d["gain"] for d in in_year if d["gain"] < 0), 2)
+        net = round(gains - losses, 2)
+        taxable = round(max(0.0, net - float(annual_exempt)), 2)
+        band = max(0.0, float(basic_band_left))
+        at_basic = min(taxable, band)
+        tax = round(at_basic * float(rate_basic) / 100
+                    + max(0.0, taxable - band) * float(rate_higher) / 100, 2)
+
+        pa: Dict[str, dict] = {}
+        for d in in_year:
+            e = pa.setdefault(d["symbol_key"], {"symbol_key": d["symbol_key"],
+                              "disposals": 0, "proceeds": 0.0, "gain": 0.0})
+            e["disposals"] += 1; e["proceeds"] += d["proceeds"]; e["gain"] += d["gain"]
+        per_asset = sorted(({"symbol_key": v["symbol_key"], "disposals": v["disposals"],
+                             "proceeds": round(v["proceeds"], 2), "gain": round(v["gain"], 2)}
+                            for v in pa.values()), key=lambda x: x["gain"])
+        return {"tax_year": f"{tax_year}/{str(tax_year + 1)[-2:]}",
+                "window": [ty_start.date().isoformat(), ty_end.date().isoformat()],
+                "proceeds": proceeds, "gains": gains, "losses": losses, "net_gain": net,
+                "annual_exempt": float(annual_exempt), "taxable": taxable,
+                "rate_basic": rate_basic, "rate_higher": rate_higher, "tax_estimate": tax,
+                "num_disposals": len(in_year), "per_asset": per_asset,
+                "disposals": [{"symbol_key": d["symbol_key"], "date": d["date"].date().isoformat(),
+                               "qty": round(d["qty"], 8), "proceeds": d["proceeds"],
+                               "cost": d["cost"], "gain": d["gain"], "rule": d["rule"]}
+                              for d in sorted(in_year, key=lambda x: x["date"])],
+                "disclaimer": "Estimate only — not tax advice. Verify against HMRC guidance."}
 
     @capability(
         "markets.portfolio.history", http_method="GET",

@@ -962,6 +962,7 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
        menu; only the act-vs-ask toggle stays on the top bar. -->
   <div class="tb-group" title="Execution behaviour">
     <button class="tb-btn" id="autoActBtn"   onclick="CH.toggleAutoAct()"    title="Toggle whether the agent acts automatically or asks before acting — applies to chat caps, the agentic loop, and DAG runs">Ask first</button>
+    <button class="tb-btn" id="autoLoopBtn" onclick="CH._autoLoopToggle()" title="Auto-loop — hand multi-step requests to the agentic loop automatically">Auto-loop</button>
   </div>
 
   <!-- Context and tools -->
@@ -1640,6 +1641,7 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
           <option value="email">Email</option>
           <option value="notebook">Notebook</option>
           <option value="podcast">Podcast 🎙</option>
+          <option value="html">HTML report 🖼</option>
         </select>
         <span class="nlbl" style="flex:0 0 auto">Report via</span>
       </label>
@@ -1647,6 +1649,21 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
       <label class="row" style="font-size:9.5px" title="Before each step, identify the concrete information it needs that earlier steps didn't already collect — gather only what's missing (never re-collect).">
         <input type="checkbox" id="loopPrestepInfo" checked>
         Pre-step info gathering
+      </label>
+
+      <div class="sec" style="margin-top:6px;font-size:9px">Context fidelity</div>
+      <div style="font-size:8.5px;color:var(--dim);margin:2px 0">Several stages REWRITE run material with an LLM before another stage reads it. Each is useful alone, but together a step can end up reading a summary of a summary. Turn them off to make the loop pass through what actually happened.</div>
+      <label class="row" style="font-size:9.5px" title="Master switch: turns OFF step finalisation, the long-output condenser and journal distillation together — every LLM rewrite of run material. Deterministic head+tail truncation and the full outputs saved to disk are unaffected, so no data is lost, only the paraphrasing.">
+        <input type="checkbox" id="loopRawContext">
+        Raw context (no LLM summarisation)
+      </label>
+      <label class="row" style="font-size:9.5px" title="Distil each finished step into a relevant-only result that downstream steps and the verifier read. On by default for v7. Ignored when Raw context is on.">
+        <input type="checkbox" id="loopStepFinalize" checked>
+        Step finalisation
+      </label>
+      <label class="row" style="font-size:9.5px" title="Let a step opt into an LLM-shaped brief of a long tool output (full output always saved to disk either way). On by default for v7. Ignored when Raw context is on.">
+        <input type="checkbox" id="loopCondenseOutput" checked>
+        Long-output condenser
       </label>
 
       <div class="sec" style="margin-top:6px;font-size:9px">Piecewise planning (strategic goals)</div>
@@ -2199,6 +2216,7 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
       <iframe id="codePreviewFrame" sandbox="allow-scripts" style="width:100%;height:100%;border:none;background:transparent" title="Code preview"></iframe>
     </div>
     <div id="codePreviewSource" style="flex:1;display:none;overflow:auto;background:var(--bg0);min-height:0;padding:8px">
+      <div id="codeLintBar" style="position:sticky;top:-8px;margin:-8px -8px 6px;padding:4px 8px;background:var(--bg1);border-bottom:1px solid var(--border);font-size:9px;font-family:var(--mono);color:var(--dim2);white-space:pre-wrap;word-break:break-word"></div>
       <pre style="margin:0"><code id="codePreviewCode" style="font-family:var(--mono);font-size:11px;color:var(--text);white-space:pre-wrap;word-break:break-word"></code></pre>
     </div>
     <div style="flex-shrink:0;padding:5px 8px;border-top:1px solid var(--border);font-size:8.5px;color:var(--dim2);background:var(--bg1)">
@@ -2828,6 +2846,87 @@ const CH = (() => {
       else appendSys('<span style="color:var(--err)">Podcast failed: '+esc((c&&c.error)||'unknown')+'</span>');
     }catch(e){ appendSys('<span style="color:var(--err)">Podcast failed: '+esc(String(e&&e.message||e))+'</span>'); }
   }
+  /* Re-deliver this message as a rich, self-contained HTML report (report.html)
+     — themed doc + Mermaid + inline-SVG infographics. The original message is
+     untouched; the report opens inline and can be pinned to the gallery. */
+  async function _msgHtmlReport(mid){
+    const rec = _MSG_REGISTRY[mid]; if(!rec) return;
+    const content = rec.getContent();
+    if(!content.trim()){ appendSys('<span style="color:var(--dim2)">Message is empty — nothing to render.</span>'); return; }
+    const title=(content.trim().split('\n').find(l=>l.trim())||'Report').replace(/^#+\s*/,'').slice(0,120);
+    appendSys('<span style="color:var(--dim2)">🖼 Building HTML report…</span>');
+    try{
+      const r=await fetch(BASE+'/mcp/call',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({name:'report.html',session_id:SID||'',arguments:{
+          content, title, mode:'auto'
+        }})});
+      const j=await r.json();
+      const c=j&&j.content;
+      if(c&&c.ok&&c.url){
+        const href=BASE+c.url;
+        const gal=_galButton({title:title,url:c.url,kind:'html_report',download_url:c.download_url||'',artifact_id:c.artifact_id||'',source_id:SID||''});
+        appendSys('<span style="color:var(--ok)">🖼 HTML report ready — <a href="'+esc(href)+'" target="_blank" rel="noopener" style="color:var(--acc)">open report</a> ('+esc(c.mode_used||'')+')</span>'+gal);
+        try{ window.open(href,'_blank','noopener'); }catch(_){}
+      } else appendSys('<span style="color:var(--err)">HTML report failed: '+esc((c&&c.error)||'unknown')+'</span>');
+    }catch(e){ appendSys('<span style="color:var(--err)">HTML report failed: '+esc(String(e&&e.message||e))+'</span>'); }
+  }
+  /* General re-deliver: re-render this message through ANY delivery channel
+     (HTML / podcast / email / telegram / notebook / memory / chat). The original
+     message is never modified. Shows the available channels as a quick menu. */
+  let _redeliverChans = null;
+  async function _msgRedeliver(mid){
+    const rec = _MSG_REGISTRY[mid]; if(!rec) return;
+    const content = rec.getContent();
+    if(!content.trim()){ appendSys('<span style="color:var(--dim2)">Message is empty — nothing to re-deliver.</span>'); return; }
+    if(!_redeliverChans){
+      try{
+        const r=await fetch(BASE+'/mcp/call',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({name:'output.channels',session_id:SID||'',arguments:{}})});
+        const j=await r.json(); _redeliverChans=((j&&j.content&&j.content.channels)||[]);
+      }catch(e){ _redeliverChans=[]; }
+    }
+    const avail=(_redeliverChans||[]).filter(c=>c&&c.available!==false&&c.id!=='fabric');
+    if(!avail.length){ appendSys('<span style="color:var(--err)">No delivery channels available.</span>'); return; }
+    const btns=avail.map(c=>`<button class="mact" onclick="CH._redeliverDo('${mid}','${esc(c.id)}',this)" title="Re-deliver as ${esc(c.label||c.id)}">${esc(c.label||c.id)}</button>`).join(' ');
+    appendSys('<span style="color:var(--dim2)">⇄ Re-deliver this message as: </span>'+btns);
+  }
+  async function _redeliverDo(mid, channel, btn){
+    const rec = _MSG_REGISTRY[mid]; if(!rec) return;
+    const content = rec.getContent(); if(!content.trim()) return;
+    const title=(content.trim().split('\n').find(l=>l.trim())||'Output').replace(/^#+\s*/,'').slice(0,120);
+    if(btn){ btn.disabled=true; btn.textContent='…'; }
+    try{
+      const r=await fetch(BASE+'/mcp/call',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({name:'output.redeliver',session_id:SID||'',arguments:{channel,content,title}})});
+      const j=await r.json(); const c=j&&j.content;
+      if(c&&c.ok){
+        let extra='',gal='';
+        if(c.url){ const href=BASE+c.url; extra=' — <a href="'+esc(href)+'" target="_blank" rel="noopener" style="color:var(--acc)">open</a>'; try{window.open(href,'_blank','noopener');}catch(_){}
+          gal=_galButton({title:title,url:c.url,kind:(channel==='html'?'html_report':'other'),download_url:c.download_url||'',artifact_id:c.artifact_id||'',source_id:SID||''}); }
+        else if(c.job_id||c.episode_id) extra=' — started (renders async)';
+        appendSys('<span style="color:var(--ok)">⇄ Re-delivered as '+esc(channel)+extra+'</span>'+gal);
+      } else appendSys('<span style="color:var(--err)">Re-deliver failed: '+esc((c&&c.error)||'unknown')+'</span>');
+    }catch(e){ appendSys('<span style="color:var(--err)">Re-deliver failed: '+esc(String(e&&e.message||e))+'</span>'); }
+  }
+  /* ★ Save to gallery — pins a produced artifact (HTML report, etc.) to the
+     global artifacts gallery via gallery.add. The artifact payload is stashed by
+     key so titles/urls with quotes survive the inline onclick. */
+  let _galSeq = 0; const _galPending = {};
+  function _galButton(art){
+    const k='g'+(++_galSeq); _galPending[k]=art;
+    return ' <button class="mact" onclick="CH._gallerySave(\''+k+'\',this)" title="Save this artifact to the Artifacts gallery">&#9733; Save to gallery</button>';
+  }
+  async function _gallerySave(key, btn){
+    const art=_galPending[key]; if(!art) return;
+    if(btn){ btn.disabled=true; btn.textContent='…'; }
+    try{
+      const r=await fetch(BASE+'/mcp/call',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({name:'gallery.add',session_id:SID||'',arguments:art})});
+      const j=await r.json(); const c=j&&j.content;
+      if(c&&c.ok){ if(btn){ btn.textContent='★ Saved'; btn.classList.add('ok'); btn.disabled=true; } }
+      else { if(btn){ btn.disabled=false; btn.innerHTML='&#9733; Save to gallery'; } appendSys('<span style="color:var(--err)">Gallery save failed: '+esc((c&&c.error)||'unknown')+'</span>'); }
+    }catch(e){ if(btn){ btn.disabled=false; } appendSys('<span style="color:var(--err)">Gallery save failed: '+esc(String(e&&e.message||e))+'</span>'); }
+  }
   function _chatSaveToNotebook(){
     const md = _chatToMarkdown();
     if(!md.trim()){ appendSys('<span style="color:var(--dim2)">Chat is empty — nothing to save.</span>'); return; }
@@ -2884,7 +2983,9 @@ const CH = (() => {
       + `<button class="mact" onclick="CH._msgSaveToIde('${mid}')" title="Save this message to a file via the IDE">+ IDE</button>`
       + `<button class="mact" onclick="CH._msgSaveToProject('${mid}')" title="Add this message to a project (or a new one) in the dream system">+ Project</button>`
       + `<button class="mact" onclick="CH._msgThinkLater('${mid}')" title="Mark this for later thought — a dream thinking-loop Vera revisits when idle">&#128173; Think later</button>`
-      + `<button class="mact" onclick="CH._msgPodcast('${mid}')" title="Turn this message into a spoken podcast episode (multi-voice TTS)">&#127908; Podcast</button>`;
+      + `<button class="mact" onclick="CH._msgPodcast('${mid}')" title="Turn this message into a spoken podcast episode (multi-voice TTS)">&#127908; Podcast</button>`
+      + `<button class="mact" onclick="CH._msgHtmlReport('${mid}')" title="Re-deliver this message as a rich, self-contained HTML report (themed doc + Mermaid + infographics)">&#128444; As HTML</button>`
+      + `<button class="mact" onclick="CH._msgRedeliver('${mid}')" title="Re-deliver this message through another channel (podcast / email / telegram / notebook / …) — original untouched">&#8646; Re-deliver</button>`;
     wrap.appendChild(actions);
 
     // Register so the save handlers can find the message's text. The body
@@ -2956,6 +3057,9 @@ const CH = (() => {
     loopRequireVerify:'Require a read-only verify after each action before finishing',
     loopStrictComplete:'Strict completion check before accepting the final answer',
     loopPreferTerminal:'Steer file work toward grep / sed / awk via the terminal',
+    loopRawContext:'Master off-switch for every LLM rewrite of run material (step finalisation, long-output condenser, journal distillation) — downstream steps read what actually happened instead of a summary of a summary. No data is lost: deterministic truncation and the full outputs on disk are unaffected',
+    loopStepFinalize:'Distil each finished step into a relevant-only result for downstream steps and the verifier. Ignored when Raw context is on',
+    loopCondenseOutput:'Let a step opt into an LLM-shaped brief of a long tool output (the full output is saved to disk either way). Ignored when Raw context is on',
   };
 
   // Rewrite a pure-checkbox .row into a tappable option card. Skips rows that
@@ -3044,12 +3148,36 @@ const CH = (() => {
       });
     });
   }
+  // Raw context is a MASTER switch: while it's on the backend forces step
+  // finalisation and the output condenser off, so show that rather than leaving
+  // two ticked boxes that are quietly ignored. Runs after _initRailUX so it also
+  // dims the .opt cards the rail builds around these rows.
+  function _initRawContextDep(){
+    const master=document.getElementById('loopRawContext');
+    if(!master) return;
+    const deps=['loopStepFinalize','loopCondenseOutput']
+      .map(id=>document.getElementById(id)).filter(Boolean);
+    const sync=()=>{
+      const off=master.checked===true;
+      deps.forEach(d=>{
+        d.disabled=off;
+        const card=d.closest('.opt')||d.closest('.row');
+        if(card){ card.style.opacity=off?'0.45':''; card.title=off
+          ? 'Disabled — Raw context (no LLM summarisation) overrides this'
+          : (card.getAttribute('data-title')||card.title); }
+      });
+    };
+    master.addEventListener('change',sync); sync();
+  }
+
   function _initRailUX(){
     try{ _enhanceRailOpts(); }catch(_){}
     try{ _enhanceMultiSelect(document.getElementById('loopStepsSel')); }catch(_){}
     try{ _initRailSections(); }catch(_){}
     // Auto-open defaults ON; only an explicit opt-out ('0') disables it.
     try{ const ap=document.getElementById('cfgAutoPreview'); if(ap) ap.checked=(localStorage.getItem('vera_auto_preview')!=='0'); }catch(_){}
+    // Restore the top-bar Auto-loop toggle state.
+    try{ const al=document.getElementById('cfgAutoDeferLoop'); if(al){ const v=localStorage.getItem('vera_auto_loop'); if(v!==null) al.checked=(v==='1'); } _syncAutoLoopBtn(); }catch(_){}
   }
 
   function appendSys(html){
@@ -4853,11 +4981,49 @@ IMPORTANT:
     };
   }
 
+  /* Lint the source view: validate structured files and flag the raw-LLM-output
+     corruption (a leading ``` fence or a {"text":…} envelope), plus show line/byte
+     counts so the user can confirm the WHOLE file is present. Self-contained — no
+     external linter (CSP forbids CDNs); JSON gets a real parse with error line/col. */
+  function _codeLint(lang, code){
+    const bar=document.getElementById('codeLintBar');
+    if(!bar) return;
+    const s=String(code==null?'':code);
+    const l=(lang||'').toLowerCase();
+    const lines=s?s.split('\n').length:0;
+    let bytes=s.length; try{ bytes=(new TextEncoder().encode(s)).length; }catch(_){}
+    const parts=[]; let cls='ok';
+    const trimmed=s.replace(/^﻿/,'').replace(/^\s+/,'');
+    if(trimmed.startsWith('```')){ cls='warn';
+      parts.push('⚠ starts with a ``` markdown fence — looks like raw LLM output saved verbatim (the fence should have been stripped)'); }
+    if(/^\s*\{\s*"(text|code|content|output)"\s*:/.test(s)){ cls='warn';
+      parts.push('⚠ wrapped in a {"text":…} envelope — raw cap output saved verbatim'); }
+    if(l==='json'){
+      try{
+        const obj=JSON.parse(s);
+        const n=Array.isArray(obj)?(obj.length+' items')
+              :(obj&&typeof obj==='object')?(Object.keys(obj).length+' keys'):'';
+        parts.push('✓ valid JSON'+(n?' · '+n:''));
+      }catch(e){
+        cls='err';
+        let loc=''; const m=/position (\d+)/.exec(e.message||'');
+        if(m){ const pos=+m[1], pre=s.slice(0,pos);
+          loc=' (line '+pre.split('\n').length+', col '+(pos-pre.lastIndexOf('\n'))+')'; }
+        parts.push('✗ invalid JSON: '+String(e.message||e).replace(/^JSON\.parse:\s*/,'')+loc);
+      }
+    }
+    parts.push(lines+' lines · '+bytes.toLocaleString()+' bytes');
+    if(bytes>=1048576) { cls=cls==='err'?'err':'warn'; parts.push('⚠ read may be capped at 1 MB'); }
+    bar.style.color = cls==='err'?'var(--err)':cls==='warn'?'#d8a03a':'var(--ok)';
+    bar.textContent = parts.join('   ·   ');
+  }
+
   function _codePreviewLoad(lang, code, runJs){
     const frame=document.getElementById('codePreviewFrame');
     const codeEl=document.getElementById('codePreviewCode');
     const titleEl=document.getElementById('codePreviewTitle');
     if(codeEl) codeEl.textContent=code;
+    try{ _codeLint(lang, code); }catch(_){}
     if(titleEl) titleEl.textContent=(lang||'plain').toUpperCase();
     if(!frame) return;
     const l=(lang||'').toLowerCase();
@@ -4953,6 +5119,8 @@ IMPORTANT:
     if(f){f.removeAttribute('srcdoc');f.removeAttribute('src');}
     const c=document.getElementById('codePreviewCode');
     if(c)c.textContent='';
+    const lb=document.getElementById('codeLintBar');
+    if(lb)lb.textContent='';
     const t=document.getElementById('codePreviewTitle');
     if(t)t.textContent='Code preview';
   }
@@ -5104,11 +5272,36 @@ IMPORTANT:
       // FS-browse mode: navigable directory listing over the container's whole FS.
       if(_artFsMode && _artSandboxed){ await _artFsBrowse(_artFsPath||_artifactDir||'/workspace'); return; }
       if(!_artifactDir){ if(treeEl) treeEl.innerHTML='<div style="color:var(--dim2);padding:4px">No artifact directory.</div>'; return; }
-      // 2) list files under it
-      r=await fetch(BASE+'/ide/code/list_files',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({root:_artifactDir,max_files:500,session_id:SID||''})});
-      const j=await r.json();
-      const files=(j&&j.files)||[];
+      // 2) list files under it.
+      //    /exec/artifacts/list is the WORKSPACE view: real deliverables only,
+      //    with sizes, dot-dirs and __pycache__ filtered out. ide/code/list_files
+      //    walks the tree raw, so with max_files=500 the list was consumed
+      //    entirely by .cache/pip/http-v2/… entries and the actual artifacts
+      //    never appeared — "the artifacts UI shows no files" while a dozen sat
+      //    in /workspace. Falls back to the old endpoint if the new one is
+      //    unavailable (older backend), so this degrades rather than breaks.
+      let files=[];
+      try{
+        r=await fetch(BASE+'/exec/artifacts/list?session_id='+encodeURIComponent(SID||''));
+        const a=await r.json();
+        if(a&&a.ok&&Array.isArray(a.files)){
+          files=a.files.filter(f=>!f.is_dir).map(f=>({
+            rel:f.name, path:(_artifactDir?_artifactDir.replace(/\/+$/,'')+'/':'')+f.name,
+            size:f.size}));
+        }
+      }catch(_){ /* fall through to the legacy walk */ }
+      if(!files.length){
+        r=await fetch(BASE+'/ide/code/list_files',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({root:_artifactDir,max_files:500,session_id:SID||''})});
+        const j=await r.json();
+        // Same noise filter for the legacy path — a raw tree walk surfaces the
+        // pip/npm caches long before anything the run actually produced.
+        files=((j&&j.files)||[]).filter(f=>{
+          const rel=String(f.rel||'');
+          return rel && !rel.startsWith('.') && !rel.includes('/.')
+                 && !rel.includes('__pycache__') && !rel.includes('node_modules/');
+        });
+      }
       if(!files.length){ if(treeEl) treeEl.innerHTML='<div style="color:var(--dim2);padding:4px">No files yet.</div>'; return; }
       files.sort((a,b)=>String(a.rel).localeCompare(String(b.rel)));
       if(treeEl) treeEl.innerHTML=files.map(f=>{
@@ -5181,6 +5374,7 @@ IMPORTANT:
         const frame=document.getElementById('codePreviewFrame');
         const codeEl=document.getElementById('codePreviewCode');
         if(codeEl) codeEl.textContent=content;
+        try{ _codeLint('markdown', content); }catch(_){}
         if(frame){
           const body=renderMd(content);
           const th=_previewTheme();
@@ -7563,6 +7757,11 @@ Your task: decide what to do next to advance toward the goal.
       progress_report_mode:    document.getElementById('loopProgressMode')?.value||'off',
       progress_channel:        document.getElementById('loopProgressChannel')?.value||'telegram',
       enable_prestep_info:     document.getElementById('loopPrestepInfo')?.checked!==false,
+      // ── Context fidelity — raw_context is the master off-switch for every LLM
+      //    rewrite of run material; the two below are the individual stages.
+      raw_context:             document.getElementById('loopRawContext')?.checked===true,
+      enable_step_finalize:    document.getElementById('loopStepFinalize')?.checked!==false,
+      condense_output:         document.getElementById('loopCondenseOutput')?.checked!==false,
       // ── v7 piecewise planning knobs (strategic master plan → pieces) ──
       max_plan_pieces:         parseInt(document.getElementById('loopMaxPlanPieces')?.value||'6',10)||6,
       max_caps_per_piece:      parseInt(document.getElementById('loopMaxCapsPerPiece')?.value||'6',10)||6,
@@ -7571,6 +7770,13 @@ Your task: decide what to do next to advance toward the goal.
     // '' cap_override_mode means "use the version default" (v7 → piece) — drop it
     // so the backend applies its default instead of reading '' as 'off'.
     if(!body.cap_override_mode) delete body.cap_override_mode;
+    // These two default ON for v7 and OFF for v6 in the backend. Sending the
+    // checkbox's default (ticked) state would force them ON for a v6 run too and
+    // silently change that engine. Only send an explicit value when the user has
+    // actually turned one OFF; otherwise let the version default stand.
+    if(body.enable_step_finalize!==false) delete body.enable_step_finalize;
+    if(body.condense_output!==false)      delete body.condense_output;
+    if(!body.raw_context) delete body.raw_context;
 
     // Apply preset config overrides — the preset's stored settings take priority
     // over the UI controls for keys it explicitly sets.
@@ -10186,6 +10392,33 @@ Your task: decide what to do next to advance toward the goal.
     if(on) _loopVariantChange();
   }
 
+  /* Top-bar "Auto-loop" toggle (next to Ask-first/Auto-act) — flips the Auto-loop
+     behaviour (cfgAutoDeferLoop): when ON, a request that needs more than one
+     capability is handed to the agentic loop automatically. This ACTIVATES the
+     feature directly; the loop's detailed settings still live behind the Loop
+     tab's ⚙ Config. Persisted in localStorage, restored on load. */
+  function _syncAutoLoopBtn(){
+    const cb=document.getElementById('cfgAutoDeferLoop');
+    const on=!!(cb&&cb.checked);
+    const btn=document.getElementById('autoLoopBtn');
+    if(btn){
+      btn.classList.toggle('on',on);
+      btn.title = on
+        ? 'Auto-loop ON — multi-step requests auto-run the agentic loop. Click to turn off.'
+        : 'Auto-loop OFF — click to auto-run multi-step requests through the agentic loop.';
+    }
+  }
+  function _autoLoopToggle(){
+    const cb=document.getElementById('cfgAutoDeferLoop');
+    const on = cb ? !cb.checked : true;
+    if(cb){ cb.checked=on; try{ cb.dispatchEvent(new Event('change',{bubbles:true})); }catch(_){} }
+    try{ localStorage.setItem('vera_auto_loop', on?'1':'0'); }catch(_){}
+    _syncAutoLoopBtn();
+    appendSys(on
+      ? 'Auto-loop <b>on</b> — multi-step requests now run the agentic loop automatically.'
+      : 'Auto-loop <b>off</b> — requests run as normal chat.');
+  }
+
   // Hide every context-tab pane/control — used when a rail pane (History /
   // Config / Caps / Panels) takes over the unified rail.
   function _hideCtxPanes(){
@@ -11092,6 +11325,12 @@ Your task: decide what to do next to advance toward the goal.
     'memory-graph':             '/ui/panels/file/memory_graph_panel.html',
     'cap_tracking':             '/ui/panels/file/cap_tracking_panel.html',
     'workers':                  '/ui/panels/file/worker_panel.html',
+    // These panels register plain inline HTML (the iframe is built in JS at
+    // mount time, so there's no <iframe src> for us to read) and their file
+    // either lives in a subdir or has a name the id-based guesser can't derive.
+    // Each exposes a dedicated /ui/panels/<id> route that resolves correctly.
+    'workers-ollama':           '/ui/panels/workers-ollama',
+    'model-routing':            '/ui/panels/model-routing',
     'chat2':                    '/chat_panel',
   };
 
@@ -11101,6 +11340,15 @@ Your task: decide what to do next to advance toward the goal.
   async function _probePanelFile(filename){
     try{
       const r = await fetch(BASE+'/ui/panels/file/'+filename, {method:'HEAD'});
+      return r.ok;
+    }catch(_){ return false; }
+  }
+
+  // Probe an arbitrary panel URL (e.g. a dedicated /ui/panels/<id> route).
+  async function _probePanelUrl(path){
+    if(!path || path==='/ui/panels/') return false;
+    try{
+      const r = await fetch(BASE+path, {method:'HEAD'});
       return r.ok;
     }catch(_){ return false; }
   }
@@ -11117,6 +11365,16 @@ Your task: decide what to do next to advance toward the goal.
     if(_PANEL_ENDPOINT_ALIASES[p.id]){
       _PANEL_SRC_CACHE[p.id]=_PANEL_ENDPOINT_ALIASES[p.id];
       return _PANEL_ENDPOINT_ALIASES[p.id];
+    }
+
+    // 2b. Many panels register plain inline HTML (iframe built in JS at mount,
+    //     so no <iframe src> above) but expose a dedicated /ui/panels/<id>
+    //     route. Probe it before guessing file names — this catches panels
+    //     whose file sits in a subdir or is named unlike its id.
+    if(await _probePanelUrl('/ui/panels/'+(p.id||''))){
+      const url='/ui/panels/'+(p.id||'');
+      _PANEL_SRC_CACHE[p.id]=url;
+      return url;
     }
 
     // 3. probe file-name guesses
@@ -13623,6 +13881,7 @@ Your task: decide what to do next to advance toward the goal.
     _initStickListeners();
     _initComposerReveal();
     _initRailUX();
+    _initRawContextDep();
     // loadModels FIRST — populates cfgModel options before loadAgents calls updateAgentMeta
     await loadModels();
     loadFormats();
@@ -13760,11 +14019,11 @@ Your task: decide what to do next to advance toward the goal.
     _renderRailPanels,_loadUiPanelsForce,
     _scrollToBottom,
     _msgEdit,_msgEditCancel,_msgEditCommit,_msgResubmit,
-    _msgSaveToNotebook,_msgSaveToIde,_msgSaveToProject,_msgThinkLater,_msgPodcast,_chatSaveToNotebook,_chatSaveToIde,_msgCopy,
+    _msgSaveToNotebook,_msgSaveToIde,_msgSaveToProject,_msgThinkLater,_msgPodcast,_msgHtmlReport,_msgRedeliver,_redeliverDo,_gallerySave,_chatSaveToNotebook,_chatSaveToIde,_msgCopy,
     _saveModalClose,_saveModalConfirm,_saveModalNbCellTypeChange,
     getActivePanelState,dispatchPanelAction,requestPanelState,
     _startDispatchListener,_stopDispatchListener,
-    _loopVariantChange,_loopVariantSync,_loopHitl,loopLoadAgentCaps,loopLoadDefaultCaps,_loopCfgToggle,
+    _loopVariantChange,_loopVariantSync,_loopHitl,loopLoadAgentCaps,loopLoadDefaultCaps,_loopCfgToggle,_autoLoopToggle,_syncAutoLoopBtn,
     _capToggleOverride,_capOvrToggle,_capOvrSelectDomain,_capOvrSelectAll,_capOvrSelectNone,_capOvrClear,_capOvrSaveToAgent,_capDomainToggle,
     _capOvrGroupOn,_capOvrGroupOff,
     _renderRailCaps,_railCapRunOpen,_railCapRunClose,_railCapRunInsert,_railCapRunExec,

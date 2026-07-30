@@ -1101,8 +1101,8 @@ async def _decompose_query_for_search(
         raw = await asyncio.wait_for(
             collect_ollama(fast, prompt,
                 "You decompose research queries. Return ONLY a JSON array of strings.",
-                job_id, timeout_secs=30),
-            timeout=40,
+                job_id, timeout_secs=FAST_WRITER_TIMEOUT),
+            timeout=FAST_WRITER_TIMEOUT + 15,
         )
         start, end = raw.index("["), raw.rindex("]") + 1
         queries = json.loads(raw[start:end])
@@ -1206,8 +1206,8 @@ async def gather_web_search(query: str, job_id: str) -> list[Citation]:
                 raw2 = await asyncio.wait_for(
                     collect_ollama(fast, replacement_prompt,
                         "You produce safe, evidence-based search queries. Return ONLY JSON.",
-                        job_id, timeout_secs=20),
-                    timeout=25
+                        job_id, timeout_secs=FAST_WRITER_TIMEOUT),
+                    timeout=FAST_WRITER_TIMEOUT + 10
                 )
                 start2 = raw2.find("["); end2 = raw2.rfind("]") + 1
                 if start2 >= 0 and end2 > start2:
@@ -2026,8 +2026,8 @@ async def _detect_intent(query: str, fast: OllamaInstance, job_id: str) -> dict:
     try:
         raw = await asyncio.wait_for(
             collect_ollama(fast, _INTENT_PROMPT.format(query=query),
-                "You analyse research queries. Return only JSON.", job_id, timeout_secs=30),
-            timeout=35
+                "You analyse research queries. Return only JSON.", job_id, timeout_secs=FAST_WRITER_TIMEOUT),
+            timeout=FAST_WRITER_TIMEOUT + 10
         )
         return json.loads(raw[raw.index("{"):raw.rindex("}")+1])
     except Exception as e:
@@ -3840,6 +3840,19 @@ async def get_instance(tier: ModelTier) -> Optional[OllamaInstance]:
     routed = _vera_routed_instance(tier)
     if routed:
         return routed
+    # In Vera mode routing is authoritative: NEVER dial the hand-configured
+    # static node list. Those entries are per-tier model/ctx DEFAULTS + the
+    # standalone-mode fallback only — dialing them directly bypasses the
+    # cluster's ability to avoid a dead node and produces misleading
+    # "cannot reach <static-host>" errors when the health map is momentarily
+    # empty. Return None so callers surface a clean "no Ollama node available".
+    if _VERA_MODE:
+        log.warning(
+            "research get_instance(%s): cluster router returned no node — no "
+            "online/unprobed Ollama instance. Not falling back to the static "
+            "list (Vera mode).", tier)
+        return None
+    # Standalone mode only: the hand-configured static list is the real backend.
     for inst in instances:
         if inst.tier == tier and inst.enabled: return inst
     for inst in instances:
@@ -3939,6 +3952,11 @@ async def stream_ollama(
         "stream": True,
         "think":  inst.enable_thinking,   # Ollama ≥0.7
         "options": {"num_ctx": num_ctx},
+        # Keep the model resident between calls so a research run's first
+        # generate (and the next run's) doesn't pay a cold model-load penalty —
+        # that cold load is what made short-timeout utility calls (query
+        # decomposition, intent) time out with "… writer timed out after 30s".
+        "keep_alive": RESEARCH_KEEP_ALIVE,
     }
     to = httpx.Timeout(connect=5.0, read=eff_timeout, write=30.0, pool=5.0)
 
@@ -5285,6 +5303,16 @@ THINKER_PLAN_TIMEOUT = 300.0   # planning/decompose/outline steps — allow extr
 THINKER_THINK_TIMEOUT= 1200.0   # deep reasoning/synthesis — extra budget for thinking chains
 WRITER_TIMEOUT       = 6000.0   # writer extraction — slightly more headroom
 SUMMARY_TIMEOUT      = 300.0   # rolling context summary
+# Fast utility writer calls (query decomposition, intent, safe-replacement
+# angles). These were 20-30s, too tight to absorb a cold model load on the
+# first generate of a run — the model spends 20-40s loading before the first
+# token, so the call died with "… writer timed out after 30s" and silently
+# degraded (e.g. single-angle search). keep_alive keeps it warm; this gives the
+# occasional cold load room to finish. Override via RESEARCH_FAST_TIMEOUT.
+FAST_WRITER_TIMEOUT  = float(os.environ.get("RESEARCH_FAST_TIMEOUT", "90"))
+# How long Ollama keeps a research model resident after a generate. Prevents
+# repeated cold loads across a run and between runs. Override via OLLAMA_KEEP_ALIVE.
+RESEARCH_KEEP_ALIVE  = os.environ.get("OLLAMA_KEEP_ALIVE", "30m")
 
 def _effective_timeout(inst: "OllamaInstance", base: float) -> float:
     """Scale timeout for instances that have thinking enabled."""

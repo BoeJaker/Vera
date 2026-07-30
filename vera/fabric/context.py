@@ -64,6 +64,7 @@ no new infrastructure introduced.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import sys
@@ -1976,8 +1977,27 @@ def _guard_pin_kwargs(guard: Dict[str, Any], cap_name: str,
     return notes
 
 
+# Which capability functions accept a `stream_cb` kwarg, cached by name so the
+# introspection (cheap, but not free) runs once per capability, not once per
+# call. Populated lazily by _accepts_stream_cb below.
+_STREAM_CB_CAPS: Dict[str, bool] = {}
+
+
+def _accepts_stream_cb(cap_name: str, func) -> bool:
+    cached = _STREAM_CB_CAPS.get(cap_name)
+    if cached is not None:
+        return cached
+    try:
+        accepts = "stream_cb" in inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        accepts = False
+    _STREAM_CB_CAPS[cap_name] = accepts
+    return accepts
+
+
 async def _agent_loop_call_tool(cap_name: str, args: Dict, *,
-                                 session_id: str = "", trace_id: str = "") -> Dict:
+                                 session_id: str = "", trace_id: str = "",
+                                 stream_cb=None) -> Dict:
     cap = CAPABILITY_REGISTRY.get(cap_name)
     if not cap:
         return {"ok": False, "error": f"Unknown capability: {cap_name}"}
@@ -1995,10 +2015,37 @@ async def _agent_loop_call_tool(cap_name: str, args: Dict, *,
     accepted = set(cap.get("schema", {}).get("properties", {}).keys()) | {"trace_id"}
     kwargs = {k: v for k, v in coerced.items() if k in accepted}
     if session_id and "session_id" in accepted:
-        kwargs.setdefault("session_id", session_id)
+        # The RUN's session wins over anything the model supplied. `session_id` is
+        # infrastructure — it selects which sandbox a cap's file IO and execution
+        # land in — and the model has no basis for choosing it. setdefault let an
+        # invented value through, observed live: a step called
+        #   code.author(path='fetch_pokemon_details.py', session_id='step_291')
+        # which wrote into a phantom 'step_291' area and returned a confident
+        # fs_path='/workspace/fetch_pokemon_details.py'. The run's OWN sandbox
+        # never received the file, so every later exec/read failed on a path the
+        # loop had just been told was written, and the step spiralled.
+        #
+        # sandbox.session.* is the deliberate exception: those caps MANAGE
+        # sandboxes, so their session_id names a target rather than the caller's
+        # own context and must stay caller-supplied.
+        _supplied = kwargs.get("session_id")
+        if cap_name.startswith("sandbox.session."):
+            kwargs.setdefault("session_id", session_id)
+        else:
+            kwargs["session_id"] = session_id
+            if _supplied and str(_supplied) != str(session_id):
+                _coerce_notes = list(_coerce_notes) + [
+                    f"session_id={_supplied!r} ignored — a cap always runs in THIS run's "
+                    f"session. Never pass session_id; it is supplied for you."]
     if guard:
         _coerce_notes = list(_coerce_notes) + _guard_pin_kwargs(
             guard, cap_name, kwargs, accepted)
+    # Live output streaming: only forward stream_cb to capabilities that
+    # actually declare it (code.author, llm.generate, ...) — passing it to an
+    # arbitrary cap function would be a TypeError for the vast majority that
+    # don't accept it, so this is opt-in per-capability, not blanket.
+    if stream_cb is not None and _accepts_stream_cb(cap_name, cap["func"]):
+        kwargs["stream_cb"] = stream_cb
     try:
         result = await cap["func"](**kwargs, trace_id=trace_id)
         return {"ok": True, "result": result, "_coerce_notes": _coerce_notes,

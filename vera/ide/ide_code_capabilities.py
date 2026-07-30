@@ -119,7 +119,30 @@ async def _sbx_read_modify_write(session_id: str, path: str, transform,
     meta.update({"path": path, "ok": True, "created": not existed,
                  "bytes": len(new_text.encode("utf-8", errors="replace")),
                  "sandboxed": True})
+    meta["_new_text"] = new_text          # for version-on-edit (popped before return)
     return meta
+
+
+async def _version_edit(session_id: str, path: str, content: Optional[str],
+                        *, agent: str = "", op: str = "edit") -> Optional[dict]:
+    """Snapshot the post-edit file into the code version store so EVERY surgical
+    edit creates a new version — the same history the auto-saved generative writes
+    build, so code.versions / code.diff / code.restore drive the point-out → fix →
+    diff back-and-forth. Best-effort; never blocks the edit, never raises."""
+    if content is None:
+        return None
+    try:
+        import importlib
+        dw = importlib.import_module("Vera.vera.dag.dag_workshop_capabilities")
+        fn = getattr(dw, "code_store_version_edit", None)
+        if fn is None:
+            return None
+        msg = f"{op} by {agent}" if agent else op
+        return await fn(path=path, content=content, session_id=session_id,
+                        agent=agent, message=msg)
+    except Exception as e:
+        log.debug("version-on-edit failed for %s: %s", path, e)
+        return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -305,6 +328,7 @@ async def ide_code_edit_lines(
                           "replaced_range": [s, e]}
     routed = await _sbx_read_modify_write(session_id, path, _splice)
     if routed is not None:
+        _nt = routed.pop("_new_text", None)
         if routed.get("ok"):
             sid = session_id or _ide_get_session_id()
             asyncio.ensure_future(_record(
@@ -323,6 +347,10 @@ async def ide_code_edit_lines(
                 fabric_data={"path": path, "start": start, "end": end,
                              "agent": agent, "new_content": new_content[:20000]},
             ))
+            _ver = await _version_edit(sid, path, _nt, agent=agent, op="edit_lines")
+            if _ver and _ver.get("ok") and not _ver.get("unchanged"):
+                routed["version"] = _ver.get("version")
+                routed["scope"]   = _ver.get("scope")
         return routed
     try:
         p = _safe_path(path, root)
@@ -367,6 +395,9 @@ async def ide_code_edit_lines(
                          "agent": agent, "new_content": new_content[:20000]},
         ))
 
+        _ver = await _version_edit(sid, str(p), new_text, agent=agent, op="edit_lines")
+        _vmeta = ({"version": _ver.get("version"), "scope": _ver.get("scope")}
+                  if _ver and _ver.get("ok") and not _ver.get("unchanged") else {})
         return {
             "path":           str(p),
             "ok":             True,
@@ -375,6 +406,7 @@ async def ide_code_edit_lines(
             "lines_after":    len(new_lines),
             "replaced_range": [s, e],
             "bytes":          size,
+            **_vmeta,
         }
     except Exception as ex:
         return {"error": str(ex), "ok": False}
@@ -419,6 +451,7 @@ async def ide_code_insert_at(
         return new_text, {"inserted_at": actual, "lines_after": len(new_lines)}
     routed = await _sbx_read_modify_write(session_id, path, _insert)
     if routed is not None:
+        _nt = routed.pop("_new_text", None)
         if routed.get("ok"):
             sid = session_id or _ide_get_session_id()
             asyncio.ensure_future(_record(
@@ -438,6 +471,10 @@ async def ide_code_insert_at(
                 fabric_data={"path": path, "line": routed.get("inserted_at"),
                              "agent": agent, "content": content[:20000]},
             ))
+            _ver = await _version_edit(sid, path, _nt, agent=agent, op="insert_at")
+            if _ver and _ver.get("ok") and not _ver.get("unchanged"):
+                routed["version"] = _ver.get("version")
+                routed["scope"]   = _ver.get("scope")
         return routed
     try:
         p = _safe_path(path, root)
@@ -475,12 +512,16 @@ async def ide_code_insert_at(
             fabric_data={"path": str(p), "line": actual,
                          "agent": agent, "content": content[:20000]},
         ))
+        _ver = await _version_edit(sid, str(p), new_text, agent=agent, op="insert_at")
+        _vmeta = ({"version": _ver.get("version"), "scope": _ver.get("scope")}
+                  if _ver and _ver.get("ok") and not _ver.get("unchanged") else {})
         return {
             "path":        str(p),
             "ok":          True,
             "created":     not existed,
             "inserted_at": actual,
             "lines_after": len(new_lines),
+            **_vmeta,
         }
     except Exception as ex:
         return {"error": str(ex), "ok": False}
@@ -703,6 +744,7 @@ async def ide_code_replace(
         routed = await _sbx_read_modify_write(session_id, path, _replace,
                                               allow_create=False)
         if routed is not None:
+            _nt = routed.pop("_new_text", None)
             if routed.get("ok") and routed.get("changed"):
                 sid = session_id or _ide_get_session_id()
                 asyncio.ensure_future(_record(
@@ -724,6 +766,10 @@ async def ide_code_replace(
                                  "replace": replace[:500],
                                  "count": routed.get("replacements"), "agent": agent},
                 ))
+                _ver = await _version_edit(sid, path, _nt, agent=agent, op="replace")
+                if _ver and _ver.get("ok") and not _ver.get("unchanged"):
+                    routed["version"] = _ver.get("version")
+                    routed["scope"]   = _ver.get("scope")
             return routed
 
         p = _safe_path(path, root)
@@ -771,8 +817,11 @@ async def ide_code_replace(
             fabric_data={"path": str(p), "find": find[:500],
                          "replace": replace[:500], "count": n, "agent": agent},
         ))
+        _ver = await _version_edit(sid, str(p), new_text, agent=agent, op="replace")
+        _vmeta = ({"version": _ver.get("version"), "scope": _ver.get("scope")}
+                  if _ver and _ver.get("ok") and not _ver.get("unchanged") else {})
         return {"path": str(p), "ok": True, "replacements": n, "changed": True,
-                "bytes": len(new_text.encode("utf-8", errors="replace"))}
+                "bytes": len(new_text.encode("utf-8", errors="replace")), **_vmeta}
     except Exception as ex:
         return {"error": str(ex), "ok": False}
 

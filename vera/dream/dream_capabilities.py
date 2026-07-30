@@ -2467,7 +2467,13 @@ async def _run_agent_loop(*, goal: str, allowed_caps: str,
             "\n\nOUTPUT DISCIPLINE: as you work, collate substantial findings "
             "and intermediate results into durable output (notebook.append / "
             "workspace files) rather than only carrying them in your replies. "
-            "Finish by stating clearly WHAT durable output you produced and where.")
+            "Finish by stating clearly WHAT durable output you produced and where."
+            "\n\nCODE AUDIENCE: code YOU will run to do the task must be complete and "
+            "runnable NOW — real values, real inputs from the workspace, NO "
+            "placeholder / TODO / 'your-key-here' stubs; if it needs a secret or path, "
+            "read it from the environment/workspace or report it blocked, then run it "
+            "and confirm it worked. Only code handed to a HUMAN as a deliverable may "
+            "carry placeholders, and only when clearly labelled as such.")
     # Surface this loop run in the cycle's poll-able progress snapshot so the
     # panel can show (and re-attach to) the live session even when the event
     # feed drops. session_id is "dream:<cycle_id>:<stage>".
@@ -10319,7 +10325,11 @@ DIRECTOR_JOURNAL_ID  = "director"                     # dream journal its though
 
 DIRECTOR_DEFAULTS: Dict[str, Any] = {
     "enabled":               True,
-    "tick_seconds":          240,    # think cadence
+    "tick_seconds":          240,    # loop cadence (queue drain + conversation)
+    # Ambient THINKING is deliberately less frequent than the tick: a richer
+    # thought at most once per this gap, instead of a shallow one every tick.
+    # A live conversation bypasses it. 0 = think every tick (old behaviour).
+    "think_gap_min":         20.0,
     "active_idle_below_min": 6.0,    # user counts as ACTIVE when idle < this
     "deliver_to_chat":       True,   # push worthwhile thoughts into the chat UI
     "speak":                 True,   # spoken delivery (chat panel synthesises + plays)
@@ -10350,6 +10360,9 @@ DIRECTOR_DEFAULTS: Dict[str, Any] = {
 
 _DIRECTOR_TASK: Optional[asyncio.Task] = None
 _DIRECTOR_RUN = False
+# Wall-clock of the last ambient think, so the director loop can space thinking
+# out (think_gap_min) independently of its faster tick. List for in-place mutate.
+_LAST_DIRECTOR_THINK: List[float] = [0.0]
 
 
 async def _director_cfg() -> Dict[str, Any]:
@@ -10736,9 +10749,20 @@ async def _director_briefing() -> Dict[str, str]:
         if cap and cap.get("func"):
             res = await cap["func"](status="active")
             lines = []
-            for p in (res or {}).get("programs", [])[:6]:
-                ls = ", ".join(f"{l['name']}:{l['status']}" for l in (p.get("loops") or [])[:6])
-                lines.append(f"- {p.get('name')} ({p.get('id')}): {ls}")
+            for p in (res or {}).get("programs", [])[:5]:
+                # Rich enough for the director to STEER: per-loop status + a slice
+                # of the latest run output, so it can spot drift or a repeated
+                # operation rather than just seeing "running".
+                loop_rows = []
+                for l in (p.get("loops") or [])[:8]:
+                    lr = l.get("last_run") or {}
+                    tail = (" — " + str(lr.get("summary") or "")[:90]) if lr else ""
+                    loop_rows.append(f"    · {l.get('name')} [{l.get('status')}]"
+                                     f"×{l.get('runs', 0)}{tail}")
+                dw = str(p.get("done_when") or "")[:90]
+                lines.append(f"- {p.get('name')} ({p.get('id')})"
+                             + (f" done_when: {dw}" if dw else "") + "\n"
+                             + "\n".join(loop_rows))
             v8_txt = "\n".join(lines)
     except Exception:
         pass
@@ -10813,7 +10837,45 @@ async def _director_deliver(thought: str, session_id: str, cfg: Dict[str, Any],
 
 # Orchestration actions the director may take. Executed on the idle handover
 # (except 'program', which self-schedules and is safe to start immediately).
-_DIRECTOR_ACTION_KINDS = ("dream", "project", "think", "loop", "program", "business")
+_DIRECTOR_ACTION_KINDS = ("steer", "dream", "project", "think", "loop", "program", "business")
+
+
+async def _director_active_programs() -> List[Dict[str, str]]:
+    """Compact list of ACTIVE V8 programs (id / name / owning goal) so the
+    director can recognise one and STEER it instead of spawning parallel work."""
+    cap = CAPABILITY_REGISTRY.get("loops.program.list")
+    if not cap or not cap.get("func"):
+        return []
+    try:
+        res = await cap["func"](status="active")
+    except Exception:
+        return []
+    out = []
+    for p in (res or {}).get("programs", []):
+        out.append({"id": str(p.get("id") or ""),
+                    "name": str(p.get("name") or "").strip().lower(),
+                    "owner_ref": str(p.get("owner_ref") or "").strip().lower()})
+    return out
+
+
+def _director_match_program(entry: Dict[str, Any],
+                            progs: List[Dict[str, str]]) -> str:
+    """The active program a director action refers to (by id, program name, or
+    owning goal slug), or '' when it starts genuinely new work."""
+    hay = " ".join(str(entry.get(k) or "") for k in ("target", "topic", "goal")).lower()
+    if not hay.strip() or not progs:
+        return ""
+    for p in progs:                          # exact program id
+        if p["id"] and p["id"] in hay:
+            return p["id"]
+    for p in progs:                          # program name (guard tiny names)
+        if p["name"] and len(p["name"]) >= 4 and p["name"] in hay:
+            return p["id"]
+    for p in progs:                          # owning goal slug
+        ref = p["owner_ref"]
+        if ref and len(ref) >= 4 and (ref in hay or ref.replace("-", " ") in hay):
+            return p["id"]
+    return ""
 
 
 async def _director_queue_action(act: Dict[str, Any], thought: str, max_q: int) -> str:
@@ -10830,6 +10892,28 @@ async def _director_queue_action(act: Dict[str, Any], thought: str, max_q: int) 
              "context": (thought or "")[:500]}
     if not (entry["topic"] or entry["target"] or entry["goal"]):
         return ""
+    # STEER-ONLY over V8 programs: if this action refers to a loop program the
+    # orchestrator is ALREADY running (by id / name / owning goal), do NOT spawn
+    # a competing loop/dream/program — inject a steering NOTE its controller and
+    # loops act on. The dream orchestrator OBSERVES and CORRECTS V8; it never
+    # re-runs its work. Explicit kind='steer' always routes here.
+    steer_cap = CAPABILITY_REGISTRY.get("loops.program.steer")
+    if steer_cap and steer_cap.get("func") \
+            and kind in ("steer", "loop", "program", "dream", "project"):
+        pid = _director_match_program(entry, await _director_active_programs())
+        if pid:
+            note = (entry["goal"] or entry["why"] or entry["topic"]).strip()
+            if note:
+                try:
+                    res = await steer_cap["func"](id=pid, note=note, source="director")
+                    if isinstance(res, dict) and res.get("ok"):
+                        await emit_event({"type": "dream.director.steered",
+                                          "program": pid, "note": note[:160]})
+                        return f"steer:{pid}"
+                except Exception as e:
+                    log.debug("director steer failed: %s", e)
+        if kind == "steer":
+            return ""   # explicit steer, no matching program → nothing to do
     # 'program' actions start immediately — the V8 orchestrator paces itself.
     if kind == "program" and (entry["goal"] or entry["topic"]):
         cap = CAPABILITY_REGISTRY.get("loops.program.create")
@@ -11011,15 +11095,21 @@ async def _director_think_once(cfg: Optional[Dict[str, Any]] = None,
           'can be a single line; a real insight, a risk, or something worth connecting across the '
           'briefing can run a few sentences. Do not pad, and do not force brevity when there is '
           'genuinely more to say>","deliver":true|false,'
-          '"actions":[{"kind":"dream|project|think|loop|program|business",'
-          '"topic":"<short subject>","target":"<project slug / think-loop name when kind '
-          'is project/think>","goal":"<full goal when kind is loop/program/business>",'
+          '"actions":[{"kind":"steer|dream|project|think|loop|program|business",'
+          '"topic":"<short subject>","target":"<project slug / think-loop name / '
+          'program id or name when kind is steer>","goal":"<full goal, or for steer the '
+          'CORRECTION text, when kind is loop/program/business/steer>",'
           '"why":"<one line>","mode":"research|reflect"}]}\n'
-          "actions: 0-2 orchestration moves — kind 'dream' queues a dream topic; 'project' "
-          "advances a named project; 'think' runs a thinking loop; 'loop' runs one agentic "
-          "loop toward a goal; 'program' starts a LONG-HORIZON V8 loop program; 'business' "
-          "runs the business operator. Empty list is fine. Ignore routine system noise — "
-          "only genuinely NEW problems matter.")
+          "actions: 0-2 orchestration moves — kind 'steer' sends a course-correction to a "
+          "V8 loop program ALREADY RUNNING (target=its id/name; goal=the correction) — use it "
+          "when a listed program has drifted off its plan or is repeating an operation; you "
+          "are OBSERVING and nudging it, not reporting on it, so steer only on a real problem. "
+          "'dream' queues a dream topic; 'project' advances a named project; 'think' runs a "
+          "thinking loop; 'loop' runs one agentic loop toward a goal; 'program' starts a "
+          "LONG-HORIZON V8 loop program; 'business' runs the business operator. DO NOT start a "
+          "new loop/dream/program for a goal a listed V8 program already drives — steer that "
+          "program instead. Empty list is fine. Ignore routine system noise — only genuinely "
+          "NEW problems matter.")
     try:
         # Ambient thinking is low-value background work: bound it well under
         # the global OLLAMA_GEN_TIMEOUT so a big model on a slow CPU node can't
@@ -11157,7 +11247,16 @@ async def _director_loop():
             if not cfg.get("enabled", True):
                 await asyncio.sleep(tick)
                 continue
-            await _director_think_once(cfg)
+            # Space ambient thinking out to think_gap_min (richer, less frequent)
+            # while the tick keeps draining the queue. A live conversation window
+            # always thinks (it's a dialogue, not ambient musing).
+            gap_min = float(cfg.get("think_gap_min", 20.0) or 0)
+            conv = await _director_conv_state()
+            due = (time.time() - _LAST_DIRECTOR_THINK[0]) >= gap_min * 60.0
+            if conv or gap_min <= 0 or due:
+                res = await _director_think_once(cfg)
+                if not (isinstance(res, dict) and res.get("backoff")):
+                    _LAST_DIRECTOR_THINK[0] = time.time()
             try:
                 await _director_auto_drain(cfg)
             except Exception as e:
@@ -11204,7 +11303,10 @@ async def dream_director_status(trace_id=None):
     "dream.director.config", memory="off",
     http_method="POST", http_path="/dream/director/config", http_tags=["dream"],
     description="Update dream-director config. Fields (all optional): enabled (bool), "
-                "tick_seconds (int), active_idle_below_min (float), deliver_to_chat (bool), "
+                "tick_seconds (int — loop cadence for queue-drain/conversation), "
+                "think_gap_min (float — minimum minutes between ambient thoughts, so "
+                "they're richer and less frequent; a live conversation ignores it), "
+                "active_idle_below_min (float), deliver_to_chat (bool), "
                 "speak (bool — spoken thought delivery via chat-panel TTS), "
                 "conversation_window_min (float — how long a /vera reply keeps the "
                 "director conversational/GPU), max_queue (int), thought_memory (int: "
@@ -11227,9 +11329,11 @@ async def dream_director_config(enabled: Optional[bool] = None, tick_seconds: Op
                                 quiet_hours: Optional[str] = None,
                                 auto_drain_min: Optional[float] = None,
                                 deliver_cooldown_min: Optional[float] = None,
+                                think_gap_min: Optional[float] = None,
                                 trace_id=None):
     cfg = await _director_cfg()
     for k, v in (("enabled", enabled), ("tick_seconds", tick_seconds),
+                 ("think_gap_min", think_gap_min),
                  ("active_idle_below_min", active_idle_below_min),
                  ("deliver_to_chat", deliver_to_chat), ("speak", speak),
                  ("conversation_window_min", conversation_window_min),

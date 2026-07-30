@@ -29,6 +29,14 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Union
 
+# HF tokenizers spins up Rust/rayon worker threads on first use; on a server that
+# forks subprocesses (docker/exec spawns) that both wastes CPU competing with the
+# event loop and risks a fork-after-parallelism deadlock (the "process just got
+# forked, after parallelism has already been used" warning seen in the logs).
+# Disable it process-wide before anything can import/use tokenizers; override with
+# an explicit env if ever needed.
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 import httpx
 import uvicorn
 
@@ -168,6 +176,28 @@ EMBED_PROVIDER     = getattr(cfg, "EMBED_PROVIDER", "ollama")
 # ("stale_timeout" storms in the Jobs panel). Default 900s; override via env.
 # keep_alive keeps the model resident so the next call skips cold-load latency.
 OLLAMA_GEN_TIMEOUT = float(os.environ.get("OLLAMA_GEN_TIMEOUT", "900"))
+
+# ── Background vs foreground work ────────────────────────────────────────────
+# BACKGROUND jobs are self-scheduled thinking that nobody is waiting on: they
+# recur on a timer, so skipping one costs nothing. FOREGROUND work (a chat turn,
+# an agentic-loop step) has someone or something blocked on it.
+#
+# The distinction exists because ollama serialises per node. A background job
+# that fails over onto a busy node does not just wait — it queues AHEAD of / with
+# foreground work and starves it. Measured live: the dream director's 12.7k-char
+# think timed out on a CPU node, failed over onto the GPU serving an agentic
+# loop, and the loop's 12-second call died at the 900s ceiling.
+# Override with VERA_BACKGROUND_JOB_TYPES (csv) — prefixes match.
+_BACKGROUND_JOB_TYPES = tuple(
+    j.strip() for j in os.environ.get(
+        "VERA_BACKGROUND_JOB_TYPES",
+        "dream_director,dream_,director_,idle_,journal_,reflect").split(",")
+    if j.strip())
+
+
+def _is_background_job(job_type: str) -> bool:
+    jt = (job_type or "").strip().lower()
+    return bool(jt) and jt.startswith(_BACKGROUND_JOB_TYPES)
 # Embedding HTTP timeout. Embeds are quick to COMPUTE but Ollama serialises
 # requests per node, so an embed sent while a big generation runs waits
 # server-side inside this budget — the old 30s default failed embeds that were
@@ -211,6 +241,19 @@ LOADED_MODULES:      List[dict]                = []   # [{name, path, caps, stat
 # it to the cancelled set so a not-yet-started queued task is skipped on pickup.
 REDIS_CANCEL_CHANNEL = "vera:cancel"
 REDIS_CANCEL_SET     = "vera:cancelled"
+
+# Shutdown hooks — modules append a zero-arg coroutine to have it awaited as
+# Vera stops (see `lifespan`). Needed because @app.on_event("shutdown") is
+# ignored when a lifespan handler is used, so module-level teardown had no
+# working registration point at all.
+SHUTDOWN_HOOKS: List[Any] = []
+
+
+def register_shutdown_hook(fn) -> None:
+    """Register a coroutine to run during Vera shutdown. Idempotent."""
+    if fn not in SHUTDOWN_HOOKS:
+        SHUTDOWN_HOOKS.append(fn)
+
 
 # UI panel registry — modules call register_ui() to inject harness panels.
 # Lives here (not in vera_capabilities) so /ui/panels always exists.
@@ -416,13 +459,17 @@ def _cap_rule(pattern: str, *, job_type: str = "", label: str = "",
               declared_by: str = "", prefer_gpu: bool = False,
               deny_gpu: bool = False, pin: str = "", allow: Optional[List[str]] = None,
               deny: Optional[List[str]] = None, model: str = "",
-              escalate_chars: int = 0, escalate: Optional[dict] = None) -> dict:
+              escalate_chars: int = 0, escalate: Optional[dict] = None,
+              options: Optional[dict] = None) -> dict:
     return {"pattern": pattern, "job_type": job_type or "", "label": label or pattern,
             "declared_by": declared_by or "", "prefer_gpu": bool(prefer_gpu),
             "deny_gpu": bool(deny_gpu), "pin": pin or "", "allow": list(allow or []),
             "deny": list(deny or []), "model": model or "",
             "escalate_chars": int(escalate_chars or 0),
-            "escalate": dict(escalate or {})}
+            "escalate": dict(escalate or {}),
+            # Sampling options (temperature/top_p/num_ctx/…) a rule may pin for
+            # its job/role — merged under the caller's explicit options at send.
+            "options": dict(options or {})}
 
 
 def register_cap_routing(pattern: str, **kw) -> dict:
@@ -500,7 +547,8 @@ def _role_rule(profile: str, role: str, r: Optional[dict] = None) -> dict:
                      pin=r.get("pin", "") or "", allow=r.get("allow") or [],
                      deny=r.get("deny") or [], model=r.get("model", "") or "",
                      escalate_chars=int(r.get("escalate_chars") or 0),
-                     escalate=r.get("escalate") or {})
+                     escalate=r.get("escalate") or {},
+                     options=r.get("options") or {})
     rule["role"] = role
     return rule
 
@@ -557,6 +605,11 @@ def _merge_rule_over_base(rule: Optional[dict], base: dict,
         v = rule.get(k)
         if v:
             eff[k] = v
+    # Sampling options merge key-by-key: the rule's options override the base's;
+    # the caller's explicit options still win later in ollama_generate.
+    ropts = rule.get("options") or {}
+    if ropts or base.get("options"):
+        eff["options"] = {**(base.get("options") or {}), **ropts}
     esc_at = int(rule.get("escalate_chars") or 0)
     if esc_at > 0 and prompt_chars >= esc_at and rule.get("escalate"):
         for k, v in (rule.get("escalate") or {}).items():
@@ -566,6 +619,8 @@ def _merge_rule_over_base(rule: Optional[dict], base: dict,
                 eff[k] = bool(v)
             elif k in ("pin", "allow", "deny", "model") and v:
                 eff[k] = v
+            elif k == "options" and isinstance(v, dict):
+                eff["options"] = {**(eff.get("options") or {}), **v}
     return eff
 
 
@@ -1149,6 +1204,11 @@ async def media_slot(service: str = ""):
         if node is not None:
             node["in_use"] = max(0, node.get("in_use", 1) - 1)
 
+# When each node was last handed work. Only used as the FINAL tie-break in
+# _pick_best, so it spreads otherwise-identical candidates round-robin.
+_LAST_PICKED: Dict[str, float] = {}
+
+
 def _embed_node_id() -> str:
     """The instance id embeddings currently route to, or "" if indeterminate.
     Resolution: runtime pinned instance (embed config UI) → embedding rule's
@@ -1183,7 +1243,8 @@ def _embed_node_id() -> str:
 def pick_instance(prefer_gpu: bool = False, instance_id: Optional[str] = None,
                   model: Optional[str] = None, job_type: Optional[str] = None,
                   rule_override: Optional[dict] = None,
-                  explain: Optional[dict] = None) -> Optional[str]:
+                  explain: Optional[dict] = None,
+                  ctx_need: int = 0) -> Optional[str]:
     # `explain`, when passed, is filled with the decision trail so callers can
     # log/emit WHY a node was chosen (rule applied, filters, tie-break).
     trail: List[str] = []
@@ -1198,8 +1259,18 @@ def pick_instance(prefer_gpu: bool = False, instance_id: Optional[str] = None,
     online = {iid:i for iid,i in OLLAMA_INSTANCES.items()
               if i.get("status")=="online" and i.get("enabled", True)}
     if not online:
-        _note("no online nodes")
-        return _out(None)
+        # No CONFIRMED-online node. Rather than strand every caller (which forces
+        # subsystems onto hardcoded fallbacks / dead IPs), route optimistically to
+        # enabled nodes that simply haven't been health-probed yet ("unknown" —
+        # e.g. within the first heartbeat after startup, or if the health loop
+        # stalled). Genuinely "offline" nodes (a ping actually failed) stay out.
+        online = {iid:i for iid,i in OLLAMA_INSTANCES.items()
+                  if i.get("status") in (None, "unknown") and i.get("enabled", True)}
+        if online:
+            _note("no confirmed-online node — routing optimistically to unprobed node(s)")
+        else:
+            _note("no online or unprobed nodes")
+            return _out(None)
     # An explicit pin always wins (as long as it's online+enabled).
     if instance_id and instance_id in online:
         _note(f"caller pinned instance '{instance_id}'")
@@ -1258,9 +1329,20 @@ def pick_instance(prefer_gpu: bool = False, instance_id: Optional[str] = None,
         # Least busy first, then configured priority, then OBSERVED throughput
         # for this model (rolling tokens/sec stats) so equally-idle nodes route
         # to the one that has actually served this model fastest.
+        #
+        # …then LEAST-RECENTLY-USED, which is what actually spreads sequential
+        # work. in_use only differs while calls overlap; a stream of one-at-a-time
+        # requests (embeddings, above all) sees in_use==0 on every node every
+        # time, so the earlier keys tie and `min` deterministically returns the
+        # same node forever. Measured: 8,541 of 8,541 embeddings — 100% — landed
+        # on one CPU node while its peer sat idle. The LRU term breaks that tie so
+        # consecutive requests alternate, without disturbing the busy/priority/
+        # throughput ordering that comes first.
         chosen = min(candidates,
                      key=lambda k: (candidates[k]["in_use"], candidates[k]["priority"],
-                                    -_route_tps(model or "", k)))
+                                    -_route_tps(model or "", k),
+                                    _LAST_PICKED.get(k, 0.0)))
+        _LAST_PICKED[chosen] = time.time()
         others = [k for k in candidates if k != chosen]
         _note(f"picked '{chosen}' (in_use={candidates[chosen]['in_use']}, "
               f"prio={candidates[chosen]['priority']}, "
@@ -1270,6 +1352,30 @@ def pick_instance(prefer_gpu: bool = False, instance_id: Optional[str] = None,
 
     # Build model-aware candidate sets
     has_model = {iid:i for iid,i in online.items() if _has_model(i, model)} if model else online
+
+    # ── Oversized-context escalation: GPU → CPU ──────────────────────────────
+    # The GPU's value is LATENCY on requests that fit in VRAM (~105 tok/s here).
+    # A request whose context exceeds the safe window would force ollama to
+    # offload part of the model and drop to ~33 tok/s — and worse, it evicts the
+    # nicely-seated model, so every SUBSEQUENT small request pays too until it
+    # reloads. The CPU nodes have 50 GB of RAM and no VRAM cliff: they are slower
+    # per token but they degrade gracefully instead of falling off a cliff.
+    #
+    # So: anything that does not fit goes to CPU, which keeps the GPU free as the
+    # fast lane for in-context work and pushes the big job into the background.
+    # Only when NO CPU node can serve it does the GPU take it anyway (spilling
+    # beats failing).
+    if ctx_need and has_model:
+        _gpu_ids = [iid for iid, i in has_model.items() if i.get("has_gpu")]
+        _cpu_ids = [iid for iid, i in has_model.items() if not i.get("has_gpu")]
+        if _gpu_ids and _cpu_ids:
+            _fits = any(ctx_need <= (gpu_safe_ctx(model or "", g) or 10**9) for g in _gpu_ids)
+            if not _fits:
+                _lim = max((gpu_safe_ctx(model or "", g) for g in _gpu_ids), default=0)
+                has_model = {iid: i for iid, i in has_model.items() if not i.get("has_gpu")}
+                prefer_gpu = False
+                _note(f"ctx escalation: ~{ctx_need} tokens exceeds GPU window {_lim} — "
+                      f"routing to CPU ({_cpu_ids}) to keep the GPU free and avoid a spill")
 
     if prefer_gpu:
         # Best: GPU node that has the model
@@ -1354,6 +1460,150 @@ async def ollama_model_ctx(model: str, instance_id: Optional[str] = None,
     return ctx
 
 
+# ── Adaptive per-node / per-model context sizing ─────────────────────────────
+# A single cluster-wide ceiling is the wrong shape for a mixed cluster. The GPU
+# node has a hard VRAM cliff: ask for more KV cache than fits and ollama silently
+# offloads part of the MODEL to CPU, which cost ~3x throughput here (105 tok/s at
+# 28672 → 33 tok/s at 32768). The CPU nodes have 50 GB of system RAM and no such
+# cliff — capping them to the GPU's limit just throws context away for nothing.
+#
+# So the ceiling is resolved per (node, model), and — because a static estimate
+# can never track quantisation, KV type or what else is resident — it LEARNS:
+# after a generation we read /api/ps, and any partial residency shrinks the cached
+# window for that pair and is reported (log + event) instead of silently costing
+# throughput forever.
+_NODE_MODEL_CTX: Dict[str, int] = {}      # "iid::model" -> learned-safe num_ctx
+_CTX_STEP = 4096                          # granularity for grow/shrink
+_CTX_FLOOR = 4096
+
+# Fraction of a GPU's VRAM assumed usable for weights+KV. The rest is driver,
+# compute buffers and fragmentation. Measured: a 12 GB card seated 9.22 GB.
+_VRAM_USABLE = float(os.environ.get("OLLAMA_VRAM_USABLE_FRAC", "0.78"))
+
+# Residency sampling. Checking /api/ps after every generation would add a round
+# trip per call; instead sample a slice, and ALWAYS check when throughput looks
+# like a spill (a partly-offloaded 9B drops from ~105 tok/s to ~33 here, so
+# anything under this on a GPU node is worth confirming).
+_SPILL_SAMPLE   = float(os.environ.get("OLLAMA_SPILL_SAMPLE", "0.05"))
+_SPILL_TPS_HINT = float(os.environ.get("OLLAMA_SPILL_TPS_HINT", "60"))
+
+
+def _node_hw(iid: str) -> dict:
+    """Detected hardware for a node (catalog fills this); {} when unknown."""
+    try:
+        cat = sys.modules.get("catalog_capabilities") or \
+              sys.modules.get("Vera.vera.catalog.catalog_capabilities")
+        return (getattr(cat, "NODE_HW", {}) or {}).get(iid, {}) or {}
+    except Exception:
+        return {}
+
+
+def _auto_ctx_for(model: str, iid: str, detected_max: int) -> int:
+    """The context window to request for `model` on node `iid`.
+
+    GPU node  → whatever we have LEARNED is safe, else a VRAM-derived estimate,
+                else the global OLLAMA_MAX_AUTO_CTX ceiling.
+    CPU node  → the model's full window; system RAM is plentiful and there is no
+                spill cliff to fall off, so the GPU-shaped ceiling does not apply.
+    """
+    key = f"{iid}::{model}"
+    learned = _NODE_MODEL_CTX.get(key)
+    if learned:
+        return max(_CTX_FLOOR, min(detected_max or learned, learned))
+    inst = OLLAMA_INSTANCES.get(iid, {}) or {}
+    hw = _node_hw(iid)
+    vram = float(hw.get("vram_gb") or 0.0)
+    if not inst.get("has_gpu") or vram <= 0:
+        # CPU node (or GPU with unknown VRAM → treat conservatively as uncapped
+        # by the VRAM ceiling but still bounded by the model's own max).
+        return detected_max or _CTX_FLOOR
+    # Rough seat check: KV cache grows ~linearly with context. We don't know the
+    # model's per-token KV cost here, so use the global ceiling as the GPU
+    # default and let the residency probe correct it downward if it was wrong.
+    ceiling = OLLAMA_MAX_AUTO_CTX or detected_max or _CTX_FLOOR
+    return max(_CTX_FLOOR, min(detected_max or ceiling, ceiling))
+
+
+def gpu_safe_ctx(model: str, iid: str) -> int:
+    """The largest context `iid` can serve for `model` WITHOUT spilling to CPU.
+    Synchronous (routing runs in a hot path): uses the learned value when we have
+    one, else the configured ceiling. 0 = unknown / not a GPU node."""
+    inst = OLLAMA_INSTANCES.get(iid, {}) or {}
+    if not inst.get("has_gpu"):
+        return 0
+    return _NODE_MODEL_CTX.get(f"{iid}::{model}") or OLLAMA_MAX_AUTO_CTX or 0
+
+
+# Chars-per-token is model-dependent; 3.4 is a deliberately LOW estimate so the
+# token count comes out high and a borderline request escalates rather than
+# squeaking onto the GPU and spilling. Output is counted too — the KV cache has
+# to hold it.
+_CHARS_PER_TOKEN = float(os.environ.get("OLLAMA_CHARS_PER_TOKEN", "3.4"))
+_CTX_RESERVE_OUT = int(os.environ.get("OLLAMA_CTX_RESERVE_OUT", "1024"))
+
+
+def est_ctx_tokens(prompt: str = "", system: str = "", num_predict: int = 0) -> int:
+    """Rough tokens this request needs resident: prompt + system + room to answer."""
+    chars = len(prompt or "") + len(system or "")
+    return int(chars / max(_CHARS_PER_TOKEN, 1.0)) + max(int(num_predict or 0), _CTX_RESERVE_OUT)
+
+
+async def note_ctx_residency(iid: str, model: str, requested_ctx: int) -> Optional[dict]:
+    """Read /api/ps and report whether `model` is FULLY resident on `iid`.
+
+    Returns {resident_pct, size, size_vram, spilled, ctx} or None if unknown.
+    On a partial load it shrinks the learned window for this (node, model) by one
+    step so the next request seats fully, logs a WARNING (so it shows in the job
+    log) and emits `ollama.cpu_spill` for the UI. This is the self-correcting
+    half of _auto_ctx_for: an estimate that was too generous fixes itself once,
+    rather than quietly costing throughput on every later call."""
+    inst = OLLAMA_INSTANCES.get(iid) or {}
+    if not inst.get("url") or not inst.get("has_gpu"):
+        return None                      # CPU nodes have no VRAM residency to check
+    try:
+        async with httpx.AsyncClient(verify=_SSL_CTX, timeout=8) as c:
+            r = await c.get(f"{inst['url']}/api/ps")
+            if r.status_code != 200:
+                return None
+            rows = (r.json() or {}).get("models") or []
+    except Exception:
+        return None
+    mdl_base = (model or "").split(":")[0]
+    for m in rows:
+        nm = str(m.get("name") or "")
+        if not (nm == model or nm.startswith(model + ":") or nm.split(":")[0] == mdl_base):
+            continue
+        size = int(m.get("size") or 0)
+        vram = int(m.get("size_vram") or 0)
+        if size <= 0:
+            return None
+        pct = round(100 * vram / size)
+        out = {"resident_pct": pct, "size": size, "size_vram": vram,
+               "spilled": pct < 99, "ctx": m.get("context_length")}
+        if out["spilled"]:
+            key = f"{iid}::{model}"
+            cur = _NODE_MODEL_CTX.get(key) or requested_ctx or _CTX_STEP * 2
+            new = max(_CTX_FLOOR, (cur - _CTX_STEP))
+            if new < cur:
+                _NODE_MODEL_CTX[key] = new
+            log.warning(
+                "OLLAMA CPU SPILL on %s: %s is only %d%% resident (%.2f/%.2f GB) at "
+                "num_ctx=%s — generation runs partly on CPU (~3x slower). "
+                "Reducing this node+model's context to %d.",
+                iid, model, pct, vram / 2**30, size / 2**30, out["ctx"], new)
+            try:
+                await emit_event({"type": "ollama.cpu_spill", "instance_id": iid,
+                                  "model": model, "resident_pct": pct,
+                                  "size_bytes": size, "vram_bytes": vram,
+                                  "context_length": out["ctx"],
+                                  "requested_ctx": requested_ctx,
+                                  "new_ctx": new})
+            except Exception:
+                pass
+        return out
+    return None
+
+
 async def effective_num_ctx(model: str, instance_id: Optional[str] = None,
                              prefer_gpu: bool = False, manual: int = 0) -> int:
     """Resolve the context window to actually use for a request.
@@ -1367,9 +1617,17 @@ async def effective_num_ctx(model: str, instance_id: Optional[str] = None,
     ctx = detected or manual or 4096
     if manual and manual > 0:
         ctx = min(ctx, manual)
-    if OLLAMA_MAX_AUTO_CTX > 0:
+    # Per-node/per-model ceiling. Resolving the node here (rather than applying a
+    # single global cap) is what lets a 50 GB CPU node keep the model's full
+    # window while the GPU node stays inside its VRAM cliff. _auto_ctx_for folds
+    # in OLLAMA_MAX_AUTO_CTX for GPU nodes, so the global setting still applies
+    # where it makes sense.
+    iid = pick_instance(prefer_gpu=prefer_gpu, instance_id=instance_id, model=model)
+    if iid:
+        ctx = min(ctx, _auto_ctx_for(model, iid, detected or ctx))
+    elif OLLAMA_MAX_AUTO_CTX > 0:
         ctx = min(ctx, OLLAMA_MAX_AUTO_CTX)
-    return ctx
+    return max(_CTX_FLOOR, ctx)
 
 
 def _ollama_caller_info(depth: int = 3) -> dict:
@@ -1526,7 +1784,8 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                            keep_alive: Optional[str] = None,
                            timeout: Optional[float] = None,
                            profile: Optional[str] = None,
-                           role: Optional[str] = None) -> str:
+                           role: Optional[str] = None,
+                           meta_out: Optional[dict] = None) -> str:
     # ── Identify caller and log the request ──────────────────────────────────
     # caller_override lets an intermediary cap (e.g. llm.generate) pass
     # through the true upstream caller rather than appearing as the caller.
@@ -1675,10 +1934,13 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                 bg_demoted = True
                 rule_source += ("+bg-cpu" if _always else "+interactive-backoff")
     route_explain: dict = {}
+    # How much context this request actually needs — lets the router send an
+    # oversized one to a CPU node instead of spilling the GPU (see pick_instance).
+    _ctx_need = est_ctx_tokens(prompt, system, (options or {}).get("num_predict") or 0)
     chosen = pick_instance(prefer_gpu=prefer_gpu, instance_id=instance_id,
                            model=eff_model, job_type=eff_job_type,
                            rule_override=(eff_rule if (cap_rule or bg_demoted) else None),
-                           explain=route_explain) or "cpu-246"
+                           explain=route_explain, ctx_need=_ctx_need) or "cpu-246"
     if bg_demoted:
         route_explain.setdefault("reason", []).append(
             f"background '{bg_label}' demoted off GPU (human active)")
@@ -1712,9 +1974,13 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     body["keep_alive"] = keep_alive if keep_alive is not None else OLLAMA_KEEP_ALIVE
     # Tuning options (temperature, num_ctx, num_predict, …) — e.g. an agent's
     # ollama_options(). A large num_ctx here is what stops a big planner prompt
-    # being silently truncated to the model's default window.
-    if options:
-        body["options"] = dict(options)
+    # being silently truncated to the model's default window. The effective
+    # routing rule may pin sampling defaults (a role profile's temperature/
+    # num_ctx); the caller's explicit options always win key-by-key.
+    _rule_opts = (eff_rule or {}).get("options") or {}
+    _merged_opts = {**_rule_opts, **(dict(options) if options else {})}
+    if _merged_opts:
+        body["options"] = _merged_opts
     gen_timeout = float(timeout) if timeout else OLLAMA_GEN_TIMEOUT
     # Reasoning models (e.g. Qwen3) route their <think> output into a separate
     # `thinking` field under native-thinking Ollama, leaving `response` empty if
@@ -1867,11 +2133,44 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                         result = "".join(buf) or "".join(tbuf)
                         elapsed = round(time.time() - t_start, 2)
                         eval_count = int(meta.get("eval_count") or len(buf))
-                        log.info("ollama_done [%s] %.2fs eval_count=%s caller=%s:%s",
+                        # Surface truncation to the caller: Ollama sets
+                        # done_reason="length" when it stopped because the output
+                        # hit the context/num_predict ceiling (not a natural EOS).
+                        # Without this the caller saves a half-finished file and
+                        # believes it is complete.
+                        if meta_out is not None:
+                            _dr = str(meta.get("done_reason") or "")
+                            meta_out.update({"done_reason": _dr,
+                                             "eval_count": eval_count,
+                                             "truncated": _dr == "length"})
+                        # Residency check — is the model actually ALL on the GPU?
+                        # A partial load is invisible in every other signal: the
+                        # call succeeds, just ~3x slower. Sampled (a fraction of
+                        # calls, plus always when throughput looks bad) so it adds
+                        # one cheap GET rather than a round trip per generation.
+                        _resid = None
+                        try:
+                            _tps = eval_count / elapsed if elapsed > 0 else 0
+                            # Sample without pulling in `random`: the sub-second
+                            # part of the clock is an adequate uniform source here.
+                            _samp = (time.time() % 1.0) < _SPILL_SAMPLE
+                            if eval_count > 8 and (_tps < _SPILL_TPS_HINT or _samp):
+                                _resid = await note_ctx_residency(chosen, mdl,
+                                                                  _merged_opts.get("num_ctx") or 0)
+                        except Exception:
+                            _resid = None
+                        log.info("ollama_done [%s] %.2fs eval_count=%s tok/s=%.1f%s caller=%s:%s",
                                  req_id, elapsed, eval_count,
+                                 (eval_count / elapsed if elapsed > 0 else 0),
+                                 (f" GPU={_resid['resident_pct']}%%"
+                                  + (" SPILL→CPU" if _resid.get("spilled") else "")
+                                  if _resid else ""),
                                  caller["caller_file"], caller["caller_func"])
                         req_entry.update({"status": "done", "elapsed_s": elapsed,
-                                          "eval_count": eval_count, "tokens": len(buf)})
+                                          "eval_count": eval_count, "tokens": len(buf),
+                                          "tok_per_s": round(eval_count / elapsed, 2) if elapsed > 0 else 0,
+                                          "gpu_resident_pct": (_resid or {}).get("resident_pct"),
+                                          "cpu_spill": bool((_resid or {}).get("spilled"))})
                         _ollama_log_append(req_entry)
                         _route_stats_update(mdl, chosen, eff_job_type,
                                             elapsed, eval_count, prompt_chars)
@@ -1885,6 +2184,11 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                                 "token_count": len(buf),
                                 "job_type": eff_job_type,
                                 "est_seconds": routing_info.get("est_seconds"),
+                                "tok_per_s": (round(eval_count / elapsed, 2)
+                                              if elapsed > 0 else 0),
+                                "gpu_resident_pct": (_resid or {}).get("resident_pct"),
+                                "cpu_spill": bool((_resid or {}).get("spilled")),
+                                "num_ctx": _merged_opts.get("num_ctx"),
                             })
                         except Exception:
                             pass
@@ -1920,8 +2224,27 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
             })
         except Exception:
             pass
-        for fb_id,fb_inst in OLLAMA_INSTANCES.items():
+        # Failover order: prefer IDLE nodes. Falling a job over onto a node that is
+        # already generating just queues it behind that work (ollama serialises per
+        # node), so the retry inherits the original wait instead of escaping it.
+        _fb_order = sorted(
+            OLLAMA_INSTANCES.items(),
+            key=lambda kv: (kv[1].get("in_use", 0), kv[1].get("priority", 99)))
+        for fb_id, fb_inst in _fb_order:
             if fb_id==chosen or fb_inst["status"]!="online": continue
+            # ── Don't let a BACKGROUND job displace foreground work ─────────
+            # Observed live: the dream director's 12.7k-char think timed out on a
+            # CPU node and failed over onto the GPU that was mid-generation for an
+            # agentic loop. The loop's own 12-second call then starved behind it
+            # and died at the 900s ceiling, and the loop degraded onto a CPU node.
+            # One slow background call became two failed calls plus a downgraded
+            # run. A background job may only fail over onto an IDLE node; if there
+            # isn't one it waits for its next scheduled tick instead.
+            if _is_background_job(eff_job_type) and fb_inst.get("in_use", 0) > 0:
+                log.info("ollama_fallback [%s] skipping %s — busy (in_use=%s) and '%s' "
+                         "is a background job; not displacing foreground work",
+                         req_id, fb_id, fb_inst.get("in_use", 0), eff_job_type)
+                continue
             # Skip nodes that don't have the model
             fb_models = fb_inst.get("models", [])
             mdl_base = mdl.split(":")[0]
@@ -2579,7 +2902,7 @@ def generate_schema(func: Callable) -> dict:
     sig   = inspect.signature(func)
     props: dict = {}
     req:   list = []
-    _SKIP = {"trace_id", "self", "request", "kwargs"}
+    _SKIP = {"trace_id", "self", "request", "kwargs", "stream_cb"}
 
     for k, v in sig.parameters.items():
         if k in _SKIP:
@@ -4593,6 +4916,93 @@ async def mcp_register_server(url: str, name: str = "", trace_id=None):
     registered=await register_mcp_server(url,srv_name)
     return {"registered":registered,"server":srv_name,"count":len(registered)}
 
+# ── Dev-mode controls ─────────────────────────────────────────────────────────
+# Operations that are useful while ITERATING on Vera itself and unacceptable in
+# normal running. Gated on VERA_DEV_MODE so they simply do not function unless
+# the operator has opted in; the caps stay visible so the gate is discoverable
+# rather than a mystery 404.
+
+def dev_mode_on() -> bool:
+    return str(os.environ.get("VERA_DEV_MODE", "")).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _relaunch_argv() -> List[str]:
+    """The argv to re-exec this process with — how it was actually started."""
+    return [sys.executable, "-m", "Vera.vera.capability_orchestration"]
+
+
+async def _do_restart(delay: float) -> None:
+    """Re-exec Vera in place after `delay` seconds.
+
+    os.execv REPLACES this process image: same PID, same parent, same cwd and
+    environment (so PYTHONPATH from build.sh survives). That matters here because
+    `build.sh run` is a ONE-SHOT — it does not restart the process — so simply
+    exiting would take Vera down with nothing to bring it back. execv also fails
+    SAFE: on error the current process keeps running rather than dying.
+
+    Shutdown hooks run first so anything holding external state (e.g. the Loop
+    Lab sandbox in follow-host mode) is released before the swap.
+    """
+    await asyncio.sleep(max(0.2, delay))
+    log.warning("DEV RESTART: re-exec %s", " ".join(_relaunch_argv()))
+    for _hook in list(SHUTDOWN_HOOKS):
+        try:
+            await _hook()
+        except Exception as e:
+            log.warning("restart: shutdown hook failed: %s", e)
+    for closer, name in ((getattr(REDIS, "aclose", None), "redis"),
+                         (getattr(PG_POOL, "close", None), "postgres"),
+                         (getattr(NEO, "close", None), "neo4j")):
+        try:
+            if closer:
+                await closer()
+        except Exception as e:
+            log.debug("restart: closing %s: %s", name, e)
+    try:
+        sys.stdout.flush(); sys.stderr.flush()
+    except Exception:
+        pass
+    try:
+        os.execv(sys.executable, _relaunch_argv())
+    except Exception as e:                      # execv only returns on failure
+        log.error("DEV RESTART FAILED — Vera is still running on the OLD code: %s", e)
+
+
+@capability("sys.dev.restart", memory="off",
+            http_method="POST", http_path="/sys/dev/restart", http_tags=["sys"],
+            description="DEV MODE ONLY. Restart Vera in place so freshly-edited source is "
+                        "loaded, without anyone having to intervene on the host. Re-execs the "
+                        "process (same PID/parent), running shutdown hooks and closing backends "
+                        "first; `build.sh run` does not respawn, so this re-exec — not an exit — "
+                        "is what makes it safe. Requires VERA_DEV_MODE=1 and confirm=True. "
+                        "In-flight work IS lost: agentic loops, chat streams and queued jobs are "
+                        "killed mid-execution. Inputs: confirm (bool!), delay_s (float, default "
+                        "1.5 — time to return this response before the swap), reason (str). "
+                        "Output: {ok, restarting, pid, argv}.")
+async def cap_sys_dev_restart(confirm: bool = False, delay_s: float = 1.5,
+                              reason: str = "", trace_id=None):
+    if not dev_mode_on():
+        return {"ok": False, "error": "dev mode is off — set VERA_DEV_MODE=1 to enable "
+                                      "sys.dev.restart", "dev_mode": False}
+    if not confirm:
+        return {"ok": False, "error": "confirm=True is required — this kills all in-flight "
+                                      "work (agentic loops, chat streams, queued jobs)",
+                "dev_mode": True}
+    log.warning("sys.dev.restart requested%s", f" — {reason}" if reason else "")
+    try:
+        await emit_event({"type": "sys.dev.restart", "reason": reason,
+                          "pid": os.getpid(), "delay_s": delay_s})
+    except Exception:
+        pass
+    # Detached so THIS request can return before the process image is replaced —
+    # otherwise the caller only ever sees a dropped connection.
+    asyncio.create_task(_do_restart(float(delay_s or 1.5)))
+    return {"ok": True, "restarting": True, "pid": os.getpid(),
+            "argv": _relaunch_argv(), "delay_s": float(delay_s or 1.5),
+            "note": "Vera is re-execing; it should answer again within a few seconds. "
+                    "In-flight loops/streams are gone."}
+
+
 # ── Observability ─────────────────────────────────────────────────────────────
 
 @capability("obs.health", memory="off", silent=True,
@@ -5837,28 +6247,44 @@ def _gc_pause_timer(phase, info):
 
 
 async def _gc_pacer():
-    """Run full collections on OUR schedule instead of CPython's. Thresholds
-    are raised at startup so automatic gen-2 passes (1-2s loop stalls on this
-    heap — the hang traces bottoming out in neo4j workspace __del__ were GC
-    finalizer sweeps) essentially never fire mid-request; this task does the
-    equivalent work at a paced, observable moment so cyclic garbage (neo4j
-    session/result graphs, parsed LLM JSON) can't accumulate unbounded."""
+    """Run collections on OUR schedule instead of CPython's. Thresholds are
+    raised at startup so automatic gen-2 passes (1-2s loop stalls on this heap —
+    the hang traces bottoming out in neo4j workspace __del__ were GC finalizer
+    sweeps) essentially never fire mid-request; this task does the equivalent
+    work at a paced, observable moment so cyclic garbage (neo4j session/result
+    graphs, parsed LLM JSON) can't accumulate unbounded.
+
+    gc.collect() holds the GIL for its whole duration, so a full (gen-2)
+    collection freezes the loop for however long it takes to rescan every
+    post-startup survivor — a caught pause was 1.78s, and to_thread can't help
+    because the collection won't release the GIL. So split the work: the young
+    generations (where request-scoped cyclic garbage actually lives and dies)
+    are reaped cheaply EVERY cycle, and the expensive full gen-2 sweep runs only
+    once per VERA_GC_FULL_EVERY cycles. That keeps gen-2 accumulation bounded
+    while cutting how often the multi-hundred-ms freeze can land ~15x."""
     import gc
     interval = float(os.getenv("VERA_GC_PACE_S", "120") or 120)
+    full_every = max(1, int(os.getenv("VERA_GC_FULL_EVERY", "15") or 15))
+    cycle = 0
     while True:
         try:
             await asyncio.sleep(interval)
         except asyncio.CancelledError:
             return
+        cycle += 1
+        full = (cycle % full_every == 0)
         t0 = time.monotonic()
         try:
-            n = gc.collect()
+            # gc.collect(1) reaps gen-0 + gen-1 without touching the large gen-2
+            # survivor set; gc.collect() (== gen-2) is the full, expensive sweep.
+            n = gc.collect() if full else gc.collect(1)
         except Exception:
             continue
         dt_ms = (time.monotonic() - t0) * 1000.0
         if dt_ms >= 200:
-            log.info("gc pacer: full collect freed %d objects in %.0fms "
-                     "(paced — would otherwise have hit mid-request)", n, dt_ms)
+            log.info("gc pacer: %s collect freed %d objects in %.0fms "
+                     "(paced — full sweep every %d cycles)",
+                     "full" if full else "young-gen", n, dt_ms, full_every)
 
 
 @asynccontextmanager
@@ -6026,6 +6452,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "ide/ide_capabilities.py"),
         os.path.join(_here, "ide/ide_code_capabilities.py"),
         os.path.join(_here, "ide/ide_remote_capabilities.py"),
+        os.path.join(_here, "ide/ide_claude_sessions_capabilities.py"),
         os.path.join(_here, "ide/vscode_capabilities.py"),
         os.path.join(_here, "ide/ide_inspect_capabilities.py"),
         os.path.join(_here, "research/research_fabric.py"),        
@@ -6112,6 +6539,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "commerce/commerce_uk_tax.py"),
         os.path.join(_here, "commerce/commerce_fulfilment.py"),
         os.path.join(_here, "commerce/commerce_listing.py"),
+        os.path.join(_here, "commerce/commerce_intake.py"),
         os.path.join(_here, "commerce/commerce_market.py"),
         os.path.join(_here, "commerce/commerce_stores.py"),
         os.path.join(_here, "business/business_capabilities.py"),
@@ -6119,6 +6547,10 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "business/thermal_printer_capabilities.py"),
         os.path.join(_here, "mcp/mcp_catalog_capabilities.py"),
         os.path.join(_here, "evolve/evolve_capabilities.py"),
+        # Operator: general observe→think→act web/computer operator (drives any
+        # web UI or web-served VM). Loaded after evolve so its documentation
+        # mission can reach evolve.sandbox.* for the loop-lab target.
+        os.path.join(_here, "operator/operator_web_capabilities.py"),
         os.path.join(_here, "vera_graph_panels.py")
 
     ]
@@ -6250,6 +6682,17 @@ async def lifespan(app: FastAPI):
 
     log.info("Vera Orchestrator v3 ready — %d caps, %d Ollama nodes",len(CAPABILITY_REGISTRY),len(OLLAMA_INSTANCES))
     yield
+    # ── Shutdown hooks ───────────────────────────────────────────────────────
+    # Modules register coroutines here to be run as Vera stops. This is the ONLY
+    # reliable place: FastAPI ignores @app.on_event("shutdown") once a `lifespan`
+    # is supplied (which it is, right here), so a module registering that way
+    # would silently never fire.
+    for _hook in list(SHUTDOWN_HOOKS):
+        try:
+            await _hook()
+        except Exception as _he:
+            log.warning("shutdown hook %s failed: %s",
+                        getattr(_hook, "__name__", "?"), _he)
     if REDIS:   await REDIS.aclose()
     if PG_POOL: await PG_POOL.close()
     if NEO:     await NEO.close()
@@ -6291,8 +6734,8 @@ def _make_get_handler(cap: dict, cap_name: str):
         except HTTPException:
             raise
         except Exception as e:
-            log.error("GET cap %s: %s", cap_name, e)
-            raise HTTPException(500, str(e))
+            log.error("GET cap %s: %s", cap_name, e, exc_info=True)
+            raise HTTPException(500, f"{type(e).__name__}: {e}")
         finally:
             CURRENT_HTTP_CAP.reset(_tok)
 
@@ -6312,6 +6755,19 @@ def _make_post_handler(cap: dict, cap_name: str):
     """
     # Pre-compute accepted parameter names from schema (excludes trace_id)
     _accepted = set(cap.get("schema", {}).get("properties", {}).keys())
+    # A cap whose function takes **kwargs accepts MORE than its schema advertises:
+    # the schema builder skips VAR_KEYWORD, so a thin delegating cap (e.g.
+    # dag.agent_loop_v7(goal, **kwargs) forwarding to the v6 runner) publishes only
+    # its named params. Filtering to that schema silently dropped every other field
+    # — session_id, max_steps, condense_output … — so the endpoint ran pure defaults
+    # while appearing to accept the request. Skip the filter for those caps; the
+    # callee's own signature (and _filter_kwargs) still rejects genuine typos.
+    try:
+        _takes_kwargs = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD
+            for p in inspect.signature(cap["func"]).parameters.values())
+    except (ValueError, TypeError):
+        _takes_kwargs = False
 
     async def _handler(request: Request):
         # Read body — empty body is fine (no params needed)
@@ -6326,7 +6782,7 @@ def _make_post_handler(cap: dict, cap_name: str):
         # Filter to only accepted params — prevents 'unexpected keyword argument'
         # when the UI sends fields the current function version doesn't know about yet.
         # If _accepted is empty (no schema), pass everything through unchanged.
-        if _accepted:
+        if _accepted and not _takes_kwargs:
             body = {k: v for k, v in body.items() if k in _accepted}
 
         _tok = CURRENT_HTTP_CAP.set(cap_name)
@@ -6344,8 +6800,11 @@ def _make_post_handler(cap: dict, cap_name: str):
                 raise HTTPException(499, "Client disconnected")
             raise
         except Exception as e:
-            log.error("POST cap %s: %s", cap_name, e)
-            raise HTTPException(500, str(e))
+            # exc_info: a bare str(e) is unusable for a KeyError/AttributeError,
+            # whose message is just the missing key ("'code.author'") with no hint
+            # where it came from. The traceback is the only way to locate it.
+            log.error("POST cap %s: %s", cap_name, e, exc_info=True)
+            raise HTTPException(500, f"{type(e).__name__}: {e}")
         finally:
             CURRENT_HTTP_CAP.reset(_tok)
 

@@ -174,12 +174,33 @@ def _strip_html(html: str) -> str:
 # Source gathering — fabric feeds, caps, urls, raw text
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _classify_source_str(s: str) -> Dict[str, Any]:
+    """Turn a bare source string into a typed spec: a URL, a FILE path (read from
+    the session workspace), or plain TEXT. Lets the agentic loop pass what it
+    naturally has — `./output_script_7.txt`, `https://…`, or notes — without
+    knowing the structured-spec schema."""
+    t = (s or "").strip()
+    low = t.lower()
+    if low.startswith(("http://", "https://")):
+        return {"type": "url", "url": t}
+    if low.startswith("www.") and " " not in t:
+        return {"type": "url", "url": "https://" + t}
+    looks_path = (t.startswith(("./", "../", "/", "~"))
+                  or (" " not in t and "\n" not in t
+                      and re.search(r"\.[A-Za-z0-9]{1,8}$", t) is not None))
+    if looks_path:
+        return {"type": "file", "path": t}
+    return {"type": "text", "text": t}
+
+
 async def _gather_sources(sources: List[dict], topic: str,
-                          job_id: str = "", max_chars: int = 9000) -> List[Dict[str, str]]:
+                          job_id: str = "", max_chars: int = 9000,
+                          session_id: str = "") -> List[Dict[str, str]]:
     """Resolve heterogeneous source specs into [{label, text}] context blocks.
 
-    Source spec shapes:
+    Source spec shapes (a bare STRING is auto-classified as url|file|text):
       {"type":"text",    "text":"...", "label"?}
+      {"type":"file",    "path":"./notes.md"}               # read from the workspace
       {"type":"dataset", "dataset_id":"mesh.node1.temp", "query"?, "top_k"?}
       {"type":"fabric",  "query":"...", "top_k"?}            # fabric-wide search
       {"type":"cap",     "name":"web.search", "args":{...}}  # any capability
@@ -189,7 +210,9 @@ async def _gather_sources(sources: List[dict], topic: str,
     per_src = max(1200, max_chars // max(1, len(sources or [])))
 
     for i, src in enumerate(sources or []):
-        if not isinstance(src, dict):
+        if isinstance(src, str):
+            src = _classify_source_str(src)
+        elif not isinstance(src, dict):
             src = {"type": "text", "text": str(src)}
         stype = (src.get("type") or "text").lower()
         label = src.get("label") or ""
@@ -198,6 +221,17 @@ async def _gather_sources(sources: List[dict], topic: str,
             if stype == "text":
                 text = str(src.get("text") or "")
                 label = label or "provided notes"
+
+            elif stype == "file":
+                fpath = str(src.get("path") or src.get("file") or "").strip()
+                label = label or fpath or "file"
+                r = await _call_cap("ide.fs.read", path=fpath,
+                                    session_id=session_id, max_bytes=200000)
+                if isinstance(r, dict) and not r.get("error"):
+                    text = r.get("content") or ""
+                else:
+                    # Not a real file after all → fall back to treating it as text.
+                    text = fpath if not (isinstance(r, dict) and r.get("error")) else ""
 
             elif stype in ("dataset", "fabric"):
                 q: Dict[str, Any] = {"top_k": int(src.get("top_k") or 12)}
@@ -465,7 +499,8 @@ async def _run_pipeline(job_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
         blocks: List[Dict[str, str]] = []
         if sources:
             await _emit(job_id, "gather", f"gathering {len(sources)} sources", 5)
-            blocks = await _gather_sources(sources, topic, job_id=job_id)
+            blocks = await _gather_sources(sources, topic, job_id=job_id,
+                                           session_id=args.get("session_id", ""))
 
         # 2) script
         if script_in and script_in.get("segments"):
@@ -534,6 +569,34 @@ async def _run_pipeline(job_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
             except Exception as e:
                 log.debug("podcast blob mirror %s: %s", episode_id, e)
 
+        # Deliver the DELIVERABLES into the session artifact dir (the sandbox
+        # /workspace when sandboxed) — the finished AUDIO and a readable SCRIPT —
+        # so the agentic loop gets real files it can use directly and does NOT
+        # bolt on a doomed "save to disk" step. The cap owns persistence; steps
+        # don't. Best-effort; the object-store + episode store remain the durable
+        # copies regardless.
+        sid = args.get("session_id", "")
+        if sid:
+            _slug = re.sub(r"[^\w.\-]+", "-", (meta["title"] or "episode").lower()).strip("-")[:48] or "episode"
+            try:
+                import importlib as _il
+                _ex = _il.import_module("Vera.vera.execution.exec_capabilities")
+                _ap = await _ex.copy_file_into_artifacts(
+                    session_id=sid, host_path=audio_path, dest_name=f"{_slug}.{out_fmt}")
+                if _ap:
+                    meta["audio_file"] = _ap
+                _transcript = "\n\n".join(f"{sg.get('speaker', '')}: {sg.get('text', '')}"
+                                          for sg in segs)
+                _script_body = (f"# {meta['title']}\n"
+                                + (f"_{meta['description']}_\n" if meta.get("description") else "")
+                                + f"\n{_transcript}\n")
+                _sp = await _ex.write_artifact_file(
+                    relpath=f"{_slug}.script.md", content=_script_body, session_id=sid)
+                if _sp:
+                    meta["script_file"] = _sp
+            except Exception as e:
+                log.debug("podcast artifact export failed for %s: %s", episode_id, e)
+
         with open(p["meta"], "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2)
         rec = {k: meta[k] for k in ("episode_id", "title", "description", "topic",
@@ -574,7 +637,30 @@ def _normalize_args(topic, sources, speakers, style, minutes, gap_ms, engine,
         speakers = DEFAULT_SPEAKERS
     speakers = [sp if isinstance(sp, dict) else {"name": str(sp), "voice": "af_heart"}
                 for sp in speakers][:6]
-    sources = _j(sources, []) or []
+    # Sources: accept a JSON list of specs OR the loose shapes the agentic loop
+    # actually passes — a bare file path, a URL, plain text, or a newline/comma list
+    # of those. Coerce everything to a list; _gather_sources classifies each item.
+    if isinstance(sources, str):
+        st = sources.strip()
+        if st[:1] in ("[", "{"):
+            try:
+                sources = json.loads(st)
+            except Exception:
+                sources = [st]
+        elif st:
+            # Split a multi-LINE list, or a comma list that clearly holds paths/URLs
+            # (not prose — "Llama 3.1, EU rules" must stay one text block).
+            if "\n" in st or (("," in st) and ("http" in st or "/" in st)):
+                sources = [p.strip() for p in re.split(r"[\n,]+", st) if p.strip()]
+            else:
+                sources = [st]
+        else:
+            sources = []
+    sources = _j(sources, sources if isinstance(sources, list) else [])
+    if isinstance(sources, dict):
+        sources = [sources]
+    if not isinstance(sources, list):
+        sources = []
     script = _j(script, None)
     return {
         "topic":        (topic or "").strip(),
@@ -612,12 +698,13 @@ def _normalize_args(topic, sources, speakers, style, minutes, gap_ms, engine,
 async def cap_podcast_script(topic: str = "", sources=None, speakers=None,
                              style: str = "", minutes: float = 0,
                              instructions: str = "", show_name: str = "",
-                             trace_id=None) -> dict:
+                             session_id: str = "", trace_id=None) -> dict:
     if not (topic or "").strip():
         return {"error": "topic is required"}
     a = _normalize_args(topic, sources, speakers, style, minutes, None, None,
-                        None, None, show_name, None, instructions, "")
-    blocks = await _gather_sources(a["sources"], a["topic"]) if a["sources"] else []
+                        None, None, show_name, None, instructions, session_id)
+    blocks = await _gather_sources(a["sources"], a["topic"],
+                                   session_id=a["session_id"]) if a["sources"] else []
     script = await _generate_script(a["topic"], blocks, a["speakers"], a["style"],
                                     a["minutes"], a["show_name"], a["intro"], instructions)
     if script.get("error"):
@@ -632,23 +719,27 @@ async def cap_podcast_script(topic: str = "", sources=None, speakers=None,
     http_method="POST", http_path="/podcast/generate", http_tags=["podcast"],
     memory="on",
     streams=["podcast.progress"],
-    description="Generate a complete multi-voice podcast episode: gathers source material "
-                "(data-fabric feeds, capability calls, URLs, notes), writes a script with the "
-                "LLM, voices each speaker on the GPU TTS engine, and stitches the audio. "
-                "WHEN TO USE: the user asks for a podcast / audio briefing / spoken digest of "
-                "data or a topic. "
-                "Input: topic (str!), sources (JSON list of "
-                "{type:text|dataset|fabric|cap|url, ...} — e.g. "
-                "[{\"type\":\"dataset\",\"dataset_id\":\"mesh.esp32-1.temp\"}, "
-                "{\"type\":\"cap\",\"name\":\"web.search\",\"args\":{\"query\":\"...\"}}]), "
+    description="Generate a complete multi-voice podcast episode from files, URLs, data, or "
+                "text: gathers the source material, writes a script with the LLM, voices each "
+                "speaker on the GPU TTS engine, stitches the audio, AND saves the finished audio "
+                "+ a readable script INTO this session's artifact workspace — so you do NOT need a "
+                "separate step to save anything. "
+                "WHEN TO USE: the user asks for a podcast / audio briefing / spoken digest. "
+                "Input: topic (str!). sources — the material to base it on; pass whatever you "
+                "have: a FILE PATH (e.g. './script.txt' — read from the workspace), a URL, plain "
+                "TEXT, or a JSON list mixing those and richer specs "
+                "({type:text|file|url|dataset|fabric|cap,...}); a bare string or newline/comma "
+                "list is auto-classified, so a file reference from a prior step Just Works. "
+                "script (JSON pre-written {segments:[{speaker,text}]} skips the LLM). "
                 "speakers (JSON list [{name,voice,speed,persona}] — voices from tts.voices), "
                 "style (conversational|interview|news|deep-dive|debate|story), minutes (float), "
-                "script (JSON — pre-written {segments:[{speaker,text}]} skips the LLM), "
                 "gap_ms (int silence between turns), format (mp3_if_possible|wav), "
                 "wait (bool — true blocks until done, false returns a job_id to poll with "
                 "podcast.status). "
-                "Output: wait=false → {job_id, status}; wait=true → the finished episode "
-                "{episode_id, title, duration_s, audio_url, segments}.",
+                "Output: the finished episode {episode_id, title, duration_s, audio_url, "
+                "audio_file (path in your workspace), script_file (path in your workspace), "
+                "segments}; wait=false → {job_id} to poll. The audio_file/script_file ARE the "
+                "deliverables — reference them directly, don't re-save.",
 )
 async def cap_podcast_generate(topic: str = "", sources=None, speakers=None,
                                style: str = "", minutes: float = 0,

@@ -92,6 +92,14 @@ caps:  ## List registered capabilities (GET /mcp/tools)
 test:  ## Smoke-test the running orchestrator
 	$(PY) welcome/welcome.py --check
 
+.PHONY: test-unit
+test-unit:  ## Run the pytest unit suite (operator + docgen contract)
+	$(PY) -m pytest tests -q
+
+.PHONY: docs-shots
+docs-shots:  ## Capture UI screenshots + regenerate docs (needs requirements-operator.txt)
+	$(PY) tools/vera-docgen/docgen.py run --base-url $(BASE)
+
 .PHONY: notebook
 notebook:  ## Launch the quickstart Jupyter notebook
 	jupyter notebook notebooks/vera_quickstart.ipynb

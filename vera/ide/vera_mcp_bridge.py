@@ -24,27 +24,40 @@ Self-test (no stdio loop):
 
 import argparse
 import json
+import ssl
 import sys
 import urllib.request
 import urllib.error
 
 PROTOCOL_VERSION = "2024-11-05"
-SERVER_INFO = {"name": "vera", "version": "1.0.0"}
+SERVER_INFO = {"name": "vera", "version": "1.1.0"}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Vera REST client
 # ─────────────────────────────────────────────────────────────────────────────
 class Vera:
-    def __init__(self, base_url, allow_prefixes, timeout=120):
+    def __init__(self, base_url, allow_prefixes, timeout=120, insecure=False):
         self.base = base_url.rstrip("/")
         self.allow = [p.strip() for p in (allow_prefixes or "").split(",") if p.strip()]
         self.timeout = timeout
         self._name_map = {}      # sanitized MCP name -> real Vera cap name
+        # Vera serves HTTPS with an auto-generated self-signed cert when
+        # TLS_ENABLED=1 — urllib rejects it by default. --insecure skips
+        # verification (LAN use); it changes nothing for http:// URLs.
+        self._ssl_ctx = None
+        if insecure:
+            self._ssl_ctx = ssl.create_default_context()
+            self._ssl_ctx.check_hostname = False
+            self._ssl_ctx.verify_mode = ssl.CERT_NONE
+
+    def _open(self, req):
+        return urllib.request.urlopen(req, timeout=self.timeout,
+                                      context=self._ssl_ctx)
 
     def _get(self, path):
         req = urllib.request.Request(self.base + path, method="GET")
-        with urllib.request.urlopen(req, timeout=self.timeout) as r:
+        with self._open(req) as r:
             return json.loads(r.read().decode("utf-8"))
 
     def _post(self, path, payload):
@@ -52,7 +65,7 @@ class Vera:
         req = urllib.request.Request(
             self.base + path, data=data, method="POST",
             headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=self.timeout) as r:
+        with self._open(req) as r:
             return json.loads(r.read().decode("utf-8"))
 
     @staticmethod
@@ -195,11 +208,14 @@ def main():
                     help="CSV of cap-name prefixes to expose (empty = all), "
                          "e.g. 'ide.,fabric.,memory.'")
     ap.add_argument("--timeout", type=int, default=120)
+    ap.add_argument("--insecure", action="store_true",
+                    help="Skip TLS certificate verification (Vera's self-signed "
+                         "https). No effect on http:// URLs.")
     ap.add_argument("--selftest", action="store_true",
                     help="Fetch the tool list and print a summary, then exit.")
     args = ap.parse_args()
 
-    vera = Vera(args.url, args.allow, timeout=args.timeout)
+    vera = Vera(args.url, args.allow, timeout=args.timeout, insecure=args.insecure)
 
     if args.selftest:
         try:

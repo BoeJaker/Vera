@@ -306,6 +306,26 @@ async def _program_events(pid: str = "", limit: int = 40) -> List[Dict[str, Any]
             continue
         if pid and prog.get("id") != pid:
             continue
+        # The WHOLE plan — every loop with its current state — travels on the
+        # program event so the card shows all N loops (pending/waiting/running/
+        # done/failed/retired), not just the handful that have produced a run.
+        def _loop_session(lp, st, runs):
+            """The session id to WATCH/replay for a loop: its in-flight run when
+            running (record isn't appended until the run ends), else its last."""
+            if str(st.get("status")) == "running":
+                return f"v8:{prog.get('id')}:{lp.get('name')}:{len(runs) + 1}"
+            return str(runs[-1].get("session_id") or "") if runs else ""
+        plan = []
+        for lp in prog.get("loops", []):
+            st = lp.get("state") or {}
+            runs = st.get("runs") or []
+            plan.append({
+                "name": str(lp.get("name") or ""),
+                "status": str(st.get("status") or "pending"),
+                "goal": str(lp.get("goal") or "")[:200],
+                "engine": lp.get("engine", ""), "profile": lp.get("profile", ""),
+                "runs": len(runs),
+                "session_id": _loop_session(lp, st, runs)})
         out.append(_ev(
             "program", prog.get("created") or "",
             "V8 program · " + str(prog.get("name") or prog.get("id")),
@@ -316,23 +336,36 @@ async def _program_events(pid: str = "", limit: int = 40) -> List[Dict[str, Any]
             # (data-scope) rather than opening the dream panel in a new tab.
             ui={"label": "Program", "program_id": str(prog.get("id") or "")},
             extra={"loops": len(prog.get("loops") or []),
+                   "loop_plan": plan,
                    "owner_ref": prog.get("owner_ref", ""),
                    "sandbox_owner": prog.get("sandbox_owner", "")}))
-        # constituent loop runs
-        for lp in prog.get("loops", []):
-            for run in (lp.get("state") or {}).get("runs", [])[-6:]:
-                sid = str(run.get("session_id") or "")
+        # DRILL-IN only (a specific program): the FULL SEQUENCE as one card per
+        # loop, in plan order, each watchable/replayable via the agent-loop UI.
+        # (In the `all` scope we keep just the program card + its loop_plan, so
+        # the master timeline isn't flooded with every loop.) A running loop is
+        # emitted live by `_live_loop_events`, so skip it here to avoid a double.
+        if pid:
+            for idx, lp in enumerate(prog.get("loops", [])):
+                st = lp.get("state") or {}
+                status = str(st.get("status") or "pending")
+                if status == "running":
+                    continue
+                runs = st.get("runs") or []
+                last = runs[-1] if runs else None
+                sid = str(last.get("session_id") or "") if last else ""
+                body = (str(last.get("final") or last.get("summary") or "")
+                        if last else str(lp.get("goal") or ""))
                 out.append(_ev(
-                    "v8_loop", run.get("ts") or "",
+                    "v8_loop", (last.get("ts") if last else None) or prog.get("created") or "",
                     "loop · " + str(lp.get("name") or ""),
-                    summary=str(run.get("summary") or "")[:800],
-                    status="ok" if run.get("ok") else "failed",
+                    summary=body[:1500], status=status,
                     session_id=sid, ref=str(prog.get("id") or ""),
                     source="program", cap="dag.agent_loop",
                     ui=_loop_ui(sid) if sid else {},
-                    extra={"elapsed_s": run.get("elapsed_s"),
+                    extra={"seq": idx + 1, "runs": len(runs),
                            "engine": lp.get("engine", ""),
-                           "profile": lp.get("profile", "")}))
+                           "profile": lp.get("profile", ""),
+                           "elapsed_s": (last.get("elapsed_s") if last else None)}))
     return out
 
 

@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vera — Operator Studio</title>
+<link rel="stylesheet" href="/ui/themes.css">
+<link rel="stylesheet" href="/ui/vera-panel.css">
+<script src="/ui/vera-ui.js"></script>
+<style>
+  :root{
+    /* Fallbacks — overridden by the live theme via vera-ui.js */
+    --bg0:#141210; --bg1:#1b1815; --bg2:#241f1b; --bg3:#2f2823;
+    --text:#e4e2dd; --dim:#a49b90; --dim2:#7d746a; --border:#39322c;
+    --acc:#e0a566; --acc2:#6ca8e0; --ok:#79c07d; --warn:#e0b96c; --err:#d97e7e;
+    --on-acc:#1a1206; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --ui-radius:8px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg0);color:var(--text);
+    font-family:var(--mono);font-size:12px;line-height:1.5;overflow:hidden}
+  button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit}
+  ::-webkit-scrollbar{width:9px;height:9px}
+  ::-webkit-scrollbar-thumb{background:var(--border);border-radius:6px}
+  ::-webkit-scrollbar-track{background:transparent}
+  .app{display:flex;flex-direction:column;height:100%}
+
+  /* ── top bar ─────────────────────────────────────────── */
+  .topbar{display:flex;align-items:center;gap:14px;padding:9px 14px;
+    background:linear-gradient(180deg,var(--bg1),var(--bg0));
+    border-bottom:1px solid var(--border);flex:0 0 auto}
+  .brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:13px;letter-spacing:.02em}
+  .brand .glyph{font-size:15px}
+  .brand small{color:var(--dim);font-weight:400;letter-spacing:0}
+  .topbar .spacer{flex:1}
+  .meta{display:flex;align-items:center;gap:14px;color:var(--dim);font-size:11px}
+  .meta b{color:var(--text);font-weight:600}
+  .meta .u{max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    color:var(--acc2)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--dim2);display:inline-block;
+    box-shadow:0 0 0 0 rgba(0,0,0,0);transition:all .3s}
+  .dot.live{background:var(--ok);animation:pulse 2s infinite}
+  .dot.warn{background:var(--warn)} .dot.off{background:var(--err)}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ok) 55%,transparent)}
+    70%{box-shadow:0 0 0 6px transparent}100%{box-shadow:0 0 0 0 transparent}}
+
+  /* ── main grid ───────────────────────────────────────── */
+  .grid{flex:1;display:grid;grid-template-columns:312px 1fr 372px;min-height:0}
+  .rail,.mind{overflow-y:auto;background:var(--bg1)}
+  .rail{border-right:1px solid var(--border)}
+  .mind{border-left:1px solid var(--border);display:flex;flex-direction:column}
+  .eyes{display:flex;flex-direction:column;min-width:0;background:
+    radial-gradient(1200px 500px at 50% -10%, color-mix(in srgb,var(--bg2) 60%,transparent), var(--bg0))}
+
+  /* ── control rail ────────────────────────────────────── */
+  .sec{border-bottom:1px solid var(--border)}
+  .sec>h3{margin:0;padding:10px 14px;font-size:11px;font-weight:700;letter-spacing:.07em;
+    text-transform:uppercase;color:var(--dim);cursor:pointer;display:flex;
+    align-items:center;gap:8px;user-select:none}
+  .sec>h3 .car{margin-left:auto;transition:transform .2s;color:var(--dim2)}
+  .sec.collapsed>h3 .car{transform:rotate(-90deg)}
+  .sec.collapsed .body{display:none}
+  .body{padding:4px 14px 14px}
+  label{display:block;color:var(--dim);margin:9px 0 4px;font-size:10.5px;
+    text-transform:uppercase;letter-spacing:.04em}
+  input[type=text],input[type=number],select,textarea{width:100%;background:var(--bg2);
+    border:1px solid var(--border);border-radius:6px;padding:7px 9px;outline:none;transition:border-color .15s}
+  input:focus,select:focus,textarea:focus{border-color:var(--acc)}
+  textarea{resize:vertical;min-height:56px;line-height:1.45}
+  .seg{display:flex;flex-wrap:wrap;gap:5px;margin-top:2px}
+  .seg button{flex:1 0 auto;background:var(--bg2);border:1px solid var(--border);border-radius:6px;
+    padding:6px 8px;color:var(--dim);cursor:pointer;font-size:11px;transition:all .12s;min-width:52px}
+  .seg button:hover{color:var(--text);border-color:var(--dim2)}
+  .seg button.on{background:var(--acc);color:var(--on-acc);border-color:var(--acc);font-weight:700}
+  .row{display:flex;gap:8px}.row>*{flex:1;min-width:0}
+  .chk{display:flex;align-items:center;gap:8px;margin-top:9px;color:var(--dim);cursor:pointer}
+  .chk input{accent-color:var(--acc);width:15px;height:15px}
+  button.act{width:100%;margin-top:11px;background:var(--acc);color:var(--on-acc);border:none;
+    border-radius:7px;padding:10px;font-weight:800;cursor:pointer;letter-spacing:.02em;
+    transition:transform .08s,filter .15s;display:flex;align-items:center;justify-content:center;gap:7px}
+  button.act:hover{filter:brightness(1.07)} button.act:active{transform:translateY(1px)}
+  button.act:disabled{opacity:.5;cursor:default;filter:none}
+  button.ghost{background:var(--bg2);color:var(--text);border:1px solid var(--border);font-weight:600}
+  button.ghost:hover{border-color:var(--dim2)}
+  .btns{display:flex;gap:8px;margin-top:9px}.btns>button{flex:1;margin-top:0}
+  .hint{color:var(--dim2);font-size:10.5px;margin-top:7px;line-height:1.4}
+  .chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px;max-height:118px;overflow:auto}
+  .chip{background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:3px 9px;
+    font-size:10.5px;color:var(--dim);cursor:pointer;transition:all .12s}
+  .chip:hover{color:var(--text)} .chip.on{background:color-mix(in srgb,var(--acc2) 22%,var(--bg2));
+    color:var(--text);border-color:var(--acc2)}
+
+  /* ── eyes / viewport ─────────────────────────────────── */
+  .eyes-bar{display:flex;align-items:center;gap:9px;padding:8px 12px;border-bottom:1px solid var(--border);
+    background:var(--bg1);flex:0 0 auto}
+  .eyes-bar .t{font-weight:700;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--dim)}
+  .eyes-bar .u{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    color:var(--acc2);font-size:11px}
+  .eyes-bar button{background:var(--bg2);border:1px solid var(--border);border-radius:6px;
+    padding:5px 9px;color:var(--dim);cursor:pointer;transition:all .12s;white-space:nowrap}
+  .eyes-bar button:hover{color:var(--text);border-color:var(--dim2)}
+  .eyes-bar button.on{color:var(--acc);border-color:var(--acc)}
+  .badge{font-size:10px;color:var(--dim2);background:var(--bg2);border:1px solid var(--border);
+    border-radius:12px;padding:2px 8px}
+  .stage{flex:1;overflow:auto;padding:16px;display:flex;align-items:flex-start;justify-content:center}
+  .shotwrap{position:relative;max-width:100%;box-shadow:0 8px 30px rgba(0,0,0,.35);
+    border:1px solid var(--border);border-radius:6px;overflow:hidden;background:var(--bg2)}
+  .shotwrap img{display:block;max-width:100%;height:auto}
+  .ov{position:absolute;inset:0;pointer-events:none}
+  .refbox{position:absolute;border:1.4px solid color-mix(in srgb,var(--acc2) 75%,transparent);
+    border-radius:3px;pointer-events:auto;cursor:pointer;transition:background .1s,border-color .1s;
+    background:color-mix(in srgb,var(--acc2) 6%,transparent)}
+  .refbox:hover{background:color-mix(in srgb,var(--acc2) 22%,transparent);border-color:var(--acc2)}
+  .refbox.sel{border-color:var(--acc);background:color-mix(in srgb,var(--acc) 22%,transparent);border-width:2px}
+  .refbox .lab{position:absolute;top:-15px;left:-1px;font-size:9px;background:var(--acc2);color:#08121c;
+    padding:0 4px;border-radius:3px 3px 0 0;font-weight:700;line-height:15px;white-space:nowrap;opacity:0;transition:opacity .1s}
+  .refbox:hover .lab,.refbox.sel .lab{opacity:1}
+  .refbox.sel .lab{background:var(--acc);color:var(--on-acc)}
+  .empty{color:var(--dim2);text-align:center;margin:auto;max-width:340px;padding:30px}
+  .empty .big{font-size:32px;margin-bottom:10px;opacity:.6}
+  .empty b{color:var(--dim)}
+
+  /* ── composer ───────────────────────────────────────── */
+  .composer{flex:0 0 auto;border-top:1px solid var(--border);background:var(--bg1);padding:9px 12px}
+  .composer .line{display:flex;gap:8px;align-items:center}
+  .composer select,.composer input{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 8px}
+  .composer .tgt{font-size:11px;color:var(--dim);white-space:nowrap}
+  .composer .tgt b{color:var(--acc)}
+  .composer input.grow{flex:1;min-width:60px}
+  .composer button{background:var(--acc);color:var(--on-acc);border:none;border-radius:6px;
+    padding:6px 14px;font-weight:700;cursor:pointer}
+  .composer button:disabled{opacity:.5;cursor:default}
+
+  /* ── mind / timeline ─────────────────────────────────── */
+  .mind-bar{display:flex;align-items:center;gap:7px;padding:8px 12px;border-bottom:1px solid var(--border);
+    background:var(--bg1);flex:0 0 auto}
+  .mind-bar .t{font-weight:700;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--dim);margin-right:auto}
+  .fchip{font-size:10px;color:var(--dim2);border:1px solid var(--border);border-radius:12px;
+    padding:2px 8px;cursor:pointer;background:var(--bg2)}
+  .fchip.on{color:var(--text);border-color:var(--acc);background:color-mix(in srgb,var(--acc) 15%,var(--bg2))}
+  .stream{flex:1;overflow-y:auto;padding:10px 12px}
+  .step{border:1px solid var(--border);border-left-width:3px;border-radius:7px;background:var(--bg1);
+    margin-bottom:9px;padding:8px 10px;animation:slidein .25s ease}
+  @keyframes slidein{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .step .head{display:flex;align-items:center;gap:7px}
+  .step .n{color:var(--dim2);font-size:10px}
+  .step .ph{font-size:9.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;
+    padding:1px 7px;border-radius:11px;margin-left:auto}
+  .step.observe{border-left-color:var(--acc2)} .step.observe .ph{color:var(--acc2);background:color-mix(in srgb,var(--acc2) 16%,transparent)}
+  .step.think{border-left-color:#b48ce0} .step.think .ph{color:#c7a6ef;background:color-mix(in srgb,#b48ce0 16%,transparent)}
+  .step.act{border-left-color:var(--acc)} .step.act .ph{color:var(--acc);background:color-mix(in srgb,var(--acc) 16%,transparent)}
+  .step.done{border-left-color:var(--ok)} .step.done .ph{color:var(--ok);background:color-mix(in srgb,var(--ok) 16%,transparent)}
+  .step.err,.step.blocked,.step.invalid{border-left-color:var(--err)}
+  .step.err .ph,.step.blocked .ph,.step.invalid .ph{color:var(--err);background:color-mix(in srgb,var(--err) 16%,transparent)}
+  .step.info{border-left-color:var(--dim2)} .step.info .ph{color:var(--dim);background:var(--bg2)}
+  .step .action{font-weight:700;color:var(--text)}
+  .step .args{color:var(--dim);font-size:10.5px}
+  .step .thought{color:var(--dim);margin-top:4px;font-style:italic;line-height:1.4}
+  .step .res{margin-top:4px;font-size:10.5px;color:var(--dim2);word-break:break-word}
+  .step .res.bad{color:var(--err)}
+  .step img{margin-top:6px;max-width:100%;border:1px solid var(--border);border-radius:5px;cursor:zoom-in}
+  .step .ms{color:var(--dim2);font-size:9.5px}
+  .runbar{padding:8px 12px;border-top:1px solid var(--border);background:var(--bg1);
+    color:var(--dim);font-size:11px;display:flex;align-items:center;gap:8px;flex:0 0 auto}
+  .spin{width:13px;height:13px;border:2px solid var(--border);border-top-color:var(--acc);
+    border-radius:50%;animation:sp .8s linear infinite;display:none}
+  .spin.on{display:inline-block}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .lightbox{position:fixed;inset:0;background:rgba(0,0,0,.82);display:none;align-items:center;
+    justify-content:center;z-index:50;cursor:zoom-out;padding:24px}
+  .lightbox img{max-width:100%;max-height:100%;border:1px solid var(--border);border-radius:6px}
+  @media(max-width:1080px){.grid{grid-template-columns:1fr}.rail,.mind{max-height:none}}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <div class="brand"><span class="glyph">🕹</span> Operator Studio
+      <small>observe → think → act</small></div>
+    <div class="spacer" style="flex:1"></div>
+    <div class="meta">
+      <span><span class="dot" id="wsDot"></span> <b id="wsState">connecting</b></span>
+      <span id="pwState" class="badge">browser: ?</span>
+      <span id="sessLbl">no session</span>
+      <span class="u" id="urlLbl"></span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- ══════════ CONTROL RAIL ══════════ -->
+    <div class="rail">
+      <div class="sec" data-sec="target">
+        <h3>Target <span class="car">▾</span></h3>
+        <div class="body">
+          <div class="seg" id="kindSeg">
+            <button data-k="live" class="on">live</button>
+            <button data-k="sandbox">sandbox</button>
+            <button data-k="url">url</button>
+            <button data-k="panel">panel</button>
+            <button data-k="codeserver">code</button>
+            <button data-k="vm">vm</button>
+          </div>
+          <label id="tgtLbl">URL / base_url</label>
+          <input type="text" id="tgtInput" placeholder="https://…">
+          <button class="act" id="connectBtn">⚡ Connect &amp; observe</button>
+          <div class="hint">Starts a browser session on the target and takes a first look. Local/sandbox targets are trusted; external hosts need the allowlist below.</div>
+        </div>
+      </div>
+
+      <div class="sec" data-sec="run">
+        <h3>Autonomous run <span class="car">▾</span></h3>
+        <div class="body">
+          <label>Goal</label>
+          <textarea id="goal" placeholder="e.g. open the Markets panel and start a backtest"></textarea>
+          <div class="row">
+            <div><label>Provider</label><input type="text" id="provider" value="ollama"></div>
+            <div><label>Max steps</label><input type="number" id="maxsteps" value="12" min="1" max="60"></div>
+          </div>
+          <label class="chk"><input type="checkbox" id="dryrun"> dry-run (plan only, don't execute)</label>
+          <label>Allowlist — external hosts you permit operating (comma-sep)</label>
+          <input type="text" id="allowlist" placeholder="maxhodl.com, app.internal">
+          <div class="hint">Vera's own UI and local/sandbox targets are always operable. Any other site must be listed here — that's all it takes; tick dry-run to preview first.</div>
+          <button class="act" id="runBtn">▶ Run to goal</button>
+          <div class="btns">
+            <button class="act ghost" id="stepBtn">⏭ Step</button>
+            <button class="act ghost" id="thinkBtn">🧠 Think</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="sec" data-sec="missions">
+        <h3>Missions · Documentation <span class="car">▾</span></h3>
+        <div class="body">
+          <label>Domains (none = all)</label>
+          <div class="chips" id="domChips"></div>
+          <div class="row" style="margin-top:9px">
+            <div><label>Doc target</label>
+              <select id="mtarget"><option value="sandbox">sandbox</option><option value="live">live</option></select></div>
+            <div><label>&nbsp;</label>
+              <label class="chk" style="margin-top:0"><input type="checkbox" id="mcapture" checked> capture</label></div>
+          </div>
+          <button class="act" id="docsBtn">📸 Build documentation</button>
+          <div class="btns">
+            <button class="act ghost" id="galleryBtn">Rebuild gallery</button>
+            <button class="act ghost" id="testsBtn">✓ Run tests</button>
+          </div>
+          <div class="hint" id="missionMsg"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ EYES / VIEWPORT ══════════ -->
+    <div class="eyes">
+      <div class="eyes-bar">
+        <span class="t">Eyes</span>
+        <span class="u" id="eyesUrl"></span>
+        <span class="badge" id="elCount">0 elements</span>
+        <button id="ovBtn" class="on" title="Toggle element overlays">⧉ refs</button>
+        <button id="reobsBtn" title="Re-observe">↻</button>
+      </div>
+      <div class="stage" id="stage">
+        <div class="empty"><div class="big">👁</div>
+          <b>No live view yet.</b><br>Pick a target and hit <b>Connect &amp; observe</b> to see what the operator sees — with clickable element refs.</div>
+      </div>
+      <div class="composer" id="composer" style="display:none">
+        <div class="line">
+          <select id="cAction" title="action"></select>
+          <span class="tgt">target <b id="cTarget">—</b></span>
+          <input class="grow" id="cText" placeholder="text / key / value / url…">
+          <button id="cActBtn">Act</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ MIND / TIMELINE ══════════ -->
+    <div class="mind">
+      <div class="mind-bar">
+        <span class="t">Mind</span>
+        <span class="fchip on" data-f="all">all</span>
+        <span class="fchip" data-f="act">acts</span>
+        <span class="fchip" data-f="think">think</span>
+        <span class="fchip" data-f="err">errors</span>
+        <span class="fchip" id="autoScroll" data-on="1">⤓ follow</span>
+        <span class="fchip" id="clearBtn">clear</span>
+      </div>
+      <div class="stream" id="stream">
+        <div class="empty" style="margin-top:40px"><div class="big">🧠</div>
+          <b>The thought stream is quiet.</b><br>Run a goal, step, or drive the eyes — every observe→think→act shows up here live.</div>
+      </div>
+      <div class="runbar"><span class="spin" id="spin"></span><span id="runMsg">idle</span></div>
+    </div>
+  </div>
+</div>
+<div class="lightbox" id="lightbox"><img id="lightboxImg" alt=""></div>
+
+<script>
+const ORIGIN = window.location.origin;
+const $ = id => document.getElementById(id);
+const state = {ws:null, session:"", viewport:{width:1440,height:900}, kind:"live",
+  elements:[], selRef:"", running:false, filter:"all", stepN:0, pw:true};
+
+/* ── HTTP cap call ─────────────────────────────────────── */
+async function api(path, body){
+  const opt={method:body?'POST':'GET',headers:{'Content-Type':'application/json'}};
+  if(body) opt.body=JSON.stringify(body);
+  try{ const r=await fetch(ORIGIN+path,opt); const t=await r.text();
+    return t&&t.trim()?JSON.parse(t):null; }catch(e){ return {error:String(e)}; }
+}
+
+/* ── live WebSocket (events + status) ──────────────────── */
+function connectWs(){
+  try{
+    const url=ORIGIN.replace(/^http/,'ws')+'/ws/mcp';
+    const ws=new WebSocket(url); state.ws=ws;
+    setWs('warn','connecting');
+    ws.onopen=()=>{ ws.send(JSON.stringify({action:'subscribe_events'})); setWs('live','live'); };
+    ws.onmessage=e=>{ let m; try{m=JSON.parse(e.data);}catch(_){return;}
+      if(m.type==='connected'){ state.pw=true; }
+      else if(m.type==='event'&&m.data){ onEvent(m.data); } };
+    ws.onclose=()=>{ setWs('off','offline'); setTimeout(connectWs,2500); };
+    ws.onerror=()=>{ try{ws.close();}catch(_){}};
+  }catch(_){ setTimeout(connectWs,3000); }
+}
+function setWs(cls,txt){ $('wsDot').className='dot '+cls; $('wsState').textContent=txt; }
+
+/* ── event → timeline ──────────────────────────────────── */
+function onEvent(ev){
+  const t=ev.type||'';
+  if(t==='operator.run'){ if(ev.stage==='start'){ setRun(true,'running: '+(ev.goal||'')); }
+    else if(ev.stage==='done'){ setRun(false,'done — '+(ev.reason||'')+' · '+(ev.steps||0)+' steps'); } return; }
+  if(t==='operator.step'){ addStep({phase:ev.phase||'act',i:ev.i,action:ev.action,thought:ev.thought,
+    reason:ev.reason,screenshot:ev.screenshot,error:ev.error}); return; }
+  if(t==='operator.act'){ /* covered by step in run; standalone acts handled by caller */ return; }
+  if(t==='operator.session'){ return; }
+  if(t==='operator.docs.progress'){ $('missionMsg').textContent='['+(ev.stage||'')+'] '+(ev.message||'');
+    if(ev.stage==='domain') addStep({phase:'info',action:'docs',thought:ev.message}); return; }
+}
+
+/* ── timeline rendering ────────────────────────────────── */
+function phaseClass(p){ return ['observe','think','act','done','err','blocked','invalid','info'].includes(p)?p:'act'; }
+function addStep(s){
+  const stream=$('stream');
+  if(stream.querySelector('.empty')) stream.innerHTML='';
+  const p=phaseClass(s.phase);
+  const div=document.createElement('div');
+  div.className='step '+p; div.dataset.p=p;
+  const args=s.args&&Object.keys(s.args).length?('<span class="args"> '+esc(JSON.stringify(s.args)).slice(0,120)+'</span>'):'';
+  const shot=s.screenshot?shotUrl(s.screenshot):'';
+  const res=s.result?('<div class="res '+(s.result.error?'bad':'')+'">→ '+esc(JSON.stringify(s.result)).slice(0,220)+'</div>'):'';
+  const err=s.reason&&(p==='blocked'||p==='err')?('<div class="res bad">'+esc(s.reason)+'</div>'):'';
+  div.innerHTML=
+    '<div class="head"><span class="n">#'+(s.i||state.stepN+1)+'</span>'+
+      (s.action?'<span class="action">'+esc(s.action)+'</span>'+args:'<span class="action">'+p+'</span>')+
+      (s.ms?'<span class="ms">'+s.ms+'ms</span>':'')+
+      '<span class="ph">'+p+'</span></div>'+
+    (s.thought?'<div class="thought">'+esc(s.thought)+'</div>':'')+res+err+
+    (shot?'<img loading="lazy" src="'+shot+'" onclick="zoom(this.src)">':'');
+  stream.appendChild(div); state.stepN++;
+  applyFilter();
+  if($('autoScroll').dataset.on==='1') stream.scrollTop=stream.scrollHeight;
+}
+function applyFilter(){
+  const f=state.filter;
+  document.querySelectorAll('.step').forEach(el=>{
+    const p=el.dataset.p; let show=true;
+    if(f==='act') show=(p==='act'||p==='done');
+    else if(f==='think') show=(p==='think');
+    else if(f==='err') show=(p==='err'||p==='blocked'||p==='invalid');
+    el.style.display=show?'':'none';
+  });
+}
+function esc(s){return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+function shotUrl(p){ if(!p) return ''; p=String(p).replace(/\\/g,'/');
+  if(p.indexOf('/operator/artifact')===0) return ORIGIN+p;
+  if(/^https?:\/\//.test(p)) return p;
+  const marker='artifacts/operator/', i=p.indexOf(marker);
+  return i<0?'':ORIGIN+'/operator/artifact?path='+encodeURIComponent(p.slice(i+marker.length)); }
+function zoom(src){ $('lightboxImg').src=src; $('lightbox').style.display='flex'; }
+$('lightbox').onclick=()=>{ $('lightbox').style.display='none'; };
+
+/* ── the eyes: render observation + ref overlays ───────── */
+function renderObservation(obs){
+  state.elements=obs.elements||[];
+  $('eyesUrl').textContent=obs.url||''; $('urlLbl').textContent=obs.url||'';
+  $('elCount').textContent=(state.elements.length)+' elements';
+  $('pwState').textContent='browser: ready';
+  const shot=obs.screenshot_url?(ORIGIN+obs.screenshot_url):'';
+  const stage=$('stage');
+  if(!shot){ stage.innerHTML='<div class="empty"><div class="big">🖼</div><b>Observed, but no screenshot.</b><br>'+esc(obs.title||'')+'</div>'; return; }
+  stage.innerHTML='<div class="shotwrap" id="shotwrap"><img id="shot" src="'+shot+'"><div class="ov" id="ov"></div></div>';
+  $('shot').onload=drawOverlays;
+  $('composer').style.display='';
+  updateComposerTarget();
+}
+function drawOverlays(){
+  const img=$('shot'), ov=$('ov'); if(!img||!ov) return; ov.innerHTML='';
+  if($('ovBtn').classList.contains('on')===false) return;
+  const vw=state.viewport.width||img.naturalWidth||1440;
+  const vh=state.viewport.height||img.naturalHeight||900;
+  state.elements.forEach(el=>{
+    const b=el.bbox||[0,0,0,0]; if(b[2]<3||b[3]<3) return;
+    const d=document.createElement('div'); d.className='refbox'+(el.ref===state.selRef?' sel':'');
+    d.style.left=(b[0]/vw*100)+'%'; d.style.top=(b[1]/vh*100)+'%';
+    d.style.width=(b[2]/vw*100)+'%'; d.style.height=(b[3]/vh*100)+'%';
+    d.title=el.role+' '+(el.name||'');
+    d.innerHTML='<span class="lab">'+el.ref+(el.name?' · '+esc(el.name).slice(0,24):'')+'</span>';
+    d.onclick=()=>selectRef(el.ref);
+    d.ondblclick=()=>{ selectRef(el.ref); doAct('click'); };
+    ov.appendChild(d);
+  });
+}
+function selectRef(ref){ state.selRef=ref; document.querySelectorAll('.refbox').forEach(x=>x.classList.remove('sel'));
+  drawOverlays(); updateComposerTarget(); }
+function updateComposerTarget(){ $('cTarget').textContent=state.selRef||'(click an element)'; }
+
+/* ── composer / manual acting ──────────────────────────── */
+const ACTIONS=['click','type','press','scroll','goto','select','hover','wait','nav','screenshot'];
+function initComposer(){ const sel=$('cAction'); sel.innerHTML=ACTIONS.map(a=>'<option>'+a+'</option>').join(''); }
+async function doAct(forceAction){
+  if(!state.session){ setRun(false,'connect a session first'); return; }
+  const action=forceAction||$('cAction').value; const val=$('cText').value;
+  const body={session_id:state.session,action};
+  if(state.selRef) body.ref=state.selRef;
+  if(action==='type') body.text=val;
+  else if(action==='press') body.key=val||'Enter';
+  else if(action==='goto') body.url=val;
+  else if(action==='select') body.value=val;
+  else if(action==='nav') body.direction=val||'back';
+  else if(action==='scroll') body.dy=parseInt(val)||400;
+  // Carry the current allowlist so a manual act works even if the host was
+  // allowlisted AFTER connecting (unioned with the session policy).
+  body.allowlist=allowList();
+  addStep({phase:'act',action:action,args:{ref:state.selRef||undefined},thought:'manual'});
+  const res=await api('/operator/act',body);
+  if(res&&res.blocked) addStep({phase:'blocked',action:action,reason:res.reason});
+  else if(res&&res.error) addStep({phase:'err',action:action,reason:res.error});
+  await observe(); // refresh eyes
+}
+
+/* ── high-level actions ────────────────────────────────── */
+function targetBody(){
+  const k=state.kind, v=$('tgtInput').value.trim(), b={kind:k};
+  if(k==='url'||k==='vm') b.url=v;
+  else if(k==='panel') b.panel_id=v;
+  else if(k==='codeserver') b.id=v;
+  else if(k==='sandbox'){ if(v) b.branch=v; }
+  else if(v) b.base_url=v;   // live with an explicit base_url
+  return b;
+}
+function allowList(){ return $('allowlist').value.split(',').map(s=>s.trim()).filter(Boolean); }
+function policyFields(){ return {allowlist:allowList(), dry_run:$('dryrun').checked}; }
+async function connect(){
+  setRun(true,'starting session…');
+  // The allowlist / destructive / dry-run set here become the SESSION policy, so
+  // every later act & run on this session honours them (allowlist once).
+  const st=await api('/operator/session/start',Object.assign(targetBody(),policyFields()));
+  if(!st||st.error){ const e=(st&&st.error)||'no response';
+    if(/playwright/i.test(e)) $('pwState').textContent='browser: not installed';
+    setRun(false,'connect failed: '+e); return; }
+  state.session=st.session_id;
+  if(st.summary&&st.summary.viewport) state.viewport=st.summary.viewport;
+  $('sessLbl').innerHTML='session <b>'+st.session_id+'</b>';
+  setRun(false,'connected'); await observe();
+}
+async function observe(){
+  if(!state.session){ return; }
+  const obs=await api('/operator/observe',{session_id:state.session,max_elements:150});
+  if(obs&&!obs.error) renderObservation(obs);
+  else setRun(false,'observe: '+((obs&&obs.error)||'?'));
+}
+async function run(){
+  const goal=$('goal').value.trim(); if(!goal){ setRun(false,'goal required'); return; }
+  if(!state.session) await connect();
+  setRun(true,'running…'); clearStreamHint();
+  const body={goal,provider:$('provider').value.trim()||'ollama',max_steps:+$('maxsteps').value||12,
+    session_id:state.session,keep_open:true,dry_run:$('dryrun').checked,allowlist:allowList()};
+  const res=await api('/operator/run',body);
+  setRun(false, res&&res.error?('error: '+res.error):('done — '+((res&&res.reason)||'')));
+  // per-step cards already streamed live via operator.step events
+  await observe();
+}
+async function think(){
+  const goal=$('goal').value.trim(); if(!goal){ setRun(false,'goal required'); return; }
+  if(!state.session) await connect();
+  setRun(true,'thinking…');
+  const t=await api('/operator/think',{session_id:state.session,goal,provider:$('provider').value.trim()||'ollama'});
+  setRun(false,'thought ready');
+  const d=t&&t.decision||{};
+  addStep({phase:'think',action:d.action||'?',args:d.args,thought:d.thought||(d.error?('error: '+d.error):'')});
+}
+async function step(){
+  const goal=$('goal').value.trim(); if(!goal){ setRun(false,'goal required'); return; }
+  if(!state.session) await connect();
+  setRun(true,'stepping…');
+  const r=await api('/operator/step',{session_id:state.session,goal,provider:$('provider').value.trim()||'ollama'});
+  setRun(false,'step '+((r&&r.reason)||''));
+  await observe();
+}
+async function buildDocs(){
+  setRun(true,'building docs — booting sandbox + shooting panels…'); clearStreamHint();
+  const domains=[...document.querySelectorAll('#domChips .chip.on')].map(c=>c.dataset.slug);
+  const res=await api('/docs/build',{target:$('mtarget').value,domains,capture:$('mcapture').checked});
+  setRun(false, res&&res.error?('docs error: '+res.error):('docs done — '+((res&&res.screenshots)||0)+' shots'));
+  $('missionMsg').textContent=res&&res.error?res.error:('captured '+((res&&res.screenshots)||0)+' screenshots across '+((res&&res.domains)||0)+' domains');
+}
+
+function setRun(on,msg){ state.running=on; $('spin').classList.toggle('on',on); $('runMsg').textContent=msg||(on?'working…':'idle');
+  ['runBtn','connectBtn','stepBtn','thinkBtn','docsBtn'].forEach(id=>$(id).disabled=on); }
+function clearStreamHint(){ const s=$('stream'); if(s.querySelector('.empty')) s.innerHTML=''; }
+
+/* ── domain chips ──────────────────────────────────────── */
+const DOMAINS=[["capability-framework","Capabilities"],["harness-ui","Harness UI"],["dag-engine","DAG"],
+["ollama-cluster","Ollama"],["memory-graph","Memory"],["data-fabric","Fabric"],["research","Research"],
+["ide","IDE"],["galaxy-graph","Galaxy"],["configuration","Config"],["worldview","Worldview"],["execution","Execution"],
+["docker","Docker"],["mesh","Mesh"],["markets","Markets"],["machine-learning","ML"],["dream","Dream"],
+["skills-ontologies","Skills"],["agents-chat","Agents"],["flow-builder","Flow"],["vllm","vLLM"],
+["workers-jobs-syslog","Workers"],["integrations","Comms"],["web-browser","Web"],["vector-browser","Vectors"],
+["ui-builder","UI Builder"],["openclaw","OpenClaw"],["render","Render"],["security","Security"],["onnx","ONNX"],
+["podcast","Podcast"],["cluster-encryption","Encryption"],["evolve","Loop Lab"],["operator","Operator"]];
+function initChips(){ $('domChips').innerHTML=DOMAINS.map(d=>'<span class="chip" data-slug="'+d[0]+'">'+d[1]+'</span>').join('');
+  document.querySelectorAll('#domChips .chip').forEach(c=>c.onclick=()=>c.classList.toggle('on')); }
+
+/* ── wiring ────────────────────────────────────────────── */
+function initSections(){ document.querySelectorAll('.sec>h3').forEach(h=>h.onclick=()=>h.parentElement.classList.toggle('collapsed')); }
+function initKind(){ document.querySelectorAll('#kindSeg button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#kindSeg button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
+  state.kind=b.dataset.k;
+  const lbl={live:'base_url (blank = this Vera)',sandbox:'branch (optional)',url:'URL',panel:'panel id',
+    codeserver:'code-server id',vm:'noVNC URL'}[b.dataset.k];
+  $('tgtLbl').textContent=lbl; $('tgtInput').placeholder=b.dataset.k==='url'||b.dataset.k==='vm'?'https://…':
+    (b.dataset.k==='panel'?'markets-studio':''); }); }
+function initFilters(){ document.querySelectorAll('.fchip[data-f]').forEach(c=>c.onclick=()=>{
+  document.querySelectorAll('.fchip[data-f]').forEach(x=>x.classList.remove('on')); c.classList.add('on');
+  state.filter=c.dataset.f; applyFilter(); });
+  $('autoScroll').onclick=()=>{ const on=$('autoScroll').dataset.on==='1'; $('autoScroll').dataset.on=on?'0':'1'; $('autoScroll').classList.toggle('on',!on); };
+  $('clearBtn').onclick=()=>{ $('stream').innerHTML=''; state.stepN=0; }; }
+
+$('connectBtn').onclick=connect; $('runBtn').onclick=run; $('thinkBtn').onclick=think; $('stepBtn').onclick=step;
+$('reobsBtn').onclick=observe; $('docsBtn').onclick=buildDocs;
+$('galleryBtn').onclick=async()=>{ setRun(true,'gallery…'); const r=await api('/docs/gallery',{}); setRun(false, r&&r.error?r.error:'gallery rebuilt'); };
+$('testsBtn').onclick=async()=>{ setRun(true,'pytest…'); const r=await api('/operator/test/run',{}); setRun(false, r&&r.ok?'tests passed':'tests failed');
+  addStep({phase:r&&r.ok?'done':'err',action:'pytest',thought:(r&&(r.out||'').split('\n').slice(-3).join(' '))||''}); };
+$('ovBtn').onclick=()=>{ $('ovBtn').classList.toggle('on'); drawOverlays(); };
+$('cActBtn').onclick=()=>doAct();
+$('goal').addEventListener('keydown',e=>{ if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); run(); }});
+
+/* ── boot ──────────────────────────────────────────────── */
+async function boot(){
+  initSections(); initKind(); initFilters(); initChips(); initComposer(); connectWs();
+  const st=await api('/operator/session/status');   // also a cheap "is playwright up" probe
+  const sess=(st&&st.sessions)||[];
+  if(sess.length){ state.session=sess[0].session_id; $('sessLbl').innerHTML='session <b>'+sess[0].session_id+'</b>';
+    if(sess[0].url) $('urlLbl').textContent=sess[0].url; }
+  // Browser status is confirmed on first successful observe; until then leave "?".
+}
+boot();
+</script>
+</body>
+</html>

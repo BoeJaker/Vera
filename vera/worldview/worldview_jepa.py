@@ -4933,37 +4933,47 @@ async def _stream_encode_new_records(dataset_id: str, limit: int = 64,
     if not new_indices:
         return 0
 
-    # Encode each new record through the GNN (isolated — no graph context)
-    encoded = 0
-    new_concepts = []
-    for idx in new_indices:
-        rid = ids[idx]
-        try:
-            emb = embs[idx]
-            if len(emb) != MODEL.embed_dim:
+    # Encode each new record through the GNN (isolated — no graph context).
+    # This is synchronous torch inference (GNN forward + VQ assign) over up to
+    # `limit` records; running it inline blocks the event loop (a caught >1.3s
+    # hang bottomed out in torch with no Python frames), so push the whole encode
+    # pass to the executor. Safe: the stream worker is the only writer to these
+    # MODEL structures and its calls are awaited serially, so no concurrent
+    # mutation is introduced.
+    def _encode():
+        encoded = 0
+        new_concepts = []
+        for idx in new_indices:
+            rid = ids[idx]
+            try:
+                emb = embs[idx]
+                if len(emb) != MODEL.embed_dim:
+                    continue
+                latent = MODEL.encode_isolated(emb)
+                if latent is None:
+                    continue
+                concept = MODEL.assign_concept(latent)
+                MODEL.record_concepts[rid] = concept
+                meta = (metas[idx] if idx < len(metas) else {}) or {}
+                text = (docs[idx] if idx < len(docs) else "") or ""
+                m = {
+                    "dataset_id":    meta.get("dataset_id", dataset_id),
+                    "text":          text[:200],
+                    "created_at":    meta.get("created_at", ""),
+                    "concept":       concept,
+                    "concept_label": MODEL.concept_labels.get(concept, ""),
+                }
+                MODEL.record_meta[rid] = m
+                if WV_INDEX.available:
+                    WV_INDEX.add_batch([rid], [latent], [m])
+                new_concepts.append(concept)
+                encoded += 1
+            except Exception as e:
+                log.debug("stream encode record %s: %s", rid, e)
                 continue
-            latent = MODEL.encode_isolated(emb)
-            if latent is None:
-                continue
-            concept = MODEL.assign_concept(latent)
-            MODEL.record_concepts[rid] = concept
-            meta = (metas[idx] if idx < len(metas) else {}) or {}
-            text = (docs[idx] if idx < len(docs) else "") or ""
-            m = {
-                "dataset_id":    meta.get("dataset_id", dataset_id),
-                "text":          text[:200],
-                "created_at":    meta.get("created_at", ""),
-                "concept":       concept,
-                "concept_label": MODEL.concept_labels.get(concept, ""),
-            }
-            MODEL.record_meta[rid] = m
-            if WV_INDEX.available:
-                WV_INDEX.add_batch([rid], [latent], [m])
-            new_concepts.append(concept)
-            encoded += 1
-        except Exception as e:
-            log.debug("stream encode record %s: %s", rid, e)
-            continue
+        return encoded, new_concepts
+
+    encoded, new_concepts = await loop.run_in_executor(None, _encode)
 
     if new_concepts:
         # Track which concepts were touched for dynamics fine-tuning
@@ -4984,64 +4994,70 @@ async def _stream_dynamics_update() -> float:
     if not pending:
         return 0.0
 
-    # Build walks from the known record_concepts
-    # We generate short walks biased towards recently-touched concepts
-    touched_set = set(pending)
     all_concepts = list(MODEL.record_concepts.values())
     if len(all_concepts) < 4:
         return 0.0
 
-    walks = []
-    for _ in range(min(500, len(pending) * 10)):
-        # Start from a touched concept, walk via transition counts
-        start = random.choice(pending)
-        seq = [start]
-        cur = start
-        for _ in range(_WV_CONFIG["walk_len"] - 1):
-            # Find transitions from cur
-            candidates = [(b, n) for (a, b), n in MODEL.transition_counts.items()
-                          if a == cur and n > 0]
-            if not candidates:
-                # Fall back to random concept
-                cur = random.choice(all_concepts)
-            else:
-                # Weighted sample
-                total_w = sum(n for _, n in candidates)
-                r = random.random() * total_w
-                cumulative = 0
-                for b, n in candidates:
-                    cumulative += n
-                    if r <= cumulative:
-                        cur = b
-                        break
-            seq.append(cur)
-        if len(seq) >= 2:
-            walks.append([TOKEN_BOS] + [c + NUM_SPECIAL_TOKENS for c in seq])
+    # Walk-building + mini-batch training are CPU-bound (torch forward+backward+
+    # optimizer over the dynamics transformer). Running this inline froze the
+    # event loop, so run the whole pass in the executor. The stream worker awaits
+    # this serially and is the only writer of MODEL.transition_counts, so there's
+    # no concurrent-mutation risk.
+    def _train() -> float:
+        # Build short walks biased towards recently-touched concepts
+        walks = []
+        for _ in range(min(500, len(pending) * 10)):
+            start = random.choice(pending)
+            seq = [start]
+            cur = start
+            for _ in range(_WV_CONFIG["walk_len"] - 1):
+                # Find transitions from cur
+                candidates = [(b, n) for (a, b), n in MODEL.transition_counts.items()
+                              if a == cur and n > 0]
+                if not candidates:
+                    cur = random.choice(all_concepts)     # fall back to random
+                else:
+                    # Weighted sample
+                    total_w = sum(n for _, n in candidates)
+                    r = random.random() * total_w
+                    cumulative = 0
+                    for b, n in candidates:
+                        cumulative += n
+                        if r <= cumulative:
+                            cur = b
+                            break
+                seq.append(cur)
+            if len(seq) >= 2:
+                walks.append([TOKEN_BOS] + [c + NUM_SPECIAL_TOKENS for c in seq])
 
-    if not walks:
-        return 0.0
+        if not walks:
+            return 0.0
 
-    # Train a few mini-batches
-    bs = _WV_CONFIG["batch_size"]
-    random.shuffle(walks)
-    losses = []
-    for i in range(0, min(len(walks), bs * 3), bs):
-        batch = walks[i:i + bs]
-        if len(batch) < 2:
-            continue
-        l = MODEL.train_dynamics_step(batch)
-        losses.append(l)
+        # Train a few mini-batches
+        bs = _WV_CONFIG["batch_size"]
+        random.shuffle(walks)
+        losses = []
+        for i in range(0, min(len(walks), bs * 3), bs):
+            batch = walks[i:i + bs]
+            if len(batch) < 2:
+                continue
+            l = MODEL.train_dynamics_step(batch)
+            losses.append(l)
 
-    # Update transition counts with new walks
-    for w in walks:
-        body = [t - NUM_SPECIAL_TOKENS for t in w if t >= NUM_SPECIAL_TOKENS]
-        for i in range(len(body) - 1):
-            k = (body[i], body[i + 1])
-            MODEL.transition_counts[k] = MODEL.transition_counts.get(k, 0) + 1
+        # Update transition counts with new walks
+        for w in walks:
+            body = [t - NUM_SPECIAL_TOKENS for t in w if t >= NUM_SPECIAL_TOKENS]
+            for i in range(len(body) - 1):
+                k = (body[i], body[i + 1])
+                MODEL.transition_counts[k] = MODEL.transition_counts.get(k, 0) + 1
+
+        return sum(losses) / len(losses) if losses else 0.0
+
+    loop = asyncio.get_running_loop()
+    avg = await loop.run_in_executor(None, _train)
 
     # Clear pending
     _STREAM_STATS["pending_concepts"] = []
-    avg = sum(losses) / len(losses) if losses else 0.0
     _STREAM_STATS["dynamics_updates"] += 1
     return avg
 
@@ -5073,6 +5089,15 @@ async def _wv_stream_worker():
                     msgs = await redis.xreadgroup(
                         group, consumer, {stream: ">"}, count=20, block=5000)
                 except Exception as e:
+                    # A blocking XREAD hitting the client socket_timeout while
+                    # idle is NORMAL (no events arrived) — just loop again.
+                    # Tearing down + reattaching on it (the old behaviour) spun
+                    # the worker: constant xgroup_create/_emit churn against the
+                    # same Redis the agentic loop relies on, plus log spam. Only
+                    # a genuine connection error should break out to reattach.
+                    if ("timeout" in str(e).lower()
+                            or isinstance(e, asyncio.TimeoutError)):
+                        continue
                     log.warning("worldview stream read: %s", e)
                     break
                 if not msgs:
@@ -5088,7 +5113,7 @@ async def _wv_stream_worker():
                                             loss=round(avg_loss, 6),
                                             updates=_STREAM_STATS["dynamics_updates"],
                                             message=f"Dynamics fine-tune loss={avg_loss:.4f}")
-                                MODEL.save()
+                                await asyncio.to_thread(MODEL.save)
                         except Exception as e:
                             log.debug("stream dynamics update: %s", e)
                     continue
@@ -5142,7 +5167,7 @@ async def _wv_stream_worker():
                                         loss=round(avg_loss, 6),
                                         updates=_STREAM_STATS["dynamics_updates"],
                                         message=f"Dynamics fine-tune loss={avg_loss:.4f}")
-                            MODEL.save()
+                            await asyncio.to_thread(MODEL.save)
                     except Exception as e:
                         log.debug("stream dynamics update: %s", e)
 

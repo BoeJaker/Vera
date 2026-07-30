@@ -54,6 +54,12 @@ try:
 except Exception:                              # pragma: no cover
     HAS_CCXT = False
 
+try:
+    from Vera.vera.security import secrets as vsecrets
+    HAS_SECRETS = True
+except Exception:                              # pragma: no cover
+    HAS_SECRETS = False
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Constants & in-memory state
 # ─────────────────────────────────────────────────────────────────────────────
@@ -480,6 +486,202 @@ def _new_job(ex_id: str, symbol: str, timeframes: List[str], full: bool) -> dict
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Broker (real exchange) accounts — keys sealed at rest, read-only by default
+# ─────────────────────────────────────────────────────────────────────────────
+def _ensure_broker_table_sync():
+    conn = _sqlite_conn()
+    try:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS mkt_broker ("
+            "id TEXT PRIMARY KEY, exchange TEXT, label TEXT, "
+            "k_key TEXT, k_secret TEXT, k_password TEXT, "
+            "can_trade INTEGER DEFAULT 0, created_at TEXT)")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _broker_rows_sync() -> List[dict]:
+    _ensure_broker_table_sync()
+    conn = _sqlite_conn()
+    try:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM mkt_broker ORDER BY created_at").fetchall()]
+    finally:
+        conn.close()
+
+
+def _broker_get_sync(bid: str):
+    _ensure_broker_table_sync()
+    conn = _sqlite_conn()
+    try:
+        r = conn.execute("SELECT * FROM mkt_broker WHERE id=?", (bid,)).fetchone()
+        return dict(r) if r else None
+    finally:
+        conn.close()
+
+
+def _broker_insert_sync(row: dict):
+    _ensure_broker_table_sync()
+    conn = _sqlite_conn()
+    try:
+        conn.execute(
+            "INSERT INTO mkt_broker (id,exchange,label,k_key,k_secret,k_password,"
+            "can_trade,created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (row["id"], row["exchange"], row["label"], row["k_key"], row["k_secret"],
+             row["k_password"], row["can_trade"], row["created_at"]))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _broker_del_sync(bid: str):
+    _ensure_broker_table_sync()
+    conn = _sqlite_conn()
+    try:
+        conn.execute("DELETE FROM mkt_broker WHERE id=?", (bid,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _broker_set_trade_sync(bid: str, can: bool):
+    _ensure_broker_table_sync()
+    conn = _sqlite_conn()
+    try:
+        conn.execute("UPDATE mkt_broker SET can_trade=? WHERE id=?",
+                     (1 if can else 0, bid))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _broker_exchange(row: dict):
+    """Build a CCXT exchange from a stored broker row (keys unsealed here only)."""
+    if not HAS_CCXT:
+        raise RuntimeError("ccxt not installed")
+    cfg = {"enableRateLimit": True, "timeout": 30000,
+           "apiKey": vsecrets.open_secret(row["k_key"]) if row.get("k_key") else "",
+           "secret": vsecrets.open_secret(row["k_secret"]) if row.get("k_secret") else ""}
+    if row.get("k_password"):
+        cfg["password"] = vsecrets.open_secret(row["k_password"])
+    return getattr(ccxt, row["exchange"])(cfg)
+
+
+# ── pluggable broker providers: ccxt (crypto) · Trading 212 · Alpaca ──────────
+BROKER_PROVIDERS = [
+    {"id": "ccxt", "label": "Crypto exchange (CCXT)", "fields": ["api_key", "api_secret", "password"]},
+    {"id": "t212-live", "label": "Trading 212 (live)", "fields": ["api_key"]},
+    {"id": "t212-demo", "label": "Trading 212 (demo)", "fields": ["api_key"]},
+    {"id": "alpaca-paper", "label": "Alpaca (paper)", "fields": ["api_key", "api_secret"]},
+    {"id": "alpaca-live", "label": "Alpaca (live)", "fields": ["api_key", "api_secret"]},
+]
+
+
+def _prov_info(exchange: str):
+    ex = (exchange or "").lower()
+    if ex in ("t212", "t212-live", "trading212"):
+        return "t212", "https://live.trading212.com/api/v0"
+    if ex == "t212-demo":
+        return "t212", "https://demo.trading212.com/api/v0"
+    if ex in ("alpaca", "alpaca-paper"):
+        return "alpaca", "https://paper-api.alpaca.markets"
+    if ex == "alpaca-live":
+        return "alpaca", "https://api.alpaca.markets"
+    return "ccxt", None
+
+
+def _broker_http(method: str, url: str, headers=None, data=None, timeout=25):
+    import urllib.request
+    body = json.dumps(data).encode() if data is not None else None
+    req = urllib.request.Request(url, data=body, method=method, headers=headers or {})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        txt = r.read().decode()
+    return json.loads(txt) if txt else {}
+
+
+def _prov_headers(row: dict):
+    kind, _ = _prov_info(row["exchange"])
+    key = vsecrets.open_secret(row["k_key"]) if row.get("k_key") else ""
+    if kind == "t212":
+        return {"Authorization": key, "Content-Type": "application/json"}
+    if kind == "alpaca":
+        sec = vsecrets.open_secret(row["k_secret"]) if row.get("k_secret") else ""
+        return {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": sec,
+                "Content-Type": "application/json"}
+    return {}
+
+
+def _prov_verify(row: dict):
+    kind, base = _prov_info(row["exchange"])
+    if kind == "ccxt":
+        _broker_exchange(row).fetch_balance()
+    elif kind == "t212":
+        _broker_http("GET", base + "/equity/account/cash", _prov_headers(row))
+    else:  # alpaca
+        _broker_http("GET", base + "/v2/account", _prov_headers(row))
+    return True
+
+
+def _prov_positions(row: dict):
+    kind, base = _prov_info(row["exchange"])
+    if kind == "ccxt":
+        b = _broker_exchange(row).fetch_balance()
+        tot, free, used = b.get("total") or {}, b.get("free") or {}, b.get("used") or {}
+        out = [{"asset": a, "free": float(free.get(a) or 0), "used": float(used.get(a) or 0),
+                "total": float(v)} for a, v in tot.items() if v and float(v) > 0]
+        out.sort(key=lambda x: -x["total"])
+        return out, None
+    if kind == "t212":
+        h = _prov_headers(row)
+        pf = _broker_http("GET", base + "/equity/portfolio", h) or []
+        cash = _broker_http("GET", base + "/equity/account/cash", h) or {}
+        out = [{"asset": p.get("ticker"), "total": float(p.get("quantity") or 0),
+                "avg_price": float(p.get("averagePrice") or 0),
+                "last": float(p.get("currentPrice") or 0),
+                "pnl": float(p.get("ppl") or 0)} for p in pf]
+        return out, {"free": float(cash.get("free") or 0), "total": float(cash.get("total") or 0)}
+    # alpaca
+    h = _prov_headers(row)
+    pos = _broker_http("GET", base + "/v2/positions", h) or []
+    acct = _broker_http("GET", base + "/v2/account", h) or {}
+    out = [{"asset": p.get("symbol"), "total": float(p.get("qty") or 0),
+            "avg_price": float(p.get("avg_entry_price") or 0),
+            "last": float(p.get("current_price") or 0),
+            "pnl": float(p.get("unrealized_pl") or 0)} for p in pos]
+    return out, {"free": float(acct.get("cash") or 0), "total": float(acct.get("equity") or 0)}
+
+
+def _prov_order(row: dict, symbol: str, side: str, otype: str, amount: float, price: float):
+    kind, base = _prov_info(row["exchange"])
+    if kind == "ccxt":
+        ex = _broker_exchange(row)
+        o = ex.create_order(symbol, otype, side, float(amount),
+                            float(price) if otype == "limit" else None)
+        return {"id": o.get("id"), "status": o.get("status"), "price": o.get("price")}
+    if kind == "t212":
+        h = _prov_headers(row)
+        qty = float(amount) if side == "buy" else -float(amount)
+        if otype == "limit":
+            o = _broker_http("POST", base + "/equity/orders/limit", h,
+                             {"ticker": symbol, "quantity": qty, "limitPrice": float(price),
+                              "timeValidity": "DAY"})
+        else:
+            o = _broker_http("POST", base + "/equity/orders/market", h,
+                             {"ticker": symbol, "quantity": qty})
+        return {"id": o.get("id"), "status": o.get("status"), "price": price or None}
+    # alpaca
+    h = _prov_headers(row)
+    payload = {"symbol": symbol, "qty": float(amount), "side": side,
+               "type": otype, "time_in_force": "day"}
+    if otype == "limit":
+        payload["limit_price"] = float(price)
+    o = _broker_http("POST", base + "/v2/orders", h, payload)
+    return {"id": o.get("id"), "status": o.get("status"),
+            "price": o.get("limit_price") or (price or None)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Capabilities
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -504,6 +706,167 @@ if _CAP_AVAILABLE:
             out.append(entry)
         return {"ccxt": HAS_CCXT, "exchanges": out,
                 "timeframes": ALL_TIMEFRAMES, "default_timeframes": DEFAULT_TIMEFRAMES}
+
+    @capability(
+        "markets.broker.link", http_method="POST", http_path="/markets/broker/link",
+        http_tags=["markets"], memory="on",
+        description="Link a REAL crypto exchange account (CCXT) via API keys. Keys "
+                    "are SEALED at rest and never returned. Linked READ-ONLY "
+                    "(can_trade off) — enable trading separately. Verifies with a "
+                    "balance read before saving. Input: exchange (str! e.g. binance, "
+                    "coinbase, kraken), label (str), api_key (str!), api_secret "
+                    "(str!), password (str — some exchanges). Output: {ok,id,verified}.",
+    )
+    async def cap_broker_link(exchange: str = "", label: str = "", api_key: str = "",
+                              api_secret: str = "", password: str = "",
+                              trace_id=None) -> dict:
+        exchange = (exchange or "").strip().lower()
+        kind, _base = _prov_info(exchange)
+        if not (exchange and api_key):
+            return {"error": "exchange and api_key required"}
+        if kind in ("ccxt", "alpaca") and not api_secret:
+            return {"error": "api_secret required for this provider"}
+        if not HAS_SECRETS:
+            return {"error": "secret store unavailable — refusing to store API keys"}
+        if kind == "ccxt":
+            if not HAS_CCXT:
+                return {"error": "ccxt not installed"}
+            if not hasattr(ccxt, exchange):
+                return {"error": f"unknown exchange '{exchange}'"}
+        loop = asyncio.get_running_loop()
+        row = {"id": uuid.uuid4().hex[:10], "exchange": exchange,
+               "label": label or exchange,
+               "k_key": vsecrets.seal(api_key),
+               "k_secret": vsecrets.seal(api_secret) if api_secret else "",
+               "k_password": vsecrets.seal(password) if password else "",
+               "can_trade": 0, "created_at": now_iso()}
+        try:
+            await loop.run_in_executor(None, _prov_verify, row)
+        except Exception as e:
+            return {"error": f"could not authenticate: {str(e)[:180]}"}
+        await loop.run_in_executor(None, _broker_insert_sync, row)
+        return {"ok": True, "id": row["id"], "exchange": exchange, "verified": True}
+
+    @capability(
+        "markets.broker.list", http_method="GET", http_path="/markets/broker/list",
+        http_tags=["markets"], memory="off", silent=True,
+        description="List linked broker accounts (keys never returned). "
+                    "Output: {accounts:[{id,exchange,label,can_trade,created_at}]}.",
+    )
+    async def cap_broker_list(trace_id=None) -> dict:
+        rows = await asyncio.get_running_loop().run_in_executor(None, _broker_rows_sync)
+        return {"accounts": [{"id": r["id"], "exchange": r["exchange"],
+                              "label": r["label"], "can_trade": bool(r["can_trade"]),
+                              "created_at": r["created_at"]} for r in rows]}
+
+    @capability(
+        "markets.broker.unlink", http_method="POST", http_path="/markets/broker/unlink",
+        http_tags=["markets"], memory="on",
+        description="Remove a linked broker account (deletes its sealed keys). "
+                    "Input: id (str!). Output: {ok}.",
+    )
+    async def cap_broker_unlink(id: str = "", trace_id=None) -> dict:
+        if not id:
+            return {"error": "id required"}
+        await asyncio.get_running_loop().run_in_executor(None, _broker_del_sync, id)
+        return {"ok": True, "id": id}
+
+    @capability(
+        "markets.broker.balances", http_method="GET",
+        http_path="/markets/broker/balances", http_tags=["markets"],
+        memory="off", silent=True,
+        description="Read live balances from a linked exchange account (read-only "
+                    "call). Input: id (str!). Output: {ok, exchange, balances:"
+                    "[{asset,free,used,total}]}.",
+    )
+    async def cap_broker_balances(id: str = "", trace_id=None) -> dict:
+        if not id:
+            return {"error": "id required"}
+        loop = asyncio.get_running_loop()
+        row = await loop.run_in_executor(None, _broker_get_sync, id)
+        if not row:
+            return {"error": "no such account"}
+        try:
+            balances, cash = await loop.run_in_executor(None, _prov_positions, row)
+        except Exception as e:
+            return {"error": f"balance read failed: {str(e)[:180]}"}
+        return {"ok": True, "exchange": row["exchange"], "label": row["label"],
+                "balances": balances, "cash": cash}
+
+    @capability(
+        "markets.broker.set_trading", http_method="POST",
+        http_path="/markets/broker/set_trading", http_tags=["markets"], memory="on",
+        description="Enable or disable REAL order placement on a linked account "
+                    "(off by default). Input: id (str!), enabled (bool). "
+                    "Output: {ok, can_trade}.",
+    )
+    async def cap_broker_set_trading(id: str = "", enabled: bool = False,
+                                     trace_id=None) -> dict:
+        if not id:
+            return {"error": "id required"}
+        await asyncio.get_running_loop().run_in_executor(
+            None, _broker_set_trade_sync, id, bool(enabled))
+        return {"ok": True, "id": id, "can_trade": bool(enabled)}
+
+    @capability(
+        "markets.broker.order", http_method="POST", http_path="/markets/broker/order",
+        http_tags=["markets"], memory="on",
+        description="Place a REAL order on a linked exchange. GUARDED: the account "
+                    "must have trading enabled AND confirm must be true. Input: id "
+                    "(str!), symbol (str! e.g. 'BTC/USDT'), side (buy|sell), type "
+                    "(market|limit=market), amount (float! — base units), price "
+                    "(float — required for limit), confirm (bool! must be true). "
+                    "Output: {ok, order} or {error}.",
+    )
+    async def cap_broker_order(id: str = "", symbol: str = "", side: str = "buy",
+                               type: str = "market", amount: float = 0.0,
+                               price: float = 0.0, confirm: bool = False,
+                               trace_id=None) -> dict:
+        if not (id and symbol and amount):
+            return {"error": "id, symbol and amount required"}
+        if not confirm:
+            return {"error": "confirm must be true to place a REAL order"}
+        side = side if side in ("buy", "sell") else "buy"
+        otype = type if type in ("market", "limit") else "market"
+        if otype == "limit" and not price:
+            return {"error": "limit orders need a price"}
+        loop = asyncio.get_running_loop()
+        row = await loop.run_in_executor(None, _broker_get_sync, id)
+        if not row:
+            return {"error": "no such account"}
+        if not row.get("can_trade"):
+            return {"error": "trading is disabled for this account — enable it first"}
+        try:
+            order = await loop.run_in_executor(
+                None, _prov_order, row, symbol, side, otype, float(amount), float(price or 0))
+        except Exception as e:
+            return {"error": f"order failed: {str(e)[:200]}"}
+        await emit_event({"type": "markets.broker", "stage": "order",
+                          "exchange": row["exchange"], "symbol": symbol,
+                          "side": side, "amount": float(amount)})
+        tg = sys.modules.get("telegram_capabilities")
+        if tg and hasattr(tg, "tg_notify"):
+            try:
+                await tg.tg_notify(text=(("🟢" if side == "buy" else "🔴") +
+                    f" REAL {side.upper()} {amount} {symbol} on {row['exchange']} "
+                    f"[{otype}] · [real: {row['label']}]"))
+            except Exception:
+                pass
+        return {"ok": True, "order": {"id": order.get("id"), "symbol": symbol,
+                                      "side": side, "type": otype,
+                                      "amount": float(amount),
+                                      "price": order.get("price") or (price or None),
+                                      "status": order.get("status")}}
+
+    @capability(
+        "markets.broker.providers", http_method="GET",
+        http_path="/markets/broker/providers", http_tags=["markets"],
+        memory="off", silent=True,
+        description="List supported broker providers and their credential fields. "
+                    "Output: {providers:[{id,label,fields}], ccxt}.",
+    )
+    async def cap_broker_providers(trace_id=None) -> dict:
+        return {"providers": BROKER_PROVIDERS, "ccxt": HAS_CCXT}
 
     @capability(
         "markets.timeframes", http_method="GET", http_path="/markets/timeframes",
@@ -804,6 +1167,7 @@ if _CAP_AVAILABLE:
                  "markets.evolve.start", "markets.evolve.stop",
                  "markets.evolve.status", "markets.evolve.history",
                  "markets.evolve.config.set", "markets.evolve.tick",
+                 "markets.evolve.prune_backtests",
                  "markets.baseline.list", "markets.baseline.ensure",
                  "markets.overview", "markets.events.detect", "markets.events.apply",
                  "markets.macro.catalog", "markets.macro.fetch",

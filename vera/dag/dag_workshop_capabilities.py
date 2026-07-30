@@ -52,6 +52,7 @@ from __future__ import annotations
 import asyncio
 import difflib
 import hashlib
+import inspect
 import json
 import logging
 import os
@@ -69,7 +70,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
     APP, CAPABILITY_REGISTRY, capability, emit_event, now_iso,
-    register_ui,
+    register_ui, register_routing_profile,
 )
 
 log = logging.getLogger("vera.dag_workshop")
@@ -80,6 +81,51 @@ _HERE = Path(__file__).parent
 def _redis():     return _orch.REDIS
 def _ctx():       return sys.modules.get("vera_context") or sys.modules.get("context")
 def _dag_store(): return sys.modules.get("dag_store")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LOOP ROUTING PROFILE — per-ROLE model / node / sampling for the loop's OWN LLM
+# calls, resolved through the generalized cluster router (threaded via
+# _safe_ollama_generate_dw's profile/role args). These are DECLARED defaults;
+# every role is overridable live on the Model Routing page (a USER role for
+# "loop/<role>" wins). This does NOT touch any agent config — it only shapes the
+# calls that pass role=, so untagged calls are unaffected.
+#
+#   executor    the ephemeral step decision loop (tool-select + arg-fill + JSON)
+#               — LOW temp for reliable, non-oscillating structured actions.
+#               model left EMPTY = inherit the run/user default until a dedicated
+#               tool model (e.g. qwen2.5:7b-instruct) is pulled and set here.
+#   planner/    goal decomposition, master plan, v6 control, v7 tiering, v8
+#   controller/ generate+adapt — pinned to a CPU reasoning model so the GPU stays
+#   tier        free for the generative step work.
+#   coder       code generation inside coding steps — a coding model, warmer temp.
+#   writer      long-form prose/report generation — warmest temp.
+LOOP_ROUTING_PROFILE = "loop"
+# CPU reasoning model for planning/orchestration (matches Loop Lab). Change here
+# or override the loop/planner|controller|tier roles on the Model Routing page.
+_LOOP_PLANNER_MODEL = "gpt-oss:20b"
+
+register_routing_profile(
+    LOOP_ROUTING_PROFILE, label="Agentic Loop", owner="dag_workshop",
+    roles={
+        "executor":   {"job_type": "loop_executor", "prefer_gpu": True,
+                       # temp/top_p only — leave num_ctx to the model default so we
+                       # never shrink a large step prompt's window (a regression).
+                       "options": {"temperature": 0.15, "top_p": 0.9}},
+        "planner":    {"job_type": "loop_planner", "deny_gpu": True,
+                       "model": _LOOP_PLANNER_MODEL,
+                       "options": {"temperature": 0.2, "num_ctx": 16384}},
+        "controller": {"job_type": "loop_planner", "deny_gpu": True,
+                       "model": _LOOP_PLANNER_MODEL,
+                       "options": {"temperature": 0.2, "num_ctx": 16384}},
+        "tier":       {"job_type": "loop_planner", "deny_gpu": True,
+                       "model": _LOOP_PLANNER_MODEL,
+                       "options": {"temperature": 0.1, "num_ctx": 8192}},
+        "coder":      {"job_type": "loop_coder", "prefer_gpu": True,
+                       "options": {"temperature": 0.45, "top_p": 0.9}},
+        "writer":     {"job_type": "loop_writer", "prefer_gpu": True,
+                       "options": {"temperature": 0.7, "top_p": 0.9}},
+    })
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -193,9 +239,19 @@ def rich_cap_signature(name: str, *, max_param_detail: int = 12) -> str:
     req    = set(schema.get("required", []) or [])
     desc   = (cap.get("description") or "")[:300]
 
+    # Params the CALLER never supplies. trace_id is plumbing; session_id is the
+    # run's own sandbox identity, injected by _agent_loop_call_tool — advertising
+    # it invites the model to invent one ("step_291" was observed live), which
+    # silently routes the cap's file IO into a sandbox the run cannot see. The
+    # sandbox.session.* caps are the exception: there it names a TARGET sandbox,
+    # so it stays part of their documented signature.
+    _hidden = {"trace_id"}
+    if not name.startswith("sandbox.session."):
+        _hidden.add("session_id")
+
     short_params = ", ".join(
         _orch._format_param_sig(p, v, req)
-        for p, v in props.items() if p != "trace_id"
+        for p, v in props.items() if p not in _hidden
     )
     out: List[str] = [f"  {name}({short_params})"]
     if desc:
@@ -203,7 +259,7 @@ def rich_cap_signature(name: str, *, max_param_detail: int = 12) -> str:
 
     detail_count = 0
     for pname, pschema in props.items():
-        if pname == "trace_id":
+        if pname in _hidden:
             continue
         if not isinstance(pschema, dict):
             continue
@@ -2241,9 +2297,23 @@ def _now_context_line() -> str:
             f"({tz}; ISO {now.isoformat(timespec='minutes')}).")
 
 
+# Loop LLM determinism — see _safe_ollama_generate_dw. Off via
+# VERA_LOOP_DETERMINISTIC=0; VERA_LOOP_TEMP / VERA_LOOP_SEED tune it.
+_LOOP_DETERMINISTIC = os.getenv("VERA_LOOP_DETERMINISTIC", "1").strip() not in ("0", "false", "no")
+try:
+    _LOOP_TEMP = float(os.getenv("VERA_LOOP_TEMP", "0") or 0)
+except Exception:
+    _LOOP_TEMP = 0.0
+try:
+    _LOOP_SEED = int(os.getenv("VERA_LOOP_SEED", "7") or 7)
+except Exception:
+    _LOOP_SEED = 7
+
+
 async def _safe_ollama_generate_dw(prompt, *, system="", json_mode=True,
                                      model="", instance_id="", prefer_gpu=True,
-                                     stream_cb=None, options=None, think=False):
+                                     stream_cb=None, options=None, think=False,
+                                     profile="", role="", job_type="", timeout=0):
     """Thinking-model-aware ollama_generate wrapper for dag_workshop callers.
 
     Lazily resolves ollama_generate via the context module so we don't have
@@ -2260,6 +2330,11 @@ async def _safe_ollama_generate_dw(prompt, *, system="", json_mode=True,
     for them because the think channel ate the response). Reasoning still flows
     through the explicit "thought" field in the JSON, not the native channel.
     Pass think=None to restore the model's default (native thinking on, json off).
+
+    `profile`/`role` (a routing role-profile + role, e.g. "loop"/"executor") or an
+    explicit `job_type` route THIS call through the generalized router — so loop
+    calls can get a per-role model/node/sampling and show up in routing telemetry.
+    All three are optional; omitted, the call behaves exactly as before.
     """
     # Ground EVERY loop LLM call (planner, controller, completion gate, step
     # finaliser, branch strategist, delivery agent, every version v1–v7) in the
@@ -2286,11 +2361,37 @@ async def _safe_ollama_generate_dw(prompt, *, system="", json_mode=True,
     # its native thinking off (think is False) — otherwise its <think> output
     # leaves an empty JSON response.
     use_json = bool(json_mode) and (not _is_thinking_model(model) or think is False)
+    # ── Deterministic by default ─────────────────────────────────────────────
+    # Every call through here is MACHINE-consumed: plans, tool selections,
+    # verdicts, journal records, authored code. Sampling noise on those buys
+    # nothing and costs reproducibility — the same step re-run would pick a
+    # different tool, invent a different filename, or "creatively" restructure a
+    # plan. Pin temperature/top_p/seed unless the caller asked for something
+    # else (explicit `options` always win). VERA_LOOP_TEMP tunes the floor;
+    # VERA_LOOP_DETERMINISTIC=0 restores model defaults.
+    _opts = dict(options) if options else {}
+    if _LOOP_DETERMINISTIC:
+        _opts.setdefault("temperature", _LOOP_TEMP)
+        _opts.setdefault("top_p", 1.0)
+        _opts.setdefault("seed", _LOOP_SEED)
     _gen_kwargs = dict(system=system, json_mode=use_json,
                        model=model or None, instance_id=instance_id or None,
                        prefer_gpu=bool(prefer_gpu), think=think)
-    if options:
-        _gen_kwargs["options"] = dict(options)
+    if _opts:
+        _gen_kwargs["options"] = _opts
+        options = _opts          # the empty-retry below reuses the same sampling
+    # Routing hints: when a caller names a role-profile/role (or an explicit
+    # job_type) the generalized router resolves the node/model/sampling for THIS
+    # loop call instead of the loop being invisible to routing. Passed only when
+    # set, so every existing (untagged) call is byte-identical to before.
+    if profile:
+        _gen_kwargs["profile"] = profile
+    if role:
+        _gen_kwargs["role"] = role
+    if job_type:
+        _gen_kwargs["job_type"] = job_type
+    if timeout:
+        _gen_kwargs["timeout"] = float(timeout)
     if stream_cb is not None:
         try:
             raw = await og(prompt, stream_cb=stream_cb, **_gen_kwargs)
@@ -2311,6 +2412,8 @@ async def _safe_ollama_generate_dw(prompt, *, system="", json_mode=True,
                 prefer_gpu=bool(prefer_gpu),
                 options=dict(options) if options else None,
                 think=think,
+                profile=profile or None, role=role or None,
+                job_type=job_type or None,
             )
         except Exception:
             pass
@@ -2516,23 +2619,76 @@ def _user_updates_block(updates: List[str], *, max_chars: int = 1600) -> str:
             "adjustments to the goal; honor them in this and every following step):\n" + body)
 
 
+def _hitl_answer_key(session_id: str, step: int) -> str:
+    return f"vera:loop:hitl:{session_id}:{step}"
+
+
 async def _await_hitl_decision(session_id: str, step: int, *,
                                  timeout: float = 300.0) -> Dict[str, Any]:
     """
     Block until /workshop/agent_loop/hitl/respond resolves this step,
     or `timeout` seconds elapse.
+
+    Resolves via EITHER an in-process future (same-instance fast path, ~instant)
+    OR a SHARED-REDIS answer key. The Redis bridge is essential in the multi-
+    instance cluster (all instances share one Redis): the loop may run on
+    instance A while the user's /hitl/respond POST is load-balanced to instance
+    B — B has no local future, so without the Redis channel the answer is lost
+    and the step times out at 180s despite the UI saying 'answer sent'. See
+    [[vera-cluster-shared-backend]].
     """
     fut: asyncio.Future = asyncio.get_event_loop().create_future()
     _HITL_PENDING_LOOP.setdefault(session_id, {})[step] = fut
+    r = _redis()
+    key = _hitl_answer_key(session_id, step)
+    # Clear any stale answer from a PRIOR question that reused this step key, so
+    # a new wait never resolves instantly on a leftover value.
+    if r is not None:
+        try:
+            await r.delete(key)
+        except Exception:
+            pass
+    deadline = time.monotonic() + timeout
     try:
-        return await asyncio.wait_for(fut, timeout=timeout)
-    except asyncio.TimeoutError:
-        return {"decision": "timeout"}
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return {"decision": "timeout"}
+            if fut.done():
+                return fut.result()
+            # Cross-instance channel: a respond handled by another instance
+            # writes the decision here.
+            if r is not None:
+                try:
+                    raw = await r.get(key)
+                except Exception:
+                    raw = None
+                if raw:
+                    try:
+                        await r.delete(key)
+                    except Exception:
+                        pass
+                    try:
+                        return json.loads(_rd(raw))
+                    except Exception:
+                        return {"decision": "continue", "comment": _rd(raw)}
+            # Wait for the local future OR poll again in ≤1s (human-scale latency).
+            try:
+                await asyncio.wait_for(asyncio.shield(fut),
+                                       timeout=min(1.0, max(0.05, remaining)))
+                return fut.result()
+            except asyncio.TimeoutError:
+                continue
     finally:
         try:
             _HITL_PENDING_LOOP.get(session_id, {}).pop(step, None)
         except Exception:
             pass
+        if r is not None:
+            try:
+                await r.delete(key)
+            except Exception:
+                pass
 
 
 @APP.post("/workshop/agent_loop/hitl/respond")
@@ -2558,10 +2714,6 @@ async def workshop_hitl_respond(request: Request):
     _valid = ("approve", "reject", "edit", "abort", "continue", "wrap")
     if not sid or decision not in _valid:
         return {"error": "session_id and a valid decision are required"}
-    pending = _HITL_PENDING_LOOP.get(sid, {})
-    fut = pending.get(step)
-    if not fut or fut.done():
-        return {"error": f"No pending step {step} for session {sid}"}
     result = {
         "decision": decision,
         "args":     body.get("args") or {},
@@ -2572,8 +2724,31 @@ async def workshop_hitl_respond(request: Request):
             result["increment"] = int(body.get("increment"))
         except Exception:
             pass
-    fut.set_result(result)
-    return {"resolved": True, "session_id": sid, "step": step, "decision": decision}
+    # ALWAYS publish to the shared-Redis answer channel first — the loop may be
+    # running on a DIFFERENT instance than the one that received this POST (one
+    # shared Redis, many orchestrator instances behind the LB). Without this the
+    # in-memory future below is only found when the POST happens to land on the
+    # loop's own instance, so the step times out at 180s despite 'answer sent'.
+    r = _redis()
+    published = False
+    if r is not None:
+        try:
+            await r.set(_hitl_answer_key(sid, step), json.dumps(result), ex=900)
+            published = True
+        except Exception as e:
+            log.debug("hitl respond redis publish failed: %s", e)
+    # Same-instance fast path: resolve the local future directly (instant).
+    pending = _HITL_PENDING_LOOP.get(sid, {})
+    fut = pending.get(step)
+    if fut and not fut.done():
+        fut.set_result(result)
+        return {"resolved": True, "session_id": sid, "step": step, "decision": decision}
+    if published:
+        # No local future here — the loop's own instance will pick it up from
+        # Redis within ~1s.
+        return {"resolved": True, "via": "redis", "session_id": sid,
+                "step": step, "decision": decision}
+    return {"error": f"No pending step {step} for session {sid}"}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -3552,7 +3727,51 @@ _DEFAULT_CAP_BLACKLIST: set = {
     "dag.agent_loop", "dag.agent_loop_v2", "dag.agent_loop_v3",
     "dag.agent_loop_v4", "dag.agent_loop_v5", "dag.agent_loop_v6",
     "dag.agent_loop_v7",
+    # A loop restarting the process it is RUNNING INSIDE would kill itself
+    # mid-step (and every other loop, chat stream and queued job with it). Never
+    # offer it — this is an operator control, not a tool.
+    "sys.dev.restart",
 }
+
+
+# Research caps that LAUNCH a full research job (multi-round crawl → LLM writer).
+# They routinely run for many minutes, which inside a loop step reads as a stall
+# and burns the step's cycle budget before it can act. Blocked from loop toolkits
+# by default; set VERA_LOOP_ALLOW_RESEARCH=1 to hand them back.
+#
+# Deliberately NOT the whole research.* namespace: the read-only/recall/admin caps
+# (research.history, research.job.*, research.recall.*, research.db.search,
+# research.sources, research.models, …) return immediately and are how a loop READS
+# research the system already did. Blocking those would cost real capability for no
+# latency win. Fast web access (web.search / web.fetch / http.get) is untouched, so
+# a loop can still look things up.
+_RESEARCH_JOB_CAPS: frozenset = frozenset({
+    "web.research",
+    "research.run", "research.report", "research.parallel", "research.deep",
+    "research.code", "research.guide", "research.quick_search",
+    "research.filestore",
+    "research.expand", "research.crawl_additional", "research.chain.continue",
+    "research.iterate.start",
+    # Referenced by the triage category maps but not registered in every build —
+    # listed so they are blocked wherever they DO exist.
+    "research.academic", "research.security",
+})
+
+
+def _research_block_caps() -> set:
+    """The research job-launching caps to keep OUT of loop toolkits, or an empty
+    set when VERA_LOOP_ALLOW_RESEARCH is truthy. Read per call so the env can be
+    flipped without editing code."""
+    if str(os.getenv("VERA_LOOP_ALLOW_RESEARCH", "0")).strip().lower() in ("1", "true", "yes"):
+        return set()
+    return set(_RESEARCH_JOB_CAPS)
+
+
+def _research_hint(cap: str = "research.quick_search", *, suffix: str = "") -> str:
+    """Name `cap` in prompt guidance, or return '' when it is blocked for loops.
+    Steering a specialist toward a cap that is not in any toolkit only produces
+    phantom-cap calls and a burnt cycle, so the guidance has to track the block."""
+    return "" if cap in _research_block_caps() else (cap + suffix)
 
 
 def _gated_read_caps() -> set:
@@ -3617,7 +3836,7 @@ async def _workshop_build_toolkit(*, allowed_caps: str, category: str,
 
     Truncates keyword-discovered caps to keep total ≤ top_k * 2.
     """
-    blacklist: set = set(_DEFAULT_CAP_BLACKLIST) | _gated_read_caps()
+    blacklist: set = set(_DEFAULT_CAP_BLACKLIST) | _gated_read_caps() | _research_block_caps()
     try:
         ctx = _ctx()
         bl = getattr(ctx, "_AGENT_LOOP_BLACKLIST", None)
@@ -3762,6 +3981,25 @@ def _have_useful_caps(toolkit: List[str], category: str) -> bool:
 
 
 # ─── Argument coercion: make wrong-type-but-recoverable inputs work ─────────
+# UNAMBIGUOUS arg-name synonyms the model reaches for instead of the schema's
+# real param — observed live wasting whole cycles (e.g. `ide.fs.read(filepath=…)`
+# failing `missing 'path'` three times in a row because the coercer DROPPED the
+# unknown arg instead of renaming it). Kept deliberately narrow: only aliases
+# that are almost never a real param name in their own right, and only applied
+# when the canonical IS in the cap's schema and wasn't already supplied. Keyed by
+# the alias in `_arg_key` normalised form (lowercased, separators stripped).
+_ARG_ALIAS = {
+    "filepath": "path", "fpath": "path", "pathname": "path", "fname": "path",
+    "cmdline": "command", "commandline": "command", "shellcommand": "command",
+    "uri": "url", "weburl": "url", "link": "url",
+    "sourcecode": "code", "scriptcode": "code",
+}
+
+
+def _arg_key(name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+
 def _coerce_args(cap_name: str, args: Any) -> Tuple[Dict[str, Any], List[str]]:
     """Apply deterministic fixes to arg dicts before invoking the cap.
 
@@ -3781,15 +4019,26 @@ def _coerce_args(cap_name: str, args: Any) -> Tuple[Dict[str, Any], List[str]]:
 
     out: Dict[str, Any] = {}
 
-    # 1. Drop completely unknown args (the LLM commonly invents ones)
+    # 1. Drop completely unknown args (the LLM commonly invents ones) — but
+    #    first RENAME an unambiguous synonym onto the schema's real param
+    #    (filepath→path, cmdline→command …) instead of dropping it, which used
+    #    to fail the call with a 'missing required arg' and burn a cycle.
     dropped = []
+    renamed = []
     for k, v in args.items():
         if k == "trace_id":
             continue
         if k in accepted:
             out[k] = v
         else:
-            dropped.append(k)
+            _canon = _ARG_ALIAS.get(_arg_key(k))
+            if _canon and _canon in accepted and _canon not in out and _canon not in args:
+                out[_canon] = v
+                renamed.append(f"{k}→{_canon}")
+            else:
+                dropped.append(k)
+    if renamed:
+        notes.append("renamed args: " + ", ".join(renamed))
     if dropped:
         notes.append(
             f"dropped unknown args: {', '.join(dropped)} "
@@ -7334,10 +7583,24 @@ _V5_CATALOG_MAX_DEFAULT = 40      # caps shown to the orchestrator (name+desc)
 # no file-write cap was offered.
 _V5_ESSENTIAL_ACTION_CAPS = ("exec.bash.run", "ide.fs.write", "ide.fs.read", "http.get")
 
+# File-access caps EVERY acting step can always reach, granted ON TOP of the
+# planner's assignment (they never consume its per-step cap budget). The loop
+# constantly saves tool output to files and tells the agent to grep/parse them, so
+# these must be in scope regardless of what the step was assigned — otherwise the
+# agent is told to "grep the saved file with exec.bash.run" and then "exec.bash.run
+# is not in this step's scope". Read-only phases get only the pure-read cap so the
+# explore/verify contract is preserved.
+_V5_ALWAYS_FILE_CAPS = ("exec.bash.run", "exec.python.run", "ide.fs.read", "ide.fs.write")
+_V5_ALWAYS_FILE_CAPS_RO = ("ide.fs.read",)   # read-only phases: no write
+
 # Caps ALWAYS worth offering (run a command/script, persist/read a file, fetch a
 # URL, search data/caps). exec.python.run is here so a step can write+run a script.
 _V5_CORE_SEED_CAPS = ("exec.bash.run", "exec.python.run", "ide.fs.write", "ide.fs.read",
-                      "http.get", "caps.search", "fabric.query")
+                      "http.get", "caps.search", "fabric.query", "code.author",
+                      # code.edit rides alongside code.author: without it in the
+                      # catalog the only route to changing an existing file is a
+                      # full re-emit, which is what loses unrelated work.
+                      "code.edit")
 # Live-web / external-research caps — seeded when the goal looks like it needs the
 # OUTSIDE world (vs the internal data fabric). This is the fix for "no proper web
 # crawling caps" + "uses fabric instead of the web lookup cap".
@@ -7450,6 +7713,30 @@ _V5_RECOVERY_MAX = 10              # max recovery caps auto-granted to a failing
 # canonical order. explore = read-only recon, think = reasoning with NO tools,
 # act = do the work (full caps), verify = read-only check of the act result.
 _V5_PHASES = ("explore", "think", "act", "verify")
+# Caps that CREATE OR REPLACE the artifact under test. An explore/verify phase
+# must not be auto-granted these: those phases inspect and prove, and re-writing
+# the thing you are checking destroys the result you were sent to confirm.
+# exec.* is deliberately ABSENT — verify runs test scripts, that is its job.
+_V5_AUTHORING_CAPS = {"code.author", "code.edit", "code.save",
+                      "ide.fs.write", "ide.code.edit_lines", "ide.code.replace",
+                      "ide.code.insert_at"}
+
+# Caps that are NEVER silently auto-granted (neither on a direct call nor via a
+# need_caps request) even though they sit in the run's catalog. These are the
+# same "generative, not action" caps the step system prompt already warns are
+# NOT a source for real-world facts/data (they CANNOT look anything up — asked
+# to, they invent a plausible-sounding answer). The auto-grant paths below exist
+# so a specialist doesn't burn a cycle asking for an obviously-fine cap like
+# exec.python.run or web.fetch; treating llm.generate the same way defeats the
+# planner's deliberate choice not to give a data-fetching step access to it.
+# Observed live: a step scoped to http.get/web.search/web.fetch called
+# llm.generate directly asking "what is the base URL and v2 endpoint path for
+# PokeAPI" instead of just searching for it — auto-granted, silently, in one
+# hop. A step that genuinely needs one of these (e.g. an authoring step) still
+# gets it normally, because the PLANNER put it in that step's `caps` up front;
+# this only blocks the silent side-door for steps it deliberately was not given.
+_V5_NO_SILENT_GRANT_CAPS = {"llm.generate"}
+
 _V5_PHASE_GUIDE = {
     "explore": ("PHASE: EXPLORE (recon). Gather the information the later phases need using "
                 "ONLY read-only capabilities — do NOT write files, run commands, or modify "
@@ -7461,7 +7748,15 @@ _V5_PHASE_GUIDE = {
     "act":     ("PHASE: ACT. Carry out the actual work using your capabilities, building on the "
                 "prior phases' context. Emit `done` with the concrete result or the artifact you "
                 "produced."),
-    "verify":  ("PHASE: VERIFY. PROVE whether the ACT phase actually satisfied the step goal — "
+    "verify":  ("PHASE: VERIFY. The work is ALREADY DONE — your job is to CHECK it, not to redo "
+                "it. Do NOT re-author, re-generate or overwrite any script the ACT phase "
+                "produced, and do NOT re-run the pipeline end-to-end (do not re-fetch, re-parse "
+                "or re-build data that already exists). Those files are the SUBJECT of this "
+                "check: replacing one destroys the very result you were sent to confirm, and a "
+                "fresh generation is not the thing that was tested. If the artifact looks wrong, "
+                "your output is a FAIL verdict describing what is wrong — fixing it is a LATER "
+                "step's job, never yours.\n"
+                "PROVE whether the ACT phase actually satisfied the step goal — "
                 "do not eyeball it. When exec caps are available, write the SMALLEST test "
                 "script that decides it (usually <30 lines of python/bash): run the code / hit "
                 "the API / stat the file / grep the log, and make the SCRIPT print a verdict "
@@ -7483,6 +7778,87 @@ def _v5_is_generative(tool: str) -> bool:
     """True for llm.*/ollama.*/agent.chat* — caps that only emit text."""
     return bool(tool) and (tool in _V5_GENERATIVE_EXACT
                            or any(tool.startswith(p) for p in _V5_GENERATIVE_PREFIXES))
+
+
+# ── Code-authoring routing ────────────────────────────────────────────────────
+# A generative call that is WRITING CODE is routed to the loop's `coder` role
+# (its own model + temperature, both configured in LOOP_ROUTING_PROFILE / the
+# Model Routing page) instead of the general run model — so code authoring goes to
+# the coding cohort. Off via VERA_LOOP_CODE_ROLE=0.
+_LOOP_CODE_ROLE_ON = os.getenv("VERA_LOOP_CODE_ROLE", "1").strip() not in ("0", "false", "no")
+_V5_CODE_FMT = {"code", "python_code", "python", "py", "js", "javascript", "jsx",
+                "ts", "typescript", "tsx", "bash", "sh", "shell", "sql", "go",
+                "rust", "rs", "java", "cpp", "c", "csharp", "ruby", "php", "json_code"}
+_V5_CODE_PROMPT_RE = re.compile(
+    r"```|\bfile\s*=\s*\S+\.(?:py|js|ts|tsx|jsx|sh|sql|go|rs|java|cpp|c|rb|php)\b|"
+    r"\b(python|javascript|typescript|bash|shell script|sql|a script|a program|"
+    r"a function|a class|a module|def |import )\b", re.I)
+
+
+def _v5_is_code_gen(tool: str, args: Any) -> bool:
+    """Heuristic: is this generative call AUTHORING code (vs prose/answers)? Strong
+    signal = a code output_format; secondary = an explicit 'write/generate … script/
+    code/function' intent in the prompt. Conservative — a miss just keeps the old
+    routing, a false hit only nudges temperature/model."""
+    if not _v5_is_generative(tool) or not isinstance(args, dict):
+        return False
+    fmt = str(args.get("output_format") or "").strip().lower()
+    if fmt in _V5_CODE_FMT or ("code" in fmt) or ("python" in fmt):
+        return True
+    blob = (str(args.get("prompt") or "") + "\n" + str(args.get("system") or ""))[:2000]
+    if re.search(r"\b(write|generate|create|implement|produce|build|refactor|fix)\b", blob, re.I) \
+            and _V5_CODE_PROMPT_RE.search(blob):
+        return True
+    return False
+
+
+_V5_FILEREF_RE = re.compile(
+    r"(?<![\w.])((?:\.{0,2}/)?(?:[\w\-]+/)*[\w][\w.\-]*\.[A-Za-z0-9]{1,8})\b")
+
+
+def _v5_prompt_file_refs(text: str) -> List[str]:
+    """File paths a prompt REFERENCES (e.g. 'reads the file ./output_x.json'), so a
+    code-gen call can be handed those files as context. URL fragments are skipped;
+    the async reader drops any that don't actually exist."""
+    if not text:
+        return []
+    s = str(text)
+    out: List[str] = []
+    for m in _V5_FILEREF_RE.finditer(s):
+        p = m.group(1)
+        st = m.start(1)
+        if "://" in s[max(0, st - 8):st + 4]:
+            continue
+        if p not in out:
+            out.append(p)
+    return out[:6]
+
+
+def _v5_apply_code_routing(tool: str, args: Any) -> bool:
+    """Route a code-authoring generative call to the coding cohort: drop any pinned
+    run model (so the `coder` role routes the model), stamp profile/role, AND attach
+    any workspace file the prompt references as CONTEXT (files=) — so a parser is
+    written against the file's REAL structure instead of blind. Mutates `args`;
+    returns True when applied."""
+    if not (_LOOP_CODE_ROLE_ON and isinstance(args, dict) and _v5_is_code_gen(tool, args)):
+        return False
+    args.pop("model", None)                 # let the coder role route the model
+    args["profile"] = LOOP_ROUTING_PROFILE   # role carries job_type=loop_coder + temp
+    args["role"] = "coder"
+    # An output_format meant for DATA or prose turns a code request into that
+    # shape — `output_format="json"` on "write a Python script" made the model
+    # return {"script": "import json\\n…"}: escaped code inside a JSON envelope,
+    # with no fence for the code autosave to find. A code generation always gets
+    # the `code` profile (fenced, filename-labelled, literal — never wrapped).
+    _fmt = str(args.get("output_format") or "").strip().lower()
+    if _fmt not in _V5_CODE_FMT and "code" not in _fmt:
+        args["output_format"] = "code"
+    # Auto-attach referenced files so llm.generate can SEE what it must parse/edit.
+    if not args.get("files"):
+        refs = _v5_prompt_file_refs(str(args.get("prompt") or "") + "\n" + str(args.get("system") or ""))
+        if refs:
+            args["files"] = refs[:3]
+    return True
 
 
 # Read-only vs mutating verbs — gate pre-plan recon to SAFE caps only, and pick a
@@ -7603,6 +7979,17 @@ _V5_TOOL_ALIASES = {
     "runpowershell": "exec.ps.run",
     # → http.get  (fetch a URL)
     "httprequest": "http.get", "httpfetch": "http.get", "fetchurl": "http.get",
+    # → ide.fs.read  (read a file — the OpenAI-style generic names models reach
+    #   for instead of the namespaced cap; observed live wasting a full loop
+    #   cycle each time they bounce off the scope gate). Same {path} arg shape.
+    "readfile": "ide.fs.read", "openfile": "ide.fs.read", "catfile": "ide.fs.read",
+    "getfile": "ide.fs.read", "loadfile": "ide.fs.read", "viewfile": "ide.fs.read",
+    "filecontents": "ide.fs.read", "getfilecontents": "ide.fs.read",
+    "readfilecontent": "ide.fs.read", "fsread": "ide.fs.read",
+    # → ide.fs.write  (write a file). Same {path, content} arg shape.
+    "writefile": "ide.fs.write", "savefile": "ide.fs.write", "putfile": "ide.fs.write",
+    "createfile": "ide.fs.write", "filewrite": "ide.fs.write", "writetofile": "ide.fs.write",
+    "savetofile": "ide.fs.write", "fswrite": "ide.fs.write",
 }
 
 
@@ -7633,7 +8020,8 @@ def _v5_resolve_tool_name(tool: str, allowed: List[str], catalog: set) -> str:
 _V5_RESEARCH_CAPS = {"web.search", "web.fetch", "research.quick_search",
                      "browser.navigate", "fabric.discover.crawl", "web.search_and_crawl"}
 # Caps that PRODUCE or RUN something — a "build / execute" unit of work.
-_V5_BUILD_CAPS = {"llm.generate", "exec.python.run", "exec.bash.run",
+_V5_BUILD_CAPS = {"llm.generate", "code.author", "code.edit",
+                  "exec.python.run", "exec.bash.run",
                   "ml.agent.build_and_test", "ide.fs.write"}
 # Read-only/context caps that are useful to BOTH halves of a split.
 _V5_SHARED_READ_CAPS = ("ide.fs.read", "http.get", "fabric.query",
@@ -7715,9 +8103,26 @@ _V5_LONGFORM_EXACT = {"web.fetch", "web.search_and_crawl", "llm.summarize",
 # partial" and re-reads forever. Size these to fit a typical model context so a
 # normal file is shown in FULL. Env-tunable for larger/smaller context models.
 _V5_FILEREAD_CAPS = {"ide.fs.read", "code.read"}
+# Discovery caps whose results are NAMES rather than usable output — the model
+# reads a ranked list of DAG/cap names and calls one directly ("Get PokeAPI Gen 1
+# Endpoints"). Their previews get an explicit "these are not callable" header.
+_V5_DAG_SEARCH_CAPS = {"context.search_dags", "dag.store.search", "dag.store_search"}
+_V5_CAP_SEARCH_CAPS = {"caps.search", "caps.describe", "context.search_caps"}
 _V5_PREVIEW_DEFAULT = 2000          # ordinary cap result kept for the model
 _V5_PREVIEW_LONGFORM = int(os.getenv("V5_PREVIEW_LONGFORM", "12000") or 12000)   # report-style caps
-_V5_PREVIEW_FILEREAD = int(os.getenv("V5_PREVIEW_FILEREAD", "32000") or 32000)   # file reads (~8k tokens)
+# File reads. 32000 (~8k tokens) was measured as the single biggest driver of loop
+# latency: reading one 493KB JSON put 32k chars into the step's message history,
+# and EVERY later cycle in that step re-sent it — specialist prompts reached 23–36k
+# chars and those calls took 170–582s each (vs ~59s average). Event-loop stalls
+# over the same run cost 60s total, so this dwarfs them.
+#
+# 8000 still shows real structure and a substantial sample, and the two things that
+# made a small budget dangerous before are both in place now: the deterministic
+# structured brief reports the TRUE item count and schema (so nothing has to be
+# eyeballed), and the read-completed note tells the specialist the file was read in
+# full and only the DISPLAY was capped — which is what stopped the endless re-read
+# loop. Raise via V5_PREVIEW_FILEREAD if a step must see more inline.
+_V5_PREVIEW_FILEREAD = int(os.getenv("V5_PREVIEW_FILEREAD", "8000") or 8000)
 _V5_CTX_PER_STEP = 3000             # prior-step summary carried into a dependent step
 _V5_CTX_TOTAL = 12000              # cap on the whole prior-context slice
 _V5_DONE_SUMMARY = 6000            # a step's own `done` summary (flows to later steps)
@@ -7774,15 +8179,351 @@ _V5_CONDENSE_TRIGGER_RATIO = 1.6
 _V5_CONDENSE_OUT_MAX = 2200
 
 
+def _v5_try_json(s: str):
+    """Parse `s` as JSON — the whole string first, else the widest [..]/{..} span
+    embedded in it (a tool may wrap the body in prose). Returns the object or None."""
+    s = (s or "").strip()
+    if not s:
+        return None
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+    for op, cl in (("[", "]"), ("{", "}")):
+        i = s.find(op); j = s.rfind(cl)
+        if 0 <= i < j:
+            try:
+                return json.loads(s[i:j + 1])
+            except Exception:
+                continue
+    return None
+
+
+def _v5_structured_brief(raw_text: str, tool: str) -> Optional[str]:
+    """If a tool output is (or wraps) a JSON payload, return a DETERMINISTIC brief —
+    the REAL type, the REAL item count computed from the data, key names, and a
+    small head sample — instead of an LLM 'condensed' summary. An LLM asked to
+    condense structured data fabricates counts and ranges (the reported bug: a
+    151-entry Pokémon list summarised as '150, IDs #71–#151'), which then fails a
+    content success-check. Returns None for genuinely unstructured text (prose,
+    HTML) so the LLM condenser still handles those."""
+    s = (raw_text or "").strip()
+    if not s or ("{" not in s and "[" not in s):
+        return None
+    obj = _v5_try_json(s)
+    _LIST_KEYS = ("results", "data", "items", "entries", "records", "pokemon",
+                  "list", "rows", "features", "objects")
+    # Drill through nested transport envelopes to the REAL payload: a dict whose
+    # body/text/stdout field is ITSELF a JSON string (http.get wraps the response
+    # under `body`; that stringified body then holds `results`). Without recursing
+    # we'd count the ENVELOPE's keys (the reported bug: `cat http.get_output` →
+    # "6 items" = url/status/ok/… instead of the 151 inside .body). Stop as soon as
+    # a level exposes an explicit data list, or after a few hops.
+    _path: List[str] = []
+    for _ in range(5):
+        if not isinstance(obj, dict):
+            break
+        if any(isinstance(obj.get(k), list) for k in _LIST_KEYS):
+            break
+        nxt = None
+        for bk in ("body", "text", "content", "stdout", "data", "json", "result", "response", "output"):
+            bv = obj.get(bk)
+            if isinstance(bv, str) and bv.lstrip()[:1] in "[{":
+                nxt = _v5_try_json(bv)
+                if nxt is not None:
+                    _path.append(bk)
+                    break
+        if nxt is None:
+            break
+        obj = nxt
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return None
+    count = None
+    sample = obj
+    list_key = None
+    if isinstance(obj, list):
+        count = len(obj)
+        sample = obj[:3]
+    elif isinstance(obj, dict):
+        for k in _LIST_KEYS:
+            v = obj.get(k)
+            if isinstance(v, list):
+                count = len(v); list_key = k
+                sample = {k: v[:3]}
+                break
+        if count is None:
+            count = len(obj)
+            sample = {kk: obj[kk] for kk in list(obj)[:5]}
+    try:
+        sample_txt = json.dumps(sample, ensure_ascii=False, default=str)[:1200]
+    except Exception:
+        sample_txt = str(sample)[:1200]
+    kind = type(obj).__name__
+    cnt = (f"{count} items (DETERMINISTIC count of the data itself, not a guess)"
+           if count is not None else "structured object")
+    # Tell the agent EXACTLY where the list lives so its parse doesn't get 0 rows
+    # by loading the envelope instead of the payload (http.get nests the body under
+    # a JSON-string field that must be json.loads'd before reaching `results`).
+    _access = ""
+    if _path or list_key:
+        where = ("the top level" if not _path else
+                 "field " + " → ".join(repr(p) for p in _path)
+                 + " (a JSON STRING — json.loads it FIRST)")
+        _access = f" The list is at {where}" + (f", key {list_key!r}." if list_key else ".")
+    return (f"[STRUCTURED DATA — NOT summarised. JSON {kind}: {cnt}.{_access} To USE it, parse the "
+            "SAVED FILE with exec.python.run (json.load) — do NOT eyeball, re-count, or re-summarise "
+            "it; the count above is authoritative.]\n"
+            f"Sample (first items): {sample_txt}")
+
+
+def _v5_schema_digest(obj: Any, depth: int = 0, *, max_keys: int = 10) -> str:
+    """A compact SHAPE sketch of parsed data: `{results: [151 × {name, url}]}`.
+
+    The count and a 3-item sample were not enough for a later step to write code
+    against a file: the reported run had the model reasoning "the sample shows
+    27 items? Wait… let me assume…" and then branching over invented shapes. The
+    schema states the REAL key names, nesting and list lengths, so the next step
+    (and code.author) parses what is actually there."""
+    # Deep enough to reach the item keys through a transport envelope: the real
+    # payload is often dict → 'body' JSON-string → dict → list → item.
+    if depth > 5:
+        return "…"
+    if isinstance(obj, dict):
+        if not obj:
+            return "{}"
+        keys = list(obj)[:max_keys]
+        inner = ", ".join(f"{k}: {_v5_schema_digest(obj[k], depth + 1)}" for k in keys)
+        if len(obj) > max_keys:
+            inner += f", …+{len(obj) - max_keys} more keys"
+        return "{" + inner + "}"
+    if isinstance(obj, list):
+        if not obj:
+            return "[]"
+        return f"[{len(obj)} × {_v5_schema_digest(obj[0], depth + 1)}]"
+    if isinstance(obj, str):
+        s = obj.strip()
+        if s[:1] in "[{" and depth < 2:      # a JSON STRING — the real payload is inside
+            sub = _v5_try_json(s)
+            if sub is not None:
+                return "json-string→" + _v5_schema_digest(sub, depth + 1)
+        return "str"
+    if isinstance(obj, bool):
+        return "bool"
+    if isinstance(obj, (int, float)):
+        return "num"
+    return "null" if obj is None else type(obj).__name__
+
+
+def _v5_csv_schema_note(raw_text: str) -> str:
+    """`SCHEMA: …` line for a file that LOOKS like CSV/TSV (not valid JSON, but a
+    header line followed by same-width comma/tab-separated rows). Same purpose as
+    the JSON path — column names + row count instead of a bare filename — for the
+    other data format every fetch→parse→write pipeline in this codebase produces
+    almost as often as JSON."""
+    lines = [ln for ln in (raw_text or "").splitlines() if ln.strip()][:200]
+    if len(lines) < 2:
+        return ""
+    for sep, label in ((",", "CSV"), ("\t", "TSV")):
+        header = lines[0].split(sep)
+        if len(header) < 2:
+            continue
+        width = len(header)
+        matching = sum(1 for ln in lines[1:] if len(ln.split(sep)) == width)
+        if matching >= min(3, len(lines) - 1) and matching >= 0.8 * (len(lines) - 1):
+            cols = ", ".join(c.strip().strip('"') for c in header[:12])
+            more = f", …+{width - 12} more columns" if width > 12 else ""
+            return f"SCHEMA: {label} columns: [{cols}{more}] ({len(lines) - 1}+ data rows)"
+    return ""
+
+
+def _v5_file_schema_note(raw_text: str) -> str:
+    """`SCHEMA: …` line for a saved structured (JSON or CSV/TSV) file, or '' when
+    it's neither — e.g. prose, code, an HTML page."""
+    obj = _v5_try_json(raw_text or "")
+    if obj is not None and not isinstance(obj, (str, int, float, bool)):
+        try:
+            return "SCHEMA: " + _v5_schema_digest(obj)[:600]
+        except Exception:
+            return ""
+    return _v5_csv_schema_note(raw_text)
+
+
+_V5_SLUG_STRIP = re.compile(r"[^a-z0-9]+")
+
+
+def _v5_output_filename(tool: str, args: Any, content: str, cycle: int) -> str:
+    """A DESCRIPTIVE, deterministic filename for a cap's saved output, so the LLM
+    can RECOGNISE which file holds what (vs a generic `_output_http_get_1.txt`).
+    Derives a slug from the most salient argument (url/path/query/name…), picks an
+    extension from the content shape (.json/.txt), and keeps the tool + cycle for
+    uniqueness. e.g. http.get on /pokemon?limit=151 → `http_get__pokemon_limit-151__c3.json`."""
+    a = args if isinstance(args, dict) else {}
+    hint = ""
+    for k in ("url", "endpoint", "path", "file", "query", "q", "name", "command", "cmd"):
+        v = a.get(k)
+        if isinstance(v, str) and v.strip():
+            hint = v.strip()
+            break
+    if hint:
+        _base = hint.split("?", 1)[0].rstrip("/")
+        seg = _base.split("/")[-1] if "/" in _base else _base
+        qs = ""
+        if "?" in hint:
+            qs = "_".join(re.findall(r"(?:limit|offset|id|page|q|query|name)=([A-Za-z0-9_.-]{1,20})",
+                                     hint))
+        hint = seg + (("_" + qs) if qs else "")
+    slug = _V5_SLUG_STRIP.sub("-", (hint or tool).lower()).strip("-")[:40] or "output"
+    ext = "json" if (content or "").lstrip()[:1] in "[{" else "txt"
+    return f"{tool.replace('.', '_')}__{slug}__c{cycle}.{ext}"
+
+
+# ── Generated documents → real files ─────────────────────────────────────────
+# A generative cap (llm.generate/…) emits a DOCUMENT — a report, a plan, an
+# article. That document is the deliverable, so the LOOP persists it to the run's
+# working directory itself: the specialist never has to chain a second
+# ide.fs.write/exec-heredoc call to turn text into a file (the reported failure
+# mode — a step that "generated" a report but left nothing on disk, and a `cat
+# <<EOF` hand-write standing in for the real output). Off via
+# VERA_LOOP_GEN_AUTOSAVE=0.
+_V5_GEN_AUTOSAVE_ON = os.getenv("VERA_LOOP_GEN_AUTOSAVE", "1").strip() not in ("0", "false", "no")
+_V5_GEN_SAVE_MIN = int(os.getenv("V5_GEN_SAVE_MIN", "300") or 300)      # below this it's an answer, not a document
+_V5_GEN_INSTEP_MAX = int(os.getenv("V5_GEN_INSTEP_MAX", "24000") or 24000)  # full text kept in-step up to here
+# Args a specialist may use to NAME the output file. `llm.generate` takes
+# `save_as` natively; the rest are aliases we normalise onto it. Deliberately
+# excludes `file`/`files`/`path` — on a generative cap those mean INPUT grounding
+# files, and hijacking them as an output name would silently drop the context.
+_V5_GEN_SAVE_ARGS = ("save_as", "save_to", "output_file", "output_path",
+                     "out_file", "filename")
+_V5_DOC_EXTS = ("md", "txt", "json", "html", "htm", "csv", "yaml", "yml", "rst", "xml")
+_V5_FNAME_RE = re.compile(r"[\w./-]+\.(?:" + "|".join(_V5_DOC_EXTS) + r")\b", re.I)
+
+
+def _v5_doc_ext(text: str) -> str:
+    """Extension implied by the CONTENT of a generated document."""
+    t = (text or "").lstrip()
+    if t[:1] in "[{":
+        return "json"
+    low = t[:400].lower()
+    if low.startswith("<!doctype html") or low.startswith("<html"):
+        return "html"
+    if re.search(r"(?m)^\s{0,3}#{1,6}\s+\S", text or "") or "```" in (text or "") \
+            or re.search(r"(?m)^\s*[-*]\s+\S", text or ""):
+        return "md"
+    return "txt"
+
+
+def _v5_doc_title_slug(text: str) -> str:
+    """A slug from the DOCUMENT'S OWN title — its first markdown H1, an HTML
+    <title>/<h1>, a leading 'Title:' line, or a short headline first line — so an
+    auto-named file reads like 'ai-ml-advancements-report.md' (descriptive, like the
+    other save mechanisms) instead of a step-title slug. '' when none is found."""
+    t = (text or "").strip()
+    if not t:
+        return ""
+    title = ""
+    m = re.search(r"(?m)^\s{0,3}#\s+(.+?)\s*#*\s*$", t)                  # markdown H1
+    if m:
+        title = m.group(1)
+    if not title:
+        m = (re.search(r"<title[^>]*>(.*?)</title>", t, re.I | re.S)
+             or re.search(r"<h1[^>]*>(.*?)</h1>", t, re.I | re.S))
+        if m:
+            title = re.sub(r"<[^>]+>", "", m.group(1))
+    if not title:
+        _first = t.splitlines()[0] if t.splitlines() else ""
+        m = re.match(r"(?i)\s*(?:title|report|subject)\s*[:\-]\s*(.+)", _first)
+        if m:
+            title = m.group(1)
+        else:
+            _fl = _first.strip().strip("#*_ ").strip()
+            if 3 <= len(_fl) <= 80 and not _fl.endswith((".", "!", "?", ":", ",", ";")):
+                title = _fl
+    return _V5_SLUG_STRIP.sub("-", title.lower()).strip("-")[:60]
+
+
+def _v5_gen_output_filename(tool: str, args: Any, step: Dict[str, Any],
+                            text: str, cycle: int, *, name_hint: str = "") -> str:
+    """Filename for a generated document. Honours, in order: an explicit name the
+    specialist asked for (save_as/…), a filename the STEP ITSELF names (the
+    planner's "save it as ai_ml_advancements_report.md" — so the loop writes the
+    file the plan asked for instead of inventing a name the next step can't find),
+    the DOCUMENT'S OWN title (a descriptive name like the other save mechanisms),
+    then a slug of the step title. Extension follows the content."""
+    a = args if isinstance(args, dict) else {}
+    for v in [name_hint] + [a.get(k) for k in _V5_GEN_SAVE_ARGS]:
+        if isinstance(v, str) and v.strip() and _V5_FNAME_RE.fullmatch(v.strip().strip("./")):
+            return v.strip().strip("/\\")
+    blob = f"{step.get('success','')}\n{step.get('goal','')}\n{step.get('title','')}"
+    m = _V5_FNAME_RE.search(blob)
+    if m:
+        return m.group(0).strip("./")
+    tslug = _v5_doc_title_slug(text)          # descriptive name from the content itself
+    if len(tslug) >= 4:
+        return f"{tslug}.{_v5_doc_ext(text)}"
+    slug = _V5_SLUG_STRIP.sub("-", str(step.get("title") or tool).lower()).strip("-")[:48] or "output"
+    return f"{slug}__c{cycle}.{_v5_doc_ext(text)}"
+
+
+def _v5_head_tail(txt: str, cap: int = _V5_CONDENSE_OUT_MAX) -> str:
+    """Deterministic head+tail slice — keep both ends (often the signal), elide the
+    middle, point at the on-disk full copy. Never an LLM summary, so the real data
+    the agent needs to act on survives intact within the step."""
+    if len(txt) <= cap:
+        return txt
+    return (txt[:int(cap * 0.7)]
+            + "\n…[middle elided — FULL output saved to the file below]…\n"
+            + txt[-int(cap * 0.25):])
+
+
+async def _v5_save_gen_document(tool: str, args: Any, step: Dict[str, Any], text: str,
+                                cycle: int, *, session_id: str,
+                                name_hint: str = "") -> Dict[str, Any]:
+    """Persist a generated DOCUMENT to the run's working directory (INSIDE the
+    session sandbox when there is one, so the same path a later exec/read uses).
+    Returns {path, rel} — or {} when the text isn't a document worth a file:
+    too short to be a deliverable, or (near-)pure fenced code, which the code
+    store already versions to its own path."""
+    body = (text or "").strip()
+    if len(body) < _V5_GEN_SAVE_MIN:
+        return {}
+    try:
+        blocks = _v5_extract_code_blocks(body)
+    except Exception:
+        blocks = []
+    if blocks:
+        prose = re.sub(r"```.*?```", "", body, flags=re.S).strip()
+        if len(prose) < 400:            # it IS the code — code autosave owns it
+            return {}
+    try:
+        name = _v5_gen_output_filename(tool, args, step, body, cycle, name_hint=name_hint)
+        import importlib as _il
+        _ex = _il.import_module("Vera.vera.execution.exec_capabilities")
+        path = await _ex.write_artifact_file(relpath=name, content=body,
+                                             session_id=session_id)
+    except Exception as e:
+        log.debug("v5 generated-document save failed for %s: %s", tool, e)
+        return {}
+    # Surface the BASENAME: an absolute host path is internal storage the sandbox
+    # can't see, and the agent copies it verbatim into later calls.
+    return {"path": str(path), "rel": os.path.basename(str(path)) or ""}
+
+
 async def _v5_condense_output(raw_text: str, tool: str, step_goal: str, *,
                               model: str, instance_id: str, prefer_gpu: bool,
-                              max_out: int = _V5_CONDENSE_OUT_MAX) -> str:
+                              max_out: int = _V5_CONDENSE_OUT_MAX,
+                              focus: str = "", keep: Optional[List[str]] = None) -> str:
     """Condense a long tool/script output into a COMPACT but COMPREHENSIVE brief
     that keeps every decision-relevant detail (numbers, ids, names, statuses,
     errors, key lines) and drops only the bulk/noise — so the specialist reads
     exactly what it needs to progress, instead of a preview cut mid-stream. Falls
     back to a head+tail slice of the raw text on any LLM failure (never worse than
-    a plain truncation)."""
+    a plain truncation).
+
+    `focus`/`keep` let the CALLING agent steer what the brief emphasises. They
+    AUGMENT the keep-every-decision-relevant-detail floor (never replace it), so a
+    badly-chosen focus can only add emphasis — it can't drop key data. The result
+    ends with a one-line note of how much bulk was omitted (the full raw output is
+    preserved on disk by the caller for on-demand grep/sed)."""
     raw = raw_text or ""
     sys = (
         "You compress ONE tool/script output for an agent still working toward a GOAL. "
@@ -7793,6 +8534,16 @@ async def _v5_condense_output(raw_text: str, tool: str, step_goal: str, *,
         "headings/bullets). Never invent anything not in the output. If the output is an "
         "error or a failure, lead with that. Be as short as possible WHILE losing no detail "
         "that matters to the goal.")
+    # Agent steering — additive emphasis on top of the keep-floor above.
+    _kk = ", ".join(str(k) for k in (keep or []) if str(k).strip())[:400]
+    _focus = str(focus or "").strip()[:400]
+    if _focus or _kk:
+        sys += ("\nAGENT STEER (in ADDITION to the rules above — never drop OTHER key detail to "
+                "make room for these):")
+        if _focus:
+            sys += (f"\n  • FOCUS: {_focus} — make sure everything matching this survives, in full.")
+        if _kk:
+            sys += (f"\n  • MUST-KEEP: {_kk} — include each of these if it appears in the output.")
     prompt = (f"GOAL CONTEXT: {str(step_goal or '')[:400]}\n"
               f"TOOL: {tool}\n\nOUTPUT TO CONDENSE (may be truncated):\n"
               f"{raw[:16000]}\n\nWrite the condensed brief.")
@@ -7802,7 +8553,14 @@ async def _v5_condense_output(raw_text: str, tool: str, step_goal: str, *,
             prefer_gpu=prefer_gpu, json_mode=False)
         clean = _strip_think(out or "")[0].strip()
         if clean:
-            return clean[:max_out]
+            clean = clean[:max_out]
+            # Drop-report: tell the agent how much bulk was removed so it knows
+            # whether it may need to pull the full output from disk.
+            _dropped = len(raw) - len(clean)
+            if _dropped > max_out:
+                clean += (f"\n\n[condensed: ~{_dropped:,} chars of bulk/noise omitted from the "
+                          f"{len(raw):,}-char raw output.]")
+            return clean
     except Exception as e:
         log.debug("v5 condense failed for %s: %s", tool, e)
     # Fallback: head + tail so the ends (often the signal) both survive.
@@ -7929,6 +8687,233 @@ _V5_ARG_ERROR_MARKERS = (
 )
 
 
+_MAX_EXEC_AUTHOR_REDIRECTS = 2   # then fail-open so a code-only step never stalls
+
+
+def _v5_is_substantial_code(code: str) -> bool:
+    """True when an inline exec `code` argument is a real PROGRAM — something that
+    should have been AUTHORED by a code-generation step and run by PATH, not
+    hand-typed by the executor. Deliberately conservative: a shell command, a quick
+    check, or a small one-off snippet passes (returns False); a multi-function /
+    long / multi-import script trips it."""
+    if not code or not isinstance(code, str):
+        return False
+    lines = [ln for ln in code.splitlines()
+             if ln.strip() and not ln.strip().startswith("#")]
+    n = len(lines)
+    if n <= 6:
+        return False
+    if len(code) > 800 or n > 15:
+        return True
+    has_struct = ("def " in code) or ("class " in code)
+    imports = sum(1 for ln in lines if ln.strip().startswith(("import ", "from ")))
+    if has_struct and n > 8:
+        return True
+    if imports >= 2 and n > 10:
+        return True
+    return False
+
+
+_MAX_DOC_AUTHOR_REDIRECTS = 2    # then fail-open — a shell-only step must never stall
+_MAX_CODE_WRITE_REDIRECTS = 2    # ide.fs.write used to hand-write code → code.author
+_V5_CODE_EXTS = ("py", "js", "ts", "jsx", "tsx", "sh", "bash", "rb", "go", "rs",
+                 "java", "c", "cpp", "cs", "php", "pl", "lua", "sql", "html", "css")
+
+
+def _v5_write_is_code(args: Any) -> str:
+    """When an ide.fs.write call is HAND-WRITING source code, return the target
+    path, else "". Code must come from the coding specialist (code.author): it is
+    written by a coding model, grounded on the real input files, and versioned.
+    A specialist typing a script into a write cap produces none of that — and it
+    is the reported failure mode. Conservative: a short config/text file, a data
+    file, or a document passes straight through."""
+    if not isinstance(args, dict):
+        return ""
+    path = str(args.get("path") or args.get("file") or "").strip()
+    content = str(args.get("content") or args.get("text") or "")
+    if not path or len(content) < 400:
+        return ""
+    ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+    if ext not in _V5_CODE_EXTS:
+        return ""
+    lines = [ln for ln in content.splitlines() if ln.strip()]
+    if len(lines) < 12:
+        return ""
+    return path if _v5_looks_like_code(content) or ext in ("html", "css") else ""
+_V5_HEREDOC_RE = re.compile(r"<<-?\s*['\"]?([A-Za-z_]\w*)['\"]?")
+_V5_REDIRECT_RE = re.compile(r">>?\s*['\"]?([\w./-]+\.(?:" + "|".join(_V5_DOC_EXTS) + r"))", re.I)
+
+
+def _v5_shell_authors_document(command: str) -> str:
+    """When a shell command is HAND-WRITING a document (a `cat <<EOF > report.md`
+    heredoc, a long `echo/printf … > notes.md`) return the target filename, else "".
+
+    Typing a deliverable into a shell command is the reported anti-pattern: the
+    executor produces a short, degraded stand-in for the document a generative cap
+    should have written (and which the loop now saves by itself). Deliberately
+    conservative — a real command, a `>> log` append, or a short one-liner returns
+    "" and passes straight through."""
+    cmd = command or ""
+    if not isinstance(cmd, str) or len(cmd) < 300:
+        return ""
+    m = _V5_REDIRECT_RE.search(cmd)
+    if not m:
+        return ""
+    body = ""
+    hd = _V5_HEREDOC_RE.search(cmd)
+    if hd:
+        # Body = everything between the heredoc marker and its terminator.
+        after = cmd[hd.end():]
+        end = re.search(r"(?m)^\s*" + re.escape(hd.group(1)) + r"\s*$", after)
+        body = after[:end.start()] if end else after
+    elif re.search(r"\b(echo|printf)\b", cmd):
+        body = cmd
+    else:
+        return ""
+    lines = [ln for ln in body.splitlines() if ln.strip()]
+    if len(body.strip()) < 400 or len(lines) < 6:
+        return ""
+    # A heredoc carrying a SCRIPT (`python - <<EOF … EOF > out.json`) computes its
+    # output — that's legitimate work, not a hand-typed document. Only prose/markup
+    # bodies are redirected.
+    code_lines = sum(1 for ln in lines
+                     if re.match(r"\s*(import |from \w+ import|def |class |for |while |if |"
+                                 r"try:|with |print\(|\w+\s*=\s*|\})", ln))
+    if code_lines >= max(3, len(lines) // 4):
+        return ""
+    return m.group(1)
+
+
+# ── Invented absolute paths ───────────────────────────────────────────────────
+# Models reach for absolute paths they have seen in TRAINING data — /mnt/data,
+# /content, /tmp, C:\… — none of which exist in this run's working directory. The
+# call then fails, the agent retries the same fiction, and the step burns out
+# (reported: `cat /mnt/data/ai_news_july_2026_summary.txt`, three times). Every
+# real file the run has is reachable by RELATIVE name, so an absolute path
+# pointing outside the working directory is treated as invented.
+_MAX_PATH_REDIRECTS = 2          # then fail open — never hard-stall a step on this
+_V5_PATHY_EXTS = ("json", "txt", "md", "markdown", "csv", "tsv", "html", "htm", "xml",
+                  "yaml", "yml", "log", "pdf", "py", "js", "ts", "sh", "sql", "ipynb",
+                  "png", "jpg", "jpeg", "svg", "zip", "tar", "gz", "docx", "xlsx")
+_V5_ABS_PATH_RE = re.compile(
+    r"(?:[A-Za-z]:\\[^\s'\"<>|;]+|/[\w.\-]+(?:/[\w.\- ]+)*/[\w.\-]+\.(?:"
+    + "|".join(_V5_PATHY_EXTS) + r"))\b")
+
+
+# Argument fields that carry PROSE or a code payload rather than a path. A
+# /mnt/data mentioned inside a prompt, a task description or a file's content is
+# discussion, not a path the call will open — scanning them made the invented-path
+# guard bounce legitimate calls (notably code.author, whose `task` quotes the
+# draft it is replacing).
+_V5_PAYLOAD_ARG_KEYS = {"task", "prompt", "system", "requirements", "content", "text",
+                        "code", "body", "message", "description", "query", "goal",
+                        "instructions", "note", "summary"}
+
+
+def _v5_collect_strings(obj: Any, out: List[str], *, skip_keys: Optional[set] = None) -> None:
+    if isinstance(obj, str):
+        out.append(obj)
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            if skip_keys and str(k).lower() in skip_keys:
+                continue
+            _v5_collect_strings(v, out, skip_keys=skip_keys)
+    elif isinstance(obj, (list, tuple)):
+        for v in obj:
+            _v5_collect_strings(v, out, skip_keys=skip_keys)
+
+
+def _v5_rewrite_strings(obj: Any, mapping: Dict[str, str]) -> Any:
+    """Return `obj` with every mapped substring replaced, walking dicts/lists."""
+    if isinstance(obj, str):
+        s = obj
+        for bad, good in mapping.items():
+            s = s.replace(bad, good)
+        return s
+    if isinstance(obj, dict):
+        return {k: _v5_rewrite_strings(v, mapping) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_v5_rewrite_strings(v, mapping) for v in obj]
+    return obj
+
+
+def _v5_foreign_abs_paths(args: Any, workdir: str) -> List[str]:
+    """Absolute file paths in a call's arguments that do NOT live in this run's
+    working directory (or the container workspace). URLs are ignored, as are
+    paths without a file-ish extension (so `/usr/bin/python3` passes)."""
+    strings: List[str] = []
+    _v5_collect_strings(args, strings, skip_keys=_V5_PAYLOAD_ARG_KEYS)
+    wd = (workdir or "").replace("\\", "/").rstrip("/")
+    found: List[str] = []
+    for s in strings:
+        if not isinstance(s, str) or len(s) > 4000:
+            continue
+        for m in _V5_ABS_PATH_RE.finditer(s):
+            p = m.group(0)
+            # Skip anything that is part of a URL.
+            i = m.start()
+            if "://" in s[max(0, i - 8):i + 4]:
+                continue
+            pn = p.replace("\\", "/")
+            if pn.startswith("/workspace/") or (wd and pn.startswith(wd + "/")):
+                continue
+            if p not in found:
+                found.append(p)
+    return found
+
+
+_V5_PKG_CACHE: Dict[str, Tuple[float, Optional[str]]] = {}
+_V5_PKG_CACHE_TTL = 600.0   # seconds — installed packages rarely change mid-run
+
+
+async def _v5_installed_packages(session_id: str) -> Optional[str]:
+    """Top-level pip packages ACTUALLY installed in this session's sandbox (or
+    host, if unsandboxed) — cached per session for _V5_PKG_CACHE_TTL. Told to a
+    step up front for the same reason _v5_workdir_files exists: a specialist
+    with no knowledge of the environment guesses (imports pandas/numpy/etc. on
+    faith) and only discovers the ModuleNotFoundError after burning a whole
+    write→run→fail cycle. None = could not be determined (say nothing)."""
+    now = time.time()
+    cached = _V5_PKG_CACHE.get(session_id)
+    if cached and (now - cached[0]) < _V5_PKG_CACHE_TTL:
+        return cached[1]
+    pkgs: Optional[str] = None
+    try:
+        import importlib as _il
+        _ex = _il.import_module("Vera.vera.execution.exec_capabilities")
+        res = await _ex.cap_bash_run(
+            command="python3 -c \"import importlib.metadata as m; "
+                    "print(','.join(sorted(d.name for d in m.distributions())))\" 2>/dev/null",
+            session_id=session_id, timeout=20)
+        if isinstance(res, dict) and res.get("ok") and res.get("stdout"):
+            names = [n.strip() for n in str(res["stdout"]).strip().split(",") if n.strip()]
+            if names:
+                pkgs = ", ".join(names[:150]) + (" …" if len(names) > 150 else "")
+    except Exception as e:
+        log.debug("v5 installed-packages probe failed: %s", e)
+    _V5_PKG_CACHE[session_id] = (now, pkgs)
+    return pkgs
+
+
+async def _v5_workdir_files(session_id: str, limit: int = 40) -> Optional[List[str]]:
+    """The REAL files in the run's working directory (sandbox-aware). Told to the
+    specialist up front so it never has to guess what exists — guessing is exactly
+    how an invented /mnt/data path gets into a command. None = could NOT be
+    determined (say nothing rather than claim the directory is empty); [] = the
+    directory really is empty."""
+    try:
+        import importlib as _il
+        _ex = _il.import_module("Vera.vera.execution.exec_capabilities")
+        fn = getattr(_ex, "artifact_list_files", None)
+        if fn is None:
+            return None
+        got = await fn(session_id=session_id, limit=limit)
+        return list(got) if got is not None else None
+    except Exception as e:
+        log.debug("v5 workdir listing failed: %s", e)
+        return None
+
+
 def _v5_arg_error_hint(tool: str, args: Any, err: str) -> str:
     """If `err` is a recoverable malformed-call error, return a precise correction
     telling the specialist to RETRY the same cap with fixed arguments (naming the
@@ -7964,7 +8949,72 @@ def _v5_arg_error_hint(tool: str, args: Any, err: str) -> str:
              + "\nThe value you need is already in your previous results above "
                "(e.g. the URL/id from the last successful call) — reuse it rather "
                "than re-fetching it.")
+    # An EMPTY call (no args at all) is a different failure than a typo'd one —
+    # observed live, repeatedly: the specialist's own reasoning named several
+    # URLs it wanted ("fetch the top 4 sources: Nature, ScienceDaily, ...") and
+    # then called web.fetch with args:{} anyway. That is not forgetting the
+    # value — it is trying to express a BATCH of calls through a cap that only
+    # takes one, and an empty call is the closest it could get. The generic
+    # "reuse it from above" hint doesn't name that mismatch, so it retried the
+    # same empty call 2-3 more times (each a full cycle) before stumbling onto
+    # `chain` on its own. Say the actual fix up front.
+    if not passed or passed == "(none)":
+        _ex_field = missing or "value"
+        head += (
+            f"\nIf you're trying to do this for SEVERAL items (e.g. multiple URLs) — calling "
+            f"`{tool}` with no argument will fail the same way no matter how many times you "
+            f"retry it; it takes exactly ONE `{_ex_field}` per call. Either call it once now "
+            f"with the FIRST item's value, or — better, if you already have the whole list — "
+            f'use `chain` to do them all in this ONE turn: {{"thought":"...","chain":'
+            f'[{{"name":"{tool}","input":{{"{_ex_field}":"<item 1>"}}}},'
+            f'{{"name":"{tool}","input":{{"{_ex_field}":"<item 2>"}}}}, ...]}}.')
     return head
+
+
+def _v5_result_failure_reason(res: Dict[str, Any], rc: int) -> str:
+    """Real reason a result dict that LOOKS like a failure (rc!=0 / ok:false)
+    actually failed. The generic check this feeds only knows the SHELL-COMMAND
+    shape (rc/stdout/stderr) — capabilities that fail without ever running a
+    command (http.get/http.post returning a non-2xx, an API wrapper returning
+    ok:false) use different field names (status/body/text/message), and none of
+    those were ever checked. The result was a real error with the actual cause
+    sitting right there in the dict, discarded, and replaced with the useless
+    'command failed (rc=0)' — informative to no one, and 'rc=0' is actively
+    misleading since 0 normally means success. Widen the field list and, for an
+    HTTP-shaped result, lead with the status code."""
+    status = res.get("status") or res.get("status_code")
+    body = str(res.get("stderr") or res.get("error") or res.get("stdout")
+               or res.get("body") or res.get("text") or res.get("message") or "").strip()
+    if status:
+        return (f"HTTP {status}: {body[:400]}" if body else f"HTTP {status} (no response body)")
+    return body[:600] or f"failed with no error detail (rc={rc}, keys={sorted(res.keys())[:8]})"
+
+
+def _v5_make_tool_stream_cb(stream_id: str, step_id: int, cycle: int, tool: str, session_id: str):
+    """Live output for a long-running LLM-backed capability call (code.author,
+    llm.generate, ...) while it is still generating — the tool-call analogue of
+    the specialist's own think_delta reasoning stream, so a 2-3 minute blocking
+    call (code.author observed at 200s+) isn't just a spinner with nothing
+    visible until it finishes. Capabilities that don't accept a stream_cb (most
+    of them — exec.*, http.*, ...) never call this; see _accepts_stream_cb in
+    context.py, which is what makes passing it on every call harmless. Returns
+    None (not a callable) when there's no stream_id, so callers can skip work."""
+    if not stream_id:
+        return None
+    acc = {"text": "", "emitted": 0}
+
+    async def _cb(tok: str):
+        try:
+            acc["text"] += tok
+            if len(acc["text"]) - acc["emitted"] < 24:
+                return
+            acc["emitted"] = len(acc["text"])
+            await emit_event({"type": "agent_loop_v5.tool_stream_delta", "stream_id": stream_id,
+                              "step_id": step_id, "cycle": cycle, "tool": tool,
+                              "text": acc["text"][-4000:], "session_id": session_id})
+        except Exception:
+            pass
+    return _cb
 
 
 async def _v5_available_models(trace_id: str = "", *, limit: int = 40) -> List[str]:
@@ -8262,6 +9312,46 @@ async def code_store_save(path: str, content: str, *, session_id: str = "", repo
     return out
 
 
+async def _code_logical_key(session_id: str, path: str) -> str:
+    """Map an on-disk edit path (container /workspace/… or host artifact dir) back
+    to the SAME logical relpath the auto-saver keys on, so a surgical edit
+    CONTINUES the file's existing version history instead of forking a new one."""
+    raw = (path or "").replace("\\", "/")
+    try:
+        import importlib as _il
+        _exec = _il.import_module("Vera.vera.execution.exec_capabilities")
+        base = await _exec.artifact_dir_async(session_id=session_id, create=False)
+        base = (base or "").replace("\\", "/").rstrip("/")
+        if base and (raw == base or raw.startswith(base + "/")):
+            return _code_norm_path(raw[len(base):])
+    except Exception:
+        pass
+    if "/workspace/" in raw:
+        return _code_norm_path(raw.split("/workspace/", 1)[1])
+    return _code_norm_path(raw)
+
+
+async def code_store_version_edit(path: str, content: str, *, session_id: str = "",
+                                  agent: str = "", message: str = "") -> Dict[str, Any]:
+    """Snapshot a file into the code version store AFTER a surgical edit
+    (ide.code.edit_lines / insert_at / replace). The edit cap has already written
+    the file to disk, so `mirror_fs=False` — we only record a new immutable
+    version. The logical key is reconciled with the auto-saver's key so
+    edit-versions and generate-versions share ONE history (code.versions /
+    code.diff show the full back-and-forth). Best-effort; never raises."""
+    try:
+        if content is None:
+            return {"ok": False, "error": "content required"}
+        key = await _code_logical_key(session_id, path)
+        if not key:
+            return {"ok": False, "error": "no key"}
+        return await code_store_save(key, content, session_id=session_id,
+                                     message=(message or "edit"), mirror_fs=False)
+    except Exception as e:
+        log.debug("code_store_version_edit failed for %s: %s", path, e)
+        return {"ok": False, "error": str(e)}
+
+
 def _unescape_collapsed_code(content: str) -> str:
     """Recover a file an LLM double-escaped (literal \\n collapsing it to one
     line). Mirrors ide_capabilities._unescape_collapsed; conservative."""
@@ -8289,6 +9379,486 @@ async def cap_code_save(path: str, content: str, session_id: str = "", repo: str
     return await code_store_save(path, content, session_id=session_id, repo=repo,
                                  message=message, lang=lang, push_gitea=push_gitea,
                                  mirror_fs=mirror_fs)
+
+
+# NOTE: keep plain helpers ABOVE the next @capability decorator. A decorator
+# binds to whatever function follows it, so a helper slipped in between
+# registers itself AS that capability — which is exactly what happened here:
+# code.author was bound to _v5_check_syntax and every call raised
+# "_v5_check_syntax() missing 2 required positional arguments".
+def _v5_check_syntax(code: str, lang: str, path: str = "") -> Dict[str, Any]:
+    """DETERMINISTIC syntax/parse check for authored content. {ok, error, checker}.
+
+    Runs in-process — no sandbox round trip — so it is free to run on every
+    authoring attempt. Deliberately only reports what a parser can PROVE: a
+    syntax error is a fact, whereas "is this good code" is not. Languages with no
+    in-process parser return ok=True with checker="" rather than a false pass, so
+    the caller can tell "verified clean" from "not checkable here".
+    """
+    lang = (lang or "").strip().lower()
+    ext = (path or "").rsplit(".", 1)[-1].lower() if "." in (path or "") else ""
+    kind = lang or ext
+    try:
+        if kind in ("python", "py"):
+            compile(code, path or "<authored>", "exec")
+            return {"ok": True, "checker": "python-compile"}
+        if kind in ("json",):
+            json.loads(code)
+            return {"ok": True, "checker": "json-parse"}
+        if kind in ("yaml", "yml"):
+            import yaml as _y                      # optional dep
+            _y.safe_load(code)
+            return {"ok": True, "checker": "yaml-parse"}
+        if kind in ("html", "htm", "xml"):
+            # Not a validator — just catches grossly malformed markup.
+            from html.parser import HTMLParser as _HP
+            class _P(_HP):
+                pass
+            _P().feed(code)
+            return {"ok": True, "checker": "html-parse"}
+    except SyntaxError as e:
+        return {"ok": False, "checker": "python-compile",
+                "error": f"SyntaxError line {e.lineno}: {e.msg}"}
+    except ImportError:
+        return {"ok": True, "checker": ""}          # parser unavailable — not a failure
+    except Exception as e:
+        return {"ok": False, "checker": kind, "error": f"{type(e).__name__}: {e}"}
+    return {"ok": True, "checker": ""}              # nothing to check with
+
+
+@capability(
+    "code.author", memory="on",
+    http_method="POST", http_path="/code/author", http_tags=["code", "fabric"],
+    description="Write a source file with the CODING specialist and save it — the one call to "
+                "use whenever code has to be produced. It hands the job to the coder role "
+                "(coding-cohort model + deterministic sampling), grounds it on any context "
+                "files you name (read sandbox-aware, so the code is written against the REAL "
+                "data shape instead of a guess), strips any fence/JSON wrapper, writes the file "
+                "to your working directory AND versions it in the code store. "
+                "USE THIS INSTEAD OF: llm.generate for code, ide.fs.write for a script, or "
+                "typing code into exec.* — those hand-write worse code and skip versioning. "
+                "Input: task (str! — what the file must do, in detail), path (str! — the target "
+                "filename, e.g. 'build_pokedex.py'), context_files (str|list — files whose REAL "
+                "content the code must work against, e.g. ['./http_get__x__c1.json']), language "
+                "(str — inferred from `path` when omitted), requirements (str — constraints, "
+                "libraries, I/O contract), session_id (str). "
+                "Output: {ok, path, fs_path, version, bytes, lang, chars}. Then RUN it with "
+                "exec.python.run(path=<path>).",
+)
+async def cap_code_author(task: str, path: str = "", context_files=None,
+                          language: str = "", requirements: str = "",
+                          session_id: str = "", trace_id=None,
+                          stream_cb=None) -> Dict[str, Any]:
+    """Author ONE code file with the coding specialist and persist it.
+
+    This exists because prompt-steering a general specialist toward "use
+    llm.generate with the right arguments" proved fragile: the same step would
+    variously hand-write the script into ide.fs.write, type it into a shell
+    heredoc, or ask for code with a JSON output format and get an escaped string
+    back. Making it a CAPABILITY moves the contract out of the prompt — one call
+    that always routes to the coder, always grounds on the named files, always
+    lands a real file on disk, versioned."""
+    task = str(task or "").strip()
+    if not task:
+        return {"ok": False, "error": "task is required — describe what the file must do"}
+    path = _code_norm_path(str(path or "").strip()) or "generated.py"
+    lang = (str(language or "").strip().lower()
+            or _code_lang_for(path) or "python")
+    files = context_files
+    if isinstance(files, str):
+        files = [f.strip() for f in re.split(r"[\n,]+", files) if f.strip()]
+    files = [str(f) for f in (files or []) if str(f).strip()][:6]
+
+    sys_prompt = (
+        "You are the IMPLEMENTER of Vera's coding cohort. Write REAL, complete, running code "
+        "— never pseudocode, never a sketch, never a partial file with '...' or 'rest of the "
+        "logic here'.\n"
+        "Rules:\n"
+        "  • Output the COMPLETE file, and nothing else. No commentary before or after.\n"
+        f"  • ONE fenced block, opened EXACTLY like this: ```{lang} file={path}\n"
+        f"    `file={path}` belongs on the OPENING FENCE LINE ONLY. The first line INSIDE "
+        "the block must be real code (an import/statement) — never a repeat of the "
+        "filename, which would be a syntax error.\n"
+        "  • Write the code literally — never wrap it in JSON, never return it as a string "
+        "field, never escape newlines as \\n.\n"
+        "  • Any CONTEXT FILES given to you show the REAL data you must work against. Parse "
+        "what is actually there — the real key names, nesting and types. Do NOT write "
+        "speculative branches for shapes you were not shown, and do NOT guess a schema.\n"
+        "  • Refer to data files by the RELATIVE names given. Never invent a path.\n"
+        "  • Fail loudly: if an input is missing or malformed, print a clear error — do not "
+        "silently produce an empty result.")
+    # ── Real SHAPE of every context file ────────────────────────────────────
+    # Showing the coder a file's raw content is not enough: a large file is
+    # truncated, and the killer case is invisible even when it isn't — an
+    # http.get capture stores the payload under `body` as a JSON *string*, so the
+    # obvious `data['body']['results']` raises "string indices must be integers".
+    # That exact line failed in a live run. The loop already derives this shape
+    # note deterministically (_v5_file_schema_note tells you which field is a
+    # JSON string and must be json.loads'd first) — it simply never reached the
+    # coder. Attach it per file so the parser is written against reality.
+    schema_lines: List[str] = []
+    if files:
+        try:
+            import importlib as _il_s
+            _ex_s = _il_s.import_module("Vera.vera.execution.exec_capabilities")
+            _rd = getattr(_ex_s, "read_artifact_file", None)
+        except Exception:
+            _rd = None
+        for f in files:
+            if not _rd:
+                break
+            try:
+                _txt = await _rd(session_id=session_id, relpath=f, max_bytes=40000)
+            except Exception:
+                _txt = None
+            if not _txt:
+                continue
+            note = _v5_file_schema_note(_txt)
+            if note:
+                schema_lines.append(f"  • {f}: {note}")
+    schema_block = ("\nACTUAL STRUCTURE OF THE CONTEXT FILES — parse EXACTLY this shape, do "
+                    "not guess and do not add branches for shapes not shown here.\n"
+                    "CRITICAL: a field shown as `json-string→{…}` holds JSON as a STRING. You "
+                    "MUST json.loads() that field before indexing into it — e.g. for "
+                    "`{body: json-string→{results: [...]}}` the correct access is "
+                    "`json.loads(data['body'])['results']`, NOT `data['body']['results']` "
+                    "(which raises \"string indices must be integers\").\n"
+                    + "\n".join(schema_lines) + "\n") if schema_lines else ""
+
+    prompt = (f"TASK — write `{path}`:\n{task}\n"
+              + (f"\nREQUIREMENTS / CONSTRAINTS:\n{requirements}\n" if requirements else "")
+              + (f"\nThe code must read these files (their real content is included above as "
+                 f"CONTEXT FILES): {', '.join(files)}\n" if files else "")
+              + schema_block
+              + f"\nWrite the complete {lang} file now.")
+
+    gen = CAPABILITY_REGISTRY.get("llm.generate")
+    fn = (gen or {}).get("raw") or (gen or {}).get("func")
+    if not fn:
+        return {"ok": False, "error": "llm.generate is unavailable"}
+    # ── Author (once) → CHECK → repair with SURGICAL edits, not a rewrite ────
+    # Never save code that does not parse. The check is a real parser, not the
+    # model's opinion, so the feedback is exact ("SyntaxError line 42: …").
+    # The FIRST pass authors the whole file — there is nothing to be surgical
+    # about yet. Every REPAIR pass after that asks for a small find/replace
+    # patch against the file AS IT ACTUALLY IS (exactly the mechanism
+    # code.edit uses for existing files) instead of re-prompting for the
+    # entire file from memory. Asking a model to re-type a whole file to fix
+    # one line is how you get a truncated/incomplete rewrite in the first
+    # place — a targeted patch can't "forget" the 90% of the file it wasn't
+    # asked to touch, because it never has to reproduce it.
+    attempts = max(1, int(os.getenv("V5_AUTHOR_MAX_ATTEMPTS", "3") or 3))
+    try:
+        res = await fn(prompt=prompt, system=sys_prompt, output_format="code",
+                       profile=LOOP_ROUTING_PROFILE, role="coder",
+                       files=files or None, session_id=session_id,
+                       caller="code.author", trace_id=trace_id, stream_cb=stream_cb)
+    except Exception as e:
+        return {"ok": False, "error": f"generation failed: {e}"}
+    text = _strip_think(_v5_gen_text(res) or "")[0]
+    text = _v5_unwrap_json_code(text)      # JSON-wrapped code → the code itself
+    if not text.strip():
+        return {"ok": False, "error": "the coder returned nothing"}
+    blocks = _v5_extract_code_blocks(text, name_hint=(path or task))
+    # The unfenced fallback needs the same marker strip — a coder that emits a
+    # bare `file=x.py` first line and NO fence would otherwise save it as line 1.
+    code = (blocks[0]["code"] if blocks
+            else _v5_strip_marker_line(_unescape_collapsed_code(text.strip())))
+    if not code.strip():
+        return {"ok": False, "error": "no code in the generation"}
+    _lang_used = blocks[0]["lang"] if blocks else lang
+    check = _v5_check_syntax(code, _lang_used, path)
+
+    _edit_sys = (
+        "You are the EDITOR of Vera's coding cohort, repairing ONE syntax error in a file "
+        "you (or a peer) just wrote. Make the SMALLEST possible fix — you are NOT rewriting "
+        "the file, and you must not reproduce any part of it you are not changing.\n"
+        'Return ONLY a JSON object: {"edits":[{"find":"<exact text to replace>",'
+        '"replace":"<corrected text>"}, ...],"note":"<what was wrong>"}\n'
+        "  • `find` must be copied EXACTLY from the CURRENT CONTENT below, including "
+        "indentation, and must be UNIQUE — include enough surrounding lines to make it so.\n"
+        "  • Fix ONLY the reported error. Do not reformat, reorder, or touch anything else.\n"
+        "  • The line-number gutter (`  12 | code`) is NOT part of the file — never include "
+        "it in `find` or `replace`.\n"
+        "  • No markdown, no prose outside the JSON.")
+    last_edit_err = ""
+    for attempt in range(2, attempts + 1):
+        if check.get("ok"):
+            break
+        await emit_event({"type": "code.author.repair", "path": path,
+                          "attempt": attempt - 1, "checker": check.get("checker", ""),
+                          "error": check.get("error", "")})
+        if stream_cb is not None:
+            try:
+                await stream_cb(f"\n\n[✗ {check.get('checker','parser')}: {check.get('error','')} "
+                                 f"— applying a targeted fix]\n\n")
+            except Exception:
+                pass
+        fix_prompt = (
+            f"FILE: {path} ({_lang_used}, {len(code.splitlines())} lines)\n"
+            f"CURRENT CONTENT (this is what actually exists on disk right now — patch THIS, "
+            f"do not regenerate it from the original task):\n{_v5_numbered(code)}\n\n"
+            f"A real {check.get('checker','parser')} reports this error:\n{check.get('error','')}\n"
+            + (f"\nYour previous fix attempt was REJECTED: {last_edit_err}\n" if last_edit_err else "")
+            + "\nReturn the JSON edit(s) that fix it.")
+        try:
+            raw = await fn(prompt=fix_prompt, system=_edit_sys, output_format="json",
+                           profile=LOOP_ROUTING_PROFILE, role="coder",
+                           session_id=session_id, caller="code.author.repair",
+                           trace_id=trace_id, stream_cb=stream_cb)
+        except Exception as e:
+            last_edit_err = f"generation failed: {e}"
+            continue
+        obj = _extract_json(_strip_think(_v5_gen_text(raw) or "")[0]) or {}
+        edits = obj.get("edits") if isinstance(obj, dict) else None
+        if not isinstance(edits, list) or not edits:
+            last_edit_err = "no edits returned"
+            continue
+        applied = _v5_apply_edits(code, edits)
+        if not applied.get("ok"):
+            last_edit_err = "; ".join(applied.get("errors", [])[:3]) or "edit(s) did not apply"
+            continue
+        code = applied["content"]
+        check = _v5_check_syntax(code, _lang_used, path)
+        last_edit_err = "" if check.get("ok") else check.get("error", "")
+    saved = await code_store_save(path, code, session_id=session_id,
+                                  message=f"code.author: {task[:80]}", lang=lang)
+    if not saved.get("ok"):
+        return {"ok": False, "error": str(saved.get("error") or "save failed"), "path": path}
+    truncated = bool(res.get("truncated")) if isinstance(res, dict) else False
+    _verified = bool(check.get("ok")) and bool(check.get("checker"))
+    _syntax_bad = not check.get("ok")
+    return {
+            # A file that does not parse is NOT a completed deliverable — it is a
+            # FAILED call, same as any other cap whose result is unusable. This
+            # used to unconditionally return ok=True, so a step that got broken
+            # code back saw a normal-looking success and moved on (to running it,
+            # or declaring the step done); the break was only discovered several
+            # cycles later. ok=False here routes it through the loop's ordinary
+            # failure handling (verify/retry) instead.
+            "ok": not _syntax_bad,
+            "path": saved.get("path", path), "fs_path": saved.get("fs_path", ""),
+            "version": saved.get("version"), "bytes": saved.get("bytes"),
+            "lang": saved.get("lang", lang), "chars": len(code),
+            "truncated": truncated,
+            # Say plainly whether a parser PROVED this file good, could not check
+            # it, or found it broken — so the caller doesn't treat "unchecked" and
+            # "verified" as the same thing.
+            "syntax_ok": bool(check.get("ok")),
+            "checked_with": check.get("checker") or "",
+            "syntax_error": check.get("error", "") if _syntax_bad else "",
+            "error": (f"code.author could not produce a file that parses after {attempts} "
+                      f"attempt(s) — {check.get('checker','parser')}: {check.get('error','')}. "
+                      f"The (broken) file WAS written and versioned at '{path}' so it can still "
+                      f"be inspected or repaired with code.edit, but it will not run as-is."
+                     ) if _syntax_bad else "",
+            "note": (("⚠ the generation hit its length limit — the file is INCOMPLETE; "
+                      "re-author it in smaller pieces. ") if truncated else "")
+                    + (f"⚠ STILL HAS A SYNTAX ERROR after {attempts} attempts "
+                       f"({check.get('error','')}) — fix it before running. " if _syntax_bad
+                       else (f"Syntax verified by {check.get('checker')}. " if _verified else ""))
+                    + f"Written and versioned. Run it with exec.python.run(path='{path}')."}
+
+
+# ── Surgical edit helpers ────────────────────────────────────────────────────
+# (Plain helpers — kept ABOVE the next @capability decorator, see the note on
+#  _v5_check_syntax for why that matters.)
+
+async def _v5_load_current(path: str, session_id: str = "", repo: str = "") -> str:
+    """Latest content of `path`: the code store first (it is the versioned truth),
+    then the run's working directory. "" when it exists in neither."""
+    try:
+        rec = await asyncio.to_thread(_code_get_sync, _code_scope(session_id, repo),
+                                      _code_norm_path(path), None)
+        if rec and rec.get("content"):
+            return str(rec["content"])
+    except Exception as e:
+        log.debug("code.edit: store read failed for %s: %s", path, e)
+    try:
+        import importlib as _il_e
+        _ex = _il_e.import_module("Vera.vera.execution.exec_capabilities")
+        rd = getattr(_ex, "read_artifact_file", None)
+        if rd:
+            return str(await rd(session_id=session_id, relpath=path, max_bytes=400000) or "")
+    except Exception as e:
+        log.debug("code.edit: workspace read failed for %s: %s", path, e)
+    return ""
+
+
+_V5_GUTTER_RE = re.compile(r"^\s*\d+\s*\|\s?", re.M)
+
+
+def _v5_strip_gutter(text: str) -> str:
+    """Remove a `  12 | ` line-number gutter from every line of an anchor.
+
+    The editor is shown the file with line numbers (they orient it), so it
+    naturally copies anchors WITH the gutter attached — observed on the very
+    first real call: find='    1 | for i in range(1, 4):', which of course
+    appears nowhere in the file. Prompting alone does not reliably prevent it;
+    stripping does."""
+    return _V5_GUTTER_RE.sub("", text or "")
+
+
+def _v5_apply_edits(content: str, edits: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Apply anchored find/replace edits. {ok, content, applied, errors}.
+
+    Anchored text — not line numbers — because line numbers drift the moment an
+    earlier edit changes the line count, silently corrupting later edits in the
+    same batch.
+
+    Every `find` must match EXACTLY ONCE. Zero matches means the model invented
+    an anchor; more than one means the edit is ambiguous. Both are refused and
+    reported rather than guessed at — a wrong guess here silently corrupts a
+    working file, which is far worse than a rejected edit the model can retry."""
+    out = content or ""
+    applied, errors = [], []
+    for i, e in enumerate(edits or []):
+        if not isinstance(e, dict):
+            continue
+        find = str(e.get("find") or "")
+        repl = str(e.get("replace") if e.get("replace") is not None else "")
+        if not find:
+            errors.append(f"edit {i + 1}: empty `find`")
+            continue
+        # Try the anchor VERBATIM first — a file may legitimately contain text
+        # that looks like a gutter (markdown tables, other numbered listings), and
+        # stripping unconditionally would corrupt those. Only when the raw anchor
+        # is absent do we retry without the gutter.
+        n = out.count(find)
+        if n == 0:
+            _f2 = _v5_strip_gutter(find)
+            if _f2 and _f2 != find and out.count(_f2) >= 1:
+                find = _f2
+                repl = _v5_strip_gutter(repl) if _V5_GUTTER_RE.search(repl) else repl
+                n = out.count(find)
+        if n == 0:
+            errors.append(f"edit {i + 1}: `find` text not present in the file "
+                          f"(first 60 chars: {find[:60]!r})")
+            continue
+        if n > 1:
+            errors.append(f"edit {i + 1}: `find` matches {n} places — make it unique "
+                          "by including more surrounding context")
+            continue
+        out = out.replace(find, repl, 1)
+        applied.append({"find_preview": find[:80], "removed": len(find), "added": len(repl)})
+    return {"ok": bool(applied) and not errors, "content": out,
+            "applied": applied, "errors": errors}
+
+
+def _v5_numbered(content: str, max_lines: int = 900) -> str:
+    """Line-numbered view for the editor prompt (numbers orient it; the edits it
+    returns are still anchored on text)."""
+    lines = (content or "").splitlines()
+    body = "\n".join(f"{i + 1:5} | {ln}" for i, ln in enumerate(lines[:max_lines]))
+    if len(lines) > max_lines:
+        body += f"\n… [{len(lines) - max_lines} more lines not shown]"
+    return body
+
+
+@capability(
+    "code.edit", memory="on",
+    http_method="POST", http_path="/code/edit", http_tags=["code", "fabric"],
+    description="SURGICALLY edit an existing source file — the call to use for a bug fix, a "
+                "tweak, a renamed symbol, addressing review feedback, or any change short of a "
+                "rewrite. The coding specialist sees the CURRENT file and returns targeted "
+                "find/replace edits, which are applied deterministically (each anchor must match "
+                "exactly once), syntax-checked, and saved as a new version. "
+                "USE THIS INSTEAD OF code.author when the file already exists: re-emitting a whole "
+                "file to change a few lines is slow, drops content the model forgets to copy, and "
+                "loses unrelated work. Input: path (str! — existing file), task (str! — the change "
+                "to make, precisely), session_id (str), repo (str). "
+                "Output: {ok, path, version, applied, errors, syntax_ok, diff_summary}. "
+                "Every edit is versioned — code.versions / code.diff / code.restore still apply.",
+)
+async def cap_code_edit(path: str, task: str = "", session_id: str = "", repo: str = "",
+                        trace_id=None) -> Dict[str, Any]:
+    """Targeted edit of an existing file, with the same verify-and-repair contract
+    as code.author: nothing is saved that does not parse."""
+    path = _code_norm_path(str(path or "").strip())
+    task = str(task or "").strip()
+    if not path:
+        return {"ok": False, "error": "path required"}
+    if not task:
+        return {"ok": False, "error": "task is required — describe the change to make"}
+    current = await _v5_load_current(path, session_id=session_id, repo=repo)
+    if not current.strip():
+        return {"ok": False, "error": f"{path} does not exist or is empty — use code.author "
+                                      "to create it", "path": path}
+    lang = _code_lang_for(path) or "text"
+
+    sys_prompt = (
+        "You are the EDITOR of Vera's coding cohort. You make SURGICAL edits to an existing "
+        "file — you never rewrite it.\n"
+        "Return ONLY a JSON object:\n"
+        '  {"edits":[{"find":"<exact text to replace>","replace":"<new text>"}, ...],'
+        '"note":"<one line on what you changed>"}\n'
+        "Rules:\n"
+        "  • `find` must be copied EXACTLY from the file, including indentation, and must be "
+        "UNIQUE — include enough surrounding lines to make it so. A non-unique or absent "
+        "anchor is rejected.\n"
+        "  • The file is shown to you with a line-number gutter (`  12 | code`). The gutter is "
+        "NOT part of the file — never include it in `find` or `replace`. Copy only the text to "
+        "the RIGHT of the `|`.\n"
+        "  • Keep each edit as SMALL as the change allows. Do not reformat, re-order, or "
+        "'improve' code you were not asked to touch.\n"
+        "  • To delete, use an empty `replace`.\n"
+        "  • Change ONLY what the task asks for. Unrelated edits will be reverted.\n"
+        "  • No markdown, no prose outside the JSON.")
+    prompt = (f"FILE: {path} ({lang}, {len(current.splitlines())} lines)\n"
+              f"CURRENT CONTENT:\n{_v5_numbered(current)}\n\n"
+              f"CHANGE REQUESTED:\n{task}\n\nReturn the JSON edits now.")
+
+    gen = CAPABILITY_REGISTRY.get("llm.generate")
+    fn = (gen or {}).get("raw") or (gen or {}).get("func")
+    if not fn:
+        return {"ok": False, "error": "llm.generate is unavailable"}
+
+    attempts = max(1, int(os.getenv("V5_EDIT_MAX_ATTEMPTS", "3") or 3))
+    _prompt, last_err, res = prompt, "", None
+    for attempt in range(1, attempts + 1):
+        try:
+            raw = await fn(prompt=_prompt, system=sys_prompt, output_format="json",
+                           profile=LOOP_ROUTING_PROFILE, role="coder",
+                           session_id=session_id, caller="code.edit", trace_id=trace_id)
+        except Exception as e:
+            return {"ok": False, "error": f"generation failed: {e}", "path": path}
+        obj = _extract_json(_strip_think(_v5_gen_text(raw) or "")[0]) or {}
+        edits = obj.get("edits") if isinstance(obj, dict) else None
+        if not isinstance(edits, list) or not edits:
+            last_err = "the editor returned no edits"
+        else:
+            res = _v5_apply_edits(current, edits)
+            if res["ok"]:
+                chk = _v5_check_syntax(res["content"], lang, path)
+                if chk.get("ok"):
+                    break
+                last_err = (f"the edited file no longer parses — "
+                            f"{chk.get('checker','parser')}: {chk.get('error','')}")
+            else:
+                last_err = "; ".join(res["errors"][:4])
+        if attempt >= attempts:
+            return {"ok": False, "path": path, "error": last_err,
+                    "errors": (res or {}).get("errors", []),
+                    "hint": "anchors must be copied exactly from the file and be unique"}
+        await emit_event({"type": "code.edit.retry", "path": path,
+                          "attempt": attempt, "error": last_err})
+        _prompt = (f"{prompt}\n\n─────\nYOUR PREVIOUS EDITS WERE REJECTED:\n{last_err}\n"
+                   "Return corrected JSON edits. Copy each `find` EXACTLY from the file "
+                   "above, with enough context to be unique.")
+
+    saved = await code_store_save(path, res["content"], session_id=session_id, repo=repo,
+                                  message=f"code.edit: {task[:80]}", lang=lang)
+    if not saved.get("ok"):
+        return {"ok": False, "error": str(saved.get("error") or "save failed"), "path": path}
+    before, after = len(current.splitlines()), len(res["content"].splitlines())
+    return {"ok": True, "path": saved.get("path", path),
+            "fs_path": saved.get("fs_path", ""), "version": saved.get("version"),
+            "lang": lang, "applied": res["applied"], "errors": res["errors"],
+            "syntax_ok": True, "checked_with": _v5_check_syntax(res["content"], lang, path).get("checker", ""),
+            "diff_summary": f"{len(res['applied'])} edit(s); {before} → {after} lines",
+            "note": (f"Edited surgically and versioned as v{saved.get('version')} — "
+                     f"{len(res['applied'])} targeted change(s), the rest of the file untouched. "
+                     f"code.diff(path='{path}') shows exactly what changed.")}
 
 
 @capability(
@@ -8384,6 +9954,41 @@ _CODE_FILE_HINT_RE = re.compile(
     r"(?:file|path|title)\s*[=:]\s*[\"']?([\w./\-]+\.[\w]+)[\"']?", re.IGNORECASE)
 _CODE_LEADING_FILE_RE = re.compile(
     r"^\s*(?:#|//|--|/\*)\s*file\s*[:=]\s*([\w./\-]+\.[\w]+)", re.IGNORECASE)
+# A first line that is ONLY a file/path marker, with or without a comment prefix.
+# The uncommented form is what code.author's own instruction ("ONE fenced block:
+# ```python file=x.py") reliably produces when the model puts the label INSIDE the
+# fence instead of in the info string. It was being kept as line 1 of the source,
+# so every authored script died immediately:
+#     File "/workspace/fetch_....py", line 1, in <module>
+#         file=fetch_detailed_stats_and_types_for_each_.py
+# It is metadata, never code — strip it from the body wherever it appears.
+# Two forms, deliberately asymmetric:
+#   • COMMENTED (`# file: x.py`, `// file = x.py`) — unambiguously metadata, so
+#     spaces and quotes are tolerated.
+#   • BARE (`file=x.py`) — only with NO spaces around the separator and NO quotes.
+#     That restriction matters: `filename = "a.py"` is ordinary code and deleting
+#     it would silently corrupt a real script. The bare form is never something a
+#     coder writes on purpose — it is the fence label leaking into the body.
+_CODE_MARKER_LINE_RE = re.compile(
+    r"""^\s*(?:
+            (?:\#|//|--|/\*)\s*(?:file|path|filename)\s*[:=]\s*["']?[\w./\-]+\.[\w]+["']?
+              \s*(?:\*/)?
+          |
+            (?:file|path|filename)[:=][\w./\-]+\.[\w]+
+        )\s*$""",
+    re.IGNORECASE | re.VERBOSE)
+
+
+def _v5_strip_marker_line(code: str) -> str:
+    """Drop a leading `file=…` / `# file: …` metadata line from a code body."""
+    lines = (code or "").splitlines()
+    i = 0
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i < len(lines) and _CODE_MARKER_LINE_RE.match(lines[i]):
+        del lines[i]
+        return "\n".join(lines)
+    return code
 
 
 def _v5_gen_text(result: Any) -> str:
@@ -8391,12 +9996,138 @@ def _v5_gen_text(result: Any) -> str:
     if isinstance(result, str):
         return result
     if isinstance(result, dict):
-        for k in ("text", "content", "output", "response", "code", "answer",
+        for k in ("text", "summary", "content", "output", "response", "code", "answer",
                   "result", "message", "completion"):
             v = result.get(k)
             if isinstance(v, str) and v.strip():
                 return v
     return ""
+
+
+def _v5_set_gen_text(result: Any, text: str) -> bool:
+    """Write `text` back into whichever field of a generative result holds the
+    generation (the same key `_v5_gen_text` reads). Returns True when it landed."""
+    if not isinstance(result, dict):
+        return False
+    for k in ("text", "summary", "content", "output", "response", "code", "answer",
+              "result", "message", "completion"):
+        v = result.get(k)
+        if isinstance(v, str) and v.strip():
+            result[k] = text
+            return True
+    return False
+
+
+# Does a blob of text read as SOURCE CODE (rather than prose)? Used to decide
+# whether a JSON-wrapped payload is code worth unwrapping, and whether unfenced
+# output should be fenced so the code autosave picks it up.
+_V5_CODE_SIGNAL_RE = re.compile(
+    r"(?m)^\s*(?:import |from \w[\w.]* import |def \w+\s*\(|class \w+|async def |"
+    r"#!/|package \w|using \w|const \w+\s*=|let \w+\s*=|var \w+\s*=|function \w+\s*\(|"
+    r"public\s+(?:static\s+)?\w+\s+\w+\s*\(|SELECT\s+|CREATE\s+TABLE)")
+# (fence language, file extension, detector) — the fence carries the canonical
+# language name, the filename the matching extension.
+# NB: flags go in the `flags` ARGUMENT, never as an inline `(?m)` mid-pattern —
+# Python 3.11+ raises re.error ("global flags not at the start of the
+# expression") for that, which aborts this module's import and silently takes
+# the v5/v6/v7 loops and the SSE stream route down with it.
+_V5_LANG_HINTS = (
+    ("python", "py", re.compile(r"^\s*(?:import |from \w[\w.]* import |def |class |if __name__)", re.M)),
+    ("bash", "sh", re.compile(r"^#!/(?:usr/)?bin/(?:ba)?sh|^\s*(?:echo |set -e|apt-get |curl )", re.M)),
+    ("javascript", "js", re.compile(r"^\s*(?:const |let |var |function |import .*from ['\"]|module\.exports)", re.M)),
+    ("sql", "sql", re.compile(r"^\s*(?:select |insert into|create table|update \w+ set)", re.I | re.M)),
+    ("go", "go", re.compile(r"^\s*(?:package \w+|func \w+\()", re.M)),
+    ("java", "java", re.compile(r"^\s*(?:public\s+class|import java\.)", re.M)),
+)
+
+
+def _v5_looks_like_code(text: str) -> bool:
+    t = (text or "").strip()
+    if len(t) < 40 or t[:1] in "[{":
+        return False
+    return bool(_V5_CODE_SIGNAL_RE.search(t))
+
+
+def _v5_code_lang(text: str) -> Tuple[str, str]:
+    """(fence language, file extension) for a blob of source code."""
+    for lang, ext, rx in _V5_LANG_HINTS:
+        if rx.search(text or ""):
+            return lang, ext
+    return "text", "txt"
+
+
+def _v5_unwrap_json_code(text: str) -> str:
+    """A generation that came back as a JSON ENVELOPE around source code —
+    `{"script": "import json\\n…"}` — unwrapped to the code itself.
+
+    This happens when a code request carries a data-shaped output_format (the
+    reported bug: output_format=json on "write a Python script"). The envelope is
+    poison downstream: the escaped code has no fence, so nothing is versioned to
+    the code store, and what lands on disk is a .json file no one can run.
+    Returns `text` unchanged unless it is confidently such an envelope."""
+    s = (text or "").strip()
+    if not s or s[:1] not in "[{\"":
+        return text
+    obj = _v5_try_json(s)
+    if isinstance(obj, str):
+        return obj if _v5_looks_like_code(obj) else text
+    if not isinstance(obj, dict):
+        return text
+    # The envelope must be THIN: its payload is one long code string, not a data
+    # record that happens to contain a snippet.
+    strs = [v for v in obj.values() if isinstance(v, str)]
+    if not strs:
+        return text
+    best = max(strs, key=len)
+    if not _v5_looks_like_code(best):
+        return text
+    if len(best) < 0.6 * len(s):        # most of the payload must BE the code
+        return text
+    return best
+
+
+def _v5_repair_gen_result(invoke: Dict[str, Any], tool: str, args: Any,
+                          step_title: str = "") -> str:
+    """Normalise a generative result IN PLACE so everything downstream (code
+    autosave, document save, the preview the next cycle reads) sees real code
+    instead of a JSON-escaped envelope. Returns a note for the agent, or ''.
+
+    Two repairs: unwrap a JSON envelope around code, and FENCE unfenced code
+    (with a filename) so the code store actually versions it."""
+    if not _v5_is_generative(tool):
+        return ""
+    res = invoke.get("result")
+    txt = _v5_gen_text(res)
+    if not txt:
+        return ""
+    note = ""
+    new = _v5_unwrap_json_code(txt)
+    if new != txt:
+        note = ("(the generation came back wrapped in JSON — the loop unwrapped it to the raw "
+                "code; do NOT ask for code as JSON, and do not 'fix' it yourself)")
+        txt = new
+    # Unfenced code can't be auto-saved (the saver looks for fences) — fence it
+    # and give it a filename so it becomes a real, runnable, versioned file.
+    if "```" not in txt and _v5_looks_like_code(txt):
+        lang, ext = _v5_code_lang(txt)
+        a = args if isinstance(args, dict) else {}
+        name = ""
+        for k in ("save_as", "filename", "output_file", "file"):
+            v = a.get(k)
+            if isinstance(v, str) and re.fullmatch(r"[\w./-]+\.\w{1,6}", v.strip()):
+                name = v.strip().lstrip("./")
+                break
+        if not name:
+            m = re.search(r"\bfile\s*=\s*['\"]?([\w./-]+\.\w{1,6})", str(a.get("prompt") or ""))
+            name = m.group(1) if m else ""
+        if not name:
+            slug = _V5_SLUG_STRIP.sub("_", (step_title or "generated").lower()).strip("_")[:40]
+            name = f"{slug or 'generated'}.{ext}"
+        txt = f"```{lang} file={name}\n{txt.rstrip()}\n```"
+        note = (note + " " if note else "") + f"(unfenced code was fenced and saved as {name})"
+    if note:
+        _v5_set_gen_text(res, txt)
+    return note
 
 
 def _v7_result_text(result: Any) -> str:
@@ -8426,11 +10157,17 @@ def _v7_result_text(result: Any) -> str:
     return "" if result is None else str(result)[:2000]
 
 
-def _v5_stub_code_fences(text: str, saved: List[Dict[str, Any]]) -> str:
+def _v5_stub_code_fences(text: str, saved: List[Dict[str, Any]],
+                         truncated: bool = False) -> str:
     """After fenced code has been auto-saved, replace each block in the preview
-    text with a short 'saved, COMPLETE' stub. The agent must never see code cut
-    off by the preview budget — a half-open fence reads as a failed generation
-    and triggers endless 'complete the code' regenerate loops."""
+    text with a short stub. The agent must never see code cut off by the PREVIEW
+    budget — a half-open fence reads as a failed generation and triggers endless
+    'complete the code' regenerate loops.
+
+    But when the GENERATION itself was truncated (the model hit its length limit,
+    `truncated=True`), the saved file really IS incomplete — say so honestly and
+    tell the agent to finish it, instead of the usual 'COMPLETE, do NOT regenerate'
+    (which would strand a half-written file and mislead the verifier)."""
     if not text or "```" not in text:
         return text
     paths = [s.get("path") for s in (saved or [])]
@@ -8445,15 +10182,109 @@ def _v5_stub_code_fences(text: str, saved: List[Dict[str, Any]]) -> str:
         path = paths[idx] if idx < len(paths) else None
         idx += 1
         where = f"auto-saved to code store as '{path}'" if path else "captured in full"
+        if truncated:
+            return (f"[⚠ code block ({n_lines} lines, {len(code)} chars) {where}, but the "
+                    "generation was CUT OFF at the length limit — this file is INCOMPLETE. Do NOT "
+                    "report the step done. Regenerate the COMPLETE file with the SAME file= label "
+                    "(re-saving overwrites to a new version); if it is genuinely too large for one "
+                    "response, split it across multiple files. Do NOT leave it truncated.]")
         return (f"[✔ code block ({n_lines} lines, {len(code)} chars) {where} — it is COMPLETE, "
-                "not truncated. Use code.read to view it. Do NOT regenerate or 'complete' it.]")
+                "not truncated. Read it back with ide.fs.read if you need it. Do NOT regenerate "
+                "or 'complete' it.]")
 
     return _CODE_FENCE_RE.sub(_sub, text)
 
 
-def _v5_extract_code_blocks(text: str) -> List[Dict[str, str]]:
+# Words that make a useless filename on their own — a script called `main.py` or
+# `run.sh` tells the next step nothing about what it does.
+_V5_WEAK_NAME = {"main", "run", "script", "test", "tmp", "temp", "file", "code",
+                 "output", "result", "data", "app", "index", "start", "go", "do"}
+
+
+def _v5_name_from_code(code: str, lang: str) -> str:
+    """A descriptive stem derived from what the code actually IS.
+
+    Tried in order of how much intent each carries: an explicit `# file:`-less
+    module docstring / leading comment, then the first meaningful def/class, then
+    a distinctive shell command. Returns "" when nothing better than a generic
+    name is available."""
+    lines = [ln.rstrip() for ln in (code or "").splitlines()[:40]]
+    body = "\n".join(lines)
+    # 1. A leading comment or docstring line: "# Fetch the first 30 Pokemon".
+    #    A shebang is NOT a description — `#!/bin/bash` would name the file
+    #    `bin_bash`, which is worse than the generic name it replaces.
+    for ln in lines[:6]:
+        s = ln.strip()
+        if s.startswith("#!") or re.match(r'^#\s*-\*-|^#\s*coding[:=]', s):
+            continue
+        m = re.match(r'^(?:#|//|--)\s*(.+)$', s) or re.match(r'^"""\s*(.+?)("""|$)', s)
+        if m:
+            cand = _v5_slug_words(m.group(1))
+            if cand:
+                return cand
+    # 2. First non-trivial function/class name.
+    for m in re.finditer(r'^\s*(?:async\s+)?(?:def|class|function)\s+([A-Za-z_]\w{2,})', body, re.M):
+        nm = m.group(1)
+        if nm.lower().strip("_") not in _V5_WEAK_NAME:
+            return _v5_slug_words(re.sub(r'[_\-]+', ' ', nm))
+    # 3. Shell: the first real command (skip shebang/set/cd/echo noise).
+    if lang in ("bash", "sh", "shell", "zsh"):
+        for ln in lines:
+            s = ln.strip()
+            if not s or s.startswith(("#", "set ", "cd ", "export ")):
+                continue
+            tok = re.split(r'[\s|>&;]+', s)
+            verb = (tok[0] or "").rsplit("/", 1)[-1]
+            if verb and verb not in ("echo", "true", "false"):
+                tail = " ".join(t for t in tok[1:3] if t and not t.startswith("-"))
+                return _v5_slug_words(f"{verb} {tail}") or _v5_slug_words(verb)
+    return ""
+
+
+def _v5_slug_words(s: str, *, max_words: int = 5) -> str:
+    """Lowercase underscore slug of the first few meaningful words."""
+    words = re.findall(r"[A-Za-z0-9]+", str(s or ""))
+    keep = [w.lower() for w in words
+            if len(w) > 1 and w.lower() not in
+            ("the", "a", "an", "of", "for", "to", "and", "this", "that", "with", "from")]
+    slug = "_".join(keep[:max_words])[:48].strip("_")
+    return slug if len(slug) >= 3 else ""
+
+
+# Which exec cap RUNS a file of a given language / extension.
+_V5_RUNNER_FOR = {
+    "python": "exec.python.run", "py": "exec.python.run",
+    "bash": "exec.bash.run", "sh": "exec.bash.run", "shell": "exec.bash.run",
+    "zsh": "exec.bash.run",
+    "javascript": "exec.node.run", "js": "exec.node.run", "node": "exec.node.run",
+    "typescript": "exec.node.run", "ts": "exec.node.run",
+    "ruby": "exec.ruby.run", "rb": "exec.ruby.run",
+    "php": "exec.php.run", "perl": "exec.perl.run", "pl": "exec.perl.run",
+    "go": "exec.go.run", "lua": "exec.lua.run",
+    "powershell": "exec.ps.run", "ps1": "exec.ps.run",
+}
+
+
+def _v5_runner_cap(lang: str = "", path: str = "") -> str:
+    """The exec cap that can run this file, or "" if we don't know one."""
+    l = (lang or "").strip().lower()
+    if l in _V5_RUNNER_FOR:
+        return _V5_RUNNER_FOR[l]
+    ext = (path or "").rsplit(".", 1)[-1].lower() if "." in (path or "") else ""
+    return _V5_RUNNER_FOR.get(ext, "")
+
+
+def _v5_extract_code_blocks(text: str, name_hint: str = "") -> List[Dict[str, str]]:
     """Return [{lang, filename, code}] for each fenced block that looks like a
-    file. Blocks with no derivable filename get a sensible default name."""
+    file.
+
+    A block the model did not label used to become `generated_1.py` /
+    `generated_2.sh`. Those names are actively harmful downstream: the next step
+    reads a file list of `generated_2.sh, generated_3.sh, generated_4.sh` and has
+    no way to tell which is the thing it needs, so it re-derives or picks wrong.
+    When there is no explicit filename we now name the file after what it DOES
+    (leading comment / def / shell verb), falling back to the step's own title
+    via `name_hint`, and only then to a generic name."""
     if not text or "```" not in text:
         return []
     out: List[Dict[str, str]] = []
@@ -8474,17 +10305,30 @@ def _v5_extract_code_blocks(text: str) -> List[Dict[str, str]]:
             filename = hint.group(1)
         elif info and ("." in info) and (" " not in info.strip()):
             filename = info.strip().strip("\"'")          # ```foo.py
+        _first = code.splitlines()[0] if code.splitlines() else ""
         if not filename:
-            lead = _CODE_LEADING_FILE_RE.search(code.splitlines()[0] if code.splitlines() else "")
+            lead = _CODE_LEADING_FILE_RE.search(_first)
             if lead:
                 filename = lead.group(1)
+            elif _CODE_MARKER_LINE_RE.match(_first):
+                _h = _CODE_FILE_HINT_RE.search(_first)
+                if _h:
+                    filename = _h.group(1)
+        # Whether or not it named the file, a leading marker line is METADATA —
+        # keeping it makes line 1 of every authored script a syntax/name error.
+        code = _v5_strip_marker_line(code)
         if not filename:
             # skip obvious non-file fences (plain output / logs)
             if lang in ("", "text", "txt", "output", "console", "log", "plaintext"):
                 continue
             ext = _CODE_FENCE_LANG_EXT.get(lang, _CODE_EXT_BY_LANG.get(lang, lang or "txt"))
             idx += 1
-            filename = f"generated_{idx}.{ext}"
+            stem = _v5_name_from_code(code, lang) or _v5_slug_words(name_hint)
+            if stem:
+                # Disambiguate multiple unlabelled blocks in one generation.
+                filename = f"{stem}.{ext}" if idx == 1 else f"{stem}_{idx}.{ext}"
+            else:
+                filename = f"generated_{idx}.{ext}"
         out.append({"lang": lang or _code_lang_for(filename),
                     "filename": _code_norm_path(filename), "code": code.rstrip("\n") + "\n"})
     return out
@@ -8670,6 +10514,18 @@ def _v5_first_str(d: Dict[str, Any], keys) -> str:
     return ""
 
 
+# A step that PRODUCES a source file → code.author, decided from the step's own
+# words rather than left to the planner. Both a verb and a code noun must hit, so
+# "write a report in markdown" and "summarise the findings" are unaffected.
+_V5_CODE_STEP_VERB_RE = re.compile(
+    r"\b(writ|creat|generat|build|implement|author|develop|code|scaffold)\w*\b", re.I)
+_V5_CODE_STEP_NOUN_RE = re.compile(
+    r"\b(script|program|module|function|class|parser|code|codebase|"
+    r"python|javascript|typescript|bash script|shell script|html|css|js|"
+    r"web ?page|front[- ]?end|app|application|ui)\b"
+    r"|\.(?:py|js|ts|jsx|tsx|sh|html|css|rb|go|rs|java|php|sql)\b", re.I)
+
+
 def _v5_coerce_step(st: Dict[str, Any], i: int, goal: str,
                     catalog_names: List[str], catalog_set: set,
                     valid_skill_ids: set) -> Optional[Dict[str, Any]]:
@@ -8699,6 +10555,16 @@ def _v5_coerce_step(st: Dict[str, Any], i: int, goal: str,
         c = _v5_resolve_tool_name(c.strip(), catalog_names, catalog_set)
         if c in CAPABILITY_REGISTRY and c not in caps:
             caps.append(c)
+    # ── Code steps get the authoring cap, deterministically ──────────────────
+    # Not a prompt hint the planner may ignore: if the step's own words say it
+    # PRODUCES a source file, code.author is added (and a bare llm.generate,
+    # which would hand back prose or JSON-wrapped code, is dropped in its
+    # favour). Prose/report steps are untouched.
+    _cap_blob = f"{title}\n{sgoal}"
+    if ("code.author" in catalog_set and "code.author" not in caps
+            and _V5_CODE_STEP_VERB_RE.search(_cap_blob)
+            and _V5_CODE_STEP_NOUN_RE.search(_cap_blob)):
+        caps = ["code.author"] + [c for c in caps if c != "llm.generate"]
     caps = caps[:8]
     # A title that's just "Step 3" / "step_3" carries no information — discard it.
     if title and re.fullmatch(r"step[\s_\-]*\d+", title, re.IGNORECASE):
@@ -8854,8 +10720,10 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
             "For each step give a short PLAIN-LANGUAGE title describing the work (NOT a "
             "capability name), a one-line goal, and the EXACT capability names it "
             "needs from the catalog. Use web.search / web.fetch to look things up (NEVER "
-            "llm.generate for research); llm.generate to write code or text; exec.python.run / "
-            "exec.bash.run to run it.\n"
+            "llm.generate for research); llm.generate to write code or PROSE; exec.python.run / "
+            "exec.bash.run to run it. For real-world DATA / a dataset / populating or editing a "
+            "data file, FETCH or COMPUTE it with a script (exec.python.run / web.*), NEVER "
+            "llm.generate — it fabricates data.\n"
             "Return ONLY this JSON object — no prose, no markdown, and NOT a bare array:\n"
             '{"steps":[{"id":1,"title":"<plain-language description, not a cap name>",'
             '"goal":"<what to achieve>",'
@@ -8875,7 +10743,8 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         try:
             raw = await _safe_ollama_generate_dw(
                 prompt, system=sys, model=plan_model, instance_id=instance_id,
-                prefer_gpu=prefer_gpu, json_mode=True, options=plan_opts)
+                prefer_gpu=prefer_gpu, json_mode=True, options=plan_opts,
+                profile=LOOP_ROUTING_PROFILE, role="planner")
             valid_skill_ids = {s["id"] for s in skills}
             _pp = _v5_parse_plan(raw or "")
             if isinstance(_pp.get("obj"), dict):
@@ -8970,43 +10839,77 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         "llm.* or agent.chat to 'execute', 'run', 'fetch', or 'retrieve' — they will just "
         "make up an answer. Example: 'get the current bash user' → a step with "
         "caps:[\"exec.bash.run\"] running `whoami`, NOT agent.chat.\n"
+        "NEVER GENERATE A DATASET WITH llm.*: real-world DATA — a list/table of real entities, "
+        "factual records, API results, a populated JSON/CSV database (e.g. 'the 151 Gen-1 Pokémon "
+        "with their real stats/types/moves') — must NOT be produced by llm.generate; asked to, it "
+        "FABRICATES plausible-looking but wrong values. Get the data by FETCHING it (web.* / "
+        "http.get, or exec.python.run calling the source API) and PARSING it with a script, then "
+        "write the file FROM that data. Rule of thumb: llm.generate authors the SCRIPT; the SCRIPT "
+        "produces and writes the DATASET. A step whose deliverable is a data file should carry "
+        "exec.python.run (+ maybe web.*/http.get), NOT llm.generate as the data source.\n"
         "INTERNAL DATA vs the LIVE WEB: memory.seek / fabric.query / fabric.entity_graph.query "
         "search only data ALREADY STORED in Vera's fabric — they do NOT browse the internet. For ANY "
         "external lookup (a person, company, domain, website, news, current/online info) use the WEB "
         "caps: web.search (search engine results), web.fetch / http.get (fetch a page as text), "
-        "browser.navigate (JS-heavy or cert-broken sites), research.quick_search (broader managed "
-        "research), fabric.discover.crawl (crawl & ingest a site). A web/OSINT goal should LEAD "
+        "browser.navigate (JS-heavy or cert-broken sites), "
+        + (_research_hint(suffix=" (broader managed research), ") or "")
+        + "fabric.discover.crawl (crawl & ingest a site). A web/OSINT goal should LEAD "
         "with web.search and only use memory.seek to check what Vera already knows — never rely "
         "on stored data alone for web presence.\n"
         "SCRIPTS (only when genuinely needed): a bash/python script is for steps whose work IS "
         "computation — parsing files, multi-command shell work, data wrangling, glue logic. If a "
-        "step needs one, make it GENERATE the script (auto-saved & versioned) and RUN it with "
-        "exec.python.run / exec.bash.run — caps like [\"llm.generate\",\"exec.python.run\"]. But "
+        "step needs one, make it AUTHOR the script with code.author (the coding specialist "
+        "writes it, grounded on the real input files, and it is saved & versioned) and RUN it "
+        "with exec.python.run — caps like [\"code.author\",\"exec.python.run\"]. But "
         "do NOT reach for exec.* on research/summarisation/writing/decision steps — those are "
         "answered from search results and llm.generate directly; running python adds nothing. "
         "Never plan an exec step 'just in case'.\n"
-        "WRITING CODE / SCRIPTS / FILES / ARTIFACTS: just GENERATE the content with llm.generate "
-        "— any fenced code it emits is AUTOMATICALLY saved to a file and VERSIONED for you, so do "
-        "NOT add an ide.fs.write step for code. Tell llm.generate to label each file (a fenced "
-        "```python file=path.ext or a leading `# file: path.ext` line) so it saves to the right "
-        "path; then OPTIONALLY run it with exec.python.run(path=\"<artifact_dir>/<file>\") / "
-        "exec.bash.run. For a SMALL file one step is fine; for a SUBSTANTIAL program use separate "
-        "steps (e.g. implement → run/test → refine). To EDIT a file, read its LATEST content "
-        "(ide.fs.read / code.read) then re-generate the FULL updated file with the SAME `# file:` "
-        "path — a NEW version is created automatically; the agent only ever sees the latest "
-        "(use code.versions / code.diff only if you explicitly need history). Do NOT use llm.plan "
-        "to 'plan a DAG' for a coding task (llm.plan builds a DAG WORKFLOW, only for when the user "
-        "explicitly asks for a DAG/pipeline).\n"
+        "WRITING CODE — ALWAYS code.author, NEVER llm.generate/ide.fs.write: any step whose job "
+        "is to produce a source file (.py/.js/.sh/.html/.css/…) carries code.author. It routes "
+        "the job to the CODING specialist, grounds it on the files you name in context_files "
+        "(so it parses the REAL structure instead of guessing), and saves + versions the file. "
+        "A code step is [\"code.author\"] — never llm.generate for code, never ide.fs.write for "
+        "a script, never code typed into an exec step.\n"
+        "WRITING AUTHORED PROSE (docs, reports, articles) — llm.generate is for content the "
+        "model AUTHORS from reasoning: an essay/report/README, an "
+        "explanation. GENERATE it with llm.generate — its "
+        "output is written to a file in the "
+        "working directory automatically, so do NOT add an ide.fs.write step. Tell "
+        "llm.generate to label each file (a fenced ```python file=path.ext or a leading "
+        "`# file: path.ext` line) so it saves to the right path; then OPTIONALLY run it with "
+        "exec.python.run(path=\"<artifact_dir>/<file>\") / exec.bash.run. For a SMALL file one step "
+        "is fine; for a SUBSTANTIAL program use separate steps (e.g. implement → run/test → refine). "
+        "This does NOT apply to DATA files — a dataset/records file is FETCHED or COMPUTED by a "
+        "script (see the NEVER-GENERATE-A-DATASET rule above), never authored by llm.generate.\n"
+        "EDITING AN EXISTING FILE — 3 WAYS, SMALLEST FIRST: (1) a SMALL / LOCALISED change to a "
+        "CODE or TEXT file (fix a bug, tweak a few lines, rename a symbol, add a function, address "
+        "a review comment) → make a SURGICAL EDIT: a step carrying ide.code.grep + ide.code.read_lines "
+        "to LOCATE the spot, then ide.code.edit_lines / ide.code.replace / ide.code.insert_at to change "
+        "ONLY those lines. Each edit is auto-versioned (code.versions / code.diff / code.restore). This "
+        "is the DEFAULT for revising existing work — do NOT regenerate a whole file for a small fix. "
+        "(2) a DATA file (JSON/CSV/config/records) or any mechanical / bulk edit → a SCRIPT that reads → "
+        "transforms → writes it (exec.python.run, or exec.bash.run with sed/jq/awk) — deterministic, "
+        "exact, never drops or invents content; never ask llm.generate to 'edit' a data file. "
+        "(3) a wholesale REWRITE / RESTRUCTURE of authored prose/code (most of the file changes) → "
+        "re-generate with llm.generate (read the latest via code.read / ide.fs.read, re-emit the FULL "
+        "file with the SAME `# file:` path — a new version is saved automatically). Reserve (3) for a "
+        "genuine rewrite, never a few changed lines. Do NOT use llm.plan to 'plan a DAG' for a coding "
+        "task (llm.plan builds a DAG WORKFLOW, only for when the user explicitly asks for a DAG/pipeline).\n"
         "DELIVERABLES / DOCUMENTS — COMPLETENESS IS THE POINT: when the goal calls for a document "
         "(report, plan, article, spec, README…), the plan must end with a FINISHED FILE, not prose "
         "in a summary. Method: (1) research/collect steps FIRST, each ending in concrete notes; "
         "(2) a DRAFT step that writes the COMPLETE document — full sentences and sections, never "
-        "an outline, never placeholders like 'TBD' or '[expand here]' — as a fenced block labelled "
-        "```markdown file=<name>.md so it is saved & versioned; (3) for LONG documents, split by "
-        "SECTION: each step reads the saved file (code.read), APPENDS/COMPLETES its sections, and "
-        "re-emits the FULL updated file with the SAME file= label (a new version — nothing is "
+        "an outline, never placeholders like 'TBD' or '[expand here]' — with llm.generate, naming "
+        "the file in the step goal (the generation is written to that file AUTOMATICALLY, so this "
+        "one step both writes and saves it); (3) for LONG documents, split by "
+        "SECTION: each step reads the saved file (ide.fs.read), APPENDS/COMPLETES its sections, and "
+        "re-emits the FULL updated document (a new version — nothing is "
         "lost); (4) a final REVIEW step that reads the whole file, fixes gaps, and confirms every "
         "section is complete. The saved file is the deliverable the user downloads.\n"
+        "NEVER plan a separate 'save the document to a file' step: generated text is persisted to "
+        "the run's working directory by the loop itself, so a following ide.fs.write/exec step "
+        "would only overwrite the real document with a hand-typed stand-in. A write step is for "
+        "DATA a script produces — never for generated prose.\n"
         "COMPLEX STEPS: if a single step is itself a big sub-project with several parts, mark it "
         "\"complex\": true and give it a clear `goal` plus the caps the whole sub-project may use "
         "— it will be expanded into its OWN sub-plan by a sub-orchestrator.\n"
@@ -9098,6 +11001,7 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=plan_model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True, options=plan_opts,
+            profile=LOOP_ROUTING_PROFILE, role="planner",
             stream_cb=(_plan_stream_cb if stream_id else None))
         _pp = _v5_parse_plan(raw or "")
         parsed = _pp["obj"] if isinstance(_pp.get("obj"), dict) else {}
@@ -9137,13 +11041,21 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
 
 async def _v5_run_recon(actions: List[Dict[str, Any]], *, session_id: str, stream_id: str,
                         trace_id: Any, call_tool, catalog_set: Optional[set] = None,
-                        round_idx: int = 1, max_rounds: int = 1) -> str:
+                        round_idx: int = 1, max_rounds: int = 1,
+                        artifacts_out: Optional[List[Dict[str, Any]]] = None) -> str:
     """Run ONE round of the orchestrator's READ-ONLY recon actions and return a
     compact findings digest to feed back into planning. Each action is re-validated
     against the read-only gate (name-read-only caps, or exec.bash.run with a safe
     exploratory command) so a malformed/unsafe action is skipped, not executed.
     Bounded and best-effort; only runs when the orchestrator actually requested
-    recon (so the simple path stays a single LLM call with no tool calls)."""
+    recon (so the simple path stays a single LLM call with no tool calls).
+
+    `artifacts_out` (when given) collects {rel, note} for the FULL result of every
+    successful action, written to the run's working directory. Recon used to keep
+    only a 700-char preview per action and hand it to the planner — the fetched
+    data itself was DISCARDED. The plan then said "process the collected data" and
+    no step could see any of it, so the first real step had to re-fetch or gave up.
+    Persisting it makes recon output ordinary run material the steps can read."""
     catalog_set = catalog_set or set()
     findings: List[str] = []
     for a in actions[:_V5_RECON_MAX]:
@@ -9173,15 +11085,393 @@ async def _v5_run_recon(actions: List[Dict[str, Any]], *, session_id: str, strea
                 preview = _result_preview(inv["result"]) if ok else ("ERROR: " + str(inv.get("error", "")))
         except Exception as e:
             preview = "ERROR: " + str(e)
-        findings.append(f"[{cap}] {'ok' if ok else 'failed'}\n{preview[:700]}")
+        # Persist the FULL result so the data recon gathered outlives planning.
+        saved_note = ""
+        if ok and artifacts_out is not None:
+            try:
+                full = _result_preview(inv["result"], max_len=200000)
+            except Exception:
+                full = preview
+            if full and len(full) > 200:
+                try:
+                    import importlib as _il_r
+                    _exr = _il_r.import_module("Vera.vera.execution.exec_capabilities")
+                    _fn = _v5_output_filename(cap, args, full, round_idx)
+                    _p = await _exr.write_artifact_file(relpath=_fn, content=full,
+                                                       session_id=session_id)
+                    _rel = os.path.basename(str(_p))
+                    _schema = _v5_file_schema_note(full)
+                    artifacts_out.append({"rel": _rel, "note": _schema or f"recon output of {cap}"})
+                    saved_note = (f"\nFULL output saved to ./{_rel} (working directory)"
+                                  + (f" — {_schema}" if _schema else ""))
+                except Exception as _e:
+                    log.debug("recon artifact write failed for %s: %s", cap, _e)
+        findings.append(f"[{cap}] {'ok' if ok else 'failed'}\n{preview[:700]}{saved_note}")
         await emit_event({"type": "agent_loop_v5.recon", "session_id": session_id,
                           "stream_id": stream_id, "cap": cap, "ok": ok,
                           "round": round_idx, "max_rounds": max_rounds,
-                          "preview": preview[:600], "phase": "done"})
+                          "preview": preview[:600], "phase": "done",
+                          "saved": saved_note.strip()})
     return "\n\n".join(findings)
 
 
-async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int, Dict[str, Any]],
+def _v5_step_artifacts(res: Dict[str, Any]) -> List[Dict[str, str]]:
+    """The FILES one finished step produced, from its `outputs` `file:<name>` keys.
+
+    Each output value's first line is the relative path and the rest is the shape
+    note the loop derived when it wrote the file (see the condenser and the code
+    autosave), so both survive into the next step's context."""
+    out: List[Dict[str, str]] = []
+    for k, v in (res.get("outputs") or {}).items():
+        if not str(k).startswith("file:"):
+            continue
+        rel = str(k)[5:].strip()
+        if not rel:
+            continue
+        body = str(v or "")
+        lines = [ln for ln in body.splitlines() if ln.strip()]
+        note = " ".join(lines[1:])[:400] if len(lines) > 1 else ""
+        out.append({"rel": rel, "note": note})
+    return out
+
+
+# ── Run-level artifact registry ──────────────────────────────────────────────
+# One record per file the run has produced or read, established ONCE at entry and
+# carried for the whole run: {content, hash, size, schema, parse_ok, parse_error,
+# produced_by, checked_at}.
+#
+# Two things this kills. (1) Redundant re-reads: a file was read in full, then
+# read again in a later step — observed 3x on one search result — because the
+# duplicate short-circuit (`success_sigs`) is a per-STEP local and cannot see
+# across steps. (2) Re-probing: the shape of a file does not change unless the
+# file does, so parsing it repeatedly to ask "what's in here?" is wasted work.
+# The hash is the invalidation key — a file that changed is re-read and
+# re-verified at the point it re-enters, everything else is served from here.
+_V5_ART_CACHE_MAX = int(os.getenv("V5_ARTIFACT_CACHE_MAX", "400000") or 400000)
+
+
+def _v5_art_key(rel: str) -> str:
+    """Normalise a path to its registry key (basename — the run works in one dir)."""
+    return os.path.basename(str(rel or "").replace("\\", "/").strip().strip("/")) or ""
+
+
+def _v5_register_artifact(artifacts: Dict[str, Dict[str, Any]], rel: str, content: str,
+                          *, produced_by: str = "", fs_path: str = "",
+                          lang: str = "") -> Dict[str, Any]:
+    """Record (or refresh) a file in the run registry and return its record.
+
+    Called at every point a file ENTERS the run — written by the condenser, code
+    autosave, code.author, a write cap, or read for the first time. Computes the
+    deterministic facts once: hash, size, shape, and whether it parses."""
+    key = _v5_art_key(rel)
+    if not key:
+        return {}
+    body = content or ""
+    h = _v5_ctx_fingerprint(body)
+    prev = artifacts.get(key)
+    if prev and prev.get("hash") == h:
+        return prev                                    # unchanged — keep the record
+    chk = _v5_check_syntax(body, lang, key) if body else {"ok": True, "checker": ""}
+    rec = {
+        "rel": key, "hash": h, "size": len(body),
+        "schema": _v5_file_schema_note(body) if body else "",
+        "parse_ok": bool(chk.get("ok")),
+        "parse_error": "" if chk.get("ok") else str(chk.get("error") or ""),
+        "checked_with": chk.get("checker") or "",
+        "produced_by": produced_by or (prev or {}).get("produced_by", ""),
+        "fs_path": fs_path or (prev or {}).get("fs_path", ""),
+        # Content is cached only when small enough to be worth re-serving.
+        "content": body if len(body) <= _V5_ART_CACHE_MAX else "",
+    }
+    artifacts[key] = rec
+    return rec
+
+
+def _v5_artifact_brief(rec: Dict[str, Any]) -> str:
+    """One-line trustworthy summary of a registered file."""
+    if not rec:
+        return ""
+    bits = [f"{rec['rel']} ({rec.get('size', 0):,} bytes)"]
+    if rec.get("schema"):
+        bits.append(rec["schema"])
+    if rec.get("parse_error"):
+        bits.append(f"⚠ does NOT parse: {rec['parse_error']}")
+    elif rec.get("checked_with"):
+        bits.append(f"parses cleanly ({rec['checked_with']})")
+    return " — ".join(bits)
+
+
+# Files worth eagerly schema-probing when they show up in a workdir listing but
+# were never registered (an exec.python.run script wrote them directly, not
+# via a tracked write path). Free-text/code/binary extensions are excluded —
+# there is no schema to find, so reading them would just be wasted I/O.
+_V5_SCHEMA_PROBE_EXTS = (".json", ".jsonl", ".ndjson", ".csv", ".tsv")
+_V5_SCHEMA_PROBE_MAX_FILES = 6          # new probes per step-context build
+_V5_SCHEMA_PROBE_MAX_BYTES = 200_000    # skip huge files — a truncated sniff is a false schema
+
+
+async def _v5_ensure_workdir_schemas(artifacts: Dict[str, Dict[str, Any]],
+                                     workdir_files: Optional[List[str]], session_id: str) -> None:
+    """A data file the run can already SEE (it's in the workdir listing) should
+    never be shown to a step as a bare name — if the loop can see the filename it
+    can see the schema. `_v5_register_artifact` already does this for every file
+    written through a tracked path (condenser, code autosave, code.author, a
+    write cap); this covers the gap — a script that wrote a file directly via its
+    own open()/json.dump — by reading and registering it here, bounded so a
+    directory with many files never turns a step-context build into a bulk read.
+    Best-effort and silent: a probe failure just leaves the file unregistered,
+    same as before this existed."""
+    if not workdir_files or not session_id:
+        return
+    probed = 0
+    for name in workdir_files:
+        if probed >= _V5_SCHEMA_PROBE_MAX_FILES:
+            break
+        n = str(name or "").rstrip("/")
+        if not n or name.endswith("/") or _v5_art_key(n) in artifacts:
+            continue
+        if not n.lower().endswith(_V5_SCHEMA_PROBE_EXTS):
+            continue
+        probed += 1
+        try:
+            import importlib as _il
+            _ex = _il.import_module("Vera.vera.execution.exec_capabilities")
+            content = await _ex.read_artifact_file(
+                session_id=session_id, relpath=n, max_bytes=_V5_SCHEMA_PROBE_MAX_BYTES)
+            if content is not None:
+                _v5_register_artifact(artifacts, n, content)
+        except Exception as e:
+            log.debug("v5 workdir schema probe failed for %s: %s", n, e)
+
+
+def _v5_ctx_fingerprint(text: str) -> str:
+    """Whitespace-insensitive fingerprint of a chunk of context, for dedupe."""
+    return hashlib.sha1(re.sub(r"\s+", " ", (text or "")).strip().encode(
+        "utf-8", "replace")).hexdigest()
+
+
+# Paragraphs shorter than this are never deduped — short lines ("ok", "done",
+# a filename) legitimately recur and dropping them reads as corruption.
+_V5_DEDUPE_MIN_PARA = 200
+
+
+def _v5_dedupe_paragraphs(text: str, seen: set) -> str:
+    """Drop paragraphs already present elsewhere in the assembled context.
+
+    A step's summary routinely REPEATS material the reader has already been given:
+    a phased step's summary concatenates its sub-steps' summaries, which are often
+    the verbatim tool preview, which the previous step already showed. Sending the
+    same 8k-char JSON three times costs latency in direct proportion — measured at
+    170–582s for the 23–36k-char prompts this produces — and teaches the model
+    nothing new. `seen` accumulates across blocks so the FIRST occurrence is kept
+    and later ones collapse to a one-line pointer."""
+    out: List[str] = []
+    for para in re.split(r"\n\s*\n", text or ""):
+        body = para.strip()
+        if len(body) < _V5_DEDUPE_MIN_PARA:
+            out.append(para)
+            continue
+        fp = _v5_ctx_fingerprint(body)
+        if fp in seen:
+            out.append("[… identical content shown above — not repeated …]")
+            continue
+        seen.add(fp)
+        out.append(para)
+    return "\n\n".join(out)
+
+
+def _v5_build_ctx_slice(rel_results: List[Dict[str, Any]],
+                        *, per_step: int = _V5_CTX_PER_STEP,
+                        total: int = _V5_CTX_TOTAL) -> str:
+    """Prior-step context for the step about to run: each source step's result AND
+    the FILES it produced.
+
+    Two things this fixes, both of which stranded real work:
+
+    1. Only `summary` used to travel. A step's `outputs` carry `file:<name>` →
+       path + real schema, and every reader EXCEPT the step specialist saw them
+       (the controller's ledger, the delivery agent). So the step that had to
+       consume the JSON a previous step had just fetched was never told the file
+       existed, let alone its shape — the reported "it collects data then can't
+       do anything with it".
+
+    2. The whole joined block was truncated with `[:total]`, which keeps the
+       OLDEST steps and silently drops the newest — the ones the current step
+       almost always depends on. Budget is now spent newest-first, then the
+       blocks are emitted back in step order.
+    """
+    blocks: List[str] = []
+    used = 0
+    # Newest-first so the dedupe keeps the MOST RECENT copy of anything repeated
+    # (an older step re-stating the same result is the redundant one), and so the
+    # budget is spent on what the current step most likely depends on.
+    seen_paras: set = set()
+    seen_files: set = set()
+    for r in reversed(rel_results or []):
+        art_txt = ""
+        arts = [a for a in _v5_step_artifacts(r) if a["rel"] not in seen_files]
+        if arts:
+            seen_files.update(a["rel"] for a in arts)
+            art_txt = ("\nFILES FROM THIS STEP (they EXIST on disk in your working "
+                       "directory — read/parse them by these RELATIVE names; do not "
+                       "re-fetch or re-derive what is already here):\n") + "\n".join(
+                f"  • {a['rel']}" + (f" — {a['note']}" if a["note"] else "") for a in arts)
+        head = f"[from step {r.get('id')} · {r.get('title', '')}]\n"
+        body = _v5_dedupe_paragraphs((r.get("summary") or "")[:per_step], seen_paras)
+        block = head + body + art_txt
+        if used + len(block) > total and blocks:
+            break
+        blocks.append(block)
+        used += len(block)
+    return "\n\n".join(reversed(blocks))
+
+
+# ── Utility-call timeout ─────────────────────────────────────────────────────
+# The loop's JUDGEMENT calls — tier classification, pre-step info, step verify,
+# the adaptive controller, step finalisation — send a small prompt and expect a
+# short bounded JSON answer. They should take seconds. Under the global 900s
+# ceiling a starved one instead hangs for a quarter of an hour and looks like
+# "the loop is slow": measured live, a 3.6k-char tier call sat on a contended GPU
+# for 900.02s and then failed anyway.
+#
+# A shorter budget makes starvation surface while it is still recoverable — the
+# call fails fast and fails over to an idle node instead of burning the ceiling.
+# Deliberately NOT applied to generative calls (code.author, llm.generate,
+# delivery): those legitimately run for minutes and a short prompt there can
+# still mean a long output.
+_V5_UTILITY_TIMEOUT = float(os.getenv("V5_UTILITY_TIMEOUT", "240") or 240)
+
+
+# Full-content inlining budget: how much REAL file text a step may be handed up
+# front, and across how many files.
+#
+# Kept deliberately SMALL. Measured on a live run, specialist prompts were already
+# reaching 23–36k chars and those calls took 170–582s EACH — prompt length is the
+# dominant cost in this loop, far more than any event-loop stall (0.4% of wall
+# time). Inlining is meant to stop a step re-deriving data it already has, and a
+# few KB of real structure achieves that; dumping whole files would buy the same
+# insight for minutes of extra latency per cycle. Raise V5_INLINE_FILE_TOTAL only
+# if a step genuinely needs to reason over a whole file.
+_V5_INLINE_FILE_TOTAL = int(os.getenv("V5_INLINE_FILE_TOTAL", "4000") or 4000)
+_V5_INLINE_FILE_MAX   = int(os.getenv("V5_INLINE_FILE_MAX", "2") or 2)
+
+
+async def _v5_inline_artifacts(rel_results: List[Dict[str, Any]], *, session_id: str,
+                               step: Dict[str, Any], goal: str,
+                               seen_text: str = "",
+                               total: int = _V5_INLINE_FILE_TOTAL,
+                               max_files: int = _V5_INLINE_FILE_MAX) -> str:
+    """Hand the step the ACTUAL CONTENT of the most relevant prior-step files.
+
+    A name plus a schema line tells a step a file exists and roughly what shape it
+    is, which is enough to write a parser but not enough to REASON about the data
+    — so a step whose job is "decide what to do with this" had to spend cycles
+    reading a file the loop could simply have shown it. Files the step's own goal
+    or success criterion NAMES are inlined first, then the most recent artifacts.
+
+    Bounded hard (`total` chars over `max_files` files) and best-effort: an
+    unreadable file is skipped silently, and anything that does not fit keeps its
+    schema note in the context slice, which is emitted regardless."""
+    arts: List[Dict[str, str]] = []
+    for r in rel_results or []:
+        for a in _v5_step_artifacts(r):
+            if not any(x["rel"] == a["rel"] for x in arts):
+                arts.append(a)
+    if not arts:
+        return ""
+    named = (str(step.get("goal") or "") + " " + str(step.get("success") or "")
+             + " " + str(goal or "")).lower()
+    # Files the step actually talks about first; then newest-last order reversed.
+    arts.sort(key=lambda a: (a["rel"].lower() not in named,))
+    try:
+        import importlib as _il
+        _ex = _il.import_module("Vera.vera.execution.exec_capabilities")
+        reader = getattr(_ex, "read_artifact_file", None)
+    except Exception:
+        reader = None
+    if reader is None:
+        return ""
+    chunks: List[str] = []
+    used = 0
+    by_content: Dict[str, str] = {}     # fingerprint → the name already shown
+    seen_norm = re.sub(r"\s+", " ", (seen_text or "")).strip()
+    for a in arts[:max_files]:
+        room = total - used
+        if room < 500:
+            break
+        try:
+            txt = await reader(session_id=session_id, relpath=a["rel"], max_bytes=room)
+        except Exception:
+            txt = None
+        if not txt:
+            continue
+        # SAME BYTES UNDER ANOTHER NAME. A run routinely ends up with copies —
+        # a script writes `data.json`, a later step re-saves it as `final.json` —
+        # and inlining both spends the budget twice to say one thing. Point at the
+        # first instead; the agent still learns both names exist.
+        fp = _v5_ctx_fingerprint(txt)
+        if fp in by_content:
+            chunks.append(f"--- {a['rel']} ---\n[identical content to "
+                          f"{by_content[fp]} — shown once above]")
+            continue
+        by_content[fp] = a["rel"]
+        # ALREADY IN CONTEXT. The prior-step summaries frequently ARE the file
+        # (a step's summary is often the verbatim read preview), so inlining it
+        # again just pays for the same bytes twice.
+        _probe = re.sub(r"\s+", " ", txt[:400]).strip()
+        if len(_probe) > 120 and _probe in seen_norm:
+            chunks.append(f"--- {a['rel']} ---\n[content already shown in the "
+                          "prior-step context above — not repeated]")
+            continue
+        clipped = len(txt) >= room
+        chunks.append(f"--- {a['rel']} ---\n{txt}"
+                      + ("\n…[clipped — read the file for the rest]" if clipped else ""))
+        used += len(txt)
+    if not chunks:
+        return ""
+    return ("\nCONTENT OF FILES FROM PRIOR STEPS (the real data — act on THIS, do not "
+            "re-fetch it):\n" + "\n\n".join(chunks) + "\n")
+
+
+async def _v5_run_step(step: Dict[str, Any], **kw) -> Dict[str, Any]:
+    """Run one step, converting an UNEXPECTED exception into a FAILED STEP RESULT
+    instead of letting it abort the entire run.
+
+    A step is the unit of recovery this loop is built around: the controller,
+    the verifier and the `extra_step`/branch machinery all know what to do with a
+    step that failed. They never got the chance when a bug inside the step body
+    raised — the exception unwound the runner, the cap and the HTTP handler, so a
+    long run died with a bare 500 and lost every artifact it had produced (seen
+    live: a `KeyError: 'code.author'` from the stuck-loop guard reading a rebound
+    tool name killed a 68-minute run). Failing the STEP keeps the run alive and
+    hands the failure to the machinery that can act on it.
+
+    CancelledError is re-raised untouched — the Stop button and client-disconnect
+    both cancel the runner task, and swallowing that would strand the run."""
+    try:
+        return await _v5_run_step_inner(step, **kw)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        step_id = step.get("id", 0)
+        sid = kw.get("session_id", "")
+        stream_id = kw.get("stream_id", "")
+        summary = (f"STEP CRASHED: an internal error aborted this step — "
+                   f"{type(e).__name__}: {e}")[:_V5_DONE_SUMMARY]
+        log.exception("v5 step %s crashed (failing the step, not the run): %s", step_id, e)
+        await emit_event({"type": "agent_loop_v5.step_done", "session_id": sid,
+                          "stream_id": stream_id, "step_id": step_id, "ok": False,
+                          "error": f"{type(e).__name__}: {e}"[:300],
+                          "summary": summary})
+        return {"id": step_id, "title": step.get("title", ""), "ok": False,
+                "summary": summary, "outputs": {},
+                "cycle_end": kw.get("cycle_offset", 0), "history": [],
+                "crashed": True}
+
+
+async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
+                       blackboard: Dict[int, Dict[str, Any]],
+                       artifacts: Optional[Dict[str, Dict[str, Any]]] = None,
                        model: str, instance_id: str, prefer_gpu: bool,
                        session_id: str, stream_id: str, trace_id: Any,
                        cycle_budget: int, cycle_offset: int,
@@ -9213,6 +11503,11 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
     `_v5_run_phased_step`, which runs each phase as its own scoped sub-agent."""
     sid = session_id
     step_id = step["id"]
+    # Run-level file registry. A step given none still works (it just gets a
+    # private one) — so a phased sub-step or an older caller degrades to the old
+    # per-step behaviour rather than crashing.
+    if artifacts is None:
+        artifacts = {}
 
     # Per-step phase cadence (opt-in, planner-chosen): hand each phase to its own
     # scoped sub-agent. Guarded by `not phase` so the phase sub-calls don't recurse.
@@ -9227,7 +11522,8 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                 valid_phases = []
         if valid_phases:
             return await _v5_run_phased_step(
-                step, valid_phases, goal=goal, blackboard=blackboard, model=model,
+                step, valid_phases, goal=goal, blackboard=blackboard, artifacts=artifacts,
+                model=model,
                 instance_id=instance_id, prefer_gpu=prefer_gpu, session_id=session_id,
                 stream_id=stream_id, trace_id=trace_id, cycle_budget=cycle_budget,
                 cycle_offset=cycle_offset, artifact_dir_path=artifact_dir_path,
@@ -9259,6 +11555,16 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
     allowed = list(caps)
     catalog_set = set(catalog_caps or []) | set(caps)
     model_set = set(available_models or [])
+    # Always grant file-access caps ON TOP of the assigned set (only those actually
+    # in the run's toolkit; read-only phases get the pure-read cap only; the
+    # tool-free `think` phase gets none). So the agent can always read/grep/parse
+    # the ./output_*.txt files the loop saves without a "not in scope" bounce.
+    if phase == "think":
+        extra_file_caps: List[str] = []
+    else:
+        _fc = _V5_ALWAYS_FILE_CAPS_RO if phase in ("explore", "verify") else _V5_ALWAYS_FILE_CAPS
+        extra_file_caps = [c for c in _fc if c in catalog_set and c not in allowed]
+        allowed += extra_file_caps
     # Recovery toolkit a failing step may escalate to — RELEVANT alternative
     # avenues, NOT a generic dump. We exclude infra/scan caps (netscan/ssh/proxmox
     # …) unless the step is already in that domain (stops the loop wandering into
@@ -9291,7 +11597,7 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
 
     # Full schemas — for this step's caps. Newly granted caps are appended to
     # `dynamic_caps_block` so the specialist learns their schemas mid-step.
-    sig_block = "\n".join(rich_cap_signature(c) for c in caps) \
+    sig_block = "\n".join(rich_cap_signature(c) for c in (list(caps) + extra_file_caps)) \
         or "  (no caps assigned — reason about the step goal and report your findings)"
     dynamic_caps_block = ""
 
@@ -9311,9 +11617,18 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
     rel = [blackboard[n] for n in needs if n in blackboard]
     if not rel:
         rel = list(blackboard.values())  # no explicit deps → all prior results
-    ctx_slice = "\n\n".join(
-        f"[from step {r['id']} · {r['title']}]\n{(r.get('summary') or '')[:_V5_CTX_PER_STEP]}"
-        for r in rel)[:_V5_CTX_TOTAL]
+    # Recon (step 0) is everyone's dependency: `needs` only ever names PLAN step
+    # ids, so a step that declares deps would otherwise never see the pre-plan
+    # investigation or the files it saved — the exact data the plan was written
+    # around. Prepend it whenever it isn't already in the slice.
+    if 0 in blackboard and not any(r.get("id") == 0 for r in rel):
+        rel = [blackboard[0]] + rel
+    ctx_slice = _v5_build_ctx_slice(rel)
+    # The real bytes of the most relevant prior-step files, on top of the names +
+    # schemas above. A `think` phase is tool-free and reasons from context alone,
+    # so it benefits most; every other phase gets it too, bounded.
+    inline_files = await _v5_inline_artifacts(rel, session_id=sid, step=step, goal=goal,
+                                              seen_text=ctx_slice)
 
     await emit_event({"type": "agent_loop_v5.step_start", "session_id": sid, "stream_id": stream_id,
                       "step_id": step_id, "title": step["title"], "goal": step["goal"],
@@ -9332,24 +11647,87 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                        "(recommended). NEVER invent a model name such as 'gpt-3.5-turbo' or 'gpt-4' "
                        "— use a name from this list or omit it.\n")
 
+    # The file-read cap this step can ACTUALLY call. Prompts used to name
+    # `code.read` unconditionally, so a step without it dutifully tried to call a
+    # capability it did not have — self-inflicted phantom-cap calls.
+    _read_cap = next((c for c in ("code.read", "ide.fs.read") if c in caps),
+                     next((c for c in ("ide.fs.read", "code.read") if c in extra_file_caps),
+                          "ide.fs.read"))
+
+    # Coding route: one cap, the coding specialist, grounded + versioned. Shown
+    # whenever it is reachable, because "write the code yourself" is the failure
+    # this replaces — prompt-steering llm.generate proved too fragile.
+    author_note = ""
+    if "code.author" in allowed or "code.author" in catalog_set:
+        author_note = (
+            "\nWRITING CODE — USE code.author, NEVER WRITE CODE YOURSELF: to produce any source "
+            "file (.py/.js/.sh/.html/.css/…) call code.author(path='<file>', task='<detailed "
+            "description of exactly what the file must do>', context_files=[<the real data files "
+            "it must read>]). It hands the job to the CODING specialist, shows it the ACTUAL "
+            "content of those files so the code is written against the real structure, and saves "
+            "+ versions the file for you. Then run it: exec.python.run(path='<file>').\n"
+            "  • Do NOT type code into ide.fs.write, exec.* or a heredoc — that skips the coding "
+            "model, the grounding and the versioning, and is refused.\n"
+            "  • Do NOT use llm.generate for code.\n"
+            "  • ALWAYS pass context_files when the code reads a file this run produced — a "
+            "script written without seeing the real data guesses the schema and returns nothing.\n"
+            "  • Describe the OUTPUT contract in `task` (exact output filename, what it must "
+            "contain) so the file it writes is the deliverable, not a demo.\n"
+            "  • CHANGING a file that ALREADY EXISTS? Use code.edit(path, task) instead — it "
+            "shows the coder the current file and applies TARGETED edits, keeping everything "
+            "you did not ask to change. code.author re-emits the WHOLE file, which is slow and "
+            "loses work the model forgets to copy. Reserve code.author for creating a new file "
+            "or a genuine wholesale rewrite.\n"
+            + ("  • Not in your scope yet — request it with need_caps.\n"
+               if "code.author" not in allowed else ""))
+
     # Code autosave note — only when the step can generate code.
     code_note = ""
     if enable_code_autosave and any(_v5_is_generative(c) for c in caps):
-        code_note = ("\nCODE/DOCUMENT AUTOSAVE: any fenced block you generate is AUTOMATICALLY "
-                     "saved to a file and VERSIONED — you do NOT need ide.fs.write. Label each "
-                     "file with a fenced ```lang file=relative/path.ext (or a leading "
-                     "`# file: path.ext` line) so it saves to the intended path; output the "
-                     "COMPLETE file, not a snippet. Regenerating the same path creates a new "
-                     "version and you always see the LATEST. To run a saved file use "
-                     "exec.python.run(path=...).\n"
+        code_note = ("\nCODE AUTOSAVE: any fenced CODE block you emit is AUTOMATICALLY saved to a "
+                     "file in THIS session's workspace and VERSIONED — for code you do NOT need "
+                     "ide.fs.write. Label each file with a fenced ```lang file=relative/path.ext "
+                     "(or a leading `# file: path.ext` line) so it saves to the intended path; "
+                     "output the COMPLETE file, not a snippet. Writes and runs share this "
+                     "workspace, so a fenced/saved file is exactly what exec.* will find. "
+                     "Regenerating the same path creates a new version and you always see the "
+                     "LATEST. To run a saved file use exec.python.run(path=...).\n"
+                     "ASKING FOR CODE: use output_format='code' (or omit it) — NEVER "
+                     "output_format='json' for a script. A data format makes the model return the "
+                     "code as an escaped string inside a JSON object, which is not a file, is not "
+                     "runnable, and is not versioned. `json` is for DATA only.\n"
                      "FINISHED OUTPUT, NOT STUBS: if this step produces a document or file, it "
                      "must be COMPLETE when you emit `done` — full sections/sentences, no "
                      "outlines, no 'TBD'/'[expand]'/'…' placeholders, no trailing 'I would "
                      "then…' prose. If the content is too long for one response, emit the first "
-                     "part now and CONTINUE next turn: code.read the saved file and re-emit the "
+                     f"part now and CONTINUE next turn: {_read_cap} the saved file and re-emit the "
                      "FULL updated file with the SAME file= label until it is finished. Your "
                      "`done` summary must name the saved file(s) — the file IS the result later "
                      "steps (and the user) rely on.\n")
+
+    # Generated-document note: writing the deliverable and PERSISTING it are ONE
+    # call. Emitted whenever the step can generate, because the reported failure
+    # was a step that generated a report and then either lost it (nothing on disk)
+    # or hand-wrote a stand-in with a `cat <<EOF` heredoc.
+    gen_note = ""
+    if _V5_GEN_AUTOSAVE_ON and any(_v5_is_generative(c) for c in caps):
+        gen_note = (
+            "\nGENERATED DOCUMENTS ARE SAVED FOR YOU: whatever llm.generate (or another generative "
+            "cap) returns is written to a REAL FILE in your working directory automatically, and "
+            "you are shown the COMPLETE text back — nothing is truncated away and nothing is lost "
+            "between cycles. Pass save_as='<name>.md' to llm.generate to choose the filename "
+            "(otherwise the loop names it from the step, honouring any filename the step already "
+            "specifies). Consequences you must follow:\n"
+            "  • Do NOT call ide.fs.write, exec.bash.run `cat <<EOF`/`echo >`, or a python "
+            "open().write() to save generated text — the file already exists. Writing it again "
+            "means hand-typing a WORSE, shorter copy over the real one.\n"
+            "  • Do NOT hunt for 'the output path' before generating: the path does not exist "
+            "until you generate, and you are told it the moment you do.\n"
+            "  • The DELIVERABLE ITSELF must come from the generative cap — never type the report/"
+            "document body into a shell command or a script. Feed the source material in with "
+            "files=['./saved_file.json', …] (read sandbox-aware, no pasting) and let the model "
+            "write it.\n"
+            "  • Your `done` summary must name the saved file by its relative name.\n")
 
     # Terminal-tools preference (opt-in): steer the specialist to reach for
     # grep/sed/awk/head/find over reading whole files or heavier caps. Only worth
@@ -9368,6 +11746,65 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                          "raw dump. e.g. pipe through `grep -c` / `sort | uniq -c` / `head` / `jq` and "
                          "end with a short summary block, so the output you read back is exactly the "
                          "signal you need to act on.\n")
+
+    # Surgical-edit preference: when the toolkit carries the targeted line-edit
+    # caps, steer a SMALL change to an EXISTING file through them instead of
+    # regenerating the whole file (the #1 cause of lost / rewritten work and the
+    # "I point out an issue and it rewrites everything" complaint).
+    edit_note = ""
+    if any(c in caps for c in ("ide.code.edit_lines", "ide.code.replace",
+                               "ide.code.insert_at")):
+        edit_note = ("\nEDITING AN EXISTING FILE — EDIT IN PLACE, DON'T REWRITE: to change a file "
+                     "that already exists, make a SURGICAL edit; do NOT re-emit the whole file. "
+                     "LOCATE first — ide.code.grep(pattern, root) to find the line, then "
+                     "ide.code.read_lines(path, start, end) for exact line numbers + context. Then "
+                     "change ONLY that region: ide.code.replace(path, find, replace[, is_regex, "
+                     "dry_run]) for a text swap (dry_run=True previews it first), "
+                     "ide.code.edit_lines(path, start, end, new_content) to replace a line range, "
+                     "ide.code.insert_at(path, line, content) to add lines. Every edit is auto-VERSIONED "
+                     "(code.versions = history, code.diff = what changed, code.restore = roll back), so "
+                     "iterate freely and address feedback with small diffs. Re-generating the ENTIRE "
+                     "file with llm.generate is ONLY for a wholesale rewrite — never for a bug fix, a "
+                     "typo, a renamed symbol, or a handful of changed lines.\n")
+
+    # Steerable summarisation — only advertised when this run condenses long
+    # outputs. Lets the specialist shape the brief so the info it needs survives.
+    condense_note = (
+        "\nWORKING WITH LONG OUTPUTS: a long tool output is shown to you as a deterministic head+tail "
+        "AND saved IN FULL to a descriptively-named file in your working directory — the real data is "
+        "always there to act on. To USE it, read/parse the saved file with exec.python.run (structured "
+        "JSON is reported with its EXACT item count and where the list lives — parse the file, don't "
+        "re-count by eye). If you would rather get a shaped SUMMARY of a particular call's output, add "
+        'a `condense` object ALONGSIDE that tool_use, e.g. {"tool_use":{...},"condense":{"focus":"each '
+        'Pokémon\'s base-stat total and types","keep":["id","types","stats"]}} — `focus`/`keep` ADD '
+        "emphasis on top of the keep-all-key-detail floor (never dropping other detail).\n"
+    ) if condense_output else ""
+
+    # Exec-role note: the specialist on an exec step EXECUTES, it does not AUTHOR
+    # programs. Hand-writing a full script in the `code` argument is the reported
+    # anti-pattern — real code must come from a code-generation step and be run by
+    # path. Only emitted when the step can actually run python.
+    exec_role_note = ""
+    if any(c in caps for c in ("exec.python.run", "exec.code.run")):
+        exec_role_note = (
+            "\nEXEC ROLE — RUN code, don't WRITE it: exec.python.run EXECUTES an existing program. A "
+            "shell command or a TRIVIAL one-liner (a few lines — a quick check, a tiny transform) is "
+            "fine to pass inline. But do NOT hand-write a full PROGRAM in the `code` argument. A real "
+            "script must be AUTHORED by a code-generation step (llm.generate — a coding specialist; its "
+            "fenced code is auto-saved & versioned to a file) and then RUN with "
+            "exec.python.run(path='<file>'). If the script you need does not exist yet, that means a "
+            "code-generation step is missing: request llm.generate (need_caps) to write the file, THEN "
+            "run it by path — do NOT substitute your own hand-typed program. Prefer path= over code= "
+            "for anything non-trivial.\n")
+
+    # File access is always granted on top of the assigned caps (see extra_file_caps).
+    file_access_note = ""
+    if extra_file_caps:
+        file_access_note = ("\nFILE ACCESS (always in scope — no need_caps required): "
+                            + ", ".join(extra_file_caps)
+                            + " are available for THIS step ON TOP of your assigned caps. Use them to "
+                            "read / grep / parse any saved file — e.g. the ./output_*.txt the loop "
+                            "writes when it condenses a big result — by RELATIVE name.\n")
 
     phase_guide = _V5_PHASE_GUIDE.get(phase, "")
     _success = str(step.get("success") or "").strip()
@@ -9392,8 +11829,64 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
     _ask_help = (
         '  {"thought":"<why>","ask_user":"<question>"}  to ASK THE USER when the step is genuinely '
         "blocked on a decision only they can make — it reaches them in the loop UI and any configured "
-        "comms channel, blocks briefly for a reply, then you proceed on assumptions, OR\n"
+        "comms channel, blocks briefly for a reply (up to a few minutes of dead time — costly, use "
+        "sparingly), then you proceed on assumptions.\n"
+        "NOT a 'decision only they can make': how to fix a bug or error you just hit. If you can "
+        "diagnose the cause yourself (e.g. 'AttributeError: no server_class on SimpleHTTPRequestHandler "
+        "— the correct fix is to instantiate http.server.HTTPServer directly'), APPLY that fix — do "
+        "NOT turn your own correct diagnosis into a question asking which of two ways to fix it the "
+        "user prefers. That is never their call; picking an implementation detail is yours. OR\n"
     ) if enable_step_questions else ""
+
+    # ── Real working-directory inventory ─────────────────────────────────────
+    # Listing what ACTUALLY exists is the only reliable cure for invented paths:
+    # a model with no knowledge of the directory falls back on paths from its
+    # training data (/mnt/data/…, /content/…) and then loops on the failure.
+    workdir_files = await _v5_workdir_files(sid)
+    await _v5_ensure_workdir_schemas(artifacts, workdir_files, sid)
+    pkg_note = ""
+    if "exec.python.run" in allowed or "code.author" in allowed:
+        _pkgs = await _v5_installed_packages(sid)
+        if _pkgs:
+            pkg_note = ("\nPYTHON PACKAGES ALREADY INSTALLED (use these, don't assume anything "
+                        "else is present — an import that isn't in this list WILL fail with "
+                        "ModuleNotFoundError; if you truly need one, install it first with "
+                        "exec.bash.run('pip install <pkg>') rather than guessing it's there):\n"
+                        + _pkgs + "\n")
+    workdir_note = ""
+    if artifact_dir_path:
+        # ONE list, every file annotated with what's already known about it — a
+        # file the loop can SEE (it's in the directory) always carries its schema
+        # alongside its name here; there is no separate bare-name listing a
+        # schema-bearing entry could be missing from. Unregistered non-data files
+        # (code, prose) just show their name — there's no schema to have.
+        _file_lines = []
+        for _n in (workdir_files or []):
+            _rec = artifacts.get(_v5_art_key(_n))
+            _file_lines.append("  • " + (_v5_artifact_brief(_rec) if _rec else _n))
+        workdir_note = (
+            "\nWORKING DIRECTORY: your exec.* / code runs use " + artifact_dir_path + " as their "
+            "cwd, and files you save land there.\n"
+            # What the run KNOWS about each file — shape, size, whether it parses
+            # — so a step can decide what to do without opening anything. Probing
+            # a file to find out what is in it is the redundancy this removes.
+            + (("FILES IN IT RIGHT NOW (schema shown where known — trust it, do NOT "
+                "re-read a file just to check its shape):\n" + "\n".join(_file_lines) + "\n")
+               if _file_lines else
+               ("It is EMPTY so far — nothing has been written yet this run.\n"
+                if workdir_files == [] else ""))
+            + "PATH RULES — absolute paths are almost always a mistake here:\n"
+              "  • Refer to files by RELATIVE name (`data.json`, `./report.md`). That resolves "
+              "whether the run is sandboxed or not.\n"
+              "  • The only files that exist are the ones listed above (if any), those earlier "
+              "steps reported, and those you create in THIS step. A path from anywhere else does "
+              "NOT exist — do not invent one and do not 'try' it.\n"
+              "  • NEVER use a path like /mnt/data/…, /content/…, /tmp/…, /home/…, /Users/… or "
+              "C:\\… — those are paths from other environments; nothing of yours is there, and the "
+              "call will just fail.\n"
+            + ("  • Need to know what's on disk? Run `ls -la` with exec.bash.run — never guess a "
+               "filename.\n" if "exec.bash.run" in allowed else
+               f"  • Never guess a filename — read one of the files above with {_read_cap}.\n"))
     sys = (
         "You are a FOCUSED SPECIALIST sub-agent. Complete ONE step of a larger task and "
         "nothing else. Stay strictly within the step goal.\n"
@@ -9403,18 +11896,47 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
         + "\n"
         + ((phase_guide + "\n\n") if phase_guide else "")
         + "You may use these capabilities (full schemas):\n" + sig_block + "\n"
-        + model_block + code_note + terminal_note
+        + ("ONLY these names are callable. `tool_use.name` must be one of them, copied EXACTLY. "
+           "Anything else is not a capability and the call is refused before it runs: a saved DAG "
+           "or WORKFLOW name (e.g. one returned by a DAG search), a step or plan title, a cap name "
+           "you saw in a search result but have not been granted, or a function name you remember "
+           "from elsewhere. If what you need isn't in the list, ask for it by its exact cap name "
+           "with need_caps — never guess a name and never invent one.\n")
+        + model_block + author_note + code_note + gen_note + terminal_note + edit_note
+        + exec_role_note + file_access_note + condense_note
         + ("\nCAPABILITY REALITY — generative vs action: llm.*, ollama.*, and agent.chat* only "
            "GENERATE or transform text from what YOU put in the prompt. They CANNOT look things "
            "up, browse the web, run commands, read/write files, or query data — asked to "
            "'research' or 'find' something they will just INVENT a plausible-sounding answer. "
            "To RESEARCH or get current/novel/factual information use web.search (then web.fetch / "
-           "http.get to read a result) or research.quick_search; to RUN something use exec.*; to "
+           "http.get to read a result)"
+           + (_research_hint(suffix="") and f" or {_research_hint()}" or "")
+           + "; to RUN something use exec.*; to "
            "read stored data use fabric.query. If the right tool isn't in your toolkit, REQUEST "
-           "it via need_caps — do NOT substitute llm.generate for a real lookup or action.\n")
+           "it via need_caps — do NOT substitute llm.generate for a real lookup or action.\n"
+           "DATASETS & DATA FILES — USE A SCRIPT, NOT llm.generate: llm.generate is for AUTHORED "
+           "content (code, prose, docs, summaries, explanations). It must NOT be your source for "
+           "real-world DATA — a list/table of real entities, factual records, API results, a "
+           "populated JSON/CSV (e.g. the 151 Gen-1 Pokémon with real stats). Asked to emit that, it "
+           "FABRICATES. Instead WRITE A SCRIPT (exec.python.run) that fetches from the source API / "
+           "parses the data and WRITES the file itself — deterministic and correct. To EDIT or "
+           "transform a file (especially data, or any bulk/mechanical change) prefer a script "
+           "(exec.python.run, or exec.bash.run with sed/jq/awk) that reads → transforms → writes; "
+           "re-emitting a whole file via llm.generate is only for authored prose/code YOU wrote, "
+           "and risks dropping or altering content on a data file.\n")
+        + ("\nFILE HONESTY — never claim a file exists unless you actually created it THIS step: "
+           "either you emitted it as a fenced code block (auto-saved), a generative call reported "
+           "'✓ SAVED — written to ./<name>', or a write capability (e.g. ide.fs.write) returned ok "
+           "for it. A later step and the verifier CHECK the real "
+           "workspace, so a path you name but did not write is caught as a phantom and derails "
+           "every step that builds on it. If you only produced text/data and did not write it, say "
+           "so plainly in `done` (e.g. 'schema DEFINED, not yet written to disk') and describe it "
+           "as content — do NOT report it as a saved path.\n")
         + (("\nRELEVANT SKILLS (follow this guidance):\n" + skill_prompt + "\n") if skill_prompt else "")
         + (("\nCONTEXT FROM PRIOR STEPS:\n" + ctx_slice + "\n") if ctx_slice else "")
-        + (("\nARTIFACT DIRECTORY for generated files: " + artifact_dir_path + "\n") if artifact_dir_path else "")
+        + (inline_files or "")
+        + workdir_note
+        + pkg_note
         + "\nWork in a tight loop. Each turn reply with ONE compact JSON object — ONE of:\n"
           '  {"thought":"<one sentence>","tool_use":{"name":"<cap>","input":{...}}}  to ACT, OR\n'
           '  {"thought":"<your reasoning>"}  to just THINK (no tool_use, no done) when you need to plan, '
@@ -9452,12 +11974,16 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
             "skills": loaded_skills,
             "skill_prompt": skill_prompt,
             "prior_context": ctx_slice,
+            "inline_files": inline_files,
             "context_sources": ctx_sources,
             "model_block": model_block.strip(),
             "code_note": code_note.strip(),
+            "gen_note": gen_note.strip(),
+            "author_note": author_note.strip(),
             "phase_guide": phase_guide,
             "recovery_caps": recovery_caps,
             "artifact_dir": artifact_dir_path,
+            "workdir_files": workdir_files or [],
         },
     })
 
@@ -9483,15 +12009,81 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
     denied_req_caps: List[str] = []        # every cap ever denied (for the stall summary)
     _MAX_DENIED_REQ_TURNS = 3              # break the step after this many fruitless request turns
     empty_exec_calls = 0                   # exec.* calls with nothing to run (caught pre-invoke)
+    _MAX_EMPTY_EXEC = 3                    # then END the step — see the guard for why it needs its own ceiling
+    missing_path_calls = 0                 # exec-by-path where the file provably does not exist
+    _MAX_MISSING_PATH = 3                  # then END the step (same reason)
+    auto_grants = 0                        # in-catalog caps granted on a direct call
+    _MAX_AUTO_GRANTS = 4                   # beyond this, fall back to the denial path
+    repeat_fail_calls = 0                  # verbatim re-issues of an already-failed call
+    _MAX_REPEAT_FAIL = 3                   # then END the step (same trap as the guards above)
+    proven_redirects = 0                   # re-authors of proven-good files sent to code.edit
+    _MAX_PROVEN_REDIRECTS = 3              # then allow the rewrite (the model may be right)
+    fileread_served = 0                    # reads answered from the run artifact registry
+    # After a few registry serves in ONE step the specialist is looping on reads
+    # rather than acting; let the next one through so it can't get stuck arguing
+    # with the cache, and so a genuinely stale record self-heals.
+    _MAX_FILEREAD_SERVED = 3
+    _fileread_bypass = False
     arg_fix_attempts: Dict[str, int] = {}  # per-tool recoverable-arg-error corrections (bounds no-widen retries)
     _MAX_ARG_FIX = 2                       # give a precise arg correction this many times before widening scope
+    exec_author_redirects = 0             # times we redirected inline-authored code → generate + run by path
+    doc_author_redirects = 0              # times we redirected a hand-typed document (shell heredoc) → llm.generate
+    path_redirects = 0                    # times we refused an invented absolute path (then fails open)
+    denied_tool_calls = 0                 # tool_use names that were out of scope / not caps at all
+    code_write_redirects = 0              # times we redirected a hand-written script → code.author
     success_sigs: Dict[str, str] = {}      # call-signature -> cached preview of a SUCCESSFUL identical call
+    failed_sigs: Dict[str, str] = {}       # call-signature -> error of a FAILED identical call (never re-run it)
+    saved_run_files: Dict[str, str] = {}   # basename -> known-good runnable path of a file WE auto-saved this run
     dup_call_hits = 0                       # redundant repeats of an already-successful call
     _MAX_DUP_HITS = 2                       # after this many redundant repeats, end the step cleanly
     step_questions_asked = 0               # ask_user calls made this step (bounded)
     _MAX_STEP_QUESTIONS = 2
+    # Every ask_user Q&A this step got a REAL answer to. Carried into the step's
+    # result (see `res["user_clarifications"]` below) so the verifier and any
+    # retry/adjust step can see it too — not just the specialist's own next
+    # cycle. Without this a user's mid-step answer ("don't bother serving it")
+    # only ever reached the ONE turn right after it: the specialist correctly
+    # honoured it and called the step done, but the INDEPENDENT verifier judged
+    # against the step's original, now-stale success criterion and the raw call
+    # history (which still contains the earlier failed attempt), ruled the
+    # criterion not met, and sent the step back to redo the very thing the user
+    # said to skip.
+    user_clarifications: List[Dict[str, str]] = []
     _MAX_CHAIN_HOPS = 5
+    think_only_streak = 0                  # consecutive thought-only turns (oscillation guard)
+    dup_thought_hits = 0                   # thoughts that merely restate the previous one
+    _MAX_THINK_STREAK = 4                  # hard-stop a step stuck deliberating this long
     _step_q_key = -500000 - int(step_id)   # reserved HITL key for this step's ask_user questions
+    _CAP_NAME_RE = re.compile(r"\b[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*){1,3}\b")
+    _CAP_AVAIL_WORDS_RE = re.compile(
+        r"\b(available|availab|capability|permission|scope|toolkit|"
+        r"access to|can i use|do i have|is it (?:already )?granted)\b", re.I)
+
+    def _mechanical_cap_answer(question: str) -> Optional[str]:
+        """A step should never spend a blocking HITL round-trip (~180s, twice
+        per step observed live) asking whether IT ALREADY HAS a capability —
+        that is a fact the orchestrator already knows and, for anything in this
+        run's catalog, auto-grants unconditionally via need_caps (see the
+        auto-grant note above _resolved_tool). Answer these mechanically instead
+        of forwarding them to a human who was never going to know the answer
+        either. Returns None when the question isn't actually about capability
+        availability, so it still goes to the normal ask_user path."""
+        if not _CAP_AVAIL_WORDS_RE.search(question or ""):
+            return None
+        names = [n for n in _CAP_NAME_RE.findall(question or "") if n in catalog_set]
+        if not names:
+            return None
+        granted, already = [], []
+        for n in dict.fromkeys(names):
+            (already if n in allowed else granted).append(n)
+        for n in granted:
+            allowed.append(n)
+        parts = []
+        if already:
+            parts.append(f"{', '.join(already)} — already in scope, just call it.")
+        if granted:
+            parts.append(f"{', '.join(granted)} — in this run's toolkit, granted now, call it directly.")
+        return ("Yes: " + " ".join(parts) + " Do not ask again — proceed.")
 
     async def _ask_user(question: str) -> str:
         """Ask the user a question mid-step via the loop UI (and, if configured, a
@@ -9629,23 +12221,57 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
             for field, ref in (hop.get("from") or {}).items():
                 h_args[field] = _chain_ref(ref, chain_out)
             h_args, _cn = _coerce_args(hop_tool, h_args)
-            if model_set and _v5_is_generative(hop_tool):
-                _m = str(h_args.get("model") or "").strip()
-                if _m and _m not in model_set:
-                    h_args.pop("model", None)
-            if (artifact_dir_path and hop_tool in ("exec.bash.run", "exec.ps.run", "exec.code.run")
+            if _v5_is_generative(hop_tool):
+                # Route a code-authoring hop (e.g. the generate→run chain) to the
+                # coding cohort; else drop an invented model as before.
+                if not _v5_apply_code_routing(hop_tool, h_args):
+                    _m = str(h_args.get("model") or "").strip()
+                    if model_set and _m and _m not in model_set:
+                        h_args.pop("model", None)
+            if (artifact_dir_path and hop_tool in ("exec.bash.run", "exec.ps.run", "exec.code.run",
+                                                   "exec.python.run")
                     and isinstance(h_args, dict) and not str(h_args.get("cwd") or "").strip()):
                 h_args["cwd"] = artifact_dir_path
+            # By-path exec self-heal (same as the single-tool path): rewrite a
+            # guessed script path to the file auto-save actually wrote this run.
+            if (hop_tool in ("exec.python.run", "exec.code.run", "exec.node.run", "exec.ruby.run",
+                             "exec.php.run", "exec.perl.run", "exec.go.run", "exec.lua.run")
+                    and isinstance(h_args, dict) and saved_run_files):
+                _hp = str(h_args.get("path") or "").strip()
+                if _hp:
+                    _hgood = saved_run_files.get(_hp.replace("\\", "/").rsplit("/", 1)[-1])
+                    if _hgood and _hgood != _hp:
+                        h_args["path"] = _hgood
             gc += 1
             cur = gc
             await emit_event({"type": "agent_loop_v5.tool_call", "stream_id": stream_id,
                               "cycle": cur, "step_id": step_id, "tool": hop_tool, "args": h_args,
                               "thought": "(chained)", "session_id": sid})
             t0 = time.monotonic()
-            invoke = await call_tool(hop_tool, h_args, session_id=sid, trace_id=trace_id or "")
+            _hstream = _v5_make_tool_stream_cb(stream_id, step_id, cur, hop_tool, sid)
+            try:
+                invoke = await call_tool(hop_tool, h_args, session_id=sid, trace_id=trace_id or "",
+                                         stream_cb=_hstream)
+            except TypeError:
+                invoke = await call_tool(hop_tool, h_args, session_id=sid, trace_id=trace_id or "")
+            if stream_id:
+                await emit_event({"type": "agent_loop_v5.tool_stream_end", "stream_id": stream_id,
+                                  "step_id": step_id, "cycle": cur, "tool": hop_tool, "session_id": sid})
             if invoke.get("ok") and isinstance(invoke.get("result"), dict) and invoke["result"].get("error"):
                 invoke["ok"] = False
                 invoke["error"] = str(invoke["result"]["error"])
+            elif invoke.get("ok") and isinstance(invoke.get("result"), dict):
+                # Same rule as the single-tool path: a command that ran but exited
+                # non-zero is a FAILED hop, and a broken hop stops the chain.
+                _hres = invoke["result"]
+                if "rc" in _hres or _hres.get("ok") is False:
+                    try:
+                        _hrc = int(_hres.get("rc") or 0)
+                    except Exception:
+                        _hrc = 0
+                    if _hrc != 0 or _hres.get("ok") is False:
+                        invoke["ok"] = False
+                        invoke["error"] = _v5_result_failure_reason(_hres, _hrc)
             if (invoke.get("ok") and await_long_running and isinstance(invoke.get("result"), dict)
                     and _detect_job_id(invoke["result"])):
                 try:
@@ -9661,6 +12287,12 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                 except Exception as e:
                     log.debug("v5 chain long-running await failed for %s: %s", hop_tool, e)
             elapsed = round((time.monotonic() - t0) * 1000)
+            if invoke.get("ok"):
+                try:
+                    _v5_repair_gen_result(invoke, hop_tool, h_args,
+                                          step_title=str(step.get("title") or ""))
+                except Exception as _e:
+                    log.debug("v5 chain generation repair failed for %s: %s", hop_tool, _e)
             _budget = _v5_preview_budget(hop_tool)
             invoke_ok = bool(invoke.get("ok"))
             hop_unhelpful = False
@@ -9676,6 +12308,40 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                                               "thought": _think_prev[:1500], "session_id": sid})
                 hop_unhelpful = _v5_looks_unhelpful(preview) or _v5_embedded_error_ratio(invoke.get("result")) >= 0.5
                 if not hop_unhelpful:
+                    # A generative hop produces a DOCUMENT: show it raw and in full
+                    # (not JSON-escaped and cut), and persist it — same contract as
+                    # the single-tool path, so chaining into llm.generate still
+                    # leaves a real file behind.
+                    if _v5_is_generative(hop_tool) and _V5_GEN_AUTOSAVE_ON:
+                        _hgtxt = ""
+                        try:
+                            _hgtxt = _strip_think(_v5_gen_text(invoke["result"]) or "")[0].strip()
+                        except Exception:
+                            _hgtxt = ""
+                        if _hgtxt:
+                            _hres = invoke.get("result")
+                            _hpath = (str(_hres.get("path") or "")
+                                      if isinstance(_hres, dict) else "")
+                            if not _hpath:
+                                _hsv = await _v5_save_gen_document(
+                                    hop_tool, h_args, step, _hgtxt, cur, session_id=sid)
+                                _hpath = _hsv.get("path", "")
+                            preview = (_hgtxt if len(_hgtxt) <= _V5_GEN_INSTEP_MAX
+                                       else _v5_head_tail(_hgtxt, _V5_GEN_INSTEP_MAX))
+                            if _hpath:
+                                _hrel = os.path.basename(_hpath)
+                                preview += (f"\n\n[✓ SAVED — written IN FULL to ./{_hrel} in your "
+                                            f"working directory ({len(_hgtxt):,} chars); do not "
+                                            "write or re-generate it.]")
+                                outputs[f"file:{_hrel}"] = (
+                                    f"{_hrel}\nwritten by {hop_tool} ({len(_hgtxt):,} chars)")
+                                saved_run_files[_hrel] = _hpath
+                                await emit_event({"type": "agent_loop_v5.output_saved",
+                                                  "session_id": sid, "stream_id": stream_id,
+                                                  "cycle": cur, "step_id": step_id,
+                                                  "tool": hop_tool, "path": _hpath, "rel": _hrel,
+                                                  "chars": len(_hgtxt)})
+                            _budget = max(_budget, len(preview))
                     outputs[hop_tool] = preview[:_budget]
                     had_useful = True
                     ok = True
@@ -9685,7 +12351,9 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
             # Auto-save any generated code (same as the single-tool path).
             if invoke_ok and enable_code_autosave and _v5_is_generative(hop_tool):
                 try:
-                    _blocks = _v5_extract_code_blocks(_v5_gen_text(invoke.get("result")))
+                    _blocks = _v5_extract_code_blocks(
+                        _v5_gen_text(invoke.get("result")),
+                        name_hint=str(step.get("title") or step.get("goal") or ""))
                 except Exception:
                     _blocks = []
                 for _blk in _blocks[:6]:
@@ -9695,7 +12363,11 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                             message=f"v5 step {step_id} chain: {str(step.get('title',''))[:80]}",
                             lang=_blk["lang"], push_gitea=code_push_gitea)
                         if _r.get("ok"):
-                            outputs[f"file:{_r['path']}"] = f"saved v{_r['version']} → {_r.get('fs_path','')}"
+                            outputs[f"file:{_r['path']}"] = (
+                                f"{_r['path']}\nsaved v{_r['version']} → {_r.get('fs_path','')}")
+                            _rk = str(_r.get("path") or "").replace("\\", "/").rsplit("/", 1)[-1]
+                            if _rk:
+                                saved_run_files[_rk] = str(_r.get("fs_path") or _r.get("path") or "")
                     except Exception as e:
                         log.debug("v5 chain auto-save failed for %s: %s", _blk.get("filename"), e)
             chain_out.append(invoke.get("result"))
@@ -9778,6 +12450,7 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
         raw = await _safe_ollama_generate_dw(
             user_msg, system=sys, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True,
+            profile=LOOP_ROUTING_PROFILE, role="executor",
             stream_cb=(_cycle_stream_cb if stream_id else None))
         if stream_id:
             await emit_event({"type": "agent_loop_v5.think_stream_end",
@@ -9808,7 +12481,14 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
         if isinstance(_ask_q, list):
             _ask_q = "; ".join(str(x) for x in _ask_q if str(x).strip())
         if _ask_q and str(_ask_q).strip():
-            if not enable_step_questions:
+            _mech = _mechanical_cap_answer(str(_ask_q))
+            if _mech is not None:
+                # Capability-availability is a fact need_caps already answers —
+                # never worth a ~180s blocking round-trip to a human who cannot
+                # know it either. Observed live: 3 separate ~3-6min stalls in one
+                # run, one of them asking exactly this.
+                pending_note = _mech
+            elif not enable_step_questions:
                 pending_note = ("Asking the user is disabled for this run — proceed on your best "
                                 "assumption and state it, or emit `done`.")
             elif step_questions_asked >= _MAX_STEP_QUESTIONS:
@@ -9823,6 +12503,8 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                 pending_note = (("The user answered: " + _answer) if _answer
                                 else ("No answer within the time limit — proceed with your best "
                                       "assumption, and note the assumption you made."))
+                if _answer:
+                    user_clarifications.append({"question": str(_ask_q).strip(), "answer": _answer})
             continue
 
         # ── Chain: run an agent-authored pipeline of caps in ONE turn, piping each
@@ -9833,6 +12515,8 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                 pending_note = "Chaining is disabled for this run — make ONE tool_use per turn."
                 continue
             productive += 1
+            think_only_streak = 0       # acting resets the oscillation guard
+            dup_thought_hits = 0
             if thought:
                 await emit_event({"type": "agent_loop_v5.think", "stream_id": stream_id,
                                   "cycle": (gc + 1), "step_id": step_id,
@@ -9851,6 +12535,12 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
         args = tu.get("input") or action.get("args") or action.get("arguments") or {}
         if not isinstance(args, dict):
             args = {}
+        # Optional per-call condense STEER: the agent may shape how THIS tool's
+        # long output is summarised (focus / must-keep fields / max_chars) so the
+        # key info it needs survives. Only consulted when condense_output is on.
+        _condense_dir = raw_obj.get("condense") or action.get("condense") or {}
+        if not isinstance(_condense_dir, dict):
+            _condense_dir = {}
 
         # Some models emit the capability request AS a tool call
         # ({"tool_use":{"name":"need_caps","input":{"caps":[...]}}}) — fold it
@@ -9882,7 +12572,10 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                 rc = _v5_resolve_tool_name(rc, allowed, catalog_set)
                 if rc in allowed:        # normalised onto an already-granted cap
                     continue
-                if rc in catalog_set and rc in CAPABILITY_REGISTRY:
+                # No silent grant even on an EXPLICIT request — same reasoning as
+                # the direct-call path below: a step not planned with this cap
+                # should not be able to get it back just by asking twice.
+                if rc in catalog_set and rc in CAPABILITY_REGISTRY and rc not in _V5_NO_SILENT_GRANT_CAPS:
                     allowed.append(rc); granted.append(rc)
                 else:
                     denied.append(rc)
@@ -9893,14 +12586,31 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                                   "stream_id": stream_id, "step_id": step_id,
                                   "added": granted, "reason": "requested"})
             if granted or denied:
+                _no_grant_denied = [d for d in denied if d in _V5_NO_SILENT_GRANT_CAPS]
                 _gen_caution = ((" NOTE: generative caps (llm.*/ollama.*/agent.chat*) only write or "
                                  "transform text you supply — they CANNOT look up, browse, fetch, run, "
-                                 "or read. For research/lookup use web.search/web.fetch/research.quick_search; "
-                                 "for actions use exec.*/http.get.")
+                                 "or read. For research/lookup use web.search/web.fetch"
+                                 + (_research_hint(suffix="") and f"/{_research_hint()}" or "")
+                                 + "; for actions use exec.*/http.get.")
                                 if any(_v5_is_generative(c) for c in granted) else "")
+                if _no_grant_denied:
+                    _gen_caution += (
+                        f" {', '.join(_no_grant_denied)} specifically will NEVER be granted this way "
+                        "— it can only write/transform text you already give it, so asking it for a "
+                        "fact (a URL, an endpoint, a schema, real data) gets you a confident-sounding "
+                        "INVENTION, not a lookup. Use web.search/web.fetch/http.get for that instead.")
+                # Separate "real cap, not in this run's toolkit" from "not a
+                # capability at all" — a DAG/workflow name or an invented one.
+                _d_real = [d for d in denied if d in CAPABILITY_REGISTRY]
+                _d_fake = [d for d in denied if d not in CAPABILITY_REGISTRY]
                 pending_note = ("Scope updated. "
                                 + (f"Now also available: {', '.join(granted)}. " if granted else "")
-                                + (f"Not in the toolkit (denied): {', '.join(denied)}." if denied else "")
+                                + (f"Not in this run's toolkit (denied): {', '.join(_d_real)}. "
+                                   if _d_real else "")
+                                + (f"NOT capabilities at all — no such tool exists: "
+                                   f"{', '.join(_d_fake)}. A DAG/workflow name, a step title or a "
+                                   "remembered function name is not a capability; only ask for "
+                                   "exact cap names. " if _d_fake else "")
                                 + ((f" STOP requesting caps — you ALREADY have: {', '.join(allowed[:8])}. "
                                     "USE one of those now or emit a `done` summary.")
                                    if denied and not granted else "")
@@ -9937,24 +12647,51 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
         #    reasoning into a single "thinking" card and continue without
         #    spending the budget. ─────────────────────────────────────────────
         if not tool:
+            think_only_streak += 1
             if thought:
+                # Semantic de-dup: a thought that merely restates the previous one
+                # is oscillation, not progress. Don't emit it as fresh reasoning
+                # (it clutters the card and lets the model re-derive the same plan
+                # every turn) — just raise the pressure to COMMIT.
+                _prev_thought = (streak_thoughts[-1] if streak_thoughts
+                                 else (all_thoughts[-2] if len(all_thoughts) >= 2 else ""))
+                _is_dup = bool(_prev_thought) and _v7_goal_similarity(_prev_thought, thought) >= 0.7
                 if think_cycle is None:
                     gc += 1
                     think_cycle = gc
                     streak_thoughts = []
-                streak_thoughts.append(thought)
+                if _is_dup:
+                    dup_thought_hits += 1
+                else:
+                    streak_thoughts.append(thought)
+                    await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
+                                      "cycle": think_cycle, "step_id": step_id,
+                                      "thought": "\n\n".join(streak_thoughts)[:4000],
+                                      "session_id": sid})
+            # Back-to-back pure thinking accomplishes nothing actionable and tends
+            # to loop on the same reasoning. After a couple of thought-only turns
+            # (or ANY restatement), push HARD to act / request a cap / finish.
+            if think_only_streak >= 2 or dup_thought_hits:
+                pending_note = ("STOP planning — you have reasoned without acting. On your NEXT reply "
+                                "you MUST do ONE of: a concrete tool_use, a need_caps request, or a "
+                                "`done` summary with what you have. No more thought-only turns.")
+            # Hard stall guard: a step stuck deliberating this long is not making
+            # progress — end it (ok iff it already produced something useful) so
+            # the controller can remediate, rather than burning the turn budget.
+            if think_only_streak >= _MAX_THINK_STREAK:
+                if not result_summary:
+                    result_summary = (
+                        f"STEP STALLED: deliberated for {think_only_streak} turns without taking an "
+                        "action"
+                        + (" (repeatedly restating the same reasoning)" if dup_thought_hits else "")
+                        + ". " + ("Partial results were produced." if had_useful else "No work was done."))
+                ok = had_useful
                 await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
-                                  "cycle": think_cycle, "step_id": step_id,
-                                  "thought": "\n\n".join(streak_thoughts)[:4000],
+                                  "cycle": (gc + 1), "step_id": step_id,
+                                  "thought": "(auto-stopped: too many thought-only turns without "
+                                             "acting — ending the step so the plan can adapt.)",
                                   "session_id": sid})
-                # Back-to-back pure thinking accomplishes nothing actionable and
-                # tends to loop on the same reasoning — after a couple of
-                # thought-only turns, push the model to act, request a cap, or
-                # finish (consumed as a note on the next turn).
-                if len(streak_thoughts) >= 2:
-                    pending_note = ("You have reasoned for several turns without acting. Do NOT just "
-                                    "think again — now either make a concrete tool_use, request a "
-                                    "capability via need_caps, or emit a `done` summary.")
+                break
             continue
 
         # ── Productive turn (a tool attempt) — opens a real cycle + budget. ───
@@ -9963,6 +12700,8 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
         cur_cycle = gc
         think_cycle = None          # the thinking streak (if any) ends here
         streak_thoughts = []
+        think_only_streak = 0       # acting resets the oscillation guard
+        dup_thought_hits = 0
         await emit_event({"type": "agent_loop_v5.cycle_planning", "stream_id": stream_id,
                           "cycle": cur_cycle, "step_id": step_id, "session_id": sid})
         if thought:
@@ -9970,16 +12709,88 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                               "cycle": cur_cycle, "step_id": step_id,
                               "thought": thought[:1500], "session_id": sid})
 
+        # Map a model-emitted alias / separator-variant onto the REAL cap name
+        # BEFORE the scope check. The single-tool step path previously skipped
+        # this (only the chain path resolved names), so a hallucinated generic
+        # like `read_file`/`json_parser` — or a mere separator variant like
+        # `web_search` — bounced off the scope gate and burned a whole loop cycle
+        # (observed live). If it resolves to an in-scope cap it now just runs; if
+        # it resolves to an out-of-scope real cap the same gate still catches it,
+        # but with the canonical name so the need_caps guidance is correct.
+        _resolved_tool = _v5_resolve_tool_name(tool, allowed, catalog_set)
+        if _resolved_tool != tool:
+            tool = _resolved_tool
+
+        # ── Auto-grant instead of a denial round-trip ────────────────────────
+        # A cap that is in THIS RUN's catalog is already approved: need_caps
+        # grants it unconditionally (see the need_caps handler — it is not phase
+        # gated). So refusing the direct call only to say "request it with
+        # need_caps" costs a full cycle of ceremony and nothing else. Observed
+        # live as 4 of 38 tool calls in one run, every one of them a cap the
+        # specialist was entitled to (exec.python.run, web.fetch).
+        #
+        # Grant it, tell the specialist, and move on. Bounded per step so a model
+        # that fixates on a wrong-but-real cap still gets pulled up, and caps
+        # OUTSIDE the catalog (invented names, DAG titles, cap_guard-blocked
+        # tools) still hard-deny exactly as before — the real boundary is the
+        # catalog and the guard, not the per-step focus list.
+        # PHASE DISCIPLINE — narrow, and deliberately NOT "read-only".
+        # A verify phase is SUPPOSED to run things: its guide tells it to write
+        # the smallest test script and execute it, so exec.* must stay grantable
+        # or verification degrades to eyeballing. What it must never do is
+        # RE-AUTHOR the artifact it is checking. Observed live: a verify phase
+        # re-generated the script the act phase had just got working, ran the
+        # broken version, and destroyed a good result while "verifying" it.
+        # So: block only the AUTHORING caps in explore/verify; leave exec alone.
+        _phase_ro = phase in ("explore", "verify")
+        if (tool not in allowed and tool in catalog_set and tool in CAPABILITY_REGISTRY
+                and tool not in _V5_NO_SILENT_GRANT_CAPS
+                and auto_grants < _MAX_AUTO_GRANTS
+                and not (_phase_ro and tool in _V5_AUTHORING_CAPS)):
+            auto_grants += 1
+            allowed.append(tool)
+            _sig = rich_cap_signature(tool)
+            dynamic_caps_block = (dynamic_caps_block + "\n" + _sig) if dynamic_caps_block else _sig
+            pending_note = (f"(`{tool}` was not in this step's scope but IS in this run's "
+                            "toolkit — granted automatically so you don't lose a turn. "
+                            "It is now available.)")
+            await emit_event({"type": "agent_loop_v5.scope_widened", "session_id": sid,
+                              "stream_id": stream_id, "step_id": step_id,
+                              "added": [tool], "reason": "auto-granted on direct call"})
+
         if tool not in allowed:
             # Soft scope: the step is scoped to its assigned (+ any widened) caps,
             # but a cap that IS in the broader toolkit can be requested via
             # need_caps rather than hard-failing the specialist.
             _avail = ", ".join(allowed) or "(none — emit done)"
             _can_req = [c for c in catalog_set if c not in allowed][:12]
-            _msg = (f"'{tool}' is not in this step's scope. Allowed now: {_avail}. "
-                    + ("Request it with need_caps (it IS in the toolkit). " if tool in catalog_set
-                       else "It is not in the toolkit. ")
-                    + (f"Other requestable caps: {', '.join(_can_req)}." if _can_req else ""))
+            denied_tool_calls += 1
+            _real = tool in CAPABILITY_REGISTRY
+            if tool in _V5_NO_SILENT_GRANT_CAPS:
+                # This is not a "not in scope yet" gap — it is a redirect. The
+                # planner deliberately did not give this step llm.generate, and
+                # need_caps will NOT grant it either (same denylist), so don't
+                # dangle that as an option or the specialist just asks again.
+                _msg = (f"'{tool}' is not available for this step, and asking for it via need_caps "
+                        "will not grant it either — it CANNOT look anything up or verify a fact "
+                        "against reality, it only generates text from what you already put in the "
+                        "prompt. Asked for a real API's base URL/endpoint/schema, it will confidently "
+                        "INVENT one that may not exist. If you need that information, look it up for "
+                        "real: web.search for it, or web.fetch/http.get a URL you already know (e.g. "
+                        "the docs page). Allowed now: " + _avail + ".")
+            else:
+                _msg = ((f"'{tool}' is not in this step's scope. " if _real else
+                         f"There is NO capability called '{tool}' — that is not a tool name (a DAG or "
+                         "workflow name, a step title and a remembered function name are all NOT "
+                         "capabilities). ")
+                        + f"Allowed now: {_avail}. "
+                        + ("Request it with need_caps (it IS in the toolkit). " if tool in catalog_set
+                           else "It is not in the toolkit. ")
+                        + (f"Other requestable caps: {', '.join(_can_req)}." if _can_req else ""))
+            if denied_tool_calls >= 2:
+                _msg += (" You have now called a name that is not available twice. STOP guessing "
+                         "names: your next tool_use MUST use one of the allowed names above "
+                         "EXACTLY as written, or emit `done` with what you have.")
             # Recorded as a meta entry ("(denied …)") so it doesn't pollute the
             # unique-tool / ok stats on the final card.
             history.append({"tool": f"(denied {tool})", "ok": False, "preview": _msg,
@@ -9995,20 +12806,129 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
         coerced_args, coerce_notes = _coerce_args(tool, args)
         if coerce_notes:
             args = coerced_args
-        if (artifact_dir_path and tool in ("exec.bash.run", "exec.ps.run", "exec.code.run")
+        if (artifact_dir_path and tool in ("exec.bash.run", "exec.ps.run", "exec.code.run",
+                                            "exec.python.run")
                 and isinstance(args, dict) and not str(args.get("cwd") or "").strip()):
             args["cwd"] = artifact_dir_path
-        # Generative caps and the `model` argument:
-        #   LOCKED (default) — the specialist may NOT pick a model. Every
-        #   generative call runs on the RUN's model (the chat agent's); with no
-        #   run model, any specialist-chosen model is stripped so routing/agent
-        #   defaults apply. Unlock via workshop.gen_model_lock.
-        #   UNLOCKED — keep the old safety net: never let an INVENTED model
-        #   name through (e.g. 'gpt-3.5-turbo' on an Ollama cluster → 0 tokens).
+        # ── By-path exec self-heal ──────────────────────────────────────────
+        # The author→run handoff breaks when the executor runs a script by a
+        # GUESSED path (e.g. /tmp/foo.py) rather than where auto-save actually
+        # wrote it — observed live as `can't open file '/tmp/…': No such file`
+        # → verify fail → step_retry blow-up (the root of the 100-cycle runs).
+        # If it runs an exec cap by a `path` whose basename matches a file WE
+        # auto-saved this run, and the path differs from the known-good one,
+        # rewrite it to the real saved path so the run just works.
+        _EXEC_BY_PATH = ("exec.python.run", "exec.code.run", "exec.node.run", "exec.ruby.run",
+                         "exec.php.run", "exec.perl.run", "exec.go.run", "exec.lua.run")
+        if tool in _EXEC_BY_PATH and isinstance(args, dict) and saved_run_files:
+            _p = str(args.get("path") or "").strip()
+            if _p:
+                _good = saved_run_files.get(_p.replace("\\", "/").rsplit("/", 1)[-1])
+                if _good and _good != _p:
+                    args["path"] = _good
+                    await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
+                                      "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                                      "session_id": sid, "note": f"run path {_p} → {_good}"})
+        # ── RUN-BEFORE-AUTHOR guard ─────────────────────────────────────────
+        # The self-heal above only rescues a path whose basename WAS saved this
+        # run. The other half of the failure is running a script that does not
+        # exist ANYWHERE yet — observed live as
+        #   "python3: can't open file '/workspace/./fetch_pokemon_details.py'"
+        # The raw errno tells the specialist nothing about what to do, so it
+        # re-ran the same call, widened scope, and burned the step. Catch it
+        # BEFORE invoking and say the one useful thing: author the file first.
+        if (tool in _EXEC_BY_PATH and isinstance(args, dict)
+                and not str(args.get("code") or "").strip()):
+            _p = str(args.get("path") or "").strip()
+            _base = _p.replace("\\", "/").rsplit("/", 1)[-1] if _p else ""
+            if _p and _base and _base not in saved_run_files:
+                _exists = None
+                try:
+                    _exists = await _v6_check_paths_exist(sid, [_p])
+                    _exists = _exists.get(_p)
+                except Exception:
+                    _exists = None
+                if _exists is False:          # PROVABLY absent — never act on "unknown"
+                    missing_path_calls += 1
+                    # Same trap as the empty-exec guard below: the decrement means
+                    # _MAX_SAME_TOOL can never fire here, so this needs its own
+                    # ceiling or the step re-warns every cycle until the budget dies.
+                    tool_calls[tool] = max(0, tool_calls.get(tool, 1) - 1)   # not a real attempt
+                    _have = await _v5_workdir_files(sid) or []
+                    _authoring = ("code.author" if "code.author" in catalog_set else "llm.generate")
+                    _msg = (f"`{_p}` does not exist — nothing has written it yet, so there is "
+                            f"nothing to run. Do NOT retry this call.\n"
+                            + (f"Files that DO exist: {', '.join(_have[:20])}\n" if _have
+                               else "The working directory is EMPTY.\n")
+                            + (f"AUTHOR the script first: {_authoring}(path='{_base}', "
+                               "task='<what the script must do>', context_files=[<the real data "
+                               f"files it reads>]), THEN run it with {tool}(path='{_base}')."
+                               + ("" if _authoring in allowed
+                                  else f" Request `{_authoring}` with need_caps first.")))
+                    history.append({"tool": f"(skipped {tool})", "ok": False,
+                                    "preview": _msg, "args": args, "ms": 0})
+                    pending_note = _msg
+                    await emit_event({"type": "agent_loop_v5.arg_correction",
+                                      "stream_id": stream_id, "cycle": cur_cycle,
+                                      "step_id": step_id, "tool": tool, "session_id": sid,
+                                      "note": f"run-before-author: {_p} does not exist — "
+                                              "author it first"})
+                    await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
+                                      "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                                      "ok": False, "elapsed_ms": 0, "preview": _msg,
+                                      "error": f"{_p} does not exist — author it first",
+                                      "session_id": sid})
+                    if missing_path_calls >= _MAX_MISSING_PATH:
+                        result_summary = ((list(outputs.values())[-1] if outputs else "")
+                                          or ("STEP STALLED: tried to run a file that does not "
+                                              f"exist {missing_path_calls}× without ever authoring "
+                                              "it."))[:_V5_DONE_SUMMARY]
+                        ok = ok or had_useful
+                        await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
+                                          "cycle": (gc + 1), "step_id": step_id, "session_id": sid,
+                                          "thought": (f"(auto-wrapped: {missing_path_calls} attempts to run a "
+                                                      "non-existent file — ending the step rather than "
+                                                      "spending the rest of the budget on the same miss.)")})
+                        break
+                    continue
+        gen_save_hint = ""      # filename the specialist asked its generation be saved as
+        gen_saved_note = ""     # "…saved to ./x" note, re-applied after any code-autosave rebuild
         if _v5_is_generative(tool):
+            # ── Output-file argument ─────────────────────────────────────────
+            # The specialist may name the file its generation should land in.
+            # llm.generate takes `save_as` natively — normalise the aliases onto
+            # it (and drop the alias) so a save_to=/output_path=/filename= call
+            # doesn't bounce as an unknown arg and then get "fixed" by
+            # hand-writing the file with a shell heredoc. For the other
+            # generative caps the name is kept loop-side and the loop saves it.
+            if isinstance(args, dict):
+                _sa = str(args.get("save_as") or "").strip()
+                for _k in _V5_GEN_SAVE_ARGS:
+                    if _k == "save_as":
+                        continue
+                    _v = args.pop(_k, None)
+                    if not _sa and isinstance(_v, str) and _v.strip():
+                        _sa = _v.strip()
+                if _sa:
+                    if tool == "llm.generate":
+                        args["save_as"] = _sa.strip("/\\")
+                    else:
+                        args.pop("save_as", None)   # other generative caps don't take it
+                        gen_save_hint = _sa.strip("/\\")   # the loop saves it under this name
+            # ── The `model` argument ─────────────────────────────────────────
+            #   LOCKED (default) — the specialist may NOT pick a model. Every
+            #   generative call runs on the RUN's model (the chat agent's); with
+            #   no run model, any specialist-chosen model is stripped so
+            #   routing/agent defaults apply. Unlock via workshop.gen_model_lock.
+            #   UNLOCKED — keep the old safety net: never let an INVENTED model
+            #   name through ('gpt-3.5-turbo' on an Ollama cluster → 0 tokens).
             await _gen_model_lock_hydrate()
             _m = str(args.get("model") or "").strip()
-            if _gen_model_locked():
+            if _v5_apply_code_routing(tool, args):
+                # Code authoring → the coding cohort (coder role picks model+temp);
+                # bypasses the run-model lock on purpose so code goes to a coder.
+                pass
+            elif _gen_model_locked():
                 if model:
                     if _m and _m != model:
                         pending_note = (f"(note: model '{_m}' ignored — generative calls are "
@@ -10039,6 +12959,12 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                                    "to run. Pass the full command string in `command`.")
         if _empty_exec_msg:
             empty_exec_calls += 1
+            # NOTE the interaction: decrementing tool_calls (so a no-op doesn't
+            # count toward the stuck-loop guard) also means _MAX_SAME_TOOL can
+            # NEVER fire for this path. Without its own ceiling the step just
+            # re-warns every cycle until the whole budget is gone — observed live
+            # as "nothing to run (caught before invoke)" on cycles 11,12,13,14,
+            # each costing a full LLM call. So this needs to end the step itself.
             tool_calls[tool] = max(0, tool_calls.get(tool, 1) - 1)  # don't count no-ops toward stuck-loop
             if empty_exec_calls >= 2:
                 _empty_exec_msg += (" You have now done this twice — STOP. Ask yourself whether this "
@@ -10052,6 +12978,24 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                               "cycle": cur_cycle, "step_id": step_id, "tool": tool, "ok": False,
                               "elapsed_ms": 0, "preview": _empty_exec_msg,
                               "error": "nothing to run (caught before invoke)", "session_id": sid})
+            # A no-op call can't possibly have CHANGED whether we already have a
+            # useful result — so if one exists, don't wait for the full 3-strike
+            # ceiling to cash it in. Observed live: a genuinely successful chained
+            # exec.python.run was immediately followed by two empty calls; ending
+            # on the first of those (instead of burning a 2nd identical cycle)
+            # saves a wasted turn every time this happens.
+            if empty_exec_calls >= _MAX_EMPTY_EXEC or (had_useful and empty_exec_calls >= 1):
+                result_summary = ((list(outputs.values())[-1] if outputs else "")
+                                  or ("STEP STALLED: called an exec cap with nothing to run "
+                                      f"{empty_exec_calls}× and never supplied code or a path."))[:_V5_DONE_SUMMARY]
+                ok = ok or had_useful
+                await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
+                                  "cycle": (gc + 1), "step_id": step_id, "session_id": sid,
+                                  "thought": (f"(auto-wrapped: {empty_exec_calls} empty `{tool}` call(s) "
+                                              + ("after an already-useful result — " if had_useful else "")
+                                              + "ending the step instead of burning the remaining "
+                                              "cycles on the same no-op.)")})
+                break
             continue
 
         # ── Duplicate-call short-circuit: the specialist re-issued a call that
@@ -10090,14 +13034,404 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                             "same command again.\n\n" + _cached_preview[:_v5_preview_budget(tool)])
             continue
 
+        # ── Registry-served file read ────────────────────────────────────────
+        # A read of a file the RUN has already established, whose content has not
+        # changed, is answered from the registry. `success_sigs` above only spans
+        # one step, so without this a later step re-reads the same bytes in full
+        # (observed 3x on one search result). The registry is refreshed at every
+        # write, so "unchanged" means the run has seen no write since — and a
+        # changed file falls through and is re-read + re-verified normally.
+        if (tool in _V5_FILEREAD_CAPS and isinstance(args, dict)
+                and not _fileread_bypass):
+            _rp = _v5_art_key(str(args.get("path") or args.get("relpath") or ""))
+            _rec = artifacts.get(_rp) if _rp else None
+            if _rec and _rec.get("content") and fileread_served < _MAX_FILEREAD_SERVED:
+                fileread_served += 1
+                if fileread_served >= _MAX_FILEREAD_SERVED:
+                    _fileread_bypass = True     # next read goes to disk for real
+                preview = (f"{_rec['rel']} — served from this run's file registry "
+                           f"(unchanged since it was last read/written; "
+                           f"{_rec.get('size', 0):,} bytes"
+                           + (f", {_rec['checked_with']} clean" if _rec.get("checked_with")
+                              and _rec.get("parse_ok") else "")
+                           + ").\n"
+                           + (f"{_rec['schema']}\n" if _rec.get("schema") else "")
+                           + "\n" + _rec["content"][:_v5_preview_budget(tool)])
+                outputs[tool] = preview[:_v5_preview_budget(tool)]
+                history.append({"tool": tool, "ok": True, "preview": preview[:2000],
+                                "args": args, "ms": 0})
+                had_useful = True
+                ok = True
+                await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
+                                  "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                                  "ok": True, "elapsed_ms": 0,
+                                  "preview": preview[:2000], "session_id": sid,
+                                  "cached": "artifact-registry"})
+                pending_note = ("(that file was already in the run's registry and has not "
+                                "changed — served without re-reading. Its shape is above; "
+                                "act on it rather than reading it again.)")
+                continue
+
+        # ── Repeat of a call that already FAILED ─────────────────────────────
+        # The success cache above only covers calls that worked. A call that
+        # failed and is re-issued VERBATIM fails identically — the reported burn
+        # was the same `cat <invented path>` running three times. Serve the
+        # earlier error without re-invoking and demand a different approach.
+        _failed_before = failed_sigs.get(_call_sig)
+        if _failed_before is not None:
+            repeat_fail_calls += 1
+            # Third instance of the same trap (see the empty-exec and
+            # run-before-author guards): the decrement below means _MAX_SAME_TOOL
+            # can never fire on this path, so without its own ceiling the step
+            # re-serves the cached error every cycle until the budget is gone.
+            # Observed live as 4 consecutive "repeat of an identical failed call"
+            # on one step, each costing a full specialist LLM call.
+            tool_calls[tool] = max(0, tool_calls.get(tool, 1) - 1)   # not a fresh attempt
+            pending_note = (
+                f"You already ran `{tool}` with EXACTLY these arguments and it FAILED:\n"
+                f"{_failed_before[:800]}\n"
+                "Repeating it produces the same error. Change something real — a different file "
+                "(by RELATIVE name, from the ones that exist), a different capability, or a "
+                "different approach entirely — or emit `done` with what you have.")
+            await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
+                              "cycle": cur_cycle, "step_id": step_id, "tool": tool, "ok": False,
+                              "elapsed_ms": 0, "preview": pending_note,
+                              "error": "repeat of an identical failed call — not re-run",
+                              "session_id": sid})
+            if repeat_fail_calls >= _MAX_REPEAT_FAIL:
+                result_summary = ((list(outputs.values())[-1] if outputs else "")
+                                  or (f"STEP STALLED: re-issued the same failing `{tool}` call "
+                                      f"{repeat_fail_calls}× without changing anything.\n"
+                                      f"Last error:\n{_failed_before[:600]}"))[:_V5_DONE_SUMMARY]
+                ok = ok or had_useful
+                await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
+                                  "cycle": (gc + 1), "step_id": step_id, "session_id": sid,
+                                  "thought": (f"(auto-wrapped: {repeat_fail_calls} identical failing "
+                                              f"`{tool}` calls — ending the step so the controller "
+                                              "can remediate instead of burning the budget.)")})
+                break
+            continue
+
+        # ── EXEC-AUTHORING GATE ──────────────────────────────────────────────
+        # exec.python.run RUNS code; it must not be used to AUTHOR it. If the
+        # executor hand-types a whole PROGRAM inline (`code=`, no `path=`),
+        # redirect: author it in a code step (llm.generate → auto-saved file) and
+        # run it BY PATH. A command / trivial one-liner passes untouched. Bounded
+        # so a genuinely code-only step can't hard-stall (fail-open after N).
+        if tool in ("exec.python.run", "exec.code.run") \
+                and not str((args or {}).get("path") or "").strip() \
+                and _v5_is_substantial_code(str((args or {}).get("code") or "")) \
+                and exec_author_redirects < _MAX_EXEC_AUTHOR_REDIRECTS:
+            exec_author_redirects += 1
+            _inline = str((args or {}).get("code") or "")
+            _nl = _inline.count("\n") + 1
+            if "code.author" in catalog_set:
+                # Author it FOR the model (see the code-write gate): the path is
+                # derived from the step, the intent from the goal + the draft it
+                # typed, the grounding from what the run has saved. It then runs
+                # the file by path — one authored file instead of a hand-typed
+                # program the loop can neither version nor ground.
+                if "code.author" not in allowed:
+                    allowed.append("code.author")
+                    try:
+                        granted.append("code.author")
+                    except Exception:
+                        pass
+                _slug = _V5_SLUG_STRIP.sub("_", str(step.get("title") or "generated").lower()
+                                           ).strip("_")[:40] or "generated"
+                _ctx_files = [n for n in sorted(saved_run_files)
+                              if n.rsplit(".", 1)[-1].lower() in ("json", "csv", "txt", "md", "xml", "yaml")][:4]
+                _target = f"{_slug}.py"
+                # Move this cycle's call count onto the tool that will ACTUALLY
+                # run. `tool` is rebound below, but the count was booked against
+                # the tool the specialist asked for — leaving it there makes the
+                # stuck-loop guard read an unseeded key (KeyError, killing the
+                # whole run) and loses the attempt history for the redirect.
+                _orig_tool = tool
+                tool = "code.author"
+                tool_calls[tool] = tool_calls.get(tool, 0) + tool_calls.pop(_orig_tool, 1)
+                args = {
+                    "path": _target,
+                    "task": (f"{step.get('goal') or goal}\n\n"
+                             f"Write `{_target}`. An executor typed this ~{_nl}-line program "
+                             "inline; use it ONLY to understand the intent, then write the file "
+                             f"properly:\n{_inline[:4000]}"),
+                    "context_files": _ctx_files,
+                    "requirements": ("Parse the context files as they ACTUALLY are — do not guess "
+                                     "a schema. Print a clear error if an input is missing; never "
+                                     "produce an empty result silently."),
+                    "session_id": sid,
+                }
+                pending_note = (
+                    f"(the loop redirected your inline program to code.author → `{_target}`, "
+                    "written by the coding specialist against the real data files and versioned. "
+                    f"Run it next with exec.python.run(path='{_target}'). exec.* RUN code; a real "
+                    "script is authored by code.author, never typed inline.)")
+                _call_sig = _v5_call_sig(tool, args)   # the call that will ACTUALLY run
+                await emit_event({"type": "agent_loop_v5.exec_author_redirect",
+                                  "stream_id": stream_id, "cycle": cur_cycle, "step_id": step_id,
+                                  "session_id": sid, "path": _target, "lines": _nl,
+                                  "context_files": _ctx_files})
+            else:
+                # No authoring cap registered — fall back to asking.
+                tool_calls[tool] = max(0, tool_calls.get(tool, 1) - 1)   # not a real attempt
+                if "llm.generate" in catalog_set and "llm.generate" not in allowed:
+                    allowed.append("llm.generate")
+                    try:
+                        granted.append("llm.generate")
+                    except Exception:
+                        pass
+                    _gsig = rich_cap_signature("llm.generate")
+                    dynamic_caps_block = ((dynamic_caps_block + "\n" + _gsig)
+                                          if dynamic_caps_block else _gsig)
+                pending_note = (
+                    f"STOP — you passed a ~{_nl}-line PROGRAM inline to {tool}. exec.* EXECUTE "
+                    "code, they do NOT author it. Author the script with llm.generate as a fenced "
+                    "```python file=<name>.py block (it is saved & versioned), then run it with "
+                    "exec.python.run(path='<name>.py'). A shell command or a TRIVIAL one-liner may "
+                    "run inline; a real script must be authored and run by path.")
+                await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
+                                  "cycle": cur_cycle, "step_id": step_id, "tool": tool, "ok": False,
+                                  "elapsed_ms": 0, "preview": "",
+                                  "error": "exec-authoring redirect: author the script, run it by path",
+                                  "session_id": sid})
+                continue
+
+        # ── DOCUMENT-AUTHORING GATE ──────────────────────────────────────────
+        # The same rule for PROSE: a `cat <<EOF > report.md` heredoc means the
+        # executor is hand-typing the deliverable into a shell command. What lands
+        # on disk is a short, degraded stand-in for the document llm.generate would
+        # write — and the loop now saves generated documents by itself, so the
+        # heredoc is never necessary. Redirect it (bounded; fails open after N so a
+        # legitimate config-file write eventually goes through).
+        _doc_target = ""
+        if (_V5_GEN_AUTOSAVE_ON and tool in ("exec.bash.run", "exec.ps.run", "exec.ssh.run")
+                and "llm.generate" in catalog_set
+                and doc_author_redirects < _MAX_DOC_AUTHOR_REDIRECTS):
+            _doc_target = _v5_shell_authors_document(
+                str((args or {}).get("command") or (args or {}).get("cmd") or ""))
+        if _doc_target:
+            doc_author_redirects += 1
+            tool_calls[tool] = max(0, tool_calls.get(tool, 1) - 1)   # not a real attempt
+            _gen_hint = "it is already in your scope"
+            if "llm.generate" not in allowed:
+                allowed.append("llm.generate")
+                try:
+                    granted.append("llm.generate")
+                except Exception:
+                    pass
+                _gsig = rich_cap_signature("llm.generate")
+                dynamic_caps_block = (dynamic_caps_block + "\n" + _gsig) if dynamic_caps_block else _gsig
+                _gen_hint = "llm.generate has just been ADDED to your scope for this"
+            pending_note = (
+                f"STOP — you were hand-typing the contents of `{_doc_target}` into a shell command. "
+                "The deliverable must be WRITTEN BY the generative cap, not typed by you: what you "
+                "type is always a shorter, weaker version of the real document. Do this instead: "
+                f"call llm.generate({_gen_hint}) with save_as='{_doc_target}', the full writing "
+                "instruction in `prompt`, and the source material passed as files=['<saved file>', "
+                "…] — it generates the document AND writes it to that exact filename for you. Do "
+                "NOT then write the file again by any other means.")
+            await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
+                              "cycle": cur_cycle, "step_id": step_id, "tool": tool, "ok": False,
+                              "elapsed_ms": 0, "preview": "",
+                              "error": f"document-authoring redirect: generate {_doc_target} with "
+                                       "llm.generate(save_as=…) instead of a shell heredoc",
+                              "session_id": sid})
+            continue
+
+        # ── PROTECT PROVEN-GOOD CODE: re-author → surgical edit ──────────────
+        # code.author REPLACES the whole file. Aimed at a path that has already
+        # EXECUTED successfully, that throws away working code on the chance the
+        # next generation is as good — and observed live, it frequently is not:
+        # a script that had just loaded 151 records was re-authored and replaced
+        # by one that raised, and the run continued with the broken copy.
+        #
+        # The change the model wants is almost always small, so route it to
+        # code.edit, which shows the coder the CURRENT file and applies targeted
+        # edits, keeping everything it was not asked to change. Bounded, and only
+        # when the file is genuinely proven — an unrun or already-broken file is
+        # re-authored exactly as before.
+        if (tool == "code.author" and isinstance(args, dict)
+                and "code.edit" in catalog_set
+                and proven_redirects < _MAX_PROVEN_REDIRECTS):
+            _tp = _v5_art_key(str(args.get("path") or ""))
+            _prec = artifacts.get(_tp) if _tp else None
+            if _prec and _prec.get("ran_ok"):
+                proven_redirects += 1
+                if "code.edit" not in allowed:
+                    allowed.append("code.edit")
+                    _esig = rich_cap_signature("code.edit")
+                    dynamic_caps_block = ((dynamic_caps_block + "\n" + _esig)
+                                          if dynamic_caps_block else _esig)
+                _orig_task = str(args.get("task") or args.get("requirements") or "")
+                tool = "code.edit"
+                args = {"path": _tp, "task": _orig_task, "session_id": sid}
+                pending_note = (
+                    f"(`{_tp}` has already RUN successfully in this run, so re-writing it "
+                    "wholesale would discard working code. Your request was routed to "
+                    "code.edit, which changes only what you asked for and leaves the rest "
+                    "intact. If you genuinely need a from-scratch rewrite, author it under "
+                    "a DIFFERENT filename.)")
+                _call_sig = _v5_call_sig(tool, args)
+                await emit_event({"type": "agent_loop_v5.proven_code_protected",
+                                  "stream_id": stream_id, "cycle": cur_cycle,
+                                  "step_id": step_id, "session_id": sid, "path": _tp,
+                                  "reason": "re-author of a file that already ran ok — "
+                                            "redirected to code.edit"})
+
+        # ── CODE-WRITE GATE ──────────────────────────────────────────────────
+        # ide.fs.write is for DATA and documents. Hand-writing a script through
+        # it skips the coding model, skips grounding on the real input files, and
+        # skips versioning — so it produces worse code than the coding specialist
+        # would, silently. Route it to code.author, which does all three.
+        _code_write_target = ""
+        if (tool in ("ide.fs.write", "code.save") and "code.author" in catalog_set
+                and code_write_redirects < _MAX_CODE_WRITE_REDIRECTS):
+            _code_write_target = _v5_write_is_code(args)
+        if _code_write_target:
+            # DO the right thing rather than ask for it. Asking costs a turn and
+            # depends on the model complying; every argument code.author needs is
+            # already derivable here — the target path from the write call, the
+            # intent from the step goal plus the draft the model just typed, and
+            # the grounding files from what this run has actually saved. So the
+            # call is REWRITTEN in place and falls through to the normal invoke.
+            code_write_redirects += 1
+            if "code.author" not in allowed:
+                allowed.append("code.author")
+                try:
+                    granted.append("code.author")
+                except Exception:
+                    pass
+            _draft = str((args or {}).get("content") or (args or {}).get("text") or "")
+            _ctx_files = [n for n in sorted(saved_run_files)
+                          if n.rsplit(".", 1)[-1].lower() in ("json", "csv", "txt", "md", "xml", "yaml")][:4]
+            _orig_tool = tool
+            tool = "code.author"
+            # Carry the call count onto the tool that will ACTUALLY run — see the
+            # exec-authoring gate above (an unseeded key here raised KeyError in
+            # the stuck-loop guard and took the entire run down with it).
+            tool_calls[tool] = tool_calls.get(tool, 0) + tool_calls.pop(_orig_tool, 1)
+            args = {
+                "path": _code_write_target,
+                "task": (f"{step.get('goal') or goal}\n\n"
+                         f"Write `{_code_write_target}`. An executor drafted the file by hand; use "
+                         "the draft ONLY to understand the intent, then write it properly:\n"
+                         f"{_draft[:4000]}"),
+                "context_files": _ctx_files,
+                "requirements": ("Parse the context files as they ACTUALLY are — do not guess a "
+                                 "schema and do not add branches for shapes you were not shown. "
+                                 "Refer to data files by their relative names."),
+                "session_id": sid,
+            }
+            pending_note = (
+                f"(the loop redirected your hand-written `{_code_write_target}` to code.author — "
+                "the coding specialist wrote it against the real data files and it is versioned. "
+                "Use ide.fs.write only for DATA or documents; call code.author yourself next time.)")
+            _call_sig = _v5_call_sig(tool, args)       # the call that will ACTUALLY run
+            await emit_event({"type": "agent_loop_v5.code_write_redirect", "stream_id": stream_id,
+                              "cycle": cur_cycle, "step_id": step_id, "session_id": sid,
+                              "from_tool": _orig_tool, "path": _code_write_target,
+                              "context_files": _ctx_files})
+
+        # ── INVENTED-PATH GUARD ──────────────────────────────────────────────
+        # An absolute path pointing outside the working directory is a path the
+        # model remembered from somewhere else (/mnt/data, /content, /tmp…), not
+        # one this run created. Two outcomes: if we KNOW a file with that
+        # basename, silently rewrite to it (self-heal); otherwise refuse before
+        # invoking and hand back the directory's REAL contents. Bounded, then
+        # fail open so a genuinely absolute path (a host mount the step was told
+        # about) can still be used.
+        _foreign = _v5_foreign_abs_paths(args, artifact_dir_path) if path_redirects < _MAX_PATH_REDIRECTS else []
+        if _foreign:
+            # Probe before judging: a path that REALLY exists where the call will
+            # run (inside the container when sandboxed, else on the host) is
+            # legitimate however absolute it looks — only confirmed-missing paths
+            # are invented.
+            try:
+                _pex = await _v6_check_paths_exist(sid, _foreign)
+            except Exception:
+                _pex = {}
+            _foreign = [p for p in _foreign
+                        if not (_pex.get(p) is True
+                                or (p not in _pex and os.path.exists(p)))]
+        if _foreign:
+            _known = dict(saved_run_files)
+            for _k in list(outputs.keys()):
+                if str(_k).startswith("file:"):
+                    _known.setdefault(str(_k)[5:].rsplit("/", 1)[-1], str(_k)[5:])
+            # Refresh from the real directory — files written earlier THIS step
+            # (or by an earlier step) must count as known.
+            for _n in (await _v5_workdir_files(sid) or []):
+                _known.setdefault(_n.rstrip("/"), _n.rstrip("/"))
+            _fix = {}
+            for _p in _foreign:
+                _bn = _p.replace("\\", "/").rsplit("/", 1)[-1]
+                if _bn in _known:
+                    _fix[_p] = "./" + _bn
+            if _fix:
+                args = _v5_rewrite_strings(args, _fix)
+                await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
+                                  "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                                  "session_id": sid,
+                                  "note": "; ".join(f"{b} → {g}" for b, g in _fix.items())})
+            _still = [p for p in _foreign if p not in _fix]
+            if _still:
+                path_redirects += 1
+                tool_calls[tool] = max(0, tool_calls.get(tool, 1) - 1)   # not a real attempt
+                _have = ", ".join(sorted(_known)[:25]) or "(nothing yet)"
+                pending_note = (
+                    "STOP — " + ", ".join(_still[:3]) + " does NOT exist. That is an absolute path "
+                    "from a DIFFERENT environment, not this run's working directory; nothing of "
+                    "yours is ever at /mnt/…, /content/…, /tmp/… or C:\\…, and re-trying it will "
+                    "fail exactly the same way.\n"
+                    f"The files that ACTUALLY exist in your working directory are: {_have}.\n"
+                    "Use one of those by RELATIVE name (e.g. `./name.json`), or run `ls -la` with "
+                    "exec.bash.run to look — do not guess a filename. If the file you want isn't "
+                    "there, it was never created: produce it in this step instead of reading it.")
+                history.append({"tool": f"(invented path {tool})", "ok": False,
+                                "preview": pending_note, "args": args, "ms": 0})
+                await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
+                                  "cycle": cur_cycle, "step_id": step_id, "tool": tool, "ok": False,
+                                  "elapsed_ms": 0, "preview": pending_note,
+                                  "error": "invented absolute path (caught before invoke): "
+                                           + ", ".join(_still[:3]),
+                                  "session_id": sid})
+                continue
+
         await emit_event({"type": "agent_loop_v5.tool_call", "stream_id": stream_id,
                           "cycle": cur_cycle, "step_id": step_id, "tool": tool, "args": args,
                           "thought": thought, "session_id": sid})
         t0 = time.monotonic()
-        invoke = await call_tool(tool, args, session_id=sid, trace_id=trace_id or "")
+        _tstream = _v5_make_tool_stream_cb(stream_id, step_id, cur_cycle, tool, sid)
+        try:
+            invoke = await call_tool(tool, args, session_id=sid, trace_id=trace_id or "",
+                                     stream_cb=_tstream)
+        except TypeError:
+            # call_tool implementations that predate stream_cb (e.g. an older
+            # fallback shim) don't accept the kwarg at all — degrade to the
+            # plain call rather than failing every tool invocation over a
+            # UI-only feature.
+            invoke = await call_tool(tool, args, session_id=sid, trace_id=trace_id or "")
+        if stream_id:
+            await emit_event({"type": "agent_loop_v5.tool_stream_end", "stream_id": stream_id,
+                              "step_id": step_id, "cycle": cur_cycle, "tool": tool, "session_id": sid})
         if invoke.get("ok") and isinstance(invoke.get("result"), dict) and invoke["result"].get("error"):
             invoke["ok"] = False
             invoke["error"] = str(invoke["result"]["error"])
+        # A COMMAND that ran but FAILED (`rc: 1`, `ok: false` — e.g. `cat: no such
+        # file`) is not a usable result. Without this the loop cached the failure
+        # as a success, served it back on the repeat, and then "auto-completed"
+        # the step on a command that never worked.
+        elif invoke.get("ok"):
+            _rres = invoke.get("result")
+            if isinstance(_rres, dict) and ("rc" in _rres or _rres.get("ok") is False):
+                try:
+                    _rc = int(_rres.get("rc") or 0)
+                except Exception:
+                    _rc = 0
+                if _rc != 0 or _rres.get("ok") is False:
+                    invoke["ok"] = False
+                    invoke["error"] = _v5_result_failure_reason(_rres, _rc)
 
         # ── Long-running jobs: a cap like research.*/ml.*/exec.* returns a job_id
         #    immediately and streams the REAL output over seconds–minutes. Await
@@ -10122,6 +13456,22 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
             except Exception as e:
                 log.debug("v5 long-running await failed for %s: %s", tool, e)
         elapsed = round((time.monotonic() - t0) * 1000)
+
+        # ── Repair a mis-shaped generation BEFORE anything reads it ──────────
+        # JSON-wrapped or unfenced code is normalised in place, so the code
+        # autosave, the document save and the next cycle's observation all see
+        # real, fenced source instead of an escaped string in an envelope.
+        if invoke.get("ok"):
+            try:
+                _rep_note = _v5_repair_gen_result(invoke, tool, args,
+                                                  step_title=str(step.get("title") or ""))
+                if _rep_note:
+                    pending_note = (pending_note + " " if pending_note else "") + _rep_note
+                    await emit_event({"type": "agent_loop_v5.gen_repaired", "session_id": sid,
+                                      "stream_id": stream_id, "cycle": cur_cycle,
+                                      "step_id": step_id, "tool": tool, "note": _rep_note})
+            except Exception as _e:
+                log.debug("v5 generation repair failed for %s: %s", tool, _e)
 
         invoke_ok = bool(invoke.get("ok"))
         # A call can SUCCEED yet return junk (consent/captcha/redirect page). Treat
@@ -10156,6 +13506,23 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                                "internal steps reported errors — treat as failed/partial and "
                                "pivot)\n") + preview
                 else:
+                    # ── Discovery results are NAMES, not callable tools ───────
+                    # A DAG search returns saved WORKFLOW names ("Get PokeAPI Gen
+                    # 1 Endpoints"); a cap search returns cap names not yet in
+                    # scope. Both land in the observation next to the real
+                    # capability list and get called directly — the reported
+                    # phantom-capability calls. Label them at the source.
+                    if tool in _V5_DAG_SEARCH_CAPS:
+                        preview = (
+                            "[These are saved DAG WORKFLOWS, not capabilities. You CANNOT call one "
+                            "by its name — a workflow name is not a tool. Use them only as "
+                            "reference for how a job was done before; to actually execute one you "
+                            "need the dag.run capability (request it via need_caps).]\n\n") + preview
+                    elif tool in _V5_CAP_SEARCH_CAPS:
+                        preview = (
+                            "[These are capability NAMES. A name found here is NOT yet callable — "
+                            "request the ones you want with need_caps first; only names in your "
+                            "capability list can be used in tool_use.]\n\n") + preview
                     # ── Long-output condenser (opt-in): a big tool/script result
                     #    would be HARD-TRUNCATED to _budget, losing the tail. When
                     #    enabled, condense the FULL output into a dense brief that
@@ -10178,21 +13545,93 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                             try:
                                 import importlib as _il2
                                 _ex = _il2.import_module("Vera.vera.execution.exec_capabilities")
-                                _fn = f"_output_{tool.replace('.', '_')}_{cur_cycle}.txt"
+                                _fn = _v5_output_filename(tool, args, _full, cur_cycle)
                                 _full_path = await _ex.write_artifact_file(
                                     relpath=_fn, content=_full, session_id=sid)
                             except Exception as _e:
                                 log.debug("condense full-output write failed: %s", _e)
                                 _full_path = ""
-                            _cond = await _v5_condense_output(
-                                _full, tool, step.get("goal") or goal,
-                                model=model, instance_id=instance_id, prefer_gpu=prefer_gpu)
+                            _struct = None
+                            if not tool.startswith("exec."):
+                                try:
+                                    _struct = _v5_structured_brief(_full, tool)
+                                except Exception:
+                                    _struct = None
+                            if tool.startswith("exec."):
+                                # The agent ran/inspected this itself (cat/grep/a
+                                # script) — show REAL content as a deterministic
+                                # head+tail, never an LLM brief.
+                                _cond = _v5_head_tail(_full)
+                            elif _struct is not None:
+                                # Structured (JSON) data → a DETERMINISTIC brief with the
+                                # REAL item count + where the list lives; the FULL data is
+                                # on disk. Never an LLM 'summary' (it fabricates counts on
+                                # data). AUTO-GRANT a parser so the agent can ACT on the
+                                # data instead of circling: json.load-ing the saved file
+                                # needs exec.python.run — hand it over now (on top, no slot
+                                # cost) when it's in the toolkit but not yet in scope.
+                                _cond = _struct
+                                if "exec.python.run" in catalog_set and "exec.python.run" not in allowed:
+                                    allowed.append("exec.python.run")
+                                    _psig = rich_cap_signature("exec.python.run")
+                                    dynamic_caps_block = ((dynamic_caps_block + "\n" + _psig)
+                                                          if dynamic_caps_block else _psig)
+                                    await emit_event({"type": "agent_loop_v5.scope_widened",
+                                                      "session_id": sid, "stream_id": stream_id,
+                                                      "step_id": step_id, "added": ["exec.python.run"],
+                                                      "reason": "parse structured output"})
+                            elif _condense_dir:
+                                # The agent EXPLICITLY asked to shape a summary of THIS
+                                # output (steerable summaries) — honour it. Without that
+                                # opt-in the full output stays available (default below).
+                                _cm = int(_condense_dir.get("max_chars") or 0)
+                                _cond = await _v5_condense_output(
+                                    _full, tool, step.get("goal") or goal,
+                                    model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+                                    focus=str(_condense_dir.get("focus") or ""),
+                                    keep=_condense_dir.get("keep") or None,
+                                    max_out=(min(max(_cm, 500), int(_V5_CONDENSE_OUT_MAX * 1.5))
+                                             if _cm else _V5_CONDENSE_OUT_MAX))
+                            else:
+                                # DEFAULT: the full output stays usable WITHIN the step — a
+                                # deterministic head+tail here, the COMPLETE output on disk.
+                                # No cycle-to-cycle LLM summary (it strips the very detail
+                                # the agent needs to act on); LLM summaries are reserved for
+                                # the step's cross-step RESULT, not its own working view.
+                                _cond = _v5_head_tail(_full)
+                            # Surface the file by its BASENAME (relative to the run's
+                            # working dir), never the absolute path — an absolute
+                            # host path (/home/<user>/.vera_artifacts/…) is internal
+                            # storage the sandbox can't see, and the agent copies it
+                            # verbatim into scripts. A relative name resolves in the
+                            # exec cwd whether the run is sandboxed (/workspace) or not.
+                            _full_rel = os.path.basename(_full_path) if _full_path else ""
+                            # The file's real SHAPE travels with it — in-step and,
+                            # via the file: output below, into every later step and
+                            # into code.author's context. Without it the next step
+                            # guesses the schema and writes code for a shape that
+                            # isn't there.
+                            _schema = _v5_file_schema_note(_full) if _full_rel else ""
                             _tail = (f"\n\n[output condensed from {len(_full):,} chars — "
-                                     + (f"FULL output saved to {_full_path}; inspect specific "
-                                        "parts with exec.bash.run grep/sed/cat if you need more."
-                                        if _full_path else
+                                     + (f"FULL output saved to ./{_full_rel} (in your working "
+                                        "directory); inspect it with exec.bash.run grep/sed/cat by "
+                                        "RELATIVE name if you need more."
+                                        if _full_rel else
                                         "full output could NOT be persisted this run — if you need "
-                                        "detail beyond this brief, re-run the tool.") + "]")
+                                        "detail beyond this brief, re-run the tool.") + "]"
+                                     + (f"\n{_schema}" if _schema else ""))
+                            if _full_rel:
+                                # Path FIRST (the journal probes line 1), schema next.
+                                outputs[f"file:{_full_rel}"] = (
+                                    f"{_full_rel}\n{_schema or 'saved output of ' + tool}")
+                                saved_run_files[_full_rel] = _full_path
+                                # Register the FULL text now. This is the file that
+                                # was re-read three times in one run: the content is
+                                # already in hand here, so a later read never has to
+                                # go back to disk for it.
+                                _v5_register_artifact(artifacts, _full_rel, _full,
+                                                      produced_by=f"{tool} output (step {step_id})",
+                                                      fs_path=_full_path)
                             preview = _cond + _tail
                             # Keep the condensed brief intact — don't let the
                             # tool's normal preview budget re-truncate it below.
@@ -10202,7 +13641,88 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                                               "cycle": cur_cycle, "step_id": step_id, "tool": tool,
                                               "raw_chars": len(_full), "condensed_chars": len(_cond),
                                               "full_path": _full_path})
+                    elif _v5_is_generative(tool) and _V5_GEN_AUTOSAVE_ON:
+                        # ── Generated text: the WHOLE document, in-step and on disk ──
+                        # Two problems this fixes, both reported: (1) the result was
+                        # shown JSON-ENCODED and cut at the preview budget, so the
+                        # ephemeral agent of the next cycle could not read back what
+                        # it had just written and re-generated or hand-wrote it; (2)
+                        # nothing persisted it, so "write the report" steps ended with
+                        # no file and the next step went hunting for a path. Show the
+                        # RAW text (full, up to a generous ceiling) and write the
+                        # document to the run's working directory ourselves.
+                        _gtxt = ""
+                        try:
+                            _gtxt = _strip_think(_v5_gen_text(invoke["result"]) or "")[0].strip()
+                        except Exception:
+                            _gtxt = ""
+                        if _gtxt:
+                            _res_o = invoke.get("result")
+                            # The cap may have saved it already (llm.generate save_as=).
+                            _gpath = (str(_res_o.get("path") or "")
+                                      if isinstance(_res_o, dict) else "")
+                            if not _gpath:
+                                _sv = await _v5_save_gen_document(
+                                    tool, args, step, _gtxt, cur_cycle,
+                                    session_id=sid, name_hint=gen_save_hint)
+                                _gpath = _sv.get("path", "")
+                            _grel = os.path.basename(_gpath) if _gpath else ""
+                            preview = (_gtxt if len(_gtxt) <= _V5_GEN_INSTEP_MAX
+                                       else _v5_head_tail(_gtxt, _V5_GEN_INSTEP_MAX))
+                            if _grel:
+                                gen_saved_note = (
+                                    f"\n\n[✓ SAVED — this generation was written IN FULL to ./{_grel} "
+                                    f"in your working directory ({len(_gtxt):,} chars). The file "
+                                    "EXISTS: do NOT write it again with ide.fs.write or a shell "
+                                    "heredoc, and do not re-generate it. Refer to it by that RELATIVE "
+                                    "name; ide.fs.read it if you need it back.]")
+                                preview += gen_saved_note
+                                # Value LEADS with the bare relative path: the journal
+                                # takes the first line as the artifact path and PROBES
+                                # it, so a decorated string ("llm.generate wrote …")
+                                # would be probed, found missing, and dropped as a
+                                # phantom — losing the very file we just wrote.
+                                outputs[f"file:{_grel}"] = (
+                                    f"{_grel}\nwritten by {tool} ({len(_gtxt):,} chars)")
+                                saved_run_files[_grel] = _gpath
+                                await emit_event({"type": "agent_loop_v5.output_saved",
+                                                  "session_id": sid, "stream_id": stream_id,
+                                                  "cycle": cur_cycle, "step_id": step_id,
+                                                  "tool": tool, "path": _gpath, "rel": _grel,
+                                                  "chars": len(_gtxt)})
+                            # Never let the ordinary preview budget cut the document
+                            # the specialist has to work with this step.
+                            _budget = max(_budget, len(preview))
                     outputs[tool] = preview[:_budget]
+                    # A cap that REPORTS a file it wrote (code.author, code.save,
+                    # ide.fs.write) registers it as an artifact — that is what
+                    # carries the file into the journal, into later steps' context
+                    # and into the by-path exec self-heal. Without it a step's
+                    # successor has no idea the file exists and re-derives it.
+                    _wres = invoke.get("result")
+                    if isinstance(_wres, dict):
+                        _wrote = str(_wres.get("path") or "").strip()
+                        if _wrote and (_wres.get("version") is not None
+                                       or _wres.get("bytes") is not None
+                                       or _wres.get("fs_path")):
+                            _wrel = os.path.basename(_wrote.replace("\\", "/"))
+                            if _wrel:
+                                outputs[f"file:{_wrel}"] = f"{_wrel}\nwritten by {tool}"
+                                saved_run_files[_wrel] = str(_wres.get("fs_path") or _wrote)
+                                # Same as the autosave path: a cap that just WROTE
+                                # a script (code.author above all) has almost
+                                # certainly set up a run, so put the runner in
+                                # scope now rather than after a refused call.
+                                _rc = _v5_runner_cap(str(_wres.get("lang") or ""), _wrote)
+                                if _rc and _rc in catalog_set and _rc not in allowed:
+                                    allowed.append(_rc)
+                                    _rsig = rich_cap_signature(_rc)
+                                    dynamic_caps_block = ((dynamic_caps_block + "\n" + _rsig)
+                                                          if dynamic_caps_block else _rsig)
+                                    await emit_event({"type": "agent_loop_v5.scope_widened",
+                                                      "session_id": sid, "stream_id": stream_id,
+                                                      "step_id": step_id, "added": [_rc],
+                                                      "reason": f"granted to run {_wrel}"})
                     had_useful = True
                     ok = True
                     success_sigs[_call_sig] = preview[:_budget]   # remember for dup short-circuit
@@ -10210,6 +13730,9 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
             preview = "ERROR: " + str(invoke.get("error", "unknown error"))
             if coerce_notes:
                 preview += "\n\nNote: args auto-coerced: " + "; ".join(coerce_notes[:4])
+            # Remember the exact failure so a verbatim repeat is answered from
+            # here instead of being run again for the same error.
+            failed_sigs[_call_sig] = preview[:1200]
 
         # ── Auto-save generated code: any fenced code a generative cap produced
         #    is versioned into the code store automatically (no ide.fs.write step
@@ -10217,7 +13740,9 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
         #    only ever sees the LATEST version. ────────────────────────────────
         if invoke_ok and enable_code_autosave and _v5_is_generative(tool):
             try:
-                blocks = _v5_extract_code_blocks(_v5_gen_text(invoke.get("result")))
+                blocks = _v5_extract_code_blocks(
+                    _v5_gen_text(invoke.get("result")),
+                    name_hint=str(step.get("title") or step.get("goal") or ""))
             except Exception:
                 blocks = []
             saved: List[Dict[str, Any]] = []
@@ -10234,22 +13759,71 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
             if saved:
                 had_useful = True
                 ok = True
+                # Did the underlying generation get CUT OFF at its length limit?
+                # llm.generate now reports this; a truncated file is saved but
+                # INCOMPLETE, so the stub/notes below must tell the agent to
+                # finish it rather than declaring it complete.
+                _res_obj = invoke.get("result")
+                _gen_trunc = bool(_res_obj.get("truncated")) if isinstance(_res_obj, dict) else False
                 _slist = "; ".join(f"{s['path']} v{s['version']}"
                                    + (" (unchanged)" if s.get("unchanged") else "") for s in saved)
                 # Rebuild the preview with the saved code fences stubbed out —
-                # the agent sees "saved, COMPLETE" notes instead of code that
-                # the preview budget may have cut mid-fence (the #1 trigger for
-                # 'complete the truncated code' regenerate loops).
+                # the agent sees "saved" notes instead of code that the preview
+                # budget may have cut mid-fence (the #1 trigger for 'complete the
+                # truncated code' regenerate loops).
                 try:
-                    _stubbed = _v5_stub_code_fences(_v5_gen_text(invoke.get("result")), saved)
+                    _stubbed = _v5_stub_code_fences(_v5_gen_text(invoke.get("result")), saved,
+                                                    truncated=_gen_trunc)
                     if _stubbed:
                         preview = _result_preview(_stubbed, max_len=_budget)
                         outputs[tool] = preview[:_budget]
                 except Exception:
                     pass
-                preview = preview + f"\n\n[auto-saved & versioned: {_slist}]"
+                preview = preview + (
+                    f"\n\n[⚠ auto-saved but INCOMPLETE (generation truncated at length limit): {_slist}]"
+                    if _gen_trunc else f"\n\n[auto-saved & versioned: {_slist}]")
+                # The fence-stub rebuild above replaced the preview — re-attach the
+                # document-saved note so the agent doesn't lose the path to the
+                # prose file the loop wrote alongside the code.
+                if gen_saved_note:
+                    preview += gen_saved_note
                 for s in saved:
-                    outputs[f"file:{s['path']}"] = f"saved v{s['version']} → {s.get('fs_path','')}"
+                    # Path first (own line) — the journal probes the first line, and a
+                    # "saved v1 → …" prefix made every auto-saved code file fail that
+                    # probe and get dropped as a phantom.
+                    outputs[f"file:{s['path']}"] = (
+                        f"{s['path']}\nsaved v{s['version']} → {s.get('fs_path','')}")
+                    # Register a known-good runnable path (prefer the mirrored
+                    # fs_path — absolute, cwd-independent) keyed by basename, so a
+                    # later exec-by-path that guesses the wrong dir self-heals.
+                    _rk = str(s.get("path") or "").replace("\\", "/").rsplit("/", 1)[-1]
+                    if _rk:
+                        saved_run_files[_rk] = str(s.get("fs_path") or s.get("path") or "")
+                        # Autosaved code enters the registry with its parse status,
+                        # so a later step is told whether it is even valid before
+                        # it tries to run or edit it.
+                        _v5_register_artifact(
+                            artifacts, _rk, s.get("code") or "",
+                            produced_by=f"code autosave (step {step_id})",
+                            fs_path=str(s.get("fs_path") or ""), lang=s.get("lang", ""))
+                    # ── Grant the RUNNER for what we just wrote ──────────────
+                    # A step that has produced a script almost always needs to run
+                    # it next, but the runner is rarely in the step's assigned
+                    # caps — so the specialist called exec.python.run, was refused,
+                    # spent a cycle on need_caps, and only then ran it. Observed as
+                    # a recurring share of failed calls. Writing the file is the
+                    # signal that the runner is wanted; grant it now.
+                    _rc = _v5_runner_cap(s.get("lang", ""), s.get("path", ""))
+                    if _rc and _rc in catalog_set and _rc not in allowed:
+                        allowed.append(_rc)
+                        _rsig = rich_cap_signature(_rc)
+                        dynamic_caps_block = ((dynamic_caps_block + "\n" + _rsig)
+                                              if dynamic_caps_block else _rsig)
+                        await emit_event({"type": "agent_loop_v5.scope_widened",
+                                          "session_id": sid, "stream_id": stream_id,
+                                          "step_id": step_id, "added": [_rc],
+                                          "reason": f"granted to run the {s.get('lang','')} "
+                                                    f"file this step just saved"})
                 await emit_event({"type": "agent_loop_v5.code_saved", "stream_id": stream_id,
                                   "cycle": cur_cycle, "step_id": step_id, "session_id": sid,
                                   "files": [{"path": s["path"], "version": s["version"],
@@ -10259,14 +13833,52 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
                                              "gitea": (s.get("gitea") or {}).get("url", "")}
                                             for s in saved]})
                 _run_hint = (saved[0].get("fs_path") or saved[0]["path"])
-                pending_note = (f"Saved & versioned: {_slist}. These persist; you see the LATEST "
-                                f"version. To run, use exec.python.run(path='{_run_hint}'). Do NOT "
-                                "ide.fs.write them — that is automatic.")
+                if _gen_trunc:
+                    pending_note = (
+                        f"Saved but INCOMPLETE: {_slist} — the generation was CUT OFF at its length "
+                        "limit. Finish the file before moving on: regenerate the COMPLETE file with "
+                        "the SAME file= label (re-saving overwrites to a new version), or split it "
+                        "into multiple files if it is too large for one response. Do NOT report the "
+                        "step done while the file is truncated.")
+                else:
+                    pending_note = (f"Saved & versioned: {_slist}. These persist; you see the LATEST "
+                                    f"version. To run, use exec.python.run(path='{_run_hint}'). Do NOT "
+                                    "ide.fs.write them — that is automatic.")
 
         # File-read truncation guidance: a capped file-read display used to make the
         # specialist re-read the file forever (it read the cut display as "the file
         # is partial"). Tell it the read COMPLETED and how to see the rest without
         # re-reading the whole thing.
+        # ── Mark a file PROVEN-GOOD when it actually runs ───────────────────
+        # "It executed successfully" is the strongest evidence a file is correct —
+        # far stronger than "it parses". Recording it is what lets the run refuse
+        # to silently replace working code with a fresh guess (see the
+        # code.author → code.edit redirect below). Observed live: a script that
+        # had just printed "Loaded 151 entries" was re-authored on the same path
+        # and replaced with one that raised, and the run carried on with the
+        # broken copy.
+        if (invoke_ok and tool in _EXEC_BY_PATH and isinstance(args, dict)
+                and isinstance(invoke.get("result"), dict)
+                and invoke["result"].get("rc") == 0):
+            _ran = _v5_art_key(str(args.get("path") or ""))
+            if _ran and _ran in artifacts:
+                artifacts[_ran]["ran_ok"] = True
+                artifacts[_ran]["ran_at_hash"] = artifacts[_ran].get("hash", "")
+
+        # A file that has just been READ enters the registry with its shape and
+        # parse status established — so the NEXT step is told what is in it
+        # instead of reading it again to find out.
+        if invoke_ok and tool in _V5_FILEREAD_CAPS:
+            try:
+                _r = invoke.get("result")
+                if isinstance(_r, dict) and _r.get("content") is not None:
+                    _v5_register_artifact(
+                        artifacts, str(_r.get("path") or args.get("path") or ""),
+                        str(_r.get("content") or ""),
+                        produced_by=f"read in step {step_id}")
+            except Exception as _e:
+                log.debug("artifact register (read) failed: %s", _e)
+
         if invoke_ok and tool in _V5_FILEREAD_CAPS and "display truncated" in (preview or ""):
             pending_note = ("The file was read IN FULL — only the DISPLAY was capped to fit context. "
                             "Do NOT re-read the whole file. To inspect a specific part use exec.bash.run "
@@ -10325,16 +13937,22 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
         # the specialist just kept re-running — that's a completion, not a
         # failure; (b) the calls never produced a usable result — that's a genuine
         # give-up-and-move-on.
-        if tool_calls[tool] >= _MAX_SAME_TOOL:
+        # `.get` (not `[...]`): a gate above may REBIND `tool` mid-iteration (the
+        # code.author redirects), so the name read here is not always the name the
+        # count was booked under. Those sites move the count across; this stays
+        # defensive so a future rebind can never turn the guard into a KeyError
+        # that aborts the run.
+        _tool_call_n = tool_calls.get(tool, 0)
+        if _tool_call_n >= _MAX_SAME_TOOL:
             _got = outputs.get(tool)
             result_summary = (_got or preview)[:_V5_DONE_SUMMARY]
             ok = ok or had_useful
             if _got:
                 _wrap = (f"(auto-completed: `{tool}` already returned a usable result — ending the "
-                         f"step after {tool_calls[tool]} calls so the run moves on instead of "
+                         f"step after {_tool_call_n} calls so the run moves on instead of "
                          "re-running it.)")
             else:
-                _wrap = (f"(auto-wrapped: `{tool}` was called {tool_calls[tool]}× without a usable "
+                _wrap = (f"(auto-wrapped: `{tool}` was called {_tool_call_n}× without a usable "
                          "result — using the best result so far.)")
             await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
                               "cycle": (gc + 1), "step_id": step_id,
@@ -10366,14 +13984,16 @@ async def _v5_run_step(step: Dict[str, Any], *, goal: str, blackboard: Dict[int,
             result_summary = "Step finished with no explicit result."
     res = {"id": step_id, "title": step["title"], "ok": ok,
            "summary": result_summary, "outputs": outputs, "cycle_end": gc,
-           "history": history}
+           "history": history, "user_clarifications": user_clarifications}
     await emit_event({"type": "agent_loop_v5.step_done", "session_id": sid, "stream_id": stream_id,
                       "step_id": step_id, "ok": ok, "summary": result_summary[:_V5_DONE_SUMMARY]})
     return res
 
 
 async def _v5_run_phased_step(step: Dict[str, Any], phases: List[str], *, goal: str,
-                              blackboard: Dict[int, Dict[str, Any]], model: str, instance_id: str,
+                              blackboard: Dict[int, Dict[str, Any]],
+                              artifacts: Optional[Dict[str, Dict[str, Any]]] = None,
+                              model: str, instance_id: str,
                               prefer_gpu: bool, session_id: str, stream_id: str, trace_id: Any,
                               cycle_budget: int, cycle_offset: int, artifact_dir_path: str,
                               call_tool, build_ctx, catalog_caps: Optional[List[str]] = None,
@@ -10405,13 +14025,14 @@ async def _v5_run_phased_step(step: Dict[str, Any], phases: List[str], *, goal: 
     merged_bb = dict(blackboard)
     phase_results: List[Dict[str, Any]] = []
     history: List[Dict[str, Any]] = []
+    user_clarifications: List[Dict[str, str]] = []
     for k, ph in enumerate(phases):
         sub_id = parent_id * 100 + 90 + k        # collision-free with sub-plan ids (parent*100+1..6)
         sub = {"id": sub_id, "title": step["title"], "goal": step["goal"],
                "caps": list(step.get("caps") or []), "skills": list(step.get("skills") or []),
                "needs": []}
         r = await _v5_run_step(
-            sub, goal=goal, blackboard=merged_bb, model=model, instance_id=instance_id,
+            sub, goal=goal, blackboard=merged_bb, artifacts=artifacts, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, session_id=sid, stream_id=stream_id, trace_id=trace_id,
             cycle_budget=cycle_budget, cycle_offset=gc, artifact_dir_path=artifact_dir_path,
             call_tool=call_tool, build_ctx=build_ctx, catalog_caps=catalog_caps,
@@ -10425,6 +14046,13 @@ async def _v5_run_phased_step(step: Dict[str, Any], phases: List[str], *, goal: 
         merged_bb[sub_id] = r
         phase_results.append(r)
         history.extend(r.get("history") or [])
+        user_clarifications.extend(r.get("user_clarifications") or [])
+
+        # NOTE: phases deliberately run to completion. Skipping later phases once
+        # the bar looks met was tried and reverted — it cut off the `verify` phase,
+        # which is the phase we most want to KEEP. The fix for a phase undoing good
+        # work is phase DISCIPLINE (a read-only phase cannot mutate) plus telling
+        # each phase what is already established, not truncating the cadence.
 
     verify_failed = any(ph == "verify" and str(r.get("summary") or "").strip().upper().startswith("FAIL")
                         for ph, r in zip(phases, phase_results))
@@ -10433,9 +14061,19 @@ async def _v5_run_phased_step(step: Dict[str, Any], phases: List[str], *, goal: 
                           for ph, r in zip(phases, phase_results))[:_V5_DONE_SUMMARY]
     await emit_event({"type": "agent_loop_v5.step_done", "session_id": sid, "stream_id": stream_id,
                       "step_id": parent_id, "ok": agg_ok, "summary": summary[:_V5_DONE_SUMMARY]})
+    # Merge every phase's outputs into the parent. Returning {} here threw away
+    # ALL of a phased step's artifacts: the act phase writes the file, the parent
+    # reports nothing, and the blackboard entry the NEXT step reads has no record
+    # that it exists. The next step then re-derives data the run already has —
+    # the reported "it doesn't make the most of existing outputs / re-derives
+    # output via the script". Later phases win on key collisions (a verify phase
+    # re-reporting a file is the more current view of it).
+    merged_outputs: Dict[str, Any] = {}
+    for r in phase_results:
+        merged_outputs.update(r.get("outputs") or {})
     return {"id": parent_id, "title": step["title"], "ok": agg_ok, "summary": summary,
-            "outputs": {}, "cycle_end": gc, "history": history, "phased": True,
-            "phase_results": phase_results}
+            "outputs": merged_outputs, "cycle_end": gc, "history": history, "phased": True,
+            "phase_results": phase_results, "user_clarifications": user_clarifications}
 
 
 async def _v5_master_plan(goal: str, catalog_brief: str = "", *, model: str = "",
@@ -10460,7 +14098,8 @@ async def _v5_master_plan(goal: str, catalog_brief: str = "", *, model: str = ""
             "Reply with just the persona description.",
             system=("You assemble expert planner personas on demand. Name the specific domain "
                     "expertise the goal demands."),
-            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu, json_mode=False)
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu, json_mode=False,
+            profile=LOOP_ROUTING_PROFILE, role="planner")
         cand = _strip_think(p_raw or "")[0].strip()
         if cand:
             persona = cand[:400]
@@ -10522,6 +14161,7 @@ async def _v5_master_plan(goal: str, catalog_brief: str = "", *, model: str = ""
                     "section over many days, so each section must carry enough substance to expand "
                     "into real work on its own."),
             model=model, instance_id=instance_id, prefer_gpu=prefer_gpu, json_mode=False,
+            profile=LOOP_ROUTING_PROFILE, role="planner",
             stream_cb=(_mp_stream_cb if stream_id else None))
         long_form = _strip_think(lf_raw or "")[0].strip()[:6000]
     except Exception as e:
@@ -10614,7 +14254,8 @@ async def _v5_split_master_plan(goal: str, long_form: str, *, model: str = "",
                     "losing detail — each piece keeps the full substance the master plan assigned "
                     "it, plus its deliverable, success metric, dependencies, and the caps it needs. "
                     "Only ever name caps that appear in the provided catalog."),
-            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu, json_mode=True)
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu, json_mode=True,
+            profile=LOOP_ROUTING_PROFILE, role="planner")
         obj = _extract_json(_strip_think(raw or "")[0].strip())
         obj = obj if isinstance(obj, dict) else {}
         out = []
@@ -11035,6 +14676,8 @@ async def cap_dag_agent_loop_v5(
             # sandbox routing / event scoping still work on the fallback shim.
             if kw.get("session_id") and "session_id" in accepted:
                 kwargs.setdefault("session_id", kw["session_id"])
+            if kw.get("stream_cb") is not None and "stream_cb" in inspect.signature(cap["func"]).parameters:
+                kwargs["stream_cb"] = kw["stream_cb"]
             try:
                 result = await cap["func"](**kwargs, trace_id=kw.get("trace_id", "") or "")
                 return {"ok": True, "result": result}
@@ -11072,7 +14715,7 @@ async def cap_dag_agent_loop_v5(
     # caps are inserted directly above and bypass _workshop_build_toolkit's filter.
     # This is what keeps llm.plan out of the orchestrator's plan AND out of every
     # specialist's scope/need_caps/recovery toolkit (all derived from catalog_names).
-    _catalog_block = _DEFAULT_CAP_BLACKLIST | _gated_read_caps()
+    _catalog_block = _DEFAULT_CAP_BLACKLIST | _gated_read_caps() | _research_block_caps()
     if _catalog_block:
         catalog_names = [c for c in catalog_names if c not in _catalog_block]
     # Prefer-terminal-tools: always keep exec.bash.run on the menu (front-seeded)
@@ -11210,6 +14853,10 @@ async def cap_dag_agent_loop_v5(
     # `single` tier is the fast path — skip recon entirely (one cap / one action
     # needs no environment inspection before planning).
     recon = plan.get("recon") or []
+    # Hoisted so recon's findings + saved files survive planning (seeded as the
+    # step-0 blackboard entry below).
+    recon_artifacts: List[Dict[str, Any]] = []
+    recon_digest = ""
     if enable_recon and recon and recon_max_rounds > 0 and tier != "single":
         catalog_set_for_recon = set(catalog_names)
         accumulated: List[str] = []
@@ -11221,13 +14868,15 @@ async def cap_dag_agent_loop_v5(
                 findings = await _v5_run_recon(
                     recon, session_id=sid, stream_id=stream_id, trace_id=trace_id,
                     call_tool=_agent_loop_call_tool, catalog_set=catalog_set_for_recon,
-                    round_idx=rnd, max_rounds=recon_max_rounds)
+                    round_idx=rnd, max_rounds=recon_max_rounds,
+                    artifacts_out=recon_artifacts)
             except Exception as e:
                 log.debug("v5 recon round %d failed: %s", rnd, e)
                 break
             if not findings:
                 break
             accumulated.append(findings)
+            recon_digest = "\n\n".join(accumulated)
             try:
                 plan2 = await _v5_orchestrate_plan(
                     goal, catalog_names, skills, cap_skill_map,
@@ -11284,6 +14933,19 @@ async def cap_dag_agent_loop_v5(
 
     # ── Execute steps over a shared blackboard (cheap, failure-triggered replan) ─
     blackboard: Dict[int, Dict[str, Any]] = {}
+    # Run-level file registry (shape + parse status + content), shared by every
+    # step so a file is established once and never re-probed while unchanged.
+    artifacts: Dict[str, Dict[str, Any]] = {}
+    # Recon as a synthetic step-0 entry so its findings + saved files reach every
+    # step. Blackboard only — never `results`, which must stay the planner's steps.
+    if recon_digest or recon_artifacts:
+        blackboard[0] = {
+            "id": 0, "title": "Recon (pre-plan investigation)", "ok": True,
+            "summary": recon_digest[:_V5_CTX_PER_STEP],
+            "outputs": {f"file:{a['rel']}": f"{a['rel']}\n{a['note']}"
+                        for a in recon_artifacts},
+            "cycle_end": 0, "history": [],
+        }
     results: List[Dict[str, Any]] = []
     flat_history: List[Dict[str, Any]] = []   # flat tool-call log → final-card stats
     user_updates: List[str] = []              # mid-run user messages folded into context
@@ -11309,7 +14971,7 @@ async def cap_dag_agent_loop_v5(
         if not sub_steps:
             # Nothing to decompose — fall back to a normal scoped mini-loop.
             return await _v5_run_step(
-                cstep, goal=goal, blackboard=blackboard, model=model, instance_id=instance_id,
+                cstep, goal=goal, blackboard=blackboard, artifacts=artifacts, model=model, instance_id=instance_id,
                 prefer_gpu=prefer_gpu, session_id=sid, stream_id=stream_id, trace_id=trace_id,
                 cycle_budget=step_cycle_budget, cycle_offset=gc_in,
                 artifact_dir_path=artifact_dir_path, call_tool=_agent_loop_call_tool,
@@ -11340,7 +15002,7 @@ async def cap_dag_agent_loop_v5(
         gc = gc_in
         for ss in sub_steps:
             r = await _v5_run_step(
-                ss, goal=cstep["goal"], blackboard={**blackboard, **sub_bb},
+                ss, goal=cstep["goal"], blackboard={**blackboard, **sub_bb}, artifacts=artifacts,
                 model=model, instance_id=instance_id, prefer_gpu=prefer_gpu, session_id=sid,
                 stream_id=stream_id, trace_id=trace_id, cycle_budget=step_cycle_budget,
                 cycle_offset=gc, artifact_dir_path=artifact_dir_path,
@@ -11359,8 +15021,13 @@ async def cap_dag_agent_loop_v5(
             f"[{r['title']}] {(r.get('summary') or '')[:500]}" for r in sub_results)[:1800]
         await emit_event({"type": "agent_loop_v5.step_done", "session_id": sid, "stream_id": stream_id,
                           "step_id": parent_id, "ok": agg_ok, "summary": agg_summary[:1500]})
+        _sub_outputs: Dict[str, Any] = {}
+        for r in sub_results:
+            _sub_outputs.update(r.get("outputs") or {})
         return {"id": parent_id, "title": cstep["title"], "ok": agg_ok, "summary": agg_summary,
-                "outputs": {}, "cycle_end": gc, "history": sub_history, "subplan": True,
+                # Merge the sub-steps' artifacts (see _v5_run_phased_step): an empty
+                # dict here hides every file the sub-plan produced from later steps.
+                "outputs": _sub_outputs, "cycle_end": gc, "history": sub_history, "subplan": True,
                 "sub_steps": sub_results}
 
     while queue and executed < max_steps:
@@ -11379,7 +15046,7 @@ async def cap_dag_agent_loop_v5(
             res = await _run_complex_step(step, gcycle)
         else:
             res = await _v5_run_step(
-                step, goal=goal, blackboard=blackboard, model=model, instance_id=instance_id,
+                step, goal=goal, blackboard=blackboard, artifacts=artifacts, model=model, instance_id=instance_id,
                 prefer_gpu=prefer_gpu, session_id=sid, stream_id=stream_id, trace_id=trace_id,
                 cycle_budget=step_cycle_budget, cycle_offset=gcycle,
                 artifact_dir_path=artifact_dir_path, call_tool=_agent_loop_call_tool,
@@ -11555,7 +15222,7 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
                       queue: List[Dict[str, Any]], last: Dict[str, Any],
                       *, catalog_names: List[str], valid_skill_ids: set,
                       base_id: int, steps_left: int, model: str, instance_id: str,
-                      prefer_gpu: bool) -> Dict[str, Any]:
+                      prefer_gpu: bool, session_id: str = "") -> Dict[str, Any]:
     """ONE cheap controller call after a step: read the ledger, weigh what the
     step actually FOUND against the goal, and decide the next move. Returns
     {assessment, findings, goal_alignment, direction, goal_met, action, steps}.
@@ -11563,7 +15230,11 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
     already coerced to canonical, id-assigned step dicts. Best-effort — on any
     failure it returns a plain 'continue' so the run never stalls on the
     controller."""
-    ledger = _v6_build_ledger(goal, done_when, results, queue)
+    # include_outputs: the controller PLANS the next step, so it has to know which
+    # artifacts already exist. Without them it saw only prose summaries of earlier
+    # steps and would happily insert a step that re-fetches or re-derives a file
+    # the run already produced (the reported "re-deriving output via the script").
+    ledger = _v6_build_ledger(goal, done_when, results, queue, include_outputs=True)
     # The step that just ran gets its OWN, much larger excerpt — the compact
     # ledger trims every step to ~700 chars, which is too little to actually
     # evaluate fresh findings against the goal (numbers, ids, error details).
@@ -11575,6 +15246,22 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
             _last_view += f"\nOUTPUTS: {_outs[:1200]}"
     if not last.get("ok") and last.get("error"):
         _last_view += f"\nERROR: {str(last.get('error'))[:400]}"
+    # What is REALLY on disk. The ledger describes what steps SAID they did; this
+    # is what they actually left behind, and it is the difference between planning
+    # "parse the data we already have" and planning "fetch the data again".
+    _files_block = ""
+    if session_id:
+        try:
+            _wf = await _v5_workdir_files(session_id, limit=60)
+        except Exception:
+            _wf = None
+        if _wf:
+            _files_block = ("\nFILES THAT ALREADY EXIST in the working directory: "
+                            + ", ".join(_wf[:60])
+                            + "\nDo NOT plan a step that re-fetches, re-downloads or re-derives "
+                              "data one of these already holds — plan to READ/PARSE it instead.\n")
+        elif _wf == []:
+            _files_block = "\nFILES IN THE WORKING DIRECTORY: none yet.\n"
     cap_lines = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names) or "  (none)"
     sys = (
         "You are the ADAPTIVE CONTROLLER of an agentic loop. A plan is being executed "
@@ -11606,6 +15293,17 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
         "For inserted/replanned steps use the SAME shape as the original plan: a plain-"
         "language title, a goal, the exact `caps` names from the catalog, and a checkable "
         "`success` criterion. NEVER put planning/DAG capabilities in a step.\n"
+        "PICK CAPS FOR WHAT THE STEP ACTUALLY DOES, not the caps nearby steps happened to "
+        "use. A step whose job is WRITING — synthesising a report/summary/article/document "
+        "from data already gathered — needs `llm.generate` in its caps. Do NOT give it only "
+        "exec.*/code.author: those write and run SCRIPTS; asked to 'synthesize a report' with "
+        "no llm.generate, the only thing a script CAN do is fake it with keyword-matching "
+        "heuristics standing in for actually understanding the source material — which is "
+        "worse than no report. Conversely, a step whose job is FETCHING/COMPUTING real data "
+        "needs exec.*/http.*/web.* — llm.generate must not be its only cap there, it "
+        "fabricates facts it wasn't given. Most steps need BOTH capability families when "
+        "they read real data (exec.python.run to parse the file) AND then write prose "
+        "from it (llm.generate to compose the actual document).\n"
         "VERIFICATION STEPS: when a claimed result needs PROOF (code that 'works', an API "
         "that 'responds', an edit that 'applied', a system state), insert a verification "
         "step with exec caps (exec.python.run / exec.bash.run + code.read/ide.fs.read) and "
@@ -11629,7 +15327,7 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
         '"caps":["cap.name"],"success":"<checkable criterion>"}]}'
     )
     _last_met = last.get("met")
-    prompt = (f"LEDGER:\n{ledger}\n\n"
+    prompt = (f"LEDGER:\n{ledger}\n{_files_block}\n"
               f"THE STEP THAT JUST RAN: [{last.get('id')}] {last.get('title','')} — "
               f"{'OK' if last.get('ok') else 'FAILED'}"
               + ("" if _last_met is None else
@@ -11642,7 +15340,8 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True)
+            prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT,
+            profile=LOOP_ROUTING_PROFILE, role="controller")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
     except Exception as e:
         log.debug("v6 control call failed: %s", e)
@@ -11676,13 +15375,35 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
 async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]],
                          *, catalog_names: List[str], valid_skill_ids: set,
                          base_id: int, steps_left: int, model: str,
-                         instance_id: str, prefer_gpu: bool) -> Dict[str, Any]:
+                         instance_id: str, prefer_gpu: bool,
+                         session_id: str = "") -> Dict[str, Any]:
     """Final completion gate: verify the whole GOAL is met (against `done_when`)
     before synthesising the answer. If it is not — and there is step budget left —
     return follow-up steps to close the gap. Returns {complete, missing,
-    follow_up}."""
+    follow_up}.
+
+    The ledger it judges is LLM-authored prose, so on its own the gate could be
+    talked into 'complete' by a summary claiming a deliverable that was never
+    written — the per-step verifier grounds its verdict against the real sandbox
+    but this one had no filesystem input at all. The actual working-directory
+    listing now goes in as ground truth, so "produce X" cannot pass when nothing
+    was produced."""
     ledger = _v6_build_ledger(goal, done_when, results, [], per_step=_V6_GATE_PER_STEP,
                               include_outputs=True, total=_V6_GATE_LEDGER_TOTAL)
+    files_block = ""
+    if session_id:
+        try:
+            _wf = await _v5_workdir_files(session_id, limit=60)
+        except Exception:
+            _wf = None
+        if _wf:
+            files_block = ("\nACTUAL FILES IN THE WORKING DIRECTORY (sandbox ground truth — this "
+                           "OVERRIDES any 'saved'/'created' claim in the ledger):\n  "
+                           + ", ".join(_wf[:60]) + "\n")
+        elif _wf == []:
+            files_block = ("\nACTUAL FILES IN THE WORKING DIRECTORY: NONE — the run wrote no files "
+                           "at all. If the goal asked for a file/artifact deliverable, it is NOT "
+                           "complete no matter what the ledger says.\n")
     cap_lines = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names) or "  (none)"
     sys = (
         "You are the COMPLETION GATE for an agentic run. Judge whether the GOAL "
@@ -11694,6 +15415,10 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
         "request MEANS THE GOAL IS MET. Do NOT rule it incomplete for lacking external "
         "validation, publishing, delivery, or extra polish the goal did not explicitly ask for. "
         "Judge the artifact that WAS produced, not an idealised one.\n"
+        + ("GROUND TRUTH BEATS NARRATIVE: when the ACTUAL FILES listing is shown, believe it "
+           "over the ledger. A goal that asked for a FILE deliverable is NOT complete unless "
+           "that file appears in the listing — a step summary saying it was 'saved' or "
+           "'created' proves nothing on its own.\n" if files_block else "")
         + (f"There is room for about {max(0, steps_left)} follow-up step(s) if needed.\n"
            if steps_left > 0 else "There is NO budget for further steps — just judge.\n")
         + "If incomplete AND steps are allowed, provide `follow_up` steps (same shape as a "
@@ -11705,7 +15430,8 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
         '"follow_up":[{"title":"<plain-language>","goal":"<achieve>","caps":["cap.name"],'
         '"success":"<criterion>"}]}'
     )
-    prompt = f"LEDGER:\n{ledger}\n\nIs the GOAL fully achieved? If not, what is missing?"
+    prompt = (f"LEDGER:\n{ledger}\n{files_block}\n"
+              "Is the GOAL fully achieved? If not, what is missing?")
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
@@ -11718,6 +15444,29 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
         return {"complete": True, "missing": [], "follow_up": []}
     complete = bool(obj.get("complete", True))
     missing = [str(m)[:200] for m in (obj.get("missing") or []) if str(m).strip()][:8]
+    # ── Deterministic override — the same hard gate _v6_verify_step already has,
+    # missing here. Observed live: the goal literally said "save the results as
+    # coins.json"; the per-step verifier correctly reported the file missing on
+    # FIVE consecutive checks; this gate's own prompt tells the judge ground
+    # truth beats narrative — and the judge said complete=True anyway, because
+    # it's still just a small model's opinion, and an opinion can be talked (or
+    # slip) past an instruction. A file the GOAL explicitly names is not a
+    # judgment call: if it verifiably doesn't exist, the run is not done,
+    # full stop, no matter what the LLM concluded.
+    if session_id:
+        _named = _v6_extract_paths(f"{goal}\n{done_when}")
+        if _named:
+            try:
+                _exist = await _v6_check_paths_exist(session_id, _named)
+            except Exception:
+                _exist = {}
+            _missing_named = [p for p in _named if _exist.get(p) is False]
+            if _missing_named:
+                complete = False
+                for p in _missing_named:
+                    _m = f"'{p}' — named in the goal, but does not exist in the sandbox"
+                    if _m not in missing:
+                        missing.append(_m)
     follow_up: List[Dict[str, Any]] = []
     if not complete and steps_left > 0:
         follow_up = _v6_coerce_control_steps(obj.get("follow_up"), base_id, goal,
@@ -11725,7 +15474,93 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
     return {"complete": complete, "missing": missing, "follow_up": follow_up}
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# ARTIFACT GROUNDING — reconcile CLAIMED files against the REAL sandbox
+# ─────────────────────────────────────────────────────────────────────────────
+# A step's summary is LLM-authored prose: a generative step (or a weak finaliser)
+# will happily state "saved to /workspace/x.json" when nothing was written, and a
+# failed run can be distilled into a tidy "status: success". These helpers pull
+# the file paths a step CLAIMS and check whether they actually exist where a later
+# exec/read would find them, so the verifier and journal judge on ground truth
+# instead of narrative. Best-effort: an unavailable probe returns "unknown", never
+# "missing", so it can only ever catch real fabrication — never invent one.
+# ═════════════════════════════════════════════════════════════════════════════
+_V6_ARTIFACT_EXT = (r"(?:py|js|ts|jsx|tsx|json|ya?ml|toml|ini|cfg|conf|md|markdown|txt|rst|"
+                    r"csv|tsv|html?|css|scss|xml|sql|sqlite|db|sh|bash|zsh|ps1|bat|pdf|png|"
+                    r"jpe?g|gif|svg|webp|ipynb|env|lock|log|zip|tar|gz|parquet|proto|go|rs|"
+                    r"java|kt|rb|php|c|h|cpp|hpp)")
+_V6_WORKSPACE_RE = re.compile(r"(/workspace/[\w./\-]+)", re.I)
+_V6_SLASHPATH_RE = re.compile(r"((?:\.{0,2}/)?(?:[\w.\-]+/)+[\w.\-]+\." + _V6_ARTIFACT_EXT + r")\b", re.I)
+_V6_BAREFILE_RE  = re.compile(r"(?<![\w/.\-])([\w\-]{1,80}\." + _V6_ARTIFACT_EXT + r")\b", re.I)
+# A criterion that is genuinely about a file EXISTING/being produced (gates the
+# hard auto-fail so merely naming a filename in passing never fails a step).
+_V6_FILE_CRIT_RE = re.compile(
+    r"\b(contain\w*|creat\w*|writ\w*|wrote|sav\w*|produc\w*|generat\w*|output\w*|"
+    r"exist\w*|present|stored?|persist\w*|download\w*|assembl\w*|build|built|"
+    r"populat\w*|directory|folder|on disk|to disk)\b", re.I)
+
+
+def _v6_extract_paths(text: str, *, include_bare: bool = True) -> List[str]:
+    """Pull candidate artifact file paths out of free text (a criterion, a summary,
+    an outputs blob). Matches /workspace/… paths, relative slashed paths with a
+    file extension, and (optionally) bare filenames with an artifact extension.
+    URLs are rejected. Conservative + bounded — this only surfaces candidates; the
+    existence probe decides truth."""
+    if not text:
+        return []
+    s = str(text)
+    out: List[str] = []
+
+    def _add(p: str) -> None:
+        p = p.strip().strip("'\"`()[]{}<>,;").rstrip(".")
+        if p and "://" not in p and p not in out:
+            out.append(p)
+
+    for m in _V6_WORKSPACE_RE.finditer(s):
+        _add(m.group(1))
+    for m in _V6_SLASHPATH_RE.finditer(s):
+        st = m.start(1)
+        if "://" in s[max(0, st - 8):st + 4]:      # part of a URL — skip
+            continue
+        _add(m.group(1))
+    if include_bare:
+        for m in _V6_BAREFILE_RE.finditer(s):
+            _add(m.group(1))
+    return out[:12]
+
+
+async def _v6_check_paths_exist(session_id: str, paths: List[str]) -> Dict[str, bool]:
+    """Probe each candidate path in the session's effective sandbox/host location.
+    Returns {path: True|False} ONLY for paths that could be decided; a path whose
+    probe was unavailable/errored is OMITTED (unknown), so callers never read a
+    broken probe as 'missing'. Bounded + concurrent."""
+    result: Dict[str, bool] = {}
+    uniq = [p for p in dict.fromkeys(paths) if p][:10]
+    if not uniq:
+        return result
+    try:
+        import importlib as _il
+        _exec = _il.import_module("Vera.vera.execution.exec_capabilities")
+        fn = getattr(_exec, "artifact_file_exists", None)
+    except Exception:
+        fn = None
+    if fn is None:
+        return result
+
+    async def _one(p: str) -> None:
+        try:
+            v = await fn(session_id=session_id, relpath=p)
+            if v is not None:
+                result[p] = bool(v)
+        except Exception:
+            pass
+
+    await asyncio.gather(*[_one(p) for p in uniq], return_exceptions=True)
+    return result
+
+
 async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
+                          session_id: str = "",
                           model: str, instance_id: str, prefer_gpu: bool) -> Dict[str, Any]:
     """ONE cheap judge call per step: did the step's RESULT objectively satisfy
     its success criterion? A step can end ok=True (some tool returned something
@@ -11738,25 +15573,158 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
         return {"met": bool(res.get("ok")), "reason": ""}
     outs = "\n".join(f"- {k}: {str(v)[:300]}"
                      for k, v in list((res.get("outputs") or {}).items())[:8])
-    hist = "\n".join(f"- {h.get('tool')} → {'ok' if h.get('ok') else 'FAILED'}"
-                     for h in (res.get("history") or [])[-10:]
-                     if h.get("tool"))
+    # Show each call's PREVIEW CONTENT, not just its ok/FAILED flag. A step can
+    # span several cycles, but `res["summary"]` reflects only the LAST cycle's
+    # `done` text and `res["outputs"]` is keyed by tool (a later call to the same
+    # tool OVERWRITES an earlier good result). Without the per-call previews the
+    # judge sees none of what earlier cycles actually produced and wrongly rules
+    # the criterion "not met / no results". Successful calls carry their content
+    # (the evidence); failures keep just the flag so "errors ⇒ NOT met" still
+    # reads. Widened to the last 12 calls so a 2-3 cycle step is fully covered.
+    # A call can report ok/rc=0 while its OUTPUT says it failed — a script that
+    # prints "Error: …" and exits 0 is the common case, and it reads to the judge
+    # as a clean success. Flag it deterministically so it cannot.
+    def _soft_failed(h) -> str:
+        pv = str(h.get("preview") or "")
+        m = re.search(r'(?im)^[^\n]*\b(?:error|traceback|exception|failed|fatal)\b[^\n]*$', pv)
+        return (m.group(0).strip()[:160] if m else "")
+
+    # Exclude meta/no-op entries — "(empty exec.python.run)", "(denied X)",
+    # "(invented path X)", "(skipped X)" — from being judged as real evidence.
+    # These are all CAUGHT BEFORE INVOKE: the call never ran, so it cannot have
+    # produced, changed, or overwritten anything. Observed live: a step's ONE
+    # real call fetched good data; its next two turns were malformed empty
+    # exec.python.run calls that got caught before invoke; the last of those
+    # became `_last` below and the judge failed the step citing it as having
+    # "overwritten" the successful retrieval — a call that never executed
+    # cannot overwrite anything it never touched. Filtering these out here
+    # means `_last` falls back to the last call that ACTUALLY ran, which is
+    # the true current state.
+    _calls = [h for h in (res.get("history") or [])[-12:]
+              if h.get("tool") and not str(h["tool"]).startswith("(")]
+    _lines = []
+    for h in _calls:
+        if not h.get("ok"):
+            # The real error text lives in `preview` (set for failed calls too —
+            # see the v5 tool-call history append) but was previously dropped here,
+            # leaving the judge only "FAILED" with no reason. That forced it to
+            # GUESS a cause (e.g. paraphrasing a write failure as a vague "denial/
+            # permission" error) instead of quoting what actually went wrong, which
+            # then steers a retry at the wrong fix. Keep the real text.
+            _lines.append(f"- {h.get('tool')} → FAILED: {str(h.get('preview') or '')[:400]}")
+            continue
+        _sf = _soft_failed(h)
+        _lines.append(
+            f"- {h.get('tool')} ok BUT ITS OUTPUT REPORTS AN ERROR ({_sf}): "
+            f"{str(h.get('preview') or '')[:500]}" if _sf else
+            f"- {h.get('tool')} ok: {str(h.get('preview') or '')[:500]}")
+    hist = "\n".join(_lines)
+    # THE END STATE IS WHAT COUNTS. A step re-attempts its work, so an early
+    # success can be superseded by a later attempt that overwrote the file and
+    # broke it. Observed live: an act phase printed "SUCCESS: Processed 151
+    # Pokemon", a later phase re-authored the same script, every subsequent run
+    # errored — and the judge passed the step by citing the earlier success.
+    # Calling out the most recent action, separately from the history, is what
+    # stops the criterion being met by evidence that is no longer true.
+    _last = _calls[-1] if _calls else None
+    last_block = ""
+    if _last:
+        _lsf = _soft_failed(_last) if _last.get("ok") else ""
+        last_block = (
+            "MOST RECENT ACTION (this is the step's CURRENT state — earlier results may "
+            "have been overwritten by it):\n"
+            f"- {_last.get('tool')}: "
+            + ("FAILED" if not _last.get("ok")
+               else (f"reported ok but its OUTPUT REPORTS AN ERROR — {_lsf}" if _lsf else "ok"))
+            + f"\n  {str(_last.get('preview') or '')[:600]}\n"
+            "If this most recent action failed, or its output reports an error, the criterion "
+            "is NOT met — no matter what an earlier attempt achieved.\n")
+    # ── Artifact grounding: check any file the criterion/summary CLAIMS against the
+    # real sandbox. A file the criterion requires that does NOT exist is a decisive
+    # miss (no LLM vote can override a filesystem fact) — this is what stops a
+    # fabricated "saved to /workspace/x" or "status: success" summary from passing a
+    # step that produced no such file. The existence facts are also handed to the
+    # judge as ground truth so it can't be talked into 'met' by the prose summary.
+    crit_paths = _v6_extract_paths(crit)
+    claim_paths = _v6_extract_paths(str(res.get("summary") or "")) + _v6_extract_paths(
+        " ".join(str(v) for v in list((res.get("outputs") or {}).values())[:8]))
+    all_paths = list(dict.fromkeys(crit_paths + claim_paths))
+    exist = await _v6_check_paths_exist(session_id, all_paths) if all_paths else {}
+    # Auto-fail ONLY when the criterion is genuinely about a file being produced/
+    # present (not just mentioning a filename in passing) AND that file is provably
+    # absent. Otherwise the existence facts still go to the judge below, but the
+    # verdict stays a judgement — this keeps the hard gate tight to real deliverables.
+    _crit_wants_file = bool(_V6_FILE_CRIT_RE.search(crit)) or ("/workspace" in crit)
+    missing_required = [p for p in crit_paths if exist.get(p) is False] if _crit_wants_file else []
+    if missing_required:
+        return {"met": False,
+                "reason": ("file(s) the success criterion requires do NOT exist in the sandbox: "
+                           + ", ".join(missing_required[:5])
+                           + " — the summary claimed a result that was never written to disk.")[:300]}
+    exist_block = ""
+    checked = [p for p in all_paths if p in exist]
+    if checked:
+        exist_block = ("ACTUAL FILESYSTEM CHECK (sandbox ground truth — this OVERRIDES any 'saved'/"
+                       "'success' claim in the summary):\n"
+                       + "\n".join(f"  - {p}: {'EXISTS' if exist[p] else 'MISSING (was NOT written)'}"
+                                   for p in checked) + "\n")
+    # The probe above only answers about paths someone NAMED. Listing what is really
+    # there also catches the opposite error: a step that DID write its deliverable
+    # under a slightly different name being failed because the summary quoted the
+    # wrong one — the judge can now see the real file and rule fairly.
+    if session_id:
+        try:
+            _wf = await _v5_workdir_files(session_id, limit=40)
+        except Exception:
+            _wf = None
+        if _wf:
+            exist_block += ("FILES ACTUALLY IN THE WORKING DIRECTORY: "
+                            + ", ".join(_wf[:40]) + "\n")
+        elif _wf == []:
+            exist_block += ("FILES ACTUALLY IN THE WORKING DIRECTORY: NONE — nothing has been "
+                            "written this run.\n")
     sys = ("You judge whether ONE step of an agentic run met its SUCCESS CRITERION. "
            "Judge STRICTLY on the evidence: if the evidence does not show the criterion "
            "objectively satisfied, it is NOT met — errors, stalls, denials, or output "
            "unrelated to the criterion all mean NOT met. A step that merely produced "
-           "'some result' has not met a criterion that asked for something specific.\n"
+           "'some result' has not met a criterion that asked for something specific. "
+           "When an ACTUAL FILESYSTEM CHECK is shown, treat it as ground truth over any "
+           "claim in the summary: a file the criterion needs but that is MISSING means NOT met.\n"
+           "JUDGE THE END STATE, NOT THE BEST MOMENT. A step retries: a later attempt can "
+           "OVERWRITE what an earlier one got right. If the MOST RECENT ACTION failed, or its "
+           "output reports an error, the step is NOT met — you may not cite an earlier success "
+           "to pass it, because that result no longer exists. Likewise a call marked 'ok' whose "
+           "OUTPUT REPORTS AN ERROR is a FAILURE: a script that prints 'Error: ...' and exits 0 "
+           "did not do its job.\n"
+           "IF THE USER ANSWERED A QUESTION MID-STEP, THEIR ANSWER OVERRIDES THE LITERAL "
+           "CRITERION WHERE THEY CONFLICT. The criterion was written by the planner BEFORE the "
+           "user weighed in; a user who said 'don't bother' with part of it, or otherwise steered "
+           "the step away from its original literal wording, has changed what 'met' means for "
+           "THIS run — do not fail the step for not doing the thing the user said to skip, and do "
+           "not weigh an EARLIER failed attempt at that thing against it either.\n"
            'Respond ONLY with JSON: {"met":true,"reason":"<one sentence of evidence>"}')
+    _clar = res.get("user_clarifications") or []
+    clar_block = ""
+    if _clar:
+        clar_block = ("THE USER ANSWERED MID-STEP (this OVERRIDES the criterion above where "
+                      "they conflict — see instructions):\n"
+                      + "\n".join(f"  Q: {c.get('question','')}\n  A: {c.get('answer','')}"
+                                  for c in _clar[:5]) + "\n")
     prompt = (f"SUCCESS CRITERION: {crit}\n\nSTEP GOAL: {step.get('goal', '')}\n"
               f"STEP ENDED ok={bool(res.get('ok'))}\n"
-              + (f"TOOL CALLS:\n{hist}\n" if hist else "")
+              + clar_block
+              + (f"TOOL CALLS & THEIR RESULTS (across ALL cycles of this step — judge "
+                 f"the criterion against these, not only the final summary):\n{hist}\n"
+                 if hist else "")
+              + (last_block or "")
+              + (exist_block or "")
               + (f"OUTPUTS:\n{outs}\n" if outs else "")
-              + f"RESULT SUMMARY:\n{(res.get('summary') or '')[:2000]}\n\n"
+              + f"RESULT SUMMARY (last cycle only):\n{(res.get('summary') or '')[:2000]}\n\n"
                 "Was the criterion met?")
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True)
+            prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT)
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
         if isinstance(obj, dict) and "met" in obj:
             return {"met": bool(obj.get("met")),
@@ -11771,7 +15739,8 @@ _V6_FINALIZE_OUT_MAX = 2500     # cap on a step's distilled output
 
 
 async def _v6_finalize_step(step: Dict[str, Any], res: Dict[str, Any], goal: str, *,
-                            model: str, instance_id: str, prefer_gpu: bool) -> None:
+                            model: str, instance_id: str, prefer_gpu: bool,
+                            session_id: str = "") -> None:
     """Distil ONE finished step's cycles into a finalised, RELEVANT-ONLY output.
 
     A step's raw `summary` is whatever the specialist last emitted (its `done`
@@ -11789,6 +15758,15 @@ async def _v6_finalize_step(step: Dict[str, Any], res: Dict[str, Any], goal: str
     if len(raw) < _V6_FINALIZE_MIN_RAW:
         return
     if raw.startswith("STEP DID NOT ACT") or raw.startswith("Step finished with no explicit result"):
+        return
+    # Never distil a step that did NOT genuinely succeed. A weak finaliser will
+    # confabulate a tidy, success-looking result (e.g. '{"status":"success",...}')
+    # from a raw transcript whose last real action FAILED — burying the true error
+    # and misleading the verifier, controller and journal that read this summary.
+    # When the step ended not-ok, or its last executed tool call failed, keep the
+    # raw summary verbatim so the failure reaches every downstream reader.
+    _hist = [h for h in (res.get("history") or []) if isinstance(h, dict) and h.get("tool")]
+    if not res.get("ok") or (_hist and _hist[-1].get("ok") is False):
         return
     crit = str(step.get("success") or "").strip()
     outs = "\n".join(f"- {k}: {str(v)[:400]}"
@@ -11812,7 +15790,7 @@ async def _v6_finalize_step(step: Dict[str, Any], res: Dict[str, Any], goal: str
     try:
         out = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=False)
+            prefer_gpu=prefer_gpu, json_mode=False, timeout=_V5_UTILITY_TIMEOUT)
         out = _strip_think(out or "")[0].strip()
     except Exception as e:
         log.debug("v6 step finalize failed: %s", e)
@@ -11820,6 +15798,31 @@ async def _v6_finalize_step(step: Dict[str, Any], res: Dict[str, Any], goal: str
     # Guard against a degenerate pass (empty, or a refusal that lost the content).
     if not out or len(out) < 24:
         return
+    # ── Path fabrication guard ──────────────────────────────────────────────
+    # The finalised summary is what EVERY later step reads, so a filename invented
+    # here poisons the rest of the run. Observed live: a step that really produced
+    # `pokemon_details.json` was distilled into `{"path": "pokemon_data.json", …}`,
+    # and the next step burned its whole budget hunting that file (ide.fs.read,
+    # then /workspace/…, then memory.read, then authoring a script to read yet
+    # another non-existent name) before giving up.
+    #
+    # So: any path the DISTILLED text introduces that is provably absent — and
+    # that the raw summary never mentioned — means the pass invented it. Keep the
+    # raw summary, which is at least a true account. Only PROVABLE absence counts;
+    # an undecidable probe leaves the distillation alone.
+    if session_id:
+        try:
+            _new = [p for p in _v6_extract_paths(out)
+                    if p not in set(_v6_extract_paths(raw))]
+            if _new:
+                _exist = await _v6_check_paths_exist(session_id, _new)
+                _phantom = [p for p in _new if _exist.get(p) is False]
+                if _phantom:
+                    log.debug("v6 finalize discarded — invented path(s) %s", _phantom[:3])
+                    res["finalize_rejected"] = f"invented path(s): {', '.join(_phantom[:3])}"
+                    return
+        except Exception as e:
+            log.debug("v6 finalize path check failed: %s", e)
     res["raw_summary"] = raw
     res["summary"] = out[:_V6_FINALIZE_OUT_MAX]
     res["finalized"] = True
@@ -11892,6 +15895,9 @@ async def _v6_adjust_step(failed_step: Dict[str, Any], failed_res: Dict[str, Any
     why = (str(failed_res.get("met_reason") or "")[:400]
            or str(failed_res.get("raw_summary") or failed_res.get("summary") or "")[:500])
     prior = str(failed_res.get("summary") or failed_res.get("raw_summary") or "")[:1800]
+    _clar = failed_res.get("user_clarifications") or []
+    user_steer = ("\n".join(f"  Q: {c.get('question','')}\n  A: {c.get('answer','')}"
+                            for c in _clar[:5]) if _clar else "")
     cur_caps = list(failed_step.get("caps") or [])
     cap_lines = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names) or "  (none)"
     _phase_hint = ("You MAY set `phases` (a subset of explore/think/act/verify, run as ordered "
@@ -11906,8 +15912,14 @@ async def _v6_adjust_step(failed_step: Dict[str, Any], failed_res: Dict[str, Any
         "verifier reported — change the TACTIC, not just the wording: pick a different/additional "
         "capability, a different data source or decomposition, or a safer sequence. Build on what "
         "the step already produced (do NOT restart from scratch or re-collect what it already "
-        "has). Keep the SAME success criterion. Use ONLY the available capabilities (by exact "
-        "name). " + _phase_hint + "\n"
+        "has). Keep the SAME success criterion UNLESS the user answered a question mid-step that "
+        "changes it — see USER STEERED below; in that case adjust the criterion to match what "
+        "they actually asked for instead of re-proposing the thing they said to skip. Use ONLY "
+        "the available capabilities (by exact name). If the step's job is WRITING — "
+        "synthesising a report/summary/document from data already gathered — its caps must "
+        "include `llm.generate`; exec.*/code.author write and run scripts, and a script asked "
+        "to 'synthesize' prose can only fake it with keyword-matching instead of actually "
+        "understanding the material. " + _phase_hint + "\n"
         'Respond ONLY with JSON: {"title":"<plain-language>","goal":"<the adjusted approach, '
         'naming what went wrong and how this navigates it>","caps":["cap.name"],"phases":[],'
         '"success":"<same checkable criterion>"}')
@@ -11918,6 +15930,8 @@ async def _v6_adjust_step(failed_step: Dict[str, Any], failed_res: Dict[str, Any
               + (f"  caps it used: {', '.join(cur_caps)}\n" if cur_caps else "")
               + f"  WHY IT FAILED: {why}\n\n"
               + (f"OUTPUT SO FAR (build on this):\n{prior}\n\n" if prior else "")
+              + (f"USER STEERED (mid-step answers — these override the original criterion where "
+                 f"they conflict):\n{user_steer}\n\n" if user_steer else "")
               + f"AVAILABLE CAPABILITIES:\n{cap_lines}\n\nDesign the adjusted step.")
     try:
         raw = await _safe_ollama_generate_dw(
@@ -11986,7 +16000,7 @@ async def _v6_adjust_step(failed_step: Dict[str, Any], failed_res: Dict[str, Any
 # ═════════════════════════════════════════════════════════════════════════════
 
 _V6_JOURNAL_DATASET = "agent_loop.journal"
-_V6_JOURNAL_DIGEST_MAX = 2600           # chars of journal digest folded into a step
+_V6_JOURNAL_DIGEST_MAX = 3400           # chars of journal digest folded into a step
 _V6_JOURNAL_DIGEST_ENTRIES = 12         # most-recent entries included in the digest
 
 
@@ -12012,11 +16026,18 @@ def _v6_journal_derive(res: Dict[str, Any]) -> Dict[str, List[str]]:
 
 
 async def _v6_journal_extract(step: Dict[str, Any], res: Dict[str, Any], goal: str, *,
+                              session_id: str = "",
                               model: str, instance_id: str, prefer_gpu: bool) -> Dict[str, Any]:
     """Distil ONE finished step into a structured journal record. Heuristic parts
     (tools, files) come straight from the result; a single cheap LLM pass pulls the
     goal-relevant key outputs, entities/apps, and a one-line note. Best-effort —
-    returns at least the heuristic record on any failure."""
+    returns at least the heuristic record on any failure.
+
+    File paths are GROUNDED against the real sandbox before they enter the journal:
+    a step that only CLAIMED to write a file (the generative-step 'saved to
+    /workspace/x' hallucination) must not have that phantom folded into later steps
+    as an 'ALREADY KNOWN' input — a probe-confirmed non-existent path is dropped
+    (recorded separately as unverified), while paths the probe can't decide are kept."""
     derived = _v6_journal_derive(res)
     rec: Dict[str, Any] = {
         "step_id": step.get("id"),
@@ -12028,6 +16049,7 @@ async def _v6_journal_extract(step: Dict[str, Any], res: Dict[str, Any], goal: s
         "files": derived["files"],
         "tools": derived["tools"],
         "entities": [],
+        "schema": "",
         "note": "",
     }
     summary = str(res.get("summary") or res.get("raw_summary") or "")
@@ -12043,8 +16065,15 @@ async def _v6_journal_extract(step: Dict[str, Any], res: Dict[str, Any], goal: s
         "known; [] if none)\n"
         "  • entities — the key named things it touched: apps, services, hosts, tools, datasets, "
         "people, domains ([] if none)\n"
+        "  • schema — if the output contains STRUCTURED data (parsed JSON, API response, CSV/DB "
+        "rows, a list of records), the exact field names AND one verbatim sample record/row "
+        "copied from the real output — e.g. 'fields: id,name,types[],stats{hp,attack,defense,"
+        "special-attack,special-defense,speed} | sample: {\"id\":1,\"name\":\"bulbasaur\",...}'. "
+        "This is the single most useful thing a LATER step that parses/transforms this data can "
+        "reuse instead of re-deriving the shape by trial and error. \"\" if the output has no "
+        "structured data.\n"
         "  • note — ONE short line on what this step contributes to the goal\n"
-        'Respond ONLY with JSON: {"key_outputs":[],"files":[],"entities":[],"note":""}')
+        'Respond ONLY with JSON: {"key_outputs":[],"files":[],"entities":[],"schema":"","note":""}')
     prompt = (f"OVERALL GOAL: {goal[:500]}\n"
               f"THIS STEP: {str(step.get('title',''))[:120]}\n"
               f"STEP GOAL: {str(step.get('goal',''))[:400]}\n\n"
@@ -12065,10 +16094,21 @@ async def _v6_journal_extract(step: Dict[str, Any], res: Dict[str, Any], goal: s
             return [str(i).strip()[:cap] for i in x if str(i).strip()][:n] if isinstance(x, list) else []
         rec["key_outputs"] = _strs(obj.get("key_outputs"), 8, 400)
         rec["entities"] = _strs(obj.get("entities"), 12, 80)
+        rec["schema"] = str(obj.get("schema") or "")[:700]
         rec["note"] = str(obj.get("note") or "")[:240]
         for f in _strs(obj.get("files"), 8, 200):
             if f not in rec["files"]:
                 rec["files"].append(f)
+    # Ground the file list: a path the probe proves ABSENT is a phantom (claimed,
+    # never written) — pull it out of `files` so it is not advertised to later
+    # steps as reusable, and keep it under `files_unverified` for the audit trail.
+    if rec["files"]:
+        exist = await _v6_check_paths_exist(session_id, rec["files"])
+        kept = [f for f in rec["files"] if exist.get(f) is not False]
+        dropped = [f for f in rec["files"] if exist.get(f) is False]
+        rec["files"] = kept
+        if dropped:
+            rec["files_unverified"] = dropped
     return rec
 
 
@@ -12082,6 +16122,8 @@ def _v6_journal_digest(journal: List[Dict[str, Any]], *,
         lines.append(head)
         for ko in (e.get("key_outputs") or [])[:6]:
             lines.append(f"    - {ko}")
+        if e.get("schema"):
+            lines.append(f"    DATA SHAPE (reuse verbatim, do not re-derive): {e['schema']}")
         if e.get("files"):
             lines.append(f"    files: {', '.join(e['files'][:6])}")
         if e.get("entities"):
@@ -12102,13 +16144,15 @@ async def _v6_journal_persist(entry: Dict[str, Any], journal: List[Dict[str, Any
             text = (f"[journal] {entry.get('title','')} — "
                     + "; ".join(entry.get("key_outputs") or [])[:600]
                     + (f" | files: {', '.join(entry.get('files') or [])}" if entry.get("files") else "")
-                    + (f" | entities: {', '.join(entry.get('entities') or [])}" if entry.get("entities") else ""))
+                    + (f" | entities: {', '.join(entry.get('entities') or [])}" if entry.get("entities") else "")
+                    + (f" | schema: {entry.get('schema')}" if entry.get("schema") else ""))
             await fabric.ingest_dataset(
                 dataset_id=_V6_JOURNAL_DATASET,
                 data=[{"text": text[:2000], "session_id": session_id, "goal": goal[:300],
                        "step_id": entry.get("step_id"), "title": entry.get("title"),
                        "key_outputs": entry.get("key_outputs"), "files": entry.get("files"),
                        "tools": entry.get("tools"), "entities": entry.get("entities"),
+                       "schema": entry.get("schema"),
                        "note": entry.get("note"), "tier": tier, "slug": slug,
                        "ts": entry.get("ts")}],
                 source="agent_loop_journal", source_id=session_id or slug,
@@ -12141,6 +16185,44 @@ async def _v6_journal_persist(entry: Dict[str, Any], journal: List[Dict[str, Any
                 await asyncio.to_thread(_write)
         except Exception as e:
             log.debug("v6 journal file mirror failed: %s", e)
+
+
+async def _v6_journal_reload(session_id: str, *, limit: int = _V6_JOURNAL_DIGEST_ENTRIES) -> List[Dict[str, Any]]:
+    """Seed a fresh run's journal from a PRIOR run's entries for the SAME chat
+    session_id. The journal above is otherwise purely in-memory per invocation:
+    a follow-up turn in the same chat starts from an empty journal even though
+    an earlier turn already paid the cost of discovering a data schema, fixing a
+    parser, etc. — the exact schema-rediscovery loop this journal exists to
+    prevent, just spread across turns instead of within one. Best-effort and
+    non-fatal; returns [] on any failure or when there is nothing to reload."""
+    if not session_id:
+        return []
+    try:
+        from Vera.vera.fabric.data_fabric import _sqlite_query
+        rows = await _sqlite_query(dataset_id=_V6_JOURNAL_DATASET, limit=400)
+    except Exception as e:
+        log.debug("v6 journal reload query failed: %s", e)
+        return []
+    entries: List[Dict[str, Any]] = []
+    for row in rows or []:
+        try:
+            data = row.get("data")
+            if isinstance(data, str):
+                data = json.loads(data)
+            if not isinstance(data, dict) or data.get("session_id") != session_id:
+                continue
+            entries.append({
+                "step_id": data.get("step_id"), "title": data.get("title"),
+                "ok": True, "met": True, "ts": data.get("ts"),
+                "key_outputs": data.get("key_outputs") or [],
+                "files": data.get("files") or [], "tools": data.get("tools") or [],
+                "entities": data.get("entities") or [], "schema": data.get("schema") or "",
+                "note": f"(from an earlier turn) {data.get('note') or ''}".strip(),
+            })
+        except Exception:
+            continue
+    entries.sort(key=lambda e: str(e.get("ts") or ""))
+    return entries[-limit:]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -12343,7 +16425,8 @@ async def _v7_classify_tier(goal: str, heuristic_tier: str, catalog_brief: str, 
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True)
+            prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT,
+            profile=LOOP_ROUTING_PROFILE, role="tier")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
         tier = str(obj.get("tier") or "").strip().lower()
         if tier in _V7_TIERS:
@@ -12449,7 +16532,7 @@ async def _v7_find_existing_strategic(goal: str, *, exclude_slug: str = "") -> s
 
 
 async def _v7_persist_strategic(goal: str, master_plan: str, done_when: str, *,
-                                existing_slug: str = "") -> str:
+                                existing_slug: str = "", session_id: str = "") -> str:
     """Persist a strategic (multi-day) goal + its documented master plan as a DREAM
     PROJECT so the dream system can execute it a portion at a time across sessions
     and days — the long-horizon half of V7. Best-effort: returns the project slug,
@@ -12501,6 +16584,19 @@ async def _v7_persist_strategic(goal: str, master_plan: str, done_when: str, *,
     program_id = ""
     v8 = CAPABILITY_REGISTRY.get("loops.program.create")
     if not slug and v8 and v8.get("func"):
+        # Auto-associate the IDE workspace the goal was escalated FROM: if the
+        # escalating session is working in a workspace, its project files are
+        # cloned into the program's container so its loops operate on the real
+        # code (and their changes come back as a review proposal).
+        ide_ws = ""
+        if session_id:
+            try:
+                _sb = (sys.modules.get("session_sandbox_capabilities")
+                       or sys.modules.get("Vera.vera.remote.session_sandbox_capabilities"))
+                if _sb and hasattr(_sb, "seed_path_for_session"):
+                    ide_ws = await _sb.seed_path_for_session(session_id) or ""
+            except Exception:
+                ide_ws = ""
         try:
             brief = (f"STRATEGIC GOAL: {goal}\n\n"
                      + (f"DONE WHEN: {done_when}\n\n" if done_when else "")
@@ -12508,7 +16604,7 @@ async def _v7_persist_strategic(goal: str, master_plan: str, done_when: str, *,
                         f"{master_plan[:4000]}" if master_plan else ""))
             res = await v8["func"](brief=brief, autostart=True,
                                    sandbox_owner=f"goal-{goal_slug}",
-                                   owner_ref=goal_slug)
+                                   owner_ref=goal_slug, ide_workspace=ide_ws)
             if isinstance(res, dict) and res.get("id"):
                 program_id = str(res["id"])
         except Exception as e:
@@ -13035,6 +17131,22 @@ async def _v7_run_clarify(goal: str, done_when: str, tier: str, *, mode: str,
 # holds. Implemented as a light prompt returning a short list of gaps; the loop
 # folds the gaps + a digest of what's already known into the step's goal.
 
+# Gaps the RUN answers for itself — never worth a gather. Matching these kept
+# steps from opening with "I need to find the path to the output file" for a file
+# that does not exist until the step writes it.
+_V7_SELF_ANSWERED_GAP_RE = re.compile(
+    r"\b(output|target|destination|save|report|document|result|deliverable)\s+"
+    r"(file\s+)?(path|name|filename|location|directory|folder|dir)\b"
+    r"|\b(path|location|filename|file\s*name)\s+(to|for|of)\s+(the\s+)?"
+    r"(output|report|document|result|deliverable|generated|final)\b"
+    r"|\bwhere\s+to\s+(save|write|store|put|place|output)\b"
+    r"|\b(path|location)\s+(to|for)\s+(save|writ\w*|stor\w*|put|plac\w*|output)\b"
+    r"|\bpath[_ ]to[_ ]\w*(output|file|report|document)\w*\b"
+    r"|\boutput[_ ](file|path|dir|filename|directory)\b"
+    r"|\b(working|artifact|workspace)\s+(directory|dir|path)\b"
+    r"|\b(session|sandbox|workspace)[ _-]?id\b", re.I)
+
+
 async def _v7_prestep_info(step: Dict[str, Any], results: List[Dict[str, Any]],
                            goal: str, *, model: str, instance_id: str,
                            prefer_gpu: bool) -> Dict[str, Any]:
@@ -13050,6 +17162,12 @@ async def _v7_prestep_info(step: Dict[str, Any], results: List[Dict[str, Any]],
         "present in ALREADY-COLLECTED. Do not restate what is already collected. "
         "If the step already has what it needs, return an empty list. Be specific "
         "(name the datum), never generic ('more research').\n"
+        "EXCLUDE anything the RUN ITSELF decides or produces — never list an output "
+        "path, a filename, a save location, a working directory, a session/sandbox "
+        "id, or a credential. The step writes its output to its own working "
+        "directory and is told the path when it does; asking for it first sends the "
+        "step hunting for a file that does not exist yet. Gaps are EXTERNAL facts "
+        "only (data, parameters, decisions) that the step cannot derive.\n"
         'Respond ONLY with JSON: {"gaps":["...","..."]}')
     prompt = (f"OVERALL GOAL: {goal[:600]}\n"
               f"THIS STEP: {step.get('title','')}\n"
@@ -13059,10 +17177,14 @@ async def _v7_prestep_info(step: Dict[str, Any], results: List[Dict[str, Any]],
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True)
+            prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT)
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
         gaps = obj.get("gaps") if isinstance(obj, dict) else None
         gaps = [str(g).strip() for g in gaps if str(g).strip()][:5] if isinstance(gaps, list) else []
+        # Drop self-answerable gaps the model asks for anyway. "path to the output
+        # file" is the recurring one: the step then spends cycles looking for a file
+        # that only comes into existence when it generates it.
+        gaps = [g for g in gaps if not _V7_SELF_ANSWERED_GAP_RE.search(g)]
     except Exception as e:
         log.debug("v7 prestep info failed: %s", e)
         gaps = []
@@ -13220,7 +17342,11 @@ async def _v6_deliver(goal: str, done_when: str, results: List[Dict[str, Any]],
         "(int default 2), before advancing; stops the run steam-rolling past a failed step), "
         "condense_output (bool default False here / True on v7 — long tool/script outputs are "
         "LLM-condensed to a dense brief that keeps the key detail, with the full output saved to "
-        "the artifact dir for on-demand grep/sed inspection), enable_final_gate "
+        "the artifact dir for on-demand grep/sed inspection), raw_context (bool default False — "
+        "ESCAPE HATCH: turn OFF every LLM rewrite of run material at once (step finalisation, the "
+        "output condenser and journal distillation) so downstream steps read what actually "
+        "happened rather than a summary of a summary; deterministic truncation and the on-disk "
+        "full outputs are unaffected, so no DATA is lost), enable_final_gate "
         "(bool default True), enable_delivery (bool default True — a dedicated DELIVERY agent "
         "turns the run evidence into a markdown deliverable: the answer, a faithful account of "
         "the actions taken, artifacts, and a usage guide when code was produced), "
@@ -13309,6 +17435,15 @@ async def cap_dag_agent_loop_v6(
     cap_override_mode:  str  = "off",      # off|piece — 'piece' scopes each piece's steps to its own caps
     enable_chaining:    bool = True,       # stage agents may chain caps in one turn (output→input)
     condense_output:    bool = False,      # long tool outputs → LLM-condensed (keep key detail), full kept on disk
+    # RAW-CONTEXT ESCAPE HATCH: one switch that turns OFF every LLM pass that
+    # REWRITES run material before another part of the run reads it — step
+    # finalisation, the opt-in output condenser, and journal distillation. Each
+    # is individually useful, but together they mean a downstream step can be
+    # reading a summary of a summary of what actually happened; when a run is
+    # going wrong that is the first thing worth eliminating. Deterministic
+    # head+tail truncation and the on-disk full outputs are unaffected, so this
+    # loses no DATA — only the paraphrasing.
+    raw_context:        bool = False,
     enable_step_questions: bool = False,   # V7-defining; v7 turns on — a step may ask the user (ask_user)
     question_timeout_secs: int = 180,      # how long a step's ask_user waits for a reply (15–86400s)
     enable_prestep_info: bool = False,     # V7-defining; v7 turns on — gather missing info before a step
@@ -13352,6 +17487,13 @@ async def cap_dag_agent_loop_v6(
     if failure_strategy not in ("extra_step", "branch", "default"):
         failure_strategy = "branch" if enable_branching else "default"
     enable_branching = (failure_strategy == "branch")
+    # Raw-context escape hatch — switch off every LLM REWRITE of run material.
+    # Applied AFTER the version defaults (v7 turns finalise/condense/journal on),
+    # so it genuinely overrides them rather than being silently re-enabled.
+    if raw_context:
+        enable_step_finalize = False
+        condense_output = False
+        enable_journal = False
     clarify_timeout_secs = max(0, min(86400, int(clarify_timeout_secs or 0)))
     clarify_scope = (clarify_scope or "whole").strip().lower()
     clarify_channel = (clarify_channel or "ui").strip().lower()
@@ -13408,6 +17550,31 @@ async def cap_dag_agent_loop_v6(
 
     await emit_event({"type": "agent_loop_v6.triage_start", "goal": goal[:200], "session_id": sid})
 
+    # ── Cross-session relevant memory ──────────────────────────────────────────
+    # The SAME mechanism plain chat uses on every turn (memory_hooks.
+    # get_agent_memory_context — embedding search against the query, relevance-
+    # ranked, bounded to `limit` results) so the loop can see a recent relevant
+    # artifact/answer and reuse it instead of redoing the work from zero. The
+    # loop already WRITES its own turns into this exact store (see
+    # _record_history_turn → memory_hooks.record_agent_turn below) — chat both
+    # writes AND reads it, the loop only ever did the write half. Folded into
+    # `goal` itself (not just one step's context) so planning sees it too —
+    # the planner is what decides whether a step re-fetches data that may
+    # already exist. Best-effort and bounded; a failure here never blocks the
+    # run, same as the identical inject in agents.py's chat path.
+    try:
+        _mh = sys.modules.get("memory_hooks")
+        if _mh:
+            _mem_ctx = await asyncio.wait_for(
+                _mh.get_agent_memory_context(session_id=sid, query=goal, limit=5), timeout=8)
+            if _mem_ctx:
+                goal = (goal + "\n\n" + _mem_ctx
+                        + "\n(The above are RELEVANT RESULTS FROM PAST CONVERSATIONS — reuse "
+                          "them if they already answer part of this goal; do not re-fetch or "
+                          "re-derive from scratch what is already there.)")
+    except Exception as e:
+        log.debug("v6 memory context inject failed: %s", e)
+
     # ── Catalog (identical construction to v5) ────────────────────────────────
     base_caps = [c.strip() for c in (base_toolkit or "").replace(",", " ").split() if c.strip()]
     try:
@@ -13423,7 +17590,7 @@ async def cap_dag_agent_loop_v6(
         if _seed not in catalog_names:
             catalog_names.insert(0, _seed)
     catalog_names = _v5_expand_cohorts(catalog_names)
-    _catalog_block = _DEFAULT_CAP_BLACKLIST | _gated_read_caps()
+    _catalog_block = _DEFAULT_CAP_BLACKLIST | _gated_read_caps() | _research_block_caps()
     if _catalog_block:
         catalog_names = [c for c in catalog_names if c not in _catalog_block]
     # Prefer-terminal-tools: guarantee exec.bash.run is on the menu so smart
@@ -13681,7 +17848,7 @@ async def cap_dag_agent_loop_v6(
                 # project — it already knows its slug and only records progress.
                 if enable_dream_persistence and tier == "strategic" and not _is_dream_exec:
                     strategic_slug = await _v7_persist_strategic(
-                        goal, mp["long_form"], done_when)
+                        goal, mp["long_form"], done_when, session_id=sid)
                     if strategic_slug:
                         await emit_event({"type": "agent_loop_v6.strategic_persisted",
                                           "session_id": sid, "stream_id": stream_id,
@@ -13737,6 +17904,10 @@ async def cap_dag_agent_loop_v6(
             log.debug("v6 master-planner stage failed: %s", e)
 
     recon = plan.get("recon") or []
+    # Recon findings + the files it saved, hoisted out of the loop so they survive
+    # planning and can be seeded into the blackboard as a step-0 result below.
+    recon_artifacts: List[Dict[str, Any]] = []
+    recon_digest = ""
     if enable_recon and recon and recon_max_rounds > 0:
         catalog_set_for_recon = set(catalog_names)
         accumulated: List[str] = []
@@ -13748,13 +17919,15 @@ async def cap_dag_agent_loop_v6(
                 findings = await _v5_run_recon(
                     recon, session_id=sid, stream_id=stream_id, trace_id=trace_id,
                     call_tool=_agent_loop_call_tool, catalog_set=catalog_set_for_recon,
-                    round_idx=rnd, max_rounds=recon_max_rounds)
+                    round_idx=rnd, max_rounds=recon_max_rounds,
+                    artifacts_out=recon_artifacts)
             except Exception as e:
                 log.debug("v6 recon round %d failed: %s", rnd, e)
                 break
             if not findings:
                 break
             accumulated.append(findings)
+            recon_digest = "\n\n".join(accumulated)
             try:
                 plan2 = await _v5_orchestrate_plan(
                     goal, catalog_names, skills, cap_skill_map,
@@ -13811,9 +17984,33 @@ async def cap_dag_agent_loop_v6(
 
     # ── Execute over a shared ledger with an adaptive controller ──────────────
     blackboard: Dict[int, Dict[str, Any]] = {}
+    # Run-level file registry (shape + parse status + content), shared by every
+    # step so a file is established once and never re-probed while unchanged.
+    artifacts: Dict[str, Dict[str, Any]] = {}
+    # Seed recon as a synthetic step-0 blackboard entry so its findings AND the
+    # files it saved reach every step (see _v5_build_ctx_slice). It goes in the
+    # blackboard only, never `results` — the ledger, verifier and step counters
+    # must keep seeing exactly the steps the planner produced.
+    if recon_digest or recon_artifacts:
+        blackboard[0] = {
+            "id": 0, "title": "Recon (pre-plan investigation)", "ok": True,
+            "summary": recon_digest[:_V5_CTX_PER_STEP],
+            "outputs": {f"file:{a['rel']}": f"{a['rel']}\n{a['note']}"
+                        for a in recon_artifacts},
+            "cycle_end": 0, "history": [],
+        }
+
     results: List[Dict[str, Any]] = []
     flat_history: List[Dict[str, Any]] = []
     journal: List[Dict[str, Any]] = []     # structured run journal (complex/long-term only)
+    if journal_on and sid:
+        # A follow-up turn in the same chat session reuses whatever an earlier
+        # turn already discovered (schemas, fixed parsers, file paths) instead
+        # of re-deriving it from zero — see _v6_journal_reload.
+        try:
+            journal.extend(await _v6_journal_reload(sid))
+        except Exception as e:
+            log.debug("v6 journal reload failed: %s", e)
     user_updates: List[str] = []           # mid-run user messages folded into context
     queue = list(steps)
     executed = 0
@@ -13841,7 +18038,8 @@ async def cap_dag_agent_loop_v6(
             return
         try:
             entry = await _v6_journal_extract(
-                step, res, goal, model=model, instance_id=instance_id, prefer_gpu=prefer_gpu)
+                step, res, goal, session_id=sid, model=model,
+                instance_id=instance_id, prefer_gpu=prefer_gpu)
             journal.append(entry)
             await emit_event({"type": "agent_loop_v6.journal", "session_id": sid,
                               "stream_id": stream_id, "step_id": step.get("id"),
@@ -13875,7 +18073,7 @@ async def cap_dag_agent_loop_v6(
             sub_steps = sub.get("steps") or []
             if not sub_steps:
                 return await _v5_run_step(
-                    step, goal=goal, blackboard=blackboard, model=model, instance_id=instance_id,
+                    step, goal=goal, blackboard=blackboard, artifacts=artifacts, model=model, instance_id=instance_id,
                     prefer_gpu=prefer_gpu, session_id=sid, stream_id=stream_id, trace_id=trace_id,
                     cycle_budget=step_cycle_budget, cycle_offset=gc_in,
                     artifact_dir_path=artifact_dir_path, call_tool=_agent_loop_call_tool,
@@ -13905,7 +18103,7 @@ async def cap_dag_agent_loop_v6(
             gc = gc_in
             for ss in sub_steps:
                 r = await _v5_run_step(
-                    ss, goal=step["goal"], blackboard={**blackboard, **sub_bb},
+                    ss, goal=step["goal"], blackboard={**blackboard, **sub_bb}, artifacts=artifacts,
                     model=model, instance_id=instance_id, prefer_gpu=prefer_gpu, session_id=sid,
                     stream_id=stream_id, trace_id=trace_id, cycle_budget=step_cycle_budget,
                     cycle_offset=gc, artifact_dir_path=artifact_dir_path,
@@ -13925,11 +18123,16 @@ async def cap_dag_agent_loop_v6(
             await emit_event({"type": "agent_loop_v5.step_done", "session_id": sid,
                               "stream_id": stream_id, "step_id": parent_id,
                               "ok": agg_ok, "summary": agg_summary[:1500]})
+            _sub_outputs: Dict[str, Any] = {}
+            for r in sub_results:
+                _sub_outputs.update(r.get("outputs") or {})
             return {"id": parent_id, "title": step["title"], "ok": agg_ok, "summary": agg_summary,
-                    "outputs": {}, "cycle_end": gc, "history": sub_history, "subplan": True,
+                    # Merge the sub-steps' artifacts (see _v5_run_phased_step): an
+                    # empty dict hides every file the sub-plan produced.
+                    "outputs": _sub_outputs, "cycle_end": gc, "history": sub_history, "subplan": True,
                     "sub_steps": sub_results}
         return await _v5_run_step(
-            step, goal=goal, blackboard=blackboard, model=model, instance_id=instance_id,
+            step, goal=goal, blackboard=blackboard, artifacts=artifacts, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, session_id=sid, stream_id=stream_id, trace_id=trace_id,
             cycle_budget=step_cycle_budget, cycle_offset=gc_in,
             artifact_dir_path=artifact_dir_path, call_tool=_agent_loop_call_tool,
@@ -13946,7 +18149,8 @@ async def cap_dag_agent_loop_v6(
         if not enable_step_finalize:
             return
         await _v6_finalize_step(step, res, goal, model=model,
-                                instance_id=instance_id, prefer_gpu=prefer_gpu)
+                                instance_id=instance_id, prefer_gpu=prefer_gpu,
+                                session_id=sid)
         if res.get("finalized"):
             await emit_event({"type": "agent_loop_v6.step_finalized", "session_id": sid,
                               "stream_id": stream_id, "step_id": step["id"],
@@ -13958,13 +18162,23 @@ async def cap_dag_agent_loop_v6(
         if not (enable_step_verify and str(step.get("success") or "").strip()):
             res["met"] = None
             return
-        v = await _v6_verify_step(step, res, model=model,
+        if stream_id:
+            await emit_event({"type": "agent_loop_v6.stage_start", "stream_id": stream_id,
+                              "session_id": sid, "stage": "verify", "key": str(step.get("id")),
+                              "label": "🎯 Checking success criterion…"})
+        v = await _v6_verify_step(step, res, session_id=sid, model=model,
                                   instance_id=instance_id, prefer_gpu=prefer_gpu)
         res["met"] = v["met"]
         res["met_reason"] = v["reason"]
+        # `ok` on a VERIFY event must be the VERDICT, not the step's own flag.
+        # Emitting res["ok"] made the trace read "verify ok=True" beside a reason
+        # saying the deliverable was never created — so a run that was correctly
+        # failing and retrying steps looked like it was sailing past its checks.
+        # met is the verdict; step_ok is kept alongside for context.
         await emit_event({"type": "agent_loop_v6.verify", "session_id": sid,
                           "stream_id": stream_id, "step_id": step["id"],
-                          "ok": bool(res.get("ok")), "met": v["met"],
+                          "ok": bool(v["met"]), "met": v["met"],
+                          "step_ok": bool(res.get("ok")),
                           "criterion": str(step.get("success") or "")[:300],
                           "reason": v["reason"]})
 
@@ -14049,7 +18263,7 @@ async def cap_dag_agent_loop_v6(
             bs = dict(bs)
             bs["needs"] = sorted(set((bs.get("needs") or []) + anc_ids + branch_ids))
             r = await _v5_run_step(
-                bs, goal=goal, blackboard=local_bb, model=model, instance_id=instance_id,
+                bs, goal=goal, blackboard=local_bb, artifacts=artifacts, model=model, instance_id=instance_id,
                 prefer_gpu=prefer_gpu, session_id=sid, stream_id=stream_id, trace_id=trace_id,
                 cycle_budget=step_cycle_budget, cycle_offset=gc,
                 artifact_dir_path=artifact_dir_path, call_tool=_agent_loop_call_tool,
@@ -14115,7 +18329,7 @@ async def cap_dag_agent_loop_v6(
                     {"goal": failed_step.get("goal", ""), "success": crit},
                     {"ok": True, "summary": br["summary"], "outputs": br["outputs"],
                      "history": br["history"]},
-                    model=model, instance_id=instance_id, prefer_gpu=prefer_gpu)
+                    session_id=sid, model=model, instance_id=instance_id, prefer_gpu=prefer_gpu)
                 met = bool(v["met"]); reason = v["reason"]
             return ap, br, met, reason
 
@@ -14280,11 +18494,15 @@ async def cap_dag_agent_loop_v6(
             # Mid-run user updates steer replanning too (append to the goal view).
             _ctrl_goal = (goal + "\n\n" + _user_updates_block(user_updates)
                           if user_updates else goal)
+            if stream_id:
+                await emit_event({"type": "agent_loop_v6.stage_start", "stream_id": stream_id,
+                                  "session_id": sid, "stage": "assess", "key": str(res.get("id")),
+                                  "label": "🧭 Deciding what's next…"})
             ctrl = await _v6_control(
                 _ctrl_goal, done_when, results, queue, res,
                 catalog_names=catalog_names, valid_skill_ids=valid_skill_ids,
                 base_id=max_id, steps_left=steps_left, model=model,
-                instance_id=instance_id, prefer_gpu=prefer_gpu)
+                instance_id=instance_id, prefer_gpu=prefer_gpu, session_id=sid)
             await emit_event({"type": "agent_loop_v6.assess", "session_id": sid,
                               "stream_id": stream_id, "after_step": step["id"],
                               "assessment": ctrl.get("assessment", ""),
@@ -14324,11 +18542,15 @@ async def cap_dag_agent_loop_v6(
     if enable_final_gate and executed < hard_cap:
         _gate_goal = (goal + "\n\n" + _user_updates_block(user_updates)
                       if user_updates else goal)
+        if stream_id:
+            await emit_event({"type": "agent_loop_v6.stage_start", "stream_id": stream_id,
+                              "session_id": sid, "stage": "gate", "key": "final",
+                              "label": "🚦 Checking the whole goal is met…"})
         gate = await _v6_final_gate(
             _gate_goal, done_when, results, catalog_names=catalog_names,
             valid_skill_ids=valid_skill_ids, base_id=max_id,
             steps_left=hard_cap - executed, model=model,
-            instance_id=instance_id, prefer_gpu=prefer_gpu)
+            instance_id=instance_id, prefer_gpu=prefer_gpu, session_id=sid)
         await emit_event({"type": "agent_loop_v6.gate", "session_id": sid,
                           "stream_id": stream_id, "complete": bool(gate.get("complete")),
                           "missing": gate.get("missing", []),
@@ -14410,6 +18632,10 @@ async def cap_dag_agent_loop_v6(
     # ── Delivery stage: dedicated final agent → markdown deliverable ─────────
     deliverable = ""
     if enable_delivery and results:
+        if stream_id:
+            await emit_event({"type": "agent_loop_v6.stage_start", "stream_id": stream_id,
+                              "session_id": sid, "stage": "deliverable", "key": "final",
+                              "label": "📦 Writing the final deliverable…"})
         deliverable = await _v6_deliver(
             goal, done_when, results, final,
             model=model, instance_id=instance_id, prefer_gpu=prefer_gpu)
@@ -14744,6 +18970,7 @@ async def workshop_agent_loop_stream(request: Request):
                             or "off").strip().lower()
     v6_enable_chaining   = bool(body.get("enable_chaining", True))
     v6_condense_output   = bool(body.get("condense_output", _v7_default))
+    v6_raw_context       = bool(body.get("raw_context", False))
     v6_enable_step_questions = bool(body.get("enable_step_questions", _v7_default))
     v6_question_timeout_secs = int(body.get("question_timeout_secs", 180) or 180)
 
@@ -14874,6 +19101,7 @@ async def workshop_agent_loop_stream(request: Request):
             cap_override_mode=v6_cap_override_mode,
             enable_chaining=v6_enable_chaining,
             condense_output=v6_condense_output,
+            raw_context=v6_raw_context,
             enable_step_questions=v6_enable_step_questions,
             question_timeout_secs=v6_question_timeout_secs,
             enable_prestep_info=v6_enable_prestep_info,

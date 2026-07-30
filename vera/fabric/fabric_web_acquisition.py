@@ -1937,83 +1937,96 @@ async def _persist_entity_graph(
     persisted = 0
     ts = now_iso()
 
-    # SQLite persistence — entity rows + per-record mention rows
-    try:
+    # SQLite persistence — entity rows + per-record mention rows.
+    # This is a bulk write (per-entity upsert + up to 200 mention rows each +
+    # up to 300 relation rows + commit). Running it inline on the event loop
+    # stalls the whole server for ~1s under a real ingest, so offload the entire
+    # blocking block to a worker thread (matching the read path below). The
+    # connection is opened AND closed inside the thread to avoid leaking it.
+    def _write_sqlite() -> int:
+        written = 0
         conn = _sqlite_conn()
-        for norm, ent in entities.items():
-            ckey = _canonical_key(ent.get("name") or norm)
-            eid = f"{ent['type']}:{hashlib.sha1(ckey.encode()).hexdigest()[:12]}"
-            record_ids = list(ent.get("record_ids", set()))
-            ds_list = list(ent.get("datasets", {dataset_id}))
+        try:
+            for norm, ent in entities.items():
+                ckey = _canonical_key(ent.get("name") or norm)
+                eid = f"{ent['type']}:{hashlib.sha1(ckey.encode()).hexdigest()[:12]}"
+                record_ids = list(ent.get("record_ids", set()))
+                ds_list = list(ent.get("datasets", {dataset_id}))
 
-            # Upsert the entity master row — merge datasets on conflict
-            # First check if entity exists so we can merge dataset lists
-            existing_row = conn.execute(
-                "SELECT datasets FROM fabric_entities WHERE id = ?", (eid,)
-            ).fetchone()
-            if existing_row:
-                try:
-                    existing_ds = set(json.loads(existing_row["datasets"] or "[]"))
-                except Exception:
-                    existing_ds = set()
-                merged_ds = list(existing_ds | set(ds_list))
-            else:
-                merged_ds = ds_list
+                # Upsert the entity master row — merge datasets on conflict
+                # First check if entity exists so we can merge dataset lists
+                existing_row = conn.execute(
+                    "SELECT datasets FROM fabric_entities WHERE id = ?", (eid,)
+                ).fetchone()
+                if existing_row:
+                    try:
+                        existing_ds = set(json.loads(existing_row["datasets"] or "[]"))
+                    except Exception:
+                        existing_ds = set()
+                    merged_ds = list(existing_ds | set(ds_list))
+                else:
+                    merged_ds = ds_list
 
-            conn.execute(
-                "INSERT INTO fabric_entities "
-                "(id, name, type, normalised, mention_count, datasets, "
-                "first_seen, last_seen, props) VALUES (?,?,?,?,?,?,?,?,?) "
-                "ON CONFLICT(id) DO UPDATE SET "
-                "mention_count = mention_count + excluded.mention_count, "
-                "datasets = ?, "
-                "last_seen = excluded.last_seen, "
-                "props = excluded.props",
-                (eid, ent["name"], ent["type"], ent.get("normalised", norm),
-                 ent.get("mention_count", 1),
-                 json.dumps(ds_list),
-                 ts, ts,
-                 json.dumps({
-                     "record_ids": record_ids[:50],
-                     "description": ent.get("description", ""),
-                     "aliases": sorted(ent.get("aliases", []))[:25],
-                     "attributes": ent.get("attributes", {}),
-                     "facts": ent.get("facts", [])[:20],
-                 }),
-                 json.dumps(merged_ds))
-            )
-
-            # Write per-record mention rows
-            for rid in record_ids[:200]:
                 conn.execute(
-                    "INSERT OR IGNORE INTO fabric_entity_mentions "
-                    "(entity_id, record_id, dataset_id, created_at) "
-                    "VALUES (?,?,?,?)",
-                    (eid, rid, dataset_id, ts)
+                    "INSERT INTO fabric_entities "
+                    "(id, name, type, normalised, mention_count, datasets, "
+                    "first_seen, last_seen, props) VALUES (?,?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(id) DO UPDATE SET "
+                    "mention_count = mention_count + excluded.mention_count, "
+                    "datasets = ?, "
+                    "last_seen = excluded.last_seen, "
+                    "props = excluded.props",
+                    (eid, ent["name"], ent["type"], ent.get("normalised", norm),
+                     ent.get("mention_count", 1),
+                     json.dumps(ds_list),
+                     ts, ts,
+                     json.dumps({
+                         "record_ids": record_ids[:50],
+                         "description": ent.get("description", ""),
+                         "aliases": sorted(ent.get("aliases", []))[:25],
+                         "attributes": ent.get("attributes", {}),
+                         "facts": ent.get("facts", [])[:20],
+                     }),
+                     json.dumps(merged_ds))
                 )
 
-            persisted += 1
+                # Write per-record mention rows
+                for rid in record_ids[:200]:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO fabric_entity_mentions "
+                        "(entity_id, record_id, dataset_id, created_at) "
+                        "VALUES (?,?,?,?)",
+                        (eid, rid, dataset_id, ts)
+                    )
 
-        # Persist entity-entity relations to SQLite
-        for rel in relations[:300]:
-            from_ck = _canonical_key(rel["from_name"])
-            to_ck = _canonical_key(rel["to_name"])
-            from_eid = f"{rel['from_type']}:{hashlib.sha1(from_ck.encode()).hexdigest()[:12]}"
-            to_eid = f"{rel['to_type']}:{hashlib.sha1(to_ck.encode()).hexdigest()[:12]}"
-            conn.execute(
-                "INSERT OR REPLACE INTO fabric_entity_relations "
-                "(from_id, to_id, rel, props, dataset_id, created_at) "
-                "VALUES (?,?,?,?,?,?)",
-                (from_eid, to_eid, rel["rel"],
-                 json.dumps({"distance": rel.get("distance", 0),
-                             "from_name": rel["from_name"],
-                             "to_name": rel["to_name"],
-                             "context": rel.get("context", ""),
-                             "score": rel.get("score", 0)}),
-                 dataset_id, ts)
-            )
+                written += 1
 
-        conn.commit()
+            # Persist entity-entity relations to SQLite
+            for rel in relations[:300]:
+                from_ck = _canonical_key(rel["from_name"])
+                to_ck = _canonical_key(rel["to_name"])
+                from_eid = f"{rel['from_type']}:{hashlib.sha1(from_ck.encode()).hexdigest()[:12]}"
+                to_eid = f"{rel['to_type']}:{hashlib.sha1(to_ck.encode()).hexdigest()[:12]}"
+                conn.execute(
+                    "INSERT OR REPLACE INTO fabric_entity_relations "
+                    "(from_id, to_id, rel, props, dataset_id, created_at) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (from_eid, to_eid, rel["rel"],
+                     json.dumps({"distance": rel.get("distance", 0),
+                                 "from_name": rel["from_name"],
+                                 "to_name": rel["to_name"],
+                                 "context": rel.get("context", ""),
+                                 "score": rel.get("score", 0)}),
+                     dataset_id, ts)
+                )
+
+            conn.commit()
+        finally:
+            conn.close()
+        return written
+
+    try:
+        persisted = await asyncio.to_thread(_write_sqlite)
     except Exception as e:
         log.warning("entity sqlite: %s", e)
 

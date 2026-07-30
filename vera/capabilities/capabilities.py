@@ -1683,6 +1683,93 @@ register_ui(
 #  ██  LLM GROUP
 # ─────────────────────────────────────────────────────────────────────────────
 
+async def _llm_files_context(files, session_id: str = "",
+                             *, max_per_file: int = 20000, max_files: int = 8) -> str:
+    """Read the given file(s)/portions and format them as a grounding CONTEXT block
+    to prepend to a generation prompt. `files` accepts a path, a 'path:start-end'
+    portion, a newline/comma list of those, a JSON list, or dicts {path,start,end}.
+    Reads are SANDBOX-AWARE via the ide.fs.read cap (so a './output_*.txt' from a
+    loop step resolves in the session workspace). Best-effort — skips what it can't
+    read; returns '' when nothing usable."""
+    specs = files
+    if isinstance(specs, str):
+        s = specs.strip()
+        if s[:1] in ("[", "{"):
+            try:
+                specs = json.loads(s)
+            except Exception:
+                specs = [s]
+        elif s:
+            specs = ([p.strip() for p in re.split(r"[\n,]+", s) if p.strip()]
+                     if ("\n" in s or "," in s) else [s])
+        else:
+            specs = []
+    if isinstance(specs, dict):
+        specs = [specs]
+    if not isinstance(specs, list) or not specs:
+        return ""
+    try:
+        from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY as _REG
+    except Exception:
+        return ""
+    _rd = _REG.get("ide.fs.read")
+    _rdfn = (_rd.get("raw") if _rd else None)
+    if not _rdfn:
+        return ""
+    blocks: list = []
+    for spec in specs[:max_files]:
+        path, start, end = "", 0, 0
+        if isinstance(spec, dict):
+            path = str(spec.get("path") or spec.get("file") or "").strip()
+            start = int(spec.get("start") or 0); end = int(spec.get("end") or 0)
+        else:
+            path = str(spec).strip()
+            m = re.match(r"^(.*?):(\d+)-(\d+)$", path)
+            if m:
+                path, start, end = m.group(1), int(m.group(2)), int(m.group(3))
+        if not path:
+            continue
+        try:
+            r = await _rdfn(path=path, session_id=session_id, max_bytes=max_per_file * 2)
+        except Exception:
+            continue
+        if not isinstance(r, dict) or r.get("error"):
+            continue
+        content = r.get("content") or ""
+        loc = ""
+        if start or end:
+            lines = content.splitlines()
+            content = "\n".join(lines[max(0, start - 1):(end or len(lines))])
+            loc = f" (lines {start or 1}-{end or len(lines)})"
+        blocks.append(f"===== FILE: {path}{loc} =====\n{content[:max_per_file]}")
+    if not blocks:
+        return ""
+    return ("CONTEXT FILES (grounding for this task — use their content; do not echo them "
+            "verbatim unless asked):\n\n" + "\n\n".join(blocks))
+
+
+async def _llm_save_output(save_as: str, text: str, session_id: str = "") -> dict:
+    """Persist a generation to `save_as` in the session's working area — INSIDE the
+    sandbox container when the session is sandboxed, else the host artifact dir —
+    and return {path, path_rel, bytes} (or {save_error} on failure).
+
+    This is what makes a written deliverable a FILE without a second cap call: the
+    caller asked for text AND a file, so llm.generate produces both. Best-effort:
+    a failed write never fails the generation (the text is still returned)."""
+    rel = str(save_as or "").strip().strip("/\\")
+    if not rel or not (text or "").strip():
+        return {}
+    try:
+        from Vera.vera.execution.exec_capabilities import write_artifact_file as _waf
+        full = await _waf(relpath=rel, content=text, session_id=session_id or "")
+        return {"path": full,
+                "path_rel": os.path.basename(str(full)) or rel,
+                "bytes": len((text or "").encode("utf-8", "ignore"))}
+    except Exception as e:
+        log.debug("llm output save failed for %s: %s", rel, e)
+        return {"save_error": str(e)[:200]}
+
+
 @capability(
     "llm.generate",
     http_method="POST", http_path="/llm/generate", http_tags=["llm", "generate"],
@@ -1693,17 +1780,28 @@ register_ui(
     streams=["tokens"],
     memory="on",
     description="Generate free-form text using the local LLM cluster (Ollama or vLLM). "
-                "WHEN TO USE: writing prose, answering questions, reasoning, drafting content, synthesising results, "
-                "building structured JSON responses, or any task requiring language understanding. "
-                "This is the most general-purpose tool — if no specialised tool fits, use this. "
+                "WHEN TO USE: writing prose, answering questions, reasoning, drafting content, summarising/"
+                "synthesising results you PROVIDE, writing code/scripts, or structuring YOUR OWN reasoning "
+                "as JSON. NOT for real-world DATA: do not use it to produce or edit a dataset / factual "
+                "records / a populated JSON or CSV (e.g. real entities with real stats) — it fabricates; "
+                "fetch or compute that with a script (exec.python.run) instead. "
+                "This is the most general-purpose AUTHORING tool — if no specialised tool fits, use this. "
                 "HOW TO USE: provide prompt= with the task and optional system= for persona/constraints. "
-                "Params: prompt (str!), system (str — optional persona/instructions), model (str — leave blank for default), "
+                "To ground the generation on FILES, pass files= — a path, a 'path:start-end' portion, "
+                "or a list (e.g. files=['./output_web_fetch_2.txt','./notes.md:1-40']); their content is "
+                "read (sandbox-aware) and prepended as context, so you don't paste large text inline. "
+                "Params: prompt (str!), files (str|list — file paths/portions to include as context), "
+                "system (str — optional persona/instructions), model (str — leave blank for default), "
                 "prefer_gpu (bool default True — route to GPU instance), backend (ollama|vllm|auto), "
                 "output_format (str — optional shared format profile, e.g. markdown|report|audio|json|"
                 "docs|quick|short|long; see llm.formats — appends a format directive to the system prompt), "
                 "job_type (str — optional cluster routing hint: embedding|chat|dream|summarize|vision|code; "
-                "routes to instances per the active routing profile). "
-                "Output: {text (the generated response), model, instance, backend, has_gpu, tokens}. "
+                "routes to instances per the active routing profile), "
+                "save_as (str — optional FILENAME, e.g. 'report.md': the generated text is written to that "
+                "file in your working directory/sandbox and its path returned, so you do NOT need a "
+                "separate ide.fs.write/exec write step to persist a document). "
+                "Output: {text (the generated response), model, instance, backend, has_gpu, tokens, "
+                "path + path_rel (when save_as was given)}. "
                 "Streams token-by-token via the tokens stream for live output.",
 )
 async def llm_generate(
@@ -1715,18 +1813,53 @@ async def llm_generate(
     backend:       str   = "auto",   # "ollama" | "vllm" | "auto"
     caller:        str   = "",       # true caller label for logging (e.g. "dream_research")
     output_format: str   = "",       # shared output-format profile (vera.output_formats)
-    job_type:      str   = "",       # cluster routing hint (embedding|chat|dream|...)
+    job_type:      str   = "",       # cluster routing hint (embedding|chat|dream|code|...)
+    profile:       str   = "",       # routing profile (e.g. "loop") — with role, picks model+sampling
+    role:          str   = "",       # routing role within the profile (e.g. "coder", "writer")
+    files=None,                      # path | 'path:start-end' | list — read + prepended as context
+    save_as:       str   = "",       # filename — write the generated text there (sandbox-aware)
+    session_id:    str   = "",       # for sandbox-aware file reads/writes
     trace_id=None,
+    stream_cb=None,   # optional extra per-call callback (e.g. the agentic loop's
+                       # live tool-output stream) — internal plumbing, deliberately
+                       # untyped/unannotated like trace_id so it never enters the
+                       # generated JSON schema and a model can never pass it.
 ):
     from Vera.vera.capability_orchestration import (
         CAPABILITY_REGISTRY as _REG,
         _ollama_caller_info,
+        effective_num_ctx,
     )
+
+    # Optional FILE CONTEXT: read the given file(s)/portions and prepend them so the
+    # caller can ground the generation on source files (a script to refactor, fetched
+    # data, notes) without pasting them inline — the loop equivalent of podcast
+    # sources. Sandbox-aware; best-effort.
+    if files:
+        try:
+            _fctx = await _llm_files_context(files, session_id)
+            if _fctx:
+                prompt = _fctx + "\n\n---\n\n" + (prompt or "")
+        except Exception as _fe:
+            log.debug("llm.generate file-context read failed: %s", _fe)
 
     # Standardised output-format layer: prepend/append the profile's directive
     # to the system prompt so every backend produces the requested shape.
     if output_format:
         system = apply_format(system, output_format)
+
+    # ── Output budget ────────────────────────────────────────────────────────
+    # A bare llm.generate used to pass NO options, so it inherited the model's
+    # small default context window — long structured outputs (big JSON/code
+    # files, full documents) were silently truncated mid-stream. Grant a
+    # generous but BOUNDED window: the model's detected max, capped to
+    # VERA_LLM_GEN_CTX (default 16384) and the cluster-wide OLLAMA_MAX_AUTO_CTX,
+    # and let the response use it (num_predict rides the same ceiling; the model
+    # still stops early at a natural EOS for short answers).
+    try:
+        _want_ctx = int(os.getenv("VERA_LLM_GEN_CTX", "16384") or 16384)
+    except Exception:
+        _want_ctx = 16384
 
     # Build a caller_override so the real upstream caller is logged rather
     # than llm_generate itself appearing as the caller in every log entry.
@@ -1739,6 +1872,11 @@ async def llm_generate(
     async def _tok(t: str):
         tokens_collected.append(t)
         await emit_stream("tokens", trace_id, {"token": t}, "llm.generate")
+        if stream_cb is not None:
+            try:
+                await stream_cb(t)
+            except Exception:
+                pass
 
     # ── Backend routing ────────────────────────────────────────────────────────
     # Prefer vLLM when: backend="vllm" OR (backend="auto" AND vLLM has online instances)
@@ -1757,7 +1895,7 @@ async def llm_generate(
         _cap = _REG.get("vllm.generate")
         if _cap:
             kw = dict(prompt=prompt, model=model, prefer_gpu=prefer_gpu,
-                      instance_id=instance_id or None,
+                      instance_id=instance_id or None, max_tokens=_want_ctx,
                       _caller_label=caller or _caller_info["caller_func"])
             if system:
                 # vLLM /v1/completions doesn't have a system field — prepend it
@@ -1769,19 +1907,30 @@ async def llm_generate(
                 text = result.get("text", "") if isinstance(result, dict) else str(result)
                 used_model = result.get("model", model or "") if isinstance(result, dict) else (model or "")
                 used_inst  = result.get("instance_id", "") if isinstance(result, dict) else ""
+                _fr = str(result.get("finish_reason", "")) if isinstance(result, dict) else ""
                 return {"text": text, "model": used_model, "instance": used_inst,
-                        "backend": "vllm", "has_gpu": True, "tokens": len(tokens_collected)}
+                        "backend": "vllm", "has_gpu": True, "tokens": len(tokens_collected),
+                        "truncated": _fr == "length",
+                        **(await _llm_save_output(save_as, text, session_id))}
             except Exception as _e:
                 log.warning("llm.generate vllm route failed (%s), falling back to ollama", _e)
 
     # ── Ollama path ─────────────────────────────────────────────────────────────
     # Call ollama_generate with the true caller so logs/events show the real source.
+    try:
+        _ctx = await effective_num_ctx(model, instance_id or None, prefer_gpu, manual=_want_ctx)
+        _gen_opts = {"num_ctx": _ctx, "num_predict": _ctx}
+    except Exception:
+        _gen_opts = {"num_predict": _want_ctx}
+    _meta: dict = {}
     text = await ollama_generate(
         prompt, system=system, model=model,
         instance_id=instance_id or None,
         prefer_gpu=prefer_gpu, stream_cb=_tok,
         caller_override=_caller_info,
         job_type=job_type or None,
+        profile=profile or None, role=role or None,
+        options=_gen_opts, meta_out=_meta,
     )
     chosen = pick_instance(prefer_gpu=prefer_gpu, instance_id=instance_id or None,
                            model=model, job_type=job_type or None)
@@ -1789,7 +1938,9 @@ async def llm_generate(
     return {"text": text, "model": model or OLLAMA_MODEL,
             "instance": chosen, "instance_url": inst.get("url"),
             "backend": "ollama",
-            "has_gpu": inst.get("has_gpu", False), "tokens": len(tokens_collected)}
+            "has_gpu": inst.get("has_gpu", False), "tokens": len(tokens_collected),
+            "truncated": bool(_meta.get("truncated")),
+            **(await _llm_save_output(save_as, text, session_id))}
 
 
 @capability("llm.formats",

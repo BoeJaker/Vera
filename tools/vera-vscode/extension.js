@@ -368,6 +368,56 @@ async function execClientAction(a) {
       if (client.status) client.status.text = "$(radio-tower) Vera client";
       return r;
     }
+    case "claude_sessions_scan": {
+      // List every local Claude Code transcript (~/.claude/projects/**/*.jsonl)
+      // so Vera can discover this machine's conversations. No file content is
+      // read here — just paths + sizes/mtimes for the ingester to diff against.
+      const root = path.join(os.homedir(), ".claude", "projects");
+      const files = [];
+      const walk = (dir) => {
+        let entries;
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
+        catch (e) { return; }
+        for (const ent of entries) {
+          const full = path.join(dir, ent.name);
+          if (ent.isDirectory()) { walk(full); continue; }
+          if (!ent.isFile() || !ent.name.endsWith(".jsonl")) continue;
+          let st;
+          try { st = fs.statSync(full); } catch (e) { continue; }
+          files.push({ rel: path.relative(root, full).split(path.sep).join("/"),
+                       size: st.size, mtime: st.mtimeMs });
+        }
+      };
+      walk(root);
+      return { ok: true, result: { files, root } };
+    }
+    case "claude_sessions_read": {
+      // Return the bytes of one transcript file from `offset` to EOF, so the
+      // ingester can tail it incrementally instead of re-reading whole files.
+      const root = path.join(os.homedir(), ".claude", "projects");
+      const rel = String(args.path || "");
+      const full = path.resolve(root, rel);
+      if (full !== root && !full.startsWith(root + path.sep)) {
+        return { ok: false, error: "path escapes projects root" };
+      }
+      let size;
+      try { size = fs.statSync(full).size; }
+      catch (e) { return { ok: false, error: "stat failed: " + e.message }; }
+      const offset = Math.min(Math.max(0, Number(args.offset) || 0), size);
+      if (offset >= size) return { ok: true, result: { content: "", size } };
+      let fd, content;
+      try {
+        const buf = Buffer.alloc(size - offset);
+        fd = fs.openSync(full, "r");
+        fs.readSync(fd, buf, 0, buf.length, offset);
+        content = buf.toString("utf-8");
+      } catch (e) {
+        return { ok: false, error: "read failed: " + e.message };
+      } finally {
+        if (fd !== undefined) try { fs.closeSync(fd); } catch (e) {}
+      }
+      return { ok: true, result: { content, size } };
+    }
     default:
       return { ok: false, error: "unknown action: " + a.action };
   }

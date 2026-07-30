@@ -358,3 +358,15 @@ badge when a signal fires on the latest bar; refreshes with each bar update.
 - [Machine Learning](./16-machine-learning.md) — the general ML workshop; markets ML tools are self-contained but share the fabric
 - [Agents & Chat](./19-agents-chat.md) — the agent-loop stream the embedded copilot uses
 - [Capability Framework](./01-capability-framework.md) — `markets.*` registration & events
+
+## Screenshots (operator-captured)
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_Regenerated from the live registry by `docs.build`. Run the documentation mission to populate this table._
+<!-- VERA:AUTO:capabilities END -->

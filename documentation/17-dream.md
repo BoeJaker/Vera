@@ -254,3 +254,15 @@ The chat panel's per-message actions can route a finished answer into the dream 
 - [Agents & Chat](./19-agents-chat.md) — `dream.stage.agent_loop` reuses the agentic loop
 - [Research System](./07-research.md) — `dream.sensor.research_recent` surfaces research artifacts
 - [Integrations](./23-integrations.md) — Telegram delivery + HITL approvals
+
+## Screenshots (operator-captured)
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_Regenerated from the live registry by `docs.build`. Run the documentation mission to populate this table._
+<!-- VERA:AUTO:capabilities END -->

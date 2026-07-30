@@ -2109,7 +2109,8 @@ if _CAP_AVAILABLE and HAS_NUMPY:
 
     # ── On-the-spot infographics (agent-buildable, live-rendered) ────────────
 
-    INFOG_PANEL_TYPES = ["stat", "spark", "bars", "donut", "gauge", "heatmap", "text"]
+    INFOG_PANEL_TYPES = ["stat", "spark", "bars", "donut", "gauge", "heatmap", "text",
+                         "ring", "area", "candles", "waffle", "radial"]
 
     @capability(
         "markets.infographic.save", http_method="POST",
@@ -2513,6 +2514,122 @@ if _CAP_AVAILABLE and HAS_NUMPY:
                 meta={"url": headlines[0].get("url", "")})
         return {"ok": True, "query": q, "headlines": headlines[:12],
                 "cached_at": now_iso()}
+
+    @capability(
+        "markets.news.sources", http_method="GET",
+        http_path="/markets/news/sources", http_tags=["markets"],
+        memory="off", silent=True,
+        description="List subscribed news sources. Output: {sources:[{id,label,"
+                    "query,site}]}.",
+    )
+    async def cap_news_sources(trace_id=None) -> dict:
+        loop = asyncio.get_running_loop()
+        srcs = await loop.run_in_executor(None, _kv_get_sync, "studio:news:sources")
+        if srcs is None:                       # first use — seed a sensible default set
+            srcs = [
+                {"id": "coindesk", "label": "CoinDesk", "query": "crypto", "site": "coindesk.com"},
+                {"id": "cointelegraph", "label": "Cointelegraph", "query": "crypto", "site": "cointelegraph.com"},
+                {"id": "the-block", "label": "The Block", "query": "crypto", "site": "theblock.co"},
+                {"id": "decrypt", "label": "Decrypt", "query": "crypto", "site": "decrypt.co"},
+                {"id": "reuters-markets", "label": "Reuters Markets", "query": "markets stocks", "site": "reuters.com"},
+                {"id": "cnbc-markets", "label": "CNBC", "query": "markets", "site": "cnbc.com"},
+                {"id": "marketwatch", "label": "MarketWatch", "query": "stock market", "site": "marketwatch.com"},
+                {"id": "yahoo-finance", "label": "Yahoo Finance", "query": "stock market", "site": "finance.yahoo.com"},
+            ]
+            await loop.run_in_executor(None, _kv_set_sync, "studio:news:sources", srcs)
+        return {"sources": srcs}
+
+    @capability(
+        "markets.news.subscribe", http_method="POST",
+        http_path="/markets/news/subscribe", http_tags=["markets"], memory="on",
+        description="Subscribe to a news source — a saved search. Input: label "
+                    "(str!), query (str — search terms, defaults to label), site "
+                    "(str — optional domain to restrict to, e.g. 'reuters.com'). "
+                    "Output: {ok, source, sources}.",
+    )
+    async def cap_news_subscribe(label: str = "", query: str = "", site: str = "",
+                                 trace_id=None) -> dict:
+        label = (label or "").strip()
+        if not label:
+            return {"error": "label required"}
+        loop = asyncio.get_running_loop()
+        srcs = await loop.run_in_executor(None, _kv_get_sync, "studio:news:sources") or []
+        sid = "".join(ch if ch.isalnum() else "-" for ch in label.lower()).strip("-")[:32] or "src"
+        base, i, existing = sid, 2, {s.get("id") for s in srcs}
+        while sid in existing:
+            sid = f"{base}-{i}"; i += 1
+        src = {"id": sid, "label": label,
+               "query": (query or "").strip() or label, "site": (site or "").strip()}
+        srcs.append(src)
+        await loop.run_in_executor(None, _kv_set_sync, "studio:news:sources", srcs)
+        return {"ok": True, "source": src, "sources": srcs}
+
+    @capability(
+        "markets.news.unsubscribe", http_method="POST",
+        http_path="/markets/news/unsubscribe", http_tags=["markets"], memory="on",
+        description="Remove a subscribed news source by id. Input: id (str!). "
+                    "Output: {ok, sources}.",
+    )
+    async def cap_news_unsubscribe(id: str = "", trace_id=None) -> dict:
+        if not id:
+            return {"error": "id required"}
+        loop = asyncio.get_running_loop()
+        srcs = await loop.run_in_executor(None, _kv_get_sync, "studio:news:sources") or []
+        srcs = [s for s in srcs if s.get("id") != id]
+        await loop.run_in_executor(None, _kv_set_sync, "studio:news:sources", srcs)
+        return {"ok": True, "sources": srcs}
+
+    @capability(
+        "markets.news.digest", http_method="POST",
+        http_path="/markets/news/digest", http_tags=["markets"],
+        memory="off", silent=True,
+        description="Aggregate fresh headlines across all subscribed news sources "
+                    "(and optionally one asset), each tagged with its source. "
+                    "Input: symbol_key (str — also include this asset's news), "
+                    "per_source (int=5), extra_query (str — one-off search). "
+                    "Output: {items:[{title,snippet,url,source}], sources_used}.",
+    )
+    async def cap_news_digest(symbol_key: str = "", per_source: int = 5,
+                              extra_query: str = "", trace_id=None) -> dict:
+        loop = asyncio.get_running_loop()
+        srcs = await loop.run_in_executor(None, _kv_get_sync, "studio:news:sources") or []
+        web = sys.modules.get("web_capabilities")
+        if not (web and hasattr(web, "cap_web_search")):
+            return {"error": "web search unavailable"}
+        ma = _ma()
+        queries = []
+        for s in srcs:
+            q = s.get("query") or s.get("label") or ""
+            if s.get("site"):
+                q = f"{q} site:{s['site']}"
+            queries.append((s.get("label", "news"), q))
+        if symbol_key:
+            aq = ma.sentiment_query_for(symbol_key, "") if ma else symbol_key
+            queries.append((symbol_key.split(":")[-1], aq))
+        if (extra_query or "").strip():
+            queries.append(("search", extra_query.strip()))
+        per = max(2, min(10, int(per_source)))
+        items, seen = [], set()
+        for label, q in queries:
+            if not q:
+                continue
+            try:
+                r = await web.cap_web_search(query=q, limit=per, discover="off")
+            except Exception:
+                continue
+            for it in (r or {}).get("results", []):
+                url = it.get("url", "")
+                key = url or it.get("title", "")
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                title = (it.get("title") or "").strip()
+                if not title:
+                    continue
+                items.append({"title": title[:200],
+                              "snippet": (it.get("snippet") or "")[:300],
+                              "url": url, "source": label})
+        return {"items": items[:60], "sources_used": len(queries)}
 
     @capability(
         "markets.sentiment.to_series", http_method="POST",

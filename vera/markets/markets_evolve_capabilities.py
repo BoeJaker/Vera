@@ -65,6 +65,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "grid_span":        0.5,       # ±50% around the current value
     "max_axes":         3,         # sweep engine caps at 3 axes / 400 combos
     "auto_accept":      True,      # put improved strategies live (monitor)
+    "surface_only_improved": True, # keep the full history log, but only leave a
+                                   # sweep winner in the backtest area when it
+                                   # actually beat the incumbent — non-improving
+                                   # runs are pruned so they don't clutter the UI
     "archive_floor":    -0.5,      # archive strategies whose best metric < this
     "improve_agent_loop": True,    # also run Loop Lab improve sessions
     "improve_every_ticks": 6,      # …every N ticks
@@ -286,6 +290,16 @@ async def _improve_target(target: Dict[str, Any], strat: Dict[str, Any],
         # no improvement — widen the search next time (self-correction)
         tstate["stale"] += 1
         tstate["span"] = min(1.5, tstate["span"] * 1.4)
+        # Keep the FULL log (this rec carries best_metric/best_values, and the
+        # tick summary is appended to KEY_HIST) — but don't leave a non-improving
+        # sweep winner cluttering the backtest area. Prune it; only genuine
+        # improvements are surfaced in the main UI.
+        if cfg.get("surface_only_improved", True) and rec.get("best_backtest_id"):
+            try:
+                await _call("markets.backtest.delete", id=rec["best_backtest_id"])
+                rec["pruned_backtest"] = True
+            except Exception as e:
+                log.debug("evolve: prune non-improving backtest failed: %s", e)
         # archive persistent losers
         if best_metric < float(cfg.get("archive_floor", -0.5)) and tstate["stale"] >= 3:
             await _call("markets.strategy.archive", id=sid)
@@ -399,6 +413,53 @@ async def markets_evolve_tick(force_improve: bool = False, trace_id=None):
         return {"ok": True, **summary}
     finally:
         _TICK_RUNNING = False
+
+
+@capability("markets.evolve.prune_backtests", memory="on",
+            http_method="POST", http_path="/markets/evolve/prune_backtests",
+            http_tags=["markets"],
+            description="One-shot cleanup of the backtest area: for every strategy, "
+                        "keep only the BEST evolve-created backtest (by the given "
+                        "metric) and delete the rest. ONLY touches rows named "
+                        "'evolve …' — your own hand-made backtests are never "
+                        "removed, and the evolve history log is untouched. Input: "
+                        "metric (str=sharpe), keep (int=1 — best N per strategy), "
+                        "dry_run (bool=False — just report). Output: {ok, candidates, "
+                        "kept, deleted, count_deleted}.")
+async def markets_evolve_prune_backtests(metric: str = "sharpe", keep: int = 1,
+                                         dry_run: bool = False, trace_id=None):
+    lst = await _call("markets.backtest.list", limit=200)
+    rows = (lst or {}).get("backtests", []) if isinstance(lst, dict) else []
+    ev = [r for r in rows if str(r.get("name") or "").lower().startswith("evolve ")]
+    groups: Dict[str, List[dict]] = {}
+    for r in ev:
+        gk = r.get("strategy_id") or r.get("name") or r.get("id")
+        groups.setdefault(gk, []).append(r)
+
+    def _m(r):
+        v = (r.get("stats") or {}).get(metric)
+        try:
+            return float(v)
+        except Exception:
+            return float("-inf")
+
+    keep = max(1, int(keep))
+    deleted, kept = [], []
+    for grp in groups.values():
+        grp.sort(key=_m, reverse=True)
+        kept.extend(r.get("id") for r in grp[:keep])
+        for r in grp[keep:]:
+            if not dry_run:
+                await _call("markets.backtest.delete", id=r.get("id"))
+            deleted.append(r.get("id"))
+    await emit_event({"type": "markets.evolve", "stage": "prune_backtests",
+                      "deleted": len(deleted), "kept": len(kept),
+                      "dry_run": bool(dry_run)})
+    return {"ok": True, "metric": metric, "candidates": len(ev),
+            "kept": kept, "deleted": deleted, "count_deleted": len(deleted),
+            "dry_run": bool(dry_run),
+            "note": "backtest.list caps at 200 rows — run again to sweep older "
+                    "rows if count_deleted was large."}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -105,12 +105,27 @@ async def _v8_config() -> Dict[str, Any]:
 
 
 def _sbx_mod():
-    """The session-sandbox module (for run-owner scoping), or None."""
+    """The session-sandbox module (for run-owner scoping + collation), or None.
+    Tries the known import names first (cheap, deterministic) before scanning —
+    a silent miss here is exactly what lets constituent loops fan out into
+    per-run containers instead of sharing the program's one owner container, so
+    the lookup must be as robust as possible."""
+    for _name in ("session_sandbox_capabilities",
+                  "Vera.vera.remote.session_sandbox_capabilities"):
+        m = sys.modules.get(_name)
+        if m is not None and hasattr(m, "set_run_owner"):
+            return m
     for n, m in list(sys.modules.items()):
         if m is not None and n.endswith("session_sandbox_capabilities") \
                 and hasattr(m, "set_run_owner"):
             return m
     return None
+
+
+def _cap_func(name: str):
+    """The callable for a registered capability, or None."""
+    c = CAPABILITY_REGISTRY.get(name)
+    return c.get("func") if c and c.get("func") else None
 
 
 def _prog_sandbox_owner(prog: Dict[str, Any]) -> tuple:
@@ -123,6 +138,54 @@ def _prog_sandbox_owner(prog: Dict[str, Any]) -> tuple:
                ("project" if owner.startswith("proj") else "program")
         return owner, kind, prog.get("name", "")
     return f"v8-{prog['id']}", "program", prog.get("name", "")
+
+
+async def _resolve_ide_workspace_path(spec: str) -> str:
+    """Resolve a program's ide_workspace (a workspace NAME, or a host PATH) to a
+    host directory the sandbox can clone into the loop containers, or '' when it
+    can't be resolved."""
+    spec = str(spec or "").strip()
+    if not spec:
+        return ""
+    try:
+        import os as _os
+        if (("/" in spec) or ("\\" in spec)) and _os.path.isdir(spec):
+            return spec
+    except Exception:
+        pass
+    lister = CAPABILITY_REGISTRY.get("ide.workspace.list")
+    if lister and lister.get("func"):
+        try:
+            res = await lister["func"]()
+            for w in (res or {}).get("workspaces", []):
+                if str(w.get("name") or "").strip().lower() == spec.lower():
+                    return str(w.get("path") or "")
+        except Exception:
+            pass
+    return ""
+
+
+async def _auto_ide_workspace() -> str:
+    """Best-effort IDE workspace path of the session that triggered this program
+    (from the syslog trigger chain) — so a program created while the user is
+    working in a workspace auto-associates without an explicit ide_workspace.
+    '' when there's no triggering session or it isn't in a workspace."""
+    sid = ""
+    try:
+        sl = sys.modules.get("syslog")
+        if sl is not None and hasattr(sl, "get_trigger_chain"):
+            sid = (sl.get_trigger_chain() or {}).get("session_id", "") or ""
+    except Exception:
+        sid = ""
+    if not sid:
+        return ""
+    sbx = _sbx_mod()
+    if sbx is not None and hasattr(sbx, "seed_path_for_session"):
+        try:
+            return await sbx.seed_path_for_session(sid) or ""
+        except Exception:
+            return ""
+    return ""
 
 
 def _profiles_mod():
@@ -140,8 +203,12 @@ async def _llm_json(prompt: str, system: str) -> Dict[str, Any]:
     if not gen:
         return {}
     try:
-        raw = await gen(prompt, system=system, json_mode=True, prefer_gpu=True,
-                        job_type="research_planner")
+        # V8 program generation + adaptation are planning/orchestration: route
+        # them through the loop/planner role (CPU reasoning model, e.g.
+        # gpt-oss:20b) so they match v5/v7 planning and keep the GPU free.
+        # Overridable on the Model Routing page (loop/planner role).
+        raw = await gen(prompt, system=system, json_mode=True,
+                        profile="loop", role="planner")
     except Exception as e:
         log.debug("v8 llm call failed: %s", e)
         return {}
@@ -329,6 +396,9 @@ async def _generate_program_spec(brief: str, include_user_agents: bool,
         "  3. neither (generic orchestration) for plain mechanical work.\n"
         "Use cadence type 'recurring' with interval_hours for monitoring/progress work, "
         "'once' for build/research steps. Wire order with depends_on (loop names). "
+        "All loops SHARE ONE persistent /workspace, so design later loops to CONSUME "
+        "the files earlier loops produce — state the expected handoff in each goal "
+        "(what a loop reads from the workspace, what it leaves for the next). "
         "2–" + str(max_loops) + " loops; fewer is better.\n"
         'Respond ONLY with JSON:\n'
         '{"name":"<short program name>","done_when":"<one-line objective completion test>",'
@@ -378,6 +448,217 @@ def _result_summary(result: Any) -> str:
                        if k in ("done", "cycles", "steps")}, default=str)[:400]
 
 
+def _result_final(result: Any) -> str:
+    """A fuller final-output slice (≤2000) for the activity UI + project record —
+    the actual deliverable text, not the controller's short summary. Empty when
+    the run produced no textual final (the summary still carries the gist)."""
+    if not isinstance(result, dict):
+        return str(result)[:2000]
+    for k in ("final", "summary", "answer", "output"):
+        v = result.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()[:2000]
+    if result.get("error"):
+        return f"ERROR: {str(result['error'])[:1000]}"
+    return ""
+
+
+def _unconsumed_steer(prog: Dict[str, Any]) -> List[str]:
+    """Steering-note texts on a program that the controller hasn't consumed yet.
+    Written by `loops.program.steer` (the dream/operator), read by the run
+    preamble and the controller so the dream can course-correct a program
+    WITHOUT spawning its own competing loops."""
+    return [str(s.get("note") or "").strip()
+            for s in (prog.get("steer_notes") or [])
+            if isinstance(s, dict) and not s.get("consumed")
+            and str(s.get("note") or "").strip()]
+
+
+def _run_steps(result: Any) -> List[Dict[str, Any]]:
+    """Best-effort step trace out of an engine/profile result, for the project
+    loop history. Empty when the engine didn't surface steps."""
+    if not isinstance(result, dict):
+        return []
+    for k in ("steps", "trace", "plan_steps"):
+        v = result.get(k)
+        if isinstance(v, list):
+            return v[:60]
+    return []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COLLATION — deliver a program's work back to the OWNING project/goal.
+#
+# All of a program's constituent loops share ONE sandbox container (its
+# sandbox_owner, e.g. goal-<slug>), so their files already co-exist there. What
+# was missing is DELIVERY of that work to the project the program drives:
+#   • per loop run  → a lightweight loop-history record (source 'v8_loop'), no
+#     file harvest, so the goal page shows V8 progress as it happens WITHOUT
+#     re-copying the same /workspace on every run (minimal duplication);
+#   • at program close → the shared /workspace is exported ONCE, its files
+#     harvested into the project's artifact store, and the container snapshotted
+#     to the durable session store so the work survives.
+# owner_ref is the project slug (blank for standalone director/chat programs —
+# those still get the durable snapshot, just no project record).
+# ─────────────────────────────────────────────────────────────────────────────
+async def _collate_loop_run(prog: Dict[str, Any], lp: Dict[str, Any],
+                            run_rec: Dict[str, Any], result: Any) -> None:
+    slug = str(prog.get("owner_ref") or "").strip()
+    if not slug:
+        return
+    rec = _cap_func("project.loop.record")
+    if not rec:
+        return
+    try:
+        await rec(slug=slug, source="v8_loop",
+                  engine=(lp.get("engine") or lp.get("profile") or ""),
+                  goal=str(lp.get("goal") or "")[:1000],
+                  final=str(run_rec.get("final") or run_rec.get("summary") or "")[:8000],
+                  steps=json.dumps(_run_steps(result), default=str),
+                  run_id=str(run_rec.get("session_id") or ""),
+                  trigger=f"v8:{prog['id']}")
+    except Exception as e:
+        log.debug("v8 collate loop run for %s: %s", prog.get("id"), e)
+
+
+async def _collate_program_close(prog: Dict[str, Any]) -> None:
+    """On program close: export the shared owner container's CHANGED /workspace
+    files ONCE and (a) harvest them into the owning project's artifact store,
+    (b) snapshot the container to the durable session store, (c) when the program
+    cloned an IDE workspace, propose the changes back to it for gated review.
+    Idempotent (guards on `collated_at`)."""
+    if prog.get("collated_at"):
+        return
+    prog["collated_at"] = now_iso()
+    owner, _kind, _label = _prog_sandbox_owner(prog)
+    slug = str(prog.get("owner_ref") or "").strip()
+    sbx = _sbx_mod()
+    tmp = None
+    try:
+        # Prefer the CHANGED-only export so a container seeded from an IDE
+        # workspace doesn't harvest the whole cloned project as "output".
+        _exp = (getattr(sbx, "export_workspace_changes", None)
+                or getattr(sbx, "export_workspace", None)) if sbx is not None else None
+        if _exp:
+            try:
+                tmp = await _exp(owner)
+            except Exception as e:
+                log.debug("v8 export workspace(%s): %s", owner, e)
+        # (a) harvest the final workspace into the project (once).
+        if slug and tmp:
+            rec = _cap_func("project.loop.record")
+            if rec:
+                notes = "; ".join(str(n.get("note") or "")
+                                  for n in (prog.get("notes") or [])[-8:])
+                roll = (f"V8 program '{prog.get('name')}' closed "
+                        f"({prog.get('status')}). Done-when: "
+                        f"{prog.get('done_when', '')}\n\nController notes: {notes}")
+                try:
+                    await rec(slug=slug, source="v8_program",
+                              goal=str(prog.get("name") or "")[:1000],
+                              final=roll[:8000], artifact_dir=tmp,
+                              run_id=str(prog.get("id") or ""),
+                              trigger=f"v8:{prog['id']}")
+                except Exception as e:
+                    log.debug("v8 close harvest for %s: %s", slug, e)
+        # (b) durable snapshot of the shared container (owner_ref or not).
+        sync = _cap_func("sandbox.session.sync")
+        if sync:
+            try:
+                await sync(session_id=owner,
+                           message=f"v8 program {prog.get('id')} {prog.get('status')}")
+            except Exception as e:
+                log.debug("v8 close sync for %s: %s", owner, e)
+        # (c) gated write-back: if the program cloned an IDE workspace, propose
+        # its changed files back to that workspace as a PR-style review — nothing
+        # is written until a human accepts (ide.workspace.changes.accept).
+        if prog.get("ide_workspace"):
+            propose = _cap_func("ide.workspace.changes.propose")
+            if propose:
+                try:
+                    await propose(session_id=owner, workspace=prog["ide_workspace"],
+                                  source=f"v8:{prog['id']}")
+                except Exception as e:
+                    log.debug("v8 close propose for %s: %s", prog.get("id"), e)
+    finally:
+        if tmp:
+            try:
+                import shutil as _sh
+                _sh.rmtree(tmp, ignore_errors=True)
+            except Exception:
+                pass
+        await _prog_save(prog)
+
+
+def _program_context_preamble(prog: Dict[str, Any],
+                              current_lp: Dict[str, Any]) -> str:
+    """The inter-loop handoff: a compact block prepended to a constituent loop's
+    goal so it runs WITH knowledge of the program — the shared objective, that it
+    shares one persistent workspace with its siblings, and what prior loops (and
+    its own earlier runs) already produced. Without this each loop is a cold
+    start that can't build on the others; the result reads sensible in isolation
+    but the program as a whole never becomes coherent."""
+    parts: List[str] = [
+        "[PROGRAM CONTEXT — you are ONE loop in a multi-loop program working "
+        "toward a SHARED objective. Collaborate with the other loops; do not "
+        "duplicate or restart their work."]
+    name = str(prog.get("name") or "").strip()
+    if name:
+        parts.append(f"PROGRAM: {name}")
+    done_when = str(prog.get("done_when") or "").strip()
+    if done_when:
+        parts.append(f"PROGRAM OBJECTIVE (done when): {done_when}")
+    # Steering notes injected by the operator / dream orchestrator (course
+    # corrections — off-plan, repeating an operation). High priority: surfaced
+    # before the task so a running loop acts on them immediately.
+    steers = _unconsumed_steer(prog)
+    if steers:
+        parts.append("OPERATOR / DREAM STEERING — apply these now:\n"
+                     + "\n".join(f"  • {s}" for s in steers[-5:]))
+    parts.append(
+        "SHARED WORKSPACE: you and every sibling loop share ONE persistent "
+        "working directory (/workspace) that carries across loops and runs. "
+        "Before doing anything, LIST and READ what prior loops left there and "
+        "BUILD ON IT — never redo work that is already present.")
+    parts.append(
+        "CODE AUDIENCE — before writing any script or code, decide WHO runs it:\n"
+        "  • Code YOU will execute in this loop MUST be complete and runnable NOW: "
+        "real values, reading real inputs from /workspace, NO placeholder / TODO / "
+        "'your-key-here' / example stubs. If it needs a secret, path or credential, "
+        "read it from the environment or a workspace file — or STOP and report it as "
+        "blocked — never fake it, then run it and confirm it actually worked.\n"
+        "  • Only code you are explicitly handing to a HUMAN as a deliverable may "
+        "contain placeholders, and then you MUST label them (e.g. '# TODO: set X') "
+        "and say so in your summary.\n"
+        "Never hand YOURSELF placeholder code and then build or test around it — that "
+        "produces output that looks finished but does nothing.")
+    # Sibling loops that have produced output (their most recent run summary).
+    prior: List[str] = []
+    for l in prog.get("loops", []):
+        if l.get("name") == current_lp.get("name"):
+            continue
+        st = l.get("state") or {}
+        runs = st.get("runs") or []
+        if not runs:
+            continue
+        prior.append(f"  - {l.get('name')} [{st.get('status', '?')}]: "
+                     f"{str(runs[-1].get('summary') or '').strip()[:300]}")
+    if prior:
+        parts.append("WHAT SIBLING LOOPS HAVE PRODUCED (latest run each):\n"
+                     + "\n".join(prior[:8]))
+    deps = [d for d in (current_lp.get("depends_on") or []) if d]
+    if deps:
+        parts.append(f"YOUR INPUTS come from these completed loops: "
+                     f"{', '.join(deps)} — their deliverables are in the workspace.")
+    my_runs = (current_lp.get("state") or {}).get("runs") or []
+    if my_runs:
+        parts.append("YOUR OWN LAST RUN of this loop: "
+                     + str(my_runs[-1].get("summary") or "").strip()[:400]
+                     + "\nContinue from there; do not repeat completed steps.")
+    parts.append("]")
+    return "\n".join(parts)
+
+
 def _spawn_loop(prog: Dict[str, Any], lp: Dict[str, Any]) -> None:
     """Launch a constituent loop as a task, tracking the live-loop count with a
     done-callback so `_RUNNING_LOOPS` can never leak (the count backs the
@@ -418,6 +699,25 @@ async def _run_program_loop(prog: Dict[str, Any], lp: Dict[str, Any]) -> None:
             await sbx.link_session(session_id, owner, kind=okind, label=olabel)
         except Exception:
             pass
+        # IDE workspace: clone the project's HOST files into the shared owner
+        # container so this loop operates on the REAL workspace. only_if_empty →
+        # seeds the fresh container once, never clobbers accumulated program work.
+        if prog.get("ide_workspace") and hasattr(sbx, "set_seed_path"):
+            try:
+                _wp = await _resolve_ide_workspace_path(prog["ide_workspace"])
+                if _wp:
+                    await sbx.set_seed_path(owner, _wp)
+                    if hasattr(sbx, "import_workspace"):
+                        await sbx.import_workspace(owner, _wp, only_if_empty=True)
+            except Exception as e:
+                log.debug("v8 %s: ide_workspace seed failed: %s", pid, e)
+    else:
+        # No owner scope → this run's exec/file-IO is NOT pinned to the program's
+        # shared container; a nested sandbox.session.start would fan out into a
+        # per-run container and the run may fall through to the host. Loud on
+        # purpose: this is the failure mode behind "each loop isolated".
+        log.warning("v8 %s: sandbox module unavailable — loop %s runs WITHOUT an "
+                    "owner container (fan-out / host-exec risk)", pid, lp["name"])
     # Global V8 config: model / agent / engine the user chose for ALL long-
     # horizon work. When set it overrides the per-loop pick, so one control
     # steers everything the orchestrator runs.
@@ -434,6 +734,12 @@ async def _run_program_loop(prog: Dict[str, Any], lp: Dict[str, Any]) -> None:
         run_goal = (f"[OPERATING PERSONA — adopt fully for this ENTIRE run: "
                     f"{pe.get('name','specialist')} — {pe.get('role','')}\n"
                     f"{pe.get('system_prompt','')}]\n\nTASK: {lp['goal']}")
+    # Inter-loop coherence: lead with the program context (shared objective +
+    # what sibling loops already produced in the shared workspace) so this run
+    # builds on the others instead of cold-starting.
+    _ctx = _program_context_preamble(prog, lp)
+    if _ctx:
+        run_goal = _ctx + "\n\n" + run_goal
     async with _RUN_LOCK:
         lp["state"]["status"] = "running"
         await _prog_save(prog)
@@ -501,9 +807,13 @@ async def _run_program_loop(prog: Dict[str, Any], lp: Dict[str, Any]) -> None:
         elapsed = round(time.time() - t0, 1)
         ok = isinstance(result, dict) and not result.get("error")
         summary = _result_summary(result)
+        # `summary` (≤800) is what the controller reasons over; `final` keeps a
+        # fuller slice of the actual deliverable so the activity UI can show real
+        # output without depending on a (TTL-limited) replay of the run.
+        final_full = _result_final(result)
         lp["state"]["runs"].append({"ts": now_iso(), "session_id": session_id,
                                     "ok": ok, "elapsed_s": elapsed,
-                                    "summary": summary})
+                                    "summary": summary, "final": final_full})
         lp["state"]["runs"] = lp["state"]["runs"][-12:]
         cad = lp.get("cadence") or {}
         if cad.get("type") == "recurring":
@@ -516,6 +826,12 @@ async def _run_program_loop(prog: Dict[str, Any], lp: Dict[str, Any]) -> None:
                           "loop": lp["name"], "run": run_n, "ok": ok,
                           "elapsed_s": elapsed, "summary": summary[:400],
                           "session_id": session_id})
+    # Deliver this run to the owning project's loop history so the goal/project
+    # page shows V8 work as it lands (files are collated once at program close).
+    try:
+        await _collate_loop_run(prog, lp, lp["state"]["runs"][-1], result)
+    except Exception as e:
+        log.debug("v8 collate loop run for %s: %s", pid, e)
     try:
         await _adapt_program(prog, lp, summary, ok)
     except Exception as e:
@@ -556,15 +872,32 @@ async def _adapt_program(prog: Dict[str, Any], last_loop: Dict[str, Any],
         '{"action":"reschedule","name":"<loop>","in_hours":<float>}]}\n'
         "Mark program_status done ONLY when done_when is genuinely met; failed only when "
         "the program cannot proceed at all.")
+    # Steering notes from the dream orchestrator / operator: the highest-priority
+    # input — the controller must act on them (retarget, add/retire, or refocus).
+    steers = [s for s in (prog.get("steer_notes") or [])
+              if isinstance(s, dict) and not s.get("consumed")
+              and str(s.get("note") or "").strip()]
+    steer_txt = ""
+    if steers:
+        steer_txt = ("\n\nSTEERING FROM THE DREAM ORCHESTRATOR / OPERATOR (act on "
+                     "these — they see the program from outside and are correcting "
+                     "drift or a repeated operation):\n"
+                     + "\n".join(f"- {str(s.get('note') or '')[:300]}" for s in steers[-5:]))
     prompt = (f"PROGRAM: {prog.get('name')}\nBRIEF: {prog.get('brief','')[:600]}\n"
               f"DONE WHEN: {prog.get('done_when','(unspecified)')}\n"
               f"HORIZON: {prog.get('horizon_days')} days (created {prog.get('created')})\n\n"
               f"LOOPS:\n" + "\n".join(state_lines) + "\n\n"
               f"JUST FINISHED: {last_loop['name']} — {'ok' if last_ok else 'FAILED'}\n"
-              f"RESULT SUMMARY:\n{last_summary[:1200]}\n\nDecide the adaptations JSON.")
+              f"RESULT SUMMARY:\n{last_summary[:1200]}"
+              + steer_txt + "\n\nDecide the adaptations JSON.")
     obj = await _llm_json(prompt, sys_p)
     if not obj:
         return
+    # Consume the steering notes we just showed the controller (idempotent — a
+    # note steers one controller pass, then the run preamble + this prompt stop
+    # repeating it).
+    for s in steers:
+        s["consumed"] = True
     note = str(obj.get("note") or "")[:300]
     if note:
         prog.setdefault("notes", []).append({"ts": now_iso(), "note": note})
@@ -602,6 +935,8 @@ async def _adapt_program(prog: Dict[str, Any], last_loop: Dict[str, Any],
         prog["status"] = status
         prog["finished"] = now_iso()
     await _prog_save(prog)
+    if status in ("done", "failed"):
+        await _collate_program_close(prog)
     await emit_event({"type": "agent_loop_v8.program_adapted", "program": prog["id"],
                       "status": prog.get("status"), "note": note,
                       "adaptations": adapted})
@@ -682,6 +1017,7 @@ async def _v8_tick():
                 prog.setdefault("notes", []).append(
                     {"ts": now_iso(), "note": "horizon reached — program closed"})
                 await _prog_save(prog)
+                await _collate_program_close(prog)
                 await emit_event({"type": "agent_loop_v8.program_done",
                                   "program": prog["id"], "reason": "horizon"})
                 continue
@@ -698,6 +1034,7 @@ async def _v8_tick():
                     prog["status"] = "done"
                     prog["finished"] = now_iso()
                     await _prog_save(prog)
+                    await _collate_program_close(prog)
                     await emit_event({"type": "agent_loop_v8.program_done",
                                       "program": prog["id"], "reason": "all loops terminal"})
                 continue
@@ -778,16 +1115,26 @@ async def cap_loops_generate(brief: str = "", include_user_agents: bool = False,
                 "0 = generator's choice), include_user_agents (bool default False), "
                 "autostart (bool default True), sandbox_owner (str — shared sandbox "
                 "container key all runs use, e.g. goal-<slug>; default = a per-program "
-                "container), owner_ref (str — spawning entity, e.g. project slug). "
-                "Output: the program state.",
+                "container), owner_ref (str — spawning entity, e.g. project slug), "
+                "ide_workspace (str — an IDE workspace name or host path whose project "
+                "files are cloned into the program's container so its loops operate on "
+                "the real workspace). Output: the program state.",
 )
 async def cap_loops_program_create(brief: str = "", horizon_days: int = 0,
                                    include_user_agents: bool = False,
                                    autostart: bool = True,
                                    sandbox_owner: str = "",
-                                   owner_ref: str = "", trace_id=None):
+                                   owner_ref: str = "",
+                                   ide_workspace: str = "", trace_id=None):
     if not (brief or "").strip():
         return {"error": "brief required"}
+    # Auto-associate the triggering session's IDE workspace when one wasn't given
+    # (e.g. a V8 loop launched from chat while working in a workspace).
+    if not (ide_workspace or "").strip():
+        try:
+            ide_workspace = await _auto_ide_workspace()
+        except Exception:
+            ide_workspace = ""
     spec = await _generate_program_spec(brief.strip(), bool(include_user_agents), 5)
     if not spec.get("loops"):
         return {"error": "generator produced no loops", "spec": spec}
@@ -804,6 +1151,9 @@ async def cap_loops_program_create(brief: str = "", horizon_days: int = 0,
         # (project slug) for the activity timeline.
         "sandbox_owner": str(sandbox_owner or "").strip()[:60],
         "owner_ref": str(owner_ref or "").strip()[:80],
+        # ide_workspace: a workspace name / host path whose files are cloned into
+        # the program's shared container so its loops operate on the real project.
+        "ide_workspace": str(ide_workspace or "").strip()[:200],
         "loops": spec["loops"], "notes": [],
     }
     await _prog_save(prog)
@@ -838,13 +1188,23 @@ async def cap_loops_program_create(brief: str = "", horizon_days: int = 0,
                 "months in the background, adapting after every run. Returns the program "
                 "state immediately (NOT a streaming run — watch constituent runs in the "
                 "Loops pane via session ids v8:<program>:<loop>). Inputs: goal (str!), "
-                "horizon_days (int), include_user_agents (bool). Output: program state.",
+                "horizon_days (int), include_user_agents (bool), sandbox_owner (str — "
+                "shared container key all runs use, e.g. goal-<slug>, so the program's "
+                "loops share the goal's workspace instead of a standalone one), owner_ref "
+                "(str — owning project/goal slug; its loop history + artifacts receive "
+                "this program's work), ide_workspace (str — IDE workspace name/host path "
+                "cloned into the program container so loops operate on the real project). "
+                "Output: program state.",
 )
 async def cap_agent_loop_v8(goal: str = "", horizon_days: int = 0,
-                            include_user_agents: bool = False, trace_id=None):
+                            include_user_agents: bool = False,
+                            sandbox_owner: str = "", owner_ref: str = "",
+                            ide_workspace: str = "", trace_id=None):
     return await cap_loops_program_create(brief=goal, horizon_days=horizon_days,
                                           include_user_agents=include_user_agents,
-                                          autostart=True, trace_id=trace_id)
+                                          autostart=True, sandbox_owner=sandbox_owner,
+                                          owner_ref=owner_ref, ide_workspace=ide_workspace,
+                                          trace_id=trace_id)
 
 
 @capability(
@@ -993,6 +1353,36 @@ async def cap_loops_program_tick(trace_id=None):
     return {"ok": True, "in_flight": _RUN_LOCK.locked()}
 
 
+@capability(
+    "loops.program.steer", memory="off",
+    http_method="POST", http_path="/loops/program/steer", http_tags=["dag", "agents"],
+    description="Inject a STEERING NOTE into a running V8 program — a high-level "
+                "course-correction the program controller and its loops read and act "
+                "on (e.g. 'you keep re-running the same search — move on to drafting', "
+                "'this has drifted off the master plan; refocus on X'). This is how the "
+                "dream orchestrator / operator steers a program WITHOUT spawning its own "
+                "competing loops: the note reaches the controller's next adaptation pass "
+                "and the next loop run's context, then is consumed. Inputs: id (str!), "
+                "note (str!), source (str default 'dream'). Output: {ok, id, notes}.",
+)
+async def cap_loops_program_steer(id: str = "", note: str = "", source: str = "dream",
+                                  trace_id=None):
+    prog = await _prog_get(id)
+    if not prog:
+        return {"error": f"unknown program: {id}"}
+    note = str(note or "").strip()
+    if not note:
+        return {"error": "note required"}
+    prog.setdefault("steer_notes", []).append(
+        {"ts": now_iso(), "note": note[:600],
+         "source": str(source or "dream")[:40], "consumed": False})
+    prog["steer_notes"] = prog["steer_notes"][-20:]
+    await _prog_save(prog)
+    await emit_event({"type": "agent_loop_v8.program_steered", "program": id,
+                      "note": note[:200], "source": source})
+    return {"ok": True, "id": id, "notes": len(prog["steer_notes"])}
+
+
 # Keep V8's caps OUT of loop toolkits — a loop must never spawn programs.
 def _extend_loop_blacklist() -> None:
     dw = (sys.modules.get("dag_workshop_capabilities")
@@ -1001,7 +1391,7 @@ def _extend_loop_blacklist() -> None:
         bl = getattr(dw, "_DEFAULT_CAP_BLACKLIST", None)
         if isinstance(bl, set):
             bl.update({"dag.agent_loop_v8", "loops.program.create", "loops.generate",
-                       "loops.program.tick", "loops.config.set"})
+                       "loops.program.tick", "loops.config.set", "loops.program.steer"})
     except Exception as e:
         log.debug("loop_orchestrator: could not extend loop blacklist: %s", e)
 

@@ -277,6 +277,35 @@ class AgentRecord:
 class AgentRegistry:
     _PREFIX = "vera:agents:"
     _CACHE:  Dict[str, AgentRecord] = {}
+    # Vera can run as a CLUSTER of instances sharing one Redis+PG backend, so an
+    # agent edited on ANOTHER node must not stay masked by our in-memory _CACHE
+    # (get() short-circuits on it and would otherwise serve the stale record
+    # forever — no TTL). save() bumps a shared Redis counter; reads clear the
+    # cache when it changes. Falls back to the old per-process behaviour if Redis
+    # is down.
+    _VER_KEY = "vera:cachever:agents"   # NOT under vera:agents:* — list_all globs that prefix
+    _CACHE_VER = [None]   # last-seen shared version
+
+    async def _sync_cache_ver(self):
+        """Drop the local cache if another node has mutated an agent — cheap,
+        non-blocking Redis GET; no-op when Redis is unavailable."""
+        r = _redis()
+        if not r:
+            return
+        try:
+            ver = await r.get(self._VER_KEY)
+        except Exception:
+            return
+        if ver != self._CACHE_VER[0]:
+            self._CACHE.clear()
+            self._CACHE_VER[0] = ver
+
+    async def _bump_cache_ver(self):
+        """Signal every cluster node (incl. self) that the agent store changed."""
+        r = _redis()
+        if r:
+            try: await r.incr(self._VER_KEY)
+            except Exception: pass
 
     async def pg_init(self):
         pg = _pg()
@@ -662,9 +691,11 @@ class AgentRegistry:
                 log.warning("AgentRegistry PG save: %s", e)
         # Fabric mirror (fire-and-forget — primary persistent store)
         asyncio.ensure_future(self._save_to_fabric(rec))
+        await self._bump_cache_ver()   # invalidate every cluster node's cache
         return rec
 
     async def get(self, agent_id: str) -> Optional[AgentRecord]:
+        await self._sync_cache_ver()
         if agent_id in self._CACHE:
             return self._CACHE[agent_id]
         r = _redis()
@@ -693,6 +724,7 @@ class AgentRegistry:
         return None
 
     async def get_by_name(self, name: str) -> Optional[AgentRecord]:
+        await self._sync_cache_ver()
         cache_key = f"name:{name}"
         if cache_key in self._CACHE:
             return self._CACHE[cache_key]
@@ -737,15 +769,19 @@ class AgentRegistry:
         if r:
             try:
                 keys = await r.keys(f"{self._PREFIX}*")
-                for k in keys:
-                    raw = await r.hgetall(k)
-                    if raw:
-                        rec = self._from_redis(raw)
-                        if not include_archived and rec.archived:
-                            continue
-                        results.append(rec)
             except Exception as e:
                 log.warning("AgentRegistry list: %s", e)
+                keys = []
+            for k in keys:
+                try:
+                    raw = await r.hgetall(k)
+                except Exception:
+                    continue   # skip non-hash keys sharing the prefix (e.g. a cache-version counter)
+                if raw:
+                    rec = self._from_redis(raw)
+                    if not include_archived and rec.archived:
+                        continue
+                    results.append(rec)
         if not results:
             pg = _pg()
             if pg:
@@ -2186,8 +2222,19 @@ class AgentRunner:
         _og_stream_ok = False   # upstream stream ran to completion
         _og_done_sent = False   # a terminal request_done/request_error was emitted
         try:
+            # `read` is a PER-CHUNK timeout in httpx (resets on every byte received),
+            # not a cumulative cap on the whole stream — so this fires whenever the
+            # model goes quiet for that long, e.g. a long silent <think> block before
+            # its first token, or the target instance was busy/cold-loading. It was
+            # hardcoded to 180s here, independent of OLLAMA_GEN_TIMEOUT (used
+            # everywhere else non-streaming generation waits on Ollama) — a large
+            # one-shot generation (e.g. a full HTML/CSS/JS app in one response) can
+            # easily go >180s without emitting a token, and the failure mode is
+            # silent: zero characters ever reach the client, the SSE stream just
+            # ends after 3 minutes with no visible content. Match the rest of the
+            # system's generation budget instead of a shorter, disconnected one.
             async with httpx.AsyncClient(
-                timeout=httpx.Timeout(180.0, connect=10.0),
+                timeout=httpx.Timeout(_orch.OLLAMA_GEN_TIMEOUT, connect=10.0),
                 follow_redirects=True,
             ) as c:
                 async with c.stream("POST", f"{url}/api/chat", json=body) as resp:
@@ -2568,8 +2615,23 @@ AIDE_PROMPT = (
     "• Podcast (a delivery channel, not just content) → podcast.script then "
     "podcast.generate; podcast.status/list to track.\n"
     "• Code & files → exec.python.run / exec.bash.run to run and verify real code; "
-    "ide.code.* to search/read a codebase, ide.fs.read/write/list for files. "
-    "Save artifacts to the artifact dir with an absolute path so they persist.\n"
+    "ide.code.list_files / ide.code.grep / ide.code.read_lines to search & read; "
+    "ide.fs.read/write/list for files. When you write a script, SAVE it to a real "
+    "path (ide.fs.write, absolute path in the artifact dir) so it PERSISTS and you "
+    "can keep iterating on the SAME file across turns.\n"
+    "• EDITING AN EXISTING FILE — FIX IN PLACE, DON'T REWRITE: to change a file that "
+    "already exists (one you wrote earlier, or one the user gave you — if they only "
+    "pasted it into chat and it isn't saved yet, write it to a file ONCE with "
+    "ide.fs.write, then edit THAT file), make a SURGICAL edit. LOCATE the spot with "
+    "ide.code.grep / ide.code.read_lines, then "
+    "change ONLY those lines: ide.code.replace (text/regex swap; dry_run=true to "
+    "preview), ide.code.edit_lines (replace a line range) or ide.code.insert_at (add "
+    "lines). Keep everything else byte-for-byte — fix the broken part, don't touch "
+    "the rest. Re-writing the WHOLE file from scratch is a LAST resort you reach for "
+    "ONLY when the user EXPLICITLY asks you to rewrite / reimplement it — never as "
+    "your default way to fix a bug, a typo, or a few wrong lines. When the user "
+    "points out a problem, your job is the smallest correct diff, then re-run to "
+    "verify. code.read / code.diff / code.versions expose a file's saved history.\n"
     "• Arbitrary network protocols → babblefish.modules then babblefish.speak / "
     "listen / decode rather than hand-rolling bytes.\n\n"
     "SAFETY\n"
@@ -2617,9 +2679,12 @@ DEFAULT_AGENTS = [
             "business.txn.list", "business.txn.add", "business.inventory.list",
             # Code execution
             "exec.python.run", "exec.bash.run",
-            # IDE / code + files
+            # IDE / code + files — read/search + SURGICAL edit (edit in place, don't
+            # rewrite) + saved-version history for conversational iteration.
             "ide.code.list_files", "ide.code.grep", "ide.code.read_lines",
             "ide.code.outline", "ide.fs.read", "ide.fs.write", "ide.fs.list",
+            "ide.fs.exists", "ide.code.edit_lines", "ide.code.replace",
+            "ide.code.insert_at", "code.read", "code.diff", "code.versions",
             # Babblefish protocol translation
             "babblefish.modules", "babblefish.speak",
             "babblefish.listen", "babblefish.decode",

@@ -273,3 +273,15 @@ This is how you get a freshly registered panel to appear without restarting the 
 - [DAG Engine](./03-dag-engine.md) — the DAG Workshop tab
 - [IDE Module](./08-ide.md) — the IDE auto-tab
 - [Research System](./07-research.md) — the Research auto-tab
+
+## Screenshots (operator-captured)
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->
+
+## Capabilities
+
+<!-- VERA:AUTO:capabilities START -->
+_Regenerated from the live registry by `docs.build`. Run the documentation mission to populate this table._
+<!-- VERA:AUTO:capabilities END -->

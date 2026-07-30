@@ -379,7 +379,6 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
     <div class="navdiv"></div>
     <div class="snav" data-pane="mimic" onclick="P.show('mimic',this)">Mimic</div>
     <div class="snav" data-pane="vllm" onclick="P.show('vllm',this)">vLLM</div>
-    <div class="snav" data-pane="catalog" onclick="P.show('catalog',this)">Catalog</div>
     <div class="snav" data-pane="openclaw" onclick="P.show('openclaw',this)">OpenClaw</div>
     <div class="snav" data-pane="api" onclick="P.show('api',this)">API</div>
     <div class="snav" data-pane="provision" onclick="P.show('provision',this)">Provision</div>
@@ -553,10 +552,11 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
       <div class="pane-tb" style="flex-shrink:0;padding:8px 12px 6px">
         <span class="pane-tb-title" style="color:var(--gpu)">OLLAMA CLUSTER</span>
         <span class="tb-sep"></span>
-        <!-- Sub-tabs: Nodes / Jobs / Wrapper -->
+        <!-- Sub-tabs: Nodes / Jobs / Catalog / Wrapper -->
         <div style="display:flex;gap:1px;margin-right:8px">
           <button class="btn sm ol-sub active" data-olsub="nodes" onclick="P.olSubTab('nodes',this)" style="border-radius:3px 0 0 3px">Nodes</button>
           <button class="btn sm ol-sub" data-olsub="jobs" onclick="P.olSubTab('jobs',this)" style="border-radius:0">Jobs</button>
+          <button class="btn sm ol-sub" data-olsub="catalog" onclick="P.olSubTab('catalog',this)" style="border-radius:0">Catalog<span id="ol-dl-badge" style="display:none;margin-left:4px;font-size:8px;padding:0 4px;border-radius:7px;background:#e6b800;color:#111;font-weight:700">0</span></button>
           <button class="btn sm ol-sub" data-olsub="wrapper" onclick="P.olSubTab('wrapper',this)" style="border-radius:0 3px 3px 0">Wrapper</button>
         </div>
         <span class="tb-sep"></span>
@@ -565,8 +565,8 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
         <button class="btn sm gpu-btn" onclick="P.openPullModal()">Pull Model</button>
         <span class="tb-sep"></span>
         <button class="btn sm" id="ol-edit-btn" onclick="P.gridToggleEdit('ollama')">⚙ Configure</button>
-        <button class="btn sm" onclick="P.gridReset('ollama')">Reset</button>
-        <button class="btn sm" onclick="P.openWidgetLoader('ollama')">+ Add Widget</button>
+        <button class="btn sm" id="ol-reset-btn" onclick="P.gridReset('ollama')">Reset</button>
+        <button class="btn sm" id="ol-addwidget-btn" onclick="P.openWidgetLoader('ollama')">+ Add Widget</button>
         <span class="status-hint" id="ol-ts"></span>
       </div>
 
@@ -830,6 +830,115 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
         </div>
       </div>
       </div><!-- /ol-sub-jobs -->
+
+      <!-- ══════════════════════════════════════════════════════════════════
+           Sub-pane: Catalog — HF browse/search, installed models per node,
+           live download progress, node hardware + disk, auto-optimise.
+           (Was a top-level pane; it belongs with the cluster it installs onto.)
+           ══════════════════════════════════════════════════════════════════ -->
+      <div id="ol-sub-catalog" style="display:none;flex:1;flex-direction:column;min-height:0;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:6px;padding:6px 12px;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap">
+          <span style="font-size:9px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:#e6b800">Model Catalog</span>
+          <div style="display:flex;gap:2px">
+            <span class="j-tab active" id="cats-browse" onclick="P.catSub('browse')" style="padding:3px 9px;font-size:9px">Browse</span>
+            <span class="j-tab" id="cats-installed" onclick="P.catSub('installed')" style="padding:3px 9px;font-size:9px">Installed <span class="j-cnt" id="cat-inst-cnt">0</span></span>
+            <span class="j-tab" id="cats-dl" onclick="P.catSub('dl')" style="padding:3px 9px;font-size:9px">Downloads <span class="j-cnt" id="cat-dl-cnt" style="display:none">0</span></span>
+            <span class="j-tab" id="cats-nodes" onclick="P.catSub('nodes')" style="padding:3px 9px;font-size:9px">Nodes &amp; Hardware</span>
+            <span class="j-tab" id="cats-opt" onclick="P.catSub('opt')" style="padding:3px 9px;font-size:9px">Auto-optimise</span>
+          </div>
+          <span style="flex:1"></span>
+          <label style="font-size:9px;color:var(--dim2);display:flex;align-items:center;gap:4px">Install to
+            <select id="cat-target-node" style="font-size:9.5px;padding:2px 4px" onchange="P.catTargetChanged()" title="One-click pulls install onto this node"></select>
+          </label>
+          <span id="cat-target-disk" style="font-size:9px;font-family:var(--mono);color:var(--dim2)"></span>
+          <span id="cat-status" style="font-size:9px;color:var(--dim2);font-family:var(--mono)"></span>
+        </div>
+        <div style="flex:1;overflow:auto;padding:10px 12px;min-height:0">
+
+          <!-- ── BROWSE ─────────────────────────────────────────────────── -->
+          <div id="cat-sub-browse">
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+              <button class="btn sm" onclick="P.catBrowseHome()" title="Back to the browse index">⌂ Browse</button>
+              <input id="cat-q" placeholder="Search Hugging Face… (e.g. qwen, llama)" style="flex:1;min-width:180px;font-size:11px;padding:4px 8px;background:var(--bg0);border:1px solid var(--border);color:var(--text);border-radius:4px" onkeydown="if(event.key==='Enter')P.catSearch()">
+              <select id="cat-task" style="font-size:10px;padding:3px 5px">
+                <option value="text-generation">text-generation</option>
+                <option value="text2text-generation">text2text</option>
+                <option value="feature-extraction">embeddings</option>
+                <option value="">any task</option>
+              </select>
+              <label style="font-size:10px;color:var(--dim2);display:flex;align-items:center;gap:3px"><input type="checkbox" id="cat-gguf" checked> GGUF only</label>
+              <select id="cat-sort" style="font-size:10px;padding:3px 5px">
+                <option value="downloads">most downloads</option>
+                <option value="trendingScore">trending</option>
+                <option value="lastModified">latest</option>
+                <option value="likes">most likes</option>
+              </select>
+              <select id="cat-fits" title="Annotate each result with a hardware-fit verdict" style="font-size:10px;padding:3px 5px">
+                <option value="cluster">Fits: cluster</option>
+                <option value="any">Fits: any</option>
+              </select>
+              <button class="btn sm" style="border-color:#e6b800;color:#e6b800" onclick="P.catSearch()">Search</button>
+            </div>
+            <!-- Browse index: families / publishers / sizes / Ollama library -->
+            <div id="cat-index"><span style="color:var(--dim);font-size:10px">Loading browse index…</span></div>
+            <!-- Result list (replaces the index once a browse/search runs) -->
+            <div id="cat-results" style="font-size:11px;display:none"></div>
+          </div>
+
+          <!-- ── MODEL DETAIL (overlays browse) ─────────────────────────── -->
+          <div id="cat-detail" style="display:none"></div>
+
+          <!-- ── INSTALLED (what each node already has) ─────────────────── -->
+          <div id="cat-sub-installed" style="display:none">
+            <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+              <button class="btn sm" onclick="P.catInstalled(true)">↻ Refresh</button>
+              <input id="cat-inst-filter" placeholder="Filter models…" style="font-size:10px;padding:3px 6px;background:var(--bg0);border:1px solid var(--border);color:var(--text);border-radius:4px;width:150px" oninput="P.catInstalledRender()">
+              <label style="font-size:10px;color:var(--dim2);display:flex;align-items:center;gap:3px"><input type="checkbox" id="cat-inst-loaded" onchange="P.catInstalledRender()"> loaded in VRAM only</label>
+              <span style="flex:1"></span>
+              <span id="cat-inst-summary" style="font-size:9px;color:var(--dim2);font-family:var(--mono)"></span>
+            </div>
+            <div id="cat-installed"><span style="color:var(--dim)">Loading installed models…</span></div>
+          </div>
+
+          <!-- ── DOWNLOADS (live pull progress) ────────────────────────── -->
+          <div id="cat-sub-dl" style="display:none">
+            <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+              <button class="btn sm" onclick="P.catDlRefresh()">↻ Refresh</button>
+              <button class="btn sm" onclick="P.catDlClear()">Clear finished</button>
+              <span style="font-size:9px;color:var(--dim)">Progress is streamed from Ollama's pull API — bytes, speed and ETA are live, and survive leaving this tab.</span>
+            </div>
+            <div id="cat-downloads"><span style="color:var(--dim)">No downloads yet.</span></div>
+          </div>
+
+          <!-- ── NODES & HARDWARE ──────────────────────────────────────── -->
+          <div id="cat-sub-nodes" style="display:none">
+            <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">
+              <button class="btn sm" onclick="P.catNodes()">↻ Refresh</button>
+              <button class="btn sm" style="border-color:var(--acc);color:var(--acc)" onclick="P.catDetectAll()">Detect all (SSH)</button>
+              <span style="font-size:9px;color:var(--dim)">Map each node to an SSH host, then auto-detect VRAM/RAM/GPU + free disk. Manual override supported.</span>
+            </div>
+            <div id="cat-nodes"><span style="color:var(--dim)">Loading nodes…</span></div>
+          </div>
+
+          <!-- ── AUTO-OPTIMISE ─────────────────────────────────────────── -->
+          <div id="cat-sub-opt" style="display:none">
+            <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+              <button class="btn sm" style="border-color:#e6b800;color:#e6b800" onclick="P.catSuggest()">Suggest now (all nodes)</button>
+              <span style="font-size:9px;color:var(--dim)">Recommends the latest model that fits each node. Manual by default; enable per-node auto-apply below.</span>
+            </div>
+            <div id="cat-suggest" style="font-size:11px;margin-bottom:12px"></div>
+            <div style="border-top:1px solid var(--border);padding-top:8px">
+              <div style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim);margin-bottom:6px">Opt-in auto-apply</div>
+              <div id="cat-autocfg" style="font-size:11px"></div>
+              <div style="margin-top:8px">
+                <span style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)">Recent runs</span>
+                <div id="cat-autolog" style="font-size:10px;font-family:var(--mono);color:var(--dim2);margin-top:4px"></div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div><!-- /ol-sub-catalog -->
 
       <!-- Sub-pane: Wrapper -->
       <div id="ol-sub-wrapper" style="display:none;flex:1;flex-direction:column;min-height:0;overflow:hidden">
@@ -1493,83 +1602,6 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
       <iframe id="vllm-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
     </div>
 
-    <!-- ════════════════════════════════════════════════════════════════════
-         CATALOG PANE — Hugging Face model browser + hardware-aware routing
-         ════════════════════════════════════════════════════════════════════ -->
-    <div class="pane" id="pane-catalog" style="padding:0;overflow:hidden">
-      <div style="display:flex;flex-direction:column;height:100%;overflow:hidden">
-        <div class="pane-tb" style="flex-shrink:0;padding:8px 12px 6px;gap:6px">
-          <span class="pane-tb-title" style="color:#e6b800">CATALOG</span>
-          <span class="tb-sep"></span>
-          <div style="display:flex;gap:2px">
-            <span class="j-tab active" id="cats-browse" onclick="P.catSub('browse')" style="padding:3px 9px;font-size:9px">Browse</span>
-            <span class="j-tab" id="cats-nodes" onclick="P.catSub('nodes')" style="padding:3px 9px;font-size:9px">Nodes &amp; Hardware</span>
-            <span class="j-tab" id="cats-opt" onclick="P.catSub('opt')" style="padding:3px 9px;font-size:9px">Auto-optimise</span>
-          </div>
-          <span style="flex:1"></span>
-          <span id="cat-status" style="font-size:9px;color:var(--dim2);font-family:var(--mono)"></span>
-        </div>
-        <div style="flex:1;overflow:auto;padding:10px 12px">
-
-          <!-- ── BROWSE ─────────────────────────────────────────────────── -->
-          <div id="cat-sub-browse">
-            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
-              <input id="cat-q" placeholder="Search Hugging Face… (e.g. qwen, llama)" style="flex:1;min-width:180px;font-size:11px;padding:4px 8px;background:var(--bg0);border:1px solid var(--border);color:var(--text);border-radius:4px" onkeydown="if(event.key==='Enter')P.catSearch()">
-              <select id="cat-task" style="font-size:10px;padding:3px 5px">
-                <option value="text-generation">text-generation</option>
-                <option value="text2text-generation">text2text</option>
-                <option value="feature-extraction">embeddings</option>
-                <option value="">any task</option>
-              </select>
-              <label style="font-size:10px;color:var(--dim2);display:flex;align-items:center;gap:3px"><input type="checkbox" id="cat-gguf" checked> GGUF only</label>
-              <select id="cat-sort" style="font-size:10px;padding:3px 5px">
-                <option value="downloads">most downloads</option>
-                <option value="trendingScore">trending</option>
-                <option value="lastModified">latest</option>
-                <option value="likes">most likes</option>
-              </select>
-              <select id="cat-fits" title="Annotate each result with a hardware-fit verdict" style="font-size:10px;padding:3px 5px">
-                <option value="cluster">Fits: cluster</option>
-                <option value="any">Fits: any</option>
-              </select>
-              <button class="btn sm" style="border-color:#e6b800;color:#e6b800" onclick="P.catSearch()">Search</button>
-            </div>
-            <div id="cat-results" style="font-size:11px"><span style="color:var(--dim)">Search Hugging Face to begin. Tip: keep “GGUF only” on for the Ollama path.</span></div>
-          </div>
-
-          <!-- ── MODEL DETAIL (overlays browse) ─────────────────────────── -->
-          <div id="cat-detail" style="display:none"></div>
-
-          <!-- ── NODES & HARDWARE ──────────────────────────────────────── -->
-          <div id="cat-sub-nodes" style="display:none">
-            <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">
-              <button class="btn sm" onclick="P.catNodes()">↻ Refresh</button>
-              <button class="btn sm" style="border-color:var(--acc);color:var(--acc)" onclick="P.catDetectAll()">Detect all (SSH)</button>
-              <span style="font-size:9px;color:var(--dim)">Map each node to an SSH host, then auto-detect VRAM/RAM/GPU. Manual override supported.</span>
-            </div>
-            <div id="cat-nodes"><span style="color:var(--dim)">Loading nodes…</span></div>
-          </div>
-
-          <!-- ── AUTO-OPTIMISE ─────────────────────────────────────────── -->
-          <div id="cat-sub-opt" style="display:none">
-            <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
-              <button class="btn sm" style="border-color:#e6b800;color:#e6b800" onclick="P.catSuggest()">Suggest now (all nodes)</button>
-              <span style="font-size:9px;color:var(--dim)">Recommends the latest model that fits each node. Manual by default; enable per-node auto-apply below.</span>
-            </div>
-            <div id="cat-suggest" style="font-size:11px;margin-bottom:12px"></div>
-            <div style="border-top:1px solid var(--border);padding-top:8px">
-              <div style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim);margin-bottom:6px">Opt-in auto-apply</div>
-              <div id="cat-autocfg" style="font-size:11px"></div>
-              <div style="margin-top:8px">
-                <span style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)">Recent runs</span>
-                <div id="cat-autolog" style="font-size:10px;font-family:var(--mono);color:var(--dim2);margin-top:4px"></div>
-              </div>
-            </div>
-          </div>
-
-        </div>
-      </div>
-    </div>
     <div class="pane" id="pane-openclaw" style="padding:0;overflow:hidden">
       <iframe id="openclaw-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
     </div>
@@ -1657,7 +1689,16 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
       </div>
       <div style="font-size:9px;color:var(--dim2);margin-top:4px;line-height:1.6">
         Pulls the model from the Ollama library onto the selected instance.
-        Large models may take several minutes to download.
+        Progress is live — you can close this dialog and watch it in
+        <b style="color:#e6b800">Catalog → Downloads</b>; the pull keeps running.
+      </div>
+      <div id="pull-prog" style="display:none;margin-top:8px">
+        <div style="display:flex;align-items:center;gap:6px">
+          <div style="flex:1;height:6px;background:var(--bg0);border-radius:3px;overflow:hidden">
+            <div id="pull-bar" style="height:100%;width:0%;background:var(--gpu);border-radius:3px;transition:width .4s"></div></div>
+          <span id="pull-pct" style="font-size:9px;font-family:var(--mono);color:var(--gpu);width:42px;text-align:right">0%</span>
+        </div>
+        <div id="pull-meta" style="font-size:8.5px;font-family:var(--mono);color:var(--dim2);margin-top:3px"></div>
       </div>
       <div class="log-box" id="pull-log" style="margin-top:8px;display:none;height:70px"></div>
     </div>
@@ -2327,6 +2368,20 @@ function renderOllamaNodes(nodes){
           <span style="font-size:8px;color:var(--dim2);width:50px;text-align:right">${(n.ram_used_gb||0).toFixed(1)}/${n.ram_total_gb.toFixed(1)}GB</span>
         </div>`:'';
 
+    // Disk bar — free space on the node's model store (from the catalog's node
+    // view; needs an SSH host mapped, or a nodes.detect pass).
+    const cn = _catNodes.find(x=>x.id===id);
+    const dFree = cn ? (cn.models_disk_free_gb!=null?cn.models_disk_free_gb:cn.disk_free_gb) : null;
+    const dTot  = cn ? (cn.models_disk_total_gb!=null?cn.models_disk_total_gb:cn.disk_total_gb) : null;
+    const diskBar = dFree!=null
+      ?`<div style="display:flex;align-items:center;gap:5px;margin-top:4px" title="Free space for model downloads${cn.models_path?' — '+esc(cn.models_path):''}">
+          <span style="font-size:7px;color:var(--dim);text-transform:uppercase;width:32px;flex-shrink:0">Disk</span>
+          <div style="flex:1;height:4px;background:var(--bg0);border-radius:2px;overflow:hidden">
+            <div style="height:100%;background:${dFree<20?'var(--err)':dFree<60?'var(--warn)':'var(--ok)'};border-radius:2px;width:${dTot?Math.min(100,Math.round((dTot-dFree)/dTot*100)):0}%"></div>
+          </div>
+          <span style="font-size:8px;color:${dFree<20?'var(--err)':'var(--dim2)'};width:60px;text-align:right">${dFree.toFixed(0)}G free</span>
+        </div>`:'';
+
     // Running models
     const running = (n.running||[]).length
       ?`<div style="margin-top:4px"><span style="font-size:8px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px">Running:</span><div class="ol-models" style="margin-top:3px">${(n.running||[]).map(m=>'<span class="ol-model running">'+esc(m.split(':')[0])+'</span>').join('')}</div></div>`:'';
@@ -2352,7 +2407,7 @@ function renderOllamaNodes(nodes){
         <div class="ol-stat"><div class="ol-stat-lbl">Latency</div><div class="ol-stat-val" style="color:${latCol}">${n.latency_ms!=null?n.latency_ms+'ms':'—'}</div></div>
         <div class="ol-stat"><div class="ol-stat-lbl">Active</div><div class="ol-stat-val" style="color:${(n.in_use||0)>0?'var(--warn)':'var(--ok)'}">${n.in_use||0}</div></div>
       </div>
-      ${vramBar}${ramBar}
+      ${vramBar}${ramBar}${diskBar}
       ${running}
       ${models?'<div style="margin-top:5px"><span style="font-size:8px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px">Models:</span><div class="ol-models" style="margin-top:3px">'+models+'</div></div>':''}
       <div class="ol-actions" onclick="event.stopPropagation()">
@@ -4093,6 +4148,11 @@ function openPullModal(instanceId){
   txt('pull-status','');
   const logEl = $('pull-log');
   if(logEl){logEl.style.display='none';logEl.innerHTML='';}
+  const prog = $('pull-prog');
+  if(prog){prog.style.display='none';}
+  const bar=$('pull-bar'); if(bar) bar.style.width='0%';
+  txt('pull-pct','0%'); txt('pull-meta','');
+  clearTimeout(_pullWatch);
   const btn = $('pull-go-btn');
   if(btn){btn.disabled=false;btn.textContent='Pull';}
 }
@@ -4100,7 +4160,13 @@ function openPullModal(instanceId){
 function closePullModal(){
   const modal = $('pull-modal-bd');
   if(modal) modal.classList.add('hidden');
+  // The pull itself keeps running server-side — stop following it here only.
+  clearTimeout(_pullWatch);
 }
+
+// Streamed pull: kick it off, then follow catalog.pull.status. The download is
+// owned by the backend, so closing the modal (or the panel) doesn't abort it.
+let _pullWatch=null;
 
 async function pullModelGo(){
   const model = ($('pull-model-name')||{}).value?.trim();
@@ -4109,29 +4175,68 @@ async function pullModelGo(){
   if(!inst){txt('pull-status','Select an instance');return;}
   const btn = $('pull-go-btn');
   if(btn){btn.disabled=true;btn.textContent='Pulling…';}
-  txt('pull-status','Pulling '+model+' to '+inst+'…');
+  txt('pull-status','Starting '+model+' on '+inst+'…');
   const logEl = $('pull-log');
   if(logEl){logEl.style.display='block';logEl.innerHTML='<span class="ll-info">Starting pull…</span>\n';}
   try{
-    const res = await api('/ollama/pull','POST',{model,instance_id:inst});
-    if(res && !res.error){
-      txt('pull-status','✓ Pulled '+model);
-      if(logEl) logEl.innerHTML+='<span class="ll-ok">✓ '+esc(model)+' pulled successfully</span>\n'
-        +(res.status?'<span class="ll-info">Status: '+esc(res.status)+'</span>\n':'');
-      if(btn){btn.textContent='Done';btn.disabled=false;}
-      // Refresh to pick up the new model
-      setTimeout(refresh,1000);
-    } else {
+    const res = await api('/catalog/pull/start','POST',{model,instance_id:inst});
+    if(!res || !res.ok){
       const err = res?.error||'Unknown error';
       txt('pull-status','✗ Failed');
       if(logEl) logEl.innerHTML+='<span class="ll-err">✗ '+esc(err)+'</span>\n';
       if(btn){btn.textContent='Retry';btn.disabled=false;}
+      return;
     }
+    $('pull-prog').style.display='block';
+    _pullFollow(res.pull_id, model);
   }catch(e){
     txt('pull-status','✗ Network error');
     if(logEl) logEl.innerHTML+='<span class="ll-err">✗ '+esc(String(e))+'</span>\n';
     if(btn){btn.textContent='Retry';btn.disabled=false;}
   }
+}
+
+function _pullFollow(pullId, model){
+  const logEl=$('pull-log'), btn=$('pull-go-btn');
+  let lastStatus='';
+  clearTimeout(_pullWatch);
+  const tick=async()=>{
+    const r=await api('/catalog/pull/status?pull_id='+encodeURIComponent(pullId));
+    const p=((r&&r.pulls)||[])[0];
+    if(!p){ _pullWatch=setTimeout(tick,1500); return; }
+    const pct=Math.max(0,Math.min(100,p.pct||0));
+    const bar=$('pull-bar'); if(bar) bar.style.width=pct+'%';
+    txt('pull-pct',pct.toFixed(1)+'%');
+    const bits=[];
+    if(p.total_bytes) bits.push(_catFmtBytes(p.completed_bytes)+' / '+_catFmtBytes(p.total_bytes));
+    if(p.speed_bps) bits.push(_catFmtBytes(p.speed_bps)+'/s');
+    if(p.eta_s!=null) bits.push('ETA '+_catFmtEta(p.eta_s));
+    if(p.layers_total) bits.push('layer '+p.layers_done+'/'+p.layers_total);
+    txt('pull-meta',bits.join('  ·  '));
+    if(logEl && p.status && p.status!==lastStatus){
+      lastStatus=p.status;
+      logEl.innerHTML+='<span class="ll-info">'+esc(p.status)+'</span>\n';
+      logEl.scrollTop=logEl.scrollHeight;
+    }
+    if(['starting','downloading','verifying'].includes(p.state)){
+      txt('pull-status',p.state+' '+model+'…');
+      _pullWatch=setTimeout(tick,1200);
+      return;
+    }
+    if(p.state==='done'){
+      txt('pull-status','✓ Pulled '+model);
+      if(logEl) logEl.innerHTML+='<span class="ll-ok">✓ '+esc(model)+' pulled successfully</span>\n';
+      if(btn){btn.textContent='Done';btn.disabled=false;}
+      setTimeout(refresh,800);
+      if(_catInstalledData) catInstalled();
+      catLoadNodes();
+    } else {
+      txt('pull-status','✗ '+p.state);
+      if(logEl) logEl.innerHTML+='<span class="ll-err">✗ '+esc(p.error||p.state)+'</span>\n';
+      if(btn){btn.textContent='Retry';btn.disabled=false;}
+    }
+  };
+  tick();
 }
 
 // ── Delete Model modal ──────────────────────────────────────────────────────
@@ -4161,20 +4266,16 @@ async function deleteModelGo(){
   if(btn){btn.disabled=true;btn.textContent='Deleting…';}
   txt('del-status','Deleting '+_delModel+'…');
   try{
-    // Ollama delete API — directly call the instance
-    const inst = (_cluster?.ollama||{})[_delInst];
-    if(!inst){txt('del-status','Instance not found');if(btn){btn.disabled=false;btn.textContent='Delete';}return;}
-    // Use a custom fetch since there may not be a /ollama/delete cap
-    const res = await fetch(inst.url+'/api/delete',{
-      method:'DELETE',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({name:_delModel}),
-    }).then(r=>r.ok?{ok:true}:r.json().catch(()=>({error:'HTTP '+r.status}))).catch(e=>({error:String(e)}));
-    if(res && !res.error){
+    // Deleted server-side (catalog.model.delete) — the browser usually can't
+    // reach the node's Ollama port directly from this origin.
+    const res = await api('/catalog/model/delete','POST',{instance_id:_delInst,model:_delModel});
+    if(res && res.ok){
       txt('del-status','✓ Deleted');
       if(btn){btn.textContent='Done';}
       closeDeleteModel();
       setTimeout(refresh,800);
+      if(_catInstalledData) catInstalled();
+      catLoadNodes();
     } else {
       txt('del-status','✗ '+(res?.error||'Failed'));
       if(btn){btn.disabled=false;btn.textContent='Delete';}
@@ -4194,18 +4295,23 @@ function olSubTab(name,btn){
   _olSubCurrent=name;
   document.querySelectorAll('.ol-sub').forEach(b=>b.classList.remove('active'));
   if(btn) btn.classList.add('active');
-  ['nodes','jobs','wrapper'].forEach(k=>{
+  else document.querySelector('.ol-sub[data-olsub="'+name+'"]')?.classList.add('active');
+  ['nodes','jobs','catalog','wrapper'].forEach(k=>{
     const el=$('ol-sub-'+k);
     if(!el) return;
     if(k===name){
-      el.style.display = (k==='wrapper') ? 'flex' : 'block';
+      el.style.display = (k==='wrapper'||k==='catalog') ? 'flex' : 'block';
     } else {
       el.style.display='none';
     }
   });
-  const editBtn=$('ol-edit-btn');
-  if(editBtn) editBtn.style.display=name==='wrapper'?'none':'';
+  // The dashboard-grid controls only apply to the widget panes (nodes/jobs).
+  const gridOnly = (name==='nodes'||name==='jobs');
+  ['ol-edit-btn','ol-reset-btn','ol-addwidget-btn'].forEach(id=>{
+    const b=$(id); if(b) b.style.display=gridOnly?'':'none';
+  });
   if(name==='jobs') oljRender();
+  if(name==='catalog') catInit();
   // When switching to wrapper, init the selector and connect if needed
   if(name==='wrapper'){
     wrapperInit();
@@ -5597,6 +5703,11 @@ function showPane(name, el){
     obsSub('perf');
     return;
   }
+  if(name==='catalog'){ // legacy alias — Catalog now lives as a sub-tab of Ollama
+    showPane('ollama', document.querySelector('.snav[data-pane="ollama"]'));
+    olSubTab('catalog');
+    return;
+  }
   document.querySelectorAll('.snav').forEach(n=>n.classList.remove('on'));
   if(el) el.classList.add('on');
   document.querySelectorAll('.pane').forEach(p=>p.classList.remove('on'));
@@ -5614,7 +5725,6 @@ function showPane(name, el){
   if(name==='storage'){ _mountFrame('storage-frame', BASE+'/pxstore/panel'); }
   if(name==='network'){ netSub(_netSub); }
   if(name==='connections'){ connLoad(); }
-  if(name==='catalog'){ catInit(); }
   if(name==='nodes'){ ndInit(); }
 }
 
@@ -5871,23 +5981,60 @@ setTimeout(loadEmbedCfg, 600);
 // builds the host list and we kick one refresh of the default (or local) host.
 setTimeout(()=>{ pmxInit(); }, 1400);
 setTimeout(()=>{ _dkrInitHosts().then(()=>{ if(_dkrHostId) dkrRefresh(); }); }, 1500);
+// Watch for model downloads from the start, so an in-flight pull badges the
+// Catalog tab even if the operator never opened it this session; the same pass
+// gives the Ollama node cards their free-disk figures.
+setTimeout(()=>{ catDlPollStart(); catLoadNodes(); }, 2500);
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CATALOG — Hugging Face model browser + hardware-aware routing / optimiser
+// CATALOG — HF browse/search · installed models · live downloads · hardware
+// Lives as a sub-tab of the Ollama pane (it manages that cluster's models).
 // ═══════════════════════════════════════════════════════════════════════════
-let _catNodes=[], _catSshHosts=[], _catCur=null, _catInited=false, _catSub='browse', _catSuggestions=[];
+let _catNodes=[], _catSshHosts=[], _catCur=null, _catInited=false, _catSub='browse';
+let _catSuggestions=[], _catIndex=null, _catInstalledData=null, _catPulls=[];
+let _catDlTimer=null, _catDlOn=false, _catHasResults=false, _catLastActive=0;
+
 function catStatus(s){ const e=$('cat-status'); if(e) e.textContent=s||''; }
-async function catInit(){ if(!_catInited){ _catInited=true; await catLoadNodes(); } }
+function _catFmtBytes(b){
+  if(b==null||isNaN(b)) return '—';
+  if(b>=1e9) return (b/1e9).toFixed(2)+' GB';
+  if(b>=1e6) return (b/1e6).toFixed(1)+' MB';
+  if(b>=1e3) return (b/1e3).toFixed(0)+' KB';
+  return b+' B';
+}
+function _catFmtEta(s){
+  if(s==null||s<0) return '—';
+  if(s<60) return Math.round(s)+'s';
+  if(s<3600) return Math.floor(s/60)+'m '+Math.round(s%60)+'s';
+  return Math.floor(s/3600)+'h '+Math.floor((s%3600)/60)+'m';
+}
+
+async function catInit(){
+  if(!_catInited){
+    _catInited=true;
+    await catLoadNodes();
+    catBrowseHome();
+    // Inventory in the background — it re-renders the index with "already
+    // installed" markers once every node has answered.
+    catInstalled();
+  }
+  catDlPollStart();
+}
+
 function catSub(name){
   _catSub=name;
-  ['browse','nodes','opt'].forEach(k=>{
+  ['browse','installed','dl','nodes','opt'].forEach(k=>{
     const t=$('cats-'+k); if(t) t.classList.toggle('active',k===name);
     const p=$('cat-sub-'+k); if(p) p.style.display=(k===name?'':'none');
   });
   if(name!=='browse') catCloseDetail();
+  if(name==='installed') catInstalled();
+  if(name==='dl') catDlRefresh();
   if(name==='nodes') catNodes();
   if(name==='opt'){ $('cat-suggest').innerHTML=''; catAutoLoad(); }
 }
+
+// ── Node list + install target ──────────────────────────────────────────────
 async function catLoadNodes(){
   const r=await api('/catalog/nodes'); _catNodes=(r&&r.nodes)||[];
   const sel=$('cat-fits');
@@ -5895,55 +6042,228 @@ async function catLoadNodes(){
     sel.innerHTML='<option value="cluster">Fits: cluster</option><option value="any">Fits: any</option>'+
       _catNodes.map(n=>`<option value="${esc(n.id)}">Fits: ${esc(n.id)}${n.vram_gb?` (${n.vram_gb}G VRAM)`:(n.ram_gb?` (${n.ram_gb}G RAM)`:'')}</option>`).join('');
     sel.value=cur; }
-  const hr=await api('/exec/ssh/hosts'); _catSshHosts=(hr&&hr.hosts)||[];
+  const tgt=$('cat-target-node');
+  if(tgt){ const cur=tgt.value;
+    const ol=_catNodes.filter(n=>n.backend==='ollama');
+    tgt.innerHTML=ol.map(n=>`<option value="${esc(n.id)}">${esc(n.label||n.id)}${n.has_gpu?' ⚡':''}</option>`).join('')
+      ||'<option value="">(no Ollama nodes)</option>';
+    if(cur&&ol.some(n=>n.id===cur)) tgt.value=cur;
+    catTargetChanged();
+  }
+  // The Ollama node cards show free disk from this data too.
+  if(_cluster) renderOllama();
 }
-// ── Browse ──
+function _catNode(iid){ return _catNodes.find(n=>n.id===iid)||null; }
+function _catFreeGb(n){
+  if(!n) return null;
+  return n.models_disk_free_gb!=null?n.models_disk_free_gb:(n.disk_free_gb!=null?n.disk_free_gb:null);
+}
+function catTargetChanged(){
+  const iid=($('cat-target-node')||{}).value||'';
+  const n=_catNode(iid), free=_catFreeGb(n), el=$('cat-target-disk');
+  if(!el) return;
+  if(free==null){ el.innerHTML='<span style="color:var(--dim)">disk unknown — detect in Nodes &amp; Hardware</span>'; return; }
+  const col=free<20?'var(--err)':free<60?'var(--warn)':'var(--ok)';
+  el.innerHTML=`<span style="color:${col}">${free.toFixed(0)}G free</span>`;
+}
+// Warn before a pull that plainly will not fit on the target's disk.
+function _catDiskOk(iid,sizeGb){
+  const free=_catFreeGb(_catNode(iid));
+  if(free==null||!sizeGb) return true;
+  if(sizeGb<free*0.95) return true;
+  return confirm('This model is about '+sizeGb.toFixed(1)+'GB but '+iid+' has only '
+    +free.toFixed(1)+'GB free on its model store.\n\nStart the download anyway?');
+}
+
+// ── Browse index (families / publishers / sizes / Ollama library) ────────────
+async function catBrowseHome(){
+  _catHasResults=false;
+  catCloseDetail();
+  $('cat-results').style.display='none';
+  const idx=$('cat-index'); idx.style.display='';
+  if(!_catIndex){
+    catStatus('loading browse index…');
+    _catIndex=await api('/catalog/browse/index')||{};
+    catStatus('');
+  }
+  const tile=(onclick,title,sub,badge)=>`
+    <div onclick="${onclick}" style="cursor:pointer;border:1px solid var(--border);border-radius:6px;padding:7px 9px;background:var(--bg1);transition:border-color .12s"
+         onmouseover="this.style.borderColor='#e6b800'" onmouseout="this.style.borderColor='var(--border)'">
+      <div style="display:flex;align-items:center;gap:5px"><b style="font-size:11px;color:var(--text)">${title}</b>${badge||''}</div>
+      <div style="font-size:9px;color:var(--dim2);margin-top:2px;line-height:1.4">${sub||''}</div>
+    </div>`;
+  const grid=(html)=>`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px;margin-bottom:12px">${html}</div>`;
+  const head=(t,hint)=>`<div style="display:flex;align-items:baseline;gap:8px;margin:2px 0 6px">
+      <span style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:#e6b800;font-weight:600">${t}</span>
+      <span style="font-size:9px;color:var(--dim)">${hint||''}</span></div>`;
+
+  const fams=(_catIndex.families||[]).map(f=>
+    tile(`P.catBrowse('family',${sq(f.key)})`, esc(f.label), esc(f.blurb||''))).join('');
+  const pubs=(_catIndex.publishers||[]).map(p=>
+    tile(`P.catBrowse('publisher',${sq(p.key)})`, esc(p.label), esc(p.blurb||''))).join('');
+  const sizes=(_catIndex.sizes||[]).map(s=>{
+    const v=(s.cluster_fit||{}).verdict||'unknown';
+    const map={gpu:['runs on GPU','var(--acc2)'],cpu:['CPU / offload','#d9a441'],no:['too big for this cluster','var(--err)'],unknown:['hardware not detected','var(--dim)'],any:['—','var(--dim)']};
+    const m=map[v]||map.unknown;
+    const badge=`<span style="font-size:8px;padding:1px 5px;border:1px solid ${m[1]};color:${m[1]};border-radius:8px">${m[0]}</span>`;
+    return tile(`P.catBrowseSize(${sq(s.key)})`, esc(s.label), esc(s.blurb||''), badge);
+  }).join('');
+
+  const libCard=(m)=>{
+    const tags=(m.tags||[]).map(t=>{
+      const ref=t==='latest'?m.name:(m.name+':'+t);
+      const have=_catInstalledHasExact(ref);
+      return `<span onclick="event.stopPropagation();P.catQuickPull(${sq(ref)})" title="${have?'Already on '+esc(have)+' — pull again to update':'Pull '+esc(ref)+' onto the install target'}"
+        style="cursor:pointer;font-size:8.5px;padding:1px 5px;border:1px solid ${have?'var(--ok)':'var(--border2)'};border-radius:8px;color:${have?'var(--ok)':'var(--dim2)'}"
+        onmouseover="this.style.color='#e6b800';this.style.borderColor='#e6b800'"
+        onmouseout="this.style.color='${have?'var(--ok)':'var(--dim2)'}';this.style.borderColor='${have?'var(--ok)':'var(--border2)'}'">${esc(t)} ${have?'✓':'⇩'}</span>`;
+    }).join(' ');
+    return `<div style="border:1px solid var(--border);border-radius:6px;padding:7px 9px;background:var(--bg1)">
+      <div style="display:flex;align-items:center;gap:6px"><b style="font-size:11px;font-family:var(--mono)">${esc(m.name)}</b></div>
+      <div style="font-size:9px;color:var(--dim2);margin:2px 0 4px">${esc(m.blurb||'')}</div>
+      <div style="display:flex;gap:3px;flex-wrap:wrap">${tags}</div></div>`;
+  };
+  const groups={general:'General',reasoning:'Reasoning',code:'Code',embed:'Embeddings',vision:'Vision'};
+  const libAll=_catIndex.ollama_library||[];
+  const lib=Object.keys(groups).map(g=>{
+    const rows=libAll.filter(m=>(m.group||'general')===g).map(libCard).join('');
+    if(!rows) return '';
+    return `<div style="font-size:9px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim);margin:4px 0 4px">${groups[g]}</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px;margin-bottom:8px">${rows}</div>`;
+  }).join('');
+
+  idx.innerHTML=
+    head('Discover','no search term needed')+
+    grid(
+      tile("P.catBrowse('trending')", '🔥 Trending', 'What the HF community is pulling right now')+
+      tile("P.catBrowse('popular')", '⭐ Most downloaded', 'The proven, widely-used GGUF repos')+
+      tile("P.catBrowse('recent')", '🕑 Recently updated', 'Freshly published + re-quantised repos')
+    )+
+    head('Families','click to list every GGUF build of that family')+grid(fams)+
+    head('By size','windowed on estimated parameter count, badged against your hardware')+grid(sizes)+
+    head('GGUF publishers','the repos that reliably ship Ollama-pullable quants')+grid(pubs)+
+    head('Ollama library','plain <code>ollama pull</code> names — one click, no HF resolution; ✓ = already installed')+
+    lib;
+}
+
+async function catBrowse(mode,arg){
+  catCloseDetail();
+  const fits=$('cat-fits').value, gguf=$('cat-gguf').checked, task=$('cat-task').value;
+  const q={mode:mode,gguf:gguf?'true':'false',task:task||'',limit:'48',fits:fits};
+  if(mode==='family') q.family=arg||'';
+  if(mode==='publisher') q.publisher=arg||'';
+  $('cat-index').style.display='none';
+  const res=$('cat-results'); res.style.display='';
+  res.innerHTML='<span style="color:var(--dim)">Browsing Hugging Face…</span>';
+  catStatus('browsing…');
+  const r=await api('/catalog/browse?'+new URLSearchParams(q).toString());
+  catStatus('');
+  if(!r||r.error){ res.innerHTML='<span style="color:var(--err)">'+esc((r&&r.error)||'browse failed')+'</span>'; return; }
+  const label={trending:'Trending',popular:'Most downloaded',recent:'Recently updated',
+               family:'Family: '+(arg||''),publisher:'Publisher: '+(arg||''),size:'Size band'}[mode]||mode;
+  catRenderResults(r.results||[],label);
+}
+async function catBrowseSize(key){
+  const b=((_catIndex||{}).sizes||[]).find(s=>s.key===key); if(!b) return;
+  catCloseDetail();
+  const fits=$('cat-fits').value;
+  $('cat-index').style.display='none';
+  const res=$('cat-results'); res.style.display='';
+  res.innerHTML='<span style="color:var(--dim)">Scanning for models in the '+esc(b.label)+' band…</span>';
+  catStatus('browsing…');
+  const r=await api('/catalog/browse?'+new URLSearchParams({mode:'size',min_b:b.min_b,max_b:b.max_b,
+    gguf:$('cat-gguf').checked?'true':'false',limit:'48',fits:fits}).toString());
+  catStatus('');
+  if(!r||r.error){ res.innerHTML='<span style="color:var(--err)">'+esc((r&&r.error)||'browse failed')+'</span>'; return; }
+  catRenderResults(r.results||[],'Size: '+b.label);
+}
+
+// ── Search ──────────────────────────────────────────────────────────────────
 async function catSearch(){
   catCloseDetail();
   const q=$('cat-q').value.trim(), gguf=$('cat-gguf').checked, task=$('cat-task').value;
   const filter=gguf?'gguf':task, sort=$('cat-sort').value, fits=$('cat-fits').value;
-  catStatus('searching…'); $('cat-results').innerHTML='<span style="color:var(--dim)">Searching Hugging Face…</span>';
+  if(!q){ catBrowseHome(); return; }
+  catStatus('searching…');
+  $('cat-index').style.display='none';
+  const res=$('cat-results'); res.style.display='';
+  res.innerHTML='<span style="color:var(--dim)">Searching Hugging Face…</span>';
   const p=new URLSearchParams({search:q,filter:filter||'',sort:sort,limit:'40',fits:fits}).toString();
   const r=await api('/catalog/search?'+p); catStatus('');
-  if(!r||r.error){ $('cat-results').innerHTML='<span style="color:var(--err)">'+esc((r&&r.error)||'search failed')+'</span>'; return; }
-  catRenderResults(r.results||[]);
+  if(!r||r.error){ res.innerHTML='<span style="color:var(--err)">'+esc((r&&r.error)||'search failed')+'</span>'; return; }
+  catRenderResults(r.results||[],'Search: '+q);
 }
 function catFitBadge(fit){
   if(!fit||fit.verdict==='any') return '';
-  const map={gpu:['GPU fit','var(--acc2)'],cpu:['CPU fit','var(--acc)'],no:['too big','var(--err)'],unknown:['?','var(--dim)']};
-  const m=map[fit.verdict]||['?','var(--dim)'];
+  const map={gpu:['GPU fit','var(--acc2)'],cpu:['CPU fit','var(--acc)'],no:['too big','var(--err)'],unknown:['hw ?','var(--dim)']};
+  const m=map[fit.verdict]||['hw ?','var(--dim)'];
   const extra=fit.headroom_gb!=null?` +${fit.headroom_gb}G`:(fit.short_gb!=null?` −${fit.short_gb}G`:'');
-  return `<span style="font-size:8px;padding:1px 5px;border:1px solid ${m[1]};color:${m[1]};border-radius:8px;white-space:nowrap">${m[0]}${extra}</span>`;
+  const tip=fit.reason?` title="${esc(fit.reason)} — run Detect in Nodes &amp; Hardware"`:'';
+  return `<span${tip} style="font-size:8px;padding:1px 5px;border:1px solid ${m[1]};color:${m[1]};border-radius:8px;white-space:nowrap">${m[0]}${extra}</span>`;
 }
-function catRenderResults(rows){
-  if(!rows.length){ $('cat-results').innerHTML='<span style="color:var(--dim)">No results.</span>'; return; }
-  $('cat-results').innerHTML=`<table style="width:100%;border-collapse:collapse;font-size:10.5px">
+function catRenderResults(rows,label){
+  const res=$('cat-results');
+  _catHasResults=true;
+  const hdr=`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <button class="btn sm" onclick="P.catBrowseHome()">← Browse</button>
+      <b style="font-size:11px;color:var(--text)">${esc(label||'Results')}</b>
+      <span style="font-size:9px;color:var(--dim2)">${rows.length} model${rows.length===1?'':'s'}</span></div>`;
+  if(!rows.length){ res.innerHTML=hdr+'<span style="color:var(--dim)">No results.</span>'; return; }
+  res.innerHTML=hdr+`<table style="width:100%;border-collapse:collapse;font-size:10.5px">
     <thead><tr style="text-align:left;color:var(--dim);border-bottom:1px solid var(--border)">
       <th style="padding:3px 6px">Model</th><th>~Params</th><th>~VRAM</th><th>Fit</th><th>↓</th><th>Updated</th><th></th></tr></thead>
     <tbody>${rows.map(r=>{ const req=r.requirement||{};
+      const have=_catInstalledHas(r.id);
       return `<tr style="border-bottom:1px solid var(--border)">
-        <td style="padding:3px 6px"><b style="color:var(--text)">${esc(r.id)}</b>${r.gated?' <span style="font-size:8px;color:#d9a441">gated</span>':''}</td>
+        <td style="padding:3px 6px"><b style="color:var(--text)">${esc(r.id)}</b>${r.gated?' <span style="font-size:8px;color:#d9a441">gated</span>':''}${have?' <span style="font-size:8px;color:var(--ok)" title="Already installed on '+esc(have)+'">✓ installed</span>':''}</td>
         <td>${r.est_params_b?r.est_params_b+'B':'<span style="color:var(--dim)">?</span>'}</td>
         <td>${req.min_vram_gb?req.min_vram_gb+'G':'—'}</td>
         <td>${catFitBadge(r.fit)}</td>
         <td>${(r.downloads||0).toLocaleString()}</td>
         <td style="color:var(--dim2)">${esc((r.lastModified||'').slice(0,10))}</td>
-        <td><button class="btn sm" style="font-size:8px;padding:1px 6px" onclick="P.catOpen(${sq(r.id)})">Open</button></td>
-      </tr>`;}).join('')}</tbody></table>`;
+        <td style="white-space:nowrap">
+          <button class="btn sm" style="font-size:8px;padding:1px 6px" onclick="P.catOpen(${sq(r.id)})">Open</button>
+          <button class="btn sm" style="font-size:8px;padding:1px 6px;border-color:#e6b800;color:#e6b800" title="Pull the best-fitting quant onto the target node" onclick="P.catQuickInstall(${sq(r.id)})">⇩ Pull</button>
+        </td></tr>`;}).join('')}</tbody></table>`;
 }
-// ── Model detail / tree ──
+// Which node (if any) has this exact Ollama tag (":latest" is implicit).
+function _catInstalledHasExact(ref){
+  if(!_catInstalledData) return '';
+  const want=String(ref||'').includes(':')?ref:(ref+':latest');
+  for(const n of (_catInstalledData.nodes||[]))
+    for(const m of (n.models||[])) if(m.name===want) return n.id;
+  return '';
+}
+// Which node (if any) already has a build of this HF repo.
+function _catInstalledHas(hfId){
+  if(!_catInstalledData) return '';
+  const leaf=String(hfId||'').split('/').pop().toLowerCase();
+  for(const n of (_catInstalledData.nodes||[])){
+    for(const m of (n.models||[])){
+      const name=String(m.name||'').toLowerCase();
+      if(name.includes(hfId.toLowerCase())||(leaf&&name.includes(leaf))) return n.id;
+    }
+  }
+  return '';
+}
+
+// ── Model detail / tree ─────────────────────────────────────────────────────
 async function catOpen(id){
   catStatus('loading '+id+'…'); const fits=$('cat-fits').value;
   const r=await api('/catalog/model?'+new URLSearchParams({id:id,fits:fits}).toString()); catStatus('');
   if(!r||r.error){ alert((r&&r.error)||'failed'); return; }
-  _catCur=r; $('cat-sub-browse').style.display='none';
+  _catCur=r;
+  $('cat-index').style.display='none';
+  $('cat-results').style.display='none';
   const d=$('cat-detail'); d.style.display='';
-  const nodeOpts=_catNodes.map(n=>`<option value="${esc(n.id)}">${esc(n.id)} · ${esc(n.backend)}${n.vram_gb?` ${n.vram_gb}G`:''}</option>`).join('');
+  const tgt=($('cat-target-node')||{}).value||'';
+  const nodeOpts=_catNodes.map(n=>`<option value="${esc(n.id)}"${n.id===tgt?' selected':''}>${esc(n.id)} · ${esc(n.backend)}${n.vram_gb?` ${n.vram_gb}G`:''}${_catFreeGb(n)!=null?` · ${Math.round(_catFreeGb(n))}G free`:''}</option>`).join('');
   const variants=(r.gguf_variants||[]).map(v=>{ const req=v.requirement||{};
     return `<tr style="border-bottom:1px solid var(--border)">
       <td style="padding:3px 6px"><b>${esc(v.quant)}</b></td><td>${v.size_gb}G</td>
       <td>${req.min_vram_gb?req.min_vram_gb+'G':'—'}</td><td>${catFitBadge(v.fit)}</td>
       <td style="color:var(--dim2)">${v.throughput_gpu&&v.throughput_gpu.est_tps?('~'+v.throughput_gpu.est_tps+' t/s gpu'):''}</td>
+      <td><button class="btn sm" style="font-size:8px;padding:1px 6px;border-color:#e6b800;color:#e6b800" onclick="P.catInstallVariant(${sq(v.quant)},${v.size_gb})">⇩ Pull</button></td>
     </tr>`;}).join('');
   const tree=(r.tree||[]).map(f=>`<div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:9px;padding:1px 0"><span>${esc(f.path)}</span><span style="color:var(--dim2)">${f.size?(f.size/1e9).toFixed(2)+'G':''}</span></div>`).join('');
   d.innerHTML=`
@@ -5954,7 +6274,7 @@ async function catOpen(id){
     <div style="display:flex;gap:14px;flex-wrap:wrap">
       <div style="flex:1;min-width:280px">
         <div style="font-size:10px;text-transform:uppercase;color:var(--dim);margin-bottom:4px">GGUF variants (Ollama path)</div>
-        ${variants?`<table style="width:100%;border-collapse:collapse;font-size:10px"><thead><tr style="text-align:left;color:var(--dim)"><th style="padding:2px 6px">Quant</th><th>Size</th><th>~VRAM</th><th>Fit</th><th>Throughput</th></tr></thead><tbody>${variants}</tbody></table>`:'<span style="color:var(--dim);font-size:10px">No GGUF files — use the vLLM path.</span>'}
+        ${variants?`<table style="width:100%;border-collapse:collapse;font-size:10px"><thead><tr style="text-align:left;color:var(--dim)"><th style="padding:2px 6px">Quant</th><th>Size</th><th>~VRAM</th><th>Fit</th><th>Throughput</th><th></th></tr></thead><tbody>${variants}</tbody></table>`:'<span style="color:var(--dim);font-size:10px">No GGUF files — use the vLLM path.</span>'}
         <div style="margin-top:6px;font-size:10px;color:var(--dim2)">Full-precision (vLLM): ${r.safetensors&&r.safetensors.size_gb?r.safetensors.size_gb+'G safetensors':'—'} ${catFitBadge(r.safetensors&&r.safetensors.fit)}</div>
       </div>
       <div style="width:270px">
@@ -5974,7 +6294,15 @@ async function catOpen(id){
     </div>
     <details style="margin-top:10px"><summary style="cursor:pointer;font-size:10px;color:var(--dim)">File tree (${(r.tree||[]).length})</summary><div style="max-height:220px;overflow:auto;margin-top:4px">${tree}</div></details>`;
 }
-function catCloseDetail(){ const d=$('cat-detail'); if(d){d.style.display='none';d.innerHTML='';} const b=$('cat-sub-browse'); if(b&&_catSub==='browse') b.style.display=''; _catCur=null; }
+function catCloseDetail(){
+  const d=$('cat-detail'); if(d){d.style.display='none';d.innerHTML='';}
+  if(_catSub==='browse'){
+    // Return to whichever browse view was open: a result list, or the index.
+    if(_catHasResults) $('cat-results').style.display='';
+    else $('cat-index').style.display='';
+  }
+  _catCur=null;
+}
 function _catInstArgs(){ return {id:_catCur.id, instance_id:$('cat-inst-node').value, backend:$('cat-inst-backend').value, quant:$('cat-inst-quant').value.trim()}; }
 async function catPlan(){
   const a=_catInstArgs(); $('cat-inst-out').textContent='planning…';
@@ -5983,15 +6311,236 @@ async function catPlan(){
   if(r.backend==='ollama') $('cat-inst-out').textContent=`ref: ${r.ref}\n${r.size_gb}G · ${r.fit&&r.fit.verdict} · ~${r.requirement&&r.requirement.min_vram_gb}G VRAM`;
   else $('cat-inst-out').textContent='vLLM: '+JSON.stringify(r.vllm_args);
 }
+// Ollama installs stream: kick the pull, then hand over to the Downloads tab.
 async function catInstall(){
   const a=_catInstArgs();
-  if(!confirm('Install '+a.id+' ('+a.backend+') to '+a.instance_id+'?')) return;
-  $('cat-inst-out').textContent='installing… (this can take a while)';
+  if(a.backend==='ollama'){
+    const plan=await api('/catalog/install/plan','POST',a);
+    if(!plan||plan.error){ $('cat-inst-out').textContent=(plan&&plan.error)||'plan failed'; return; }
+    if(!_catDiskOk(a.instance_id,plan.size_gb)) return;
+    $('cat-inst-out').textContent='starting download…';
+    const r=await api('/catalog/install','POST',{...a,wait:false});
+    if(!r||!r.ok){ $('cat-inst-out').textContent='✗ '+((r&&r.error)||'failed'); return; }
+    $('cat-inst-out').textContent='⇩ downloading '+r.ref+' — see the Downloads tab';
+    catSub('dl');
+    return;
+  }
+  if(!confirm('Start '+a.id+' on '+a.instance_id+' via vLLM?')) return;
+  $('cat-inst-out').textContent='starting… (this can take a while)';
   const r=await api('/catalog/install','POST',a);
-  $('cat-inst-out').textContent=(r&&r.ok)?('✓ installed'+(r.ref?': '+r.ref:'')):('✗ '+((r&&r.error)||JSON.stringify((r&&r.result)||r)));
+  $('cat-inst-out').textContent=(r&&r.ok)?'✓ started':('✗ '+((r&&r.error)||JSON.stringify((r&&r.result)||r)));
   if(r&&r.ok) catLoadNodes();
 }
-// ── Nodes & Hardware ──
+// One-click pull of a specific quant from the detail table.
+async function catInstallVariant(quant,sizeGb){
+  if(!_catCur) return;
+  const iid=$('cat-inst-node')?$('cat-inst-node').value:($('cat-target-node')||{}).value;
+  if(!iid){ alert('No target node'); return; }
+  if(!_catDiskOk(iid,sizeGb)) return;
+  const r=await api('/catalog/install','POST',{id:_catCur.id,instance_id:iid,backend:'ollama',quant:quant,wait:false});
+  if(!r||!r.ok){ alert('Pull failed: '+((r&&r.error)||'unknown')); return; }
+  catSub('dl');
+}
+// One-click pull from a result row — auto-picks the best-fitting quant.
+async function catQuickInstall(hfId){
+  const iid=($('cat-target-node')||{}).value;
+  if(!iid){ alert('No Ollama node available to install onto'); return; }
+  catStatus('resolving quant…');
+  const plan=await api('/catalog/install/plan','POST',{id:hfId,instance_id:iid,backend:'ollama'});
+  catStatus('');
+  if(!plan||!plan.ok){ alert((plan&&plan.error)||'could not resolve a GGUF build — open the model for options'); return; }
+  if(!confirm('Pull '+plan.ref+'\n('+plan.size_gb+'GB, '+((plan.fit||{}).verdict||'?')+') onto '+iid+'?')) return;
+  if(!_catDiskOk(iid,plan.size_gb)) return;
+  const r=await api('/catalog/install','POST',{id:hfId,instance_id:iid,backend:'ollama',wait:false});
+  if(!r||!r.ok){ alert('Pull failed: '+((r&&r.error)||'unknown')); return; }
+  catSub('dl');
+}
+// Ollama-library pull (plain name, no HF resolution needed).
+async function catQuickPull(ref){
+  const iid=($('cat-target-node')||{}).value;
+  if(!iid){ alert('No Ollama node available to install onto'); return; }
+  if(!confirm('Pull '+ref+' onto '+iid+'?')) return;
+  const r=await api('/catalog/pull/start','POST',{model:ref,instance_id:iid});
+  if(!r||!r.ok){ alert('Pull failed: '+((r&&r.error)||'unknown')); return; }
+  catSub('dl');
+}
+
+// ── Installed models per node ───────────────────────────────────────────────
+async function catInstalled(force){
+  const el=$('cat-installed'); if(!el) return;
+  if(force||!_catInstalledData) el.innerHTML='<span style="color:var(--dim)">Querying every node…</span>';
+  const r=await api('/catalog/installed');
+  _catInstalledData=r||{nodes:[]};
+  const cnt=$('cat-inst-cnt'); if(cnt) cnt.textContent=_catInstalledData.total_models||0;
+  catInstalledRender();
+  // Repaint the browse index so its "already installed" markers are current.
+  if(_catSub==='browse'&&!_catHasResults&&!_catCur) catBrowseHome();
+}
+function catInstalledRender(){
+  const el=$('cat-installed'); if(!el||!_catInstalledData) return;
+  const q=(($('cat-inst-filter')||{}).value||'').toLowerCase();
+  const loadedOnly=(($('cat-inst-loaded')||{}).checked)||false;
+  const nodes=_catInstalledData.nodes||[];
+  const sum=$('cat-inst-summary');
+  if(sum) sum.textContent=`${_catInstalledData.total_models||0} models · ${(_catInstalledData.total_size_gb||0).toFixed(1)}GB across ${nodes.length} node${nodes.length===1?'':'s'}`;
+  if(!nodes.length){ el.innerHTML='<span style="color:var(--dim)">No nodes.</span>'; return; }
+  el.innerHTML=nodes.map(n=>{
+    const models=(n.models||[]).filter(m=>
+      (!q||String(m.name||'').toLowerCase().includes(q))&&(!loadedOnly||m.loaded));
+    // Disk bar — the model store's filesystem when we know it, else the root fs
+    let disk=`<div style="font-size:9px;color:var(--dim);margin-top:5px">disk unknown —
+      <button class="btn sm" style="font-size:8px;padding:0 5px" onclick="P.catDetectDisk(${sq(n.id)})">Detect over SSH</button>
+      ${n.ssh_host_suggest?'<span style="color:var(--acc2)">host '+esc(n.ssh_host_suggest)+' available</span>':'<span>no SSH host mapped — add one in Nodes &amp; Hardware</span>'}</div>`;
+    if(n.disk_free_gb!=null){
+      const tot=n.disk_total_gb||0, free=n.disk_free_gb;
+      const usedPct=tot?Math.min(100,Math.round((tot-free)/tot*100)):0;
+      const col=free<20?'var(--err)':free<60?'var(--warn)':'var(--ok)';
+      disk=`<div style="display:flex;align-items:center;gap:6px;margin-top:5px">
+        <span style="font-size:7.5px;color:var(--dim);text-transform:uppercase;width:30px;flex-shrink:0">Disk</span>
+        <div style="flex:1;height:5px;background:var(--bg0);border-radius:3px;overflow:hidden">
+          <div style="height:100%;width:${usedPct}%;background:${col};border-radius:3px"></div></div>
+        <span style="font-size:8.5px;color:${col};font-family:var(--mono);white-space:nowrap">${free.toFixed(0)}G free${tot?' / '+tot.toFixed(0)+'G':''}</span>
+      </div>
+      <div style="font-size:8px;color:var(--dim2);margin-top:2px">${n.models_path?esc(n.models_path)+' · ':''}models ${(n.size_gb||0).toFixed(1)}G${n.models_dir_gb!=null?' (store '+n.models_dir_gb+'G)':''}${n.disk_source?' · via '+esc(n.disk_source):''}</div>`;
+    }
+    const rows=models.map(m=>`<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:2px 6px;font-family:var(--mono);font-size:9.5px">${m.loaded?'<span title="Resident in VRAM now" style="color:var(--warn)">⬤ </span>':''}${esc(m.name)}</td>
+      <td style="font-size:9px;color:var(--dim2)">${esc(m.quant||'')}</td>
+      <td style="font-size:9px;color:var(--dim2)">${m.params_b?m.params_b+'B':''}</td>
+      <td style="font-size:9px">${m.size_gb!=null?m.size_gb+'G':'—'}</td>
+      <td style="font-size:9px;color:var(--dim2)">${!m.loaded?'':(m.vram_gb?m.vram_gb+'G VRAM':'in RAM')}</td>
+      <td style="font-size:9px;color:var(--dim2)">${esc(String(m.modified_at||'').slice(0,10))}</td>
+      <td style="text-align:right">${n.backend==='ollama'?`<button class="btn sm err-btn" style="font-size:8px;padding:1px 5px" onclick="P.catDelete(${sq(n.id)},${sq(m.name)},${m.size_gb||0})">Delete</button>`:''}</td>
+    </tr>`).join('');
+    const err=n.error?`<div style="font-size:9px;color:var(--err);margin-top:4px">${esc(n.error)}</div>`:'';
+    return `<div style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:8px;background:var(--bg1)">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="width:7px;height:7px;border-radius:50%;background:${n.status==='online'?'var(--ok)':'var(--err)'}"></span>
+        <b style="color:var(--text)">${esc(n.label||n.id)}</b>
+        <span style="font-size:8px;padding:1px 5px;border:1px solid var(--border2);border-radius:8px;color:var(--dim2)">${esc(n.backend)}</span>
+        ${n.has_gpu?`<span style="font-size:8px;color:var(--gpu)">GPU${n.vram_gb?' '+n.vram_gb+'G':''}</span>`:'<span style="font-size:8px;color:var(--dim2)">CPU</span>'}
+        <span style="font-size:9px;color:var(--dim2)">${n.count||0} model${(n.count||0)===1?'':'s'} · ${(n.size_gb||0).toFixed(1)}G</span>
+        <span style="flex:1"></span>
+        <button class="btn sm gpu-btn" style="font-size:8px" onclick="P.catPullTo(${sq(n.id)})">⇩ Pull to this node</button>
+      </div>
+      ${disk}${err}
+      ${rows?`<table style="width:100%;border-collapse:collapse;margin-top:6px">
+        <thead><tr style="text-align:left;color:var(--dim);border-bottom:1px solid var(--border);font-size:9px">
+          <th style="padding:2px 6px">Model</th><th>Quant</th><th>Params</th><th>Size</th><th>Loaded</th><th>Modified</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table>`
+       :`<div style="font-size:10px;color:var(--dim);margin-top:6px">${(n.models||[]).length?'No models match the filter.':'No models installed on this node yet.'}</div>`}
+    </div>`;
+  }).join('');
+}
+function catPullTo(iid){
+  const tgt=$('cat-target-node'); if(tgt) tgt.value=iid;
+  catTargetChanged();
+  catSub('browse'); catBrowseHome();
+  catStatus('install target → '+iid);
+}
+// Map the suggested SSH host (if the node has none yet) and probe its disk.
+async function catDetectDisk(iid){
+  const n=(_catInstalledData?.nodes||[]).find(x=>x.id===iid)||_catNode(iid)||{};
+  let host=n.ssh_host||n.ssh_host_suggest||'';
+  if(!host){
+    alert('No SSH host is mapped to '+iid+'.\n\nOpen Nodes & Hardware, pick an SSH host for this node and press Map, then Detect.');
+    catSub('nodes'); return;
+  }
+  catStatus('detecting hardware + disk on '+iid+'…');
+  if(!n.ssh_host) await api('/catalog/node/ssh_set','POST',{instance_id:iid,host_id:host});
+  const r=await api('/catalog/node/detect','POST',{instance_id:iid});
+  catStatus('');
+  if(!r||!r.ok){ alert('Detect failed: '+((r&&r.error)||'unknown')); return; }
+  await catLoadNodes();
+  catInstalled(true);
+}
+async function catDelete(iid,model,sizeGb){
+  if(!confirm('Delete '+model+' from '+iid+'?'+(sizeGb?'\n\nThis frees about '+sizeGb+'GB.':''))) return;
+  const r=await api('/catalog/model/delete','POST',{instance_id:iid,model:model});
+  if(!r||!r.ok){ alert('Delete failed: '+((r&&r.error)||'unknown')); return; }
+  catInstalled(true); catLoadNodes();
+}
+
+// ── Live downloads ──────────────────────────────────────────────────────────
+function catDlPollStart(){
+  if(_catDlOn) return;   // guard immediately — the first tick is async
+  _catDlOn=true;
+  const tick=async()=>{
+    const r=await api('/catalog/pull/status');
+    _catPulls=(r&&r.pulls)||[];
+    const active=(r&&r.active)||0;
+    // Badges: on the Ollama sub-tab button and on the Downloads sub-tab.
+    [['ol-dl-badge',active],['cat-dl-cnt',active]].forEach(([id,v])=>{
+      const el=$(id); if(!el) return;
+      el.style.display=v?'':'none'; el.textContent=v;
+    });
+    if(_catSub==='dl') catDlRender();
+    // A pull just finished — refresh what's installed and the disk figures.
+    if(_catLastActive>0&&active===0){ catLoadNodes(); if(_catInstalledData) catInstalled(); }
+    _catLastActive=active;
+    // Fast while something is downloading; a slow heartbeat otherwise, slower
+    // still when nobody is looking at the Ollama pane.
+    const visible=$('pane-ollama')?.classList.contains('on');
+    clearTimeout(_catDlTimer);
+    _catDlTimer=setTimeout(tick, active?1500:(visible?8000:30000));
+  };
+  tick();
+}
+async function catDlRefresh(){
+  const r=await api('/catalog/pull/status');
+  _catPulls=(r&&r.pulls)||[];
+  catDlRender();
+}
+function catDlRender(){
+  const el=$('cat-downloads'); if(!el) return;
+  if(!_catPulls.length){ el.innerHTML='<span style="color:var(--dim)">No downloads yet. Pull a model from Browse, or from the Installed tab\'s “Pull to this node”.</span>'; return; }
+  const stateCol={downloading:'#e6b800',starting:'var(--dim2)',verifying:'var(--acc2)',
+                  done:'var(--ok)',failed:'var(--err)',cancelled:'var(--dim2)'};
+  el.innerHTML=_catPulls.map(p=>{
+    const act=['starting','downloading','verifying'].includes(p.state);
+    const col=stateCol[p.state]||'var(--dim2)';
+    const pct=Math.max(0,Math.min(100,p.pct||0));
+    const speed=p.speed_bps?_catFmtBytes(p.speed_bps)+'/s':'';
+    const bytes=p.total_bytes?`${_catFmtBytes(p.completed_bytes)} / ${_catFmtBytes(p.total_bytes)}`:'';
+    const eta=act&&p.eta_s!=null?'ETA '+_catFmtEta(p.eta_s):'';
+    const layers=p.layers_total?`layer ${p.layers_done}/${p.layers_total}`:'';
+    return `<div style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:6px;background:var(--bg1)">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <b style="font-family:var(--mono);font-size:10.5px;color:var(--text)">${esc(p.model)}</b>
+        <span style="font-size:9px;color:var(--dim2)">→ ${esc(p.node_label||p.instance_id)}</span>
+        <span style="font-size:8px;padding:1px 6px;border:1px solid ${col};color:${col};border-radius:8px;text-transform:uppercase">${esc(p.state)}</span>
+        <span style="flex:1"></span>
+        ${act?`<button class="btn sm err-btn" style="font-size:8px" onclick="P.catDlCancel(${sq(p.id)})">Cancel</button>`
+             :`<button class="btn sm" style="font-size:8px" onclick="P.catDlClear(${sq(p.id)})">Dismiss</button>`}
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:5px">
+        <div style="flex:1;height:6px;background:var(--bg0);border-radius:3px;overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:${col};border-radius:3px;transition:width .4s"></div></div>
+        <span style="font-size:9px;font-family:var(--mono);color:${col};width:42px;text-align:right">${pct.toFixed(1)}%</span>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:8.5px;font-family:var(--mono);color:var(--dim2);margin-top:3px">
+        ${bytes?`<span>${bytes}</span>`:''}${speed?`<span>${speed}</span>`:''}${eta?`<span>${eta}</span>`:''}
+        ${layers?`<span>${layers}</span>`:''}
+        <span style="color:var(--dim)">${esc(p.status||'')}</span>
+        <span style="flex:1"></span>
+        <span>${esc(String(p.started_at||'').slice(11,19))}</span>
+      </div>
+      ${p.error?`<div style="font-size:9px;color:var(--err);margin-top:3px">${esc(p.error)}</div>`:''}
+    </div>`;
+  }).join('');
+}
+async function catDlCancel(pid){
+  if(!confirm('Cancel this download?')) return;
+  const r=await api('/catalog/pull/cancel','POST',{pull_id:pid});
+  if(r&&r.error) alert(r.error);
+  setTimeout(catDlRefresh,600);
+}
+async function catDlClear(pid){
+  await api('/catalog/pull/clear','POST',pid?{pull_id:pid}:{});
+  catDlRefresh();
+}
+
+// ── Nodes & Hardware ────────────────────────────────────────────────────────
 async function catNodes(){
   const r=await api('/catalog/nodes'); _catNodes=(r&&r.nodes)||[];
   const hr=await api('/exec/ssh/hosts'); _catSshHosts=(hr&&hr.hosts)||[];
@@ -6000,6 +6549,17 @@ async function catNodes(){
   el.innerHTML=_catNodes.map(n=>{
     const hw=[n.vram_gb?`${n.vram_gb}G VRAM`:null,n.gpu_name||null,n.ram_gb?`${n.ram_gb}G RAM`:null,n.cpu_cores?`${n.cpu_cores} cores`:null].filter(Boolean).join(' · ')||'<span style="color:var(--dim)">hardware unknown</span>';
     const badge=n.class==='slow-hq'?'<span style="font-size:8px;padding:1px 5px;border:1px solid #e6b800;color:#e6b800;border-radius:8px">slow-HQ</span>':'';
+    const free=_catFreeGb(n);
+    let disk='<span style="color:var(--dim)">disk unknown</span>';
+    if(free!=null){
+      const tot=(n.models_disk_total_gb!=null?n.models_disk_total_gb:n.disk_total_gb)||0;
+      const col=free<20?'var(--err)':free<60?'var(--warn)':'var(--ok)';
+      disk=`<span style="color:${col}">${free.toFixed(0)}G free${tot?' / '+tot.toFixed(0)+'G':''}</span>`
+          +(n.models_path?`<span style="color:var(--dim2)"> · ${esc(n.models_path)}</span>`:'')
+          +(n.disk_source?`<span style="color:var(--dim2)"> · via ${esc(n.disk_source)}</span>`:'');
+    }
+    const sshSel=n.ssh_host||n.ssh_host_suggest||'';
+    const suggest=(!n.ssh_host&&n.ssh_host_suggest)?'<span style="font-size:8px;color:var(--acc)" title="Suggested from the unified node estate">suggested</span>':'';
     return `<div style="border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:6px;background:var(--bg1)">
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <b style="color:var(--text)">${esc(n.id)}</b>
@@ -6008,9 +6568,10 @@ async function catNodes(){
         <span style="flex:1"></span>
         <span style="font-size:9px;color:var(--dim2)">${n.hw_source?('src: '+n.hw_source):''}</span></div>
       <div style="font-size:10px;color:var(--text);margin:4px 0">${hw}</div>
+      <div style="font-size:9.5px;margin-bottom:4px">💽 ${disk}</div>
       <div style="font-size:9px;color:var(--dim2);margin-bottom:4px">models: ${(n.models||[]).slice(0,4).map(esc).join(', ')||'—'}${n.pinned_model?` · pinned: ${esc(n.pinned_model)}`:''}</div>
       <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">
-        <select id="cat-ssh-${esc(n.id)}" style="font-size:9px;padding:2px"><option value="">(no SSH host)</option>${host(n.ssh_host)}</select>
+        <select id="cat-ssh-${esc(n.id)}" style="font-size:9px;padding:2px"><option value="">(no SSH host)</option>${host(sshSel)}</select>${suggest}
         <button class="btn sm" style="font-size:8px" onclick="P.catSshSet(${sq(n.id)})">Map</button>
         <button class="btn sm" style="font-size:8px;border-color:var(--acc);color:var(--acc)" onclick="P.catDetect(${sq(n.id)})">Detect</button>
         <button class="btn sm" style="font-size:8px" onclick="P.catHwEdit(${sq(n.id)})">Edit HW</button>
@@ -6027,11 +6588,11 @@ async function catSshSet(iid){
 async function catDetect(iid){
   catNodeOut(iid,'detecting over SSH…');
   const r=await api('/catalog/node/detect','POST',{instance_id:iid});
-  if(r&&r.ok){ catNodeOut(iid,'detected'); catNodes(); } else catNodeOut(iid,(r&&r.error)||'failed');
+  if(r&&r.ok){ catNodeOut(iid,'detected'); catNodes().then(catTargetChanged); } else catNodeOut(iid,(r&&r.error)||'failed');
 }
 async function catDetectAll(){
   $('cat-nodes').innerHTML='<span style="color:var(--dim)">Detecting all mapped nodes…</span>';
-  await api('/catalog/nodes/detect_all','POST',{}); catNodes();
+  await api('/catalog/nodes/detect_all','POST',{}); await catNodes(); catTargetChanged();
 }
 async function catHwEdit(iid){
   const vram=prompt('VRAM (GB) — blank to skip'); if(vram===null) return;
@@ -6303,6 +6864,10 @@ return {
   vscLoad, vscOpen, vscCopyPw, vscRotate, vscDeploy,
   openWidgetLoader, closeWidgetLoader, wlFilter, wlAdd, wlRemoveDyn,
   catSub, catSearch, catOpen, catCloseDetail, catPlan, catInstall,
+  catBrowseHome, catBrowse, catBrowseSize, catTargetChanged,
+  catInstallVariant, catQuickInstall, catQuickPull,
+  catInstalled, catInstalledRender, catPullTo, catDelete, catDetectDisk,
+  catDlRefresh, catDlRender, catDlCancel, catDlClear,
   catNodes, catSshSet, catDetect, catDetectAll, catHwEdit, catQuality,
   catSuggest, catApply, catAutoSave,
   ndLoad, ndDetect, ndDetectAll, ndProv, ndProvClose, ndCompToggle,

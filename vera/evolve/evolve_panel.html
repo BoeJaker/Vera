@@ -840,6 +840,32 @@ async function implPoll(){
   }
   _implTicks++;
   const status=(st.run&&st.run.status)||'';
+  // The evolve RUN itself can terminate BEFORE any agent-loop session exists — a
+  // pre-flight failure (sandbox unusable, bad target, invalid args) aborts in
+  // <1s with an error and never opens a session. The workshop session then stays
+  // status-less and event-less forever, so the terminal branch below never fires
+  // and the timeline hangs on "waiting for events" (the exact stuck state the
+  // "▶ following … no inline events yet" note described). While we're following
+  // the PRIMARY session with nothing surfaced yet, poll the evolve run's OWN
+  // state and render its terminal outcome. (During a v7 planning phase the run is
+  // not terminal, so this is a no-op until a child session is found or it fails.)
+  if(_implMode==='primary'&&_implTotal===0&&_testRunId&&_implTicks>=2&&_implTicks%2===0){
+    const gr=await api('/evolve/run/get?run_id='+encodeURIComponent(_testRunId));
+    const d=gr&&gr.run;
+    if(d&&(d.error||d.combined!=null)){
+      stopImplPoll();
+      _renderTestResult(d,_testRunId);
+      if(d.error){
+        implStat('⚠ run failed before any step ran — '+d.error,true);
+        wfSet('implementer','error');
+        if($('wf-status'))$('wf-status').textContent='failed';
+      }else{
+        wfSet('implementer','done');
+        checkImplEmpty(_testRunId);
+      }
+      return;
+    }
+  }
   // Exact restore of a run whose live session events have EXPIRED (7-day TTL):
   // the session is empty AND the run hash is gone (no status), so the terminal
   // branch below never fires. After a couple of ticks, replay the saved trace
@@ -910,7 +936,7 @@ async function checkImplEmpty(runId){
     const gr=await api('/evolve/run/get?run_id='+encodeURIComponent(runId));
     const d=gr&&gr.run;if(!d)return;
     let msg;
-    if(d.where==='sandbox')msg='🛡 This run executed INSIDE the dev sandbox — its live events go to the sandbox\'s own Redis, so the inline timeline stays empty here. The full tool trace is in the Result → full detail.';
+    if(d.where==='sandbox')msg='🛡 This run executed INSIDE the dev sandbox. Its timeline is mirrored here live — if it is still empty the run finished in one shot, or the mirror was unavailable; the full tool trace is in the Result → full detail.';
     else if((d.error||'').indexOf('timeout')>=0)msg='⏱ The loop timed out ('+esc(d.error)+') before emitting any steps — the model/cluster was likely busy. Try again, or use a lighter goal.';
     else msg='This loop produced no inline step events (it may be a strategic loop that runs each piece in a sub-session, or it finished in one shot). Its result is on the right → · pick a v6 loop (coding / operator) to watch the step-by-step timeline.';
     implStat(msg,true);
@@ -1972,8 +1998,19 @@ async function loadSandbox(){
   if(up)h+=' <a href="http://localhost:'+esc(r.dev_port)+'/" target="_blank">open dev →</a>';
   h+='</div>';
   if(stale){
-    h+='<div class="hint" style="margin-top:5px;color:var(--warn)">▲ The sandbox is running a <b>stale image</b> — it is missing newer capabilities (e.g. <code>loops.run</code>), so runs routed into it 404. Rebuild the image and recreate the container:</div>'
-      +'<div class="row" style="margin-top:5px"><button class="btn primary" onclick="sandboxRebuild()" title="Force-rebuild vera:latest from source, then recreate the sandbox container on it (a few minutes)">🛠 Rebuild image &amp; recreate</button></div>';
+    // Cause-aware: a stale MOUNT (or a behind BRANCH) is fixed by recreating the
+    // container — NOT by a multi-minute image rebuild. Only a genuinely stale
+    // image needs the rebuild. The backend diagnoses which (r.probe.cause).
+    const cause=(r.probe&&r.probe.cause)||'image';
+    const msg=(r.probe&&r.probe.error)||'The sandbox is missing newer capabilities (e.g. loops.run), so runs routed into it 404.';
+    h+='<div class="hint" style="margin-top:5px;color:var(--warn)">▲ '+esc(msg)+'</div>';
+    if(cause==='image'){
+      h+='<div class="row" style="margin-top:5px"><button class="btn primary" onclick="sandboxRebuild()" title="Force-rebuild vera:latest from source, then recreate the sandbox container on it (a few minutes)">🛠 Rebuild image &amp; recreate</button></div>';
+    }else{
+      // mount / branch → cheap recreate (down → up; up force-recreates + updates the worktree)
+      h+='<div class="row" style="margin-top:5px"><button class="btn primary" onclick="sandboxRecreate()" title="Recreate the sandbox container so it picks up the current worktree source (seconds — no image rebuild)">♻ Recreate container</button>'
+        +' <button class="btn" onclick="sandboxRebuild()" title="Full image rebuild — only needed if recreate does not clear it">🛠 Rebuild image</button></div>';
+    }
   } else if(r.probe&&r.probe.error&&sb.branch){
     h+='<div class="hint" style="margin-top:4px;color:var(--warn)">probe: '+esc(r.probe.error)+'</div>';
   }
@@ -2040,6 +2077,20 @@ async function sandboxRebuild(){
   const r=await post(branch?'/evolve/sandbox/up':'/evolve/sandbox/ensure',body);
   if(r&&(r.ok||r.healthy))toast(r.healthy?'Rebuilt — sandbox up + healthy':(r.stale?'Still stale — check the build log':'Rebuilt — starting, re-check status'));
   else toast((r&&(r.error||r.note))||'rebuild failed');
+  loadSandbox();
+}
+// Cheap fix for a stale MOUNT / behind branch: recreate the container so it
+// re-reads the current worktree source. `up` now force-recreates + validates the
+// worktree, so a plain up on the branch is enough — no multi-minute image build.
+async function sandboxRecreate(){
+  const sb=(await api('/evolve/sandbox/status'))||{};
+  const branch=(sb.sandbox&&sb.sandbox.branch)||'';
+  if(!branch){toast('no sandbox branch — bring one up first');return}
+  toast('Recreating container on '+branch+'… (seconds)');
+  const r=await post('/evolve/sandbox/up',{branch:branch});
+  if(r&&r.healthy)toast('Recreated — sandbox up + healthy');
+  else if(r&&r.ok)toast(r.stale?('Still stale ('+(r.cause||'?')+') — '+(r.note||'see status')):'Recreated — starting, re-check status');
+  else toast((r&&(r.error||r.note))||'recreate failed');
   loadSandbox();
 }
 async function sandboxSnapshot(){const r=await post('/evolve/sandbox/snapshot',{});toast(r&&r.ok?('Snapshotted '+r.copied+' keys'):(r&&r.error)||'failed')}

@@ -38,6 +38,7 @@ import contextvars
 import json
 import logging
 import os
+import re
 import shlex
 import shutil
 import sys
@@ -141,11 +142,154 @@ _WORKDIR = "/workspace"
 # breaking package installs the way a read-only rootfs would. Reads anywhere in
 # the container still work. Toggle: sandbox.config confine_writes (default on).
 _WORKTMP = _WORKDIR + "/.tmp"
+# Directory dropped on the container's PYTHONPATH holding a sitecustomize.py that
+# auto-loads for every `python` invocation — see _SITECUSTOMIZE_PY / _ensure_sandbox_pyenv.
+_SITE_DIR = _WORKDIR + "/.python"
+
 _CONFINE_ENV = {
     "HOME": _WORKDIR, "TMPDIR": _WORKTMP, "TMP": _WORKTMP, "TEMP": _WORKTMP,
     "XDG_CACHE_HOME": _WORKDIR + "/.cache",
     "PIP_CACHE_DIR": _WORKDIR + "/.cache/pip",
+    # Auto-load our sitecustomize so sandbox scripts' outbound HTTP looks human.
+    "PYTHONPATH": _SITE_DIR,
 }
+
+# A realistic desktop-Chrome UA + companion headers, overridable per-deployment via
+# VERA_SANDBOX_HTTP_UA. Kept in sync in spirit with the web_client.py fingerprint
+# the HTTP CAPS already use — the point is that scripts RUN IN THE SANDBOX (urllib/
+# requests/httpx) look the same, so public sites don't bot-block them.
+_SANDBOX_HTTP_UA = os.getenv(
+    "VERA_SANDBOX_HTTP_UA",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/125.0.0.0 Safari/537.36")
+
+# sitecustomize.py (Python auto-imports this when it's on sys.path): patch the
+# default outbound HTTP headers of urllib, requests and httpx so a bare
+# `urllib.request.urlopen(url)` / `requests.get(url)` from an agent-written script
+# presents as a real browser instead of "Python-urllib/3.x" (which PokeAPI, GitHub
+# raw, Cloudflare-fronted sites, etc. throttle or 403 as an obvious bot).
+# NOTE: built with a token replace, NOT str.format — the body contains literal
+# `{}` (dict/set) which str.format would misread as replacement fields (that bug
+# once raised IndexError at import and took the whole sandbox module down).
+_SITECUSTOMIZE_TEMPLATE = '''\
+# Vera sandbox — make outbound HTTP look like a real browser (auto-loaded).
+import os
+_UA = os.environ.get("VERA_HTTP_UA") or __VERA_UA__
+# Advertise ONLY encodings the HTTP STACK can actually DECODE, and take that from
+# urllib3 itself rather than guessing.
+#
+# These headers are injected by hand and OVERRIDE urllib3's own negotiation, so
+# any mismatch silently corrupts every response: the server compresses with
+# something we asked for, nothing decompresses it, and the script sees 200 OK with
+# binary garbage under `Content-Type: application/json`. .json() then dies with
+# "Expecting value: line 1 column 1 (char 0)", which reads as a broken API rather
+# than a bad header — an agent will rewrite its parser forever and never fix it.
+#
+# Two real cases hit this: `br` advertised with no brotli package (the base image
+# ships none), and then `zstd` advertised merely because `zstandard` imports —
+# urllib3 2.7 does NOT decode zstd even so. Module importability is the wrong
+# test; urllib3's ACCEPT_ENCODING is the authoritative one, derived from its
+# actual decoder table.
+_ENC = "gzip, deflate"
+try:
+    from urllib3.util.request import ACCEPT_ENCODING as _AE
+    if _AE:
+        _ENC = _AE
+except Exception:
+    try:
+        from urllib3.response import HTTPResponse as _HR
+        _cd = [c for c in (getattr(_HR, "CONTENT_DECODERS", None) or []) if c != "x-gzip"]
+        if _cd:
+            _ENC = ", ".join(_cd)
+    except Exception:
+        pass
+_HDRS = {
+    "User-Agent": _UA,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,"
+              "application/json;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": _ENC,
+    "Sec-CH-UA": '"Chromium";v="125", "Not.A/Brand";v="24"',
+    "Sec-CH-UA-Platform": '"Linux"',
+    "Upgrade-Insecure-Requests": "1",
+}
+try:
+    import urllib.request as _u
+    _op = _u.build_opener()
+    # urllib.request does NOT transparently decompress — urlopen() hands back the
+    # raw body. So it must ask for `identity`: inheriting the requests/urllib3
+    # Accept-Encoding would guarantee an unreadable gzip/br response for every
+    # bare urlopen() an agent script makes.
+    _uh = dict(_HDRS)
+    _uh["Accept-Encoding"] = "identity"
+    _op.addheaders = list(_uh.items())
+    _u.install_opener(_op)
+except Exception:
+    pass
+try:
+    import requests as _r
+    _orig = _r.sessions.Session.__init__
+    def _patched(self, *a, **k):
+        _orig(self, *a, **k)
+        try:
+            self.headers.update(_HDRS)
+        except Exception:
+            pass
+    _r.sessions.Session.__init__ = _patched
+except Exception:
+    pass
+try:
+    import httpx as _h
+    _oc = _h.Client.__init__
+    def _pc(self, *a, **k):
+        h = dict(k.get("headers") or {})
+        for _kk, _vv in _HDRS.items():
+            h.setdefault(_kk, _vv)
+        k["headers"] = h
+        return _oc(self, *a, **k)
+    _h.Client.__init__ = _pc
+except Exception:
+    pass
+'''
+_SITECUSTOMIZE_PY = _SITECUSTOMIZE_TEMPLATE.replace("__VERA_UA__", repr(_SANDBOX_HTTP_UA))
+
+
+async def _ensure_sandbox_pyenv(dk, host, cname: str) -> None:
+    """Drop sitecustomize.py into the container's PYTHONPATH so EVERY python script's
+    outbound HTTP (urllib/requests/httpx) carries realistic browser headers — public
+    sites stop bot-blocking sandbox scripts — and ensure `requests` is importable so
+    scripts don't fail on ImportError and fall back to a bot-blocked urllib. Idempotent
+    + best-effort; never blocks/breaks container start on failure.
+
+    Also installs the brotli/zstd DECODERS. The browser fingerprint above asks for
+    `br`, and Cloudflare-fronted APIs honour it — without a decoder the body comes
+    back as raw compressed bytes and every .json() in every agent-written script
+    fails with a misleading parse error. The base image (python:3.12-slim) ships
+    neither, so this is what makes the fingerprint safe to send."""
+    try:
+        b64 = base64.b64encode(_SITECUSTOMIZE_PY.encode("utf-8")).decode()
+        script = (
+            f"mkdir -p {shlex.quote(_SITE_DIR)} && "
+            f"echo {b64} | base64 -d > {shlex.quote(_SITE_DIR)}/sitecustomize.py; "
+            "python3 -c 'import requests' 2>/dev/null || "
+            "pip install --quiet --disable-pip-version-check requests 2>/dev/null || true; "
+            # Decoders for the Accept-Encoding the fingerprint advertises.
+            "python3 -c 'import brotli' 2>/dev/null || "
+            "pip install --quiet --disable-pip-version-check brotli 2>/dev/null || true; "
+            "python3 -c 'import zstandard' 2>/dev/null || "
+            "pip install --quiet --disable-pip-version-check zstandard 2>/dev/null || true; "
+            # curl: the single most commonly reached-for CLI tool the base image
+            # lacks (it has python3/pip and little else) — install it up front so
+            # the FIRST command a step runs doesn't have to hit the "not found" →
+            # auto-install-and-retry path at all. Everything else missing is
+            # still covered reactively by _auto_install_missing_bin_and_retry.
+            "command -v curl >/dev/null 2>&1 || "
+            "(apt-get update -qq && apt-get install -y -qq --no-install-recommends curl "
+            "2>/dev/null) || true")
+        await dk._run_local(
+            await dk._docker_argv(host, ["exec", cname, "sh", "-lc", script]), timeout=300)
+    except Exception as e:
+        log.debug("sandbox pyenv setup failed for %s: %s", cname, e)
 
 
 def _confine_env_args(cfg: Dict) -> List[str]:
@@ -235,6 +379,43 @@ async def _container_running(dk, rec_host: Dict, cname: str) -> Optional[str]:
 async def _docker_host(dk, host_id: str):
     rec = dk._get_host(host_id or "local")
     return rec
+
+
+# ── Bulk container-state map (event-loop protection) ─────────────────────────
+# `sandbox.session.list` is silently polled by the Sandboxes/Workers UI. It used
+# to fire ONE `/containers/json` docker round-trip PER sandbox record; with 100+
+# historical sandboxes that is a serial storm of docker inspects on the event
+# loop every poll, and concurrent pollers kept the loop saturated — enough to
+# starve TLS handshakes (server appears down while the port stays open). We now
+# do ONE bulk query per docker host (the `vera-sbx-` name prefix is a docker
+# substring filter that returns them all) and cache it for a few seconds so a
+# burst of pollers collapses to a single call.
+_CSTATE_CACHE: Dict[str, Any] = {}   # host_key -> (expiry_monotonic, {cname: state})
+_CSTATE_TTL = float(os.getenv("VERA_SBX_STATE_TTL", "3.0"))
+
+
+async def _containers_state_map(dk, rec_host: Dict, host_key: str,
+                                prefix: str = "vera-sbx-") -> Dict[str, str]:
+    """ONE docker call per host → {container_name: State}, TTL-cached."""
+    now = time.monotonic()
+    hit = _CSTATE_CACHE.get(host_key)
+    if hit and hit[0] > now:
+        return hit[1]
+    import urllib.parse
+    filt = urllib.parse.quote(json.dumps({"name": [prefix]}))
+    m: Dict[str, str] = {}
+    try:
+        status, body, _ = await dk._engine_request(
+            rec_host, "GET", f"/containers/json?all=true&filters={filt}")
+        rows = json.loads(body or b"[]") if status == 200 else []
+        for row in rows:
+            st = row.get("State", "")
+            for n in (row.get("Names") or []):
+                m[n.lstrip("/")] = st
+    except Exception:
+        pass
+    _CSTATE_CACHE[host_key] = (now + _CSTATE_TTL, m)
+    return m
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -467,6 +648,9 @@ async def cap_sbx_start(session_id: str = "", base_image: str = "",
         # and non-volume files survive without needing a commit.
         if not base_image or base_image == rec.get("image"):
             if await _wake(dk, host, {**rec, "container": cname}, state):
+                # Refresh the python HTTP-shaping env — cheap + idempotent, and it
+                # back-fills containers created before this feature existed.
+                await _ensure_sandbox_pyenv(dk, host, cname)
                 rec.update({"container": cname, "image": rec.get("image") or image,
                             "active": bool(enable), "docker_host_id": host["id"],
                             "updated": now_iso(), "last_used": time.time()})
@@ -495,6 +679,8 @@ async def cap_sbx_start(session_id: str = "", base_image: str = "",
     await dk._run_local(await dk._docker_argv(host, [
         "exec", cname, "sh", "-lc",
         f"mkdir -p {_WORKTMP} {_WORKDIR}/.cache/pip"]), timeout=30)
+    # Human-shaped outbound HTTP + a usable `requests` for agent scripts.
+    await _ensure_sandbox_pyenv(dk, host, cname)
 
     if packages.strip():
         # best-effort: apt for debian-ish bases, then pip.
@@ -510,22 +696,33 @@ async def cap_sbx_start(session_id: str = "", base_image: str = "",
                 "updated": now_iso()})
     await _save_rec(rec)
 
-    # Rehydrate /workspace from the durable session store when it came up empty
-    # (fresh volume / different host) — resumes long-term work. Never clobbers an
+    # Populate a fresh /workspace: prefer a configured host SEED (e.g. an IDE
+    # workspace's project files) so a loop can operate on them; else rehydrate
+    # from the durable session store to resume long-term work. Never clobbers an
     # already-populated volume.
     rehydrated = False
+    seeded = False
     if rehydrate:
         try:
             if await _workspace_is_empty(session_id):
-                r = await _restore_session(session_id)
-                rehydrated = bool(r.get("ok"))
+                sp = str(rec.get("seed_path") or "").strip()
+                if sp and os.path.isdir(sp):
+                    seeded = await _seed_from_host(dk, host, cname, sp)
+                    if seeded:
+                        rec["seeded_at"] = time.time()
+                        await _save_rec(rec)
+                if not seeded:
+                    r = await _restore_session(session_id)
+                    rehydrated = bool(r.get("ok"))
         except Exception as e:
-            log.debug("sandbox rehydrate skipped for %s: %s", session_id, e)
+            log.debug("sandbox seed/rehydrate skipped for %s: %s", session_id, e)
 
     await emit_event({"type": "remote.sandbox.started", "session_id": session_id,
-                      "image": image, "restored": restored, "rehydrated": rehydrated})
+                      "image": image, "restored": restored, "rehydrated": rehydrated,
+                      "seeded": seeded})
     return {"ok": True, "container_id": run.get("container_id", cname), "image": image,
-            "restored": restored, "active": bool(enable), "rehydrated": rehydrated}
+            "restored": restored, "active": bool(enable), "rehydrated": rehydrated,
+            "seeded": seeded}
 
 
 @capability(
@@ -832,20 +1029,29 @@ async def cap_sbx_list(trace_id=None) -> Dict:
     except Exception:
         items = {}
     dk = _dk()
-    out = []
+    recs = []
     for v in items.values():
         try:
-            rec = json.loads(v)
+            recs.append(json.loads(v))
         except Exception:
             continue
+    # ONE bulk docker query per host (cached) instead of one per container —
+    # collapses the per-poll serial inspect storm that used to starve the loop.
+    state_maps: Dict[str, Dict[str, str]] = {}
+    if dk:
+        for hid in {rec.get("docker_host_id", "local")
+                    for rec in recs if rec.get("container")}:
+            try:
+                host = await _docker_host(dk, hid)
+                state_maps[hid] = await _containers_state_map(dk, host, hid) if host else {}
+            except Exception:
+                state_maps[hid] = {}
+    out = []
+    for rec in recs:
         state = ""
         if dk and rec.get("container"):
-            try:
-                host = await _docker_host(dk, rec.get("docker_host_id", "local"))
-                if host:
-                    state = (await _container_running(dk, host, rec["container"])) or "absent"
-            except Exception:
-                state = ""
+            hid = rec.get("docker_host_id", "local")
+            state = state_maps.get(hid, {}).get(rec["container"], "absent")
         out.append({"session_id": rec.get("session_id"), "container": rec.get("container"),
                     "image": rec.get("image"), "active": bool(rec.get("active")),
                     "docker_host_id": rec.get("docker_host_id", "local"),
@@ -1211,6 +1417,73 @@ async def cap_sbx_cfg_set(docker_host_id: Optional[str] = None,
     return {"ok": True, "config": cfg}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# AUTO-INSTALL missing binaries and retry, once
+# ─────────────────────────────────────────────────────────────────────────────
+# The base image (python:3.12-slim) has python3/pip and NOT MUCH else — no curl,
+# wget, git, jq, ... A specialist reaching for one of these is usually right
+# that the tool is a completely normal thing to expect on Linux, just not
+# present in this minimal image. Failing the call and making the specialist
+# reason its way to "install it first" (if it even thinks of that) burns a
+# whole cycle on a problem the sandbox can fix itself in ~1s. Deliberately a
+# SMALL, known-safe allowlist — this installs a specific missing binary the
+# command just asked for, not arbitrary packages an LLM might name.
+_APT_PKG_FOR_MISSING_BIN = {
+    "curl": "curl", "wget": "wget", "git": "git", "jq": "jq",
+    "unzip": "unzip", "zip": "zip", "vim": "vim", "nano": "nano",
+    "less": "less", "tree": "tree", "ping": "iputils-ping",
+    "dig": "dnsutils", "nslookup": "dnsutils", "host": "bind9-host",
+    "ssh": "openssh-client", "scp": "openssh-client", "rsync": "rsync",
+    "make": "make", "gcc": "build-essential", "g++": "build-essential",
+    "node": "nodejs", "npm": "nodejs", "convert": "imagemagick",
+}
+# Matches both dash/BusyBox-style ("sh: 1: curl: not found") and bash-style
+# ("bash: curl: command not found") shell messages, with or without a leading
+# path on the shell name.
+_NOT_FOUND_RE = re.compile(
+    r"(?im)^\s*(?:/[\w./]*)?(?:ba)?sh:\s*(?:\d+:\s*)?([A-Za-z0-9_.+-]+):\s*"
+    r"(?:not found|command not found)\b")
+
+
+async def _auto_install_missing_bin_and_retry(sid: str, command: str, res: Optional[Dict], *,
+                                              workdir: str, timeout: int, shell: str) -> Optional[Dict]:
+    """If `res` is a failed exec whose output is a shell '<bin>: not found', and
+    `<bin>` is a known-safe common CLI tool, apt-get install it inside the SAME
+    container and re-run the ORIGINAL command once. Returns `res` unchanged
+    (silently) whenever there's nothing to do or the install/retry doesn't pan
+    out — never raises, never loops more than once."""
+    if not res or res.get("ok") or not (res.get("stderr") or res.get("stdout")):
+        return res
+    m = _NOT_FOUND_RE.search(f"{res.get('stderr','')}\n{res.get('stdout','')}")
+    if not m:
+        return res
+    binname = m.group(1)
+    pkg = _APT_PKG_FOR_MISSING_BIN.get(binname)
+    if not pkg:
+        return res
+    try:
+        install = await _exec_in(
+            sid, f"apt-get update -qq && apt-get install -y -qq --no-install-recommends "
+                 f"{shlex.quote(pkg)}",
+            timeout=120, shell="sh")
+    except Exception as e:
+        log.debug("sandbox auto-install of %s failed: %s", pkg, e)
+        return res
+    if not install or not install.get("ok"):
+        return res
+    try:
+        retry = await _exec_in(sid, command, workdir=workdir, timeout=timeout, shell=shell)
+    except Exception as e:
+        log.debug("sandbox retry after auto-install of %s failed: %s", pkg, e)
+        return res
+    if retry is None:
+        return res
+    retry["auto_installed"] = [pkg]
+    retry["stdout"] = (f"[sandbox: '{binname}' was missing — auto-installed '{pkg}' and re-ran "
+                       f"the command]\n" + str(retry.get("stdout") or ""))
+    return retry
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 #  ROUTING HOOKS  (called by exec_capabilities when a call carries a session_id)
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1226,6 +1499,9 @@ async def route_shell(session_id: str, command: str, timeout: int = 60,
     if not rec:
         return None
     res = await _exec_in(rec["session_id"], command, timeout=int(timeout or 60), shell=shell)
+    if res is not None and shell != "pwsh":
+        res = await _auto_install_missing_bin_and_retry(
+            rec["session_id"], command, res, workdir="", timeout=int(timeout or 60), shell=shell)
     if res is None:
         return None
     res.setdefault("elapsed_ms", 0)
@@ -1397,6 +1673,7 @@ async def route_fs_read(session_id: str, path: str, *,
         return None
     if not path:
         return {"error": "path required"}
+    resolved = path
     q = shlex.quote(path)
     meta = await _exec_in(
         session_id,
@@ -1405,7 +1682,41 @@ async def route_fs_read(session_id: str, path: str, *,
     if meta is None:
         return {"error": "sandbox exec failed"}
     if "__VERA_ENOENT__" in (meta.get("stdout", "") + meta.get("stderr", "")):
-        return {"error": f"File not found: {path}"}
+        # Self-correcting read: the agent frequently guesses a slightly-wrong name
+        # (a leading underscore, the wrong sub-dir) and then loops on the phantom
+        # path. Locate the file by BASENAME anywhere under /workspace; a unique
+        # match is read transparently. Otherwise return the error WITH the actual
+        # workspace file list so the next attempt uses a REAL name.
+        base = os.path.basename(str(path).replace("\\", "/")) or str(path)
+        probe = await _exec_in(
+            session_id,
+            f"find {shlex.quote(_WORKDIR)} -maxdepth 6 -type f -name {shlex.quote(base)} "
+            f"2>/dev/null | head -3 | sed 's/^/__M__/'; echo __VERA_LS__; "
+            f"ls -1p {shlex.quote(_WORKDIR)} 2>/dev/null | grep -v '/$' | head -40",
+            timeout=30)
+        matches: List[str] = []
+        listing: List[str] = []
+        if probe is not None:
+            seen_ls = False
+            for line in (probe.get("stdout", "") or "").splitlines():
+                if line.startswith("__M__"):
+                    m = line[len("__M__"):].strip()
+                    if m:
+                        matches.append(m)
+                elif line.strip() == "__VERA_LS__":
+                    seen_ls = True
+                elif seen_ls and line.strip():
+                    listing.append(line.strip())
+        if len(matches) == 1:
+            resolved = matches[0]
+            q = shlex.quote(resolved)
+            meta = await _exec_in(session_id, f"stat -c %s {q} 2>/dev/null || echo 0", timeout=30)
+            if meta is None:
+                return {"error": "sandbox exec failed"}
+        else:
+            hint = (" — files in /workspace: " + ", ".join(listing[:30])) if listing else \
+                   " (and /workspace is empty or unreadable)"
+            return {"error": f"File not found: {path}{hint}"}
     try:
         size = int((meta.get("stdout", "").strip().splitlines() or ["0"])[-1] or 0)
     except Exception:
@@ -1423,12 +1734,21 @@ async def route_fs_read(session_id: str, path: str, *,
         content = body.get("stdout", "")
     # The exec output cap (1 MB) can bound the base64 below the requested bytes.
     truncated = size > max_bytes or size > len(content.encode("utf-8", "replace"))
-    return {"path": path, "content": content, "size": size,
-            "truncated": truncated, "sandboxed": True}
+    out = {"path": resolved, "content": content, "size": size,
+           "truncated": truncated, "sandboxed": True}
+    if resolved != path:
+        out["resolved_from"] = path
+    return out
 
 
 async def route_fs_write(session_id: str, path: str, content: str) -> Optional[Dict]:
-    dk, _host, _rec = await _sbx_host(session_id)
+    # A write is real work: auto-create the session's sandbox (when auto_create is
+    # on) exactly like route_shell/route_code/route_artifact_dir do, so a file the
+    # agent writes lands in the SAME container its exec.* runs see — never on the
+    # host while exec looks in a freshly-made container. Without this, ide.fs.write
+    # fell through to a host write of an absolute '/workspace/x' path and died with
+    # EACCES, and the loop regenerated the file forever.
+    dk, _host, _rec = await _sbx_host(session_id, create=True)
     if dk is None:
         return None
     if not path:
@@ -1466,6 +1786,35 @@ async def route_fs_delete(session_id: str, path: str) -> Optional[Dict]:
         return {"error": (res or {}).get("stderr") or "delete failed",
                 "deleted": False}
     return {"path": path, "deleted": True, "sandboxed": True}
+
+
+async def route_copy_in(session_id: str, host_path: str, dest_name: str = "",
+                        *, subdir: str = "") -> Optional[Dict]:
+    """docker-cp a HOST file INTO the session's sandbox /workspace (binary-safe —
+    the right transport for generated media like audio, not the 1 MB base64 exec
+    path). Auto-creates the sandbox (a session receiving a deliverable is doing
+    real work). Returns {path} (absolute container path) or None when there's no
+    active sandbox → the caller writes to the host artifact dir instead."""
+    dk, host, rec = await _sbx_host(session_id, create=True)
+    if dk is None:
+        return None
+    if not host_path or not os.path.isfile(host_path):
+        return {"error": f"source not found: {host_path}"}
+    name = re.sub(r"[^\w.\-]", "_", dest_name or os.path.basename(host_path)) or "artifact.bin"
+    rel = (subdir.strip("/") + "/" + name) if subdir else name
+    dest = _WORKDIR.rstrip("/") + "/" + rel
+    try:
+        await _exec_in(session_id, f"mkdir -p {shlex.quote(os.path.dirname(dest))}", timeout=20)
+        await dk._run_local(
+            await dk._docker_argv(host, ["cp", host_path, f"{rec['container']}:{dest}"]),
+            timeout=180)
+        chk = await _exec_in(session_id, f"[ -f {shlex.quote(dest)} ] && echo OK || echo NO", timeout=20)
+        if chk and "OK" in (chk.get("stdout", "") or ""):
+            return {"path": dest, "sandboxed": True}
+        return {"error": "docker cp verification failed"}
+    except Exception as e:
+        log.debug("route_copy_in failed for %s: %s", session_id, e)
+        return {"error": str(e)}
 
 
 async def route_fs_list(session_id: str, path: str = "") -> Optional[Dict]:
@@ -1600,6 +1949,43 @@ async def export_workspace(session_id: str) -> Optional[str]:
     /workspace to a fresh host temp dir (works on stopped containers too).
     Caller MUST rmtree the returned dir. None when there's no container."""
     return await _collect_workspace(session_id)
+
+
+async def export_workspace_changes(session_id: str) -> Optional[str]:
+    """Like export_workspace, but when the container was SEEDED from a host dir
+    (seeded_at set — e.g. an IDE workspace clone), prunes the export down to only
+    files CREATED OR MODIFIED since the seed. docker cp preserves mtimes, so the
+    seeded project files keep their (older) host mtimes while the loop's own
+    output is newer — this is what stops the seeded project from being harvested
+    or proposed as if the loop had produced it. Caller MUST rmtree the result."""
+    tmp = await _collect_workspace(session_id)
+    if tmp is None:
+        return None
+    try:
+        rec = await _get_rec(await _resolve_sid(session_id)) or {}
+        seeded_at = float(rec.get("seeded_at") or 0)
+    except Exception:
+        seeded_at = 0.0
+    if seeded_at <= 0:
+        return tmp                       # never seeded → all of it is loop output
+    cutoff = seeded_at - 2.0             # small epsilon for fs mtime granularity
+    try:
+        for root, _dirs, files in os.walk(tmp, topdown=False):
+            for fn in files:
+                fp = os.path.join(root, fn)
+                try:
+                    if os.path.getmtime(fp) < cutoff:
+                        os.remove(fp)
+                except Exception:
+                    pass
+            try:
+                if root != tmp and not os.listdir(root):
+                    os.rmdir(root)
+            except Exception:
+                pass
+    except Exception as e:
+        log.debug("export_workspace_changes prune %s: %s", session_id, e)
+    return tmp
 
 
 async def route_code_list_files(session_id: str, root: str = "", *,
@@ -1745,6 +2131,91 @@ async def _collect_workspace(session_id: str) -> Optional[str]:
         log.warning("sandbox snapshot cp failed for %s: %s", session_id, cp.get("stderr"))
         return None
     return tmp
+
+
+async def _seed_from_host(dk, host, container: str, host_path: str) -> bool:
+    """`docker cp` a HOST directory's CONTENTS into container:/workspace."""
+    src = os.path.join(host_path, ".")
+    cp = await dk._run_local(await dk._docker_argv(
+        host, ["cp", src, f"{container}:{_WORKDIR}"]), timeout=600)
+    if not cp.get("ok"):
+        log.warning("sandbox seed cp failed (%s → %s): %s",
+                    host_path, container, cp.get("stderr"))
+    return bool(cp.get("ok"))
+
+
+async def import_workspace(session_id: str, host_path: str, *,
+                           only_if_empty: bool = True) -> Dict:
+    """Seed a session container's /workspace FROM a host directory (the inverse
+    of export_workspace) — e.g. clone an IDE workspace's project files into a
+    loop's container so the loop can operate on them. By default only when
+    /workspace is empty, so it never clobbers work already in the container."""
+    if not host_path or not os.path.isdir(host_path):
+        return {"ok": False, "error": f"host path not found: {host_path}"}
+    if only_if_empty:
+        await _ensure_routable(session_id, create=True)   # need a container to test
+        if not await _workspace_is_empty(session_id):
+            return {"ok": True, "skipped": "workspace not empty"}
+    dk, host, rec = await _sbx_host_any(session_id)
+    if dk is None or not rec:
+        return {"ok": False, "error": "no container for session"}
+    await _exec_in(session_id, f"mkdir -p {shlex.quote(_WORKDIR)}", timeout=20)
+    ok = await _seed_from_host(dk, host, rec["container"], host_path)
+    if ok:
+        rec["seeded_at"] = time.time()
+        await _save_rec(rec)
+        await emit_event({"type": "remote.sandbox.seeded",
+                          "session_id": session_id, "host_path": host_path})
+    return {"ok": ok, "seeded_from": host_path} if ok \
+        else {"ok": False, "error": "docker cp failed"}
+
+
+async def set_seed_path(session_id: str, host_path: str) -> bool:
+    """Record a HOST directory to seed a session's /workspace from whenever its
+    container is (re)created empty (e.g. an IDE workspace's project files). The
+    seed itself is applied in sandbox.session.start's fresh-volume path."""
+    try:
+        sid = await _resolve_sid(session_id)
+        rec = await _get_rec(sid) or {"session_id": sid, "created": now_iso()}
+        rec["seed_path"] = str(host_path or "")
+        await _save_rec(rec)
+        return True
+    except Exception as e:
+        log.debug("set_seed_path %s: %s", session_id, e)
+        return False
+
+
+async def seed_path_for_session(session_id: str) -> str:
+    """The HOST seed path of the container a session resolves to (set when an IDE
+    workspace was opened) — lets a caller auto-associate a program with the
+    workspace the session is working in. '' when the session isn't in a workspace."""
+    try:
+        rec = await _get_rec(await _resolve_sid(session_id)) or {}
+        return str(rec.get("seed_path") or "")
+    except Exception:
+        return ""
+
+
+@capability(
+    "sandbox.session.seed",
+    http_method="POST", http_path="/remote/sandbox/seed", http_tags=["remote", "sandbox"],
+    description="Seed a session's sandbox /workspace FROM a host directory — clone "
+                "project files (e.g. an IDE workspace) into the container so a loop or "
+                "session can operate on them. Also records the path as the container's "
+                "default seed, re-applied whenever a fresh container comes up empty. "
+                "Inputs: session_id (str!), host_path (str! — a directory on the Vera "
+                "host), set_default (bool=true — remember it for future recreations), "
+                "only_if_empty (bool=true — never clobber existing container files). "
+                "Output: {ok, seeded_from, skipped?}.",
+)
+async def cap_sbx_seed(session_id: str = "", host_path: str = "",
+                       set_default: bool = True, only_if_empty: bool = True,
+                       trace_id=None) -> Dict:
+    if not session_id or not host_path:
+        return {"ok": False, "error": "session_id and host_path required"}
+    if set_default:
+        await set_seed_path(session_id, host_path)
+    return await import_workspace(session_id, host_path, only_if_empty=only_if_empty)
 
 
 def _tar_dir(src_dir: str) -> str:

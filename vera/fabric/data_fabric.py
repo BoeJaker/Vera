@@ -2579,32 +2579,37 @@ async def _post_ingest_pipeline(
 
 
 async def _ensure_dataset_source(dataset_id: str, source: str, source_id: str):
-    """Create a source record for this dataset if one doesn't exist."""
-    def _sync():
+    """Create a source record for this dataset if one doesn't exist.
+
+    Insert goes through the single-writer queue (_sqlite_upsert_source) so the
+    columns match the real fabric_sources schema: the PK is `id` (not `source_id`
+    — that column only exists on fabric_records) and there is no `schedule`
+    column (it's `interval`). The earlier direct INSERT named both non-existent
+    columns and so errored on every call ("no such column: source_id"), meaning
+    no auto-source was ever created.
+    """
+    def _exists():
         conn = _sqlite_conn()
         try:
-            existing = conn.execute(
-                "SELECT source_id FROM fabric_sources WHERE dataset_id=? LIMIT 1",
+            return conn.execute(
+                "SELECT 1 FROM fabric_sources WHERE dataset_id=? LIMIT 1",
                 (dataset_id,)
-            ).fetchone()
-            if existing:
-                return None
-            sid = source_id or f"auto_{dataset_id}"
-            conn.execute(
-                "INSERT OR IGNORE INTO fabric_sources "
-                "(source_id, source_type, url, dataset_id, schedule, enabled, config, created_at) "
-                "VALUES (?,?,?,?,?,?,?,?)",
-                (sid, source or "api", "", dataset_id, "", 1,
-                 json.dumps({"auto_created": True, "source": source}), now_iso())
-            )
-            conn.commit()
-            return sid
+            ).fetchone() is not None
         finally:
             conn.close()
     try:
-        sid = await asyncio.to_thread(_sync)
-        if sid:
-            log.info("auto-created source %s for dataset %s", sid, dataset_id)
+        if await asyncio.to_thread(_exists):
+            return
+        sid = source_id or f"auto_{dataset_id}"
+        await _sqlite_upsert_source({
+            "id":          sid,
+            "source_type": source or "api",
+            "dataset_id":  dataset_id,
+            "enabled":     True,
+            "config":      {"auto_created": True, "source": source},
+            "created_at":  now_iso(),
+        })
+        log.info("auto-created source %s for dataset %s", sid, dataset_id)
     except Exception as e:
         log.warning("ensure_dataset_source %s: %s", dataset_id, e)
 

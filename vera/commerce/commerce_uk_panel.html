@@ -157,16 +157,20 @@ function form(title,fields,values,onSubmit){
 
 // ── nav ──────────────────────────────────────────────────────────────────────
 const SECTIONS=[
-  ['dashboard','▦','Dashboard'],['inventory','▤','Inventory'],['quicklist','↯','Quick List'],
+  ['dashboard','▦','Dashboard'],['inventory','▤','Inventory'],['station','⚡','Scan Station'],
+  ['quicklist','↯','Quick List'],
   ['listings','❖','Listings'],['orders','▥','Orders'],['customers','◎','Customers'],
   ['shipping','➤','Shipping'],['market','⌕','Market & Deals'],['tax','£','Tax & Profit'],
   ['settings','⚙','Settings']];
 let CUR='dashboard';
+function openStation(){const u='/business/intake/panel'+(STORE?('?store='+encodeURIComponent(STORE)+'&store_name='+encodeURIComponent(STORE_NAME)):'');
+  window.open(u,'vera_scan_station');}
 function buildNav(){const n=$('#nav');n.innerHTML='';for(const [id,ico,label] of SECTIONS){
   const b=el('button',{onclick:()=>go(id)},el('span',{class:'ico'},ico),el('span',{},label));
   if(id==='market')b.append(el('span',{class:'badge',id:'dealBadge'}));
   b.dataset.id=id;if(id===CUR)b.classList.add('active');n.append(b);}}
-function go(id){CUR=id;document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.id===id));
+function go(id){if(id==='station'){openStation();return;}
+  CUR=id;document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.id===id));
   if(EMBED)try{parent.postMessage({type:'store.nav.state',id},'*');}catch(_){}
   RENDER[id]&&RENDER[id]();}
 
@@ -243,7 +247,8 @@ RENDER.inventory=async()=>{
   q.addEventListener('keydown',e=>{if(e.key==='Enter')load();});
   tb.append(q,el('button',{class:'btn',onclick:()=>load()},'Search'),
     el('button',{class:'btn pri',onclick:()=>editProduct({})},'+ Add product'),
-    el('button',{class:'btn',onclick:()=>go('quicklist')},'↯ Scan in'));
+    el('button',{class:'btn pri',onclick:openStation},'⚡ Scan Station'),
+    el('button',{class:'btn',onclick:()=>go('quicklist')},'↯ Quick List'));
   m.append(tb);const wrap=el('div',{id:'invWrap'});m.append(wrap);
   async function load(){wrap.innerHTML='<span class="spin"></span>';
     const r=await api('/business/product/list'+qs(withStore({q:q.value,limit:400})));

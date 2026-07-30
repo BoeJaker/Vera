@@ -410,6 +410,25 @@
 .alo-card-expand{margin-left:auto;flex:0 0 auto;background:var(--bg2,#252220);border:1px solid var(--border,#3a3530);color:var(--dim2,#8a7e70);border-radius:3px;cursor:pointer;font-size:12px;line-height:1;padding:2px 6px}
 .alo-card-expand:hover{color:var(--text,#ddd5c8);border-color:var(--border2,#4a4540)}
 .alo-card-expand.expanded{color:var(--acc2,#a8c87a);border-color:var(--acc2,#a8c87a)}
+/* ── Per-step context meter + GPU-spill badge ────────────────────────── */
+.alo-ctxbar{display:flex;align-items:center;gap:6px;padding:3px 6px;border-top:1px solid var(--border,#3a3530);font-size:9px;color:var(--dim2,#8a7e70)}
+.alo-ctx-lbl{flex:0 0 auto;text-transform:uppercase;letter-spacing:.05em}
+.alo-ctx-track{flex:0 0 70px;height:5px;background:var(--border,#3a3530);border-radius:3px;overflow:hidden}
+.alo-ctx-fill{display:block;height:100%;width:0%;background:var(--acc2,#a8c87a);border-radius:3px;transition:width .4s,background .3s}
+.alo-ctx-txt{flex:0 0 auto;font-variant-numeric:tabular-nums}
+.alo-ctx-spill{flex:0 0 auto;margin-left:auto;color:var(--err,#c96a5a);font-weight:600}
+/* ── Files-produced card: list + inline preview/source ───────────────── */
+.alo-file-list{display:flex;flex-direction:column;gap:2px;margin-top:4px}
+.alo-file-row{display:flex;align-items:center;gap:8px;font-size:10px;padding:2px 4px;border-radius:3px}
+.alo-file-row:hover{background:var(--bg2,#252220)}
+.alo-file-name{flex:1 1 auto;color:var(--acc2,#a8c87a);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.alo-file-size{flex:0 0 auto;color:var(--dim2,#8a7e70);font-variant-numeric:tabular-nums}
+.alo-file-btn{flex:0 0 auto;background:var(--bg2,#252220);border:1px solid var(--border,#3a3530);color:var(--dim2,#8a7e70);border-radius:3px;cursor:pointer;font-size:9px;padding:1px 5px;text-decoration:none}
+.alo-file-btn:hover{color:var(--text,#ddd5c8);border-color:var(--border2,#4a4540)}
+.alo-file-view{margin-top:6px;border-top:1px solid var(--border,#3a3530);padding-top:6px}
+.alo-file-vh{font-size:9.5px;color:var(--dim2,#8a7e70);margin-bottom:4px}
+.alo-file-src{margin:0;max-height:340px;overflow:auto;background:var(--bg2,#252220);border:1px solid var(--border,#3a3530);border-radius:4px;padding:6px;font-size:10px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
+.alo-file-more{font-size:9px;color:var(--dim2,#8a7e70);margin-top:3px}
 /* Timeline card: header bar (outside the scroll region) above the cycles list */
 .alo-cycles-card{display:flex;flex-direction:column;min-height:0;background:var(--bg1,#1f1d1a);border:1px solid var(--border,#3a3530);border-radius:3px;overflow:hidden}
 .alo-cycles-h{display:flex;align-items:center;gap:8px;padding:6px 9px;border-bottom:1px solid var(--border,#3a3530);background:var(--bg1,#1f1d1a);flex:0 0 auto}
@@ -658,6 +677,16 @@
       // Triage and Run-complete cards (shadow DOM — inline onclick can't reach
       // component methods, so delegate from the shadow root).
       this._sr.addEventListener('click', (e) => {
+        // Files card: preview / source / refresh. Checked BEFORE the generic
+        // expand handler because the refresh control reuses .alo-card-expand.
+        const fbtn = e.target.closest('.alo-file-btn, [data-act="files-refresh"]');
+        if(fbtn){
+          const act = fbtn.getAttribute('data-act');
+          if(act === 'files-refresh'){ this._renderFilesCard().catch(()=>{}); return; }
+          const row = fbtn.closest('.alo-file-row');
+          if(row && act){ this._showFile(row.getAttribute('data-file'), act).catch(()=>{}); }
+          return;
+        }
         const btn = e.target.closest('.alo-card-expand');
         if(btn){ this._toggleCardExpand(btn); return; }
         // Expand/collapse a truncated argument pill to reveal its full value.
@@ -1110,8 +1139,28 @@
         return;
       }
 
+      // ── v6: generic "stage starting" heartbeat — a slow LLM-backed section
+      //    (verify, assess, gate, deliverable) gets a spinner + cycling-phrase
+      //    placeholder card the MOMENT it starts, same idea as the orchestrator
+      //    planning heartbeat, instead of just looking frozen while the judge
+      //    call is in flight. Removed by the real card (matched on stage+key,
+      //    see each handler below) once that arrives. ──
+      if(t === 'agent_loop_v6.stage_start'){
+        const key = `${ev.stage}:${ev.key}`;
+        if(this._sr.querySelector(`.alo-cycle.stage-hb[data-stage-key="${key}"]`)) return;
+        const pool = ALO_THINK_PHRASES();
+        const first = pool[Math.floor(Math.random()*pool.length)];
+        const card = this._cycleEl(`<div class="alo-cycle-h">
+            <span class="alo-spinner"></span>
+            <span class="alo-cycle-tool">${_esc(ev.label||'Working…')}</span>
+          </div><div class="alo-cycle-thought"><span class="alo-phrase">${_esc(first)}</span></div>`, 'stage-hb');
+        if(card) card.setAttribute('data-stage-key', key);
+        return;
+      }
+
       // ── v6-only: adaptive controller assessment after a step ─────────
       if(t === 'agent_loop_v6.assess'){
+        this._sr.querySelector(`.alo-cycle.stage-hb[data-stage-key="assess:${ev.after_step}"]`)?.remove();
         const ACT = {
           continue: {ic:'→', lbl:'continue', cls:'expand'},
           insert:   {ic:'⊕', lbl:'insert step(s)', cls:'warn'},
@@ -1133,6 +1182,7 @@
 
       // ── v6-only: per-step success-criterion verification verdict ─────
       if(t === 'agent_loop_v6.verify'){
+        this._sr.querySelector(`.alo-cycle.stage-hb[data-stage-key="verify:${ev.step_id}"]`)?.remove();
         const met = !!ev.met;
         this._cycleEl(`<div class="alo-cycle-h">
           <span class="alo-cycle-tool">🎯 Success check · step ${_esc(String(ev.step_id||'?'))} — ${met?'met':'NOT met'}</span>
@@ -1167,6 +1217,7 @@
 
       // ── v6-only: delivery agent's final markdown deliverable ─────────
       if(t === 'agent_loop_v6.deliverable'){
+        this._sr.querySelector(`.alo-cycle.stage-hb[data-stage-key="deliverable:final"]`)?.remove();
         const md = ev.markdown||'';
         this._cycleEl(`<div class="alo-cycle-h">
           <span class="alo-cycle-tool">📦 Deliverable</span>
@@ -1177,6 +1228,7 @@
 
       // ── v6-only: final completion gate ───────────────────────────────
       if(t === 'agent_loop_v6.gate'){
+        this._sr.querySelector(`.alo-cycle.stage-hb[data-stage-key="gate:final"]`)?.remove();
         const complete = !!ev.complete;
         const miss = (ev.missing||[]).map(m=>`<div>• ${_esc(m)}</div>`).join('');
         const fu = (ev.follow_up||[]).map(s=>`${s.id}. ${_esc(s.title||'')}`).join(' › ');
@@ -1239,7 +1291,7 @@
             <span class="alo-cycle-tool">🧠 Strategising…</span>
             <span class="alo-cycle-status"><span class="alo-spinner"></span> ${_esc(String((ev.text||'').length))} chars</span>
           </div>${ev.persona?`<div class="alo-cycle-thought" style="font-style:italic">${_esc(ev.persona)}</div>`:''}
-          <div class="alo-cycle-preview" style="white-space:pre-wrap;max-height:260px;overflow:auto">${_esc(ev.text||'')}</div>`;
+          <div class="alo-cycle-preview alo-md" style="max-height:260px;overflow:auto">${_renderMarkdown(ev.text||'')}</div>`;
         let card = this._sr.querySelector('.alo-cycle.masterplan[data-mp="1"]');
         if(card){ card.innerHTML = inner; }
         else { card = this._cycleEl(inner, 'masterplan'); if(card) card.setAttribute('data-mp','1'); }
@@ -1783,6 +1835,21 @@
         return;
       }
 
+      // ── generated document written to the run's working directory ──────────
+      // The loop persists a generative cap's output itself, so the step never
+      // needs a second write call. Surfaced as its own card: the file IS the
+      // deliverable, and the path is what later steps refer to.
+      if(t === 'agent_loop_v5.output_saved'){
+        const rel = ev.rel || ev.path || '';
+        const chars = Number(ev.chars||0).toLocaleString();
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">📄 Output saved</span>
+          <span class="alo-cycle-status">${_esc(String(ev.tool||''))} · ${chars} chars</span>
+        </div><div class="alo-cycle-preview" style="font-family:var(--mono,monospace);font-size:10px">`
+          + `./${_esc(rel)}</div>`, 'expand');
+        return;
+      }
+
       // handover synthesis
       if(t === 'agent_loop.handover_start'){
         this._cycleEl(`<div class="alo-cycle-h">
@@ -1897,6 +1964,34 @@
         return;
       }
 
+      // tool_stream_delta — live text for a long-running LLM-backed cap
+      // (code.author, llm.generate, ...) while it's still generating, same
+      // idea as think_delta but scoped to the actual tool-call card (keyed by
+      // cycle, same as tool_call/tool_done) instead of a transient reasoning
+      // card. Removed by tool_stream_end once the real result replaces it.
+      if(t.endsWith('.tool_stream_delta')){
+        if(!this._showThinking) return;
+        const ref = this._cycleRefs.get(ev.cycle);
+        if(!ref || !ref.el) return;
+        let wrap = ref.el.querySelector('.alo-cycle-stream');
+        if(!wrap){
+          wrap = document.createElement('div');
+          wrap.className = 'alo-cycle-stream';
+          wrap.innerHTML = `<div class="alo-cycle-status"><span class="alo-spinner"></span> generating…</div>
+            <div class="alo-cycle-preview alo-stream-text"></div>`;
+          ref.el.appendChild(wrap);
+        }
+        const txt = wrap.querySelector('.alo-stream-text');
+        if(txt) txt.textContent = ev.text || '';
+        return;
+      }
+      if(t.endsWith('.tool_stream_end')){
+        const ref = this._cycleRefs.get(ev.cycle);
+        const wrap = ref && ref.el && ref.el.querySelector('.alo-cycle-stream');
+        if(wrap) wrap.remove();
+        return;
+      }
+
       // tool_done (any variant)
       if(t.endsWith('.tool_done')){
         this._renderToolDone(ev);
@@ -1955,7 +2050,24 @@
       // done (any variant) — no longer renders a separate "Done" summary card;
       // the final pane already shows the summary, cycle count and stats, so the
       // extra card was redundant. The alo:done event is still dispatched.
+      // Per-step context fill: step_context carries the EXACT system prompt the
+      // ephemeral specialist was given, so this is the real number, not a guess.
+      if(t.endsWith('.step_context')){
+        const sp = (ev.system_prompt||'').length
+                 + ((ev.parts&&ev.parts.inline_files)||'').length;
+        if(sp) this._updCtx(sp, ev.num_ctx || this._ctxWindow);
+      }
+      // Spill telemetry from the router (ollama.cpu_spill / request_done).
+      if(t === 'ollama.cpu_spill'){ this._markSpill(true, ev.resident_pct); }
+      else if(t === 'ollama.request_done' && ev.gpu_resident_pct != null){
+        this._markSpill(!!ev.cpu_spill, ev.gpu_resident_pct);
+        if(ev.num_ctx) this._ctxWindow = ev.num_ctx;
+      }
+
       if(t.endsWith('.done')){
+        // List whatever the run actually left on disk. Deliberately fire-and-
+        // forget: a failed/slow listing must never hold up the done event.
+        this._renderFilesCard().catch(()=>{});
         this.dispatchEvent(new CustomEvent('alo:done', {detail:{summary:ev.summary||'', cycles:ev.cycles, ok:!ev.error}, bubbles:true}));
         return;
       }
@@ -2044,6 +2156,135 @@
     }
 
     // ───────────────────── Render helpers ────────────────────────────
+    // ── Per-step context meter + GPU-spill badge ─────────────────────────────
+    // The chat header's context meter tracks the CHAT conversation only — it is
+    // fed from the chat stream's `done` event, which a loop never emits, so it
+    // sits frozen while a loop runs. A loop also isn't ONE context: every step is
+    // a fresh ephemeral specialist with its own window. So the meaningful number
+    // is per step — how full THIS step's prompt is against the model's window —
+    // and it belongs pinned to the loop, not the chat header.
+    _ctxBar(){
+      let el = this._sr.querySelector('.alo-ctxbar');
+      if(!el){
+        el = document.createElement('div');
+        el.className = 'alo-ctxbar';
+        el.innerHTML = `<span class="alo-ctx-lbl">context</span>
+          <span class="alo-ctx-track"><span class="alo-ctx-fill"></span></span>
+          <span class="alo-ctx-txt">—</span>
+          <span class="alo-ctx-spill" hidden title="The model is only partly resident in VRAM — generation is running partly on CPU and is roughly 3x slower.">⚠ GPU→CPU</span>`;
+        (this._sr.querySelector('.alo-cycles-card') || this._sr).appendChild(el);
+      }
+      return el;
+    }
+    // Chars→tokens: matches the router's estimate (deliberately low so the bar
+    // reads slightly pessimistic rather than falsely comfortable).
+    _updCtx(promptChars, windowTokens){
+      const bar = this._ctxBar();
+      const used = Math.round((promptChars||0) / 3.4);
+      const max  = windowTokens || this._ctxWindow || 0;
+      if(!max){ return; }
+      this._ctxWindow = max;
+      const pct = Math.min(100, Math.round(used/max*100));
+      const fill = bar.querySelector('.alo-ctx-fill');
+      fill.style.width = pct + '%';
+      fill.style.background = pct>85 ? 'var(--err,#c96a5a)'
+                            : pct>65 ? 'var(--warn,#c9a45a)' : 'var(--acc2,#a8c87a)';
+      bar.querySelector('.alo-ctx-txt').textContent =
+        `${(used/1000).toFixed(1)}k / ${(max/1000).toFixed(0)}k`;
+    }
+    _markSpill(on, pct){
+      const b = this._ctxBar().querySelector('.alo-ctx-spill');
+      if(!b) return;
+      b.hidden = !on;
+      if(on && pct != null) b.textContent = `⚠ GPU→CPU ${pct}%`;
+    }
+
+    // ── Files produced by the run ────────────────────────────────────────────
+    // A loop writes its real deliverables into its session sandbox, which the
+    // chat UI cannot reach — so a generated page/report/script was effectively
+    // write-only: the cards could NAME a file but not open it. This lists the
+    // run's working directory and gives each file a preview (rendered) and a
+    // source view, plus a download, the way the artifact browser does.
+    static _fmtSize(n){
+      if(n == null || n < 0) return '';
+      if(n < 1024) return n + ' B';
+      if(n < 1024*1024) return (n/1024).toFixed(1) + ' KB';
+      return (n/1048576).toFixed(1) + ' MB';
+    }
+    _fileUrl(name){
+      return '/exec/artifacts/download?session_id=' + encodeURIComponent(this._sessionId||'')
+           + '&rel=' + encodeURIComponent(name);
+    }
+    async _renderFilesCard(){
+      if(!this._sessionId) return;
+      let data;
+      try{
+        const r = await fetch('/exec/artifacts/list?session_id='
+                              + encodeURIComponent(this._sessionId));
+        data = await r.json();
+      }catch(e){ return; }
+      const files = (data && data.files || []).filter(f => !f.is_dir);
+      if(!files.length) return;
+      // Reuse one card across refreshes so a re-render doesn't stack copies.
+      let card = this._filesCard;
+      if(!card || !card.isConnected){
+        card = this._cycleEl('', 'files');
+        this._filesCard = card;
+      }
+      const rows = files.map(f => `
+        <div class="alo-file-row" data-file="${_esc(f.name)}">
+          <span class="alo-file-name">${_esc(f.name)}</span>
+          <span class="alo-file-size">${_esc(VeraAgentLoopOutput._fmtSize(f.size))}</span>
+          <button class="alo-file-btn" data-act="preview">preview</button>
+          <button class="alo-file-btn" data-act="source">source</button>
+          <a class="alo-file-btn" href="${this._fileUrl(f.name)}" download>download</a>
+        </div>`).join('');
+      card.innerHTML = `<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">📁 Files produced</span>
+          <span class="alo-cycle-status">${files.length} file${files.length===1?'':'s'}</span>
+          <button class="alo-card-expand" data-act="files-refresh" title="Refresh">⟳</button>
+        </div>
+        <div class="alo-file-list">${rows}</div>
+        <div class="alo-file-view" hidden></div>`;
+    }
+    async _showFile(name, mode){
+      const view = this._filesCard && this._filesCard.querySelector('.alo-file-view');
+      if(!view) return;
+      const ext = (name.split('.').pop() || '').toLowerCase();
+      const url = this._fileUrl(name);
+      view.hidden = false;
+      view.innerHTML = `<div class="alo-file-vh">${_esc(name)} · ${mode}</div>
+                        <div class="alo-file-body">loading…</div>`;
+      const body = view.querySelector('.alo-file-body');
+      const IMG = ['png','jpg','jpeg','gif','svg','webp'];
+      if(mode === 'preview' && IMG.includes(ext)){
+        body.innerHTML = `<img src="${url}" style="max-width:100%;border-radius:4px">`;
+        return;
+      }
+      let text = '';
+      try{
+        const r = await fetch(url);
+        text = await r.text();
+      }catch(e){ body.textContent = 'could not read: ' + e; return; }
+      if(mode === 'preview' && (ext === 'html' || ext === 'htm')){
+        // srcdoc + sandbox: render it, but never let a generated page reach the
+        // parent document or the network on our origin.
+        body.innerHTML = '';
+        const fr = document.createElement('iframe');
+        fr.setAttribute('sandbox', '');
+        fr.style.cssText = 'width:100%;height:420px;border:1px solid var(--border,#3a3530);border-radius:4px;background:#fff';
+        fr.srcdoc = text;
+        body.appendChild(fr);
+        return;
+      }
+      if(mode === 'preview' && ext === 'md'){
+        body.innerHTML = `<pre class="alo-file-src">${_esc(text.slice(0, 20000))}</pre>`;
+        return;
+      }
+      body.innerHTML = `<pre class="alo-file-src">${_esc(text.slice(0, 20000))}</pre>`
+        + (text.length > 20000 ? `<div class="alo-file-more">… ${text.length-20000} more chars — use download for the full file</div>` : '');
+    }
+
     _cycleEl(html, cls){
       const host = this._sr.querySelector('.alo-cycles');
       const empty = host.querySelector('.alo-empty');
@@ -2373,10 +2614,24 @@
         <span style="color:var(--info,#7eb8d9);font-size:9px">server-streamed research · job <code>${_esc((jobId||'').slice(0,8))}</code><span class="alo-cur"></span></span>`;
       strip.appendChild(hdr);
       area = document.createElement('div');
-      area.className = 'alo-progress-tokens';
+      // alo-md → the streamed research text renders as formatted markdown
+      // (headings/lists/code/links) rather than a raw monospace dump. The
+      // accumulated source markdown lives on area._raw so each token re-renders
+      // the whole buffer (see the stream.token handler + _appendResearchToken).
+      area.className = 'alo-progress-tokens alo-md';
+      area.style.whiteSpace = 'normal';
       area.dataset.researchStream = jobId;
       strip.appendChild(area);
       return area;
+    }
+
+    /** Append a research-stream token and re-render the area as markdown.
+     *  Keeps the raw source on `area._raw` so partial markdown formats live. */
+    _appendResearchToken(area, tok){
+      if(!area) return;
+      area._raw = (area._raw || '') + (tok || '');
+      area.innerHTML = _renderMarkdown(area._raw);
+      _follow(area);
     }
 
     /** Renders a completed research job's full report inline as a collapsible,
@@ -2471,8 +2726,7 @@
           if(this._activeWsJobs.has(data.job_id)) return;  // WS is handling it
           const area = this._ensureResearchArea(strip, data.job_id);
           if(area){
-            area.textContent += tok;
-            _follow(area);
+            this._appendResearchToken(area, tok);
             return;
           }
         }
@@ -2714,9 +2968,12 @@
       const strip = this._ensureProgressStrip(ev.cycle);
       if(!strip) return;
       const streamArea = document.createElement('div');
-      streamArea.className = 'alo-progress-tokens';
+      // alo-md → render the live research stream as formatted markdown (buffer
+      // on streamArea._raw; see _appendResearchToken).
+      streamArea.className = 'alo-progress-tokens alo-md';
       streamArea.dataset.researchJob = ev.job_id;
       streamArea.style.minHeight = '140px';
+      streamArea.style.whiteSpace = 'normal';
       const streamHdr = document.createElement('div');
       streamHdr.className = 'alo-progress-row';
       streamHdr.innerHTML = `<span class="alo-progress-tag" style="background:#1a2d3a;color:#5a9edd">stream</span>
@@ -2744,8 +3001,7 @@
           try{
             const m = JSON.parse(e.data);
             if(m.type === 'token' || m.type === 'thinking'){
-              streamArea.textContent += (m.text||'');
-              _follow(streamArea);
+              this._appendResearchToken(streamArea, m.text||'');
             } else if(m.type === 'step'){
               const stepEl = document.createElement('div');
               stepEl.style.cssText = 'font-size:8.5px;color:var(--acc3,#c5a572);margin:2px 0';
@@ -2760,7 +3016,7 @@
               // Non-fatal sub-step failure (one source 500'd, an instance is
               // down, …) — the job keeps running and will still send `done`.
               // Closing here killed the live stream on the first hiccup.
-              streamArea.textContent += '\n⚠ '+(m.text||'stream error');
+              this._appendResearchToken(streamArea, '\n\n⚠ '+(m.text||'stream error')+'\n\n');
             }
           }catch(_){}
         };

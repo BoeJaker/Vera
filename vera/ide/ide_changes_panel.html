@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vera — Workspace Changes</title>
+<style>
+:root{
+  --bg0:#14161a;--bg1:#1a1d22;--bg2:#22262d;--bg3:#2b3038;
+  --border:#333944;--border2:#454c58;
+  --acc:#5a9e8f;--acc2:#8fb87a;--warn:#c9a35a;--ok:#6db87a;--err:#c96b6b;
+  --add:#2ea043;--del:#c0504d;
+  --fg:#dfe3ea;--fg2:#aab2bf;--fg3:#7c8595;--dim:#616a78;
+  --mono:'JetBrains Mono','Fira Mono',ui-monospace,monospace;--sans:'Inter',system-ui,sans-serif;
+  --on-acc:#0d0f12;color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg0);color:var(--fg);font-family:var(--sans);font-size:12.5px}
+body{display:flex;flex-direction:column;overflow:hidden}
+header{display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--border);background:var(--bg1);flex-shrink:0}
+header h1{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:1.5px;color:var(--acc)}
+header .sub{font-size:10px;color:var(--dim)}
+header .flex{flex:1}
+select,button{font-family:inherit;font-size:11px}
+.btn{background:var(--bg2);border:1px solid var(--border);color:var(--fg);border-radius:6px;padding:5px 10px;cursor:pointer}
+.btn:hover{border-color:var(--acc);color:var(--acc)}
+.btn.ok{border-color:var(--ok);color:var(--ok)}
+.btn.ok:hover{background:rgba(109,184,122,.12)}
+.btn.no:hover{border-color:var(--err);color:var(--err)}
+.btn:disabled{opacity:.4;cursor:default}
+main{flex:1;display:flex;min-height:0}
+.side{width:270px;flex-shrink:0;border-right:1px solid var(--border);overflow-y:auto;background:var(--bg0)}
+.pcard{padding:9px 12px;border-bottom:1px solid var(--border);cursor:pointer}
+.pcard:hover{background:var(--bg1)}
+.pcard.on{background:var(--bg2);border-left:3px solid var(--acc);padding-left:9px}
+.pcard .t{font-size:11.5px;font-weight:600;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pcard .m{font-size:9.5px;color:var(--dim);margin-top:3px;display:flex;gap:8px;flex-wrap:wrap}
+.badge{font-size:8.5px;padding:1px 6px;border-radius:9px;text-transform:uppercase;letter-spacing:.4px;border:1px solid var(--border);color:var(--fg3)}
+.badge.pending{color:var(--warn);border-color:var(--warn)}
+.badge.applied{color:var(--ok);border-color:var(--ok)}
+.badge.partial{color:var(--acc);border-color:var(--acc)}
+.badge.rejected{color:var(--err);border-color:var(--err)}
+.badge.added{color:var(--add);border-color:var(--add)}
+.badge.modified{color:var(--warn);border-color:var(--warn)}
+.badge.binary{color:var(--dim);border-color:var(--dim)}
+.badge.accept{color:var(--ok);border-color:var(--ok)}
+.badge.reject{color:var(--err);border-color:var(--err)}
+.detail{flex:1;display:flex;flex-direction:column;min-width:0}
+.dhd{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--border);background:var(--bg1);flex-shrink:0;flex-wrap:wrap}
+.dhd .t{font-size:12px;font-weight:600}
+.dhd .p{font-size:10px;color:var(--dim);font-family:var(--mono)}
+.files{flex:1;overflow-y:auto;padding:10px 12px}
+.file{border:1px solid var(--border);border-radius:8px;margin-bottom:10px;overflow:hidden;background:var(--bg1)}
+.fhd{display:flex;align-items:center;gap:9px;padding:7px 10px;cursor:pointer;background:var(--bg2)}
+.fhd:hover{background:var(--bg3)}
+.fhd .fn{font-family:var(--mono);font-size:11px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fhd .acts{display:flex;gap:5px}
+.fhd .a{font-size:9.5px;padding:2px 8px;border-radius:5px;border:1px solid var(--border);background:var(--bg1);color:var(--fg3);cursor:pointer}
+.fhd .a.ok:hover{border-color:var(--ok);color:var(--ok)}
+.fhd .a.no:hover{border-color:var(--err);color:var(--err)}
+.diff{display:none;max-height:420px;overflow:auto;background:var(--bg0);border-top:1px solid var(--border)}
+.file.open .diff{display:block}
+.diff pre{font-family:var(--mono);font-size:11px;line-height:1.5;white-space:pre;padding:0}
+.dl{display:block;padding:0 10px}
+.dl.add{background:rgba(46,160,67,.13);color:#8ee29b}
+.dl.del{background:rgba(192,80,77,.15);color:#e59a97}
+.dl.hunk{color:var(--acc);background:var(--bg2)}
+.dl.meta{color:var(--dim)}
+.empty{padding:40px;text-align:center;color:var(--dim);font-size:12px}
+.note{font-size:10px;color:var(--warn);padding:2px 10px 8px}
+.spin{color:var(--dim);padding:20px;font-size:11px}
+</style>
+<script>window.__VERA_BASE__=window.__VERA_BASE__||'';</script>
+</head>
+<body>
+<header>
+  <h1>WORKSPACE CHANGES</h1>
+  <span class="sub">PR-style review · accept or reject a loop's edits</span>
+  <span class="flex"></span>
+  <label class="sub">show
+    <select id="statusSel">
+      <option value="pending" selected>pending</option>
+      <option value="partial">partial</option>
+      <option value="applied">applied</option>
+      <option value="rejected">rejected</option>
+      <option value="">all</option>
+    </select>
+  </label>
+  <button class="btn" id="refreshBtn">↻ Refresh</button>
+</header>
+<main>
+  <div class="side" id="side"><div class="spin">Loading…</div></div>
+  <div class="detail">
+    <div class="dhd" id="dhd" style="display:none"></div>
+    <div class="files" id="files"><div class="empty">Select a change proposal on the left.</div></div>
+  </div>
+</main>
+
+<script>
+const API=(()=>{try{if(window.parent!==window&&window.parent._veraBase)return window.parent._veraBase}catch(e){}return window.__VERA_BASE__||window.location.origin||''})();
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let _cur=null, _sel=null;
+
+async function api(path, method, body){
+  const opt={method:method||'GET',headers:{'Content-Type':'application/json'}};
+  if(body) opt.body=JSON.stringify(body);
+  const r=await fetch(API+path,opt);
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  return r.json();
+}
+function rel(ts){ if(!ts) return ''; const t=Date.parse(ts); if(isNaN(t)) return String(ts).slice(0,16);
+  const d=(Date.now()-t)/1000; if(d<60)return Math.floor(d)+'s ago'; if(d<3600)return Math.floor(d/60)+'m ago';
+  if(d<86400)return Math.floor(d/3600)+'h ago'; return new Date(t).toLocaleDateString(); }
+
+async function loadList(){
+  const status=$('statusSel').value;
+  let r; try{ r=await api('/ide/workspace/changes/list?status='+encodeURIComponent(status)); }
+  catch(e){ $('side').innerHTML='<div class="spin">Error: '+esc(e.message)+'</div>'; return; }
+  const props=(r&&r.proposals)||[];
+  if(!props.length){ $('side').innerHTML='<div class="empty">No '+esc(status||'')+' proposals.</div>'; return; }
+  $('side').innerHTML=props.map(p=>{
+    const on=(_sel===p.id)?' on':'';
+    return '<div class="pcard'+on+'" data-id="'+esc(p.id)+'">'
+      +'<div class="t">'+esc(p.workspace||p.host_path||p.id)+'</div>'
+      +'<div class="m"><span class="badge '+esc(p.status)+'">'+esc(p.status)+'</span>'
+      +'<span>'+p.files+' files</span>'+(p.pending?'<span>'+p.pending+' pending</span>':'')
+      +'<span>'+esc(rel(p.created))+'</span></div>'
+      +(p.source?'<div class="m"><span>from '+esc(p.source)+'</span></div>':'')+'</div>';
+  }).join('');
+  $('side').querySelectorAll('.pcard').forEach(el=>el.addEventListener('click',()=>select(el.getAttribute('data-id'))));
+}
+
+async function select(id){
+  _sel=id;
+  $('side').querySelectorAll('.pcard').forEach(el=>el.classList.toggle('on',el.getAttribute('data-id')===id));
+  $('files').innerHTML='<div class="spin">Loading diff…</div>';
+  let p; try{ p=await api('/ide/workspace/changes/get?id='+encodeURIComponent(id)); }
+  catch(e){ $('files').innerHTML='<div class="empty">Error: '+esc(e.message)+'</div>'; return; }
+  if(p.error){ $('files').innerHTML='<div class="empty">'+esc(p.error)+'</div>'; return; }
+  _cur=p; render();
+}
+
+function renderDiff(diff){
+  if(!diff) return '<pre><span class="dl meta">(no textual diff)</span></pre>';
+  const lines=diff.split('\n').map(l=>{
+    let c='dl'; const h=l[0];
+    if(l.startsWith('@@'))c='dl hunk'; else if(l.startsWith('+++')||l.startsWith('---'))c='dl meta';
+    else if(h==='+')c='dl add'; else if(h==='-')c='dl del';
+    return '<span class="'+c+'">'+esc(l||' ')+'</span>';
+  });
+  return '<pre>'+lines.join('')+'</pre>';
+}
+
+function render(){
+  const p=_cur; if(!p) return;
+  const pend=(p.files||[]).filter(f=>f.decision==='pending').length;
+  $('dhd').style.display='';
+  $('dhd').innerHTML='<span class="t">'+esc(p.workspace||p.host_path||p.id)+'</span>'
+    +'<span class="badge '+esc(p.status)+'">'+esc(p.status)+'</span>'
+    +'<span class="p">'+esc(p.host_path||'')+'</span>'
+    +'<span class="flex" style="flex:1"></span>'
+    +'<button class="btn ok" id="allOk"'+(pend?'':' disabled')+'>✓ Accept all ('+pend+')</button>'
+    +'<button class="btn no" id="allNo"'+(pend?'':' disabled')+'>✕ Reject all</button>';
+  $('allOk').onclick=()=>act('accept',{id:p.id,apply_all:true});
+  $('allNo').onclick=()=>{ if(confirm('Reject and discard this whole proposal?')) act('reject',{id:p.id,reject_all:true},true); };
+  const files=p.files||[];
+  if(!files.length){ $('files').innerHTML='<div class="empty">No changed files.</div>'; return; }
+  $('files').innerHTML=files.map((f,i)=>{
+    const appliable=f.text && !f.binary && !f.truncated;
+    const dec=f.decision&&f.decision!=='pending'?'<span class="badge '+esc(f.decision)+'">'+esc(f.decision)+'</span>':'';
+    return '<div class="file" data-i="'+i+'">'
+      +'<div class="fhd"><span class="badge '+esc(f.status)+'">'+esc(f.status)+'</span>'
+      +'<span class="fn">'+esc(f.rel)+'</span>'+dec
+      +'<span class="acts">'
+      +(appliable?'<span class="a ok" data-ok="'+esc(f.rel)+'">✓ accept</span>'
+                 +'<span class="a no" data-no="'+esc(f.rel)+'">✕ reject</span>':'')
+      +'</span></div>'
+      +(!appliable?'<div class="note">'+(f.binary?'binary file — review/apply manually':'too large to auto-apply — apply manually')+'</div>':'')
+      +'<div class="diff">'+renderDiff(f.diff)+'</div></div>';
+  }).join('');
+  $('files').querySelectorAll('.fhd').forEach(h=>h.addEventListener('click',ev=>{
+    if(ev.target.closest('.acts')) return;
+    h.parentElement.classList.toggle('open');
+  }));
+  $('files').querySelectorAll('[data-ok]').forEach(b=>b.addEventListener('click',ev=>{
+    ev.stopPropagation(); act('accept',{id:p.id,paths:b.getAttribute('data-ok')}); }));
+  $('files').querySelectorAll('[data-no]').forEach(b=>b.addEventListener('click',ev=>{
+    ev.stopPropagation(); act('reject',{id:p.id,paths:b.getAttribute('data-no')}); }));
+}
+
+async function act(kind, body, dropAfter){
+  try{ await api('/ide/workspace/changes/'+kind, 'POST', body); }
+  catch(e){ alert(kind+' failed: '+e.message); return; }
+  await loadList();
+  if(dropAfter){ _cur=null;_sel=null; $('dhd').style.display='none';
+    $('files').innerHTML='<div class="empty">Proposal '+esc(kind==='reject'?'rejected':'updated')+'.</div>'; return; }
+  await select(_sel);
+}
+
+$('refreshBtn').addEventListener('click',loadList);
+$('statusSel').addEventListener('change',()=>{ _sel=null; loadList(); });
+loadList();
+setInterval(loadList, 20000);
+</script>
+</body>
+</html>

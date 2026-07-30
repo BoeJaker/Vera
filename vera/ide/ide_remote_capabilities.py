@@ -1178,7 +1178,8 @@ def _text_of(obj: dict) -> str:
 # future, which lets the work queue treat a live editor like any other host.
 
 _CLIENT_ACTION_KINDS = ("open_file", "run_command", "terminal", "type_text",
-                        "claude_task", "notify")
+                        "claude_task", "notify",
+                        "claude_sessions_scan", "claude_sessions_read")
 _CLIENT_ACTIONS: Dict[str, List[dict]] = {}      # instance_id -> pending actions
 _CLIENT_WAKE:    Dict[str, asyncio.Event] = {}   # instance_id -> poll waker
 _CLIENT_RESULTS: Dict[str, asyncio.Future] = {}  # action_id -> result future
@@ -1233,7 +1234,12 @@ async def _client_dispatch(instance_id: str, action: str, args: dict,
                 "Actions: open_file {path} · run_command {command, args} · "
                 "terminal {text, enter} · type_text {text} · "
                 "claude_task {task, permission_mode} (runs the CLIENT's Claude Code, "
-                "using its local sign-in) · notify {message}. "
+                "using its local sign-in) · notify {message} · "
+                "claude_sessions_scan {} (list the client's local "
+                "~/.claude/projects/**/*.jsonl transcripts) · "
+                "claude_sessions_read {path, offset} (tail one transcript from a "
+                "byte offset) — used by ide.claude_sessions.* to ingest this "
+                "machine's Claude Code conversations. "
                 "Input: instance_id (str!), action (str!), args (dict), "
                 "wait (int seconds — 0 = fire-and-forget, >0 = await the client's "
                 "result). Output: {ok, action_id, queued|result…}.",

@@ -204,7 +204,17 @@ FORMAT_PROFILES: Dict[str, Dict[str, Any]] = {
         "label": "JSON", "kind": "deliverable", "target_file_format": "json",
         "system_suffix": "OUTPUT FORMAT: respond with STRICT, valid JSON only. No "
                          "markdown, no code fences, no commentary before or after. "
-                         "If a schema was described, follow it exactly.",
+                         "If a schema was described, follow it exactly. This is for "
+                         "DATA — never use it to return source code.",
+    },
+    "code": {
+        "label": "Source code", "kind": "deliverable", "target_file_format": "py",
+        "system_suffix": "OUTPUT FORMAT: source code, as ONE fenced block per file, "
+                         "labelled with its language and filename — ```python "
+                         "file=name.py — containing the COMPLETE file. Write the code "
+                         "literally: do NOT wrap it in JSON, do NOT return it as a "
+                         "string field, do NOT escape newlines as \\n. Keep commentary "
+                         "outside the fence to a sentence or two.",
     },
     "email": {
         "label": "Email", "kind": "deliverable", "target_file_format": "txt",

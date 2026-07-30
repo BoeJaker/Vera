@@ -326,6 +326,10 @@ The full guide set lives in [`documentation/`](documentation/), grouped by theme
 | [27 · OpenClaw](documentation/27-openclaw.md) | Bridge to an external OpenClaw agentic gateway |
 | [28 · Render](documentation/28-render.md) | pandoc-backed document export (DOCX/PDF/…) |
 | [29 · Security & Secrets](documentation/29-security.md) | Fernet sealing for stored credentials |
+| [33 · Loop Lab (Evolve)](documentation/33-evolve.md) | Closed evaluate→improve harness for the agentic loops + dev sandbox |
+| [34 · Operator](documentation/34-operator.md) | General **observe→think→act** operator: drives any web UI or web-served VM; powers the auto-generated screenshots + docs |
+
+> 📸 **Visual docs gallery:** [`documentation/README.md`](documentation/README.md) — every panel, screenshotted by the operator. Regenerate with `python tools/vera-docgen/docgen.py run` (or the `docs.build` capability).
 
 ---
 

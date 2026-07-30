@@ -108,7 +108,7 @@ button.danger:hover{border-color:var(--err);color:var(--err)}
   <div class="hint" style="margin-top:10px"><b>Background loops (V8 / orchestrated)</b> — the model / agent / engine
     ALL long-horizon loops run on. Set here to steer every program; leave blank to let each loop choose.</div>
   <div class="toolbar" style="margin-top:6px">
-    <label class="dim">Model <input type="text" id="v8-model" placeholder="(per-loop)" style="width:150px" onchange="saveV8Config()"></label>
+    <label class="dim">Model <select id="v8-model" style="width:210px" onchange="saveV8Config()"><option value="">(per-loop)</option></select></label>
     <label class="dim">Agent <input type="text" id="v8-agent" placeholder="(per-loop)" style="width:140px" onchange="saveV8Config()"></label>
     <label class="dim">Engine
       <select id="v8-engine" onchange="saveV8Config()">
@@ -214,7 +214,7 @@ button.danger:hover{border-color:var(--err);color:var(--err)}
     <select id="cr-jt"></select>
     <select id="cr-gpu"><option value="">GPU: auto</option><option value="prefer">GPU: prefer</option><option value="deny">GPU: deny</option></select>
     <select id="cr-pin"><option value="">pin: none</option></select>
-    <input type="text" id="cr-model" placeholder="model (optional)" style="width:150px">
+    <select id="cr-model" style="width:210px"><option value="">(cluster default)</option></select>
     <input type="number" id="cr-esc" placeholder="esc chars" title="escalate_chars — 0 = off">
     <button class="primary" onclick="saveCapRule()">＋ Add / update</button>
   </div>
@@ -280,6 +280,63 @@ function jtSel(cls, val){
   const opts = ['<option value="">(default)</option>'].concat(JOB_TYPES.map(jt=>
     `<option value="${esc(jt)}"${val===jt?' selected':''}>${esc(jt)}</option>`));
   return `<select class="${cls}">${opts.join('')}</select>`;
+}
+// Every model the cluster can actually serve: the union of what each Ollama node
+// reports, plus vLLM served models and provider:<id>/<model> refs. Deduped and
+// sorted, with which nodes carry it — typing model names by hand meant a typo
+// silently fell back to the default model with no error anywhere.
+function allModels(){
+  const seen = new Map();   // ref -> Set(node labels)
+  const put = (ref, where) => {
+    if(!ref) return;
+    if(!seen.has(ref)) seen.set(ref, new Set());
+    if(where) seen.get(ref).add(where);
+  };
+  Object.keys(NODES).forEach(iid => (NODES[iid].models||[]).forEach(m => put(m, iid)));
+  Object.keys(VLLM).forEach(vid => {
+    const v = VLLM[vid] || {};
+    (v.models || (v.model ? [v.model] : [])).forEach(m => put(m, 'vllm:'+vid));
+  });
+  PROVIDERS.filter(p=>p.enabled!==false).forEach(p => {
+    (p.models || (p.default_model ? [p.default_model] : [])).forEach(m =>
+      put('provider:'+p.id+'/'+m, 'provider:'+p.id));
+  });
+  return [...seen.entries()]
+    .map(([ref, nodes]) => ({ref, nodes:[...nodes]}))
+    .sort((a,b)=>a.ref.localeCompare(b.ref));
+}
+// Model picker. Keeps any value already set even if that model is no longer
+// reported by a node (a rule pinned to a since-removed model should stay
+// visible and editable, not silently reset to "default").
+function modelSel(cls, val, id){
+  const list = allModels();
+  const known = list.some(m=>m.ref===val);
+  const opts = ['<option value="">(cluster default)</option>'];
+  if(val && !known) opts.push(`<option value="${esc(val)}" selected>${esc(val)} (not on any node)</option>`);
+  list.forEach(m=>opts.push(
+    `<option value="${esc(m.ref)}"${val===m.ref?' selected':''}>${esc(m.ref)}${
+      m.nodes.length?' · '+esc(m.nodes.join(', ')):''}</option>`));
+  return `<select class="${cls}"${id?` id="${esc(id)}"`:''}>${opts.join('')}</select>`;
+}
+
+// Fill the standalone model <select>s once node/provider data is in. Called
+// after every load so a newly-pulled model appears without a page refresh.
+// Preserves the current selection — repopulating must not silently clear a
+// rule the user is midway through editing.
+function refreshModelSelects(){
+  ['cr-model','v8-model'].forEach(id=>{
+    const el=$(id); if(!el) return;
+    const keep=el.value;
+    const placeholder = id==='v8-model' ? '(per-loop)' : '(cluster default)';
+    const list=allModels();
+    const opts=[`<option value="">${placeholder}</option>`];
+    if(keep && !list.some(m=>m.ref===keep))
+      opts.push(`<option value="${esc(keep)}">${esc(keep)} (not on any node)</option>`);
+    list.forEach(m=>opts.push(
+      `<option value="${esc(m.ref)}">${esc(m.ref)}${m.nodes.length?' · '+esc(m.nodes.join(', ')):''}</option>`));
+    el.innerHTML=opts.join('');
+    el.value=keep;
+  });
 }
 
 // ── Nodes ────────────────────────────────────────────────────────────────────
@@ -402,6 +459,7 @@ async function loadRoleProfiles(){
   NODES = r.nodes || NODES;
   JOB_TYPES = r.job_types || JOB_TYPES;
   renderNodes();
+  refreshModelSelects();
   renderRoleProfiles();
 }
 function renderRoleProfiles(){
@@ -528,6 +586,7 @@ async function loadJtRouting(){
   NODES=r.nodes||NODES;
   JOB_TYPES=r.job_types||JOB_TYPES;
   renderNodes();
+  refreshModelSelects();
   if(!_jtViewProfile||!(r.profiles||{})[_jtViewProfile]) _jtViewProfile=r.active_profile;
   const sel=$('jt-profile');
   sel.innerHTML=Object.keys(r.profiles||{}).map(p=>
@@ -744,6 +803,7 @@ setInterval(async()=>{
   const r=await api('/ollama/routing');
   if(r&&r.nodes){NODES=r.nodes;}
   renderNodes();
+  refreshModelSelects();
   loadMedia();
 }, 15000);
 

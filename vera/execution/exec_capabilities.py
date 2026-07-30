@@ -254,10 +254,20 @@ def _load_hosts_file() -> Dict[str, dict]:
     return {}
 
 
+_HOSTS_FILE_LAST: List[str] = [""]  # serialized blob last written — skip redundant rewrites
+
+
 def _save_hosts_file(hosts: Dict[str, dict]) -> None:
     try:
-        _SSH_STORE_PATH.write_text(
-            json.dumps(hosts, indent=2, sort_keys=True), encoding="utf-8")
+        blob = json.dumps(hosts, indent=2, sort_keys=True)
+        # _load_hosts() re-saves this cache on EVERY host resolve (every ssh/docker
+        # call, and the monitor's per-host docker.ps tick), but the host list almost
+        # never changes — a caught stall was a >1.2s write_text on the loop against
+        # the busy home volume. Skip the write (and chmod) when nothing changed.
+        if blob == _HOSTS_FILE_LAST[0] and _SSH_STORE_PATH.exists():
+            return
+        _SSH_STORE_PATH.write_text(blob, encoding="utf-8")
+        _HOSTS_FILE_LAST[0] = blob
         try:
             os.chmod(_SSH_STORE_PATH, 0o600)
         except Exception:
@@ -266,12 +276,71 @@ def _save_hosts_file(hosts: Dict[str, dict]) -> None:
         log.error("Failed to persist SSH host store file: %s", e)
 
 
+# Resolving a host record happens on every ssh/docker call (the monitor polls
+# docker.ps per host), so _load_hosts() is cached. Vera can run as a CLUSTER of
+# instances sharing one Neo4j+Redis backend, so a host added/edited/deleted on
+# ANOTHER node must be picked up here too: every mutation bumps a shared Redis
+# counter (_HOSTS_VER_KEY) and we reload when it changes → near-instant cross-node
+# propagation. A time-TTL (VERA_SSH_HOSTS_TTL) backstops the version check (bounds
+# staleness if Redis is down or a bump is ever missed) and is the sole freshness
+# signal when Redis is unreachable. Local mutations also invalidate directly.
+_HOSTS_CACHE: Dict[str, Any] = {}   # {"data": {id: rec}, "ver": <val|None>}
+_HOSTS_CACHE_TS = [0.0]
+_HOSTS_CACHE_TTL = float(os.getenv("VERA_SSH_HOSTS_TTL", "10") or 10)
+_HOSTS_VER_KEY = "vera:sshhosts:ver"
+
+
+def _orch_redis():
+    """Live handle to the cluster-shared Redis (set at runtime in lifespan)."""
+    m = sys.modules.get("Vera.vera.capability_orchestration")
+    return getattr(m, "REDIS", None) if m else None
+
+
+def _invalidate_hosts_cache() -> None:
+    _HOSTS_CACHE_TS[0] = 0.0
+
+
+async def _bump_hosts_ver() -> None:
+    """Signal every cluster node (incl. self) to reload the host store."""
+    r = _orch_redis()
+    if r is not None:
+        try: await r.incr(_HOSTS_VER_KEY)
+        except Exception: pass
+
+
 def _neo_available() -> bool:
     fn = _fabric_neo()
     return bool(fn and getattr(fn, "available", False))
 
 
 async def _load_hosts() -> Dict[str, dict]:
+    """Version-aware, TTL-backstopped cache over _load_hosts_uncached (see note
+    above). Returns a shallow copy so callers that mutate the dict in place
+    (save/delete) can't corrupt the cached snapshot; per-host records are tiny so
+    the copy is free."""
+    r = _orch_redis()
+    ver = None
+    redis_ok = False
+    if r is not None:
+        try:
+            ver = await r.get(_HOSTS_VER_KEY)   # sub-ms, non-blocking; None until first mutation
+            redis_ok = True
+        except Exception:
+            redis_ok = False
+    data = _HOSTS_CACHE.get("data")
+    within_ttl = _HOSTS_CACHE_TS[0] and (time.monotonic() - _HOSTS_CACHE_TS[0]) < _HOSTS_CACHE_TTL
+    # Serve the cache when the TTL hasn't lapsed AND (Redis is down → best-effort,
+    # or the shared version is unchanged → cluster-confirmed no edits anywhere).
+    if data is not None and within_ttl and (not redis_ok or ver == _HOSTS_CACHE.get("ver")):
+        return dict(data)
+    loaded = await _load_hosts_uncached()
+    _HOSTS_CACHE["data"] = loaded
+    _HOSTS_CACHE["ver"] = ver
+    _HOSTS_CACHE_TS[0] = time.monotonic()
+    return dict(loaded)
+
+
+async def _load_hosts_uncached() -> Dict[str, dict]:
     """Primary: Neo4j. Fallback: JSON file. Also cross-syncs the two."""
     if _neo_available():
         try:
@@ -285,13 +354,16 @@ async def _load_hosts() -> Dict[str, dict]:
                     if "tags" in rec and not isinstance(rec["tags"], list):
                         rec["tags"] = []
                     out[rec["id"]] = rec
-            # Cache to file so we still work if Neo4j goes down later
+            # Cache to file so we still work if Neo4j goes down later. Blocking
+            # file I/O is pushed off the loop — the unchanged-skip in
+            # _save_hosts_file makes the common case a no-op, but the first/changed
+            # write and the fallback reads must not stall the event loop.
             if out:
-                try: _save_hosts_file(out)
+                try: await asyncio.to_thread(_save_hosts_file, out)
                 except Exception: pass
             else:
                 # Neo4j empty — lift whatever's in the JSON cache into Neo4j
-                file_hosts = _load_hosts_file()
+                file_hosts = await asyncio.to_thread(_load_hosts_file)
                 if file_hosts:
                     for rec in file_hosts.values():
                         try: await _persist_host_neo(rec)
@@ -300,7 +372,7 @@ async def _load_hosts() -> Dict[str, dict]:
             return out
         except Exception as e:
             log.warning("SshHost Neo4j read failed, falling back to file: %s", e)
-    return _load_hosts_file()
+    return await asyncio.to_thread(_load_hosts_file)
 
 
 async def _persist_host_neo(rec: dict) -> None:
@@ -331,6 +403,8 @@ async def _save_hosts(hosts: Dict[str, dict]) -> None:
             try: await _persist_host_neo(rec)
             except Exception as e:
                 log.warning("SshHost persist(%s) failed: %s", rec.get("id"), e)
+    _invalidate_hosts_cache()
+    await _bump_hosts_ver()
 
 
 async def _delete_host(host_id: str) -> None:
@@ -344,6 +418,8 @@ async def _delete_host(host_id: str) -> None:
                 await s.run("MATCH (h:SshHost {id:$id}) DETACH DELETE h", id=host_id)
         except Exception as e:
             log.warning("SshHost delete failed for %s: %s", host_id, e)
+    _invalidate_hosts_cache()
+    await _bump_hosts_ver()
 
 
 def _public_host_record(h: dict) -> dict:
@@ -496,6 +572,19 @@ async def _run_local(argv: List[str], stdin_data: str = "",
                      cwd: Optional[str] = None,
                      env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     t0 = time.monotonic()
+    # Spawning from this large-RSS server via the default fork() path copies the
+    # parent's page tables while holding the GIL — so the loop freezes for the
+    # whole copy and NO thread offload can help (fork holds the GIL). A caught
+    # stall was 1.16s just to spawn `docker exec` for a workspace dirty-check.
+    # close_fds=False lets CPython take the posix_spawn (vfork) path instead,
+    # which shares the address space and never copies page tables, so spawn cost
+    # stops scaling with process size. Safe: since PEP 446 (3.4+) every fd Python
+    # opens is non-inheritable (O_CLOEXEC) by default, so no server socket / DB
+    # handle leaks into the child. (posix_spawn is skipped when cwd is set on
+    # Python <3.13; those callers keep the old path.) Opt out with VERA_FAST_SPAWN=0.
+    _spawn_kw: Dict[str, Any] = {}
+    if os.getenv("VERA_FAST_SPAWN", "1") != "0":
+        _spawn_kw["close_fds"] = False
     try:
         proc = await asyncio.create_subprocess_exec(
             *argv,
@@ -504,6 +593,7 @@ async def _run_local(argv: List[str], stdin_data: str = "",
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
             env={**os.environ, **(env or {})} if env else None,
+            **_spawn_kw,
         )
     except FileNotFoundError as e:
         return {"ok": False, "error": f"executable not found: {e}",
@@ -901,6 +991,258 @@ async def write_artifact_file(*, relpath: str, content: str, session_id: str = "
     with open(target, "w", encoding="utf-8") as fh:
         fh.write(content)
     return target
+
+
+async def artifact_file_exists(session_id: str = "", relpath: str = "") -> Optional[bool]:
+    """Does `relpath` actually exist in the session's EFFECTIVE artifact location —
+    INSIDE the container when sandboxed (where its runs execute), else the host
+    artifact dir? Mirrors write_artifact_file's routing so the answer means "is the
+    file where a later exec/read would find it?". Accepts absolute container paths
+    (…/workspace/x) or a path relative to the artifact dir.
+
+    Returns True (exists), False (definitely missing), or None (could NOT be
+    determined — no session, probe error). Callers MUST treat None as unknown and
+    never as 'missing', so a broken probe can't fail an otherwise-good step."""
+    session_id = session_id or _trigger_session_id()
+    p = str(relpath or "").strip()
+    if not p or "://" in p:
+        return None
+    pnorm = p.replace("\\", "/")
+    is_bare = "/" not in pnorm                       # a plain filename, no directory
+    base_name = os.path.basename(pnorm)
+    sb = _sandbox_mod()
+    # Sandboxed session → stat inside the container (its /workspace, not the host).
+    if session_id and sb is not None:
+        cpath = pnorm if pnorm.startswith("/") else (_WORKDIR.rstrip("/") + "/" + pnorm.lstrip("/"))
+        try:
+            hit: Optional[bool] = None
+            if hasattr(sb, "route_fs_exists"):
+                r = await sb.route_fs_exists(session_id, cpath)
+                if r is not None:
+                    hit = None if r.get("error") else bool(r.get("exists"))
+            elif hasattr(sb, "route_fs_read"):       # older sandbox module: infer from read
+                r = await sb.route_fs_read(session_id, cpath, max_bytes=1)
+                if r is not None:
+                    hit = None if (r.get("error") and "not found" not in str(r.get("error")).lower()) \
+                        else (False if r.get("error") else True)
+            if hit is True:
+                return True
+            # A BARE filename may legitimately live in a workspace SUBDIR the plan
+            # chose — search the whole workspace before ruling it missing, so a real
+            # file is never reported absent just because it isn't at the root.
+            if hit is False and is_bare and base_name and hasattr(sb, "route_shell"):
+                safe = re.sub(r"[^\w.\-]", "", base_name)
+                if safe:
+                    rr = await sb.route_shell(
+                        session_id,
+                        f"find /workspace -maxdepth 6 -name '{safe}' -print -quit 2>/dev/null", 20)
+                    if rr is not None and (rr.get("stdout") or "").strip():
+                        return True
+            if hit is not None:
+                return hit
+            # sb present but no active sandbox for this session → fall through to host.
+        except Exception as e:
+            log.debug("artifact_file_exists sandbox probe failed for %s: %s", cpath, e)
+            return None
+    # Host artifact dir.
+    try:
+        base = artifact_dir(session_id=session_id)
+        rel = re.sub(r"^/?workspace/", "", pnorm).lstrip("/")
+        parts = [s for s in rel.split("/") if s and s not in (".", "..")]
+        if not parts:
+            return None
+        target = _norm_path(os.path.join(base, *parts))
+        if _path_within(target, base) and os.path.isfile(target):
+            return True
+        if is_bare and base_name:                    # search subdirs (bounded)
+            seen = 0
+            for root, _dirs, files in os.walk(base):
+                if base_name in files:
+                    return True
+                seen += 1
+                if seen > 2000:
+                    break
+        return False
+    except Exception:
+        return None
+
+
+async def read_artifact_file(session_id: str = "", relpath: str = "",
+                             max_bytes: int = 60000) -> Optional[str]:
+    """Read `relpath` from the session's EFFECTIVE artifact location — inside the
+    container when sandboxed, else the host artifact dir. The read sibling of
+    write_artifact_file / artifact_file_exists, routed identically so it returns
+    the same bytes a later exec/read in the run would see.
+
+    Returns the text (truncated to `max_bytes`), or None when it could not be read
+    (no such file, probe unavailable, binary). Callers must treat None as "unknown",
+    never as "empty"."""
+    session_id = session_id or _trigger_session_id()
+    p = str(relpath or "").strip()
+    if not p or "://" in p:
+        return None
+    pnorm = p.replace("\\", "/")
+    sb = _sandbox_mod()
+    if session_id and sb is not None and hasattr(sb, "route_fs_read"):
+        cpath = pnorm if pnorm.startswith("/") else (_WORKDIR.rstrip("/") + "/" + pnorm.lstrip("/"))
+        try:
+            r = await sb.route_fs_read(session_id, cpath, max_bytes=max_bytes)
+            if r is not None and not r.get("error"):
+                return str(r.get("content") or "")[:max_bytes]
+        except Exception as e:
+            log.debug("read_artifact_file sandbox read failed for %s: %s", cpath, e)
+    try:
+        base = artifact_dir(session_id=session_id)
+        rel = re.sub(r"^/?workspace/", "", pnorm).lstrip("/")
+        parts = [s for s in rel.split("/") if s and s not in (".", "..")]
+        if not parts:
+            return None
+        target = _norm_path(os.path.join(base, *parts))
+        if not (_path_within(target, base) and os.path.isfile(target)):
+            return None
+        with open(target, "r", encoding="utf-8", errors="replace") as fh:
+            return fh.read(max_bytes)
+    except Exception as e:
+        log.debug("read_artifact_file host read failed for %s: %s", p, e)
+        return None
+
+
+async def artifact_list_files(session_id: str = "", limit: int = 40) -> Optional[List[str]]:
+    """The REAL filenames in the session's effective working directory — inside the
+    container when sandboxed (where its runs execute), else the host artifact dir.
+    Relative names only, so they resolve in the exec cwd either way.
+
+    This is what an agent should be told instead of being left to guess: the
+    invented-path failure mode (`cat /mnt/data/summary.txt`) is a model filling a
+    gap in its knowledge of what actually exists. Returns None when the listing
+    could NOT be determined (never [] — an empty list means the directory really
+    is empty, and callers state that to the model as fact)."""
+    session_id = session_id or _trigger_session_id()
+    names: List[str] = []
+    sb = _sandbox_mod()
+    if session_id and sb is not None and hasattr(sb, "route_fs_list"):
+        try:
+            r = await sb.route_fs_list(session_id, _sandbox_workdir())
+            if r is not None and not r.get("error"):
+                for e in (r.get("entries") or []):
+                    n = str(e.get("name") or "").strip()
+                    if n and not n.startswith("."):
+                        names.append(n + ("/" if e.get("kind") == "dir" else ""))
+                return sorted(names)[:max(1, limit)]
+        except Exception as e:
+            log.debug("artifact_list_files sandbox list failed: %s", e)
+    try:
+        base = artifact_dir(session_id=session_id)
+        for n in sorted(os.listdir(base)):
+            if n.startswith("."):
+                continue
+            names.append(n + ("/" if os.path.isdir(os.path.join(base, n)) else ""))
+    except Exception as e:
+        log.debug("artifact_list_files host list failed: %s", e)
+        return None
+    return names[:max(1, limit)]
+
+
+def _sandbox_workdir() -> str:
+    """The container path a sandboxed session runs in ('/workspace')."""
+    sb = _sandbox_mod()
+    return str(getattr(sb, "_WORKDIR", "/workspace") or "/workspace") if sb else "/workspace"
+
+
+async def copy_file_into_artifacts(session_id: str = "", host_path: str = "",
+                                   dest_name: str = "") -> str:
+    """Place an existing HOST file (e.g. generated podcast audio) into the session's
+    artifact area — the container /workspace when sandboxed (binary-safe docker cp),
+    else the host artifact dir. Lets a cap that produced a file DELIVER it where the
+    loop/agent will find it, so no separate 'save to disk' step is needed. Returns
+    the destination path, or '' on failure."""
+    session_id = session_id or _trigger_session_id()
+    if not host_path or not os.path.isfile(host_path):
+        return ""
+    sb = _sandbox_mod()
+    if session_id and sb is not None and hasattr(sb, "route_copy_in"):
+        try:
+            r = await sb.route_copy_in(session_id, host_path, dest_name)
+            if r and not r.get("error") and r.get("path"):
+                return r["path"]
+        except Exception as e:
+            log.debug("copy_file_into_artifacts sandbox route failed: %s", e)
+    # Host fallback.
+    try:
+        import shutil
+        base = artifact_dir(session_id=session_id)
+        name = re.sub(r"[^\w.\-]", "_", dest_name or os.path.basename(host_path)) or "artifact.bin"
+        target = _norm_path(os.path.join(base, name))
+        if _path_within(target, base):
+            os.makedirs(base, exist_ok=True)
+            shutil.copyfile(host_path, target)
+            return target
+    except Exception as e:
+        log.debug("copy_file_into_artifacts host copy failed: %s", e)
+    return ""
+
+
+@APP.get("/exec/artifacts/list", include_in_schema=False)
+async def artifact_list(session_id: str = ""):
+    """The files in a session's working directory, for the loop UI's file browser.
+
+    The agentic-loop cards could name files a run produced but gave no way to open
+    them: the run's sandbox is not reachable from the chat UI, so a generated
+    report/page/script was effectively write-only until someone shelled in. Pairs
+    with /exec/artifacts/download (same routing) so the UI can list, preview and
+    fetch the source of anything a loop wrote.
+
+    Output: {ok, session_id, dir, files:[{name, size, is_dir, ext}]}. Hidden
+    entries and the loop's own bookkeeping are filtered out."""
+    from fastapi.responses import JSONResponse
+    sid = str(session_id or "").strip()
+    if not sid:
+        return JSONResponse({"error": "session_id required"}, status_code=400)
+    try:
+        base = await artifact_dir_async(session_id=sid, create=False)
+    except Exception:
+        base = ""
+    def _row(name: str, size, mtime, is_dir: bool):
+        return {"name": name, "is_dir": is_dir, "size": size, "mtime": mtime,
+                "ext": (name.rsplit(".", 1)[-1].lower() if "." in name else "")}
+
+    def _keep(name: str) -> bool:
+        return bool(name) and not name.startswith(".") and name != "__pycache__"
+
+    out = []
+    # Sandboxed → route_fs_list already carries size/mtime per entry, so take them
+    # from there rather than probing each file (one call, not N round-trips).
+    sb = _sandbox_mod()
+    if sb is not None and hasattr(sb, "route_fs_list"):
+        try:
+            r = await sb.route_fs_list(sid, _sandbox_workdir())
+        except Exception:
+            r = None
+        if r is not None and not r.get("error"):
+            for e in (r.get("entries") or []):
+                nm = str(e.get("name") or "")
+                if _keep(nm):
+                    out.append(_row(nm, e.get("size"), e.get("mtime"),
+                                    e.get("kind") == "dir"))
+            out.sort(key=lambda x: (x["is_dir"], x["name"].lower()))
+            return {"ok": True, "session_id": sid, "dir": base, "files": out}
+    # Host artifact dir.
+    try:
+        hbase = artifact_dir(session_id=sid)
+        with os.scandir(hbase) as it:
+            for e in it:
+                if not _keep(e.name):
+                    continue
+                try:
+                    st = e.stat()
+                    out.append(_row(e.name, st.st_size, int(st.st_mtime), e.is_dir()))
+                except Exception:
+                    out.append(_row(e.name, None, None, e.is_dir()))
+    except Exception as e:
+        return {"ok": False, "session_id": sid, "dir": base, "files": [],
+                "error": f"working directory could not be listed: {e}"}
+    out.sort(key=lambda x: (x["is_dir"], x["name"].lower()))
+    return {"ok": True, "session_id": sid, "dir": base, "files": out}
 
 
 @APP.get("/exec/artifacts/download", include_in_schema=False)
