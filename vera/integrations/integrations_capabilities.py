@@ -420,6 +420,41 @@ async def cap_mcp_call(id: str = "", trace_id=None) -> Dict:
     return await connect(id=mcp_id)
 
 
+@capability(
+    "integration.identity.register",
+    http_method="POST", http_path="/integrations/identity/register", http_tags=["integration", "identity"],
+    memory="on",
+    description="Register this integration in the directory (FreeIPA-first via "
+                "identity.resolve.app: DNS + service principal + TLS cert; graceful "
+                "skip if FreeIPA is down), then stamp identity_fqdn / "
+                "identity_verified / cert on the record. Inputs: id (str!), fqdn "
+                "(str — defaults from host). Output: {ok, backend, result, integration}.",
+)
+async def cap_identity_register(id: str = "", fqdn: str = "", trace_id=None) -> Dict:
+    rec = await _get(id)
+    if not rec:
+        return {"error": "not found"}
+    fqdn = fqdn or rec.get("identity_fqdn") or rec.get("host") or ""
+    if not fqdn:
+        return {"error": "no fqdn/host to register"}
+    reg = _cap_raw("identity.resolve.app") or _cap_raw("identity.app.register")
+    if not reg:
+        return {"error": "identity resolver unavailable (identity module not loaded)"}
+    name = fqdn.split(".")[0]
+    r = await reg(name=name, ip=rec.get("host", ""), port=int(rec.get("port") or 0),
+                  ssh_host_id=rec.get("ssh_host_id", ""))
+    ok = bool(r.get("ok"))
+    rec["identity_fqdn"] = r.get("fqdn", fqdn)
+    rec["identity_verified"] = ok
+    cert = r.get("cert") if isinstance(r.get("cert"), dict) else {}
+    if cert.get("expires"):
+        rec["cert"] = {"fqdn": rec["identity_fqdn"], "expires": cert["expires"]}
+    await _put(rec)
+    await _audit("identity_register", rec, backend=r.get("backend"), ok=ok)
+    return {"ok": ok, "backend": r.get("backend", ""), "result": r,
+            "integration": _redact(rec)}
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 #  CONNECTIONS VIEW  (MCP / API / SSH / identity / cert / mesh, to+from a service)
 # ═════════════════════════════════════════════════════════════════════════════
@@ -738,7 +773,8 @@ register_ui(
         "integration.list", "integration.get", "integration.save",
         "integration.delete", "integration.access.set", "integration.operate",
         "integration.api.call", "integration.mcp.call", "integration.connections",
-        "integration.discover",
+        "integration.discover", "integration.identity.register",
+        "identity.resolve.status",
         # the one-click "register & secure everything" button drives autoenroll
         "autoenroll.scan", "autoenroll.run", "autoenroll.pending",
     ],

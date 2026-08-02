@@ -483,13 +483,16 @@ async def _enrol_one(a: Dict, cfg: Dict) -> Dict:
             except Exception as e:
                 steps["cert"] = {"ok": False, "error": str(e)}
 
-    # ── Directory (LDAP / IPA) host record ──
+    # ── Directory host record (FreeIPA-first via the resolver, graceful fallback) ──
     if cfg.get("do_ldap"):
-        reg = _cap("identity.host.register")
+        reg = _cap("identity.resolve.host") or _cap("identity.host.register")
         if reg and fqdn:
             try:
                 r = await reg(fqdn=fqdn, ip=a.get("ip", ""))
-                steps["ldap"] = {"ok": bool(r.get("ok")), "error": r.get("error", "")}
+                steps["ldap"] = {"ok": bool(r.get("ok")),
+                                 "backend": r.get("backend", ""),
+                                 "skipped": r.get("skipped", False),
+                                 "error": r.get("error", "")}
             except Exception as e:
                 steps["ldap"] = {"ok": False, "error": str(e)}
         else:

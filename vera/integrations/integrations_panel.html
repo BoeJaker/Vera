@@ -199,6 +199,8 @@ async function apiPing(id){const r=await api('/integrations/api/call','POST',{id
   toast(r.error?r.error:('API '+ (r.status||'?')),!!r.error);}
 async function mcpConnect(id){const r=await api('/integrations/mcp/call','POST',{id});
   toast(r.error?r.error:('MCP '+(r.status||'connected')),!!r.error);}
+async function idReg(id){toast('registering in directory…');const r=await api('/integrations/identity/register','POST',{id});
+  toast(r.error?r.error:('directory: '+(r.backend||'skipped')+(r.ok?' ✓':'')),!!r.error);openDrw(id);load();}
 
 /* ── drawer ── */
 async function openDrw(id){
@@ -210,6 +212,7 @@ async function openDrw(id){
   const acc=it.access||{}; const api2=it.api||{};
   $('#drwBody').innerHTML=`
     <div class="sec">Connections</div><div class="conns">${conns}</div>
+    <button class="btn sm" onclick="idReg('${it.id}')">🔐 Register in directory</button>
     <div class="sec">Access policy</div>
     <div class="toggles">${MODES.map(m=>tgHtml(it,m)).join('')}</div>
     <label style="font-size:12px;display:block;margin-top:8px">
