@@ -25,6 +25,12 @@
   .btn.pri{background:var(--acc);color:var(--on-acc,#04121f);border-color:var(--acc);font-weight:600}
   .btn.sm{padding:3px 7px;font-size:11px}
   .btn.on{border-color:var(--acc);color:var(--acc)}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .segb{background:var(--bg1);color:var(--t2);border:none;padding:5px 11px;font-size:12px;cursor:pointer}
+  .segb.on{background:var(--acc);color:var(--on-acc,#04121f);font-weight:600}
+  #intFrame{display:none;flex:1;border:none;width:100%;height:100%;background:var(--bg0)}
+  body.intmode #intFrame{display:block}
+  body.intmode #side,body.intmode #empty,body.intmode #grid,body.intmode #wsRightBtns{display:none !important}
   .btn.danger:hover{border-color:var(--stop);color:var(--stop)}
   .list{flex:1;overflow:auto;padding:6px}
   .wsrow{padding:8px 9px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;
@@ -111,13 +117,17 @@
 
   <div id="main">
     <header>
-      <span class="ttl" id="wsTitle">—</span>
+      <span class="seg"><button class="segb on" id="segWs" onclick="setView('ws')">▦ Workspaces</button><button class="segb" id="segInt" onclick="setView('int')">🧩 Integrations</button></span>
+      <span class="ttl" id="wsTitle" style="margin-left:10px">—</span>
       <span class="spacer"></span>
+      <span id="wsRightBtns">
       <button class="btn sm" onclick="openApps()" title="Mount / manage web apps for the app widget">🌐 Apps</button>
       <button class="btn sm" id="editBtn" onclick="toggleEdit()">✎ Edit</button>
       <button class="btn sm" id="addBtn" onclick="openAdd()" style="display:none">+ Widget</button>
       <button class="btn sm pri" id="saveBtn" onclick="saveWorkspace()" style="display:none">Save</button>
+      </span>
     </header>
+    <iframe id="intFrame" src="/integrations/panel" allow="clipboard-read; clipboard-write"></iframe>
     <div id="empty">
       <div style="font-size:26px">▦</div>
       <div>Create a workspace, then add terminal / file-explorer / app / panel widgets<br>bound to a container or VM.</div>
@@ -242,7 +252,13 @@ async function openWorkspace(id){
     $('#empty').style.display='none'; $('#grid').style.display='';
     $('#wsTitle').textContent=CUR.label; $('#addBtn').style.display='none'; $('#saveBtn').style.display='none';
     $('#editBtn').classList.remove('on');
-    renderGrid(); loadWorkspaces();
+    renderGrid(); /* ── view switch: Workspaces ⇄ Integrations (embedded Hub) ─────── */
+function setView(v){ const int=v==='int';
+  document.body.classList.toggle('intmode',int);
+  $('#segWs').classList.toggle('on',!int); $('#segInt').classList.toggle('on',int);
+}
+
+loadWorkspaces();
   }catch(e){ toast('load failed: '+e.message,true); }
 }
 async function delWorkspace(id){ if(!confirm('Delete workspace?'))return;

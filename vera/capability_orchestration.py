@@ -6551,6 +6551,10 @@ async def lifespan(app: FastAPI):
         # web UI or web-served VM). Loaded after evolve so its documentation
         # mission can reach evolve.sandbox.* for the loop-lab target.
         os.path.join(_here, "operator/operator_web_capabilities.py"),
+        # Integrations Hub: integration-centric layer (embed/interact/api/mcp/ssh
+        # with enforced per-app access) over app.mount/operator/mcp-catalog/identity.
+        # Loaded last so its lazy cap lookups resolve every referenced subsystem.
+        os.path.join(_here, "integrations/integrations_capabilities.py"),
         os.path.join(_here, "vera_graph_panels.py")
 
     ]

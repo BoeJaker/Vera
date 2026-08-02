@@ -1,0 +1,313 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Integrations Hub</title>
+<style>
+  :root{ --bg0:#0d0f12; --bg1:#14171c; --bg2:#1b1f26; --fg:#d6dde6; --t2:#9aa4b2;
+         --t3:#6b7480; --acc:#5aa9ff; --line:#252b34; --run:#3ecf8e; --stop:#e05a5a;
+         --warn:#e0a94a; }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg0);color:var(--fg);
+    font:13px/1.45 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  #wrap{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  header{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);flex-shrink:0}
+  .ttl{font-weight:600;font-size:14px}.sp{flex:1}
+  .btn{background:var(--bg2);color:var(--fg);border:1px solid var(--line);border-radius:7px;
+    padding:6px 11px;font-size:12px;cursor:pointer}
+  .btn:hover{border-color:var(--acc)} .btn.pri{background:var(--acc);color:#04121f;border-color:var(--acc);font-weight:600}
+  .btn.sm{padding:3px 8px;font-size:11px} .btn.danger:hover{border-color:var(--stop);color:var(--stop)}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  #grid{flex:1;overflow:auto;padding:14px;display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px;align-content:start}
+  .card{background:var(--bg1);border:1px solid var(--line);border-radius:11px;padding:12px;
+    display:flex;flex-direction:column;gap:9px;cursor:pointer;transition:border-color .15s}
+  .card:hover{border-color:var(--acc)}
+  .card.sens{border-color:#5a2e2e}
+  .chead{display:flex;align-items:center;gap:9px}
+  .ico{font-size:22px;line-height:1}
+  .nm{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sub{color:var(--t3);font-size:11px}
+  .badges{display:flex;gap:5px;flex-wrap:wrap}
+  .bdg{font-size:10px;padding:1px 6px;border-radius:20px;border:1px solid var(--line);color:var(--t2)}
+  .bdg.ok{color:var(--run);border-color:#24523c}
+  .bdg.warn{color:var(--warn);border-color:#5a4a24}
+  .bdg.src{color:var(--acc);border-color:#274a6b}
+  .toggles{display:flex;gap:5px;flex-wrap:wrap;margin-top:2px}
+  .tg{font-size:11px;padding:3px 8px;border-radius:7px;border:1px solid var(--line);
+    background:var(--bg0);color:var(--t3);cursor:pointer;user-select:none}
+  .tg.on{color:var(--run);border-color:#24523c;background:#12241b}
+  .tg.locked{opacity:.45;cursor:not-allowed;text-decoration:line-through}
+  .acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:3px}
+  #empty{grid-column:1/-1;text-align:center;color:var(--t3);padding:40px}
+  /* drawer */
+  .ov{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:100}
+  .ov.on{display:block}
+  .drw{position:absolute;top:0;right:0;height:100%;width:460px;max-width:96%;background:var(--bg1);
+    border-left:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden}
+  .drw h3{margin:0;padding:13px 15px;border-bottom:1px solid var(--line);font-size:14px;display:flex;gap:8px;align-items:center}
+  .drw .bd{padding:14px 15px;overflow:auto;flex:1}
+  .drw .ft{padding:11px 15px;border-top:1px solid var(--line);display:flex;gap:8px}
+  .fld{margin-bottom:11px}.fld label{display:block;font-size:11px;color:var(--t2);margin-bottom:3px}
+  .fld input,.fld select{width:100%;background:var(--bg0);border:1px solid var(--line);color:var(--fg);
+    border-radius:6px;padding:7px 9px;font-size:12px}
+  .row2{display:flex;gap:8px}.row2>*{flex:1}
+  .conns{border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:6px 0 12px}
+  .conn{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--line);font-size:12px}
+  .conn:last-child{border-bottom:none}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--t3);flex-shrink:0}
+  .dot.on{background:var(--run)} .conn .ct{font-weight:600;width:66px;text-transform:capitalize}
+  .conn .cd{color:var(--t3);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sec{font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.04em;margin:14px 0 6px}
+  .hint{color:var(--t3);font-size:11px;margin-top:4px}
+  #toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--bg2);
+    border:1px solid var(--line);border-radius:8px;padding:8px 14px;opacity:0;transition:.2s;pointer-events:none;z-index:200}
+  #toast.on{opacity:1}#toast.err{border-color:var(--stop);color:var(--stop)}
+  pre.plan{background:var(--bg0);border:1px solid var(--line);border-radius:8px;padding:10px;
+    font:11px/1.4 ui-monospace,monospace;max-height:280px;overflow:auto;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <header>
+    <span class="ttl">🧩 Integrations Hub</span>
+    <span class="sub" id="count"></span>
+    <span class="sp"></span>
+    <button class="btn sm" onclick="load()">↻</button>
+    <button class="btn sm" onclick="openNew()">+ Add</button>
+    <button class="btn sm" onclick="openDiscover()">🔍 Discover</button>
+    <button class="btn sm pri" onclick="openRegister()">🔐 Register &amp; secure</button>
+  </header>
+  <div id="grid"></div>
+</div>
+
+<!-- detail / edit drawer -->
+<div class="ov" id="drwOv" onclick="if(event.target===this)closeDrw()">
+  <div class="drw">
+    <h3><span id="dIco">🧩</span><span id="dTitle">Integration</span>
+        <span class="sp" style="flex:1"></span>
+        <button class="btn sm" onclick="closeDrw()">✕</button></h3>
+    <div class="bd" id="drwBody"></div>
+    <div class="ft">
+      <button class="btn danger" onclick="delCur()">Delete</button>
+      <span class="sp" style="flex:1"></span>
+      <button class="btn" onclick="closeDrw()">Close</button>
+      <button class="btn pri" onclick="saveCur()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- discover modal -->
+<div class="ov" id="discOv" onclick="if(event.target===this)closeDiscover()">
+  <div class="drw" style="left:0;right:auto;border-right:1px solid var(--line);border-left:none">
+    <h3>🔍 Discover integrations<span class="sp" style="flex:1"></span>
+        <button class="btn sm" onclick="closeDiscover()">✕</button></h3>
+    <div class="bd">
+      <div class="hint">Finds local Docker containers, and optionally port-scans a host
+        for web apps + MCP servers. New integrations are created <b>locked</b>
+        (embed only) — enable interaction/API/MCP per integration afterwards.</div>
+      <div class="fld" style="margin-top:12px"><label>Extra host to scan (optional)</label>
+        <input id="discHost" placeholder="192.168.0.90"></div>
+      <label style="font-size:12px"><input type="checkbox" id="discDocker" checked> local Docker hosts</label><br>
+      <label style="font-size:12px"><input type="checkbox" id="discId" checked> mark identity-verified from directory</label>
+      <div id="discOut" class="hint" style="margin-top:12px"></div>
+    </div>
+    <div class="ft"><span class="sp" style="flex:1"></span>
+      <button class="btn" onclick="runDiscover(false)">Preview</button>
+      <button class="btn pri" onclick="runDiscover(true)">Discover</button></div>
+  </div>
+</div>
+
+<!-- register & secure modal -->
+<div class="ov" id="regOv" onclick="if(event.target===this)closeRegister()">
+  <div class="drw" style="width:560px">
+    <h3>🔐 Register &amp; secure everything<span class="sp" style="flex:1"></span>
+        <button class="btn sm" onclick="closeRegister()">✕</button></h3>
+    <div class="bd">
+      <div class="hint">Runs the auto-enrolment orchestrator across your estate:
+        fresh TLS certs (step-ca), network mesh join, directory (FreeIPA→lldap)
+        records, and mounts exposed app ports. A dry-run plan is shown first;
+        nothing changes until you apply.</div>
+      <div id="regOut"><pre class="plan" id="regPlan">Loading plan…</pre></div>
+    </div>
+    <div class="ft"><span class="sp" style="flex:1"></span>
+      <button class="btn" onclick="loadPlan()">↻ Re-scan</button>
+      <button class="btn pri" onclick="applyRegister()">Apply (dry_run=false)</button></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let ITEMS=[], CUR=null;
+const MODES=['embed','interact','api','mcp','ssh'];
+function toast(m,e){const t=$('#toast');t.textContent=m;t.className='on'+(e?' err':'');clearTimeout(t._h);t._h=setTimeout(()=>t.className='',2600);}
+async function api(path,method='GET',body){const o={method,headers:{'Content-Type':'application/json'}};if(body)o.body=JSON.stringify(body);
+  const r=await fetch(path,o);let j={};try{j=await r.json();}catch(e){} if(!r.ok&&!j.error)j.error='HTTP '+r.status; return j;}
+
+async function load(){
+  const r=await api('/integrations/list'); ITEMS=r.integrations||[];
+  $('#count').textContent=ITEMS.length?ITEMS.length+' services':'';
+  const g=$('#grid');
+  if(!ITEMS.length){g.innerHTML='<div id="empty">No integrations yet.<br><br>'
+    +'<button class="btn pri" onclick="openDiscover()">🔍 Discover local services</button></div>';return;}
+  g.innerHTML='';
+  ITEMS.forEach(it=>g.appendChild(card(it)));
+}
+function card(it){
+  const d=document.createElement('div'); d.className='card'+(it.sensitive?' sens':'');
+  const acc=it.access||{};
+  const badges=[`<span class="bdg src">${esc(it.source||'manual')}</span>`];
+  if(it.identity_verified)badges.push('<span class="bdg ok">✓ verified</span>');
+  if(it.in_mesh)badges.push('<span class="bdg ok">mesh</span>');
+  if(it.sensitive)badges.push('<span class="bdg warn">sensitive</span>');
+  d.innerHTML=`<div class="chead"><span class="ico">${esc(kindIcon(it.kind))}</span>
+      <div style="min-width:0;flex:1"><div class="nm">${esc(it.label)}</div>
+      <div class="sub">${esc(it.kind)} · ${esc(it.base_url||(it.host?it.host+':'+it.port:''))}</div></div></div>
+    <div class="badges">${badges.join('')}</div>
+    <div class="toggles">${MODES.map(m=>tgHtml(it,m)).join('')}</div>
+    <div class="acts">
+      <button class="btn sm" ${acc.embed?'':'disabled'} onclick="event.stopPropagation();openEmbed('${it.id}')">Open</button>
+      <button class="btn sm" ${acc.interact&&!it.sensitive?'':'disabled'} onclick="event.stopPropagation();operate('${it.id}')">Operate</button>
+      <button class="btn sm" ${acc.api&&!it.sensitive?'':'disabled'} onclick="event.stopPropagation();apiPing('${it.id}')">API</button>
+      <button class="btn sm" ${acc.mcp&&!it.sensitive?'':'disabled'} onclick="event.stopPropagation();mcpConnect('${it.id}')">MCP</button>
+    </div>`;
+  d.onclick=()=>openDrw(it.id);
+  return d;
+}
+function tgHtml(it,m){
+  const acc=it.access||{}; const locked=it.sensitive&&['interact','api','mcp'].includes(m);
+  const on=acc[m]&&!locked;
+  return `<span class="tg ${on?'on':''} ${locked?'locked':''}" title="${locked?'locked by sensitive flag':'toggle '+m}"
+    onclick="event.stopPropagation();${locked?'':`toggle('${it.id}','${m}',${!acc[m]})`}">${m}</span>`;
+}
+function kindIcon(k){return{n8n:'🔗',homeassistant:'🏠',gitea:'🍵',github:'🐙',grafana:'📊',
+  wordpress:'📝',portainer:'🐳',prometheus:'🔥'}[k]||'🌐';}
+
+async function toggle(id,mode,val){
+  const b={id}; b[mode]=val;
+  const r=await api('/integrations/access/set','POST',b);
+  if(r.error)return toast(r.error,true);
+  toast(`${mode} ${val?'enabled':'disabled'}`); load(); if(CUR&&CUR.id===id)openDrw(id);
+}
+function openEmbed(id){window.open('/integrations/'+id+'/embed','_blank');}
+async function operate(id){toast('starting operator…');const r=await api('/integrations/operate','POST',{id});
+  toast(r.error?r.error:(r.session_id?'operator session '+r.session_id:'operator run started'),!!r.error);}
+async function apiPing(id){const r=await api('/integrations/api/call','POST',{id,method:'GET',path:''});
+  toast(r.error?r.error:('API '+ (r.status||'?')),!!r.error);}
+async function mcpConnect(id){const r=await api('/integrations/mcp/call','POST',{id});
+  toast(r.error?r.error:('MCP '+(r.status||'connected')),!!r.error);}
+
+/* ── drawer ── */
+async function openDrw(id){
+  const r=await api('/integrations/connections','POST',{id}); if(r.error)return toast(r.error,true);
+  CUR=r.integration; const it=CUR;
+  $('#dIco').textContent=kindIcon(it.kind); $('#dTitle').textContent=it.label||'Integration';
+  const conns=(r.connections||[]).map(c=>`<div class="conn"><span class="dot ${c.enabled?'on':''}"></span>
+    <span class="ct">${esc(c.type)}</span><span class="cd">${esc(c.detail||c.target||'')}</span></div>`).join('');
+  const acc=it.access||{}; const api2=it.api||{};
+  $('#drwBody').innerHTML=`
+    <div class="sec">Connections</div><div class="conns">${conns}</div>
+    <div class="sec">Access policy</div>
+    <div class="toggles">${MODES.map(m=>tgHtml(it,m)).join('')}</div>
+    <label style="font-size:12px;display:block;margin-top:8px">
+      <input type="checkbox" id="dSens" ${it.sensitive?'checked':''} onchange="toggleSens('${it.id}',this.checked)">
+      mark <b>sensitive</b> (hard-locks interact/api/mcp)</label>
+    <div class="sec">Details</div>
+    <div class="fld"><label>Label</label><input id="dLabel" value="${esc(it.label||'')}"></div>
+    <div class="row2"><div class="fld"><label>Kind</label>
+      <select id="dKind">${['n8n','homeassistant','gitea','github','grafana','wordpress','portainer','prometheus','generic']
+        .map(k=>`<option ${k===it.kind?'selected':''}>${k}</option>`).join('')}</select></div>
+      <div class="fld"><label>Scheme</label><select id="dScheme">
+        <option ${it.scheme==='http'?'selected':''}>http</option>
+        <option ${it.scheme==='https'?'selected':''}>https</option></select></div></div>
+    <div class="row2"><div class="fld"><label>Host</label><input id="dHost" value="${esc(it.host||'')}"></div>
+      <div class="fld" style="max-width:100px"><label>Port</label><input id="dPort" value="${esc(it.port||'')}"></div></div>
+    <div class="fld"><label>Base URL (overrides host/port)</label><input id="dBase" value="${esc(it.base_url||'')}"></div>
+    <div class="sec">API connector</div>
+    <div class="row2"><div class="fld"><label>Auth scheme</label><select id="dApiScheme">
+      ${['bearer','token','header','basic','none'].map(s=>`<option ${s===(api2.auth_scheme)?'selected':''}>${s}</option>`).join('')}</select></div>
+      <div class="fld"><label>Header name (scheme=header)</label><input id="dApiHeader" value="${esc(api2.auth_header||'')}"></div></div>
+    <div class="fld"><label>API token / key ${api2.has_auth?'<span class="bdg ok">set</span>':''}</label>
+      <input id="dApiTok" type="password" placeholder="${api2.has_auth?'•••• (blank keeps existing)':'paste token'}"></div>
+    <div class="sec">Links</div>
+    <div class="fld"><label>Paired MCP server id (mcp.catalog)</label><input id="dMcp" value="${esc(it.mcp_id||'')}"></div>
+    <div class="fld"><label>SSH host id (exec store)</label><input id="dSsh" value="${esc(it.ssh_host_id||'')}"></div>`;
+  $('#drwOv').classList.add('on');
+}
+function closeDrw(){$('#drwOv').classList.remove('on');CUR=null;}
+async function toggleSens(id,val){const r=await api('/integrations/access/set','POST',{id,sensitive:val});
+  if(r.error)return toast(r.error,true);toast('sensitive '+(val?'on':'off'));load();openDrw(id);}
+async function saveCur(){
+  if(!CUR)return; const b={id:CUR.id,label:$('#dLabel').value,kind:$('#dKind').value,scheme:$('#dScheme').value,
+    host:$('#dHost').value,port:parseInt($('#dPort').value)||0,base_url:$('#dBase').value,
+    api_scheme:$('#dApiScheme').value,api_header:$('#dApiHeader').value,mcp_id:$('#dMcp').value,ssh_host_id:$('#dSsh').value};
+  if($('#dApiTok').value)b.api_token=$('#dApiTok').value;
+  const r=await api('/integrations/save','POST',b);
+  if(r.error)return toast(r.error,true); toast('Saved'); closeDrw(); load();
+}
+async function delCur(){if(!CUR||!confirm('Delete this integration? (the service itself is untouched)'))return;
+  await api('/integrations/delete','POST',{id:CUR.id}); toast('Deleted'); closeDrw(); load();}
+
+/* ── add ── */
+function openNew(){CUR={id:'',label:'',kind:'generic',scheme:'http',host:'',port:0,access:{},api:{}};
+  $('#dIco').textContent='🧩';$('#dTitle').textContent='New integration';
+  $('#drwBody').innerHTML=`
+    <div class="fld"><label>Label</label><input id="dLabel" placeholder="e.g. Home n8n"></div>
+    <div class="row2"><div class="fld"><label>Kind</label><select id="dKind">
+      ${['generic','n8n','homeassistant','gitea','github','grafana','wordpress','portainer','prometheus']
+        .map(k=>`<option>${k}</option>`).join('')}</select></div>
+      <div class="fld"><label>Scheme</label><select id="dScheme"><option>http</option><option>https</option></select></div></div>
+    <div class="row2"><div class="fld"><label>Host</label><input id="dHost" placeholder="192.168.0.90"></div>
+      <div class="fld" style="max-width:100px"><label>Port</label><input id="dPort" placeholder="5678"></div></div>
+    <div class="fld"><label>Base URL (optional; for cloud like GitHub)</label><input id="dBase" placeholder="https://api.github.com"></div>
+    <div class="fld"><label>API token / key (optional)</label><input id="dApiTok" type="password"></div>
+    <input type="hidden" id="dApiScheme" value=""><input type="hidden" id="dApiHeader" value="">
+    <input type="hidden" id="dMcp" value=""><input type="hidden" id="dSsh" value="">
+    <div class="hint">New integrations start <b>locked</b> (embed only). Set access after saving.</div>`;
+  $('#drwOv').classList.add('on');
+}
+
+/* ── discover ── */
+function openDiscover(){$('#discOut').innerHTML='';$('#discOv').classList.add('on');}
+function closeDiscover(){$('#discOv').classList.remove('on');}
+async function runDiscover(commit){
+  $('#discOut').textContent='Scanning…';
+  const r=await api('/integrations/discover','POST',{host:$('#discHost').value.trim(),
+    docker:$('#discDocker').checked,identity:$('#discId').checked,commit});
+  if(r.error){$('#discOut').textContent=r.error;return;}
+  $('#discOut').innerHTML=`found <b>${r.found}</b> · ${commit?'created <b>'+r.created.length+'</b>, updated '+r.updated.length:'preview only'}`
+    +(r.created.length?'<br>'+r.created.map(c=>esc(c.label)).join(', '):'');
+  if(commit){load();}
+}
+
+/* ── register & secure (autoenroll) ── */
+function openRegister(){$('#regOv').classList.add('on');loadPlan();}
+function closeRegister(){$('#regOv').classList.remove('on');}
+async function loadPlan(){$('#regPlan').textContent='Scanning estate…';
+  const r=await api('/autoenroll/scan','POST',{});
+  if(r.error){$('#regPlan').textContent=r.error;return;}
+  const s=r.summary||{};
+  let out=`assets: ${s.assets}   need creds: ${s.need_creds}   meshed: ${s.already_meshed}\n`
+    +`secret backend: ${r.secret_backend||'?'}\n\n`;
+  (r.plan||[]).forEach(p=>{out+=`• ${p.name} [${p.kind}]  ${p.ip||''}\n    actions: ${(p.actions||[]).join(', ')||'—'}`
+    +`${p.needs&&p.needs.length?'   needs: '+p.needs.join(','):''}\n`;});
+  $('#regPlan').textContent=out||'(nothing to enrol)';
+}
+async function applyRegister(){
+  if(!confirm('Apply auto-enrolment for real (dry_run=false)? This issues certs, joins the mesh, and creates directory records.'))return;
+  $('#regPlan').textContent='Applying…';
+  const r=await api('/autoenroll/run','POST',{dry_run:false});
+  if(r.error){$('#regPlan').textContent=r.error;return;}
+  const s=r.summary||{};
+  $('#regPlan').textContent=`done — ok:${s.ok||0} partial:${s.partial||0} needs_cred:${s.needs_cred||0}\n`
+    +JSON.stringify(r.results||r,null,1).slice(0,4000);
+  toast('Auto-enrol run complete'); load();
+}
+
+load();
+</script>
+</body>
+</html>
