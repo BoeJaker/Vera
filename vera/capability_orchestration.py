@@ -2069,7 +2069,16 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         _hb_task = asyncio.create_task(_ollama_liveness_heartbeat(
             req_id, chosen, mdl, caller, prompt_preview, _hb_stop))
         try:
-            async with _ollama_slot(chosen):
+            # timeout=timeout (not omitted): a caller that passed an explicit
+            # per-call timeout gets it enforced on the QUEUE WAIT too, not just
+            # the post-connection read below — without this, `timeout=` only
+            # ever bounded the read/stall phase, and the wait for a free
+            # generation slot stayed governed SOLELY by the global
+            # OLLAMA_QUEUE_TIMEOUT (default 0 = unbounded) no matter what a
+            # caller asked for. Callers that don't pass timeout (the vast
+            # majority) are unaffected — same unbounded-queue-wait default as
+            # always, since `timeout` is None there too.
+            async with _ollama_slot(chosen, timeout=timeout):
                 _hb_stop.set()   # slot acquired — the queue heartbeat can stop
                 # Phase transition: queued → generating (panel moves the job
                 # from the Queued tab to Running the moment the node starts).
@@ -2260,9 +2269,11 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                 fb_inst["in_use"] = fb_inst.get("in_use", 0) + 1
                 try:
                     # Same only-fail-when-idle semantics as the primary path:
-                    # unbounded queue wait, streamed response so the read
-                    # timeout is a stall detector rather than a total cap.
-                    async with _ollama_slot(fb_id):
+                    # unbounded queue wait UNLESS the caller passed an explicit
+                    # timeout (see the primary path's _ollama_slot call above),
+                    # streamed response so the read timeout is a stall detector
+                    # rather than a total cap.
+                    async with _ollama_slot(fb_id, timeout=timeout):
                         async with httpx.AsyncClient(verify=_SSL_CTX, timeout=httpx.Timeout(gen_timeout, connect=15.0)) as c:
                             async with c.stream("POST", f"{fb_inst['url']}/api/generate",
                                                 json={**body, "stream": True}) as r:

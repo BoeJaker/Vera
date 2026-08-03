@@ -747,6 +747,12 @@ async function loadTest(){
   wfInit();
   refreshTestRuns();
   restoreTestRun();   // if a run is in-flight/last, re-attach + restore its view
+  // Re-check periodically for a NEW externally-triggered run while this tab
+  // just sits open (not merely on nav/reload) — found live 2026-08-03: a run
+  // launched by a direct HTTP call while Loop Lab was already open on the
+  // Test tab stayed invisible until a manual reload. Only fires the (cheap)
+  // adopt-check when nothing is already being actively followed here.
+  if(!_testAdoptTimer)_testAdoptTimer=setInterval(()=>{if(!_implTimer)restoreTestRun()},8000);
 }
 // Refresh ONLY the recent-runs table (used after a run completes — does not wipe
 // the workflow diagram, so the final animated state stays on screen).
@@ -769,6 +775,7 @@ function _watchAlo(){return document.querySelector('#sec-watch vera-agent-loop-o
 // No SSE, no event-bus dependency: it cannot silently miss events, it survives
 // navigating away and back (full replay from 0), and a status line always
 // shows what it's following so it never sits on a dead "Waiting for events…".
+let _testAdoptTimer=null;
 let _implSid='',_implSince=0,_implTimer=null,_implGoal='',_implT0=0,
     _implMode='primary',_implTicks=0,_implRunDone=false,_implTotal=0,_implExact=false,
     // The session that ACTUALLY carried events (may be a discovered child, not
@@ -1000,11 +1007,24 @@ async function tcRun(){
 // here means opening/reloading Loop Lab always shows a run that's actually
 // happening, not just ones this tab itself launched.
 async function _adoptLiveRunIfAny(){
-  if(_testRunId)return;   // already tracking something locally — don't clobber it
+  // Only skip if we're ACTIVELY polling something — a stale _testRunId left
+  // over from a run that already finished/failed must NOT block adopting a
+  // genuinely different NEW live run (found live 2026-08-03: a failed run's
+  // id stuck around in _testRunId, silently preventing the next externally-
+  // triggered run from ever being picked up — "I can't see the current test
+  // running" even though evolve.run.status clearly showed it live).
+  if(_testRunId && _implTimer)return;
   try{
     const st=await api('/evolve/run/status');
     const cur=st&&st.current;
-    if(st&&st.live&&cur&&cur.run_id){
+    if(st&&st.live&&cur&&cur.run_id&&cur.run_id!==_testRunId){
+      // _implResolvedSid/_implExact are the PREVIOUS run's — reusing them here
+      // (found live 2026-08-03) makes bindImplementer's knownSid short-circuit
+      // straight to the OLD run's dead session, so the timeline silently polls
+      // a session that will NEVER produce another event again: looks exactly
+      // like "stuck on the first card forever" while a genuinely different,
+      // actively-progressing run is invisible right alongside it.
+      _implResolvedSid='';_implExact=false;_implFallbackSteps=null;
       _testRunId=cur.run_id;
       _testRunKind=cur.type||'loop';
       _testRunLabel=cur.task||'';

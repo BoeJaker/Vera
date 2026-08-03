@@ -1252,3 +1252,265 @@ actually completes; the "linked Dispatch sessions + Loop Lab runs"
 piece of the Branches view is click-driven (cross-link), not an
 always-visible inline list — revisit if that turns out to be
 insufficient once used for real.
+
+## 19. Manual-run timeout fix, Loop Lab live-reattach, and a Phase A test audit
+
+**The manual-run hard-timeout bug.** `chain-preserve-existing-file` (§18)
+was killed at its 480s `timeout_s` while its own event trace showed it
+still actively working — the activity-aware watchdog (`_indefinite`/
+`_idle_s`/`_max_s`, kill only on genuine idleness or an absolute 7200s
+ceiling) was gated to `source == "run"` only, i.e. interactive
+`run.start` sessions from the panel. A single manual task run
+(`evolve.task.run`, `source="manual"`) still used the OLD fixed-clock
+`timeout_s` kill — reasonable for a suite (many tasks queued behind
+one hung one) but wrong for a single run with nothing else waiting.
+Fixed: `_run_task`'s gate is now `source in ("run", "manual")`.
+
+**Loop Lab couldn't show its own externally-triggered runs.** Chat can
+reattach to any live agentic loop even if it wasn't created in that
+chat session; Loop Lab's Test tab couldn't do the equivalent — opening/
+refreshing it only ever restored a LOCALLY-tracked run
+(`_testRunId` set by that tab's own Run button). A test launched by a
+direct HTTP call (this session's whole test-launching pattern) was
+invisible until manually correlated. Fixed with `_adoptLiveRunIfAny()`
+(`evolve_panel.html`): on load/restore, if nothing is locally tracked,
+ask `evolve.run.status` for whatever's currently live server-side
+(`_RUN_LIVE`, regardless of who started it) and adopt it — then the
+existing `bindImplementer`/`implPoll` mechanism just works.
+
+**That adoption path had its own bug, found live.** A run adopted this
+way showed the triage/toolkit/orchestrator-planning cards but NEVER any
+step/cycle cards — even though the SAME run, watched from its own
+originating chat, showed everything. Root cause: `implFindChild()` (the
+logic that finds a strategic/orchestrated loop's REAL execution
+sub-session, since the top-level `evolve:<run_id>` session only ever
+carries planning-level events) hard-requires a non-empty `goal` to match
+against, and `_adoptLiveRunIfAny()` had no goal to give it —
+`evolve.run.status`'s live snapshot (`_RUN_LIVE`) never carried one.
+Fixed on both ends: `_RUN_LIVE` now includes `goal` (`evolve_capabilities.py`,
+set once per run from the resolved task), and the panel reads it back
+through instead of hard-coding empty. Verified live end-to-end after a
+restart, watching a genuinely-running task from a fresh Loop Lab load.
+
+**Phase A: audited every benchmark task for effectiveness.**
+`memory-roundtrip`'s label had a mojibake em-dash (encoding artifact from
+an earlier save) — fixed. `web-brief` had a real regression: it hard-
+required `cap_called: web.search`, which would unfairly FAIL a run that
+correctly used the newer `web.research`/`web.crawl` (those call
+`web.search`/`web.fetch` as plain Python calls, never as separate
+model-invoked `tool_use` steps, so they never appear in `cap_called`) —
+loosened the check, rewrote the rubric to explain and reward the newer
+tools, deleted a redundant duplicate task (`recent-web-info`) created
+before spotting the overlap. Reviewed the rest (`date-math`,
+`dream-reason`, `fabric-lookup`, `tool-echo`, `ui-verify-click`,
+`chain-preserve-existing-file`, the `smoke-*` trio, `sim-reseller-grow`)
+— all reasonably scoped for what they test, with one exception:
+**`format-json`** only checked that key `"a"` was present and the
+output was valid JSON — `{"a":1}` alone, missing `b`/`c` or with wrong
+values, would incorrectly pass. Tightened to assert all three
+`key: value` pairs via regex.
+
+## 20. Claude Code session ingest: a real race condition, and an event-loop-blocking bug
+
+The scheduled auto-ingest (`ide.claude_sessions.autoingest`, built
+earlier this session — fires at boot and every
+`VERA_CLAUDE_SESSIONS_INGEST_INTERVAL` seconds, default 300) looked
+completely stalled: the local backlog (87 synced transcript files, some
+30MB+) sat at 4 known sessions across two full restarts and a 20-minute
+monitoring window with zero movement. Root cause: no lock. A single
+`ingest_all` pass over a large backlog can genuinely take longer than
+the 5-minute interval, and the scheduler doesn't check whether the
+previous tick is still running before firing the next — two overlapping
+passes both load the on-disk byte-offset cursor from the SAME stale
+position and race to save it back at the end, so whichever finishes
+last wins and the other's progress vanishes. Fixed with a per-source
+`asyncio.Lock` (an overlapping tick now skips instead of racing) and by
+saving the cursor after every FILE instead of only once at the very end
+of the whole pass, so an interruption mid-pass loses at most one file's
+progress.
+
+Confirmed live that the fix works — genuinely progressing, not stuck —
+by bypassing a caching layer that was masking it (`fabric.query`'s
+relevance-search cache returned identical stale results twice in a row;
+`fabric.datasets`' plain record count doesn't cache and showed real
+growth: 4933 → 4941 records in 25 seconds, `updated_at` advancing).
+Still slow (roughly one turn per ~3 seconds — several DB writes per
+turn: Neo4j, fabric ingest, Redis broadcast) but no longer racing itself
+into permanent stasis.
+
+**Separately, a real event-loop-blocking bug turned up in `perf.stalls`
+after a restart** (checked per the `improve-vera` skill's own §6
+advice): `_local_scan()` walks `~/.claude/projects` via a synchronous
+`Path.rglob`, called directly inside an `async def` with no executor
+offload — with the real 87-file tree this froze the ENTIRE event loop
+(every HTTP request, every loop step, everything) for 1000ms+ per
+scheduled tick. Fixed by moving it to `asyncio.get_event_loop()
+.run_in_executor`, the same pattern already used for `_git()`/subprocess
+calls elsewhere in the codebase.
+
+## 21. Dev tooling: generic env control, build script verbs, VS Code tasks, and a new skill
+
+Three related asks: give Claude Code's own work a concrete Loop Lab
+integration (adversarial-review + coder role, sandboxed rather than
+editing prod directly — prod is being phased out as an EDIT target,
+still fine as a live-diagnosis target); add VS Code tasks to control
+Vera (start/stop/restart, env vars, Claude-sync); build both into Vera/
+the extension so they're reusable.
+
+**New skill: `improve-vera-sandboxed`** (`.claude/skills/`), explicitly
+based on `improve-vera` (§0/§2/§3/§3a/§5/§6/§7 carry over unchanged) but
+retargeting the actual EDIT step: cut a branch, edit ONLY inside the
+Loop Lab worktree (never prod's checkout), do a genuine adversarial-
+reviewer pass on the diff before considering it done (a second, less
+invested pass catches what the first won't), build Loop Lab/pytest
+coverage for the touched area if it doesn't exist, gate through
+`evolve.pipeline.run(auto_promote=False)`, and STOP — tell the user
+directly that a pipeline is ready for their manual
+`evolve.pipeline.promote`, never call it automatically. Confirmed live
+that the underlying gated pipeline (branch → worktree → sandbox test →
+manual-only promote) already existed almost exactly as described —
+`evolve_pipeline_promote` merges to main and nothing else does. One
+real gap found and stated plainly rather than silently assumed-away: no
+active notification fires when a pipeline reaches "awaiting promote" —
+`_audit`/`emit_event` do, but nothing pages anyone.
+
+**Generic environment control**: `sys.env.get`/`sys.env.set`
+(`capability_orchestration.py`), dev-mode-gated like the existing
+`sys.dev.restart`, read/write the repo-root `.env` preserving every
+other line. Companion `sys.dev.stop` (clean shutdown, mirrors
+`sys.dev.restart`'s structure but exits instead of re-execing) added so
+"stop" doesn't require SSH.
+
+**A security bug shipped, caught, and fixed within minutes.** The first
+version of `sys.env.get` printed `FABRIC_S3_ACCESS` — a real Garage
+access key — in cleartext: the redaction keyword list (SECRET/PASSWORD/
+TOKEN/KEY/CREDENTIAL) didn't cover "ACCESS", and the endpoint itself
+wasn't gated behind `VERA_DEV_MODE` like its siblings. Both fixed
+(broader keyword list — explicitly documented as "err toward
+over-redacting" rather than a false sense of completeness — plus the
+same dev-mode gate) and redeployed immediately on discovery, verified
+redacted after.
+
+**`build.sh`/`build.ps1`** gained real `start`/`stop`/`restart`/
+`sync-claude` verbs (`restart`/`stop` call `sys.dev.restart`/
+`sys.dev.stop` over HTTP — no SSH needed). Found and fixed a real bug
+while adding them: `build.ps1` defaulted to `http://localhost:$Port`,
+which is only correct if the script runs ON the Vera host itself —
+from a separate Windows machine (this project's actual, universal usage
+pattern) it silently probes the WRONG machine. Now defaults to
+`llm.int`, overridable via `$env:VERA_HOST` for anyone who genuinely
+does run Vera locally via Docker Desktop.
+
+**VS Code**: a ready-made `tools/vera-vscode/tasks/vera-tasks.json`
+(start/stop/restart/health/caps/env-get/env-set/claude-sync-interval,
+platform-conditioned) plus a new `Vera: Install control tasks into this
+workspace` command that merges it into `.vscode/tasks.json` by task
+label — safe to re-run, won't clobber hand-added tasks.
+
+## 22. Root cause of the 80-minute planner hang: an idle sandbox's own dream scheduler
+
+Live-tracing `web-brief`'s full 111-event session trace (the run had
+been killed by a restart before finishing, but the event log survived
+in Redis) showed triage/toolkit completing normally at 12:27:38, then
+`agent_loop_v5.planning` heartbeats — "still planning…", by design, since
+a single blocking planner LLM call can legitimately take 100s+ — every
+45 seconds, continuously, until the 13:48 restart. Zero real steps ever
+ran. The heartbeat is exactly what made this LOOK like healthy activity
+across several live status checks — a real methodological lesson: an
+event that only proves "the wrapper is still waiting" is not evidence
+that the thing being waited on is making progress.
+
+Root cause, confirmed with direct live evidence, not inference: the Loop
+Lab dev sandbox is a FULL Vera process sharing prod's REAL Ollama
+nodes — no isolation there, unlike Redis/Postgres which get a dedicated
+DB — and its dream scheduler + "ambient" director loop both auto-start
+by default (`cfg.get("enabled", True)`) on ANY process boot, sandbox
+included. Queried the sandbox's own `dream.scheduler.status` directly:
+`in_cycle: true`, a "Project Action" cycle that had been running since
+**11:12** — over 3 hours, `llm_prefer_gpu: true` — the identical GPU
+node the stuck planner call needed. Paused it
+(new `evolve.sandbox.pause`, see below) and confirmed the hypothesis
+holds architecturally even without re-running the exact scenario.
+
+**Fix, two parts.** (1) A shared `is_dev_sandbox()` helper
+(`capability_orchestration.py`, checks `VERA_IS_DEV_SANDBOX`) now gates
+dream's scheduler/director auto-start AND the Claude-session autoingest
+scheduler (§20) — a sandbox exists to run one test, not to dream or
+re-scan the same transcripts into a throwaway DB nobody reads. (2) A
+real idle lifecycle for the sandbox CONTAINER itself, since gating
+*known* ambient jobs doesn't stop a future one: `last_activity` tracked
+on every genuine use (`_sandbox_touch()`, called from `_resolve_sandbox`
+whenever a test actually routes there), a scheduled sweep
+(`VERA_SANDBOX_IDLE_PAUSE_S`, default 1800s) that `docker pause`s the
+container — SIGSTOP-equivalent, freezes every process inside without
+losing state — after that long with nothing live in it, and transparent
+auto-unpause the moment something real needs it again
+(`_sandbox_ensure_unpaused()`, wired into `_sandbox_probe`). Passive
+status polling (`evolve.sandbox.status`) never wakes it itself — only a
+real routing decision does, or the new manual `evolve.sandbox.pause`/
+`.resume`. Verified live: recreated the sandbox fresh (pinned to a
+branch carrying this exact fix, since the sandbox's normal
+`loop-lab/latest` worktree tracks mainline, which doesn't have it — see
+§23) and confirmed via `dream.scheduler.status` that
+`scheduler_running: false` this time, with dream's own `enabled: true`
+config left untouched — the auto-START is what's gated, not the stored
+setting.
+
+## 23. Git hygiene: concurrent unrelated work in the same checkout
+
+Before committing today's changes, `git status` showed several modified
+files never touched this session (`vera/dag/loop_profiles.py`,
+`vera/fabric/context.py`, `vera/fabric/memory_retrieval.py`,
+`vera/provisioning/identity_capabilities.py` + panel, plus two untracked
+`identity_migrate*` files) — a different, concurrent stream of work
+(the last two commits on this branch, `4bd49e8`/`aa5956b`, are an
+"Integrations Hub + FreeIPA-first identity resolver" feature this
+session never touched) building further on top, uncommitted, live on
+the shared checkout. One file, `evolve_capabilities.py`, had BOTH
+streams entangled in the same diff — a hunk adding a `memory.browse`-
+based benchmark task (dated 2026-08-03, clearly from that other stream's
+own live-testing narrative) sat alongside this session's sandbox-
+lifecycle hunks. Resolved by hand-building a patch containing only this
+session's hunks (with corrected line-number headers) and applying it
+with `git apply --cached`, leaving the other stream's changes exactly
+as they were — modified, uncommitted, untouched — rather than either
+bundling unrelated work into one commit or (worse) discarding it.
+Committed as `141c76f` on `agentic-loop-improvements-2`.
+
+Recreating the sandbox to pick up the commit hit its own small snag:
+the sandbox's default worktree tracks "current mainline" (fast-forwarded
+`main`), which doesn't include this branch's work, and the branch
+itself couldn't be checked out in a second worktree because it was
+ALREADY checked out in prod's own working copy (a hard git constraint —
+one branch, one worktree). Solved with a throwaway branch pointer at the
+same commit (`loop-lab/sandbox-fixes-20260803`) and pinned the sandbox
+to that instead — doesn't touch `main`, fully reversible, and gave the
+sandbox real access to today's fixes without any merge.
+
+## 24. A self-correction: a timezone mix-up, not a second hang bug
+
+Re-testing `markets-sweep-propose` after the §22 fix, a live check of
+`evolve.run.status` showed `last_activity` frozen at a UTC timestamp
+that looked (compared against a local-clock mental model of "current
+time") like a 60+-minute gap — apparently a SECOND, differently-shaped
+hang (no heartbeat at all this time, unlike `web-brief`'s). Spent real
+effort chasing it: ruled out dream (confirmed off, both prod and
+sandbox), confirmed the GPU node genuinely idle (`ollama.list_models`
+answered instantly), found a real-but-unrelated 1035ms event-loop stall
+in `dag_store.py`'s `relevance_search` via the sandbox's own
+`perf.stalls`. Then restarted the sandbox to "unblock" it — which
+instead KILLED a run that was, per its own final record
+(`elapsed_s: 538.9`, actively climbing event count right up to the
+moment of the restart), almost certainly still legitimately working.
+
+The actual bug was in this investigation, not in Vera: local time here
+is UTC+1 (BST) and the run's own timestamps are UTC — comparing one
+against the other directly manufactured an illusory hour-long gap out
+of what was really about a minute. `web-brief`'s original 80-minute
+finding is unaffected (built entirely from that run's OWN internal,
+self-consistent timestamp sequence, 12:27→13:48, corroborated by the
+user independently flagging it as taking too long in real time — never
+a cross-clock comparison). Lesson applied going forward: compare a
+run's `t0`/`started_at` against `[DateTimeOffset]::UtcNow`, never
+against an eyeballed "current time," when judging whether something is
+actually stuck. Re-ran `markets-sweep-propose` cleanly afterward.

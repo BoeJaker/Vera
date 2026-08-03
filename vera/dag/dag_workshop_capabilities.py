@@ -11176,6 +11176,12 @@ def _v5_coerce_step(st: Dict[str, Any], i: int, goal: str,
 
 
 _V5_PLANNER_AGENT_NAME = "agentic-planner"
+# Bounds BOTH the queue-wait for a free Ollama generation slot and the
+# post-connection read/stall timeout (see _v5_orchestrate_plan's call and
+# ollama_generate's _ollama_slot threading). Generous enough for a large
+# planning prompt on a genuinely busy cluster; still recovers within a sane
+# ceiling instead of the unbounded default. Override via env for tuning.
+_V5_PLANNER_TIMEOUT_S = float(os.environ.get("VERA_PLANNER_TIMEOUT_S", "600"))
 
 
 async def _v5_planning_heartbeat(sid: str, stream_id: str, stop_evt: "asyncio.Event",
@@ -11557,10 +11563,21 @@ async def _v5_orchestrate_plan(goal: str, catalog_names: List[str], skills: List
         except Exception:
             pass
     try:
+        # Bounded, not the unbounded default: found live 2026-08-03 that this
+        # single blocking call can otherwise wait for a free Ollama generation
+        # slot INDEFINITELY (OLLAMA_QUEUE_TIMEOUT defaults to 0 = unbounded,
+        # and a per-call `timeout=` didn't used to reach the queue-wait at
+        # all — see ollama_generate's _ollama_slot call, fixed alongside this)
+        # — two separate live tests both hung 10+ minutes to 80+ minutes on
+        # this exact call with zero recovery, only a "still planning…"
+        # heartbeat to show for it. On timeout this raises, the except below
+        # catches it, steps stays empty, and the loop's existing STEPWISE
+        # fallback (bootstrap step + adaptive re-plan from evidence) takes
+        # over gracefully instead of hanging forever.
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=plan_model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True, options=plan_opts,
-            profile=LOOP_ROUTING_PROFILE, role="planner",
+            profile=LOOP_ROUTING_PROFILE, role="planner", timeout=_V5_PLANNER_TIMEOUT_S,
             stream_cb=(_plan_stream_cb if stream_id else None))
         _pp = _v5_parse_plan(raw or "")
         parsed = _pp["obj"] if isinstance(_pp.get("obj"), dict) else {}
