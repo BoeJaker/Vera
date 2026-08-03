@@ -5411,6 +5411,21 @@ def _sqlite_backup_sync(src_path: Path, dst_path: Path) -> Dict[str, Any]:
     if not src_path.is_file():
         return {"ok": False, "error": f"source db not found: {src_path}"}
     dst_path.parent.mkdir(parents=True, exist_ok=True)
+    if dst_path.exists():
+        # The sandbox CONTAINER runs as root, and its own normal fabric
+        # writes during a test (not just this snapshot) touch this same
+        # file — so it can be root-owned again by the time the NEXT
+        # snapshot runs, not just the first time. Found live 2026-08-03:
+        # "attempt to write a readonly database" on a perfectly-0644 file,
+        # because it was root:root and this process runs as boejaker.
+        # boejaker has passwordless sudo (see .vera-ops precedent) so this
+        # is a no-prompt, best-effort fix-up, not a hard dependency —
+        # if sudo itself is unavailable the real error still surfaces below.
+        try:
+            subprocess.run(["sudo", "-n", "chown", "boejaker:boejaker", str(dst_path)],
+                           capture_output=True, timeout=15, check=False)
+        except Exception:
+            pass
     src = sqlite3.connect(str(src_path))
     try:
         dst = sqlite3.connect(str(dst_path))
