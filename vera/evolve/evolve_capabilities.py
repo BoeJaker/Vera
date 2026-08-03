@@ -66,6 +66,7 @@ import logging
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -5388,25 +5389,66 @@ async def _sandbox_idle_sweep() -> None:
 schedule(_sandbox_idle_sweep, _SANDBOX_IDLE_SWEEP_INTERVAL_S, name="evolve.sandbox.idle_sweep")
 
 
+def _fabric_sqlite_path(root: Optional[Path] = None) -> Path:
+    """Mirrors data_fabric.py's own SQLITE_PATH resolution (FABRIC_SQLITE env
+    override, else <repo>/vera/fabric/vera_fabric.db) so the snapshot targets
+    the EXACT file data_fabric.py itself would open for whichever checkout
+    `root` points at — prod's own root by default, a sandbox worktree when
+    given one explicitly."""
+    override = os.environ.get("FABRIC_SQLITE", "")
+    if override and root is None:
+        return Path(override)
+    base = root or _repo_root()
+    return base / "vera" / "fabric" / "vera_fabric.db"
+
+
+def _sqlite_backup_sync(src_path: Path, dst_path: Path) -> Dict[str, Any]:
+    """Blocking — always run via run_in_executor. Uses sqlite3's own backup
+    API rather than a raw file copy: a live multi-GB db under WAL can be
+    mid-write at any instant, and a plain copy risks grabbing a torn/corrupt
+    snapshot. backup() takes the proper sqlite-level lock and streams a
+    consistent copy regardless of concurrent writers on the source."""
+    if not src_path.is_file():
+        return {"ok": False, "error": f"source db not found: {src_path}"}
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    src = sqlite3.connect(str(src_path))
+    try:
+        dst = sqlite3.connect(str(dst_path))
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()
+    return {"ok": True, "bytes": dst_path.stat().st_size}
+
+
 @capability("evolve.sandbox.snapshot", memory="off",
             http_method="POST", http_path="/evolve/sandbox/snapshot", http_tags=["evolve"],
             description="Copy a point-in-time snapshot of Loop Lab state (evolve "
-                        "config + benchmark tasks) AND the Ollama routing overrides "
-                        "(role_profiles/cap_routing/routing) from prod's Redis DB "
-                        "into the sandbox's isolated DB, so it tests with the same "
-                        "suite AND the same fast/correct model routing prod actually "
-                        "uses. Without the routing keys a fresh sandbox silently "
-                        "falls back to the bare CODE-DECLARED defaults for every "
-                        "role — found live 2026-08-03: prod's user override pins "
-                        "loop/planner to GPU + a 7GB model, but the sandbox's empty "
-                        "user-override state fell back to deny_gpu=true + a 13.79GB "
-                        "model on CPU-only nodes, making every sandboxed loop test "
-                        "dramatically (10-100x) slower than prod with zero visible "
-                        "error — it looked exactly like a hang. "
-                        "Input: prefixes (csv, default 'vera:evolve:tasks,"
-                        "vera:evolve:config,vera:evolve:seeded,vera:ollama:role_profiles,"
-                        "vera:ollama:cap_routing,vera:ollama:routing').")
-async def evolve_sandbox_snapshot(prefixes: str = "", trace_id=None):
+                        "config + benchmark tasks), the Ollama routing overrides "
+                        "(role_profiles/cap_routing/routing) from prod's Redis DB, "
+                        "AND prod's real data-fabric SQLite db (vera_fabric.db — "
+                        "fabric_records, mkt_strategies, everything memory.seek/"
+                        "fabric.query/markets.strategy.list actually read) into the "
+                        "sandbox. Without this a fresh sandbox's fabric layer is "
+                        "whatever empty/default file its OWN worktree checkout "
+                        "happens to have — found live 2026-08-03 chasing why "
+                        "markets-sweep-propose took 32 minutes of honest but "
+                        "unnecessary improvisation: markets.strategy.list returned "
+                        "zero strategies in the sandbox despite 11 real ones on prod, "
+                        "because the sqlite file lives INSIDE the repo tree "
+                        "(vera/fabric/vera_fabric.db, relative to data_fabric.py) and "
+                        "the sandbox's worktree is a separate checkout with its own "
+                        "copy. The sqlite copy uses sqlite3's own backup API (safe "
+                        "against a concurrently-written multi-GB source) and can take "
+                        "real time on a large db — this call may run long; that's "
+                        "normal, not a hang. Input: prefixes (csv, default "
+                        "'vera:evolve:tasks,vera:evolve:config,vera:evolve:seeded,"
+                        "vera:ollama:role_profiles,vera:ollama:cap_routing,"
+                        "vera:ollama:routing'), sqlite (bool default True — set False "
+                        "to skip the (slower) fabric db copy and only sync Redis).")
+async def evolve_sandbox_snapshot(prefixes: str = "", sqlite: bool = True, trace_id=None):
     r = _redis()
     if not r:
         return {"error": "redis unavailable"}
@@ -5439,9 +5481,23 @@ async def evolve_sandbox_snapshot(prefixes: str = "", trace_id=None):
                     continue
     except Exception as e:
         return {"error": str(e), "copied": copied}
+    fabric_db: Dict[str, Any] = {"ok": True, "skipped": "sqlite=False"}
+    if sqlite:
+        sb = await _get_sandbox()
+        if sb and sb.get("worktree"):
+            try:
+                src = _fabric_sqlite_path()
+                dst = _fabric_sqlite_path(Path(sb["worktree"]))
+                fabric_db = await asyncio.get_event_loop().run_in_executor(
+                    None, _sqlite_backup_sync, src, dst)
+            except Exception as e:
+                fabric_db = {"ok": False, "error": str(e)[:200]}
+        else:
+            fabric_db = {"ok": False, "skipped": "no sandbox worktree"}
     await emit_event({"type": "evolve.sandbox.snapshot", "copied": copied,
-                      "db": DEV_REDIS_DB})
-    return {"ok": True, "copied": copied, "dev_redis_db": DEV_REDIS_DB}
+                      "db": DEV_REDIS_DB, "fabric_db": fabric_db})
+    return {"ok": True, "copied": copied, "dev_redis_db": DEV_REDIS_DB,
+            "fabric_db": fabric_db}
 
 
 @capability("evolve.sandbox.up", memory="on",
