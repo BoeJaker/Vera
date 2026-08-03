@@ -5336,17 +5336,29 @@ schedule(_sandbox_idle_sweep, _SANDBOX_IDLE_SWEEP_INTERVAL_S, name="evolve.sandb
 @capability("evolve.sandbox.snapshot", memory="off",
             http_method="POST", http_path="/evolve/sandbox/snapshot", http_tags=["evolve"],
             description="Copy a point-in-time snapshot of Loop Lab state (evolve "
-                        "config + benchmark tasks) from prod's Redis DB into the "
-                        "sandbox's isolated DB so it tests with the same suite. "
+                        "config + benchmark tasks) AND the Ollama routing overrides "
+                        "(role_profiles/cap_routing/routing) from prod's Redis DB "
+                        "into the sandbox's isolated DB, so it tests with the same "
+                        "suite AND the same fast/correct model routing prod actually "
+                        "uses. Without the routing keys a fresh sandbox silently "
+                        "falls back to the bare CODE-DECLARED defaults for every "
+                        "role — found live 2026-08-03: prod's user override pins "
+                        "loop/planner to GPU + a 7GB model, but the sandbox's empty "
+                        "user-override state fell back to deny_gpu=true + a 13.79GB "
+                        "model on CPU-only nodes, making every sandboxed loop test "
+                        "dramatically (10-100x) slower than prod with zero visible "
+                        "error — it looked exactly like a hang. "
                         "Input: prefixes (csv, default 'vera:evolve:tasks,"
-                        "vera:evolve:config,vera:evolve:seeded').")
+                        "vera:evolve:config,vera:evolve:seeded,vera:ollama:role_profiles,"
+                        "vera:ollama:cap_routing,vera:ollama:routing').")
 async def evolve_sandbox_snapshot(prefixes: str = "", trace_id=None):
     r = _redis()
     if not r:
         return {"error": "redis unavailable"}
     pats = [p.strip() for p in (prefixes or
-            "vera:evolve:tasks,vera:evolve:config,vera:evolve:seeded").split(",")
-            if p.strip()]
+            "vera:evolve:tasks,vera:evolve:config,vera:evolve:seeded,"
+            "vera:ollama:role_profiles,vera:ollama:cap_routing,vera:ollama:routing"
+            ).split(",") if p.strip()]
     copied = 0
     try:
         for pat in pats:
