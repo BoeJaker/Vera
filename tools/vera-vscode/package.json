@@ -60,6 +60,7 @@
       { "command": "vera.enqueueTask",     "title": "Vera: Enqueue a Claude Code task for this workspace" },
       { "command": "vera.toggleClientMode","title": "Vera: Toggle client mode (let Vera control this window)" },
       { "command": "vera.forgetCertificate","title": "Vera: Forget trusted certificate (re-trust on next request)" },
+      { "command": "vera.installTasks",    "title": "Vera: Install control tasks into this workspace (start/stop/restart/env/claude-sync)" },
       { "command": "vera.refresh",         "title": "Vera: Refresh", "icon": "$(refresh)" }
     ],
     "viewsContainers": {

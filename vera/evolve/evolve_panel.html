@@ -992,8 +992,31 @@ async function tcRun(){
   $('wf-status').textContent='running '+esc(r.type||'')+' · '+esc(r.target||'');
 }
 // Restore the live/last test view when returning to the Test tab.
+// If a test was triggered OUTSIDE this UI (a direct HTTP call to
+// evolve.task.run, e.g. from an external tool/session, not this panel's own
+// Run button) _testRunId is empty here even though a real run is genuinely
+// in flight — evolve.run.status (no run_id) reports whatever's currently
+// live (_RUN_LIVE server-side), regardless of who started it. Adopting it
+// here means opening/reloading Loop Lab always shows a run that's actually
+// happening, not just ones this tab itself launched.
+async function _adoptLiveRunIfAny(){
+  if(_testRunId)return;   // already tracking something locally — don't clobber it
+  try{
+    const st=await api('/evolve/run/status');
+    const cur=st&&st.current;
+    if(st&&st.live&&cur&&cur.run_id){
+      _testRunId=cur.run_id;
+      _testRunKind=cur.type||'loop';
+      _testRunLabel=cur.task||'';
+      _testRunGoal=cur.goal||'';
+      _suiteActive=false;
+      implStat('▶ found a run already in progress (started outside this panel) — attaching…');
+    }
+  }catch(_){}
+}
 async function restoreTestRun(){
   if(_suiteActive){testSuiteRefresh()}
+  await _adoptLiveRunIfAny();
   if(!_testRunId)return;
   const gr=await api('/evolve/run/get?run_id='+encodeURIComponent(_testRunId));
   const d=gr&&gr.run;

@@ -581,6 +581,68 @@ async function forgetCertificate() {
     "Vera: forgot the cached certificate — it will be re-trusted on the next request.");
 }
 
+/* ---- install control tasks (start/stop/restart/env/claude-sync) into the
+   workspace's .vscode/tasks.json — merged by label so re-running this after
+   editing the shipped template updates ours without touching anyone else's
+   hand-added tasks. Template lives in tools/vera-vscode/tasks/vera-tasks.json
+   so it stays usable even without the extension (copy/paste by hand). ---- */
+function installTasksTemplatePath() {
+  return path.join(__dirname, "tasks", "vera-tasks.json");
+}
+
+async function installTasks() {
+  const wd = workspaceDir();
+  if (!wd) { vscode.window.showErrorMessage("Vera: open a workspace folder first."); return; }
+  let template;
+  try {
+    template = JSON.parse(fs.readFileSync(installTasksTemplatePath(), "utf8"));
+  } catch (e) {
+    vscode.window.showErrorMessage("Vera: couldn't read the bundled tasks template — " + e.message);
+    return;
+  }
+  const vscodeDir = path.join(wd, ".vscode");
+  const tasksPath = path.join(vscodeDir, "tasks.json");
+  let existing = { version: "2.0.0", inputs: [], tasks: [] };
+  if (fs.existsSync(tasksPath)) {
+    try {
+      existing = JSON.parse(fs.readFileSync(tasksPath, "utf8"));
+    } catch (e) {
+      const proceed = await vscode.window.showWarningMessage(
+        "Vera: existing .vscode/tasks.json isn't valid JSON (or has comments) — overwrite it entirely?",
+        { modal: true }, "Overwrite");
+      if (proceed !== "Overwrite") return;
+      existing = { version: "2.0.0", inputs: [], tasks: [] };
+    }
+  }
+  existing.version = existing.version || "2.0.0";
+  existing.inputs = existing.inputs || [];
+  existing.tasks = existing.tasks || [];
+
+  const mergeByKey = (list, incoming, keyFn) => {
+    const byKey = new Map(list.map((it) => [keyFn(it), it]));
+    for (const item of incoming) byKey.set(keyFn(item), item);
+    return Array.from(byKey.values());
+  };
+  existing.inputs = mergeByKey(existing.inputs, template.inputs || [], (i) => i.id);
+  existing.tasks = mergeByKey(existing.tasks, template.tasks || [], (t) => t.label);
+
+  try {
+    fs.mkdirSync(vscodeDir, { recursive: true });
+    fs.writeFileSync(tasksPath, JSON.stringify(existing, null, 2) + "\n", "utf8");
+  } catch (e) {
+    vscode.window.showErrorMessage("Vera: couldn't write .vscode/tasks.json — " + e.message);
+    return;
+  }
+  const openIt = await vscode.window.showInformationMessage(
+    `Vera: installed ${(template.tasks || []).length} control tasks into .vscode/tasks.json ` +
+    `(Terminal ▸ Run Task ▸ Vera: …). Edit the "veraHost" input's default if your Vera isn't at llm.int:8999.`,
+    "Open tasks.json");
+  if (openIt) {
+    const doc = await vscode.workspace.openTextDocument(tasksPath);
+    vscode.window.showTextDocument(doc);
+  }
+}
+
 function activate(ctx) {
   EXT_CTX = ctx;
   const sidebar = new VeraSidebar(ctx);
@@ -590,6 +652,7 @@ function activate(ctx) {
     vscode.commands.registerCommand("vera.enqueueTask", () => enqueueTask()),
     vscode.commands.registerCommand("vera.toggleClientMode", toggleClientMode),
     vscode.commands.registerCommand("vera.forgetCertificate", forgetCertificate),
+    vscode.commands.registerCommand("vera.installTasks", installTasks),
     vscode.commands.registerCommand("vera.refresh", () => sidebar.push()),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("vera.clientMode")) {

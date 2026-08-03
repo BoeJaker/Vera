@@ -36,12 +36,20 @@ Vera build helper
   ./build.sh down       Stop the stack
   ./build.sh logs       Follow orchestrator logs
   ./build.sh venv       Create .venv and install requirements
-  ./build.sh run        Run orchestrator locally (no docker)
+  ./build.sh run        Run orchestrator locally (no docker, blocks foreground)
+  ./build.sh start      Run orchestrator locally, detached (nohup, logs to vera_start.log)
+  ./build.sh stop       Cleanly shut a native (non-docker) instance down (sys.dev.stop)
+  ./build.sh restart    Restart a native instance in place (sys.dev.restart)
+  ./build.sh sync-claude  Trigger an immediate Claude Code session ingest pass
   ./build.sh secret     Print a fresh VERA_SECRET_KEY
   ./build.sh health     Curl GET /health
   ./build.sh caps       List capabilities (GET /mcp/tools)
   ./build.sh tour       Terminal guided tour
   ./build.sh welcome    Open the HTML welcome guide
+
+restart/stop use the in-process sys.dev.restart/sys.dev.stop capabilities —
+they need VERA_DEV_MODE=1 (see .env) and only affect a NATIVE ('run'/'start')
+instance, not the docker stack (use 'down'/'build' for that).
 EOF
 }
 
@@ -53,6 +61,26 @@ case "$cmd" in
   logs)    $COMPOSE logs -f vera ;;
   venv)    "$PY" -m venv "$VENV" && "$VENV/bin/pip" install --upgrade pip && "$VENV/bin/pip" install -r requirements.txt ;;
   run)     cd "$PARENT" && PYTHONPATH="$PARENT" "$PY" -m Vera.vera.capability_orchestration ;;
+  start)
+    cd "$REPO_ROOT"
+    nohup sh -c "cd '$PARENT' && PYTHONPATH='$PARENT' '$PY' -m Vera.vera.capability_orchestration > '$REPO_ROOT/vera_start.log' 2>&1 < /dev/null &" >/dev/null 2>&1
+    echo "started — logging to $REPO_ROOT/vera_start.log"
+    ;;
+  stop)
+    resolve_base
+    $CURL -X POST "$BASE/sys/dev/stop" -H 'Content-Type: application/json' -d '{"confirm":true,"reason":"build.sh stop"}' \
+      | "$PY" -m json.tool || echo "stop request failed — is Vera reachable at $BASE, and is VERA_DEV_MODE=1 set?"
+    ;;
+  restart)
+    resolve_base
+    $CURL -X POST "$BASE/sys/dev/restart" -H 'Content-Type: application/json' -d '{"confirm":true,"reason":"build.sh restart"}' \
+      | "$PY" -m json.tool || echo "restart request failed — is Vera reachable at $BASE, and is VERA_DEV_MODE=1 set?"
+    ;;
+  sync-claude)
+    resolve_base
+    $CURL -X POST "$BASE/ide/claude_sessions/ingest_all" -H 'Content-Type: application/json' -d '{}' \
+      | "$PY" -m json.tool || echo "sync request failed — is Vera reachable at $BASE?"
+    ;;
   secret)  "$PY" -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())" ;;
   health)  resolve_base; $CURL "$BASE/health" | "$PY" -m json.tool || echo "Vera not reachable at $BASE" ;;
   caps)    resolve_base; $CURL "$BASE/mcp/tools" | "$PY" -m json.tool || echo "Vera not reachable at $BASE" ;;

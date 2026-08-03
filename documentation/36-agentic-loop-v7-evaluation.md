@@ -1135,3 +1135,120 @@ has been exercised against a fresh run yet — the research goal has now
 been restarted four times this session without ever reaching its later
 steps (synthesis/report-writing) uninterrupted. Worth letting one run
 all the way through once no more fixes are queued up.
+
+## 18. Loop Lab sandbox freshness, a repo-wide line-ending bug, and a new Branches view
+
+User's ask: run more tests via Loop Lab, make sure the sandbox actually
+runs latest Vera first ("this should happen when vera boots"), keep
+building test infrastructure, and — a new, separate ask — a place to
+see what's happening across different git branches Vera/Claude Code are
+working on, plus a fallback path for Dispatch to see Claude Code
+activity without depending on the currently-flaky VS Code extension.
+
+**Sandbox freshness — two real bugs found, not just staleness.**
+`evolve.sandbox.status` showed the dev-sandbox up but on branch
+`loop-lab/sandbox`, started 2026-08-02T12:55 — before every fix in this
+document. Its own capability docstring explains why: a NAMED branch is
+a deliberate pin, never auto-refreshed; only the *default* ("current
+mainline") mode fast-forwards. Bringing it up on the default hit a
+second, unrelated bug: `git worktree add` failed with `Permission
+denied` on `.git/worktrees/` — that directory (and its `sandbox`
+subdirectory) were owned `root:root` from an earlier root-run setup
+step, while the Vera process runs as `boejaker`. Fixed with `sudo chown
+-R boejaker:boejaker .git/worktrees` (boejaker has passwordless sudo).
+
+**Repo-wide CRLF line-ending bug, found investigating why "latest
+mainline" didn't line up with prod's own branch.** Bringing the sandbox
+up on the resolved default landed on `main` — not prod's actual branch
+(`agentic-loop-improvements-2`), since `_default_branch()` asks git for
+the repo's structural default, not "whatever prod happens to be on."
+Explicitly pointing a `loop-lab/latest` branch at prod's HEAD commit
+surfaced the REAL finding: `git status` showed 192 modified files,
+327,435 insertions / 323,516 deletions — the user immediately flagged
+this as implausible ("I'm only seeing 43 changes"), and they were right.
+Every one of those 192 files had CRLF line endings in the working tree
+while their committed HEAD versions were plain LF — a repo-wide flip,
+almost certainly from this whole engagement's SMB/Windows-side editing,
+never normalized. **Fixed properly, not just for this commit**: added
+`.gitattributes` (`* text=auto eol=lf`) so any future CRLF lands
+normalized the moment it's staged, then `git add --renormalize .` —
+which collapsed ~155 files to zero diff instantly (pure line-ending
+noise, now gone) and left exactly 37 genuinely-changed files, matching
+the user's own expectation far more closely than 192. Committed as one
+change (`27cbe06`) covering `.gitattributes` + those 37 files + 7
+untracked new files (3 of them confirmed as this session's own:
+doc 35/36, the VS Code troubleshooting doc; 4 unrecognized ones the
+user confirmed including anyway). Working tree confirmed fully clean
+afterward. Sandbox re-pointed at `loop-lab/latest` (a branch pinned to
+this exact commit) — `tool_count` went from 1777 (stale pinned branch)
+to 1887 (this commit) vs prod's 1962; the residual gap looks
+environmental (Docker image's baked Python deps vs prod's own venv),
+not code staleness, and wasn't investigated further this pass.
+
+**Test run attempted, inconclusive.** `chain-preserve-existing-file`
+(the §13 regression test) ran on the sandbox but hit its own 480s
+timeout before completing (`combined: 0.0`, `error: "timeout after
+480s"`) — not a pass/fail signal on the fix itself, just too tight a
+budget for a real run. Worth re-running with a longer timeout.
+
+**New: `ide.git.branches` + a Branches section in Dispatch.** Directly
+answers "somewhere to easily see what Vera/Claude Code are working on
+across branches." New capability (`ide_capabilities.py`): every local
+branch's last commit (hash/author/date/message), ahead/behind vs `main`,
+and whether it currently has a live worktree (prod's own checkout, a
+Loop Lab sandbox, or any other active checkout) — the "genuinely being
+worked on right now" signal, not just "has commits somewhere." Folded
+into the EXISTING Dispatch panel (`ide_claude_sessions_panel.html`) per
+the user's placement choice, rather than a new tab — a collapsible
+🌿 Branches section above the session list. Each branch's commit is a
+clickable chip: one click filters Dispatch's own session list to that
+commit (reusing the `?commit=` mechanism already built), a second
+"⇄ Loop Lab" action cross-links to Loop Lab's run list for the same
+commit (reusing the existing cross-link postMessage contract). No new
+correlation machinery — entirely built from primitives already in place
+from earlier in this session.
+
+Caught a genuinely useful finding on first live use: `agentic-loop-improvements-2`'s
+latest commit is `4bd49e8`, a MERGE ("Merge integrations-hub: Integrations
+Hub + FreeIPA-first identity resolver") that landed AFTER this session's
+own commit (`27cbe06`) — from some other stream of work entirely, not
+anything in this conversation. Exactly the kind of cross-branch activity
+this view exists to surface.
+
+**Small bug found and fixed inline**: the new capability's default
+`path` resolution used `parents[1]` instead of `parents[2]`
+(`ide_capabilities.py` lives at `<repo>/vera/ide/`, so parents[2] is
+`<repo>`) — cosmetically wrong (`path` field reported `<repo>/vera`
+instead of `<repo>`) but functionally harmless, since git itself walks
+up from any subdirectory to find `.git`. Fixed; takes effect on the next
+restart (not worth a dedicated one).
+
+**Claude Code activity fallback sync — built, not yet fully run.**
+Dispatch's "local" ingestion source already scans `<repo>/.claude/projects`
+(for exactly this reason — a sandboxed `claude` process commonly has
+`HOME` pointed at the mounted repo). New script,
+`C:\Users\User\.vera-ops\Sync-ClaudeSessions.ps1`: copies this Windows
+machine's own Claude Code session transcripts for the Vera project
+into that exact folder over the existing SMB share, so the ALREADY-
+SCHEDULED local ingest picks them up with no new Vera capability at
+all. Ran once: synced all 87 local session files. Full ingest is slow
+(some files are 30+ MB, hundreds to 1000+ turns each) and still running
+in the background — confirmed genuinely working, not stalled (three
+files fully processed so far: 283, 141, and 588 real turns, correct
+project/timestamps/content). Durable per-file byte-offset cursor means
+a Vera restart pauses rather than loses this progress — confirmed by
+resuming it cleanly after the restart needed to deploy the Branches
+capability.
+
+**VS Code troubleshooting extracted**: `tools/vera-vscode/TROUBLESHOOTING.md`
+— the multi-profile install fix and connection-failure diagnosis from
+earlier in this session, written up as a standing reference rather than
+left in chat history, linked from the extension's own README.
+
+**Still open**: re-run `chain-preserve-existing-file` with a longer
+timeout; investigate the sandbox's residual ~75-cap gap vs prod if it
+matters later; confirm the full 87-file Claude-session backfill
+actually completes; the "linked Dispatch sessions + Loop Lab runs"
+piece of the Branches view is click-driven (cross-link), not an
+always-visible inline list — revisit if that turns out to be
+insufficient once used for real.

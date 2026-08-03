@@ -62,6 +62,7 @@ from Vera.vera.capability_orchestration import (
     CAPABILITY_REGISTRY,
     capability,
     emit_event,
+    is_dev_sandbox,
     now_iso,
     register_ui,
     schedule,
@@ -17056,23 +17057,33 @@ async def _startup():
         except Exception as e:
             log.debug("dream: custom stage reload: %s", e)
 
-        cfg = await _get_config()
-        if cfg.get("enabled", True):
-            global _SCHED_RUN, _SCHED_TASK
-            if not _SCHED_RUN:
-                _SCHED_RUN = True
-                _SCHED_TASK = asyncio.create_task(_scheduler_loop())
-                log.info("dream scheduler auto-started")
-        # The director (ambient CPU-side thought loop) runs INDEPENDENTLY of the
-        # idle-gated scheduler — it thinks during activity too, backing off only
-        # on CPU-pool pressure. Its own config (dream.director.config) gates it.
-        dcfg = await _director_cfg()
-        if dcfg.get("enabled", True):
-            global _DIRECTOR_RUN, _DIRECTOR_TASK
-            if not _DIRECTOR_RUN:
-                _DIRECTOR_RUN = True
-                _DIRECTOR_TASK = asyncio.create_task(_director_loop())
-                log.info("dream director auto-started")
+        # A Loop Lab dev sandbox is a full Vera process sharing prod's REAL
+        # Ollama nodes (no isolation there) — it exists to run one loop/test,
+        # not to dream. Without this gate, every sandbox silently auto-starts
+        # its own scheduler + ambient director on boot regardless of whether
+        # anyone's using it, competing with the actual test for the same GPU.
+        # Confirmed live 2026-08-03 (see is_dev_sandbox()'s docstring).
+        if is_dev_sandbox():
+            log.info("dream: scheduler + director auto-start skipped (dev sandbox)")
+        else:
+            cfg = await _get_config()
+            if cfg.get("enabled", True):
+                global _SCHED_RUN, _SCHED_TASK
+                if not _SCHED_RUN:
+                    _SCHED_RUN = True
+                    _SCHED_TASK = asyncio.create_task(_scheduler_loop())
+                    log.info("dream scheduler auto-started")
+            # The director (ambient CPU-side thought loop) runs INDEPENDENTLY of
+            # the idle-gated scheduler — it thinks during activity too, backing
+            # off only on CPU-pool pressure. Its own config (dream.director.config)
+            # gates it.
+            dcfg = await _director_cfg()
+            if dcfg.get("enabled", True):
+                global _DIRECTOR_RUN, _DIRECTOR_TASK
+                if not _DIRECTOR_RUN:
+                    _DIRECTOR_RUN = True
+                    _DIRECTOR_TASK = asyncio.create_task(_director_loop())
+                    log.info("dream director auto-started")
     except Exception as e:
         log.warning("dream startup: %s", e)
 

@@ -1829,8 +1829,11 @@ async def _resolve_sandbox(cfg: Dict[str, Any], ttype: str) -> Dict[str, Any]:
             return {"use": False, "blocked": True,
                     "reason": f"sandbox_mode=require but the sandbox is unusable: {down_reason}",
                     "stale": bool(stale)}
+        await _sandbox_touch()
         return {"use": True, "blocked": False, "reason": "require"}
     # prefer — never block; fall back to in-process, but say WHY when it's stale.
+    if up:
+        await _sandbox_touch()
     return {"use": bool(up), "blocked": False, "stale": bool(stale),
             "reason": "sandbox" if up else (f"in-process ({down_reason})")}
 
@@ -1902,10 +1905,18 @@ async def _run_task(task: Dict[str, Any], variant: Optional[Dict[str, Any]] = No
     task = dict(task)
     task["_sandbox"] = sb["use"]
     task["_denylist"] = cfg.get("test_denylist") or []
-    # Interactive tests (run.start) are ACTIVITY-watched, not clock-killed —
-    # the loop under test may take an indefinite amount of time. Suites and
-    # improve-session variant tests stay bounded by their per-task timeout_s.
-    if source == "run" and ttype == "loop":
+    # Interactive tests (run.start) AND manual one-at-a-time task runs
+    # (evolve.task.run) are ACTIVITY-watched, not clock-killed — the loop
+    # under test may take an indefinite amount of time, and a run that's
+    # genuinely still producing events should never be judged "timed out"
+    # just because it crossed some fixed clock threshold (found live,
+    # 2026-08-03: chain-preserve-existing-file was killed at its 480s
+    # timeout_s while apparently still working). Suites and improve-session
+    # variant tests stay bounded by their per-task timeout_s on purpose — a
+    # suite runs many tasks back to back, and one hung task must not stall
+    # every task queued behind it; that tradeoff doesn't apply to a single
+    # manually-triggered run with nothing else waiting.
+    if source in ("run", "manual") and ttype == "loop":
         task["_indefinite"] = True
         task["_idle_s"] = cfg.get("run_idle_timeout_s", 300)
         task["_max_s"] = cfg.get("run_max_s", 7200)
@@ -1913,7 +1924,8 @@ async def _run_task(task: Dict[str, Any], variant: Optional[Dict[str, Any]] = No
 
     _RUN_LIVE.update({"run_id": run_id, "task": task.get("id"),
                       "type": ttype, "started_at": now_iso(), "t0": t0,
-                      "where": where})
+                      "where": where,
+                      "goal": task.get("goal", "") or task.get("cap", "")})
 
     log.info("evolve run %s: task=%s type=%s where=%s (timeout %ss)",
              run_id, task.get("id"), ttype, where, timeout)
@@ -4947,7 +4959,55 @@ async def _diagnose_stale(n_tools: int) -> Dict[str, Any]:
                      f"Rebuild the image (🛠 Rebuild image & recreate)."}
 
 
-async def _sandbox_probe() -> Dict[str, Any]:
+_SANDBOX_CONTAINER = "vera-dev"
+# How long the sandbox container can sit with no test/dev activity before the
+# idle sweep pauses it. `docker pause` (SIGSTOP-equivalent) freezes every
+# process inside — including the ambient background jobs is_dev_sandbox()
+# doesn't stop from STARTING (dream's director loop, third-party schedulers
+# added later, etc.) — without losing container state, so resume is a plain
+# unpause + a few seconds' wait, not a full evolve.sandbox.up rebuild.
+_SANDBOX_IDLE_PAUSE_S = int(os.getenv("VERA_SANDBOX_IDLE_PAUSE_S", "1800"))
+
+
+async def _sandbox_touch() -> None:
+    """Record that the sandbox was just actually used — the idle-pause sweep's
+    only signal that something real (a test, a manual exec) is happening in
+    there, as opposed to the container merely existing."""
+    r = _redis()
+    if not r:
+        return
+    try:
+        sb = await _get_sandbox()
+        if sb:
+            sb["last_activity"] = now_iso()
+            await r.set(KEY_SANDBOX, json.dumps(sb, default=str))
+    except Exception:
+        pass
+
+
+async def _sandbox_container_status() -> str:
+    """docker inspect's raw state: 'running' | 'paused' | 'exited' | '' (absent)."""
+    r = await _sh(["docker", "inspect", "-f", "{{.State.Status}}", _SANDBOX_CONTAINER],
+                 timeout=15)
+    return r["out"].strip() if r["ok"] else ""
+
+
+async def _sandbox_ensure_unpaused() -> bool:
+    """If the container is paused (idle-swept), unpause it and give it a moment
+    to resume serving before the caller's own health probe runs. No-op (True)
+    if it's already running or doesn't exist — the normal up/down paths handle
+    those. Returns False only on a genuine unpause failure."""
+    if await _sandbox_container_status() != "paused":
+        return True
+    r = await _sh(["docker", "unpause", _SANDBOX_CONTAINER], timeout=15)
+    if r["ok"]:
+        await _audit("sandbox.resume", "auto-unpaused on demand (idle sweep had paused it)")
+        await emit_event({"type": "evolve.sandbox.resumed"})
+        await asyncio.sleep(2)  # let its event loop actually start servicing requests
+    return r["ok"]
+
+
+async def _sandbox_probe(auto_unpause: bool = True) -> Dict[str, Any]:
     """Confirm a HEALTHY, READY Vera is serving the dev-sandbox port before we
     route caps into it. A bare /health 2xx is NOT enough, and neither is a 200
     from /mcp/tools: during boot (and on a STALE image) the tools surface answers
@@ -4958,8 +5018,22 @@ async def _sandbox_probe() -> Dict[str, Any]:
     workhorse cap (_SANDBOX_READY_CAP) actually present in the registry. If it's
     up but missing that cap, reachable=False + stale=True with a REBUILD hint, so
     'prefer' falls back to in-process and 'require' blocks with a clear reason
-    instead of a cryptic 404."""
+    instead of a cryptic 404.
+
+    `auto_unpause=False` (used by passive status/UI polling) reports a paused
+    container as simply unreachable-because-paused WITHOUT waking it — the
+    whole point of idle-pausing is defeated if a status panel poll wakes the
+    sandbox back up every few seconds. Only a REAL routing decision
+    (_resolve_sandbox, an explicit exec/pause/resume call) should wake it."""
     await _dev_port()          # refresh the active port from config first
+    if await _sandbox_container_status() == "paused":
+        if not auto_unpause:
+            return {"reachable": False, "paused": True,
+                    "error": "sandbox is paused (idle) — resumes automatically "
+                             "on the next real use, or evolve.sandbox.resume now"}
+        if not await _sandbox_ensure_unpaused():
+            return {"reachable": False, "error": "sandbox is paused (idle) and failed to "
+                                                 "unpause — check docker on the host"}
     base = _dev_base_url()
     try:
         async with httpx.AsyncClient(timeout=6) as c:
@@ -5166,15 +5240,97 @@ async def evolve_sandbox_fs_write(path: str = "", content: str = "", trace_id=No
 @capability("evolve.sandbox.status", memory="off", silent=True,
             http_method="GET", http_path="/evolve/sandbox/status", http_tags=["evolve"],
             description="State of the dev sandbox Vera: descriptor (branch, port, "
-                        "worktree) + a live health probe of the dev port. Output: "
-                        "{sandbox, probe, up}.")
+                        "worktree, last_activity) + a live health probe of the dev "
+                        "port. A PAUSED sandbox (idle-swept — see "
+                        "VERA_SANDBOX_IDLE_PAUSE_S) is reported as such WITHOUT being "
+                        "woken by this check — only real use wakes it. Output: "
+                        "{sandbox, probe, up, paused}.")
 async def evolve_sandbox_status(trace_id=None):
     port = await _dev_port()
     sb = await _get_sandbox()
-    probe = await _sandbox_probe() if sb else {"reachable": False}
+    probe = await _sandbox_probe(auto_unpause=False) if sb else {"reachable": False}
     return {"sandbox": sb, "probe": probe,
             "up": bool(sb) and probe.get("reachable", False),
+            "paused": bool(probe.get("paused")),
             "dev_port": port, "prod_port": PROD_PORT, "dev_redis_db": DEV_REDIS_DB}
+
+
+@capability("evolve.sandbox.pause", memory="on",
+            http_method="POST", http_path="/evolve/sandbox/pause", http_tags=["evolve"],
+            description="Manually pause the dev sandbox container (docker pause — "
+                        "freezes every process inside, including ambient background "
+                        "jobs, without losing state). Same mechanism the idle sweep "
+                        "uses automatically after VERA_SANDBOX_IDLE_PAUSE_S seconds "
+                        "of no test/dev activity. Refuses while a run is actively "
+                        "routed to the sandbox. Output: {ok, error}.")
+async def evolve_sandbox_pause(trace_id=None):
+    if _RUN_LIVE.get("where") == "sandbox" and _RUN_LIVE.get("run_id") in _BG_RUNS \
+            and not _BG_RUNS[_RUN_LIVE["run_id"]].done():
+        return {"ok": False, "error": "a run is actively using the sandbox right now — "
+                                      "wait for it to finish first"}
+    status = await _sandbox_container_status()
+    if status != "running":
+        return {"ok": False, "error": f"sandbox container is '{status or 'absent'}', not running"}
+    r = await _sh(["docker", "pause", _SANDBOX_CONTAINER], timeout=15)
+    if r["ok"]:
+        await _audit("sandbox.pause", "paused manually")
+        await emit_event({"type": "evolve.sandbox.paused", "manual": True})
+    return {"ok": r["ok"], "error": r["err"] if not r["ok"] else ""}
+
+
+@capability("evolve.sandbox.resume", memory="off",
+            http_method="POST", http_path="/evolve/sandbox/resume", http_tags=["evolve"],
+            description="Manually unpause the dev sandbox container. Normally "
+                        "unnecessary — any real use (a test, an exec call) auto-"
+                        "resumes it — but useful to pre-warm it before a burst of "
+                        "testing. Output: {ok, error}.")
+async def evolve_sandbox_resume(trace_id=None):
+    if await _sandbox_container_status() != "paused":
+        return {"ok": True, "error": "", "note": "was not paused"}
+    ok = await _sandbox_ensure_unpaused()
+    return {"ok": ok, "error": "" if ok else "docker unpause failed"}
+
+
+_SANDBOX_IDLE_SWEEP_INTERVAL_S = int(os.getenv("VERA_SANDBOX_IDLE_SWEEP_INTERVAL_S", "300"))
+
+
+async def _sandbox_idle_sweep() -> None:
+    """Scheduled: pause the sandbox container after VERA_SANDBOX_IDLE_PAUSE_S
+    seconds with no test/dev activity (see _sandbox_touch/_resolve_sandbox).
+    'It needs to be functional but if a loop test or development isn't
+    happening it shouldn't be active' (2026-08-03) — an idle-but-RUNNING
+    sandbox is a full Vera process quietly sharing prod's real Ollama nodes;
+    pausing freezes it completely (see _SANDBOX_CONTAINER's docstring) until
+    genuinely needed again."""
+    try:
+        if _RUN_LIVE.get("where") == "sandbox" and _RUN_LIVE.get("run_id") in _BG_RUNS \
+                and not _BG_RUNS[_RUN_LIVE["run_id"]].done():
+            return  # actively in use right now — never pause out from under it
+        sb = await _get_sandbox()
+        if not sb:
+            return
+        if await _sandbox_container_status() != "running":
+            return  # already paused/exited/absent — nothing to do
+        last = sb.get("last_activity") or sb.get("created_at") or ""
+        try:
+            from datetime import datetime, timezone
+            last_dt = datetime.fromisoformat(str(last).replace("Z", "+00:00"))
+            idle_s = (datetime.now(timezone.utc) - last_dt).total_seconds()
+        except Exception:
+            idle_s = 0  # unknown last_activity — be conservative, don't pause
+        if idle_s < _SANDBOX_IDLE_PAUSE_S:
+            return
+        r = await _sh(["docker", "pause", _SANDBOX_CONTAINER], timeout=15)
+        if r["ok"]:
+            await _audit("sandbox.pause", f"idle-paused after {int(idle_s)}s with no activity")
+            await emit_event({"type": "evolve.sandbox.paused", "manual": False,
+                              "idle_s": int(idle_s)})
+            log.info("evolve: sandbox idle-paused after %ds inactivity", int(idle_s))
+    except Exception as e:
+        log.debug("sandbox idle sweep: %s", e)
+
+
+schedule(_sandbox_idle_sweep, _SANDBOX_IDLE_SWEEP_INTERVAL_S, name="evolve.sandbox.idle_sweep")
 
 
 @capability("evolve.sandbox.snapshot", memory="off",

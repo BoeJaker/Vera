@@ -4926,6 +4926,25 @@ def dev_mode_on() -> bool:
     return str(os.environ.get("VERA_DEV_MODE", "")).strip().lower() in ("1", "true", "yes", "on")
 
 
+def is_dev_sandbox() -> bool:
+    """True inside a Loop Lab dev sandbox (docker-compose.dev.yml sets
+    VERA_IS_DEV_SANDBOX=1 — see evolve_capabilities.py's _dev_compose_yaml).
+
+    A sandbox is a FULL Vera process sharing prod's real backing services —
+    crucially including the same physical Ollama nodes (no isolation there,
+    unlike Redis/Postgres which get a dedicated DB). Every background job that
+    auto-starts on process boot (dream's scheduler + ambient director loop,
+    scheduled auto-ingest, ...) therefore also runs inside every sandbox,
+    silently generating Ollama traffic that competes with whatever loop/test
+    is actually being run there — invisible because it's not part of any
+    session anyone is watching. Confirmed live 2026-08-03: an 80+ minute
+    orchestrator-planning hang in a Loop Lab test coincided with exactly this
+    — the sandbox's own dream director had no reason not to be running too.
+    Call sites that start ambient/incidental background work (not the actual
+    thing under test) should check this and skip in a sandbox."""
+    return str(os.environ.get("VERA_IS_DEV_SANDBOX", "")).strip().lower() in ("1", "true", "yes", "on")
+
+
 def _relaunch_argv() -> List[str]:
     """The argv to re-exec this process with — how it was actually started."""
     return [sys.executable, "-m", "Vera.vera.capability_orchestration"]
@@ -5001,6 +5020,163 @@ async def cap_sys_dev_restart(confirm: bool = False, delay_s: float = 1.5,
             "argv": _relaunch_argv(), "delay_s": float(delay_s or 1.5),
             "note": "Vera is re-execing; it should answer again within a few seconds. "
                     "In-flight loops/streams are gone."}
+
+
+async def _do_stop(delay: float) -> None:
+    """Clean shutdown after `delay` seconds — runs the same shutdown hooks/backend
+    closes as _do_restart but exits instead of re-execing. Only meaningful when
+    something OUTSIDE this process (a supervisor, or a person at the host) will
+    bring it back up; `build.sh run`/`sys.dev.restart`'s own re-exec are the two
+    ways Vera comes back after this, this capability does neither on its own."""
+    await asyncio.sleep(max(0.2, delay))
+    log.warning("DEV STOP: shutting down (pid %s)", os.getpid())
+    for _hook in list(SHUTDOWN_HOOKS):
+        try:
+            await _hook()
+        except Exception as e:
+            log.warning("stop: shutdown hook failed: %s", e)
+    for closer, name in ((getattr(REDIS, "aclose", None), "redis"),
+                         (getattr(PG_POOL, "close", None), "postgres"),
+                         (getattr(NEO, "close", None), "neo4j")):
+        try:
+            if closer:
+                await closer()
+        except Exception as e:
+            log.debug("stop: closing %s: %s", name, e)
+    try:
+        sys.stdout.flush(); sys.stderr.flush()
+    except Exception:
+        pass
+    os._exit(0)   # hard exit — no atexit/finally surprises mid-shutdown
+
+
+@capability("sys.dev.stop", memory="off",
+            http_method="POST", http_path="/sys/dev/stop", http_tags=["sys"],
+            description="DEV MODE ONLY. Cleanly shut Vera DOWN (not restart) — closes "
+                        "Redis/Postgres/Neo4j and exits. Nothing brings it back up "
+                        "automatically (`build.sh run` is one-shot); use this only when "
+                        "something external is expected to relaunch it, or when you "
+                        "genuinely want it down. Requires VERA_DEV_MODE=1 and confirm=True. "
+                        "Inputs: confirm (bool!), delay_s (float, default 1.5), reason (str). "
+                        "Output: {ok, stopping, pid}.")
+async def cap_sys_dev_stop(confirm: bool = False, delay_s: float = 1.5,
+                           reason: str = "", trace_id=None):
+    if not dev_mode_on():
+        return {"ok": False, "error": "dev mode is off — set VERA_DEV_MODE=1 to enable "
+                                      "sys.dev.stop", "dev_mode": False}
+    if not confirm:
+        return {"ok": False, "error": "confirm=True is required — this kills all in-flight "
+                                      "work and does NOT come back on its own",
+                "dev_mode": True}
+    log.warning("sys.dev.stop requested%s", f" — {reason}" if reason else "")
+    try:
+        await emit_event({"type": "sys.dev.stop", "reason": reason,
+                          "pid": os.getpid(), "delay_s": delay_s})
+    except Exception:
+        pass
+    asyncio.create_task(_do_stop(float(delay_s or 1.5)))
+    return {"ok": True, "stopping": True, "pid": os.getpid(),
+            "delay_s": float(delay_s or 1.5),
+            "note": "Vera is shutting down and will NOT relaunch on its own."}
+
+
+def _env_file_path() -> Path:
+    return Path(__file__).resolve().parent.parent / ".env"
+
+
+# Deliberately broad and keyword-based rather than an allowlist: a keyword
+# denylist is easy to get wrong (FABRIC_S3_ACCESS slipped past the first
+# version of this list, undetected until a live call actually printed the
+# access key in cleartext), so err toward over-redacting. Still gated behind
+# VERA_DEV_MODE below as defense in depth — this list should never be the
+# ONLY thing standing between a secret and an HTTP response.
+_ENV_SECRET_HINTS = ("SECRET", "PASSWORD", "PASS", "TOKEN", "KEY", "CREDENTIAL",
+                     "ACCESS", "AUTH", "PRIVATE", "APIKEY", "CERT")
+
+
+def _env_redact(key: str, val: str) -> str:
+    return "••••••••" if any(h in key.upper() for h in _ENV_SECRET_HINTS) else val
+
+
+@capability("sys.env.get", memory="off", silent=True,
+            http_method="GET", http_path="/sys/env/get", http_tags=["sys"],
+            description="DEV MODE ONLY. Read the repo-root .env file (the one "
+                        "vera.config._load_dotenv_files reads at process start for "
+                        "native/non-docker launches). Secret-looking keys (see "
+                        "_ENV_SECRET_HINTS) are redacted, but this is a keyword "
+                        "heuristic, not a guarantee — gated on VERA_DEV_MODE for "
+                        "that reason, same as the rest of the sys.dev.* family. "
+                        "Output: {path, vars: {key: value}}.")
+async def cap_sys_env_get(trace_id=None):
+    if not dev_mode_on():
+        return {"ok": False, "error": "dev mode is off — set VERA_DEV_MODE=1 to enable "
+                                      "sys.env.get", "dev_mode": False}
+    path = _env_file_path()
+    out: Dict[str, str] = {}
+    if path.is_file():
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            if line.startswith("export "):
+                line = line[len("export "):]
+            k, _, v = line.partition("=")
+            k = k.strip()
+            if k:
+                out[k] = _env_redact(k, v.strip())
+    return {"path": str(path), "vars": out}
+
+
+@capability("sys.env.set", memory="off",
+            http_method="POST", http_path="/sys/env/set", http_tags=["sys"],
+            description="DEV MODE ONLY. Set (or add) a KEY=VALUE line in the repo-root .env "
+                        "file — the generic 'control other system variables' knob (e.g. "
+                        "VERA_CLAUDE_SESSIONS_INGEST_INTERVAL, OLLAMA_MAX_AUTO_CTX). Preserves "
+                        "every other line/comment/order in the file. Also updates the CURRENT "
+                        "process's os.environ so anything that reads the var live (not just at "
+                        "import time) sees it immediately — but most .env values (this one "
+                        "included) are only read ONCE at process/module import, so a restart "
+                        "(sys.dev.restart) is usually still required for it to actually take "
+                        "effect; pass restart=True to chain one automatically. Requires "
+                        "VERA_DEV_MODE=1 and confirm=True. Inputs: key (str!), value (str!), "
+                        "confirm (bool!), restart (bool — also restart Vera after writing). "
+                        "Output: {ok, path, key, value, restarting}.")
+async def cap_sys_env_set(key: str = "", value: str = "", confirm: bool = False,
+                          restart: bool = False, trace_id=None):
+    if not dev_mode_on():
+        return {"ok": False, "error": "dev mode is off — set VERA_DEV_MODE=1 to enable "
+                                      "sys.env.set", "dev_mode": False}
+    key = (key or "").strip()
+    if not key or not key.replace("_", "").isalnum():
+        return {"ok": False, "error": "key must be a non-empty alphanumeric/underscore name"}
+    if not confirm:
+        return {"ok": False, "error": "confirm=True is required", "dev_mode": True}
+    path = _env_file_path()
+    lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+    new_line = f"{key}={value}"
+    found = False
+    for i, raw in enumerate(lines):
+        line = raw.strip()
+        probe = line[len("export "):] if line.startswith("export ") else line
+        if probe.split("=", 1)[0].strip() == key and not line.startswith("#"):
+            lines[i] = new_line
+            found = True
+            break
+    if not found:
+        lines.append(new_line)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.environ[key] = value
+    log.warning("sys.env.set: %s=%s (restart=%s)", key, _env_redact(key, value), restart)
+    try:
+        await emit_event({"type": "sys.env.set", "key": key,
+                          "value": _env_redact(key, value), "restart": restart})
+    except Exception:
+        pass
+    out = {"ok": True, "path": str(path), "key": key, "value": value, "restarting": False}
+    if restart:
+        r = await cap_sys_dev_restart(confirm=True, reason=f"sys.env.set {key}")
+        out["restarting"] = bool(r.get("restarting"))
+    return out
 
 
 # ── Observability ─────────────────────────────────────────────────────────────
@@ -6475,6 +6651,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "provisioning/identity_capabilities.py"),
         os.path.join(_here, "provisioning/lldap_capabilities.py"),
         os.path.join(_here, "provisioning/identity_resolver.py"),
+        os.path.join(_here, "provisioning/identity_migrate.py"),
         os.path.join(_here, "provisioning/enroll_capabilities.py"),
         os.path.join(_here, "provisioning/software_capabilities.py"),
         os.path.join(_here, "provisioning/components_capabilities.py"),

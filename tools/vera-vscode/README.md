@@ -15,6 +15,16 @@ back into Vera (memory, fabric, IDE tools).
   Vera's capabilities as tools.
 - **Vera: Enqueue a Claude Code task for this workspace** — command-palette
   entry point for the same enqueue flow.
+- **Vera: Install control tasks into this workspace** — merges a ready-made
+  `.vscode/tasks.json` (start/stop/restart the server, force a Claude Code
+  session sync, read/set arbitrary `.env` variables) built on top of
+  `build.sh`/`build.ps1` and the `sys.dev.*`/`sys.env.*` capabilities. Safe to
+  re-run — merges by task label/input id, so it won't clobber tasks you've
+  added yourself. Works without the extension too: the template it installs
+  lives at `tools/vera-vscode/tasks/vera-tasks.json`, plain copy-pasteable
+  into any `.vscode/tasks.json`. Restart/stop require `VERA_DEV_MODE=1` on
+  the server; the default `veraHost` input assumes `llm.int:8999` — edit it
+  if yours differs.
 
 - **Client mode** (`vera.clientMode` / command *Vera: Toggle client mode*) —
   registers this window with Vera as a controllable instance

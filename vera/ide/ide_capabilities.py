@@ -2229,6 +2229,74 @@ async def ide_git_log(path: str, n: int = 20, since: str = "", until: str = "", 
 
 
 @capability(
+    "ide.git.branches",
+    http_method="POST", http_path="/ide/git/branches", http_tags=["ide", "git"],
+    memory="off",
+    description="List every local branch with its last commit and worktree status — "
+                "the 'what is Vera/Claude Code actually working on right now' view, "
+                "for the Dispatch panel's branch section. "
+                "Input: path (str — repo path, defaults to this checkout's own "
+                "root), base (str — branch to compare ahead/behind against, "
+                "default 'main'). "
+                "Output: {branches: [{name, current, hash, author, date, ts, "
+                "message, ahead, behind, worktree}], path, base}.",
+)
+async def ide_git_branches(path: str = "", base: str = "main", trace_id=None):
+    # ide_capabilities.py lives at <repo>/vera/ide/ — parents[2] is <repo>,
+    # not parents[1] (<repo>/vera). Git itself doesn't care (it walks up to
+    # find .git regardless of which subdirectory cwd is), so this was
+    # functionally harmless, but the reported `path` field was wrong.
+    path = path or str(Path(__file__).resolve().parents[2])
+    rc, out, _err = _git(
+        ["for-each-ref", "--sort=-committerdate", "refs/heads/",
+         "--format=%(refname:short)\x1f%(objectname:short)\x1f%(authorname)\x1f"
+         "%(committerdate:short)\x1f%(committerdate:unix)\x1f%(subject)"],
+        path)
+    branches: list = []
+    if rc == 0:
+        for line in out.splitlines():
+            parts = line.split("\x1f")
+            if len(parts) != 6:
+                continue
+            name, h, author, date, ts, subject = parts
+            branches.append({"name": name, "hash": h, "author": author,
+                             "date": date, "ts": int(ts) if ts.isdigit() else 0,
+                             "message": subject, "ahead": None, "behind": None,
+                             "current": False, "worktree": ""})
+    # Ahead/behind vs `base` — how far each branch has diverged, in both
+    # directions, so a branch that's fallen behind main is visible, not just
+    # branches that are ahead of it.
+    for b in branches:
+        if b["name"] == base:
+            continue
+        rc2, out2, _err2 = _git(
+            ["rev-list", "--left-right", "--count", f"{base}...{b['name']}"], path)
+        if rc2 == 0:
+            counts = out2.strip().split()
+            if len(counts) == 2:
+                b["behind"], b["ahead"] = int(counts[0]), int(counts[1])
+    # Which branches have a LIVE worktree right now (this is prod's own
+    # checkout, a Loop Lab dev-sandbox worktree, or any other active
+    # checkout) — the "actually being worked on" signal, distinct from just
+    # "has commits".
+    rc3, out3, _err3 = _git(["worktree", "list", "--porcelain"], path)
+    by_branch_wt: dict = {}
+    cur_wt_path = ""
+    for line in out3.splitlines():
+        if line.startswith("worktree "):
+            cur_wt_path = line[len("worktree "):].strip()
+        elif line.startswith("branch "):
+            ref = line[len("branch "):].strip()
+            by_branch_wt[ref.rsplit("/", 1)[-1]] = cur_wt_path
+    rc4, out4, _err4 = _git(["branch", "--show-current"], path)
+    cur_name = out4.strip()
+    for b in branches:
+        b["current"] = (b["name"] == cur_name)
+        b["worktree"] = by_branch_wt.get(b["name"], "")
+    return {"branches": branches, "path": path, "base": base}
+
+
+@capability(
     "ide.git.diff",
     http_method="POST", http_path="/ide/git/diff", http_tags=["ide", "git"],
     memory="off",

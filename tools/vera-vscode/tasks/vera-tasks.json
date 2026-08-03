@@ -1,0 +1,127 @@
+{
+  "//": "Vera control tasks — installed by the 'Vera: Install control tasks into this workspace' command (or copy this file's contents into your own .vscode/tasks.json by hand). Every task calls build.sh/build.ps1, or the sys.dev.*/sys.env.*/ide.claude_sessions.* HTTP capabilities those scripts themselves call — nothing here is extension-specific, so these keep working even if the extension isn't installed.",
+  "version": "2.0.0",
+  "inputs": [
+    {
+      "id": "veraHost",
+      "type": "promptString",
+      "description": "Vera host:port (build.sh/build.ps1 resolve this themselves; only the raw HTTP tasks below need it spelled out)",
+      "default": "llm.int:8999"
+    },
+    {
+      "id": "veraEnvKey",
+      "type": "promptString",
+      "description": "Environment variable name to set (repo-root .env)"
+    },
+    {
+      "id": "veraEnvValue",
+      "type": "promptString",
+      "description": "Value to set it to"
+    },
+    {
+      "id": "veraEnvRestart",
+      "type": "pickString",
+      "description": "Restart Vera after setting it? (most .env values are only read at process start)",
+      "options": ["false", "true"],
+      "default": "false"
+    },
+    {
+      "id": "veraClaudeSyncInterval",
+      "type": "promptString",
+      "description": "Auto-sync interval in seconds for Claude Code session ingest (0 = disable). Requires a restart to take effect.",
+      "default": "300"
+    }
+  ],
+  "tasks": [
+    {
+      "label": "Vera: Health Check",
+      "type": "shell",
+      "windows": { "command": "powershell -NoProfile -File \"${workspaceFolder}\\build.ps1\" health" },
+      "linux":   { "command": "\"${workspaceFolder}/build.sh\" health" },
+      "osx":     { "command": "\"${workspaceFolder}/build.sh\" health" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared" }
+    },
+    {
+      "label": "Vera: List Capabilities",
+      "type": "shell",
+      "windows": { "command": "powershell -NoProfile -File \"${workspaceFolder}\\build.ps1\" caps" },
+      "linux":   { "command": "\"${workspaceFolder}/build.sh\" caps" },
+      "osx":     { "command": "\"${workspaceFolder}/build.sh\" caps" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared" }
+    },
+    {
+      "label": "Vera: Restart (native, in-place)",
+      "detail": "Calls sys.dev.restart over HTTP — requires VERA_DEV_MODE=1 on the server. Kills every in-flight loop/chat/session on the box.",
+      "type": "shell",
+      "windows": { "command": "powershell -NoProfile -File \"${workspaceFolder}\\build.ps1\" restart" },
+      "linux":   { "command": "\"${workspaceFolder}/build.sh\" restart" },
+      "osx":     { "command": "\"${workspaceFolder}/build.sh\" restart" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared" }
+    },
+    {
+      "label": "Vera: Stop (native)",
+      "detail": "Calls sys.dev.stop over HTTP — clean shutdown, does NOT come back on its own.",
+      "type": "shell",
+      "windows": { "command": "powershell -NoProfile -File \"${workspaceFolder}\\build.ps1\" stop" },
+      "linux":   { "command": "\"${workspaceFolder}/build.sh\" stop" },
+      "osx":     { "command": "\"${workspaceFolder}/build.sh\" stop" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared" }
+    },
+    {
+      "label": "Vera: Sync Claude Sessions Now",
+      "detail": "Forces an immediate Claude Code transcript ingest pass (doesn't wait for the auto-sync interval).",
+      "type": "shell",
+      "windows": { "command": "powershell -NoProfile -File \"${workspaceFolder}\\build.ps1\" sync-claude" },
+      "linux":   { "command": "\"${workspaceFolder}/build.sh\" sync-claude" },
+      "osx":     { "command": "\"${workspaceFolder}/build.sh\" sync-claude" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared" }
+    },
+    {
+      "label": "Vera: Show Environment Variables",
+      "detail": "Reads the repo-root .env (secret-looking values redacted).",
+      "type": "shell",
+      "windows": { "command": "powershell -NoProfile -Command \"Invoke-RestMethod -Uri 'https://${input:veraHost}/sys/env/get' -SkipCertificateCheck | ConvertTo-Json -Depth 6\"" },
+      "linux":   { "command": "curl -sk https://${input:veraHost}/sys/env/get | python3 -m json.tool" },
+      "osx":     { "command": "curl -sk https://${input:veraHost}/sys/env/get | python3 -m json.tool" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared" }
+    },
+    {
+      "label": "Vera: Set Environment Variable...",
+      "detail": "Generic .env control (sys.env.set) — needs VERA_DEV_MODE=1 on the server.",
+      "type": "shell",
+      "windows": {
+        "command": "powershell -NoProfile -Command \"Invoke-RestMethod -Uri 'https://${input:veraHost}/sys/env/set' -Method Post -SkipCertificateCheck -ContentType 'application/json' -Body (@{key='${input:veraEnvKey}';value='${input:veraEnvValue}';confirm=$true;restart=('${input:veraEnvRestart}' -eq 'true')} | ConvertTo-Json) | ConvertTo-Json -Depth 6\""
+      },
+      "linux": {
+        "command": "python3 -c \"import json,urllib.request; req=urllib.request.Request('https://${input:veraHost}/sys/env/set', data=json.dumps({'key':'${input:veraEnvKey}','value':'${input:veraEnvValue}','confirm':True,'restart':'${input:veraEnvRestart}'=='true'}).encode(), headers={'Content-Type':'application/json'}, method='POST'); import ssl; print(urllib.request.urlopen(req, context=ssl._create_unverified_context()).read().decode())\""
+      },
+      "osx": {
+        "command": "python3 -c \"import json,urllib.request; req=urllib.request.Request('https://${input:veraHost}/sys/env/set', data=json.dumps({'key':'${input:veraEnvKey}','value':'${input:veraEnvValue}','confirm':True,'restart':'${input:veraEnvRestart}'=='true'}).encode(), headers={'Content-Type':'application/json'}, method='POST'); import ssl; print(urllib.request.urlopen(req, context=ssl._create_unverified_context()).read().decode())\""
+      },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared" }
+    },
+    {
+      "label": "Vera: Set Local Claude Auto-Sync Interval...",
+      "detail": "Sets VERA_CLAUDE_SESSIONS_INGEST_INTERVAL and restarts so it takes effect (0 disables auto-sync).",
+      "type": "shell",
+      "windows": {
+        "command": "powershell -NoProfile -Command \"Invoke-RestMethod -Uri 'https://${input:veraHost}/sys/env/set' -Method Post -SkipCertificateCheck -ContentType 'application/json' -Body (@{key='VERA_CLAUDE_SESSIONS_INGEST_INTERVAL';value='${input:veraClaudeSyncInterval}';confirm=$true;restart=$true} | ConvertTo-Json) | ConvertTo-Json -Depth 6\""
+      },
+      "linux": {
+        "command": "python3 -c \"import json,urllib.request,ssl; req=urllib.request.Request('https://${input:veraHost}/sys/env/set', data=json.dumps({'key':'VERA_CLAUDE_SESSIONS_INGEST_INTERVAL','value':'${input:veraClaudeSyncInterval}','confirm':True,'restart':True}).encode(), headers={'Content-Type':'application/json'}, method='POST'); print(urllib.request.urlopen(req, context=ssl._create_unverified_context()).read().decode())\""
+      },
+      "osx": {
+        "command": "python3 -c \"import json,urllib.request,ssl; req=urllib.request.Request('https://${input:veraHost}/sys/env/set', data=json.dumps({'key':'VERA_CLAUDE_SESSIONS_INGEST_INTERVAL','value':'${input:veraClaudeSyncInterval}','confirm':True,'restart':True}).encode(), headers={'Content-Type':'application/json'}, method='POST'); print(urllib.request.urlopen(req, context=ssl._create_unverified_context()).read().decode())\""
+      },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared" }
+    }
+  ]
+}

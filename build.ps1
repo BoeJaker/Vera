@@ -10,7 +10,13 @@ $Parent   = Split-Path $RepoRoot -Parent
 $Py       = if ($env:PY) { $env:PY } else { "python" }
 $Venv     = if ($env:VENV) { $env:VENV } else { ".venv" }
 $Port     = if ($env:PORT) { $env:PORT } else { "8999" }
-$Base     = "http://localhost:$Port"
+# VERA_HOST matters here in a way it doesn't for build.sh: build.sh runs ON the
+# Vera host itself (localhost is always correct there), but build.ps1 commonly
+# runs from a DIFFERENT Windows machine against a remote Vera (e.g. llm.int) —
+# defaulting to localhost would silently probe the wrong machine's port 8999.
+# Set VERA_HOST=localhost explicitly if you really are running Vera's docker
+# stack locally via Docker Desktop.
+$VeraHost = if ($env:VERA_HOST) { $env:VERA_HOST } else { "llm.int" }
 
 function Get-Compose {
   docker compose version *> $null
@@ -27,12 +33,28 @@ Vera build helper
   .\build.ps1 logs       Follow orchestrator logs
   .\build.ps1 venv       Create .venv and install requirements
   .\build.ps1 run        Run orchestrator locally (no docker)
+  .\build.ps1 stop       Cleanly shut a native instance down (sys.dev.stop, over HTTP)
+  .\build.ps1 restart    Restart a native instance in place (sys.dev.restart, over HTTP)
+  .\build.ps1 sync-claude  Trigger an immediate Claude Code session ingest pass
+
   .\build.ps1 secret     Print a fresh VERA_SECRET_KEY
   .\build.ps1 health     GET /health
   .\build.ps1 caps       List capabilities (GET /mcp/tools)
   .\build.ps1 tour       Terminal guided tour
   .\build.ps1 welcome    Open the HTML welcome guide
+
+stop/restart call the in-process sys.dev.stop/sys.dev.restart capabilities
+directly over HTTPS — no SSH needed, but VERA_DEV_MODE=1 must be set on the
+server (see .env). Vera itself runs on the Linux host, not Windows, so this
+only ever reaches it over the network; there is no local process to control.
 "@ | Write-Output
+}
+
+function Resolve-VeraBase {
+  # TLS_ENABLED is set on the real host, not knowable from Windows without
+  # asking it — this deployment's default is https with a self-signed cert
+  # (see Resolve-VeraBase callers' -SkipCertificateCheck).
+  return "https://${VeraHost}:$Port"
 }
 
 switch ($Command) {
@@ -42,9 +64,24 @@ switch ($Command) {
   "logs"    { Invoke-Expression "$(Get-Compose) logs -f vera" }
   "venv"    { & $Py -m venv $Venv; & "$Venv\Scripts\pip.exe" install --upgrade pip; & "$Venv\Scripts\pip.exe" install -r requirements.txt }
   "run"     { $env:PYTHONPATH = $Parent; Push-Location $Parent; & $Py -m Vera.vera.capability_orchestration; Pop-Location }
+  "stop"    {
+    $b = Resolve-VeraBase
+    try { Invoke-RestMethod -Uri "$b/sys/dev/stop" -Method Post -SkipCertificateCheck -ContentType "application/json" -Body '{"confirm":true,"reason":"build.ps1 stop"}' | ConvertTo-Json -Depth 6 }
+    catch { Write-Output "stop request failed — is Vera reachable at $b, and is VERA_DEV_MODE=1 set? $($_.Exception.Message)" }
+  }
+  "restart" {
+    $b = Resolve-VeraBase
+    try { Invoke-RestMethod -Uri "$b/sys/dev/restart" -Method Post -SkipCertificateCheck -ContentType "application/json" -Body '{"confirm":true,"reason":"build.ps1 restart"}' | ConvertTo-Json -Depth 6 }
+    catch { Write-Output "restart request failed — is Vera reachable at $b, and is VERA_DEV_MODE=1 set? $($_.Exception.Message)" }
+  }
+  "sync-claude" {
+    $b = Resolve-VeraBase
+    try { Invoke-RestMethod -Uri "$b/ide/claude_sessions/ingest_all" -Method Post -SkipCertificateCheck -ContentType "application/json" -Body '{}' | ConvertTo-Json -Depth 6 }
+    catch { Write-Output "sync request failed — is Vera reachable at $b? $($_.Exception.Message)" }
+  }
   "secret"  { & $Py -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())" }
-  "health"  { try { Invoke-RestMethod "$Base/health" | ConvertTo-Json -Depth 6 } catch { Write-Output "Vera not reachable at $Base" } }
-  "caps"    { try { Invoke-RestMethod "$Base/mcp/tools" | ConvertTo-Json -Depth 6 } catch { Write-Output "Vera not reachable at $Base" } }
+  "health"  { $b = Resolve-VeraBase; try { Invoke-RestMethod "$b/health" -SkipCertificateCheck | ConvertTo-Json -Depth 6 } catch { Write-Output "Vera not reachable at $b" } }
+  "caps"    { $b = Resolve-VeraBase; try { Invoke-RestMethod "$b/mcp/tools" -SkipCertificateCheck | ConvertTo-Json -Depth 6 } catch { Write-Output "Vera not reachable at $b" } }
   "tour"    { & $Py welcome/welcome.py }
   "welcome" { & $Py -c "import webbrowser,pathlib;webbrowser.open(pathlib.Path('welcome/index.html').resolve().as_uri())" }
   default   { Show-Usage }

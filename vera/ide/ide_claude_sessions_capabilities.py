@@ -71,7 +71,7 @@ from typing import Dict, List, Optional
 from fastapi.responses import HTMLResponse
 
 from Vera.vera.capability_orchestration import (
-    capability, emit_event, now_iso, register_ui, schedule,
+    capability, emit_event, is_dev_sandbox, now_iso, register_ui, schedule,
 )
 from Vera.vera.fabric.data_fabric import _sqlite_conn
 from Vera.vera.ide.ide_capabilities import _record, ide_git_log
@@ -105,6 +105,25 @@ def _save_state(state: dict) -> None:
 
 def _source_key(instance_id: str) -> str:
     return f"instance:{instance_id}" if instance_id else "local"
+
+
+# One ingest_all pass per source can run long (large 30MB+ transcript files,
+# ~87 of them observed in practice) — comfortably longer than the 5-minute
+# scheduler interval. Without a guard, the next scheduled tick fires a second,
+# overlapping ingest_all for the same source; both load the on-disk cursor
+# state at its start-of-run position and race to write it back at the end,
+# so whichever finishes last wins and the other's progress is silently lost.
+# Net effect observed live: the cursor barely advanced over multiple 5-minute
+# intervals and two restarts. A simple per-source lock makes an overlapping
+# tick a no-op skip instead of a race.
+_INGEST_LOCKS: Dict[str, asyncio.Lock] = {}
+
+
+def _ingest_lock(key: str) -> asyncio.Lock:
+    lock = _INGEST_LOCKS.get(key)
+    if lock is None:
+        lock = _INGEST_LOCKS[key] = asyncio.Lock()
+    return lock
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -393,7 +412,14 @@ async def cap_claude_sessions_sources(trace_id=None) -> dict:
 )
 async def cap_claude_sessions_scan(instance_id: str = "", trace_id=None) -> dict:
     if not instance_id:
-        return {"source": "local", "files": _local_scan()}
+        # _local_scan() does a synchronous os.walk (Path.rglob) across every
+        # local root — with the real ~/.claude/projects tree (87+ files, some
+        # 30MB+) this blocked the WHOLE event loop for 1000ms+ per call (caught
+        # live in perf.stalls, kind="hang", 2026-08-03). Every other coroutine —
+        # every HTTP request, every loop step — froze for that entire window.
+        # Off the loop, same as _git()/subprocess calls elsewhere in the codebase.
+        files = await asyncio.get_event_loop().run_in_executor(None, _local_scan)
+        return {"source": "local", "files": files}
     inst = _get_instance(instance_id)
     if not inst:
         return {"error": f"instance not found: {instance_id}"}
@@ -463,25 +489,30 @@ async def cap_claude_sessions_ingest(rel: str = "", instance_id: str = "", trace
                 "Output: {ok, files_scanned, files_updated, turns_recorded}.",
 )
 async def cap_claude_sessions_ingest_all(instance_id: str = "", trace_id=None) -> dict:
-    scan = await cap_claude_sessions_scan(instance_id=instance_id)
-    if scan.get("error"):
-        return {"error": scan["error"]}
-    files = scan.get("files", [])
-    state = _load_state()
     key = _source_key(instance_id)
-    src_state = state.get(key, {})
-    updated = 0
-    total_turns = 0
-    for f in files:
-        rel = f["rel"]
-        known = src_state.get(rel, {})
-        if "offset" in known and f.get("size", 0) <= known["offset"]:
-            continue  # nothing new
-        n = await _ingest_file(instance_id, rel, state)
-        if n:
-            updated += 1
-            total_turns += n
-    _save_state(state)
+    lock = _ingest_lock(key)
+    if lock.locked():
+        return {"ok": True, "files_scanned": 0, "files_updated": 0,
+                "turns_recorded": 0, "skipped": "already running"}
+    async with lock:
+        scan = await cap_claude_sessions_scan(instance_id=instance_id)
+        if scan.get("error"):
+            return {"error": scan["error"]}
+        files = scan.get("files", [])
+        state = _load_state()
+        src_state = state.get(key, {})
+        updated = 0
+        total_turns = 0
+        for f in files:
+            rel = f["rel"]
+            known = src_state.get(rel, {})
+            if "offset" in known and f.get("size", 0) <= known["offset"]:
+                continue  # nothing new
+            n = await _ingest_file(instance_id, rel, state)
+            _save_state(state)  # persist per-file so a restart/crash mid-pass loses at most one file's progress
+            if n:
+                updated += 1
+                total_turns += n
     if updated:
         await emit_event({"type": "ide.claude_sessions.ingest_all", "source": key,
                           "files_scanned": len(files), "files_updated": updated,
@@ -637,7 +668,13 @@ async def _scheduled_ingest_all():
                 log.warning("claude_sessions: scheduled ingest failed for %s: %s", iid, e)
 
 
-schedule(_scheduled_ingest_all, _SCHEDULE_INTERVAL_S, name="ide.claude_sessions.autoingest")
+if _SCHEDULE_INTERVAL_S > 0 and not is_dev_sandbox():
+    schedule(_scheduled_ingest_all, _SCHEDULE_INTERVAL_S, name="ide.claude_sessions.autoingest")
+elif is_dev_sandbox():
+    log.info("claude_sessions: auto-ingest skipped (dev sandbox — would just "
+             "re-scan the same transcripts into a throwaway DB nobody reads)")
+else:
+    log.info("claude_sessions: auto-ingest disabled (VERA_CLAUDE_SESSIONS_INGEST_INTERVAL<=0)")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
