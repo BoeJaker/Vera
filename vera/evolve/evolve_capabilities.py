@@ -5237,21 +5237,76 @@ async def evolve_sandbox_fs_write(path: str = "", content: str = "", trace_id=No
     return {"ok": True, "path": path, "bytes": len(content)}
 
 
+async def _sandbox_routing_drift() -> Dict[str, Any]:
+    """Compare the sandbox's EFFECTIVE loop-profile routing against prod's own —
+    the live tripwire for the exact bug found 2026-08-03: evolve.sandbox.snapshot
+    silently omitting the Ollama routing-override keys made every sandboxed
+    loop test run its planner/controller/tier calls on CPU with a 13.79GB model
+    (prod pins them to GPU + a 7GB model), with no error and no GPU activity —
+    indistinguishable from a hang from any external vantage point, for HOURS.
+    Snapshotting the right keys by default (see evolve.sandbox.snapshot) is the
+    real fix; this is the belt-and-suspenders check so if that ever regresses —
+    a future refactor drops a prefix, a custom snapshot call omits one, prod's
+    routing changes after the sandbox was already created and never re-synced —
+    it surfaces immediately as a clear status field instead of silently
+    reproducing the same multi-hour mystery. Best-effort: returns {ok: True} if
+    the sandbox is unreachable or either side's routing can't be read, rather
+    than blocking sandbox.status on it."""
+    try:
+        prod_cap = CAPABILITY_REGISTRY.get("ollama.role_profiles.get")
+        if not prod_cap:
+            return {"ok": True, "checked": False}
+        prod_rp = await prod_cap["func"]()
+        prod_loop = ((prod_rp.get("effective") or {}).get("loop") or {}).get("roles") or {}
+        sb_raw = await _sandbox_call("ollama.role_profiles.get", {}, timeout=15)
+        if not isinstance(sb_raw, dict) or sb_raw.get("error"):
+            return {"ok": True, "checked": False}
+        sb_loop = ((sb_raw.get("effective") or {}).get("loop") or {}).get("roles") or {}
+        mismatches = []
+        for role in ("planner", "controller", "tier"):
+            p, s = prod_loop.get(role) or {}, sb_loop.get(role) or {}
+            if not p or not s:
+                continue
+            if bool(p.get("deny_gpu")) != bool(s.get("deny_gpu")) or \
+                    (p.get("model") or "") != (s.get("model") or ""):
+                mismatches.append({
+                    "role": role,
+                    "prod": {"deny_gpu": bool(p.get("deny_gpu")), "model": p.get("model") or ""},
+                    "sandbox": {"deny_gpu": bool(s.get("deny_gpu")), "model": s.get("model") or ""},
+                })
+        if mismatches:
+            return {"ok": False, "checked": True, "mismatches": mismatches,
+                    "hint": "sandbox routing differs from prod for loop role(s) above — "
+                            "loop tests here may be dramatically slower with no visible "
+                            "error. Re-run evolve.sandbox.snapshot then recreate the "
+                            "sandbox (evolve.sandbox.up) to pick up prod's current routing."}
+        return {"ok": True, "checked": True, "mismatches": []}
+    except Exception as e:
+        return {"ok": True, "checked": False, "error": str(e)[:200]}
+
+
 @capability("evolve.sandbox.status", memory="off", silent=True,
             http_method="GET", http_path="/evolve/sandbox/status", http_tags=["evolve"],
             description="State of the dev sandbox Vera: descriptor (branch, port, "
                         "worktree, last_activity) + a live health probe of the dev "
-                        "port. A PAUSED sandbox (idle-swept — see "
+                        "port + a routing-drift check (does the sandbox's Ollama "
+                        "role routing for planner/controller/tier still match prod's? "
+                        "— see _sandbox_routing_drift's docstring for the incident "
+                        "this guards against). A PAUSED sandbox (idle-swept — see "
                         "VERA_SANDBOX_IDLE_PAUSE_S) is reported as such WITHOUT being "
-                        "woken by this check — only real use wakes it. Output: "
-                        "{sandbox, probe, up, paused}.")
+                        "woken by this check — only real use wakes it (the drift check "
+                        "is skipped while paused, for the same reason). Output: "
+                        "{sandbox, probe, up, paused, routing_drift}.")
 async def evolve_sandbox_status(trace_id=None):
     port = await _dev_port()
     sb = await _get_sandbox()
     probe = await _sandbox_probe(auto_unpause=False) if sb else {"reachable": False}
+    up = bool(sb) and probe.get("reachable", False)
+    drift = await _sandbox_routing_drift() if up else {"ok": True, "checked": False}
     return {"sandbox": sb, "probe": probe,
-            "up": bool(sb) and probe.get("reachable", False),
+            "up": up,
             "paused": bool(probe.get("paused")),
+            "routing_drift": drift,
             "dev_port": port, "prod_port": PROD_PORT, "dev_redis_db": DEV_REDIS_DB}
 
 
