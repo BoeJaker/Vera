@@ -88,3 +88,8 @@ the generated `.vsix`. Set `vera.baseUrl` to your Vera server.
 > The MCP bridge served by `GET /ide/remote/bridge/source` is the exact same
 > `vera/ide/vera_mcp_bridge.py` the server-side `ide.remote.bridge.install`
 > deploys, so the editor path and the SSH path stay in sync.
+
+## Troubleshooting
+
+Installed but not showing up in your current profile, or installed but
+won't connect? See `TROUBLESHOOTING.md` in this directory.

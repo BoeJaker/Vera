@@ -3031,7 +3031,17 @@ CATEGORY_PREFIX_HINTS: Dict[str, List[str]] = {
     "messaging":      ["tg.", "mcp.", "llm.generate"],
     "image_gen":      ["sd.", "image.", "llm.generate"],
     "audio":          ["tts.", "stt.", "llm.generate"],
-    "browser_task":   ["browser.", "http.get", "scrape."],
+    # "operator." added alongside "browser." — operator.* is the REAL browser
+    # automation family (Playwright, real click/observe against a live page);
+    # browser.navigate's own click-automation is the older, more fragile
+    # implementation (§2.23). Without this, a "browser_task"-categorized goal
+    # never even sees operator.run as an option — confirmed live: a goal
+    # explicitly asking to "verify it actually works" by clicking a button
+    # never had operator.* appear ANYWHERE in its capability catalog across
+    # an entire 3600+-event run, so the deterministic operator.run seeding
+    # elsewhere in this file (see _V5_UI_VERIFY_STEP_RE) had nothing to seed
+    # it INTO — this is the missing link that made that seeding logic inert.
+    "browser_task":   ["browser.", "operator.", "http.get", "scrape."],
     "agent_op":       ["agent.", "research.agents.", "workshop.",
                        "ide.agent.", "context.search_dags"],
     "other":          [],
@@ -3745,8 +3755,14 @@ _DEFAULT_CAP_BLACKLIST: set = {
 # research the system already did. Blocking those would cost real capability for no
 # latency win. Fast web access (web.search / web.fetch / http.get) is untouched, so
 # a loop can still look things up.
+# `web.research` (NOT the same thing despite the name) belongs with that fast group,
+# not here — found live, 2026-08-03: it was listed here by name-similarity to
+# research.run/research.report, contradicting its own registered description
+# ("Returns immediately (not LONG-RUNNING)... no second round-trip... nothing is
+# written to the fabric") and silently defeating its own seeding in
+# _V5_WEB_RESEARCH_SEED_CAPS — seeded caps still pass through this block AFTER
+# insertion, so listing it here overrode the seed regardless of intent.
 _RESEARCH_JOB_CAPS: frozenset = frozenset({
-    "web.research",
     "research.run", "research.report", "research.parallel", "research.deep",
     "research.code", "research.guide", "research.quick_search",
     "research.filestore",
@@ -4018,6 +4034,30 @@ def _coerce_args(cap_name: str, args: Any) -> Tuple[Dict[str, Any], List[str]]:
     accepted = set(props.keys()) - {"trace_id"}
 
     out: Dict[str, Any] = {}
+
+    # 0. Unwrap a common LLM mistake: nesting the real args under a wrapper
+    #    key — {"args": {"goal": "...", "url": "..."}} instead of the flat
+    #    {"goal": "...", "url": "..."} the schema actually wants. Observed
+    #    live on operator.run: the wrapper key ("args") isn't a real schema
+    #    prop, so step 1 below silently dropped EVERYTHING including the
+    #    required `goal`, producing a confusing "ERROR: goal required" with
+    #    no trace back to what actually went wrong — a `dry_run`-cheap call
+    #    (elapsed_ms in the low tens) that still burned a whole cycle on a
+    #    step already fighting to get a real browser check done. Only
+    #    unwraps when: the wrapper key itself is NOT already a real
+    #    accepted prop (a genuine top-level `args`/`params` field, if one
+    #    ever exists, is never touched), args is otherwise a single-key
+    #    dict (so this never eats a call that also has other real args
+    #    alongside a coincidentally-named one), and the nested dict shares
+    #    at least one key with the schema (so an unrelated single-key dict
+    #    is never mistaken for a wrapper).
+    _WRAPPER_KEYS = ("args", "arguments", "params", "parameters", "kwargs", "input")
+    if len(args) == 1:
+        _only_k, _only_v = next(iter(args.items()))
+        if (_only_k in _WRAPPER_KEYS and _only_k not in accepted
+                and isinstance(_only_v, dict) and any(k in accepted for k in _only_v)):
+            args = _only_v
+            notes.append(f"unwrapped nested '{_only_k}' wrapper")
 
     # 1. Drop completely unknown args (the LLM commonly invents ones) — but
     #    first RENAME an unambiguous synonym onto the schema's real param
@@ -4374,6 +4414,28 @@ async def _attempt_arg_recovery(*, cap_name: str, failed_args: Dict[str, Any],
 
         # Coerce types via the standard pipeline
         coerced, _coerce_notes = _coerce_args(cap_name, new_args)
+
+        # UI-verify URL/goal self-heal — this recovery path reconstructs
+        # args via its OWN recovery-LLM call each attempt, entirely
+        # bypassing the main single-tool/chain-hop self-heal (§2.35/§2.38/
+        # §2.43) that only runs on a FIRST attempt. Observed live (§5.24,
+        # Test V): once operator.run failed once with the malformed-URL
+        # guess, EVERY subsequent recovery attempt reproduced the exact
+        # same malformed shape un-healed — this function is a genuinely
+        # separate code path the earlier fixes never reached. No
+        # workdir_files here (this function doesn't have it), so only the
+        # pattern-rewrite case applies, not the empty-URL single-candidate
+        # default — still covers what was actually observed.
+        _rec_url_arg = ("url" if cap_name == "operator.run"
+                        else ("start_url" if cap_name == "browser.navigate" else ""))
+        if _rec_url_arg and isinstance(coerced, dict):
+            _ru = str(coerced.get(_rec_url_arg) or "").strip()
+            _rum = _ru and re.match(
+                r"^https?://localhost(?::\d+)?\.?/(?!remote/sandbox/preview/)([^/?#]+)/?$", _ru)
+            if _rum:
+                coerced[_rec_url_arg] = _v5_sandbox_preview_url(session_id, _rum.group(1))
+            if not str(coerced.get("goal") or "").strip() and goal:
+                coerced["goal"] = goal
 
         if emit_fn:
             try:
@@ -7604,7 +7666,24 @@ _V5_CORE_SEED_CAPS = ("exec.bash.run", "exec.python.run", "ide.fs.write", "ide.f
 # Live-web / external-research caps — seeded when the goal looks like it needs the
 # OUTSIDE world (vs the internal data fabric). This is the fix for "no proper web
 # crawling caps" + "uses fabric instead of the web lookup cap".
-_V5_WEB_RESEARCH_SEED_CAPS = ("web.search", "web.fetch", "browser.navigate",
+# `web.research` was missing here entirely (found live, 2026-08-03): a goal
+# needing current/recent web info had no access to the ONE call built exactly
+# for it (search + read top results in one round trip — its own description:
+# "the default way to look something up... far lighter than research.run")
+# and instead manually chained web.search -> web.fetch -> browser.navigate
+# across many wasted cycles, several 404s, and a stale (2024) result.
+# `web.crawl` was ALSO missing — the right tool for "go to this known site and
+# follow a few links" (shallow, same-domain, no fabric persistence needed —
+# ingest_to_fabric=false), as opposed to web.research's query-driven search.
+# `browser.navigate` deliberately REMOVED (2026-08-03, user call, watching it
+# live): a real browser session is the wrong weight class for plain content
+# extraction — unreliable at it relative to the alternatives above, and
+# operator.run already covers genuine UI-interaction needs. See
+# _V5_LOOP_DENYLIST for the enforcement (removing it from just this seed list
+# isn't sufficient on its own — semantic catalog matching could still surface
+# it independently of seeding). Listed in the order the model should reach
+# for them: cheapest/most-targeted first.
+_V5_WEB_RESEARCH_SEED_CAPS = ("web.research", "web.crawl", "web.search", "web.fetch",
                               "research.quick_search", "fabric.discover.crawl")
 _V5_WEB_GOAL_HINTS = (
     "info about", "who is", "research", "osint", "web", "site", "domain", "presence",
@@ -7618,7 +7697,7 @@ _V5_WEB_GOAL_HINTS = (
 _V5_INFRA_PREFIXES = ("netscan.", "exec.ssh", "proxmox.", "docker.", "k8s.", "kube.",
                       "mesh.", "openclaw.")
 # Universal "other avenue" investigation caps — preferred recovery, in this order.
-_V5_INVESTIGATION_CAPS = ("web.search", "web.fetch", "http.get", "browser.navigate",
+_V5_INVESTIGATION_CAPS = ("web.research", "web.crawl", "web.search", "web.fetch", "http.get",
                           "research.quick_search", "fabric.query",
                           "fabric.entity_graph.query", "caps.search", "caps.describe",
                           "context.search_caps", "ide.fs.read", "exec.bash.run",
@@ -7637,6 +7716,18 @@ def _v5_seed_caps_for(goal: str) -> List[str]:
     seeds = list(_V5_CORE_SEED_CAPS)
     if _v5_goal_is_webby(goal):
         seeds += list(_V5_WEB_RESEARCH_SEED_CAPS)
+    # A goal whose OWN text asks for UI/HTML verification ("...then verify it
+    # actually works by clicking the button...") never matches the research-y
+    # web hints above, so operator.run/browser.navigate were never guaranteed
+    # into the catalog for it — which in turn meant the additive per-step
+    # seeding at _v5_coerce_step (keyed on "operator.run" in catalog_set) was
+    # unreachable dead code: it can only ADD operator.run to a step's caps if
+    # the catalog already has it. Goal-level (not just step-level) matching
+    # closes that gap at the source.
+    if _V5_UI_VERIFY_STEP_RE.search(goal or ""):
+        # browser.navigate deliberately excluded — see _V5_LOOP_DENYLIST.
+        if "operator.run" not in seeds:
+            seeds.append("operator.run")
     # Canonical-retrieval gate: swap gated read seeds for their canonical
     # replacements so a data goal still gets a guaranteed search avenue.
     gated = _gated_read_caps()
@@ -7651,14 +7742,37 @@ def _v5_seed_caps_for(goal: str) -> List[str]:
     return out
 
 
+# Caps deliberately EXCLUDED from the agentic loop's own catalog, regardless of
+# HOW they'd otherwise enter it — guaranteed seeding, semantic relevance match,
+# or cohort expansion. A genuine "not available to this loop" list, stronger
+# than just leaving something out of the seed lists (which only stops
+# GUARANTEED inclusion — semantic matching over the full CAPABILITY_REGISTRY
+# runs independently and could still surface it). Filtered here because both
+# v5's and v6's catalog-build paths funnel every candidate cap (seeded,
+# semantically matched, cohort-expanded) through this ONE function before
+# anything downstream sees the list — a single choke point rather than
+# hunting every place a cap could otherwise sneak in.
+#   browser.navigate — decided live, 2026-08-03, watching it get reached for
+#   on a plain data-extraction goal it handles far less reliably than the
+#   alternatives: operator.run's real Playwright-backed observe->think->act
+#   loop for genuine UI interaction, web.research/web.crawl for content
+#   gathering. Still a real, registered capability — just never offered to
+#   the agentic loop specifically. See _V5_WEB_RESEARCH_SEED_CAPS's own
+#   comment for the full reasoning.
+_V5_LOOP_DENYLIST = {"browser.navigate"}
+
+
 def _v5_deflood_catalog(catalog: List[str], goal: str, *, per_ns_cap: int = 6) -> List[str]:
     """Stop one big namespace (e.g. 20+ netscan.* caps) crowding out everything
     else. Caps each namespace's representation UNLESS the goal explicitly names
-    that namespace. Order is preserved."""
+    that namespace. Order is preserved. Also the single enforcement point for
+    _V5_LOOP_DENYLIST — see its comment."""
     g = (goal or "").lower()
     counts: Dict[str, int] = {}
     out: List[str] = []
     for c in catalog:
+        if c in _V5_LOOP_DENYLIST:
+            continue
         ns = c.split(".")[0]
         # If the goal mentions the namespace, don't trim it.
         if ns and ns in g:
@@ -7717,7 +7831,7 @@ _V5_PHASES = ("explore", "think", "act", "verify")
 # must not be auto-granted these: those phases inspect and prove, and re-writing
 # the thing you are checking destroys the result you were sent to confirm.
 # exec.* is deliberately ABSENT — verify runs test scripts, that is its job.
-_V5_AUTHORING_CAPS = {"code.author", "code.edit", "code.save",
+_V5_AUTHORING_CAPS = {"code.author", "code.edit", "code.save", "prose.author",
                       "ide.fs.write", "ide.code.edit_lines", "ide.code.replace",
                       "ide.code.insert_at"}
 
@@ -7812,6 +7926,29 @@ def _v5_is_code_gen(tool: str, args: Any) -> bool:
     return False
 
 
+def _v5_pos_within_url(s: str, pos: int) -> bool:
+    """Is the character at `pos` in `s` part of a URL's scheme+host (so a
+    path-shaped regex match starting there is really a URL path, not a
+    real filesystem path)? Shared by every "extract candidate file paths
+    from free text, but skip URLs" helper in this module — there were
+    THREE independent copies of this check (`_v5_prompt_file_refs`,
+    `_v5_foreign_abs_paths`, `_v6_extract_paths`), all with the exact same
+    latent bug: a fixed 8-character backward lookback for `"://"`, which
+    only works for a short scheme+host (`http://x.com/path`). A realistic
+    `https://localhost:8999/path` already has 14+ characters between
+    `://` and the path — outside an 8-char window — so none of the three
+    ever actually caught it (found live, §2.45/§5.25: this exact miss let
+    a correctly-fixed sandbox preview URL get silently mistaken for an
+    invented absolute path and rewritten to a bare relative filename, on
+    every single call, the whole session, before being traced here).
+    Walks back to the nearest token boundary instead of a fixed width, so
+    a scheme+host of any realistic length is recognized."""
+    b = pos
+    while b > 0 and s[b - 1] not in ' \t\n\r"\'<>()[]{}':
+        b -= 1
+    return "://" in s[b:pos]
+
+
 _V5_FILEREF_RE = re.compile(
     r"(?<![\w.])((?:\.{0,2}/)?(?:[\w\-]+/)*[\w][\w.\-]*\.[A-Za-z0-9]{1,8})\b")
 
@@ -7827,7 +7964,7 @@ def _v5_prompt_file_refs(text: str) -> List[str]:
     for m in _V5_FILEREF_RE.finditer(s):
         p = m.group(1)
         st = m.start(1)
-        if "://" in s[max(0, st - 8):st + 4]:
+        if _v5_pos_within_url(s, st):
             continue
         if p not in out:
             out.append(p)
@@ -8017,10 +8154,10 @@ def _v5_resolve_tool_name(tool: str, allowed: List[str], catalog: set) -> str:
 
 
 # Caps that look up NEW / EXTERNAL knowledge — a "research" unit of work.
-_V5_RESEARCH_CAPS = {"web.search", "web.fetch", "research.quick_search",
-                     "browser.navigate", "fabric.discover.crawl", "web.search_and_crawl"}
+_V5_RESEARCH_CAPS = {"web.research", "web.crawl", "web.search", "web.fetch",
+                     "research.quick_search", "fabric.discover.crawl", "web.search_and_crawl"}
 # Caps that PRODUCE or RUN something — a "build / execute" unit of work.
-_V5_BUILD_CAPS = {"llm.generate", "code.author", "code.edit",
+_V5_BUILD_CAPS = {"llm.generate", "code.author", "code.edit", "prose.author",
                   "exec.python.run", "exec.bash.run",
                   "ml.agent.build_and_test", "ide.fs.write"}
 # Read-only/context caps that are useful to BOTH halves of a split.
@@ -8498,6 +8635,39 @@ async def _v5_save_gen_document(tool: str, args: Any, step: Dict[str, Any], text
         name = _v5_gen_output_filename(tool, args, step, body, cycle, name_hint=name_hint)
         import importlib as _il
         _ex = _il.import_module("Vera.vera.execution.exec_capabilities")
+        # Was this name EXPLICITLY requested (save_as/…), or heuristically GUESSED
+        # (the step's own goal/success text happens to mention a filename, a title
+        # slug, …)? Only the guessed paths can accidentally collide with an
+        # unrelated file that's already there. Observed live: a step's later
+        # "verify the word count" sub-call had no save_as of its own, but the
+        # STEP's goal text still mentioned the deliverable's filename (from the
+        # ORIGINAL "write X and save it as rag_explainer.md" instruction) — the
+        # heuristic picked that name, and a throwaway chain-of-thought scratch
+        # ramble silently overwrote the already-correct, already-verified
+        # deliverable. An explicit name is trusted as-is (an intentional
+        # overwrite is a real thing); a guessed one that collides is not.
+        _a = args if isinstance(args, dict) else {}
+        _explicit_name = next(
+            (v.strip().strip("./") for v in [name_hint] + [_a.get(k) for k in _V5_GEN_SAVE_ARGS]
+             if isinstance(v, str) and v.strip() and _V5_FNAME_RE.fullmatch(v.strip().strip("./"))),
+            None)
+        if _explicit_name is None:
+            # artifact_file_exists is the right probe here — a proper tri-state
+            # True/False/None (unknown), unlike read_artifact_file's Optional[str]
+            # where None means "no such file, probe unavailable, OR binary" all
+            # at once (its own docstring: callers must treat None as UNKNOWN, not
+            # as empty/absent). A collision guard that mistook "probe glitched" for
+            # "confirmed absent" would silently reopen the exact overwrite this fix
+            # exists to prevent. Rename on True OR None — the cost of an
+            # unnecessary suffix is trivial next to the cost of a false "safe to
+            # overwrite" on a real file.
+            try:
+                _exists = await _ex.artifact_file_exists(session_id=session_id, relpath=name)
+            except Exception:
+                _exists = None
+            if _exists is not False:
+                base, dot, ext = name.rpartition(".")
+                name = f"{base}__c{cycle}.{ext}" if dot else f"{name}__c{cycle}"
         path = await _ex.write_artifact_file(relpath=name, content=body,
                                              session_id=session_id)
     except Exception as e:
@@ -8850,9 +9020,14 @@ def _v5_foreign_abs_paths(args: Any, workdir: str) -> List[str]:
             continue
         for m in _V5_ABS_PATH_RE.finditer(s):
             p = m.group(0)
-            # Skip anything that is part of a URL.
-            i = m.start()
-            if "://" in s[max(0, i - 8):i + 4]:
+            # Skip anything that is part of a URL — shared check
+            # (_v5_pos_within_url), see its docstring: this exact spot,
+            # with its OWN inline fixed-8-char lookback, was the actual
+            # root cause (§2.45/§5.25) of a correctly-fixed sandbox
+            # preview URL being silently rewritten to a bare relative
+            # filename on every single call, undoing the URL self-heal
+            # every time, all session, before being traced here.
+            if _v5_pos_within_url(s, m.start()):
                 continue
             pn = p.replace("\\", "/")
             if pn.startswith("/workspace/") or (wd and pn.startswith(wd + "/")):
@@ -8914,6 +9089,66 @@ async def _v5_workdir_files(session_id: str, limit: int = 40) -> Optional[List[s
         return None
 
 
+def _v5_sandbox_preview_url(session_id: str, relpath: str) -> str:
+    """A live URL that actually renders/serves `relpath` out of this session's
+    sandbox — for `operator.run`'s `url` target, so a step can have a REAL
+    browser (real click, real observed DOM change) verify a file it just wrote,
+    instead of inventing a doomed `webbrowser.open()`/`xdg-open` call inside
+    the (headless, display-less) sandbox itself (§3.13). Backed by
+    `/remote/sandbox/preview/{session_id}/{path}`
+    (session_sandbox_capabilities.py), which re-reads the file live on every
+    request via the same routed read path `code.author`'s context-grounding
+    already trusts — no new container-network reachability, just a URL for
+    content a caller could already pull out.
+
+    Same scheme/port derivation used elsewhere in this file for an in-process
+    self-referencing URL (see the research-WS in-process detection above)."""
+    scheme = "http"
+    port = os.environ.get("VERA_ORCH_PORT", "").strip()
+    try:
+        _cfg = getattr(_orch, "cfg", None)
+        if _cfg is not None:
+            if getattr(_cfg, "TLS_ENABLED", False):
+                scheme = "https"
+            if not port:
+                port = str(getattr(_cfg, "ORCHESTRATOR_PORT", "") or "")
+    except Exception:
+        pass
+    base = f"{scheme}://localhost:{port or '8999'}"
+    rel = str(relpath or "").strip().lstrip("/")
+    return f"{base}/remote/sandbox/preview/{session_id}/{rel}"
+
+
+_V5_RECOVERY_NARRATIVE_RE = re.compile(
+    r"\n\s*\n\s*(?:the previous attempt|why it failed|output so far)", re.I)
+
+
+def _v5_navigate_goal_fallback(step: Dict[str, Any]) -> str:
+    """Fallback `goal` for operator.run/browser.navigate when the model's own
+    call left it empty. Step TITLE is preferred — the planner's/adjuster's own
+    JSON schema asks for it as `"title":"<plain-language>"`, short and
+    concrete by design. Step GOAL is the last resort only: for a
+    RETRIED/adjusted step (_v6_adjust_step) it is explicitly written as a
+    DIAGNOSTIC narrative — its own prompt asks for "the adjusted approach,
+    naming what went wrong and how this navigates it" — meant for the
+    sub-agent's OWN system prompt, not a browsing instruction. Observed live:
+    a several-hundred-word "WHY IT FAILED... OUTPUT SO FAR..." block landed
+    verbatim as operator.run/browser.navigate's `goal`, diluting its actual
+    navigation focus with irrelevant recovery bookkeeping. Trimmed to
+    whatever precedes such a recovery-narrative marker, then hard-capped, so
+    even a goal-less-title fallback stays a genuinely usable instruction."""
+    title = str(step.get("title") or "").strip()
+    if title:
+        return title
+    goal = str(step.get("goal") or "").strip()
+    if not goal:
+        return ""
+    cut = _V5_RECOVERY_NARRATIVE_RE.search(goal)
+    if cut:
+        goal = goal[:cut.start()].strip()
+    return goal[:300]
+
+
 def _v5_arg_error_hint(tool: str, args: Any, err: str) -> str:
     """If `err` is a recoverable malformed-call error, return a precise correction
     telling the specialist to RETRY the same cap with fixed arguments (naming the
@@ -8969,6 +9204,47 @@ def _v5_arg_error_hint(tool: str, args: Any, err: str) -> str:
             f'[{{"name":"{tool}","input":{{"{_ex_field}":"<item 1>"}}}},'
             f'{{"name":"{tool}","input":{{"{_ex_field}":"<item 2>"}}}}, ...]}}.')
     return head
+
+
+_V5_MODULE_NOT_FOUND_RE = re.compile(
+    r"ModuleNotFoundError:\s*No module named ['\"]([^'\"]+)['\"]")
+
+
+def _v5_module_not_found_hint(tool: str, err: str) -> str:
+    """A `ModuleNotFoundError` from a run script is a DIFFERENT failure class
+    than a malformed call (_v5_arg_error_hint's territory) — the call itself
+    (exec.python.run(path=...)) succeeded; the SCRIPT it ran is broken.
+    Observed live, repeatedly, for over an HOUR on one run: the specialist's
+    default response to this error is to widen scope (useless — no new
+    capability fixes a bad import) or rewrite the whole script from scratch
+    (which regenerates the SAME bug, since the coder never compared the
+    import against the real filename either time) or ask the user a
+    clarifying question that could have been answered by its own `ls`
+    output from two steps earlier. In every observed case the actual bug was
+    a plain, one-character filename mismatch (a missing collision-avoidance
+    suffix). Name that specific, cheap, deterministic check up front instead
+    of leaving it to be rediscovered the hard way on every retry."""
+    m = _V5_MODULE_NOT_FOUND_RE.search(err or "")
+    if not m:
+        return ""
+    mod = m.group(1)
+    return (
+        f"`{tool}` ran, but the SCRIPT it executed failed with "
+        f"`ModuleNotFoundError: No module named '{mod}'`. This is almost always "
+        f"an EXACT FILENAME MISMATCH, not a missing package or a wrong approach: "
+        f"a script tried to import a local file whose real name doesn't quite "
+        f"match — collision-avoidance can append a trailing underscore or "
+        f"number to a saved filename, so the file on disk may be `{mod}_.py` or "
+        f"`{mod}2.py`, not `{mod}.py`.\n"
+        f"Do this now, in order: (1) list the working directory (or check a "
+        f"listing you already have — do not assume) and find the REAL name of "
+        f"the file you meant to import, character for character; (2) if it "
+        f"doesn't match what the import statement says, fix ONLY that import "
+        f"line with a targeted edit (code.edit) — do not rewrite the whole "
+        f"file, and do not regenerate the SAME import from memory, since "
+        f"that reproduces this exact bug. Do not widen your toolkit and do "
+        f"not ask a clarifying question for this — the real filename is "
+        f"already discoverable, this is a one-line fix.")
 
 
 def _v5_result_failure_reason(res: Dict[str, Any], rc: int) -> str:
@@ -9486,7 +9762,22 @@ async def cap_code_author(task: str, path: str = "", context_files=None,
         "speculative branches for shapes you were not shown, and do NOT guess a schema.\n"
         "  • Refer to data files by the RELATIVE names given. Never invent a path.\n"
         "  • Fail loudly: if an input is missing or malformed, print a clear error — do not "
-        "silently produce an empty result.")
+        "silently produce an empty result.\n"
+        "  • CAPABILITIES ARE NOT PYTHON — the task description below was carried over from "
+        "a planning step and may still be phrased as if getting/storing data goes through a "
+        "named Vera capability or tool. That is stale planning framing to IGNORE, not a "
+        "literal instruction: Vera's capabilities are calls in VERA'S OWN tool-call protocol, "
+        "this sandbox has no access to them, and NONE of them is a real Python package — do "
+        "not import one, call one as a function, or state one in a comment as the actual "
+        "mechanism, no matter what its name looks like. Only two kinds of `import` are ever "
+        "valid here: (1) a real, standard, pip-installable library (requests, csv, json, "
+        "argparse, …) — if you would not actually find it on PyPI/stdlib, it does not belong "
+        "in an import; (2) a real file that already exists in your working directory (shown "
+        "to you as a CONTEXT FILE or in the file listing) — import it using its module name "
+        "EXACTLY as that file is actually named, character for character (including any "
+        "trailing underscore or number a filename-collision suffix added) — a close-but-not-"
+        "exact guess at the name fails with the same ModuleNotFoundError as importing "
+        "something that was never real.")
     # ── Real SHAPE of every context file ────────────────────────────────────
     # Showing the coder a file's raw content is not enough: a large file is
     # truncated, and the killer case is invisible even when it isn't — an
@@ -9660,6 +9951,211 @@ async def cap_code_author(task: str, path: str = "", context_files=None,
                     + f"Written and versioned. Run it with exec.python.run(path='{path}')."}
 
 
+# ── Grounded prose authoring ─────────────────────────────────────────────────
+# Mirrors code.author's reason for existing: a bare llm.generate call for a
+# document has no grounding against what the run actually produced. Observed
+# live (chat-1785581469703, 2026-08-01): a README-generation step used raw
+# llm.generate repeatedly, each draft escalating the described project further
+# from reality — a "Node.js/Express backend", a "Python Pandas/ReportLab
+# analysis module", a "React + TypeScript frontend" — none of which existed;
+# the only artifact the run ever produced was one static HTML file. It then
+# ran `bash npm_install.sh`, a script never authored anywhere in the run, for
+# an ecosystem that was never built. code.author grounds generated CODE on the
+# real shape of its context files and PROVES it with a real parser; prose has
+# no equivalent, so it drifts. This gives it one: the real working-directory
+# file listing is always attached as required context, and any install/build
+# command the draft writes (npm/pip/cargo/…) is mechanically checked against
+# whether that ecosystem's manifest file is actually present.
+_V5_PKG_MANIFESTS = {
+    "npm": "package.json", "yarn": "package.json", "pnpm": "package.json",
+    "pip": "requirements.txt", "pip3": "requirements.txt",
+    "poetry": "pyproject.toml", "cargo": "Cargo.toml",
+    "bundle": "Gemfile", "composer": "composer.json",
+    "mvn": "pom.xml", "gradle": "build.gradle", "go": "go.mod",
+}
+_V5_PKG_CMD_RE = re.compile(
+    r"`{0,3}\s*(npm|yarn|pnpm|pip3?|poetry|cargo|bundle|composer|mvn|gradle|go)\s+"
+    r"(?:install|ci|build|run|get|add)\b[^`\n]*", re.I)
+
+
+def _v5_prose_ungrounded_refs(text: str, real_files: Optional[List[str]]) -> List[str]:
+    """Install/build command lines in generated prose that name a package
+    manager whose manifest file isn't actually present in the sandbox — the
+    exact shape of the observed failure. `real_files=None` (listing could not
+    be determined) never flags anything: silence, not a false accusation,
+    when there is nothing real to check against."""
+    if real_files is None:
+        return []
+    names = {os.path.basename(f).lower() for f in real_files if isinstance(f, str)}
+    out: List[str] = []
+    for m in _V5_PKG_CMD_RE.finditer(text or ""):
+        manifest = _V5_PKG_MANIFESTS.get(m.group(1).lower())
+        if manifest and manifest.lower() not in names:
+            out.append(m.group(0).strip()[:120])
+    return out
+
+
+@capability(
+    "prose.author", memory="on",
+    http_method="POST", http_path="/prose/author", http_tags=["fabric", "docs"],
+    description="Write a prose/document file (README, report, write-up) with the WRITER role "
+                "and save it — the one call to use for a document that describes something this "
+                "run actually built. It attaches the REAL files that exist in your working "
+                "directory as required grounding (so it can't invent a service/framework that "
+                "was never built), and mechanically checks any install/build command it writes "
+                "(npm/pip/cargo/...) against whether that ecosystem's real manifest file is "
+                "actually present, correcting or flagging it if not. "
+                "USE THIS INSTEAD OF: a bare llm.generate call for a README/report/write-up — "
+                "llm.generate has no grounding against what was really produced and has been "
+                "observed inventing an entire fictional architecture, then issuing install "
+                "commands for it. "
+                "Input: task (str! — what the document must cover, in detail; if you already "
+                "drafted the document yourself, pass it as content/text instead — it becomes "
+                "material this call incorporates and grounds, rather than saving your draft "
+                "as-is), path (str! — target filename, e.g. 'README.md'), context_files (str|"
+                "list — files whose REAL content the document should describe/summarize), "
+                "session_id (str). "
+                "Output: {ok, path, fs_path, version, bytes, chars, grounded, ungrounded_refs}.",
+)
+async def cap_prose_author(task: str = "", path: str = "", context_files=None,
+                           content: str = "", text: str = "",
+                           session_id: str = "", trace_id=None,
+                           stream_cb=None) -> Dict[str, Any]:
+    """Author ONE prose/document file with the writer role and persist it, grounded
+    against the sandbox's REAL file listing — see the module note above this
+    function for the concrete failure this replaces."""
+    task = str(task or "").strip()
+    _material = str(content or text or "").strip()
+    if not task and _material:
+        # Observed live: a specialist that had already drafted the document
+        # itself called prose.author(path=..., content=...) — the ide.fs.write
+        # shape it's used to — and got a hard TypeError since `task` used to be
+        # required-positional. Recover instead of failing: the draft becomes
+        # material to incorporate, still routed through the SAME grounding
+        # pass (real file listing, manifest-command check) rather than saved
+        # verbatim and ungrounded the way ide.fs.write would have.
+        task = ("Incorporate the following already-drafted material into the document, "
+                 "correcting anything in it that doesn't match the REAL file listing "
+                 f"below:\n\n{_material[:6000]}")
+    if not task:
+        return {"ok": False, "error": "task is required — describe what the document must cover "
+                                       "(or pass content/text with an existing draft to incorporate)"}
+    path = _code_norm_path(str(path or "").strip()) or "generated.md"
+    lang = _code_lang_for(path) or "markdown"
+    files = context_files
+    if isinstance(files, str):
+        files = [f.strip() for f in re.split(r"[\n,]+", files) if f.strip()]
+    files = [str(f) for f in (files or []) if str(f).strip()][:6]
+
+    real_files = await _v5_workdir_files(session_id)
+    real_block = (
+        "\nTHE ACTUAL FILES THAT EXIST in your working directory right now — this is the ONLY "
+        "project you may describe. Do not name, describe, or write install/run instructions "
+        "for any service, framework, or file NOT in this list, no matter how natural it would "
+        "sound for a project like this one. If the task below implies something (a backend, a "
+        "frontend build step, a test suite) that isn't actually here, do not invent that it "
+        "exists — describe what's REALLY here instead:\n  " + ", ".join(real_files) + "\n"
+    ) if real_files else (
+        "\n(The real file listing could not be determined — do not assert specific install/"
+        "build commands or a multi-component architecture you cannot verify; describe only "
+        "what THIS task explicitly gives you.)\n"
+    )
+    sys_prompt = (
+        "You are the WRITER of Vera's cohort, producing ONE real document file — never a "
+        "sketch, never a placeholder, never inventing project structure that doesn't exist.\n"
+        "Rules:\n"
+        "  • Output the COMPLETE document, and nothing else. No commentary before or after.\n"
+        f"  • ONE fenced block, opened EXACTLY like this: ```{lang} file={path}\n"
+        "  • Write it literally — never wrap it in JSON, never escape newlines as \\n.\n"
+        "  • Any CONTEXT FILES given to you show REAL content to describe/summarize — quote "
+        "and reference what's actually there, not a plausible guess.\n"
+        "  • Never document a component, service, or dependency that isn't in the real file "
+        "listing below. A project with one static HTML file is a project with one static HTML "
+        "file — do not add a backend, a build step, or a package manager it doesn't have."
+        + real_block)
+    prompt = (f"TASK — write `{path}`:\n{task}\n"
+              + (f"\nThe document should describe/reference these files (their real content is "
+                 f"included above as CONTEXT FILES): {', '.join(files)}\n" if files else "")
+              + f"\nWrite the complete document now.")
+
+    gen = CAPABILITY_REGISTRY.get("llm.generate")
+    fn = (gen or {}).get("raw") or (gen or {}).get("func")
+    if not fn:
+        return {"ok": False, "error": "llm.generate is unavailable"}
+    try:
+        res = await fn(prompt=prompt, system=sys_prompt, output_format="code",
+                       profile=LOOP_ROUTING_PROFILE, role="writer",
+                       files=files or None, session_id=session_id,
+                       caller="prose.author", trace_id=trace_id, stream_cb=stream_cb)
+    except Exception as e:
+        return {"ok": False, "error": f"generation failed: {e}"}
+    text = _strip_think(_v5_gen_text(res) or "")[0]
+    text = _v5_unwrap_json_code(text)
+    if not text.strip():
+        return {"ok": False, "error": "the writer returned nothing"}
+    blocks = _v5_extract_code_blocks(text, name_hint=(path or task))
+    content = (blocks[0]["code"] if blocks
+              else _v5_strip_marker_line(_unescape_collapsed_code(text.strip())))
+    if not content.strip():
+        return {"ok": False, "error": "no document content in the generation"}
+
+    # ── One repair pass if it still names a manifest that isn't really there ──
+    ungrounded = _v5_prose_ungrounded_refs(content, real_files)
+    if ungrounded:
+        await emit_event({"type": "prose.author.repair", "path": path,
+                          "ungrounded_refs": ungrounded})
+        fix_prompt = (
+            f"FILE: {path}\nCURRENT CONTENT (this is what actually exists — patch THIS, do not "
+            f"regenerate it from scratch):\n{_v5_numbered(content)}\n\n"
+            f"It references install/build command(s) for an ecosystem whose manifest file isn't "
+            f"actually present in the working directory: {'; '.join(ungrounded)}\n"
+            f"REAL files that DO exist: {', '.join(real_files or [])}\n"
+            'Return ONLY a JSON object: {"edits":[{"find":"<exact text to replace>",'
+            '"replace":"<corrected text>"}, ...]} that removes or corrects these references so '
+            "the document only describes what's really there. No markdown, no prose outside "
+            "the JSON.")
+        try:
+            raw = await fn(prompt=fix_prompt,
+                           system="You are the EDITOR, making the smallest possible correction "
+                                  "to remove ungrounded claims.",
+                           output_format="json", profile=LOOP_ROUTING_PROFILE, role="writer",
+                           session_id=session_id, caller="prose.author.repair",
+                           trace_id=trace_id, stream_cb=stream_cb)
+            obj = _extract_json(_strip_think(_v5_gen_text(raw) or "")[0]) or {}
+            edits = obj.get("edits") if isinstance(obj, dict) else None
+            if isinstance(edits, list) and edits:
+                applied = _v5_apply_edits(content, edits)
+                if applied.get("ok"):
+                    content = applied["content"]
+                    ungrounded = _v5_prose_ungrounded_refs(content, real_files)
+        except Exception as e:
+            log.debug("prose.author repair failed: %s", e)
+
+    saved = await code_store_save(path, content, session_id=session_id,
+                                  message=f"prose.author: {task[:80]}", lang=lang)
+    if not saved.get("ok"):
+        return {"ok": False, "error": str(saved.get("error") or "save failed"), "path": path}
+    truncated = bool(res.get("truncated")) if isinstance(res, dict) else False
+    return {
+            "ok": not ungrounded,
+            "path": saved.get("path", path), "fs_path": saved.get("fs_path", ""),
+            "version": saved.get("version"), "bytes": saved.get("bytes"),
+            "lang": saved.get("lang", lang), "chars": len(content),
+            "truncated": truncated,
+            "grounded": not ungrounded,
+            "ungrounded_refs": ungrounded,
+            "error": (f"the document still references install/build command(s) for missing "
+                      f"manifests after one repair attempt: {'; '.join(ungrounded)}. The file "
+                      f"WAS written and versioned at '{path}' so it can be inspected or fixed "
+                      f"with code.edit."
+                     ) if ungrounded else "",
+            "note": (("⚠ the generation hit its length limit — the document is INCOMPLETE. ")
+                     if truncated else "")
+                    + (f"⚠ still references ungrounded command(s): {'; '.join(ungrounded)}. "
+                       if ungrounded else "Grounded against the real working-directory listing. ")
+                    + f"Written and versioned at '{path}'."}
+
+
 # ── Surgical edit helpers ────────────────────────────────────────────────────
 # (Plain helpers — kept ABOVE the next @capability decorator, see the note on
 #  _v5_check_syntax for why that matters.)
@@ -9803,6 +10299,13 @@ async def cap_code_edit(path: str, task: str = "", session_id: str = "", repo: s
         "'improve' code you were not asked to touch.\n"
         "  • To delete, use an empty `replace`.\n"
         "  • Change ONLY what the task asks for. Unrelated edits will be reverted.\n"
+        "  • CAPABILITIES ARE NOT PYTHON — if CHANGE REQUESTED talks about getting/storing "
+        "data via a named Vera capability or tool, that is stale planning framing to IGNORE, "
+        "not a literal instruction; none of Vera's capabilities is a real Python package, and "
+        "this sandbox has no access to them. Never introduce an `import` for one, a call to "
+        "one, or a comment naming one as the mechanism. A NEW `import` you add is only valid "
+        "if it is a real pip-installable/stdlib library, or a real file that already exists — "
+        "matched to its ACTUAL name character for character, not a guess.\n"
         "  • No markdown, no prose outside the JSON.")
     prompt = (f"FILE: {path} ({lang}, {len(current.splitlines())} lines)\n"
               f"CURRENT CONTENT:\n{_v5_numbered(current)}\n\n"
@@ -10524,6 +11027,20 @@ _V5_CODE_STEP_NOUN_RE = re.compile(
     r"python|javascript|typescript|bash script|shell script|html|css|js|"
     r"web ?page|front[- ]?end|app|application|ui)\b"
     r"|\.(?:py|js|ts|jsx|tsx|sh|html|css|rb|go|rs|java|php|sql)\b", re.I)
+# The mirror image: a step whose own words say it SYNTHESISES/WRITES a prose
+# deliverable needs llm.generate — exec.*/code.author write and run SCRIPTS,
+# not prose. Noun alone is enough signal here (unlike the code rule, no verb
+# is required — "the report", "a summary of X" already says enough), because
+# this only ADDS a cap, it never removes one the step already has.
+_V5_PROSE_STEP_NOUN_RE = re.compile(
+    r"\b(report|summary|summaries|document|article|write-?up|blog ?post|"
+    r"narrative|synopsis|essay|briefing)\b", re.I)
+# A step that must VERIFY a rendered/interactive UI actually works (not just
+# that a file exists) — needs a real browser, not exec.*/webbrowser.open()
+# inside a headless, display-less sandbox (§3.13).
+_V5_UI_VERIFY_STEP_RE = re.compile(
+    r"\b(verif\w*|test\w*|check\w*|confirm\w*)\b.{0,60}\b(html|web ?page|\bpage\b|website|"
+    r"\bui\b|button|click\w*|render\w*|browser|front[- ]?end|interface)\b", re.I)
 
 
 def _v5_coerce_step(st: Dict[str, Any], i: int, goal: str,
@@ -10565,6 +11082,48 @@ def _v5_coerce_step(st: Dict[str, Any], i: int, goal: str,
             and _V5_CODE_STEP_VERB_RE.search(_cap_blob)
             and _V5_CODE_STEP_NOUN_RE.search(_cap_blob)):
         caps = ["code.author"] + [c for c in caps if c != "llm.generate"]
+    # ── Prose/report steps get llm.generate, deterministically ──────────────
+    # Not a prompt hint the controller/adjust-step LLM may ignore either: this
+    # was a system-prompt-only fix (the controller/adjust-step system prompts
+    # were told a writing step needs llm.generate) and, observed live, that
+    # instruction was followed for the ORIGINAL master plan but ignored on a
+    # controller REPLAN — the specialist correctly tried to self-correct by
+    # requesting llm.generate directly, and was hard-denied by the anti-
+    # hallucination guard (which exists to stop llm.generate substituting for
+    # a real lookup, not to block genuine authoring) — with no legitimate path
+    # left, it fell back to a Python script hard-coding a canned narrative
+    # instead of a real synthesis of the data it had actually gathered. This
+    # makes the fix structural instead of hoping the small controller model
+    # follows the instruction every time.
+    # Prefer the GROUNDED author when it's available — same reasoning as the
+    # code-step swap above: a document step handed raw llm.generate has no
+    # grounding against what the run actually produced, and was observed
+    # inventing a fictional architecture (a backend/frontend/build system
+    # that was never built) then issuing install commands for it. Falls back
+    # to bare llm.generate when prose.author isn't in this run's catalog.
+    if _V5_PROSE_STEP_NOUN_RE.search(_cap_blob):
+        if "prose.author" in catalog_set and "prose.author" not in caps:
+            caps = ["prose.author"] + [c for c in caps if c != "llm.generate"]
+        elif "llm.generate" in catalog_set and "llm.generate" not in caps:
+            caps = caps + ["llm.generate"]
+    # ── UI/HTML verification steps get operator.run, swapping out browser.navigate ──
+    # Additive for everything EXCEPT browser.navigate: a verification step
+    # often legitimately also wants exec.*/ide.fs.read (e.g. to read the
+    # file back first), so those are never touched here. But where the two
+    # tools DO overlap — real browser automation — operator.run is
+    # structurally the better one for exactly the failure modes this whole
+    # investigation kept hitting (§3.13: selector fragility; §3.16: no
+    # session reuse, no policy gate; browser.navigate's own registered
+    # description even calls it "the older, more fragile implementation"
+    # relative to operator.*). Leaving both in a step's caps meant the
+    # specialist could still reach for either — `preview_note` only ever
+    # WORDED its recommendation toward operator.run, it never actually
+    # removed the weaker alternative — so this is now a genuine swap, not
+    # just additive, for this one role.
+    if _V5_UI_VERIFY_STEP_RE.search(_cap_blob) and "operator.run" in catalog_set:
+        if "operator.run" not in caps:
+            caps = caps + ["operator.run"]
+        caps = [c for c in caps if c != "browser.navigate"]
     caps = caps[:8]
     # A title that's just "Step 3" / "step_3" carries no information — discard it.
     if title and re.fullmatch(r"step[\s_\-]*\d+", title, re.IGNORECASE):
@@ -11201,6 +11760,25 @@ def _v5_artifact_brief(rec: Dict[str, Any]) -> str:
     return " — ".join(bits)
 
 
+def _v5_path_is_proven(artifacts: Dict[str, Dict[str, Any]], path: str) -> bool:
+    """True if `path` already has real prior work in this run's registry that a
+    blind code.author re-write would discard. Two ways to earn it: it RAN
+    successfully (`ran_ok` — the strongest signal, but only ever set for files
+    passed to an exec.* cap), or it's a substantial, cleanly-parsing file that
+    was never meant to be "run" at all — an index.html/styles.css deliverable
+    is never executed, so gating protection on `ran_ok` alone left every
+    static web file permanently unprotected (observed live: an index.html
+    re-authored via code.author four times in a row, each call blindly
+    discarding the last). A short/empty/unparsed file is NOT proven — an
+    actually-broken or trivial stub should still be freely re-authored."""
+    rec = artifacts.get(_v5_art_key(path))
+    if not rec:
+        return False
+    if rec.get("ran_ok"):
+        return True
+    return bool(rec.get("parse_ok")) and int(rec.get("size") or 0) >= 200
+
+
 # Files worth eagerly schema-probing when they show up in a workdir listing but
 # were never registered (an exec.python.run script wrote them directly, not
 # via a tracked write path). Free-text/code/binary extensions are excluded —
@@ -11316,7 +11894,17 @@ def _v5_build_ctx_slice(rel_results: List[Dict[str, Any]],
                        "directory — read/parse them by these RELATIVE names; do not "
                        "re-fetch or re-derive what is already here):\n") + "\n".join(
                 f"  • {a['rel']}" + (f" — {a['note']}" if a["note"] else "") for a in arts)
-        head = f"[from step {r.get('id')} · {r.get('title', '')}]\n"
+        # The title is the PLANNED framing, fixed at plan time — a step whose
+        # actual execution diverged from its plan (e.g. planned to pull from
+        # "Vera's fabric", actually ended up fetching over HTTP) leaves every
+        # later reader of this title believing the stale, now-inaccurate plan.
+        # `actual_caps` is ground truth (what the step really, successfully
+        # called) computed from its own tool-call history — shown alongside
+        # the title, never replacing it, so a mismatch is visible instead of
+        # silently misleading whatever reads this next.
+        _real = r.get("actual_caps") or []
+        _real_txt = f" (actually used: {', '.join(_real)})" if _real else ""
+        head = f"[from step {r.get('id')} · {r.get('title', '')}{_real_txt}]\n"
         body = _v5_dedupe_paragraphs((r.get("summary") or "")[:per_step], seen_paras)
         block = head + body + art_txt
         if used + len(block) > total and blocks:
@@ -11467,6 +12055,30 @@ async def _v5_run_step(step: Dict[str, Any], **kw) -> Dict[str, Any]:
                 "summary": summary, "outputs": {},
                 "cycle_end": kw.get("cycle_offset", 0), "history": [],
                 "crashed": True}
+
+
+def _v5_actual_caps_used(history: List[Dict[str, Any]]) -> List[str]:
+    """The REAL capabilities a step successfully invoked, in first-use order —
+    ground truth for what actually happened, independent of what the step's
+    PLANNED title said would happen. Exists because a step's title/goal is
+    fixed at plan time and never rewritten when execution diverges from the
+    plan (e.g. planned as "…from Vera's fabric", actually ended up fetching
+    over HTTP) — every later reader (a later step's context, the controller's
+    ledger, the completion gate, the final human-facing summary) kept seeing
+    only the stale, now-inaccurate framing. This is threaded alongside the
+    title everywhere it's surfaced, rather than rewriting the title in place —
+    additive and safe, since nothing that keys off the exact title string
+    breaks. Internal pseudo-tools (bracketed, e.g. "(chain)") and failed
+    calls are excluded: a rejected/erroring attempt isn't what produced the
+    step's actual result."""
+    seen: List[str] = []
+    for h in history or []:
+        t = str((h or {}).get("tool") or "")
+        if not t or t.startswith("(") or not h.get("ok"):
+            continue
+        if t not in seen:
+            seen.append(t)
+    return seen
 
 
 async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
@@ -11673,6 +12285,13 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             "script written without seeing the real data guesses the schema and returns nothing.\n"
             "  • Describe the OUTPUT contract in `task` (exact output filename, what it must "
             "contain) so the file it writes is the deliverable, not a demo.\n"
+            "  • Write `task` in terms of DATA IN / DATA OUT — never 'use capability X' or "
+            "'retrieve it via <some capability>'. The coder's sandbox has no access to Vera's "
+            "capabilities at all — if a step's own goal/title names one (yours or an earlier "
+            "step's, because the plan was written before the run knew how the data would "
+            "actually get fetched), that is planning language, not something to translate "
+            "into an import or a mention in the code. Describe only the real inputs (files/URLs "
+            "you actually have) and the real output required.\n"
             "  • CHANGING a file that ALREADY EXISTS? Use code.edit(path, task) instead — it "
             "shows the coder the current file and applies TARGETED edits, keeping everything "
             "you did not ask to change. code.author re-emits the WHOLE file, which is slow and "
@@ -11680,6 +12299,27 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             "or a genuine wholesale rewrite.\n"
             + ("  • Not in your scope yet — request it with need_caps.\n"
                if "code.author" not in allowed else ""))
+
+    # Prose route: same reasoning as author_note above, for documents instead
+    # of code. Shown whenever reachable, because "draft it yourself with
+    # llm.generate and write it out" is the failure this replaces.
+    prose_note = ""
+    if "prose.author" in allowed or "prose.author" in catalog_set:
+        prose_note = (
+            "\nWRITING A DOCUMENT ABOUT WHAT YOU BUILT — USE prose.author, NEVER A BARE "
+            "llm.generate: a README, report, or write-up that describes a project (its "
+            "components, how to run it, what it depends on) must go through "
+            "prose.author(path='<file>', task='<what the document must cover>', "
+            "context_files=[<files it should describe>]). It grounds the draft against the "
+            "REAL files that exist in your working directory and checks any install/build "
+            "command it writes against whether that ecosystem's manifest file is actually "
+            "there — a bare llm.generate call has no such grounding and has been observed "
+            "inventing an entire fictional architecture (a backend, a frontend, a build "
+            "system) that was never built, then issuing install commands for it.\n"
+            "  • Do NOT hand-draft a README/report with llm.generate and then ide.fs.write it "
+            "yourself — describe ONLY what prose.author's own grounding confirms exists.\n"
+            + ("  • Not in your scope yet — request it with need_caps.\n"
+               if "prose.author" not in allowed else ""))
 
     # Code autosave note — only when the step can generate code.
     code_note = ""
@@ -11824,7 +12464,13 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         '"input":{"prompt":"Write a report from this source:"},"from":{"context":"$1"}},'
         '{"name":"ide.fs.write","input":{"path":"report.md"},"from":{"content":"$2"}}]; '
         'generate→run: [{"name":"llm.generate","input":{"prompt":"write a python script that..."}},'
-        '{"name":"exec.python.run","from":{"code":"$0:code"}}], OR\n'
+        '{"name":"exec.python.run","from":{"code":"$0:code"}}]. '
+        '`chain` is a TOP-LEVEL field of your JSON response, a sibling to `tool_use` — it is '
+        'NOT a capability name. `{"tool_use":{"name":"chain","input":{...}}}` or '
+        '`{"tool_use":{"name":"ide.fs.chain",...}}` are WRONG and will be refused (there is no '
+        'capability called `chain`, `ide.fs.chain`, or anything like it) — the correct shape '
+        'has `"chain":[...]` as its own key next to `"thought"`, exactly like the examples '
+        "above, never inside `tool_use`. OR\n"
     ) if enable_chaining else ""
     _ask_help = (
         '  {"thought":"<why>","ask_user":"<question>"}  to ASK THE USER when the step is genuinely '
@@ -11887,6 +12533,52 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             + ("  • Need to know what's on disk? Run `ls -la` with exec.bash.run — never guess a "
                "filename.\n" if "exec.bash.run" in allowed else
                f"  • Never guess a filename — read one of the files above with {_read_cap}.\n"))
+    # A REAL way to verify a UI/HTML deliverable actually works — real browser,
+    # real click, real observed DOM change — instead of the doomed
+    # `webbrowser.open()`/`xdg-open` calls a specialist otherwise invents
+    # inside the (headless, display-less) sandbox itself (§3.13). Only shown
+    # when there's actually an HTML file to verify AND operator.run is
+    # reachable; the URL is computed here, not left for the model to guess.
+    preview_note = ""
+    _has_operator = bool(sid) and ("operator.run" in allowed or "operator.run" in catalog_set)
+    _has_browser_nav = "browser.navigate" in allowed or "browser.navigate" in catalog_set
+    if sid and (_has_operator or _has_browser_nav):
+        _html_files = [n for n in (workdir_files or [])
+                       if n.lower().endswith((".html", ".htm")) and not n.endswith("/")]
+        if _html_files:
+            # Observed live, twice, in two different shapes: (1) exec.bash.run
+            # "xdg-open ..." / Python's webbrowser.open() — both no-ops in a
+            # headless, display-less sandbox, reported ok:true regardless; (2)
+            # code.author writing a hand-rolled script that `import selenium`
+            # — a library that ISN'T installed here, and redundant even where
+            # it is: the specialist already has a REAL capability
+            # (operator.run / browser.navigate) that already IS browser
+            # automation. Its own reasoning conflated "the capability failed"
+            # with "my Selenium script's import failed," never actually
+            # calling the capability via tool_use at all. Name both failure
+            # modes explicitly rather than assume "use the real tool" is
+            # self-evident — it visibly wasn't.
+            _preview_lines = [f"  • {n} → {_v5_sandbox_preview_url(sid, n)}"
+                              for n in _html_files[:5]]
+            _tool_hint = ("operator.run(goal='<what to check>', url='<preview URL below>')"
+                          if _has_operator else
+                          "browser.navigate(goal='<what to check>', start_url='<preview URL below>')")
+            preview_note = (
+                "\nVERIFYING A UI/HTML FILE ACTUALLY WORKS — call "
+                + ("operator.run" if _has_operator else "browser.navigate")
+                + " DIRECTLY as a tool_use. Do NOT:\n"
+                "  • call webbrowser.open()/xdg-open/a bare HTTP GET — this sandbox is headless "
+                "with no display, so 'opening a browser' inside it is a no-op that reports "
+                "ok:true while checking nothing.\n"
+                "  • write your own script that imports selenium/playwright/a webdriver "
+                "library — it is almost certainly NOT installed here, and even where it is, "
+                "you already have a capability that IS real browser automation; writing your "
+                "own is redundant work that only adds a new way to fail.\n"
+                f"Real interaction (a click producing the right result, etc.) needs: {_tool_hint} "
+                "— it drives an ACTUAL headless browser against the live URL and reports what "
+                "it actually observed.\n"
+                "Live preview URL(s) for HTML file(s) already in this working directory:\n"
+                + "\n".join(_preview_lines) + "\n")
     sys = (
         "You are a FOCUSED SPECIALIST sub-agent. Complete ONE step of a larger task and "
         "nothing else. Stay strictly within the step goal.\n"
@@ -11902,7 +12594,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
            "you saw in a search result but have not been granted, or a function name you remember "
            "from elsewhere. If what you need isn't in the list, ask for it by its exact cap name "
            "with need_caps — never guess a name and never invent one.\n")
-        + model_block + author_note + code_note + gen_note + terminal_note + edit_note
+        + model_block + author_note + prose_note + code_note + gen_note + terminal_note + edit_note
         + exec_role_note + file_access_note + condense_note
         + ("\nCAPABILITY REALITY — generative vs action: llm.*, ollama.*, and agent.chat* only "
            "GENERATE or transform text from what YOU put in the prompt. They CANNOT look things "
@@ -11923,7 +12615,15 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
            "transform a file (especially data, or any bulk/mechanical change) prefer a script "
            "(exec.python.run, or exec.bash.run with sed/jq/awk) that reads → transforms → writes; "
            "re-emitting a whole file via llm.generate is only for authored prose/code YOU wrote, "
-           "and risks dropping or altering content on a data file.\n")
+           "and risks dropping or altering content on a data file.\n"
+           "CAPABILITIES ARE NOT PYTHON — this includes any code YOU emit directly (a fenced "
+           "block gets autosaved). The STEP GOAL above may be worded around a Vera capability "
+           "(this step's own, or an earlier one's you're building on) — that is planning "
+           "language, not a literal instruction, and none of Vera's capabilities is a real "
+           "Python package: never write `import` for one, call one as a function, or state one "
+           "in a comment as the mechanism, in ANY code you produce or hand to code.author/"
+           "code.edit. A new `import` is only valid for a real pip-installable/stdlib library, "
+           "or a real file that already exists, matched to its exact name.\n")
         + ("\nFILE HONESTY — never claim a file exists unless you actually created it THIS step: "
            "either you emitted it as a fenced code block (auto-saved), a generative call reported "
            "'✓ SAVED — written to ./<name>', or a write capability (e.g. ide.fs.write) returned ok "
@@ -11936,6 +12636,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         + (("\nCONTEXT FROM PRIOR STEPS:\n" + ctx_slice + "\n") if ctx_slice else "")
         + (inline_files or "")
         + workdir_note
+        + preview_note
         + pkg_note
         + "\nWork in a tight loop. Each turn reply with ONE compact JSON object — ONE of:\n"
           '  {"thought":"<one sentence>","tool_use":{"name":"<cap>","input":{...}}}  to ACT, OR\n'
@@ -11980,6 +12681,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             "code_note": code_note.strip(),
             "gen_note": gen_note.strip(),
             "author_note": author_note.strip(),
+            "prose_note": prose_note.strip(),
             "phase_guide": phase_guide,
             "recovery_caps": recovery_caps,
             "artifact_dir": artifact_dir_path,
@@ -12033,6 +12735,11 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
     code_write_redirects = 0              # times we redirected a hand-written script → code.author
     success_sigs: Dict[str, str] = {}      # call-signature -> cached preview of a SUCCESSFUL identical call
     failed_sigs: Dict[str, str] = {}       # call-signature -> error of a FAILED identical call (never re-run it)
+    # Chain hops call `call_tool` directly (see _run_chain below) and never
+    # consult `success_sigs` above — this is that same short-circuit, scoped
+    # separately since a chain hop's cached value needs the raw `result`
+    # (for `chain_out`/`$N` refs), not just a preview string.
+    _chain_success: Dict[str, Dict[str, Any]] = {}
     saved_run_files: Dict[str, str] = {}   # basename -> known-good runnable path of a file WE auto-saved this run
     dup_call_hits = 0                       # redundant repeats of an already-successful call
     _MAX_DUP_HITS = 2                       # after this many redundant repeats, end the step cleanly
@@ -12053,6 +12760,29 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
     think_only_streak = 0                  # consecutive thought-only turns (oscillation guard)
     dup_thought_hits = 0                   # thoughts that merely restate the previous one
     _MAX_THINK_STREAK = 4                  # hard-stop a step stuck deliberating this long
+    # `done` is otherwise accepted on its word alone — nothing checks whether the
+    # phase actually DID anything, or whether the summary itself describes a plan
+    # rather than a result. Observed live, repeatedly: a phase's FIRST turn was
+    # `{"done": "Ready to generate the script once column preferences are
+    # confirmed."}` / "Requesting 'ide.fs.write' capability to generate the
+    # markdown file." — zero tool calls made, the phase ended anyway, and the
+    # controller had to spend a full retry cycle discovering nothing was
+    # produced. `think_only_streak` above only catches OMITTING `done` entirely
+    # (bare repeated thoughts) — it has no defense against an explicit but
+    # premature `done`. Both conditions must hold to reject one: no useful
+    # action yet AND the text itself reads as intent, not a result — so a
+    # legitimate "the answer was already in context, nothing to do" done (which
+    # states a fact, not a plan) is never blocked.
+    premature_done_streak = 0
+    _MAX_PREMATURE_DONE = 2                # correct it this many times before accepting it anyway
+    _DONE_INTENT_RE = re.compile(
+        r"\b(ready to|about to|going to|planning to|plan to|intends? to|"
+        # NOT [^.]{0,40} — a capability/filename in the gap (ide.fs.write,
+        # report.md) contains literal dots, which would silently block the
+        # match; observed live, this exact pattern was needed to catch
+        # "Requesting 'ide.fs.write' capability to generate the markdown file."
+        r"will now|requesting\b.{0,40}\bcapability|once\b.{0,40}\b(?:is|are)\s+confirmed)\b",
+        re.I)
     _step_q_key = -500000 - int(step_id)   # reserved HITL key for this step's ask_user questions
     _CAP_NAME_RE = re.compile(r"\b[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*){1,3}\b")
     _CAP_AVAIL_WORDS_RE = re.compile(
@@ -12168,7 +12898,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         hop's output into the next via its `from` map — NO inference between hops (the
         whole point: e.g. llm.generate → ide.fs.write in one turn). Each hop renders as
         a normal tool card. Returns True if at least one hop produced a usable result."""
-        nonlocal gc, dynamic_caps_block, ok, had_useful
+        nonlocal gc, dynamic_caps_block, ok, had_useful, code_write_redirects, proven_redirects
         spec = [h for h in (hops or []) if isinstance(h, dict) and str(h.get("name") or "").strip()]
         spec = spec[:_MAX_CHAIN_HOPS]
         if not spec:
@@ -12218,6 +12948,19 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                                       "elapsed_ms": 0, "preview": _msg, "error": _msg, "session_id": sid})
                     break
             h_args = dict(hop.get("input") or {})
+            # A reference like "$0:code" is only ever resolved when it's in the
+            # `from` mapping (the loop below) — but the model sometimes instead
+            # puts it straight in `input`, apparently expecting it to
+            # auto-substitute there too. Observed live: `ide.fs.write` got
+            # input={"content": "$0:code"} (no `from` entry for "content" at
+            # all) and wrote that 7-character literal placeholder straight
+            # over a REAL file, reporting ok:true — silent data loss dressed
+            # up as success. `_chain_ref` already returns any non-matching
+            # string COMPLETELY UNCHANGED, so running every input value
+            # through it is a no-op for ordinary literal values and only ever
+            # helps the one case where a reference landed in the wrong field.
+            h_args = {k: (_chain_ref(v, chain_out) if isinstance(v, str) else v)
+                      for k, v in h_args.items()}
             for field, ref in (hop.get("from") or {}).items():
                 h_args[field] = _chain_ref(ref, chain_out)
             h_args, _cn = _coerce_args(hop_tool, h_args)
@@ -12242,18 +12985,153 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                     _hgood = saved_run_files.get(_hp.replace("\\", "/").rsplit("/", 1)[-1])
                     if _hgood and _hgood != _hp:
                         h_args["path"] = _hgood
+            # UI-verify preview-URL self-heal (same as the single-tool path,
+            # see its comment) for a chain hop calling operator.run/
+            # browser.navigate with a guessed-too-shallow localhost URL.
+            _h_url_arg = ("url" if hop_tool == "operator.run"
+                          else ("start_url" if hop_tool == "browser.navigate" else ""))
+            if _h_url_arg and isinstance(h_args, dict):
+                _hu = str(h_args.get(_h_url_arg) or "").strip()
+                _hum = _hu and re.match(
+                    r"^https?://localhost(?::\d+)?\.?/(?!remote/sandbox/preview/)([^/?#]+)/?$", _hu)
+                if _hum:
+                    # Not gated on saved_run_files/workdir_files "knowing"
+                    # the file — same relaxation as the single-tool path,
+                    # same reason (dropped live, Test T).
+                    _hfname = _hum.group(1)
+                    h_args[_h_url_arg] = _v5_sandbox_preview_url(sid, _hfname)
+                elif not _hu and _V5_UI_VERIFY_STEP_RE.search(f"{step.get('title','')}\n{step.get('goal','')}"):
+                    # Missing url/start_url entirely — same "stuck on Google"
+                    # fix as the single-tool path (its default start_url is
+                    # literally https://www.google.com).
+                    _hcands = [n for n in (workdir_files or [])
+                              if n.lower().endswith((".html", ".htm")) and not n.endswith("/")]
+                    if len(_hcands) == 1:
+                        h_args[_h_url_arg] = _v5_sandbox_preview_url(sid, _hcands[0])
+            # Missing `goal` self-heal (same as the single-tool path).
+            if hop_tool in ("operator.run", "browser.navigate") and isinstance(h_args, dict):
+                if not str(h_args.get("goal") or "").strip():
+                    _h_step_goal = _v5_navigate_goal_fallback(step)
+                    if _h_step_goal:
+                        h_args["goal"] = _h_step_goal
+            # PROTECT PROVEN-GOOD CODE (same as the single-tool path, see its
+            # comment): a chain hop re-authoring a path that already has real
+            # prior work redirects to code.edit instead of blindly replacing it.
+            # Without this, a chain was the easiest way to skip the protection
+            # entirely: a hop calls `call_tool` directly (below), so a chain
+            # never passed through the single-tool path's own version of this
+            # check at all — observed live, a 5-hop chain issued THREE full
+            # code.author-free `ide.fs.write` overwrites of the same file
+            # back-to-back in under a second.
+            if (hop_tool == "code.author" and isinstance(h_args, dict)
+                    and "code.edit" in catalog_set
+                    and proven_redirects < _MAX_PROVEN_REDIRECTS):
+                _htp = _v5_art_key(str(h_args.get("path") or ""))
+                if _htp and _v5_path_is_proven(artifacts, _htp):
+                    proven_redirects += 1
+                    if "code.edit" not in allowed:
+                        allowed.append("code.edit")
+                        _hesig = rich_cap_signature("code.edit")
+                        dynamic_caps_block = ((dynamic_caps_block + "\n" + _hesig)
+                                              if dynamic_caps_block else _hesig)
+                    hop_tool = "code.edit"
+                    h_args = {"path": _htp,
+                              "task": str(h_args.get("task") or h_args.get("requirements") or ""),
+                              "session_id": sid}
+                    await emit_event({"type": "agent_loop_v5.proven_code_protected",
+                                      "stream_id": stream_id, "cycle": gc, "step_id": step_id,
+                                      "session_id": sid, "path": _htp,
+                                      "reason": "chain hop re-author of a proven file — "
+                                                "redirected to code.edit"})
+            # CODE-WRITE GATE (same as the single-tool path, see its comment):
+            # ide.fs.write/code.save is for DATA and documents, not hand-typed
+            # source — route it to code.author. Same chain-bypass reasoning as
+            # the block above: a chain hop never saw this check before either.
+            _hcw_target = ""
+            if (hop_tool in ("ide.fs.write", "code.save") and "code.author" in catalog_set
+                    and code_write_redirects < _MAX_CODE_WRITE_REDIRECTS):
+                _hcw_target = _v5_write_is_code(h_args)
+            if _hcw_target:
+                code_write_redirects += 1
+                if "code.author" not in allowed:
+                    allowed.append("code.author")
+                _hdraft = str((h_args or {}).get("content") or (h_args or {}).get("text") or "")
+                _hctx_files = [n for n in sorted(saved_run_files)
+                              if n.rsplit(".", 1)[-1].lower() in ("json", "csv", "txt", "md", "xml", "yaml")][:4]
+                hop_tool = "code.author"
+                h_args = {
+                    "path": _hcw_target,
+                    "task": (f"{step.get('goal') or goal}\n\n"
+                             f"Write `{_hcw_target}`. An executor drafted the file by hand; use "
+                             "the draft ONLY to understand the intent, then write it properly:\n"
+                             f"{_hdraft[:4000]}"),
+                    "context_files": _hctx_files,
+                    "requirements": ("Parse the context files as they ACTUALLY are — do not guess a "
+                                     "schema and do not add branches for shapes you were not shown. "
+                                     "Refer to data files by their relative names."),
+                    "session_id": sid,
+                }
+                await emit_event({"type": "agent_loop_v5.code_write_redirect", "stream_id": stream_id,
+                                  "cycle": gc, "step_id": step_id, "session_id": sid,
+                                  "from_tool": "ide.fs.write", "path": _hcw_target,
+                                  "context_files": _hctx_files})
+            # ── Duplicate-hop short-circuit — the single-tool path's own
+            # version of this (`success_sigs`, used below the chain loop)
+            # never sees chain hops at all: they call `call_tool` directly
+            # here, bypassing it entirely. Observed live: a specialist
+            # re-issued an identical single-hop chain (`ide.fs.write` with
+            # the SAME path+content, already correct) FIVE times in a row —
+            # each one a genuine fresh write, burning the step's whole cycle
+            # budget on pure repetition instead of recognizing after the
+            # FIRST success that the goal was already met.
+            _h_sig = _v5_call_sig(hop_tool, h_args)
+            _h_cached = _chain_success.get(_h_sig)
+            if _h_cached is not None:
+                gc += 1
+                cur = gc
+                any_ok = True
+                had_useful = True
+                chain_out.append(_h_cached["result"])
+                await emit_event({"type": "agent_loop_v5.tool_call", "stream_id": stream_id,
+                                  "cycle": cur, "step_id": step_id, "tool": hop_tool, "args": h_args,
+                                  "thought": "(chained)", "session_id": sid})
+                await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
+                                  "cycle": cur, "step_id": step_id, "tool": hop_tool, "ok": True,
+                                  "elapsed_ms": 0, "preview": _h_cached["preview"], "error": "",
+                                  "note": "duplicate call — served the earlier result",
+                                  "session_id": sid})
+                history.append({"tool": hop_tool, "ok": True, "preview": _h_cached["preview"],
+                                "args": h_args, "ms": 0})
+                continue
             gc += 1
             cur = gc
+            # URL-FETCH DEDUP (same run-level `artifacts` cache the single-tool
+            # path uses, see its own comment) — `_chain_success` above is only
+            # a within-THIS-invocation dict, so it cannot catch a hop that
+            # refetches a URL a PRIOR phase/retry already fetched.
+            _h_url_cache_key = ""
+            if hop_tool in ("web.fetch", "http.get") and isinstance(h_args, dict):
+                _hu2 = str(h_args.get("url") or "").strip()
+                if _hu2:
+                    _h_url_cache_key = "url:" + _hu2
+            _h_url_cached = artifacts.get(_h_url_cache_key) if _h_url_cache_key else None
+            if _h_url_cached and "_url_cache_value" in _h_url_cached:
+                await emit_event({"type": "agent_loop_v5.url_cache_hit", "stream_id": stream_id,
+                                  "cycle": cur, "step_id": step_id, "tool": hop_tool,
+                                  "url": str(h_args.get("url") or ""), "session_id": sid})
             await emit_event({"type": "agent_loop_v5.tool_call", "stream_id": stream_id,
                               "cycle": cur, "step_id": step_id, "tool": hop_tool, "args": h_args,
                               "thought": "(chained)", "session_id": sid})
             t0 = time.monotonic()
-            _hstream = _v5_make_tool_stream_cb(stream_id, step_id, cur, hop_tool, sid)
-            try:
-                invoke = await call_tool(hop_tool, h_args, session_id=sid, trace_id=trace_id or "",
-                                         stream_cb=_hstream)
-            except TypeError:
-                invoke = await call_tool(hop_tool, h_args, session_id=sid, trace_id=trace_id or "")
+            if _h_url_cached and "_url_cache_value" in _h_url_cached:
+                invoke = {"ok": True, "result": _h_url_cached["_url_cache_value"]}
+            else:
+                _hstream = _v5_make_tool_stream_cb(stream_id, step_id, cur, hop_tool, sid)
+                try:
+                    invoke = await call_tool(hop_tool, h_args, session_id=sid, trace_id=trace_id or "",
+                                             stream_cb=_hstream)
+                except TypeError:
+                    invoke = await call_tool(hop_tool, h_args, session_id=sid, trace_id=trace_id or "")
             if stream_id:
                 await emit_event({"type": "agent_loop_v5.tool_stream_end", "stream_id": stream_id,
                                   "step_id": step_id, "cycle": cur, "tool": hop_tool, "session_id": sid})
@@ -12287,6 +13165,10 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 except Exception as e:
                     log.debug("v5 chain long-running await failed for %s: %s", hop_tool, e)
             elapsed = round((time.monotonic() - t0) * 1000)
+            if (_h_url_cache_key and not _h_url_cached
+                    and invoke.get("ok") and isinstance(invoke.get("result"), dict)):
+                artifacts[_h_url_cache_key] = {"rel": _h_url_cache_key,
+                                               "_url_cache_value": invoke["result"]}
             if invoke.get("ok"):
                 try:
                     _v5_repair_gen_result(invoke, hop_tool, h_args,
@@ -12372,6 +13254,8 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                         log.debug("v5 chain auto-save failed for %s: %s", _blk.get("filename"), e)
             chain_out.append(invoke.get("result"))
             entry_ok = invoke_ok and not hop_unhelpful
+            if entry_ok:
+                _chain_success[_h_sig] = {"result": invoke.get("result"), "preview": preview[:_budget]}
             history.append({"tool": hop_tool, "ok": entry_ok, "preview": preview[:_budget],
                             "args": h_args, "ms": elapsed})
             await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
@@ -12467,7 +13351,31 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         if thought:
             all_thoughts.append(thought)
 
-        # Step complete?
+        # Step complete? — unless this is a PREMATURE done: nothing useful has
+        # happened yet this phase, and the summary itself reads as a plan
+        # ("ready to...", "requesting X capability...") rather than a result.
+        # The `think` phase is exempt: reasoning/planning language is its
+        # actual job, not a symptom there.
+        if done_val and phase != "think" and not had_useful and _DONE_INTENT_RE.search(str(done_val)):
+            premature_done_streak += 1
+            if premature_done_streak < _MAX_PREMATURE_DONE:
+                pending_note = (
+                    f"Your `done` (\"{str(done_val)[:200]}\") describes a PLAN, not a RESULT — "
+                    "nothing has actually happened yet this step. Either DO it now with a real "
+                    "tool_use (don't just say you're about to), or if you're genuinely blocked, "
+                    "request what you need with need_caps. Do not emit `done` again until you have "
+                    "a real outcome to report.")
+                await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
+                                  "cycle": (gc + 1), "step_id": step_id, "session_id": sid,
+                                  "thought": f"(premature done rejected: {str(done_val)[:300]})"})
+                continue
+            # Corrected and it happened again — treat it the same as any other
+            # exhausted stall guard rather than looping forever.
+            result_summary = (f"STEP STALLED: emitted `done` describing a plan rather than a "
+                               f"result, {premature_done_streak}×, without ever taking an "
+                               f"action: {str(done_val)[:300]}")
+            ok = False
+            break
         if done_val:
             result_summary = str(done_val)[:_V5_DONE_SUMMARY]
             ok = True
@@ -12668,6 +13576,29 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                                       "cycle": think_cycle, "step_id": step_id,
                                       "thought": "\n\n".join(streak_thoughts)[:4000],
                                       "session_id": sid})
+            else:
+                # A genuinely EMPTY generation — no thought, no tool_use, no
+                # done — is NOT the model quietly deliberating; it means the
+                # underlying LLM call returned nothing (a transient
+                # generation/routing failure that `_safe_ollama_generate_dw`'s
+                # own one-shot retry didn't recover from). Silently folding
+                # this into the same bucket as a genuine "thought but chose
+                # not to act" turn (which at least emits a visible reasoning
+                # card) made repeated infra failures indistinguishable from
+                # real deliberation — observed live: an operator watching a
+                # run saw a step "auto-stop for too many thought-only turns"
+                # with NO thought content anywhere in the trace and no way to
+                # tell why. Surface it plainly instead of leaving a silent gap.
+                if think_cycle is None:
+                    gc += 1
+                    think_cycle = gc
+                    streak_thoughts = []
+                await emit_event({"type": "agent_loop_v5.thinking", "stream_id": stream_id,
+                                  "cycle": think_cycle, "step_id": step_id,
+                                  "thought": "(the model returned no output this turn — a likely "
+                                             "transient generation/routing failure, not genuine "
+                                             "deliberation.)",
+                                  "session_id": sid})
             # Back-to-back pure thinking accomplishes nothing actionable and tends
             # to loop on the same reasoning. After a couple of thought-only turns
             # (or ANY restatement), push HARD to act / request a cap / finish.
@@ -12778,6 +13709,22 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                         "INVENT one that may not exist. If you need that information, look it up for "
                         "real: web.search for it, or web.fetch/http.get a URL you already know (e.g. "
                         "the docs page). Allowed now: " + _avail + ".")
+            elif tool == "chain" or tool.endswith(".chain"):
+                # A specific, common confusion, not a generic "unknown cap":
+                # `chain` is a top-level RESPONSE-SHAPE keyword (a sibling of
+                # `tool_use`), never something callable BY tool_use.name. The
+                # generic "not a capability" message below doesn't say that —
+                # it just lists what IS allowed, so the specialist tends to
+                # retry the same wrong shape with a different tool name (once
+                # even `ide.fs.chain`) instead of fixing the shape. Observed
+                # live, repeatedly, across independent steps in one run.
+                _msg = (f"`{tool}` is not a capability — 'chain' is never a tool_use name, real or "
+                        "otherwise. `chain` is its own TOP-LEVEL field in your JSON response, a "
+                        'sibling of `tool_use`: {"thought":"...","chain":[{"name":"<real cap>",'
+                        '"input":{...}},{"name":"<real cap>","input":{...},"from":{"<arg>":"$0"}}]} '
+                        "— NOT {\"tool_use\":{\"name\":\"chain\",...}}. If you don't actually need "
+                        f"multiple chained calls, just make ONE normal tool_use with a real capability "
+                        f"name. Allowed now: {_avail}.")
             else:
                 _msg = ((f"'{tool}' is not in this step's scope. " if _real else
                          f"There is NO capability called '{tool}' — that is not a tool name (a DAG or "
@@ -12829,6 +13776,91 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                     await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
                                       "cycle": cur_cycle, "step_id": step_id, "tool": tool,
                                       "session_id": sid, "note": f"run path {_p} → {_good}"})
+        # ── UI-verify preview-URL self-heal ──────────────────────────────────
+        # `preview_note` (§2.24/§2.30) hands the specialist the EXACT, correct
+        # preview URL (.../remote/sandbox/preview/{session_id}/{relpath}) —
+        # observed live (Test R on browser.navigate, Test S on operator.run)
+        # that it's not reliably copied verbatim: the model instead invents a
+        # shorter guess pointing straight at localhost:{port}/{filename}, one
+        # directory level too shallow and missing the session_id entirely, so
+        # the target 404s (or in operator.run's case, opens about:blank and
+        # burns its whole max_steps budget — one observed call took 16
+        # minutes wall-clock before giving up). If the guessed URL's last path
+        # segment matches a file WE know this run wrote, rewrite it to the
+        # real preview URL rather than let a real browser/operator session
+        # spend minutes discovering that on its own.
+        _UI_URL_ARG = "url" if tool == "operator.run" else ("start_url" if tool == "browser.navigate" else "")
+        if _UI_URL_ARG and isinstance(args, dict):
+            _u = str(args.get(_UI_URL_ARG) or "").strip()
+            _um = _u and re.match(
+                r"^https?://localhost(?::\d+)?\.?/(?!remote/sandbox/preview/)([^/?#]+)/?$", _u)
+            if _um:
+                # No longer gated on saved_run_files/workdir_files "knowing"
+                # the file (dropped live, Test T: the file genuinely existed
+                # — code.author had already written it in a PRIOR step — but
+                # neither cross-step-persisted saved_run_files nor a fresh
+                # workdir_files fetch reliably reflected that in time, so the
+                # gate silently no-opped and the malformed URL sailed through
+                # unfixed). The URL SHAPE alone is already unambiguous: it's
+                # OUR OWN orchestrator's own port with a path that is
+                # STRUCTURALLY not our real preview route — there is no
+                # legitimate call this run would make to `localhost:{our
+                # port}/anything` that ISN'T meant to be the sandbox preview
+                # route, so requiring independent file-existence confirmation
+                # was extra caution that cost correctness without preventing
+                # any real false positive.
+                _fname = _um.group(1)
+                _fixed = _v5_sandbox_preview_url(sid, _fname)
+                args[_UI_URL_ARG] = _fixed
+                await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
+                                  "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                                  "session_id": sid, "note": f"{_UI_URL_ARG} {_u} → {_fixed}"})
+            elif not _u and _V5_UI_VERIFY_STEP_RE.search(f"{step.get('title','')}\n{step.get('goal','')}"):
+                # §3.14-chapter's OTHER observed failure mode (Test R): a
+                # step whose args omitted the url/start_url ENTIRELY doesn't
+                # match the malformed-guess regex above at all (there's
+                # nothing to guess-correct) — it just silently falls through
+                # to browser.navigate's own hardcoded default
+                # (start_url='https://www.google.com') and the run ends up
+                # "stuck on a Google consent page" trying to extract info
+                # from a search engine's cookie banner instead of ever
+                # reaching the file it was meant to verify. Only fires for a
+                # step whose own title/goal is UI-verify-shaped (so this
+                # never redirects an unrelated call that legitimately wants
+                # no default), and only when exactly ONE html/htm file
+                # exists in the working directory — with more than one
+                # candidate, guessing which is wrong is worse than leaving
+                # the args alone.
+                _html_candidates = [n for n in (workdir_files or [])
+                                    if n.lower().endswith((".html", ".htm")) and not n.endswith("/")]
+                if len(_html_candidates) == 1:
+                    _fixed = _v5_sandbox_preview_url(sid, _html_candidates[0])
+                    args[_UI_URL_ARG] = _fixed
+                    await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
+                                      "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                                      "session_id": sid,
+                                      "note": f"{_UI_URL_ARG} (missing) → {_fixed}"})
+        # ── operator.run/browser.navigate missing `goal` self-heal ───────────
+        # Both hard-require `goal` (operator.run: "ERROR: goal required";
+        # browser.navigate the same) — observed live (§5.22, Test U): a
+        # SECOND call to operator.run within the same step omitted `goal`
+        # entirely (not the nested-wrapper shape §2.36 already fixes — just
+        # genuinely absent), instantly failing a call that had otherwise
+        # correct args, wasting a turn on a step already fighting to get a
+        # real browser check done. The step's own goal is always a
+        # reasonable, safe default: whatever the specialist was calling this
+        # tool FOR, it is working toward the step's stated goal, and this
+        # only fires when the model left the field empty — it never
+        # overrides a real (even if different) goal the model DID provide.
+        if tool in ("operator.run", "browser.navigate") and isinstance(args, dict):
+            if not str(args.get("goal") or "").strip():
+                _step_goal = _v5_navigate_goal_fallback(step)
+                if _step_goal:
+                    args["goal"] = _step_goal
+                    await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
+                                      "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                                      "session_id": sid,
+                                      "note": f"goal (missing) → step goal: {_step_goal[:100]}"})
         # ── RUN-BEFORE-AUTHOR guard ─────────────────────────────────────────
         # The self-heal above only rescues a path whose basename WAS saved this
         # run. The other half of the failure is running a script that does not
@@ -13213,24 +14245,48 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         if _doc_target:
             doc_author_redirects += 1
             tool_calls[tool] = max(0, tool_calls.get(tool, 1) - 1)   # not a real attempt
-            _gen_hint = "it is already in your scope"
-            if "llm.generate" not in allowed:
-                allowed.append("llm.generate")
-                try:
-                    granted.append("llm.generate")
-                except Exception:
-                    pass
-                _gsig = rich_cap_signature("llm.generate")
-                dynamic_caps_block = (dynamic_caps_block + "\n" + _gsig) if dynamic_caps_block else _gsig
-                _gen_hint = "llm.generate has just been ADDED to your scope for this"
-            pending_note = (
-                f"STOP — you were hand-typing the contents of `{_doc_target}` into a shell command. "
-                "The deliverable must be WRITTEN BY the generative cap, not typed by you: what you "
-                "type is always a shorter, weaker version of the real document. Do this instead: "
-                f"call llm.generate({_gen_hint}) with save_as='{_doc_target}', the full writing "
-                "instruction in `prompt`, and the source material passed as files=['<saved file>', "
-                "…] — it generates the document AND writes it to that exact filename for you. Do "
-                "NOT then write the file again by any other means.")
+            # Prefer the GROUNDED author when it's registered — same reasoning as
+            # the code-authoring redirect above: a document typed by hand (or
+            # generated with no grounding) is exactly how a fictional
+            # architecture ends up in a README. Falls back to llm.generate when
+            # prose.author isn't in this run's catalog.
+            if "prose.author" in catalog_set:
+                if "prose.author" not in allowed:
+                    allowed.append("prose.author")
+                    try:
+                        granted.append("prose.author")
+                    except Exception:
+                        pass
+                    _gsig = rich_cap_signature("prose.author")
+                    dynamic_caps_block = (dynamic_caps_block + "\n" + _gsig) if dynamic_caps_block else _gsig
+                pending_note = (
+                    f"STOP — you were hand-typing the contents of `{_doc_target}` into a shell "
+                    "command. The deliverable must be WRITTEN BY the grounded authoring cap, not "
+                    "typed by you: what you type is always a shorter, weaker, ungrounded version "
+                    f"of the real document. Do this instead: call prose.author(path='{_doc_target}', "
+                    "task='<what the document must cover, in detail>', context_files=[<source "
+                    "files it should describe>]) — it grounds the draft against the REAL files in "
+                    "your working directory and writes it to that exact filename for you. Do NOT "
+                    "then write the file again by any other means.")
+            else:
+                _gen_hint = "it is already in your scope"
+                if "llm.generate" not in allowed:
+                    allowed.append("llm.generate")
+                    try:
+                        granted.append("llm.generate")
+                    except Exception:
+                        pass
+                    _gsig = rich_cap_signature("llm.generate")
+                    dynamic_caps_block = (dynamic_caps_block + "\n" + _gsig) if dynamic_caps_block else _gsig
+                    _gen_hint = "llm.generate has just been ADDED to your scope for this"
+                pending_note = (
+                    f"STOP — you were hand-typing the contents of `{_doc_target}` into a shell command. "
+                    "The deliverable must be WRITTEN BY the generative cap, not typed by you: what you "
+                    "type is always a shorter, weaker version of the real document. Do this instead: "
+                    f"call llm.generate({_gen_hint}) with save_as='{_doc_target}', the full writing "
+                    "instruction in `prompt`, and the source material passed as files=['<saved file>', "
+                    "…] — it generates the document AND writes it to that exact filename for you. Do "
+                    "NOT then write the file again by any other means.")
             await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
                               "cycle": cur_cycle, "step_id": step_id, "tool": tool, "ok": False,
                               "elapsed_ms": 0, "preview": "",
@@ -13255,8 +14311,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 and "code.edit" in catalog_set
                 and proven_redirects < _MAX_PROVEN_REDIRECTS):
             _tp = _v5_art_key(str(args.get("path") or ""))
-            _prec = artifacts.get(_tp) if _tp else None
-            if _prec and _prec.get("ran_ok"):
+            if _tp and _v5_path_is_proven(artifacts, _tp):
                 proven_redirects += 1
                 if "code.edit" not in allowed:
                     allowed.append("code.edit")
@@ -13398,20 +14453,46 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                                   "session_id": sid})
                 continue
 
+        # ── URL-FETCH DEDUP ──────────────────────────────────────────────────
+        # The run-level `artifacts` registry already stops a LOCAL FILE being
+        # re-read across steps/retries (see its own comment: "a file was read
+        # 3x on one search result"). web.fetch/http.get never had the
+        # equivalent — each is keyed by URL not path, so a retried step (a
+        # fresh phase attempt with no memory of its own prior attempt) had no
+        # way to know it. Found live, 2026-08-03: a 3-phase step fetched the
+        # SAME technologyreview.com/techcrunch.com URLs three times across its
+        # own explore/act/verify phases, once even twice in the same phase 15
+        # seconds apart. Same registry, a "url:"-prefixed key so it can never
+        # collide with a real file's basename — served straight from cache,
+        # no new network call, no wasted cycle.
+        _url_cache_key = ""
+        if tool in ("web.fetch", "http.get") and isinstance(args, dict):
+            _u = str(args.get("url") or "").strip()
+            if _u:
+                _url_cache_key = "url:" + _u
+        _url_cached = artifacts.get(_url_cache_key) if _url_cache_key else None
+        if _url_cached and "_url_cache_value" in _url_cached:
+            await emit_event({"type": "agent_loop_v5.url_cache_hit", "stream_id": stream_id,
+                              "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                              "url": str(args.get("url") or ""), "session_id": sid})
+
         await emit_event({"type": "agent_loop_v5.tool_call", "stream_id": stream_id,
                           "cycle": cur_cycle, "step_id": step_id, "tool": tool, "args": args,
                           "thought": thought, "session_id": sid})
         t0 = time.monotonic()
-        _tstream = _v5_make_tool_stream_cb(stream_id, step_id, cur_cycle, tool, sid)
-        try:
-            invoke = await call_tool(tool, args, session_id=sid, trace_id=trace_id or "",
-                                     stream_cb=_tstream)
-        except TypeError:
-            # call_tool implementations that predate stream_cb (e.g. an older
-            # fallback shim) don't accept the kwarg at all — degrade to the
-            # plain call rather than failing every tool invocation over a
-            # UI-only feature.
-            invoke = await call_tool(tool, args, session_id=sid, trace_id=trace_id or "")
+        if _url_cached and "_url_cache_value" in _url_cached:
+            invoke = {"ok": True, "result": _url_cached["_url_cache_value"]}
+        else:
+            _tstream = _v5_make_tool_stream_cb(stream_id, step_id, cur_cycle, tool, sid)
+            try:
+                invoke = await call_tool(tool, args, session_id=sid, trace_id=trace_id or "",
+                                         stream_cb=_tstream)
+            except TypeError:
+                # call_tool implementations that predate stream_cb (e.g. an older
+                # fallback shim) don't accept the kwarg at all — degrade to the
+                # plain call rather than failing every tool invocation over a
+                # UI-only feature.
+                invoke = await call_tool(tool, args, session_id=sid, trace_id=trace_id or "")
         if stream_id:
             await emit_event({"type": "agent_loop_v5.tool_stream_end", "stream_id": stream_id,
                               "step_id": step_id, "cycle": cur_cycle, "tool": tool, "session_id": sid})
@@ -13456,6 +14537,13 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             except Exception as e:
                 log.debug("v5 long-running await failed for %s: %s", tool, e)
         elapsed = round((time.monotonic() - t0) * 1000)
+
+        # Store a freshly-successful fetch into the URL cache (see the
+        # URL-FETCH DEDUP gate above) so a LATER retry/phase within this same
+        # run can be served from here instead of hitting the network again.
+        if (_url_cache_key and not _url_cached
+                and invoke.get("ok") and isinstance(invoke.get("result"), dict)):
+            artifacts[_url_cache_key] = {"rel": _url_cache_key, "_url_cache_value": invoke["result"]}
 
         # ── Repair a mis-shaped generation BEFORE anything reads it ──────────
         # JSON-wrapped or unfenced code is normalised in place, so the code
@@ -13532,7 +14620,21 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                     if condense_output and not _v5_is_generative(tool) \
                             and tool not in _V5_FILEREAD_CAPS:
                         try:
-                            _full = _result_preview(invoke["result"], max_len=60000)
+                            # NOT _result_preview(..., max_len=60000) — that's a
+                            # PREVIEW helper: it hard-slices the JSON-serialized
+                            # string at the byte boundary with no regard for
+                            # where it lands, which can and does cut through an
+                            # escape sequence (found live, 2026-08-03: "Bad
+                            # escaped character in JSON at position 60000" on a
+                            # file whose own note claimed "the FULL output was
+                            # captured"). This IS meant to be the full,
+                            # untruncated content persisted to disk — the whole
+                            # point of writing it out is to keep what doesn't
+                            # fit in the prompt. A 2MB safety net (not 60KB)
+                            # guards only against genuinely pathological output;
+                            # anything realistic — even a large API dump — comes
+                            # through completely intact.
+                            _full = _result_preview(invoke["result"], max_len=2_000_000)
                         except Exception:
                             _full = preview
                         if len(_full) > int(_budget * _V5_CONDENSE_TRIGGER_RATIO):
@@ -13865,6 +14967,36 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 artifacts[_ran]["ran_ok"] = True
                 artifacts[_ran]["ran_at_hash"] = artifacts[_ran].get("hash", "")
 
+        # ── Register a code.author/code.edit write the moment it lands ──────
+        # Without this, the registry only ever learns about a file via a
+        # SEPARATE ide.fs.read/code.read, or via the exec-output condenser —
+        # neither happens on the ordinary author-then-run flow. The result was
+        # that `_ran in artifacts` above was False for the file that had JUST
+        # run successfully (never registered in the first place), so ran_ok
+        # could never be set and code.author -> code.edit protection could
+        # never engage for it — observed live: a script that had already
+        # printed a real success message was re-authored from scratch twice
+        # more, the second rewrite silently WORSE than the version that ran.
+        # code.author's own result carries no `content` (only metadata), so
+        # this builds the record from what it DOES report — size (bytes/chars)
+        # and syntax_ok — rather than a real hash; good enough to make the
+        # path exist in the registry and to satisfy `_v5_path_is_proven`'s
+        # own parse_ok+size check. A fresh author clears any earlier ran_ok:
+        # the content just changed, so the OLD proof no longer applies to it.
+        if invoke_ok and tool in ("code.author", "code.edit") and isinstance(invoke.get("result"), dict):
+            _cres = invoke["result"]
+            _cpath = _v5_art_key(str(_cres.get("path") or args.get("path") or ""))
+            if _cpath:
+                _crec = artifacts.setdefault(_cpath, {"rel": _cpath})
+                _crec["size"] = int(_cres.get("bytes") or _cres.get("chars") or _crec.get("size") or 0)
+                _crec["parse_ok"] = bool(_cres.get("syntax_ok", _crec.get("parse_ok", False)))
+                _crec["parse_error"] = str(_cres.get("syntax_error") or "")
+                _crec["checked_with"] = str(_cres.get("checked_with") or _crec.get("checked_with", ""))
+                _crec["produced_by"] = f"{tool} (step {step_id})"
+                _crec["fs_path"] = str(_cres.get("fs_path") or _crec.get("fs_path", ""))
+                _crec.pop("ran_ok", None)
+                _crec.pop("ran_at_hash", None)
+
         # A file that has just been READ enters the registry with its shape and
         # parse status established — so the NEXT step is told what is in it
         # instead of reading it again to find out.
@@ -13907,7 +15039,8 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         #      job. Only THEN widen scope to the recovery toolkit.
         if not entry_ok:
             _err_txt = str(invoke.get("error", "")) if not invoke_ok else ""
-            _arg_hint = _v5_arg_error_hint(tool, args, _err_txt)
+            _arg_hint = (_v5_arg_error_hint(tool, args, _err_txt)
+                         or _v5_module_not_found_hint(tool, _err_txt))
             if _arg_hint and arg_fix_attempts.get(tool, 0) < _MAX_ARG_FIX:
                 arg_fix_attempts[tool] = arg_fix_attempts.get(tool, 0) + 1
                 tool_calls[tool] = max(0, tool_calls.get(tool, 1) - 1)  # a bad-args call isn't a real attempt
@@ -13984,7 +15117,8 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             result_summary = "Step finished with no explicit result."
     res = {"id": step_id, "title": step["title"], "ok": ok,
            "summary": result_summary, "outputs": outputs, "cycle_end": gc,
-           "history": history, "user_clarifications": user_clarifications}
+           "history": history, "user_clarifications": user_clarifications,
+           "actual_caps": _v5_actual_caps_used(history)}
     await emit_event({"type": "agent_loop_v5.step_done", "session_id": sid, "stream_id": stream_id,
                       "step_id": step_id, "ok": ok, "summary": result_summary[:_V5_DONE_SUMMARY]})
     return res
@@ -14073,7 +15207,8 @@ async def _v5_run_phased_step(step: Dict[str, Any], phases: List[str], *, goal: 
         merged_outputs.update(r.get("outputs") or {})
     return {"id": parent_id, "title": step["title"], "ok": agg_ok, "summary": summary,
             "outputs": merged_outputs, "cycle_end": gc, "history": history, "phased": True,
-            "phase_results": phase_results, "user_clarifications": user_clarifications}
+            "phase_results": phase_results, "user_clarifications": user_clarifications,
+            "actual_caps": _v5_actual_caps_used(history)}
 
 
 async def _v5_master_plan(goal: str, catalog_brief: str = "", *, model: str = "",
@@ -14532,8 +15667,15 @@ async def _v5_synthesize_final(goal: str, results: List[Dict[str, Any]], *,
                                model: str = "", instance_id: str = "",
                                prefer_gpu: bool = True) -> str:
     """Compose a final answer from the per-step results (the blackboard)."""
+    def _step_hdr(r: Dict[str, Any]) -> str:
+        # See _v6_build_ledger/_v5_build_ctx_slice: `title` is the PLANNED
+        # framing and is never rewritten if execution diverged from the plan —
+        # fold in the REAL caps used so this human-facing summary doesn't
+        # perpetuate a stale plan-time description of what happened.
+        _real = r.get("actual_caps") or []
+        return r["title"] + (f" (actually used: {', '.join(_real)})" if _real else "")
     block = "\n\n".join(
-        f"STEP {r['id']} — {r['title']} ({'ok' if r.get('ok') else 'failed'}):\n{(r.get('summary') or '')[:1000]}"
+        f"STEP {r['id']} — {_step_hdr(r)} ({'ok' if r.get('ok') else 'failed'}):\n{(r.get('summary') or '')[:1000]}"
         for r in results) or "(no steps were executed)"
     sys = ("Write the final answer to the user's GOAL using the results of the executed steps. "
            "Be direct and concrete. Do not mention 'steps' or internal orchestration unless the "
@@ -15180,8 +16322,15 @@ def _v6_build_ledger(goal: str, done_when: str, results: List[Dict[str, Any]],
             status += " · success bar MET"
         elif met is False:
             status += " · success bar NOT MET"
+        # `title` is the PLANNED framing and never gets rewritten if execution
+        # diverged from the plan — `actual_caps` (ground truth, from the
+        # step's own tool-call history) is shown alongside it so a controller
+        # insert/replan decision or the completion gate's judgment sees what
+        # REALLY happened, not just what was intended.
+        _real = r.get("actual_caps") or []
+        _title = r.get("title", "") + (f" (actually used: {', '.join(_real)})" if _real else "")
         line = (
-            f"[{r['id']}] {r.get('title','')} — {status}"
+            f"[{r['id']}] {_title} — {status}"
             + (f"\n   success bar: {crit}" if crit else "")
             + (f"\n   verifier: {str(r.get('met_reason'))[:200]}" if r.get("met_reason") else "")
             + f"\n   result: {(r.get('summary') or '')[:per_step]}")
@@ -15358,6 +16507,33 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
     if action in ("insert", "replan"):
         steps = _v6_coerce_control_steps(obj.get("steps"), base_id, goal,
                                          catalog_names, valid_skill_ids)
+        if action == "insert" and steps and session_id:
+            # The controller's own reasoning can directly contradict its own
+            # stated findings — observed live: `findings` said a file "has
+            # been successfully created," and in the SAME assessment the
+            # controller still inserted a step to "persist this code to a
+            # real file" — a redundant re-write of a file that was already
+            # correct (and which then went on, via a separate real bug, to
+            # get corrupted by that very re-write). An inserted step naming
+            # a SPECIFIC file the sandbox confirms already exists is exactly
+            # this failure shape — drop it (logged via the pending_note
+            # below on the caller's side is not available here, so this is
+            # silent-but-safe: dropping a step that adds nothing is never
+            # worse than running it). Same conservative discipline as
+            # §2.14's follow_up-skip: only ever skips on POSITIVE existence
+            # confirmation, never on unknown/unprobable paths.
+            _kept = []
+            for _s in steps:
+                _paths = _v6_extract_paths(f"{_s.get('title','')}\n{_s.get('goal','')}")
+                if _paths:
+                    try:
+                        _exist = await _v6_check_paths_exist(session_id, _paths)
+                    except Exception:
+                        _exist = {}
+                    if all(_exist.get(p) is True for p in _paths):
+                        continue
+                _kept.append(_s)
+            steps = _kept
         if not steps:
             # An insert/replan with no usable steps is a no-op — fall back to
             # continuing rather than stalling or wiping the queue.
@@ -15376,11 +16552,21 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
                          *, catalog_names: List[str], valid_skill_ids: set,
                          base_id: int, steps_left: int, model: str,
                          instance_id: str, prefer_gpu: bool,
-                         session_id: str = "") -> Dict[str, Any]:
+                         session_id: str = "", raw_goal: str = "") -> Dict[str, Any]:
     """Final completion gate: verify the whole GOAL is met (against `done_when`)
     before synthesising the answer. If it is not — and there is step budget left —
     return follow-up steps to close the gap. Returns {complete, missing,
     follow_up}.
+
+    `goal` may be augmented with cross-session memory context (the caller
+    folds in "relevant past conversations" before planning) — good for the
+    LLM judge's own holistic read, but the deterministic prose-noun override
+    below must judge the PRISTINE ask, or an unrelated past conversation's
+    vocabulary (leaked in via embedding-similarity memory injection) can trip
+    it on a goal that never mentioned a document at all. `raw_goal`, when
+    given, is what that one check searches; everything else still reasons
+    over `goal`. Falls back to `goal` if `raw_goal` is empty (e.g. an older
+    caller that hasn't been updated).
 
     The ledger it judges is LLM-authored prose, so on its own the gate could be
     talked into 'complete' by a summary claiming a deliverable that was never
@@ -15444,15 +16630,60 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
         return {"complete": True, "missing": [], "follow_up": []}
     complete = bool(obj.get("complete", True))
     missing = [str(m)[:200] for m in (obj.get("missing") or []) if str(m).strip()][:8]
-    # ── Deterministic override — the same hard gate _v6_verify_step already has,
-    # missing here. Observed live: the goal literally said "save the results as
-    # coins.json"; the per-step verifier correctly reported the file missing on
-    # FIVE consecutive checks; this gate's own prompt tells the judge ground
-    # truth beats narrative — and the judge said complete=True anyway, because
-    # it's still just a small model's opinion, and an opinion can be talked (or
+
+    # Ground the judge's OWN claims against the real goal text before
+    # trusting them — §3.14: an ungrounded `missing` item naming a file the
+    # goal never actually asked for is the judge inventing a requirement,
+    # not reporting a real gap. If that fabrication was the ONLY stated
+    # reason for `complete: False`, the honest verdict is that the judge
+    # found nothing real wrong — flip it back to True. A REAL, grounded
+    # problem (this list still non-empty, or one of the deterministic
+    # overrides below) still correctly keeps the run incomplete.
+    _grounding_goal = raw_goal or goal
+    missing, _dropped_hallucinated = _v6_ground_missing_claims(missing, _grounding_goal)
+    if _dropped_hallucinated:
+        log.info("v6 gate: dropped %d hallucinated missing-claim(s) not grounded in the goal: %s",
+                 len(_dropped_hallucinated), _dropped_hallucinated)
+        if complete is False and not missing:
+            complete = True
+
+    _forced_steps: List[Dict[str, Any]] = []
+
+    def _fire_override(reason: str, forced_step: Optional[Dict[str, Any]] = None) -> None:
+        """One deterministic override firing: force the verdict to incomplete,
+        record why (deduped against whatever the judge already said), and
+        queue its remediation step. Exists so every override below is a
+        single, self-contained (detect → explain → repair) unit instead of
+        its detection and its remediation living in two separate passes over
+        the function — the split used to mean adding override #5 meant
+        editing two distant places and keeping them in sync by hand.
+
+        Not a claim that the four checks below collapse into one semantic
+        check — they don't: two ground against the real filesystem (a named
+        path, a document-shaped file), two ground against the per-step
+        verifier's own verdicts (every step, just the last one). Those are
+        genuinely different kinds of evidence a 'complete=True' claim can
+        contradict, so each still needs its own detection logic. What WAS
+        real duplication is the plumbing around them (force incomplete →
+        dedupe the reason → queue a fix) — that part is now shared."""
+        nonlocal complete
+        complete = False
+        if reason not in missing:
+            missing.append(reason)
+        if forced_step:
+            _forced_steps.append(forced_step)
+
+    # ── Override 1: a file the GOAL EXPLICITLY NAMES doesn't exist ──────────
+    # The same hard gate _v6_verify_step already has, missing here. Observed
+    # live: the goal literally said "save the results as coins.json"; the
+    # per-step verifier correctly reported the file missing on FIVE
+    # consecutive checks; this gate's own prompt tells the judge ground truth
+    # beats narrative — and the judge said complete=True anyway, because it's
+    # still just a small model's opinion, and an opinion can be talked (or
     # slip) past an instruction. A file the GOAL explicitly names is not a
     # judgment call: if it verifiably doesn't exist, the run is not done,
     # full stop, no matter what the LLM concluded.
+    _missing_named: List[str] = []
     if session_id:
         _named = _v6_extract_paths(f"{goal}\n{done_when}")
         if _named:
@@ -15461,16 +16692,151 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
             except Exception:
                 _exist = {}
             _missing_named = [p for p in _named if _exist.get(p) is False]
-            if _missing_named:
-                complete = False
-                for p in _missing_named:
-                    _m = f"'{p}' — named in the goal, but does not exist in the sandbox"
-                    if _m not in missing:
-                        missing.append(_m)
+    for p in _missing_named:
+        _ext = p.rsplit(".", 1)[-1].lower() if "." in p else ""
+        _doc_ext = _ext in ("md", "markdown", "txt", "html", "htm", "rst")
+        _fire_override(
+            f"'{p}' — named in the goal, but does not exist in the sandbox",
+            {
+                "title": f"Create the missing file: {p}",
+                "goal": (f"The goal requires the file '{p}' to exist, but it does not. "
+                         f"Produce it now using the data/results already gathered earlier "
+                         f"in this run (see the ledger) — do not restart the whole task. "
+                         f"Save it at exactly this path: {p}."),
+                "caps": (["llm.generate", "ide.fs.write"] if _doc_ext
+                         else ["exec.python.run", "ide.fs.write"]),
+                "success": f"The file '{p}' exists and contains real, non-placeholder content.",
+            })
+
+    # ── Override 2: not a single executed step met its own success bar ──────
+    # Same failure class as override 1, no file involved. Observed live: goal
+    # was a single-fact lookup (an exchange rate); BOTH executed steps' own
+    # verifiers reported met=False (the value was never actually confirmed);
+    # the gate was handed that exact ledger — verifier verdicts included —
+    # and said complete=True anyway, and the deliverable then stated a
+    # specific, wrong-looking number as fact. Whether or not a file is
+    # involved, a goal cannot be "done" when not ONE of its executed steps
+    # satisfied its own success bar — that isn't a judgment call either.
+    _verified_steps = [r for r in results if r.get("met") is not None]
+    _no_step_met = bool(_verified_steps) and not any(r.get("met") for r in _verified_steps)
+    if _no_step_met:
+        _fire_override(
+            "no executed step actually met its own success criterion — the "
+            "verifier reported every one of them unmet",
+            {
+                "title": "Re-attempt the goal directly",
+                "goal": (f"Every step tried so far failed to actually satisfy its own success "
+                         f"criterion — the goal is NOT yet achieved despite earlier attempts. "
+                         f"Try again with a different approach (a different source, tool, or "
+                         f"method than what was already tried and failed) to satisfy this "
+                         f"goal: {goal}"),
+                "caps": [],
+                "success": done_when or "The goal is verifiably achieved.",
+            })
+
+    # ── Override 2b: narrower sibling — just the MOST RECENT step failed ────
+    # Not EVERY step failed, just the run's most recent one. Observed live
+    # (Test D): calc.py got add/sub/mul/div working and verified early
+    # (met=True), then the later step adding a power operation was verified
+    # met=False TWICE in a row (the code.edit wired --pow into argparse but
+    # forgot to add it to the validation list, so the CLI still rejected it)
+    # — the run's actual final state is broken. results[] is appended in
+    # execution order, so its last met-checked entry IS the run's most recent
+    # ground truth; early wins elsewhere don't retroactively fix a later
+    # regression the run never circled back to repair.
+    _last_step_unmet = bool(
+        _verified_steps and _verified_steps[-1].get("met") is False and not _no_step_met)
+    if _last_step_unmet:
+        _last_reason = str(_verified_steps[-1].get("reason")
+                            or _verified_steps[-1].get("met_reason") or "")[:400]
+        _fire_override(
+            "the most recently executed step's own verifier reported it unmet, and "
+            "the run never came back to fix it: " + _last_reason[:200],
+            {
+                "title": "Fix the unresolved failure from the last step",
+                "goal": (f"The most recent step did NOT actually satisfy its own success "
+                         f"criterion, and the run stopped without fixing it. Diagnose and "
+                         f"repair the real, specific problem (do not just re-describe it) — "
+                         f"use a targeted edit, not a full rewrite, if the fix is to an "
+                         f"existing file. What the verifier reported: {_last_reason}\n"
+                         f"Overall goal: {goal}"),
+                "caps": [],
+                "success": done_when or "The goal is verifiably achieved.",
+            })
+
+    # ── Override 3: goal implies a written DOCUMENT, none exists ────────────
+    # A goal that implies a written document deliverable (report/summary/
+    # article/…) is not complete if no document-shaped file was ever
+    # written, even when an early unrelated step (e.g. a search step with an
+    # easy bar) legitimately met ITS OWN criterion and so override #2 above
+    # doesn't fire. Observed live: goal "...then create a detailed report" —
+    # ide.fs.write was called ZERO times in the entire run, the workdir held
+    # only two broken .py scripts, and the gate still said complete=True; the
+    # deliverable then presented confident, well-formatted, substantially
+    # fabricated prose (a hallucinated 404'd URL cited as fact, the run's own
+    # internal fabric-dataset listing misread as external market data) with
+    # an "Artifacts" section listing the broken scripts and telling the user
+    # to run them manually — while still claiming "complete". Checked
+    # against `raw_goal` (the PRISTINE ask, pre-memory-injection) — see the
+    # docstring; `goal` itself can carry unrelated vocabulary folded in from
+    # an earlier, different conversation. Only even checked while the verdict
+    # is STILL `complete` going in — an earlier override already proving the
+    # run incomplete means this one has nothing to add.
+    _prose_check_goal = raw_goal or goal
+    if (complete and session_id
+            and _V5_PROSE_STEP_NOUN_RE.search(f"{_prose_check_goal}\n{done_when}")):
+        _has_doc = bool(_wf) and any(
+            str(f).lower().endswith((".md", ".markdown", ".txt", ".html", ".htm", ".pdf", ".rst"))
+            for f in _wf)
+        if _wf is not None and not _has_doc:
+            _fire_override(
+                "the goal implies a written report/document, but no document-shaped "
+                "file (.md/.txt/.html/...) exists in the working directory",
+                {
+                    "title": "Write and save the report",
+                    "goal": ("Using the llm.generate capability directly — do NOT write a script "
+                             "that calls an external or mock LLM API — write the document "
+                             "described by the goal below, grounded strictly on data already "
+                             "gathered earlier in this run, then save it as a real file (e.g. "
+                             "report.md) with ide.fs.write or llm.generate's save_as argument.\n"
+                             f"GOAL: {goal}"),
+                    "caps": ["llm.generate", "ide.fs.write"],
+                    "success": ("A document-shaped file (.md/.txt/.html) exists in the working "
+                                "directory containing the report described by the goal."),
+                })
+
+    # ── Give the forced verdict teeth. The overrides above can flip
+    # `complete` to False, but `obj["follow_up"]` was built by the judge back
+    # when IT still believed complete=True — so it's empty, and a forced-False
+    # verdict with an empty follow_up list is a no-op: the caller's
+    # `while follow_up and executed < hard_cap` loop just never runs, and the
+    # run proceeds straight to delivery with an accurate-but-inert diagnosis
+    # sitting unused in the event log. Observed live (Test C2). Both the
+    # judge's own follow_up and every override's synthesized fix are combined
+    # below — one must never clobber the other (`_own_follow_up` being
+    # non-empty only means the judge found SOME reason to be incomplete and
+    # proposed a fix for THAT reason; it says nothing about whether it also
+    # covers what a deterministic override caught).
     follow_up: List[Dict[str, Any]] = []
     if not complete and steps_left > 0:
-        follow_up = _v6_coerce_control_steps(obj.get("follow_up"), base_id, goal,
-                                             catalog_names, valid_skill_ids)
+        _own_follow_up = obj.get("follow_up") if isinstance(obj.get("follow_up"), list) else []
+        # Same grounding check as `missing` above, applied per-step — covers
+        # the MIXED case a real, grounded problem coexists with one
+        # hallucinated follow-up step (so `complete` correctly stays False
+        # from the real issue, but the fabricated step must still not run).
+        _goal_files_fu = set(_v6_extract_paths(_grounding_goal))
+        _grounded_follow_up = []
+        for _fu in _own_follow_up:
+            _fu_text = f"{(_fu or {}).get('title', '')} {(_fu or {}).get('goal', '')}" \
+                if isinstance(_fu, dict) else str(_fu or "")
+            _fu_files = _v6_extract_paths(_fu_text)
+            if _fu_files and not any(f in _goal_files_fu for f in _fu_files):
+                log.info("v6 gate: dropped a hallucinated follow-up step not grounded "
+                         "in the goal: %r", _fu_text[:200])
+                continue
+            _grounded_follow_up.append(_fu)
+        follow_up = _v6_coerce_control_steps(
+            _grounded_follow_up + _forced_steps, base_id, goal, catalog_names, valid_skill_ids)
     return {"complete": complete, "missing": missing, "follow_up": follow_up}
 
 
@@ -15498,6 +16864,11 @@ _V6_FILE_CRIT_RE = re.compile(
     r"\b(contain\w*|creat\w*|writ\w*|wrote|sav\w*|produc\w*|generat\w*|output\w*|"
     r"exist\w*|present|stored?|persist\w*|download\w*|assembl\w*|build|built|"
     r"populat\w*|directory|folder|on disk|to disk)\b", re.I)
+# Extension tokens a criterion names as REQUIRED (e.g. "a document-shaped file
+# (.md/.txt/.html)") — reuses the same known-extension list as the path
+# extractors above so this only ever matches real file extensions, never an
+# arbitrary short word or an abbreviation like "e.g.".
+_V6_CRIT_EXT_RE = re.compile(r"\.(" + _V6_ARTIFACT_EXT + r")\b", re.I)
 
 
 def _v6_extract_paths(text: str, *, include_bare: bool = True) -> List[str]:
@@ -15520,13 +16891,47 @@ def _v6_extract_paths(text: str, *, include_bare: bool = True) -> List[str]:
         _add(m.group(1))
     for m in _V6_SLASHPATH_RE.finditer(s):
         st = m.start(1)
-        if "://" in s[max(0, st - 8):st + 4]:      # part of a URL — skip
+        # Shared check (_v5_pos_within_url) — this was the third
+        # independent copy of the same fixed-8-char-lookback bug
+        # (§2.45/§5.25). This function backs the gate's named-file
+        # override AND §3.14's gate-grounding fix, so a goal/claim
+        # mentioning a long URL could have been silently misread as
+        # naming a real file path either direction.
+        if _v5_pos_within_url(s, st):
             continue
         _add(m.group(1))
     if include_bare:
         for m in _V6_BAREFILE_RE.finditer(s):
             _add(m.group(1))
     return out[:12]
+
+
+def _v6_ground_missing_claims(items: List[str], goal_text: str) -> Tuple[List[str], List[str]]:
+    """Strip a completion-gate `missing`/`follow_up` claim that names a
+    specific file NOT actually present anywhere in the real goal text —
+    the judge INVENTING a file requirement the goal never asked for, not
+    reporting a real gap (§3.14, found live: Test R's gate returned
+    `missing: ["'toggle.html' — named in the goal, but does not exist in
+    the sandbox"]` and a matching follow-up step, when the goal — verified
+    verbatim — named only `lightswitch.html`; the fabricated file was then
+    dutifully created and the run reported success, with the fabrication
+    invisible in the final summary). Conservative by design: only an item
+    that ITSELF names a concrete file (an extension is present, via the
+    same extractor the named-file override already trusts) is checked at
+    all — a missing item with no file reference ("the summary doesn't
+    cover X") is always kept untouched, since this only targets the
+    file-hallucination shape, not general completeness judgment calls.
+    Returns (kept, dropped)."""
+    goal_files = set(_v6_extract_paths(goal_text or ""))
+    kept: List[str] = []
+    dropped: List[str] = []
+    for item in items:
+        claimed = _v6_extract_paths(str(item or ""))
+        if claimed and not any(c in goal_files for c in claimed):
+            dropped.append(item)
+        else:
+            kept.append(item)
+    return kept, dropped
 
 
 async def _v6_check_paths_exist(session_id: str, paths: List[str]) -> Dict[str, bool]:
@@ -15630,15 +17035,45 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
     last_block = ""
     if _last:
         _lsf = _soft_failed(_last) if _last.get("ok") else ""
+        _last_failed = (not _last.get("ok")) or bool(_lsf)
+        # A failed "most recent action" only invalidates an earlier success if
+        # it plausibly TOUCHED THE SAME deliverable — i.e. its own `path` arg
+        # matches an earlier SUCCESSFUL call's `path`. Without this check the
+        # rule fires on ANY later failure anywhere in a multi-phase step, even
+        # one on a completely unrelated file/sub-task — observed live: phase A
+        # authored+ran a script successfully (real stdout, rc:0), phase B (a
+        # SEPARATE later phase of the same step) made an unrelated mistake
+        # (typed a shell command into exec.python.run's `code` field), and
+        # that alone discarded phase A's genuinely-met criterion and triggered
+        # a full step retry — which is where an actual regression then
+        # happened (the re-authored script was worse than the original).
+        # A same-path match still hard-fails exactly the case this rule was
+        # ORIGINALLY built for: a later action failing (or re-authoring then
+        # failing to run) THE SAME file an earlier action had proven working.
+        _last_path = _v5_art_key(str((_last.get("args") or {}).get("path") or ""))
+        _same_target = bool(_last_path) and any(
+            h.get("ok") and _v5_art_key(str((h.get("args") or {}).get("path") or "")) == _last_path
+            for h in _calls[:-1])
+        _override_note = ""
+        if _last_failed and _same_target:
+            _override_note = ("This action targeted the SAME file/path as an earlier "
+                              "successful call, so the earlier success is stale — "
+                              "superseded by this later failure. The criterion is NOT met.\n")
+        elif _last_failed:
+            _override_note = ("This action's target does not match any earlier successful "
+                              "call's target, so — even though it failed — it does NOT by "
+                              "itself invalidate an earlier success on a DIFFERENT file or "
+                              "sub-task. Judge the criterion on the step's evidence AS A "
+                              "WHOLE (above), not solely on this one later, unrelated call.\n")
         last_block = (
-            "MOST RECENT ACTION (this is the step's CURRENT state — earlier results may "
-            "have been overwritten by it):\n"
+            "MOST RECENT ACTION (this is the step's CURRENT state for whatever it "
+            "touched — earlier results for THE SAME target may have been "
+            "overwritten by it):\n"
             f"- {_last.get('tool')}: "
             + ("FAILED" if not _last.get("ok")
                else (f"reported ok but its OUTPUT REPORTS AN ERROR — {_lsf}" if _lsf else "ok"))
             + f"\n  {str(_last.get('preview') or '')[:600]}\n"
-            "If this most recent action failed, or its output reports an error, the criterion "
-            "is NOT met — no matter what an earlier attempt achieved.\n")
+            + _override_note)
     # ── Artifact grounding: check any file the criterion/summary CLAIMS against the
     # real sandbox. A file the criterion requires that does NOT exist is a decisive
     # miss (no LLM vote can override a filesystem fact) — this is what stops a
@@ -15683,6 +17118,26 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
         elif _wf == []:
             exist_block += ("FILES ACTUALLY IN THE WORKING DIRECTORY: NONE — nothing has been "
                             "written this run.\n")
+        # ── Extension-class grounding: a criterion can require "a file with
+        # extension X" (e.g. "a document-shaped file (.md/.txt/.html)") without
+        # naming a specific path — _v6_extract_paths/exist above only catches a
+        # NAMED file, so this shape sails through ungrounded. Observed live: the
+        # judge accepted a `.py` file as satisfying a criterion that explicitly
+        # named `.md/.txt/.html`, reasoning "(Python script)" counts — directly
+        # contradicting the criterion it was just given. If the criterion lists
+        # specific extensions, at least one file with one of them must actually
+        # exist; no LLM vote overrides that any more than a named-path miss does.
+        _crit_exts = set(m.lower() for m in _V6_CRIT_EXT_RE.findall(crit))
+        if _crit_exts and _wf is not None:
+            _ext_ok = any(str(f).lower().endswith(tuple(f".{e}" for e in _crit_exts))
+                          for f in _wf)
+            if not _ext_ok:
+                return {"met": False,
+                        "reason": ("the success criterion requires a file with one of these "
+                                   f"extensions ({', '.join('.' + e for e in sorted(_crit_exts))}), "
+                                   "but no file in the working directory actually has one — a "
+                                   "different file type does not satisfy this, no matter what it "
+                                   "contains.")[:300]}
     sys = ("You judge whether ONE step of an agentic run met its SUCCESS CRITERION. "
            "Judge STRICTLY on the evidence: if the evidence does not show the criterion "
            "objectively satisfied, it is NOT met — errors, stalls, denials, or output "
@@ -17562,6 +19017,16 @@ async def cap_dag_agent_loop_v6(
     # the planner is what decides whether a step re-fetches data that may
     # already exist. Best-effort and bounded; a failure here never blocks the
     # run, same as the identical inject in agents.py's chat path.
+    # The PRISTINE user goal, captured before memory injection below can widen
+    # it — the final gate's deterministic overrides (_V5_PROSE_STEP_NOUN_RE et
+    # al.) must judge what the USER actually asked for, not vocabulary that
+    # leaked in from an unrelated past conversation the embedding search
+    # happened to consider "relevant". Observed live: a goal with no document/
+    # report language anywhere in it still tripped the "goal implies a
+    # written report" gate override, because an unrelated earlier session's
+    # goal (which genuinely was about a report) got folded into `goal` here
+    # and the override searched the augmented text, not the real ask.
+    _orig_goal = goal
     try:
         _mh = sys.modules.get("memory_hooks")
         if _mh:
@@ -17576,6 +19041,26 @@ async def cap_dag_agent_loop_v6(
         log.debug("v6 memory context inject failed: %s", e)
 
     # ── Catalog (identical construction to v5) ────────────────────────────────
+    # category="other"/keywords=[] are NOT placeholders for "not triaged
+    # yet" — v6/v7 never runs real triage classification at all, by design
+    # (it plans directly off the goal). This is a silent but load-bearing
+    # contract with _workshop_build_toolkit's internals: category="other"
+    # makes its category-prefix-hint step (CATEGORY_PREFIX_HINTS) produce
+    # nothing, but keywords=[] ALSO triggers its `weak_triage` branch, which
+    # WIDENS the keyword/semantic-search step's budget to the full top_k and
+    # falls back to querying on the raw goal text instead of keywords — so
+    # discovery still happens, just entirely through embedding-relevance
+    # search over the goal text + a cap's registered `description`, never
+    # through the prefix table. (Confirmed via §3.15/§5.14: a cap whose
+    # description doesn't lexically resemble the goal — e.g. operator.run's
+    # parameter-focused wording vs. a goal saying "click"/"button" — can
+    # rank below a worse-suited cap whose description happens to share more
+    # words, which is why operator.run needed a DETERMINISTIC seed floor in
+    # _v5_seed_caps_for/§2.31 rather than relying on this ranking alone.)
+    # Don't "fix" category/keywords here to look more populated without
+    # re-reading _workshop_build_toolkit's weak_triage branch first — doing
+    # so changes the semantic_budget math and could narrow discovery, not
+    # widen it.
     base_caps = [c.strip() for c in (base_toolkit or "").replace(",", " ").split() if c.strip()]
     try:
         catalog_names = await _workshop_build_toolkit(
@@ -18130,7 +19615,7 @@ async def cap_dag_agent_loop_v6(
                     # Merge the sub-steps' artifacts (see _v5_run_phased_step): an
                     # empty dict hides every file the sub-plan produced.
                     "outputs": _sub_outputs, "cycle_end": gc, "history": sub_history, "subplan": True,
-                    "sub_steps": sub_results}
+                    "sub_steps": sub_results, "actual_caps": _v5_actual_caps_used(sub_history)}
         return await _v5_run_step(
             step, goal=goal, blackboard=blackboard, artifacts=artifacts, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, session_id=sid, stream_id=stream_id, trace_id=trace_id,
@@ -18539,7 +20024,22 @@ async def cap_dag_agent_loop_v6(
                 queue[0]["_ctrl_steer"] = _note
 
     # ── Final completion gate ─────────────────────────────────────────────────
-    if enable_final_gate and executed < hard_cap:
+    # A BOUNDED LOOP, not a single shot: the gate's own deterministic overrides
+    # (including 2b, "the most recent step failed") only ever see the results
+    # as they stood at THAT gate call. A single gate → run follow_up → done
+    # sequence means those overrides never get to evaluate whether the
+    # follow_up steps actually fixed anything — observed live (Test J): the
+    # LAST follow_up step genuinely failed (a claimed file was never created)
+    # and the run still ended as `status: done` with a stale, now-wrong
+    # `complete` verdict, saved only by the deliverable stage's own honest
+    # reporting rather than by the gate architecture. Re-gating after each
+    # follow_up batch gives the overrides a real chance against the run's
+    # TRUE final state. `_MAX_GATE_ROUNDS` is defensive insurance on top of
+    # the `executed < hard_cap` bound that already limits real step work.
+    _gate_rounds = 0
+    _MAX_GATE_ROUNDS = 3
+    while enable_final_gate and executed < hard_cap and _gate_rounds < _MAX_GATE_ROUNDS:
+        _gate_rounds += 1
         _gate_goal = (goal + "\n\n" + _user_updates_block(user_updates)
                       if user_updates else goal)
         if stream_id:
@@ -18550,15 +20050,45 @@ async def cap_dag_agent_loop_v6(
             _gate_goal, done_when, results, catalog_names=catalog_names,
             valid_skill_ids=valid_skill_ids, base_id=max_id,
             steps_left=hard_cap - executed, model=model,
-            instance_id=instance_id, prefer_gpu=prefer_gpu, session_id=sid)
+            instance_id=instance_id, prefer_gpu=prefer_gpu, session_id=sid,
+            raw_goal=_orig_goal)
         await emit_event({"type": "agent_loop_v6.gate", "session_id": sid,
                           "stream_id": stream_id, "complete": bool(gate.get("complete")),
                           "missing": gate.get("missing", []),
+                          "round": _gate_rounds,
                           "follow_up": [{"id": s["id"], "title": s["title"]}
                                         for s in gate.get("follow_up", [])]})
         follow_up = gate.get("follow_up") or []
+        if not follow_up:
+            # Either complete, or the judge/overrides had nothing actionable
+            # to add — no follow_up means no more work THIS gate call can
+            # drive, so re-gating again would just repeat the same verdict.
+            break
         while follow_up and executed < hard_cap:
             step = follow_up.pop(0)
+            # A follow_up batch can contain more than one step for the SAME
+            # underlying gap (the judge's own suggestion plus a deterministic
+            # override's synthesized fix, per §2.9) — if an EARLIER step in
+            # THIS batch already produced every file this one exists to
+            # create, running it too is pure redundancy at best (wasted
+            # cycles) and a risky re-touch of already-correct output at
+            # worst. Skip only on POSITIVE evidence (the file demonstrably
+            # exists now) — never on absence of evidence, so a step that
+            # doesn't name a specific file (e.g. "Re-attempt the goal
+            # directly") is completely unaffected and always runs normally.
+            _fu_paths = _v6_extract_paths(f"{step.get('goal','')}\n{step.get('title','')}")
+            if _fu_paths:
+                try:
+                    _fu_exist = await _v6_check_paths_exist(sid, _fu_paths)
+                except Exception:
+                    _fu_exist = {}
+                if all(_fu_exist.get(p) is True for p in _fu_paths):
+                    await emit_event({"type": "agent_loop_v6.follow_up_skipped", "session_id": sid,
+                                      "stream_id": stream_id,
+                                      "step": {"id": step["id"], "title": step["title"]},
+                                      "reason": ("already satisfied by an earlier step in this "
+                                                 "batch: " + ", ".join(_fu_paths))})
+                    continue
             executed += 1
             _umsgs = await _drain_user_messages(sid)
             if _umsgs:

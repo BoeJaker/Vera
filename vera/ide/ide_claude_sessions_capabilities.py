@@ -9,7 +9,7 @@ machine runs it. That's a *different* thing from the Vera MCP bridge
 back into Vera for; this module reads what the user and Claude actually said
 to each other, so Vera's memory graph / fabric / dream have that context too.
 
-Two sources are supported:
+Three sources are supported:
   • local  (instance_id="")  — every ~/.claude/projects the Vera process can
     reach: its own OS account's home directory, PLUS this checkout's own
     <repo>/.claude/projects (a session sandbox or container commonly runs
@@ -24,6 +24,12 @@ Two sources are supported:
     extension), so no SSH access or shared filesystem is required — this
     covers the common case of a desktop VS Code window pointed at a Vera
     project over a network share.
+  • a registered SSH host (ide.remote, kind=ssh) — for a headless remote
+    machine that runs `claude` but has no live VS Code extension connected.
+    Scans `$HOME/.claude/projects` on that host via `find -printf` over the
+    existing `exec.ssh.run`/`_ssh()` credential store (`ide_remote_capabilities.py`),
+    and reads new bytes via `tail -c +N`. No shared filesystem needed —
+    just the same SSH credential already used for code-server provisioning.
 
 Only `user` / `assistant` transcript lines are recorded; bookkeeping line
 types (ai-title, queue-operation, attachment, file-history-snapshot, …) and
@@ -34,7 +40,7 @@ record new turns.
 
 Capabilities (group `ide.claude_sessions.*`)
 ──────────────────────────────────────────────
-  sources        — list ingestible sources (local + alive vscode-client instances)
+  sources        — list ingestible sources (local + alive vscode-client + ssh instances)
   scan           — list transcript files for a source
   ingest         — parse + record new lines from one transcript
   ingest_all     — scan + ingest every transcript for a source
@@ -68,9 +74,9 @@ from Vera.vera.capability_orchestration import (
     capability, emit_event, now_iso, register_ui, schedule,
 )
 from Vera.vera.fabric.data_fabric import _sqlite_conn
-from Vera.vera.ide.ide_capabilities import _record
+from Vera.vera.ide.ide_capabilities import _record, ide_git_log
 from Vera.vera.ide.ide_remote_capabilities import (
-    _load_instances, _get_instance, _client_dispatch, _client_alive,
+    _load_instances, _get_instance, _client_dispatch, _client_alive, _ssh,
 )
 
 log = logging.getLogger("vera.ide.claude_sessions")
@@ -225,6 +231,13 @@ def _split_local_rel(rel: str) -> tuple:
     return "home", rel
 
 
+def _shell_dquote(s: str) -> str:
+    """Escape a string for safe interpolation inside a DOUBLE-quoted shell
+    string (not full shlex.quote — that would also escape '$', breaking the
+    intentional $HOME expansion around it)."""
+    return s.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
+
+
 async def _read_new_bytes(instance_id: str, rel: str, offset: int) -> Optional[str]:
     """Fetch bytes of `rel` from `offset` to EOF for the given source."""
     if not instance_id:
@@ -242,6 +255,21 @@ async def _read_new_bytes(instance_id: str, rel: str, offset: int) -> Optional[s
         except OSError as e:
             log.warning("claude_sessions: local read failed for %s: %s", rel, e)
             return None
+    inst = _get_instance(instance_id)
+    if inst and inst.get("kind") == "ssh":
+        host_id = inst.get("host_id", "")
+        if not host_id:
+            log.warning("claude_sessions: ssh instance %s has no host_id", instance_id)
+            return None
+        # tail -c +N is 1-indexed (byte N onward); offset is a 0-indexed
+        # byte count already consumed, so +1 to land on the first new byte.
+        cmd = f'tail -c +{offset + 1} -- "$HOME/.claude/projects/{_shell_dquote(rel)}"'
+        res = await _ssh(host_id, cmd, timeout=30)
+        if not res.get("ok"):
+            log.warning("claude_sessions: ssh read failed for %s: %s", rel,
+                       res.get("error") or res.get("stderr"))
+            return None
+        return res.get("stdout", "")
     out = await _client_dispatch(instance_id, "claude_sessions_read",
                                   {"path": rel, "offset": offset}, wait=30)
     if not out.get("ok", True):
@@ -314,7 +342,8 @@ async def _ingest_file(instance_id: str, rel: str, state: dict) -> int:
     memory="off", silent=True,
     description="List ingestible Claude Code transcript sources: the Vera "
                 "host's own local ~/.claude/projects (instance_id='') plus "
-                "every connected vscode-client instance. "
+                "every connected vscode-client instance plus every "
+                "registered ssh instance (alive = a fresh, capped SSH probe). "
                 "Output: {sources: [{instance_id, label, kind, alive}]}.",
 )
 async def cap_claude_sessions_sources(trace_id=None) -> dict:
@@ -328,6 +357,22 @@ async def cap_claude_sessions_sources(trace_id=None) -> dict:
                 "kind": "vscode-client",
                 "alive": _client_alive(inst.get("id", "")),
             })
+        elif inst.get("kind") == "ssh" and inst.get("host_id"):
+            # Cheap, capped liveness probe (not tight-polled — called on
+            # panel load/refresh, not on an interval) rather than trusting
+            # a possibly-stale stored status field.
+            alive = False
+            try:
+                res = await _ssh(inst["host_id"], "true", timeout=5)
+                alive = bool(res.get("ok"))
+            except Exception:
+                alive = False
+            sources.append({
+                "instance_id": inst.get("id", ""),
+                "label": inst.get("label", ""),
+                "kind": "ssh",
+                "alive": alive,
+            })
     return {"sources": sources}
 
 
@@ -340,9 +385,11 @@ async def cap_claude_sessions_sources(trace_id=None) -> dict:
                 "local root the Vera process can reach, see _local_roots() "
                 "(its own home dir + this checkout's own .claude/projects, plus "
                 "VERA_CLAUDE_PROJECTS_ROOTS); a vscode-client instance id to scan "
-                "a connected VS Code window instead). For local sources rel is "
-                "'<root-label>::<path>' (root-label e.g. home, vera-repo). "
-                "Output: {source, files: [{rel, size, mtime}]}.",
+                "a connected VS Code window instead; an ssh instance id to scan "
+                "$HOME/.claude/projects on that registered host over SSH). For "
+                "local sources rel is '<root-label>::<path>' (root-label e.g. "
+                "home, vera-repo); for ssh sources rel is the path relative to "
+                "$HOME/.claude/projects. Output: {source, files: [{rel, size, mtime}]}.",
 )
 async def cap_claude_sessions_scan(instance_id: str = "", trace_id=None) -> dict:
     if not instance_id:
@@ -350,8 +397,32 @@ async def cap_claude_sessions_scan(instance_id: str = "", trace_id=None) -> dict
     inst = _get_instance(instance_id)
     if not inst:
         return {"error": f"instance not found: {instance_id}"}
+    if inst.get("kind") == "ssh":
+        host_id = inst.get("host_id", "")
+        if not host_id:
+            return {"error": f"ssh instance {instance_id} has no host_id"}
+        # %s/%T@/%P: size, mtime (epoch, fractional), path relative to the
+        # find root — same shape _local_scan() builds from os.stat() so both
+        # sources parse identically downstream.
+        cmd = ('ROOT="$HOME/.claude/projects"; '
+               '[ -d "$ROOT" ] && find "$ROOT" -name "*.jsonl" '
+               '-printf "%s\\t%T@\\t%P\\n" 2>/dev/null || true')
+        res = await _ssh(host_id, cmd, timeout=30)
+        if not res.get("ok"):
+            return {"error": f"ssh scan failed: {res.get('error') or res.get('stderr', '')}"}
+        files = []
+        for line in (res.get("stdout") or "").splitlines():
+            parts = line.split("\t")
+            if len(parts) != 3:
+                continue
+            size_s, mtime_s, rel = parts
+            try:
+                files.append({"rel": rel, "size": int(size_s), "mtime": float(mtime_s) * 1000.0})
+            except ValueError:
+                continue
+        return {"source": instance_id, "files": files}
     if inst.get("kind") != "vscode-client":
-        return {"error": f"scan only supports local or vscode-client sources "
+        return {"error": f"scan only supports local, ssh, or vscode-client sources "
                           f"(instance kind={inst.get('kind')!r} not yet wired up)"}
     out = await _client_dispatch(instance_id, "claude_sessions_scan", {}, wait=30)
     if not out.get("ok", True):
@@ -442,11 +513,15 @@ async def _query_records(limit: int) -> List[dict]:
     http_method="GET", http_path="/ide/claude_sessions/list_sessions", http_tags=["ide", "claude_sessions"],
     memory="off", silent=True,
     description="Group ingested Claude Code turns into a session list for the "
-                "Dispatch panel, most-recently-active first. "
+                "Dispatch panel, most-recently-active first. Each session is "
+                "correlated against this repo's git log for its own time "
+                "window, so a session that produced commits shows them "
+                "directly — the same join key Loop Lab's evolve.* runs use. "
                 "Input: scan_limit (int, default 3000 — how many recent turns "
                 "to scan before grouping). "
                 "Output: {sessions: [{claude_session_id, project_dir, "
-                "instance_id, turns, first_ts, last_ts, last_role, last_preview}]}.",
+                "instance_id, turns, first_ts, last_ts, last_role, "
+                "last_preview, commits: [{hash, author, date, ts, message}]}]}.",
 )
 async def cap_claude_sessions_list_sessions(scan_limit: int = 3000, trace_id=None) -> dict:
     scan_limit = max(1, min(20000, scan_limit))
@@ -476,6 +551,19 @@ async def cap_claude_sessions_list_sessions(scan_limit: int = 3000, trace_id=Non
         if ts and ts < s["first_ts"]:
             s["first_ts"] = ts
     out = sorted(sessions.values(), key=lambda s: s["last_ts"], reverse=True)
+    # Correlation: which commit(s) to THIS repo landed during each session's
+    # own time window — the shared join key with Loop Lab's evolve.* runs
+    # (see ide.git.log's since/until support). A session with no commits in
+    # its window (read-only work, or work on a different repo/checkout) just
+    # gets an empty list — this never blocks the session list from loading.
+    for s in out:
+        try:
+            log_res = await ide_git_log(path=str(_REPO_ROOT), since=s["first_ts"], until=s["last_ts"])
+            s["commits"] = log_res.get("commits", [])
+        except Exception as e:
+            log.debug("claude_sessions: commit correlation failed for %s: %s",
+                     s.get("claude_session_id"), e)
+            s["commits"] = []
     return {"sessions": out}
 
 

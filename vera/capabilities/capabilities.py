@@ -35,6 +35,7 @@ from Vera.vera.capability_orchestration import (
 from Vera.vera.config import cfg
 from Vera.vera.output_formats import apply_format, list_profiles
 from Vera.vera.delivery import list_channels
+from Vera.vera.web.web_client import USER_AGENT as _WEB_USER_AGENT
 
 log = logging.getLogger("vera.caps")
 
@@ -2297,7 +2298,17 @@ async def math_stats(numbers: str, trace_id=None):
 async def http_get(url: str, timeout: int = 15, trace_id=None):
     timeout = parse_timeout(timeout)
     try:
-        async with httpx.AsyncClient(timeout=timeout,follow_redirects=True) as c:
+        # A bare httpx client announces itself as "python-httpx/x.y" — many
+        # real sites (Wikipedia among them, observed live: "403 Please set a
+        # user-agent") reject that outright. web.fetch already avoids this via
+        # web_client.py's hardened session; http.get built its own client and
+        # never got the same header, so a REST-API-shaped call to an ordinary
+        # public page failed for a reason that had nothing to do with the URL
+        # or the goal. Just the UA, not the full browser-fingerprint headers
+        # web_client.py adds for scraping — this cap's contract is a raw,
+        # simple request, not page-scraping hardening.
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True,
+                                     headers={"User-Agent": _WEB_USER_AGENT}) as c:
             t0=time.monotonic(); r=await c.get(url); ms=round((time.monotonic()-t0)*1000)
         return {"url":str(r.url),"status":r.status_code,"ok":r.is_success,"latency_ms":ms,
                 "content_type":r.headers.get("content-type",""),"body":r.text[:65536]}
@@ -2313,7 +2324,10 @@ async def http_get(url: str, timeout: int = 15, trace_id=None):
 async def http_post(url: str, payload: str = "{}", timeout: int = 15, trace_id=None):
     timeout = parse_timeout(timeout)
     try:
-        async with httpx.AsyncClient(timeout=timeout,follow_redirects=True) as c:
+        # See http_get's comment: a bare httpx client's default UA gets
+        # rejected by real sites for a reason unrelated to the request itself.
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True,
+                                     headers={"User-Agent": _WEB_USER_AGENT}) as c:
             r=await c.post(url,json=json.loads(payload))
         return {"url":str(r.url),"status":r.status_code,"ok":r.is_success,"body":r.text[:32768]}
     except Exception as e: return {"url":url,"error":str(e),"ok":False}

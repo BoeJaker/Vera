@@ -1013,7 +1013,7 @@ async def artifact_file_exists(session_id: str = "", relpath: str = "") -> Optio
     sb = _sandbox_mod()
     # Sandboxed session → stat inside the container (its /workspace, not the host).
     if session_id and sb is not None:
-        cpath = pnorm if pnorm.startswith("/") else (_WORKDIR.rstrip("/") + "/" + pnorm.lstrip("/"))
+        cpath = pnorm if pnorm.startswith("/") else (_sandbox_workdir().rstrip("/") + "/" + pnorm.lstrip("/"))
         try:
             hit: Optional[bool] = None
             if hasattr(sb, "route_fs_exists"):
@@ -1084,7 +1084,7 @@ async def read_artifact_file(session_id: str = "", relpath: str = "",
     pnorm = p.replace("\\", "/")
     sb = _sandbox_mod()
     if session_id and sb is not None and hasattr(sb, "route_fs_read"):
-        cpath = pnorm if pnorm.startswith("/") else (_WORKDIR.rstrip("/") + "/" + pnorm.lstrip("/"))
+        cpath = pnorm if pnorm.startswith("/") else (_sandbox_workdir().rstrip("/") + "/" + pnorm.lstrip("/"))
         try:
             r = await sb.route_fs_read(session_id, cpath, max_bytes=max_bytes)
             if r is not None and not r.get("error"):

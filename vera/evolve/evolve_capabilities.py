@@ -90,6 +90,7 @@ log = logging.getLogger("vera.evolve")
 
 _HERE = Path(__file__).parent
 _PANEL_PATH = _HERE / "evolve_panel.html"
+_REPO_ROOT = _HERE.resolve().parents[1]   # vera/evolve -> vera -> repo root
 
 KEY_CONFIG   = "vera:evolve:config"
 KEY_TASKS    = "vera:evolve:tasks"
@@ -2046,10 +2047,43 @@ async def evolve_task_run(id: str = "", assess: bool = False, provider: str = ""
     return detail
 
 
+async def _run_window_commits(rec: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Commits landed during this run's own time window — the same
+    correlation primitive ide.claude_sessions.list_sessions uses on the
+    Dispatch side (ide_capabilities.ide_git_log's since/until support), so
+    a Loop Lab run and the chat session that triggered it share a join key
+    (the commit hash) without either subsystem needing to know about the
+    other directly. Best-effort: a run with no `ts`/`elapsed_s`, or a repo
+    with nothing committed in the window, just gets an empty list."""
+    ts = rec.get("ts") or ""
+    elapsed_s = rec.get("elapsed_s")
+    if not ts or elapsed_s is None:
+        return []
+    try:
+        from datetime import datetime, timedelta
+        until_dt = datetime.fromisoformat(ts.rstrip("Z"))
+        since_dt = until_dt - timedelta(seconds=float(elapsed_s) + 1)
+        since = since_dt.isoformat() + "Z"
+        until = until_dt.isoformat() + "Z"
+        ide_caps = sys.modules.get("ide_capabilities")
+        if not ide_caps:
+            return []
+        res = await ide_caps.ide_git_log(path=str(_REPO_ROOT), since=since, until=until)
+        return res.get("commits", [])
+    except Exception as e:
+        log.debug("evolve: commit correlation failed for run %s: %s", rec.get("run_id"), e)
+        return []
+
+
 @capability("evolve.runs", memory="off", silent=True,
             http_method="GET", http_path="/evolve/runs", http_tags=["evolve"],
-            description="Recent benchmark runs (compact, newest first). Query: "
-                        "limit, task, session.")
+            description="Recent benchmark runs (compact, newest first), each "
+                        "correlated against this repo's git log for its own "
+                        "run window (commits: [{hash, author, date, ts, "
+                        "message}]) — the same join key Dispatch's chat-session "
+                        "list uses, for connecting a run back to whatever "
+                        "session (Claude Code or otherwise) produced it. "
+                        "Query: limit, task, session.")
 async def evolve_runs(limit: int = 50, task: str = "", session: str = "",
                       trace_id=None):
     r = _redis()
@@ -2071,6 +2105,8 @@ async def evolve_runs(limit: int = 50, task: str = "", session: str = "",
                     break
         except Exception:
             pass
+    for rec in out:
+        rec["commits"] = await _run_window_commits(rec)
     return {"runs": out, "count": len(out)}
 
 

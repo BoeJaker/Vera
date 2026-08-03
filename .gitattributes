@@ -1,0 +1,5 @@
+# Normalize line endings to LF for every text file, regardless of what OS/editor
+# touched it (this repo is edited both over SMB from Windows and directly on
+# this Linux host over SSH) -- without this, a CRLF save anywhere shows up as
+# a whole-file diff on every line, even when nothing meaningful changed.
+* text=auto eol=lf

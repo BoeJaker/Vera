@@ -26,7 +26,8 @@ Per-node hardware lives in Redis (vera:catalog:node_hw); the node→SSH-host map
 """
 from __future__ import annotations
 import asyncio, json, logging, os, re, sys, time
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -90,6 +91,9 @@ async def _hydrate() -> None:
                 AUTOOPT.update(doc)
     except Exception as e:
         log.debug("hydrate autoopt: %s", e)
+    # Downloads do NOT survive a Vera restart (the /api/pull stream is ours), so
+    # retire the records that a previous process left mid-flight.
+    await _reap_stale_pulls()
 
 
 async def _persist(key: str, obj) -> None:
@@ -1092,11 +1096,100 @@ PULLS: Dict[str, dict] = {}             # this process's pulls (authoritative fo
 _PULL_TASKS: Dict[str, asyncio.Task] = {}
 _PULL_SEQ = {"n": 0}
 _ACTIVE_STATES = ("starting", "downloading", "verifying")
+# A running pull writes its record at least once a second. One that still claims
+# to be active but has not been touched for this long belongs to a Vera process
+# that is gone — and since the /api/pull stream is ours, the transfer died with
+# it. Generous enough to cover a slow manifest fetch before the first byte.
+PULL_STALE_S = 120.0
 
 
 def _pull_id(instance_id: str) -> str:
     _PULL_SEQ["n"] += 1
     return f"{instance_id}-{int(time.time())}-{_PULL_SEQ['n']}"
+
+
+def _iso_age(ts: str) -> float:
+    """Seconds since an ISO-8601 stamp; +inf when it cannot be read."""
+    try:
+        t = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        return max(0.0, (datetime.now(timezone.utc) - t).total_seconds())
+    except Exception:
+        return float("inf")
+
+
+def _pull_is_stale(rec: dict) -> bool:
+    """True for a record that still advertises itself as running but whose owner
+    is gone. Only ever true for the Redis mirror — local records in PULLS are
+    driven by a live task."""
+    return (rec.get("state") in _ACTIVE_STATES
+            and _iso_age(rec.get("updated_at") or rec.get("started_at") or "") > PULL_STALE_S)
+
+
+def _pull_mark_interrupted(rec: dict) -> dict:
+    """Turn an orphaned 'downloading' record into an honest terminal one. Ollama
+    keeps the partial blob, so the bytes already on the node are not lost —
+    re-pulling the same ref resumes from there (what the UI's Resume does)."""
+    rec["state"] = "interrupted"
+    rec["ok"] = False
+    rec["error"] = rec.get("error") or (
+        "Vera restarted while this download was in flight — the partial download "
+        "is still on the node, resume to continue from where it stopped")
+    rec["speed_bps"] = 0
+    rec["eta_s"] = None
+    rec["finished_at"] = rec.get("finished_at") or now_iso()
+    return rec
+
+
+async def _pull_all_redis() -> List[Tuple[str, dict]]:
+    """Every mirrored record in the cluster, decoded. Unparseable rows are skipped."""
+    r = _redis()
+    if not r:
+        return []
+    out: List[Tuple[str, dict]] = []
+    try:
+        raw = await r.hgetall(KEY_PULLS)
+        for k, v in (raw or {}).items():
+            k = k.decode() if isinstance(k, bytes) else k
+            v = v.decode() if isinstance(v, bytes) else v
+            try:
+                out.append((k, json.loads(v)))
+            except Exception:
+                continue
+    except Exception as e:
+        log.debug("pull scan: %s", e)
+    return out
+
+
+async def _pull_store(pull_id: str, rec: dict) -> None:
+    r = _redis()
+    if not r:
+        return
+    try:
+        await r.hset(KEY_PULLS, pull_id, json.dumps(rec))
+    except Exception as e:
+        log.debug("pull store %s: %s", pull_id, e)
+
+
+async def _reap_stale_pulls() -> int:
+    """One-shot at startup: rewrite every orphaned record as 'interrupted'.
+
+    Without this the Downloads list keeps showing a phantom live transfer — frozen
+    percentage, but a speed and ETA that read as current — which cannot be
+    cancelled (no local task) and cannot be dismissed (the UI only offers Dismiss
+    on finished rows). Records that are merely stale-looking because they belong
+    to a *live* pull on another Vera instance are left alone: those are still
+    being written to, so they never cross PULL_STALE_S."""
+    n = 0
+    for pid, rec in await _pull_all_redis():
+        if not _pull_is_stale(rec):
+            continue
+        await _pull_store(pid, _pull_mark_interrupted(rec))
+        n += 1
+    if n:
+        log.info("catalog: retired %d model download(s) orphaned by a restart", n)
+    return n
 
 
 async def _pull_persist(rec: dict, force: bool = False) -> None:
@@ -1230,7 +1323,18 @@ async def _pull_start(model: str, instance_id: str, hf_id: str = "") -> dict:
     for rec in PULLS.values():
         if (rec["instance_id"] == instance_id and rec["model"] == model
                 and rec["state"] in _ACTIVE_STATES):
-            return rec                     # already downloading — join it
+            return rec                     # already downloading here — join it
+    # The same ref may be in flight on another Vera instance; a second /api/pull
+    # would fight it over the same partial blob. Orphans from a restart look
+    # identical in Redis, so retire those instead of refusing to start.
+    for pid, other in await _pull_all_redis():
+        if (pid not in PULLS and other.get("instance_id") == instance_id
+                and other.get("model") == model
+                and other.get("state") in _ACTIVE_STATES):
+            if _pull_is_stale(other):
+                await _pull_store(pid, _pull_mark_interrupted(other))
+            else:
+                return other               # live elsewhere — point at its record
     rec = {
         "id": _pull_id(instance_id), "model": model, "hf_id": hf_id,
         "instance_id": instance_id, "node_label": base.get("label", instance_id),
@@ -1265,7 +1369,8 @@ def _prune_pulls() -> None:
                         "back via catalog.pull.status. Inputs: model (str! — an Ollama "
                         "library name like 'qwen2.5:7b' or an 'hf.co/author/repo:QUANT' "
                         "ref), instance_id (str!). Re-starting a pull that is already "
-                        "running joins the existing one.")
+                        "running joins the existing one; re-starting one that was "
+                        "interrupted resumes it from the partial data on the node.")
 async def cap_catalog_pull_start(model: str, instance_id: str, trace_id=None):
     await _hydrate()
     if not (model or "").strip():
@@ -1282,23 +1387,18 @@ async def cap_catalog_pull_start(model: str, instance_id: str, trace_id=None):
                         "ETA, per-layer counts and the last Ollama status line. Query: "
                         "pull_id (str — one pull), instance_id (str — filter), active_only "
                         "(bool). Includes pulls started by other Vera instances in the "
-                        "cluster (mirrored through Redis).")
+                        "cluster (mirrored through Redis). A download whose Vera process "
+                        "died mid-transfer reports state 'interrupted', not 'downloading' "
+                        "— restart it with catalog.pull.start to resume.")
 async def cap_catalog_pull_status(pull_id: str = "", instance_id: str = "",
                                   active_only: bool = False, trace_id=None):
+    await _hydrate()          # first call after a restart also reaps the orphans
     merged: Dict[str, dict] = {}
-    r = _redis()
-    if r:
-        try:
-            raw = await r.hgetall(KEY_PULLS)
-            for k, v in (raw or {}).items():
-                k = k.decode() if isinstance(k, bytes) else k
-                v = v.decode() if isinstance(v, bytes) else v
-                try:
-                    merged[k] = json.loads(v)
-                except Exception:
-                    continue
-        except Exception as e:
-            log.debug("pull status redis: %s", e)
+    for pid, rec in await _pull_all_redis():
+        # Report an orphan as interrupted rather than as a live transfer. The
+        # startup reaper handles our own leftovers; this also covers another
+        # instance dying mid-session, without waiting for it to come back.
+        merged[pid] = _pull_mark_interrupted(rec) if _pull_is_stale(rec) else rec
     for pid, rec in PULLS.items():        # local records win — they are live
         merged[pid] = _pull_public(rec)
     rows = list(merged.values())
@@ -1318,12 +1418,24 @@ async def cap_catalog_pull_status(pull_id: str = "", instance_id: str = "",
             http_method="POST", http_path="/catalog/pull/cancel", http_tags=["catalog"],
             description="Cancel an in-flight model download. Inputs: pull_id (str!). Only "
                         "the Vera instance that started the pull can cancel it; from "
-                        "another instance this reports where it is running.")
+                        "another instance this reports where it is running. A download "
+                        "orphaned by a restart is retired as 'interrupted'.")
 async def cap_catalog_pull_cancel(pull_id: str, trace_id=None):
     task = _PULL_TASKS.get(pull_id)
     if not task:
         if pull_id in PULLS:
             return {"ok": True, "note": "already finished", "pull": _pull_public(PULLS[pull_id])}
+        # No local task and no local record: either another live Vera instance owns
+        # it, or it is an orphan from a restart. Retire the orphan here so the row
+        # is not stuck being un-cancellable until the Redis TTL expires.
+        for pid, rec in await _pull_all_redis():
+            if pid != pull_id:
+                continue
+            if _pull_is_stale(rec):
+                await _pull_store(pid, _pull_mark_interrupted(rec))
+                return {"ok": True, "pull_id": pull_id, "state": "interrupted",
+                        "note": "download was orphaned by a Vera restart", "pull": rec}
+            break
         return {"error": "pull not running on this Vera instance — cancel it from the "
                          "instance that started it"}
     task.cancel()
@@ -1333,7 +1445,8 @@ async def cap_catalog_pull_cancel(pull_id: str, trace_id=None):
 @capability("catalog.pull.clear", memory="off",
             http_method="POST", http_path="/catalog/pull/clear", http_tags=["catalog"],
             description="Clear finished download records from the downloads list. "
-                        "Inputs: pull_id (str — one record; empty clears all finished).")
+                        "Inputs: pull_id (str — one record; empty clears all finished, "
+                        "including any orphaned by a restart, but never a live pull).")
 async def cap_catalog_pull_clear(pull_id: str = "", trace_id=None):
     ids = ([pull_id] if pull_id
            else [pid for pid, rec in PULLS.items() if rec["state"] not in _ACTIVE_STATES])
@@ -1350,18 +1463,16 @@ async def cap_catalog_pull_clear(pull_id: str = "", trace_id=None):
             if pull_id:
                 await r.hdel(KEY_PULLS, pull_id)
             else:
-                raw = await r.hgetall(KEY_PULLS)
-                stale = []
-                for k, v in (raw or {}).items():
-                    k = k.decode() if isinstance(k, bytes) else k
-                    v = v.decode() if isinstance(v, bytes) else v
-                    try:
-                        if json.loads(v).get("state") not in _ACTIVE_STATES:
-                            stale.append(k)
-                    except Exception:
-                        stale.append(k)
-                if stale:
-                    await r.hdel(KEY_PULLS, *stale)
+                # Keep only what is genuinely live (here or on another instance);
+                # everything else goes — finished, orphaned by a restart, or
+                # unparseable junk.
+                keep = {pid for pid, rec in await _pull_all_redis()
+                        if rec.get("state") in _ACTIVE_STATES and not _pull_is_stale(rec)}
+                allk = [k.decode() if isinstance(k, bytes) else k
+                        for k in (await r.hkeys(KEY_PULLS) or [])]
+                done = [k for k in allk if k not in keep]
+                if done:
+                    await r.hdel(KEY_PULLS, *done)
         except Exception as e:
             log.debug("pull clear redis: %s", e)
     return {"ok": True, "cleared": cleared}

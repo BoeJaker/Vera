@@ -78,6 +78,86 @@
     }catch(e){}
   }
 
+  // ── 0b. UI scale (global zoom) ─────────────────────────────────────────────
+  // A single magnification factor applied to every frame independently via CSS
+  // `zoom` on <html>. It scales layout (font, spacing, controls) so the whole UI
+  // grows/shrinks to taste — no per-stylesheet rem refactor needed.
+  //
+  // Why per-frame (not just the shell) is correct: panels are embedded as
+  // width/height:100% iframes. Under an ancestor's CSS zoom a percentage-sized
+  // box keeps its *device* size (its CSS-px size divides by the zoom, then paints
+  // back ×zoom), so the shell's zoom scales its own chrome but NOT the panel
+  // content. Each panel therefore applies the same factor to itself and magnifies
+  // its content exactly once — no double-scaling.
+  //
+  // The value lives in localStorage (shared by every same-origin frame), so one
+  // setting drives them all and the `storage` event live-syncs already-open
+  // frames. Server persistence (/ui/scale) seeds fresh browsers.
+  var SCALE_KEY = 'vera:ui:scale';
+  var SCALE_MIN = 0.6, SCALE_MAX = 2.0, SCALE_STEP = 0.1, SCALE_DEFAULT = 1.0;
+
+  function _clampScale(s){
+    s = parseFloat(s);
+    if(!isFinite(s) || s <= 0) return SCALE_DEFAULT;
+    return Math.max(SCALE_MIN, Math.min(SCALE_MAX, Math.round(s*100)/100));
+  }
+  function _readScale(){
+    try{ var v = localStorage.getItem(SCALE_KEY); return v!=null ? _clampScale(v) : SCALE_DEFAULT; }
+    catch(e){ return SCALE_DEFAULT; }
+  }
+  // Paint only — no persistence/broadcast. `zoom` reflows at the scaled size
+  // (unlike transform:scale, which repaints and leaves scrollbars/overflow
+  // wrong). Supported in every current engine (Firefox 126+).
+  //
+  // The counter-scale is the important part: native browser zoom shrinks the
+  // layout viewport so `100vh`/`100vw` still fit, but CSS `zoom` does NOT — a
+  // full-height layout would overflow and the frame would grow a spurious
+  // scrollbar. So we (a) counter-size <html> to viewport/scale (it renders back
+  // to exactly the viewport after zoom), and (b) publish `--ui-scale` so any
+  // `height:calc(100vh / var(--ui-scale,1))` box in the page (the shell body,
+  // and any panel that opts in) counter-scales itself the same way. Panels that
+  // still use raw `100vh` just get a normal inner scrollbar when enlarged —
+  // graceful, and exactly what zooming a page does.
+  function _paintScale(s){
+    s = _clampScale(s);
+    var d = document.documentElement;
+    try{
+      if(s === 1){
+        d.style.zoom = '';
+        d.style.width = '';
+        d.style.height = '';
+        d.style.removeProperty('--ui-scale');
+      } else {
+        d.style.setProperty('--ui-scale', String(s));
+        d.style.zoom = String(s);
+        d.style.width  = 'calc(100vw / ' + s + ')';
+        d.style.height = 'calc(100vh / ' + s + ')';
+      }
+    }catch(e){}
+  }
+  // Set + persist + broadcast. Returns the clamped value actually applied.
+  function setScale(s){
+    s = _clampScale(s);
+    _paintScale(s);
+    try{ localStorage.setItem(SCALE_KEY, String(s)); }catch(e){}
+    // Cross-session / cross-device persistence — fire and forget.
+    fetch(BASE + '/ui/scale/set', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({scale: s})
+    }).catch(function(){});
+    // Same-origin siblings pick this up via the `storage` event; also relay by
+    // postMessage (parent + our own children) so the shell's iframe tree updates
+    // even if a browser throttles storage events.
+    try{ window.parent.postMessage({type:'vera:scale', scale: s}, '*'); }catch(e){}
+    try{
+      var fr = document.querySelectorAll('iframe');
+      for(var i=0;i<fr.length;i++){
+        try{ fr[i].contentWindow.postMessage({type:'vera:scale', scale: s}, '*'); }catch(e2){}
+      }
+    }catch(e3){}
+    return s;
+  }
+
   // ── 1. Load theme CSS ──────────────────────────────────────────────────────
   if(!document.getElementById('vera-themes-css')){
     var link = document.createElement('link');
@@ -209,6 +289,10 @@
     }
   })();
 
+  // Paint the cached UI scale synchronously too, so the panel never flashes at
+  // 100% before the setting applies.
+  (function applyCachedScale(){ _paintScale(_readScale()); })();
+
   // ── 3. Hook into existing setTheme ─────────────────────────────────────────
   // If the panel already has setTheme(), wrap it so changes broadcast to the API.
   // We do this after DOMContentLoaded to ensure the panel's JS has loaded.
@@ -269,6 +353,33 @@
        e.data.event.type === 'ui.theme.changed'){
       setThemeLocal(e.data.event.theme, e.data.event.vars);
     }
+    // UI scale relayed from a sibling/parent frame.
+    if(e.data && e.data.type === 'vera:scale' && typeof e.data.scale !== 'undefined'){
+      _paintScale(e.data.scale);
+    }
+    // Scale changed via the capability (agent / another client) — apply + cache.
+    if(e.data && e.data.type === 'vera_event' && e.data.event &&
+       e.data.event.type === 'ui.scale.changed'){
+      var sv = _clampScale(e.data.event.scale);
+      _paintScale(sv);
+      try{ localStorage.setItem(SCALE_KEY, String(sv)); }catch(e2){}
+    }
+  });
+
+  // ── 5b. Live-sync scale across same-origin frames + keyboard shortcuts ──────
+  // The `storage` event fires in every OTHER same-origin frame when any frame
+  // changes localStorage — the natural broadcast channel for a shared setting.
+  window.addEventListener('storage', function(e){
+    if(e.key === SCALE_KEY){ _paintScale(e.newValue!=null ? e.newValue : SCALE_DEFAULT); }
+  });
+  // Ctrl/Cmd+Alt with =/-/0 adjusts UI scale (Alt keeps native browser zoom on
+  // plain Ctrl +/-/0 free).
+  window.addEventListener('keydown', function(e){
+    if(!(e.ctrlKey || e.metaKey) || !e.altKey || e.shiftKey) return;
+    var k = e.key;
+    if(k === '=' || k === '+'){ e.preventDefault(); setScale(_readScale() + SCALE_STEP); }
+    else if(k === '-' || k === '_'){ e.preventDefault(); setScale(_readScale() - SCALE_STEP); }
+    else if(k === '0'){ e.preventDefault(); setScale(SCALE_DEFAULT); }
   });
 
   // MutationObserver on parent frame's data-theme attribute
@@ -315,6 +426,40 @@
     }).catch(function(){});
   }
 
+  // ── 6b. Reusable "UI size" control ─────────────────────────────────────────
+  // −  100%  +  ↺  — used by the standalone floating picker (the shell builds an
+  // equivalent in its own theme menu). Buttons stopPropagation so clicking them
+  // never dismisses the containing menu.
+  function _makeScaleControl(){
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:5px 6px 8px;margin-bottom:5px;'+
+      'border-bottom:1px solid var(--bd2,var(--border2,rgba(128,128,128,.3)))';
+    var lbl = document.createElement('span');
+    lbl.textContent = 'UI size';
+    lbl.style.cssText = 'flex:1;color:var(--t2,var(--dim,#999))';
+    function mk(txt, title){
+      var b = document.createElement('button');
+      b.type = 'button'; b.textContent = txt; b.title = title;
+      b.style.cssText = 'width:22px;height:22px;padding:0;line-height:1;border-radius:5px;cursor:pointer;'+
+        'border:1px solid var(--bd2,var(--border2,rgba(128,128,128,.4)));'+
+        'background:var(--s2,var(--bg2,#222));color:var(--t1,var(--text,#ddd));font-size:13px';
+      return b;
+    }
+    var minus = mk('−','Smaller (Ctrl+Alt+−)');
+    var val   = document.createElement('span');
+    val.style.cssText = 'min-width:36px;text-align:center;color:var(--t1,var(--text,#ddd));font-variant-numeric:tabular-nums';
+    var plus  = mk('+','Larger (Ctrl+Alt+=)');
+    var reset = mk('↺','Reset to 100% (Ctrl+Alt+0)');
+    function refresh(){ val.textContent = Math.round(_readScale()*100) + '%'; }
+    minus.onclick = function(e){ e.stopPropagation(); setScale(_readScale()-SCALE_STEP); refresh(); };
+    plus.onclick  = function(e){ e.stopPropagation(); setScale(_readScale()+SCALE_STEP); refresh(); };
+    reset.onclick = function(e){ e.stopPropagation(); setScale(SCALE_DEFAULT); refresh(); };
+    refresh();
+    row.appendChild(lbl); row.appendChild(minus); row.appendChild(val);
+    row.appendChild(plus); row.appendChild(reset);
+    return row;
+  }
+
   // ── 7. Standalone floating theme picker ─────────────────────────────────────
   // A panel viewed on its own (top-level document, not inside the shell's tab
   // iframe) has no theme selector of its own. Inject a small floating control
@@ -354,6 +499,7 @@
       fetch(BASE + '/ui/themes').then(function(r){return r.json();}).then(function(data){
         var themes = (data && data.themes) || {};
         menu.innerHTML = '';
+        menu.appendChild(_makeScaleControl());
         Object.keys(themes).forEach(function(tid){
           var t = themes[tid];
           var active = tid === _current;
@@ -411,6 +557,13 @@
     injectPicker: injectPicker,
     injectFloatingPicker: injectFloatingPicker,
     onAccent: _deriveOnAccent,
+    // UI scale (global zoom)
+    setScale: setScale,
+    getScale: _readScale,
+    nudgeScale: function(d){ return setScale(_readScale() + (d||0)); },
+    applyScale: _paintScale,
+    makeScaleControl: _makeScaleControl,
+    SCALE_MIN: SCALE_MIN, SCALE_MAX: SCALE_MAX, SCALE_STEP: SCALE_STEP,
     BASE: BASE,
   };
 
@@ -419,7 +572,24 @@
   function _init(){
     hookExistingSetTheme();
     fetchAndApply();
+    fetchAndApplyScale();
     injectFloatingPicker();
+  }
+
+  // Seed the UI scale from the server ONLY when this browser has no explicit
+  // local choice yet — so a per-device override (different monitor sizes) is
+  // never stomped by the shared server value on reload.
+  function fetchAndApplyScale(){
+    var hasLocal = false;
+    try{ hasLocal = localStorage.getItem(SCALE_KEY) != null; }catch(e){}
+    if(hasLocal) return;
+    fetch(BASE + '/ui/scale').then(function(r){ return r.json(); }).then(function(d){
+      if(d && typeof d.scale !== 'undefined'){
+        var s = _clampScale(d.scale);
+        _paintScale(s);
+        try{ localStorage.setItem(SCALE_KEY, String(s)); }catch(e){}
+      }
+    }).catch(function(){});
   }
   if(document.readyState === 'loading'){
     document.addEventListener('DOMContentLoaded', _init);

@@ -694,7 +694,13 @@ async def cap_web_fetch(
     "web.crawl",
     http_method="POST", http_path="/web/crawl", http_tags=["web", "crawl"],
     memory="on",
-    description="Recursive crawl from a seed URL. Same-domain only. "
+    description="Recursive crawl from a seed URL. Same-domain only. WHEN TO USE: you know "
+                "the SITE (not just a search query) and need to follow a few of its own links "
+                "— e.g. 'check nature.com's AI section for recent articles'. Lighter than "
+                "fabric.discover.crawl (no surface/subtable/entity detection, no resumable "
+                "frontier) — for a quick, disposable read pass ingest_to_fabric=false; only "
+                "set it true when you actually want this persisted into the data fabric as a "
+                "reusable dataset, not for a one-off lookup inside a loop step. "
                 "Input: url (str!), depth (int 0-3 default 1), "
                 "breadth (int 1-10 default 3 — links per level), "
                 "max_pages (int default 10), timeout (float default 8.0), "

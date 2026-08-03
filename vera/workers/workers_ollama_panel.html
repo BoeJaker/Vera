@@ -552,11 +552,12 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
       <div class="pane-tb" style="flex-shrink:0;padding:8px 12px 6px">
         <span class="pane-tb-title" style="color:var(--gpu)">OLLAMA CLUSTER</span>
         <span class="tb-sep"></span>
-        <!-- Sub-tabs: Nodes / Jobs / Catalog / Wrapper -->
+        <!-- Sub-tabs: Nodes / Jobs / Catalog / Benchmark / Wrapper -->
         <div style="display:flex;gap:1px;margin-right:8px">
           <button class="btn sm ol-sub active" data-olsub="nodes" onclick="P.olSubTab('nodes',this)" style="border-radius:3px 0 0 3px">Nodes</button>
           <button class="btn sm ol-sub" data-olsub="jobs" onclick="P.olSubTab('jobs',this)" style="border-radius:0">Jobs</button>
           <button class="btn sm ol-sub" data-olsub="catalog" onclick="P.olSubTab('catalog',this)" style="border-radius:0">Catalog<span id="ol-dl-badge" style="display:none;margin-left:4px;font-size:8px;padding:0 4px;border-radius:7px;background:#e6b800;color:#111;font-weight:700">0</span></button>
+          <button class="btn sm ol-sub" data-olsub="benchmark" onclick="P.olSubTab('benchmark',this)" style="border-radius:0">Benchmark</button>
           <button class="btn sm ol-sub" data-olsub="wrapper" onclick="P.olSubTab('wrapper',this)" style="border-radius:0 3px 3px 0">Wrapper</button>
         </div>
         <span class="tb-sep"></span>
@@ -939,6 +940,126 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
 
         </div>
       </div><!-- /ol-sub-catalog -->
+
+      <!-- ══════════════════════════════════════════════════════════════════
+           Sub-pane: Benchmark — measure a model on a node in a given role.
+           Real token metrics + load time (from Ollama's own response envelope)
+           and deterministic accuracy role-packs, with a role leaderboard.
+           ══════════════════════════════════════════════════════════════════ -->
+      <div id="ol-sub-benchmark" style="display:none;flex:1;flex-direction:column;min-height:0;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap">
+          <span style="font-size:9px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:var(--gpu)">Model Benchmark</span>
+          <span style="font-size:9px;color:var(--dim);max-width:340px">Deterministic role packs + real token/load metrics, straight from each Ollama node. Compare how good a model is in a role.</span>
+          <span style="flex:1"></span>
+          <button class="btn sm" onclick="P.benchInit(true)">↻ Refresh</button>
+          <button class="btn sm" onclick="P.benchClear()" title="Delete all stored results">Clear results</button>
+        </div>
+        <div style="flex:1;overflow:auto;padding:10px 12px;min-height:0;display:flex;flex-direction:column;gap:10px">
+
+          <!-- ── RUN PANEL ─────────────────────────────────────────────── -->
+          <div style="border:1px solid var(--border);border-radius:6px;background:var(--bg1);padding:9px 11px">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+              <label style="font-size:9px;color:var(--dim2);display:flex;flex-direction:column;gap:2px">Node
+                <select id="bench-node" style="font-size:10.5px;padding:3px 5px;min-width:150px" onchange="P.benchNodeChanged()"></select>
+              </label>
+              <label style="font-size:9px;color:var(--dim2);display:flex;flex-direction:column;gap:2px">Model
+                <select id="bench-model" style="font-size:10.5px;padding:3px 5px;min-width:170px"></select>
+              </label>
+              <label style="font-size:9px;color:var(--dim2);display:flex;flex-direction:column;gap:2px">Role
+                <select id="bench-role" style="font-size:10.5px;padding:3px 5px;min-width:150px" onchange="P.benchLeaderboard()"></select>
+              </label>
+              <label style="font-size:9px;color:var(--dim2);display:flex;flex-direction:column;gap:2px" title="Sampling temperature. 0 = deterministic & repeatable (recommended for accuracy). >0 samples — accuracy becomes a pass-rate; raise Repeats to average the variance.">Temp
+                <input type="number" id="bench-temp" value="0" min="0" max="2" step="0.1" style="font-size:10.5px;padding:3px 4px;width:52px" onchange="P.benchTempChanged()">
+              </label>
+              <label id="bench-rep-wrap" style="font-size:9px;color:var(--dim2);display:none;flex-direction:column;gap:2px" title="Samples per item when temperature>0 — accuracy is averaged over them (pass-rate).">Repeats
+                <input type="number" id="bench-repeats" value="3" min="1" max="5" step="1" style="font-size:10.5px;padding:3px 4px;width:48px">
+              </label>
+              <label style="font-size:9px;color:var(--dim2);display:flex;flex-direction:column;gap:2px" title="top-p nucleus sampling">top-p
+                <input type="number" id="bench-topp" value="1.0" min="0" max="1" step="0.05" style="font-size:10.5px;padding:3px 4px;width:52px">
+              </label>
+              <label style="font-size:9px;color:var(--dim2);display:flex;flex-direction:column;gap:2px" title="RNG seed — fixed seed keeps runs comparable">Seed
+                <input type="number" id="bench-seed" value="42" step="1" style="font-size:10.5px;padding:3px 4px;width:56px">
+              </label>
+              <label style="font-size:9.5px;color:var(--dim2);display:flex;align-items:center;gap:4px;padding-bottom:3px" title="Unload the model first to measure a true cold load time (evicts it from VRAM — avoid while the cluster is busy)">
+                <input type="checkbox" id="bench-cold"> cold load
+              </label>
+              <button class="btn sm" style="border-color:var(--gpu);color:var(--gpu)" onclick="P.benchRun()">▶ Benchmark</button>
+              <button class="btn sm" onclick="P.benchRunAll()" title="Benchmark every model installed on this node, one after another">All models on node</button>
+              <span id="bench-status" style="font-size:9px;color:var(--dim2);font-family:var(--mono);padding-bottom:3px"></span>
+            </div>
+            <!-- last / live result -->
+            <div id="bench-last" style="margin-top:9px;font-size:11px;color:var(--dim)">Pick a node and model, then run a benchmark. Results are scored programmatically (temperature 0, fixed seed) so they are repeatable.</div>
+          </div>
+
+          <!-- ── NODE MONITOR (live per-node performance) ──────────────── -->
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
+              <span style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)">Node Monitor</span>
+              <span style="font-size:9px;color:var(--dim)">Each node's live health, resident models &amp; VRAM, and the workload it's serving — every node has its own setup.</span>
+              <span style="flex:1"></span>
+              <label style="font-size:9px;color:var(--dim2);display:flex;align-items:center;gap:4px" title="Auto-refresh every 15s while this tab is open"><input type="checkbox" id="bench-mon-auto" onchange="P.benchMonAuto()"> auto</label>
+              <button class="btn sm" onclick="P.benchMon()">↻ Refresh</button>
+            </div>
+            <div id="bench-nodes" style="display:flex;gap:10px;flex-wrap:wrap"><span style="color:var(--dim);font-size:10px">Loading node monitor…</span></div>
+          </div>
+
+          <!-- ── INFOGRAPHICS ──────────────────────────────────────────── -->
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+              <span style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)">Infographics</span>
+              <span id="bench-charts-role" style="font-size:9px;color:var(--gpu);font-weight:600"></span>
+              <span style="flex:1"></span>
+              <span style="font-size:9px;color:var(--dim)">accuracy · throughput · the quality-vs-speed trade-off</span>
+            </div>
+            <div id="bench-charts" style="display:flex;gap:12px;flex-wrap:wrap"></div>
+          </div>
+
+          <!-- ── LEADERBOARD ───────────────────────────────────────────── -->
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+              <span style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)">Leaderboard</span>
+              <span id="bench-lb-role" style="font-size:9px;color:var(--gpu);font-weight:600"></span>
+              <span style="flex:1"></span>
+              <span style="font-size:9px;color:var(--dim)">latest result per model × node · ranked by accuracy, then speed · live = observed t/s from real traffic</span>
+            </div>
+            <div id="bench-leaderboard"><span style="color:var(--dim)">No benchmarks yet.</span></div>
+          </div>
+
+          <!-- ── PASSIVE (live production usage) ────────────────────────── -->
+          <div style="border-top:1px solid var(--border);padding-top:9px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
+              <span style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)">Passive · live usage</span>
+              <span style="font-size:9px;color:var(--dim)">Harvested from real traffic (the router's rolling per-request stats) — no test run. Observed throughput, latency &amp; call volume per model.</span>
+              <span style="flex:1"></span>
+              <button class="btn sm" onclick="P.benchPassive()">↻ Refresh</button>
+            </div>
+            <div id="bench-passive-charts" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:8px"></div>
+            <div id="bench-passive"><span style="color:var(--dim);font-size:10px">No live traffic recorded yet.</span></div>
+          </div>
+
+          <!-- ── LOOP-LAB (agentic mechanism) ──────────────────────────── -->
+          <div style="border-top:1px solid var(--border);padding-top:9px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
+              <span style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)">Loop Lab</span>
+              <span style="font-size:9px;color:var(--dim)">Pin the selected model onto its node and run it through a real agentic loop — a qualitative read alongside the deterministic score.</span>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+              <label style="font-size:9px;color:var(--dim2);display:flex;flex-direction:column;gap:2px">Profile
+                <select id="bench-loop-profile" style="font-size:10.5px;padding:3px 5px">
+                  <option value="planning">planning</option>
+                  <option value="research">research</option>
+                  <option value="devops">devops</option>
+                  <option value="coding">coding</option>
+                </select>
+              </label>
+              <input id="bench-loop-goal" placeholder="Goal for the loop, e.g. 'Summarise the top 3 open errors and propose a fix'" style="flex:1;min-width:240px;font-size:10.5px;padding:4px 8px;background:var(--bg0);border:1px solid var(--border);color:var(--text);border-radius:4px">
+              <button class="btn sm" onclick="P.benchLoop()">Run in Loop Lab →</button>
+            </div>
+            <div id="bench-loop-out" style="font-size:10px;color:var(--dim2);font-family:var(--mono);margin-top:6px"></div>
+          </div>
+
+        </div>
+      </div><!-- /ol-sub-benchmark -->
 
       <!-- Sub-pane: Wrapper -->
       <div id="ol-sub-wrapper" style="display:none;flex:1;flex-direction:column;min-height:0;overflow:hidden">
@@ -4296,11 +4417,11 @@ function olSubTab(name,btn){
   document.querySelectorAll('.ol-sub').forEach(b=>b.classList.remove('active'));
   if(btn) btn.classList.add('active');
   else document.querySelector('.ol-sub[data-olsub="'+name+'"]')?.classList.add('active');
-  ['nodes','jobs','catalog','wrapper'].forEach(k=>{
+  ['nodes','jobs','catalog','benchmark','wrapper'].forEach(k=>{
     const el=$('ol-sub-'+k);
     if(!el) return;
     if(k===name){
-      el.style.display = (k==='wrapper'||k==='catalog') ? 'flex' : 'block';
+      el.style.display = (k==='wrapper'||k==='catalog'||k==='benchmark') ? 'flex' : 'block';
     } else {
       el.style.display='none';
     }
@@ -4312,6 +4433,7 @@ function olSubTab(name,btn){
   });
   if(name==='jobs') oljRender();
   if(name==='catalog') catInit();
+  if(name==='benchmark') benchInit();
   // When switching to wrapper, init the selector and connect if needed
   if(name==='wrapper'){
     wrapperInit();
@@ -5993,6 +6115,29 @@ setTimeout(()=>{ catDlPollStart(); catLoadNodes(); }, 2500);
 let _catNodes=[], _catSshHosts=[], _catCur=null, _catInited=false, _catSub='browse';
 let _catSuggestions=[], _catIndex=null, _catInstalledData=null, _catPulls=[];
 let _catDlTimer=null, _catDlOn=false, _catHasResults=false, _catLastActive=0;
+let _catIdxRepaintPending=false, _catIdxLeaveWired=false;
+
+// Repaint the browse index (to refresh "already installed ✓" markers) WITHOUT
+// destroying the tag pills the user is reaching for. A background repaint that
+// lands mid-interaction was wiping the Ollama-library tag menu before a tag
+// could be clicked — so defer it while the pointer is over the index and flush
+// once the pointer leaves.
+function _catRepaintIndexSafe(){
+  if(_catSub!=='browse'||_catHasResults||_catCur) return;
+  const idx=$('cat-index'); if(!idx) return;
+  if(idx.matches(':hover')){
+    _catIdxRepaintPending=true;
+    if(!_catIdxLeaveWired){
+      _catIdxLeaveWired=true;
+      idx.addEventListener('mouseleave',()=>{
+        if(_catIdxRepaintPending){ _catIdxRepaintPending=false; _catRepaintIndexSafe(); }
+      });
+    }
+    return;
+  }
+  _catIdxRepaintPending=false;
+  catBrowseHome();
+}
 
 function catStatus(s){ const e=$('cat-status'); if(e) e.textContent=s||''; }
 function _catFmtBytes(b){
@@ -6373,8 +6518,9 @@ async function catInstalled(force){
   _catInstalledData=r||{nodes:[]};
   const cnt=$('cat-inst-cnt'); if(cnt) cnt.textContent=_catInstalledData.total_models||0;
   catInstalledRender();
-  // Repaint the browse index so its "already installed" markers are current.
-  if(_catSub==='browse'&&!_catHasResults&&!_catCur) catBrowseHome();
+  // Refresh the browse index's "already installed" markers — but never yank the
+  // tag pills out from under an in-progress click (see _catRepaintIndexSafe).
+  _catRepaintIndexSafe();
 }
 function catInstalledRender(){
   const el=$('cat-installed'); if(!el||!_catInstalledData) return;
@@ -6495,9 +6641,12 @@ function catDlRender(){
   const el=$('cat-downloads'); if(!el) return;
   if(!_catPulls.length){ el.innerHTML='<span style="color:var(--dim)">No downloads yet. Pull a model from Browse, or from the Installed tab\'s “Pull to this node”.</span>'; return; }
   const stateCol={downloading:'#e6b800',starting:'var(--dim2)',verifying:'var(--acc2)',
-                  done:'var(--ok)',failed:'var(--err)',cancelled:'var(--dim2)'};
+                  done:'var(--ok)',failed:'var(--err)',cancelled:'var(--dim2)',
+                  interrupted:'#e08040'};
   el.innerHTML=_catPulls.map(p=>{
     const act=['starting','downloading','verifying'].includes(p.state);
+    // Ollama keeps the partial blob, so these can pick up where they stopped.
+    const resumable=['interrupted','failed','cancelled'].includes(p.state);
     const col=stateCol[p.state]||'var(--dim2)';
     const pct=Math.max(0,Math.min(100,p.pct||0));
     const speed=p.speed_bps?_catFmtBytes(p.speed_bps)+'/s':'';
@@ -6511,7 +6660,8 @@ function catDlRender(){
         <span style="font-size:8px;padding:1px 6px;border:1px solid ${col};color:${col};border-radius:8px;text-transform:uppercase">${esc(p.state)}</span>
         <span style="flex:1"></span>
         ${act?`<button class="btn sm err-btn" style="font-size:8px" onclick="P.catDlCancel(${sq(p.id)})">Cancel</button>`
-             :`<button class="btn sm" style="font-size:8px" onclick="P.catDlClear(${sq(p.id)})">Dismiss</button>`}
+             :`${resumable?`<button class="btn sm" style="font-size:8px" onclick="P.catDlResume(${sq(p.id)})">Resume</button>`:''}
+               <button class="btn sm" style="font-size:8px" onclick="P.catDlClear(${sq(p.id)})">Dismiss</button>`}
       </div>
       <div style="display:flex;align-items:center;gap:6px;margin-top:5px">
         <div style="flex:1;height:6px;background:var(--bg0);border-radius:3px;overflow:hidden">
@@ -6537,6 +6687,16 @@ async function catDlCancel(pid){
 }
 async function catDlClear(pid){
   await api('/catalog/pull/clear','POST',pid?{pull_id:pid}:{});
+  catDlRefresh();
+}
+// Restart a download that was interrupted (usually by a Vera restart — the pull
+// stream belongs to Vera, so it dies with the process). Ollama kept the partial
+// blob, so this resumes rather than re-fetching the whole thing.
+async function catDlResume(pid){
+  const p=_catPulls.find(x=>x.id===pid); if(!p) return;
+  const r=await api('/catalog/pull/start','POST',{model:p.model,instance_id:p.instance_id});
+  if(r&&r.error){ alert('Resume failed: '+r.error); return; }
+  if(r&&r.pull_id&&r.pull_id!==pid) await api('/catalog/pull/clear','POST',{pull_id:pid});
   catDlRefresh();
 }
 
@@ -6822,6 +6982,416 @@ async function ndSwitch(nodeId,backend){
   ndLoad();
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// BENCHMARK — measure a model on a node in a role (token metrics + load time +
+// deterministic accuracy packs), with a role leaderboard. Sub-tab of Ollama.
+// ═══════════════════════════════════════════════════════════════════════════
+let _benchNodes=[], _benchInited=false, _benchBusy=false, _benchRoles=[], _benchMonTimer=null;
+
+function benchStatus(s){ const e=$('bench-status'); if(e) e.textContent=s||''; }
+function _benchMs(v){ return (v==null)?'—':(v>=1000?(v/1000).toFixed(1)+'s':Math.round(v)+'ms'); }
+function _benchAccColor(a){ if(a==null) return 'var(--dim)'; return a>=0.8?'#6fd68b':a>=0.5?'#e6b800':'#e0603a'; }
+function _benchBar(a){
+  const pct=a==null?0:Math.round(a*100);
+  return `<span style="display:inline-flex;align-items:center;gap:5px">
+    <span style="width:52px;height:6px;background:var(--bg0);border-radius:3px;overflow:hidden;display:inline-block">
+      <span style="display:block;height:100%;width:${pct}%;background:${_benchAccColor(a)}"></span></span>
+    <b style="color:${_benchAccColor(a)}">${a==null?'—':pct+'%'}</b></span>`;
+}
+
+async function benchInit(force){
+  if(_benchInited && !force){ benchLeaderboard(); return; }
+  _benchInited=true;
+  // Ollama nodes + their installed models (reuse the catalog's per-node view).
+  const r=await api('/catalog/installed');
+  _benchNodes=((r&&r.nodes)||[]).filter(n=>n.backend==='ollama');
+  const nsel=$('bench-node');
+  if(nsel){
+    const cur=nsel.value;
+    nsel.innerHTML=_benchNodes.map(n=>{
+      const gpu=n.has_gpu?' ⚡':''; const cnt=(n.models||[]).length;
+      return `<option value="${esc(n.id)}">${esc(n.label||n.id)}${gpu} · ${cnt} model${cnt===1?'':'s'}</option>`;
+    }).join('')||'<option value="">no Ollama nodes</option>';
+    if(cur && _benchNodes.some(n=>n.id===cur)) nsel.value=cur;
+  }
+  // Roles.
+  const rsel=$('bench-role');
+  if(rsel && !_benchRoles.length){
+    const s=await api('/bench/suites'); _benchRoles=(s&&s.suites)||[];
+    rsel.innerHTML='<option value="all">all (text roles)</option>'+
+      _benchRoles.map(x=>`<option value="${esc(x.role)}" title="${esc(x.blurb||'')}">${esc(x.label)} · ${x.items} items</option>`).join('');
+  }
+  benchTempChanged();
+  benchNodeChanged();
+  benchMon();
+  benchLeaderboard();
+  benchPassive();
+}
+
+function benchNodeChanged(){
+  const nid=$('bench-node').value;
+  const n=_benchNodes.find(x=>x.id===nid);
+  const msel=$('bench-model'); if(!msel) return;
+  const models=(n&&n.models)||[];
+  msel.innerHTML=models.length
+    ? models.map(m=>{
+        const t=(m.size_gb!=null?m.size_gb+'G':'')+(m.quant?' '+m.quant:'');
+        return `<option value="${esc(m.name)}">${esc(m.name)}${t?' · '+esc(t.trim()):''}</option>`;
+      }).join('')
+    : '<option value="">no models installed</option>';
+}
+
+function benchTempChanged(){
+  const t=parseFloat($('bench-temp').value)||0;
+  const w=$('bench-rep-wrap'); if(w) w.style.display=(t>0)?'flex':'none';
+}
+function _benchSampling(){
+  return {
+    temperature: parseFloat($('bench-temp').value)||0,
+    top_p: parseFloat($('bench-topp').value),
+    seed: parseInt($('bench-seed').value)||42,
+    repeats: parseInt($('bench-repeats').value)||1,
+  };
+}
+
+async function benchRun(){
+  if(_benchBusy){ return; }
+  const inst=$('bench-node').value, model=$('bench-model').value, role=$('bench-role').value;
+  const cold=$('bench-cold').checked;
+  if(!inst||!model){ alert('Pick a node and an installed model first.'); return; }
+  await _benchRunOne(inst, model, role, cold, _benchSampling());
+  benchLeaderboard();
+}
+
+async function _benchRunOne(inst, model, role, cold, samp){
+  samp=samp||{};
+  _benchBusy=true; benchStatus('starting…');
+  const tnote=(samp.temperature>0)?` · temp ${samp.temperature}×${samp.repeats||1}`:'';
+  $('bench-last').innerHTML=`<span style="color:var(--gpu)">▶ Benchmarking <b>${esc(model)}</b> on ${esc(inst)} · role: ${esc(role)}${cold?' · cold':''}${tnote}…</span>`;
+  const st=await api('/bench/run/start','POST',{instance_id:inst,model,role,cold,
+    temperature:samp.temperature||0,top_p:(samp.top_p==null?1:samp.top_p),
+    seed:samp.seed||42,repeats:samp.repeats||1});
+  if(!st||!st.run_id){ $('bench-last').innerHTML=`<span style="color:var(--err)">Failed to start: ${esc((st&&st.error)||'unknown')}</span>`; _benchBusy=false; benchStatus(''); return; }
+  const rid=st.run_id;
+  // Poll status until finished, then load the full result.
+  for(let i=0;i<400;i++){
+    await new Promise(r=>setTimeout(r,1200));
+    const s=await api('/bench/status?run_id='+encodeURIComponent(rid));
+    const row=(s&&s.runs&&s.runs[0])||null;
+    if(!row){ benchStatus('running…'); continue; }
+    if(row.state==='running'){ benchStatus('running… ('+i+')'); continue; }
+    _benchBusy=false; benchStatus('');
+    if(row.state==='error'||!row.result_id){
+      $('bench-last').innerHTML=`<span style="color:var(--err)">Benchmark failed: ${esc(row.error||'no result')}</span>`;
+      return;
+    }
+    const rr=await api('/bench/result?id='+encodeURIComponent(row.result_id));
+    if(rr&&rr.result) benchRenderResult(rr.result);
+    return;
+  }
+  _benchBusy=false; benchStatus('timed out');
+}
+
+async function benchRunAll(){
+  if(_benchBusy){ alert('A benchmark is already running.'); return; }
+  const inst=$('bench-node').value, role=$('bench-role').value, cold=$('bench-cold').checked;
+  const n=_benchNodes.find(x=>x.id===inst);
+  const models=((n&&n.models)||[]).map(m=>m.name).filter(Boolean);
+  if(!models.length){ alert('No installed models on this node.'); return; }
+  if(!confirm('Benchmark all '+models.length+' models on '+(n.label||inst)+' sequentially? This can take a while.')) return;
+  const samp=_benchSampling();
+  for(let i=0;i<models.length;i++){
+    benchStatus('model '+(i+1)+'/'+models.length);
+    await _benchRunOne(inst, models[i], role, cold, samp);
+  }
+  benchStatus('done'); benchLeaderboard();
+}
+
+function benchRenderResult(rec){
+  const p=rec.perf||{};
+  const metric=(rec.roles&&rec.roles.length===1&&rec.roles[0]==='embed')?'MRR':'accuracy';
+  const meta=[];
+  if(rec.size_gb!=null) meta.push(rec.size_gb+' GB');
+  if(rec.quant) meta.push(rec.quant);
+  if(rec.params) meta.push(rec.params);
+  const packs=(rec.packs||[]).map(pk=>{
+    const items=(pk.items||[]).map(it=>{
+      const rr=(it.runs>1)?`<span style="font-size:8.5px;color:var(--dim);width:26px">${it.passed}/${it.runs}</span>`:'';
+      return `<div style="display:flex;gap:6px;padding:1px 0;font-size:9.5px">
+        <span style="color:${it.ok?'#6fd68b':'#e0603a'};width:12px">${it.ok?'✓':'✗'}</span>${rr}
+        <span style="flex:1;color:var(--dim2)">${esc((it.prompt||'').slice(0,70))}</span>
+        <span style="font-family:var(--mono);color:var(--dim);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.got||'')}</span>
+      </div>`;
+    }).join('');
+    return `<details style="margin:2px 0">
+      <summary style="cursor:pointer;font-size:10px;list-style:none;display:flex;align-items:center;gap:8px">
+        <b style="min-width:120px">${esc(pk.label||pk.role)}</b>
+        ${_benchBar(pk.accuracy)}
+        <span style="color:var(--dim2);font-size:9px">${pk.passed}/${pk.total}${pk.metric?(' · '+pk.metric):''}</span>
+        ${pk.error?`<span style="color:var(--err);font-size:9px">${esc(pk.error)}</span>`:''}
+      </summary>
+      <div style="padding:3px 0 3px 18px">${items||'<span style="color:var(--dim);font-size:9px">no items</span>'}</div>
+    </details>`;
+  }).join('');
+  $('bench-last').innerHTML=`
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px">
+      <div><b style="font-size:12px">${esc(rec.model)}</b>
+        <span style="color:var(--dim2);font-size:9px">@ ${esc(rec.node_label||rec.instance_id)}${rec.has_gpu?' ⚡':''}</span>
+        ${meta.length?`<span style="color:var(--dim);font-size:9px"> · ${esc(meta.join(' · '))}</span>`:''}
+        ${rec.cold?'<span class="chip" style="cursor:default;border-color:#6cb2ff;color:#6cb2ff;font-size:8px">cold</span>':''}</div>
+      <span style="flex:1"></span>
+      <div style="text-align:right"><div style="font-size:8px;color:var(--dim);text-transform:uppercase">${metric}</div>
+        <div style="font-size:16px;font-weight:700;color:${_benchAccColor(rec.accuracy)}">${rec.accuracy==null?'—':Math.round(rec.accuracy*100)+'%'}</div></div>
+    </div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:10px;font-family:var(--mono);color:var(--dim2);margin-bottom:7px">
+      <span title="generation tokens / second">gen ${p.gen_tps??'—'} t/s</span>
+      <span title="prompt-eval tokens / second">prompt ${p.prompt_tps??'—'} t/s</span>
+      <span title="model load duration">load ${_benchMs(p.load_ms)}</span>
+      <span title="approx time to first token">ttft ${_benchMs(p.ttft_ms)}</span>
+      <span title="total wall time across all calls">wall ${p.total_wall_s??'—'}s</span>
+      <span>${rec.items_passed}/${rec.items_total} checks</span>
+      ${(rec.sampling&&rec.sampling.temperature>0)?`<span title="sampling config" style="color:#c98500">temp ${rec.sampling.temperature} · ×${rec.sampling.repeats} · top-p ${rec.sampling.top_p}</span>`:`<span style="color:var(--dim)" title="deterministic run">temp 0 (deterministic)</span>`}
+    </div>
+    ${packs}`;
+}
+
+// ── Charts — theme-aware, dependency-free (HTML bars + inline-SVG scatter) ────
+// Single-series per chart with direct labels, so categorical CVD-safety never
+// comes into play; accuracy uses the reserved status ramp (green/amber/red).
+function _benchTrunc(s,n){ s=String(s||''); return s.length>n?s.slice(0,n-1)+'…':s; }
+function _benchCard(title, body){
+  return `<div style="flex:1 1 250px;min-width:230px;border:1px solid var(--border);border-radius:6px;background:var(--bg1);padding:8px 10px">
+    <div style="font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--dim);margin-bottom:6px">${esc(title)}</div>${body}</div>`;
+}
+// Horizontal bar chart from [{label,value,disp,color,title}]. max auto unless given.
+function _benchHtmlBars(items, opts){
+  opts=opts||{};
+  const mx=opts.max!=null?opts.max:Math.max(1,...items.map(d=>d.value||0));
+  if(!items.length) return '<span style="color:var(--dim);font-size:9px">no data</span>';
+  return items.map(d=>{
+    const w=mx>0?Math.round((d.value||0)/mx*100):0;
+    const col=d.color||'var(--gpu)';
+    return `<div style="display:flex;align-items:center;gap:6px;margin:2px 0" title="${esc(d.title||(d.label+': '+(d.disp!=null?d.disp:d.value)))}">
+      <span style="width:96px;font-size:9px;color:var(--dim2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(_benchTrunc(d.label,16))}</span>
+      <span style="flex:1;height:11px;background:var(--bg0);border-radius:3px;overflow:hidden;position:relative">
+        <span style="position:absolute;left:0;top:0;height:100%;width:${w}%;background:${col};border-radius:3px"></span></span>
+      <span style="width:52px;text-align:right;font-size:9px;font-family:var(--mono);color:var(--text)">${d.disp!=null?d.disp:(d.value!=null?d.value:'—')}</span>
+    </div>`;
+  }).join('');
+}
+// Quality-vs-speed scatter (x=gen t/s, y=accuracy%). Inline SVG, dots + labels.
+function _benchScatter(pts){
+  pts=pts.filter(p=>p.x!=null&&p.y!=null);
+  if(pts.length<1) return '<span style="color:var(--dim);font-size:9px">need gen t/s + accuracy on ≥1 model</span>';
+  const W=250,H=150,pl=30,pr=8,pt=8,pb=20;
+  const xmax=Math.max(1,...pts.map(p=>p.x))*1.1, ymax=100;
+  const X=v=>pl+(v/xmax)*(W-pl-pr), Y=v=>H-pb-(v/ymax)*(H-pt-pb);
+  const grid=[0,25,50,75,100].map(g=>`<line x1="${pl}" y1="${Y(g)}" x2="${W-pr}" y2="${Y(g)}" stroke="var(--border)" stroke-width="0.5"/><text x="${pl-4}" y="${Y(g)+3}" text-anchor="end" font-size="7" fill="var(--dim)">${g}</text>`).join('');
+  const dots=pts.map(p=>{
+    const cx=X(p.x),cy=Y(p.y),col=_benchAccColor(p.y/100);
+    return `<g><title>${esc(p.label)} — ${p.y}% @ ${p.x} t/s</title>
+      <circle cx="${cx}" cy="${cy}" r="4" fill="${col}" stroke="var(--bg1)" stroke-width="1"/>
+      <text x="${cx+6}" y="${cy+3}" font-size="7.5" fill="var(--dim2)">${esc(_benchTrunc(p.label,12))}</text></g>`;
+  }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;overflow:visible">
+    ${grid}
+    <line x1="${pl}" y1="${H-pb}" x2="${W-pr}" y2="${H-pb}" stroke="var(--baseline,var(--border))" stroke-width="1"/>
+    <line x1="${pl}" y1="${pt}" x2="${pl}" y2="${H-pb}" stroke="var(--border)" stroke-width="1"/>
+    <text x="${(W+pl)/2}" y="${H-3}" text-anchor="middle" font-size="7.5" fill="var(--dim)">gen tokens/sec →</text>
+    <text x="8" y="${(H)/2}" text-anchor="middle" font-size="7.5" fill="var(--dim)" transform="rotate(-90 8 ${H/2})">accuracy %</text>
+    ${dots}</svg>`;
+}
+
+function benchCharts(rows){
+  const el=$('bench-charts'); if(!el) return;
+  const cr=$('bench-charts-role'); const role=($('bench-role')&&$('bench-role').value)||'all';
+  if(cr) cr.textContent='role: '+role;
+  if(!rows||!rows.length){ el.innerHTML='<span style="color:var(--dim);font-size:9px">Run a benchmark to see charts.</span>'; return; }
+  const acc=rows.filter(x=>x.accuracy!=null).map(x=>({label:x.model,value:Math.round(x.accuracy*100),
+    disp:Math.round(x.accuracy*100)+'%',color:_benchAccColor(x.accuracy)}));
+  const tps=rows.filter(x=>x.gen_tps!=null).sort((a,b)=>b.gen_tps-a.gen_tps).map(x=>({label:x.model,value:x.gen_tps,
+    disp:x.gen_tps+' t/s',color:'#3987e5',title:x.model+': '+x.gen_tps+' gen t/s'+(x.live_tps!=null?(' · live '+x.live_tps):'')}));
+  const load=rows.filter(x=>x.load_ms!=null).sort((a,b)=>a.load_ms-b.load_ms).map(x=>({label:x.model,value:x.load_ms,
+    disp:_benchMs(x.load_ms),color:'#9085e9'}));
+  const scat=rows.map(x=>({label:x.model,x:x.gen_tps,y:x.accuracy!=null?Math.round(x.accuracy*100):null}));
+  el.innerHTML=
+    _benchCard('Accuracy by model', _benchHtmlBars(acc,{max:100}))+
+    _benchCard('Generation throughput', _benchHtmlBars(tps))+
+    _benchCard('Load time (lower is better)', _benchHtmlBars(load))+
+    _benchCard('Quality vs speed', _benchScatter(scat));
+}
+
+async function benchLeaderboard(){
+  const role=($('bench-role')&&$('bench-role').value)||'all';
+  const lr=$('bench-lb-role'); if(lr) lr.textContent='role: '+role;
+  const r=await api('/bench/compare?role='+encodeURIComponent(role));
+  const rows=(r&&r.rows)||[];
+  benchCharts(rows);
+  const el=$('bench-leaderboard'); if(!el) return;
+  if(!rows.length){ el.innerHTML='<span style="color:var(--dim);font-size:10px">No benchmarks for this role yet — run one above.</span>'; return; }
+  el.innerHTML=`<table style="width:100%;border-collapse:collapse;font-size:10px">
+    <thead><tr style="color:var(--dim);text-align:left;font-size:8.5px;text-transform:uppercase;letter-spacing:.5px">
+      <th style="padding:2px 4px">#</th><th style="padding:2px 4px">Model</th><th style="padding:2px 4px">Node</th>
+      <th style="padding:2px 4px">Accuracy</th><th style="padding:2px 4px">gen t/s</th><th style="padding:2px 4px" title="observed t/s from real traffic">live t/s</th><th style="padding:2px 4px">load</th>
+      <th style="padding:2px 4px">size</th><th style="padding:2px 4px">quant</th><th style="padding:2px 4px" title="sampling temperature">temp</th><th style="padding:2px 4px"></th></tr></thead>
+    <tbody>${rows.map((x,i)=>`<tr style="border-top:1px solid var(--border)">
+      <td style="padding:3px 4px;color:var(--dim)">${i+1}</td>
+      <td style="padding:3px 4px"><b>${esc(x.model)}</b>${x.cold?' <span style="color:#6cb2ff;font-size:8px">cold</span>':''}</td>
+      <td style="padding:3px 4px;color:var(--dim2)">${esc(x.node_label||x.instance_id)}${x.has_gpu?' ⚡':''}</td>
+      <td style="padding:3px 4px">${_benchBar(x.accuracy)} <span style="color:var(--dim);font-size:8.5px">${x.items_passed}/${x.items_total}</span></td>
+      <td style="padding:3px 4px;font-family:var(--mono)">${x.gen_tps??'—'}</td>
+      <td style="padding:3px 4px;font-family:var(--mono);color:var(--dim2)">${x.live_tps??'—'}</td>
+      <td style="padding:3px 4px;font-family:var(--mono)">${_benchMs(x.load_ms)}</td>
+      <td style="padding:3px 4px;font-family:var(--mono);color:var(--dim2)">${x.size_gb!=null?x.size_gb+'G':'—'}</td>
+      <td style="padding:3px 4px;color:var(--dim2)">${esc(x.quant||'—')}</td>
+      <td style="padding:3px 4px;color:var(--dim2)">${(x.sampling&&x.sampling.temperature>0)?x.sampling.temperature:'0'}</td>
+      <td style="padding:3px 4px"><button class="btn sm" title="Open this result" onclick="P.benchOpen(${sq(x.result_id)})">▸</button></td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+async function benchPassive(){
+  const inst=($('bench-node')&&$('bench-node').value)||'';
+  const r=await api('/bench/passive');
+  let rows=(r&&r.rows)||[];
+  // Chart the whole estate; the table lists everything so nothing is hidden.
+  const cel=$('bench-passive-charts');
+  if(cel){
+    if(!rows.length){ cel.innerHTML=''; }
+    else{
+      const tps=rows.filter(x=>x.obs_tps!=null).sort((a,b)=>b.obs_tps-a.obs_tps).slice(0,10)
+        .map(x=>({label:x.model,value:x.obs_tps,disp:x.obs_tps+' t/s',color:'#199e70'}));
+      const calls=[...rows].sort((a,b)=>(b.calls||0)-(a.calls||0)).slice(0,10)
+        .map(x=>({label:x.model,value:x.calls||0,disp:String(x.calls||0),color:'#3987e5'}));
+      cel.innerHTML=_benchCard('Observed throughput (live)', _benchHtmlBars(tps))+
+                    _benchCard('Requests seen (live)', _benchHtmlBars(calls));
+    }
+  }
+  const el=$('bench-passive'); if(!el) return;
+  if(!rows.length){ el.innerHTML='<span style="color:var(--dim);font-size:10px">No live traffic recorded yet — run some real generations and they will show here.</span>'; return; }
+  el.innerHTML=`<table style="width:100%;border-collapse:collapse;font-size:10px">
+    <thead><tr style="color:var(--dim);text-align:left;font-size:8.5px;text-transform:uppercase;letter-spacing:.5px">
+      <th style="padding:2px 4px">Model</th><th style="padding:2px 4px">Node</th><th style="padding:2px 4px">obs t/s</th>
+      <th style="padding:2px 4px">avg latency</th><th style="padding:2px 4px">calls</th><th style="padding:2px 4px">jobs</th><th style="padding:2px 4px">last seen</th></tr></thead>
+    <tbody>${rows.map(x=>`<tr style="border-top:1px solid var(--border)${inst&&x.instance_id===inst?';background:rgba(57,135,229,.06)':''}">
+      <td style="padding:3px 4px"><b>${esc(x.model)}</b></td>
+      <td style="padding:3px 4px;color:var(--dim2)">${esc(x.node_label||x.instance_id)}${x.has_gpu?' ⚡':''}</td>
+      <td style="padding:3px 4px;font-family:var(--mono)">${x.obs_tps??'—'}</td>
+      <td style="padding:3px 4px;font-family:var(--mono)">${x.avg_latency_s!=null?x.avg_latency_s+'s':'—'}</td>
+      <td style="padding:3px 4px;font-family:var(--mono)">${x.calls||0}</td>
+      <td style="padding:3px 4px;color:var(--dim2)">${esc((x.job_types||[]).join(', ')||'—')}</td>
+      <td style="padding:3px 4px;color:var(--dim2);font-size:8.5px">${esc(String(x.last_ts||'').slice(0,16).replace('T',' '))}</td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+async function benchOpen(rid){
+  if(!rid) return;
+  const rr=await api('/bench/result?id='+encodeURIComponent(rid));
+  if(rr&&rr.result){ benchRenderResult(rr.result); $('bench-last').scrollIntoView({behavior:'smooth',block:'nearest'}); }
+}
+
+// ── Node monitor — live per-node health, VRAM, workload + sparkline ──────────
+function _benchIdSafe(s){ return String(s||'').replace(/[^a-zA-Z0-9_-]/g,'_'); }
+function _benchSpark(vals, color){
+  vals=(vals||[]).filter(v=>v!=null&&!isNaN(v));
+  if(vals.length<2) return '';
+  const w=90,h=22,mx=Math.max(...vals),mn=Math.min(...vals),rng=(mx-mn)||1;
+  const pts=vals.map((v,i)=>`${(i/(vals.length-1)*w).toFixed(1)},${(h-((v-mn)/rng)*h).toFixed(1)}`).join(' ');
+  return `<svg viewBox="0 0 ${w} ${h}" style="width:90px;height:22px" title="observed t/s trend"><polyline points="${pts}" fill="none" stroke="${color||'#3987e5'}" stroke-width="1.5"/></svg>`;
+}
+
+async function benchMon(){
+  const el=$('bench-nodes'); if(!el) return;
+  const [r,h]=await Promise.all([api('/bench/node_perf'),api('/bench/node_perf/history?limit=60')]);
+  benchMonRender((r&&r.nodes)||[], (h&&h.series)||{});
+}
+
+function benchMonRender(nodes, series){
+  const el=$('bench-nodes'); if(!el) return;
+  if(!nodes.length){ el.innerHTML='<span style="color:var(--dim);font-size:10px">No Ollama nodes.</span>'; return; }
+  el.innerHTML=nodes.map(n=>{
+    const hw=n.hw||{}, wl=n.workload||{};
+    const dot=n.reachable?'#6fd68b':'#e0603a';
+    const vramTxt=hw.vram_gb?`${(n.loaded_vram_gb||0).toFixed(1)}/${hw.vram_gb}G`:(n.loaded_vram_gb!=null?`${(n.loaded_vram_gb||0).toFixed(1)}G`:'—');
+    const vpct=n.vram_used_pct!=null?n.vram_used_pct:0;
+    const diskTxt=(hw.disk_free_gb!=null)?`${Math.round(hw.disk_free_gb)}G free${hw.disk_total_gb?(' / '+Math.round(hw.disk_total_gb)+'G'):''}`:'';
+    const loaded=(n.loaded||[]).map(m=>`<span class="chip" style="cursor:default;font-size:8px;border-color:var(--gpu)" title="${esc(m.model)} · ${m.vram_gb}G VRAM">${esc(_benchTrunc(m.model,20))} ${m.vram_gb}G</span>`).join(' ')||'<span style="color:var(--dim);font-size:9px">idle — no model resident</span>';
+    const hwbits=[];
+    if(hw.gpu_name) hwbits.push('⚡ '+esc(hw.gpu_name)); else if(!n.has_gpu) hwbits.push('CPU');
+    if(hw.ram_gb) hwbits.push(hw.ram_gb+'G RAM');
+    if(hw.cpu_cores) hwbits.push(hw.cpu_cores+'c');
+    const spark=_benchSpark((series[n.id]||[]).map(s=>s.tps),'#199e70');
+    const jobs=(wl.job_types||[]).slice(0,4).join(', ');
+    const tops=(wl.top_models||[]).map(m=>`<div style="display:flex;justify-content:space-between;font-size:8.5px;color:var(--dim2)"><span>${esc(_benchTrunc(m.model,24))}</span><span style="font-family:var(--mono)">${m.calls}×${m.tps!=null?(' '+m.tps+'t/s'):''}</span></div>`).join('');
+    return `<div style="flex:1 1 300px;min-width:280px;max-width:430px;border:1px solid var(--border);border-radius:6px;background:var(--bg1);padding:9px 11px">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+        <span style="width:8px;height:8px;border-radius:50%;background:${dot};display:inline-block" title="${n.reachable?'online':'unreachable'}"></span>
+        <b style="font-size:11px">${esc(n.label||n.id)}</b>
+        ${n.has_gpu?'<span style="color:var(--gpu);font-size:8px">GPU</span>':''}
+        ${!n.enabled?'<span class="chip" style="cursor:default;font-size:8px;border-color:#e0603a;color:#e0603a">disabled</span>':''}
+        <span style="flex:1"></span>
+        <span style="font-size:8.5px;color:var(--dim);font-family:var(--mono)">${n.ping_ms!=null?n.ping_ms+'ms':'—'}${n.version?(' · v'+esc(n.version)):''}</span>
+      </div>
+      <div style="font-size:8.5px;color:var(--dim2);margin-bottom:5px">${hwbits.join(' · ')}${diskTxt?(' · '+diskTxt):''}</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
+        <span style="font-size:8px;color:var(--dim);width:34px">VRAM</span>
+        <span style="flex:1;height:9px;background:var(--bg0);border-radius:3px;overflow:hidden;position:relative">
+          <span style="position:absolute;left:0;top:0;height:100%;width:${Math.min(100,vpct)}%;background:${vpct>90?'#e0603a':vpct>70?'#c98500':'#3987e5'}"></span></span>
+        <span style="font-size:8.5px;font-family:var(--mono);color:var(--text);width:72px;text-align:right">${vramTxt}</span>
+      </div>
+      <div style="margin-bottom:6px;line-height:1.8">${loaded}</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:9px;font-family:var(--mono);color:var(--dim2);border-top:1px solid var(--border);padding-top:5px">
+        <span title="requests seen (live)">${wl.calls||0} calls</span>
+        <span title="observed tokens/sec">${wl.tps!=null?wl.tps+' t/s':'— t/s'}</span>
+        <span title="avg latency">${wl.avg_latency_s!=null?wl.avg_latency_s+'s':'—'}</span>
+        <span>${wl.active_models||0} models</span>
+        <span style="flex:1"></span>${spark}
+      </div>
+      ${jobs?`<div style="font-size:8px;color:var(--dim);margin-top:3px">jobs: ${esc(jobs)}</div>`:''}
+      ${tops?`<div style="margin-top:4px">${tops}</div>`:''}
+      <div style="display:flex;align-items:center;gap:6px;margin-top:6px">
+        <button class="btn sm" onclick="P.benchNodeGpu(${sq(n.id)})" title="Sample live GPU utilisation over SSH (nvidia-smi)">GPU util</button>
+        <span id="bench-gpu-${_benchIdSafe(n.id)}" style="font-size:8.5px;color:var(--dim2);font-family:var(--mono)"></span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function benchNodeGpu(iid){
+  const slot=$('bench-gpu-'+_benchIdSafe(iid)); if(slot) slot.textContent='sampling…';
+  const r=await api('/bench/node_gpu','POST',{instance_id:iid});
+  if(!slot) return;
+  if(r&&r.error){ slot.innerHTML='<span style="color:var(--err)">'+esc(r.error)+'</span>'; return; }
+  const g=(r&&r.gpus)||[];
+  if(!g.length){ slot.textContent='no GPU data'; return; }
+  slot.innerHTML=g.map(x=>`GPU${x.index}: ${x.util_pct!=null?x.util_pct+'%':'—'} util${x.mem_pct!=null?(' · '+x.mem_pct+'% mem'):''}${x.temp_c!=null?(' · '+x.temp_c+'°C'):''}${x.power_w!=null?(' · '+Math.round(x.power_w)+'W'):''}`).join('  |  ');
+}
+
+function benchMonAuto(){
+  const on=$('bench-mon-auto')&&$('bench-mon-auto').checked;
+  if(_benchMonTimer){ clearInterval(_benchMonTimer); _benchMonTimer=null; }
+  if(on){ _benchMonTimer=setInterval(()=>{ const p=$('ol-sub-benchmark'); if(p&&p.style.display!=='none') benchMon(); }, 15000); }
+}
+
+async function benchLoop(){
+  const inst=$('bench-node').value, model=$('bench-model').value;
+  const profile=$('bench-loop-profile').value, goal=($('bench-loop-goal').value||'').trim();
+  if(!inst||!model||!goal){ alert('Pick a node + model and enter a goal.'); return; }
+  const out=$('bench-loop-out'); out.textContent='Running '+model+' through the '+profile+' loop…';
+  const r=await api('/bench/loop','POST',{instance_id:inst,model,goal,profile});
+  if(r&&r.error){ out.innerHTML='<span style="color:var(--err)">'+esc(r.error)+'</span>'; return; }
+  const res=(r&&r.result)||{};
+  const steps=(res.steps||[]).length, fin=(res.final||'').slice(0,600);
+  out.innerHTML=`<div style="color:${r.ok?'#6fd68b':'#e0603a'}">${r.ok?'✓':'✗'} ${esc(model)} · ${steps} step${steps===1?'':'s'}</div>
+    <div style="color:var(--dim2);white-space:pre-wrap;margin-top:3px">${esc(fin)||'<no final output>'}</div>`;
+}
+
+async function benchClear(){
+  if(!confirm('Delete ALL stored benchmark results?')) return;
+  await api('/bench/clear','POST',{});
+  benchLeaderboard();
+  $('bench-last').innerHTML='<span style="color:var(--dim)">Results cleared.</span>';
+}
+
 // ── Public API ───────────────────────────────────────────────────────────────
 return {
   show: showPane, refresh, autoToggle,
@@ -6867,9 +7437,12 @@ return {
   catBrowseHome, catBrowse, catBrowseSize, catTargetChanged,
   catInstallVariant, catQuickInstall, catQuickPull,
   catInstalled, catInstalledRender, catPullTo, catDelete, catDetectDisk,
-  catDlRefresh, catDlRender, catDlCancel, catDlClear,
+  catDlRefresh, catDlRender, catDlCancel, catDlClear, catDlResume,
   catNodes, catSshSet, catDetect, catDetectAll, catHwEdit, catQuality,
   catSuggest, catApply, catAutoSave,
+  benchInit, benchNodeChanged, benchRun, benchRunAll, benchLeaderboard,
+  benchOpen, benchLoop, benchClear, benchTempChanged, benchPassive,
+  benchMon, benchMonAuto, benchNodeGpu,
   ndLoad, ndDetect, ndDetectAll, ndProv, ndProvClose, ndCompToggle,
   ndModelSearch, ndModelPick, ndPlan, ndRun, ndSwitch,
 };

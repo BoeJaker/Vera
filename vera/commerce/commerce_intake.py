@@ -259,6 +259,32 @@ def _sync_product_qty_sync(product_id: str):
         conn.close()
 
 
+def _reflect_unit_on_product(core, prod: dict, unit: dict):
+    """Mirror a unit's price/cost/photo/metadata onto its catalog product so the
+    store Inventory view (which reads commerce_products) shows real values."""
+    if not (core and prod and unit):
+        return
+    attrs = unit.get("attributes") or {}
+    pattrs = dict(prod.get("attributes") or {})
+    for k in ("valuation", "console", "release_year", "edition", "region",
+              "publisher", "genre", "rarity", "pricecharting_url", "platform"):
+        if attrs.get(k) is not None:
+            pattrs[k] = attrs[k]
+    if unit.get("photos") and not pattrs.get("images"):
+        pattrs["images"] = unit["photos"]              # thumbnail for the Inventory grid
+    upd = {"id": prod["id"], "attributes": pattrs}
+    if _f(unit.get("price")):
+        upd["price"] = _f(unit.get("price"))
+    if _f(unit.get("cost")):
+        upd["cost"] = _f(unit.get("cost"))
+    if attrs.get("console") and not prod.get("category"):
+        upd["category"] = unit.get("category") or "video_game"
+    try:
+        core._db_upsert_product(upd)
+    except Exception as e:
+        log.debug("reflect unit on product: %s", e)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Photo persistence — accept a URL/path (keep) or base64/data-URI (store to disk)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -444,8 +470,8 @@ if _CAP_AVAILABLE:
         platform: str = "", brand: str = "", condition: str = "", grade: float = 0.0,
         completeness: str = "", cost: float = 0.0, price: float = 0.0,
         currency: str = "GBP", photos: List = None, location: str = "", notes: str = "",
-        description: str = "", auto_describe: bool = False, auto_price: bool = False,
-        lookup: bool = True, store_id: str = "", trace_id=None):
+        description: str = "", attributes: Dict = None, auto_describe: bool = False,
+        auto_price: bool = False, lookup: bool = True, store_id: str = "", trace_id=None):
         await _ensure_schema()
         core = _core()
         if not core:
@@ -466,7 +492,7 @@ if _CAP_AVAILABLE:
         # 2 — persist photos
         stored = await _persist_photos(photos or [])
         # 3 — create the unit
-        attrs = {}
+        attrs = dict(attributes or {})
         if platform: attrs["platform"] = platform
         if notes:    attrs["notes"] = notes
         unit = await _run(_db_upsert_unit, {
@@ -490,6 +516,10 @@ if _CAP_AVAILABLE:
             sug = await _suggest_unit_price(prod, unit)
             if sug:
                 unit = await _run(_db_upsert_unit, {"id": unit["id"], "price": sug})
+        # 6 — reflect the unit onto its catalog product so the store Inventory view
+        #     shows the real price / cost / metadata (the unit is the source of truth
+        #     per physical copy; the catalog row mirrors the latest for at-a-glance).
+        await _run(_reflect_unit_on_product, core, prod, unit)
         await emit_event({"type": "commerce.progress", "stage": "unit.intake",
                           "message": f"+unit '{unit.get('title','')[:36]}' "
                                      f"({unit.get('condition')})"})
@@ -561,6 +591,42 @@ if _CAP_AVAILABLE:
         return {"units": rows, "count": len(rows)}
 
     @capability(
+        "business.unit.move", http_method="POST", http_path="/business/unit/move",
+        http_tags=["commerce"],
+        description="Move unit(s) to another store — e.g. from a personal COLLECTION "
+                    "into a shop to sell, or between shops. Re-homes each unit's "
+                    "store_id, re-resolves (or creates) its catalog product in the "
+                    "target store so the title lives there too, sets status (default "
+                    "in_stock), and keeps both stores' quantities correct. Input: "
+                    "unit_ids (list!) OR unit_id (str), to_store_id (str — '' = "
+                    "unassigned), status (default in_stock). Output: {ok, moved, units}.")
+    async def cap_unit_move(unit_ids: List = None, unit_id: str = "", to_store_id: str = "",
+                            status: str = "in_stock", trace_id=None):
+        await _ensure_schema()
+        ids = list(unit_ids or ([] if not unit_id else [unit_id]))
+        if not ids:
+            return {"error": "unit_ids or unit_id required"}
+        moved, touched = [], set()
+        for uid in ids:
+            u = await _run(_db_get_unit, uid)
+            if not u:
+                continue
+            old_pid = u.get("product_id")
+            res = await cap_catalog_resolve(upc=u.get("upc", ""), title=u.get("title", ""),
+                                            category=u.get("category", ""), lookup=False,
+                                            store_id=to_store_id, trace_id=None)
+            new_pid = (res.get("product") or {}).get("id") or old_pid
+            saved = await _run(_db_upsert_unit, {"id": uid, "store_id": to_store_id or "",
+                                                 "product_id": new_pid, "status": status or "in_stock"})
+            moved.append(saved); touched.update([old_pid, new_pid])
+        for pid in touched:
+            if pid:
+                await _run(_sync_product_qty_sync, pid)
+        await emit_event({"type": "commerce.progress", "stage": "unit.move",
+                          "message": f"moved {len(moved)} unit(s) → store {to_store_id or 'unassigned'}"})
+        return {"ok": True, "moved": len(moved), "units": moved}
+
+    @capability(
         "business.unit.get", http_method="GET", http_path="/business/unit/get",
         http_tags=["commerce"], memory="off", silent=True,
         description="Fetch one unit by id, with its catalog product attached. "
@@ -603,6 +669,16 @@ if _CAP_AVAILABLE:
         u = await _run(_db_upsert_unit, {k: v for k, v in fields.items() if v is not None or k == "id"})
         if u.get("product_id"):
             await _run(_sync_product_qty_sync, u["product_id"])
+        # mark a realised sale in the internal product DB's price history
+        if status == "sold":
+            enrich = sys.modules.get("commerce_enrich")
+            if enrich and hasattr(enrich, "record_sale_sync"):
+                try:
+                    await _run(enrich.record_sale_sync, u.get("title", ""), u.get("upc", ""),
+                               (u.get("attributes") or {}).get("platform", ""),
+                               u.get("product_id", ""), _f(u.get("price")))
+                except Exception as e:
+                    log.debug("record sale: %s", e)
         return {"ok": True, "unit": u}
 
     @capability(

@@ -210,6 +210,61 @@ def build_label(spec: dict) -> bytes:
     return bytes(out)
 
 
+def build_item_label(spec: dict) -> bytes:
+    """An INTERNAL inventory label. Two modes:
+      • 'sticker' — compact stick-on: title, price@location, CODE128 of the SKU.
+      • 'slip'    — a fuller insert to pack in the box: title, console/year/edition,
+                    condition/grade, price, location, notes, then the barcode.
+    spec = {sku, title, price, currency, condition, grade, completeness, console,
+            year, edition, region, location, note, store, mode}."""
+    mode = spec.get("mode", "sticker")
+    cur = spec.get("currency", "")
+    def money(v):
+        try: return f"{cur}{float(v):,.2f}"
+        except Exception: return str(v or "")
+    sku = str(spec.get("sku") or "")
+    out = bytearray(_INIT)
+    if mode == "slip":
+        if spec.get("store"):
+            out += _ALIGN["center"] + _BOLD_ON + _text_line(str(spec["store"])) + _BOLD_OFF
+        out += (_ALIGN["center"] + _BOLD_ON + _size(1, 2)
+                + _text_line(str(spec.get("title", ""))[:64]) + _size(1, 1) + _BOLD_OFF)
+        meta = " / ".join(str(x) for x in [spec.get("console"), spec.get("year"),
+                          spec.get("edition"), spec.get("region")] if x)
+        if meta:
+            out += _ALIGN["center"] + _text_line(meta[:48])
+        out += _ALIGN["left"] + _text_line("-" * 32)
+        cond = " ".join(str(x) for x in [spec.get("condition"),
+                        (f"grade {spec.get('grade')}" if spec.get("grade") else ""),
+                        spec.get("completeness")] if x)
+        if cond:
+            out += _text_line("Condition: " + cond)
+        if spec.get("location"):
+            out += _text_line("Location:  " + str(spec["location"]))
+        if spec.get("price") not in (None, ""):
+            out += (_BOLD_ON + _size(1, 2) + _text_line("Price: " + money(spec.get("price")))
+                    + _size(1, 1) + _BOLD_OFF)
+        if spec.get("note"):
+            out += _text_line(str(spec["note"])[:96])
+        out += _text_line("-" * 32)
+        if sku:
+            out += _ALIGN["center"] + _barcode(sku)
+        out += _ALIGN["left"] + _FEED3 + _CUT
+    else:  # sticker
+        t = str(spec.get("title", ""))
+        if t:
+            out += _ALIGN["center"] + _BOLD_ON + _text_line(t[:32]) + _BOLD_OFF
+        line = "   ".join(x for x in [
+            (money(spec.get("price")) if spec.get("price") not in (None, "") else ""),
+            ("@" + str(spec["location"]) if spec.get("location") else "")] if x)
+        if line:
+            out += _ALIGN["center"] + _text_line(line)
+        if sku:
+            out += _ALIGN["center"] + _barcode(sku)
+        out += _ALIGN["left"] + _FEED3 + _CUT
+    return bytes(out)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Printer registry (sqlite)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -503,6 +558,39 @@ if _CAP_AVAILABLE:
         res = await _route(printer, data)
         await emit_event({"type": "print.job", "stage": "label",
                           "message": f"label via {res.get('transport')}"})
+        return {"ok": True, **res}
+
+    @capability(
+        "print.item_label", http_method="POST", http_path="/print/item_label",
+        http_tags=["print"],
+        schema=enum_schema(mode=["sticker", "slip"]),
+        description="Print an INTERNAL inventory barcode label to a thermal printer. "
+                    "'sticker' = a compact stick-on (title, price @ location, CODE128 "
+                    "of the SKU). 'slip' = a fuller insert to pack in the box (title, "
+                    "console/year/edition, condition/grade, price, location, notes, "
+                    "barcode). The SKU barcode scans back to pull the exact unit up. "
+                    "Input: sku (str! — the internal code), title, price, currency "
+                    "(GBP), condition, grade, completeness, console, year, edition, "
+                    "region, location, note, store, mode (sticker|slip), printer_id. "
+                    "Output: {ok, escpos_b64, bytes, transport, routed}.")
+    async def cap_print_item_label(
+        sku: str = "", title: str = "", price: float = None, currency: str = "GBP",
+        condition: str = "", grade: float = None, completeness: str = "",
+        console: str = "", year: str = "", edition: str = "", region: str = "",
+        location: str = "", note: str = "", store: str = "", mode: str = "sticker",
+        printer_id: str = "", trace_id=None):
+        await _ensure_schema()
+        if not (sku or title):
+            return {"error": "sku or title required"}
+        data = build_item_label({
+            "sku": sku, "title": title, "price": price, "currency": currency,
+            "condition": condition, "grade": grade, "completeness": completeness,
+            "console": console, "year": year, "edition": edition, "region": region,
+            "location": location, "note": note, "store": store, "mode": mode})
+        printer = await _run(_db_get_printer, printer_id or "default")
+        res = await _route(printer, data)
+        await emit_event({"type": "print.job", "stage": "item_label",
+                          "message": f"{mode} label {sku} via {res.get('transport')}"})
         return {"ok": True, **res}
 
     @capability(

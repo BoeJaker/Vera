@@ -252,7 +252,8 @@ async def _serve_vera_ui_js():
     p = Path(__file__).parent.parent / "vera-ui.js"
     if p.exists():
         return Response(content=p.read_text(encoding="utf-8"),
-                        media_type="application/javascript")
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
     return Response(content="console.warn('vera-ui.js not found');",
                     media_type="application/javascript")
 
@@ -367,6 +368,54 @@ async def cap_loader_set(type: str = "", speed: Optional[float] = None,
             pass
     await emit_event({"type": "ui.loader.changed", "config": cfg})
     return {"config": cfg}
+
+
+# ── UI scale (global zoom) — mirrors the theme/loader API ─────────────────────
+# A single magnification factor applied to every panel (CSS `zoom` on <html> in
+# vera-ui.js). localStorage is the live per-device store; this is the persistence
+# seed for fresh browsers and the broadcast channel for programmatic changes.
+_UI_SCALE_DEFAULT = 1.0
+_UI_SCALE: float = _UI_SCALE_DEFAULT
+
+
+def _clamp_scale(v) -> float:
+    try:
+        v = float(v)
+    except Exception:
+        return _UI_SCALE_DEFAULT
+    if v <= 0:
+        return _UI_SCALE_DEFAULT
+    return round(max(0.6, min(2.0, v)), 2)
+
+
+@capability(
+    "ui.scale.get",
+    http_method="GET", http_path="/ui/scale", http_tags=["ui"],
+    memory="off", silent=True,
+    description="Get the global UI scale (zoom) factor. 1.0 = 100%.",
+)
+async def cap_scale_get(trace_id=None):
+    return {"scale": _UI_SCALE, "min": 0.6, "max": 2.0, "step": 0.1}
+
+
+@capability(
+    "ui.scale.set",
+    http_method="POST", http_path="/ui/scale/set", http_tags=["ui"],
+    memory="off", silent=True,
+    description="Set the global UI scale (zoom) applied across every panel. "
+                "Input: scale (float, 0.6–2.0; 1.0 = 100%). Broadcasts to all UIs.",
+)
+async def cap_scale_set(scale: float, trace_id=None):
+    global _UI_SCALE
+    _UI_SCALE = _clamp_scale(scale)
+    r = _redis()
+    if r:
+        try:
+            await r.set("vera:ui:scale", str(_UI_SCALE))
+        except Exception:
+            pass
+    await emit_event({"type": "ui.scale.changed", "scale": _UI_SCALE})
+    return {"scale": _UI_SCALE}
 
 
 # Serve vera-graph.js — the unified reusable graph element
@@ -844,7 +893,7 @@ def get_allowed_caps(scope: str = "general") -> List[str]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _startup():
-    global _ACTIVE_THEME
+    global _ACTIVE_THEME, _UI_SCALE
     r = _redis()
     if not r:
         return
@@ -854,6 +903,14 @@ async def _startup():
         saved = await r.get("vera:ui:theme")
         if saved:
             _ACTIVE_THEME = saved.decode() if isinstance(saved, bytes) else saved
+    except Exception:
+        pass
+
+    # Load UI scale
+    try:
+        saved = await r.get("vera:ui:scale")
+        if saved:
+            _UI_SCALE = _clamp_scale(saved.decode() if isinstance(saved, bytes) else saved)
     except Exception:
         pass
 

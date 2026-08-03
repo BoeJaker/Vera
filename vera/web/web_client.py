@@ -252,11 +252,50 @@ def detect_block(html: str, status_code: int) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 # HTML → text
 # ─────────────────────────────────────────────────────────────────────────────
+_MAIN_CONTENT_RE = [
+    # Wikipedia's actual article container — checked first since it's the
+    # domain observed live pushing real content past a naive full-page strip.
+    re.compile(r'<div[^>]+id=["\']mw-content-text["\'][^>]*>(.*)', re.S | re.I),
+    re.compile(r'<div[^>]+id=["\']bodyContent["\'][^>]*>(.*)', re.S | re.I),
+    # Generic semantic containers most other sites use.
+    re.compile(r"<main\b[^>]*>(.*?)</main>", re.S | re.I),
+    re.compile(r"<article\b[^>]*>(.*?)</article>", re.S | re.I),
+    re.compile(r'<div[^>]+role=["\']main["\'][^>]*>(.*)', re.S | re.I),
+]
+# A match shorter than this is more likely a wrong/near-empty container than
+# the real article body — trust it only when there's substance behind it.
+_MIN_MAIN_CONTENT_CHARS = 400
+
+
+def _extract_main_html(html: str) -> str:
+    """Best-effort isolate the page's real content container BEFORE stripping
+    tags. Observed live: a naive whole-document strip put Wikipedia's nav
+    menu ("Jump to content / Main menu / Main page / Contents / Current
+    events / Random article / ...") at the very FRONT of the extracted text,
+    ahead of the actual article — a caller reading only the head (or a
+    truncated preview) never reaches the real content and wrongly concludes
+    the fetch failed, then escalates to a much more expensive and fragile
+    tool (browser automation with guessed CSS selectors, or a live search
+    engine hit) for data a plain fetch already had.
+
+    Purely additive: falls back to the FULL, unmodified document when no
+    recognized container matches or the match is implausibly short — never
+    removes anything a narrower heuristic might have gotten wrong, only
+    reorders what the existing full-strip already does once a container is
+    confidently found."""
+    for pat in _MAIN_CONTENT_RE:
+        m = pat.search(html)
+        if m and len(m.group(1)) >= _MIN_MAIN_CONTENT_CHARS:
+            return m.group(1)
+    return html
+
+
 def html_to_text(html: str, preserve_structure: bool = True,
                  max_chars: int = MAX_PAGE_CHARS) -> str:
     """Strip HTML tags, decode entities, collapse whitespace."""
     if not html:
         return ""
+    html = _extract_main_html(html)
     text = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.S | re.I)
     text = re.sub(r"<style[^>]*>.*?</style>", " ", text, flags=re.S | re.I)
     text = re.sub(r"<noscript[^>]*>.*?</noscript>", " ", text, flags=re.S | re.I)

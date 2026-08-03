@@ -2196,21 +2196,35 @@ async def ide_git_commit(path: str, message: str, add_all: bool = True, trace_id
     "ide.git.log",
     http_method="POST", http_path="/ide/git/log", http_tags=["ide", "git"],
     memory="off",
-    description="Get git log for a repository. "
-                "Input: path (str!), n (int, default 20). "
-                "Output: {commits: [{hash, author, date, message}]}.",
+    description="Get git log for a repository, optionally windowed by time — the "
+                "shared correlation primitive for tying a chat session or a Loop "
+                "Lab run back to the commit(s) it produced (see "
+                "ide.claude_sessions.* and evolve.* callers). "
+                "Input: path (str!), n (int, default 20 — ignored when since/until "
+                "given), since (str — git-parseable date/time, e.g. an ISO "
+                "timestamp or unix epoch, inclusive lower bound), until (str — "
+                "same, inclusive upper bound). "
+                "Output: {commits: [{hash, author, date, ts, message}]}.",
 )
-async def ide_git_log(path: str, n: int = 20, trace_id=None):
-    rc, out, err = _git(
-        ["log", f"-{n}", "--pretty=format:%H\x1f%an\x1f%ad\x1f%s", "--date=short"],
-        path,
-    )
+async def ide_git_log(path: str, n: int = 20, since: str = "", until: str = "", trace_id=None):
+    args = ["log", "--pretty=format:%H\x1f%an\x1f%ad\x1f%ct\x1f%s", "--date=short"]
+    if since or until:
+        # A time-windowed query is answering "what landed during this
+        # session/run" — unbounded by count, since we want everything in
+        # the window, not just the most recent N.
+        if since:
+            args.append(f"--since={since}")
+        if until:
+            args.append(f"--until={until}")
+    else:
+        args.append(f"-{n}")
+    rc, out, err = _git(args, path)
     commits = []
     for line in out.splitlines():
         parts = line.split("\x1f")
-        if len(parts) == 4:
+        if len(parts) == 5:
             commits.append({"hash": parts[0][:8], "author": parts[1],
-                            "date": parts[2], "message": parts[3]})
+                            "date": parts[2], "ts": int(parts[3]), "message": parts[4]})
     return {"commits": commits, "path": path}
 
 

@@ -4,7 +4,7 @@
   <script>/* vera theme boot */
   (function(){try{var d=document.documentElement,S=window.localStorage;
   var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
-  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  var vf=S.getItem('vera:ui:themeVarsFor');if(t&&vf!==t)return;var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
   if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <title>Vera — Loop Lab</title>
@@ -57,6 +57,8 @@ tr.clk:hover td{background:var(--bg2)}
 .kv .k{font-size:9px;color:var(--dim2);text-transform:uppercase;letter-spacing:.5px}
 .kv .v{font-size:14px;font-weight:700;font-family:var(--mono)}
 .tag{font-size:8.5px;padding:0 5px;border-radius:3px;background:var(--bg3);color:var(--dim2);font-family:var(--mono)}
+.tag.commit{color:var(--acc);cursor:pointer;border:1px solid var(--acc)}
+.tag.commit:hover{background:var(--acc);color:#fff}
 .sbd-pre{max-height:420px;overflow:auto;font-size:10.5px;line-height:1.45;white-space:pre;background:var(--bg2);border-radius:5px;padding:8px;margin:0}
 .dl{display:block}
 .dl.add{color:var(--ok);background:rgba(109,184,122,.08)}
@@ -1709,10 +1711,26 @@ async function saveTask(){
 async function delTask(id){if(!confirm('Delete task '+id+'?'))return;await post('/evolve/task/delete',{id});closeModal();loadTasks()}
 
 /* ═══ RUNS ═══ */
+// Cross-link to Dispatch: same postMessage contract Dispatch uses to jump
+// here — parent shell (vscode_panel.html) switches views and force-reloads
+// the target iframe with ?commit=<hash> since iframe src is set once only.
+function crossLinkToDispatch(hash){
+  if(window.parent===window)return;
+  window.parent.postMessage({type:'vera-cross-link',target:'dispatch',commit:hash},'*');
+}
+function runCommitTags(commits){
+  if(!commits||!commits.length)return'';
+  return commits.map(c=>'<span class="tag commit" onclick="event.stopPropagation();crossLinkToDispatch(\''+esc(c.hash)+'\')" title="'+esc(c.message||'')+' — jump to the Dispatch session that made this commit">📌 '+esc(c.hash)+'</span>').join('');
+}
 async function loadRuns(){
-  const r=await api('/evolve/runs?limit=60');const runs=(r&&r.runs)||[];
-  if(!runs.length){$('runs-body').innerHTML='<div class="empty">No runs yet.</div>';return}
-  let h='<table><tr><th>time</th><th>task</th><th>where</th><th>src</th><th>checks</th><th>score</th><th>combined</th><th>time</th><th></th></tr>';
+  const r=await api('/evolve/runs?limit=60');let runs=(r&&r.runs)||[];
+  const filterCommit=new URLSearchParams(location.search).get('commit');
+  if(filterCommit){
+    runs=runs.filter(r2=>(r2.commits||[]).some(c=>c.hash===filterCommit||filterCommit.startsWith(c.hash)));
+  }
+  const filterBar=filterCommit?'<div class="hint" style="padding:6px 0">Filtered to commit '+esc(filterCommit)+' — <a href="#" onclick="event.preventDefault();history.replaceState(null,\'\',location.pathname);loadRuns()">clear</a></div>':'';
+  if(!runs.length){$('runs-body').innerHTML=filterBar+'<div class="empty">'+(filterCommit?'No run in this window produced commit '+esc(filterCommit)+'.':'No runs yet.')+'</div>';return}
+  let h=filterBar+'<table><tr><th>time</th><th>task</th><th>where</th><th>src</th><th>checks</th><th>score</th><th>combined</th><th>time</th><th>commits</th><th></th></tr>';
   for(const r2 of runs){
     const wh=r2.where==='sandbox'?'<span class="tag" style="color:var(--ok)">🛡 sandbox</span>':(r2.where?'<span class="tag" style="color:var(--warn)">in-proc</span>':'');
     h+='<tr class="clk" onclick="openRun(\''+esc(r2.run_id)+'\')"><td class="mono">'+esc((r2.ts||'').slice(11,19))+'</td>'
@@ -1720,6 +1738,7 @@ async function loadRuns(){
       +'<td>'+wh+'</td>'
       +'<td><span class="tag">'+esc(r2.source||'')+'</span></td><td class="mono">'+esc(r2.checks_ok)+'/'+esc(r2.checks_n)+'</td>'
       +'<td>'+scChip(r2.score)+'</td><td>'+scChip(r2.combined)+'</td><td class="mono">'+(r2.elapsed_s||0)+'s</td>'
+      +'<td>'+runCommitTags(r2.commits)+'</td>'
       +'<td><button class="btn sm" onclick="event.stopPropagation();compareRun(\''+esc(r2.run_id)+'\')" title="Score with both critics">⇄</button></td></tr>';
   }
   h+='</table>';$('runs-body').innerHTML=h;
@@ -2228,5 +2247,6 @@ async function saveConfig(){
 
 loadAll();
 </script>
+<script src="/ui/vera-ui.js"></script>
 </body>
 </html>

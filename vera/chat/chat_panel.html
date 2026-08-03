@@ -3225,6 +3225,10 @@ const CH = (() => {
     }
     if(!resolved) resolved = 'chat-' + Date.now();
     SID = resolved;
+    // A prior "watch this LHM loop" override belonged to whatever session was
+    // active before — starting/switching sessions must not leave the
+    // Code/Artifacts pane silently pointed at some other, now-unrelated loop.
+    _artifactsSidOverride='';
     window._veraSessionId = SID;
     window._chatSessionId = SID;
     try{
@@ -5018,6 +5022,32 @@ IMPORTANT:
     bar.textContent = parts.join('   ·   ');
   }
 
+  /* A code block previewed here is a bare string with no real URL behind it
+     (srcdoc, base "about:srcdoc") — unlike the sandbox-file preview
+     (agent_loop_ouput.js's _previewUrl, a real path-based route), there is
+     no server-side location a <link href="style.css">/<script src="script.js">
+     could ever resolve against. But every code block rendered in this chat
+     is already sitting in _CODE_BLOCKS keyed by the filename parsed from its
+     fence (see _parseFenceFilename — the same `file=x` convention
+     code.author uses) — so a sibling CSS/JS block posted alongside the HTML
+     (the normal shape of a multi-file loop deliverable shown in chat) can be
+     inlined directly instead of left as a dangling, never-resolvable
+     reference. Confirmed live: a 3-file Pokedex (index.html/style.css/
+     script.js) rendered completely unstyled here even though the sandbox
+     file preview (a different code path) served all three correctly.*/
+  function _inlineSiblingAssets(html){
+    const byName={};
+    for(const k in _CODE_BLOCKS){
+      const b=_CODE_BLOCKS[k];
+      if(b && b.filename) byName[b.filename.replace(/^\.?\//,'')]=b;
+    }
+    if(!Object.keys(byName).length) return html;
+    html=html.replace(/<link\b[^>]*\brel=["']stylesheet["'][^>]*\bhref=["']([^"']+)["'][^>]*>/gi,
+      (m,href)=>{ const b=byName[href.replace(/^\.?\//,'')]; return b?('<style>'+b.code+'</style>'):m; });
+    html=html.replace(/<script\b(?![^>]*\bsrc=["']?data:)[^>]*\bsrc=["']([^"']+)["'][^>]*><\/script>/gi,
+      (m,src)=>{ const b=byName[src.replace(/^\.?\//,'')]; return b?('<script>'+b.code+'<\/script>'):m; });
+    return html;
+  }
   function _codePreviewLoad(lang, code, runJs){
     const frame=document.getElementById('codePreviewFrame');
     const codeEl=document.getElementById('codePreviewCode');
@@ -5047,13 +5077,14 @@ IMPORTANT:
       document.addEventListener('DOMContentLoaded',()=>document.body.appendChild(out));
     })();<\/script>`;
     if(l==='html'){
+      const _srcCode=_inlineSiblingAssets(code);
       // Inject console hook before </body> if possible, else prepend to <head>
-      if(/<\/body>/i.test(code)){
-        html=code.replace(/<\/body>/i, consoleHook+'</body>');
-      } else if(/<\/head>/i.test(code)){
-        html=code.replace(/<\/head>/i, consoleHook+'</head>');
+      if(/<\/body>/i.test(_srcCode)){
+        html=_srcCode.replace(/<\/body>/i, consoleHook+'</body>');
+      } else if(/<\/head>/i.test(_srcCode)){
+        html=_srcCode.replace(/<\/head>/i, consoleHook+'</head>');
       } else {
-        html=`<!DOCTYPE html><html><head>${consoleHook}</head><body>${code}</body></html>`;
+        html=`<!DOCTYPE html><html><head>${consoleHook}</head><body>${_srcCode}</body></html>`;
       }
       // Theme the page: base style goes at the START of <head> (or is
       // prepended) so the document's own styles always win over it.
@@ -5238,6 +5269,26 @@ IMPORTANT:
   let _artSandboxed=false;   // is the current artifact dir inside a container?
   let _artFsMode=false;      // false = workspace file list · true = browse whole FS
   let _artFsPath='';         // current dir in FS-browse mode
+  // A loop picked up from the LHM (chatLoopsList) runs under ITS OWN
+  // session_id, distinct from this chat's own SID — the loop timeline card
+  // gets pointed at it via aloEl.setSessionId(), but the separate Artifacts/
+  // Code pane always read the live chat's SID, so a picked-up loop's real
+  // workspace/artifacts never showed even though the timeline replayed fine.
+  // When set, this overrides SID for the Artifacts pane only; cleared when
+  // the user sends a message in their own live session again.
+  let _artifactsSidOverride='';
+  function _artSid(){ return _artifactsSidOverride || SID || ''; }
+  // Called at the top of every send* function: sending a message in the
+  // live session is an explicit signal the user is back to their own
+  // work, not still watching a picked-up loop — without this, the Code
+  // pane silently kept showing that loop's workspace until a full session
+  // switch (only cleared there previously), which is a much less common
+  // action than just sending a follow-up message.
+  function _clearWatchedLoopOverride(){
+    if(!_artifactsSidOverride) return;
+    _artifactsSidOverride='';
+    try{ if(CTX_TAB==='code') _artifactsRefresh(); }catch(_){}
+  }
   /* Flip between the flat workspace file list and a navigable browser over the
      WHOLE container filesystem (only offered when the session is sandboxed). */
   function _artifactsFsMode(){
@@ -5253,7 +5304,7 @@ IMPORTANT:
     if(treeEl) treeEl.innerHTML='<div style="color:var(--dim2);padding:4px">scanning…</div>';
     try{
       // 1) resolve the artifact dir for this session
-      let r=await fetch(BASE+'/exec/sandbox/artifact_dir?session_id='+encodeURIComponent(SID||''),
+      let r=await fetch(BASE+'/exec/sandbox/artifact_dir?session_id='+encodeURIComponent(_artSid()),
         {headers:{'Content-Type':'application/json'}});
       const info=await r.json();
       _artifactDir=info?.dir||'';
@@ -5282,7 +5333,7 @@ IMPORTANT:
       //    unavailable (older backend), so this degrades rather than breaks.
       let files=[];
       try{
-        r=await fetch(BASE+'/exec/artifacts/list?session_id='+encodeURIComponent(SID||''));
+        r=await fetch(BASE+'/exec/artifacts/list?session_id='+encodeURIComponent(_artSid()));
         const a=await r.json();
         if(a&&a.ok&&Array.isArray(a.files)){
           files=a.files.filter(f=>!f.is_dir).map(f=>({
@@ -5292,7 +5343,7 @@ IMPORTANT:
       }catch(_){ /* fall through to the legacy walk */ }
       if(!files.length){
         r=await fetch(BASE+'/ide/code/list_files',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({root:_artifactDir,max_files:500,session_id:SID||''})});
+          body:JSON.stringify({root:_artifactDir,max_files:500,session_id:_artSid()})});
         const j=await r.json();
         // Same noise filter for the legacy path — a raw tree walk surfaces the
         // pip/npm caches long before anything the run actually produced.
@@ -5315,7 +5366,7 @@ IMPORTANT:
           <span style="flex:1;overflow:hidden;text-overflow:ellipsis;cursor:pointer"
             onclick="CH._artifactOpen(this.parentElement.dataset.path, this.parentElement.dataset.rel)">📄 ${rel}${sz}</span>
           <a class="btn xs" style="text-decoration:none;flex:none" title="Download ${rel}"
-            href="${BASE}/exec/artifacts/download?session_id=${encodeURIComponent(SID||'')}&rel=${encodeURIComponent(f.rel||'')}"
+            href="${BASE}/exec/artifacts/download?session_id=${encodeURIComponent(_artSid())}&rel=${encodeURIComponent(f.rel||'')}"
             download onclick="event.stopPropagation()">⬇</a></div>`;
       }).join('');
     }catch(e){
@@ -5330,7 +5381,7 @@ IMPORTANT:
     const lblEl=document.getElementById('artifactDirLbl');
     if(treeEl) treeEl.innerHTML='<div style="color:var(--dim2);padding:4px">listing…</div>';
     try{
-      const qs='?path='+encodeURIComponent(path||'/')+'&session_id='+encodeURIComponent(SID||'');
+      const qs='?path='+encodeURIComponent(path||'/')+'&session_id='+encodeURIComponent(_artSid());
       const r=await fetch(BASE+'/ide/fs/browse'+qs,{method:'GET'});
       const j=await r.json();
       if(j&&j.error){ if(treeEl) treeEl.innerHTML='<div style="color:var(--err);padding:4px">'+esc(j.error)+'</div>'; return; }
@@ -5361,7 +5412,7 @@ IMPORTANT:
   async function _artifactOpen(path, rel){
     try{
       const r=await fetch(BASE+'/ide/code/read_lines',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({path,session_id:SID||''})});
+        body:JSON.stringify({path,session_id:_artSid()})});
       const j=await r.json();
       if(j&&j.error){ alert('Could not read file: '+j.error); return; }
       const content=(j&&(j.content!=null?j.content:(Array.isArray(j.lines)?j.lines.join('\n'):'')))||'';
@@ -6372,6 +6423,7 @@ IMPORTANT:
   setTimeout(_applyAskBeforeActing,0);
 
   async function sendAgentLoop(goal){
+    _clearWatchedLoopOverride();
     // Variant dispatch: if the user picked a server-side loop in the
     // Loop pane, route through that capability and stream its events.
     // 'chat' (default) keeps the existing in-page step-by-step loop.
@@ -7008,6 +7060,7 @@ Your task: decide what to do next to advance toward the goal.
   }
 
   async function sendMsg(msg){
+    _clearWatchedLoopOverride();
     const agentName=document.getElementById('agentBarSel')?.value||'assistant';
     // ── Instant render ────────────────────────────────────────────────
     // Paint the user's message AND the agent "thinking" throbber NOW, before
@@ -8052,6 +8105,7 @@ Your task: decide what to do next to advance toward the goal.
              dag.complete, dag.error, [DONE]
   ═══════════════════════════════════════════════════════ */
   async function sendDag(msg){
+    _clearWatchedLoopOverride();
     const agentName=document.getElementById('agentBarSel')?.value||'dag-planner';
     const execute=document.getElementById('cfgDagExec')?.checked!==false;
     const stepwise=document.getElementById('cfgDagStepwise')?.checked;
@@ -9891,6 +9945,12 @@ Your task: decide what to do next to advance toward the goal.
     try{ aloEl.setSessionId(session); }catch(_){}
     try{ aloEl.reset&&aloEl.reset(); }catch(_){}
     for(const ev of events){ try{ aloEl.appendEvent(ev); }catch(_){} }
+    // Point the Code/Artifacts pane at THIS loop's own session — it runs
+    // under a session_id distinct from the live chat's SID, so without this
+    // the pane kept showing the live chat's (usually empty) workspace
+    // instead of the loop's real deliverables.
+    _artifactsSidOverride=session;
+    try{ if(CTX_TAB==='code') _artifactsRefresh(); }catch(_){}
     try{ scroll&&scroll(); }catch(_){}
     if((run.status||'')==='running'){
       appendSys('<span style="color:var(--dim2)">↻ Watching a strategic goal\x27s dream loop live…</span>');
@@ -10471,6 +10531,7 @@ Your task: decide what to do next to advance toward the goal.
   function toggleCouncil(){COUNCIL_MODE=!COUNCIL_MODE;document.getElementById('councilPanel').classList.toggle('on',COUNCIL_MODE);document.getElementById('councilTopBtn').classList.toggle('council-on',COUNCIL_MODE);if(COUNCIL_MODE&&!COUNCIL_INSTS.size)councilSelectAll();}
 
   async function sendCouncil(msg){
+    _clearWatchedLoopOverride();
     const agentName=document.getElementById('agentBarSel')?.value||'assistant';const mode=document.getElementById('councilMode')?.value||'vote';
     const ctxInj=buildCtxInj();const instIds=[...COUNCIL_INSTS];
     if(!instIds.length){appendSys('Select instances for council mode');return;}

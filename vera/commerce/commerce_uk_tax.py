@@ -258,6 +258,23 @@ def _auto_postage(order_id: str) -> Optional[float]:
             return None
     return None
 
+def _materials_packaging(order: dict, settings: dict) -> float:
+    """Per-item packaging cost from the consumables ledger (commerce_ops) × units
+    in the order, so packaging accounting is per-item. Falls back to the flat
+    packaging_default when no materials are recorded."""
+    ops = sys.modules.get("commerce_ops")
+    if ops and hasattr(ops, "_materials_per_item_sync"):
+        try:
+            per = _f(ops._materials_per_item_sync("", order.get("store_id") or "")
+                     .get("per_item_total"))
+            if per:
+                qty = sum(_i(it.get("qty", 1)) for it in (order.get("items") or [])) or 1
+                return round(per * qty, 2)
+        except Exception:
+            pass
+    return _f(settings.get("packaging_default"), 0.30)
+
+
 def _order_finance(order: dict, settings: dict) -> dict:
     """Full profit breakdown for one order. Recorded costs win over auto ones."""
     oid = order.get("id", "")
@@ -281,7 +298,7 @@ def _order_finance(order: dict, settings: dict) -> dict:
         postage = 0.0
     packaging = costs.get("packaging_cost")
     if packaging is None:
-        packaging = _f(settings.get("packaging_default"), 0.30)
+        packaging = _materials_packaging(order, settings)
     other = _f(costs.get("other_cost"))
 
     cost_total = round(_f(cogs) + _f(fee) + _f(postage) + _f(packaging) + other, 2)

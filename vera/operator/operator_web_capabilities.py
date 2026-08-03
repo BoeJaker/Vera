@@ -154,7 +154,24 @@ async def _open_session(url: str = "", kind: str = "", base_url: str = "",
                 pass
             sess.meta["last_url"] = sess.page.url
         except Exception as e:
-            log.warning("operator: initial navigation failed: %s", e)
+            # Was previously a silently-swallowed log.warning — the session
+            # would then enter run_loop() sitting on about:blank with NO
+            # indication anything went wrong, and the model's own first
+            # "observe" sees a genuinely blank page with no error attached.
+            # Confirmed live (§5.22, Test U): the model then GUESSES its
+            # own goto target (a bare relative filename) instead of retrying
+            # the URL it was actually given, and that guess trips the
+            # allowlist check — a confusing failure mode with no trace back
+            # to the real cause. If the caller's own start page can't be
+            # reached, that is itself the actionable problem; own the
+            # session and close it rather than leak a half-started one.
+            log.warning("operator: initial navigation to %s failed: %s",
+                       resolved["start_url"], e)
+            try:
+                await _be.close_session(sess.session_id)
+            except Exception:
+                pass
+            return {"error": f"could not load the start page ({resolved['start_url']}): {e}"}
     return {"ok": True, "session_id": sess.session_id, "resolved": resolved,
             "summary": sess.summary()}
 
@@ -399,7 +416,21 @@ async def cap_step(session_id: str = "", goal: str = "", provider: str = "ollama
 
 @capability("operator.run", memory="on",
             http_method="POST", http_path="/operator/run", http_tags=["operator"],
-            description="Drive a goal to completion with the observe→think→act loop. "
+            description="Drive a REAL browser session to a goal via observe→think→act — a "
+                        "general-purpose web operator, not just a verification tool. WHEN TO "
+                        "USE: any goal that means actually operating a real page — click a "
+                        "button/link, fill a form and submit it, navigate a site's own "
+                        "structure to find something (menus, search boxes, pagination), read/"
+                        "extract real content off a rendered page (including JS-rendered "
+                        "content a plain HTTP fetch never sees), OR verify a webpage's visible "
+                        "UI actually changed after an interaction (a status text flipping, a "
+                        "page navigating, an element appearing) — that's the tool for checking "
+                        "a page/interface really works, not just that its file exists, but it "
+                        "is one of several jobs this cap does, not the only one. For a pure "
+                        "text/data lookup that doesn't need real navigation prefer the lighter "
+                        "web.research (query-driven) or web.crawl (known-site, link-following) "
+                        "— reach for operator.run when the page itself needs to be DRIVEN, not "
+                        "just read. "
                         "Inputs: goal (str!), url OR kind+base_url (target), provider, "
                         "model, max_steps (15), session_id (reuse), allowlist (extra "
                         "hosts), dry_run, allow_destructive, keep_open, branch. "

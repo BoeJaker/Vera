@@ -1210,7 +1210,25 @@
             <span class="alo-cycle-tool">🗒 Ledger</span>
             <span class="alo-cycle-status">${ok}/${done.length} ok${unmet?` · ${unmet} unmet`:''} · ${(ev.pending||[]).length} pending</span>
           </div><div class="alo-cycle-preview" style="font-family:var(--mono,monospace);font-size:10px">done: ${rows||'—'}<br>pending: ${_esc(pend)}</div>`;
-        if(card){ card.innerHTML = inner; }
+        if(card){
+          // Re-used element updated IN PLACE stays frozen at wherever it first
+          // landed in the scrollback (right after step 1's own cards) — every
+          // later ledger snapshot then silently overwrites that SAME card's
+          // content, so a reader scrolling through sees "done: 1 2 3" sitting
+          // directly under step 1, well before steps 2/3 ever visibly ran.
+          // Confirmed live, 2026-08-03 (user's own screenshot: the ledger card
+          // right after step 1's journal already read "done: ✓1 ✓2 ✓3"). Move
+          // it to the END of the log on every update, alongside a fresh
+          // timestamp, so its position always reflects when THIS snapshot
+          // actually happened — a live status widget, not a fixed-position
+          // history entry silently mutating underneath the reader.
+          card.innerHTML = inner;
+          const host = this._sr.querySelector('.alo-cycles');
+          if(host && host.lastElementChild !== card) host.appendChild(card);
+          const timeEl = card.querySelector('.alo-cycle-time');
+          if(timeEl) timeEl.textContent = new Date().toLocaleTimeString([], {hour12:false});
+          _follow(host);
+        }
         else { card = this._cycleEl(inner, 'ledger'); if(card) card.setAttribute('data-ledger','1'); }
         return;
       }
@@ -2215,6 +2233,15 @@
       return '/exec/artifacts/download?session_id=' + encodeURIComponent(this._sessionId||'')
            + '&rel=' + encodeURIComponent(name);
     }
+    _previewUrl(name){
+      // A REAL, path-based route (not a query-param download link) — needed
+      // so a multi-file deliverable's relative <link href="style.css">/
+      // <script src="script.js"> resolve correctly against the browser's
+      // own normal same-directory URL rules. See _showFile's html-preview
+      // branch for why this matters and _fileUrl doesn't work for it.
+      return '/remote/sandbox/preview/' + encodeURIComponent(this._sessionId||'')
+           + '/' + encodeURIComponent(name);
+    }
     async _renderFilesCard(){
       if(!this._sessionId) return;
       let data;
@@ -2261,22 +2288,39 @@
         body.innerHTML = `<img src="${url}" style="max-width:100%;border-radius:4px">`;
         return;
       }
+      if(mode === 'preview' && (ext === 'html' || ext === 'htm')){
+        // sandbox iframe pointed at the REAL sandbox-preview route (not
+        // srcdoc-with-fetched-text): a deliverable split across index.html +
+        // style.css + script.js needs its <link>/<script src> to resolve to
+        // the sibling files, and srcdoc documents get "about:srcdoc" as their
+        // base URL — any relative reference inside them 404s regardless of
+        // what the real files are named or where they live. Confirmed live:
+        // exactly this (index.html/style.css/script.js from one loop run)
+        // rendered blank/unstyled in this preview while curling each file
+        // directly worked fine — the files were never the problem.
+        // `/remote/sandbox/preview/<sid>/<path>` is a real path-based route
+        // (session_sandbox_capabilities.py) explicitly built for this case —
+        // its own docstring: "A page with EXTERNAL asset files works too,
+        // since the browser will request each asset's own relative path
+        // against this same route." Security posture is UNCHANGED from the
+        // srcdoc version: `sandbox="allow-scripts"` with no
+        // `allow-same-origin` still forces an opaque ("null") origin on
+        // whatever loads inside the iframe, even when `src` is a real,
+        // same-origin URL — the generated page still can't reach this page's
+        // cookies/localStorage or navigate the parent.
+        body.innerHTML = '';
+        const fr = document.createElement('iframe');
+        fr.setAttribute('sandbox', 'allow-scripts');
+        fr.style.cssText = 'width:100%;height:420px;border:1px solid var(--border,#3a3530);border-radius:4px;background:#fff';
+        fr.src = this._previewUrl(name);
+        body.appendChild(fr);
+        return;
+      }
       let text = '';
       try{
         const r = await fetch(url);
         text = await r.text();
       }catch(e){ body.textContent = 'could not read: ' + e; return; }
-      if(mode === 'preview' && (ext === 'html' || ext === 'htm')){
-        // srcdoc + sandbox: render it, but never let a generated page reach the
-        // parent document or the network on our origin.
-        body.innerHTML = '';
-        const fr = document.createElement('iframe');
-        fr.setAttribute('sandbox', '');
-        fr.style.cssText = 'width:100%;height:420px;border:1px solid var(--border,#3a3530);border-radius:4px;background:#fff';
-        fr.srcdoc = text;
-        body.appendChild(fr);
-        return;
-      }
       if(mode === 'preview' && ext === 'md'){
         body.innerHTML = `<pre class="alo-file-src">${_esc(text.slice(0, 20000))}</pre>`;
         return;

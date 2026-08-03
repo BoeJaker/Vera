@@ -1,11 +1,14 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<script>/* vera theme boot */
+<script>/* vera theme boot — coherence-aware: only replay cached vars when they belong
+   to the active theme id, else let themes.css [data-theme] win (avoids the
+   dark-vars-over-ash "black on black" flash). vera-ui.js reconciles after load. */
 (function(){try{var d=document.documentElement,S=window.localStorage;
 var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
-var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
-if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+var vfor=S.getItem('vera:ui:themeVarsFor');
+if(t&&vfor===t){var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}}catch(e){}})();</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Vera — Scan Station</title>
@@ -19,7 +22,7 @@ if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
   --text:#ddd5c8;--dim:#6a6058;--dim2:#8a7e70;
   --mono:'JetBrains Mono','Fira Mono',monospace;
   --sans:'Inter','IBM Plex Sans',system-ui,sans-serif;
-  --radius:6px;--radius-sm:4px;color-scheme:dark;
+  --radius:6px;--radius-sm:4px;--on-acc:#0d0f12;color-scheme:light dark;
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:13px}
@@ -39,10 +42,10 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc)}
 textarea{width:100%;resize:vertical;font-family:var(--sans);font-size:12.5px;line-height:1.45}
 .btn{background:var(--bg2);border:1px solid var(--border2);color:var(--text);border-radius:var(--radius-sm);padding:6px 12px;font-size:12px}
 .btn:hover{background:var(--bg3)}
-.btn.pri{background:var(--acc);border-color:var(--acc);color:#0d0f12;font-weight:600}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#0d0f12);font-weight:600}
 .btn.pri:hover{filter:brightness(1.08)}
 .btn.sm{padding:3px 8px;font-size:11px}
-.btn.on{background:var(--acc);border-color:var(--acc);color:#0d0f12;font-weight:600}
+.btn.on{background:var(--acc);border-color:var(--acc);color:var(--on-acc,#0d0f12);font-weight:600}
 .btn.warn{border-color:var(--warn);color:var(--warn)}
 .btn.danger{border-color:var(--err);color:var(--err)}
 .btn:disabled{opacity:.5;cursor:default}
@@ -51,12 +54,12 @@ textarea{width:100%;resize:vertical;font-family:var(--sans);font-size:12.5px;lin
 .pane.left{border-right:1px solid var(--border);max-width:46%}
 .card{background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:14px}
 .card h3{font-size:12px;margin-bottom:10px;color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;gap:8px}
-.card h3 .n{background:var(--acc);color:#0d0f12;border-radius:50%;width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700}
+.card h3 .n{background:var(--acc);color:var(--on-acc,#0d0f12);border-radius:50%;width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700}
 .scanbox{display:flex;gap:8px;align-items:center;background:var(--bg2);border:2px solid var(--acc);border-radius:var(--radius);padding:10px}
 .scanbox input{flex:1;font-family:var(--mono);font-size:20px;background:transparent;border:none;letter-spacing:1px}
 .seg{display:inline-flex;border:1px solid var(--border2);border-radius:var(--radius-sm);overflow:hidden}
 .seg button{background:var(--bg2);border:none;color:var(--dim2);padding:5px 12px;font-size:12px}
-.seg button.on{background:var(--acc);color:#0d0f12;font-weight:600}
+.seg button.on{background:var(--acc);color:var(--on-acc,#0d0f12);font-weight:600}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
 .fld{display:flex;flex-direction:column;gap:3px}
 .fld label{font-size:10.5px;color:var(--dim2);text-transform:uppercase;letter-spacing:.4px}
@@ -100,7 +103,40 @@ video{width:100%;border-radius:var(--radius);background:#000;aspect-ratio:4/3;ob
 .dot.on{background:var(--up);box-shadow:0 0 6px var(--up)}
 kbd{background:var(--bg3);border:1px solid var(--border2);border-radius:3px;padding:0 5px;font-family:var(--mono);font-size:10px;color:var(--dim2)}
 .hint{font-size:10.5px;color:var(--dim);margin-top:6px;line-height:1.5}
-@media(max-width:820px){.layout{flex-direction:column}.pane.left{max-width:none;border-right:none;border-bottom:1px solid var(--border)}}
+/* enrichment info card */
+.infocard{border-color:var(--acc)}
+.facts{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:7px;margin-top:4px}
+.fact{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:5px 8px}
+.fact .k{font-size:9.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--dim2)}
+.fact .v{font-size:12.5px;font-weight:600;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prices{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.pricebox{flex:1;min-width:78px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:7px 9px;cursor:pointer;transition:border-color .13s}
+.pricebox:hover{border-color:var(--acc)}
+.pricebox .k{font-size:9.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--dim2)}
+.pricebox .v{font-family:var(--mono);font-size:16px;font-weight:700;margin-top:2px}
+.pricebox .v.hi{color:var(--up)}
+.badge{display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:20px;font-size:11px;border:1px solid var(--border2);color:var(--dim2)}
+.badge.rar{border-color:var(--deal);color:var(--deal)}
+.badge.pos{border-color:var(--up);color:var(--up)}.badge.neg{border-color:var(--dn);color:var(--dn)}.badge.mix{border-color:var(--warn);color:var(--warn)}
+.spark{width:100%;height:56px;display:block;margin-top:8px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm)}
+.spark .leg{font-size:9px}
+.review-sum{font-size:12px;color:var(--text);margin-top:6px;line-height:1.5}
+.src{font-size:10px;color:var(--dim);margin-top:8px}
+.src a{color:var(--dim2)}
+/* command bar — always-visible scan/mode/category strip under the header */
+.cmdbar{display:flex;gap:10px;align-items:center;padding:9px 14px;border-bottom:1px solid var(--border);background:var(--bg1);flex-shrink:0;flex-wrap:wrap}
+.cmdbar .scanbox{flex:1;min-width:240px;padding:7px 10px}
+.cmdbar .scanbox input{font-size:18px}
+.coachline{display:none;align-items:center;gap:9px;padding:8px 14px;border-bottom:1px solid var(--border);background:linear-gradient(90deg,color-mix(in srgb,var(--acc) 12%,var(--bg1)),var(--bg1));flex-shrink:0;font-size:13px}
+.coachline.on{display:flex}
+.coachline .who{color:var(--acc);font-weight:700;flex-shrink:0}
+.coachline .msg{color:var(--text)}
+/* left pane fits the viewport: cap the video so the tray stays visible */
+video{max-height:44vh}
+.pane.left{display:flex;flex-direction:column}
+.pane.left .card:last-child{flex:1;min-height:0;display:flex;flex-direction:column}
+.pane.left .phototray{flex:1;min-height:0;overflow:auto;align-content:flex-start}
+@media(max-width:820px){.layout{flex-direction:column}.pane.left{max-width:none;border-right:none;border-bottom:1px solid var(--border)}video{max-height:36vh}}
 </style>
 </head>
 <body>
@@ -108,6 +144,7 @@ kbd{background:var(--bg3);border:1px solid var(--border2);border-radius:3px;padd
   <span class="brand">◆ SCAN STATION</span>
   <span class="muted" id="storeLbl" style="font-size:11px">Fast per-unit intake</span>
   <div class="chips" id="chips">
+    <button class="btn sm" id="coachBtn" title="Conversational assistant — asks for fields, comments on the item, warns of gaps">💬 Coach</button>
     <button class="btn sm" id="voiceBtn" title="Voice commands (V)"><span class="dot"></span>🎤 Voice</button>
     <button class="btn sm" id="ttsBtn" title="Read fields aloud">🔊 Read-back</button>
     <button class="btn sm" id="cfgBtn" title="Settings">⚙</button>
@@ -115,6 +152,8 @@ kbd{background:var(--bg3);border:1px solid var(--border2);border-radius:3px;padd
     <a class="btn sm" id="backLink" href="#">↩ Store</a>
   </div>
 </div>
+<div class="cmdbar" id="cmdbar"></div>
+<div class="coachline" id="coachLine"></div>
 <div class="layout">
   <div class="pane left" id="paneL"></div>
   <div class="pane" id="paneR"></div>
@@ -141,7 +180,23 @@ const num=v=>{if(v==null)return null;const n=parseFloat(String(v).replace(/[^0-9
 
 // ── config (persisted) ───────────────────────────────────────────────────────
 const DEF={autoAdvanceN:3,autoAssess:true,autoPrice:false,tts:false,mode:'used',
-  category:'video_game',condition:'good'};
+  category:'video_game',condition:'good',
+  // image processing
+  bgRemove:false,bgModel:'u2net',watermark:false,watermarkText:(STORE_NAME||'')+'',
+  wmPos:'br',wmOpacity:0.5,
+  // auto-capture from live video
+  autoCapture:false,obstructionCheck:false,
+  // vision model to route describe/identify/grade to (blank = auto)
+  visionModel:'',
+  // conversational assistant: asks for the active field, comments on the item,
+  // warns of gaps. Speaks aloud when on (independent of the Read-back toggle).
+  coach:false,
+  // market/metadata enrichment (PriceCharting + eBay/Vinted + reviews)
+  autoEnrich:true,region:'PAL',
+  // thermal label printing
+  autoPrint:false,printMode:'sticker',printerId:'',labelStore:(STORE_NAME||''),
+  // sticky location/bin — persists across scans until changed or cleared
+  stickyLocation:''};
 let CFG=Object.assign({},DEF,JSON.parse(localStorage.getItem('vera:intake:cfg')||'{}'));
 function saveCfg(){localStorage.setItem('vera:intake:cfg',JSON.stringify(CFG));}
 const CONDITIONS=['new','like_new','very_good','good','acceptable','for_parts'];
@@ -150,46 +205,82 @@ const CATEGORIES=['video_game','console','accessory','controller','amiibo','trad
 const CONDLABEL={new:'New',like_new:'Like new',very_good:'Very good',good:'Good',acceptable:'Acceptable',for_parts:'For parts'};
 
 // ── TTS ──────────────────────────────────────────────────────────────────────
-function say(t){if(!CFG.tts||!t||!window.speechSynthesis)return;try{const u=new SpeechSynthesisUtterance(String(t));
-  u.rate=1.08;u.pitch=1;window.speechSynthesis.cancel();window.speechSynthesis.speak(u);}catch(e){}}
+function speak(t,rate){if(!t||!window.speechSynthesis)return;try{const u=new SpeechSynthesisUtterance(String(t));
+  u.rate=rate||1.08;u.pitch=1;window.speechSynthesis.cancel();window.speechSynthesis.speak(u);}catch(e){}}
+function say(t){if(CFG.tts)speak(t);}                       // Read-back toggle
+
+// ── Coach: optional conversational assistant ─────────────────────────────────
+// Asks for the active field, remarks on the scanned item, warns of gaps. Speaks
+// aloud (regardless of Read-back) and shows a line under the command bar.
+const FIELD_Q={title:'What is it?',platform:'Which platform or system?',
+  condition:'What condition is it in?',completeness:'Is it complete — box and manual?',
+  grade:'What grade, nought to ten?',cost:'What did it cost you?',price:'Price it at?',
+  location:'Which bin or shelf?'};
+let _coachT=null;
+function coachSay(msg,opts){opts=opts||{};if(!CFG.coach||!msg)return;
+  const line=$('#coachLine');if(line){line.classList.add('on');
+    line.innerHTML='';line.append(el('span',{class:'who'},'Coach'),el('span',{class:'msg'},msg));}
+  if(!opts.silent)speak(msg,1.05);}
+function updateCoachUI(){const b=$('#coachBtn');if(b)b.classList.toggle('on',CFG.coach);
+  const line=$('#coachLine');if(line&&!CFG.coach)line.classList.remove('on');}
+function coachAsk(key){if(!CFG.coach)return;const q=FIELD_Q[key];if(!q)return;
+  clearTimeout(_coachT);_coachT=setTimeout(()=>coachSay(q),120);}   // debounce rapid focus
+function coachMissing(d){if(!CFG.coach)return[];const miss=[];
+  if(!(S.photos||[]).length)miss.push('no photos yet');
+  if(d.price==null||d.price==='')miss.push('no price');
+  if(CFG.mode==='used'&&(!d.grade))miss.push('no grade');
+  return miss;}
+// One-liner remark on the freshly scanned/identified item via the LLM cluster.
+async function coachRemark(ctx){if(!CFG.coach)return;
+  const bits=[ctx.title&&('Item: '+ctx.title),ctx.platform&&('Platform: '+ctx.platform),
+    ctx.condition&&('Condition: '+ctx.condition),ctx.grade&&('Grade: '+ctx.grade+'/10')].filter(Boolean).join('. ');
+  try{const r=await api('/llm/generate',{job_type:'chat',
+    system:'You are a warm, brief shop assistant helping catalogue second-hand video games. Reply in ONE short spoken sentence — a quick remark on the item and a nudge for the next detail. No lists, no preamble.',
+    prompt:bits+'. React in one sentence.'});
+    const t=((r&&r.text)||'').trim().replace(/^["']|["']$/g,'');
+    if(t)coachSay(t);}catch(e){}}
 
 // ── state ────────────────────────────────────────────────────────────────────
-const S={product:null,upc:'',photos:[],cands:null,session:[],busy:false,dirty:false};
+const S={product:null,upc:'',photos:[],cands:null,session:[],busy:false,dirty:false,enrich:null};
 const F={}; // form input elements, filled by buildForm
 
-// ── LEFT pane: scan + webcam + photos ────────────────────────────────────────
-function buildLeft(){
-  const p=$('#paneL');p.innerHTML='';
-  // 1 · scan
-  const c1=el('div',{class:'card'});
-  c1.append(el('h3',{},el('span',{class:'n'},'1'),'Scan or identify'));
+// ── COMMAND BAR: mode + category + barcode + identify (always visible) ────────
+function buildCmdbar(){
+  const bar=$('#cmdbar');bar.innerHTML='';
   const modeSeg=el('div',{class:'seg'});
-  for(const m of ['new','used']){const b=el('button',{onclick:()=>{CFG.mode=m;saveCfg();buildLeft();buildRight();}},m==='new'?'New':'Used');
+  for(const m of ['new','used']){const b=el('button',{onclick:()=>{CFG.mode=m;saveCfg();buildCmdbar();buildRight();}},m==='new'?'New':'Used');
     if(CFG.mode===m)b.classList.add('on');modeSeg.append(b);}
-  const catSel=el('select',{onchange:e=>{CFG.category=e.target.value;saveCfg();}});
+  const catSel=el('select',{title:'Category',onchange:e=>{CFG.category=e.target.value;saveCfg();}});
   for(const c of CATEGORIES){const o=el('option',{value:c},c.replace(/_/g,' '));if(c===CFG.category)o.selected=true;catSel.append(o);}
-  c1.append(el('div',{class:'row',style:'margin-bottom:10px'},
-    el('div',{class:'fld'},el('label',{},'Mode'),modeSeg),
-    el('div',{class:'fld',style:'flex:1'},el('label',{},'Category'),catSel)));
   const sb=el('div',{class:'scanbox'});
-  const bc=el('input',{id:'bc',placeholder:'scan barcode…',autocomplete:'off',autofocus:true});
+  const bc=el('input',{id:'bc',placeholder:'scan or type a barcode, then Enter…',autocomplete:'off',autofocus:true});
   bc.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();onScan(bc.value.trim());}});
   sb.append(bc,el('button',{class:'btn pri',onclick:()=>onScan(bc.value.trim())},'Look up'));
-  c1.append(sb);
-  c1.append(el('div',{class:'hint',html:'USB/Bluetooth scanners type like a keyboard — just scan while this box is focused. '+
-    'Scanning a new code auto-saves the current unit and starts the next. <kbd>F2</kbd> refocus · <kbd>Space</kbd> capture photo · <kbd>Ctrl+Enter</kbd> save.'}));
-  p.append(c1);
-  // 2 · camera
+  // sticky location / bin — stays until changed or cleared; scan a LOC: sticker to set
+  const locInput=el('input',{id:'locInput',value:CFG.stickyLocation||'',placeholder:'bin',style:'width:80px',
+    title:'Current bin — sticks across scans. Scan a LOC: label to set it.'});
+  locInput.addEventListener('change',()=>setLocation(locInput.value));
+  locInput.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();setLocation(locInput.value);$('#bc').focus();}});
+  const locBox=el('div',{class:'seg',style:'align-items:center'},
+    el('span',{style:'padding:0 6px;color:var(--dim2)'},'📍'),locInput,
+    el('button',{onclick:()=>printLocationLabel(),title:'Print a shelf label for this bin'},'🖨'),
+    el('button',{onclick:()=>setLocation(''),title:'Clear location'},'✕'));
+  bar.append(modeSeg,catSel,sb,locBox,
+    el('button',{class:'btn',id:'idBtn',onclick:identifyByPhoto,title:'Identify a barcode-less item (cartridge/disc) from a photo'},'✦ Identify by photo'));
+}
+
+// ── LEFT pane: camera + photos ───────────────────────────────────────────────
+function buildLeft(){
+  const p=$('#paneL');p.innerHTML='';
+  // camera
   const c2=el('div',{class:'card'});
-  c2.append(el('h3',{},el('span',{class:'n'},'2'),'Camera',
-    el('span',{style:'margin-left:auto;font-weight:400;text-transform:none;letter-spacing:0'},
-      el('button',{class:'btn sm',id:'idBtn',onclick:identifyByPhoto,title:'Identify a barcode-less item (cartridge/disc) from the picture'},'✦ Identify by photo'))));
+  c2.append(el('h3',{},el('span',{class:'n'},'1'),'Camera'));
   const devSel=el('select',{id:'devSel',style:'flex:1;min-width:120px'});
   const camRow=el('div',{class:'row',style:'margin-bottom:8px'},
     el('div',{class:'fld',style:'flex:1'},el('label',{},'Device (DroidCam, webcam…)'),devSel),
     el('button',{class:'btn',id:'camBtn',onclick:toggleCam},'▶ Start'));
   c2.append(camRow);
-  const vw=el('div',{class:'videowrap'});
+  const vw=el('div',{class:'videowrap',id:'vwrap',style:'display:none'});
   const v=el('video',{id:'vid',autoplay:true,muted:true,playsinline:true});
   vw.append(v,el('div',{class:'live',id:'liveBadge'},'⌕ scanning…'));
   c2.append(vw);
@@ -199,11 +290,14 @@ function buildLeft(){
       el('input',{type:'file',accept:'image/*',multiple:true,capture:'environment',
         style:'position:absolute;inset:0;opacity:0;cursor:pointer',
         onchange:e=>{for(const f of e.target.files)fileToDataURL(f).then(d=>addPhoto(d));}})),
+    el('button',{class:'btn'+(CFG.autoCapture?' on':''),id:'autoBtn',title:'Auto-shoot when the item is framed & steady',
+      onclick:()=>{CFG.autoCapture=!CFG.autoCapture;saveCfg();$('#autoBtn').classList.toggle('on',CFG.autoCapture);
+        toast('Auto-capture '+(CFG.autoCapture?'on':'off'),CFG.autoCapture?'ok':'');}},'◉ Auto'),
     el('span',{class:'muted',id:'liveOnOff',style:'font-size:11px;align-self:center'},'live barcode: —')));
   p.append(c2);
   // 3 · photos
   const c3=el('div',{class:'card'});
-  c3.append(el('h3',{},el('span',{class:'n'},'3'),'Photos',
+  c3.append(el('h3',{},el('span',{class:'n'},'2'),'Photos',
     el('span',{class:'muted',id:'photoCount',style:'margin-left:auto;font-weight:400;letter-spacing:0;text-transform:none'})));
   c3.append(el('div',{class:'phototray',id:'tray'}));
   c3.append(el('div',{class:'hint',html:`Approve <span class="mono">✓</span> the good shots. After <b>${CFG.autoAdvanceN}</b> approved, the item is auto-assessed and jumps to Save. Change the number in <kbd>⚙</kbd>.`}));
@@ -216,8 +310,11 @@ function fld(key,label,node){F[key]=node;return el('div',{class:'fld'},el('label
 function buildRight(){
   const p=$('#paneR');p.innerHTML='';const used=CFG.mode==='used';
   const c=el('div',{class:'card'});
-  c.append(el('h3',{},el('span',{class:'n'},'4'),used?'Unit details':'Item details',
-    el('span',{style:'margin-left:auto;font-weight:400;text-transform:none;letter-spacing:0'},
+  c.append(el('h3',{},el('span',{class:'n'},'3'),used?'Unit details':'Item details',
+    el('span',{style:'margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;font-weight:400;text-transform:none;letter-spacing:0'},
+      el('button',{class:'btn sm',onclick:buildTitle,title:'Normalise the name and build an eBay-style title from the fields'},'⚒ Title'),
+      el('button',{class:'btn sm',onclick:fetchArt,title:'Fetch box art & screenshots from retro libraries'},'🖼 Art'),
+      el('button',{class:'btn sm',onclick:()=>enrichCurrent(true),title:'Fetch prices, history, metadata, reviews & rarity'},'ℹ Info'),
       el('button',{class:'btn sm',id:'assessBtn',onclick:assessUnit,title:'Vision model grades condition + writes the description'},'✦ Assess & describe'))));
   const title=el('input',{class:'title-in',placeholder:'title (max 80)',maxlength:80});
   title.addEventListener('input',()=>S.dirty=true);
@@ -244,7 +341,7 @@ function buildRight(){
   grid2.append(el('div',{class:'fld'},el('label',{},' '),el('button',{class:'btn',onclick:suggestPrice},'£ suggest')));
   c.append(grid2);
   const grid3=el('div',{class:'grid2',style:'margin-top:10px'});
-  grid3.append(fld('location','Location / bin',el('input',{placeholder:'e.g. A3'})));
+  grid3.append(fld('location','Location / bin',el('input',{placeholder:'e.g. A3',value:CFG.stickyLocation||''})));
   grid3.append(fld('qty',used?'Copies (this scan)':'Quantity',el('input',{type:'number',value:used?1:1,min:1})));
   c.append(grid3);
   const desc=el('textarea',{rows:4,placeholder:'description (✦ Assess writes this from the photos + details)'});
@@ -253,6 +350,7 @@ function buildRight(){
   // save row
   const row=el('div',{class:'saverow'});
   row.append(el('button',{class:'btn pri',id:'saveBtn',onclick:()=>saveUnit(false)},'✓ Save & next'),
+    el('button',{class:'btn',onclick:()=>saveUnit(false,false,true),title:'Save then print an internal barcode label'},'✓ Save & label'),
     el('button',{class:'btn',onclick:()=>saveUnit(true)},'✓ Save & list'),
     el('button',{class:'btn',onclick:clearForm},'✕ Clear'));
   c.append(row);
@@ -260,6 +358,11 @@ function buildRight(){
   const order=['title','platform','condition','completeness','cost','price','location'];
   for(const k of order){const node=F[k];if(!node)continue;node.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();
     const i=order.indexOf(k);const nx=order.slice(i+1).map(x=>F[x]).find(Boolean);if(nx)nx.focus();else saveUnit(false);}});}
+  // coach asks for the active field on focus
+  for(const k in FIELD_Q){const node=F[k];if(node)node.addEventListener('focus',()=>coachAsk(k));}
+  // editing the location makes it the new sticky bin (kept across scans)
+  F.location.addEventListener('change',()=>{CFG.stickyLocation=F.location.value.trim();saveCfg();
+    const li=$('#locInput');if(li)li.value=CFG.stickyLocation;});
   p.append(c);
   // session
   const sc=el('div',{class:'card'});
@@ -287,6 +390,15 @@ function fillForm(d){if(d.title!=null)F.title.value=String(d.title).slice(0,80);
 // ── scan / lookup ────────────────────────────────────────────────────────────
 async function onScan(code){
   if(!code)return;
+  // location sticker? (LOC:xxx) → set the sticky current bin, don't intake
+  const lm=code.match(/^LOC[:\-]\s*(.+)$/i);
+  if(lm){$('#bc').value='';setLocation(lm[1].trim());return;}
+  // internal SKU sticker? (non-UPC) → pull the existing unit up (LBI: what + where)
+  if(!/^\d{8,14}$/.test(code)){
+    const f=await api('/business/unit/list'+qs({q:code,limit:5}));
+    const hit=(f.units||[]).find(u=>(u.sku||'').toLowerCase()===code.toLowerCase());
+    if(hit){$('#bc').value='';showFoundUnit(hit);return;}
+  }
   // scan-to-proceed: commit the in-progress unit (saves + clears the form) first
   if(S.dirty&&(F.title.value.trim()||S.photos.length)){await saveUnit(false);}
   $('#bc').value=code;S.upc=code;S.busy=true;toast('Looking up '+code+'…');
@@ -294,9 +406,13 @@ async function onScan(code){
   S.busy=false;$('#bc').value='';
   if(r.error||!r.product){toast('No match — type the title','warn');F.title.focus();say('No match found');return;}
   const pr=r.product;S.product=null;
-  fillForm({title:pr.title,platform:pr.platform||pr.brand||''});
+  const guessed=!pr.platform;const plat=pr.platform||guessConsole(pr.title)||pr.brand||'';
+  S.platformGuessed=guessed&&!!plat;                 // enrich may override a guess
+  fillForm({title:pr.title,platform:plat});
   if((pr.images||[]).length&&!S.photos.length){for(const u of pr.images.slice(0,1))addPhoto(u,true);}
   S.dirty=true;toast('Found: '+(pr.title||'').slice(0,48),'ok');say('Found '+(pr.title||''));
+  if(CFG.autoEnrich)enrichCurrent();          // enrich speaks its own richer coach line
+  else coachRemark({title:pr.title,platform:pr.platform||pr.brand});
   (CFG.mode==='used'?F.condition:F.price).focus();
 }
 
@@ -306,7 +422,7 @@ async function identifyByPhoto(){
   if(!img){img=await capturePhoto(true);}                       // grab a frame if none
   if(!img){toast('Capture or add a photo first','warn');return;}
   toast('Identifying…');const r=await api('/business/vision/identify_item',
-    {image_b64:img.data||'',image_url:img.url||'',category:CFG.category});
+    {image_b64:img.data||'',image_url:img.url||'',category:CFG.category,model:CFG.visionModel||''});
   if(r.error){toast(r.error,'err');return;}
   if(r.barcode){toast('Barcode read from photo: '+r.barcode,'ok');onScan(r.barcode);return;}
   S.cands=r.candidates||[];renderCands();
@@ -318,7 +434,8 @@ function renderCands(){let host=$('#candHost');
   const list=$('#candList');list.innerHTML='';
   for(const c of (S.cands||[])){list.append(el('div',{class:'cand',onclick:()=>{
       fillForm({title:c.title,platform:c.platform});if(c.category)CFG.category=c.category;
-      S.dirty=true;host.remove();toast('Set: '+(c.title||'').slice(0,40),'ok');F.condition.focus();}},
+      S.dirty=true;host.remove();toast('Set: '+(c.title||'').slice(0,40),'ok');
+      if(CFG.autoEnrich)enrichCurrent();else coachRemark({title:c.title,platform:c.platform});F.condition.focus();}},
     el('div',{},el('div',{style:'font-weight:600'},esc(c.title||'?')),
       el('div',{class:'muted',style:'font-size:11px'},esc([c.platform,c.region].filter(Boolean).join(' · '))||'—')),
     el('span',{class:'conf'},Math.round((c.confidence||0)*100)+'%')));}
@@ -333,12 +450,13 @@ async function assessUnit(){
   const ctx={title:F.title.value.trim(),platform:F.platform.value.trim(),
     category:CFG.category,completeness:F.completeness.value};
   const r=await api('/business/vision/assess_unit',
-    {image_b64:img.data||'',image_url:img.url||'',context:ctx});
+    {image_b64:img.data||'',image_url:img.url||'',context:ctx,model:CFG.visionModel||''});
   if(b){b.disabled=false;b.textContent='✦ Assess & describe';}
   if(r.error){toast(r.error,'err');return;}
   const d=r.draft||{};fillForm(d);S.dirty=true;
   toast('Graded '+(d.condition?CONDLABEL[d.condition]:'')+(d.grade!=null?(' · '+d.grade+'/10'):''),'ok');
-  say((d.condition?CONDLABEL[d.condition]+', ':'')+(d.grade!=null?('grade '+d.grade+'. '):'')+(d.description||''));
+  const spoken=(d.condition?CONDLABEL[d.condition]+', ':'')+(d.grade!=null?('grade '+d.grade+'. '):'')+(d.description||'');
+  if(CFG.coach)coachSay(spoken);else say(spoken);
 }
 async function suggestPrice(){toast('Pricing…');
   const t=F.title.value.trim();if(!t){toast('Enter a title first','warn');return;}
@@ -348,20 +466,257 @@ async function suggestPrice(){toast('Pricing…');
   else toast('No comparable sales found','warn');
 }
 
+// ── enrichment: prices, history, metadata, reviews, rarity ───────────────────
+async function enrichCurrent(manual){
+  const title=F.title.value.trim(),upc=S.upc||'';
+  if(!title&&!upc){if(manual)toast('Scan or name it first','warn');return;}
+  showInfoLoading();
+  const r=await api('/business/enrich/item',{title,upc,platform:F.platform.value.trim(),
+    category:CFG.category,region:CFG.region,reviews:true});
+  if(r.error||!r.enrichment){const h=$('#infoHost');if(h)h.remove();if(manual)toast(r.error||'No data','warn');return;}
+  S.enrich=r.enrichment;renderInfo(r.enrichment);
+  // autofill empties from the dossier
+  const p=r.enrichment.product||{};
+  if(p.console&&(!F.platform.value.trim()||S.platformGuessed)){F.platform.value=p.console;S.platformGuessed=false;}
+  if(p.cover&&!S.photos.length)addPhoto(p.cover,true);      // seed the box art
+  if(!F.title.value.trim()||/[\[\(]|\bnew\b|\bpal\b|\bntsc\b/i.test(F.title.value))buildTitle();
+  if(CFG.coach){const rar=(r.enrichment.rarity||{}).label;const pc=(r.enrichment.prices||{}).pricecharting||{};
+    coachSay((p.console?p.console+', ':'')+(p.release_year?p.release_year+'. ':'')+
+      (pc.cib?('Sells around '+money(pc.cib)+' complete. '):'')+(rar&&rar!=='Unknown'?rar+'.':''));}
+}
+function showInfoLoading(){let h=$('#infoHost');if(!h){h=el('div',{id:'infoHost',class:'card infocard'});$('#paneR').prepend(h);}
+  h.innerHTML='';h.append(el('h3',{},'ℹ Market & info'),el('div',{class:'muted',style:'font-size:12px'},el('span',{class:'spin'}),' gathering prices, history & reviews…'));}
+function priceBox(k,v,cls){return el('div',{class:'pricebox',title:'Use this price',
+    onclick:()=>{if(v!=null){F.price.value=Number(v).toFixed(2);S.dirty=true;toast('Price set '+money(v),'ok');}}},
+  el('div',{class:'k'},k),el('div',{class:'v'+(cls?' '+cls:'')},v==null?'—':money(v)));}
+function renderInfo(e){let h=$('#infoHost');if(!h){h=el('div',{id:'infoHost',class:'card infocard'});$('#paneR').prepend(h);}
+  h.innerHTML='';const p=e.product||{},pc=(e.prices||{}).pricecharting||{},mk=e.market||{},cb=mk.combined||{},rev=e.reviews||{},rar=e.rarity||{};
+  const head=el('h3',{},'ℹ Market & info',
+    el('span',{style:'margin-left:auto;display:flex;gap:6px;align-items:center'},
+      rar.label&&rar.label!=='Unknown'?el('span',{class:'badge rar',title:(rar.sales_per_year||0)+' sales/yr'},'◆ '+rar.label):null,
+      el('button',{class:'btn sm',onclick:()=>enrichCurrent(true),title:'Refresh'},'↻')));
+  h.append(head);
+  // facts
+  const facts=el('div',{class:'facts'});
+  const fact=(k,v)=>{if(v)facts.append(el('div',{class:'fact'},el('div',{class:'k'},k),el('div',{class:'v',title:v},v)));};
+  fact('Console',p.console);fact('Year',p.release_year);fact('Edition',p.edition);fact('Region',p.region);
+  fact('Publisher',p.publisher);fact('Genre',p.genre);fact('Players',p.players);fact('Rating',p.esrb);
+  if(p.upc)fact('UPC',p.upc);
+  h.append(facts);
+  // prices (PriceCharting loose/cib/new + live market median)
+  const prices=el('div',{class:'prices'});
+  prices.append(priceBox('Loose',pc.loose),priceBox('Complete',pc.cib),priceBox('New',pc.new),
+    priceBox('eBay/Vinted',cb.median,'hi'));
+  h.append(prices);
+  h.append(el('div',{class:'muted',style:'font-size:10.5px;margin-top:5px'},
+    'PriceCharting (converted to GBP) · live market '+(cb.low!=null?('low '+money(cb.low)+' – high '+money(cb.high)+' · '+(cb.sample_size||0)+' listings'):'—')));
+  // price history sparkline
+  const hist=(e.price_history||[]).filter(x=>x.variant==='cib');
+  const series=hist.length?hist:(e.price_history||[]).filter(x=>x.variant==='loose');
+  if(series.length>2)h.append(sparkline(series));
+  // reviews / sentiment
+  if(rev.summary){const s=(rev.sentiment||'').toLowerCase();
+    const cls=s.startsWith('pos')?'pos':s.startsWith('neg')?'neg':'mix';
+    h.append(el('div',{style:'margin-top:10px;display:flex;gap:8px;align-items:center'},
+      el('span',{class:'badge '+cls},(cls==='pos'?'▲':cls==='neg'?'▼':'◆')+' '+(rev.sentiment||'mixed')),
+      rev.score!=null?el('span',{class:'badge'},'Score '+rev.score):null),
+      el('div',{class:'review-sum'},esc(rev.summary)));
+    if((rev.highlights||[]).length)h.append(el('div',{class:'muted',style:'font-size:11px;margin-top:4px'},'• '+rev.highlights.map(esc).join('  • ')));}
+  // sources
+  if((e.sources||[]).length){const html='sources: '+e.sources.map(s=>
+    /^https?:/.test(s)?`<a href="${esc(s)}" target="_blank">PriceCharting</a>`:esc(s)).join(' · ');
+    h.append(el('div',{class:'src',html}));}
+}
+function sparkline(points){const w=340,ht=56,pad=4;
+  const xs=points.map(p=>p.ts),ys=points.map(p=>p.value);
+  const x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);
+  const nx=t=>pad+(x1===x0?0:(t-x0)/(x1-x0))*(w-2*pad);
+  const ny=v=>ht-pad-(y1===y0?(ht-2*pad)/2:(v-y0)/(y1-y0)*(ht-2*pad));
+  const d=points.map((p,i)=>(i?'L':'M')+nx(p.ts).toFixed(1)+' '+ny(p.value).toFixed(1)).join(' ');
+  const ns='http://www.w3.org/2000/svg';const svg=document.createElementNS(ns,'svg');
+  svg.setAttribute('class','spark');svg.setAttribute('viewBox',`0 0 ${w} ${ht}`);svg.setAttribute('preserveAspectRatio','none');
+  const path=document.createElementNS(ns,'path');path.setAttribute('d',d);
+  path.setAttribute('fill','none');path.setAttribute('stroke','var(--acc)');path.setAttribute('stroke-width','1.5');
+  const dot=document.createElementNS(ns,'circle');dot.setAttribute('cx',nx(xs[xs.length-1]));dot.setAttribute('cy',ny(ys[ys.length-1]));
+  dot.setAttribute('r','2.5');dot.setAttribute('fill','var(--deal)');
+  const lbl=document.createElementNS(ns,'text');lbl.setAttribute('x',w-3);lbl.setAttribute('y',12);lbl.setAttribute('text-anchor','end');
+  lbl.setAttribute('fill','var(--dim2)');lbl.setAttribute('class','leg');
+  lbl.textContent=money(y0)+'–'+money(y1)+'  ·  '+new Date(x0).getFullYear()+'→now';
+  svg.append(path,dot,lbl);
+  const wrap=el('div');wrap.append(svg,el('div',{class:'muted',style:'font-size:10px;margin-top:2px'},'Complete-in-box price history (PriceCharting)'));
+  return wrap;
+}
+
+// ── console auto-detect from a barcode-lookup title ──────────────────────────
+const CONSOLE_PATTERNS=[
+  [/playstation ?5|\bps5\b/i,'PlayStation 5'],[/playstation ?4|\bps4\b/i,'PlayStation 4'],
+  [/playstation ?3|\bps3\b/i,'PlayStation 3'],[/playstation ?2|\bps2\b/i,'PlayStation 2'],
+  [/\bpsp\b/i,'PlayStation Portable'],[/ps ?vita|\bvita\b/i,'PlayStation Vita'],
+  [/playstation ?1|\bps1\b|\bpsx\b|playstation/i,'PlayStation'],
+  [/xbox series|series ?[sx]/i,'Xbox Series X'],[/xbox ?one/i,'Xbox One'],
+  [/xbox ?360/i,'Xbox 360'],[/\bxbox\b/i,'Xbox'],
+  [/switch/i,'Switch'],[/wii ?u/i,'Wii U'],[/\bwii\b/i,'Wii'],[/\b3ds\b/i,'Nintendo 3DS'],
+  [/nintendo ?ds|\bnds\b/i,'Nintendo DS'],[/gamecube|\bngc\b/i,'GameCube'],
+  [/\bn64\b|nintendo ?64/i,'Nintendo 64'],[/super ?nintendo|\bsnes\b/i,'Super Nintendo'],
+  [/game ?boy ?advance|\bgba\b/i,'Game Boy Advance'],[/game ?boy ?color|\bgbc\b/i,'Game Boy Color'],
+  [/game ?boy/i,'Game Boy'],[/\bnes\b|nintendo entertainment/i,'Nintendo'],
+  [/mega ?drive|genesis/i,'Genesis'],[/dreamcast/i,'Dreamcast'],[/sega ?saturn|\bsaturn\b/i,'Sega Saturn'],
+  [/master ?system/i,'Master System'],[/game ?gear/i,'Game Gear']];
+function guessConsole(text){const s=String(text||'');for(const [re,lbl] of CONSOLE_PATTERNS)if(re.test(s))return lbl;return '';}
+
+// ── location: sticky current bin, LOC barcodes, printable labels ──────────────
+function setLocation(loc){loc=(loc||'').trim();CFG.stickyLocation=loc;saveCfg();
+  if(F.location)F.location.value=loc;const li=$('#locInput');if(li)li.value=loc;
+  toast(loc?('Location set: '+loc):'Location cleared',loc?'ok':'');say(loc?('Location '+loc):'Location cleared');}
+async function printLocationLabel(loc){loc=(loc||CFG.stickyLocation||'').trim();if(!loc){toast('Set a location first','warn');return;}
+  const r=await api('/print/item_label',{sku:'LOC:'+loc,title:'📍 '+loc,mode:'sticker',printer_id:CFG.printerId||''});
+  if(r.error){toast('Print: '+r.error,'err');return;}
+  if(r.routed){toast('Location label printed','ok');return;}
+  if(r.escpos_b64){let ok=await writeBytes(b64ToBytes(r.escpos_b64));
+    if(!ok){ok=await connectPrinterSerial()&&await writeBytes(b64ToBytes(r.escpos_b64));}
+    toast(ok?'Location label printed':'No printer — connect one in ⚙','ok');}}
+
+// ── title normalisation + builder ────────────────────────────────────────────
+function normalizeName(raw,platform){let s=String(raw||'');
+  s=s.replace(/\[[^\]]*\]|\([^)]*\)/g,' ');                       // drop [..] (..)
+  const strip=[platform,'nintendo','sony','sega','microsoft','pal','ntsc-j','ntsc','region free',
+    'brand new','\\bnew\\b','sealed','boxed','cib','complete in box','complete','\\bused\\b',
+    'preowned','pre-owned','very good','like new','vgc','video game','\\bgame\\b','genuine',
+    'official','tested','\\buk\\b'];
+  for(const w of strip){if(!w)continue;try{s=s.replace(new RegExp('\\b'+w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b','ig'),' ');}catch(_){}}
+  return s.replace(/[-–—:]+/g,' ').replace(/\s{2,}/g,' ').trim();
+}
+const COMPLBL={sealed:'Sealed',cib:'CIB',boxed_no_manual:'Boxed',cart_only:'Cart Only',disc_only:'Disc Only',loose:'Loose'};
+function buildTitle(){
+  const en=S.enrich&&S.enrich.product||{};
+  const name=normalizeName(F.title.value,F.platform.value)||F.title.value.trim();
+  const platform=F.platform.value.trim()||en.console||'';
+  const edition=(en.edition&&en.edition!=='Standard')?en.edition:'';
+  const region=en.region||'';
+  const comp=COMPLBL[F.completeness.value]||'';
+  const cond=CFG.mode==='used'?(CONDLABEL[F.condition.value]||''):'';
+  const t=[name,platform,edition,region,comp,cond].filter(Boolean).join(' ').replace(/\s{2,}/g,' ').trim().slice(0,80);
+  F.title.value=t;S.dirty=true;toast('Title built','ok');say(t);
+}
+
+// ── box art & screenshots from retro libraries ───────────────────────────────
+async function fetchArt(){
+  const title=normalizeName(F.title.value,F.platform.value)||F.title.value.trim();
+  if(!title){toast('Scan or name it first','warn');return;}
+  const en=S.enrich&&S.enrich.product||{};
+  toast('Fetching art…');
+  const r=await api('/business/images/fetch',{title,console:F.platform.value.trim()||en.console||'',region:en.region||CFG.region,cover:en.cover||''});
+  if(r.error){toast(r.error,'err');return;}
+  if(!(r.images||[]).length){toast('No art found for this title','warn');return;}
+  renderArtPicker(r.images);
+}
+function renderArtPicker(images){let h=$('#artHost');if(!h){h=el('div',{id:'artHost',class:'card'});$('#paneR').prepend(h);}
+  h.innerHTML='';h.append(el('h3',{},'🖼 Art & screenshots',el('button',{class:'btn sm',style:'margin-left:auto',onclick:()=>h.remove()},'close')));
+  const g=el('div',{class:'phototray'});
+  for(const im of images){const box=el('div',{class:'photo',title:im.kind+' · '+im.source});
+    box.append(el('img',{src:im.url}));
+    box.append(el('div',{class:'acts'},el('button',{title:'add',onclick:()=>{addPhoto(im.url,true);toast('Added '+im.kind,'ok');}},'＋')));
+    g.append(box);}
+  h.append(g,el('div',{class:'muted',style:'font-size:10.5px;margin-top:6px'},'Box art / in-game snaps / title screens (libretro + PriceCharting). ＋ adds to this unit.'));
+}
+
+// ── thermal label printing (server-routed, or Web Serial/Bluetooth from here) ─
+let _serialPort=null,_btChar=null;
+function b64ToBytes(b64){const bin=atob(b64);const u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);return u;}
+async function connectPrinterSerial(){
+  if(!('serial'in navigator)){toast('Web Serial unsupported — configure a server printer in the Store settings','warn');return false;}
+  try{_serialPort=await navigator.serial.requestPort();await _serialPort.open({baudRate:9600});toast('USB printer connected','ok');return true;}
+  catch(e){toast('Printer connect cancelled','');return false;}
+}
+async function connectPrinterBluetooth(){
+  if(!('bluetooth'in navigator)){toast('Web Bluetooth unsupported','warn');return false;}
+  try{const dev=await navigator.bluetooth.requestDevice({filters:[{services:[0x18f0]},{services:['000018f0-0000-1000-8000-00805f9b34fb']}],
+      optionalServices:[0x18f0,'000018f0-0000-1000-8000-00805f9b34fb','0000ff00-0000-1000-8000-00805f9b34fb']});
+    const s=await dev.gatt.connect();let svc;try{svc=await s.getPrimaryService(0x18f0);}catch(_){svc=await s.getPrimaryService('0000ff00-0000-1000-8000-00805f9b34fb');}
+    const chars=await svc.getCharacteristics();_btChar=chars.find(c=>c.properties.write||c.properties.writeWithoutResponse)||chars[0];
+    toast('Bluetooth printer connected','ok');return true;}
+  catch(e){toast('BT connect failed: '+e.message,'warn');return false;}
+}
+async function writeBytes(bytes){
+  if(_serialPort&&_serialPort.writable){const w=_serialPort.writable.getWriter();try{await w.write(bytes);}finally{w.releaseLock();}return true;}
+  if(_btChar){for(let i=0;i<bytes.length;i+=180){const chunk=bytes.slice(i,i+180);
+    if(_btChar.properties.writeWithoutResponse)await _btChar.writeValueWithoutResponse(chunk);else await _btChar.writeValue(chunk);}return true;}
+  return false;
+}
+// Print a label for a unit-like object {sku,title,price,condition,grade,completeness,location,attributes}
+async function printLabel(u,mode){mode=mode||CFG.printMode;
+  const a=(u.attributes||{});const en=S.enrich&&S.enrich.product||{};
+  const body={sku:u.sku||u.id||'',title:u.title||F.title.value.trim(),price:u.price!=null?u.price:num(F.price.value),
+    currency:'GBP',condition:u.condition||F.condition.value,grade:u.grade||num(F.grade.value)||'',
+    completeness:u.completeness||F.completeness.value,
+    console:a.console||en.console||F.platform.value.trim(),year:a.release_year||en.release_year||'',
+    edition:a.edition||en.edition||'',region:a.region||en.region||CFG.region,
+    location:u.location||F.location.value.trim(),store:CFG.labelStore||'',mode,printer_id:CFG.printerId||''};
+  const r=await api('/print/item_label',body);
+  if(r.error){toast('Print: '+r.error,'err');return;}
+  if(r.routed){toast('Label printed ('+mode+')','ok');return;}
+  // not server-routed → write the returned ESC/POS from here
+  if(r.escpos_b64){let ok=await writeBytes(b64ToBytes(r.escpos_b64));
+    if(!ok){ok=await connectPrinterSerial()&&await writeBytes(b64ToBytes(r.escpos_b64));}
+    toast(ok?'Label printed ('+mode+')':'No printer — connect one in ⚙','ok');}
+}
+
+// ── scan an internal sticker → show the unit (LBI: what it is + where) ────────
+function showFoundUnit(u){const a=u.attributes||{};
+  let h=$('#foundHost');if(!h){h=el('div',{id:'foundHost',class:'card infocard'});$('#paneR').prepend(h);}
+  h.innerHTML='';
+  h.append(el('h3',{},'✓ Found unit',el('button',{class:'btn sm',style:'margin-left:auto',onclick:()=>h.remove()},'close')));
+  h.append(el('div',{style:'font-weight:600;font-size:15px'},esc(u.title||'')));
+  h.append(el('div',{class:'muted',style:'font-size:12px;margin-top:2px'},
+    esc(CONDLABEL[u.condition]||u.condition||'')+(u.grade?(' · '+u.grade+'/10'):'')+
+    ' · '+money(u.price)+' · '+esc(u.status||'in_stock')));
+  const facts=el('div',{class:'facts',style:'margin-top:8px'});
+  const fact=(k,v)=>{if(v)facts.append(el('div',{class:'fact'},el('div',{class:'k'},k),el('div',{class:'v',title:v},v)));};
+  fact('Location',u.location||'—');fact('SKU',u.sku);fact('Console',a.console);fact('Year',a.release_year);
+  fact('Edition',a.edition);fact('Valuation',(a.valuation&&money(a.valuation.market_gbp))||'');
+  h.append(facts);
+  const loc=el('input',{value:u.location||'',placeholder:'location',style:'flex:1'});
+  h.append(el('div',{class:'row',style:'margin-top:10px'},
+    el('button',{class:'btn',onclick:()=>printLabel(u)},'🖨 Reprint'),
+    el('button',{class:'btn',onclick:async()=>{const r=await api('/business/unit/draft_listing',{unit_id:u.id,platform:'ebay'});toast(r.error||'Listed','ok');}},'↗ Relist'),
+    el('button',{class:'btn warn',onclick:async()=>{await api('/business/unit/upsert',{id:u.id,status:'sold'});toast('Marked sold','ok');refreshChips();h.remove();}},'✓ Sold')));
+  h.append(el('div',{class:'row',style:'margin-top:8px'},loc,
+    el('button',{class:'btn',onclick:async()=>{await api('/business/unit/upsert',{id:u.id,location:loc.value.trim()});u.location=loc.value.trim();toast('Location '+loc.value,'ok');}},'Set bin')));
+  // move to another store / collection
+  const storeSel=el('select',{style:'flex:1'});storeSel.append(el('option',{value:''},'move to store / collection…'));
+  api('/business/store/list').then(r=>{for(const s of (r.stores||[])){if(s.id===(u.store_id||''))continue;
+    storeSel.append(el('option',{value:s.id},(s.platform==='collection'?'▣ ':'▤ ')+(s.name||s.id)));}});
+  h.append(el('div',{class:'row',style:'margin-top:8px'},storeSel,
+    el('button',{class:'btn',onclick:async()=>{if(!storeSel.value){toast('Pick a store','warn');return;}
+      const r=await api('/business/unit/move',{unit_id:u.id,to_store_id:storeSel.value,status:'in_stock'});
+      toast(r.error?r.error:'Moved','ok');if(r.ok){refreshChips();h.remove();}}},'→ Move')));
+  say('Found '+(u.title||'')+(u.location?', location '+u.location:''));
+}
+
 // ── save ─────────────────────────────────────────────────────────────────────
-async function saveUnit(alsoList,silent){
+async function saveUnit(alsoList,silent,alsoPrint){
   const d=readForm();
-  if(!d.title&&!S.upc){toast('Nothing to save — scan or type a title','warn');return;}
+  if(!d.title&&!S.upc){toast('Nothing to save — scan or type a title','warn');coachSay('Nothing to save yet — scan or name it first.');return;}
+  if(!silent){const miss=coachMissing(d);if(miss.length)coachSay('Saving, though '+miss.join(' and ')+'.');}
   const btn=$('#saveBtn');if(btn&&!silent){btn.disabled=true;btn.innerHTML='<span class="spin"></span>';}
   const photos=S.photos.filter(p=>p.approved).map(p=>p.url||p.data);
   if(!photos.length&&S.photos.length)photos.push(...S.photos.map(p=>p.url||p.data)); // fall back to all if none approved
   const qty=CFG.mode==='used'?d.qty:1;
+  // carry the enrichment dossier onto each unit (metadata + valuation)
+  let enrichAttrs=null;
+  if(S.enrich){const p=S.enrich.product||{},pc=(S.enrich.prices||{}).pricecharting||{},cb=(S.enrich.market||{}).combined||{};
+    enrichAttrs={console:p.console,release_year:p.release_year,edition:p.edition,region:p.region,
+      publisher:p.publisher,developer:p.developer,genre:p.genre,players:p.players,esrb:p.esrb,
+      rarity:(S.enrich.rarity||{}).label,pricecharting_url:p.pricecharting_url,
+      valuation:{market_gbp:pc.cib||cb.median||pc.loose,pc_loose:pc.loose,pc_cib:pc.cib,pc_new:pc.new,
+        ebay_median:cb.median,at:new Date().toISOString()}};}
   let firstUnit=null,made=0;
   for(let i=0;i<qty;i++){
     const body=withStore({title:d.title,upc:S.upc||'',category:CFG.category,platform:d.platform,
       condition:CFG.mode==='new'?'new':d.condition,grade:d.grade,completeness:d.completeness,
       cost:d.cost,price:d.price,currency:'GBP',photos,location:d.location,
-      description:d.description,auto_describe:false,auto_price:CFG.autoPrice&&d.price==null});
+      description:d.description,attributes:enrichAttrs||undefined,
+      auto_describe:false,auto_price:CFG.autoPrice&&d.price==null});
     const r=await api('/business/unit/intake',body);
     if(r.error){toast(r.error,'err');if(btn){btn.disabled=false;btn.textContent='✓ Save & next';}return;}
     made++;firstUnit=firstUnit||r.unit;
@@ -371,24 +726,52 @@ async function saveUnit(alsoList,silent){
     toast(lr.error?('Saved. List issue: '+lr.error):'Saved & drafted listing','ok');}
   else if(!silent)toast('Saved '+made+' unit'+(made>1?'s':'')+' ✓','ok');
   if(!silent)say('Saved');
+  if(firstUnit&&(alsoPrint||CFG.autoPrint))printLabel(firstUnit).catch(()=>{});
   refreshChips();renderSession();
   if(!silent){clearForm();$('#bc').focus();}
 }
-function clearForm(){S.product=null;S.upc='';S.photos=[];S.cands=null;S.dirty=false;
-  const h=$('#candHost');if(h)h.remove();
+function clearForm(){S.product=null;S.upc='';S.photos=[];S.cands=null;S.dirty=false;S.enrich=null;
+  const h=$('#candHost');if(h)h.remove();const ih=$('#infoHost');if(ih)ih.remove();
+  const fh=$('#foundHost');if(fh)fh.remove();const ah=$('#artHost');if(ah)ah.remove();
   if(F.title){F.title.value='';F.platform.value='';F.completeness.value='sealed';F.condition.value=CFG.condition;
     F.grade.value=0;F.grade.dispatchEvent(new Event('input'));F.cost.value='';F.price.value='';
-    F.location.value='';F.description.value='';F.qty.value=1;}
+    F.location.value=CFG.stickyLocation||'';F.description.value='';F.qty.value=1;}   // location stays sticky
   renderTray();
   const sb=$('#saveBtn');if(sb){sb.disabled=false;sb.textContent='✓ Save & next';}
 }
 
-// ── photos ───────────────────────────────────────────────────────────────────
+// ── photos (capture → optional bg-remove → optional watermark → store) ────────
 function fileToDataURL(f){return new Promise(res=>{const r=new FileReader();r.onload=()=>res(r.result);r.readAsDataURL(f);});}
-function addPhoto(dataOrUrl,approved){const isUrl=/^(https?:|\/)/.test(dataOrUrl);
-  const ph={data:isUrl?'':dataOrUrl,url:isUrl?dataOrUrl:'',approved:!!approved};
+async function removeBg(dataUrl){if(!CFG.bgRemove)return dataUrl;
+  const b64=(dataUrl||'').split(',').pop();
+  const r=await api('/image/rembg',{image_b64:b64,model:CFG.bgModel||'u2net',post_process:true});
+  if(r&&r.image_b64&&!r.error)return 'data:image/png;base64,'+r.image_b64;
+  if(r&&r.error)toast('BG removal: '+r.error,'warn');return dataUrl;}
+function applyWatermark(dataUrl){return new Promise(res=>{
+  if(!CFG.watermark||!CFG.watermarkText)return res(dataUrl);
+  const img=new Image();img.onload=()=>{const cv=document.createElement('canvas');cv.width=img.width;cv.height=img.height;
+    const g=cv.getContext('2d');g.drawImage(img,0,0);
+    const txt=String(CFG.watermarkText);const fs=Math.max(14,Math.round(img.width*0.04));
+    g.font='700 '+fs+'px Inter,system-ui,sans-serif';g.textBaseline='alphabetic';
+    const pad=Math.round(fs*0.7),w=g.measureText(txt).width,pos=CFG.wmPos||'br';
+    let x=pad,y=img.height-pad;
+    if(pos.indexOf('r')>=0)x=img.width-w-pad;if(pos.indexOf('c')>=0)x=(img.width-w)/2;
+    if(pos.indexOf('t')>=0)y=fs+pad;
+    g.globalAlpha=Math.min(1,Math.max(0.1,CFG.wmOpacity||0.5));
+    g.lineWidth=Math.max(2,fs*0.12);g.strokeStyle='rgba(0,0,0,.55)';g.strokeText(txt,x,y);
+    g.fillStyle='#fff';g.fillText(txt,x,y);g.globalAlpha=1;
+    res(cv.toDataURL('image/png'));};img.onerror=()=>res(dataUrl);img.src=dataUrl;});}
+async function processImage(dataUrl){let d=dataUrl;
+  try{d=await removeBg(d);}catch(e){}
+  try{d=await applyWatermark(d);}catch(e){}
+  return d;}
+async function addPhoto(dataOrUrl,approved){const isUrl=/^(https?:|\/)/.test(dataOrUrl);
+  if(isUrl){const ph={data:'',url:dataOrUrl,approved:!!approved};S.photos.push(ph);S.dirty=true;renderTray();checkAutoAdvance();return ph;}
+  const willProc=CFG.bgRemove||CFG.watermark;
+  const ph={data:dataOrUrl,url:'',approved:!!approved,proc:willProc};
   S.photos.push(ph);S.dirty=true;renderTray();
-  if(!isUrl)persistPhoto(ph);                       // upload in background → get a durable URL
+  if(willProc){const out=await processImage(dataOrUrl);ph.data=out;ph.proc=false;renderTray();}
+  persistPhoto(ph);                                  // upload in background → durable URL
   checkAutoAdvance();return ph;}
 async function persistPhoto(ph){try{const b64=(ph.data||'').split(',').pop();
   const r=await api('/images/store',{image_b64:b64,source:'img2img',prompt:'unit photo'});
@@ -396,6 +779,7 @@ async function persistPhoto(ph){try{const b64=(ph.data||'').split(',').pop();
 function renderTray(){const tray=$('#tray');if(!tray)return;tray.innerHTML='';
   S.photos.forEach((ph,i)=>{const box=el('div',{class:'photo'+(ph.approved?' ok':'')});
     box.append(el('img',{src:ph.data||ph.url}));
+    if(ph.proc)box.append(el('div',{class:'badge',style:'left:auto;right:3px'},el('span',{class:'spin'})));
     if(ph.approved)box.append(el('div',{class:'badge'},'✓'));
     const acts=el('div',{class:'acts'});
     acts.append(el('button',{title:'approve',onclick:()=>{ph.approved=!ph.approved;renderTray();checkAutoAdvance();}},ph.approved?'✓':'○'),
@@ -421,14 +805,52 @@ async function toggleCam(){if(S._camOn){stopCam();return;}
   try{
     _stream=await navigator.mediaDevices.getUserMedia({video:selectedDeviceConstraint(),audio:false});
     $('#vid').srcObject=_stream;S._camOn=true;$('#camBtn').textContent='■ Stop';$('#camBtn').classList.add('warn');
-    await populateDevices();startLiveScan();renderTray();
+    const vw=$('#vwrap');if(vw)vw.style.display='';
+    await populateDevices();startLiveScan();startAutoCapture();renderTray();
   }catch(e){toast('Camera error: '+e.message,'err');}
 }
 function selectedDeviceConstraint(){const id=($('#devSel')||{}).value;
   return id?{deviceId:{exact:id}}:{facingMode:'environment'};}
 function stopCam(){if(_stream){_stream.getTracks().forEach(t=>t.stop());}_stream=null;S._camOn=false;
-  if(_rafScan)cancelAnimationFrame(_rafScan);$('#camBtn').textContent='▶ Start';$('#camBtn').classList.remove('warn');
+  if(_rafScan)cancelAnimationFrame(_rafScan);if(_acTimer){clearInterval(_acTimer);_acTimer=null;}
+  $('#camBtn').textContent='▶ Start';$('#camBtn').classList.remove('warn');
+  const vw=$('#vwrap');if(vw)vw.style.display='none';
   $('#liveBadge').classList.remove('on');const l=$('#liveOnOff');if(l)l.textContent='live barcode: —';renderTray();}
+
+// ── auto-capture: fire when the frame is sharp (in focus) and stable (not moving),
+//    optionally rejecting shots the vision model says are obstructed/cut off ──────
+let _acTimer=null,_acCanvas=null,_acPrev=null,_acStable=0,_acCool=0,_acBusy=false;
+function startAutoCapture(){if(_acTimer)clearInterval(_acTimer);_acPrev=null;_acStable=0;
+  _acTimer=setInterval(autoCaptureTick,220);}
+function autoCaptureTick(){
+  if(!S._camOn||!CFG.autoCapture||_acBusy)return;
+  const v=$('#vid');if(!v||!v.videoWidth)return;
+  const s=64,cv=_acCanvas||(_acCanvas=document.createElement('canvas'));cv.width=s;cv.height=s;
+  const g=cv.getContext('2d');g.drawImage(v,0,0,s,s);
+  const d=g.getImageData(0,0,s,s).data,gray=new Float32Array(s*s);
+  for(let i=0;i<s*s;i++)gray[i]=0.299*d[i*4]+0.587*d[i*4+1]+0.114*d[i*4+2];
+  let sharp=0;for(let y=1;y<s-1;y++)for(let x=1;x<s-1;x++){const j=y*s+x;
+    const lap=4*gray[j]-gray[j-1]-gray[j+1]-gray[j-s]-gray[j+s];sharp+=lap*lap;}
+  sharp/=(s*s);
+  let diff=1e9;if(_acPrev){diff=0;for(let i=0;i<s*s;i++)diff+=Math.abs(gray[i]-_acPrev[i]);diff/=(s*s);}
+  _acPrev=gray;
+  const framed=sharp>120,stable=diff<4.5,now=Date.now();
+  const l=$('#liveOnOff');if(l&&CFG.autoCapture)l.textContent='auto: '+(framed&&stable?'● ready':(!framed?'○ focus…':'○ hold steady'));
+  if(framed&&stable)_acStable++;else _acStable=0;
+  if(_acStable>=3&&now>_acCool){_acStable=0;_acCool=now+2600;_acBusy=true;
+    doAutoCapture().finally(()=>{_acBusy=false;});}
+}
+async function doAutoCapture(){
+  const ph=await capturePhoto(true);if(!ph)return;                   // raw, not yet added
+  if(CFG.obstructionCheck){const clear=await frameClear(ph.data);
+    if(!clear){navigator.vibrate&&navigator.vibrate([25,40,25]);const l=$('#liveOnOff');if(l)l.textContent='auto: ✋ obstructed';return;}}
+  navigator.vibrate&&navigator.vibrate(60);await addPhoto(ph.data,true);toast('Auto-captured','ok');
+}
+async function frameClear(dataUrl){
+  const r=await api('/vision/describe',{image_b64:dataUrl,model:CFG.visionModel||'',
+    prompt:'Is a hand, finger, or anything covering/obstructing the product, or is the item cut off / out of frame? Answer ONLY "yes" (obstructed or cut off) or "no" (clear and fully in frame).'});
+  const t=((r&&r.text)||'').toLowerCase();return /\bno\b/.test(t)&&!/\byes\b/.test(t);
+}
 async function populateDevices(){try{const devs=await navigator.mediaDevices.enumerateDevices();
   const sel=$('#devSel');const cur=sel.value;sel.innerHTML='';
   devs.filter(d=>d.kind==='videoinput').forEach((d,i)=>sel.append(el('option',{value:d.deviceId},d.label||('Camera '+(i+1)))));
@@ -464,6 +886,7 @@ function renderSession(){const host=$('#sessList');if(!host)return;host.innerHTM
       el('img',{src:(u.photos||[])[0]||''}),
       el('div',{style:'flex:1;min-width:0'},el('div',{style:'font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'},esc(u.title||'')),
         el('div',{class:'muted',style:'font-size:11px'},esc(CONDLABEL[u.condition]||u.condition||'')+(u.grade?(' · '+u.grade+'/10'):'')+' · '+money(u.price))),
+      el('button',{class:'btn sm',onclick:()=>printLabel(u),title:'Reprint label'},'🖨'),
       el('button',{class:'btn sm',onclick:async()=>{const r=await api('/business/unit/draft_listing',{unit_id:u.id,platform:'ebay'});toast(r.error||'Listed draft','ok');}},'list'),
       el('button',{class:'btn sm danger',onclick:async()=>{await api('/business/unit/delete',{id:u.id});S.session=S.session.filter(x=>x.id!==u.id);renderSession();refreshChips();}},'✕')));}
   const sv=$('#sessVal');if(sv)sv.textContent=S.session.length?(S.session.length+' · '+money(val)):'';
@@ -500,8 +923,8 @@ function applyVoice(t){t=t.trim();if(!t)return;const l=t.toLowerCase();
   if(/read( back)?|read fields/.test(l)){readBack();return;}
   if(/list it|save and list/.test(l)){saveUnit(true);return;}
   if(/save|next|done/.test(l)){saveUnit(false);return;}
-  if(/\bused mode|switch to used\b/.test(l)){CFG.mode='used';saveCfg();buildLeft();buildRight();return;}
-  if(/\bnew mode|switch to new\b/.test(l)){CFG.mode='new';saveCfg();buildLeft();buildRight();return;}
+  if(/\bused mode|switch to used\b/.test(l)){CFG.mode='used';saveCfg();buildCmdbar();buildLeft();buildRight();return;}
+  if(/\bnew mode|switch to new\b/.test(l)){CFG.mode='new';saveCfg();buildCmdbar();buildLeft();buildRight();return;}
   toast('“'+t+'”','');
 }
 function readBack(){const d=readForm();const parts=[d.title,'condition '+CONDLABEL[d.condition],
@@ -521,30 +944,125 @@ function setVoice(on){_recOn=on;const b=$('#voiceBtn');b.classList.toggle('on',o
   b.querySelector('.dot').classList.toggle('on',on);toast(on?'Voice on — say a command':'Voice off',on?'ok':'');}
 
 // ── settings ─────────────────────────────────────────────────────────────────
-function openCfg(){const p=$('#paneR');
+function chk(c){const i=el('input',{type:'checkbox'});i.checked=!!c;return i;}
+function lblRow(input,text){return el('label',{style:'display:flex;gap:8px;align-items:center;font-size:12px'},input,text);}
+function subHdr(t){return el('div',{class:'muted',style:'font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;margin:13px 0 6px'},t);}
+function openCfg(){const p=$('#paneR');const old=$('#cfgCard');if(old)old.remove();
   const wrap=el('div',{class:'card',id:'cfgCard'});
   wrap.append(el('h3',{},'Settings',el('button',{class:'btn sm',style:'margin-left:auto',onclick:()=>wrap.remove()},'close')));
+  // capture flow
   const n=el('input',{type:'number',min:1,max:8,value:CFG.autoAdvanceN,style:'width:70px'});
-  const aA=el('input',{type:'checkbox'});aA.checked=CFG.autoAssess;
-  const aP=el('input',{type:'checkbox'});aP.checked=CFG.autoPrice;
-  const tt=el('input',{type:'checkbox'});tt.checked=CFG.tts;
+  const aA=chk(CFG.autoAssess),aP=chk(CFG.autoPrice),tt=chk(CFG.tts);
   const cond=el('select');for(const x of CONDITIONS){const o=el('option',{value:x},CONDLABEL[x]);if(x===CFG.condition)o.selected=true;cond.append(o);}
-  const g=el('div',{class:'grid2'});
-  g.append(el('div',{class:'fld'},el('label',{},'Auto-advance after N approved photos'),n),
+  wrap.append(subHdr('Capture flow'),el('div',{class:'grid2'},
+    el('div',{class:'fld'},el('label',{},'Auto-advance after N approved photos'),n),
     el('div',{class:'fld'},el('label',{},'Default condition'),cond),
-    el('label',{style:'display:flex;gap:8px;align-items:center;font-size:12px'},aA,'Auto-assess on advance'),
-    el('label',{style:'display:flex;gap:8px;align-items:center;font-size:12px'},aP,'Auto-suggest price on save'),
-    el('label',{style:'display:flex;gap:8px;align-items:center;font-size:12px'},tt,'Read fields aloud (TTS)'));
-  wrap.append(g);
-  wrap.append(el('div',{style:'margin-top:12px'},el('button',{class:'btn pri',onclick:()=>{
-    CFG.autoAdvanceN=Math.max(1,parseInt(n.value)||3);CFG.autoAssess=aA.checked;CFG.autoPrice=aP.checked;
-    CFG.tts=tt.checked;CFG.condition=cond.value;saveCfg();wrap.remove();buildLeft();buildRight();
-    $('#ttsBtn').classList.toggle('on',CFG.tts);toast('Saved','ok');}},'Save settings')));
+    lblRow(aA,'Auto-assess on advance'),lblRow(aP,'Auto-suggest price on save'),lblRow(tt,'Read fields aloud (TTS)')));
+  // auto-capture
+  const aC=chk(CFG.autoCapture),oc=chk(CFG.obstructionCheck);
+  wrap.append(subHdr('Auto-capture from video'),el('div',{class:'grid2'},
+    lblRow(aC,'Auto-shoot when framed & steady'),lblRow(oc,'Reject hands / cut-off shots (vision)')));
+  // image processing
+  const bg=chk(CFG.bgRemove),wm=chk(CFG.watermark);
+  const wmText=el('input',{value:CFG.watermarkText||'',placeholder:'watermark text'});
+  const wmPos=el('select');[['br','bottom-right'],['bl','bottom-left'],['bc','bottom-center'],['tr','top-right'],['tl','top-left']].forEach(o=>{const op=el('option',{value:o[0]},o[1]);if(o[0]===CFG.wmPos)op.selected=true;wmPos.append(op);});
+  const wmOp=el('input',{type:'range',min:'0.1',max:'1',step:'0.05',value:CFG.wmOpacity});
+  wrap.append(subHdr('Image processing'),el('div',{class:'grid2'},
+    lblRow(bg,'Remove background (rembg / GPU node)'),lblRow(wm,'Watermark photos')),
+    el('div',{class:'grid3',style:'margin-top:8px'},
+      el('div',{class:'fld'},el('label',{},'Watermark text'),wmText),
+      el('div',{class:'fld'},el('label',{},'Position'),wmPos),
+      el('div',{class:'fld'},el('label',{},'Opacity'),wmOp)));
+  // vision model + download
+  const vmSel=el('select');vmSel.append(el('option',{value:''},'auto (first available)'));
+  const dlNode=el('select'),dlModel=el('select'),dlCustom=el('input',{placeholder:'or ollama/hf ref'});
+  ['qwen2.5vl:7b','qwen2.5vl:3b','llava:13b','llava:7b','minicpm-v','moondream','llama3.2-vision:11b']
+    .forEach(m=>dlModel.append(el('option',{value:m},m)));
+  const dlBtn=el('button',{class:'btn pri'},'⇩ Download to node');
+  const bar=el('div',{style:'height:6px;background:var(--bg3);border-radius:4px;overflow:hidden;margin-top:8px;display:none'});
+  const fill=el('div',{style:'height:100%;width:0;background:var(--acc)'});bar.append(fill);
+  const dlLbl=el('div',{class:'muted',style:'font-size:11px;margin-top:4px'});
+  wrap.append(subHdr('Vision model'),
+    el('div',{class:'fld'},el('label',{},'Route identify / grade / describe to'),vmSel),
+    el('div',{class:'grid3',style:'margin-top:8px'},
+      el('div',{class:'fld'},el('label',{},'Ollama node'),dlNode),
+      el('div',{class:'fld'},el('label',{},'Recommended VL model'),dlModel),
+      el('div',{class:'fld'},el('label',{},'Custom ref'),dlCustom)),
+    el('div',{style:'margin-top:8px'},dlBtn),bar,dlLbl);
+  api('/vision/models').then(r=>{for(const m of (r.models||[])){const v=m.model;const o=el('option',{value:v},v+(m.instance?(' · '+m.instance):''));if(v===CFG.visionModel)o.selected=true;vmSel.append(o);}});
+  api('/catalog/nodes').then(r=>{const ns=(r.nodes||[]).filter(nd=>!nd.backend||nd.backend==='ollama');
+    for(const nd of ns){const mc=(nd.models||[]).length;dlNode.append(el('option',{value:nd.id},nd.id+(mc?(' · '+mc+' models'):'')));}
+    if(!ns.length)dlNode.append(el('option',{value:''},'no Ollama nodes'));});
+  dlBtn.onclick=async()=>{const model=(dlCustom.value.trim()||dlModel.value),inst=dlNode.value;
+    if(!model||!inst){toast('Pick a node + model','warn');return;}
+    dlBtn.disabled=true;bar.style.display='block';fill.style.width='0';dlLbl.textContent='starting…';
+    const r=await api('/catalog/pull/start',{model,instance_id:inst});
+    if(r.error){dlLbl.textContent='Error: '+r.error;dlBtn.disabled=false;return;}
+    const pid=r.pull_id;
+    const poll=async()=>{const s=await api('/catalog/pull/status'+qs({pull_id:pid}));
+      const rec=(s.pulls||[])[0];if(!rec){setTimeout(poll,1500);return;}
+      fill.style.width=(rec.pct||0)+'%';
+      dlLbl.textContent=(rec.state||'')+' · '+(rec.pct||0)+'%'+(rec.eta_s?(' · ETA '+rec.eta_s+'s'):'')+(rec.status?(' · '+rec.status):'');
+      if(['done','failed','cancelled'].includes(rec.state)){dlBtn.disabled=false;
+        if(rec.state==='done'){fill.style.width='100%';toast('Model ready: '+model,'ok');
+          if(!vmSel.querySelector('option[value="'+model+'"]'))vmSel.append(el('option',{value:model},model));
+          vmSel.value=model;}
+        else toast('Pull '+rec.state,'err');return;}
+      setTimeout(poll,1500);};
+    setTimeout(poll,1200);};
+  // label printing
+  const ap=chk(CFG.autoPrint);
+  const pm=el('select');[['sticker','Sticker (compact)'],['slip','Box slip (full info)']].forEach(o=>{const op=el('option',{value:o[0]},o[1]);if(o[0]===CFG.printMode)op.selected=true;pm.append(op);});
+  const lblStore=el('input',{value:CFG.labelStore||'',placeholder:'store name on slips'});
+  const connBtn=el('button',{class:'btn',onclick:async()=>{await connectPrinterSerial();}},'⇆ Connect USB printer');
+  const connBt=el('button',{class:'btn',onclick:async()=>{await connectPrinterBluetooth();}},'⇆ Bluetooth');
+  wrap.append(subHdr('Label printing (thermal)'),
+    el('div',{class:'grid2'},lblRow(ap,'Auto-print a label on save'),
+      el('div',{class:'fld'},el('label',{},'Label type'),pm)),
+    el('div',{class:'grid2',style:'margin-top:8px'},
+      el('div',{class:'fld'},el('label',{},'Store name (slips)'),lblStore),
+      el('div',{class:'fld'},el('label',{},'Connect (or set a server printer in Store → Settings)'),el('div',{class:'row'},connBtn,connBt))),
+    el('div',{class:'hint'},'Prints an internal CODE128 barcode of the unit SKU — scan the sticker here later to pull the item up (what it is + where it is). USB uses Web Serial; a server/mesh printer configured in the Store panel prints without connecting here.'));
+  // collections (personal, non-sale — same LBI + valuation as a shop)
+  const colName=el('input',{placeholder:'new collection name'});
+  const colList=el('div',{class:'muted',style:'font-size:11px;margin-top:6px'});
+  async function loadCols(){const r=await api('/business/store/list');colList.innerHTML='';
+    const cols=(r.stores||[]).filter(s=>s.platform==='collection');
+    if(!cols.length){colList.textContent='No collections yet.';return;}
+    for(const s of cols){const a=el('a',{href:'/business/intake/panel'+qs({store:s.id,store_name:s.name}),style:'margin-right:10px'},'▣ '+esc(s.name));colList.append(a);}}
+  wrap.append(subHdr('Personal collections'),
+    el('div',{class:'row'},colName,el('button',{class:'btn',onclick:async()=>{if(!colName.value.trim())return;
+      const r=await api('/business/store/upsert',{name:colName.value.trim(),platform:'collection',icon:'▣'});
+      toast(r.ok?'Collection created — open it to scan in':'Error',r.ok?'ok':'err');colName.value='';loadCols();}},'+ Create')),
+    colList,el('div',{class:'hint'},'A collection catalogues items you keep (same barcode/photo/valuation flow). Open one to scan into it; move items into a shop later from the “found unit” panel when you scan their sticker.'));
+  loadCols();
+  // market enrichment
+  const enr=chk(CFG.autoEnrich);
+  const regSel=el('select');[['PAL','PAL / EU (UK)'],['NTSC','NTSC / US'],['JP','Japan']].forEach(o=>{const op=el('option',{value:o[0]},o[1]);if(o[0]===CFG.region)op.selected=true;regSel.append(op);});
+  const revalBtn=el('button',{class:'btn',onclick:async()=>{revalBtn.disabled=true;revalBtn.innerHTML='<span class="spin"></span> revaluing…';
+    const r=await api('/business/enrich/refresh_all',withStore({limit:300,only_stale:true}));
+    revalBtn.disabled=false;revalBtn.textContent='↻ Revalue all inventory';
+    toast(r.error?r.error:('Revalued '+(r.updated||0)+', skipped '+(r.skipped||0)),r.error?'err':'ok');}},'↻ Revalue all inventory');
+  wrap.append(subHdr('Market enrichment'),
+    el('div',{class:'grid2'},lblRow(enr,'Auto-fetch prices/history/reviews on scan'),
+      el('div',{class:'fld'},el('label',{},'Region for prices'),regSel)),
+    el('div',{style:'margin-top:8px'},revalBtn),
+    el('div',{class:'hint'},'PriceCharting is scraped for prices, full history & rarity (free); eBay + Vinted give the live market; reviews via web + LLM. Revalue-all keeps every item current — schedule it nightly from /schedule.'));
+  // save
+  wrap.append(el('div',{style:'margin-top:14px'},el('button',{class:'btn pri',onclick:()=>{
+    CFG.autoAdvanceN=Math.max(1,parseInt(n.value)||3);CFG.autoAssess=aA.checked;CFG.autoPrice=aP.checked;CFG.tts=tt.checked;CFG.condition=cond.value;
+    CFG.autoCapture=aC.checked;CFG.obstructionCheck=oc.checked;
+    CFG.bgRemove=bg.checked;CFG.watermark=wm.checked;CFG.watermarkText=wmText.value;CFG.wmPos=wmPos.value;CFG.wmOpacity=parseFloat(wmOp.value)||0.5;
+    CFG.visionModel=vmSel.value;CFG.autoEnrich=enr.checked;CFG.region=regSel.value;
+    CFG.autoPrint=ap.checked;CFG.printMode=pm.value;CFG.labelStore=lblStore.value;
+    saveCfg();wrap.remove();buildCmdbar();buildLeft();buildRight();$('#ttsBtn').classList.toggle('on',CFG.tts);toast('Saved','ok');}},'Save settings')));
   p.prepend(wrap);
 }
 
 // ── boot ─────────────────────────────────────────────────────────────────────
 $('#voiceBtn').onclick=toggleVoice;
+$('#coachBtn').onclick=()=>{CFG.coach=!CFG.coach;saveCfg();updateCoachUI();
+  if(CFG.coach)coachSay('Coach on. Scan something and I will help.');else{window.speechSynthesis&&window.speechSynthesis.cancel();toast('Coach off','');}};
 $('#ttsBtn').onclick=()=>{CFG.tts=!CFG.tts;saveCfg();$('#ttsBtn').classList.toggle('on',CFG.tts);toast(CFG.tts?'Read-back on':'Read-back off',CFG.tts?'ok':'');};
 $('#cfgBtn').onclick=openCfg;
 $('#ttsBtn').classList.toggle('on',CFG.tts);
@@ -556,7 +1074,8 @@ document.addEventListener('keydown',e=>{
   else if(e.code==='Space'&&!typing&&S._camOn){e.preventDefault();capturePhoto();}
   else if(e.key==='Enter'&&e.ctrlKey){e.preventDefault();saveUnit(false);}
 });
-buildLeft();buildRight();$('#bc')&&$('#bc').focus();
+buildCmdbar();buildLeft();buildRight();updateCoachUI();$('#bc')&&$('#bc').focus();
 </script>
+<script src="/ui/vera-ui.js"></script>
 </body>
 </html>

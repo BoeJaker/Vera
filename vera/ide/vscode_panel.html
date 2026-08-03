@@ -182,6 +182,20 @@ function showView(v){
 }
 $$('#views button').forEach(b=>b.onclick=()=>showView(b.dataset.view));
 
+/* ---- cross-link: Dispatch <-> Loop Lab commit tags ----
+   Either embedded panel posts {type:'vera-cross-link', target, commit}
+   when a commit chip is clicked. Both iframe srcs are otherwise only set
+   once (lazy-load in showView), so a later jump-with-filter has to force
+   a fresh src here to get the ?commit= filter applied. */
+const CROSS_LINK_SRC={looplab:'/evolve/panel',dispatch:'/ide/claude_sessions/panel'};
+window.addEventListener('message',(e)=>{
+  const d=e.data;
+  if(!d||d.type!=='vera-cross-link'||!CROSS_LINK_SRC[d.target])return;
+  showView(d.target);
+  const frame=$('#'+d.target+'-frame');
+  frame.src=CROSS_LINK_SRC[d.target]+(d.commit?('?commit='+encodeURIComponent(d.commit)):'');
+});
+
 /* ---- instances ---- */
 async function loadInstances(keep=true){
   const r=await api('/ide/vscode/instances');

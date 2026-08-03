@@ -10330,5 +10330,107 @@ if(typeof tileStratOverlay==='function'){
   };
 }
 </script>
+<script>
+'use strict';
+/* ═══ round 38: evolve — browsable history log + backtest cleanup ═══
+   Enhances the existing 🧬 Self-improve card in the Run Center with:
+     • 📜 history — the full evolve log, browsable: each iteration expandable to
+       its per-strategy results with best↔prev metric and improved/live/pruned/
+       archived flags (reads markets.evolve.history).
+     • 🧹 clean up — a dry-run preview (how many redundant "evolve …" backtests
+       would go, how many best-per-strategy stay) then a confirm that runs
+       markets.evolve.prune_backtests for real and refreshes the backtest list.  */
+(function(){
+  const card=$('evCard'); if(!card||$('evExtra')) return;
+  const css=`
+  #evHistBody{margin-top:7px;max-height:300px;overflow:auto;display:none}
+  #evHistBody.on{display:block}
+  .evTick{border:1px solid var(--line);border-radius:9px;margin-bottom:5px;overflow:hidden}
+  .evTickHd{display:flex;align-items:center;gap:7px;padding:5px 8px;font-size:10.5px;cursor:pointer;
+    background:color-mix(in srgb,var(--acc) 5%,transparent)}
+  .evTickHd:hover{background:color-mix(in srgb,var(--acc) 10%,transparent)}
+  .evTickHd::before{content:'▸';color:var(--muted);transition:transform .15s}
+  .evTick.open .evTickHd::before{transform:rotate(90deg)}
+  .evTickBody{padding:2px 8px 5px;display:none}
+  .evTick.open .evTickBody{display:block}
+  .evRes{display:flex;align-items:center;gap:7px;padding:3px 0;font-size:10.5px;border-top:1px solid var(--line)}
+  .evRes .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .evFlag{font-size:9px;padding:0 5px;border-radius:6px;white-space:nowrap}
+  .evPrune{border:1px solid var(--line);border-radius:9px;padding:9px;font-size:11px;margin-top:6px}`;
+  const st=document.createElement('style'); st.textContent=css; document.head.appendChild(st);
+  const extra=document.createElement('div');
+  extra.innerHTML='<div class="formRow" id="evExtra" style="margin-top:6px">'+
+    '<button class="ghost" id="evHistBtn">📜 history</button>'+
+    '<button class="ghost" id="evClean" title="delete redundant evolve backtests, keeping the best per strategy — your own backtests are never touched">🧹 clean up runs</button>'+
+    '</div><div id="evHistBody"></div>';
+  card.appendChild(extra);
+  $('evHistBtn').onclick=evHistory;
+  $('evClean').onclick=()=>evPrune(false);
+})();
+
+async function evHistory(){
+  const b=$('evHistBody'); if(!b) return;
+  if(b.classList.contains('on')&&b.dataset.mode==='hist'){
+    b.classList.remove('on'); b.innerHTML=''; b.dataset.mode=''; return; }
+  b.classList.add('on'); b.dataset.mode='hist';
+  b.innerHTML='<div class="muted" style="font-size:11px;padding:6px"><span class="spin"></span> loading history…</div>';
+  const r=await api('/markets/evolve/history?limit=30');
+  const hist=(r&&r.history)||[];
+  if(!hist.length){ b.innerHTML='<div class="muted" style="font-size:11px;padding:6px">no evolve iterations logged yet — the loop hasn’t run</div>'; return; }
+  const fx=(v,d)=>v==null?d:(+v).toFixed(3);
+  b.innerHTML=hist.map((h,hi)=>{
+    const rows=(h.results||[]).map(rr=>{
+      const flags=[];
+      if(rr.improved) flags.push('<span class="evFlag" style="background:color-mix(in srgb,var(--up) 22%,transparent);color:var(--up)">✓ improved</span>');
+      if(rr.accepted) flags.push('<span class="evFlag" style="background:color-mix(in srgb,var(--acc) 20%,transparent);color:var(--acc)">● live</span>');
+      if(rr.pruned_backtest) flags.push('<span class="evFlag" style="background:color-mix(in srgb,var(--muted) 20%,transparent);color:var(--muted)">⌫ pruned</span>');
+      if(rr.archived) flags.push('<span class="evFlag" style="background:color-mix(in srgb,var(--dn) 18%,transparent);color:var(--dn)">🗄 archived</span>');
+      if(rr.skipped) flags.push('<span class="evFlag" style="color:var(--muted)" title="'+esc(rr.skipped)+'">skipped</span>');
+      if(rr.error) flags.push('<span class="evFlag" style="color:var(--dn)" title="'+esc(rr.error)+'">⚠ error</span>');
+      const pm=rr.prev_metric==null?'':'<span class="muted">'+fx(rr.prev_metric)+'→</span>';
+      return '<div class="evRes"><span class="nm">'+esc(rr.name||rr.strategy_id||'?')+'</span>'+
+        '<span class="num" style="min-width:96px;text-align:right">'+pm+'<b class="'+(rr.improved?'up':'')+'">'+fx(rr.best_metric,'—')+'</b></span>'+
+        '<span style="display:flex;gap:3px;flex-wrap:wrap;justify-content:flex-end;max-width:150px">'+(flags.join('')||'<span class="evFlag muted">—</span>')+'</span></div>';
+    }).join('')||'<div class="evRes muted">no targets this tick</div>';
+    const ts=(h.ts||'').slice(0,16).replace('T',' ');
+    return '<div class="evTick'+(hi===0?' open':'')+'"><div class="evTickHd">'+
+      '<span style="flex:1">'+esc(ts)+' · '+(h.targets||0)+' targets</span>'+
+      (h.improved?'<span class="up">'+h.improved+'↑</span>':'<span class="muted">0↑</span>')+
+      (h.accepted?' <span style="color:var(--acc)">'+h.accepted+'●</span>':'')+
+      (h.archived?' <span class="dn">'+h.archived+'🗄</span>':'')+
+      '</div><div class="evTickBody">'+rows+'</div></div>';
+  }).join('');
+  b.querySelectorAll('.evTickHd').forEach(hd=>hd.onclick=()=>hd.parentElement.classList.toggle('open'));
+}
+
+async function evPrune(commit){
+  const btn=$('evClean');
+  if(btn){ btn.disabled=true; btn.dataset.lbl=btn.textContent; btn.innerHTML='<span class="spin"></span>'; }
+  const r=await api('/markets/evolve/prune_backtests','POST',{dry_run:!commit},120000);
+  if(btn){ btn.disabled=false; btn.textContent=btn.dataset.lbl||'🧹 clean up runs'; }
+  if(!r||r.error){ toast('prune: '+esc((r&&r.error)||'failed'),'err'); return; }
+  const b=$('evHistBody');
+  if(commit){
+    toast('cleaned up '+r.count_deleted+' redundant evolve run'+(r.count_deleted===1?'':'s'),'ok');
+    if(b){ b.classList.remove('on'); b.innerHTML=''; b.dataset.mode=''; }
+    if(typeof renderRunHist==='function') renderRunHist();
+    if(typeof evLoad==='function') evLoad();
+    return;
+  }
+  if(!b) return;
+  b.classList.add('on'); b.dataset.mode='prune';
+  if(!r.count_deleted){
+    b.innerHTML='<div class="evPrune">✓ nothing to clean — '+r.candidates+' evolve run'+(r.candidates===1?'':'s')+
+      ', all already best-per-strategy</div>'; return;
+  }
+  b.innerHTML='<div class="evPrune"><b>'+r.count_deleted+'</b> redundant evolve backtest'+(r.count_deleted===1?'':'s')+
+    ' will be deleted, keeping the best <b>'+r.kept.length+'</b> (one per strategy). '+
+    '<span class="muted">Your own backtests and the evolve history log are never touched.</span>'+
+    '<div class="formRow" style="margin-top:8px"><button class="pri" id="evPruneGo" style="background:var(--dn);border-color:var(--dn)">delete '+r.count_deleted+'</button>'+
+    '<button class="ghost" id="evPruneNo">cancel</button></div></div>';
+  $('evPruneGo').onclick=()=>evPrune(true);
+  $('evPruneNo').onclick=()=>{ b.classList.remove('on'); b.innerHTML=''; b.dataset.mode=''; };
+}
+</script>
 </body>
 </html>

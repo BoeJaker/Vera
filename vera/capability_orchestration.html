@@ -9,10 +9,20 @@
   var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
   if(t&&S.getItem('vera:ui:themeVarsFor')===t){
     var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
-    if(v)for(var k in v)d.style.setProperty(k,v[k]);}}catch(e){}})();</script>
+    if(v)for(var k in v)d.style.setProperty(k,v[k]);}
+  /* paint cached UI scale before layout so the shell never flashes at 100%.
+     zoom magnifies; the counter-size (viewport/scale) + --ui-scale var keep the
+     100vh shell body from overflowing — CSS zoom, unlike native zoom, doesn't
+     shrink the layout viewport. */
+  var sc=parseFloat(S.getItem('vera:ui:scale'));
+  if(sc>0&&sc!==1){sc=Math.max(0.6,Math.min(2,sc));
+    d.style.setProperty('--ui-scale',String(sc));
+    d.style.zoom=String(sc);
+    d.style.width='calc(100vw / '+sc+')';
+    d.style.height='calc(100vh / '+sc+')';}}catch(e){}})();</script>
 <meta charset="UTF-8">
 <title>Vera — Orchestrator Harness</title>
-<script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-ui.js?v=scale2"></script>
 <!-- Fonts loaded non-render-blocking: the shell paints immediately with the
      system fallbacks in the CSS var stacks, then swaps in the web fonts if/when
      they arrive. On a LAN box with slow/no route to Google, this avoids the
@@ -48,7 +58,7 @@
   color-scheme:light;
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:13px;height:100vh;display:flex;flex-direction:column;overflow:hidden;-webkit-font-smoothing:antialiased}
+body{background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:13px;height:calc(100vh / var(--ui-scale, 1));display:flex;flex-direction:column;overflow:hidden;-webkit-font-smoothing:antialiased}
 html, body, button, input, select, textarea, span, div {
   font-variant-emoji: text;
 }
@@ -163,7 +173,7 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .tab-hover-zone{position:absolute;top:0;left:0;right:0;height:42px;z-index:19;display:none}
 .tab-hover-zone.active{display:block}
 
-.tab{padding:9px 14px;cursor:pointer;font-size:9.5px;font-weight:700;font-family:var(--mono);text-transform:uppercase;letter-spacing:1.4px;color:var(--dim2);border-bottom:2px solid transparent;transition:all .16s;white-space:nowrap;user-select:none;position:relative}
+.tab{padding:9px 14px;cursor:pointer;font-size:11px;font-weight:700;font-family:var(--mono);text-transform:uppercase;letter-spacing:1px;color:var(--dim2);border-bottom:2px solid transparent;transition:all .16s;white-space:nowrap;user-select:none;position:relative}
 .tab:hover{color:var(--text)}
 .tab.active{color:var(--acc);border-bottom-color:var(--acc)}
 /* Multi-open indicator dot */
@@ -185,7 +195,7 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .body-wrap.lhm .lhm-nav{display:flex}
 .body-wrap.lhm .lhm-nav.events-open{width:260px}
 .lhm-nav-foot{padding:4px 6px;border-top:1px solid var(--border);flex-shrink:0;display:flex;gap:2px;align-items:center;justify-content:flex-end}
-.lhm-nav .tab{display:flex;align-items:center;border-bottom:none;border-right:2px solid transparent;padding:8px 10px 8px 10px;font-family:var(--mono);font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:1.1px;color:var(--dim2);white-space:normal;word-break:break-word;user-select:none;cursor:pointer;position:relative;transition:all .14s;text-align:left;line-height:1.3}
+.lhm-nav .tab{display:flex;align-items:center;border-bottom:none;border-right:2px solid transparent;padding:8px 10px 8px 10px;font-family:var(--mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.7px;color:var(--dim2);white-space:normal;word-break:break-word;user-select:none;cursor:pointer;position:relative;transition:all .14s;text-align:left;line-height:1.3}
 .lhm-nav .tab:hover{color:var(--text);background:rgba(255,255,255,.025)}
 .lhm-nav .tab.active{color:var(--acc);border-right-color:var(--acc);background:rgba(90,158,143,.06)}
 .lhm-nav .tab.open{color:var(--acc2);border-right-color:var(--acc2)}
@@ -5335,8 +5345,34 @@ async function toggleTheme(){
 
 // Dropdown picker anchored under the theme button — lets you jump straight to
 // any theme rather than clicking through the whole cycle.
+// "UI size" row for the theme menu — delegates to veraUI (loaded from
+// vera-ui.js), which persists the value + broadcasts it to every panel iframe.
+function _scaleControlEl(){
+  const vu = window.veraUI || {};
+  const get = ()=> (vu.getScale ? vu.getScale() : 1);
+  const set = (s)=>{ if(vu.setScale) vu.setScale(s); refresh(); };
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;align-items:center;gap:6px;padding:5px 6px 8px;margin-bottom:5px;'+
+    'border-bottom:1px solid var(--border2)';
+  const lbl = document.createElement('span');
+  lbl.textContent = 'UI size'; lbl.style.cssText = 'flex:1;color:var(--dim2)';
+  const mk = (t,ti)=>{ const b=document.createElement('button'); b.type='button'; b.textContent=t; b.title=ti;
+    b.style.cssText='width:22px;height:22px;padding:0;line-height:1;border-radius:5px;cursor:pointer;'+
+      'border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px'; return b; };
+  const minus=mk('−','Smaller (Ctrl+Alt+−)'), plus=mk('+','Larger (Ctrl+Alt+=)'), reset=mk('↺','Reset to 100% (Ctrl+Alt+0)');
+  const val=document.createElement('span');
+  val.style.cssText='min-width:36px;text-align:center;color:var(--text);font-variant-numeric:tabular-nums';
+  function refresh(){ val.textContent = Math.round(get()*100)+'%'; }
+  minus.onclick = e=>{ e.stopPropagation(); set(get()-0.1); };
+  plus.onclick  = e=>{ e.stopPropagation(); set(get()+0.1); };
+  reset.onclick = e=>{ e.stopPropagation(); set(1); };
+  wrap.append(lbl, minus, val, plus, reset); refresh();
+  return wrap;
+}
+
 function _buildThemeMenuRows(menu, themes){
   menu.innerHTML = '';
+  menu.appendChild(_scaleControlEl());
   Object.keys(themes).forEach(tid=>{
     const t = themes[tid], active = tid === _currentTheme;
     const row = document.createElement('div');

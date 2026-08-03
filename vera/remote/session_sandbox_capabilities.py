@@ -1302,6 +1302,50 @@ def _html_escape(s: str) -> str:
             .replace(">", "&gt;").replace('"', "&quot;"))
 
 
+@APP.get("/remote/sandbox/preview/{session_id}/{path:path}", include_in_schema=False)
+async def _sandbox_preview_file(session_id: str, path: str):
+    """Serve ONE file straight out of a session sandbox's working directory, live
+    (re-read on every request, never cached) — so a browser (operator.run's
+    Playwright session in particular) can actually load and render/click a file a
+    loop step just authored inside the sandbox.
+
+    Exists because there was no reachable URL for anything a step wrote — a
+    session sandbox is a container, not a network-routable host, and the only
+    prior way to look at its files was `ide.fs.read`-style text extraction. This
+    reuses that exact same read path (`read_artifact_file`, the same one
+    `_v5_workdir_files`/`code.author`'s context-grounding already trust) rather
+    than opening any new container-network reachability — no docker networking,
+    no port publishing, nothing that widens what a session sandbox can be
+    reached FROM. It only widens what can be done with content a caller could
+    already pull out via that same read path.
+
+    Deliberately narrow: text files only (`read_artifact_file` decodes as
+    UTF-8), single relative path per request — an HTML/CSS/JS deliverable with
+    inline styling/scripts (the actual motivating case, §3.13) needs nothing
+    more. A page with EXTERNAL asset files works too, since the browser will
+    request each asset's own relative path against this same route — only a
+    page needing a real backend (server-rendered routes, an API) is out of
+    scope, which was never true of anything the loop authors as a static
+    deliverable."""
+    from fastapi.responses import Response, PlainTextResponse
+    import importlib, mimetypes
+    rel = str(path or "").strip().lstrip("/")
+    if not rel or ".." in rel.split("/"):
+        return PlainTextResponse("invalid path", status_code=400)
+    try:
+        ex = importlib.import_module("Vera.vera.execution.exec_capabilities")
+        read_fn = getattr(ex, "read_artifact_file", None)
+    except Exception as e:
+        return PlainTextResponse(f"preview unavailable: {e}", status_code=500)
+    if not read_fn:
+        return PlainTextResponse("preview unavailable: read_artifact_file missing", status_code=500)
+    content = await read_fn(session_id=session_id, relpath=rel, max_bytes=2_000_000)
+    if content is None:
+        return PlainTextResponse(f"not found in sandbox {session_id}: {rel}", status_code=404)
+    ctype = mimetypes.guess_type(rel)[0] or "text/plain"
+    return Response(content=content, media_type=ctype)
+
+
 async def link_session(session_id: str, target: str, *, kind: str = "",
                        label: str = "") -> bool:
     """Programmatic helper for loops: link `session_id` to a shared container key

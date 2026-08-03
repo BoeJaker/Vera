@@ -4,7 +4,7 @@
 <script>/* vera theme boot */
 (function(){try{var d=document.documentElement,S=window.localStorage;
 var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
-var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+var vf=S.getItem('vera:ui:themeVarsFor');if(t&&vf!==t)return;var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
 if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
@@ -160,8 +160,8 @@ const SECTIONS=[
   ['dashboard','▦','Dashboard'],['inventory','▤','Inventory'],['station','⚡','Scan Station'],
   ['quicklist','↯','Quick List'],
   ['listings','❖','Listings'],['orders','▥','Orders'],['customers','◎','Customers'],
-  ['shipping','➤','Shipping'],['market','⌕','Market & Deals'],['tax','£','Tax & Profit'],
-  ['settings','⚙','Settings']];
+  ['shipping','➤','Shipping'],['sourcing','⛓','Sourcing'],['market','⌕','Market & Deals'],
+  ['tax','£','Tax & Profit'],['settings','⚙','Settings']];
 let CUR='dashboard';
 function openStation(){const u='/business/intake/panel'+(STORE?('?store='+encodeURIComponent(STORE)+'&store_name='+encodeURIComponent(STORE_NAME)):'');
   window.open(u,'vera_scan_station');}
@@ -252,20 +252,24 @@ RENDER.inventory=async()=>{
   m.append(tb);const wrap=el('div',{id:'invWrap'});m.append(wrap);
   async function load(){wrap.innerHTML='<span class="spin"></span>';
     const r=await api('/business/product/list'+qs(withStore({q:q.value,limit:400})));
-    const t=el('table');t.append(el('tr',{},el('th',{},''),el('th',{},'SKU / Name'),el('th',{},'Cat'),el('th',{class:'right'},'Qty'),el('th',{class:'right'},'Cost'),el('th',{class:'right'},'Price'),el('th',{class:'right'},'Actions')));
-    for(const p of (r.products||[])){const img=(p.attributes&&(p.attributes.images||[])[0])||'';
+    const t=el('table');t.append(el('tr',{},el('th',{},''),el('th',{},'Item'),el('th',{},'Details'),el('th',{class:'right'},'Qty'),el('th',{class:'right'},'Cost'),el('th',{class:'right'},'Price'),el('th',{class:'right'},'Value'),el('th',{class:'right'},'Actions')));
+    for(const p of (r.products||[])){const a=p.attributes||{};const img=(a.images||[])[0]||a.cover||'';
+      const val=(a.valuation&&(a.valuation.market_gbp||a.valuation.pc_cib))||null;
+      const meta=[a.console,a.release_year,(a.edition&&a.edition!=='Standard'?a.edition:''),a.region].filter(Boolean).join(' · ');
       t.append(el('tr',{},
         el('td',{},img?el('img',{class:'thumb',src:img}):el('div',{class:'thumb'})),
         el('td',{},el('div',{style:'font-weight:600'},esc(p.name||'')),el('div',{class:'muted mono',style:'font-size:10px'},esc(p.sku||'')+(p.upc?(' · '+p.upc):''))),
-        el('td',{},el('span',{class:'muted'},esc(p.category||'—'))),
+        el('td',{},meta?el('div',{class:'muted',style:'font-size:11px'},esc(meta)):el('span',{class:'muted'},esc(p.category||'—')),
+          a.rarity?el('span',{class:'pill deal',style:'font-size:9px'},esc(a.rarity)):null),
         el('td',{class:'right mono'},p.qty_on_hand),
         el('td',{class:'right mono'},money(p.cost,p.currency)),
         el('td',{class:'right mono'},money(p.price,p.currency)),
+        el('td',{class:'right mono',title:'market valuation'},val!=null?el('span',{style:'color:var(--deal)'},money(val)):'—'),
         el('td',{class:'right'},
           el('button',{class:'btn sm',onclick:()=>editProduct(p)},'edit'),' ',
           el('button',{class:'btn sm',onclick:()=>repriceOne(p)},'reprice'),' ',
           el('button',{class:'btn sm pri',onclick:()=>draftFrom(p)},'list'))));}
-    if(!(r.products||[]).length)t.append(el('tr',{},el('td',{colspan:7,class:'empty'},'No products. Scan or add one.')));
+    if(!(r.products||[]).length)t.append(el('tr',{},el('td',{colspan:8,class:'empty'},'No products. Scan or add one.')));
     wrap.innerHTML='';wrap.append(t);}
   load();
 };
@@ -507,6 +511,94 @@ RENDER.shipping=async()=>{
   load();
 };
 
+// ── sourcing: materials costing + suppliers + drop-ship ──────────────────────
+RENDER.sourcing=async()=>{
+  const m=$('#main');m.innerHTML='<h2>Sourcing</h2><div class="sub">Packing-material costs · suppliers · drop-ship profit</div>';
+  const row=el('div',{class:'row'});
+  // materials
+  const mc=el('div',{class:'card col'});mc.append(el('h3',{},'⧉ Packing materials',
+    el('button',{class:'btn sm',style:'margin-left:auto',onclick:()=>matModal({})},'+ Add')));
+  const mw=el('div');mc.append(mw);row.append(mc);
+  // suppliers
+  const sc=el('div',{class:'card col'});sc.append(el('h3',{},'⛴ Suppliers',
+    el('button',{class:'btn sm',style:'margin-left:auto',onclick:()=>supModal({})},'+ Add')));
+  const sw=el('div');sc.append(sw);row.append(sc);
+  m.append(row);
+  // dropship profit calculator
+  const dc=el('div',{class:'card',style:'margin-top:14px'});dc.append(el('h3',{},'⚖ Drop-ship profit calculator'));
+  dc.append(el('div',{class:'muted',style:'font-size:11px;margin-bottom:8px'},'Pick a sourced product and a sell price for an honest margin (supplier cost + shipping + fees + postage + packaging), with the UK import-VAT position.'));
+  const prodSel=el('select',{style:'flex:1;min-width:180px'});
+  const price=el('input',{type:'number',step:'0.01',placeholder:'sell £',style:'width:100px'});
+  const post=el('input',{type:'number',step:'0.01',placeholder:'your postage £',style:'width:130px'});
+  const out=el('div',{style:'margin-top:10px'});
+  dc.append(el('div',{class:'row'},prodSel,price,post,
+    el('button',{class:'btn',onclick:()=>srcModal(prodSel.value)},'⛓ Set source'),
+    el('button',{class:'btn pri',onclick:calc},'Calculate')),out);
+  m.append(dc);
+  async function srcModal(pid){if(!pid){toast('Pick a product first','err');return;}
+    const sup=await api('/business/supplier/list'+qs(withStore({})));
+    const sl=await api('/business/sourcing/list'+qs({product_id:pid}));const cur=(sl.sourcing||[])[0]||{};
+    form('Source / drop-ship this product',[
+      {name:'supplier_id',label:'Supplier',type:'select',options:[{value:'',label:'—'}].concat((sup.suppliers||[]).map(s=>({value:s.id,label:s.name}))),default:cur.supplier_id},
+      {name:'supplier_url',label:'Supplier listing URL',default:cur.supplier_url},
+      {name:'unit_cost',label:'Unit cost (supplier currency)',type:'number',step:'0.01',default:cur.unit_cost},
+      {name:'currency',label:'Currency (CNY/USD/GBP)',default:cur.currency||'CNY'},
+      {name:'shipping_gbp',label:'Per-item shipping £',type:'number',step:'0.01',default:cur.shipping_gbp},
+      {name:'fulfil_mode',label:'Fulfilment',type:'select',options:['dropship','stock'],default:cur.fulfil_mode||'dropship'},
+      {name:'moq',label:'Min order qty',type:'number',default:cur.moq||1}],{},
+      async o=>{o.id=cur.id||'';o.product_id=pid;const r=await api('/business/sourcing/upsert',withStore(o));
+        closeModal();toast(r.ok?('Sourced @ '+money((r.sourcing||{}).unit_cost_gbp)+' landed'):'Error',r.ok?'ok':'err');});}
+
+  async function loadMats(){mw.innerHTML='<span class="spin"></span>';const r=await api('/business/material/list'+qs(withStore({})));
+    const t=el('table');t.append(el('tr',{},el('th',{},'Material'),el('th',{},'Applies'),el('th',{class:'right'},'Bulk'),el('th',{class:'right'},'Per item'),el('th',{})));
+    for(const x of (r.materials||[])){t.append(el('tr',{},
+      el('td',{},el('div',{style:'font-weight:600'},esc(x.name)),el('div',{class:'muted',style:'font-size:10px'},esc(x.kind))),
+      el('td',{},el('span',{class:'muted'},esc(x.category||'all'))),
+      el('td',{class:'right mono'},money(x.bulk_cost)+' / '+x.bulk_qty),
+      el('td',{class:'right mono'},money(x.per_item)),
+      el('td',{class:'right'},el('button',{class:'btn sm',onclick:()=>matModal(x)},'edit'),' ',el('button',{class:'btn sm danger',onclick:async()=>{await api('/business/material/delete',{id:x.id});loadMats();}},'✕'))));}
+    if(!(r.materials||[]).length)t.append(el('tr',{},el('td',{colspan:5,class:'empty'},'No materials. Add a bulk buy → per-item cost feeds every sale.')));
+    mw.innerHTML='';mw.append(t);mw.append(el('div',{class:'muted',style:'font-size:11px;margin-top:6px'},'Per-item packaging total: '+money(r.per_item_total)));}
+  function matModal(x){form(x.id?'Edit material':'Add material',[
+    {name:'name',label:'Name (e.g. C5 bubble mailer)'},
+    {name:'kind',label:'Kind',type:'select',options:['packaging','postage','label','filler','other'],default:x.kind||'packaging'},
+    {name:'category',label:'Applies to category (blank = all)'},
+    {name:'bulk_cost',label:'Bulk cost £',type:'number',step:'0.01'},
+    {name:'bulk_qty',label:'Quantity in the bulk buy',type:'number'}],x,
+    async o=>{o.id=x.id||'';const r=await api('/business/material/upsert',withStore(o));closeModal();toast(r.ok?('Per item '+money((r.material||{}).per_item)):'Error',r.ok?'ok':'err');loadMats();});}
+
+  async function loadSups(){sw.innerHTML='<span class="spin"></span>';const r=await api('/business/supplier/list'+qs(withStore({})));
+    const t=el('table');t.append(el('tr',{},el('th',{},'Supplier'),el('th',{},'Cur'),el('th',{},'Lead'),el('th',{})));
+    for(const x of (r.suppliers||[])){t.append(el('tr',{},
+      el('td',{},el('div',{style:'font-weight:600'},esc(x.name)),x.url?el('a',{href:x.url,target:'_blank',style:'font-size:10px'},'open'):el('span',{class:'muted',style:'font-size:10px'},esc(x.kind))),
+      el('td',{},el('span',{class:'muted'},esc(x.currency))),
+      el('td',{},el('span',{class:'muted'},(x.lead_days||0)+'d')),
+      el('td',{class:'right'},el('button',{class:'btn sm',onclick:()=>supModal(x)},'edit'),' ',el('button',{class:'btn sm danger',onclick:async()=>{await api('/business/supplier/delete',{id:x.id});loadSups();}},'✕'))));}
+    if(!(r.suppliers||[]).length)t.append(el('tr',{},el('td',{colspan:4,class:'empty'},'No suppliers yet.')));
+    sw.innerHTML='';sw.append(t);}
+  function supModal(x){form(x.id?'Edit supplier':'Add supplier',[
+    {name:'name',label:'Name'},{name:'kind',label:'Kind',type:'select',options:['aliexpress','wholesale','retail','other'],default:x.kind||'aliexpress'},
+    {name:'url',label:'URL'},{name:'currency',label:'Currency (CNY/USD/GBP)',default:x.currency||'CNY'},
+    {name:'lead_days',label:'Lead time (days)',type:'number',default:x.lead_days||0}],x,
+    async o=>{o.id=x.id||'';const r=await api('/business/supplier/upsert',withStore(o));closeModal();toast(r.ok?'Saved':'Error',r.ok?'ok':'err');loadSups();});}
+
+  async function loadProds(){const r=await api('/business/product/list'+qs(withStore({limit:400})));
+    prodSel.innerHTML='';for(const p of (r.products||[]))prodSel.append(el('option',{value:p.id},(p.name||p.sku||p.id).slice(0,50)));}
+  async function calc(){if(!prodSel.value||!price.value){toast('Pick a product + price','err');return;}
+    out.innerHTML='<span class="spin"></span>';
+    const r=await api('/business/dropship/profit',withStore({product_id:prodSel.value,sell_price:parseFloat(price.value),your_postage:parseFloat(post.value)||0}));
+    if(r.error){out.innerHTML='';toast(r.error,'err');return;}
+    const b=r.breakdown||{};out.innerHTML='';
+    const t=el('table');const rr=(l,v,cls)=>t.append(el('tr',{},el('td',{},l),el('td',{class:'right mono'+(cls?' '+cls:'')},v)));
+    rr('Revenue',money(b.revenue));rr('Supplier cost',money(b.supplier_cost));rr('Supplier shipping',money(b.supplier_shipping));
+    rr('Marketplace fee',money(b.marketplace_fee));if(b.your_postage)rr('Your postage',money(b.your_postage));if(b.packaging)rr('Packaging',money(b.packaging));
+    t.append(el('tr',{},el('td',{},el('b',{},'Net profit')),el('td',{class:'right mono'},el('b',{style:'color:'+((r.net_profit>=0)?'var(--up)':'var(--dn)')},money(r.net_profit)+' · '+pct(r.margin_pct)))));
+    out.append(el('div',{class:'row',style:'margin-bottom:6px'},el('span',{class:'pill '+(r.fulfil_mode==='dropship'?'warn':'ok')},r.fulfil_mode)),t,
+      el('div',{class:'muted',style:'font-size:11px;margin-top:6px'},'ℹ '+esc(r.vat_note||'')),
+      el('button',{class:'btn sm',style:'margin-top:8px',onclick:async()=>{const q=await api('/business/restock',withStore({product_id:prodSel.value}));toast(q.error?q.error:(q.mode==='stock'?('Restocked '+q.created+' @ '+money(q.landed_cost)):'Drop-ship intent logged'),q.error?'err':'ok');}},'⟳ Restock this'));}
+  loadMats();loadSups();loadProds();
+};
+
 // ── market & deals ───────────────────────────────────────────────────────────
 RENDER.market=async()=>{
   const m=$('#main');m.innerHTML='<h2>Market &amp; Deals</h2><div class="sub">Live eBay + Vinted OSINT, watchlists & buy alerts</div>';
@@ -669,5 +761,6 @@ if(EMBED){
 buildNav();refreshChips();RENDER.dashboard();
 setInterval(refreshChips,60000);
 </script>
+<script src="/ui/vera-ui.js"></script>
 </body>
 </html>

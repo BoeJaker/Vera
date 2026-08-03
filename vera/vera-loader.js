@@ -42,7 +42,11 @@
   function writeCache(cfg) { try { localStorage.setItem(CACHE_KEY, JSON.stringify(cfg)); } catch (e) {} }
 
   // ── theme colour resolution (reads the panel's live CSS vars) ──────────────
-  function themeColors(el) {
+  // The returned object is *live*: it is registered and, on a theme change, its
+  // fields are recomputed IN PLACE so running animations (which captured it once
+  // in their factory) repaint in the new theme without being torn down.
+  var _liveCols = [];
+  function _resolveColors(el) {
     var cs = getComputedStyle(el || document.documentElement);
     function pick() {
       for (var i = 0; i < arguments.length; i++) {
@@ -58,6 +62,38 @@
       dim: pick('--dim2', '--t2', '--fg2') || '#6b7585'
     };
   }
+  function themeColors(el) {
+    var target = el || document.documentElement;
+    var obj = _resolveColors(target);
+    _liveCols.push({ el: target, obj: obj });
+    return obj;
+  }
+  var _repaintT = null;
+  function repaintThemes() {
+    for (var i = _liveCols.length - 1; i >= 0; i--) {
+      var e = _liveCols[i];
+      // drop entries whose element left the DOM (loader removed)
+      if (e.el !== document.documentElement && e.el && !e.el.isConnected) { _liveCols.splice(i, 1); continue; }
+      var fresh = _resolveColors(e.el);
+      e.obj.node = fresh.node; e.obj.node2 = fresh.node2; e.obj.edge = fresh.edge; e.obj.dim = fresh.dim;
+    }
+  }
+  function scheduleRepaint() {
+    if (_repaintT) return;
+    // debounce: applyVars() sets dozens of properties in a burst
+    _repaintT = setTimeout(function () { _repaintT = null; repaintThemes(); }, 60);
+  }
+  // Watch for theme switches (data-theme flip) and inline var updates (applyVars
+  // writes CSS custom properties onto <html>'s style attribute).
+  try {
+    new MutationObserver(scheduleRepaint).observe(document.documentElement, {
+      attributes: true, attributeFilter: ['data-theme', 'style']
+    });
+    // Cross-panel broadcast some shells emit on theme change.
+    window.addEventListener('message', function (e) {
+      var d = e && e.data; if (d && (d.type === 'vera:theme' || d.type === 'theme')) scheduleRepaint();
+    });
+  } catch (e) {}
 
   // ── shared ticker: one RAF for every live loader ───────────────────────────
   var _frames = [];               // {fn, canvas}
