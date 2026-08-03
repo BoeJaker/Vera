@@ -1514,3 +1514,149 @@ a cross-clock comparison). Lesson applied going forward: compare a
 run's `t0`/`started_at` against `[DateTimeOffset]::UtcNow`, never
 against an eyeballed "current time," when judging whether something is
 actually stuck. Re-ran `markets-sweep-propose` cleanly afterward.
+
+## 25. Two more Loop Lab reattach bugs, found live from "I still can't see it"
+
+The user kept reporting the Test tab showed nothing past the
+"Orchestrator planning…" card even after §19's `_adoptLiveRunIfAny`
+fix — correctly refusing to accept "that's just how it renders" as an
+answer, which is what actually surfaced both real bugs here.
+
+**Bug 1 — the adopt guard blocked adopting a genuinely NEW run.**
+`_adoptLiveRunIfAny`'s guard was `if(_testRunId) return` — meant to
+protect a run this tab already started, but it ALSO fired whenever any
+run id was already tracked locally, including one that had already
+finished or failed. A previous (failed) run's id sitting in
+`_testRunId` silently blocked the tab from ever adopting the NEXT,
+genuinely different live run — `evolve.run.status` clearly showed it
+live server-side, the tab just never looked again. Fixed: only skip
+when actively polling (`_implTimer` set), and compare the live run id
+against what's tracked before deciding to skip.
+
+**Bug 2 — adopting a new run reused the OLD run's resolved session id.**
+Even after fixing bug 1, the timeline still showed nothing moving.
+`_implResolvedSid` (persisted across nav so returning to Test re-binds
+straight to the session that actually carried events, instead of
+re-running child-session discovery) is exactly what's needed for
+restoring the SAME run after a reload — but adopting a DIFFERENT run
+reused it anyway, so the poller kept hitting the old run's now-dead
+session, which would never produce another event again. Looked
+identical to "stuck on the first card forever" while a different,
+actively-progressing run sat right alongside it, invisible. Fixed:
+`_implResolvedSid`/`_implExact`/`_implFallbackSteps` all reset when a
+genuinely new run is adopted.
+
+Also added an 8-second background re-check (`_testAdoptTimer`) so an
+already-open Test tab picks up a new externally-triggered run without
+needing a manual reload at all — previously `_adoptLiveRunIfAny` only
+ever ran once, on tab load/navigation.
+
+Both fixes are pure browser-side session-id bookkeeping against prod's
+own session-state store — confirmed by finding `_mirror_loop_session`'s
+own docstring ("a no-op for in-process runs, their events already land
+in prod's DB"): a local (non-sandbox) test was never affected by either
+bug, and benefits from the same fix with one fewer moving part (no
+sandbox→prod mirror hop at all).
+
+## 26. The REAL root cause: the sandbox's Ollama routing was never synced from prod
+
+§22's dream-scheduler fix was real and correctly deployed, but a fresh,
+dream-free sandbox STILL produced the exact same symptom on the very
+next test: `markets-sweep-propose` sat on "Orchestrator planning…" for
+765+ seconds with the Ollama jobs panel showing nothing. The user
+pointed out directly — "nothing is loading the gpu currently" — which
+ruled out contention as the explanation and reopened the investigation
+properly instead of accepting the first plausible-sounding answer.
+
+Traced it to the actual cause: `_v7_classify_tier`'s LLM call (and the
+main planner call) route through role-based rules (`profile=loop`,
+`role=planner/controller/tier`). Comparing `llm.route.resolve` from
+PROD (`https://llm.int:8999`) against the SAME call made FROM THE
+SANDBOX ITSELF (`http://llm.int:8998` — a distinction the user also had
+to correct me on, since prod's own view of "in_use" says nothing about
+a completely separate process's semaphore state) showed two totally
+different resolutions. Confirmed via `ollama.role_profiles.get`:
+
+- **Prod** has a USER-level override: `loop/planner` →
+  `prefer_gpu: true, deny_gpu: false, model: jaahas/qwen3.5-uncensored`
+  (a 7.36GB model, GPU).
+- **Sandbox** had `"user": {}` — completely empty — so every sandboxed
+  planner/controller/tier call fell back to the bare CODE-DECLARED
+  default: `deny_gpu: true, model: gpt-oss:20b` (13.79GB, CPU-only
+  nodes explicitly forbidden from touching the GPU).
+
+Nothing was ever hanging. Every sandboxed loop test has been running
+its planning calls on CPU with a model nearly twice the size of what
+prod actually uses, with the GPU explicitly denied by config — no
+error, no GPU activity to point at, indistinguishable from a genuine
+hang from any external vantage point. `evolve.sandbox.snapshot` only
+ever copied `vera:evolve:tasks/config/seeded` — never the Ollama
+routing-override keys (`vera:ollama:role_profiles/cap_routing/routing`)
+— so a fresh sandbox has NEVER had prod's real routing config, since
+the very first time this snapshot mechanism was built.
+
+**Fixed** by adding those three keys to the snapshot's default prefix
+list. Verified with a clean before/after: `llm.route.resolve` on the
+sandbox for `role=planner` went from `cpu-247 + gpt-oss:20b` to
+`gpu-250 + jaahas/qwen3.5-uncensored`, matching prod exactly. A fresh
+`markets-sweep-propose` run produced real `plan`/`tool_call`/
+`step_start` events within 92 seconds — versus every prior attempt
+never getting past 3-5 heartbeat-only events in 5-15+ minutes — and
+went on to complete successfully (`pass_rate: 1.0`) in ~32 minutes.
+
+**Robustness follow-through**, since a code default alone can regress:
+`evolve.sandbox.status` now runs `_sandbox_routing_drift()` on every
+check — compares the sandbox's effective `loop/planner/controller/tier`
+routing against prod's live and surfaces a clear `routing_drift`
+mismatch the instant they diverge, rather than relying on nobody ever
+touching the snapshot defaults again. Also cleaned up genuinely orphaned
+state from this investigation's own iteration (a superseded
+`loop-lab/sandbox-fixes-20260803` worktree+branch, replaced by `-2`);
+left the pre-existing `latest`/`main`/`sandbox` worktrees alone.
+
+## 27. A second, deeper data gap: the sandbox's fabric SQLite was never synced either
+
+`markets-sweep-propose`'s first successful run (§26) passed, but took
+32 minutes for what should be a short task. Its own step trace showed
+why: `markets.strategy.list` returned `{"strategies": [], "count": 0}`
+in the sandbox despite 11 real saved strategies on prod, so the agent
+spent most of that time honestly improvising — trying nonexistent
+files, web-searching for generic RSI/MACD examples, correctly refusing
+a hallucinated GitHub path the anti-hallucination guard caught, then
+building its own config from scratch. It got a valid, sensible answer,
+just the long way round, because the environment it was actually
+tested against had no strategy data at all.
+
+Root cause, once traced: `markets.strategy.list` reads from a SQLite db
+(`_sqlite_conn()`, `data_fabric.py`), and `SQLITE_PATH` defaults to
+`vera/fabric/vera_fabric.db` — a path INSIDE the repo tree, relative to
+`data_fabric.py` itself. The sandbox's worktree is a separate checkout,
+so it has always had its own default/empty copy of that file, entirely
+disconnected from prod's real one — a 2.36GB db backing not just
+`mkt_strategies` but `fabric_records` generally, i.e. everything
+`memory.seek`/`fabric.query` read too. Not markets-specific: any
+sandboxed test expecting real fabric/memory data hits the same wall.
+Asked the user how to close this (a live data-safety tradeoff, not one
+to pick alone) — read-only bind-mount, periodic snapshot copy, or leave
+it and rewrite the affected tasks; chose the snapshot-copy pattern,
+consistent with §26's Redis fix.
+
+**Fixed**: `evolve.sandbox.snapshot` now also backs up prod's real
+`vera_fabric.db` into the sandbox's worktree, using sqlite3's own
+`backup()` API rather than a raw file copy — a live multi-GB db under
+WAL can be mid-write at any instant, and a plain copy risks grabbing a
+torn snapshot; `backup()` takes the proper lock and streams a
+consistent copy regardless of concurrent writers on the source.
+
+**Second bug, found on first live use**: the backup failed —
+"attempt to write a readonly database" — because the sandbox
+CONTAINER runs as root, and its own ordinary fabric writes during a
+test (not just this snapshot) touch the same file, so it was
+root-owned while the snapshot process (prod, running as `boejaker`)
+couldn't write to it. Not a one-time fixup: any later sandbox activity
+can re-assert root ownership before the NEXT snapshot runs. Fixed with
+a best-effort `sudo -n chown boejaker:boejaker` immediately before
+opening the destination, every time — verified directly on the host
+before committing, then end-to-end via a live `markets.strategy.list`
+call against the sandbox, which returned all 11 real strategies by
+name, matching prod exactly.
