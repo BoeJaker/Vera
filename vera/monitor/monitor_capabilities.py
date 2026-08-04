@@ -95,7 +95,10 @@ def _is_error(d: Any) -> bool:
 
 
 def _resources() -> Dict:
-    """Cheap, non-blocking process/host resource sample (psutil, since-last-call)."""
+    """Cheap, non-blocking process/host resource sample (psutil, since-last-call).
+    proc_mb/proc_cpu are specifically THIS Vera process (RSS = Resident Set
+    Size, its actual physical-memory footprint) — see _top_processes() below
+    for host-wide visibility beyond just this one process."""
     if not _HAS_PSUTIL:
         return {"cpu": None, "mem": None, "proc_mb": None, "proc_cpu": None,
                 "ram_used_gb": None, "ram_total_gb": None}
@@ -119,6 +122,56 @@ def _resources() -> Dict:
         log.debug("sysmon resources: %s", e)
         return {"cpu": None, "mem": None, "proc_mb": None, "proc_cpu": None,
                 "ram_used_gb": None, "ram_total_gb": None}
+
+
+_PROC_CACHE: Dict[int, "psutil.Process"] = {}   # pid -> psutil.Process, reused across
+                                                 # ticks so cpu_percent() gets a real delta
+
+
+def _top_processes(n: int = 8) -> List[Dict]:
+    """Host-wide top-N processes by RSS memory (not just this Vera process —
+    see _resources() above for that). CPU%% needs the SAME Process object
+    reused across ticks to get a real delta (a fresh wrapper's cpu_percent()
+    always returns 0.0 on its first call, same psutil gotcha _resources()
+    already works around for the single-process case above); this keeps a
+    small persistent cache keyed by pid, evicting entries for pids that have
+    exited since the last sampler tick."""
+    if not _HAS_PSUTIL:
+        return []
+    try:
+        seen_pids = set()
+        rows = []
+        for p in psutil.process_iter(['pid', 'name', 'username']):
+            pid = p.info.get('pid')
+            if pid is None:
+                continue
+            seen_pids.add(pid)
+            proc = _PROC_CACHE.get(pid)
+            if proc is None:
+                proc = p
+                try:
+                    proc.cpu_percent(None)   # prime
+                except Exception:
+                    continue
+                _PROC_CACHE[pid] = proc
+            try:
+                mem_mb = round(proc.memory_info().rss / 1e6, 1)
+                cpu_pct = round(proc.cpu_percent(None), 1)
+                rows.append({
+                    "pid": pid, "name": p.info.get('name') or '?',
+                    "user": (p.info.get('username') or '')[:14],
+                    "mem_mb": mem_mb, "cpu_pct": cpu_pct,
+                })
+            except Exception:
+                continue
+        for pid in list(_PROC_CACHE.keys()):
+            if pid not in seen_pids:
+                del _PROC_CACHE[pid]
+        rows.sort(key=lambda r: r["mem_mb"], reverse=True)
+        return rows[:n]
+    except Exception as e:
+        log.debug("sysmon top_processes: %s", e)
+        return []
 
 
 async def _queue_len() -> Optional[int]:
@@ -211,7 +264,13 @@ async def _docker_host_summary(h: Dict) -> Dict:
 
 
 async def _docker_summary() -> Dict:
-    hl = await _call("docker.hosts.list")
+    # .list.effective, not .list: this box has a real duplicate registration
+    # (the local socket registered twice, once as kind=local and once as a
+    # mis-saved kind=tcp pointing at the same socket) — .list is the raw,
+    # undeduped registry (kept that way so the host management UI can still
+    # show/delete the duplicate); .list.effective collapses same-engine
+    # entries so every container on it isn't counted twice here.
+    hl = await _call("docker.hosts.list.effective")
     if _is_error(hl):
         return {"ok": False, "error": hl["error"], "hosts": [],
                 "total_hosts": 0, "reachable": 0, "running": 0, "containers": 0}
@@ -291,6 +350,7 @@ async def _build_full() -> Dict:
         _proxmox_summary(), _docker_summary(), _ollama_summary(),
         _call("obs.node_temps"))
     return {"ts": now_iso(), "t": time.time(), "resources": _resources(),
+            "top_processes": _top_processes(),
             "proxmox": proxmox, "docker": docker, "ollama": ollama, "temps": temps}
 
 
@@ -349,11 +409,13 @@ schedule(_sample_once, SAMPLE_SEC, "sysmon_sampler")
     memory="off", silent=True,
     description="One-call health snapshot of the local infra stack — Proxmox "
                 "clusters, Docker hosts, the Ollama cluster, and per-host core "
-                "temperatures — plus process CPU/RAM. Served from the sampler "
-                "cache (the heavy proxmox/docker calls run once per "
-                "SYSMON_SAMPLE_SEC, not per request); pass fresh=true to force "
-                "a live rebuild. Output: {ts, t, cached, age_s, "
-                "resources:{cpu,mem,proc_mb,...}, proxmox:{...}, docker:{...}, "
+                "temperatures — plus this Vera process's own CPU/RAM AND the "
+                "host's top-8 processes by memory (top_processes). Served "
+                "from the sampler cache (the heavy proxmox/docker calls run "
+                "once per SYSMON_SAMPLE_SEC, not per request); pass fresh=true "
+                "to force a live rebuild. Output: {ts, t, cached, age_s, "
+                "resources:{cpu,mem,proc_mb,...}, top_processes:[{pid,name,"
+                "user,mem_mb,cpu_pct}], proxmox:{...}, docker:{...}, "
                 "ollama:{...}, temps:{hosts:[...]}}.",
 )
 async def cap_sysmon_status(fresh: bool = False, trace_id=None) -> Dict:

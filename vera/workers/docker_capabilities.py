@@ -195,6 +195,57 @@ def _normalize_tcp(url: str) -> str:
     return u.rstrip("/")
 
 
+def _host_engine_key(rec: dict) -> str:
+    """Identity key for the underlying Docker ENGINE a host record points at —
+    not the host record's own id. This box has a real, live example of the bug
+    this fixes: the local socket is registered both as kind='local' id='local'
+    AND as a mis-saved kind='tcp' id='unix://var/run/docker.sock' pointing at
+    the exact same socket via a stray unix:// URL (the same case
+    _socket_from_url()'s docstring already calls out as a "recover hosts
+    mistakenly saved as tcp" scenario) — two DIFFERENT host records, ONE real
+    engine, so every container on it was being counted/listed twice."""
+    kind = rec.get("kind", "local")
+    if kind == "ssh":
+        return f"ssh:{rec.get('ssh_host_id','')}:{rec.get('socket') or _LOCAL_SOCK}"
+    sock = rec.get("socket") or _socket_from_url(rec.get("url", ""))
+    if sock:
+        return f"sock:{sock}"
+    return f"tcp:{_normalize_tcp(rec.get('url',''))}"
+
+
+def _effective_hosts() -> Dict[str, dict]:
+    """docker.hosts.list, deduplicated by _host_engine_key — the version every
+    aggregator (sysmon summary, per-container stats) should iterate, so a
+    stale duplicate registration doesn't double-count every container on it.
+    Kept separate from docker.hosts.list itself, which stays raw/undeduped so
+    the host management UI can still show (and let a user actually delete)
+    the duplicate registration rather than have it silently hidden."""
+    hosts = list(_ensure_local_host(_load_hosts()).values())
+    seen: Dict[str, dict] = {}
+    for h in hosts:
+        key = _host_engine_key(h)
+        if key not in seen or (h.get("default") and not seen[key].get("default")):
+            seen[key] = h
+    return {h["id"]: h for h in seen.values()}
+
+
+@capability(
+    "docker.hosts.list.effective",
+    http_method="GET", http_path="/workers/docker/hosts/effective", http_tags=["docker"],
+    memory="off", silent=True,
+    description="Same records as docker.hosts.list but deduplicated by the "
+                "underlying engine identity (socket path, or ssh target) — use "
+                "this for any aggregation ACROSS hosts (dashboard summaries, "
+                "per-container stats); docker.hosts.list stays raw/undeduped so "
+                "the host management UI can still surface (and let a user "
+                "delete) a genuinely duplicate registration instead of it being "
+                "silently hidden. Output: {hosts:[...], count}.",
+)
+async def cap_docker_hosts_list_effective(trace_id=None) -> Dict:
+    hosts = _effective_hosts()
+    return {"hosts": list(hosts.values()), "count": len(hosts)}
+
+
 def _socket_from_url(url: str) -> str:
     """If `url` denotes a unix socket (unix:///… or a bare /…/*.sock path),
     return the socket path, else "". Tolerates a stray scheme/slash prefix the UI
@@ -301,6 +352,43 @@ async def cap_docker_hosts_delete(id: str = "", trace_id=None) -> Dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # ENGINE API  (reverse proxy + ping/ps/images)
 # ─────────────────────────────────────────────────────────────────────────────
+# One httpx.AsyncClient per docker socket, built once and reused forever —
+# NOT rebuilt per request. httpx.AsyncHTTPTransport() unconditionally builds
+# a fresh SSLContext (ssl.create_default_context(), which loads + parses the
+# CA bundle off disk via certifi) even for a plain http://localhost request
+# over a Unix domain socket that never uses TLS at all. These are hit
+# constantly (docker stats polling every ~30s per container, plus the
+# Sandboxes/Workers panels), and doing that SSL-context build on every single
+# call blocked the event loop for 1-3.6s each time — long enough to starve
+# WebSocket read/writes and cause the client-side reconnect flapping. One
+# client per socket, `verify=False` since UDS+http has nothing to verify.
+_UDS_CLIENT_CACHE: Dict[str, httpx.AsyncClient] = {}
+
+
+def _uds_client(sock: str) -> httpx.AsyncClient:
+    c = _UDS_CLIENT_CACHE.get(sock)
+    if c is None or c.is_closed:
+        transport = httpx.AsyncHTTPTransport(uds=sock, verify=False)
+        c = httpx.AsyncClient(transport=transport)
+        _UDS_CLIENT_CACHE[sock] = c
+    return c
+
+
+# Same fix, for the plain-TCP docker-host branches (a registered tcp/ssh host
+# whose url doesn't recover to a local unix socket) — these were missed on
+# the first pass and kept blocking the event loop every ~30s poll exactly
+# like the UDS branches did. One client per base URL, built once.
+_TCP_CLIENT_CACHE: Dict[str, httpx.AsyncClient] = {}
+
+
+def _tcp_client(base: str) -> httpx.AsyncClient:
+    c = _TCP_CLIENT_CACHE.get(base)
+    if c is None or c.is_closed:
+        c = httpx.AsyncClient()
+        _TCP_CLIENT_CACHE[base] = c
+    return c
+
+
 async def _engine_request(rec: dict, method: str, api_path: str,
                           *, timeout: float = 15.0) -> Tuple[int, bytes, str]:
     """Hit the Docker Engine API for a host. Returns (status, body, content_type)."""
@@ -312,16 +400,15 @@ async def _engine_request(rec: dict, method: str, api_path: str,
         # Recover hosts mistakenly saved as tcp with a unix-socket url.
         sock = _socket_from_url(rec.get("url", ""))
         if sock and os.path.exists(sock):
-            transport = httpx.AsyncHTTPTransport(uds=sock)
-            async with httpx.AsyncClient(transport=transport, timeout=timeout) as c:
-                r = await c.request(method, "http://localhost" + api_path)
-                return r.status_code, r.content, r.headers.get("content-type", "application/json")
+            c = _uds_client(sock)
+            r = await c.request(method, "http://localhost" + api_path, timeout=timeout)
+            return r.status_code, r.content, r.headers.get("content-type", "application/json")
         base = _normalize_tcp(rec.get("url", ""))
         if not base:
             return 503, b'{"message":"tcp host has no url"}', "application/json"
-        async with httpx.AsyncClient(timeout=timeout) as c:
-            r = await c.request(method, base + api_path)
-            return r.status_code, r.content, r.headers.get("content-type", "application/json")
+        c = _tcp_client(base)
+        r = await c.request(method, base + api_path, timeout=timeout)
+        return r.status_code, r.content, r.headers.get("content-type", "application/json")
 
     if kind == "ssh":
         sock = rec.get("socket") or _LOCAL_SOCK
@@ -340,16 +427,15 @@ async def _engine_request(rec: dict, method: str, api_path: str,
     # local
     sock = rec.get("socket") or _LOCAL_SOCK
     if os.path.exists(sock):
-        transport = httpx.AsyncHTTPTransport(uds=sock)
-        async with httpx.AsyncClient(transport=transport, timeout=timeout) as c:
-            r = await c.request(method, "http://localhost" + api_path)
-            return r.status_code, r.content, r.headers.get("content-type", "application/json")
+        c = _uds_client(sock)
+        r = await c.request(method, "http://localhost" + api_path, timeout=timeout)
+        return r.status_code, r.content, r.headers.get("content-type", "application/json")
     dh = os.getenv("DOCKER_HOST", "")
     if dh.startswith(("tcp://", "http://", "https://")):
         base = _normalize_tcp(dh)
-        async with httpx.AsyncClient(timeout=timeout) as c:
-            r = await c.request(method, base + api_path)
-            return r.status_code, r.content, r.headers.get("content-type", "application/json")
+        c = _tcp_client(base)
+        r = await c.request(method, base + api_path, timeout=timeout)
+        return r.status_code, r.content, r.headers.get("content-type", "application/json")
     return (503, b'{"message":"no local docker socket; set DOCKER_HOST or register a tcp/ssh host"}',
             "application/json")
 
@@ -509,7 +595,7 @@ async def _docker_stats_tick_host(host_id: str, rec: dict) -> None:
 
 
 async def _docker_stats_tick() -> None:
-    hosts = _ensure_local_host(_load_hosts())
+    hosts = _effective_hosts()   # deduped — see _host_engine_key()
     await asyncio.gather(
         *(_docker_stats_tick_host(hid, rec) for hid, rec in hosts.items()), return_exceptions=True)
 

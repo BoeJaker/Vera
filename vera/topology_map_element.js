@@ -87,16 +87,54 @@
     // every real-time event. Public API — called from outside this class.
     applyEvent(ev) {
       const t = (ev && ev.type) || '';
+      let matched = true;
       if (t === 'worker.start' && ev.worker) {
         const nid = 'worker:' + ev.worker;
         this._dispatch(ev.task || nid, nid, 'acc');
       } else if ((t === 'worker.done' || t === 'worker.cancelled') && ev.worker) {
         this._settle(ev.task || ('worker:' + ev.worker), t === 'worker.done' ? 'ok' : 'err');
-      } else if (t === 'ollama.request' && ev.phase === 'generating' && ev.instance_id) {
+      } else if (t === 'ollama.request' && ev.instance_id) {
+        // NOTE: do not gate this on ev.phase — the embedding path
+        // (capability_orchestration.py's ollama_embed, the single most
+        // frequent live caller: every fabric/memory embed call) emits plain
+        // {type:'ollama.request', instance_id, ...} with NO phase field at
+        // all, so a phase==='generating' check silently excluded almost all
+        // real traffic. Only the full-generate path ever sets 'queued' then
+        // 'generating' — firing on every ollama.request regardless of phase
+        // means a multi-phase generate call just re-triggers _dispatch a
+        // couple of times on the SAME key, which is harmless (it only resets
+        // the glow + safety timeout, doesn't double-animate the chip flight
+        // since the class is already applied).
         this._dispatch('oll:' + ev.instance_id, 'ollama:' + ev.instance_id, 'acc');
       } else if ((t === 'ollama.request_done' || t === 'ollama.request_error') && ev.instance_id) {
         this._settle('oll:' + ev.instance_id, t === 'ollama.request_done' ? 'ok' : 'err');
+      } else {
+        matched = false;
       }
+      if (matched) {
+        this._lastActivityAt = Date.now();
+        this._eventCount++;
+        if (this._activityDot) {
+          this._activityDot.classList.add('hot');
+          clearTimeout(this._activityDotTimer);
+          this._activityDotTimer = setTimeout(() => this._activityDot.classList.remove('hot'), 400);
+        }
+      }
+    }
+
+    // Runs every second regardless of whether any event has ever arrived —
+    // this is the objective, always-on proof the live feed is connected
+    // (vs. the chip-flight animation, which is real but easy to miss in a
+    // half-second window). Text always reflects reality: says so plainly if
+    // nothing has arrived yet, never fakes "connected".
+    _tickActivity() {
+      if (!this._activityText) return;
+      if (!this._lastActivityAt) {
+        this._activityText.textContent = 'no live activity yet';
+        return;
+      }
+      const secs = Math.floor((Date.now() - this._lastActivityAt) / 1000);
+      this._activityText.textContent = `${this._eventCount} events · last ${secs}s ago`;
     }
 
     // Fly a chip from the node's category/parent to the node itself, and mark
@@ -164,11 +202,19 @@
           .tip{position:absolute;pointer-events:none;left:8px;top:8px;font-size:9.5px;
                background:var(--bg0,#0b0f17);border:1px solid var(--border,#2a3140);border-radius:3px;
                padding:3px 7px;color:var(--ink,#d9e1ed);opacity:0;transition:opacity .1s;max-width:70%}
+          .activity{position:absolute;right:8px;top:8px;font-size:9px;font-family:var(--mono,monospace);
+                    color:var(--dim2,#7e8ba0);display:flex;align-items:center;gap:5px;pointer-events:none}
+          .activity .adot{width:6px;height:6px;border-radius:50%;background:var(--dim,#4a5568);
+                          transition:background .15s}
+          .activity .adot.hot{background:var(--acc,#5b8cff);box-shadow:0 0 5px var(--acc,#5b8cff)}
         </style>
         <div class="wrap">
           <svg><g class="cam"><g class="edges"></g><g class="nodes"></g><g class="chips"></g></g></svg>
           <div class="empty" data-part="empty">Waiting for topology.snapshot…</div>
           <div class="tip" data-part="tip"></div>
+          <div class="activity" data-part="activity" title="Live vera:events reaching this map — proof the WS feed is actually connected, independent of whether you catch a chip flight">
+            <span class="adot"></span><span data-part="activity-text">no live activity yet</span>
+          </div>
         </div>`;
       this._svg = this._sr.querySelector('svg');
       this._cam = this._sr.querySelector('.cam');
@@ -177,6 +223,11 @@
       this._gChips = this._sr.querySelector('.chips');
       this._empty = this._sr.querySelector('[data-part="empty"]');
       this._tip = this._sr.querySelector('[data-part="tip"]');
+      this._activityDot = this._sr.querySelector('.adot');
+      this._activityText = this._sr.querySelector('[data-part="activity-text"]');
+      this._eventCount = 0;
+      this._lastActivityAt = 0;
+      setInterval(() => this._tickActivity(), 1000);
 
       this._svg.addEventListener('mousedown', e => {
         if (e.target.closest('.node-g')) return;

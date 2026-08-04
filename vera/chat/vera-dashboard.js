@@ -259,8 +259,38 @@
       if (!state.editing) return;
       var w = e.target.closest('.widget'); if (!w || w.parentNode !== grid) return;
       dragSrc = w; w.classList.add('dragging');
+      _scrollTarget = null;   // recomputed lazily by _autoScrollOnDrag below
       try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', w.dataset.wid || ''); } catch (_) {}
     }
+
+    // Auto-scroll while dragging near the top/bottom edge of the scrolling
+    // container. Native HTML5 drag-and-drop is *supposed* to auto-scroll on
+    // its own, but that only reliably works over the grid's own background —
+    // every .widget has overflow:hidden, which makes browsers lose track of
+    // the actual scrollable ancestor while the pointer is over a widget
+    // (rather than the gaps between them), so this reimplements it manually,
+    // independent of whatever element the dragover currently targets.
+    var _scrollTarget = null;
+    function _scrollableAncestor(el) {
+      var node = el.parentElement;
+      while (node && node !== document.body) {
+        var st = getComputedStyle(node);
+        if ((st.overflowY === 'auto' || st.overflowY === 'scroll') && node.scrollHeight > node.clientHeight) return node;
+        node = node.parentElement;
+      }
+      return document.scrollingElement || document.documentElement;
+    }
+    function _autoScrollOnDrag(e) {
+      if (!state.editing || !dragSrc) return;
+      if (!_scrollTarget) _scrollTarget = _scrollableAncestor(grid);
+      var margin = 70, maxSpeed = 22;
+      var r = _scrollTarget.getBoundingClientRect ? _scrollTarget.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+      var y = e.clientY, dy = 0;
+      if (y < r.top + margin) dy = -maxSpeed * (1 - Math.max(0, y - r.top) / margin);
+      else if (y > r.bottom - margin) dy = maxSpeed * (1 - Math.max(0, r.bottom - y) / margin);
+      if (dy) _scrollTarget.scrollTop += dy;
+    }
+    document.addEventListener('dragover', _autoScrollOnDrag);
     function onDragOver(e) {
       if (!state.editing || !dragSrc) return;
       var w = e.target.closest('.widget'); if (!w || w === dragSrc || w.parentNode !== grid) return;
@@ -388,6 +418,17 @@
     function soloRequest(w) {
       var r = w.getBoundingClientRect();
       var title = ((w.querySelector('.w-title') || {}).textContent || w.dataset.wid || '').trim();
+      // Instant-paint snapshot: send the widget's current markup + this page's
+      // <style> blocks (the .widget/.w-head/.kpi-val/... rules live there, not
+      // on the element itself) so the harness can render real content in the
+      // float immediately via srcdoc — no second navigation, no poll. href is
+      // kept only as a legacy fallback for a harness still running the old
+      // vera-dashboard.js (rollout skew), which ignores html/css and falls
+      // back to the old full-tab-reload + #vd-solo poll.
+      var css = '';
+      try {
+        document.querySelectorAll('style').forEach(function (s) { css += s.textContent + '\n'; });
+      } catch (e) {}
       try {
         window.parent.postMessage({
           type: 'vera.dash.solo',
@@ -395,9 +436,35 @@
           title: title,
           href: String(window.location.href),
           w: Math.max(320, Math.round(r.width)),
-          h: Math.max(220, Math.round(r.height))
+          h: Math.max(220, Math.round(r.height)),
+          html: w.outerHTML,
+          css: css
         }, '*');
       } catch (e) { /* sandboxed parent — leave the widget in place */ }
+      _startSoloMirror(w);
+    }
+
+    // Keep a popped-out widget's floating mirror live without a second page
+    // boot: watch the widget's own subtree (the SOURCE page's normal load*()
+    // polling already mutates it on its usual cadence) and re-post a fresh
+    // snapshot, debounced, whenever it changes. One observer per widget id —
+    // cheap to leave running even after the float is closed on the harness
+    // side, since an unanswered postMessage is a no-op there.
+    var _soloMirrors = {};
+    function _startSoloMirror(w) {
+      var wid = w.dataset.wid;
+      if (_soloMirrors[wid]) return;
+      var t = null;
+      var mo = new MutationObserver(function () {
+        clearTimeout(t);
+        t = setTimeout(function () {
+          try {
+            window.parent.postMessage({ type: 'vera.dash.solo.update', wid: wid, html: w.outerHTML }, '*');
+          } catch (e) {}
+        }, 150);
+      });
+      mo.observe(w, { childList: true, subtree: true, characterData: true, attributes: true });
+      _soloMirrors[wid] = mo;
     }
     function floatW(w) {
       var r = w.getBoundingClientRect();

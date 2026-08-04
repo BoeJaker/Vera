@@ -716,9 +716,11 @@ select option{background:var(--bg2)}
                 <button class="w-iconbtn" onclick="dashHideWidget('host-resources')">×</button>
               </span>
             </div>
-            <div class="w-body" style="display:flex;flex-direction:column;gap:8px;max-height:180px">
+            <div class="w-body" style="display:flex;flex-direction:column;gap:6px;max-height:280px">
               <div style="height:56px;flex-shrink:0" title="Host CPU % / RAM %, last ~10min"><vera-sparkline id="sparkHostRes"></vera-sparkline></div>
-              <div style="height:50px;flex-shrink:0" title="Vera process RSS (MB), last ~10min"><vera-sparkline id="sparkProcMb"></vera-sparkline></div>
+              <div style="height:44px;flex-shrink:0" title="This Vera process's own memory footprint (RSS = Resident Set Size, its actual physical RAM usage), last ~10min"><vera-sparkline id="sparkProcMb"></vera-sparkline></div>
+              <div style="font-size:8.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;flex-shrink:0">Top processes (host-wide, by memory)</div>
+              <div id="topProcs" style="max-height:100px;overflow-y:auto;flex-shrink:0"></div>
             </div>
             <span class="w-resize" data-resize></span>
           </div>
@@ -2732,6 +2734,19 @@ async function loadSysmonSplit(){
     }).join('');
   }
 
+  // ── Top host processes (not just Vera's own — see sparkProcMb for that) ──
+  const topProcsEl = document.getElementById('topProcs');
+  if(topProcsEl){
+    const procs = s.top_processes||[];
+    topProcsEl.innerHTML = procs.length ? procs.map(p=>
+      `<div class="sm-row" style="padding:2px 0">
+        <span class="nm" title="pid ${p.pid} · ${esc(p.user||'')}">${esc(p.name||'?')}</span>
+        <span class="meta">${p.cpu_pct!=null?p.cpu_pct+'% cpu':''}</span>
+        <span style="width:50px;text-align:right;font-family:var(--mono);color:var(--dim2)">${p.mem_mb!=null?Math.round(p.mem_mb)+'MB':'—'}</span>
+      </div>`
+    ).join('') : '<span style="color:var(--dim2);font-size:9.5px">psutil unavailable</span>';
+  }
+
   dashTouch();
 }
 
@@ -2887,7 +2902,7 @@ async function loadSparklines(){
     { field:'cpu', label:'cpu', color:'acc', unit:'%' },
     { field:'mem', label:'ram', color:'acc2', unit:'%' },
   ]);
-  single('sparkProcMb', 'proc_mb', 'proc RSS', 'mb');
+  single('sparkProcMb', 'proc_mb', 'vera process mem', 'mb');
   multi('sparkQueueWorkers', [
     { field:'queue',   label:'queue', color:'warn' },
     { field:'workers', label:'wrk',   color:'acc' },
