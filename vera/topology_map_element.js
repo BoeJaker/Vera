@@ -79,12 +79,24 @@
     }
 
     // ── live activity: real routing, not a poll-diff guess ─────────────────
+    // Endpoint is /ws/mcp (there is no bare /ws — confirmed against
+    // capability_orchestration.py's actual @APP.websocket route), and the
+    // event bus subscription is action:'subscribe_events' (registers this
+    // connection under the special "__events__" key emit_event() broadcasts
+    // to) — action:'subscribe' with stream:'vera:events' silently matches
+    // nothing, since emit_event() only ever checks for sub === "__events__".
+    // Every broadcast event arrives wrapped as {type:'event', data:{...}}.
     _connectWs() {
       try {
-        const wsUrl = this._getBase().replace(/^http/, 'ws') + '/ws';
+        const wsUrl = this._getBase().replace(/^http/, 'ws') + '/ws/mcp';
         this._ws = new WebSocket(wsUrl);
-        this._ws.onopen = () => { try { this._ws.send(JSON.stringify({ action: 'subscribe', stream: 'vera:events' })); } catch (_) {} };
-        this._ws.onmessage = e => { try { this._onEvent(JSON.parse(e.data)); } catch (_) {} };
+        this._ws.onopen = () => { try { this._ws.send(JSON.stringify({ action: 'subscribe_events' })); } catch (_) {} };
+        this._ws.onmessage = e => {
+          try {
+            const msg = JSON.parse(e.data);
+            if (msg && msg.type === 'event') this._onEvent(msg.data);
+          } catch (_) {}
+        };
         this._ws.onclose = () => { setTimeout(() => this.isConnected && this._connectWs(), 3000); };
         this._ws.onerror = () => { try { this._ws.close(); } catch (_) {} };
       } catch (_) { setTimeout(() => this.isConnected && this._connectWs(), 5000); }
@@ -232,14 +244,14 @@
       const edgesByParent = {};
       this._edges.forEach(e => { (edgesByParent[e.from] = edgesByParent[e.from] || []).push(e.to); });
       const ring1 = (edgesByParent['hub'] || []).map(id => byId.get(id)).filter(Boolean);
-      const R1 = 110;
+      const R1 = 150;
       ring1.forEach((c, i) => {
         const a = (i / Math.max(1, ring1.length)) * Math.PI * 2 - Math.PI / 2;
         c.x = Math.cos(a) * R1; c.y = Math.sin(a) * R1;
       });
       ring1.forEach(c => {
         const leafIds = edgesByParent[c.id] || [];
-        const R2 = Math.min(70, 26 + leafIds.length * 4);
+        const R2 = Math.min(95, 30 + leafIds.length * 5);
         leafIds.forEach((lid, j) => {
           const leaf = byId.get(lid); if (!leaf) return;
           const a = (j / Math.max(1, leafIds.length)) * Math.PI * 2;
@@ -295,9 +307,15 @@
         g.appendChild(dot);
         if (changed.has(n.id)) this._pulseEl(g, col);
         if (activeNodeIds.has(n.id)) g.classList.add('dispatching');   // survives the rebuild below
-        const label = svgEl('text', { y: r + 11, 'text-anchor': 'middle' });
-        label.textContent = short(n.label || n.id, n.kind === 'category' ? 14 : 12);
-        g.appendChild(label);
+        // Permanent labels only for the hub/category/service ring — leaves
+        // (individual nodes/workers/ollama instances/mesh devices) can crowd
+        // together closely enough that always-on text just overlaps into
+        // noise; their name is still one hover away via _showTip below.
+        if (n.kind === 'hub' || n.kind === 'category' || n.kind === 'service') {
+          const label = svgEl('text', { y: r + 11, 'text-anchor': 'middle' });
+          label.textContent = short(n.label || n.id, 14);
+          g.appendChild(label);
+        }
         g.addEventListener('mouseenter', () => this._showTip(n));
         g.addEventListener('mouseleave', () => { this._tip.style.opacity = 0; });
         this._gNodes.appendChild(g);

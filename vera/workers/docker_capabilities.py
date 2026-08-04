@@ -62,7 +62,7 @@ from fastapi.responses import Response, StreamingResponse, JSONResponse
 from Vera.vera.config import cfg
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
-    APP, capability, emit_event, now_iso,
+    APP, capability, emit_event, now_iso, schedule,
 )
 
 log = logging.getLogger("vera.docker")
@@ -423,6 +423,119 @@ async def cap_docker_ps(host_id: str = "", all: bool = True, trace_id=None) -> D
     if not isinstance(rows, list):
         rows = []
     return {"host_id": rec["id"], "containers": rows, "count": len(rows)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PER-CONTAINER STATS  — CPU%/memory for running containers, on a throttled
+# background tick rather than per-request: some hosts here run 300+ containers
+# (local Vera dev host included), and a live docker.ps count is confirmed to
+# already be that high — hitting /containers/{id}/stats for every one of them
+# on every dashboard poll would hammer the Engine API for no real benefit, so
+# this samples on its own 30s cadence, caches, and caps to the busiest N.
+# ─────────────────────────────────────────────────────────────────────────────
+DOCKER_STATS_SEC = 30.0
+DOCKER_STATS_TOP_N = 12          # shown/kept per host — dashboard tile space, not a hard API limit
+_DOCKER_STATS_SAMPLE_CAP = 60    # max containers actually queried per host per tick, busiest-first by definition impossible to know in advance, so just capped by list order
+_DOCKER_STATS_CACHE: Dict[str, dict] = {}   # host_id -> {containers:[...], updated_at, error}
+
+
+def _docker_cpu_pct(stats: dict) -> Optional[float]:
+    """Same delta-vs-system-usage formula the `docker stats` CLI uses. A single
+    non-streaming /stats call already contains both cpu_stats and precpu_stats
+    (Docker itself samples twice internally), so this needs only one request
+    per container, not two spaced a second apart like the host-level probe."""
+    try:
+        cpu = stats["cpu_stats"]["cpu_usage"]["total_usage"] - stats["precpu_stats"]["cpu_usage"]["total_usage"]
+        sysd = stats["cpu_stats"]["system_cpu_usage"] - stats["precpu_stats"]["system_cpu_usage"]
+        ncpu = stats["cpu_stats"].get("online_cpus") or len(stats["cpu_stats"]["cpu_usage"].get("percpu_usage") or [1])
+        if sysd > 0 and cpu >= 0:
+            return round((cpu / sysd) * ncpu * 100.0, 1)
+    except Exception:
+        pass
+    return None
+
+
+async def _docker_container_stat(rec: dict, cid: str) -> Optional[dict]:
+    status, body, _ = await _engine_request(rec, "GET", f"/containers/{cid}/stats?stream=false", timeout=8.0)
+    if status != 200:
+        return None
+    try:
+        data = json.loads(body)
+    except Exception:
+        return None
+    mem = data.get("memory_stats") or {}
+    mem_used = mem.get("usage")
+    # Docker counts page cache in "usage" — subtract it when present so this
+    # reads like real working-set memory, matching what `docker stats` shows.
+    cache = (mem.get("stats") or {}).get("cache") or (mem.get("stats") or {}).get("inactive_file") or 0
+    if mem_used is not None:
+        mem_used = max(0, mem_used - cache)
+    return {
+        "cpu_pct": _docker_cpu_pct(data),
+        "mem_mb": round(mem_used / 1e6, 1) if mem_used is not None else None,
+        "mem_limit_mb": round(mem["limit"] / 1e6, 1) if mem.get("limit") else None,
+    }
+
+
+async def _docker_stats_tick_host(host_id: str, rec: dict) -> None:
+    try:
+        status, body, _ = await _engine_request(rec, "GET", "/containers/json?all=false")
+        if status != 200:
+            _DOCKER_STATS_CACHE[host_id] = {"containers": [], "updated_at": now_iso(), "error": f"HTTP {status}"}
+            return
+        rows = await _parse_engine_json(body, [])
+        if not isinstance(rows, list):
+            rows = []
+        rows = rows[:_DOCKER_STATS_SAMPLE_CAP]
+        stats = await asyncio.gather(
+            *(_docker_container_stat(rec, c.get("Id", "")) for c in rows), return_exceptions=True)
+        out = []
+        for c, st in zip(rows, stats):
+            if not isinstance(st, dict):
+                continue
+            out.append({
+                "id": (c.get("Id") or "")[:12],
+                "name": (c.get("Names") or ["?"])[0].lstrip("/"),
+                "image": c.get("Image", ""),
+                **st,
+            })
+        out.sort(key=lambda r: r.get("cpu_pct") or 0, reverse=True)
+        _DOCKER_STATS_CACHE[host_id] = {
+            "containers": out[:DOCKER_STATS_TOP_N], "total_running": len(rows),
+            "updated_at": now_iso(), "error": "",
+        }
+    except Exception as e:
+        _DOCKER_STATS_CACHE[host_id] = {"containers": [], "updated_at": now_iso(), "error": str(e)[:200]}
+
+
+async def _docker_stats_tick() -> None:
+    hosts = _ensure_local_host(_load_hosts())
+    await asyncio.gather(
+        *(_docker_stats_tick_host(hid, rec) for hid, rec in hosts.items()), return_exceptions=True)
+
+
+try:
+    schedule(_docker_stats_tick, DOCKER_STATS_SEC, name="docker_stats_probe")
+except Exception as e:
+    log.debug("schedule docker stats probe: %s", e)
+
+
+@capability(
+    "docker.stats.top",
+    http_method="GET", http_path="/workers/docker/stats/top", http_tags=["docker"],
+    memory="off", silent=True,
+    description="Per-container CPU% and working-set memory for the busiest "
+                f"running containers on every registered Docker host, refreshed "
+                f"every {int(DOCKER_STATS_SEC)}s in the background and capped to "
+                f"the top {DOCKER_STATS_TOP_N} per host by CPU (a live docker.ps "
+                "count can be in the hundreds — querying every container's "
+                "/stats on every request would hammer the Engine API for no "
+                "benefit a small dashboard tile could show anyway). Output: "
+                "{hosts:{host_id:{containers:[{id,name,image,cpu_pct,mem_mb,"
+                "mem_limit_mb}], total_running, updated_at, error}}}.",
+)
+async def cap_docker_stats_top(trace_id=None) -> Dict:
+    return {"hosts": _DOCKER_STATS_CACHE}
 
 
 @capability(

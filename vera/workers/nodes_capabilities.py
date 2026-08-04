@@ -1502,6 +1502,21 @@ if command -v smartctl >/dev/null 2>&1; then
 else
   echo "NO_SMART"
 fi
+if [ -r /proc/stat ]; then
+  echo "PERCPU_BEGIN"
+  grep '^cpu[0-9]' /proc/stat > /tmp/.vera_pc1 2>/dev/null
+  sleep 1
+  grep '^cpu[0-9]' /proc/stat > /tmp/.vera_pc2 2>/dev/null
+  awk '
+    NR==FNR{t=0;for(i=2;i<=NF;i++)t+=$i;idle1[$1]=$5;tot1[$1]=t;next}
+    {t=0;for(i=2;i<=NF;i++)t+=$i;dt=t-tot1[$1];di=$5-idle1[$1];
+     pct=(dt>0)?100*(1-di/dt):0; printf "PERCPU|%s|%.1f\n",$1,pct}
+  ' /tmp/.vera_pc1 /tmp/.vera_pc2 2>/dev/null
+  rm -f /tmp/.vera_pc1 /tmp/.vera_pc2
+  echo "PERCPU_END"
+else
+  echo "NO_PERCPU"
+fi
 """
 
 _TEMP_INSTALL_SCRIPT = (
@@ -1624,6 +1639,26 @@ def _parse_thermal_zones(txt: str) -> Dict[str, float]:
     return temps
 
 
+def _parse_percpu(txt: str) -> Dict[str, float]:
+    """Parse the PERCPU_BEGIN..PERCPU_END block: 'PERCPU|cpu0|23.4' -> {"cpu0": 23.4}.
+    Computed from two /proc/stat samples 1s apart — no extra package (sysstat/
+    mpstat) required, works on any Linux box. Note: /proc/stat's cpuN is a
+    LOGICAL cpu (thread) index, which on hyperthreaded hardware does not
+    necessarily line up 1:1 with lm-sensors' physical "Core N" temp labels —
+    shown as its own per-CPU load table, not fused into the temp readings."""
+    out: Dict[str, float] = {}
+    for ln in (txt or "").splitlines():
+        if not ln.startswith("PERCPU|"):
+            continue
+        _, _, rest = ln.partition("|")
+        cpu, _, raw = rest.partition("|")
+        try:
+            out[cpu.strip()] = round(float(raw.strip()), 1)
+        except ValueError:
+            continue
+    return out
+
+
 async def _probe_host_temp(host: Dict) -> None:
     host_id = host.get("id", "")
     if not host_id:
@@ -1655,6 +1690,11 @@ async def _probe_host_temp(host: Dict) -> None:
         elif "NO_SMART" in out:
             missing_tools.append("smartmontools")
 
+        percpu: Dict[str, float] = {}
+        if "PERCPU_BEGIN" in out:
+            body = out.split("PERCPU_BEGIN", 1)[1].split("PERCPU_END", 1)[0]
+            percpu = _parse_percpu(body)
+
         if missing_tools:
             # Try installing everything missing at once, with a long backoff
             # on repeat failure — never blocks this tick; the next tick picks
@@ -1673,12 +1713,12 @@ async def _probe_host_temp(host: Dict) -> None:
         _TEMP_CACHE[host_id] = {
             "host_id": host_id, "label": label, "pve": bool(facts.get("pve")),
             "temps": temps, "max_c": max(temps.values()) if temps else None,
-            "updated_at": now_iso(), "error": error,
+            "percpu": percpu, "updated_at": now_iso(), "error": error,
         }
     except Exception as e:
         _TEMP_CACHE[host_id] = {
             "host_id": host_id, "label": label, "pve": False,
-            "temps": {}, "max_c": None, "updated_at": now_iso(), "error": str(e)[:200],
+            "temps": {}, "max_c": None, "percpu": {}, "updated_at": now_iso(), "error": str(e)[:200],
         }
 
 
@@ -1699,19 +1739,25 @@ except Exception as e:
     "obs.node_temps",
     http_method="GET", http_path="/nodes/temps", http_tags=["obs"],
     memory="off", silent=True,
-    description="Core temperatures for every SSH-registered node, probed every "
-                f"{int(TEMP_PROBE_SEC)}s across three complementary layers: "
-                "sensors -A -u (CPU package/core, falling back to "
-                "/sys/class/thermal), ipmitool sdr type temperature (the "
-                "iLO/BMC's full sensor list — inlet ambient, DIMM zones, PSU, "
-                "and on servers with a smart-array backplane, per-bay drive "
-                "temps), and smartctl per block device (direct per-drive SMART "
-                "temperature). Installs whichever of lm-sensors/ipmitool/"
-                "smartmontools is missing, once per host with a long backoff. "
-                "Named/tagged into the obs.* umbrella like obs.cluster, though "
-                "implemented here since this module owns the SSH probe. Output: "
-                "{hosts:[{host_id,label,pve,temps:{sensor:celsius},max_c,"
-                "updated_at,error}], count}.",
+    description="Core temperatures AND per-logical-CPU load for every "
+                f"SSH-registered node, probed every {int(TEMP_PROBE_SEC)}s. "
+                "Temps across three complementary layers: sensors -A -u (CPU "
+                "package/physical-core, falling back to /sys/class/thermal), "
+                "ipmitool sdr type temperature (the iLO/BMC's full sensor list "
+                "— inlet ambient, DIMM zones, PSU, and on servers with a "
+                "smart-array backplane, per-bay drive temps), and smartctl per "
+                "block device (direct per-drive SMART temperature). Per-CPU "
+                "load is computed from two /proc/stat samples 1s apart (no "
+                "extra package needed) — note its cpuN is a LOGICAL cpu/thread "
+                "index, which doesn't necessarily line up 1:1 with the temp "
+                "side's physical 'Core N' sensor labels on hyperthreaded "
+                "hardware, so they're kept as separate tables, not fused per-"
+                "core. Installs whichever of lm-sensors/ipmitool/smartmontools "
+                "is missing, once per host with a long backoff. Named/tagged "
+                "into the obs.* umbrella like obs.cluster, though implemented "
+                "here since this module owns the SSH probe. Output: "
+                "{hosts:[{host_id,label,pve,temps:{sensor:celsius},"
+                "percpu:{cpuN:pct},max_c,updated_at,error}], count}.",
 )
 async def cap_node_temps(trace_id=None) -> Dict:
     return {"hosts": list(_TEMP_CACHE.values()), "count": len(_TEMP_CACHE)}

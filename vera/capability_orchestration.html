@@ -591,7 +591,7 @@ select option{background:var(--bg2)}
         <div class="dash-toolbar">
           <div class="dash-title">Cluster Overview</div>
           <span class="dash-meta" id="dashLastUpdate">never updated</span>
-          <button class="btn sm"      onclick="loadHealth();loadCluster();loadMemoryStats();loadSysmonSplit();loadHostTemps();loadSparklines();loadMeshInfo();loadLoopLabInfo();loadSandboxesInfo();loadMimicSummary();loadTopologyMap();pollDashHealthStrip();dashTouch()" title="Refresh all widgets">↻ Refresh</button>
+          <button class="btn sm"      onclick="loadHealth();loadCluster();loadMemoryStats();loadSysmonSplit();loadHostTemps();loadDockerStats();loadSparklines();loadMeshInfo();loadLoopLabInfo();loadSandboxesInfo();loadMimicSummary();loadTopologyMap();pollDashHealthStrip();dashTouch()" title="Refresh all widgets">↻ Refresh</button>
           <button class="btn sm teal" onclick="clusterAutoRefresh()" id="dashAutoBtn">Auto 5s</button>
           <span id="clusterRefreshBadge" style="font-size:9.5px;color:var(--dim2);align-self:center"></span>
           <button class="btn sm"      onclick="loadDiagnostics()">Diagnostics</button>
@@ -631,46 +631,51 @@ select option{background:var(--bg2)}
 
           <!-- ── Proxmox (split out of the old combined System Monitor iframe — same
                per-cluster row detail + chart the combined panel had, just its own tile) ── -->
-          <div class="widget w-w4 w-h4" data-wid="sysmon-proxmox">
+          <div class="widget w-w4 w-h5" data-wid="sysmon-proxmox">
             <div class="w-head">
               <span class="w-grip">⠿</span>
               <span class="w-dot" id="wProxmoxDot"></span>
               <span class="w-title">Proxmox <span id="hProxmoxState" style="color:var(--dim2);font-weight:400;text-transform:none;letter-spacing:0"></span></span>
               <span class="w-actions">
-                <button class="w-iconbtn" onclick="loadSysmonSplit();loadSparklines()" title="Refresh">↻</button>
+                <button class="w-iconbtn" onclick="loadSysmonSplit();loadSparklines();loadHostTemps()" title="Refresh">↻</button>
                 <button class="w-iconbtn" onclick="dashHideWidget('sysmon-proxmox')">×</button>
               </span>
             </div>
-            <div class="w-body" style="display:flex;flex-direction:column;gap:6px;max-height:260px">
+            <div class="w-body" style="display:flex;flex-direction:column;gap:6px;max-height:340px">
               <div class="sm-kpis">
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hProxmoxRunning">—</div><div class="sm-kpi-sub">running</div></div>
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hProxmoxGuests">—</div><div class="sm-kpi-sub">guests</div></div>
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hProxmoxNodes">—</div><div class="sm-kpi-sub">nodes</div></div>
               </div>
-              <div id="pmxRows" style="max-height:70px;overflow-y:auto;flex-shrink:0"></div>
-              <div style="height:50px;flex-shrink:0" title="Running guests, last ~10min"><vera-sparkline id="sparkProxmox"></vera-sparkline></div>
+              <div id="pmxRows" style="max-height:60px;overflow-y:auto;flex-shrink:0"></div>
+              <div id="pmxCores" style="font-size:8.5px;color:var(--dim2);flex-shrink:0;max-height:120px;overflow-y:auto"></div>
+              <div style="display:flex;gap:6px;flex-shrink:0">
+                <div style="flex:1;height:50px" title="Running guests, last ~10min"><vera-sparkline id="sparkProxmox"></vera-sparkline></div>
+                <div style="flex:1;height:50px" title="Cluster RAM %, last ~10min"><vera-sparkline id="sparkProxmoxMem"></vera-sparkline></div>
+              </div>
             </div>
             <span class="w-resize" data-resize></span>
           </div>
 
           <!-- ── Docker ── -->
-          <div class="widget w-w4 w-h4" data-wid="sysmon-docker">
+          <div class="widget w-w4 w-h5" data-wid="sysmon-docker">
             <div class="w-head">
               <span class="w-grip">⠿</span>
               <span class="w-dot" id="wDockerDot"></span>
               <span class="w-title">Docker <span id="hDockerState" style="color:var(--dim2);font-weight:400;text-transform:none;letter-spacing:0"></span></span>
               <span class="w-actions">
-                <button class="w-iconbtn" onclick="loadSysmonSplit();loadSparklines()" title="Refresh">↻</button>
+                <button class="w-iconbtn" onclick="loadSysmonSplit();loadSparklines();loadDockerStats()" title="Refresh">↻</button>
                 <button class="w-iconbtn" onclick="dashHideWidget('sysmon-docker')">×</button>
               </span>
             </div>
-            <div class="w-body" style="display:flex;flex-direction:column;gap:6px;max-height:260px">
+            <div class="w-body" style="display:flex;flex-direction:column;gap:6px;max-height:340px">
               <div class="sm-kpis">
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hDockerRunning">—</div><div class="sm-kpi-sub">running</div></div>
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hDockerConts">—</div><div class="sm-kpi-sub">containers</div></div>
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hDockerHosts">—</div><div class="sm-kpi-sub">hosts up</div></div>
               </div>
-              <div id="dkrRows" style="max-height:70px;overflow-y:auto;flex-shrink:0"></div>
+              <div id="dkrRows" style="max-height:60px;overflow-y:auto;flex-shrink:0"></div>
+              <div id="dkrTopContainers" style="max-height:110px;overflow-y:auto;flex-shrink:0"></div>
               <div style="height:50px;flex-shrink:0" title="Running containers, last ~10min"><vera-sparkline id="sparkDocker"></vera-sparkline></div>
             </div>
             <span class="w-resize" data-resize></span>
@@ -2439,7 +2444,7 @@ function _tabFireLoader(n){
   if(n==='caps')        loadCaps();
   if(n==='redis')       loadRedis();
   if(n==='servers')     loadServers();
-  if(n==='dashboard')  {loadHealth();loadCluster();loadMemoryStats();loadSysmonSplit();loadHostTemps();loadSparklines();loadMeshInfo();loadLoopLabInfo();loadSandboxesInfo();loadMimicSummary();loadTopologyMap();pollDashHealthStrip();dashTouch();}
+  if(n==='dashboard')  {loadHealth();loadCluster();loadMemoryStats();loadSysmonSplit();loadHostTemps();loadDockerStats();loadSparklines();loadMeshInfo();loadLoopLabInfo();loadSandboxesInfo();loadMimicSummary();loadTopologyMap();pollDashHealthStrip();dashTouch();}
   if(n==='media')       loadAllPanels();
   if(n==='dagworkshop') dagStoreLoad();
   if(n==='syslog'||n==='streams') syslogLoad();
@@ -2506,6 +2511,7 @@ async function refreshAll(){
     loadMemoryStats(),
     loadSysmonSplit(),
     loadHostTemps(),
+    loadDockerStats(),
     loadSparklines(),
     loadMeshInfo(),
     loadLoopLabInfo(),
@@ -2515,6 +2521,11 @@ async function refreshAll(){
   ]);
   _dashHealthStripInit();
   dashTouch();
+  // Live by default: without this, nothing (topology status, mesh/temps/
+  // sysmon tiles, etc.) ever updates again after this initial load unless the
+  // user notices and clicks "Auto 5s" themselves — a dashboard billed as
+  // live/dynamic shouldn't require an opt-in click just to stay current.
+  if(!_clusterAutoInterval) clusterAutoRefresh();
   // Pre-initialise the session node exactly once per session_id
   _initSessionOnce(_veraSessionId, 'assistant');
 }
@@ -2845,9 +2856,9 @@ function _dashHealthStripInit(){
 async function loadSparklines(){
   const h = await api('/sysmon/history?limit=60'); if(!h || !h.samples) return;
   const mk = field => h.samples.map(s => ({ t: s.t, v: (s[field]==null ? null : s[field]) }));
-  const single = (id, field, unit) => {
+  const single = (id, field, label, unit) => {
     const el = document.getElementById(id);
-    if (el && typeof el.setSeries === 'function') { el.setSeries(mk(field)); if(unit) el.setUnit(unit); }
+    if (el && typeof el.setSeries === 'function') { el.setSeries(mk(field), label); if(unit) el.setUnit(unit); }
   };
   const multi = (id, series) => {
     const el = document.getElementById(id);
@@ -2855,18 +2866,22 @@ async function loadSparklines(){
       el.setMultiSeries(series.map(s => ({ label: s.label, color: s.color, unit: s.unit||'', points: mk(s.field) })));
     }
   };
-  single('sparkProxmox', 'pmx_running', '');
-  single('sparkDocker',  'dkr_running', '');
+  // Kept as two separate charts, not one multi-series: guests-running (a small
+  // count, ~0-15) and ram% (0-100) don't share a sensible y-axis — combined,
+  // the count line would be squashed flat next to the percentage line.
+  single('sparkProxmox',    'pmx_running',  'guests running', '');
+  single('sparkProxmoxMem', 'pmx_mem_pct',  'cluster ram',    '%');
+  single('sparkDocker',  'dkr_running', 'containers running', '');
   multi('sparkOllama', [
     { field:'oll_online', label:'online', color:'acc' },
     { field:'oll_inuse',  label:'busy',   color:'warn' },
   ]);
-  single('sparkTemps', 'temp_max', '°C');
+  single('sparkTemps', 'temp_max', 'max temp', '°C');
   multi('sparkHostRes', [
     { field:'cpu', label:'cpu', color:'acc', unit:'%' },
     { field:'mem', label:'ram', color:'acc2', unit:'%' },
   ]);
-  single('sparkProcMb', 'proc_mb', 'mb');
+  single('sparkProcMb', 'proc_mb', 'proc RSS', 'mb');
   multi('sparkQueueWorkers', [
     { field:'queue',   label:'queue', color:'warn' },
     { field:'workers', label:'wrk',   color:'acc' },
@@ -2933,6 +2948,62 @@ async function loadHostTemps(){
     }).join('');
   }
   setDot('wTempsDot', worst==null ? '' : (worst<70?'ok':(worst<85?'warn':'err')));
+  _renderProxmoxCores(r);
+}
+
+// Per-core detail for the Proxmox tile: every physical core's temp (from
+// obs.node_temps' "Core N" sensor labels) and every logical CPU's load
+// (from the same call's percpu field). Kept as two separate compact heatmap
+// rows rather than one fused table — /proc/stat's cpuN is a logical-thread
+// index that doesn't reliably line up with lm-sensors' physical "Core N" on
+// hyperthreaded hardware, so pretending they're the same row would be a
+// second inaccuracy bug of exactly the kind already fixed once in topology.
+function _renderProxmoxCores(r){
+  const el = document.getElementById('pmxCores'); if(!el) return;
+  const pveHosts = (r.hosts||[]).filter(h=>h.pve);
+  if(!pveHosts.length){ el.innerHTML=''; return; }
+  const heatColor = v => v==null?'var(--dim2)':(v<70?'var(--ok)':(v<85?'var(--warn)':'var(--err)'));
+  const loadColor = v => v==null?'var(--dim2)':(v<60?'var(--ok)':(v<85?'var(--warn)':'var(--err)'));
+  const chip = (label, val, unit, color) =>
+    `<span title="${esc(label)}: ${val==null?'—':val}${unit}" style="display:inline-block;width:30px;text-align:center;
+      padding:1px 0;margin:1px;border-radius:2px;background:${color};color:#0b0f17;font-weight:600">${val==null?'—':Math.round(val)}</span>`;
+  el.innerHTML = pveHosts.map(h=>{
+    const coreTemps = Object.entries(h.temps||{}).filter(([k])=>/^Core \d+$/.test(k))
+      .sort((a,b)=>parseInt(a[0].slice(5))-parseInt(b[0].slice(5)));
+    const cpuLoads = Object.entries(h.percpu||{}).sort((a,b)=>
+      parseInt(a[0].replace('cpu',''))-parseInt(b[0].replace('cpu','')));
+    if(!coreTemps.length && !cpuLoads.length) return '';
+    return `<div style="margin-top:4px">
+      <div style="color:var(--dim2);margin-bottom:2px">${esc(h.label)} — ${coreTemps.length} cores · ${cpuLoads.length} threads</div>
+      ${coreTemps.length?`<div>Core °C: ${coreTemps.map(([k,v])=>chip(k,v,'°C',heatColor(v))).join('')}</div>`:''}
+      ${cpuLoads.length?`<div style="margin-top:2px">Load %: ${cpuLoads.map(([k,v])=>chip(k,v,'%',loadColor(v))).join('')}</div>`:''}
+    </div>`;
+  }).join('');
+}
+
+// Per-container CPU/memory — docker.stats.top, sampled server-side every 30s
+// and capped to the busiest N per host (some hosts here run 300+ containers;
+// this is intentionally NOT "every container", see the capability's own doc).
+async function loadDockerStats(){
+  const r = await api('/workers/docker/stats/top');
+  const el = document.getElementById('dkrTopContainers'); if(!el || !r) return;
+  const hosts = r.hosts||{};
+  const rows = [];
+  Object.entries(hosts).forEach(([hostId, h])=>{
+    (h.containers||[]).forEach(c=>rows.push(c));
+  });
+  if(!rows.length){ el.innerHTML = '<span style="color:var(--dim2);font-size:9.5px">no container stats yet</span>'; return; }
+  rows.sort((a,b)=>(b.cpu_pct||0)-(a.cpu_pct||0));
+  const cpuColor = v => v==null?'var(--dim2)':(v<60?'var(--ok)':(v<90?'var(--warn)':'var(--err)'));
+  el.innerHTML = `<div style="font-size:8.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px">Busiest containers</div>` +
+    rows.slice(0,12).map(c=>{
+      const pct = Math.max(2, Math.min(100, c.cpu_pct||0));
+      return `<div class="sm-row" style="padding:3px 0">
+        <span class="nm" title="${esc(c.image||'')}">${esc(c.name||c.id)}</span>
+        <span class="meta">${c.mem_mb!=null?Math.round(c.mem_mb)+'MB':''}</span>
+        <span style="width:34px;text-align:right;color:${cpuColor(c.cpu_pct)};font-family:var(--mono)">${c.cpu_pct!=null?c.cpu_pct+'%':'—'}</span>
+      </div>`;
+    }).join('');
 }
 
 // Live SVG stack topology — one fetch of topology.snapshot, handed straight
@@ -4944,7 +5015,11 @@ function clusterAutoRefresh(){
     document.getElementById('clusterRefreshBadge').textContent='';
     const b=document.getElementById('dashAutoBtn'); if(b){b.classList.remove('primary');b.textContent='Auto 5s';}
   } else {
-    _clusterAutoInterval=setInterval(()=>{loadCluster();loadSysmonSplit();loadSparklines();loadMimicSummary();dashTouch();},5000);
+    _clusterAutoInterval=setInterval(()=>{
+      loadCluster();loadSysmonSplit();loadSparklines();loadMimicSummary();
+      loadTopologyMap();loadMeshInfo();loadLoopLabInfo();loadSandboxesInfo();loadHostTemps();loadDockerStats();
+      dashTouch();
+    },5000);
     document.getElementById('clusterRefreshBadge').textContent='● auto-refreshing every 5s';
     const b=document.getElementById('dashAutoBtn'); if(b){b.classList.add('primary');b.textContent='● Auto 5s';}
   }

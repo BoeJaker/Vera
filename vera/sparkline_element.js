@@ -11,10 +11,17 @@
  * crosshair + tooltip with the exact value/time for every series at once.
  *
  * Public API:
- *   el.setSeries(points)             — single series, points: [{t,v}], oldest→newest
+ *   el.setSeries(points, label)      — single series, points: [{t,v}], oldest→newest.
+ *                                        label is shown in the legend (always
+ *                                        rendered — a chart with no legend at
+ *                                        all leaves no way to tell what it is).
  *   el.setMultiSeries([{label,color,unit,points}, ...])  — up to ~3 series with
  *                                        a live legend (current value per series)
  *   el.setUnit(text)                 — single-series hover unit, e.g. '%', '°C'
+ *
+ * Always draws a scale: a top/bottom gridline labelled with the actual min/max
+ * value of the visible range (not just an unlabelled squiggle), and reserves
+ * real vertical space for the legend row so it never sits on top of the line.
  *
  * Zero backend dependency — callers fetch /sysmon/history (or similar) once and
  * hand the mapped series to each mounted instance; this component only draws.
@@ -71,8 +78,8 @@
       cancelAnimationFrame(this._raf);
     }
 
-    setSeries(points) {
-      this._series = [{ label: '', color: 'acc', unit: this._unit, points: Array.isArray(points) ? points.slice() : [] }];
+    setSeries(points, label) {
+      this._series = [{ label: label || '', color: 'acc', unit: this._unit, points: Array.isArray(points) ? points.slice() : [] }];
       this._dirty = true;
     }
     setMultiSeries(series) {
@@ -89,8 +96,9 @@
         <style>
           :host{display:block;width:100%;height:100%;min-height:32px;position:relative}
           canvas{width:100%;height:100%;display:block;cursor:crosshair}
-          .legend{position:absolute;top:1px;left:2px;display:flex;gap:8px;flex-wrap:wrap;
+          .legend{position:absolute;top:1px;left:2px;display:flex;gap:6px;flex-wrap:wrap;
                   font-size:8.5px;font-family:var(--mono,monospace);pointer-events:none;z-index:1}
+          .legend span{background:var(--bg0,#0b0f17);padding:0 3px;border-radius:2px;opacity:.95}
           .legend b{font-weight:700}
           .tip{position:absolute;pointer-events:none;top:1px;right:2px;font-size:9.5px;
                font-family:var(--mono,monospace);white-space:pre;text-align:right;
@@ -119,14 +127,18 @@
       this._cv.width = this._w * dpr; this._cv.height = this._h * dpr;
       this._ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
-    _xAt(i, n) { return n <= 1 ? this._w / 2 : (i / (n - 1)) * this._w; }
+    _xAt(i, n) {
+      const plotW = this._plotW != null ? this._plotW : this._w;
+      return n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW;
+    }
     _maxLen() { return this._series.reduce((m, s) => Math.max(m, s.points.length), 0); }
 
     _onHover(e) {
       const n = this._maxLen(); if (!n) return;
       const rect = this._cv.getBoundingClientRect();
       const x = e.clientX - rect.left;
-      let idx = Math.round((x / this._w) * (n - 1));
+      const plotW = this._plotW != null ? this._plotW : this._w;
+      let idx = Math.round((x / plotW) * (n - 1));
       idx = Math.max(0, Math.min(n - 1, idx));
       this._hoverIdx = idx;
       const lines = [];
@@ -166,6 +178,7 @@
       ctx.clearRect(0, 0, w, h);
       const n = this._maxLen();
       const anyData = this._series.some(s => s.points.some(p => p.v != null));
+      const hasLegend = this._series.some(s => s.label) && this._series.length;
       if (!n || !anyData) {
         ctx.fillStyle = col.dim2; ctx.font = '10px ' + col.mono; ctx.textAlign = 'center';
         ctx.fillText('no data', w / 2, h / 2 + 3);
@@ -180,12 +193,29 @@
       }));
       if (!isFinite(lo)) { lo = 0; hi = 1; }
       if (lo === hi) { lo -= 1; hi += 1; }
-      const pad = 3;
-      const yOf = v => h - pad - ((v - lo) / (hi - lo)) * (h - pad * 2);
+      // Reserve real space at the top for the legend row (rather than just
+      // overlaying it) so the line/area never visually collides with the
+      // text, and at the bottom/right for the axis scale labels.
+      const padTop = hasLegend ? 13 : 4, padBot = 11, padR = 30;
+      const plotW = w - padR;
+      this._plotW = plotW;   // _xAt() (used here and by _onHover) reads this
+      const yOf = v => h - padBot - ((v - lo) / (hi - lo)) * (h - padTop - padBot);
 
       // min/max shading band (once, using the shared range)
       ctx.fillStyle = 'rgba(126,139,160,.07)';
-      ctx.fillRect(0, yOf(hi), w, Math.max(0, yOf(lo) - yOf(hi)));
+      ctx.fillRect(0, yOf(hi), plotW, Math.max(0, yOf(lo) - yOf(hi)));
+
+      // Scale: an actual labelled axis, not just an unlabelled squiggle — a
+      // top gridline at the max, a bottom one at the min, each with its real
+      // value printed on the right edge.
+      const unitOf = this._series[0] && this._series[0].unit || '';
+      ctx.strokeStyle = 'rgba(126,139,160,.18)'; ctx.lineWidth = 1;
+      ctx.font = '8px ' + col.mono; ctx.fillStyle = col.dim2; ctx.textAlign = 'left';
+      [{ v: hi, y: yOf(hi) }, { v: lo, y: yOf(lo) }].forEach(g => {
+        ctx.beginPath(); ctx.moveTo(0, g.y + 0.5); ctx.lineTo(plotW, g.y + 0.5); ctx.stroke();
+        const label = (Number.isInteger(g.v) ? g.v : g.v.toFixed(1)) + unitOf;
+        ctx.fillText(label, plotW + 3, Math.min(h - 2, Math.max(8, g.y + 3)));
+      });
 
       this._series.forEach((s, si) => {
         const color = col[s.color] || col.acc;

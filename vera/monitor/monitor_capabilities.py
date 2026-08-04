@@ -235,18 +235,27 @@ async def _proxmox_cluster_summary(c: Dict) -> Dict:
     if not isinstance(st, dict) or st.get("error"):
         return {"id": cid, "label": c.get("label", cid), "ok": False,
                 "error": (st or {}).get("error", "unreachable"),
-                "nodes": 0, "guests": 0, "running": 0, "quorate": None}
+                "nodes": 0, "guests": 0, "running": 0, "quorate": None,
+                "mem_used_gb": 0.0, "mem_total_gb": 0.0}
     counts = st.get("counts", {}) or {}
     cluster = st.get("cluster", {}) or {}
+    # Cluster-wide RAM — summed from each PVE HOST node's own mem/maxmem (not
+    # guests: a guest's "mem" is its allocation footprint on the host, double-
+    # counting it on top of the host's own mem would inflate the total).
+    nodes = st.get("nodes", []) or []
+    mem_used = sum(n.get("mem", 0) for n in nodes)
+    mem_total = sum(n.get("maxmem", 0) for n in nodes)
     return {
         "id":      cid,
         "label":   cluster.get("name") or c.get("label", cid),
         "ok":      True,
         "error":   "",
-        "nodes":   counts.get("nodes", len(st.get("nodes", []))),
+        "nodes":   counts.get("nodes", len(nodes)),
         "guests":  counts.get("guests", len(st.get("guests", []))),
         "running": counts.get("running", 0),
         "quorate": cluster.get("quorate"),
+        "mem_used_gb":  round(mem_used / 1e9, 2),
+        "mem_total_gb": round(mem_total / 1e9, 2),
     }
 
 
@@ -254,10 +263,12 @@ async def _proxmox_summary() -> Dict:
     cl = await _call("proxmox.cluster.list")
     if _is_error(cl):
         return {"ok": False, "error": cl["error"], "clusters": [],
-                "configured": 0, "nodes": 0, "guests": 0, "running": 0}
+                "configured": 0, "nodes": 0, "guests": 0, "running": 0, "mem_pct": None}
     clusters_in = (cl or {}).get("clusters", []) if isinstance(cl, dict) else []
     clusters = list(await asyncio.gather(
         *[_proxmox_cluster_summary(c) for c in clusters_in])) if clusters_in else []
+    mem_used = sum(c.get("mem_used_gb", 0) for c in clusters)
+    mem_total = sum(c.get("mem_total_gb", 0) for c in clusters)
     return {
         "ok":         any(c["ok"] for c in clusters),
         "error":      "",
@@ -266,6 +277,9 @@ async def _proxmox_summary() -> Dict:
         "nodes":      sum(c["nodes"] for c in clusters),
         "guests":     sum(c["guests"] for c in clusters),
         "running":    sum(c["running"] for c in clusters),
+        "mem_used_gb":  round(mem_used, 2),
+        "mem_total_gb": round(mem_total, 2),
+        "mem_pct":    round(100 * mem_used / mem_total, 1) if mem_total else None,
     }
 
 
@@ -294,6 +308,7 @@ def _compact(full: Dict, qlen: Optional[int], workers: int) -> Dict:
         "pmx_running":  p.get("running", 0),
         "pmx_guests":   p.get("guests", 0),
         "pmx_nodes":    p.get("nodes", 0),
+        "pmx_mem_pct":  p.get("mem_pct"),
         "dkr_running":  d.get("running", 0),
         "dkr_containers": d.get("containers", 0),
         "dkr_hosts":    d.get("reachable", 0),
@@ -359,9 +374,9 @@ async def cap_sysmon_status(fresh: bool = False, trace_id=None) -> Dict:
     memory="off", silent=True,
     description="Time-series ring buffer behind the monitor graphs. Each sample: "
                 "{t, cpu, mem, proc_mb, proc_cpu, pmx_running, pmx_guests, "
-                "dkr_running, dkr_containers, oll_online, oll_inuse, temp_max, "
-                "queue, workers, caps}. Input: limit (int, default 240). Output: "
-                "{samples:[...], count, interval_s, psutil}.",
+                "pmx_mem_pct, dkr_running, dkr_containers, oll_online, oll_inuse, "
+                "temp_max, queue, workers, caps}. Input: limit (int, default 240). "
+                "Output: {samples:[...], count, interval_s, psutil}.",
 )
 async def cap_sysmon_history(limit: int = 240, trace_id=None) -> Dict:
     items = list(_HISTORY)
