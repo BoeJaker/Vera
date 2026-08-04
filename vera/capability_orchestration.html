@@ -573,7 +573,7 @@ select option{background:var(--bg2)}
         <div class="dash-toolbar">
           <div class="dash-title">Cluster Overview</div>
           <span class="dash-meta" id="dashLastUpdate">never updated</span>
-          <button class="btn sm"      onclick="loadHealth();loadCluster();loadMemoryStats();dashTouch()" title="Refresh all widgets">↻ Refresh</button>
+          <button class="btn sm"      onclick="loadHealth();loadCluster();loadMemoryStats();loadSysmonSplit();loadMeshInfo();loadLoopLabInfo();loadSandboxesInfo();loadMimicSummary();pollDashHealthStrip();dashTouch()" title="Refresh all widgets">↻ Refresh</button>
           <button class="btn sm teal" onclick="clusterAutoRefresh()" id="dashAutoBtn">Auto 5s</button>
           <span id="clusterRefreshBadge" style="font-size:9.5px;color:var(--dim2);align-self:center"></span>
           <button class="btn sm"      onclick="loadDiagnostics()">Diagnostics</button>
@@ -581,6 +581,9 @@ select option{background:var(--bg2)}
           <button class="btn sm"      onclick="dashResetLayout()" title="Reset to defaults">Reset</button>
           <button class="btn sm"      onclick="dashOpenWidgetLoader()" title="Add a registered panel or element as a widget">+ Add Widget</button>
         </div>
+
+        <!-- Subsystem health strip — always-on, distinct from the opt-in header meter bar -->
+        <div id="dashHealthStrip" style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;padding:6px 10px;margin-bottom:8px;background:var(--bg0);border:1px solid var(--border);border-radius:4px;font-size:10px;color:var(--dim2)"></div>
 
         <!-- Hidden-widget picker (only visible while editing & if any widgets are hidden) -->
         <div class="dash-picker" id="dashHiddenPicker" style="display:none">
@@ -591,17 +594,48 @@ select option{background:var(--bg2)}
         <!-- The reactive grid — every child .widget is configurable -->
         <div class="dash-grid" id="dashGrid">
 
-          <!-- ── System Monitor (proxmox + docker + ollama, with graphs) ── -->
-          <div class="widget w-w12 w-h5" data-wid="sysmon" data-panel="system-monitor">
+          <!-- ── Proxmox (split out of the old combined System Monitor iframe) ── -->
+          <div class="widget w-w4 w-h2" data-wid="sysmon-proxmox">
             <div class="w-head">
               <span class="w-grip">⠿</span>
-              <span class="w-dot ok"></span>
-              <span class="w-title">▦ System Monitor</span>
-              <span class="w-actions"><button class="w-iconbtn" onclick="dashHideWidget('sysmon')">×</button></span>
+              <span class="w-dot" id="wProxmoxDot"></span>
+              <span class="w-title">Proxmox</span>
+              <span class="w-actions">
+                <button class="w-iconbtn" onclick="loadSysmonSplit()" title="Refresh">↻</button>
+                <button class="w-iconbtn" onclick="dashHideWidget('sysmon-proxmox')">×</button>
+              </span>
             </div>
-            <div class="w-body flush" style="padding:0;position:relative">
-              <iframe src="/sysmon/panel" style="width:100%;height:100%;min-height:440px;border:none;background:transparent"></iframe>
+            <div class="w-body tight"><div class="kpi"><div class="kpi-val tv-neu" id="hProxmox" style="font-size:22px">—</div><div class="kpi-sub" id="hProxmoxSub">guests · running</div></div></div>
+            <span class="w-resize" data-resize></span>
+          </div>
+
+          <!-- ── Docker ── -->
+          <div class="widget w-w4 w-h2" data-wid="sysmon-docker">
+            <div class="w-head">
+              <span class="w-grip">⠿</span>
+              <span class="w-dot" id="wDockerDot"></span>
+              <span class="w-title">Docker</span>
+              <span class="w-actions">
+                <button class="w-iconbtn" onclick="loadSysmonSplit()" title="Refresh">↻</button>
+                <button class="w-iconbtn" onclick="dashHideWidget('sysmon-docker')">×</button>
+              </span>
             </div>
+            <div class="w-body tight"><div class="kpi"><div class="kpi-val tv-neu" id="hDocker" style="font-size:22px">—</div><div class="kpi-sub" id="hDockerSub">containers running</div></div></div>
+            <span class="w-resize" data-resize></span>
+          </div>
+
+          <!-- ── Ollama (sysmon view — see also the fuller "Ollama Nodes" list widget below) ── -->
+          <div class="widget w-w4 w-h2" data-wid="sysmon-ollama">
+            <div class="w-head">
+              <span class="w-grip">⠿</span>
+              <span class="w-dot" id="wOllamaSysDot"></span>
+              <span class="w-title">Ollama</span>
+              <span class="w-actions">
+                <button class="w-iconbtn" onclick="loadSysmonSplit()" title="Refresh">↻</button>
+                <button class="w-iconbtn" onclick="dashHideWidget('sysmon-ollama')">×</button>
+              </span>
+            </div>
+            <div class="w-body tight"><div class="kpi"><div class="kpi-val tv-neu" id="hOllamaSys" style="font-size:22px">—</div><div class="kpi-sub" id="hOllamaSysSub">gpu · in use</div></div></div>
             <span class="w-resize" data-resize></span>
           </div>
 
@@ -728,12 +762,15 @@ select option{background:var(--bg2)}
               <span class="w-title">Queues &amp; Proxy</span>
               <span class="w-actions">
                 <span id="clusterTs" style="font-size:9px;color:var(--dim2);font-family:var(--mono);margin-right:6px"></span>
-                <button class="w-iconbtn" onclick="loadCluster()" title="Refresh">↻</button>
+                <a href="/cluster/mimic/panel" target="_blank" style="font-size:9.5px;color:var(--acc2);text-decoration:none;margin-right:6px" title="Open the dedicated Mimic panel (Workers & Ollama tab)">Open Mimic panel ↗</a>
+                <button class="w-iconbtn" onclick="loadCluster();loadMimicSummary()" title="Refresh">↻</button>
                 <button class="w-iconbtn" onclick="dashHideWidget('queues')">×</button>
               </span>
             </div>
             <div class="w-body tight">
               <div id="clusterQueues" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+              <div style="font-size:9.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.7px;margin:10px 0 5px">Mimic Proxy</div>
+              <div id="mimicSummary" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"></div>
             </div>
             <span class="w-resize" data-resize></span>
           </div>
@@ -770,6 +807,59 @@ select option{background:var(--bg2)}
             </div>
             <div class="w-body">
               <div id="clusterOllama" style="display:flex;flex-direction:column;gap:6px"></div>
+            </div>
+            <span class="w-resize" data-resize></span>
+          </div>
+
+          <!-- ── Mesh info ── -->
+          <div class="widget w-w4 w-h3" data-wid="mesh-info">
+            <div class="w-head">
+              <span class="w-grip">⠿</span>
+              <span class="w-dot" id="wMeshDot"></span>
+              <span class="w-title">Mesh</span>
+              <span class="w-actions">
+                <button class="w-iconbtn" onclick="loadMeshInfo()" title="Refresh">↻</button>
+                <button class="w-iconbtn" onclick="dashHideWidget('mesh-info')">×</button>
+              </span>
+            </div>
+            <div class="w-body tight">
+              <div class="kpi"><div class="kpi-val tv-neu" id="hMeshCount" style="font-size:22px">—</div><div class="kpi-sub" id="hMeshSub">nodes</div></div>
+              <div id="meshBreakdown" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;font-size:9.5px;color:var(--dim2)"></div>
+            </div>
+            <span class="w-resize" data-resize></span>
+          </div>
+
+          <!-- ── Loop Lab info ── -->
+          <div class="widget w-w4 w-h3" data-wid="looplab-info">
+            <div class="w-head">
+              <span class="w-grip">⠿</span>
+              <span class="w-dot" id="wLoopLabDot"></span>
+              <span class="w-title">Loop Lab</span>
+              <span class="w-actions">
+                <button class="w-iconbtn" onclick="loadLoopLabInfo()" title="Refresh">↻</button>
+                <button class="w-iconbtn" onclick="dashHideWidget('looplab-info')">×</button>
+              </span>
+            </div>
+            <div class="w-body tight">
+              <div class="kpi"><div class="kpi-val tv-neu" id="hLoopLabState" style="font-size:18px">—</div><div class="kpi-sub" id="hLoopLabSub">sandbox</div></div>
+              <div id="loopLabRuns" style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px"></div>
+            </div>
+            <span class="w-resize" data-resize></span>
+          </div>
+
+          <!-- ── Session sandboxes ── -->
+          <div class="widget w-w4 w-h3" data-wid="sandboxes-info">
+            <div class="w-head">
+              <span class="w-grip">⠿</span>
+              <span class="w-dot" id="wSandboxesDot"></span>
+              <span class="w-title">Sandboxes <span id="sandboxesCountBadge" style="color:var(--dim2);font-weight:400;text-transform:none;letter-spacing:0"></span></span>
+              <span class="w-actions">
+                <button class="w-iconbtn" onclick="loadSandboxesInfo()" title="Refresh">↻</button>
+                <button class="w-iconbtn" onclick="dashHideWidget('sandboxes-info')">×</button>
+              </span>
+            </div>
+            <div class="w-body">
+              <div id="sandboxesList" style="display:flex;flex-direction:column;gap:5px;font-size:10.5px"></div>
             </div>
             <span class="w-resize" data-resize></span>
           </div>
@@ -2234,12 +2324,19 @@ function _tabFireLoader(n){
   if(n==='caps')        loadCaps();
   if(n==='redis')       loadRedis();
   if(n==='servers')     loadServers();
-  if(n==='dashboard')  {loadHealth();loadCluster();loadMemoryStats();dashTouch();}
+  if(n==='dashboard')  {loadHealth();loadCluster();loadMemoryStats();loadSysmonSplit();loadMeshInfo();loadLoopLabInfo();loadSandboxesInfo();loadMimicSummary();pollDashHealthStrip();dashTouch();}
   if(n==='media')       loadAllPanels();
   if(n==='dagworkshop') dagStoreLoad();
   if(n==='syslog'||n==='streams') syslogLoad();
   if(n==='fabric')      fabricInit();
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared dashboard widget-dot helper — single definition, used by every
+// widget's status dot (loadHealth/loadMemoryStats/loadCluster/loadSysmonSplit/
+// loadMeshInfo/loadLoopLabInfo/loadSandboxesInfo/...). state is 'ok'|'warn'|'err'|''.
+// ─────────────────────────────────────────────────────────────────────────────
+function setDot(id, state){ const d=document.getElementById(id); if(d) d.className='w-dot '+(state||''); }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // API
@@ -2292,7 +2389,13 @@ async function refreshAll(){
     agentLoad(),
     loadCluster(),
     loadMemoryStats(),
+    loadSysmonSplit(),
+    loadMeshInfo(),
+    loadLoopLabInfo(),
+    loadSandboxesInfo(),
+    loadMimicSummary(),
   ]);
+  _dashHealthStripInit();
   dashTouch();
   // Pre-initialise the session node exactly once per session_id
   _initSessionOnce(_veraSessionId, 'assistant');
@@ -2384,22 +2487,21 @@ async function loadMemoryStats(){
     const dl=document.getElementById(detId);
     if(dl&&detail!==undefined)dl.textContent=detail;
   };
-  const setDot=(id,connected)=>{const d=document.getElementById(id);if(d)d.className='w-dot '+(connected?'ok':'err');};
   // Postgres
   const pg=b.postgres||{};
   sv('hPG', pg.connected?pg.total??'✓':'✗', pg.connected?'tv-ok':'tv-err',
      pg.connected?`${pg.active??'?'} active · ${pg.edges??'?'} edges`:'disconnected','hPGDetail');
-  setDot('wPGDot', pg.connected);
+  setDot('wPGDot', pg.connected?'ok':'err');
   // Chroma
   const ch=b.chroma||{};
   sv('hChroma', ch.connected?ch.count??'✓':'✗', ch.connected?'tv-ok':'tv-err',
      ch.connected?`${ch.count??'?'} vectors`:'disconnected','hChromaDetail');
-  setDot('wChromaDot', ch.connected);
+  setDot('wChromaDot', ch.connected?'ok':'err');
   // Neo4j
   const n=b.neo4j||{};
   sv('hNeo4j', n.connected?n.nodes??'✓':'✗', n.connected?'tv-ok':'tv-err',
      n.connected?`${n.nodes??'?'} nodes · ${n.relationships??'?'} edges`:'disconnected','hNeo4jDetail');
-  setDot('wNeoDot', n.connected);
+  setDot('wNeoDot', n.connected?'ok':'err');
   dashTouch();
   // Surface Neo4j disconnect to syslog
   if(b.neo4j&&!b.neo4j.connected){
@@ -2413,7 +2515,6 @@ async function loadMemoryStats(){
 async function loadHealth(){
   const h=await api('/health'); if(!h) return;
   const sv=(id,v,cls)=>{const el=document.getElementById(id);if(el){el.textContent=v;el.className='kpi-val tile-val '+cls;}};
-  const setDot=(id,state)=>{const d=document.getElementById(id);if(d)d.className='w-dot '+state;};
   sv('hMode',h.mode||'—','tv-neu'); sv('hRedis',h.redis?'✓':'✗',h.redis?'tv-ok':'tv-err');
   sv('hWorkers',h.workers??'—',h.workers>0?'tv-ok':'tv-warn'); sv('hCaps',h.caps??'—',h.caps>0?'tv-neu':'tv-warn');
   setDot('wModeDot', h.mode?'ok':'');
@@ -2427,6 +2528,146 @@ async function loadHealth(){
     setDot('wPendingDot', p.count>0?'warn':'ok');
   }
   dashTouch();
+}
+
+// Split-out replacement for the old single iframe'd "System Monitor" widget —
+// /sysmon/status already returns proxmox/docker/ollama as independent keys,
+// so this just fans one fetch out into the three tiles.
+async function loadSysmonSplit(){
+  const s = await api('/sysmon/status'); if(!s) return;
+  const sv=(id,v,cls)=>{const el=document.getElementById(id);if(el){el.textContent=v;el.className='kpi-val tile-val '+cls;}};
+  const subv=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v;};
+
+  const pmx = s.proxmox||{};
+  sv('hProxmox', pmx.configured ? `${pmx.nodes??0} nodes` : '—', pmx.ok?'tv-ok':(pmx.configured?'tv-err':'tv-neu'));
+  subv('hProxmoxSub', pmx.configured ? `${pmx.guests??0} guests · ${pmx.running??0} running` : (pmx.error||'not configured'));
+  setDot('wProxmoxDot', pmx.configured ? (pmx.ok?'ok':'err') : '');
+
+  const dkr = s.docker||{};
+  sv('hDocker', dkr.total_hosts ? `${dkr.reachable??0}/${dkr.total_hosts} hosts` : '—', dkr.ok?'tv-ok':(dkr.total_hosts?'tv-err':'tv-neu'));
+  subv('hDockerSub', dkr.total_hosts ? `${dkr.running??0}/${dkr.containers??0} containers running` : (dkr.error||'no hosts'));
+  setDot('wDockerDot', dkr.total_hosts ? (dkr.ok?'ok':'err') : '');
+
+  const oll = s.ollama||{};
+  sv('hOllamaSys', oll.total ? `${oll.online??0}/${oll.total} online` : '—', oll.ok?'tv-ok':(oll.total?'tv-warn':'tv-neu'));
+  subv('hOllamaSysSub', oll.total ? `${oll.gpu??0} gpu · ${oll.in_use??0} in use` : (oll.error||'no nodes'));
+  setDot('wOllamaSysDot', oll.total ? (oll.ok?'ok':'warn') : '');
+
+  dashTouch();
+}
+
+// Relative-time helper — accepts epoch seconds/ms (sandbox.session.list's
+// last_used) or an ISO string (mesh last_seen).
+function agoStr(ts){
+  if(ts==null || ts==='') return '—';
+  const ms = (typeof ts==='number') ? (ts<1e12?ts*1000:ts) : Date.parse(ts);
+  if(!ms || isNaN(ms)) return '—';
+  const s = Math.max(0,(Date.now()-ms)/1000);
+  if(s<60) return Math.floor(s)+'s ago';
+  if(s<3600) return Math.floor(s/60)+'m ago';
+  if(s<86400) return Math.floor(s/3600)+'h ago';
+  return Math.floor(s/86400)+'d ago';
+}
+
+async function loadMeshInfo(){
+  const r = await api('/mesh/nodes'); if(!r) return;
+  const nodes = r.nodes||[];
+  const counts = {online:0, stale:0, offline:0, new:0};
+  const rssiVals = [];
+  nodes.forEach(n=>{
+    const st = n.status||'offline';
+    if(counts[st]!=null) counts[st]++;
+    if(typeof n.rssi==='number') rssiVals.push(n.rssi);
+  });
+  const healthy = counts.offline===0 && counts.stale===0;
+  const el=document.getElementById('hMeshCount');
+  if(el){ el.textContent=nodes.length; el.className='kpi-val tile-val '+(nodes.length===0?'tv-neu':(healthy?'tv-ok':(counts.online>0?'tv-warn':'tv-err'))); }
+  const sub=document.getElementById('hMeshSub'); if(sub) sub.textContent = nodes.length===1?'node':'nodes';
+  const bd=document.getElementById('meshBreakdown');
+  if(bd){
+    const parts = ['online','stale','offline','new'].filter(k=>counts[k]>0).map(k=>`${counts[k]} ${k}`);
+    if(rssiVals.length){
+      rssiVals.sort((a,b)=>a-b);
+      parts.push(`median ${rssiVals[Math.floor(rssiVals.length/2)]} dBm`);
+    }
+    bd.textContent = parts.length ? parts.join(' · ') : 'no nodes';
+  }
+  setDot('wMeshDot', nodes.length===0?'':(healthy?'ok':(counts.online>0?'warn':'err')));
+  dashTouch();
+}
+
+async function loadLoopLabInfo(){
+  const [s, p] = await Promise.all([api('/evolve/sandbox/status'), api('/evolve/pipeline/list')]);
+  if(s){
+    const sb = s.sandbox||{};
+    const state = s.up ? (s.paused?'Paused':'Up') : 'Down';
+    const el=document.getElementById('hLoopLabState');
+    if(el){ el.textContent=state; el.className='kpi-val tile-val '+(s.up&&!s.paused?'tv-ok':(s.paused?'tv-warn':'tv-err')); }
+    const sub=document.getElementById('hLoopLabSub');
+    if(sub) sub.textContent = `port ${s.dev_port??'—'} · ${(sb.branch||'no branch').split('/').pop()}`;
+    setDot('wLoopLabDot', s.up&&!s.paused?'ok':(s.paused?'warn':'err'));
+  }
+  const runsEl = document.getElementById('loopLabRuns');
+  if(runsEl){
+    const runs = (p&&p.pipelines)||[];
+    if(!runs.length){
+      runsEl.innerHTML = '<span style="font-size:9.5px;color:var(--dim2)">no pipeline runs yet</span>';
+    } else {
+      runsEl.innerHTML = runs.slice(0,5).map(r=>{
+        const cls = r.live?'tv-warn':(r.decision==='promoted'?'tv-ok':(r.decision==='pending'?'tv-neu':'tv-err'));
+        const label = r.live?'running':(r.decision||r.status||'?');
+        return `<span class="${cls}" style="font-size:9px;padding:2px 6px;border-radius:3px;background:var(--panel2)" title="${r.id||''}">${label}</span>`;
+      }).join('');
+    }
+  }
+  dashTouch();
+}
+
+async function loadSandboxesInfo(){
+  const r = await api('/remote/sandbox/list'); if(!r) return;
+  const all = r.sandboxes||[];
+  const active = all.filter(s=>s.state==='running'||s.active);
+  const badge=document.getElementById('sandboxesCountBadge'); if(badge) badge.textContent = `${active.length} active / ${all.length} total`;
+  const listEl=document.getElementById('sandboxesList');
+  if(listEl){
+    if(!active.length){
+      listEl.innerHTML = '<span style="color:var(--dim2)">no active sandboxes</span>';
+    } else {
+      listEl.innerHTML = active.slice(0,8).map(s=>{
+        const dotCls = s.state==='running'?'ok':(s.state==='exited'?'err':'warn');
+        return `<div style="display:flex;align-items:center;gap:6px">
+          <span class="w-dot ${dotCls}"></span>
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${s.session_id}">${s.label||s.session_id}</span>
+          <span style="color:var(--dim2);font-size:9px">${s.source||''}</span>
+          <span style="color:var(--dim2);font-size:9px">${agoStr(s.last_used)}</span>
+        </div>`;
+      }).join('');
+    }
+  }
+  setDot('wSandboxesDot', active.length>0?'ok':'');
+  dashTouch();
+}
+
+// Always-on subsystem health strip — distinct from the opt-in HDR_METRICS bar.
+// One aggregate fetch (dash.health.summary), server-classified ok/warn/err/unknown.
+const DASH_HEALTH_LABELS = {
+  proxmox:"Proxmox", docker:"Docker", ollama:"Ollama", mesh:"Mesh",
+  loop_lab:"Loop Lab", sandboxes:"Sandboxes", mimic:"Mimic",
+};
+async function pollDashHealthStrip(){
+  const el = document.getElementById('dashHealthStrip'); if(!el) return;
+  const h = await api('/dash/health/summary'); if(!h) return;
+  el.innerHTML = Object.keys(DASH_HEALTH_LABELS).map(k=>{
+    const state = h[k]||'unknown';
+    const dotCls = state==='unknown' ? '' : state;
+    return `<span style="display:inline-flex;align-items:center;gap:5px"><span class="w-dot ${dotCls}"></span>${DASH_HEALTH_LABELS[k]}</span>`;
+  }).join('');
+}
+let _dashHealthInterval = null;
+function _dashHealthStripInit(){
+  if(_dashHealthInterval) return;
+  pollDashHealthStrip();
+  _dashHealthInterval = setInterval(pollDashHealthStrip, 10000);
 }
 
 async function loadDiagnostics(){
@@ -4370,6 +4611,41 @@ async function loadCluster(){
 // Keep loadWorkers as alias so existing code doesn't break
 async function loadWorkers(){ return loadCluster(); }
 
+// Mimic proxy identity for the Queues & Proxy widget. Kept as its own fetch
+// rather than folded into _renderCluster()/loadCluster() — cluster.mimic.status
+// already exists standalone and independently backs the dedicated Mimic pane
+// (ollama_mimic_panel.html), so this just consumes it a second time rather than
+// duplicating its aggregation logic.
+async function loadMimicSummary(){
+  const [status, reqs] = await Promise.all([
+    api('/cluster/mimic/status'),
+    api('/cluster/mimic/requests?limit=5'),
+  ]);
+  const el = document.getElementById('mimicSummary');
+  if(!el) return;
+  if(!status){ el.innerHTML = '<span style="color:var(--dim2)">unavailable</span>'; return; }
+  const stateColor = !status.mounted ? 'var(--dim2)' : (status.paused ? 'var(--warn)' : 'var(--ok)');
+  const stateLbl = !status.mounted ? 'not mounted' : (status.paused ? 'paused' : 'running');
+  const online = status.online_nodes||[];
+  let html = `
+    <div class="cluster-stat"><div class="cluster-stat-v" style="font-size:16px;color:${stateColor}">${stateLbl}</div><div class="cluster-stat-l">State</div></div>
+    <div class="cluster-stat"><div class="cluster-stat-v">${status.routing||'—'}</div><div class="cluster-stat-l">Routing</div></div>
+    <div class="cluster-stat"><div class="cluster-stat-v">${status.current_target||'—'}</div><div class="cluster-stat-l">Current target</div></div>
+    <div class="cluster-stat"><div class="cluster-stat-v">${online.length}</div><div class="cluster-stat-l">Nodes online</div></div>
+    <div class="cluster-stat"><div class="cluster-stat-v">${status.active??0}/${status.max_concurrency??'—'}</div><div class="cluster-stat-l">Active/limit</div></div>`;
+  const entries = (reqs&&reqs.entries)||[];
+  if(entries.length){
+    const newest = entries[0], oldest = entries[entries.length-1];
+    const spanMin = Math.max(1, (Date.parse(newest.ts)-Date.parse(oldest.ts))/60000);
+    const rate = (entries.length/spanMin).toFixed(1);
+    html += `<div class="cluster-stat"><div class="cluster-stat-v">${rate}/min</div><div class="cluster-stat-l">Recent rate (${reqs.total??entries.length} total)</div></div>`;
+    html += `<div style="width:100%;font-size:9px;color:var(--dim2);font-family:var(--mono);margin-top:4px">` +
+      entries.slice(0,3).map(e=>`${(e.ts||'').slice(11,19)} · ${e.instance||'?'} · ${e.model||'?'}`).join('<br>') +
+      `</div>`;
+  }
+  el.innerHTML = html;
+}
+
 function clusterAutoRefresh(){
   if(_clusterAutoInterval){
     clearInterval(_clusterAutoInterval);
@@ -4377,7 +4653,7 @@ function clusterAutoRefresh(){
     document.getElementById('clusterRefreshBadge').textContent='';
     const b=document.getElementById('dashAutoBtn'); if(b){b.classList.remove('primary');b.textContent='Auto 5s';}
   } else {
-    _clusterAutoInterval=setInterval(()=>{loadCluster();dashTouch();},5000);
+    _clusterAutoInterval=setInterval(()=>{loadCluster();loadSysmonSplit();loadMimicSummary();dashTouch();},5000);
     document.getElementById('clusterRefreshBadge').textContent='● auto-refreshing every 5s';
     const b=document.getElementById('dashAutoBtn'); if(b){b.classList.add('primary');b.textContent='● Auto 5s';}
   }

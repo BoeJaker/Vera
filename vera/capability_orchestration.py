@@ -101,6 +101,17 @@ OLLAMA_EVENT_SESSION: "contextvars.ContextVar[str]" = contextvars.ContextVar(
 BACKGROUND_LLM: "contextvars.ContextVar[str]" = contextvars.ContextVar(
     "vera_background_llm", default="")
 
+# Which KIND of caller is driving the current request, for the duration of
+# one /mcp/call — set only by _make_mcp_call_handler when the request body
+# carries an explicit caller_kind (currently just "mcp", sent by
+# vera_mcp_bridge.py, the shim Claude Code launches). /mcp/call is ALSO used
+# by the browser chat UI to execute capabilities, which never sets this —
+# so the honest default (empty here) is "some UI/browser caller", never
+# guessed further. Read by evolve.* run-recording to populate a real
+# triggered_by field (claude_code / autonomous via BACKGROUND_LLM / user).
+CALLER_KIND: "contextvars.ContextVar[str]" = contextvars.ContextVar(
+    "vera_caller_kind", default="")
+
 # The capability currently being served over HTTP (set by the REST handler
 # factories). Lets a cap distinguish a DIRECT human/UI HTTP invocation of
 # itself from an internal (agentic / pipeline) call — used e.g. by the fabric
@@ -262,7 +273,10 @@ UI_PANELS: Dict[str, dict] = {}
 def register_ui(panel_id: str, label: str, icon: str, html: str, js: str = "",
                 ui_caps: List[str] = None,
                 mode: str = "inject",
-                tab_order: int = 100):
+                tab_order: int = 100,
+                specialist_agent: str = "",
+                specialist_loop_profile: str = "",
+                specialist_context_cap: str = ""):
     """Register a built-in UI panel.
 
     mode:
@@ -275,6 +289,26 @@ def register_ui(panel_id: str, label: str, icon: str, html: str, js: str = "",
 
     tab_order: integer sort key for auto-tabs (lower = further left); default 100.
     ui_caps: list of capability names this panel uses.
+    specialist_agent / specialist_loop_profile: optional declarative binding —
+    the DEFAULT_AGENTS persona (single-turn) / LOOP_PROFILES preset (autonomous)
+    this panel is "expert" in, generalizing the markets studio's hardcoded COP
+    widget (agent="quant-strategist", loop_profile="markets-quant") into a
+    per-panel declaration ANY panel can make. Read by ui.panel.specialist and
+    by <vera-panel-copilot> (panel_copilot_element.js) to embed a scoped
+    copilot without each panel reimplementing the chat/loop wiring, and by
+    chat's panel-dispatch defer-to-specialist mode (opt-in) to route a panel-
+    scoped request through this specialist instead of generic context
+    injection. Blank = no binding, panel behaves exactly as before.
+    specialist_context_cap: optional capability name that returns a fresh,
+    panel-relevant context snapshot to hand the specialist BEFORE it answers
+    — not just the right persona, the right live data (e.g. markets: an
+    up-to-date scan of active portfolios/assets; business: the full store
+    list, zoomable to one active store). The capability is called with
+    whatever the caller's own panel-state/entity params supply (e.g. an
+    entity_id extracted from the open panel's live state) and its result is
+    passed as agent.consult's `context` argument — no new execution engine,
+    just real data prepended to the same consult/loop call. Blank = no
+    context injection, specialist answers from persona alone as before.
     """
     UI_PANELS[panel_id] = {
         "id":        panel_id,
@@ -285,6 +319,9 @@ def register_ui(panel_id: str, label: str, icon: str, html: str, js: str = "",
         "ui_caps":   ui_caps or [],
         "mode":      mode,
         "tab_order": tab_order,
+        "specialist_agent":        specialist_agent,
+        "specialist_loop_profile": specialist_loop_profile,
+        "specialist_context_cap":  specialist_context_cap,
     }
 
 REDIS = PG_POOL = CHROMA = NEO = None
@@ -4896,6 +4933,8 @@ def _make_mcp_call_handler():
             except Exception:
                 pass
 
+        caller_kind = str(body.get("caller_kind") or "").strip()
+        _ck_token = CALLER_KIND.set(caller_kind) if caller_kind else None
         try:
             result = await cap["func"](**args, trace_id=tid)
             return await _json_response(
@@ -4909,6 +4948,9 @@ def _make_mcp_call_handler():
         except Exception as e:
             log.error("mcp/call cap %s: %s", name, e)
             raise HTTPException(500, str(e))
+        finally:
+            if _ck_token is not None:
+                CALLER_KIND.reset(_ck_token)
 
     _handler.__name__ = "_post_mcp_call"
     return _handler
@@ -5431,6 +5473,88 @@ async def obs_diagnostics(trace_id=None):
             description="List all capability modules loaded at startup — name, path, caps added, status.")
 async def obs_modules(trace_id=None):
     return {"modules": LOADED_MODULES, "count": len(LOADED_MODULES)}
+
+
+# ── Cross-subsystem dashboard aggregation ──────────────────────────────────────
+# Loose-coupled lookup into another module's capability — same pattern as
+# monitor_capabilities.py's _call(), tolerant of a capability not being loaded
+# or raising, so one bad subsystem never breaks the whole snapshot.
+async def _cap_call(cap_name: str, **kw) -> Any:
+    cap = CAPABILITY_REGISTRY.get(cap_name)
+    if not cap:
+        return {"error": f"{cap_name} not loaded"}
+    kw.setdefault("trace_id", "")
+    try:
+        return await cap["func"](**kw)
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
+async def _gather_subsystem_snapshot() -> Dict:
+    """Fan out once across the subsystems the main-dash health strip (and the
+    topology map) both need. Kept as one shared helper so neither reimplements
+    the other's gather logic."""
+    sysmon, mesh, loop_lab, sandboxes, mimic = await asyncio.gather(
+        _cap_call("sysmon.status"),
+        _cap_call("mesh.nodes"),
+        _cap_call("evolve.sandbox.status"),
+        _cap_call("sandbox.session.list"),
+        _cap_call("cluster.mimic.status"),
+    )
+    return {"sysmon": sysmon, "mesh": mesh, "loop_lab": loop_lab,
+            "sandboxes": sandboxes, "mimic": mimic}
+
+
+def _dot_state(ok: bool, exists: bool, warn: bool = False) -> str:
+    """Centralised ok/warn/err/unknown classification so every consumer of
+    _gather_subsystem_snapshot() (health strip, topology map) agrees on what
+    a color means."""
+    if not exists:
+        return "unknown"
+    if ok:
+        return "ok"
+    return "warn" if warn else "err"
+
+
+@capability("dash.health.summary", memory="off", silent=True,
+            http_method="GET", http_path="/dash/health/summary", http_tags=["obs"],
+            description="One compact ok/warn/err/unknown dot per subsystem "
+                        "(proxmox, docker, ollama, mesh, loop_lab, sandboxes, "
+                        "mimic) for the main-dashboard health strip. Fans out "
+                        "via _gather_subsystem_snapshot(), never raises.")
+async def dash_health_summary(trace_id=None) -> Dict:
+    snap = await _gather_subsystem_snapshot()
+    sysmon = snap["sysmon"] if isinstance(snap["sysmon"], dict) else {}
+    pmx = sysmon.get("proxmox") or {}
+    dkr = sysmon.get("docker") or {}
+    oll = sysmon.get("ollama") or {}
+
+    mesh = snap["mesh"] if isinstance(snap["mesh"], dict) else {}
+    mesh_nodes = mesh.get("nodes") or []
+    mesh_bad = sum(1 for n in mesh_nodes if n.get("status") in ("offline", "stale"))
+    mesh_ok_nodes = sum(1 for n in mesh_nodes if n.get("status") == "online")
+
+    ll = snap["loop_lab"] if isinstance(snap["loop_lab"], dict) else {}
+
+    sbx = snap["sandboxes"] if isinstance(snap["sandboxes"], dict) else {}
+    sbx_ok = "sandboxes" in sbx and not sbx.get("error")
+
+    mim = snap["mimic"] if isinstance(snap["mimic"], dict) else {}
+
+    return {
+        "proxmox":   _dot_state(bool(pmx.get("ok")), bool(pmx.get("configured")), warn=False),
+        "docker":    _dot_state(bool(dkr.get("ok")), bool(dkr.get("total_hosts")), warn=False),
+        "ollama":    _dot_state(oll.get("online", 0) == oll.get("total", 0) and oll.get("total", 0) > 0,
+                                 bool(oll.get("total")), warn=bool(oll.get("online"))),
+        "mesh":      _dot_state(bool(mesh_nodes) and mesh_bad == 0, bool(mesh_nodes),
+                                 warn=mesh_ok_nodes > 0),
+        "loop_lab":  _dot_state(bool(ll.get("up")) and not ll.get("paused"), "sandbox" in ll,
+                                 warn=bool(ll.get("paused"))),
+        "sandboxes": _dot_state(sbx_ok, "sandboxes" in sbx, warn=False),
+        "mimic":     _dot_state(bool(mim.get("mounted")) and not mim.get("paused"),
+                                 bool(mim.get("mounted")), warn=bool(mim.get("paused"))),
+        "ts": now_iso(),
+    }
 
 
 @capability("ollama.instances", memory="off", silent=True,
@@ -6192,6 +6316,66 @@ async def _health(trace_id=None):
 async def _ui_panels(trace_id=None):
     return list(UI_PANELS.values())
 
+@capability("ui.panel.specialist", memory="off", silent=True,
+            http_method="GET", http_path="/ui/panel/specialist", http_tags=["ui"],
+            description="The declarative specialist binding for one panel, if "
+                        "any (see register_ui's specialist_agent/"
+                        "specialist_loop_profile — the generalized form of the "
+                        "markets studio's hardcoded COP widget). Used by "
+                        "<vera-panel-copilot> to know which agent/loop-profile "
+                        "to embed, and by chat's panel-dispatch defer-to-"
+                        "specialist mode. Input: panel_id (str!). Output: "
+                        "{panel_id, specialist_agent, specialist_loop_profile, "
+                        "bound: bool}.")
+async def _ui_panel_specialist(panel_id: str = "", trace_id=None):
+    p = UI_PANELS.get(panel_id) or {}
+    agent = p.get("specialist_agent", "")
+    profile = p.get("specialist_loop_profile", "")
+    context_cap = p.get("specialist_context_cap", "")
+    return {"panel_id": panel_id, "specialist_agent": agent,
+            "specialist_loop_profile": profile, "specialist_context_cap": context_cap,
+            "bound": bool(agent or profile)}
+
+@capability("caps.specialist", memory="off", silent=True,
+            http_method="GET", http_path="/caps/specialist", http_tags=["ui", "agents"],
+            description="The specialist bound to a CAPABILITY (not a panel) — "
+                        "derived directly from the panel bindings (register_ui's "
+                        "specialist_agent/specialist_loop_profile/"
+                        "specialist_context_cap), never a separate registry to "
+                        "keep in sync. This is the unification point between "
+                        "panel-dispatch (chat/panel_copilot, which already knows "
+                        "which panel is open) and a running agentic loop (which "
+                        "only knows the capability NAME it's about to call, no "
+                        "panel context at all) — both resolve to the same "
+                        "specialist through the same underlying binding. Finds "
+                        "the panel whose ui_caps contains cap_name exactly, or "
+                        "(family=True, default) shares its dot-prefix family "
+                        "(e.g. 'mesh.firmware.flash' matches a panel whose "
+                        "ui_caps includes any 'mesh.*' capability). Input: "
+                        "cap_name (str!), family (bool default True). Output: "
+                        "{cap_name, panel_id, specialist_agent, "
+                        "specialist_loop_profile, specialist_context_cap, bound}.")
+async def _caps_specialist(cap_name: str = "", family: bool = True, trace_id=None):
+    empty = {"cap_name": cap_name, "panel_id": "", "specialist_agent": "",
+             "specialist_loop_profile": "", "specialist_context_cap": "", "bound": False}
+    if not cap_name:
+        return empty
+    prefix = cap_name.split(".")[0] + "." if family and "." in cap_name else None
+    for pid, p in UI_PANELS.items():
+        caps = p.get("ui_caps") or []
+        if not isinstance(caps, list):
+            continue   # a few legacy registrations pass a malformed ui_caps
+        agent = p.get("specialist_agent", "")
+        profile = p.get("specialist_loop_profile", "")
+        if not (agent or profile):
+            continue
+        if cap_name in caps or (prefix and any(isinstance(c, str) and c.startswith(prefix) for c in caps)):
+            return {"cap_name": cap_name, "panel_id": pid,
+                    "specialist_agent": agent, "specialist_loop_profile": profile,
+                    "specialist_context_cap": p.get("specialist_context_cap", ""),
+                    "bound": True}
+    return empty
+
 async def _heartbeat():
     await emit_event({"type":"heartbeat","caps":len(CAPABILITY_REGISTRY),"workers":len(WORKER_REGISTRY)})
 
@@ -6663,6 +6847,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "provisioning/lldap_capabilities.py"),
         os.path.join(_here, "provisioning/identity_resolver.py"),
         os.path.join(_here, "provisioning/identity_migrate.py"),
+        os.path.join(_here, "provisioning/openbao_identity.py"),
         os.path.join(_here, "provisioning/enroll_capabilities.py"),
         os.path.join(_here, "provisioning/software_capabilities.py"),
         os.path.join(_here, "provisioning/components_capabilities.py"),
@@ -7126,6 +7311,17 @@ def _mount_all_http_routes(app: FastAPI):
 APP = FastAPI(title="Vera Orchestrator", version="3.0", lifespan=lifespan)
 APP.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+@APP.get("/ui/elements/panel_copilot.js", include_in_schema=False)
+async def _serve_panel_copilot_js():
+    from fastapi.responses import Response as _Resp
+    p = Path(__file__).parent / "panel_copilot_element.js"
+    if p.exists():
+        return _Resp(content=p.read_text(encoding="utf-8"),
+                    media_type="application/javascript",
+                    headers={"Cache-Control": "no-cache"})
+    return _Resp(content="console.warn('vera-panel-copilot element JS not found');",
+                media_type="application/javascript")
+
 
 # ── Client config injection ───────────────────────────────────────────────────
 # Browser panels can't read the Python config, so the single source-of-truth
@@ -7194,6 +7390,8 @@ try:
         # dashboard widget or promoted back to a top-level tab from the tab bar's
         # "+" picker.
         mode="element", tab_order=72,
+        specialist_agent="fabric-librarian",
+        specialist_loop_profile="fabric-discovery",
     )
 except Exception as _mge:
     log.warning("memgraph register_ui: %s", _mge)
