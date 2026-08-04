@@ -573,7 +573,7 @@ select option{background:var(--bg2)}
         <div class="dash-toolbar">
           <div class="dash-title">Cluster Overview</div>
           <span class="dash-meta" id="dashLastUpdate">never updated</span>
-          <button class="btn sm"      onclick="loadHealth();loadCluster();loadMemoryStats();loadSysmonSplit();loadMeshInfo();loadLoopLabInfo();loadSandboxesInfo();loadMimicSummary();pollDashHealthStrip();dashTouch()" title="Refresh all widgets">↻ Refresh</button>
+          <button class="btn sm"      onclick="loadHealth();loadCluster();loadMemoryStats();loadSysmonSplit();loadHostTemps();loadSparklines();loadMeshInfo();loadLoopLabInfo();loadSandboxesInfo();loadMimicSummary();loadTopologyMap();pollDashHealthStrip();dashTouch()" title="Refresh all widgets">↻ Refresh</button>
           <button class="btn sm teal" onclick="clusterAutoRefresh()" id="dashAutoBtn">Auto 5s</button>
           <span id="clusterRefreshBadge" style="font-size:9.5px;color:var(--dim2);align-self:center"></span>
           <button class="btn sm"      onclick="loadDiagnostics()">Diagnostics</button>
@@ -594,48 +594,92 @@ select option{background:var(--bg2)}
         <!-- The reactive grid — every child .widget is configurable -->
         <div class="dash-grid" id="dashGrid">
 
+          <!-- ── Live topology map: hub -> Nodes/Workers/Ollama/Mesh -> leaves ── -->
+          <div class="widget w-w12 w-h6" data-wid="topology-map">
+            <div class="w-head">
+              <span class="w-grip">⠿</span>
+              <span class="w-dot ok"></span>
+              <span class="w-title">Stack Topology</span>
+              <span class="w-actions">
+                <button class="w-iconbtn" onclick="loadTopologyMap()" title="Refresh">↻</button>
+                <button class="w-iconbtn" onclick="dashHideWidget('topology-map')">×</button>
+              </span>
+            </div>
+            <div class="w-body flush" style="padding:0">
+              <vera-topology-map id="topoMap" style="width:100%;height:100%;min-height:360px"></vera-topology-map>
+            </div>
+            <span class="w-resize" data-resize></span>
+          </div>
+
           <!-- ── Proxmox (split out of the old combined System Monitor iframe) ── -->
-          <div class="widget w-w4 w-h2" data-wid="sysmon-proxmox">
+          <div class="widget w-w4 w-h3" data-wid="sysmon-proxmox">
             <div class="w-head">
               <span class="w-grip">⠿</span>
               <span class="w-dot" id="wProxmoxDot"></span>
               <span class="w-title">Proxmox</span>
               <span class="w-actions">
-                <button class="w-iconbtn" onclick="loadSysmonSplit()" title="Refresh">↻</button>
+                <button class="w-iconbtn" onclick="loadSysmonSplit();loadSparklines()" title="Refresh">↻</button>
                 <button class="w-iconbtn" onclick="dashHideWidget('sysmon-proxmox')">×</button>
               </span>
             </div>
-            <div class="w-body tight"><div class="kpi"><div class="kpi-val tv-neu" id="hProxmox" style="font-size:22px">—</div><div class="kpi-sub" id="hProxmoxSub">guests · running</div></div></div>
+            <div class="w-body tight" style="display:flex;flex-direction:column;gap:4px">
+              <div class="kpi"><div class="kpi-val tv-neu" id="hProxmox" style="font-size:22px">—</div><div class="kpi-sub" id="hProxmoxSub">guests · running</div></div>
+              <div style="height:30px" title="Running guests, last ~10min"><vera-sparkline id="sparkProxmox" unit=""></vera-sparkline></div>
+            </div>
             <span class="w-resize" data-resize></span>
           </div>
 
           <!-- ── Docker ── -->
-          <div class="widget w-w4 w-h2" data-wid="sysmon-docker">
+          <div class="widget w-w4 w-h3" data-wid="sysmon-docker">
             <div class="w-head">
               <span class="w-grip">⠿</span>
               <span class="w-dot" id="wDockerDot"></span>
               <span class="w-title">Docker</span>
               <span class="w-actions">
-                <button class="w-iconbtn" onclick="loadSysmonSplit()" title="Refresh">↻</button>
+                <button class="w-iconbtn" onclick="loadSysmonSplit();loadSparklines()" title="Refresh">↻</button>
                 <button class="w-iconbtn" onclick="dashHideWidget('sysmon-docker')">×</button>
               </span>
             </div>
-            <div class="w-body tight"><div class="kpi"><div class="kpi-val tv-neu" id="hDocker" style="font-size:22px">—</div><div class="kpi-sub" id="hDockerSub">containers running</div></div></div>
+            <div class="w-body tight" style="display:flex;flex-direction:column;gap:4px">
+              <div class="kpi"><div class="kpi-val tv-neu" id="hDocker" style="font-size:22px">—</div><div class="kpi-sub" id="hDockerSub">containers running</div></div>
+              <div style="height:30px" title="Running containers, last ~10min"><vera-sparkline id="sparkDocker" unit=""></vera-sparkline></div>
+            </div>
             <span class="w-resize" data-resize></span>
           </div>
 
           <!-- ── Ollama (sysmon view — see also the fuller "Ollama Nodes" list widget below) ── -->
-          <div class="widget w-w4 w-h2" data-wid="sysmon-ollama">
+          <div class="widget w-w4 w-h3" data-wid="sysmon-ollama">
             <div class="w-head">
               <span class="w-grip">⠿</span>
               <span class="w-dot" id="wOllamaSysDot"></span>
               <span class="w-title">Ollama</span>
               <span class="w-actions">
-                <button class="w-iconbtn" onclick="loadSysmonSplit()" title="Refresh">↻</button>
+                <button class="w-iconbtn" onclick="loadSysmonSplit();loadSparklines()" title="Refresh">↻</button>
                 <button class="w-iconbtn" onclick="dashHideWidget('sysmon-ollama')">×</button>
               </span>
             </div>
-            <div class="w-body tight"><div class="kpi"><div class="kpi-val tv-neu" id="hOllamaSys" style="font-size:22px">—</div><div class="kpi-sub" id="hOllamaSysSub">gpu · in use</div></div></div>
+            <div class="w-body tight" style="display:flex;flex-direction:column;gap:4px">
+              <div class="kpi"><div class="kpi-val tv-neu" id="hOllamaSys" style="font-size:22px">—</div><div class="kpi-sub" id="hOllamaSysSub">gpu · in use</div></div>
+              <div style="height:30px" title="Online nodes, last ~10min"><vera-sparkline id="sparkOllama" unit=""></vera-sparkline></div>
+            </div>
+            <span class="w-resize" data-resize></span>
+          </div>
+
+          <!-- ── Host core temps (SSH-probed: sensors, or /sys/class/thermal fallback) ── -->
+          <div class="widget w-w4 w-h3" data-wid="host-temps">
+            <div class="w-head">
+              <span class="w-grip">⠿</span>
+              <span class="w-dot" id="wTempsDot"></span>
+              <span class="w-title">Host Temps</span>
+              <span class="w-actions">
+                <button class="w-iconbtn" onclick="loadHostTemps();loadSparklines()" title="Refresh">↻</button>
+                <button class="w-iconbtn" onclick="dashHideWidget('host-temps')">×</button>
+              </span>
+            </div>
+            <div class="w-body">
+              <div id="hostTempsList" style="display:flex;flex-direction:column;gap:6px;font-size:10.5px"></div>
+              <div style="height:26px;margin-top:8px" title="Worst host temp, last ~10min"><vera-sparkline id="sparkTemps" unit="°C"></vera-sparkline></div>
+            </div>
             <span class="w-resize" data-resize></span>
           </div>
 
@@ -2324,7 +2368,7 @@ function _tabFireLoader(n){
   if(n==='caps')        loadCaps();
   if(n==='redis')       loadRedis();
   if(n==='servers')     loadServers();
-  if(n==='dashboard')  {loadHealth();loadCluster();loadMemoryStats();loadSysmonSplit();loadMeshInfo();loadLoopLabInfo();loadSandboxesInfo();loadMimicSummary();pollDashHealthStrip();dashTouch();}
+  if(n==='dashboard')  {loadHealth();loadCluster();loadMemoryStats();loadSysmonSplit();loadHostTemps();loadSparklines();loadMeshInfo();loadLoopLabInfo();loadSandboxesInfo();loadMimicSummary();loadTopologyMap();pollDashHealthStrip();dashTouch();}
   if(n==='media')       loadAllPanels();
   if(n==='dagworkshop') dagStoreLoad();
   if(n==='syslog'||n==='streams') syslogLoad();
@@ -2390,10 +2434,13 @@ async function refreshAll(){
     loadCluster(),
     loadMemoryStats(),
     loadSysmonSplit(),
+    loadHostTemps(),
+    loadSparklines(),
     loadMeshInfo(),
     loadLoopLabInfo(),
     loadSandboxesInfo(),
     loadMimicSummary(),
+    loadTopologyMap(),
   ]);
   _dashHealthStripInit();
   dashTouch();
@@ -2668,6 +2715,64 @@ function _dashHealthStripInit(){
   if(_dashHealthInterval) return;
   pollDashHealthStrip();
   _dashHealthInterval = setInterval(pollDashHealthStrip, 10000);
+}
+
+// Feed the <vera-sparkline> instances mounted in the sysmon tiles from one
+// shared /sysmon/history fetch (not one fetch per sparkline).
+async function loadSparklines(){
+  const h = await api('/sysmon/history?limit=60'); if(!h || !h.samples) return;
+  const mk = field => h.samples.map(s => ({ t: s.t, v: (s[field]==null ? null : s[field]) }));
+  const feed = (id, field) => {
+    const el = document.getElementById(id);
+    if (el && typeof el.setSeries === 'function') el.setSeries(mk(field));
+  };
+  feed('sparkProxmox', 'pmx_running');
+  feed('sparkDocker',  'dkr_running');
+  feed('sparkOllama',  'oll_online');
+  feed('sparkTemps',   'temp_max');
+}
+
+// Host core temps — obs.node_temps, probed over SSH every ~60s server-side.
+async function loadHostTemps(){
+  const r = await api('/nodes/temps');
+  const listEl = document.getElementById('hostTempsList');
+  if(!r){ return; }
+  const hosts = r.hosts||[];
+  const tempColor = c => c==null?'var(--dim2)':(c<70?'var(--ok)':(c<85?'var(--warn)':'var(--err)'));
+  if(!hosts.length){
+    if(listEl) listEl.innerHTML = '<span style="color:var(--dim2)">no nodes probed yet</span>';
+    setDot('wTempsDot', '');
+    return;
+  }
+  const known = hosts.map(h=>h.max_c).filter(v=>v!=null);
+  const worst = known.length ? Math.max(...known) : null;
+  if(listEl){
+    listEl.innerHTML = hosts.map(h=>{
+      const c = h.max_c;
+      const pct = c==null ? 0 : Math.max(2, Math.min(100, c));
+      const col = tempColor(c);
+      const label = h.label + (h.pve?' · PVE':'');
+      const valTxt = c==null ? (h.error||'—') : `${c}°C`;
+      return `<div>
+        <div style="display:flex;justify-content:space-between;gap:6px">
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${h.host_id}">${label}</span>
+          <span style="color:${col};font-family:var(--mono);white-space:nowrap">${valTxt}</span>
+        </div>
+        <div style="height:4px;background:var(--bg0);border-radius:2px;overflow:hidden;margin-top:2px">
+          <div style="height:100%;width:${pct}%;background:${col}"></div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+  setDot('wTempsDot', worst==null ? '' : (worst<70?'ok':(worst<85?'warn':'err')));
+}
+
+// Live SVG stack topology — one fetch of topology.snapshot, handed straight
+// to the <vera-topology-map> custom element's own diff/pulse/layout logic.
+async function loadTopologyMap(){
+  const r = await api('/topology/snapshot'); if(!r) return;
+  const el = document.getElementById('topoMap');
+  if (el && typeof el.applySnapshot === 'function') el.applySnapshot(r);
 }
 
 async function loadDiagnostics(){
@@ -4653,7 +4758,7 @@ function clusterAutoRefresh(){
     document.getElementById('clusterRefreshBadge').textContent='';
     const b=document.getElementById('dashAutoBtn'); if(b){b.classList.remove('primary');b.textContent='Auto 5s';}
   } else {
-    _clusterAutoInterval=setInterval(()=>{loadCluster();loadSysmonSplit();loadMimicSummary();dashTouch();},5000);
+    _clusterAutoInterval=setInterval(()=>{loadCluster();loadSysmonSplit();loadSparklines();loadMimicSummary();dashTouch();},5000);
     document.getElementById('clusterRefreshBadge').textContent='● auto-refreshing every 5s';
     const b=document.getElementById('dashAutoBtn'); if(b){b.classList.add('primary');b.textContent='● Auto 5s';}
   }
@@ -6175,17 +6280,34 @@ function dashShowWidget(wid){ _dashCtl && _dashCtl.show(wid); }
 // ─────────────────────────────────────────────────────────────────────────────
 // CROSS-FRAME WIDGET POP-OUT — embedded dashboards (Dream, Workers & Ollama, …)
 // live inside tab iframes, so a float reparented to THEIR body disappears when
-// the top-level tab switches. Their VeraDash posts 'vera.dash.solo' instead;
-// we float a chrome window here containing a solo view of that page
-// (#vd-solo=<wid> shows exactly that one widget, live), which survives any tab
-// switch just like the main dashboard's floats.
+// the top-level tab switches. Their VeraDash posts 'vera.dash.solo' with an
+// instant-paint snapshot (the widget's outerHTML + that page's <style> rules);
+// we render it via srcdoc immediately — no second page navigation, no polling
+// wait. The source page keeps running its own normal polling in the background
+// (hidden tab iframes are display:none'd, not destroyed) and mirrors updates
+// via 'vera.dash.solo.update' whenever the widget's DOM changes, so the float
+// stays live without ever booting a second full copy of the tab.
+//
+// 'href' is kept only as a fallback for a harness/child running mismatched
+// vera-dashboard.js versions during rollout (a child without the html/css
+// fields falls through to the old full-tab #vd-solo reload — see the `else`
+// branch below); once both sides are on the current file this path is dead.
 // ─────────────────────────────────────────────────────────────────────────────
 const _soloFloats = {};
 window.addEventListener('message', e => {
   const d = e.data;
-  if (!d || d.type !== 'vera.dash.solo' || !d.wid || !d.href) return;
-  _veraSoloFloat(d);
+  if (!d || !d.wid) return;
+  if (d.type === 'vera.dash.solo' && d.href) { _veraSoloFloat(d); return; }
+  if (d.type === 'vera.dash.solo.update') { _veraSoloUpdate(d); return; }
 });
+function _veraSoloDoc(css, html){
+  return '<!doctype html><html><head><meta charset="utf-8">'
+    + '<script src="/ui/vera-ui.js"><\/script>'
+    + '<style>html,body{height:100%;margin:0;background:var(--bg1,#16181d);'
+    + 'color:var(--text,#d6d9df);font-family:var(--mono,ui-monospace,monospace);'
+    + 'font-size:11px}*{box-sizing:border-box}\n' + (css||'') + '</style>'
+    + '</head><body>' + (html||'') + '</body></html>';
+}
 function _veraSoloFloat(d){
   const key = String(d.wid);
   if (_soloFloats[key]) {                       // already open → nudge to front
@@ -6201,6 +6323,7 @@ function _veraSoloFloat(d){
     + 'display:flex;flex-direction:column;background:var(--bg2);border:1px solid var(--acc);'
     + 'border-radius:var(--radius-lg,8px);box-shadow:0 18px 60px rgba(0,0,0,.65);'
     + 'overflow:hidden;resize:both;min-width:300px;min-height:200px';
+  const hasSnapshot = typeof d.html === 'string' && d.html;
   const src = String(d.href).split('#')[0] + '#vd-solo=' + encodeURIComponent(d.wid);
   el.innerHTML =
     '<div class="solo-head" style="display:flex;align-items:center;gap:6px;padding:6px 10px;'
@@ -6210,11 +6333,13 @@ function _veraSoloFloat(d){
     + esc(d.title || d.wid) + '</span>'
     + '<button class="w-iconbtn" title="Close" style="cursor:pointer">✕</button></div>'
     + '<div style="flex:1;position:relative;min-height:0;display:flex">'
-    + '<iframe src="' + esc(src) + '" style="flex:1;border:none;width:100%;background:transparent"></iframe>'
-    + '<div class="vera-loading"><div class="vera-spinner"></div></div>'
+    + (hasSnapshot
+        ? '<iframe style="flex:1;border:none;width:100%;background:transparent"></iframe>'
+        : '<iframe src="' + esc(src) + '" style="flex:1;border:none;width:100%;background:transparent"></iframe>'
+              + '<div class="vera-loading"><div class="vera-spinner"></div></div>')
     + '</div>';
-  const _soloOv = el.querySelector('.vera-loading');
   const _soloFrame = el.querySelector('iframe');
+  const _soloOv = el.querySelector('.vera-loading');
   if (_soloFrame && _soloOv) {
     _soloFrame.addEventListener('load', () => _soloOv.remove(), { once: true });
     setTimeout(() => { if (_soloOv.parentNode) _soloOv.remove(); }, 10000);
@@ -6238,6 +6363,15 @@ function _veraSoloFloat(d){
   });
   document.body.appendChild(el);
   _soloFloats[key] = el;
+  if (hasSnapshot) _soloFrame.srcdoc = _veraSoloDoc(d.css, d.html);   // instant paint, no navigation
+}
+function _veraSoloUpdate(d){
+  const el = _soloFloats[String(d.wid)]; if (!el) return;             // float already closed — no-op
+  const frame = el.querySelector('iframe');
+  const doc = frame && frame.contentDocument;
+  if (!doc || !doc.body) return;
+  const cur = doc.body.querySelector('[data-wid]') || doc.body.firstElementChild;
+  if (cur) cur.outerHTML = d.html; else doc.body.innerHTML = d.html;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -6407,6 +6541,12 @@ function _dashEnhancePop(){
 <!-- Shared dashboard framework (drag/resize/hide + widget loader + pop-out).
      Provides the "+ Add Widget" modal, so the old inline overlay is gone. -->
 <script src="/ui/vera-dashboard.js"></script>
+
+<!-- <vera-sparkline> — reusable history sparkline used by the sysmon tiles -->
+<script src="/ui/elements/sparkline.js"></script>
+
+<!-- <vera-topology-map> — live SVG map of the whole Vera stack -->
+<script src="/ui/elements/topology_map.js"></script>
 
 </body>
 </html>

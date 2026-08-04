@@ -5491,18 +5491,24 @@ async def _cap_call(cap_name: str, **kw) -> Any:
 
 
 async def _gather_subsystem_snapshot() -> Dict:
-    """Fan out once across the subsystems the main-dash health strip (and the
-    topology map) both need. Kept as one shared helper so neither reimplements
-    the other's gather logic."""
-    sysmon, mesh, loop_lab, sandboxes, mimic = await asyncio.gather(
+    """Fan out once across the subsystems the main-dash health strip and the
+    topology map both need. Kept as one shared helper so neither reimplements
+    the other's gather logic. `nodes`/`cluster` are only consumed by the
+    topology map today, but there's no reason for it to run a second parallel
+    gather just for two more cheap (cache-backed, no live SSH) calls."""
+    sysmon, mesh, loop_lab, sandboxes, mimic, nodes, cluster, temps = await asyncio.gather(
         _cap_call("sysmon.status"),
         _cap_call("mesh.nodes"),
         _cap_call("evolve.sandbox.status"),
         _cap_call("sandbox.session.list"),
         _cap_call("cluster.mimic.status"),
+        _cap_call("nodes.list"),
+        _cap_call("obs.cluster"),
+        _cap_call("obs.node_temps"),
     )
     return {"sysmon": sysmon, "mesh": mesh, "loop_lab": loop_lab,
-            "sandboxes": sandboxes, "mimic": mimic}
+            "sandboxes": sandboxes, "mimic": mimic, "nodes": nodes,
+            "cluster": cluster, "temps": temps}
 
 
 def _dot_state(ok: bool, exists: bool, warn: bool = False) -> str:
@@ -5555,6 +5561,116 @@ async def dash_health_summary(trace_id=None) -> Dict:
                                  bool(mim.get("mounted")), warn=bool(mim.get("paused"))),
         "ts": now_iso(),
     }
+
+
+def _temp_status(max_c: Optional[float]) -> str:
+    if max_c is None:
+        return "unknown"
+    if max_c < 70:
+        return "ok"
+    return "warn" if max_c < 85 else "err"
+
+
+@capability("topology.snapshot", memory="off", silent=True,
+            http_method="GET", http_path="/topology/snapshot", http_tags=["obs"],
+            description="Live node/edge snapshot of the whole Vera stack for the "
+                        "main-dashboard SVG topology map: one hub node, one "
+                        "category node per subsystem (Nodes/Workers/Ollama/Mesh), "
+                        "and one leaf per actual machine/worker/instance/mesh "
+                        "device with an ok/warn/err/unknown status (host leaves "
+                        "fold in obs.node_temps where available). Reuses "
+                        "_gather_subsystem_snapshot() — the same fan-out "
+                        "dash.health.summary uses — rather than a second gather. "
+                        "Output: {nodes:[{id,label,kind,status,detail}], "
+                        "edges:[{from,to}], ts}.")
+async def topology_snapshot(trace_id=None) -> Dict:
+    snap = await _gather_subsystem_snapshot()
+    nodes_out: List[Dict] = [{"id": "hub", "label": "Vera", "kind": "hub", "status": "ok", "detail": ""}]
+    edges_out: List[Dict] = []
+
+    def _worst(states: List[str]) -> str:
+        if "err" in states:
+            return "err"
+        if "warn" in states:
+            return "warn"
+        if "ok" in states:
+            return "ok"
+        return "unknown"
+
+    def _cat(cat_id: str, label: str, status: str):
+        nodes_out.append({"id": cat_id, "label": label, "kind": "category", "status": status, "detail": ""})
+        edges_out.append({"from": "hub", "to": cat_id})
+
+    temps = snap["temps"] if isinstance(snap["temps"], dict) else {}
+    temp_by_host = {h.get("host_id"): h for h in (temps.get("hosts") or []) if h.get("host_id")}
+
+    # ── Nodes: the unified estate (SSH hosts merged with Proxmox/Docker/Ollama/vLLM links) ──
+    nl = snap["nodes"] if isinstance(snap["nodes"], dict) else {}
+    machines = nl.get("nodes") or []
+    if machines:
+        leaf_states = []
+        for m in machines:
+            t = temp_by_host.get(m.get("ssh_host_id"))
+            leaf_states.append(_temp_status(t.get("max_c")) if t else ("ok" if m.get("backends") else "unknown"))
+        _cat("cat:nodes", "Nodes", _worst(leaf_states))
+        for m, st in zip(machines, leaf_states):
+            t = temp_by_host.get(m.get("ssh_host_id"))
+            bits = []
+            if m.get("backends"):
+                bits.append("/".join(m["backends"]))
+            if t and t.get("max_c") is not None:
+                bits.append(f"{t['max_c']}°C")
+            nid = f"node:{m.get('id', '')}"
+            nodes_out.append({"id": nid, "label": m.get("label") or m.get("id"), "kind": "node",
+                               "status": st, "detail": " · ".join(bits)})
+            edges_out.append({"from": "cat:nodes", "to": nid})
+
+    # ── Workers: obs.cluster's live worker registry ──
+    cl = snap["cluster"] if isinstance(snap["cluster"], dict) else {}
+    workers = cl.get("workers") or {}
+    if workers:
+        def _worker_status(raw: str) -> str:
+            if raw == "idle" or raw.startswith("running"):
+                return "ok"
+            if raw == "provisioned":
+                return "warn"
+            return "unknown"
+        leaf_states = [_worker_status(str(w.get("status", ""))) for w in workers.values()]
+        _cat("cat:workers", "Workers", _worst(leaf_states))
+        for (wid, w), st in zip(workers.items(), leaf_states):
+            nid = f"worker:{wid}"
+            nodes_out.append({"id": nid, "label": wid, "kind": "worker", "status": st,
+                               "detail": str(w.get("status", ""))})
+            edges_out.append({"from": "cat:workers", "to": nid})
+
+    # ── Ollama: obs.cluster's live per-instance status (richer/fresher than the
+    #    sysmon copy, which is sampled on its own 10s cadence and can lag) ──
+    oll = cl.get("ollama") or {}
+    if oll:
+        leaf_states = ["ok" if i.get("status") == "online" else "err" for i in oll.values()]
+        _cat("cat:ollama", "Ollama", _worst(leaf_states))
+        for (iid, inst), st in zip(oll.items(), leaf_states):
+            nid = f"ollama:{iid}"
+            nodes_out.append({"id": nid, "label": inst.get("label", iid), "kind": "ollama", "status": st,
+                               "detail": f"{inst.get('model_count', 0)} models"
+                                         + (f" · {inst.get('vram_used_gb')}GB" if inst.get("vram_used_gb") else "")})
+            edges_out.append({"from": "cat:ollama", "to": nid})
+
+    # ── Mesh nodes ──
+    mesh = snap["mesh"] if isinstance(snap["mesh"], dict) else {}
+    mesh_nodes = mesh.get("nodes") or []
+    if mesh_nodes:
+        mesh_status_map = {"online": "ok", "stale": "warn", "new": "warn", "offline": "err"}
+        leaf_states = [mesh_status_map.get(n.get("status", "offline"), "err") for n in mesh_nodes]
+        _cat("cat:mesh", "Mesh", _worst(leaf_states))
+        for n, st in zip(mesh_nodes, leaf_states):
+            nid = f"mesh:{n.get('node_id', '')}"
+            detail = f"{n['rssi']} dBm" if n.get("rssi") is not None else n.get("status", "")
+            nodes_out.append({"id": nid, "label": n.get("name") or n.get("node_id"), "kind": "mesh",
+                               "status": st, "detail": detail})
+            edges_out.append({"from": "cat:mesh", "to": nid})
+
+    return {"nodes": nodes_out, "edges": edges_out, "ts": now_iso()}
 
 
 @capability("ollama.instances", memory="off", silent=True,

@@ -273,15 +273,18 @@ async def _proxmox_summary() -> Dict:
 #  Full snapshot + sampler
 # ─────────────────────────────────────────────────────────────────────────────
 async def _build_full() -> Dict:
-    proxmox, docker, ollama = await asyncio.gather(
-        _proxmox_summary(), _docker_summary(), _ollama_summary())
+    proxmox, docker, ollama, temps = await asyncio.gather(
+        _proxmox_summary(), _docker_summary(), _ollama_summary(),
+        _call("obs.node_temps"))
     return {"ts": now_iso(), "t": time.time(), "resources": _resources(),
-            "proxmox": proxmox, "docker": docker, "ollama": ollama}
+            "proxmox": proxmox, "docker": docker, "ollama": ollama, "temps": temps}
 
 
 def _compact(full: Dict, qlen: Optional[int], workers: int) -> Dict:
     p, d, o = full["proxmox"], full["docker"], full["ollama"]
     res = full.get("resources", {})
+    temp_hosts = (full.get("temps") or {}).get("hosts") or []
+    temp_vals = [h.get("max_c") for h in temp_hosts if h.get("max_c") is not None]
     return {
         "t":            round(full.get("t") or time.time(), 1),
         "cpu":          res.get("cpu"),
@@ -297,6 +300,7 @@ def _compact(full: Dict, qlen: Optional[int], workers: int) -> Dict:
         "oll_online":   o.get("online", 0),
         "oll_total":    o.get("total", 0),
         "oll_inuse":    o.get("in_use", 0),
+        "temp_max":     max(temp_vals) if temp_vals else None,
         "caps":         len(CAPABILITY_REGISTRY),
         "workers":      workers,
         "queue":        qlen if qlen is not None else 0,
@@ -329,12 +333,13 @@ schedule(_sample_once, SAMPLE_SEC, "sysmon_sampler")
     http_method="GET", http_path="/sysmon/status", http_tags=["monitor"],
     memory="off", silent=True,
     description="One-call health snapshot of the local infra stack — Proxmox "
-                "clusters, Docker hosts and the Ollama cluster — plus process "
-                "CPU/RAM. Served from the sampler cache (the heavy proxmox/docker "
-                "calls run once per SYSMON_SAMPLE_SEC, not per request); pass "
-                "fresh=true to force a live rebuild. Output: {ts, t, cached, age_s, "
+                "clusters, Docker hosts, the Ollama cluster, and per-host core "
+                "temperatures — plus process CPU/RAM. Served from the sampler "
+                "cache (the heavy proxmox/docker calls run once per "
+                "SYSMON_SAMPLE_SEC, not per request); pass fresh=true to force "
+                "a live rebuild. Output: {ts, t, cached, age_s, "
                 "resources:{cpu,mem,proc_mb,...}, proxmox:{...}, docker:{...}, "
-                "ollama:{...}}.",
+                "ollama:{...}, temps:{hosts:[...]}}.",
 )
 async def cap_sysmon_status(fresh: bool = False, trace_id=None) -> Dict:
     age = (time.time() - _LAST_T) if _LAST_T else 1e9
@@ -354,8 +359,8 @@ async def cap_sysmon_status(fresh: bool = False, trace_id=None) -> Dict:
     memory="off", silent=True,
     description="Time-series ring buffer behind the monitor graphs. Each sample: "
                 "{t, cpu, mem, proc_mb, proc_cpu, pmx_running, pmx_guests, "
-                "dkr_running, dkr_containers, oll_online, oll_inuse, queue, "
-                "workers, caps}. Input: limit (int, default 240). Output: "
+                "dkr_running, dkr_containers, oll_online, oll_inuse, temp_max, "
+                "queue, workers, caps}. Input: limit (int, default 240). Output: "
                 "{samples:[...], count, interval_s, psutil}.",
 )
 async def cap_sysmon_history(limit: int = 240, trace_id=None) -> Dict:

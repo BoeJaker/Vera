@@ -484,6 +484,38 @@ async def _serve_loop_graph_js():
     )
 
 
+# Serve sparkline_element.js — the <vera-sparkline> dashboard history sparkline.
+@APP.get("/ui/elements/sparkline.js", include_in_schema=False)
+async def _serve_sparkline_js():
+    from fastapi.responses import Response
+    from pathlib import Path
+    p = Path(__file__).parent.parent / "sparkline_element.js"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
+    return Response(
+        content="console.warn('sparkline element JS not found');",
+        media_type="application/javascript"
+    )
+
+
+# Serve topology_map_element.js — the <vera-topology-map> live SVG stack map.
+@APP.get("/ui/elements/topology_map.js", include_in_schema=False)
+async def _serve_topology_map_js():
+    from fastapi.responses import Response
+    from pathlib import Path
+    p = Path(__file__).parent.parent / "topology_map_element.js"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
+    return Response(
+        content="console.warn('topology_map element JS not found');",
+        media_type="application/javascript"
+    )
+
+
 # Serve sandbox_controls.js — the <vera-sandbox-controls> exec-sandbox editor.
 # Shared by the Exec panel and the IDE panel; both edit the one server-side
 # policy (exec.sandbox.get/set), so the controls stay linked.

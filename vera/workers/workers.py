@@ -78,6 +78,20 @@ async def _push_local_metrics():
                             "disk_total_gb": str(metrics["disk_total_gb"]),
                             "disk_pct":      str(metrics["disk_pct"]),
                         })
+                        # Keep SSH-provisioned entries (workers.py's own
+                        # registrations — the main heartbeat loop in
+                        # capability_orchestration.py refreshes its own TTL
+                        # separately) alive in Redis past their 120s TTL as
+                        # long as this process still has them locally; once a
+                        # restart wipes WORKER_REGISTRY, this stops firing and
+                        # the entry expires out cleanly instead of lingering
+                        # with stale data forever.
+                        meta = WORKER_META.get(wid)
+                        if meta:
+                            await r.hset(f"vera:workers:{wid}", mapping={
+                                "host": meta.get("host", ""),
+                            })
+                            await r.expire(f"vera:workers:{wid}", 120)
                     except Exception:
                         pass
         except Exception as e:
@@ -226,12 +240,36 @@ async def _ssh_init_gen(p):
                        f"Ollama {'v'+r.json().get('version','?') if r.status_code==200 else 'not found'}")
     except Exception: yield _evt("info","Ollama not found")
     conn.close()
-    WORKER_REGISTRY[wid] = {"worker_id":wid,"status":"starting","in_use":0,"current_task":"","capabilities":[]}
+    # "provisioned", not "starting" — this flow uploads code/deps but never
+    # launches a persistent remote worker process, so there is no live
+    # heartbeat to promote it out of a transient state. A human (or a future
+    # start-process step) is what would flip this to a real running worker.
+    WORKER_REGISTRY[wid] = {"worker_id":wid,"status":"provisioned","in_use":0,"current_task":"","capabilities":[]}
     WORKER_META[wid] = {"worker_class":cls,"label":label,"host":host,"ssh_port":port,"ssh_user":user,"registered_at":now_iso()}
     r = _orch.REDIS
     if r:
         try: await r.hset("vera:worker_meta", wid, json.dumps(WORKER_META[wid]))
         except Exception: pass
+        # Also write the durable vera:workers:{wid} hash — obs.workers/obs.cluster
+        # (and so the main dashboard's Workers tile) only ever scan THIS key, not
+        # vera:worker_meta. Without it, an SSH-provisioned worker is invisible to
+        # every Vera instance except the one that ran this SSE stream, and even
+        # there it silently disappears once _push_local_metrics's periodic TTL
+        # refresh below stops finding it after a restart. Match the field shape
+        # the main worker heartbeat writes (capability_orchestration.py) so
+        # obs.workers doesn't have to fall back to its setdefault() placeholders.
+        try:
+            await r.hset(f"vera:workers:{wid}", mapping={
+                "id": wid, "status": "provisioned", "host": host,
+                "capabilities": "[]", "cap_count": "0",
+                "tasks_done": "0", "tasks_failed": "0",
+                "started": WORKER_META[wid]["registered_at"],
+                "pid": "", "current_task": "", "task_started": "",
+                "ollama_instance": "",
+            })
+            await r.expire(f"vera:workers:{wid}", 120)
+        except Exception as e:
+            log.warning("worker registry push (ssh init) failed: %s", e)
     await emit_event({"type":"worker.registered","worker_id":wid,"class":cls})
     yield _evt("ok", f"Worker {wid} registered")
 
@@ -337,7 +375,16 @@ async def route_disable(wid: str):
 
 async def _restore_worker_meta():
     """Hydrate WORKER_META (incl. the persisted `enabled` flag) from Redis on
-    boot, so a worker turned off before a restart stays off."""
+    boot, so a worker turned off before a restart stays off.
+
+    Also re-seeds WORKER_REGISTRY for each restored id: WORKER_REGISTRY is a
+    plain in-process dict (unlike WORKER_META, which is Redis-backed), so a
+    restart of the instance that ran _ssh_init_gen wipes it — and with it,
+    _push_local_metrics's periodic TTL refresh for that worker's
+    vera:workers:{wid} hash, which then silently expires out of obs.workers
+    120s later even though the SSH-provisioned host is still perfectly real.
+    Re-seeding here means that as soon as this instance is back up, its own
+    metrics loop picks the id back up and keeps it alive."""
     for _ in range(60):
         if _orch.REDIS:
             break
@@ -354,6 +401,10 @@ async def _restore_worker_meta():
             except Exception:
                 continue
             WORKER_META.setdefault(wid, {}).update(meta)
+            WORKER_REGISTRY.setdefault(wid, {
+                "worker_id": wid, "status": "provisioned",
+                "in_use": 0, "current_task": "", "capabilities": [],
+            })
     except Exception as e:
         log.debug("restore worker meta: %s", e)
 
@@ -423,6 +474,8 @@ register_ui(
     ],
     mode="tab",
     tab_order=1,
+    specialist_agent="infra-operator",
+    specialist_loop_profile="devops",
 )
 
 log.info("vera_workers loaded")

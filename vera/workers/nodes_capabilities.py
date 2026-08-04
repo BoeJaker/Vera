@@ -1444,6 +1444,153 @@ try:
 except Exception as e:
     log.debug("schedule nodes maintenance: %s", e)
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CORE TEMPERATURES  — SSH probe (sensors -A -u, falling back to
+# /sys/class/thermal), on its own lighter/heavier tick from the 5-min
+# maintenance timer above: SSH is comparatively expensive and temps move
+# slowly, so this doesn't share _maintenance_tick's due-time logic.
+#
+# Exposed as obs.node_temps — named/tagged into the obs.* umbrella the same
+# way obs.cluster lives in cluster.py rather than the observability section
+# of capability_orchestration.py: the implementation stays here because this
+# module already owns the SSH channel and per-host fact cache.
+# ─────────────────────────────────────────────────────────────────────────────
+TEMP_PROBE_SEC = 60.0
+_TEMP_INSTALL_BACKOFF = 3600.0 * 6   # don't hammer apt on a host that keeps failing
+
+_TEMP_SCRIPT = r"""
+if command -v sensors >/dev/null 2>&1; then
+  echo "SENSORS_BEGIN"
+  sensors -A -u 2>/dev/null
+  echo "SENSORS_END"
+elif [ -d /sys/class/thermal ]; then
+  for z in /sys/class/thermal/thermal_zone*/temp; do
+    [ -f "$z" ] || continue
+    d=$(dirname "$z")
+    zt=$(cat "$d/type" 2>/dev/null || basename "$d")
+    v=$(cat "$z" 2>/dev/null)
+    [ -n "$v" ] && echo "THERMAL_ZONE|$zt|$v"
+  done
+else
+  echo "NO_SENSORS"
+fi
+"""
+
+_TEMP_INSTALL_SCRIPT = (
+    "(sudo -n apt-get install -y lm-sensors || apt-get install -y lm-sensors) >/dev/null 2>&1; "
+    "(sudo -n sensors-detect --auto || sensors-detect --auto) >/dev/null 2>&1; "
+    "echo INSTALL_DONE"
+)
+
+_TEMP_CACHE: Dict[str, dict] = {}            # host_id -> {label, pve, temps, max_c, updated_at, error}
+_TEMP_INSTALL_TRIED: Dict[str, float] = {}   # host_id -> time.time() of last install attempt
+
+
+def _parse_sensors_u(txt: str) -> Dict[str, float]:
+    """Parse `sensors -A -u` machine-readable output into {sensor_label: celsius}.
+    Section headers ('Package id 0:', 'Core 0:') are unindented lines ending in
+    ':'; the tempN_input values under them are indented 'tempN_input: NN.NNN'."""
+    temps: Dict[str, float] = {}
+    label = ""
+    for raw in (txt or "").splitlines():
+        if not raw.strip():
+            continue
+        if not raw[0].isspace():
+            s = raw.strip()
+            if s.endswith(":"):
+                label = s[:-1].strip()
+            continue   # chip name line, or a section-header line just captured
+        key, sep, val = raw.strip().partition(":")
+        if sep and key.strip().endswith("_input"):
+            try:
+                temps[label or key.strip()] = round(float(val.strip()), 1)
+            except ValueError:
+                continue
+    return temps
+
+
+def _parse_thermal_zones(txt: str) -> Dict[str, float]:
+    temps: Dict[str, float] = {}
+    for ln in (txt or "").splitlines():
+        if not ln.startswith("THERMAL_ZONE|"):
+            continue
+        _, _, rest = ln.partition("|")
+        zt, _, raw = rest.partition("|")
+        try:
+            temps[zt.strip() or "zone"] = round(float(raw.strip()) / 1000.0, 1)
+        except ValueError:
+            continue
+    return temps
+
+
+async def _probe_host_temp(host: Dict) -> None:
+    host_id = host.get("id", "")
+    if not host_id:
+        return
+    label = host.get("label") or host.get("host") or host_id
+    try:
+        r = await _ssh(host_id, _TEMP_SCRIPT, timeout=20)
+        out = r.get("stdout", "") or ""
+        temps: Dict[str, float] = {}
+        if "SENSORS_BEGIN" in out:
+            body = out.split("SENSORS_BEGIN", 1)[1].split("SENSORS_END", 1)[0]
+            temps = _parse_sensors_u(body)
+        elif "THERMAL_ZONE|" in out:
+            temps = _parse_thermal_zones(out)
+        elif "NO_SENSORS" in out:
+            # Try installing lm-sensors once, with a long backoff on repeat
+            # failure — never blocks this tick; the next tick picks up real
+            # values once sensors-detect has actually configured the modules.
+            last_try = _TEMP_INSTALL_TRIED.get(host_id, 0.0)
+            if time.time() - last_try > _TEMP_INSTALL_BACKOFF:
+                _TEMP_INSTALL_TRIED[host_id] = time.time()
+                log.info("nodes: no sensors on %s, attempting lm-sensors install", host_id)
+                await _ssh(host_id, _TEMP_INSTALL_SCRIPT, timeout=90)
+        error = "" if temps else ("no sensors available" if "NO_SENSORS" in out
+                                   else (r.get("error") or "no temperature readings returned"))
+        facts = FACTS.get(host_id, {})
+        _TEMP_CACHE[host_id] = {
+            "host_id": host_id, "label": label, "pve": bool(facts.get("pve")),
+            "temps": temps, "max_c": max(temps.values()) if temps else None,
+            "updated_at": now_iso(), "error": error,
+        }
+    except Exception as e:
+        _TEMP_CACHE[host_id] = {
+            "host_id": host_id, "label": label, "pve": False,
+            "temps": {}, "max_c": None, "updated_at": now_iso(), "error": str(e)[:200],
+        }
+
+
+async def _temp_probe_tick():
+    hosts = await _ssh_hosts()
+    if not hosts:
+        return
+    await asyncio.gather(*(_probe_host_temp(h) for h in hosts), return_exceptions=True)
+
+
+try:
+    schedule(_temp_probe_tick, TEMP_PROBE_SEC, name="nodes_temp_probe")
+except Exception as e:
+    log.debug("schedule nodes temp probe: %s", e)
+
+
+@capability(
+    "obs.node_temps",
+    http_method="GET", http_path="/nodes/temps", http_tags=["obs"],
+    memory="off", silent=True,
+    description="Core temperatures for every SSH-registered node, probed every "
+                f"{int(TEMP_PROBE_SEC)}s (sensors -A -u, falling back to "
+                "/sys/class/thermal; installs lm-sensors once per host, with a "
+                "long backoff, if neither is available). Named/tagged into the "
+                "obs.* umbrella like obs.cluster, though implemented here since "
+                "this module owns the SSH probe. Output: {hosts:[{host_id,label,"
+                "pve,temps:{sensor:celsius},max_c,updated_at,error}], count}.",
+)
+async def cap_node_temps(trace_id=None) -> Dict:
+    return {"hosts": list(_TEMP_CACHE.values()), "count": len(_TEMP_CACHE)}
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # UNIFIED PROVISIONING UMBRELLA  — one target model × one payload model
 # ═════════════════════════════════════════════════════════════════════════════
