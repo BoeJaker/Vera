@@ -3041,9 +3041,38 @@ function _renderProxmoxCores(r){
   }).join('');
 }
 
-// Per-container CPU/memory — docker.stats.top, sampled server-side every 30s
-// and capped to the busiest N per host (some hosts here run 300+ containers;
-// this is intentionally NOT "every container", see the capability's own doc).
+// Tiny inline-SVG polyline, deliberately NOT a <vera-sparkline> instance per
+// row: up to 12 containers x 2 series would mean 24 parallel canvas+RAF+
+// ResizeObserver components for what's just a glance-value trend — a plain
+// static SVG string computed once per refresh is far cheaper here.
+function _miniSpark(vals, w, h, color){
+  const nums = (vals||[]).filter(v=>v!=null);
+  if(nums.length<2) return `<svg width="${w}" height="${h}"></svg>`;
+  let lo=Math.min(...nums), hi=Math.max(...nums);
+  if(lo===hi){ lo-=1; hi+=1; }
+  const n = vals.length;
+  const pts = vals.map((v,i)=>{
+    const x = n<=1 ? w/2 : (i/(n-1))*w;
+    const y = v==null ? null : h - ((v-lo)/(hi-lo))*h;
+    return [x,y];
+  });
+  let d = '', pen=false;
+  pts.forEach(([x,y])=>{
+    if(y==null){ pen=false; return; }
+    d += (pen?'L':'M') + x.toFixed(1) + ',' + y.toFixed(1) + ' ';
+    pen = true;
+  });
+  return `<svg width="${w}" height="${h}" style="display:block"><path d="${d.trim()}" fill="none" stroke="${color}" stroke-width="1.2"/></svg>`;
+}
+
+// Per-container CPU/memory (+ short trend) — docker.stats.top, sampled
+// server-side every 30s and capped to the busiest N per host (some hosts
+// here run 300+ containers; this is intentionally NOT "every container",
+// see the capability's own doc). Per-container STORAGE isn't included:
+// Docker's stats API doesn't carry disk usage per container without a much
+// heavier `docker system df -v`-style call per container per tick, which
+// isn't worth the Engine API load for a dashboard tile -- host-level disk
+// usage is already covered in the Host Temps widget's storage section.
 async function loadDockerStats(){
   const r = await api('/workers/docker/stats/top');
   const el = document.getElementById('dkrTopContainers'); if(!el || !r) return;
@@ -3054,12 +3083,22 @@ async function loadDockerStats(){
   });
   if(!rows.length){ el.innerHTML = '<span style="color:var(--dim2);font-size:9.5px">no container stats yet</span>'; return; }
   rows.sort((a,b)=>(b.cpu_pct||0)-(a.cpu_pct||0));
+  // SVG stroke="..." is a plain attribute, not a CSS property, so var()
+  // doesn't reliably resolve there the way it does in an inline style --
+  // resolve the accent color to a concrete value once, up front.
+  const memSparkColor = getComputedStyle(document.documentElement).getPropertyValue('--acc2').trim() || '#8fb87a';
+  const cpuColorHex = v => v==null?'#7e8ba0':(v<60?getComputedStyle(document.documentElement).getPropertyValue('--ok').trim()||'#5a9e8f'
+    :(v<90?getComputedStyle(document.documentElement).getPropertyValue('--warn').trim()||'#c9a45a':getComputedStyle(document.documentElement).getPropertyValue('--err').trim()||'#c75a5a'));
   const cpuColor = v => v==null?'var(--dim2)':(v<60?'var(--ok)':(v<90?'var(--warn)':'var(--err)'));
-  el.innerHTML = `<div style="font-size:8.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px">Busiest containers</div>` +
+  el.innerHTML = `<div style="font-size:8.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px">Busiest containers — cpu / mem trend, last ~10min</div>` +
     rows.slice(0,12).map(c=>{
-      const pct = Math.max(2, Math.min(100, c.cpu_pct||0));
-      return `<div class="sm-row" style="padding:3px 0">
+      const hist = c.history||[];
+      const cpuVals = hist.map(p=>p.cpu_pct);
+      const memVals = hist.map(p=>p.mem_mb);
+      return `<div class="sm-row" style="padding:3px 0;gap:8px">
         <span class="nm" title="${esc(c.image||'')}">${esc(c.name||c.id)}</span>
+        <span title="cpu% trend">${_miniSpark(cpuVals, 36, 14, cpuColorHex(c.cpu_pct))}</span>
+        <span title="memory (MB) trend">${_miniSpark(memVals, 36, 14, memSparkColor)}</span>
         <span class="meta">${c.mem_mb!=null?Math.round(c.mem_mb)+'MB':''}</span>
         <span style="width:34px;text-align:right;color:${cpuColor(c.cpu_pct)};font-family:var(--mono)">${c.cpu_pct!=null?c.cpu_pct+'%':'—'}</span>
       </div>`;

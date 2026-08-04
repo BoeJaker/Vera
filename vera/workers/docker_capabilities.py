@@ -52,6 +52,7 @@ import sys
 import tempfile
 import time
 import uuid
+from collections import deque
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -521,8 +522,10 @@ async def cap_docker_ps(host_id: str = "", all: bool = True, trace_id=None) -> D
 # ─────────────────────────────────────────────────────────────────────────────
 DOCKER_STATS_SEC = 30.0
 DOCKER_STATS_TOP_N = 12          # shown/kept per host — dashboard tile space, not a hard API limit
+DOCKER_STATS_HISTORY_MAX = 20    # ~10min of trend at the 30s sample cadence, per container
 _DOCKER_STATS_SAMPLE_CAP = 60    # max containers actually queried per host per tick, busiest-first by definition impossible to know in advance, so just capped by list order
 _DOCKER_STATS_CACHE: Dict[str, dict] = {}   # host_id -> {containers:[...], updated_at, error}
+_DOCKER_STATS_HISTORY: Dict[str, "deque"] = {}   # container_id(12-char) -> deque of {t,cpu_pct,mem_mb}
 
 
 def _docker_cpu_pct(stats: dict) -> Optional[float]:
@@ -576,16 +579,31 @@ async def _docker_stats_tick_host(host_id: str, rec: dict) -> None:
         stats = await asyncio.gather(
             *(_docker_container_stat(rec, c.get("Id", "")) for c in rows), return_exceptions=True)
         out = []
+        now = time.time()
         for c, st in zip(rows, stats):
             if not isinstance(st, dict):
                 continue
+            cid = (c.get("Id") or "")[:12]
+            # History is tracked for every SAMPLED container (up to
+            # _DOCKER_STATS_SAMPLE_CAP), not just the final top-N below, so a
+            # container's trend stays continuous even while its rank
+            # fluctuates in and out of "busiest" between ticks.
+            hist = _DOCKER_STATS_HISTORY.setdefault(cid, deque(maxlen=DOCKER_STATS_HISTORY_MAX))
+            hist.append({"t": now, "cpu_pct": st.get("cpu_pct"), "mem_mb": st.get("mem_mb")})
             out.append({
-                "id": (c.get("Id") or "")[:12],
+                "id": cid,
                 "name": (c.get("Names") or ["?"])[0].lstrip("/"),
                 "image": c.get("Image", ""),
+                "history": list(hist),
                 **st,
             })
         out.sort(key=lambda r: r.get("cpu_pct") or 0, reverse=True)
+        # Evict history for containers that have stopped entirely (not just
+        # ones that dropped out of the top-N) so this doesn't grow unbounded.
+        seen_ids = {(c.get("Id") or "")[:12] for c in rows}
+        for cid in list(_DOCKER_STATS_HISTORY.keys()):
+            if cid not in seen_ids:
+                del _DOCKER_STATS_HISTORY[cid]
         _DOCKER_STATS_CACHE[host_id] = {
             "containers": out[:DOCKER_STATS_TOP_N], "total_running": len(rows),
             "updated_at": now_iso(), "error": "",
@@ -610,15 +628,20 @@ except Exception as e:
     "docker.stats.top",
     http_method="GET", http_path="/workers/docker/stats/top", http_tags=["docker"],
     memory="off", silent=True,
-    description="Per-container CPU% and working-set memory for the busiest "
-                f"running containers on every registered Docker host, refreshed "
-                f"every {int(DOCKER_STATS_SEC)}s in the background and capped to "
-                f"the top {DOCKER_STATS_TOP_N} per host by CPU (a live docker.ps "
-                "count can be in the hundreds — querying every container's "
-                "/stats on every request would hammer the Engine API for no "
-                "benefit a small dashboard tile could show anyway). Output: "
-                "{hosts:{host_id:{containers:[{id,name,image,cpu_pct,mem_mb,"
-                "mem_limit_mb}], total_running, updated_at, error}}}.",
+    description="Per-container CPU% and working-set memory (plus a short "
+                f"trend, `history`, up to {DOCKER_STATS_HISTORY_MAX} samples) "
+                "for the busiest running containers on every registered "
+                f"Docker host, refreshed every {int(DOCKER_STATS_SEC)}s in the "
+                f"background and capped to the top {DOCKER_STATS_TOP_N} per "
+                "host by CPU (a live docker.ps count can be in the hundreds "
+                "— querying every container's /stats on every request would "
+                "hammer the Engine API for no benefit a small dashboard tile "
+                "could show anyway; history is tracked for every SAMPLED "
+                "container though, so a container's trend stays continuous "
+                "even while its rank fluctuates in/out of the visible top-N). "
+                "Output: {hosts:{host_id:{containers:[{id,name,image,cpu_pct,"
+                "mem_mb,mem_limit_mb,history:[{t,cpu_pct,mem_mb}]}], "
+                "total_running, updated_at, error}}}.",
 )
 async def cap_docker_stats_top(trace_id=None) -> Dict:
     return {"hosts": _DOCKER_STATS_CACHE}
