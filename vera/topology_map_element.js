@@ -13,7 +13,8 @@
  *
  * Public API:
  *   el.applySnapshot({nodes:[{id,label,kind,status,detail}], edges:[{from,to}]})
- *   el.fit()   — recenter/rescale to fit everything in view
+ *   el.applyEvent(ev)   — feed one live vera:events event (see below)
+ *   el.fit()            — recenter/rescale to fit everything in view
  *
  * Truthful animation, two layers:
  *   1. Status-change pulses: a snapshot poll that changes an id's status from
@@ -22,14 +23,20 @@
  *      SVG shapes don't render box-shadow/background-color, so this is its
  *      own transient-circle technique (same idea <vera-loop-graph> uses for
  *      its pulses) rather than the HTML-oriented window.veraUI.pulseOnce().
- *   2. Real routing activity: a live WS subscription to vera:events (same
- *      stream + subscribe protocol as <vera-ollama-map>/ollama_routing_map_
- *      element.js) drives a "flying chip" from a category to the exact leaf
- *      real work just landed on, fired ONLY by real worker.start/worker.done/
- *      ollama.request(.done/.error) events — never a decorative interval.
- *      This is what makes "what's routed where" visible without waiting for
- *      the next poll, and is the main answer to "static/boring" — the poll
- *      loop alone can't show anything between two snapshots.
+ *   2. Real routing activity: applyEvent(ev), called by the host page's own
+ *      handleLiveEvent() for every real-time event on its already-open
+ *      /ws/mcp connection (this element always lives directly in
+ *      capability_orchestration.html, never in an iframe, so a plain
+ *      function call is simpler and more reliable than opening a second,
+ *      independent WebSocket of its own — see <vera-ollama-map>/
+ *      ollama_routing_map_element.js for that pattern, appropriate there
+ *      since it's embedded inside a different document). Drives a "flying
+ *      chip" from a category to the exact leaf real work just landed on,
+ *      fired ONLY by real worker.start/worker.done/ollama.request(.done/
+ *      .error) events — never a decorative interval. This is what makes
+ *      "what's routed where" visible without waiting for the next poll, and
+ *      is the main answer to "static/boring" — the poll loop alone can't
+ *      show anything between two snapshots.
  */
 (function () {
   'use strict';
@@ -64,47 +71,21 @@
       this._activeDispatch = new Map(); // task_id/instance_id -> node id currently marked "dispatching"
       this._view = { x: 0, y: 0, k: 1 };
       this._drag = null;
-      this._ws = null;
-      this._base = '';
       this._build();
     }
 
-    connectedCallback() { this.fit(); this._connectWs(); }
-    disconnectedCallback() { try { this._ws && this._ws.close(); } catch (_) {} }
-
-    setApiBase(url) { this._base = (url || '').replace(/\/$/, ''); }
-    _getBase() {
-      return this._base || window._veraBase || window.location.origin ||
-        (window.__VERA_BASE__ || ('http://' + location.hostname + ':8999'));
-    }
-
-    // ── live activity: real routing, not a poll-diff guess ─────────────────
-    // Endpoint is /ws/mcp (there is no bare /ws — confirmed against
-    // capability_orchestration.py's actual @APP.websocket route), and the
-    // event bus subscription is action:'subscribe_events' (registers this
-    // connection under the special "__events__" key emit_event() broadcasts
-    // to) — action:'subscribe' with stream:'vera:events' silently matches
-    // nothing, since emit_event() only ever checks for sub === "__events__".
-    // Every broadcast event arrives wrapped as {type:'event', data:{...}}.
-    _connectWs() {
-      try {
-        const wsUrl = this._getBase().replace(/^http/, 'ws') + '/ws/mcp';
-        this._ws = new WebSocket(wsUrl);
-        this._ws.onopen = () => { try { this._ws.send(JSON.stringify({ action: 'subscribe_events' })); } catch (_) {} };
-        this._ws.onmessage = e => {
-          try {
-            const msg = JSON.parse(e.data);
-            if (msg && msg.type === 'event') this._onEvent(msg.data);
-          } catch (_) {}
-        };
-        this._ws.onclose = () => { setTimeout(() => this.isConnected && this._connectWs(), 3000); };
-        this._ws.onerror = () => { try { this._ws.close(); } catch (_) {} };
-      } catch (_) { setTimeout(() => this.isConnected && this._connectWs(), 5000); }
-    }
+    connectedCallback() { this.fit(); }
 
     _parentOf(id) { const e = this._edges.find(x => x.to === id); return e ? e.from : null; }
 
-    _onEvent(ev) {
+    // ── live activity: real routing, not a poll-diff guess ─────────────────
+    // This element always lives directly in capability_orchestration.html
+    // (never in an iframe), so it doesn't open its own WebSocket — the page
+    // already has one open (main dash's `ws`, subscribed with
+    // action:'subscribe_events' onto the /ws/mcp endpoint), and
+    // handleLiveEvent() calls this directly as a plain function call for
+    // every real-time event. Public API — called from outside this class.
+    applyEvent(ev) {
       const t = (ev && ev.type) || '';
       if (t === 'worker.start' && ev.worker) {
         const nid = 'worker:' + ev.worker;
@@ -307,15 +288,14 @@
         g.appendChild(dot);
         if (changed.has(n.id)) this._pulseEl(g, col);
         if (activeNodeIds.has(n.id)) g.classList.add('dispatching');   // survives the rebuild below
-        // Permanent labels only for the hub/category/service ring — leaves
-        // (individual nodes/workers/ollama instances/mesh devices) can crowd
-        // together closely enough that always-on text just overlaps into
-        // noise; their name is still one hover away via _showTip below.
-        if (n.kind === 'hub' || n.kind === 'category' || n.kind === 'service') {
-          const label = svgEl('text', { y: r + 11, 'text-anchor': 'middle' });
-          label.textContent = short(n.label || n.id, 14);
-          g.appendChild(label);
-        }
+        // Every node gets a permanent label (leaves included) — hiding leaf
+        // names behind hover-only made the map read as less informative, not
+        // less cluttered; wider ring spacing (_layout() above) is the actual
+        // fix for overlap instead.
+        const isCat = n.kind === 'category' || n.kind === 'hub' || n.kind === 'service';
+        const label = svgEl('text', { y: r + 10, 'text-anchor': 'middle', 'font-size': isCat ? '9px' : '7.5px' });
+        label.textContent = short(n.label || n.id, isCat ? 14 : 11);
+        g.appendChild(label);
         g.addEventListener('mouseenter', () => this._showTip(n));
         g.addEventListener('mouseleave', () => { this._tip.style.opacity = 0; });
         this._gNodes.appendChild(g);

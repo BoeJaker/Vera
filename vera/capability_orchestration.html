@@ -1918,6 +1918,12 @@ function dispatch(msg){
 
 function handleLiveEvent(ev){
   if(!ev) return;
+  // Feed the topology map's live routing animation directly — it lives in
+  // this same document (not an iframe), so this is a plain function call on
+  // the already-open, already-proven WS connection above, not a second
+  // WebSocket the element would have to open and subscribe on its own.
+  const _topo = document.getElementById('topoMap');
+  if(_topo && typeof _topo.applyEvent === 'function') _topo.applyEvent(ev);
   const t=ev.type||'event';
   const cls=(t.includes('error')||t.includes('fail'))? 'err':(t.includes('done')||t.includes('ok'))? 'ok':t.includes('warn')? 'warn':'info';
   // Dream lifecycle/scheduler events → refresh the top-strip dream indicator
