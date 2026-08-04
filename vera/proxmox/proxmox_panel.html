@@ -173,6 +173,7 @@ a{color:var(--ac)}
 let CLUSTERS = [];
 let CUR = null;           // current cluster id
 let SNAP = null;          // last status snapshot
+let TEMPS = null;         // last /nodes/temps response (obs.node_temps)
 let timer = null;
 let con = { term:null, fit:null, ws:null, rfb:null, deeplink:'' };
 
@@ -218,7 +219,12 @@ async function refresh(){
   try{
     const s=await api('/proxmox/status','POST',{cluster_id:CUR});
     if(s.error){ toast(s.error,true); $('#autoStat').textContent='error'; return; }
-    SNAP=s; render(); $('#autoStat').textContent='updated '+new Date().toLocaleTimeString();
+    SNAP=s;
+    // Best-effort — obs.node_temps probes the SSH host registry, not this
+    // cluster specifically, so it's shown as its own section (name-matching
+    // a PVE node to an SSH host label isn't reliable enough to fuse per-node).
+    try{ TEMPS=await api('/nodes/temps'); }catch(e){ TEMPS=null; }
+    render(); $('#autoStat').textContent='updated '+new Date().toLocaleTimeString();
   }catch(e){ toast('status failed: '+e.message,true); }
 }
 
@@ -241,6 +247,27 @@ function render(){
     </div>`;
   });
   h+='</div>';
+
+  // Core temps (obs.node_temps — CPU/IPMI/drive sensors over SSH). Shown as
+  // its own section rather than fused into each node card above: PVE's node
+  // name and the SSH host registry's label aren't reliably the same string,
+  // so a per-node join would silently miss hosts as often as it'd match them.
+  const tempHosts = (TEMPS&&TEMPS.hosts||[]).filter(t=>Object.keys(t.temps||{}).length)
+    .sort((a,b)=>(b.max_c||0)-(a.max_c||0));
+  if(tempHosts.length){
+    h+=`<div class="section-h">Core Temps <span class="count">${tempHosts.length}</span></div><div class="grid">`;
+    tempHosts.forEach(t=>{
+      const sensors=Object.entries(t.temps).sort((a,b)=>b[1]-a[1]);
+      const top=sensors.slice(0,6);
+      const cls=t.max_c>=85?'stop':t.max_c>=70?'warn':'run';
+      h+=`<div class="card">
+        <div class="hd"><span class="nm">🌡 ${esc(t.label)}</span><span class="pill ${cls}">${t.max_c}°C max</span></div>
+        ${top.map(([name,val])=>metric(esc(name), val+'°C', Math.min(100,val))).join('')}
+        ${sensors.length>top.length?`<div class="sub" style="margin-top:4px;color:var(--t3)">+${sensors.length-top.length} more sensors</div>`:''}
+      </div>`;
+    });
+    h+='</div>';
+  }
 
   const guests=SNAP.guests.filter(g=>!g.template);
   h+=`<div class="section-h">Guests <span class="count">${guests.length}</span> · running ${SNAP.counts&&SNAP.counts.running||0}</div><div class="grid">`;

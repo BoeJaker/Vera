@@ -613,7 +613,7 @@ select option{background:var(--bg2)}
         <div class="dash-grid" id="dashGrid">
 
           <!-- ── Live topology map: hub -> Nodes/Workers/Ollama/Mesh -> leaves ── -->
-          <div class="widget w-w12 w-h6" data-wid="topology-map">
+          <div class="widget w-w12 w-h5" data-wid="topology-map">
             <div class="w-head">
               <span class="w-grip">⠿</span>
               <span class="w-dot ok"></span>
@@ -623,15 +623,15 @@ select option{background:var(--bg2)}
                 <button class="w-iconbtn" onclick="dashHideWidget('topology-map')">×</button>
               </span>
             </div>
-            <div class="w-body flush" style="padding:0">
-              <vera-topology-map id="topoMap" style="width:100%;height:100%;min-height:360px"></vera-topology-map>
+            <div class="w-body flush" style="padding:0;max-height:340px">
+              <vera-topology-map id="topoMap" style="width:100%;height:100%;min-height:280px"></vera-topology-map>
             </div>
             <span class="w-resize" data-resize></span>
           </div>
 
           <!-- ── Proxmox (split out of the old combined System Monitor iframe — same
                per-cluster row detail + chart the combined panel had, just its own tile) ── -->
-          <div class="widget w-w4 w-h6" data-wid="sysmon-proxmox">
+          <div class="widget w-w4 w-h4" data-wid="sysmon-proxmox">
             <div class="w-head">
               <span class="w-grip">⠿</span>
               <span class="w-dot" id="wProxmoxDot"></span>
@@ -641,20 +641,20 @@ select option{background:var(--bg2)}
                 <button class="w-iconbtn" onclick="dashHideWidget('sysmon-proxmox')">×</button>
               </span>
             </div>
-            <div class="w-body" style="display:flex;flex-direction:column;gap:6px">
+            <div class="w-body" style="display:flex;flex-direction:column;gap:6px;max-height:260px">
               <div class="sm-kpis">
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hProxmoxRunning">—</div><div class="sm-kpi-sub">running</div></div>
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hProxmoxGuests">—</div><div class="sm-kpi-sub">guests</div></div>
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hProxmoxNodes">—</div><div class="sm-kpi-sub">nodes</div></div>
               </div>
-              <div id="pmxRows" style="max-height:100px;overflow-y:auto"></div>
-              <div style="height:56px" title="Running guests, last ~10min"><vera-sparkline id="sparkProxmox"></vera-sparkline></div>
+              <div id="pmxRows" style="max-height:70px;overflow-y:auto;flex-shrink:0"></div>
+              <div style="height:50px;flex-shrink:0" title="Running guests, last ~10min"><vera-sparkline id="sparkProxmox"></vera-sparkline></div>
             </div>
             <span class="w-resize" data-resize></span>
           </div>
 
           <!-- ── Docker ── -->
-          <div class="widget w-w4 w-h6" data-wid="sysmon-docker">
+          <div class="widget w-w4 w-h4" data-wid="sysmon-docker">
             <div class="w-head">
               <span class="w-grip">⠿</span>
               <span class="w-dot" id="wDockerDot"></span>
@@ -664,20 +664,20 @@ select option{background:var(--bg2)}
                 <button class="w-iconbtn" onclick="dashHideWidget('sysmon-docker')">×</button>
               </span>
             </div>
-            <div class="w-body" style="display:flex;flex-direction:column;gap:6px">
+            <div class="w-body" style="display:flex;flex-direction:column;gap:6px;max-height:260px">
               <div class="sm-kpis">
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hDockerRunning">—</div><div class="sm-kpi-sub">running</div></div>
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hDockerConts">—</div><div class="sm-kpi-sub">containers</div></div>
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hDockerHosts">—</div><div class="sm-kpi-sub">hosts up</div></div>
               </div>
-              <div id="dkrRows" style="max-height:100px;overflow-y:auto"></div>
-              <div style="height:56px" title="Running containers, last ~10min"><vera-sparkline id="sparkDocker"></vera-sparkline></div>
+              <div id="dkrRows" style="max-height:70px;overflow-y:auto;flex-shrink:0"></div>
+              <div style="height:50px;flex-shrink:0" title="Running containers, last ~10min"><vera-sparkline id="sparkDocker"></vera-sparkline></div>
             </div>
             <span class="w-resize" data-resize></span>
           </div>
 
           <!-- ── Ollama (sysmon view — see also the fuller "Ollama Nodes" list widget below) ── -->
-          <div class="widget w-w4 w-h6" data-wid="sysmon-ollama">
+          <div class="widget w-w4 w-h4" data-wid="sysmon-ollama">
             <div class="w-head">
               <span class="w-grip">⠿</span>
               <span class="w-dot" id="wOllamaSysDot"></span>
@@ -687,21 +687,21 @@ select option{background:var(--bg2)}
                 <button class="w-iconbtn" onclick="dashHideWidget('sysmon-ollama')">×</button>
               </span>
             </div>
-            <div class="w-body" style="display:flex;flex-direction:column;gap:6px">
+            <div class="w-body" style="display:flex;flex-direction:column;gap:6px;max-height:260px">
               <div class="sm-kpis">
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hOllamaOnline">—</div><div class="sm-kpi-sub">online</div></div>
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hOllamaGpu">—</div><div class="sm-kpi-sub">gpu</div></div>
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hOllamaInuse">—</div><div class="sm-kpi-sub">in use</div></div>
               </div>
-              <div id="ollRows" style="max-height:100px;overflow-y:auto"></div>
-              <div style="height:56px" title="Online nodes vs. busy, last ~10min"><vera-sparkline id="sparkOllama"></vera-sparkline></div>
+              <div id="ollRows" style="max-height:70px;overflow-y:auto;flex-shrink:0"></div>
+              <div style="height:50px;flex-shrink:0" title="Online nodes vs. busy, last ~10min"><vera-sparkline id="sparkOllama"></vera-sparkline></div>
             </div>
             <span class="w-resize" data-resize></span>
           </div>
 
           <!-- ── Host resources (new: wasn't a dashboard tile before, only ever inside
                the old combined System Monitor iframe) ── -->
-          <div class="widget w-w4 w-h4" data-wid="host-resources">
+          <div class="widget w-w4 w-h3" data-wid="host-resources">
             <div class="w-head">
               <span class="w-grip">⠿</span>
               <span class="w-dot ok"></span>
@@ -711,27 +711,27 @@ select option{background:var(--bg2)}
                 <button class="w-iconbtn" onclick="dashHideWidget('host-resources')">×</button>
               </span>
             </div>
-            <div class="w-body" style="display:flex;flex-direction:column;gap:8px">
-              <div style="height:66px" title="Host CPU % / RAM %, last ~10min"><vera-sparkline id="sparkHostRes"></vera-sparkline></div>
-              <div style="height:56px" title="Vera process RSS (MB), last ~10min"><vera-sparkline id="sparkProcMb"></vera-sparkline></div>
+            <div class="w-body" style="display:flex;flex-direction:column;gap:8px;max-height:180px">
+              <div style="height:56px;flex-shrink:0" title="Host CPU % / RAM %, last ~10min"><vera-sparkline id="sparkHostRes"></vera-sparkline></div>
+              <div style="height:50px;flex-shrink:0" title="Vera process RSS (MB), last ~10min"><vera-sparkline id="sparkProcMb"></vera-sparkline></div>
             </div>
             <span class="w-resize" data-resize></span>
           </div>
 
           <!-- ── Host core temps (SSH-probed: sensors, or /sys/class/thermal fallback) ── -->
-          <div class="widget w-w4 w-h5" data-wid="host-temps">
+          <div class="widget w-w4 w-h4" data-wid="host-temps">
             <div class="w-head">
               <span class="w-grip">⠿</span>
               <span class="w-dot" id="wTempsDot"></span>
-              <span class="w-title">Host Temps <span style="color:var(--dim2);font-weight:400;text-transform:none;letter-spacing:0">— click a host for every sensor</span></span>
+              <span class="w-title">Host Temps <span style="color:var(--dim2);font-weight:400;text-transform:none;letter-spacing:0">— every sensor, click to collapse</span></span>
               <span class="w-actions">
                 <button class="w-iconbtn" onclick="loadHostTemps();loadSparklines()" title="Refresh">↻</button>
                 <button class="w-iconbtn" onclick="dashHideWidget('host-temps')">×</button>
               </span>
             </div>
-            <div class="w-body">
-              <div id="hostTempsList" style="display:flex;flex-direction:column;gap:6px;font-size:10.5px;max-height:180px;overflow-y:auto"></div>
-              <div style="height:44px;margin-top:8px" title="Worst reading across all sensors, last ~10min"><vera-sparkline id="sparkTemps" unit="°C"></vera-sparkline></div>
+            <div class="w-body" style="max-height:290px;display:flex;flex-direction:column;gap:8px">
+              <div id="hostTempsList" style="display:flex;flex-direction:column;gap:6px;font-size:10.5px;flex:1;min-height:0;overflow-y:auto"></div>
+              <div style="height:44px;flex-shrink:0" title="Worst reading across all sensors, last ~10min"><vera-sparkline id="sparkTemps" unit="°C"></vera-sparkline></div>
             </div>
             <span class="w-resize" data-resize></span>
           </div>
@@ -2880,12 +2880,18 @@ async function loadSparklines(){
 function _tempToggle(idx){
   const d = document.getElementById('tempDetail'+idx);
   if(d) d.style.display = d.style.display==='none' ? 'block' : 'none';
+  const c = document.getElementById('tempCaret'+idx);
+  if(c) c.textContent = (d && d.style.display==='none') ? '▸' : '▾';
 }
 async function loadHostTemps(){
   const r = await api('/nodes/temps');
   const listEl = document.getElementById('hostTempsList');
   if(!r){ return; }
-  const hosts = r.hosts||[];
+  // Hosts with real sensor data first (most sensors first) so the deep listing
+  // is immediately visible without having to scroll past every "no sensors /
+  // permission denied" host first.
+  const hosts = (r.hosts||[]).slice().sort((a,b)=>
+    Object.keys(b.temps||{}).length - Object.keys(a.temps||{}).length);
   const tempColor = c => c==null?'var(--dim2)':(c<70?'var(--ok)':(c<85?'var(--warn)':'var(--err)'));
   if(!hosts.length){
     if(listEl) listEl.innerHTML = '<span style="color:var(--dim2)">no nodes probed yet</span>';
@@ -2901,9 +2907,13 @@ async function loadHostTemps(){
       const col = tempColor(c);
       const label = h.label + (h.pve?' · PVE':'');
       const valTxt = c==null ? (h.error||'—') : `${c}°C`;
+      // Default EXPANDED — this widget's whole point is showing every sensor;
+      // hiding them behind a click meant the deep listing was invisible unless
+      // you knew to click. Click still toggles collapse, for hosts with 50+
+      // sensors where you might want to shrink back down.
       const sensors = Object.entries(h.temps||{}).sort((a,b)=>b[1]-a[1]);
       const clickable = sensors.length ? `onclick="_tempToggle(${i})" style="cursor:pointer"` : '';
-      const detail = sensors.length ? `<div id="tempDetail${i}" style="display:none;margin:4px 0 2px 8px;padding-left:6px;border-left:2px solid var(--border)">` +
+      const detail = sensors.length ? `<div id="tempDetail${i}" style="display:block;margin:4px 0 2px 8px;padding-left:6px;border-left:2px solid var(--border);max-height:160px;overflow-y:auto">` +
         sensors.map(([name,val])=>`<div style="display:flex;justify-content:space-between;gap:6px;font-size:9px">
           <span style="color:var(--dim2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</span>
           <span style="color:${tempColor(val)};font-family:var(--mono)">${val}°C</span>
@@ -2911,7 +2921,7 @@ async function loadHostTemps(){
       return `<div>
         <div ${clickable}>
           <div style="display:flex;justify-content:space-between;gap:6px">
-            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${h.host_id}">${label}${sensors.length?` <span style="color:var(--dim2)">(${sensors.length} sensors ▾)</span>`:''}</span>
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${h.host_id}">${label}${sensors.length?` <span id="tempCaret${i}" style="color:var(--dim2)">▾</span> <span style="color:var(--dim2)">${sensors.length} sensors</span>`:''}</span>
             <span style="color:${col};font-family:var(--mono);white-space:nowrap">${valTxt}</span>
           </div>
           <div style="height:4px;background:var(--bg0);border-radius:2px;overflow:hidden;margin-top:2px">
