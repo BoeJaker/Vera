@@ -2949,15 +2949,54 @@ async function loadHostTemps(){
       // sensors where you might want to shrink back down.
       const sensors = Object.entries(h.temps||{}).sort((a,b)=>b[1]-a[1]);
       const clickable = sensors.length ? `onclick="_tempToggle(${i})" style="cursor:pointer"` : '';
-      const detail = sensors.length ? `<div id="tempDetail${i}" style="display:block;margin:4px 0 2px 8px;padding-left:6px;border-left:2px solid var(--border);max-height:160px;overflow-y:auto">` +
+      const health = h.health || {};
+      const fanRows = Object.entries(health.fan||{});
+      const voltRows = Object.entries(health.voltage||{});
+      const powerRows = Object.entries(health.power||{});
+      const healthCount = fanRows.length + voltRows.length + powerRows.length;
+      const healthRow = (name,val,unit) => `<div style="display:flex;justify-content:space-between;gap:6px;font-size:9px">
+        <span style="color:var(--dim2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</span>
+        <span style="font-family:var(--mono)">${val}${unit}</span>
+      </div>`;
+      const drives = Object.entries(h.drives||{});
+      const diskUsage = h.disk_usage||[];
+      const diskColor = p => p<80?'var(--ok)':(p<92?'var(--warn)':'var(--err)');
+      const detail = (sensors.length || healthCount || drives.length || diskUsage.length) ? `<div id="tempDetail${i}" style="display:block;margin:4px 0 2px 8px;padding-left:6px;border-left:2px solid var(--border);max-height:160px;overflow-y:auto">` +
         sensors.map(([name,val])=>`<div style="display:flex;justify-content:space-between;gap:6px;font-size:9px">
           <span style="color:var(--dim2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</span>
           <span style="color:${tempColor(val)};font-family:var(--mono)">${val}°C</span>
-        </div>`).join('') + `</div>` : '';
+        </div>`).join('') +
+        (healthCount ? `<div style="font-size:8px;color:var(--dim);text-transform:uppercase;margin:4px 0 2px">Fan / Voltage / Power</div>` : '') +
+        fanRows.map(([n,v])=>healthRow(n,v,' RPM')).join('') +
+        voltRows.map(([n,v])=>healthRow(n,v,'V')).join('') +
+        powerRows.map(([n,v])=>healthRow(n,v,'W')).join('') +
+        (drives.length ? `<div style="font-size:8px;color:var(--dim);text-transform:uppercase;margin:4px 0 2px">Drive Health</div>` : '') +
+        drives.map(([name,d])=>{
+          const okHealth = (d.health||'').toUpperCase()==='PASSED';
+          const hc = d.health ? (okHealth?'var(--ok)':'var(--err)') : 'var(--dim2)';
+          const poh = d.power_on_hours!=null ? `${Math.round(d.power_on_hours/24)}d on` : '';
+          return `<div style="display:flex;justify-content:space-between;gap:6px;font-size:9px">
+            <span style="color:var(--dim2)">${esc(name)}</span>
+            <span style="color:var(--dim2)">${poh}</span>
+            <span style="color:${hc};font-family:var(--mono)">${esc(d.health||'—')}</span>
+          </div>`;
+        }).join('') +
+        (diskUsage.length ? `<div style="font-size:8px;color:var(--dim);text-transform:uppercase;margin:4px 0 2px">Disk Usage</div>` : '') +
+        diskUsage.map(d=>`<div style="margin-bottom:3px">
+          <div style="display:flex;justify-content:space-between;font-size:9px">
+            <span style="color:var(--dim2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.mount)}</span>
+            <span style="color:${diskColor(d.used_pct)};font-family:var(--mono)">${d.used_pct}% of ${Math.round(d.total_gb)}GB</span>
+          </div>
+          <div style="height:3px;background:var(--bg0);border-radius:2px;overflow:hidden;margin-top:1px">
+            <div style="height:100%;width:${Math.min(100,d.used_pct)}%;background:${diskColor(d.used_pct)}"></div>
+          </div>
+        </div>`).join('') +
+        `</div>` : '';
+      const totalSensors = sensors.length + healthCount;
       return `<div>
         <div ${clickable}>
           <div style="display:flex;justify-content:space-between;gap:6px">
-            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${h.host_id}">${label}${sensors.length?` <span id="tempCaret${i}" style="color:var(--dim2)">▾</span> <span style="color:var(--dim2)">${sensors.length} sensors</span>`:''}</span>
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${h.host_id}">${label}${totalSensors?` <span id="tempCaret${i}" style="color:var(--dim2)">▾</span> <span style="color:var(--dim2)">${totalSensors} sensors</span>`:''}</span>
             <span style="color:${col};font-family:var(--mono);white-space:nowrap">${valTxt}</span>
           </div>
           <div style="height:4px;background:var(--bg0);border-radius:2px;overflow:hidden;margin-top:2px">

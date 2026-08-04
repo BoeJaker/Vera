@@ -1486,7 +1486,7 @@ else
 fi
 if command -v ipmitool >/dev/null 2>&1; then
   echo "IPMI_BEGIN"
-  (sudo -n ipmitool sdr type temperature 2>/dev/null || ipmitool sdr type temperature 2>/dev/null)
+  (sudo -n ipmitool sdr elist full 2>/dev/null || ipmitool sdr elist full 2>/dev/null)
   echo "IPMI_END"
 else
   echo "NO_IPMI"
@@ -1517,6 +1517,9 @@ if [ -r /proc/stat ]; then
 else
   echo "NO_PERCPU"
 fi
+echo "DISK_BEGIN"
+df -P -B1G 2>/dev/null | awk 'NR>1 && $1 ~ /^\// && $6 !~ /^\/(boot|snap|dev|run)/ {print "DISK|"$6"|"$2"|"$3"|"$5}'
+echo "DISK_END"
 """
 
 _TEMP_INSTALL_SCRIPT = (
@@ -1553,11 +1556,16 @@ def _parse_sensors_u(txt: str) -> Dict[str, float]:
     return temps
 
 
-def _parse_ipmi_temps(txt: str) -> Dict[str, float]:
-    """Parse `ipmitool sdr type temperature` rows:
-    'Inlet Ambient    | 01h | ok  |  7.1 | 21 degrees C' -> {"Inlet Ambient": 21.0}.
-    Skips sensors with no reading ('No Reading', 'Disabled', non-numeric)."""
-    temps: Dict[str, float] = {}
+def _parse_ipmi_sensors(txt: str) -> Dict[str, Dict[str, float]]:
+    """Parse `ipmitool sdr elist full` — the FULL sensor list (temperature,
+    fan, voltage, current/power, everything the iLO/BMC exposes), not just
+    the temperature subset — into {category: {name: value}}. Rows look like
+    'Inlet Ambient | 01h | ok | 7.1 | 21 degrees C' or
+    'Fan Block 1   | 30h | ok | 7.1 | 22400 RPM' or
+    'VCORE         | 60h | ok | 7.1 | 1.20 Volts'; category is inferred from
+    the reading's unit suffix. Skips sensors with no reading ('No Reading',
+    'Disabled', non-numeric — e.g. discrete/state sensors elist also lists)."""
+    out: Dict[str, Dict[str, float]] = {"temp": {}, "fan": {}, "voltage": {}, "power": {}}
     for ln in (txt or "").splitlines():
         if "|" not in ln:
             continue
@@ -1567,14 +1575,24 @@ def _parse_ipmi_temps(txt: str) -> Dict[str, float]:
         name, reading = parts[0], parts[-1]
         if not name:
             continue
-        m = re.match(r"(-?\d+(?:\.\d+)?)", reading)
+        m = re.match(r"(-?\d+(?:\.\d+)?)\s*(.*)", reading)
         if not m:
             continue
         try:
-            temps[name] = round(float(m.group(1)), 1)
+            val = round(float(m.group(1)), 2)
         except ValueError:
             continue
-    return temps
+        unit = m.group(2).strip().lower()
+        if "degrees" in unit or unit == "c":
+            out["temp"][name] = round(val, 1)
+        elif "rpm" in unit:
+            out["fan"][name] = val
+        elif "volt" in unit:
+            out["voltage"][name] = val
+        elif "watt" in unit or "amp" in unit:
+            out["power"][name] = val
+        # else: discrete/unitless sensor (e.g. a state bitmask) — not a metric, skip
+    return out
 
 
 def _parse_smartctl_temp(txt: str) -> Optional[float]:
@@ -1604,10 +1622,42 @@ def _parse_smartctl_temp(txt: str) -> Optional[float]:
     return None
 
 
-def _parse_smart_drives(txt: str) -> Dict[str, float]:
+def _parse_smart_health(txt: str) -> Optional[str]:
+    m = re.search(r"SMART overall-health self-assessment test result:\s*(\w+)", txt or "")
+    if m:
+        return m.group(1)
+    m = re.search(r"^SMART Health Status:\s*(.+)$", txt or "", re.MULTILINE)
+    if m:
+        return m.group(1).strip()
+    return None
+
+
+def _parse_smart_poh(txt: str) -> Optional[int]:
+    """Power-on hours — ATA attribute table (RAW_VALUE) or NVMe log line."""
+    m = re.search(
+        r"^\s*9\s+Power_On_Hours\s+\S+(?:\s+\d+){5}\s+\S+\s+\S+\s+\S+\s+(\d+)",
+        txt or "", re.MULTILINE)
+    if m:
+        try:
+            return int(m.group(1))
+        except ValueError:
+            pass
+    m = re.search(r"Power On Hours:\s*([\d,]+)", txt or "")
+    if m:
+        try:
+            return int(m.group(1).replace(",", ""))
+        except ValueError:
+            pass
+    return None
+
+
+def _parse_smart_devices(txt: str) -> Dict[str, Dict]:
     """Parse the SMART_BEGIN..SMART_END block (one smartctl -a dump per
-    SMART_DEV|<path> .. SMART_DEV_END section) into {"drive sda": 34.0, ...}."""
-    temps: Dict[str, float] = {}
+    SMART_DEV|<path> .. SMART_DEV_END section) into per-drive health, not
+    just temperature — {"sda": {"temp_c":34.0,"health":"PASSED",
+    "power_on_hours":12345}} — all pulled from the SAME smartctl -a dump the
+    temp probe already fetches, no extra SSH round-trip."""
+    out: Dict[str, Dict] = {}
     dev = None
     buf: List[str] = []
     for ln in (txt or "").splitlines():
@@ -1616,13 +1666,38 @@ def _parse_smart_drives(txt: str) -> Dict[str, float]:
             buf = []
         elif ln.strip() == "SMART_DEV_END":
             if dev:
-                t = _parse_smartctl_temp("\n".join(buf))
-                if t is not None:
-                    temps[f"drive {dev.rsplit('/', 1)[-1]}"] = t
+                body = "\n".join(buf)
+                out[dev.rsplit("/", 1)[-1]] = {
+                    "temp_c": _parse_smartctl_temp(body),
+                    "health": _parse_smart_health(body),
+                    "power_on_hours": _parse_smart_poh(body),
+                }
             dev = None
         elif dev is not None:
             buf.append(ln)
-    return temps
+    return out
+
+
+def _parse_disk_usage(txt: str) -> List[Dict]:
+    """Parse the DISK_BEGIN..DISK_END block: 'DISK|/mount|totalGB|usedGB|NN%'
+    (df -P -B1G, real filesystems only — tmpfs/overlay and /boot|/snap|/dev|
+    /run mounts are filtered out in the shell already, not worth showing)."""
+    out: List[Dict] = []
+    for ln in (txt or "").splitlines():
+        if not ln.startswith("DISK|"):
+            continue
+        parts = ln.split("|")
+        if len(parts) != 5:
+            continue
+        _, mount, total, used, pct = parts
+        try:
+            out.append({
+                "mount": mount, "total_gb": float(total), "used_gb": float(used),
+                "used_pct": float(pct.rstrip("%")),
+            })
+        except ValueError:
+            continue
+    return out
 
 
 def _parse_thermal_zones(txt: str) -> Dict[str, float]:
@@ -1678,15 +1753,22 @@ async def _probe_host_temp(host: Dict) -> None:
         elif "NO_SENSORS" in out:
             missing_tools.append("lm-sensors")
 
+        health: Dict[str, Dict[str, float]] = {"fan": {}, "voltage": {}, "power": {}}
         if "IPMI_BEGIN" in out:
             body = out.split("IPMI_BEGIN", 1)[1].split("IPMI_END", 1)[0]
-            temps.update(_parse_ipmi_temps(body))
+            ipmi = _parse_ipmi_sensors(body)
+            temps.update(ipmi["temp"])
+            health["fan"] = ipmi["fan"]; health["voltage"] = ipmi["voltage"]; health["power"] = ipmi["power"]
         elif "NO_IPMI" in out:
             missing_tools.append("ipmitool")
 
+        drives: Dict[str, Dict] = {}
         if "SMART_BEGIN" in out:
             body = out.split("SMART_BEGIN", 1)[1].split("SMART_END", 1)[0]
-            temps.update(_parse_smart_drives(body))
+            drives = _parse_smart_devices(body)
+            for name, d in drives.items():
+                if d.get("temp_c") is not None:
+                    temps[f"drive {name}"] = d["temp_c"]
         elif "NO_SMART" in out:
             missing_tools.append("smartmontools")
 
@@ -1694,6 +1776,11 @@ async def _probe_host_temp(host: Dict) -> None:
         if "PERCPU_BEGIN" in out:
             body = out.split("PERCPU_BEGIN", 1)[1].split("PERCPU_END", 1)[0]
             percpu = _parse_percpu(body)
+
+        disk_usage: List[Dict] = []
+        if "DISK_BEGIN" in out:
+            body = out.split("DISK_BEGIN", 1)[1].split("DISK_END", 1)[0]
+            disk_usage = _parse_disk_usage(body)
 
         if missing_tools:
             # Try installing everything missing at once, with a long backoff
@@ -1713,12 +1800,14 @@ async def _probe_host_temp(host: Dict) -> None:
         _TEMP_CACHE[host_id] = {
             "host_id": host_id, "label": label, "pve": bool(facts.get("pve")),
             "temps": temps, "max_c": max(temps.values()) if temps else None,
-            "percpu": percpu, "updated_at": now_iso(), "error": error,
+            "percpu": percpu, "health": health, "drives": drives, "disk_usage": disk_usage,
+            "updated_at": now_iso(), "error": error,
         }
     except Exception as e:
         _TEMP_CACHE[host_id] = {
             "host_id": host_id, "label": label, "pve": False,
-            "temps": {}, "max_c": None, "percpu": {}, "updated_at": now_iso(), "error": str(e)[:200],
+            "temps": {}, "max_c": None, "percpu": {}, "health": {"fan": {}, "voltage": {}, "power": {}},
+            "drives": {}, "disk_usage": [], "updated_at": now_iso(), "error": str(e)[:200],
         }
 
 
@@ -1739,25 +1828,33 @@ except Exception as e:
     "obs.node_temps",
     http_method="GET", http_path="/nodes/temps", http_tags=["obs"],
     memory="off", silent=True,
-    description="Core temperatures AND per-logical-CPU load for every "
-                f"SSH-registered node, probed every {int(TEMP_PROBE_SEC)}s. "
-                "Temps across three complementary layers: sensors -A -u (CPU "
-                "package/physical-core, falling back to /sys/class/thermal), "
-                "ipmitool sdr type temperature (the iLO/BMC's full sensor list "
-                "— inlet ambient, DIMM zones, PSU, and on servers with a "
-                "smart-array backplane, per-bay drive temps), and smartctl per "
-                "block device (direct per-drive SMART temperature). Per-CPU "
-                "load is computed from two /proc/stat samples 1s apart (no "
-                "extra package needed) — note its cpuN is a LOGICAL cpu/thread "
-                "index, which doesn't necessarily line up 1:1 with the temp "
-                "side's physical 'Core N' sensor labels on hyperthreaded "
-                "hardware, so they're kept as separate tables, not fused per-"
-                "core. Installs whichever of lm-sensors/ipmitool/smartmontools "
-                "is missing, once per host with a long backoff. Named/tagged "
-                "into the obs.* umbrella like obs.cluster, though implemented "
-                "here since this module owns the SSH probe. Output: "
-                "{hosts:[{host_id,label,pve,temps:{sensor:celsius},"
-                "percpu:{cpuN:pct},max_c,updated_at,error}], count}.",
+    description="Core temperatures, fan/voltage/power health, AND per-logical-"
+                f"CPU load for every SSH-registered node, probed every "
+                f"{int(TEMP_PROBE_SEC)}s. Temps across three complementary "
+                "layers: sensors -A -u (CPU package/physical-core, falling "
+                "back to /sys/class/thermal), ipmitool sdr elist full (the "
+                "iLO/BMC's FULL sensor list, not just temperature — inlet "
+                "ambient, DIMM zones, PSU, per-bay drive temps on smart-array "
+                "backplanes, PLUS fan RPM/voltage rails/power draw, split into "
+                "the `health` field), and smartctl per block device (direct "
+                "per-drive SMART temperature). Per-CPU load is computed from "
+                "two /proc/stat samples 1s apart (no extra package needed) — "
+                "note its cpuN is a LOGICAL cpu/thread index, which doesn't "
+                "necessarily line up 1:1 with the temp side's physical "
+                "'Core N' sensor labels on hyperthreaded hardware, so they're "
+                "kept as separate tables, not fused per-core. Installs "
+                "whichever of lm-sensors/ipmitool/smartmontools is missing, "
+                "once per host with a long backoff. Named/tagged into the "
+                "obs.* umbrella like obs.cluster, though implemented here "
+                "since this module owns the SSH probe. Also carries drives "
+                "(per-device SMART health/power-on-hours, from the SAME "
+                "smartctl dump the temps come from — no extra SSH round trip) "
+                "and disk_usage (df -P per real filesystem). Output: {hosts:["
+                "{host_id,label,pve,temps:{sensor:celsius},percpu:{cpuN:pct},"
+                "health:{fan:{name:rpm},voltage:{name:volts},power:{name:w}},"
+                "drives:{dev:{temp_c,health,power_on_hours}},"
+                "disk_usage:[{mount,total_gb,used_gb,used_pct}],max_c,"
+                "updated_at,error}], count}.",
 )
 async def cap_node_temps(trace_id=None) -> Dict:
     return {"hosts": list(_TEMP_CACHE.values()), "count": len(_TEMP_CACHE)}
