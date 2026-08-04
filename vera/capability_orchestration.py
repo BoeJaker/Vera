@@ -5496,7 +5496,7 @@ async def _gather_subsystem_snapshot() -> Dict:
     the other's gather logic. `nodes`/`cluster` are only consumed by the
     topology map today, but there's no reason for it to run a second parallel
     gather just for two more cheap (cache-backed, no live SSH) calls."""
-    sysmon, mesh, loop_lab, sandboxes, mimic, nodes, cluster, temps = await asyncio.gather(
+    sysmon, mesh, loop_lab, sandboxes, mimic, nodes, cluster, temps, memstats, redis_info = await asyncio.gather(
         _cap_call("sysmon.status"),
         _cap_call("mesh.nodes"),
         _cap_call("evolve.sandbox.status"),
@@ -5505,10 +5505,12 @@ async def _gather_subsystem_snapshot() -> Dict:
         _cap_call("nodes.list"),
         _cap_call("obs.cluster"),
         _cap_call("obs.node_temps"),
+        _cap_call("memory.stats"),
+        _cap_call("obs.redis"),
     )
     return {"sysmon": sysmon, "mesh": mesh, "loop_lab": loop_lab,
             "sandboxes": sandboxes, "mimic": mimic, "nodes": nodes,
-            "cluster": cluster, "temps": temps}
+            "cluster": cluster, "temps": temps, "memstats": memstats, "redis": redis_info}
 
 
 def _dot_state(ok: bool, exists: bool, warn: bool = False) -> str:
@@ -5526,8 +5528,9 @@ def _dot_state(ok: bool, exists: bool, warn: bool = False) -> str:
             http_method="GET", http_path="/dash/health/summary", http_tags=["obs"],
             description="One compact ok/warn/err/unknown dot per subsystem "
                         "(proxmox, docker, ollama, mesh, loop_lab, sandboxes, "
-                        "mimic) for the main-dashboard health strip. Fans out "
-                        "via _gather_subsystem_snapshot(), never raises.")
+                        "mimic, fabric, redis) for the main-dashboard health "
+                        "strip. Fans out via _gather_subsystem_snapshot(), "
+                        "never raises.")
 async def dash_health_summary(trace_id=None) -> Dict:
     snap = await _gather_subsystem_snapshot()
     sysmon = snap["sysmon"] if isinstance(snap["sysmon"], dict) else {}
@@ -5547,6 +5550,14 @@ async def dash_health_summary(trace_id=None) -> Dict:
 
     mim = snap["mimic"] if isinstance(snap["mimic"], dict) else {}
 
+    mem = snap["memstats"] if isinstance(snap["memstats"], dict) else {}
+    backs = (mem.get("backends") or {}) if isinstance(mem.get("backends"), dict) else {}
+    fabric_backs = [backs.get(k) or {} for k in ("postgres", "chroma", "neo4j")]
+    fabric_ok = sum(1 for b in fabric_backs if b.get("connected"))
+
+    rds = snap["redis"] if isinstance(snap["redis"], dict) else {}
+    redis_ok = bool(rds) and not rds.get("error")
+
     return {
         "proxmox":   _dot_state(bool(pmx.get("ok")), bool(pmx.get("configured")), warn=False),
         "docker":    _dot_state(bool(dkr.get("ok")), bool(dkr.get("total_hosts")), warn=False),
@@ -5559,6 +5570,9 @@ async def dash_health_summary(trace_id=None) -> Dict:
         "sandboxes": _dot_state(sbx_ok, "sandboxes" in sbx, warn=False),
         "mimic":     _dot_state(bool(mim.get("mounted")) and not mim.get("paused"),
                                  bool(mim.get("mounted")), warn=bool(mim.get("paused"))),
+        "fabric":    _dot_state(fabric_ok == len(fabric_backs) and fabric_ok > 0, bool(backs),
+                                 warn=fabric_ok > 0),
+        "redis":     _dot_state(redis_ok, bool(rds), warn=False),
         "ts": now_iso(),
     }
 
@@ -5571,18 +5585,51 @@ def _temp_status(max_c: Optional[float]) -> str:
     return "warn" if max_c < 85 else "err"
 
 
+# obs.node_temps' `error` field is either benign ("no sensors installed on an
+# otherwise-fine host") or a real connectivity/auth failure from the SSH probe
+# itself. Only the latter should ever demote a node's status — see the topology
+# accuracy fix below (a temp probe with no sensors doesn't mean the node's dead).
+_TEMP_BENIGN_ERR_PREFIXES = ("no sensors available", "no temperature readings returned")
+
+
+def _node_leaf_status(backends: List[str], temp_entry: Optional[Dict]) -> str:
+    st = "ok" if backends else "unknown"
+    if not temp_entry:
+        return st
+    max_c = temp_entry.get("max_c")
+    if max_c is not None:
+        tst = _temp_status(max_c)
+        if tst in ("warn", "err"):
+            return tst
+        return st
+    err = str(temp_entry.get("error") or "")
+    if err and not err.startswith(_TEMP_BENIGN_ERR_PREFIXES):
+        # the temp probe's own SSH call hit a real error (permission denied,
+        # connection refused, ...) — that's live evidence this "reachable"
+        # backend flag is stale, not a dead giveaway of a working host.
+        return "err"
+    return st
+
+
 @capability("topology.snapshot", memory="off", silent=True,
             http_method="GET", http_path="/topology/snapshot", http_tags=["obs"],
             description="Live node/edge snapshot of the whole Vera stack for the "
                         "main-dashboard SVG topology map: one hub node, one "
-                        "category node per subsystem (Nodes/Workers/Ollama/Mesh), "
-                        "and one leaf per actual machine/worker/instance/mesh "
-                        "device with an ok/warn/err/unknown status (host leaves "
-                        "fold in obs.node_temps where available). Reuses "
+                        "category node per subsystem (Nodes/Workers/Ollama/Mesh/"
+                        "Fabric), a standalone Redis service node, and one leaf "
+                        "per actual machine/worker/instance/mesh device/storage "
+                        "backend with an ok/warn/err/unknown status (host leaves "
+                        "fold in obs.node_temps where available, and a real SSH/"
+                        "auth error from the temp probe — as opposed to merely "
+                        "'no sensors installed' — demotes a node to err instead "
+                        "of leaving it looking falsely healthy). Reuses "
                         "_gather_subsystem_snapshot() — the same fan-out "
                         "dash.health.summary uses — rather than a second gather. "
-                        "Output: {nodes:[{id,label,kind,status,detail}], "
-                        "edges:[{from,to}], ts}.")
+                        "The frontend <vera-topology-map> element separately "
+                        "subscribes to live vera:events (worker.start/.done, "
+                        "ollama.request/.done/.error) to animate real routing "
+                        "between polls of this endpoint. Output: {nodes:[{id,"
+                        "label,kind,status,detail}], edges:[{from,to}], ts}.")
 async def topology_snapshot(trace_id=None) -> Dict:
     snap = await _gather_subsystem_snapshot()
     nodes_out: List[Dict] = [{"id": "hub", "label": "Vera", "kind": "hub", "status": "ok", "detail": ""}]
@@ -5611,7 +5658,7 @@ async def topology_snapshot(trace_id=None) -> Dict:
         leaf_states = []
         for m in machines:
             t = temp_by_host.get(m.get("ssh_host_id"))
-            leaf_states.append(_temp_status(t.get("max_c")) if t else ("ok" if m.get("backends") else "unknown"))
+            leaf_states.append(_node_leaf_status(m.get("backends") or [], t))
         _cat("cat:nodes", "Nodes", _worst(leaf_states))
         for m, st in zip(machines, leaf_states):
             t = temp_by_host.get(m.get("ssh_host_id"))
@@ -5620,6 +5667,8 @@ async def topology_snapshot(trace_id=None) -> Dict:
                 bits.append("/".join(m["backends"]))
             if t and t.get("max_c") is not None:
                 bits.append(f"{t['max_c']}°C")
+            elif t and t.get("error") and not str(t["error"]).startswith(_TEMP_BENIGN_ERR_PREFIXES):
+                bits.append(str(t["error"])[:60])
             nid = f"node:{m.get('id', '')}"
             nodes_out.append({"id": nid, "label": m.get("label") or m.get("id"), "kind": "node",
                                "status": st, "detail": " · ".join(bits)})
@@ -5669,6 +5718,37 @@ async def topology_snapshot(trace_id=None) -> Dict:
             nodes_out.append({"id": nid, "label": n.get("name") or n.get("node_id"), "kind": "mesh",
                                "status": st, "detail": detail})
             edges_out.append({"from": "cat:mesh", "to": nid})
+
+    # ── Fabric: the data fabric's storage backends (Postgres/Chroma/Neo4j) —
+    #    same memory.stats the dashboard's own Postgres/Chroma/Neo4j tiles use ──
+    mem = snap["memstats"] if isinstance(snap["memstats"], dict) else {}
+    backs = mem.get("backends") or {}
+    if backs:
+        fabric_labels = {"postgres": "Postgres", "chroma": "Chroma", "neo4j": "Neo4j"}
+        leaf_states = ["ok" if (backs.get(k) or {}).get("connected") else "err" for k in fabric_labels]
+        _cat("cat:fabric", "Fabric", _worst(leaf_states))
+        for (k, label), st in zip(fabric_labels.items(), leaf_states):
+            b = backs.get(k) or {}
+            nid = f"fabric:{k}"
+            if k == "postgres":
+                detail = f"{b.get('total', 0)} records" if b.get("connected") else (b.get("error") or "disconnected")
+            elif k == "chroma":
+                detail = f"{b.get('count', 0)} vectors" if b.get("connected") else (b.get("error") or "disconnected")
+            else:
+                detail = f"{b.get('nodes', 0)} nodes · {b.get('relationships', 0)} edges" if b.get("connected") else (b.get("error") or "disconnected")
+            nodes_out.append({"id": nid, "label": label, "kind": "node", "status": st, "detail": detail})
+            edges_out.append({"from": "cat:fabric", "to": nid})
+
+    # ── Redis: the event bus / task queue backbone — a single service, not a
+    #    list, so it hangs straight off the hub rather than under a category ──
+    rds = snap["redis"] if isinstance(snap["redis"], dict) else {}
+    if rds:
+        redis_ok = not rds.get("error")
+        detail = (f"{rds.get('connected_clients', '?')} clients · {rds.get('used_memory_human', '?')}"
+                   if redis_ok else (rds.get("error") or "disconnected"))
+        nodes_out.append({"id": "svc:redis", "label": "Redis", "kind": "service",
+                           "status": "ok" if redis_ok else "err", "detail": detail})
+        edges_out.append({"from": "hub", "to": "svc:redis"})
 
     return {"nodes": nodes_out, "edges": edges_out, "ts": now_iso()}
 

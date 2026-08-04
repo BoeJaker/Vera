@@ -1446,10 +1446,19 @@ except Exception as e:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CORE TEMPERATURES  — SSH probe (sensors -A -u, falling back to
-# /sys/class/thermal), on its own lighter/heavier tick from the 5-min
-# maintenance timer above: SSH is comparatively expensive and temps move
-# slowly, so this doesn't share _maintenance_tick's due-time logic.
+# CORE TEMPERATURES  — SSH probe across three layers, richest-available wins
+# per layer (they're complementary, not alternatives):
+#   1. sensors -A -u (CPU package/core), falling back to /sys/class/thermal
+#   2. ipmitool sdr type temperature — the iLO/BMC's full sensor list (inlet
+#      ambient, per-CPU, DIMM zones, PSU inlet, fan-adjacent, and on servers
+#      with a smart-array backplane, per-bay drive temps too) — this is what
+#      actually gets "down to the drives" on real server hardware (HPE
+#      ProLiant etc.) without any vendor-specific tooling.
+#   3. smartctl per block device — SMART temperature attribute, as a direct
+#      per-drive reading independent of whatever the backplane exposes to IPMI.
+# On its own lighter/heavier tick from the 5-min maintenance timer above:
+# SSH is comparatively expensive and temps move slowly, so this doesn't share
+# _maintenance_tick's due-time logic.
 #
 # Exposed as obs.node_temps — named/tagged into the obs.* umbrella the same
 # way obs.cluster lives in cluster.py rather than the observability section
@@ -1475,10 +1484,29 @@ elif [ -d /sys/class/thermal ]; then
 else
   echo "NO_SENSORS"
 fi
+if command -v ipmitool >/dev/null 2>&1; then
+  echo "IPMI_BEGIN"
+  (sudo -n ipmitool sdr type temperature 2>/dev/null || ipmitool sdr type temperature 2>/dev/null)
+  echo "IPMI_END"
+else
+  echo "NO_IPMI"
+fi
+if command -v smartctl >/dev/null 2>&1; then
+  echo "SMART_BEGIN"
+  for d in $(lsblk -d -n -o NAME 2>/dev/null | grep -E '^(sd|nvme|hd)'); do
+    echo "SMART_DEV|/dev/$d"
+    (sudo -n smartctl -a /dev/$d 2>/dev/null || smartctl -a /dev/$d 2>/dev/null)
+    echo "SMART_DEV_END"
+  done
+  echo "SMART_END"
+else
+  echo "NO_SMART"
+fi
 """
 
 _TEMP_INSTALL_SCRIPT = (
-    "(sudo -n apt-get install -y lm-sensors || apt-get install -y lm-sensors) >/dev/null 2>&1; "
+    "(sudo -n apt-get install -y lm-sensors ipmitool smartmontools "
+    "|| apt-get install -y lm-sensors ipmitool smartmontools) >/dev/null 2>&1; "
     "(sudo -n sensors-detect --auto || sensors-detect --auto) >/dev/null 2>&1; "
     "echo INSTALL_DONE"
 )
@@ -1510,6 +1538,78 @@ def _parse_sensors_u(txt: str) -> Dict[str, float]:
     return temps
 
 
+def _parse_ipmi_temps(txt: str) -> Dict[str, float]:
+    """Parse `ipmitool sdr type temperature` rows:
+    'Inlet Ambient    | 01h | ok  |  7.1 | 21 degrees C' -> {"Inlet Ambient": 21.0}.
+    Skips sensors with no reading ('No Reading', 'Disabled', non-numeric)."""
+    temps: Dict[str, float] = {}
+    for ln in (txt or "").splitlines():
+        if "|" not in ln:
+            continue
+        parts = [p.strip() for p in ln.split("|")]
+        if len(parts) < 5:
+            continue
+        name, reading = parts[0], parts[-1]
+        if not name:
+            continue
+        m = re.match(r"(-?\d+(?:\.\d+)?)", reading)
+        if not m:
+            continue
+        try:
+            temps[name] = round(float(m.group(1)), 1)
+        except ValueError:
+            continue
+    return temps
+
+
+def _parse_smartctl_temp(txt: str) -> Optional[float]:
+    """Extract one temperature reading from `smartctl -a` output, ATA (SMART
+    attribute table, RAW_VALUE column) or NVMe ('Temperature: NN Celsius')."""
+    m = re.search(
+        r"^\s*\d+\s+(?:Temperature_Celsius|Airflow_Temperature_Cel)\s+\S+"
+        r"\s+\d+\s+\d+\s+\d+\s+\S+\s+\S+\s+\S+\s+(\d+)",
+        txt or "", re.MULTILINE)
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            pass
+    m = re.search(r"^Temperature:\s*(-?\d+)\s*Celsius", txt or "", re.MULTILINE)
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            pass
+    m = re.search(r"^Temperature Sensor \d+:\s*(-?\d+)\s*Celsius", txt or "", re.MULTILINE)
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            pass
+    return None
+
+
+def _parse_smart_drives(txt: str) -> Dict[str, float]:
+    """Parse the SMART_BEGIN..SMART_END block (one smartctl -a dump per
+    SMART_DEV|<path> .. SMART_DEV_END section) into {"drive sda": 34.0, ...}."""
+    temps: Dict[str, float] = {}
+    dev = None
+    buf: List[str] = []
+    for ln in (txt or "").splitlines():
+        if ln.startswith("SMART_DEV|"):
+            dev = ln.split("|", 1)[1].strip()
+            buf = []
+        elif ln.strip() == "SMART_DEV_END":
+            if dev:
+                t = _parse_smartctl_temp("\n".join(buf))
+                if t is not None:
+                    temps[f"drive {dev.rsplit('/', 1)[-1]}"] = t
+            dev = None
+        elif dev is not None:
+            buf.append(ln)
+    return temps
+
+
 def _parse_thermal_zones(txt: str) -> Dict[str, float]:
     temps: Dict[str, float] = {}
     for ln in (txt or "").splitlines():
@@ -1530,25 +1630,45 @@ async def _probe_host_temp(host: Dict) -> None:
         return
     label = host.get("label") or host.get("host") or host_id
     try:
-        r = await _ssh(host_id, _TEMP_SCRIPT, timeout=20)
+        r = await _ssh(host_id, _TEMP_SCRIPT, timeout=25)
         out = r.get("stdout", "") or ""
         temps: Dict[str, float] = {}
+        missing_tools = []
+
         if "SENSORS_BEGIN" in out:
             body = out.split("SENSORS_BEGIN", 1)[1].split("SENSORS_END", 1)[0]
-            temps = _parse_sensors_u(body)
+            temps.update(_parse_sensors_u(body))
         elif "THERMAL_ZONE|" in out:
-            temps = _parse_thermal_zones(out)
+            temps.update(_parse_thermal_zones(out))
         elif "NO_SENSORS" in out:
-            # Try installing lm-sensors once, with a long backoff on repeat
-            # failure — never blocks this tick; the next tick picks up real
-            # values once sensors-detect has actually configured the modules.
+            missing_tools.append("lm-sensors")
+
+        if "IPMI_BEGIN" in out:
+            body = out.split("IPMI_BEGIN", 1)[1].split("IPMI_END", 1)[0]
+            temps.update(_parse_ipmi_temps(body))
+        elif "NO_IPMI" in out:
+            missing_tools.append("ipmitool")
+
+        if "SMART_BEGIN" in out:
+            body = out.split("SMART_BEGIN", 1)[1].split("SMART_END", 1)[0]
+            temps.update(_parse_smart_drives(body))
+        elif "NO_SMART" in out:
+            missing_tools.append("smartmontools")
+
+        if missing_tools:
+            # Try installing everything missing at once, with a long backoff
+            # on repeat failure — never blocks this tick; the next tick picks
+            # up real values once the tools (and, for lm-sensors, the kernel
+            # modules via sensors-detect) are actually in place.
             last_try = _TEMP_INSTALL_TRIED.get(host_id, 0.0)
             if time.time() - last_try > _TEMP_INSTALL_BACKOFF:
                 _TEMP_INSTALL_TRIED[host_id] = time.time()
-                log.info("nodes: no sensors on %s, attempting lm-sensors install", host_id)
-                await _ssh(host_id, _TEMP_INSTALL_SCRIPT, timeout=90)
-        error = "" if temps else ("no sensors available" if "NO_SENSORS" in out
-                                   else (r.get("error") or "no temperature readings returned"))
+                log.info("nodes: %s missing on %s, attempting install", ",".join(missing_tools), host_id)
+                await _ssh(host_id, _TEMP_INSTALL_SCRIPT, timeout=120)
+
+        error = "" if temps else (r.get("error") or (
+            f"no sensors available ({', '.join(missing_tools)} not installed)" if missing_tools
+            else "no temperature readings returned"))
         facts = FACTS.get(host_id, {})
         _TEMP_CACHE[host_id] = {
             "host_id": host_id, "label": label, "pve": bool(facts.get("pve")),
@@ -1580,12 +1700,18 @@ except Exception as e:
     http_method="GET", http_path="/nodes/temps", http_tags=["obs"],
     memory="off", silent=True,
     description="Core temperatures for every SSH-registered node, probed every "
-                f"{int(TEMP_PROBE_SEC)}s (sensors -A -u, falling back to "
-                "/sys/class/thermal; installs lm-sensors once per host, with a "
-                "long backoff, if neither is available). Named/tagged into the "
-                "obs.* umbrella like obs.cluster, though implemented here since "
-                "this module owns the SSH probe. Output: {hosts:[{host_id,label,"
-                "pve,temps:{sensor:celsius},max_c,updated_at,error}], count}.",
+                f"{int(TEMP_PROBE_SEC)}s across three complementary layers: "
+                "sensors -A -u (CPU package/core, falling back to "
+                "/sys/class/thermal), ipmitool sdr type temperature (the "
+                "iLO/BMC's full sensor list — inlet ambient, DIMM zones, PSU, "
+                "and on servers with a smart-array backplane, per-bay drive "
+                "temps), and smartctl per block device (direct per-drive SMART "
+                "temperature). Installs whichever of lm-sensors/ipmitool/"
+                "smartmontools is missing, once per host with a long backoff. "
+                "Named/tagged into the obs.* umbrella like obs.cluster, though "
+                "implemented here since this module owns the SSH probe. Output: "
+                "{hosts:[{host_id,label,pve,temps:{sensor:celsius},max_c,"
+                "updated_at,error}], count}.",
 )
 async def cap_node_temps(trace_id=None) -> Dict:
     return {"hosts": list(_TEMP_CACHE.values()), "count": len(_TEMP_CACHE)}

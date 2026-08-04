@@ -1,20 +1,20 @@
 /**
  * sparkline_element.js — <vera-sparkline>
  * ============================================================================
- * A small canvas history sparkline for dashboard tiles (CPU/RAM/proxmox/docker/
- * temp over time). Forked/simplified from the markets module's QChart engine
- * (vera/markets/markets_studio_panel.html.blk0.js) — keeps its ResizeObserver
- * sizing, requestAnimationFrame + dirty-flag redraw loop, and MutationObserver
- * theme repaint, but strips everything QChart has that a sparkline doesn't need
- * (candles, overlays, multi-pane, drawing tools) down to: one line/area series,
- * min/max shading, and a hover crosshair + tooltip with the exact value/time.
+ * A small canvas history chart for dashboard tiles (CPU/RAM/proxmox/docker/
+ * temp/queue over time). Forked/simplified from the markets module's QChart
+ * engine (vera/markets/markets_studio_panel.html.blk0.js) — keeps its
+ * ResizeObserver sizing, requestAnimationFrame + dirty-flag redraw loop, and
+ * MutationObserver theme repaint, but strips everything QChart has that this
+ * doesn't need (candles, overlays, multi-pane, drawing tools) down to: up to
+ * a few line/area series with a live legend, min/max shading, and a hover
+ * crosshair + tooltip with the exact value/time for every series at once.
  *
  * Public API:
- *   el.setSeries(points)   — points: [{t: epochSeconds, v: number|null}, ...],
- *                            oldest → newest
- *   el.setLabel(text)      — optional, currently unused by the default paint
- *                            (host tiles show their own label; kept for future use)
- *   el.setUnit(text)       — appended to the hover tooltip value, e.g. '%', '°C'
+ *   el.setSeries(points)             — single series, points: [{t,v}], oldest→newest
+ *   el.setMultiSeries([{label,color,unit,points}, ...])  — up to ~3 series with
+ *                                        a live legend (current value per series)
+ *   el.setUnit(text)                 — single-series hover unit, e.g. '%', '°C'
  *
  * Zero backend dependency — callers fetch /sysmon/history (or similar) once and
  * hand the mapped series to each mounted instance; this component only draws.
@@ -30,6 +30,8 @@
       ink:   g('--ink', '#d9e1ed'),
       dim2:  g('--dim2', '#7e8ba0'),
       acc:   g('--acc', '#5b8cff'),
+      acc2:  g('--acc2', '#8fb87a'),
+      warn:  g('--warn', '#c9a45a'),
       bg0:   g('--bg0', '#0b0f17'),
       border:g('--border', '#2a3140'),
       mono:  g('--mono', 'ui-monospace,Consolas,monospace'),
@@ -45,8 +47,7 @@
     constructor() {
       super();
       this._sr = this.attachShadow({ mode: 'open' });
-      this._pts = [];          // [{t,v}], oldest → newest
-      this._label = this.getAttribute('label') || '';
+      this._series = [];        // [{label, color, unit, points:[{t,v}]}]
       this._unit = this.getAttribute('unit') || '';
       this._hoverIdx = null;
       this._dirty = true;
@@ -70,26 +71,40 @@
       cancelAnimationFrame(this._raf);
     }
 
-    setSeries(points) { this._pts = Array.isArray(points) ? points.slice() : []; this._dirty = true; }
-    setLabel(t) { this._label = t || ''; this._dirty = true; }
-    setUnit(u) { this._unit = u || ''; this._dirty = true; }
+    setSeries(points) {
+      this._series = [{ label: '', color: 'acc', unit: this._unit, points: Array.isArray(points) ? points.slice() : [] }];
+      this._dirty = true;
+    }
+    setMultiSeries(series) {
+      this._series = (series || []).map(s => ({
+        label: s.label || '', color: s.color || 'acc', unit: s.unit || '',
+        points: Array.isArray(s.points) ? s.points.slice() : [],
+      }));
+      this._dirty = true;
+    }
+    setUnit(u) { this._unit = u || ''; if (this._series[0]) this._series[0].unit = u; this._dirty = true; }
 
     _build() {
       this._sr.innerHTML = `
         <style>
           :host{display:block;width:100%;height:100%;min-height:32px;position:relative}
           canvas{width:100%;height:100%;display:block;cursor:crosshair}
-          .tip{position:absolute;pointer-events:none;top:1px;font-size:10px;
-               font-family:var(--mono,monospace);white-space:nowrap;
+          .legend{position:absolute;top:1px;left:2px;display:flex;gap:8px;flex-wrap:wrap;
+                  font-size:8.5px;font-family:var(--mono,monospace);pointer-events:none;z-index:1}
+          .legend b{font-weight:700}
+          .tip{position:absolute;pointer-events:none;top:1px;right:2px;font-size:9.5px;
+               font-family:var(--mono,monospace);white-space:pre;text-align:right;
                background:var(--bg0,#0b0f17);border:1px solid var(--border,#2a3140);
-               border-radius:3px;padding:1px 5px;opacity:0;transition:opacity .1s;
+               border-radius:3px;padding:1px 6px;opacity:0;transition:opacity .1s;
                color:var(--ink,#d9e1ed);z-index:2}
         </style>
         <canvas></canvas>
+        <div class="legend"></div>
         <div class="tip"></div>
       `;
       this._cv = this._sr.querySelector('canvas');
       this._ctx = this._cv.getContext('2d');
+      this._legendEl = this._sr.querySelector('.legend');
       this._tip = this._sr.querySelector('.tip');
       this._cv.addEventListener('mousemove', e => this._onHover(e));
       this._cv.addEventListener('mouseleave', () => {
@@ -105,23 +120,30 @@
       this._ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
     _xAt(i, n) { return n <= 1 ? this._w / 2 : (i / (n - 1)) * this._w; }
+    _maxLen() { return this._series.reduce((m, s) => Math.max(m, s.points.length), 0); }
 
     _onHover(e) {
-      if (!this._pts.length) return;
+      const n = this._maxLen(); if (!n) return;
       const rect = this._cv.getBoundingClientRect();
       const x = e.clientX - rect.left;
-      const n = this._pts.length;
       let idx = Math.round((x / this._w) * (n - 1));
       idx = Math.max(0, Math.min(n - 1, idx));
       this._hoverIdx = idx;
-      const p = this._pts[idx];
-      if (p && p.v != null) {
-        const d = new Date(p.t * 1000);
+      const lines = [];
+      let ts = null;
+      this._series.forEach(s => {
+        const p = s.points[idx];
+        if (!p) return;
+        if (ts == null) ts = p.t;
+        lines.push(`${s.label ? s.label + ': ' : ''}${p.v == null ? '—' : p.v}${s.unit || ''}`);
+      });
+      if (ts != null) {
+        const d = new Date(ts * 1000);
         const hh = String(d.getHours()).padStart(2, '0'),
               mm = String(d.getMinutes()).padStart(2, '0'),
               ss = String(d.getSeconds()).padStart(2, '0');
-        this._tip.textContent = `${p.v}${this._unit} @ ${hh}:${mm}:${ss}`;
-        this._tip.style.left = Math.min(this._w - 74, Math.max(2, this._xAt(idx, n) - 30)) + 'px';
+        lines.push(`@ ${hh}:${mm}:${ss}`);
+        this._tip.textContent = lines.join('\n');
         this._tip.style.opacity = 1;
       } else {
         this._tip.style.opacity = 0;
@@ -134,55 +156,87 @@
       this._raf = requestAnimationFrame(this._loop);
     }
 
+    _lastVal(pts) {
+      for (let i = pts.length - 1; i >= 0; i--) if (pts[i].v != null) return pts[i].v;
+      return null;
+    }
+
     _draw() {
       const ctx = this._ctx, w = this._w, h = this._h, col = this._col;
       ctx.clearRect(0, 0, w, h);
-      const withVal = this._pts.filter(p => p.v != null);
-      if (withVal.length < 2) {
+      const n = this._maxLen();
+      const anyData = this._series.some(s => s.points.some(p => p.v != null));
+      if (!n || !anyData) {
         ctx.fillStyle = col.dim2; ctx.font = '10px ' + col.mono; ctx.textAlign = 'center';
         ctx.fillText('no data', w / 2, h / 2 + 3);
+        this._legendEl.innerHTML = '';
         return;
       }
-      let lo = Math.min(...withVal.map(p => p.v)), hi = Math.max(...withVal.map(p => p.v));
+
+      // shared y-range across all series so multi-series lines are comparable
+      let lo = Infinity, hi = -Infinity;
+      this._series.forEach(s => s.points.forEach(p => {
+        if (p.v != null) { lo = Math.min(lo, p.v); hi = Math.max(hi, p.v); }
+      }));
+      if (!isFinite(lo)) { lo = 0; hi = 1; }
       if (lo === hi) { lo -= 1; hi += 1; }
       const pad = 3;
       const yOf = v => h - pad - ((v - lo) / (hi - lo)) * (h - pad * 2);
-      const n = this._pts.length;
 
-      // min/max shading band
+      // min/max shading band (once, using the shared range)
       ctx.fillStyle = 'rgba(126,139,160,.07)';
       ctx.fillRect(0, yOf(hi), w, Math.max(0, yOf(lo) - yOf(hi)));
 
-      // line
-      ctx.beginPath();
-      let started = false;
-      this._pts.forEach((p, i) => {
-        if (p.v == null) { started = false; return; }
-        const x = this._xAt(i, n), y = yOf(p.v);
-        if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+      this._series.forEach((s, si) => {
+        const color = col[s.color] || col.acc;
+        const pts = s.points;
+        ctx.beginPath();
+        let started = false, lx = null, ly = null;
+        pts.forEach((p, i) => {
+          if (p.v == null) { started = false; return; }
+          const x = this._xAt(i, n), y = yOf(p.v);
+          if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+          lx = x; ly = y;
+        });
+        ctx.strokeStyle = color; ctx.lineWidth = 1.4; ctx.stroke();
+        // area fill only for the first/primary series, to keep multi-series legible
+        if (si === 0) {
+          const lastIdx = pts.length - 1;
+          ctx.lineTo(this._xAt(lastIdx, n), h);
+          ctx.lineTo(this._xAt(0, n), h);
+          ctx.closePath();
+          const grad = ctx.createLinearGradient(0, 0, 0, h);
+          grad.addColorStop(0, hexA(color, 0.20));
+          grad.addColorStop(1, hexA(color, 0));
+          ctx.fillStyle = grad; ctx.fill();
+        }
+        if (lx != null) { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(lx, ly, 1.8, 0, Math.PI * 2); ctx.fill(); }
       });
-      ctx.strokeStyle = col.acc; ctx.lineWidth = 1.4; ctx.stroke();
-
-      // area fill under the line
-      const lastIdx = this._pts.length - 1;
-      ctx.lineTo(this._xAt(lastIdx, n), h);
-      ctx.lineTo(this._xAt(0, n), h);
-      ctx.closePath();
-      const grad = ctx.createLinearGradient(0, 0, 0, h);
-      grad.addColorStop(0, hexA(col.acc, 0.22));
-      grad.addColorStop(1, hexA(col.acc, 0));
-      ctx.fillStyle = grad; ctx.fill();
 
       // hover crosshair
       if (this._hoverIdx != null) {
         const x = this._xAt(this._hoverIdx, n);
         ctx.strokeStyle = col.dim2; ctx.lineWidth = 1; ctx.setLineDash([2, 2]);
         ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); ctx.setLineDash([]);
-        const p = this._pts[this._hoverIdx];
-        if (p && p.v != null) {
-          ctx.fillStyle = col.acc;
-          ctx.beginPath(); ctx.arc(x, yOf(p.v), 2.5, 0, Math.PI * 2); ctx.fill();
-        }
+        this._series.forEach(s => {
+          const p = s.points[this._hoverIdx];
+          if (p && p.v != null) {
+            const color = col[s.color] || col.acc;
+            ctx.fillStyle = color;
+            ctx.beginPath(); ctx.arc(x, yOf(p.v), 2.5, 0, Math.PI * 2); ctx.fill();
+          }
+        });
+      }
+
+      // legend (only worth showing when there's a label to explain the color)
+      if (this._series.some(s => s.label)) {
+        this._legendEl.innerHTML = this._series.map(s => {
+          const v = this._lastVal(s.points);
+          const color = col[s.color] || col.acc;
+          return `<span style="color:${color}">${s.label} <b>${v == null ? '—' : v}${s.unit || ''}</b></span>`;
+        }).join('');
+      } else {
+        this._legendEl.innerHTML = '';
       }
     }
   }

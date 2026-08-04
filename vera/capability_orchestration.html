@@ -302,10 +302,10 @@ select option{background:var(--bg2)}
 
 /* Widget head */
 .w-head{display:flex;align-items:center;gap:6px;padding:7px 10px 6px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,rgba(255,255,255,.014),transparent);flex-shrink:0}
-.w-head .w-dot{width:6px;height:6px;border-radius:50%;background:var(--dim);flex-shrink:0;box-shadow:0 0 0 0 transparent;transition:background .25s,box-shadow .25s}
-.w-head .w-dot.ok{background:var(--ok);box-shadow:0 0 6px rgba(109,184,122,.5)}
-.w-head .w-dot.warn{background:var(--warn);box-shadow:0 0 6px rgba(201,163,90,.5)}
-.w-head .w-dot.err{background:var(--err);box-shadow:0 0 6px rgba(201,107,107,.5)}
+.w-dot{width:6px;height:6px;border-radius:50%;background:var(--dim);flex-shrink:0;box-shadow:0 0 0 0 transparent;transition:background .25s,box-shadow .25s;display:inline-block}
+.w-dot.ok{background:var(--ok);box-shadow:0 0 6px rgba(109,184,122,.5)}
+.w-dot.warn{background:var(--warn);box-shadow:0 0 6px rgba(201,163,90,.5)}
+.w-dot.err{background:var(--err);box-shadow:0 0 6px rgba(201,107,107,.5)}
 .w-title{font-size:9.5px;color:var(--dim);text-transform:uppercase;letter-spacing:1.1px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .w-actions{display:flex;gap:2px;align-items:center;opacity:0;transition:opacity .15s}
 .widget:hover .w-actions,.dash-grid.editing .w-actions{opacity:1}
@@ -412,6 +412,24 @@ select option{background:var(--bg2)}
 .cluster-stat{display:flex;flex-direction:column;align-items:center;padding:4px 12px;background:var(--bg0);border:1px solid var(--border);border-radius:4px}
 .cluster-stat-v{font-size:18px;font-weight:700;font-family:var(--mono);color:var(--acc);line-height:1}
 .cluster-stat-l{font-size:9px;color:var(--dim2);margin-top:2px;white-space:nowrap}
+
+/* Sysmon stack tiles (Proxmox/Docker/Ollama row lists) — ported from the old
+   combined system_monitor_panel.html so per-item detail survives the split. */
+.sm-row{display:flex;align-items:center;gap:8px;padding:5px 2px;border-bottom:1px solid rgba(58,53,48,.25);font-family:var(--mono);font-size:10px}
+.sm-row:last-child{border-bottom:none}
+.sm-row .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.sm-row .meta{color:var(--dim2);font-size:9px;white-space:nowrap}
+.sm-tag{font-size:7.5px;padding:1px 6px;border-radius:7px;font-family:var(--mono);font-weight:600;white-space:nowrap;flex-shrink:0}
+.sm-tag.ok{background:rgba(109,184,122,.1);color:var(--ok);border:1px solid rgba(109,184,122,.22)}
+.sm-tag.err{background:rgba(201,107,107,.1);color:var(--err);border:1px solid rgba(201,107,107,.22)}
+.sm-tag.warn{background:rgba(201,163,90,.1);color:var(--warn);border:1px solid rgba(201,163,90,.22)}
+.sm-tag.gpu{background:rgba(201,122,90,.1);color:var(--acc3,var(--warn));border:1px solid rgba(201,122,90,.22)}
+.sm-tag.dim{background:var(--bg2);color:var(--dim2);border:1px solid var(--border)}
+.sm-kpis{display:flex;border:1px solid var(--border);border-radius:4px;overflow:hidden}
+.sm-kpi{flex:1;padding:6px 4px;text-align:center;border-right:1px solid var(--border)}
+.sm-kpi:last-child{border-right:none}
+.sm-kpi-val{font-family:var(--mono);font-size:15px;font-weight:700;color:var(--acc)}
+.sm-kpi-sub{font-size:7.5px;color:var(--dim2);font-family:var(--mono);text-transform:uppercase;letter-spacing:.4px;margin-top:1px}
 
 /* Agent editor */
 .ae-param{display:flex;flex-direction:column;gap:3px}
@@ -611,74 +629,109 @@ select option{background:var(--bg2)}
             <span class="w-resize" data-resize></span>
           </div>
 
-          <!-- ── Proxmox (split out of the old combined System Monitor iframe) ── -->
-          <div class="widget w-w4 w-h3" data-wid="sysmon-proxmox">
+          <!-- ── Proxmox (split out of the old combined System Monitor iframe — same
+               per-cluster row detail + chart the combined panel had, just its own tile) ── -->
+          <div class="widget w-w4 w-h6" data-wid="sysmon-proxmox">
             <div class="w-head">
               <span class="w-grip">⠿</span>
               <span class="w-dot" id="wProxmoxDot"></span>
-              <span class="w-title">Proxmox</span>
+              <span class="w-title">Proxmox <span id="hProxmoxState" style="color:var(--dim2);font-weight:400;text-transform:none;letter-spacing:0"></span></span>
               <span class="w-actions">
                 <button class="w-iconbtn" onclick="loadSysmonSplit();loadSparklines()" title="Refresh">↻</button>
                 <button class="w-iconbtn" onclick="dashHideWidget('sysmon-proxmox')">×</button>
               </span>
             </div>
-            <div class="w-body tight" style="display:flex;flex-direction:column;gap:4px">
-              <div class="kpi"><div class="kpi-val tv-neu" id="hProxmox" style="font-size:22px">—</div><div class="kpi-sub" id="hProxmoxSub">guests · running</div></div>
-              <div style="height:30px" title="Running guests, last ~10min"><vera-sparkline id="sparkProxmox" unit=""></vera-sparkline></div>
+            <div class="w-body" style="display:flex;flex-direction:column;gap:6px">
+              <div class="sm-kpis">
+                <div class="sm-kpi"><div class="sm-kpi-val" id="hProxmoxRunning">—</div><div class="sm-kpi-sub">running</div></div>
+                <div class="sm-kpi"><div class="sm-kpi-val" id="hProxmoxGuests">—</div><div class="sm-kpi-sub">guests</div></div>
+                <div class="sm-kpi"><div class="sm-kpi-val" id="hProxmoxNodes">—</div><div class="sm-kpi-sub">nodes</div></div>
+              </div>
+              <div id="pmxRows" style="max-height:100px;overflow-y:auto"></div>
+              <div style="height:56px" title="Running guests, last ~10min"><vera-sparkline id="sparkProxmox"></vera-sparkline></div>
             </div>
             <span class="w-resize" data-resize></span>
           </div>
 
           <!-- ── Docker ── -->
-          <div class="widget w-w4 w-h3" data-wid="sysmon-docker">
+          <div class="widget w-w4 w-h6" data-wid="sysmon-docker">
             <div class="w-head">
               <span class="w-grip">⠿</span>
               <span class="w-dot" id="wDockerDot"></span>
-              <span class="w-title">Docker</span>
+              <span class="w-title">Docker <span id="hDockerState" style="color:var(--dim2);font-weight:400;text-transform:none;letter-spacing:0"></span></span>
               <span class="w-actions">
                 <button class="w-iconbtn" onclick="loadSysmonSplit();loadSparklines()" title="Refresh">↻</button>
                 <button class="w-iconbtn" onclick="dashHideWidget('sysmon-docker')">×</button>
               </span>
             </div>
-            <div class="w-body tight" style="display:flex;flex-direction:column;gap:4px">
-              <div class="kpi"><div class="kpi-val tv-neu" id="hDocker" style="font-size:22px">—</div><div class="kpi-sub" id="hDockerSub">containers running</div></div>
-              <div style="height:30px" title="Running containers, last ~10min"><vera-sparkline id="sparkDocker" unit=""></vera-sparkline></div>
+            <div class="w-body" style="display:flex;flex-direction:column;gap:6px">
+              <div class="sm-kpis">
+                <div class="sm-kpi"><div class="sm-kpi-val" id="hDockerRunning">—</div><div class="sm-kpi-sub">running</div></div>
+                <div class="sm-kpi"><div class="sm-kpi-val" id="hDockerConts">—</div><div class="sm-kpi-sub">containers</div></div>
+                <div class="sm-kpi"><div class="sm-kpi-val" id="hDockerHosts">—</div><div class="sm-kpi-sub">hosts up</div></div>
+              </div>
+              <div id="dkrRows" style="max-height:100px;overflow-y:auto"></div>
+              <div style="height:56px" title="Running containers, last ~10min"><vera-sparkline id="sparkDocker"></vera-sparkline></div>
             </div>
             <span class="w-resize" data-resize></span>
           </div>
 
           <!-- ── Ollama (sysmon view — see also the fuller "Ollama Nodes" list widget below) ── -->
-          <div class="widget w-w4 w-h3" data-wid="sysmon-ollama">
+          <div class="widget w-w4 w-h6" data-wid="sysmon-ollama">
             <div class="w-head">
               <span class="w-grip">⠿</span>
               <span class="w-dot" id="wOllamaSysDot"></span>
-              <span class="w-title">Ollama</span>
+              <span class="w-title">Ollama <span id="hOllamaState" style="color:var(--dim2);font-weight:400;text-transform:none;letter-spacing:0"></span></span>
               <span class="w-actions">
                 <button class="w-iconbtn" onclick="loadSysmonSplit();loadSparklines()" title="Refresh">↻</button>
                 <button class="w-iconbtn" onclick="dashHideWidget('sysmon-ollama')">×</button>
               </span>
             </div>
-            <div class="w-body tight" style="display:flex;flex-direction:column;gap:4px">
-              <div class="kpi"><div class="kpi-val tv-neu" id="hOllamaSys" style="font-size:22px">—</div><div class="kpi-sub" id="hOllamaSysSub">gpu · in use</div></div>
-              <div style="height:30px" title="Online nodes, last ~10min"><vera-sparkline id="sparkOllama" unit=""></vera-sparkline></div>
+            <div class="w-body" style="display:flex;flex-direction:column;gap:6px">
+              <div class="sm-kpis">
+                <div class="sm-kpi"><div class="sm-kpi-val" id="hOllamaOnline">—</div><div class="sm-kpi-sub">online</div></div>
+                <div class="sm-kpi"><div class="sm-kpi-val" id="hOllamaGpu">—</div><div class="sm-kpi-sub">gpu</div></div>
+                <div class="sm-kpi"><div class="sm-kpi-val" id="hOllamaInuse">—</div><div class="sm-kpi-sub">in use</div></div>
+              </div>
+              <div id="ollRows" style="max-height:100px;overflow-y:auto"></div>
+              <div style="height:56px" title="Online nodes vs. busy, last ~10min"><vera-sparkline id="sparkOllama"></vera-sparkline></div>
+            </div>
+            <span class="w-resize" data-resize></span>
+          </div>
+
+          <!-- ── Host resources (new: wasn't a dashboard tile before, only ever inside
+               the old combined System Monitor iframe) ── -->
+          <div class="widget w-w4 w-h4" data-wid="host-resources">
+            <div class="w-head">
+              <span class="w-grip">⠿</span>
+              <span class="w-dot ok"></span>
+              <span class="w-title">Host Resources</span>
+              <span class="w-actions">
+                <button class="w-iconbtn" onclick="loadSysmonSplit();loadSparklines()" title="Refresh">↻</button>
+                <button class="w-iconbtn" onclick="dashHideWidget('host-resources')">×</button>
+              </span>
+            </div>
+            <div class="w-body" style="display:flex;flex-direction:column;gap:8px">
+              <div style="height:66px" title="Host CPU % / RAM %, last ~10min"><vera-sparkline id="sparkHostRes"></vera-sparkline></div>
+              <div style="height:56px" title="Vera process RSS (MB), last ~10min"><vera-sparkline id="sparkProcMb"></vera-sparkline></div>
             </div>
             <span class="w-resize" data-resize></span>
           </div>
 
           <!-- ── Host core temps (SSH-probed: sensors, or /sys/class/thermal fallback) ── -->
-          <div class="widget w-w4 w-h3" data-wid="host-temps">
+          <div class="widget w-w4 w-h5" data-wid="host-temps">
             <div class="w-head">
               <span class="w-grip">⠿</span>
               <span class="w-dot" id="wTempsDot"></span>
-              <span class="w-title">Host Temps</span>
+              <span class="w-title">Host Temps <span style="color:var(--dim2);font-weight:400;text-transform:none;letter-spacing:0">— click a host for every sensor</span></span>
               <span class="w-actions">
                 <button class="w-iconbtn" onclick="loadHostTemps();loadSparklines()" title="Refresh">↻</button>
                 <button class="w-iconbtn" onclick="dashHideWidget('host-temps')">×</button>
               </span>
             </div>
             <div class="w-body">
-              <div id="hostTempsList" style="display:flex;flex-direction:column;gap:6px;font-size:10.5px"></div>
-              <div style="height:26px;margin-top:8px" title="Worst host temp, last ~10min"><vera-sparkline id="sparkTemps" unit="°C"></vera-sparkline></div>
+              <div id="hostTempsList" style="display:flex;flex-direction:column;gap:6px;font-size:10.5px;max-height:180px;overflow-y:auto"></div>
+              <div style="height:44px;margin-top:8px" title="Worst reading across all sensors, last ~10min"><vera-sparkline id="sparkTemps" unit="°C"></vera-sparkline></div>
             </div>
             <span class="w-resize" data-resize></span>
           </div>
@@ -799,7 +852,7 @@ select option{background:var(--bg2)}
           </div>
 
           <!-- ── Queues ── -->
-          <div class="widget w-w12 w-h2" data-wid="queues">
+          <div class="widget w-w6 w-h5" data-wid="queues">
             <div class="w-head">
               <span class="w-grip">⠿</span>
               <span class="w-dot ok"></span>
@@ -815,6 +868,26 @@ select option{background:var(--bg2)}
               <div id="clusterQueues" style="display:flex;gap:8px;flex-wrap:wrap"></div>
               <div style="font-size:9.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.7px;margin:10px 0 5px">Mimic Proxy</div>
               <div id="mimicSummary" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"></div>
+              <div style="font-size:9.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.7px;margin:10px 0 5px">Active Routing <span style="text-transform:none;letter-spacing:0;color:var(--dim2)">— what's running now, and where</span></div>
+              <div id="activeRouting" style="display:flex;flex-direction:column;gap:3px;font-size:9.5px;font-family:var(--mono);max-height:110px;overflow-y:auto"></div>
+              <div style="height:52px;margin-top:8px" title="Task queue depth vs. worker count, last ~10min"><vera-sparkline id="sparkQueueWorkers"></vera-sparkline></div>
+            </div>
+            <span class="w-resize" data-resize></span>
+          </div>
+
+          <!-- ── Scheduler ── -->
+          <div class="widget w-w6 w-h3" data-wid="scheduler">
+            <div class="w-head">
+              <span class="w-grip">⠿</span>
+              <span class="w-dot ok"></span>
+              <span class="w-title">Scheduler</span>
+              <span class="w-actions">
+                <button class="w-iconbtn" onclick="loadCluster()" title="Refresh">↻</button>
+                <button class="w-iconbtn" onclick="dashHideWidget('scheduler')">×</button>
+              </span>
+            </div>
+            <div class="w-body" style="max-height:220px;overflow-y:auto">
+              <div id="schedList" style="font-size:10px;color:var(--dim2)"></div>
             </div>
             <span class="w-resize" data-resize></span>
           </div>
@@ -830,10 +903,8 @@ select option{background:var(--bg2)}
                 <button class="w-iconbtn" onclick="dashHideWidget('workerlist')">×</button>
               </span>
             </div>
-            <div class="w-body">
+            <div class="w-body" style="max-height:280px;overflow-y:auto">
               <div id="clusterWorkers" style="display:flex;flex-direction:column;gap:5px"></div>
-              <div style="font-size:9.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.7px;margin:10px 0 5px">Scheduler</div>
-              <div id="schedList" style="font-size:10px;color:var(--dim2)"></div>
             </div>
             <span class="w-resize" data-resize></span>
           </div>
@@ -2577,28 +2648,72 @@ async function loadHealth(){
   dashTouch();
 }
 
-// Split-out replacement for the old single iframe'd "System Monitor" widget —
-// /sysmon/status already returns proxmox/docker/ollama as independent keys,
-// so this just fans one fetch out into the three tiles.
+// Split-out replacement for the old single iframe'd "System Monitor" widget.
+// /sysmon/status already returns proxmox/docker/ollama as independent keys —
+// this fans one fetch out into the three tiles, but (per feedback) carries
+// over the SAME per-item row detail + tags the old combined panel had
+// (system_monitor_panel.html's renderProxmox/renderDocker/renderOllama),
+// not just a single headline number each.
+function _smLight(ok, configured, healthy, total){
+  if(!configured) return '';
+  if(!ok) return 'err';
+  if(total && healthy < total) return 'warn';
+  return 'ok';
+}
 async function loadSysmonSplit(){
   const s = await api('/sysmon/status'); if(!s) return;
-  const sv=(id,v,cls)=>{const el=document.getElementById(id);if(el){el.textContent=v;el.className='kpi-val tile-val '+cls;}};
-  const subv=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v;};
+  const setv=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v;};
 
+  // ── Proxmox ──
   const pmx = s.proxmox||{};
-  sv('hProxmox', pmx.configured ? `${pmx.nodes??0} nodes` : '—', pmx.ok?'tv-ok':(pmx.configured?'tv-err':'tv-neu'));
-  subv('hProxmoxSub', pmx.configured ? `${pmx.guests??0} guests · ${pmx.running??0} running` : (pmx.error||'not configured'));
-  setDot('wProxmoxDot', pmx.configured ? (pmx.ok?'ok':'err') : '');
+  const pmxUp = (pmx.clusters||[]).filter(c=>c.ok).length;
+  setv('hProxmoxRunning', pmx.running??'—'); setv('hProxmoxGuests', pmx.guests??'—'); setv('hProxmoxNodes', pmx.nodes??'—');
+  setv('hProxmoxState', pmx.configured ? `${pmxUp}/${pmx.configured} up` : 'no clusters');
+  setDot('wProxmoxDot', _smLight(pmx.ok, pmx.configured, pmxUp, pmx.configured));
+  const pmxRows = document.getElementById('pmxRows');
+  if(pmxRows){
+    if(!pmx.configured) pmxRows.innerHTML = '<div style="color:var(--dim2);font-size:10px;padding:6px 0">No Proxmox clusters saved.</div>';
+    else pmxRows.innerHTML = (pmx.clusters||[]).map(c=>{
+      const tag = c.ok ? (c.quorate===false?'<span class="sm-tag warn">no quorum</span>':'<span class="sm-tag ok">up</span>') : '<span class="sm-tag err">down</span>';
+      const meta = c.ok ? `${c.running}/${c.guests} guests · ${c.nodes} node${c.nodes===1?'':'s'}` : esc(c.error||'unreachable');
+      return `<div class="sm-row"><span class="nm" title="${esc(c.label)}">${esc(c.label)}</span><span class="meta">${meta}</span>${tag}</div>`;
+    }).join('');
+  }
 
+  // ── Docker ──
   const dkr = s.docker||{};
-  sv('hDocker', dkr.total_hosts ? `${dkr.reachable??0}/${dkr.total_hosts} hosts` : '—', dkr.ok?'tv-ok':(dkr.total_hosts?'tv-err':'tv-neu'));
-  subv('hDockerSub', dkr.total_hosts ? `${dkr.running??0}/${dkr.containers??0} containers running` : (dkr.error||'no hosts'));
-  setDot('wDockerDot', dkr.total_hosts ? (dkr.ok?'ok':'err') : '');
+  setv('hDockerRunning', dkr.running??'—'); setv('hDockerConts', dkr.containers??'—'); setv('hDockerHosts', `${dkr.reachable??0}/${dkr.total_hosts??0}`);
+  setv('hDockerState', dkr.total_hosts ? `${dkr.reachable}/${dkr.total_hosts} reachable` : 'no hosts');
+  setDot('wDockerDot', _smLight(dkr.ok, dkr.total_hosts, dkr.reachable, dkr.total_hosts));
+  const dkrRows = document.getElementById('dkrRows');
+  if(dkrRows){
+    if(dkr.error) dkrRows.innerHTML = `<div style="color:var(--dim2);font-size:10px;padding:6px 0">Docker error: ${esc(dkr.error)}</div>`;
+    else if(!dkr.total_hosts) dkrRows.innerHTML = '<div style="color:var(--dim2);font-size:10px;padding:6px 0">No Docker hosts registered.</div>';
+    else dkrRows.innerHTML = (dkr.hosts||[]).map(h=>{
+      const tag = h.reachable ? '<span class="sm-tag ok">up</span>' : '<span class="sm-tag err">down</span>';
+      const meta = h.reachable ? `${h.running}/${h.containers} running` : esc(h.error||'unreachable');
+      return `<div class="sm-row"><span class="nm" title="${esc(h.label)}">${esc(h.label)}</span><span class="sm-tag dim">${esc(h.kind||'?')}</span><span class="meta">${meta}</span>${tag}</div>`;
+    }).join('');
+  }
 
+  // ── Ollama (status/latency view — see the fuller "Ollama Nodes" widget for vram/models) ──
   const oll = s.ollama||{};
-  sv('hOllamaSys', oll.total ? `${oll.online??0}/${oll.total} online` : '—', oll.ok?'tv-ok':(oll.total?'tv-warn':'tv-neu'));
-  subv('hOllamaSysSub', oll.total ? `${oll.gpu??0} gpu · ${oll.in_use??0} in use` : (oll.error||'no nodes'));
-  setDot('wOllamaSysDot', oll.total ? (oll.ok?'ok':'warn') : '');
+  setv('hOllamaOnline', `${oll.online??0}/${oll.total??0}`); setv('hOllamaGpu', oll.gpu??'—'); setv('hOllamaInuse', oll.in_use??'—');
+  setv('hOllamaState', oll.total ? `${oll.online}/${oll.total} online` : 'no nodes');
+  setDot('wOllamaSysDot', _smLight(oll.ok, oll.total, oll.online, oll.total));
+  const ollRows = document.getElementById('ollRows');
+  if(ollRows){
+    if(oll.error) ollRows.innerHTML = `<div style="color:var(--dim2);font-size:10px;padding:6px 0">Ollama error: ${esc(oll.error)}</div>`;
+    else if(!oll.total) ollRows.innerHTML = '<div style="color:var(--dim2);font-size:10px;padding:6px 0">No Ollama nodes configured.</div>';
+    else ollRows.innerHTML = (oll.nodes||[]).map(n=>{
+      const on = n.status==='online';
+      const tag = !n.enabled ? '<span class="sm-tag dim">disabled</span>' : (on?'<span class="sm-tag ok">online</span>':'<span class="sm-tag err">offline</span>');
+      const gpu = n.has_gpu ? '<span class="sm-tag gpu">gpu</span>' : '';
+      const lat = (on && n.latency_ms!=null) ? Math.round(n.latency_ms)+'ms · ' : '';
+      const meta = on ? `${lat}${n.models} model${n.models===1?'':'s'}${n.in_use?' · '+n.in_use+' busy':''}` : '';
+      return `<div class="sm-row"><span class="nm" title="${esc(n.url||n.label)}">${esc(n.label)}</span>${gpu}<span class="meta">${meta}</span>${tag}</div>`;
+    }).join('');
+  }
 
   dashTouch();
 }
@@ -2700,15 +2815,20 @@ async function loadSandboxesInfo(){
 const DASH_HEALTH_LABELS = {
   proxmox:"Proxmox", docker:"Docker", ollama:"Ollama", mesh:"Mesh",
   loop_lab:"Loop Lab", sandboxes:"Sandboxes", mimic:"Mimic",
+  fabric:"Fabric", redis:"Redis",
 };
 async function pollDashHealthStrip(){
   const el = document.getElementById('dashHealthStrip'); if(!el) return;
   const h = await api('/dash/health/summary'); if(!h) return;
-  el.innerHTML = Object.keys(DASH_HEALTH_LABELS).map(k=>{
+  const chips = Object.keys(DASH_HEALTH_LABELS).map(k=>{
     const state = h[k]||'unknown';
     const dotCls = state==='unknown' ? '' : state;
-    return `<span style="display:inline-flex;align-items:center;gap:5px"><span class="w-dot ${dotCls}"></span>${DASH_HEALTH_LABELS[k]}</span>`;
+    return `<span style="display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:11px;
+      border:1px solid var(--border);background:var(--bg2);color:var(--dim2);white-space:nowrap"
+      title="${DASH_HEALTH_LABELS[k]}: ${state}">
+      <span class="w-dot ${dotCls}" style="width:7px;height:7px"></span>${DASH_HEALTH_LABELS[k]}</span>`;
   }).join('');
+  el.innerHTML = '<span style="font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:.8px;margin-right:2px">System</span>' + chips;
 }
 let _dashHealthInterval = null;
 function _dashHealthStripInit(){
@@ -2717,22 +2837,50 @@ function _dashHealthStripInit(){
   _dashHealthInterval = setInterval(pollDashHealthStrip, 10000);
 }
 
-// Feed the <vera-sparkline> instances mounted in the sysmon tiles from one
-// shared /sysmon/history fetch (not one fetch per sparkline).
+// Feed the <vera-sparkline> instances mounted across the dashboard from one
+// shared /sysmon/history fetch (not one fetch per sparkline). Multi-series
+// pairings mirror the old combined system_monitor_panel.html's CHARTS config
+// (res=cpu/mem, oll=online/busy, q=queue/workers) so that depth isn't lost
+// now that it's split across tiles.
 async function loadSparklines(){
   const h = await api('/sysmon/history?limit=60'); if(!h || !h.samples) return;
   const mk = field => h.samples.map(s => ({ t: s.t, v: (s[field]==null ? null : s[field]) }));
-  const feed = (id, field) => {
+  const single = (id, field, unit) => {
     const el = document.getElementById(id);
-    if (el && typeof el.setSeries === 'function') el.setSeries(mk(field));
+    if (el && typeof el.setSeries === 'function') { el.setSeries(mk(field)); if(unit) el.setUnit(unit); }
   };
-  feed('sparkProxmox', 'pmx_running');
-  feed('sparkDocker',  'dkr_running');
-  feed('sparkOllama',  'oll_online');
-  feed('sparkTemps',   'temp_max');
+  const multi = (id, series) => {
+    const el = document.getElementById(id);
+    if (el && typeof el.setMultiSeries === 'function') {
+      el.setMultiSeries(series.map(s => ({ label: s.label, color: s.color, unit: s.unit||'', points: mk(s.field) })));
+    }
+  };
+  single('sparkProxmox', 'pmx_running', '');
+  single('sparkDocker',  'dkr_running', '');
+  multi('sparkOllama', [
+    { field:'oll_online', label:'online', color:'acc' },
+    { field:'oll_inuse',  label:'busy',   color:'warn' },
+  ]);
+  single('sparkTemps', 'temp_max', '°C');
+  multi('sparkHostRes', [
+    { field:'cpu', label:'cpu', color:'acc', unit:'%' },
+    { field:'mem', label:'ram', color:'acc2', unit:'%' },
+  ]);
+  single('sparkProcMb', 'proc_mb', 'mb');
+  multi('sparkQueueWorkers', [
+    { field:'queue',   label:'queue', color:'warn' },
+    { field:'workers', label:'wrk',   color:'acc' },
+  ]);
 }
 
 // Host core temps — obs.node_temps, probed over SSH every ~60s server-side.
+// Per-host summary bar (max_c) that expands on click into every individual
+// sensor obs.node_temps found — CPU cores, IPMI (ambient/PSU/DIMM/drive-bay),
+// and per-drive SMART temps, not just a single headline number.
+function _tempToggle(idx){
+  const d = document.getElementById('tempDetail'+idx);
+  if(d) d.style.display = d.style.display==='none' ? 'block' : 'none';
+}
 async function loadHostTemps(){
   const r = await api('/nodes/temps');
   const listEl = document.getElementById('hostTempsList');
@@ -2747,20 +2895,30 @@ async function loadHostTemps(){
   const known = hosts.map(h=>h.max_c).filter(v=>v!=null);
   const worst = known.length ? Math.max(...known) : null;
   if(listEl){
-    listEl.innerHTML = hosts.map(h=>{
+    listEl.innerHTML = hosts.map((h,i)=>{
       const c = h.max_c;
       const pct = c==null ? 0 : Math.max(2, Math.min(100, c));
       const col = tempColor(c);
       const label = h.label + (h.pve?' · PVE':'');
       const valTxt = c==null ? (h.error||'—') : `${c}°C`;
+      const sensors = Object.entries(h.temps||{}).sort((a,b)=>b[1]-a[1]);
+      const clickable = sensors.length ? `onclick="_tempToggle(${i})" style="cursor:pointer"` : '';
+      const detail = sensors.length ? `<div id="tempDetail${i}" style="display:none;margin:4px 0 2px 8px;padding-left:6px;border-left:2px solid var(--border)">` +
+        sensors.map(([name,val])=>`<div style="display:flex;justify-content:space-between;gap:6px;font-size:9px">
+          <span style="color:var(--dim2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</span>
+          <span style="color:${tempColor(val)};font-family:var(--mono)">${val}°C</span>
+        </div>`).join('') + `</div>` : '';
       return `<div>
-        <div style="display:flex;justify-content:space-between;gap:6px">
-          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${h.host_id}">${label}</span>
-          <span style="color:${col};font-family:var(--mono);white-space:nowrap">${valTxt}</span>
+        <div ${clickable}>
+          <div style="display:flex;justify-content:space-between;gap:6px">
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${h.host_id}">${label}${sensors.length?` <span style="color:var(--dim2)">(${sensors.length} sensors ▾)</span>`:''}</span>
+            <span style="color:${col};font-family:var(--mono);white-space:nowrap">${valTxt}</span>
+          </div>
+          <div style="height:4px;background:var(--bg0);border-radius:2px;overflow:hidden;margin-top:2px">
+            <div style="height:100%;width:${pct}%;background:${col}"></div>
+          </div>
         </div>
-        <div style="height:4px;background:var(--bg0);border-radius:2px;overflow:hidden;margin-top:2px">
-          <div style="height:100%;width:${pct}%;background:${col}"></div>
-        </div>
+        ${detail}
       </div>`;
     }).join('');
   }
@@ -4722,10 +4880,12 @@ async function loadWorkers(){ return loadCluster(); }
 // (ollama_mimic_panel.html), so this just consumes it a second time rather than
 // duplicating its aggregation logic.
 async function loadMimicSummary(){
-  const [status, reqs] = await Promise.all([
+  const [status, reqs, jobs] = await Promise.all([
     api('/cluster/mimic/status'),
     api('/cluster/mimic/requests?limit=5'),
+    api('/cluster/jobs?limit=20'),
   ]);
+  _renderActiveRouting(jobs, reqs);
   const el = document.getElementById('mimicSummary');
   if(!el) return;
   if(!status){ el.innerHTML = '<span style="color:var(--dim2)">unavailable</span>'; return; }
@@ -4749,6 +4909,22 @@ async function loadMimicSummary(){
       `</div>`;
   }
   el.innerHTML = html;
+}
+
+// "What's running now, and where" — real routing, not aggregate counts:
+// worker tasks (capability -> worker_id) from /cluster/jobs' `running` list,
+// plus the freshest Mimic proxy requests (model -> ollama instance).
+function _renderActiveRouting(jobs, reqs){
+  const el = document.getElementById('activeRouting'); if(!el) return;
+  const rows = [];
+  ((jobs && jobs.running) || []).forEach(j => {
+    rows.push(`<span style="color:var(--warn)">▶</span> ${esc(j.capability||'?')} <span style="color:var(--dim2)">→</span> ${esc(j.worker_id||'?')}`);
+  });
+  (((reqs && reqs.entries) || []).slice(0, 5)).forEach(e => {
+    rows.push(`<span style="color:var(--dim2)">${(e.ts||'').slice(11,19)}</span> ${esc(e.model||'?')} <span style="color:var(--dim2)">→</span> ${esc(e.instance||'?')}`);
+  });
+  el.innerHTML = rows.length ? rows.join('<br>')
+    : '<span style="color:var(--dim2)">nothing running right now</span>';
 }
 
 function clusterAutoRefresh(){
