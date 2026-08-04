@@ -591,7 +591,7 @@ select option{background:var(--bg2)}
         <div class="dash-toolbar">
           <div class="dash-title">Cluster Overview</div>
           <span class="dash-meta" id="dashLastUpdate">never updated</span>
-          <button class="btn sm"      onclick="loadHealth();loadCluster();loadMemoryStats();loadSysmonSplit();loadHostTemps();loadDockerStats();loadSparklines();loadMeshInfo();loadLoopLabInfo();loadSandboxesInfo();loadMimicSummary();loadTopologyMap();pollDashHealthStrip();dashTouch()" title="Refresh all widgets">↻ Refresh</button>
+          <button class="btn sm"      onclick="loadHealth();loadCluster();loadMemoryStats();loadSysmonSplit();loadHostTemps();loadDockerStats();loadSparklines();loadMeshInfo();loadLoopLabInfo();loadSandboxesInfo();loadConnections();loadMimicSummary();loadTopologyMap();pollDashHealthStrip();dashTouch()" title="Refresh all widgets">↻ Refresh</button>
           <button class="btn sm teal" onclick="clusterAutoRefresh()" id="dashAutoBtn">Auto 5s</button>
           <span id="clusterRefreshBadge" style="font-size:9.5px;color:var(--dim2);align-self:center"></span>
           <button class="btn sm"      onclick="loadDiagnostics()">Diagnostics</button>
@@ -982,6 +982,23 @@ select option{background:var(--bg2)}
             </div>
             <div class="w-body">
               <div id="sandboxesList" style="display:flex;flex-direction:column;gap:5px;font-size:10.5px"></div>
+            </div>
+            <span class="w-resize" data-resize></span>
+          </div>
+
+          <!-- ── Connections: VS Code / Claude Code / OpenClaw ── -->
+          <div class="widget w-w4 w-h3" data-wid="connections">
+            <div class="w-head">
+              <span class="w-grip">⠿</span>
+              <span class="w-dot" id="wConnDot"></span>
+              <span class="w-title">Connections</span>
+              <span class="w-actions">
+                <button class="w-iconbtn" onclick="loadConnections()" title="Refresh">↻</button>
+                <button class="w-iconbtn" onclick="dashHideWidget('connections')">×</button>
+              </span>
+            </div>
+            <div class="w-body" style="max-height:220px;overflow-y:auto">
+              <div id="connList" style="display:flex;flex-direction:column;gap:5px;font-size:10px"></div>
             </div>
             <span class="w-resize" data-resize></span>
           </div>
@@ -2452,7 +2469,7 @@ function _tabFireLoader(n){
   if(n==='caps')        loadCaps();
   if(n==='redis')       loadRedis();
   if(n==='servers')     loadServers();
-  if(n==='dashboard')  {loadHealth();loadCluster();loadMemoryStats();loadSysmonSplit();loadHostTemps();loadDockerStats();loadSparklines();loadMeshInfo();loadLoopLabInfo();loadSandboxesInfo();loadMimicSummary();loadTopologyMap();pollDashHealthStrip();dashTouch();}
+  if(n==='dashboard')  {loadHealth();loadCluster();loadMemoryStats();loadSysmonSplit();loadHostTemps();loadDockerStats();loadSparklines();loadMeshInfo();loadLoopLabInfo();loadSandboxesInfo();loadConnections();loadMimicSummary();loadTopologyMap();pollDashHealthStrip();dashTouch();}
   if(n==='media')       loadAllPanels();
   if(n==='dagworkshop') dagStoreLoad();
   if(n==='syslog'||n==='streams') syslogLoad();
@@ -2524,6 +2541,7 @@ async function refreshAll(){
     loadMeshInfo(),
     loadLoopLabInfo(),
     loadSandboxesInfo(),
+    loadConnections(),
     loadMimicSummary(),
     loadTopologyMap(),
   ]);
@@ -2839,6 +2857,48 @@ async function loadSandboxesInfo(){
     }
   }
   setDot('wSandboxesDot', active.length>0?'ok':'');
+  dashTouch();
+}
+
+// Connected client surfaces — VS Code instances, Claude Code session sources
+// (local + connected vscode-client + ssh), and the OpenClaw gateway (opt-in,
+// off by default — shown as "disabled" rather than silently omitted so it's
+// clear this is a real state, not a missing widget).
+async function loadConnections(){
+  const [vs, cs, oc] = await Promise.all([
+    api('/ide/vscode/instances'), api('/ide/claude_sessions/sources'), api('/openclaw/status'),
+  ]);
+  const el = document.getElementById('connList'); if(!el) return;
+  const rows = [];
+  (vs&&vs.instances||[]).forEach(i=>{
+    const on = i.status==='online'||i.status==='connected'||i.status==='running';
+    const err = i.status==='offline'||i.status==='error'||i.status==='disconnected';
+    rows.push({kind:'VS Code', name:i.label||i.id||'?', dot: on?'ok':(err?'err':''), meta:i.kind||''});
+  });
+  (cs&&cs.sources||[]).forEach(s=>{
+    rows.push({kind:'Claude Code', name:s.label||s.instance_id||'local', dot: s.alive?'ok':'err', meta:s.kind||''});
+  });
+  if(oc){
+    if(oc.enabled){
+      rows.push({kind:'OpenClaw', name:'gateway', dot: oc.connected?'ok':(oc.connecting?'warn':'err'), meta: oc.gateway_version||oc.last_error||''});
+      (oc.active_sessions||[]).forEach(sid=>rows.push({kind:'OpenClaw', name:sid, dot:'ok', meta:'session'}));
+    } else {
+      rows.push({kind:'OpenClaw', name:'disabled', dot:'', meta:''});
+    }
+  }
+  if(!rows.length){
+    el.innerHTML = '<span style="color:var(--dim2)">no connections</span>';
+    setDot('wConnDot', '');
+    return;
+  }
+  el.innerHTML = rows.map(r=>`<div class="sm-row">
+    <span class="sm-tag dim" style="flex-shrink:0">${esc(r.kind)}</span>
+    <span class="nm" title="${esc(r.name)}">${esc(r.name)}</span>
+    <span class="meta">${esc(r.meta||'')}</span>
+    <span class="w-dot ${r.dot}" style="flex-shrink:0"></span>
+  </div>`).join('');
+  const anyErr = rows.some(r=>r.dot==='err'), anyOk = rows.some(r=>r.dot==='ok');
+  setDot('wConnDot', anyOk ? (anyErr?'warn':'ok') : (anyErr?'err':''));
   dashTouch();
 }
 
