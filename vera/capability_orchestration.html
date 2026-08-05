@@ -161,7 +161,7 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .ev:hover{background:rgba(255,255,255,.02)}
 .ev.ok{border-color:var(--ok)}.ev.err{border-color:var(--err);color:var(--err)}.ev.info{border-color:var(--acc)}.ev.warn{border-color:var(--warn)}
 .ev-time{color:var(--dim)}
-.main{flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative}
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative;transition:padding .12s ease}
 
 /* ── Tab bar: horizontal (default) ── */
 .tabs{display:flex;background:var(--bg1);border-bottom:1px solid var(--border);flex-shrink:0;overflow-x:auto;scrollbar-width:none;position:relative;z-index:20}
@@ -1980,6 +1980,11 @@ function _tabApplyAutohide(){
   });
   zone.removeEventListener('mouseenter', _tabReveal);
   zone.removeEventListener('mouseleave', _tabScheduleHide);
+  // NOT tied to _autohide alone — see _tabReveal/_tabScheduleHide, which
+  // toggle this in lockstep with .show. Reserving it here unconditionally
+  // (whenever autohide is merely turned ON) meant the rest of the UI never
+  // actually reclaimed the space while the bar was genuinely hidden —
+  // defeating the point of auto-hide in both orientations.
   document.getElementById('main')?.classList.remove('autohide-reserve-h','autohide-reserve-v');
 
   if(_autohide){
@@ -1988,7 +1993,6 @@ function _tabApplyAutohide(){
     zone.classList.add('active');
     if(hBtn) hBtn.classList.add('active');
     if(vBtn) vBtn.classList.add('active');
-    document.getElementById('main')?.classList.add(_lhmMode ? 'autohide-reserve-v' : 'autohide-reserve-h');
 
     zone.addEventListener('mouseenter', _tabReveal);
     zone.addEventListener('mouseleave', _tabScheduleHide);
@@ -2005,13 +2009,19 @@ function _tabApplyAutohide(){
 function _tabReveal(){
   if(_autohideTimer){clearTimeout(_autohideTimer);_autohideTimer=null;}
   _autohideEl()?.classList.add('show');
+  // Reserve the space ONLY while actually revealed, so the rest of the UI
+  // fills it back in the instant the bar auto-hides again (see the .12s
+  // transition on .main's padding, matching the bar's own slide timing so
+  // the two move together instead of one snapping ahead of the other).
+  document.getElementById('main')?.classList.add(_lhmMode ? 'autohide-reserve-v' : 'autohide-reserve-h');
 }
 function _tabScheduleHide(){
   if(_autohideTimer) clearTimeout(_autohideTimer);
   _autohideTimer = setTimeout(()=>{
     _autohideEl()?.classList.remove('show');
+    document.getElementById('main')?.classList.remove('autohide-reserve-h','autohide-reserve-v');
     _autohideTimer = null;
-  }, 250);
+  }, 150);
 }
 
 // Init on load
@@ -3865,11 +3875,15 @@ function _ensurePanelLoaded(panelEl) {
   // Nudge any vera-panel-bridge.js in the frame to publish immediately (see
   // _lhmNavSync's nav injection) instead of waiting for its own 30s tick or
   // the visitor's first click — harmless no-op for panels without the
-  // bridge script. Guarded per-frame so whichever of 'load' or the
-  // _frameResponded poll below fires first wins; the other is a no-op.
+  // bridge script. Deliberately NOT a single-shot guard: a postMessage sent
+  // before the target document has replaced about:blank (or before its
+  // inline scripts have run far enough to register the listener) is simply
+  // dropped, never queued for later delivery — a single "send once" attempt
+  // could easily be the one that's too early and then never retried. Resent
+  // on every poll tick below until the frame settles; the bridge's own
+  // handler is idempotent (just resets its dedupe and republishes current
+  // state), so redundant delivery once the listener IS up costs nothing.
   const sendInit = f => {
-    if (f._vpInitSent) return;
-    f._vpInitSent = true;
     try { f.contentWindow.postMessage({type:'vera:panel:init', panel_id: pid, session_id:''}, '*'); } catch(e){}
   };
   frames.forEach(f => {
@@ -3895,8 +3909,8 @@ function _ensurePanelLoaded(panelEl) {
     responded.forEach(sendInit);
     if (responded.length === frames.length) done();
   };
-  pollTick();                    // check immediately — most routes commit well under 150ms
-  poll = setInterval(pollTick, 150);
+  pollTick();                    // check immediately — most routes commit well under 80ms
+  poll = setInterval(pollTick, 80);
   // Backstop: only claim "didn't respond" if NO frame got a document in 12s;
   // if any route answered, drop the overlay and let the panel show through.
   panelEl._loadTimer = setTimeout(() => {
