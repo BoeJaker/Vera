@@ -71,13 +71,13 @@
 <body>
 <div id="wrap">
   <header>
-    <span class="ttl">🧩 Integrations Hub</span>
+    <span class="ttl">⛓ Integrations Hub</span>
     <span class="sub" id="count"></span>
     <span class="sp"></span>
     <button class="btn sm" onclick="load()">↻</button>
     <button class="btn sm" onclick="openNew()">+ Add</button>
-    <button class="btn sm" onclick="openDiscover()">🔍 Discover</button>
-    <button class="btn sm pri" onclick="openRegister()">🔐 Register &amp; secure</button>
+    <button class="btn sm" onclick="openDiscover()">⌕ Discover</button>
+    <button class="btn sm pri" onclick="openRegister()">⚿ Register &amp; secure</button>
   </header>
   <div id="grid"></div>
 </div>
@@ -85,7 +85,7 @@
 <!-- detail / edit drawer -->
 <div class="ov" id="drwOv" onclick="if(event.target===this)closeDrw()">
   <div class="drw">
-    <h3><span id="dIco">🧩</span><span id="dTitle">Integration</span>
+    <h3><span id="dIco">⛓</span><span id="dTitle">Integration</span>
         <span class="sp" style="flex:1"></span>
         <button class="btn sm" onclick="closeDrw()">✕</button></h3>
     <div class="bd" id="drwBody"></div>
@@ -101,7 +101,7 @@
 <!-- discover modal -->
 <div class="ov" id="discOv" onclick="if(event.target===this)closeDiscover()">
   <div class="drw" style="left:0;right:auto;border-right:1px solid var(--line);border-left:none">
-    <h3>🔍 Discover integrations<span class="sp" style="flex:1"></span>
+    <h3>⌕ Discover integrations<span class="sp" style="flex:1"></span>
         <button class="btn sm" onclick="closeDiscover()">✕</button></h3>
     <div class="bd">
       <div class="hint">Finds local Docker containers, and optionally port-scans a host
@@ -122,7 +122,7 @@
 <!-- register & secure modal -->
 <div class="ov" id="regOv" onclick="if(event.target===this)closeRegister()">
   <div class="drw" style="width:560px">
-    <h3>🔐 Register &amp; secure everything<span class="sp" style="flex:1"></span>
+    <h3>⚿ Register &amp; secure everything<span class="sp" style="flex:1"></span>
         <button class="btn sm" onclick="closeRegister()">✕</button></h3>
     <div class="bd">
       <div class="hint">Runs the auto-enrolment orchestrator across your estate:
@@ -152,7 +152,7 @@ async function load(){
   $('#count').textContent=ITEMS.length?ITEMS.length+' services':'';
   const g=$('#grid');
   if(!ITEMS.length){g.innerHTML='<div id="empty">No integrations yet.<br><br>'
-    +'<button class="btn pri" onclick="openDiscover()">🔍 Discover local services</button></div>';return;}
+    +'<button class="btn pri" onclick="openDiscover()">⌕ Discover local services</button></div>';return;}
   g.innerHTML='';
   ITEMS.forEach(it=>g.appendChild(card(it)));
 }
@@ -183,8 +183,8 @@ function tgHtml(it,m){
   return `<span class="tg ${on?'on':''} ${locked?'locked':''}" title="${locked?'locked by sensitive flag':'toggle '+m}"
     onclick="event.stopPropagation();${locked?'':`toggle('${it.id}','${m}',${!acc[m]})`}">${m}</span>`;
 }
-function kindIcon(k){return{n8n:'🔗',homeassistant:'🏠',gitea:'🍵',github:'🐙',grafana:'📊',
-  wordpress:'📝',portainer:'🐳',prometheus:'🔥'}[k]||'🌐';}
+function kindIcon(k){return{n8n:'⛓',homeassistant:'⌂',gitea:'◉',github:'⌥',grafana:'∑',
+  wordpress:'✎',portainer:'⛁',prometheus:'▲'}[k]||'○';}
 
 async function toggle(id,mode,val){
   const b={id}; b[mode]=val;
@@ -212,7 +212,7 @@ async function openDrw(id){
   const acc=it.access||{}; const api2=it.api||{};
   $('#drwBody').innerHTML=`
     <div class="sec">Connections</div><div class="conns">${conns}</div>
-    <button class="btn sm" onclick="idReg('${it.id}')">🔐 Register in directory</button>
+    <button class="btn sm" onclick="idReg('${it.id}')">⚿ Register in directory</button>
     <div class="sec">Access policy</div>
     <div class="toggles">${MODES.map(m=>tgHtml(it,m)).join('')}</div>
     <label style="font-size:12px;display:block;margin-top:8px">
@@ -256,7 +256,7 @@ async function delCur(){if(!CUR||!confirm('Delete this integration? (the service
 
 /* ── add ── */
 function openNew(){CUR={id:'',label:'',kind:'generic',scheme:'http',host:'',port:0,access:{},api:{}};
-  $('#dIco').textContent='🧩';$('#dTitle').textContent='New integration';
+  $('#dIco').textContent='⛓';$('#dTitle').textContent='New integration';
   $('#drwBody').innerHTML=`
     <div class="fld"><label>Label</label><input id="dLabel" placeholder="e.g. Home n8n"></div>
     <div class="row2"><div class="fld"><label>Kind</label><select id="dKind">

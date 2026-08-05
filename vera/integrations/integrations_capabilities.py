@@ -281,6 +281,48 @@ async def cap_delete(id: str = "", trace_id=None) -> Dict:
 
 
 @capability(
+    "integration.import_apps",
+    http_method="POST", http_path="/integrations/import_apps", http_tags=["integration"],
+    memory="on",
+    description="Fold the legacy Workspaces app-mount records (app.list / "
+                "vera:remote:apps) into integrations so both share ONE registry. "
+                "Idempotent (dedup by host:port); keeps a link back via app_id. "
+                "New records are default-locked. Input: commit (bool=true). "
+                "Output: {imported:[...], count, skipped, total}.",
+)
+async def cap_import_apps(commit: bool = True, trace_id=None) -> Dict:
+    lst = _cap_raw("app.list")
+    if not lst:
+        return {"error": "app.list unavailable (workspace module not loaded)"}
+    apps = (await lst() or {}).get("apps", [])
+    by_hp = {(r.get("host"), r.get("port")): r for r in await _all()}
+    imported: List[Dict] = []
+    skipped = 0
+    for a in apps:
+        key = (a.get("host"), int(a.get("port") or 0))
+        if not key[0] or not key[1] or key in by_hp:
+            skipped += 1
+            continue
+        kind = _guess_kind(key[1], "", a.get("label", ""))
+        rec = {
+            "id": uuid.uuid4().hex[:12], "created": now_iso(),
+            "label": a.get("label") or f"{kind}:{key[1]}", "kind": kind,
+            "host": key[0], "port": key[1], "scheme": a.get("scheme", "http"),
+            "source": "local", "access": dict(DEFAULT_ACCESS), "sensitive": False,
+            "mcp_id": a.get("mcp_id", ""), "conn_id": a.get("conn_id", ""),
+            "app_id": a.get("id", ""),   # link back to the legacy mounted app
+            "api": {"auth_scheme": KIND_SPECS.get(kind, {}).get("auth_scheme", "bearer")},
+        }
+        by_hp[key] = rec
+        if commit:
+            await _put(rec)
+            await _audit("imported_app", rec)
+        imported.append(_redact(rec))
+    return {"imported": imported, "count": len(imported), "skipped": skipped,
+            "total": len(apps)}
+
+
+@capability(
     "integration.access.set",
     http_method="POST", http_path="/integrations/access/set", http_tags=["integration"],
     memory="on",
@@ -717,26 +759,55 @@ async def integration_embed_proxy(iid: str, request: Request, path: str = ""):
     if not base:
         return JSONResponse({"error": "no target URL"}, status_code=502)
     qs = request.url.query
-    target = base + "/" + path + (("?" + qs) if qs else "")
     proxy_base = f"/integrations/{iid}/embed/"
     fwd = {k: v for k, v in request.headers.items()
            if k.lower() not in _HOP and k.lower() != "host"}
+    fwd["accept-encoding"] = "identity"   # uncompressed → no garbled/binary body
     body = await request.body()
     verify = bool(rec.get("verify_tls"))
-    try:
+
+    async def _fetch(b: str):
+        target = b + "/" + path + (("?" + qs) if qs else "")
         async with httpx.AsyncClient(verify=verify, timeout=45,
                                      follow_redirects=False) as c:
-            up = await c.request(request.method, target, headers=fwd,
-                                 content=body if body else None)
-    except Exception as e:
-        return JSONResponse({"error": f"upstream {type(e).__name__}: {e}"}, status_code=502)
+            return await c.request(request.method, target, headers=fwd,
+                                   content=body if body else None)
+
+    switched = False
+    try:
+        up = await _fetch(base)
+        # Auto-heal a scheme mismatch ("HTTP request sent to an HTTPS server").
+        if (base.startswith("http://") and up.status_code == 400
+                and b"HTTPS server" in (up.content or b"")[:500]):
+            base = "https://" + base[len("http://"):]
+            up = await _fetch(base); switched = True
+    except Exception:
+        if base.startswith("http://"):
+            try:
+                base = "https://" + base[len("http://"):]
+                up = await _fetch(base); switched = True
+            except Exception as e2:
+                return JSONResponse({"error": f"upstream {type(e2).__name__}: {e2}"},
+                                    status_code=502)
+        else:
+            return JSONResponse({"error": "upstream unreachable"}, status_code=502)
+    if switched and not rec.get("base_url") and rec.get("scheme") != "https":
+        rec["scheme"] = "https"                # remember so next time we go direct
+        try:
+            await _put(rec)
+        except Exception:
+            pass
+
     resp_headers = {}
     for k, v in up.headers.items():
         lk = k.lower()
         if lk in _HOP:
             continue
-        if lk == "location" and v.startswith(base):
-            v = proxy_base + v[len(base):].lstrip("/")
+        if lk == "location":
+            if v.startswith(base):
+                v = proxy_base + v[len(base):].lstrip("/")
+            elif v.startswith("/"):          # root-relative (e.g. /onboarding.html, /login)
+                v = proxy_base + v.lstrip("/")
         resp_headers[k] = v
     ctype = up.headers.get("content-type", "")
     content = up.content
@@ -764,7 +835,7 @@ async def cap_panel(trace_id=None):
 register_ui(
     "integrations",
     "Integrations",
-    "🧩",
+    "⛓",
     html="""<div style="height:100%;display:flex;flex-direction:column">
   <iframe src="/integrations/panel" style="flex:1;border:none;width:100%;height:100%;
           background:var(--bg0,#0d0f12)" allow="clipboard-read; clipboard-write"></iframe>
@@ -774,7 +845,7 @@ register_ui(
         "integration.delete", "integration.access.set", "integration.operate",
         "integration.api.call", "integration.mcp.call", "integration.connections",
         "integration.discover", "integration.identity.register",
-        "identity.resolve.status",
+        "integration.import_apps", "identity.resolve.status",
         # the one-click "register & secure everything" button drives autoenroll
         "autoenroll.scan", "autoenroll.run", "autoenroll.pending",
     ],

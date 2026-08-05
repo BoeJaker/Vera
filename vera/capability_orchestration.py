@@ -6969,6 +6969,22 @@ async def _gc_pacer():
                      "full" if full else "young-gen", n, dt_ms, full_every)
 
 
+async def _openbao_autounseal_boot():
+    """If OpenBao KMS auto-unseal is configured, open the vault on startup."""
+    await asyncio.sleep(8)          # let redis/backends connect first
+    try:
+        cap = CAPABILITY_REGISTRY.get("identity.openbao.unseal")
+        fn = (cap.get("raw") or cap.get("func")) if cap else None
+        if not fn:
+            return
+        r = await fn(boot=True)
+        if r and r.get("ok") and r.get("sealed") is False and r.get("submitted"):
+            log.info("openbao auto-unseal: vault unsealed at boot (kms=%s)",
+                     r.get("kms_backend"))
+    except Exception as e:
+        log.debug("openbao auto-unseal boot skipped: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global REDIS, PG_POOL, CHROMA, NEO
@@ -7168,6 +7184,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "provisioning/autoenroll_capabilities.py"),
         os.path.join(_here, "networking/netgraph_capabilities.py"),
         os.path.join(_here, "networking/netsec_capabilities.py"),
+        os.path.join(_here, "interaction/interaction_capabilities.py"),
         os.path.join(_here, "workers/docker_capabilities.py"),
         os.path.join(_here, "workers/workers.py"),
         os.path.join(_here, "workers/nodes_capabilities.py"),
@@ -7336,6 +7353,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(scheduler_loop())
     asyncio.create_task(instance_health_loop(interval=20))
     asyncio.create_task(_load_ollama_persistence())   # hydrate routing/nodes/embed from Redis
+    asyncio.create_task(_openbao_autounseal_boot())    # KMS auto-unseal OpenBao if configured
     # Activity recording — disabled by default, enable with VERA_ACTIVITY_RECORDING=1
     if os.getenv("VERA_ACTIVITY_RECORDING", "0") == "1":
         asyncio.create_task(_activity_worker())
@@ -7708,40 +7726,43 @@ try:
 except Exception as _mge:
     log.warning("memgraph register_ui: %s", _mge)
 
-# ── Model Routing — top-level page for ALL LLM routing control ────────────────
-# Default policy (least-busy, GPU-first), job-type profiles, role profiles
-# (research / IDE thinker-writer-verifier), per-capability rules, live activity.
-try:
-    register_ui(
-        "model-routing", "Model Routing", "⇶",
-        '<div id="panel-model-routing" style="height:100%;overflow:hidden;background:var(--bg0)"></div>',
-        r"""
-(function mountModelRoutingPanel() {
-  var mount = document.getElementById('panel-model-routing');
-  if (!mount || mount._mrMounted) return;
-  mount._mrMounted = true;
-  var frame = document.createElement('iframe');
-  var backendBase = (document.getElementById('backendUrl') || {}).value || '';
-  backendBase = backendBase.replace(/\/$/, '') || window._veraBase || (window.__VERA_BASE__||('http://'+location.hostname+':8999'));
-  frame.src = backendBase + '/ui/panels/model-routing';
-  frame.style.cssText = 'width:100%;height:100%;border:none;display:block;background:var(--bg0,#181614)';
-  frame.allow = 'clipboard-read; clipboard-write';
-  mount.appendChild(frame);
-})();
-""",
-        ui_caps=[
-            "ollama.routing.get", "ollama.routing.save", "ollama.profile.activate",
-            "ollama.profile.delete", "ollama.cap_routing.get", "ollama.cap_routing.save",
-            "ollama.cap_routing.delete", "ollama.role_profiles.get",
-            "ollama.role_profiles.save", "ollama.role_profiles.delete",
-            "llm.route.resolve", "ollama.route_stats", "ollama.request_log",
-            "media.nodes", "media.node.add", "media.node.remove",
-            "media.node.config", "media.ping", "vllm.status",
-        ],
-        mode="tab", tab_order=2,
-    )
-except Exception as _mre:
-    log.warning("model-routing register_ui: %s", _mre)
+# ── Model Routing — moved into Workers & Ollama (its "Model Routing" pane,
+# workers_ollama_panel.html, lazily mounts the same /ui/panels/model-routing
+# route this used to register as its own top-level tab) — no longer a
+# standalone top-level page. Route + panel file (routing_panel.html) stay
+# live below (_model_routing_panel), just not independently register_ui'd.
+#
+# try:
+#     register_ui(
+#         "model-routing", "Model Routing", "⇶",
+#         '<div id="panel-model-routing" style="height:100%;overflow:hidden;background:var(--bg0)"></div>',
+#         r"""
+# (function mountModelRoutingPanel() {
+#   var mount = document.getElementById('panel-model-routing');
+#   if (!mount || mount._mrMounted) return;
+#   mount._mrMounted = true;
+#   var frame = document.createElement('iframe');
+#   var backendBase = (document.getElementById('backendUrl') || {}).value || '';
+#   backendBase = backendBase.replace(/\/$/, '') || window._veraBase || (window.__VERA_BASE__||('http://'+location.hostname+':8999'));
+#   frame.src = backendBase + '/ui/panels/model-routing';
+#   frame.style.cssText = 'width:100%;height:100%;border:none;display:block;background:var(--bg0,#181614)';
+#   frame.allow = 'clipboard-read; clipboard-write';
+#   mount.appendChild(frame);
+# })();
+# """,
+#         ui_caps=[
+#             "ollama.routing.get", "ollama.routing.save", "ollama.profile.activate",
+#             "ollama.profile.delete", "ollama.cap_routing.get", "ollama.cap_routing.save",
+#             "ollama.cap_routing.delete", "ollama.role_profiles.get",
+#             "ollama.role_profiles.save", "ollama.role_profiles.delete",
+#             "llm.route.resolve", "ollama.route_stats", "ollama.request_log",
+#             "media.nodes", "media.node.add", "media.node.remove",
+#             "media.node.config", "media.ping", "vllm.status",
+#         ],
+#         mode="tab", tab_order=2,
+#     )
+# except Exception as _mre:
+#     log.warning("model-routing register_ui: %s", _mre)
 
 
 # ── Global exception capture → syslog WS feed ─────────────────────────────────

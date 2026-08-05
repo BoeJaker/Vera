@@ -166,9 +166,18 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 /* ── Tab bar: horizontal (default) ── */
 .tabs{display:flex;background:var(--bg1);border-bottom:1px solid var(--border);flex-shrink:0;overflow-x:auto;scrollbar-width:none;position:relative;z-index:20}
 .tabs::-webkit-scrollbar{display:none}
-/* Auto-hide: overlay so panels reclaim the space */
+/* Auto-hide: an OVERLAY (the tab bar leaves flow, .panels reclaims its
+   height) — but .panels reflowing into that vacated space put the
+   dashboard's own toolbar exactly where the hover-zone below lives, so
+   hovering the dashboard's own controls popped the tab bar down ON TOP of
+   them: reported as "hiding a bar in the main dashboard, not the tabs".
+   .main.autohide-reserve-h reserves that same height permanently while
+   autohide is on (whether or not the bar is currently revealed), so the
+   overlay only ever covers its own always-empty gutter — .panels never
+   sits under the hover zone or the reveal animation. */
 .tabs.autohide{position:absolute;top:0;left:0;right:0;transform:translateY(-100%);opacity:0;pointer-events:none;transition:transform .12s ease,opacity .1s ease}
 .tabs.autohide.show{transform:translateY(0);opacity:1;pointer-events:auto}
+.main.autohide-reserve-h{padding-top:42px}
 /* Hover zone: sits at the top of .main, tall enough to be easy to hit */
 .tab-hover-zone{position:absolute;top:0;left:0;right:0;height:42px;z-index:19;display:none}
 .tab-hover-zone.active{display:block}
@@ -179,6 +188,14 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 /* Multi-open indicator dot */
 .tab.open{color:var(--acc2);border-bottom-color:var(--acc2)}
 .tab.open::after{content:'';position:absolute;top:4px;right:4px;width:5px;height:5px;border-radius:50%;background:var(--acc2);opacity:.7}
+
+/* Injected sub-menu in horizontal mode — same registerNav() items the LHM
+   sidebar shows inline under the active tab, but the horizontal bar has no
+   room for that, so it flies out as a dropdown on hover instead. */
+.tab-dropdown{position:fixed;z-index:9500;background:var(--bg1);border:1px solid var(--border);border-radius:0 0 6px 6px;box-shadow:0 8px 20px rgba(0,0,0,.35);min-width:150px;padding:4px;font-family:var(--mono)}
+.tab-dropdown .tdd-item{padding:6px 10px;font-size:10px;font-weight:600;letter-spacing:.3px;color:var(--dim2);white-space:nowrap;cursor:pointer;border-radius:4px;transition:all .12s}
+.tab-dropdown .tdd-item:hover{color:var(--text);background:var(--bg2)}
+.tab-dropdown .tdd-item.on{color:var(--acc2);background:rgba(90,158,143,.08)}
 
 /* ── Tab bar controls (always at START) ── */
 .tab-controls{display:flex;align-items:center;gap:1px;flex-shrink:0;padding:0 6px 0 2px;border-right:1px solid var(--border);margin-right:2px;order:-1}
@@ -194,6 +211,16 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .lhm-nav{display:none;flex-direction:column;width:160px;min-width:120px;flex-shrink:0;background:var(--bg1);border-right:1px solid var(--border);transition:width .15s}
 .body-wrap.lhm .lhm-nav{display:flex}
 .body-wrap.lhm .lhm-nav.events-open{width:260px}
+/* Auto-hide extended to vertical/LHM mode — same overlay + reserved-gutter
+   pattern as the horizontal tab bar above (see .main.autohide-reserve-h),
+   so hovering the left edge doesn't reflow/cover real panel content
+   either. Replaces the old .body-wrap.lhm .tabs.autohide rules, which
+   targeted an element (.tabs) that's display:none in LHM mode anyway and
+   so never actually did anything here. */
+.body-wrap.lhm .lhm-nav.autohide{position:absolute;top:0;left:0;bottom:0;transform:translateX(-100%);opacity:0;pointer-events:none;transition:transform .12s ease,opacity .1s ease;z-index:20}
+.body-wrap.lhm .lhm-nav.autohide.show{transform:translateX(0);opacity:1;pointer-events:auto}
+.body-wrap.lhm .main.autohide-reserve-v{padding-left:160px}
+.body-wrap.lhm .tab-hover-zone{top:0;left:0;bottom:0;right:auto;width:28px;height:auto}
 .lhm-nav-foot{padding:4px 6px;border-top:1px solid var(--border);flex-shrink:0;display:flex;gap:2px;align-items:center;justify-content:flex-end}
 .lhm-nav .tab{display:flex;align-items:center;border-bottom:none;border-right:2px solid transparent;padding:8px 10px 8px 10px;font-family:var(--mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.7px;color:var(--dim2);white-space:normal;word-break:break-word;user-select:none;cursor:pointer;position:relative;transition:all .14s;text-align:left;line-height:1.3}
 .lhm-nav .tab:hover{color:var(--text);background:rgba(255,255,255,.025)}
@@ -209,10 +236,6 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .lhm-nav .subitem{display:block;padding:5px 10px 5px 20px;font-family:var(--mono);font-size:9px;font-weight:600;letter-spacing:.3px;color:var(--dim2);white-space:normal;word-break:break-word;user-select:none;cursor:pointer;border-right:2px solid transparent;transition:all .12s}
 .lhm-nav .subitem:hover{color:var(--text);background:rgba(255,255,255,.02)}
 .lhm-nav .subitem.on{color:var(--acc2);border-right-color:var(--acc2)}
-/* LHM auto-hide (keep for compat) */
-.body-wrap.lhm .tabs.autohide{position:absolute;top:0;left:0;bottom:0;right:auto;transform:translateX(-100%)}
-.body-wrap.lhm .tabs.autohide.show{transform:translateX(0)}
-.body-wrap.lhm .tab-hover-zone{top:0;left:0;bottom:0;right:auto;width:28px;height:auto}
 
 /* ── Panels area: multi-tab split ── */
 .panels{flex:1;overflow:hidden;position:relative;display:flex;flex-direction:row}
@@ -546,7 +569,7 @@ select option{background:var(--bg2)}
     cursor:pointer;color:var(--dim2);z-index:9999;
     box-shadow:2px 0 6px rgba(0,0,0,.3);width:18px">▶ Events</button>
 
-  <div class="main">
+  <div class="main" id="main">
     <div class="tab-hover-zone" id="tabHoverZone"></div>
     <div class="tabs" id="tabBar">
       <div class="tab active" data-tab="dashboard">Dashboard</div>
@@ -585,6 +608,7 @@ select option{background:var(--bg2)}
         <button class="tab-ctrl-btn" onclick="openTabPicker()" title="Add any registered panel as a top-level tab">⊞</button>
         <button class="tab-ctrl-btn" onclick="openActiveStandalone()" title="Open the current tab in its own standalone browser tab">↗</button>
         <button class="tab-ctrl-btn" onclick="openStandalonePicker()" title="Open any panel standalone in a new browser tab">⧉</button>
+        <button class="tab-ctrl-btn" onclick="tabToggleAutohide()" id="lhmAutohideBtn" title="Auto-hide this menu">⇔</button>
         <button class="tab-ctrl-btn" id="lhmEventsBtn" onclick="_lhmToggleEvents()" title="Toggle live events">◎</button>
       </div>
     </nav>
@@ -1737,6 +1761,7 @@ function _tabApplyLhm(){
     }
   }
   _tabRender();
+  _tabApplyAutohide();   // switching horizontal/LHM re-targets autohide at whichever nav is now visible
 }
 
 // ── Top-level nav unification ──────────────────────────────────────────────
@@ -1838,6 +1863,63 @@ function _lhmNavSync(){
       });
     }
   });
+  _tabAttachHoverMenus();
+}
+
+// Horizontal-mode equivalent of the injected sub-menu above: the top tab bar
+// has no room to show sections inline under the active tab the way the LHM
+// sidebar does, so hovering a top-level tab flies them out as a dropdown
+// instead. Idempotent — safe to call every _lhmNavSync() (new nav data, new
+// tabs); only ever wires a given .tab element's listeners once. A tab with
+// no registered nav (most panels haven't opted in) just does nothing on
+// hover, same as before this feature existed.
+function _tabAttachHoverMenus(){
+  document.querySelectorAll('#tabBar .tab').forEach(t=>{
+    if(t._navHoverWired) return;
+    t._navHoverWired = true;
+    let showTimer=null, hideTimer=null;
+    t.addEventListener('mouseenter', ()=>{
+      clearTimeout(hideTimer);
+      const pid = _tabToPanelId(t);
+      const nav = _panelNavCache[pid];
+      if(!nav || !Array.isArray(nav.items) || !nav.items.length) return;
+      clearTimeout(showTimer);
+      showTimer = setTimeout(()=>_showTabDropdown(t, pid, nav), 120);
+    });
+    t.addEventListener('mouseleave', ()=>{
+      clearTimeout(showTimer);
+      hideTimer = setTimeout(_hideTabDropdown, 200);
+    });
+  });
+}
+let _tabDropdownEl = null, _tabDropdownHideTimer = null;
+function _showTabDropdown(tabEl, pid, nav){
+  if(_tabDropdownEl && _tabDropdownEl._pid === pid) return;   // already open for this tab
+  _hideTabDropdown();
+  const dd = document.createElement('div');
+  dd.className = 'tab-dropdown';
+  dd._pid = pid;
+  nav.items.forEach(it=>{
+    const row = document.createElement('div');
+    row.className = 'tdd-item' + (it.id===nav.active ? ' on' : '');
+    row.textContent = it.label || it.id;
+    row.addEventListener('click', ()=>{
+      _lhmNavSelect(pid, it.id);
+      _panelNavCache[pid] = Object.assign({}, nav, {active: it.id});
+      _hideTabDropdown();
+    });
+    dd.appendChild(row);
+  });
+  const r = tabEl.getBoundingClientRect();
+  dd.style.left = Math.round(r.left) + 'px';
+  dd.style.top  = Math.round(r.bottom) + 'px';
+  dd.addEventListener('mouseenter', ()=>clearTimeout(_tabDropdownHideTimer));
+  dd.addEventListener('mouseleave', ()=>{ _tabDropdownHideTimer = setTimeout(_hideTabDropdown, 150); });
+  document.body.appendChild(dd);
+  _tabDropdownEl = dd;
+}
+function _hideTabDropdown(){
+  if(_tabDropdownEl){ _tabDropdownEl.remove(); _tabDropdownEl = null; }
 }
 
 // ── LHM inline live-events panel ──
@@ -1874,42 +1956,60 @@ function tabToggleAutohide(){
   _tabApplyAutohide();
   _tabSavePrefs();
 }
+// One shared "auto-hide the current top-level nav" feature, extended to
+// whichever nav is actually visible — the horizontal #tabBar, or .lhm-nav in
+// LHM/vertical mode (previously autohide only ever touched #tabBar, so
+// toggling it in LHM mode did nothing: #tabBar is display:none there).
+// _tabApplyLhm() re-runs this on every horizontal<->LHM switch so the right
+// element is wired regardless of which mode autohide was turned on in.
+function _autohideEl(){ return _lhmMode ? document.getElementById('lhmNav') : document.getElementById('tabBar'); }
 function _tabApplyAutohide(){
-  const tabBar = document.getElementById('tabBar');
   const zone = document.getElementById('tabHoverZone');
-  const btn = document.getElementById('tabAutohideBtn');
+  const hBtn = document.getElementById('tabAutohideBtn');
+  const vBtn = document.getElementById('lhmAutohideBtn');
+  const tabBar = document.getElementById('tabBar');
+  const lhmNav = document.getElementById('lhmNav');
 
-  // Clean up old listeners
+  // Clean up regardless of mode — a stale listener/class on the OTHER
+  // element (from before a mode switch) must never linger.
+  [tabBar, lhmNav].forEach(el=>{
+    if(!el) return;
+    el.removeEventListener('mouseenter', _tabReveal);
+    el.removeEventListener('mouseleave', _tabScheduleHide);
+    el.classList.remove('autohide','show');
+  });
   zone.removeEventListener('mouseenter', _tabReveal);
   zone.removeEventListener('mouseleave', _tabScheduleHide);
-  tabBar.removeEventListener('mouseenter', _tabReveal);
-  tabBar.removeEventListener('mouseleave', _tabScheduleHide);
+  document.getElementById('main')?.classList.remove('autohide-reserve-h','autohide-reserve-v');
 
   if(_autohide){
-    tabBar.classList.add('autohide');
+    const el = _autohideEl(); if(!el) return;
+    el.classList.add('autohide');
     zone.classList.add('active');
-    if(btn) btn.classList.add('active');
+    if(hBtn) hBtn.classList.add('active');
+    if(vBtn) vBtn.classList.add('active');
+    document.getElementById('main')?.classList.add(_lhmMode ? 'autohide-reserve-v' : 'autohide-reserve-h');
 
     zone.addEventListener('mouseenter', _tabReveal);
     zone.addEventListener('mouseleave', _tabScheduleHide);
-    tabBar.addEventListener('mouseenter', _tabReveal);
-    tabBar.addEventListener('mouseleave', _tabScheduleHide);
+    el.addEventListener('mouseenter', _tabReveal);
+    el.addEventListener('mouseleave', _tabScheduleHide);
   } else {
-    tabBar.classList.remove('autohide','show');
     zone.classList.remove('active');
-    if(btn) btn.classList.remove('active');
+    if(hBtn) hBtn.classList.remove('active');
+    if(vBtn) vBtn.classList.remove('active');
     if(_autohideTimer){clearTimeout(_autohideTimer);_autohideTimer=null;}
   }
 }
 
 function _tabReveal(){
   if(_autohideTimer){clearTimeout(_autohideTimer);_autohideTimer=null;}
-  document.getElementById('tabBar').classList.add('show');
+  _autohideEl()?.classList.add('show');
 }
 function _tabScheduleHide(){
   if(_autohideTimer) clearTimeout(_autohideTimer);
   _autohideTimer = setTimeout(()=>{
-    document.getElementById('tabBar').classList.remove('show');
+    _autohideEl()?.classList.remove('show');
     _autohideTimer = null;
   }, 250);
 }
@@ -3789,12 +3889,14 @@ function _ensurePanelLoaded(panelEl) {
   // check whether the route actually committed a document instead, so a
   // heavy/slow panel (big charting libs, live data feeds) still gets init
   // promptly rather than only once its very last straggling resource finishes.
-  poll = setInterval(() => {
+  const pollTick = () => {
     if (settled) { clearInterval(poll); return; }
     const responded = Array.from(frames).filter(_frameResponded);
     responded.forEach(sendInit);
     if (responded.length === frames.length) done();
-  }, 700);
+  };
+  pollTick();                    // check immediately — most routes commit well under 150ms
+  poll = setInterval(pollTick, 150);
   // Backstop: only claim "didn't respond" if NO frame got a document in 12s;
   // if any route answered, drop the overlay and let the panel show through.
   panelEl._loadTimer = setTimeout(() => {

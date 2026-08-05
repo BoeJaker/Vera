@@ -73,6 +73,12 @@ select option{background:var(--bg2)}
 .mtab{padding:7px 13px;font-size:10.5px;font-weight:500;cursor:pointer;color:var(--dim2);border-bottom:2px solid transparent;transition:all .15s;user-select:none;white-space:nowrap;flex-shrink:0}
 .mtab.on{color:var(--acc3);border-bottom-color:var(--acc3)}
 #content{flex:1;overflow-y:auto;padding:14px 16px}
+/* Empty-state: same centred icon + message pattern as skills_panel.html /
+   ontologies_panel.html, so the "no selection" states across this trio of
+   panels read as one consistent family instead of Agents' plain text line. */
+.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;padding:30px 14px;text-align:center;color:var(--dim)}
+.empty-state .es-ico{font-size:22px;opacity:.5}
+.empty-state .es-txt{font-size:10.5px;line-height:1.5}
 /* Save bar */
 #saveBar{display:none;flex-shrink:0;padding:8px 14px;border-top:1px solid var(--border);background:var(--bg1);align-items:center;gap:8px}
 /* Params */
@@ -130,7 +136,7 @@ input[type=range]{padding:0;accent-color:var(--acc3);cursor:pointer}
       <div class="mtab"    onclick="AP.tab('test',this)">Test</div>
     </div>
     <div id="content">
-      <div id="ed-empty" style="color:var(--dim);font-size:11px;padding:20px 0">Select an agent or click <strong>+ New</strong>.</div>
+      <div id="ed-empty" class="empty-state" style="margin-top:30px"><div class="es-ico">◆</div><div class="es-txt">Select an agent from the list,<br>or click <b style="color:var(--acc3)">+ New</b> to create one.</div></div>
       <div id="ed-wrap" style="display:none">
         <input type="hidden" id="f-id">
 
@@ -500,7 +506,7 @@ const AP = (() => {
   function renderList(){
     const el=document.getElementById('agList');
     const total=document.getElementById('ag-total');if(total)total.textContent=agents.length;
-    if(!agents.length){el.innerHTML='<div style="color:var(--dim);font-size:11px;padding:12px">No agents.</div>';return;}
+    if(!agents.length){el.innerHTML='<div class="empty-state"><div class="es-ico">◆</div><div class="es-txt">No agents yet.<br>Click <b style="color:var(--acc3)">+ New</b> to create one.</div></div>';return;}
     el.innerHTML=agents.map(a=>{
       const mode=a.tool_mode||'none';
       const mb=mode!=='none'?`<span class="bdg bdg-${mode}">${mode}</span>`:'';

@@ -373,6 +373,7 @@ html.vpb-nav-hosted #secNav{display:none}
     <div class="snav" data-pane="nodes" onclick="P.show('nodes',this)">Nodes</div>
     <div class="navdiv"></div>
     <div class="snav" data-pane="ollama" onclick="P.show('ollama',this)">Ollama</div>
+    <div class="snav" data-pane="modelrouting" onclick="P.show('modelrouting',this)">Model Routing</div>
     <div class="navdiv"></div>
     <div class="snav" data-pane="observe" onclick="P.show('observe',this)">Observe</div>
     <div class="navdiv"></div>
@@ -1725,6 +1726,9 @@ html.vpb-nav-hosted #secNav{display:none}
          fixes the vLLM "nothing is clickable" bug (its scripts now run in
          their own window instead of being dropped by innerHTML injection).
          ════════════════════════════════════════════════════════════════════ -->
+    <div class="pane" id="pane-modelrouting" style="padding:0;overflow:hidden">
+      <iframe id="modelrouting-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
     <div class="pane" id="pane-mimic" style="padding:0;overflow:hidden">
       <iframe id="mimic-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
     </div>
@@ -5849,6 +5853,7 @@ function showPane(name, el){
   if(name==='docker'){ if(!Object.keys(_dkrHosts||{}).length) _dkrInitHosts(); dkrWorkerList(); sbxRefresh(); stkRefresh(); if(_dkrHostId) dkrRefresh(); }
   if(name==='proxmox'){ if(_pmxInited){ if(_pmxCur) pmxRefresh(); } else pmxInit(); nmTick(true); }
   if(name==='sandbox'){ const el=$('wk-sandbox-ctl'); if(el&&el.refresh) el.refresh(); }
+  if(name==='modelrouting'){ _mountFrame('modelrouting-frame', BASE+'/ui/panels/model-routing'); }
   if(name==='mimic'){ _mountFrame('mimic-frame', BASE+'/cluster/mimic/panel'); }
   if(name==='vllm'){ _mountFrame('vllm-frame', BASE+'/vllm/panel'); }
   if(name==='openclaw'){ _mountFrame('openclaw-frame', BASE+'/openclaw/panel'); }
@@ -5872,6 +5877,7 @@ function showPane(name, el){
 // of Observe/Ollama, not real top-level panes of their own).
 if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
   {id:'workers', label:'Workers'}, {id:'nodes', label:'Nodes'}, {id:'ollama', label:'Ollama'},
+  {id:'modelrouting', label:'Model Routing'},
   {id:'observe', label:'Observe'}, {id:'proxmox', label:'Proxmox'}, {id:'storage', label:'Storage'},
   {id:'docker', label:'Docker'}, {id:'sandbox', label:'Sandbox'}, {id:'network', label:'Network'},
   {id:'connections', label:'Connections'}, {id:'mimic', label:'Mimic'}, {id:'vllm', label:'vLLM'},

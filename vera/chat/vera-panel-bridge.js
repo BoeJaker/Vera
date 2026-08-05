@@ -511,7 +511,12 @@
     try{ var sig = JSON.stringify(s); if(sig === _lastState) return; _lastState = sig; }catch(e){}
     try{ window.parent.postMessage({type: 'vera:panel:state', panel_id: _panelId, session_id: _sessionId, state: s}, '*'); }catch(e){}
   }
-  function publishStateDebounced(){ if(_publishTimer) clearTimeout(_publishTimer); _publishTimer = setTimeout(publishState, 250); }
+  // 80ms, not the 250ms this used to be — mainly coalesces bursts of rapid
+  // DOM mutations (the click/change/input listeners below), not a
+  // deliberate throttle; the injected-nav round trip (registerNav ->
+  // publish -> host -> nav_hosted reply) was visibly slow to settle and
+  // every ms here is on that critical path.
+  function publishStateDebounced(){ if(_publishTimer) clearTimeout(_publishTimer); _publishTimer = setTimeout(publishState, 80); }
   function publishEvent(name, payload){
     try{ window.parent.postMessage({type: 'vera:panel:event', panel_id: _panelId, event: name, payload: payload || {}}, '*'); }catch(e){}
   }
@@ -540,7 +545,7 @@
       // correctly-tagged copy — the only one any panel_id-keyed listener
       // can actually use — never goes out at all without this reset.
       _lastState = null;
-      setTimeout(publishState, 50);
+      publishState();
     } else if(t === 'vera:panel:nav_hosted'){
       // The host confirms it received our registerNav() items and is
       // rendering them itself (only sent back once it actually saw a
