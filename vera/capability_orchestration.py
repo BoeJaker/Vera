@@ -5496,7 +5496,7 @@ async def _gather_subsystem_snapshot() -> Dict:
     the other's gather logic. `nodes`/`cluster` are only consumed by the
     topology map today, but there's no reason for it to run a second parallel
     gather just for two more cheap (cache-backed, no live SSH) calls."""
-    sysmon, mesh, loop_lab, sandboxes, mimic, nodes, cluster, temps, memstats, redis_info, docker_stats = await asyncio.gather(
+    sysmon, mesh, loop_lab, sandboxes, mimic, nodes, cluster, temps, memstats, redis_info, docker_stats, perf = await asyncio.gather(
         _cap_call("sysmon.status"),
         _cap_call("mesh.nodes"),
         _cap_call("evolve.sandbox.status"),
@@ -5508,11 +5508,12 @@ async def _gather_subsystem_snapshot() -> Dict:
         _cap_call("memory.stats"),
         _cap_call("obs.redis"),
         _cap_call("docker.stats.top"),
+        _cap_call("perf.stalls", limit=5),
     )
     return {"sysmon": sysmon, "mesh": mesh, "loop_lab": loop_lab,
             "sandboxes": sandboxes, "mimic": mimic, "nodes": nodes,
             "cluster": cluster, "temps": temps, "memstats": memstats, "redis": redis_info,
-            "docker_stats": docker_stats}
+            "docker_stats": docker_stats, "perf": perf}
 
 
 def _dot_state(ok: bool, exists: bool, warn: bool = False) -> str:
@@ -5619,9 +5620,11 @@ def _node_leaf_status(backends: List[str], temp_entry: Optional[Dict]) -> str:
                         "main-dashboard SVG topology map: one hub node, one "
                         "category node per subsystem (Nodes/Workers/Ollama/Mesh/"
                         "Fabric/Docker/Sandboxes), a standalone Redis service "
-                        "node, three subsystem-source service nodes (Dream/Chat/"
-                        "DAG — animation endpoints only, always 'ok' since "
-                        "they're code paths not machines), and one leaf per "
+                        "node, six subsystem-source service nodes (Dream/Chat/"
+                        "DAG/User/Perf/Error Monitor — animation endpoints, "
+                        "always 'ok' since they're code paths not machines, "
+                        "except Perf which reflects a real recent perf.stalls "
+                        "reading), and one leaf per "
                         "actual machine/worker/instance/mesh device/Proxmox "
                         "guest/Docker container/session sandbox with an "
                         "ok/warn/err/unknown status (host leaves fold in "
@@ -5645,12 +5648,25 @@ def _node_leaf_status(backends: List[str], temp_entry: Optional[Dict]) -> str:
                         "onto whichever node represents that subsystem: dream/"
                         "chat/agent_loop_v*/dag* -> the matching service node, "
                         "docker -> the Docker category, sandbox/evolve -> the "
-                        "Sandboxes category). Location/network/data layers "
-                        "aren't implemented: Vera doesn't collect rack/physical "
-                        "placement or flow-level network data today, and this "
-                        "map doesn't fake a layer off data that doesn't exist. "
+                        "Sandboxes category, chat/ide/operator/accounts/"
+                        "calendar/email -> User first, perf -> the Perf node, "
+                        "any cap.error/ollama.request_error -> an extra chip "
+                        "to Error Monitor regardless of which group raised "
+                        "it), filtered against the same noisy-group skip-list "
+                        "convention _ACT_SKIP_GROUPS already uses server-side "
+                        "(obs/health/ui/mcp/session/syslog/panel never "
+                        "animate) so a poll-heavy subsystem can't flood the "
+                        "map. Also emits 'serves' edges linking a machine leaf "
+                        "directly to the exact Ollama instance / Docker host "
+                        "nodes.list's own merge already resolved it backs (on "
+                        "top of the generic category edge) — real hardware-"
+                        "backs-service links, never guessed. Location/network/"
+                        "data layers aren't implemented: Vera doesn't collect "
+                        "rack/physical placement or flow-level network data "
+                        "today, and this map doesn't fake a layer off data "
+                        "that doesn't exist. "
                         "Output: {nodes:[{id,label,kind,status,detail,temp_c}], "
-                        "edges:[{from,to}], ts}.")
+                        "edges:[{from,to,kind}], ts}.")
 async def topology_snapshot(trace_id=None) -> Dict:
     snap = await _gather_subsystem_snapshot()
     nodes_out: List[Dict] = [{"id": "hub", "label": "Vera", "kind": "hub", "status": "ok", "detail": ""}]
@@ -5853,6 +5869,33 @@ async def topology_snapshot(trace_id=None) -> Dict:
                                "status": "ok" if lab_ok else "warn", "detail": detail})
             edges_out.append({"from": "cat:sandboxes", "to": "sandbox:looplab"})
 
+    # ── Hardware -> service structured edges: nodes.list's own _build_nodes()
+    #    merge already resolves which physical machine backs which Ollama
+    #    instance (URL-host match or the catalog's NODE_SSH map) and which
+    #    Docker host id a machine runs — that's a REAL "this hardware serves
+    #    that service" relationship, not a guess, so it gets its own edge on
+    #    top of the generic category edge instead of everything only ever
+    #    fanning out under "Nodes"/"Ollama"/"Docker" with no link between
+    #    them. ("192.168.0.138 serves vera" made literal: the machine leaf
+    #    gets a direct edge to the exact service leaf it hosts.) Docker is
+    #    coarser — individual containers in docker.stats.top aren't tied back
+    #    to a specific physical host today, so a matching machine links to
+    #    the whole Docker category rather than a fabricated per-container
+    #    edge. ──
+    existing_ids = {n["id"] for n in nodes_out}
+    docker_host_ids_seen = set(dhosts.keys()) if all_containers else set()
+    for m in machines:
+        nid = f"node:{m.get('id', '')}"
+        if nid not in existing_ids:
+            continue
+        for oi in (m.get("ollama") or []):
+            oid = f"ollama:{oi.get('id', '')}"
+            if oid in existing_ids:
+                edges_out.append({"from": nid, "to": oid, "kind": "serves"})
+        dhid = m.get("docker_host_id")
+        if dhid and dhid in docker_host_ids_seen:
+            edges_out.append({"from": nid, "to": "cat:docker", "kind": "serves"})
+
     # ── Subsystem sources: Dream / Chat / DAG (agent loops) don't have a
     #    machine inventory of their own — they're code paths, always "up" if
     #    Vera itself is up — but they're the actual origin of most live
@@ -5863,6 +5906,34 @@ async def topology_snapshot(trace_id=None) -> Dict:
     #    everything flying out of the Ollama category regardless of origin. ──
     for sid, label in (("svc:dream", "Dream"), ("svc:chat", "Chat"), ("svc:dag", "DAG / Loops")):
         nodes_out.append({"id": sid, "label": label, "kind": "service", "status": "ok", "detail": ""})
+        edges_out.append({"from": "hub", "to": sid})
+
+    # ── User / Perf / Error Monitor: three more fixed animation endpoints,
+    #    same "code path, not a machine, always up if Vera is up" treatment
+    #    as Dream/Chat/DAG above.
+    #      - User is the SOURCE every human-initiated touchpoint (chat, IDE,
+    #        operator, accounts, calendar, email — see the frontend's
+    #        USER_TOUCHPOINT_GROUPS) routes through first, so those events
+    #        have somewhere real to originate from on the map instead of
+    #        appearing to spawn out of the subsystem they happened to land in.
+    #      - Perf reflects the SAME watchdog stall/hang feed
+    #        <vera-error-radar> already polls (perf.stalls) — real "warn" if
+    #        the last few captured events include a genuine stall/hang,
+    #        never a fabricated always-green light.
+    #      - Error Monitor is a SINK: every cap.error / ollama.request_error,
+    #        regardless of which group raised it, gets an extra chip flown
+    #        here (frontend), so failures visibly flow through the system to
+    #        one place instead of only ever recolouring their origin node. ──
+    perf = snap.get("perf") if isinstance(snap.get("perf"), dict) else {}
+    recent_stalls = [e for e in (perf.get("events") or []) if e.get("kind") in ("stall", "hang")]
+    for sid, label, status, detail in (
+        ("user", "User", "ok", "chat / IDE / operator / API entry points"),
+        ("svc:perf", "Perf",
+         "warn" if recent_stalls else "ok",
+         (f"{len(recent_stalls)} recent stall(s)" if recent_stalls else "no stalls")),
+        ("svc:errors", "Error Monitor", "ok", "cap.error / ollama errors flow here"),
+    ):
+        nodes_out.append({"id": sid, "label": label, "kind": "service", "status": status, "detail": detail})
         edges_out.append({"from": "hub", "to": sid})
 
     return {"nodes": nodes_out, "edges": edges_out, "ts": now_iso()}
@@ -7135,6 +7206,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "fabric/memory_retrieval.py"),
         os.path.join(_here, "fabric/discovery.py"),
         os.path.join(_here, "fabric/knowledgebase.py"),
+        os.path.join(_here, "text/text_ops_capabilities.py"),
         os.path.join(_here, "skills/skills.py"),
         os.path.join(_here, "skills/skills_owl.py"),
         os.path.join(_here, "dag/dag_store.py"),
