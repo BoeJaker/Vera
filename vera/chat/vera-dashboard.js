@@ -71,6 +71,26 @@
     if (_dragGuardEl) { _dragGuardEl.remove(); _dragGuardEl = null; }
   }
 
+  // The dashboard's real scrolling ancestor is almost never `window` — every
+  // host page (main dashboard, Dream, Workers & Ollama) wraps its tab content
+  // in its own overflow-y:auto container (a `.panel` div here, something else
+  // elsewhere), with `window`/`document.documentElement` itself never
+  // scrolling at all. Walk up from the grid to find whichever ancestor is
+  // ACTUALLY the one with scroll room, rather than assuming a specific class
+  // name (which would only work on one host page) or `window` (which mostly
+  // never scrolls on any of them).
+  function _scrollParent(el) {
+    var node = el.parentElement;
+    while (node && node !== document.body) {
+      var cs = getComputedStyle(node);
+      if ((cs.overflowY === 'auto' || cs.overflowY === 'scroll') && node.scrollHeight > node.clientHeight + 1) {
+        return node;
+      }
+      node = node.parentElement;
+    }
+    return document.scrollingElement || document.documentElement;
+  }
+
   /* ── injected CSS (once) ─────────────────────────────────────────────── */
   function injectCSS() {
     if (document.getElementById('vera-dash-css')) return;
@@ -426,23 +446,30 @@
       // the user holds the cursor STILL at the viewport edge and expects the
       // page to keep scrolling — so a rAF loop re-checks the last known
       // cursor position every frame, independent of new mousemove events.
+      var scrollEl = _scrollParent(grid);
       var EDGE = 56, MAX_SPEED = 16;
       var lastX = sx, lastY = sy, rafId = null;
       function autoScrollTick() {
-        var vh = window.innerHeight;
+        // The edge zone is relative to the SCROLL CONTAINER's own box, not
+        // the raw browser viewport — on a page where that container doesn't
+        // fill the whole window (a toolbar/tab-bar above it, say) the two
+        // don't line up, and triggering off the wrong one either fires the
+        // auto-scroll too early or never at the container's actual edge.
+        var r = scrollEl.getBoundingClientRect();
+        var top = Math.max(0, r.top), bottom = Math.min(window.innerHeight, r.bottom);
         var d = 0;
-        if (lastY < EDGE) d = -MAX_SPEED * (1 - lastY / EDGE);
-        else if (lastY > vh - EDGE) d = MAX_SPEED * (1 - (vh - lastY) / EDGE);
+        if (lastY < top + EDGE) d = -MAX_SPEED * (1 - (lastY - top) / EDGE);
+        else if (lastY > bottom - EDGE) d = MAX_SPEED * (1 - (bottom - lastY) / EDGE);
         if (d) {
-          var before = window.pageYOffset;
-          window.scrollBy(0, d);
-          var actual = window.pageYOffset - before;   // 0 at document start/end
+          var before = scrollEl.scrollTop;
+          scrollEl.scrollBy(0, d);
+          var actual = scrollEl.scrollTop - before;   // 0 at scroll start/end
           if (actual) {
             // The ghost is position:fixed (viewport-relative) and its left/top
             // were computed from a rect taken ONCE at drag start — scrolling
-            // the page after that moves the widget's real position without
-            // moving the ghost, so compensate by the same amount to keep it
-            // visually anchored over the widget as the page scrolls beneath it.
+            // the container after that moves the widget's real position
+            // without moving the ghost, so compensate by the same amount to
+            // keep it visually anchored over the widget as it scrolls beneath.
             scrolled += actual;
             ghost.style.top = (startRect.top - scrolled) + 'px';
             applySize(lastX, lastY);   // re-derive target size at the new ghost height
@@ -463,7 +490,19 @@
         allowed.forEach(function (n) { w.classList.remove('w-w' + n); });
         [1, 2, 3, 4, 5, 6].forEach(function (n) { w.classList.remove('w-h' + n); });
         w.classList.add('w-w' + targetW); w.classList.add('w-h' + targetH);
-        state.sizes[w.dataset.wid] = { w: targetW, h: targetH };
+        // grid-row:span N alone doesn't guarantee N rows' worth of PIXELS —
+        // minmax(58px,auto) sizes each row-track to whatever's tallest among
+        // every widget sharing it, and CSS grid stretches every item to fill
+        // its own cell by default — so a widget explicitly shrunk here could
+        // still render as tall as an unrelated neighbour parked in the same
+        // row-track, with the drag having no visible effect. An explicit
+        // max-height, derived from THIS widget's own just-measured row pitch
+        // (not a guess), caps it regardless of what any other widget's
+        // row-track needs — scoped to only widgets someone has actually
+        // dragged, so nothing not touched by this ever changes appearance.
+        var maxH = Math.max(50, Math.round(targetH * rowPitch - gapY));
+        w.style.maxHeight = maxH + 'px';
+        state.sizes[w.dataset.wid] = { w: targetW, h: targetH, maxH: maxH };
         save();
       }
       applySize(sx, sy);   // seed the label before any movement
@@ -501,10 +540,15 @@
       ws.forEach(function (w) {
         if (state.hidden.has(w.dataset.wid)) w.classList.add('hidden'); else w.classList.remove('hidden');
       });
-      Object.keys(state.sizes).forEach(function (wid) {
-        var w = map[wid]; if (!w) return; var sz = state.sizes[wid];
-        if (sz.w) { [2, 3, 4, 6, 8, 12].forEach(function (n) { w.classList.remove('w-w' + n); }); w.classList.add('w-w' + sz.w); }
-        if (sz.h) { [1, 2, 3, 4, 5, 6].forEach(function (n) { w.classList.remove('w-h' + n); }); w.classList.add('w-h' + sz.h); }
+      // Runs over EVERY widget (not just ones with a saved size) so a widget
+      // that had a manual max-height (see onResizeDown's up()) but was then
+      // reset/removed from state.sizes actually loses that inline cap again,
+      // instead of it lingering forever.
+      ws.forEach(function (w) {
+        var sz = state.sizes[w.dataset.wid];
+        if (sz && sz.w) { [2, 3, 4, 6, 8, 12].forEach(function (n) { w.classList.remove('w-w' + n); }); w.classList.add('w-w' + sz.w); }
+        if (sz && sz.h) { [1, 2, 3, 4, 5, 6].forEach(function (n) { w.classList.remove('w-h' + n); }); w.classList.add('w-h' + sz.h); }
+        w.style.maxHeight = (sz && sz.maxH) ? sz.maxH + 'px' : '';
       });
       renderHidden();
     }
