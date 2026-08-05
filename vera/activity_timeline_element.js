@@ -266,10 +266,18 @@
         this._paintRail(evs);
         return;
       }
+      // An empty _lastSig means this is either the very first paint or a
+      // fresh scope/filter switch (both explicitly clear it) — in either case
+      // there's no scroll position worth preserving, and the useful default
+      // is showing the newest activity (now the rightmost card) rather than
+      // landing on whatever the oldest event happens to be. A background
+      // auto-refresh that found genuinely new events, by contrast, DOES have
+      // a real _lastSig to fall through to the normal preserve-scroll path.
+      const firstPaint = !this._lastSig;
       this._lastSig = sig;
       const scrollLeft = box ? box.scrollLeft : 0;
       this._paintCards(evs);
-      if (box) box.scrollLeft = scrollLeft;         // preserve horizontal scroll
+      if (box) box.scrollLeft = firstPaint ? box.scrollWidth : scrollLeft;
       this._reopenWatches();                        // re-attach any live watches
       this._paintRail(evs);
     }
@@ -377,7 +385,19 @@
       const box = this.shadowRoot.querySelector('#cards');
       if (!box) return;
       if (!evs.length) { box.innerHTML = '<div class="empty">No activity for this scope yet.</div>'; return; }
-      box.innerHTML = evs.map((e, i) => this._cardHtml(e, i)).join('');
+      // evs is newest-first (the /activity/timeline API's own contract), but
+      // the timeline RAIL below is a plain chronological axis — oldest at the
+      // left (0%), newest at the right (100%). Rendering cards in API order
+      // put the newest card at the far LEFT of the carousel, the opposite end
+      // from where the rail puts it, so clicking a rail node (always scrolling
+      // toward "newest = right") landed you looking the wrong way for a card
+      // that was actually leftmost. Render oldest -> newest so both views
+      // agree on which side is "now". `i` passed to _cardHtml stays the
+      // ORIGINAL evs index (not the display position) — the rail's node
+      // index, the open-watch set, and _refreshTimes()'s data-time lookup all
+      // key off it, so only the rendering order flips, nothing else.
+      const order = evs.map((e, i) => i).reverse();
+      box.innerHTML = order.map(i => this._cardHtml(evs[i], i)).join('');
       box.querySelectorAll('[data-open]').forEach(b => b.addEventListener('click', ev => { ev.stopPropagation(); this._openUi(b.getAttribute('data-open')); }));
       box.querySelectorAll('[data-scope]').forEach(b => b.addEventListener('click', ev => { ev.stopPropagation(); this.setScope(b.getAttribute('data-scope')); }));
       box.querySelectorAll('[data-files]').forEach(b => b.addEventListener('click', ev => { ev.stopPropagation(); this.setScope(b.getAttribute('data-files')); this._openFiles(); }));

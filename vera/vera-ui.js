@@ -158,6 +158,57 @@
     return s;
   }
 
+  // ── 0c. Truthful-animation primitive ───────────────────────────────────────
+  // The one rule every new infographic in this app must follow: animation
+  // reflects a REAL event that just happened, never decorative perpetual
+  // motion. pulseOnce() is the single mechanism for that — a ONE-SHOT CSS
+  // flash triggered by a real state change, self-removing when it finishes,
+  // never `animation: X infinite`. Centralising it here (rather than letting
+  // each new component reinvent its own "just add a class" logic) is what
+  // makes the rule structural instead of a convention someone can forget —
+  // the same reasoning as this session's is_dev_sandbox()/routing-drift work:
+  // don't just document the rule, build the thing that can't violate it.
+  var PULSE_CSS_ID = 'vera-pulse-once-css';
+  var PULSE_CLASS = 'vera-pulse-once';
+  function _ensurePulseCss(){
+    if(document.getElementById(PULSE_CSS_ID)) return;
+    var s = document.createElement('style');
+    s.id = PULSE_CSS_ID;
+    s.textContent =
+      '@keyframes vera-pulse-once-kf{' +
+        '0%{box-shadow:0 0 0 0 var(--vera-pulse-color,var(--ac,#5ad1ff));' +
+          'background-color:var(--vera-pulse-bg,transparent)}' +
+        '35%{box-shadow:0 0 0 6px transparent;' +
+          'background-color:var(--vera-pulse-bg-peak,transparent)}' +
+        '100%{box-shadow:0 0 0 0 transparent;background-color:transparent}' +
+      '}' +
+      '.' + PULSE_CLASS + '{animation:vera-pulse-once-kf var(--vera-pulse-ms,900ms) ease-out 1}';
+    document.head.appendChild(s);
+  }
+  // pulseOnce(el, {ms, color}) — flash `el` exactly once. Safe to call rapidly
+  // in succession (e.g. several real events landing close together): each
+  // call restarts the animation from the top via a reflow-forcing class
+  // toggle, rather than stacking or being ignored while one is in-flight.
+  function pulseOnce(el, opts){
+    if(!el) return;
+    _ensurePulseCss();
+    opts = opts || {};
+    if(opts.ms) el.style.setProperty('--vera-pulse-ms', opts.ms + 'ms');
+    if(opts.color) el.style.setProperty('--vera-pulse-color', opts.color);
+    el.classList.remove(PULSE_CLASS);
+    // eslint-disable-next-line no-unused-expressions
+    void el.offsetWidth;   // force reflow so re-adding the class restarts the animation
+    el.classList.add(PULSE_CLASS);
+    var done = function(){
+      el.classList.remove(PULSE_CLASS);
+      el.removeEventListener('animationend', done);
+    };
+    el.addEventListener('animationend', done);
+    // Fallback in case animationend never fires (element removed mid-flight,
+    // a browser quirk, etc.) — never leave the class stuck on permanently.
+    setTimeout(done, (opts.ms || 900) + 300);
+  }
+
   // ── 1. Load theme CSS ──────────────────────────────────────────────────────
   if(!document.getElementById('vera-themes-css')){
     var link = document.createElement('link');
@@ -234,7 +285,25 @@
     if(vars['--t1'])  set('--text0', vars['--t1']);
     if(vars['--t2'])  set('--text1', vars['--t2']);
     if(vars['--t3'])  set('--text2', vars['--t3']);
+    // IDE panels (ide_panel.html and its kin) also declare a 4th text tier
+    // and a HIGHLIGHTED border that this mapping never reached — those two
+    // properties stayed frozen at their hardcoded defaults on every theme
+    // switch even though --bg0-3/--text0-2/--accent all correctly updated,
+    // which is what made "the IDE" read as only half-following the theme.
+    // The theme source has no dedicated 4th text tier, so --text3 tracks
+    // the same --t3 as --text2 (a shared source beats a value that never
+    // moves at all) — --border-hi has a real match in --bd2.
+    if(vars['--t3'])  set('--text3', vars['--t3']);
+    if(vars['--bd2']) set('--border-hi', vars['--bd2']);
     if(vars['--ac'])  set('--accent', vars['--ac']);
+    // Same story for the IDE's extended --accent2..5 badge/status colours —
+    // each maps to the closest real themed hue rather than a literal
+    // renumbering of one var (there's no dedicated 6th theme hue, so
+    // --accent6 is intentionally left alone rather than inventing one).
+    if(vars['--ac2']) set('--accent2', vars['--ac2']);
+    if(vars['--ac3']) set('--accent3', vars['--ac3']);
+    if(vars['--ac5']) set('--accent4', vars['--ac5']);
+    if(vars['--ac4']) set('--accent5', vars['--ac4']);
     return out;
   }
 
@@ -565,6 +634,9 @@
     makeScaleControl: _makeScaleControl,
     SCALE_MIN: SCALE_MIN, SCALE_MAX: SCALE_MAX, SCALE_STEP: SCALE_STEP,
     BASE: BASE,
+    // Truthful-animation primitive — see §0c. Every new infographic element
+    // uses this instead of rolling its own CSS animation loop.
+    pulseOnce: pulseOnce,
   };
 
   // ── Auto-init ──────────────────────────────────────────────────────────────
