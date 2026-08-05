@@ -368,12 +368,18 @@
       this._applyCam();
     }
 
-    // ── layout: fixed radial hub → ring1 → ring2, keyed by id so positions
-    // stay stable across polls (no force simulation needed for a shallow,
-    // slowly-changing graph like this). Ring1 is whatever's directly wired to
-    // the hub — usually a "category" (Nodes/Workers/Ollama/Mesh/Fabric) but
-    // also standalone single-instance services (Redis) that have no children
-    // of their own; ring2 is anything wired to a ring1 node. ─────────────────
+    // ── layout: radial hub → ring1 → ring2, keyed by id so positions stay
+    // stable across polls (no force simulation needed for a shallow, slowly-
+    // changing graph like this). Ring1 is whatever's directly wired to the
+    // hub — usually a "category" (Nodes/Workers/Ollama/Mesh/Fabric/Docker/
+    // Sandboxes) but also standalone single-instance services (Redis) that
+    // have no children of their own; ring2 is anything wired to a ring1 node.
+    // Both a category's DISTANCE from the hub and its ANGULAR share of the
+    // circle scale with how many leaves it has — a fixed radius/equal-angle
+    // layout put a 12+-leaf category (Nodes/Docker/Sandboxes) on the exact
+    // same ring as a 1-leaf service, so its own leaf-fan routinely swept into
+    // its neighbours' territory. Highly-connected categories now sit further
+    // out AND claim more of the circle, proportional to their own fan-out. ──
     _layout(nodes) {
       const byId = new Map(nodes.map(n => [n.id, n]));
       const hub = byId.get('hub');
@@ -381,14 +387,21 @@
       const edgesByParent = {};
       this._edges.forEach(e => { (edgesByParent[e.from] = edgesByParent[e.from] || []).push(e.to); });
       const ring1 = (edgesByParent['hub'] || []).map(id => byId.get(id)).filter(Boolean);
-      const R1 = 150;
+      const leafCount = c => (edgesByParent[c.id] || []).length;
+      const r2Of = c => Math.min(95, 30 + leafCount(c) * 5);
+      const weights = ring1.map(c => 1 + leafCount(c) * 0.2);
+      const totalW = weights.reduce((a, b) => a + b, 0) || 1;
+      let acc = 0;
       ring1.forEach((c, i) => {
-        const a = (i / Math.max(1, ring1.length)) * Math.PI * 2 - Math.PI / 2;
-        c.x = Math.cos(a) * R1; c.y = Math.sin(a) * R1;
+        const slot = weights[i] / totalW;
+        const a = (acc + slot / 2) * Math.PI * 2 - Math.PI / 2;
+        acc += slot;
+        const r1 = 110 + r2Of(c);
+        c.x = Math.cos(a) * r1; c.y = Math.sin(a) * r1;
       });
       ring1.forEach(c => {
         const leafIds = edgesByParent[c.id] || [];
-        const R2 = Math.min(95, 30 + leafIds.length * 5);
+        const R2 = r2Of(c);
         leafIds.forEach((lid, j) => {
           const leaf = byId.get(lid); if (!leaf) return;
           const a = (j / Math.max(1, leafIds.length)) * Math.PI * 2;
