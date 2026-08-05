@@ -58,6 +58,12 @@
   color-scheme:light;
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+/* html itself had no background at all — invisible normally since body's
+   own box always covered the viewport, but the autohide padding transition
+   on .main forces a reflow of body's box on every hide/reveal, and for one
+   frame mid-transition the browser's default white canvas showed through
+   at the edges: "a flash of white" specifically in dark themes. */
+html{background:var(--bg0)}
 body{background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:13px;height:calc(100vh / var(--ui-scale, 1));display:flex;flex-direction:column;overflow:hidden;-webkit-font-smoothing:antialiased}
 html, body, button, input, select, textarea, span, div {
   font-variant-emoji: text;
@@ -130,7 +136,7 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .btn:disabled{opacity:.35;cursor:not-allowed;pointer-events:none}
 
 /* LAYOUT */
-.body-wrap{display:flex;flex:1;overflow:hidden}
+.body-wrap{display:flex;flex:1;overflow:hidden;background:var(--bg0)}
 .sidebar{width:240px;border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;background:var(--bg1);transition:width .15s}
 /* In LHM mode the event sidebar hides — its content is accessible via the Observe tab */
 .body-wrap.lhm .sidebar{display:none}
@@ -161,7 +167,7 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .ev:hover{background:rgba(255,255,255,.02)}
 .ev.ok{border-color:var(--ok)}.ev.err{border-color:var(--err);color:var(--err)}.ev.info{border-color:var(--acc)}.ev.warn{border-color:var(--warn)}
 .ev-time{color:var(--dim)}
-.main{flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative;transition:padding .12s ease}
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative;transition:padding .12s ease;background:var(--bg0)}
 
 /* ── Tab bar: horizontal (default) ── */
 .tabs{display:flex;background:var(--bg1);border-bottom:1px solid var(--border);flex-shrink:0;overflow-x:auto;scrollbar-width:none;position:relative;z-index:20}
@@ -581,6 +587,7 @@ select option{background:var(--bg2)}
       <div class="tab-controls">
         <button class="tab-ctrl-btn" onclick="tabToggleLhm()" title="Toggle left-hand menu" id="tabLhmBtn">☰</button>
         <button class="tab-ctrl-btn" onclick="tabToggleAutohide()" title="Auto-hide tabs" id="tabAutohideBtn">⇕</button>
+        <button class="tab-ctrl-btn keep-inner-nav-btn" onclick="tabToggleKeepInnerNav()" title="Keep a panel's own inner menu visible while this main menu is auto-hiding">⧈</button>
         <button class="tab-ctrl-btn" onclick="tabAddPane()" title="Open additional panel alongside">+</button>
         <button class="tab-ctrl-btn" onclick="openTabPicker()" id="tabPickerBtn"
                 title="Add any registered panel as a top-level tab (right-click a custom tab to remove it)">⊞</button>
@@ -609,6 +616,7 @@ select option{background:var(--bg2)}
         <button class="tab-ctrl-btn" onclick="openActiveStandalone()" title="Open the current tab in its own standalone browser tab">↗</button>
         <button class="tab-ctrl-btn" onclick="openStandalonePicker()" title="Open any panel standalone in a new browser tab">⧉</button>
         <button class="tab-ctrl-btn" onclick="tabToggleAutohide()" id="lhmAutohideBtn" title="Auto-hide this menu">⇔</button>
+        <button class="tab-ctrl-btn keep-inner-nav-btn" onclick="tabToggleKeepInnerNav()" title="Keep a panel's own inner menu visible while this main menu is auto-hiding">⧈</button>
         <button class="tab-ctrl-btn" id="lhmEventsBtn" onclick="_lhmToggleEvents()" title="Toggle live events">◎</button>
       </div>
     </nav>
@@ -1496,6 +1504,14 @@ let _openTabs = new Set(['dashboard']);   // panel IDs currently visible (withou
 let _lhmMode  = false;
 let _autohide = false;
 let _autohideTimer = null;
+// Opt-in: when the main menu itself auto-hides, its own visibility becomes
+// unreliable as a place to reach a mounted panel's sections — so relying
+// on it to also cover the panel's OWN inner rail (the usual nav_hosted
+// hide) can be more annoying than the duplication it saves. Off by
+// default (existing behaviour: always hide once hosted); toggling this
+// re-applies immediately to every currently-mounted panel with nav — see
+// _reapplyNavHosting().
+let _keepInnerNavOnAutohide = false;
 let _evSidebarCollapsed = false;
 
 // ── Helpers: resolve tab element ↔ panel ID ──
@@ -1516,15 +1532,17 @@ function _tabLoadPrefs(){
       const p=JSON.parse(raw);
       _lhmMode=!!p.lhm;
       _autohide=!!p.autohide;
+      _keepInnerNavOnAutohide=!!p.keepInnerNav;
     }
   }catch(_){}
   _tabApplyLhm();
   _tabApplyAutohide();
+  _tabUpdateKeepInnerNavBtn();
   // Sync LHM nav after DOM settles (auto-tabs may not exist yet)
   setTimeout(_lhmNavSync, 500);
 }
 function _tabSavePrefs(){
-  try{localStorage.setItem('vera_tab_prefs',JSON.stringify({lhm:_lhmMode,autohide:_autohide}));}catch(_){}
+  try{localStorage.setItem('vera_tab_prefs',JSON.stringify({lhm:_lhmMode,autohide:_autohide,keepInnerNav:_keepInnerNavOnAutohide}));}catch(_){}
 }
 
 // Switch to a single tab (default click)
@@ -1774,24 +1792,44 @@ function _tabApplyLhm(){
 // first consumer of it outside the chat side-rail. panelId -> {items,active}
 // or undefined if that panel hasn't (or doesn't) register one.
 const _panelNavCache = {};
+const _panelNavSources = {};   // panelId -> e.source, so _reapplyNavHosting() can re-notify without a fresh message
+// Whether a panel with registered nav should be told to hide its own inner
+// rail right now — off only when the main menu itself is autohiding AND the
+// user opted to keep inner rails visible in that case (see
+// _keepInnerNavOnAutohide above). When the main menu is NOT autohiding, it's
+// always reliably reachable, so the panel's own (now redundant) rail is
+// still hidden regardless of the toggle.
+function _navHostingAllowed(){ return !(_autohide && _keepInnerNavOnAutohide); }
 window.addEventListener('message', e => {
   const d = e.data;
   if(!d || typeof d!=='object' || d.type!=='vera:panel:state' || !d.panel_id) return;
   const nav = (d.state && d.state.nav) || null;
-  // Confirm receipt so the panel can hide its own now-redundant internal
-  // rail (vera-panel-bridge.js turns this into a vpb-nav-hosted class the
-  // panel's own CSS keys off) — sent every time real nav items are seen,
-  // not just once, so a panel that (re)loads after this listener already
-  // has a cached signature still gets confirmed instead of relying on the
-  // dedupe below to have fired at least once historically.
   if(nav && Array.isArray(nav.items) && nav.items.length && e.source){
-    try{ e.source.postMessage({type:'vera:panel:nav_hosted'}, '*'); }catch(err){}
+    _panelNavSources[d.panel_id] = e.source;
+    // Confirm receipt so the panel can hide its own now-redundant internal
+    // rail (vera-panel-bridge.js turns this into a vpb-nav-hosted class the
+    // panel's own CSS keys off) — sent every time real nav items are seen,
+    // not just once, so a panel that (re)loads after this listener already
+    // has a cached signature still gets confirmed instead of relying on the
+    // dedupe below to have fired at least once historically. Sends the
+    // inverse (nav_unhosted) when the keep-inner-nav-on-autohide opt-in is
+    // active, so a panel that already hid its rail before the user toggled
+    // this on gets it back immediately rather than waiting on its own next
+    // unrelated state change.
+    try{ e.source.postMessage({type: _navHostingAllowed() ? 'vera:panel:nav_hosted' : 'vera:panel:nav_unhosted'}, '*'); }catch(err){}
   }
   const prevSig = JSON.stringify(_panelNavCache[d.panel_id] || null);
   if(JSON.stringify(nav) === prevSig) return;   // no real change → no re-render
   _panelNavCache[d.panel_id] = nav;
   _lhmNavSync();
 });
+// Re-evaluate every currently-known panel's hosting state — called whenever
+// autohide or the keep-inner-nav toggle changes, so already-mounted panels
+// react immediately instead of waiting for their own next state publish.
+function _reapplyNavHosting(){
+  const msg = { type: _navHostingAllowed() ? 'vera:panel:nav_hosted' : 'vera:panel:nav_unhosted' };
+  Object.values(_panelNavSources).forEach(src => { try{ src.postMessage(msg, '*'); }catch(e){} });
+}
 // Reach the iframe for a given top-level panel id, so an injected sub-item
 // click can postMessage nav_select straight into it.
 function _panelFrame(pid){
@@ -1884,11 +1922,11 @@ function _tabAttachHoverMenus(){
       const nav = _panelNavCache[pid];
       if(!nav || !Array.isArray(nav.items) || !nav.items.length) return;
       clearTimeout(showTimer);
-      showTimer = setTimeout(()=>_showTabDropdown(t, pid, nav), 120);
+      showTimer = setTimeout(()=>_showTabDropdown(t, pid, nav), 60);
     });
     t.addEventListener('mouseleave', ()=>{
       clearTimeout(showTimer);
-      hideTimer = setTimeout(_hideTabDropdown, 200);
+      hideTimer = setTimeout(_hideTabDropdown, 120);
     });
   });
 }
@@ -1914,7 +1952,7 @@ function _showTabDropdown(tabEl, pid, nav){
   dd.style.left = Math.round(r.left) + 'px';
   dd.style.top  = Math.round(r.bottom) + 'px';
   dd.addEventListener('mouseenter', ()=>clearTimeout(_tabDropdownHideTimer));
-  dd.addEventListener('mouseleave', ()=>{ _tabDropdownHideTimer = setTimeout(_hideTabDropdown, 150); });
+  dd.addEventListener('mouseleave', ()=>{ _tabDropdownHideTimer = setTimeout(_hideTabDropdown, 100); });
   document.body.appendChild(dd);
   _tabDropdownEl = dd;
 }
@@ -1955,6 +1993,19 @@ function tabToggleAutohide(){
   _autohide = !_autohide;
   _tabApplyAutohide();
   _tabSavePrefs();
+  _reapplyNavHosting();   // autohide state feeds directly into _navHostingAllowed()
+}
+// Opt-in toggle: keep a mounted panel's own inner rail visible while the
+// main menu is auto-hiding, instead of hiding it in favour of a main menu
+// that (by definition, while autohidden) isn't reliably on screen.
+function tabToggleKeepInnerNav(){
+  _keepInnerNavOnAutohide = !_keepInnerNavOnAutohide;
+  _tabUpdateKeepInnerNavBtn();
+  _tabSavePrefs();
+  _reapplyNavHosting();
+}
+function _tabUpdateKeepInnerNavBtn(){
+  document.querySelectorAll('.keep-inner-nav-btn').forEach(b=>b.classList.toggle('active', _keepInnerNavOnAutohide));
 }
 // One shared "auto-hide the current top-level nav" feature, extended to
 // whichever nav is actually visible — the horizontal #tabBar, or .lhm-nav in
@@ -2021,7 +2072,7 @@ function _tabScheduleHide(){
     _autohideEl()?.classList.remove('show');
     document.getElementById('main')?.classList.remove('autohide-reserve-h','autohide-reserve-v');
     _autohideTimer = null;
-  }, 150);
+  }, 100);
 }
 
 // Init on load
@@ -3909,8 +3960,8 @@ function _ensurePanelLoaded(panelEl) {
     responded.forEach(sendInit);
     if (responded.length === frames.length) done();
   };
-  pollTick();                    // check immediately — most routes commit well under 80ms
-  poll = setInterval(pollTick, 80);
+  pollTick();                    // check immediately — most routes commit well under 50ms
+  poll = setInterval(pollTick, 50);
   // Backstop: only claim "didn't respond" if NO frame got a document in 12s;
   // if any route answered, drop the overlay and let the panel show through.
   panelEl._loadTimer = setTimeout(() => {

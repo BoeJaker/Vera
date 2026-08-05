@@ -119,7 +119,7 @@
     var host = document.querySelector('[data-vera-lhm]');
     if (!host || host._vpNavBridged) return;
     var nav = (host.id === 'nav') ? host : (host.querySelector('#nav') || host);
-    var SEL = '[data-section], [data-sec], [data-s], [data-view], [data-tab], [data-nav], [data-pane]';
+    var SEL = '[data-section], [data-sec], [data-s], [data-view], [data-tab], [data-nav], [data-pane], [data-go], [data-k]';
     var btns = nav.querySelectorAll(SEL);
     if (!btns.length) return;
     host._vpNavBridged = true;
@@ -127,7 +127,7 @@
     function idOf(b) {
       return b.getAttribute('data-section') || b.getAttribute('data-sec') || b.getAttribute('data-s') ||
              b.getAttribute('data-view') || b.getAttribute('data-tab') || b.getAttribute('data-nav') ||
-             b.getAttribute('data-pane');
+             b.getAttribute('data-pane') || b.getAttribute('data-go') || b.getAttribute('data-k');
     }
     // title attribute first — it's already clean text with no icon glyph.
     // Failing that, a couple of panels wrap the label in its own child

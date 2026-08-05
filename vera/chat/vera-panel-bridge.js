@@ -367,7 +367,7 @@
     var el = document.querySelector(
       '[data-sec="' + id + '"], [data-section="' + id + '"], [data-view="' + id + '"], ' +
       '[data-tab="' + id + '"], [data-nav="' + id + '"], [data-pane="' + id + '"], ' +
-      '[data-s="' + id + '"]');
+      '[data-s="' + id + '"], [data-go="' + id + '"], [data-k="' + id + '"]');
     if(!el){ var found = _findNamed(id); el = found && found.el; }
     if(!el) return {ok: false, error: 'no nav target for id: ' + id};
     el.click();
@@ -511,12 +511,12 @@
     try{ var sig = JSON.stringify(s); if(sig === _lastState) return; _lastState = sig; }catch(e){}
     try{ window.parent.postMessage({type: 'vera:panel:state', panel_id: _panelId, session_id: _sessionId, state: s}, '*'); }catch(e){}
   }
-  // 80ms, not the 250ms this used to be — mainly coalesces bursts of rapid
+  // 40ms, not the 250ms this used to be — mainly coalesces bursts of rapid
   // DOM mutations (the click/change/input listeners below), not a
   // deliberate throttle; the injected-nav round trip (registerNav ->
   // publish -> host -> nav_hosted reply) was visibly slow to settle and
   // every ms here is on that critical path.
-  function publishStateDebounced(){ if(_publishTimer) clearTimeout(_publishTimer); _publishTimer = setTimeout(publishState, 80); }
+  function publishStateDebounced(){ if(_publishTimer) clearTimeout(_publishTimer); _publishTimer = setTimeout(publishState, 40); }
   function publishEvent(name, payload){
     try{ window.parent.postMessage({type: 'vera:panel:event', panel_id: _panelId, event: name, payload: payload || {}}, '*'); }catch(e){}
   }
@@ -556,6 +556,12 @@
       // today's chat side-rail) never receives this, so its own rail stays
       // visible there — this is never assumed, only confirmed by the host.
       document.documentElement.classList.add('vpb-nav-hosted');
+    } else if(t === 'vera:panel:nav_unhosted'){
+      // The inverse — the host's own top-level menu just stopped reliably
+      // covering these sections (its "keep inner nav visible while the main
+      // menu is auto-hiding" opt-in, or the host isn't hosting this panel's
+      // nav at all right now), so un-hide this panel's own rail again.
+      document.documentElement.classList.remove('vpb-nav-hosted');
     } else if(t === 'vera:panel:query'){
       // Explicit freshness ping — bypass the changed-state dedupe. Without
       // this, an idle panel whose state hasn't changed republishes NOTHING,
