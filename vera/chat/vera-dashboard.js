@@ -490,19 +490,20 @@
         allowed.forEach(function (n) { w.classList.remove('w-w' + n); });
         [1, 2, 3, 4, 5, 6].forEach(function (n) { w.classList.remove('w-h' + n); });
         w.classList.add('w-w' + targetW); w.classList.add('w-h' + targetH);
-        // grid-row:span N alone doesn't guarantee N rows' worth of PIXELS —
-        // minmax(58px,auto) sizes each row-track to whatever's tallest among
-        // every widget sharing it, and CSS grid stretches every item to fill
-        // its own cell by default — so a widget explicitly shrunk here could
-        // still render as tall as an unrelated neighbour parked in the same
-        // row-track, with the drag having no visible effect. An explicit
-        // max-height, derived from THIS widget's own just-measured row pitch
-        // (not a guess), caps it regardless of what any other widget's
-        // row-track needs — scoped to only widgets someone has actually
-        // dragged, so nothing not touched by this ever changes appearance.
-        var maxH = Math.max(50, Math.round(targetH * rowPitch - gapY));
-        w.style.maxHeight = maxH + 'px';
-        state.sizes[w.dataset.wid] = { w: targetW, h: targetH, maxH: maxH };
+        // Resize only ever sets the w-wN/w-hN span classes — nothing else.
+        // An earlier version of this also stamped an inline max-height here,
+        // computed from THIS drag's measured row pitch — but that pitch is
+        // only trustworthy when the widget's CURRENT rendered height truly
+        // reflects its span, which isn't true for any widget that already
+        // carries its own fixed max-height (Proxmox/Docker/Ollama/Host Temps
+        // all do, in their own CSS). Measuring off an already-capped box and
+        // then stamping a SECOND, competing inline cap from that measurement
+        // is exactly what made repeated resizes drift — "2x1" ending up a
+        // different actual size each time depending on whatever the box
+        // happened to measure right before the drag. The class is the only
+        // thing that needs to be idempotent; each widget's own CSS is
+        // responsible for its own height ceiling, if it has one.
+        state.sizes[w.dataset.wid] = { w: targetW, h: targetH };
         save();
       }
       applySize(sx, sy);   // seed the label before any movement
@@ -540,15 +541,10 @@
       ws.forEach(function (w) {
         if (state.hidden.has(w.dataset.wid)) w.classList.add('hidden'); else w.classList.remove('hidden');
       });
-      // Runs over EVERY widget (not just ones with a saved size) so a widget
-      // that had a manual max-height (see onResizeDown's up()) but was then
-      // reset/removed from state.sizes actually loses that inline cap again,
-      // instead of it lingering forever.
       ws.forEach(function (w) {
         var sz = state.sizes[w.dataset.wid];
         if (sz && sz.w) { [2, 3, 4, 6, 8, 12].forEach(function (n) { w.classList.remove('w-w' + n); }); w.classList.add('w-w' + sz.w); }
         if (sz && sz.h) { [1, 2, 3, 4, 5, 6].forEach(function (n) { w.classList.remove('w-h' + n); }); w.classList.add('w-h' + sz.h); }
-        w.style.maxHeight = (sz && sz.maxH) ? sz.maxH + 'px' : '';
       });
       renderHidden();
     }
