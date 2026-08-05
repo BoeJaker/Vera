@@ -133,7 +133,16 @@
       '.vera-spinner{width:22px;height:22px;border-radius:50%;flex-shrink:0;',
       'border:2.5px solid var(--border2,#333);border-top-color:var(--acc,#5a9e8f);',
       'animation:veraSpin .7s linear infinite}',
-      '@keyframes veraSpin{to{transform:rotate(360deg)}}'
+      '@keyframes veraSpin{to{transform:rotate(360deg)}}',
+      // Resize ghost — see onResizeDown(). A plain fixed-position preview box
+      // that tracks the mouse directly; the real widget/grid are untouched
+      // until mouseup, so nothing reflows (and therefore nothing jumps) mid-drag.
+      '.vd-rghost{position:fixed;z-index:9600;pointer-events:none;box-sizing:border-box;',
+      'border:2px dashed var(--acc,#5a9e8f);border-radius:var(--radius-lg,8px);',
+      'background:color-mix(in srgb, var(--acc,#5a9e8f) 10%, transparent)}',
+      '.vd-rghost-label{position:absolute;right:6px;bottom:5px;font-family:var(--mono);',
+      'font-size:10px;font-weight:600;color:var(--acc,#5a9e8f);background:var(--bg1,#16181d);',
+      'padding:2px 7px;border-radius:3px;border:1px solid var(--acc,#5a9e8f)}'
     ].join('');
     document.head.appendChild(s);
   }
@@ -337,7 +346,20 @@
       dragSrc = null;
     }
 
-    /* resize (edit mode only) — snap width to allowed spans */
+    /* resize (edit mode only) — snap width/height to allowed spans.
+     *
+     * Previously this applied the new w-wN/w-hN classes to the LIVE widget on
+     * every mousemove, which reflows the whole CSS grid immediately — other
+     * widgets shift, and the widget being resized can itself move to a new
+     * row/column mid-drag. The resize handle the mouse was tracking then isn't
+     * where the mouse is anymore, so the drag "jumps"/ends up the wrong size
+     * relative to the cursor, and (since a reflow can slide unrelated content
+     * — another widget, an iframe — under the pointer) tracking feels like it
+     * breaks whenever the mouse crosses onto the widget itself.
+     *
+     * Fix: a plain fixed-position ghost box previews the target size,
+     * following the mouse directly — the real widget/grid are untouched
+     * (nothing reflows) until mouseup, which commits the final span ONCE. */
     function onResizeDown(e) {
       if (!state.editing) return;
       var handle = e.target.closest('.w-resize'); if (!handle || !grid.contains(handle)) return;
@@ -347,18 +369,60 @@
       var cw = parseInt((w.className.match(/w-w(\d+)/) || [])[1] || '4', 10);
       var ch = parseInt((w.className.match(/w-h(\d+)/) || [])[1] || '1', 10);
       var allowed = [2, 3, 4, 6, 8, 12];
+      // Per-column/per-row pixel pitch derived from the widget's OWN current
+      // box (not a guessed fixed constant, which drifted out of sync with the
+      // real grid on any viewport width / sidebar state / zoom / row-height-
+      // grown-by-content) — self-correct every time from what's actually on
+      // screen right now. Column/row gap read from the grid's computed style
+      // so this works unmodified on every host dashboard (main/Dream/Workers
+      // & Ollama), even if they don't all use the same gap.
+      var startRect = w.getBoundingClientRect();
+      var gcs = getComputedStyle(grid);
+      var gapX = parseFloat(gcs.columnGap || gcs.gap) || 10;
+      var gapY = parseFloat(gcs.rowGap || gcs.gap) || 10;
+      var colPitch = (startRect.width + gapX) / cw;
+      var rowPitch = (startRect.height + gapY) / ch;
+
+      var ghost = document.createElement('div');
+      ghost.className = 'vd-rghost';
+      ghost.style.left = startRect.left + 'px';
+      ghost.style.top = startRect.top + 'px';
+      ghost.style.width = startRect.width + 'px';
+      ghost.style.height = startRect.height + 'px';
+      var label = document.createElement('div');
+      label.className = 'vd-rghost-label';
+      ghost.appendChild(label);
+      document.body.appendChild(ghost);
+
+      function snap(n, lo, hi, list) {
+        n = Math.max(lo, Math.min(hi, n));
+        if (!list) return n;
+        var near = list[0], best = Infinity;
+        list.forEach(function (a) { var d = Math.abs(a - n); if (d < best) { best = d; near = a; } });
+        return near;
+      }
+      var targetW = cw, targetH = ch;
       function mv(ev) {
-        var nw = Math.max(2, Math.min(12, cw + Math.round((ev.clientX - sx) / 80)));
-        var nh = Math.max(1, Math.min(6, ch + Math.round((ev.clientY - sy) / 70)));
-        var near = allowed[0], best = Infinity;
-        allowed.forEach(function (a) { var d = Math.abs(a - nw); if (d < best) { best = d; near = a; } });
-        nw = near;
+        var pxW = Math.max(140, startRect.width + (ev.clientX - sx));
+        var pxH = Math.max(70, startRect.height + (ev.clientY - sy));
+        ghost.style.width = pxW + 'px';
+        ghost.style.height = pxH + 'px';
+        targetW = snap(Math.round((pxW + gapX) / colPitch), 2, 12, allowed);
+        targetH = snap(Math.round((pxH + gapY) / rowPitch), 1, 6, null);
+        label.textContent = targetW + ' × ' + targetH;
+      }
+      function up() {
+        document.removeEventListener('mousemove', mv);
+        document.removeEventListener('mouseup', up);
+        _dragGuardOff();
+        ghost.remove();
         allowed.forEach(function (n) { w.classList.remove('w-w' + n); });
         [1, 2, 3, 4, 5, 6].forEach(function (n) { w.classList.remove('w-h' + n); });
-        w.classList.add('w-w' + nw); w.classList.add('w-h' + nh);
-        state.sizes[w.dataset.wid] = { w: nw, h: nh };
+        w.classList.add('w-w' + targetW); w.classList.add('w-h' + targetH);
+        state.sizes[w.dataset.wid] = { w: targetW, h: targetH };
+        save();
       }
-      function up() { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); _dragGuardOff(); save(); }
+      mv({ clientX: sx, clientY: sy });   // seed the label before any movement
       _dragGuardOn('nwse-resize');
       document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
     }
