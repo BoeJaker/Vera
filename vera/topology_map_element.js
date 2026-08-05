@@ -3,18 +3,27 @@
  * ============================================================================
  * A live SVG map of the whole Vera stack for the main dashboard: a "Vera" hub
  * in the middle, one category node per subsystem (Nodes / Workers / Ollama /
- * Mesh / Fabric / Docker / Sandboxes), six subsystem-source nodes (Dream /
- * Chat / DAG / User / Perf / Error Monitor — animation endpoints, not
- * machines), and one leaf per actual machine/worker/instance/mesh device/
- * Proxmox guest/container/sandbox, colored by status (ok/warn/err/unknown).
- * A machine leaf that nodes.list's own merge resolved as backing a specific
- * Ollama instance or Docker host gets an extra dashed "serves" edge straight
- * to that service, on top of its plain category edge — real hardware-backs-
- * service structure, not just a flat category fan-out. Click any node to
- * drill into the REAL cap-activity this map has actually routed through it
- * (a rolling per-node log + name-frequency cloud, never a fabricated view);
- * a sandbox leaf's drill-down additionally links to its full session
- * timeline in the Activity tab. Styled after the existing
+ * Mesh / Fabric / Docker / Sandboxes), three subsystem-source nodes (Dream /
+ * Chat / DAG — animation endpoints, not machines), three kind='monitor' meta
+ * nodes (User / Perf / Error Monitor — pinned to a reserved wedge at the top
+ * of the hub ring with a dashed-ring look, so they stay findable no matter
+ * how many ordinary categories/services are also fanning out from the hub),
+ * and one leaf per actual machine/worker/instance/mesh device/Proxmox
+ * guest/container/sandbox, colored by status (ok/warn/err/unknown). A
+ * machine leaf that nodes.list's own merge resolved as backing a specific
+ * Ollama instance or Docker host — or a Docker container whose name matches
+ * a Fabric backend (Postgres/Chroma/Neo4j) — gets an extra dashed "serves"
+ * edge straight to that service, on top of its plain category edge — real
+ * hardware-backs-service structure, not just a flat category fan-out. A
+ * category node's click toggles a hub-and-spoke collapse (hide its leaves +
+ * their edges, category itself stays) for decluttering; every node's click
+ * also opens/refreshes a drill-down into the REAL cap-activity this map has
+ * actually routed through it (a rolling per-node log — each entry expandable
+ * to the real args/result/error text the event carried, never just its name
+ * — plus a name-frequency cloud); a sandbox leaf's drill-down additionally
+ * links to its full session timeline in the Activity tab. The live-activity
+ * counter (top-right) is itself clickable for a per-node breakdown of every
+ * logged event so far. Styled after the existing
  * <vera-loop-graph> (loop_graph_element.js) — true SVG via
  * document.createElementNS, pan = drag, zoom = wheel, theming via the
  * standard Vera CSS variables — but with a fixed radial hub→category→leaf
@@ -94,7 +103,12 @@
   const STATUS_COL = {
     ok: '#5a9e8f', warn: '#c9a45a', err: '#c75a5a', unknown: '#7a7468',
   };
-  const KIND_R = { hub: 16, category: 11, node: 7, worker: 6, ollama: 7, mesh: 6, service: 10 };
+  // Sizes are ~15-20% larger than the original pass — the map read as too
+  // small/cramped once it was carrying this many subsystems' worth of text.
+  // 'monitor' (User/Perf/Error Monitor) is bigger still and gets its own
+  // dashed-ring CSS treatment (.node-g.k-monitor) so it doesn't blend into
+  // the ordinary category/service dots it's pinned next to (see _layout()).
+  const KIND_R = { hub: 19, category: 13, node: 8, worker: 7, ollama: 8, mesh: 7, service: 12, monitor: 14 };
 
   // ── Where an ollama.request actually came from, so the chip can fly
   // Fabric -> Ollama -> the exact node instead of a flat Ollama-category ->
@@ -187,7 +201,8 @@
       this._prevStatus = new Map(); // id -> last-seen status, for diff-only pulsing
       this._nodeEls = new Map();   // id -> its rendered <g class="node-g"> (for live WS-driven effects between polls)
       this._activeDispatch = new Map(); // task_id/instance_id -> node id currently marked "dispatching"
-      this._nodeLog = new Map();   // id -> [{ts,name}] rolling recent-activity log, for drill-down (real, not fetched)
+      this._nodeLog = new Map();   // id -> [{ts,name,detail}] rolling recent-activity log, for drill-down (real, not fetched)
+      this._collapsed = new Set(); // category ids currently hub-and-spoke collapsed (leaves + their edges hidden)
       this._view = { x: 0, y: 0, k: 1 };
       this._drag = null;
       this._colorMode = 'status'; // 'status' | 'temp' — see setColorMode()
@@ -239,7 +254,7 @@
         this._settle('oll:' + ev.instance_id, isErr ? 'err' : 'ok');
         if (isErr && this._nodes.has('svc:errors')) {
           this._flyChip('ollama:' + ev.instance_id, 'svc:errors', STATUS_COL.err);
-          this._logNode('svc:errors', 'ollama.request_error');
+          this._logNode('svc:errors', 'ollama.request_error', ev.error || '');
         }
       } else if (t === 'cap.call' && ev.name) {
         const group = ev.group || String(ev.name).split('.')[0];
@@ -253,7 +268,7 @@
               : null;
             if (path) this._dispatchVia(_capKey(ev), path, 'acc');
             else this._dispatch(_capKey(ev), nid, 'acc');
-            this._logNode(nid, ev.name);
+            this._logNode(nid, ev.name, ev.args_preview || '');
           } else {
             matched = false;
           }
@@ -267,6 +282,7 @@
           const nid = GROUP_NODE[group];
           if (nid && this._nodes.has(nid)) {
             this._settle(_capKey(ev), isErr ? 'err' : 'ok');
+            if (!isErr) this._logNode(nid, ev.name, ev.preview || '');
           } else if (!isErr) {
             matched = false;
           }
@@ -276,7 +292,7 @@
           // chatter. Origin is the mapped node when known, else the hub.
           if (isErr && this._nodes.has('svc:errors')) {
             this._flyChip(nid && this._nodes.has(nid) ? nid : 'hub', 'svc:errors', STATUS_COL.err);
-            this._logNode('svc:errors', ev.name);
+            this._logNode('svc:errors', ev.name, ev.error || '');
           }
         }
       } else {
@@ -308,16 +324,18 @@
       this._activityText.textContent = `${this._eventCount} events · last ${secs}s ago`;
     }
 
-    // Record one real routed cap name against a node, for the drill-down
-    // panel's "recent activity" list + name-frequency cloud (_showDrill).
-    // This is exactly what was just animated — never a separate fetch, so it
-    // can never show anything the map itself didn't actually route.
-    _logNode(nodeId, name) {
+    // Record one real routed cap name (+ whatever real content the event
+    // carried — args_preview / result preview / error text, never invented)
+    // against a node, for the drill-down panel's log + name-frequency cloud,
+    // and the activity-counter's click-to-reveal breakdown. This is exactly
+    // what was just animated — never a separate fetch.
+    _logNode(nodeId, name, detail) {
       const log = this._nodeLog.get(nodeId) || [];
-      log.unshift({ ts: Date.now(), name: String(name || '') });
+      log.unshift({ ts: Date.now(), name: String(name || ''), detail: String(detail || '') });
       if (log.length > 40) log.length = 40;
       this._nodeLog.set(nodeId, log);
       if (this._drillId === nodeId) this._renderDrill();
+      if (this._actbreak && this._actbreak.classList.contains('open')) this._renderActBreakdown();
     }
 
     // perf.stalls has no live WS push (see <vera-error-radar>'s own comment
@@ -346,11 +364,13 @@
         if (!this._stallsPrimed) { this._stallsPrimed = true; return; }
         if (fresh.length && this._nodes.has('svc:perf')) {
           fresh.forEach(e => {
+            const label = e.kind === 'hang' ? 'event-loop hang' : 'event-loop stall';
+            const detail = (e.stalled_ms ? e.stalled_ms + 'ms' : '') + (e.where ? ' at ' + e.where : '');
             this._pulseEl(this._nodeEls.get('svc:perf'), STATUS_COL.warn);
-            this._logNode('svc:perf', e.kind === 'hang' ? 'event-loop hang' : 'event-loop stall');
+            this._logNode('svc:perf', label, detail);
             if (this._nodes.has('svc:errors')) {
               this._flyChip('svc:perf', 'svc:errors', STATUS_COL.warn);
-              this._logNode('svc:errors', e.kind === 'hang' ? 'event-loop hang' : 'event-loop stall');
+              this._logNode('svc:errors', label, detail);
             }
           });
           this._lastActivityAt = Date.now();
@@ -420,12 +440,23 @@
           svg{width:100%;height:100%;display:block;cursor:grab;background:
               radial-gradient(circle at 1px 1px, rgba(255,255,255,.03) 1px, transparent 0) 0 0/24px 24px}
           svg.drag{cursor:grabbing}
-          .edge{fill:none;stroke:var(--border,#2a3140);stroke-width:1.2;opacity:.55}
-          .edge.serves{stroke:var(--acc,#5b8cff);stroke-dasharray:1 4;stroke-linecap:round;opacity:.6}
+          /* Edges brightened + thickened — the original muted --border tone
+             all but disappeared against the dark canvas background. */
+          .edge{fill:none;stroke:color-mix(in srgb, var(--border,#2a3140) 45%, var(--ink,#d9e1ed) 35%);
+                stroke-width:1.6;opacity:.7}
+          .edge.serves{stroke:var(--acc,#5b8cff);stroke-dasharray:2 5;stroke-linecap:round;
+                       opacity:.85;stroke-width:1.7}
           .node-g{cursor:pointer}
           .node-g circle.dot{stroke-width:1.6;transition:fill .25s,stroke .25s}
           .node-g text{font-size:9px;fill:var(--ink,#d9e1ed);pointer-events:none}
           .node-g .sub{font-size:7.5px;fill:var(--dim2,#7e8ba0)}
+          /* 'monitor' nodes (User/Perf/Error Monitor) — dashed ring so they
+             read as a distinct meta layer even though they sit right next to
+             ordinary category/service dots in their reserved top wedge. */
+          .node-g.k-monitor circle.dot{stroke-dasharray:2.5 2.5;stroke-width:2.2}
+          /* A collapsed category — hollowed out + dashed to signal "there's
+             more here, click to expand" without needing a text label. */
+          .node-g.collapsed circle.dot{fill-opacity:.12 !important;stroke-dasharray:2 3}
           .pulsering{fill:none;stroke-width:2;transform-box:fill-box;transform-origin:center;
                      animation:tmPulse .9s ease-out 1}
           @keyframes tmPulse{0%{opacity:.8;r:var(--r0,10)}100%{opacity:0;r:calc(var(--r0,10) + 14px)}}
@@ -433,11 +464,20 @@
           .chip{pointer-events:none;transition:cx .55s ease,cy .55s ease,opacity .35s ease}
           .empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
                  color:var(--dim2,#7e8ba0);font-size:10px}
-          .tip{position:absolute;pointer-events:none;left:8px;top:8px;font-size:9.5px;
-               background:var(--bg0,#0b0f17);border:1px solid var(--border,#2a3140);border-radius:3px;
-               padding:3px 7px;color:var(--ink,#d9e1ed);opacity:0;transition:opacity .1s;max-width:70%}
+          /* Shared "info card" chrome (.tip / .drill / .actbreak): the border
+             was nearly invisible at 1px solid --border against this dark bg,
+             but a full-strength --ink border reads too harsh/boxy for a
+             minimal hover card — color-mix splits the difference, plus a
+             soft shadow to lift the card off the canvas instead of relying
+             on the border alone. */
+          .tip{position:absolute;pointer-events:none;left:8px;top:8px;font-size:11px;
+               background:var(--bg0,#0b0f17);
+               border:1px solid color-mix(in srgb, var(--border,#2a3140) 45%, var(--ink,#d9e1ed) 30%);
+               box-shadow:0 2px 10px rgba(0,0,0,.4);border-radius:4px;
+               padding:4px 8px;color:var(--ink,#d9e1ed);opacity:0;transition:opacity .1s;max-width:70%}
           .activity{position:absolute;right:8px;top:8px;font-size:9px;font-family:var(--mono,monospace);
-                    color:var(--dim2,#7e8ba0);display:flex;align-items:center;gap:5px;pointer-events:none}
+                    color:var(--dim2,#7e8ba0);display:flex;align-items:center;gap:5px;
+                    cursor:pointer;user-select:none}
           .activity .adot{width:6px;height:6px;border-radius:50%;background:var(--dim,#4a5568);
                           transition:background .15s}
           .activity .adot.hot{background:var(--acc,#5b8cff);box-shadow:0 0 5px var(--acc,#5b8cff)}
@@ -449,7 +489,8 @@
                             background:color-mix(in srgb, var(--acc,#5b8cff) 15%, var(--bg0,#0b0f17))}
           .drill{position:absolute;right:8px;bottom:8px;top:auto;width:min(280px,60%);
                  max-height:min(320px,72%);background:color-mix(in srgb,var(--bg0,#0b0f17) 92%,transparent);
-                 border:1px solid var(--border,#2a3140);border-radius:6px;padding:8px 10px;
+                 border:1px solid color-mix(in srgb, var(--border,#2a3140) 45%, var(--ink,#d9e1ed) 30%);
+                 box-shadow:0 2px 10px rgba(0,0,0,.4);border-radius:6px;padding:8px 10px;
                  display:none;flex-direction:column;gap:6px;overflow:hidden;font-size:10px;
                  color:var(--ink,#d9e1ed);backdrop-filter:blur(4px)}
           .drill.open{display:flex}
@@ -460,10 +501,27 @@
           .drill .cloud span{color:var(--ink,#d9e1ed);opacity:.55}
           .drill .loglist{overflow-y:auto;flex:1;min-height:0;display:flex;flex-direction:column;gap:2px}
           .drill .logrow{display:flex;gap:6px;color:var(--dim2,#7e8ba0);font-size:9px}
+          .drill .logrow.has-detail{cursor:pointer}
           .drill .logrow .n{color:var(--ink,#d9e1ed);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+          .drill .logrow .dd{color:var(--dim2,#7e8ba0);flex:0 0 auto}
+          .drill .logsub{display:none;color:var(--dim2,#7e8ba0);font-size:8.5px;line-height:1.4;
+                         white-space:pre-wrap;word-break:break-word;padding:2px 0 5px 18px}
+          .drill .logsub.open{display:block}
           .drill .empty2{color:var(--dim2,#7e8ba0);font-size:9.5px}
           .drill a.opensession{color:var(--acc,#5b8cff);text-decoration:none;font-size:9.5px}
           .drill a.opensession:hover{text-decoration:underline}
+          .actbreak{position:absolute;right:8px;top:24px;width:200px;max-height:220px;overflow-y:auto;
+                    background:color-mix(in srgb,var(--bg0,#0b0f17) 92%,transparent);
+                    border:1px solid color-mix(in srgb, var(--border,#2a3140) 45%, var(--ink,#d9e1ed) 30%);
+                    box-shadow:0 2px 10px rgba(0,0,0,.4);border-radius:6px;padding:6px 8px;
+                    display:none;font-size:9.5px;color:var(--ink,#d9e1ed);backdrop-filter:blur(4px)}
+          .actbreak.open{display:block}
+          .actbreak h4{margin:0 0 4px;font-size:10px;display:flex;justify-content:space-between;align-items:center}
+          .actbreak h4 button{font:inherit;background:none;border:none;color:var(--dim2,#7e8ba0);cursor:pointer}
+          .actbreak .abrow{display:flex;justify-content:space-between;gap:6px;padding:2px 0;
+                           border-top:1px solid var(--border,#2a3140)}
+          .actbreak .abrow:first-child{border-top:none}
+          .actbreak .abrow .cnt{color:var(--dim2,#7e8ba0);font-variant-numeric:tabular-nums}
         </style>
         <div class="wrap">
           <svg><g class="cam"><g class="edges"></g><g class="nodes"></g><g class="chips"></g></g></svg>
@@ -473,8 +531,12 @@
             <button type="button" data-layer="status" class="on">status</button>
             <button type="button" data-layer="temp">temp</button>
           </div>
-          <div class="activity" data-part="activity" title="Live vera:events reaching this map — proof the WS feed is actually connected, independent of whether you catch a chip flight">
+          <div class="activity" data-part="activity" title="Live vera:events reaching this map — click for a breakdown by node">
             <span class="adot"></span><span data-part="activity-text">no live activity yet</span>
+          </div>
+          <div class="actbreak" data-part="actbreak">
+            <h4>Activity by node<button type="button" data-part="actbreak-close" title="Close">×</button></h4>
+            <div data-part="actbreak-rows"></div>
           </div>
           <div class="drill" data-part="drill">
             <h4><span data-part="drill-title"></span><button type="button" data-part="drill-close" title="Close">×</button></h4>
@@ -498,6 +560,8 @@
       this._drillCloud = this._sr.querySelector('[data-part="drill-cloud"]');
       this._drillLog = this._sr.querySelector('[data-part="drill-log"]');
       this._drillId = null;
+      this._actbreak = this._sr.querySelector('[data-part="actbreak"]');
+      this._actbreakRows = this._sr.querySelector('[data-part="actbreak-rows"]');
       this._eventCount = 0;
       this._lastActivityAt = 0;
       setInterval(() => this._tickActivity(), 1000);
@@ -507,6 +571,23 @@
         if (btn) this.setColorMode(btn.dataset.layer);
       });
       this._sr.querySelector('[data-part="drill-close"]').addEventListener('click', () => this._closeDrill());
+      // Rows carrying real detail (args_preview / result preview / error
+      // text) expand in place on click — delegated so it survives every
+      // _renderDrill() innerHTML rebuild without re-attaching per row.
+      this._drillLog.addEventListener('click', e => {
+        const row = e.target.closest('.logrow.has-detail');
+        if (!row) return;
+        const sub = row.nextElementSibling;
+        if (sub && sub.classList.contains('logsub')) sub.classList.toggle('open');
+      });
+      this._sr.querySelector('[data-part="activity"]').addEventListener('click', e => {
+        e.stopPropagation();
+        this._actbreak.classList.contains('open') ? this._closeActBreakdown() : this._showActBreakdown();
+      });
+      this._sr.querySelector('[data-part="actbreak-close"]').addEventListener('click', e => {
+        e.stopPropagation();
+        this._closeActBreakdown();
+      });
 
       this._svg.addEventListener('mousedown', e => {
         if (e.target.closest('.node-g')) return;
@@ -586,7 +667,18 @@
       if (hub) { hub.x = 0; hub.y = 0; }
       const edgesByParent = {};
       this._edges.forEach(e => { (edgesByParent[e.from] = edgesByParent[e.from] || []).push(e.to); });
-      const ring1 = (edgesByParent['hub'] || []).map(id => byId.get(id)).filter(Boolean);
+      const ring1All = (edgesByParent['hub'] || []).map(id => byId.get(id)).filter(Boolean);
+      // The three kind='monitor' meta nodes (User/Perf/Error Monitor) are
+      // pinned to a small reserved wedge at the very top of the hub ring
+      // instead of competing for an angular slot proportional to their (zero)
+      // leaf count — with 10+ ordinary categories/services also fanning out
+      // from the hub, that proportional slot could land anywhere and be lost
+      // in the crowd. Pinning them together, closer in, at a predictable spot
+      // makes them reliably findable regardless of how much else is on the
+      // ring — and the frontend gives them a dashed ring on top of that.
+      const PINNED = ['user', 'svc:perf', 'svc:errors'];
+      const pinned = PINNED.map(id => ring1All.find(c => c.id === id)).filter(Boolean);
+      const ring1 = ring1All.filter(c => !PINNED.includes(c.id));
       const leafCount = c => (edgesByParent[c.id] || []).length;
       const r2Of = c => Math.min(130, 30 + leafCount(c) * 6);
       const weights = ring1.map(c => 1 + leafCount(c) * 0.2);
@@ -598,11 +690,20 @@
       // sized for the smaller set packed neighbouring leaf-fans into each
       // other regardless of any one category's own footprint. The +r2Of(c)
       // term on top still pushes an individual big category out further.
-      const minR1 = Math.max(140, ring1.length * 32);
+      const minR1 = Math.max(140, (ring1.length + pinned.length) * 32);
+      const pinnedSpan = pinned.length ? (Math.PI * 2) * (50 / 360) : 0;
+      const pinnedStart = -Math.PI / 2 - pinnedSpan / 2;
+      pinned.forEach((c, i) => {
+        const a = pinnedStart + (pinned.length > 1 ? (i / (pinned.length - 1)) * pinnedSpan : pinnedSpan / 2);
+        const r1 = minR1 * 0.7; // no leaves of their own — sit a bit closer in
+        c.x = Math.cos(a) * r1; c.y = Math.sin(a) * r1;
+      });
+      const freeStart = pinnedStart + pinnedSpan;
+      const freeSpan = Math.PI * 2 - pinnedSpan;
       let acc = 0;
       ring1.forEach((c, i) => {
         const slot = weights[i] / totalW;
-        const a = (acc + slot / 2) * Math.PI * 2 - Math.PI / 2;
+        const a = freeStart + (acc + slot / 2) * freeSpan;
         acc += slot;
         const r1 = minR1 + r2Of(c) * 0.6;
         c.x = Math.cos(a) * r1; c.y = Math.sin(a) * r1;
@@ -700,7 +801,18 @@
       this._nodeEls.clear();
       const byId = this._nodes;
 
+      // Hub-and-spoke collapse: a collapsed category's own leaves (never the
+      // category node itself) drop out of both passes below — decluttering a
+      // category you're not currently interested in without losing the
+      // category itself (still visible, still clickable to re-expand).
+      const hiddenIds = new Set();
+      byId.forEach(n => {
+        const p = this._parentOf(n.id);
+        if (p && this._collapsed.has(p)) hiddenIds.add(n.id);
+      });
+
       this._edges.forEach(e => {
+        if (hiddenIds.has(e.from) || hiddenIds.has(e.to)) return;
         const a = byId.get(e.from), b = byId.get(e.to);
         if (!a || !b) return;
         // 'serves' edges are a real hardware->service link (nodes.list's own
@@ -716,7 +828,10 @@
 
       const activeNodeIds = new Set(this._activeDispatch.values());
       byId.forEach(n => {
-        const g = svgEl('g', { class: 'node-g', transform: `translate(${n.x},${n.y})` });
+        if (hiddenIds.has(n.id)) return;
+        const collapsedHere = n.kind === 'category' && this._collapsed.has(n.id);
+        const g = svgEl('g', { class: `node-g k-${n.kind}${collapsedHere ? ' collapsed' : ''}`,
+          transform: `translate(${n.x},${n.y})` });
         const r = KIND_R[n.kind] || 6;
         g.dataset.r = String(r);
         const col = this._nodeColor(n);
@@ -728,19 +843,36 @@
         // names behind hover-only made the map read as less informative, not
         // less cluttered; wider ring spacing (_layout() above) is the actual
         // fix for overlap instead.
-        const isCat = n.kind === 'category' || n.kind === 'hub' || n.kind === 'service';
-        const label = svgEl('text', { y: r + 10, 'text-anchor': 'middle', 'font-size': isCat ? '9px' : '7.5px' });
-        label.textContent = short(n.label || n.id, isCat ? 14 : 11);
+        const isCat = n.kind === 'category' || n.kind === 'hub' || n.kind === 'service' || n.kind === 'monitor';
+        const label = svgEl('text', { y: r + 11, 'text-anchor': 'middle', 'font-size': isCat ? '10.5px' : '9px' });
+        const hiddenCount = collapsedHere ? (this._edges.filter(e => e.from === n.id).length) : 0;
+        label.textContent = short(n.label || n.id, isCat ? 14 : 11) + (hiddenCount ? ` (${hiddenCount})` : '');
         g.appendChild(label);
         g.addEventListener('mouseenter', () => this._showTip(n));
         g.addEventListener('mouseleave', () => { this._tip.style.opacity = 0; });
-        g.addEventListener('click', e => { e.stopPropagation(); this._showDrill(n.id); });
+        // A category node's click toggles its hub-and-spoke collapse; every
+        // node (categories included) also opens/refreshes its own real
+        // activity drill-down — the two aren't mutually exclusive.
+        g.addEventListener('click', e => {
+          e.stopPropagation();
+          if (n.kind === 'category') this._toggleCollapse(n.id);
+          this._showDrill(n.id);
+        });
         this._gNodes.appendChild(g);
         this._nodeEls.set(n.id, g);
       });
       // A stale drill target (id dropped out of this snapshot, or one whose
       // log has since grown) still needs its content refreshed in place.
       if (this._drillId) this._renderDrill();
+    }
+
+    // Toggle whether a category's leaves + their edges render at all — pure
+    // declutter, no data loss (the category node itself, and its own drill-
+    // down / activity, stay exactly as live as ever).
+    _toggleCollapse(id) {
+      if (this._collapsed.has(id)) this._collapsed.delete(id);
+      else this._collapsed.add(id);
+      this._render(new Set());
     }
 
     // ── drill-down: click any node to see the REAL cap activity this map has
@@ -783,12 +915,43 @@
       const sid = this._drillId.startsWith('sandbox:') ? this._drillId.slice(8) : '';
       const link = sid ? `<a class="opensession" target="_blank" rel="noopener"
           href="/activity/panel?scope=chat:${encodeURIComponent(sid)}">Open full session activity ↗</a>` : '';
+      // Each row shows what happened; a row with real content (args_preview /
+      // result preview / error text — see applyEvent's _logNode calls)
+      // expands on click to show it, rather than the log being names-only.
       const rows = log.slice(0, 20).map(it => {
         const secs = Math.max(0, Math.round((Date.now() - it.ts) / 1000));
         const age = secs < 60 ? `${secs}s` : `${Math.round(secs / 60)}m`;
-        return `<div class="logrow"><span>${age}</span><span class="n">${esc(it.name)}</span></div>`;
+        const hasDetail = !!it.detail;
+        const row = `<div class="logrow${hasDetail ? ' has-detail' : ''}"><span>${age}</span>` +
+          `<span class="n">${esc(it.name)}</span>${hasDetail ? '<span class="dd">▾</span>' : ''}</div>`;
+        return hasDetail ? row + `<div class="logsub">${esc(short(it.detail, 400))}</div>` : row;
       }).join('');
       this._drillLog.innerHTML = link + (rows || '<span class="empty2">nothing routed here yet — activity appears as it happens</span>');
+    }
+
+    // ── Activity counter click-through: a real per-node breakdown of every
+    // event this map has actually logged so far this session (the exact
+    // same _nodeLog the drill-down reads — one source of truth, two views),
+    // answering "what IS all this activity, by subsystem" without having to
+    // click through every node individually. ──
+    _showActBreakdown() {
+      this._actbreak.classList.add('open');
+      this._renderActBreakdown();
+    }
+    _closeActBreakdown() { this._actbreak.classList.remove('open'); }
+    _renderActBreakdown() {
+      const counts = new Map();
+      this._nodeLog.forEach((log, nodeId) => {
+        if (!log.length) return;
+        const n = this._nodes.get(nodeId);
+        const label = n ? (n.label || nodeId) : nodeId;
+        counts.set(label, (counts.get(label) || 0) + log.length);
+      });
+      const rows = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+      this._actbreakRows.innerHTML = rows.length
+        ? rows.map(([label, count]) =>
+            `<div class="abrow"><span>${esc(label)}</span><span class="cnt">${count}</span></div>`).join('')
+        : '<div class="empty2">no activity logged yet</div>';
     }
 
     _showTip(n) {

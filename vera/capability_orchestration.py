@@ -5620,11 +5620,14 @@ def _node_leaf_status(backends: List[str], temp_entry: Optional[Dict]) -> str:
                         "main-dashboard SVG topology map: one hub node, one "
                         "category node per subsystem (Nodes/Workers/Ollama/Mesh/"
                         "Fabric/Docker/Sandboxes), a standalone Redis service "
-                        "node, six subsystem-source service nodes (Dream/Chat/"
-                        "DAG/User/Perf/Error Monitor — animation endpoints, "
-                        "always 'ok' since they're code paths not machines, "
-                        "except Perf which reflects a real recent perf.stalls "
-                        "reading), and one leaf per "
+                        "node, three subsystem-source service nodes (Dream/Chat/"
+                        "DAG) plus three kind='monitor' meta nodes (User/Perf/"
+                        "Error Monitor — animation endpoints, always 'ok' since "
+                        "they're code paths not machines, except Perf which "
+                        "reflects a real recent perf.stalls reading; the "
+                        "frontend pins 'monitor' nodes to a reserved wedge so "
+                        "they don't get lost among a dozen-plus categories), "
+                        "and one leaf per "
                         "actual machine/worker/instance/mesh device/Proxmox "
                         "guest/Docker container/session sandbox with an "
                         "ok/warn/err/unknown status (host leaves fold in "
@@ -5658,9 +5661,11 @@ def _node_leaf_status(backends: List[str], temp_entry: Optional[Dict]) -> str:
                         "animate) so a poll-heavy subsystem can't flood the "
                         "map. Also emits 'serves' edges linking a machine leaf "
                         "directly to the exact Ollama instance / Docker host "
-                        "nodes.list's own merge already resolved it backs (on "
-                        "top of the generic category edge) — real hardware-"
-                        "backs-service links, never guessed. Location/network/"
+                        "nodes.list's own merge already resolved it backs, and "
+                        "a Docker container leaf to the exact Fabric backend "
+                        "(Postgres/Chroma/Neo4j) its name matches (on top of "
+                        "the generic category edge) — real hardware-backs-"
+                        "service links, never guessed. Location/network/"
                         "data layers aren't implemented: Vera doesn't collect "
                         "rack/physical placement or flow-level network data "
                         "today, and this map doesn't fake a layer off data "
@@ -5896,6 +5901,30 @@ async def topology_snapshot(trace_id=None) -> Dict:
         if dhid and dhid in docker_host_ids_seen:
             edges_out.append({"from": nid, "to": "cat:docker", "kind": "serves"})
 
+    # ── Fabric backends actually run AS Docker containers on this stack
+    #    (Postgres/Chroma/Neo4j all deploy that way here) — nodes.list has no
+    #    link for this (it only tracks Ollama/vLLM/Proxmox against a machine),
+    #    so this is a best-effort NAME match against the same docker.stats.top
+    #    containers already rendered as cat:docker leaves above. Only fires
+    #    when a container name actually contains the backend's own name —
+    #    never a guess dressed up as a link, and silently adds nothing on a
+    #    stack where fabric isn't containerised. ──
+    _FABRIC_CONTAINER_HINTS = {
+        "postgres": ("postgres", "pg"),
+        "chroma": ("chroma",),
+        "neo4j": ("neo4j",),
+    }
+    if all_containers:
+        for c in all_containers[:14]:
+            cid = f"docker:{c.get('id', '')}"
+            if cid not in existing_ids:
+                continue
+            cname = str(c.get("name") or "").lower()
+            for fkey, hints in _FABRIC_CONTAINER_HINTS.items():
+                fid = f"fabric:{fkey}"
+                if fid in existing_ids and any(h in cname for h in hints):
+                    edges_out.append({"from": cid, "to": fid, "kind": "serves"})
+
     # ── Subsystem sources: Dream / Chat / DAG (agent loops) don't have a
     #    machine inventory of their own — they're code paths, always "up" if
     #    Vera itself is up — but they're the actual origin of most live
@@ -5933,7 +5962,11 @@ async def topology_snapshot(trace_id=None) -> Dict:
          (f"{len(recent_stalls)} recent stall(s)" if recent_stalls else "no stalls")),
         ("svc:errors", "Error Monitor", "ok", "cap.error / ollama errors flow here"),
     ):
-        nodes_out.append({"id": sid, "label": label, "kind": "service", "status": status, "detail": detail})
+        # kind="monitor" (not "service") — the frontend gives these three a
+        # dashed ring + a reserved, always-findable wedge at the top of the
+        # hub ring instead of competing for space among a dozen-plus
+        # subsystem categories, which is what made them hard to spot before.
+        nodes_out.append({"id": sid, "label": label, "kind": "monitor", "status": status, "detail": detail})
         edges_out.append({"from": "hub", "to": sid})
 
     return {"nodes": nodes_out, "edges": edges_out, "ts": now_iso()}

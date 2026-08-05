@@ -461,11 +461,29 @@ select option{background:var(--bg2)}
 .sm-tag.warn{background:rgba(201,163,90,.1);color:var(--warn);border:1px solid rgba(201,163,90,.22)}
 .sm-tag.gpu{background:rgba(201,122,90,.1);color:var(--acc3,var(--warn));border:1px solid rgba(201,122,90,.22)}
 .sm-tag.dim{background:var(--bg2);color:var(--dim2);border:1px solid var(--border)}
-.sm-kpis{display:flex;border:1px solid var(--border);border-radius:4px;overflow:hidden}
+.sm-kpis{display:flex;border:1px solid var(--border);border-radius:4px;overflow:hidden;flex-shrink:0}
 .sm-kpi{flex:1;padding:6px 4px;text-align:center;border-right:1px solid var(--border)}
 .sm-kpi:last-child{border-right:none}
 .sm-kpi-val{font-family:var(--mono);font-size:15px;font-weight:700;color:var(--acc)}
 .sm-kpi-sub{font-size:7.5px;color:var(--dim2);font-family:var(--mono);text-transform:uppercase;letter-spacing:.4px;margin-top:1px}
+/* Sysmon detail cards (Proxmox/Docker/Ollama/Host Resources/Host Temps): the
+   list sub-sections (.sm-list) flex-grow to fill whatever extra height a
+   manual widget resize/grid-row span reveals, instead of stopping at a fixed
+   max-height and leaving dead space below them — same underlying bug class
+   the topology map's own inline max-height had. Sparklines/KPI rows stay
+   fixed-height (a taller widget doesn't need a taller number or chart). */
+.sm-list{flex:1;overflow-y:auto}
+/* Proxmox's 3-across mini-chart row reflows to a vertical stack once the
+   widget itself gets too narrow to show three side-by-side charts legibly
+   (a manual resize, not just a fixed breakpoint) — scoped via a named
+   containment context on the card itself. */
+.widget[data-wid="sysmon-proxmox"]{container-type:inline-size;container-name:sm-card}
+.sm-sparkrow{display:flex;gap:6px;flex-shrink:0}
+.sm-sparkrow>div{flex:1;height:50px;min-width:0}
+@container sm-card (max-width:260px){
+  .sm-sparkrow{flex-direction:column;gap:4px}
+  .sm-sparkrow>div{height:34px}
+}
 
 /* Agent editor */
 .ae-param{display:flex;flex-direction:column;gap:3px}
@@ -680,19 +698,19 @@ select option{background:var(--bg2)}
                 <button class="w-iconbtn" onclick="dashHideWidget('sysmon-proxmox')">×</button>
               </span>
             </div>
-            <div class="w-body" style="display:flex;flex-direction:column;gap:6px;max-height:340px">
+            <div class="w-body" style="display:flex;flex-direction:column;gap:6px">
               <div class="sm-kpis">
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hProxmoxRunning">—</div><div class="sm-kpi-sub">running</div></div>
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hProxmoxGuests">—</div><div class="sm-kpi-sub">guests</div></div>
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hProxmoxNodes">—</div><div class="sm-kpi-sub">nodes</div></div>
               </div>
-              <div id="pmxRows" style="max-height:60px;overflow-y:auto;flex-shrink:0"></div>
-              <div id="pmxCores" style="font-size:8.5px;color:var(--dim2);flex-shrink:0;max-height:120px;overflow-y:auto"></div>
-              <div id="pmxGuests" style="max-height:110px;overflow-y:auto;flex-shrink:0"></div>
-              <div style="display:flex;gap:6px;flex-shrink:0">
-                <div style="flex:1;height:50px" title="Running guests, last ~10min"><vera-sparkline id="sparkProxmox"></vera-sparkline></div>
-                <div style="flex:1;height:50px" title="Cluster RAM %, last ~10min"><vera-sparkline id="sparkProxmoxMem"></vera-sparkline></div>
-                <div style="flex:1;height:50px" title="Peak host sensor temp, last ~10min"><vera-sparkline id="sparkProxmoxTemp"></vera-sparkline></div>
+              <div id="pmxRows" class="sm-list" style="min-height:36px"></div>
+              <div id="pmxCores" class="sm-list" style="font-size:8.5px;color:var(--dim2);min-height:50px"></div>
+              <div id="pmxGuests" class="sm-list" style="min-height:50px"></div>
+              <div class="sm-sparkrow">
+                <div title="Running guests, last ~10min"><vera-sparkline id="sparkProxmox"></vera-sparkline></div>
+                <div title="Cluster RAM %, last ~10min"><vera-sparkline id="sparkProxmoxMem"></vera-sparkline></div>
+                <div title="Peak host sensor temp, last ~10min"><vera-sparkline id="sparkProxmoxTemp"></vera-sparkline></div>
               </div>
             </div>
             <span class="w-resize" data-resize></span>
@@ -709,14 +727,14 @@ select option{background:var(--bg2)}
                 <button class="w-iconbtn" onclick="dashHideWidget('sysmon-docker')">×</button>
               </span>
             </div>
-            <div class="w-body" style="display:flex;flex-direction:column;gap:6px;max-height:340px">
+            <div class="w-body" style="display:flex;flex-direction:column;gap:6px">
               <div class="sm-kpis">
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hDockerRunning">—</div><div class="sm-kpi-sub">running</div></div>
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hDockerConts">—</div><div class="sm-kpi-sub">containers</div></div>
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hDockerHosts">—</div><div class="sm-kpi-sub">hosts up</div></div>
               </div>
-              <div id="dkrRows" style="max-height:60px;overflow-y:auto;flex-shrink:0"></div>
-              <div id="dkrTopContainers" style="max-height:110px;overflow-y:auto;flex-shrink:0"></div>
+              <div id="dkrRows" class="sm-list" style="min-height:36px"></div>
+              <div id="dkrTopContainers" class="sm-list" style="min-height:50px"></div>
               <div style="height:50px;flex-shrink:0" title="Running containers, last ~10min"><vera-sparkline id="sparkDocker"></vera-sparkline></div>
             </div>
             <span class="w-resize" data-resize></span>
@@ -733,13 +751,13 @@ select option{background:var(--bg2)}
                 <button class="w-iconbtn" onclick="dashHideWidget('sysmon-ollama')">×</button>
               </span>
             </div>
-            <div class="w-body" style="display:flex;flex-direction:column;gap:6px;max-height:260px">
+            <div class="w-body" style="display:flex;flex-direction:column;gap:6px">
               <div class="sm-kpis">
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hOllamaOnline">—</div><div class="sm-kpi-sub">online</div></div>
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hOllamaGpu">—</div><div class="sm-kpi-sub">gpu</div></div>
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hOllamaInuse">—</div><div class="sm-kpi-sub">in use</div></div>
               </div>
-              <div id="ollRows" style="max-height:70px;overflow-y:auto;flex-shrink:0"></div>
+              <div id="ollRows" class="sm-list" style="min-height:44px"></div>
               <div style="height:50px;flex-shrink:0" title="Online nodes vs. busy, last ~10min"><vera-sparkline id="sparkOllama"></vera-sparkline></div>
             </div>
             <span class="w-resize" data-resize></span>
@@ -757,11 +775,11 @@ select option{background:var(--bg2)}
                 <button class="w-iconbtn" onclick="dashHideWidget('host-resources')">×</button>
               </span>
             </div>
-            <div class="w-body" style="display:flex;flex-direction:column;gap:6px;max-height:280px">
+            <div class="w-body" style="display:flex;flex-direction:column;gap:6px">
               <div style="height:56px;flex-shrink:0" title="Host CPU % / RAM %, last ~10min"><vera-sparkline id="sparkHostRes"></vera-sparkline></div>
               <div style="height:44px;flex-shrink:0" title="This Vera process's own memory footprint (RSS = Resident Set Size, its actual physical RAM usage), last ~10min"><vera-sparkline id="sparkProcMb"></vera-sparkline></div>
               <div style="font-size:8.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;flex-shrink:0">Top processes (host-wide, by memory)</div>
-              <div id="topProcs" style="max-height:100px;overflow-y:auto;flex-shrink:0"></div>
+              <div id="topProcs" class="sm-list" style="min-height:44px"></div>
             </div>
             <span class="w-resize" data-resize></span>
           </div>
@@ -777,7 +795,7 @@ select option{background:var(--bg2)}
                 <button class="w-iconbtn" onclick="dashHideWidget('host-temps')">×</button>
               </span>
             </div>
-            <div class="w-body" style="max-height:290px;display:flex;flex-direction:column;gap:8px">
+            <div class="w-body" style="display:flex;flex-direction:column;gap:8px">
               <div id="hostTempsList" style="display:flex;flex-direction:column;gap:6px;font-size:10.5px;flex:1;min-height:0;overflow-y:auto"></div>
               <div style="height:44px;flex-shrink:0" title="Worst reading across all sensors, last ~10min"><vera-sparkline id="sparkTemps" unit="°C"></vera-sparkline></div>
             </div>
