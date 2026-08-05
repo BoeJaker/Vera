@@ -356,6 +356,17 @@
         this._view.k = Math.max(0.3, Math.min(3, this._view.k * f));
         this._applyCam();
       }, { passive: false });
+
+      // Dashboard widgets are user-resizable (drag handle, or a solo-float
+      // window), and the SVG itself always tracks the host's box via plain
+      // CSS width/height:100% — but the CAMERA (_view) was only ever
+      // computed once, in fit(), for whatever size the box happened to be
+      // at that moment. Growing the widget afterwards left the graph
+      // exactly where it was and just revealed more of the surrounding
+      // empty dot-grid background around it — "large spaces that don't
+      // have the canvas" — since nothing ever told the camera the box had
+      // changed. This keeps it centered on every resize.
+      new ResizeObserver(() => this._onResize()).observe(this);
     }
 
     _applyCam() {
@@ -365,6 +376,21 @@
     fit() {
       const r = this._svg.getBoundingClientRect();
       this._view = { x: (r.width || 400) / 2, y: (r.height || 260) / 2, k: 1 };
+      this._lastRect = { w: r.width || 400, h: r.height || 260 };
+      this._applyCam();
+    }
+
+    // Re-center (keeping current zoom/pan intent) by exactly how much the
+    // box grew or shrank, so whatever was centered stays centered instead
+    // of resize either leaving dead space (grow) or cropping content
+    // (shrink) around a camera position computed for the old box size.
+    _onResize() {
+      const r = this._svg.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      const last = this._lastRect || { w: r.width, h: r.height };
+      this._view.x += (r.width - last.w) / 2;
+      this._view.y += (r.height - last.h) / 2;
+      this._lastRect = { w: r.width, h: r.height };
       this._applyCam();
     }
 
@@ -388,15 +414,23 @@
       this._edges.forEach(e => { (edgesByParent[e.from] = edgesByParent[e.from] || []).push(e.to); });
       const ring1 = (edgesByParent['hub'] || []).map(id => byId.get(id)).filter(Boolean);
       const leafCount = c => (edgesByParent[c.id] || []).length;
-      const r2Of = c => Math.min(95, 30 + leafCount(c) * 5);
+      const r2Of = c => Math.min(130, 30 + leafCount(c) * 6);
       const weights = ring1.map(c => 1 + leafCount(c) * 0.2);
       const totalW = weights.reduce((a, b) => a + b, 0) || 1;
+      // Hub-ring radius scales with the NUMBER of ring1 categories, not just
+      // each one's own leaf count — this graph has grown from ~5-6
+      // categories (Nodes/Workers/Ollama/Mesh/Fabric) to 10+ (+ Docker,
+      // Sandboxes, the Dream/Chat/DAG source nodes, Redis), and a radius
+      // sized for the smaller set packed neighbouring leaf-fans into each
+      // other regardless of any one category's own footprint. The +r2Of(c)
+      // term on top still pushes an individual big category out further.
+      const minR1 = Math.max(140, ring1.length * 32);
       let acc = 0;
       ring1.forEach((c, i) => {
         const slot = weights[i] / totalW;
         const a = (acc + slot / 2) * Math.PI * 2 - Math.PI / 2;
         acc += slot;
-        const r1 = 110 + r2Of(c);
+        const r1 = minR1 + r2Of(c) * 0.6;
         c.x = Math.cos(a) * r1; c.y = Math.sin(a) * r1;
       });
       ring1.forEach(c => {
@@ -456,6 +490,34 @@
 
       this._nodes = new Map(nodes.map(n => [n.id, n]));
       this._render(changed);
+      // Fit once, on the first real snapshot only — the graph's world-space
+      // extent grew a lot as more categories/leaves were added (see
+      // _layout's widened radii), and fit()'s original fixed k:1 view
+      // rendered it too zoomed-in on a first paint (or too zoomed-out,
+      // depending on widget size), rather than actually showing the whole
+      // thing. Every poll after that just re-lays-out in place, same as
+      // before — a user's manual pan/zoom is never overridden mid-session.
+      if (!this._everFitted && nodes.length) { this._everFitted = true; this._fitToContent(); }
+    }
+
+    // Compute a camera transform that shows every node with a margin,
+    // rather than fit()'s fixed k:1 view centered on an empty box.
+    _fitToContent() {
+      const pts = Array.from(this._nodes.values());
+      if (!pts.length) return;
+      const PAD = 40; // leaf radius + label allowance
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      pts.forEach(n => {
+        minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x);
+        minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y);
+      });
+      const w = Math.max(1, maxX - minX + PAD * 2), h = Math.max(1, maxY - minY + PAD * 2);
+      const r = this._svg.getBoundingClientRect();
+      const vw = r.width || 400, vh = r.height || 260;
+      const k = Math.max(0.25, Math.min(1.4, Math.min(vw / w, vh / h)));
+      this._view = { x: vw / 2 - ((minX + maxX) / 2) * k, y: vh / 2 - ((minY + maxY) / 2) * k, k };
+      this._lastRect = { w: vw, h: vh };
+      this._applyCam();
     }
 
     _render(changed) {

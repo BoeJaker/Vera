@@ -48,6 +48,29 @@
     try { return window.self !== window.top; } catch (e) { return true; }
   })();
 
+  // Any mousedown-driven drag (resize handle, floating-widget header) that
+  // tracks mousemove on `document` breaks the instant the pointer passes
+  // over an iframe — a widget's own embedded panel, another widget's,
+  // whatever's underneath a float — because an iframe is a SEPARATE
+  // browsing context; mousemove over it fires in ITS document, never
+  // bubbling up to this page's listener, so the drag looks like it just
+  // "stops" until the pointer returns to non-iframe territory. Reported as
+  // "resizing doesn't work if resizing over another widget" / "[floating]
+  // stops moving if the mouse escapes it". Fix: a transparent full-viewport
+  // overlay above everything for the drag's duration — the pointer is
+  // always over OUR element, never an iframe, so tracking never drops.
+  var _dragGuardEl = null;
+  function _dragGuardOn(cursor) {
+    if (_dragGuardEl) return;
+    _dragGuardEl = document.createElement('div');
+    _dragGuardEl.style.cssText = 'position:fixed;inset:0;z-index:2147483647;' +
+      'cursor:' + (cursor || 'move') + ';background:transparent';
+    document.body.appendChild(_dragGuardEl);
+  }
+  function _dragGuardOff() {
+    if (_dragGuardEl) { _dragGuardEl.remove(); _dragGuardEl = null; }
+  }
+
   /* ── injected CSS (once) ─────────────────────────────────────────────── */
   function injectCSS() {
     if (document.getElementById('vera-dash-css')) return;
@@ -335,7 +358,8 @@
         w.classList.add('w-w' + nw); w.classList.add('w-h' + nh);
         state.sizes[w.dataset.wid] = { w: nw, h: nh };
       }
-      function up() { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); save(); }
+      function up() { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); _dragGuardOff(); save(); }
+      _dragGuardOn('nwse-resize');
       document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
     }
 
@@ -480,6 +504,28 @@
       document.body.appendChild(w);   // escape the tab panel so the float survives tab switches
       var pb = w.querySelector('.vd-pop'); if (pb) { pb.classList.add('on'); pb.title = 'Dock back into the grid'; }
       w.querySelector('.w-head').addEventListener('mousedown', floatStart);
+      // The header's own × button is every widget's normal "hide from the
+      // dashboard" control (inline onclick="dashHideWidget(...)", hardcoded
+      // per-widget) — while floating, that reads as "close this window" but
+      // actually banishes the widget from the dashboard entirely, needing
+      // the "+ Add Widget" picker to bring it back. Reported as "you can
+      // quite easily remove it from the UI pressing × thinking you are
+      // docking it." Intercepted here (capture phase, so it runs before the
+      // inline onclick) ONLY while floating — docked widgets keep the
+      // original hide behaviour untouched. Attached once; re-checks
+      // .floating live so it's a no-op after dock() without needing removal.
+      if (!w._vdCloseHooked) {
+        w._vdCloseHooked = true;
+        var btns = w.querySelectorAll('.w-actions .w-iconbtn');
+        var closeBtn = btns[btns.length - 1];
+        if (closeBtn) {
+          closeBtn.addEventListener('click', function (e) {
+            if (!w.classList.contains('floating')) return;
+            e.preventDefault(); e.stopImmediatePropagation();
+            dock(w);
+          }, true);
+        }
+      }
     }
     function dock(w) {
       w.querySelector('.w-head').removeEventListener('mousedown', floatStart);
@@ -496,6 +542,7 @@
       var w = e.currentTarget.closest('.widget'); if (!w || !w.classList.contains('floating')) return;
       var r = w.getBoundingClientRect();
       fdrag = { w: w, dx: e.clientX - r.left, dy: e.clientY - r.top };
+      _dragGuardOn('move');
       document.addEventListener('mousemove', floatMove); document.addEventListener('mouseup', floatStop);
       e.preventDefault();
     }
@@ -504,7 +551,7 @@
       fdrag.w.style.left = Math.max(0, Math.min(window.innerWidth - 60, e.clientX - fdrag.dx)) + 'px';
       fdrag.w.style.top = Math.max(0, Math.min(window.innerHeight - 28, e.clientY - fdrag.dy)) + 'px';
     }
-    function floatStop() { fdrag = null; document.removeEventListener('mousemove', floatMove); document.removeEventListener('mouseup', floatStop); }
+    function floatStop() { fdrag = null; document.removeEventListener('mousemove', floatMove); document.removeEventListener('mouseup', floatStop); _dragGuardOff(); }
     function popWindow(w) {
       var pid = w.dataset.panel; if (!pid) return;
       window.open('/ui/panel/window?id=' + encodeURIComponent(pid), 'veraPanel_' + pid,

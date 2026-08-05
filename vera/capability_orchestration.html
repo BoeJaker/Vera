@@ -6874,11 +6874,21 @@ function _veraSoloFloat(d){
     el.style.left = r.left + 'px'; el.style.top = r.top + 'px';
     el.style.right = 'auto';       el.style.bottom = 'auto';
     const dx = ev.clientX - r.left, dy = ev.clientY - r.top;
+    // The float's own content is a live iframe sitting right below this
+    // thin header strip — a fast drag routinely puts the pointer over it
+    // within one mousemove tick, and since an iframe is a separate
+    // browsing context, mousemove there never reaches this listener at
+    // all ("stops moving if the mouse escapes it"). A transparent overlay
+    // above everything keeps the pointer over OUR page for the drag's
+    // duration so tracking never drops.
+    const guard = document.createElement('div');
+    guard.style.cssText = 'position:fixed;inset:0;z-index:2147483647;cursor:move;background:transparent';
+    document.body.appendChild(guard);
     const mv = e2 => {
       el.style.left = Math.max(0, Math.min(window.innerWidth  - 60, e2.clientX - dx)) + 'px';
       el.style.top  = Math.max(0, Math.min(window.innerHeight - 28, e2.clientY - dy)) + 'px';
     };
-    const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); };
+    const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); guard.remove(); };
     document.addEventListener('mousemove', mv);
     document.addEventListener('mouseup', up);
     ev.preventDefault();
