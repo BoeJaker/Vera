@@ -347,11 +347,14 @@
   // Select a section by the id the panel gave registerNav(). Prefers the
   // panel's own select callback when it registered one; otherwise falls back
   // to clicking whatever element carries a matching data-sec/-section/-view/
-  // -tab/-nav/-pane attribute — the exact patterns this codebase's existing
-  // hand-rolled section switchers already use (data-sec="test", or
+  // -tab/-nav/-pane/-s attribute — the exact patterns this codebase's
+  // existing hand-rolled section switchers already use (data-sec="test",
   // data-pane="workers" as workers_ollama_panel.html/
-  // agents_skills_ontologies_panel.html both use), so most panels need zero
-  // extra code beyond the registerNav(items) call itself.
+  // agents_skills_ontologies_panel.html both use, data-s="x" as
+  // ui_builder_panel.html uses), so most panels need zero extra code beyond
+  // the registerNav(items) call itself — and the canonical vera-panel.js
+  // #sidebar[data-vera-lhm] shell doesn't even need that: it calls
+  // registerNav()/setNavActive() generically for every panel using it.
   function _navSelect(p){
     var id = (p || {}).id;
     if(id == null) return {ok: false, error: 'nav_select requires {id}'};
@@ -363,7 +366,8 @@
     }
     var el = document.querySelector(
       '[data-sec="' + id + '"], [data-section="' + id + '"], [data-view="' + id + '"], ' +
-      '[data-tab="' + id + '"], [data-nav="' + id + '"], [data-pane="' + id + '"]');
+      '[data-tab="' + id + '"], [data-nav="' + id + '"], [data-pane="' + id + '"], ' +
+      '[data-s="' + id + '"]');
     if(!el){ var found = _findNamed(id); el = found && found.el; }
     if(!el) return {ok: false, error: 'no nav target for id: ' + id};
     el.click();

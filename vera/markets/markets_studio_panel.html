@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Quant Studio</title>
+<link rel="stylesheet" href="/ui/vera-panel.css">
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/elements/vera_markdown.js"></script>
 <style>
@@ -310,7 +311,7 @@ table.tbl tr:hover td{background:color-mix(in srgb, var(--acc) 5%, transparent)}
 
 <body>
 <div id="app">
-  <nav id="rail">
+  <nav id="rail" data-vera-lhm>
     <button class="railBtn on" data-view="charts"><span class="ico">◫</span><span class="lbl">Charts</span></button>
     <button class="railBtn" data-view="strat"><span class="ico">⚗</span><span class="lbl">Strategy</span></button>
     <button class="railBtn" data-view="run"><span class="ico">▶</span><span class="lbl">Backtest</span></button>
@@ -10432,5 +10433,7 @@ async function evPrune(commit){
   $('evPruneNo').onclick=()=>{ b.classList.remove('on'); b.innerHTML=''; b.dataset.mode=''; };
 }
 </script>
+<script src="/ui/vera-panel.js"></script>
+<script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>

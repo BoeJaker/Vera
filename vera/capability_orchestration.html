@@ -3762,17 +3762,20 @@ function _ensurePanelLoaded(panelEl) {
     if (ov) _showPanelLoadError(panelEl, ov);
   };
   const pid = _panelIdFromEl(panelEl);
+  // Nudge any vera-panel-bridge.js in the frame to publish immediately (see
+  // _lhmNavSync's nav injection) instead of waiting for its own 30s tick or
+  // the visitor's first click — harmless no-op for panels without the
+  // bridge script. Guarded per-frame so whichever of 'load' or the
+  // _frameResponded poll below fires first wins; the other is a no-op.
+  const sendInit = f => {
+    if (f._vpInitSent) return;
+    f._vpInitSent = true;
+    try { f.contentWindow.postMessage({type:'vera:panel:init', panel_id: pid, session_id:''}, '*'); } catch(e){}
+  };
   frames.forEach(f => {
     const src = f.getAttribute('data-lazy-src');
     f.removeAttribute('data-lazy-src');
-    f.addEventListener('load', () => {
-      if (--pending <= 0) done();
-      // Nudge any vera-panel-bridge.js in this frame to publish immediately
-      // (see _lhmNavSync's nav injection) instead of waiting for its own 30s
-      // tick or the visitor's first click. A harmless no-op for panels that
-      // don't include the bridge script.
-      try { f.contentWindow.postMessage({type:'vera:panel:init', panel_id: pid, session_id:''}, '*'); } catch(e){}
-    }, { once: true });
+    f.addEventListener('load', () => { if (--pending <= 0) done(); sendInit(f); }, { once: true });
     // A cross-origin/blocked frame fires 'error'; same-origin route errors just
     // render an error page (which still fires 'load'), so the timeout below is
     // the real backstop for "took too long / no response".
@@ -3781,11 +3784,16 @@ function _ensurePanelLoaded(panelEl) {
   });
   // The iframe 'load' event waits for EVERY subresource of the inner page, so a
   // panel that is rendered and interactive but keeps one request hanging (or a
-  // slow sibling frame in a merged panel) would never settle. Same-origin lets
-  // us check whether the route actually committed a document instead.
+  // slow sibling frame in a merged panel) would never settle — and never send
+  // init either, since that was only ever wired to 'load'. Same-origin lets us
+  // check whether the route actually committed a document instead, so a
+  // heavy/slow panel (big charting libs, live data feeds) still gets init
+  // promptly rather than only once its very last straggling resource finishes.
   poll = setInterval(() => {
     if (settled) { clearInterval(poll); return; }
-    if (Array.from(frames).every(_frameResponded)) done();
+    const responded = Array.from(frames).filter(_frameResponded);
+    responded.forEach(sendInit);
+    if (responded.length === frames.length) done();
   }, 700);
   // Backstop: only claim "didn't respond" if NO frame got a document in 12s;
   // if any route answered, drop the overlay and let the panel show through.

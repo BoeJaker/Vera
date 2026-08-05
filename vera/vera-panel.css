@@ -43,6 +43,18 @@
   --lhm-collapsed-width: 46px; /* icon-rail width when collapsed              */
 }
 
+/* Hidden once the host shell confirms it's rendering these same sections as
+   injected sub-menu items itself (VeraPanelBridge's registerNav() +
+   vpb-nav-hosted class — see vera-panel-bridge.js / vera-panel.js's
+   initNavBridge). Attribute selector, not #sidebar-scoped, so it also
+   covers the rare panel that opts into this same look on a differently-id'd
+   element. Confirmation-driven, never assumed: a panel opened standalone,
+   or mounted somewhere that hasn't adopted nav injection (the chat side-
+   rail, today), never receives the class and keeps its sidebar exactly as
+   before. Every panel using this file gets this for free — no per-panel
+   CSS needed. */
+html.vpb-nav-hosted [data-vera-lhm] { display: none; }
+
 /* ── Sidebar ──────────────────────────────────────────────────────────── */
 #sidebar[data-vera-lhm] {
   width: var(--lhm-width); flex-shrink: 0;

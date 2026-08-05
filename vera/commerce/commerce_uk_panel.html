@@ -9,6 +9,7 @@ if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Vera — Reselling</title>
+<link rel="stylesheet" href="/ui/vera-panel.css">
 <style>
 :root{
   --bg0:#141312;--bg1:#1b1917;--bg2:#242120;--bg3:#2e2a28;
@@ -109,7 +110,7 @@ tr:hover td{background:var(--bg1)}
   <div class="chips" id="hdrChips"></div>
 </div>
 <div class="layout">
-  <nav class="side" id="nav"></nav>
+  <nav class="side" id="nav" data-vera-lhm></nav>
   <main class="content" id="main"><div class="empty"><span class="spin"></span> loading…</div></main>
 </div>
 <div id="toast"></div>
@@ -168,7 +169,7 @@ function openStation(){const u='/business/intake/panel'+(STORE?('?store='+encode
 function buildNav(){const n=$('#nav');n.innerHTML='';for(const [id,ico,label] of SECTIONS){
   const b=el('button',{onclick:()=>go(id)},el('span',{class:'ico'},ico),el('span',{},label));
   if(id==='market')b.append(el('span',{class:'badge',id:'dealBadge'}));
-  b.dataset.id=id;if(id===CUR)b.classList.add('active');n.append(b);}}
+  b.dataset.id=id;b.dataset.section=id;if(id===CUR)b.classList.add('active');n.append(b);}}
 function go(id){if(id==='station'){openStation();return;}
   CUR=id;document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.id===id));
   if(EMBED)try{parent.postMessage({type:'store.nav.state',id},'*');}catch(_){}
@@ -762,5 +763,7 @@ buildNav();refreshChips();RENDER.dashboard();
 setInterval(refreshChips,60000);
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel.js"></script>
+<script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>

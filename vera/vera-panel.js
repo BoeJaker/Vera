@@ -12,6 +12,15 @@
  *      (body.lhm-collapsed), persisted to localStorage per panel.
  *   2. Upgrade section headers marked .sec or [data-collapsible] into
  *      collapsible toggles with a caret (chat-rail behavior).
+ *   3. Bridge #nav's own nav-btn sections to VeraPanelBridge.registerNav()
+ *      (vera-panel-bridge.js) — the main-shell / chat-side-rail top-level
+ *      nav-unification feature — so EVERY canonical-LHM panel gets its
+ *      sections injected into whichever outer menu hosts it, automatically,
+ *      the moment it also includes vera-panel-bridge.js. No per-panel JS: a
+ *      MutationObserver watches for whichever nav-btn the panel's OWN
+ *      switch function (nav()/dwSection()/show()/… — every panel names it
+ *      differently) marks .active, and mirrors that via setNavActive() —
+ *      panels never need to call the bridge themselves.
  *
  * It deliberately does NOT touch existing data-section nav handlers — panels
  * keep their own section-switch wiring, so this is purely additive.
@@ -94,7 +103,78 @@
     });
   }
 
-  function init() { initCollapse(); initSections(); }
+  // ── 3. Nav → VeraPanelBridge, generic across every LHM-marked panel ──────
+  // The canonical shape is <aside id="sidebar" data-vera-lhm><nav id="nav">
+  // <button class="nav-btn" data-section="x">…, but several panels built
+  // their own nav rail before this file existed (their own classes/CSS,
+  // just a data-vera-lhm + data-section marker added to opt in) — rather
+  // than special-case each one's own class names here, or in the bridge's
+  // nav_select fallback, ANY element carrying data-vera-lhm qualifies, and
+  // ANY descendant carrying data-section/-sec/-s (whatever class it has)
+  // counts as a nav item; whichever one gets .active (every switcher found
+  // so far already uses that convention for its own styling, canonical or
+  // not) is treated as current. One shared implementation for the whole
+  // panel population, not per-panel exceptions.
+  function initNavBridge() {
+    var host = document.querySelector('[data-vera-lhm]');
+    if (!host || host._vpNavBridged) return;
+    var nav = (host.id === 'nav') ? host : (host.querySelector('#nav') || host);
+    var SEL = '[data-section], [data-sec], [data-s], [data-view], [data-tab], [data-nav], [data-pane]';
+    var btns = nav.querySelectorAll(SEL);
+    if (!btns.length) return;
+    host._vpNavBridged = true;
+
+    function idOf(b) {
+      return b.getAttribute('data-section') || b.getAttribute('data-sec') || b.getAttribute('data-s') ||
+             b.getAttribute('data-view') || b.getAttribute('data-tab') || b.getAttribute('data-nav') ||
+             b.getAttribute('data-pane');
+    }
+    // title attribute first — it's already clean text with no icon glyph.
+    // Failing that, a couple of panels wrap the label in its own child
+    // element (.lbl, .fab-nb-label) rather than a bare trailing text node
+    // (the shape the collapse CSS above relies on to hide just the label
+    // in icon-rail mode) — check those explicitly before falling back to
+    // whatever plain text nodes exist, then the whole button's text as a
+    // last resort (icon glyph and all).
+    function labelOf(b) {
+      var t = (b.getAttribute('title') || '').trim();
+      if (t) return t;
+      var lblEl = b.querySelector('.lbl, .fab-nb-label, .nav-label');
+      if (lblEl && lblEl.textContent.trim()) return lblEl.textContent.trim();
+      var txt = '';
+      Array.prototype.forEach.call(b.childNodes, function (n) { if (n.nodeType === 3) txt += n.textContent; });
+      txt = txt.trim();
+      return txt || (b.textContent || '').trim() || idOf(b);
+    }
+    var items = Array.prototype.map.call(btns, function (b) { return { id: idOf(b), label: labelOf(b) }; });
+    // ".on" (markets_studio_panel.html's own railBtn convention, among
+    // others) alongside the canonical ".active" — scoped to just these nav
+    // buttons, so it's never ambiguous with an unrelated "on" state
+    // elsewhere in the panel.
+    function currentActive() {
+      for (var i = 0; i < btns.length; i++) {
+        if (btns[i].classList.contains('active') || btns[i].classList.contains('on')) return idOf(btns[i]);
+      }
+      return '';
+    }
+    function ready(tries) {
+      if (!window.VeraPanelBridge) {
+        if (tries > 0) setTimeout(function () { ready(tries - 1); }, 200);
+        return;
+      }
+      window.VeraPanelBridge.registerNav(items);
+      window.VeraPanelBridge.setNavActive(currentActive());
+      var mo = new MutationObserver(function () {
+        window.VeraPanelBridge.setNavActive(currentActive());
+      });
+      Array.prototype.forEach.call(btns, function (b) {
+        mo.observe(b, { attributes: true, attributeFilter: ['class'] });
+      });
+    }
+    ready(25);   // ~5s — covers vera-panel-bridge.js loading after this script
+  }
+
+  function init() { initCollapse(); initSections(); initNavBridge(); }
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
@@ -106,5 +186,6 @@
     setCollapsed: setCollapsed,
     isCollapsed: function () { return document.body.classList.contains('lhm-collapsed'); },
     initSections: initSections,
+    initNavBridge: initNavBridge,
   };
 })();

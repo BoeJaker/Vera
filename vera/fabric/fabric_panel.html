@@ -184,24 +184,24 @@ code{font-family:var(--mono);font-size:.9em}
 <body>
 <div id="app">
 <!-- LEFT NAV -->
-<div class="fab-nav" id="fabNav">
+<div class="fab-nav" id="fabNav" data-vera-lhm>
   <div class="fab-nav-hd"><span class="fab-nav-title">Data Fabric</span><button class="btn sm" onclick="fabToggleNav()" id="fabNavCollapseBtn" style="padding:2px 5px;font-size:11px" title="Collapse">‹</button></div>
   <div class="fab-nav-btns">
-    <button class="fab-nb active" id="fnav-datasets" onclick="fabSection('datasets')" title="Datasets"><span class="fab-nb-icon">◫</span><span class="fab-nb-label">Datasets</span><span class="fab-nb-badge" id="fnav-ds-cnt">—</span></button>
-    <button class="fab-nb" id="fnav-sources"  onclick="fabSection('sources')" title="Sources"><span class="fab-nb-icon">⬡</span><span class="fab-nb-label">Sources</span><span class="fab-nb-badge" id="fnav-src-cnt">—</span></button>
-   <button class="fab-nb" id="fnav-discover" onclick="fabSection('discover')" title="Discover"><span class="fab-nb-icon">⊕</span><span class="fab-nb-label">Discover</span></button>
-    <button class="fab-nb" id="fnav-query"    onclick="fabSection('query')" title="Query"><span class="fab-nb-icon">⌕</span><span class="fab-nb-label">Query</span></button>
-    <button class="fab-nb" id="fnav-iot"      onclick="fabSection('iot')" title="IoT &amp; TS"><span class="fab-nb-icon">⬡</span><span class="fab-nb-label">IoT &amp; TS</span></button>
-    <button class="fab-nb" id="fnav-graph"    onclick="fabSection('graph')" title="Graph"><span class="fab-nb-icon">◈</span><span class="fab-nb-label">Graph</span></button>
-    <button class="fab-nb" id="fnav-memgraph" onclick="fabSection('memgraph')" title="Memory Graph"><span class="fab-nb-icon">◉</span><span class="fab-nb-label">Memory</span></button>
-    <button class="fab-nb" id="fnav-loom"     onclick="fabSection('loom')" title="Loom"><span class="fab-nb-icon">⧖</span><span class="fab-nb-label">Loom</span></button>
-    <button class="fab-nb" id="fnav-schedule" onclick="fabSection('schedule')" title="Schedule"><span class="fab-nb-icon">⏱</span><span class="fab-nb-label">Schedule</span></button>
-    <button class="fab-nb" id="fnav-bus"      onclick="fabSection('bus')" title="Bus"><span class="fab-nb-icon">⇄</span><span class="fab-nb-label">Bus</span></button>
-    <button class="fab-nb" id="fnav-stats"    onclick="fabSection('stats')" title="Stats"><span class="fab-nb-icon">∑</span><span class="fab-nb-label">Stats</span></button>
-    <button class="fab-nb" id="fnav-skills"   onclick="fabSection('skills')" title="Skills"><span class="fab-nb-icon">✦</span><span class="fab-nb-label">Skills</span></button>
-    <button class="fab-nb" id="fnav-worldview" onclick="fabSection('worldview')" title="WorldView"><span class="fab-nb-icon">◈</span><span class="fab-nb-label">WorldView</span></button>
-    <button class="fab-nb" id="fnav-vectors"   onclick="fabSection('vectors')" title="Vectors"><span class="fab-nb-icon">⬡</span><span class="fab-nb-label">Vectors</span></button>
-    <button class="fab-nb" id="fnav-objects"   onclick="fabSection('objects')" title="Blob Store (Garage/Ceph)"><span class="fab-nb-icon">⛁</span><span class="fab-nb-label">Blobs</span></button>
+    <button class="fab-nb active" id="fnav-datasets" data-section="datasets" onclick="fabSection('datasets')" title="Datasets"><span class="fab-nb-icon">◫</span><span class="fab-nb-label">Datasets</span><span class="fab-nb-badge" id="fnav-ds-cnt">—</span></button>
+    <button class="fab-nb" id="fnav-sources" data-section="sources"  onclick="fabSection('sources')" title="Sources"><span class="fab-nb-icon">⬡</span><span class="fab-nb-label">Sources</span><span class="fab-nb-badge" id="fnav-src-cnt">—</span></button>
+   <button class="fab-nb" id="fnav-discover" data-section="discover" onclick="fabSection('discover')" title="Discover"><span class="fab-nb-icon">⊕</span><span class="fab-nb-label">Discover</span></button>
+    <button class="fab-nb" id="fnav-query" data-section="query"    onclick="fabSection('query')" title="Query"><span class="fab-nb-icon">⌕</span><span class="fab-nb-label">Query</span></button>
+    <button class="fab-nb" id="fnav-iot" data-section="iot"      onclick="fabSection('iot')" title="IoT &amp; TS"><span class="fab-nb-icon">⬡</span><span class="fab-nb-label">IoT &amp; TS</span></button>
+    <button class="fab-nb" id="fnav-graph" data-section="graph"    onclick="fabSection('graph')" title="Graph"><span class="fab-nb-icon">◈</span><span class="fab-nb-label">Graph</span></button>
+    <button class="fab-nb" id="fnav-memgraph" data-section="memgraph" onclick="fabSection('memgraph')" title="Memory Graph"><span class="fab-nb-icon">◉</span><span class="fab-nb-label">Memory</span></button>
+    <button class="fab-nb" id="fnav-loom" data-section="loom"     onclick="fabSection('loom')" title="Loom"><span class="fab-nb-icon">⧖</span><span class="fab-nb-label">Loom</span></button>
+    <button class="fab-nb" id="fnav-schedule" data-section="schedule" onclick="fabSection('schedule')" title="Schedule"><span class="fab-nb-icon">⏱</span><span class="fab-nb-label">Schedule</span></button>
+    <button class="fab-nb" id="fnav-bus" data-section="bus"      onclick="fabSection('bus')" title="Bus"><span class="fab-nb-icon">⇄</span><span class="fab-nb-label">Bus</span></button>
+    <button class="fab-nb" id="fnav-stats" data-section="stats"    onclick="fabSection('stats')" title="Stats"><span class="fab-nb-icon">∑</span><span class="fab-nb-label">Stats</span></button>
+    <button class="fab-nb" id="fnav-skills" data-section="skills"   onclick="fabSection('skills')" title="Skills"><span class="fab-nb-icon">✦</span><span class="fab-nb-label">Skills</span></button>
+    <button class="fab-nb" id="fnav-worldview" data-section="worldview" onclick="fabSection('worldview')" title="WorldView"><span class="fab-nb-icon">◈</span><span class="fab-nb-label">WorldView</span></button>
+    <button class="fab-nb" id="fnav-vectors" data-section="vectors"   onclick="fabSection('vectors')" title="Vectors"><span class="fab-nb-icon">⬡</span><span class="fab-nb-label">Vectors</span></button>
+    <button class="fab-nb" id="fnav-objects" data-section="objects"   onclick="fabSection('objects')" title="Blob Store (Garage/Ceph)"><span class="fab-nb-icon">⛁</span><span class="fab-nb-label">Blobs</span></button>
   </div>
   <div class="fab-nav-status"><span id="fabStatusBar">—</span>
     <button class="btn sm" style="margin-left:6px;font-size:9px;padding:2px 6px" onclick="fabShowHealth()" title="Diagnostic snapshot">Health</button>
