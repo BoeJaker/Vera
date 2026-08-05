@@ -368,6 +368,8 @@ async def browser_content(
     http_method="POST", http_path="/browser/click", http_tags=["browser", "web"],
     memory="on",
     description="Navigate to a URL, click an element by CSS selector, and return a screenshot. "
+                "Waits up to 8s for `selector` to appear before clicking (handles pages "
+                "that build their own UI client-side, not just static markup). "
                 "Input: url (str!), selector (str! — CSS selector to click), "
                 "wait_for (str — selector to wait for after click), wait_ms (int). "
                 "Output: {image_b64, url, title, clicked, ok}.",
@@ -385,7 +387,18 @@ async def browser_click(
         ctx, page = await _new_page(browser)
         try:
             await page.goto(url, wait_until="domcontentloaded")
-            # Locate and click target element
+            # Locate and click target element. `domcontentloaded` fires before
+            # any async JS has run — on a page that builds its own UI client-
+            # side (e.g. Vera's own dashboard fetching /ui/panels to build its
+            # tab bar), the target selector routinely doesn't exist yet at
+            # this exact instant even though it reliably appears moments
+            # later. wait_for_selector (not a plain query) is what actually
+            # fixes "Selector not found" on those pages instead of it being a
+            # coin-flip race against however fast the app happens to render.
+            try:
+                await page.wait_for_selector(selector, timeout=8_000)
+            except Exception:
+                pass   # fall through to the explicit not-found error below
             el = await page.query_selector(selector)
             if not el:
                 return _err(f"Selector not found: {selector}", url=url, clicked=False)
