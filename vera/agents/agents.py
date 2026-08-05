@@ -51,6 +51,7 @@ Configurable model parameters (all optional, server defaults used if not set)
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 import os
@@ -2682,7 +2683,7 @@ DEFAULT_AGENTS = [
             # IDE / code + files — read/search + SURGICAL edit (edit in place, don't
             # rewrite) + saved-version history for conversational iteration.
             "ide.code.list_files", "ide.code.grep", "ide.code.read_lines",
-            "ide.code.outline", "ide.fs.read", "ide.fs.write", "ide.fs.list",
+            "ide.code.outline", "ide.fs.read", "ide.fs.list",
             "ide.fs.exists", "ide.code.edit_lines", "ide.code.replace",
             "ide.code.insert_at", "code.read", "code.diff", "code.versions",
             # Babblefish protocol translation
@@ -2990,7 +2991,8 @@ DEFAULT_AGENTS = [
             "output."
         ),
         domain_caps=["exec.python.run", "exec.bash.run", "llm.generate",
-                     "ide.code.tool_manifest", "http.get"],
+                     "ide.code.tool_manifest", "http.get",
+                     "code.author", "code.save", "code.versions"],
         domain_description="Implementation, scripting, running & iterating on code",
         tool_mode="call",
         voice="bm_lewis",
@@ -3780,16 +3782,19 @@ DEFAULT_AGENTS = [
         system_prompt=(
             "You are the EDITOR of Vera's coding cohort. You change EXISTING code "
             "with the smallest possible edit. Method: locate the exact region "
-            "(ide.code.grep / ide.code.read_lines), read it, apply a targeted "
-            "ide.code.edit_lines / ide.code.replace / ide.code.insert_at, then "
-            "re-read to confirm the change landed and nothing else moved. Never "
-            "rewrite a whole file when a patch will do. Match the surrounding "
-            "style. State exactly what changed — file, lines, before→after."
+            "(ide.code.grep / ide.code.read_lines), then apply the change via "
+            "code.edit (find/replace anchors, versioned, syntax-checked) — the "
+            "canonical surgical-edit tool, not raw file writes. Fall back to "
+            "ide.code.edit_lines / ide.code.replace / ide.code.insert_at only for "
+            "cases code.edit doesn't cover. Re-read (code.diff) to confirm the "
+            "change landed and nothing else moved. Never rewrite a whole file when "
+            "a patch will do. Match the surrounding style. State exactly what "
+            "changed — file, lines, before→after."
         ),
         domain_caps=["ide.code.read_lines", "ide.code.edit_lines",
                      "ide.code.insert_at", "ide.code.replace", "ide.code.grep",
-                     "ide.code.list_files", "ide.fs.read", "ide.fs.write",
-                     "code.save", "code.diff", "code.read"],
+                     "ide.code.list_files", "ide.fs.read",
+                     "code.edit", "code.save", "code.diff", "code.read"],
         domain_description="Surgical line-level code edits on existing files",
         tool_mode="call", voice="bm_lewis",
     ),
@@ -3901,7 +3906,7 @@ DEFAULT_AGENTS = [
             "exec.bash.run for bulk work. Be explicit about every path you "
             "create, move or remove — a delete is not reversible."
         ),
-        domain_caps=["ide.fs.read", "ide.fs.write", "ide.fs.list", "ide.fs.browse",
+        domain_caps=["ide.fs.read", "ide.fs.list", "ide.fs.browse",
                      "ide.fs.delete", "ide.fs.roots", "ide.fs.exists",
                      "exec.bash.run"],
         domain_description="Filesystem browse/read/write/move/organise operations",
@@ -4271,6 +4276,70 @@ async def agent_chat(
     return await AGENT_RUNNER.run(agent, message, hist, session_id)
 
 
+# ── agent.consult — the sub-agent-calling primitive ───────────────────────────
+# Lets a RUNNING loop step (or any capability) delegate a narrow question to a
+# named specialist agent — "if the loop needs to touch the calendar, it can
+# consult the comms agent" — without giving the loop a second recursive loop
+# engine to worry about. It's deliberately just agent.chat's own single-turn
+# AGENT_RUNNER.run path (confirmed non-tool-executing — one /api/chat call,
+# no sub-tool loop) reused under a name that makes the calling convention
+# explicit, plus two guards agent.chat doesn't need because nothing calls IT
+# from inside another agent's own turn:
+#   - a hard recursion cap (a consulted specialist can't itself consult
+#     another — contextvars propagate through create_task, so one guard at
+#     entry covers the whole call tree, same pattern as BACKGROUND_LLM in
+#     capability_orchestration.py)
+#   - a fixed timeout ceiling, so one slow consult can't blow a caller's
+#     whole step/run budget regardless of what timeout the caller itself had
+_CONSULT_DEPTH: "contextvars.ContextVar[int]" = contextvars.ContextVar(
+    "vera_agent_consult_depth", default=0)
+_CONSULT_TIMEOUT_S = 90
+
+
+@capability(
+    "agent.consult", memory="off",
+    http_method="POST", http_path="/agents/consult", http_tags=["agents"],
+    description="Delegate ONE bounded question to a named specialist agent "
+                "from inside a running loop step or another capability — the "
+                "calling-convention primitive for cross-domain delegation "
+                "('the loop needs to touch the calendar, so it consults the "
+                "comms agent'). Single LLM turn only (no sub-tool loop, no "
+                "recursive consult — a consulted agent cannot itself call "
+                "agent.consult). Inputs: agent_name (str!), message (str! — "
+                "the question/task for the specialist), context (str — extra "
+                "background the specialist wouldn't otherwise have). Output: "
+                "{text, agent_name, model, latency_ms} or {error}.",
+)
+async def agent_consult(agent_name: str, message: str, context: str = "",
+                        trace_id=None):
+    if _CONSULT_DEPTH.get() >= 1:
+        return {"error": "agent.consult refused: a consulted specialist "
+                         "cannot itself consult another specialist "
+                         "(recursion depth 1 exceeded)"}
+    agent = await AGENT_REGISTRY.get_by_name(agent_name)
+    if not agent:
+        return {"error": f"unknown agent: {agent_name}"}
+    full_message = message if not context else \
+        f"Context from the calling task:\n{context}\n\nQuestion:\n{message}"
+    t0 = time.time()
+    await emit_event({"type": "agent.consult.start", "agent_name": agent_name,
+                      "trace_id": trace_id or ""})
+    token = _CONSULT_DEPTH.set(_CONSULT_DEPTH.get() + 1)
+    try:
+        result = await asyncio.wait_for(
+            AGENT_RUNNER.run(agent, full_message, [], f"consult:{trace_id or uuid.uuid4().hex[:8]}"),
+            timeout=_CONSULT_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        result = {"error": f"agent.consult timed out after {_CONSULT_TIMEOUT_S}s",
+                  "agent_name": agent_name}
+    finally:
+        _CONSULT_DEPTH.reset(token)
+    await emit_event({"type": "agent.consult.done", "agent_name": agent_name,
+                      "trace_id": trace_id or "", "elapsed_s": round(time.time() - t0, 1),
+                      "error": result.get("error", "")})
+    return result
+
+
 @capability(
     "agent.chat_voice", memory="on",
     http_method="POST", http_path="/agents/chat_voice", http_tags=["agents"],
@@ -4347,6 +4416,14 @@ _ASO_MOUNT_JS = r"""
   frame.src = backendBase + '/ui/panels/agents-skills-ontologies';
   frame.style.cssText = 'width:100%;height:100%;border:none;display:block;background:#181614';
   frame.allow = 'clipboard-read; clipboard-write; microphone';
+  // Built here at mount time rather than via a lazily-loaded <iframe src>,
+  // so the harness's generic init-on-first-load hook (_ensurePanelLoaded in
+  // capability_orchestration.html) never sees it — send vera:panel:init
+  // directly instead, needed for the nav-unification pilot (registerNav()
+  // in agents_skills_ontologies_panel.html) to reach the outer shell.
+  frame.addEventListener('load', () => {
+    try { frame.contentWindow.postMessage({ type:'vera:panel:init', panel_id:'auto-agents-skills-ontologies', session_id:'' }, '*'); } catch(_) {}
+  });
   mount.appendChild(frame);
 
   // Relay base URL changes to the iframe

@@ -46,6 +46,11 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
 .pane{position:absolute;inset:0;display:none}
 .pane.on{display:block}
 .pane iframe{width:100%;height:100%;border:none;display:block;background:var(--bg0)}
+/* Hidden once the host shell confirms it's rendering these same 3 sections
+   as injected sub-menu items itself (VeraPanelBridge's registerNav() +
+   vpb-nav-hosted — see vera-panel-bridge.js). #panes already carries
+   flex:1 in the #shell flex row above. Confirmation-driven, not assumed. */
+html.vpb-nav-hosted #secNav{display:none}
 </style>
 </head>
 <body>
@@ -69,6 +74,7 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
     </div>
   </div>
 </div>
+<script src="/ui/vera-panel-bridge.js"></script>
 <script>
 'use strict';
 // KEY FIX: base URL is always the origin of THIS page since it's served by the backend
@@ -103,7 +109,16 @@ function show(name, el) {
   const pane = document.getElementById('pane-' + name);
   if (pane) pane.classList.add('on');
   loadFrame(name);
+  // Keep the outer shell's injected top-level sub-menu in sync when this
+  // panel changes section on its own — see registerNav() below.
+  if (window.VeraPanelBridge) VeraPanelBridge.setNavActive(name);
 }
+// 3rd pilot panel for nav unification — its buttons already carry
+// data-pane, matched directly by VeraPanelBridge's generic nav_select
+// fallback, so no selectFn is needed.
+if (window.VeraPanelBridge) VeraPanelBridge.registerNav([
+  {id:'agents', label:'Agents'}, {id:'skills', label:'Skills'}, {id:'ontologies', label:'Ontologies'},
+]);
 
 function broadcast(msg) {
   Object.keys(LOADED).forEach(name => {
@@ -131,6 +146,5 @@ window.addEventListener('message', e => {
 window.addEventListener('DOMContentLoaded', () => { loadFrame('agents'); });
 </script>
 <script src="/ui/vera-ui.js"></script>
-<script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>

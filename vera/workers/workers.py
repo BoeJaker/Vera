@@ -443,6 +443,17 @@ _WOL_MOUNT_JS = r"""
   frame.src = backendBase + '/ui/panels/workers-ollama';
   frame.style.cssText = 'width:100%;height:100%;border:none;display:block;background:#181614';
   frame.allow = 'clipboard-read; clipboard-write';
+  // This panel builds its own iframe here at mount time (immediately, not
+  // lazily like most other auto-tabs) instead of a raw <iframe src> in the
+  // registered HTML, so the harness's generic lazy-load init-on-first-load
+  // hook (_ensurePanelLoaded in capability_orchestration.html) never sees
+  // it. Send vera:panel:init directly so vera-panel-bridge.js inside gets a
+  // real panel_id promptly instead of only its own 30s tick/first-click —
+  // needed for the top-level nav-unification pilot (registerNav() below in
+  // workers_ollama_panel.html) to actually reach the outer shell.
+  frame.addEventListener('load', function() {
+    try { frame.contentWindow.postMessage({type:'vera:panel:init', panel_id:'auto-workers-ollama', session_id:''}, '*'); } catch(_) {}
+  });
   mount.appendChild(frame);
   // Relay base URL and theme to the iframe
   var urlInput = document.getElementById('backendUrl');

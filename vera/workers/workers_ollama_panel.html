@@ -45,6 +45,14 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
   scrollbar-width:thin;scrollbar-color:var(--bg3) transparent;
 }
 #secNav::-webkit-scrollbar{width:5px}
+/* Hidden once the host shell confirms it's rendering these same sections
+   as injected sub-menu items itself (VeraPanelBridge's registerNav() +
+   vpb-nav-hosted — see vera-panel-bridge.js). #panes already carries
+   flex:1 in the #shell flex row above, so it fills the freed width with
+   no other adjustment needed. Confirmation-driven, not assumed — opened
+   standalone or mounted somewhere that hasn't adopted nav injection keeps
+   this rail exactly as before. */
+html.vpb-nav-hosted #secNav{display:none}
 #secNav::-webkit-scrollbar-track{background:transparent}
 #secNav::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:3px}
 #secNav::-webkit-scrollbar-thumb:hover{background:var(--border2)}
@@ -905,8 +913,9 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
           <div id="cat-sub-dl" style="display:none">
             <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
               <button class="btn sm" onclick="P.catDlRefresh()">↻ Refresh</button>
+              <button class="btn sm" id="cat-dl-resume-all" style="display:none" onclick="P.catDlResume()">⟳ Resume all</button>
               <button class="btn sm" onclick="P.catDlClear()">Clear finished</button>
-              <span style="font-size:9px;color:var(--dim)">Progress is streamed from Ollama's pull API — bytes, speed and ETA are live, and survive leaving this tab.</span>
+              <span style="font-size:9px;color:var(--dim)">Progress is streamed from Ollama's pull API — bytes, speed and ETA are live, and survive leaving this tab. Downloads interrupted by a Vera restart resume automatically.</span>
             </div>
             <div id="cat-downloads"><span style="color:var(--dim)">No downloads yet.</span></div>
           </div>
@@ -1864,6 +1873,7 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
   </div>
 </div>
 
+<script src="/ui/vera-panel-bridge.js"></script>
 <script>
 'use strict';
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -5848,7 +5858,25 @@ function showPane(name, el){
   if(name==='network'){ netSub(_netSub); }
   if(name==='connections'){ connLoad(); }
   if(name==='nodes'){ ndInit(); }
+  // Keep the outer shell's injected top-level sub-menu in sync when this
+  // panel changes pane on its own (a direct click here, not one relayed
+  // from an injected item) — see registerNav() below. The 'perf'/'catalog'
+  // legacy aliases above recurse into this function with a real pane name
+  // before returning, so they still land here correctly.
+  if(window.VeraPanelBridge) VeraPanelBridge.setNavActive(name);
 }
+// Pilot rollout of nav unification (2nd panel, after Loop Lab) — every
+// button above already carries data-pane, which VeraPanelBridge's generic
+// nav_select fallback matches directly, so no selectFn is needed here
+// either. Excludes the 'perf'/'catalog' legacy aliases (they're sub-tabs
+// of Observe/Ollama, not real top-level panes of their own).
+if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
+  {id:'workers', label:'Workers'}, {id:'nodes', label:'Nodes'}, {id:'ollama', label:'Ollama'},
+  {id:'observe', label:'Observe'}, {id:'proxmox', label:'Proxmox'}, {id:'storage', label:'Storage'},
+  {id:'docker', label:'Docker'}, {id:'sandbox', label:'Sandbox'}, {id:'network', label:'Network'},
+  {id:'connections', label:'Connections'}, {id:'mimic', label:'Mimic'}, {id:'vllm', label:'vLLM'},
+  {id:'openclaw', label:'OpenClaw'}, {id:'api', label:'API'}, {id:'provision', label:'Provision'},
+]);
 
 // ── Proxmox sub-tabs — Dashboard (native) / CPU-NUMA (pxstore solo iframe) ───
 function pmxSub(name){
@@ -6638,6 +6666,13 @@ async function catDlRefresh(){
   catDlRender();
 }
 function catDlRender(){
+  // Resume all is only meaningful when something is actually interrupted.
+  const resumeBtn=$('cat-dl-resume-all');
+  if(resumeBtn){
+    const n=_catPulls.filter(p=>p.state==='interrupted').length;
+    resumeBtn.style.display=n?'':'none';
+    resumeBtn.textContent=n>1?`⟳ Resume all (${n})`:'⟳ Resume';
+  }
   const el=$('cat-downloads'); if(!el) return;
   if(!_catPulls.length){ el.innerHTML='<span style="color:var(--dim)">No downloads yet. Pull a model from Browse, or from the Installed tab\'s “Pull to this node”.</span>'; return; }
   const stateCol={downloading:'#e6b800',starting:'var(--dim2)',verifying:'var(--acc2)',
@@ -6689,14 +6724,16 @@ async function catDlClear(pid){
   await api('/catalog/pull/clear','POST',pid?{pull_id:pid}:{});
   catDlRefresh();
 }
-// Restart a download that was interrupted (usually by a Vera restart — the pull
-// stream belongs to Vera, so it dies with the process). Ollama kept the partial
-// blob, so this resumes rather than re-fetching the whole thing.
+// Restart interrupted downloads — one row, or every interrupted row when called
+// with no id (the Resume all button). Ollama still holds the partial blob, so
+// these continue from where they stopped. Vera does the same thing to itself on
+// startup; this is for the times you want it sooner, or after a failed auto-run.
 async function catDlResume(pid){
-  const p=_catPulls.find(x=>x.id===pid); if(!p) return;
-  const r=await api('/catalog/pull/start','POST',{model:p.model,instance_id:p.instance_id});
+  const r=await api('/catalog/pull/resume','POST',pid?{pull_id:pid}:{});
   if(r&&r.error){ alert('Resume failed: '+r.error); return; }
-  if(r&&r.pull_id&&r.pull_id!==pid) await api('/catalog/pull/clear','POST',{pull_id:pid});
+  const n=(r&&r.resumed||[]).length, bad=(r&&r.failed||[]);
+  if(bad.length) alert(`Resumed ${n}. Could not resume ${bad.length}:\n`+
+                       bad.map(b=>`• ${b.model} on ${b.instance_id}: ${b.error}`).join('\n'));
   catDlRefresh();
 }
 
@@ -7449,7 +7486,6 @@ return {
 })();
 </script>
 <script src="/ui/vera-ui.js"></script>
-<script src="/ui/vera-panel-bridge.js"></script>
 <script src="/ui/elements/sandbox_controls.js" id="vera-sandbox-controls-js"></script>
 </body>
 </html>

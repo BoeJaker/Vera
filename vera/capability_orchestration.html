@@ -1753,6 +1753,15 @@ window.addEventListener('message', e => {
   const d = e.data;
   if(!d || typeof d!=='object' || d.type!=='vera:panel:state' || !d.panel_id) return;
   const nav = (d.state && d.state.nav) || null;
+  // Confirm receipt so the panel can hide its own now-redundant internal
+  // rail (vera-panel-bridge.js turns this into a vpb-nav-hosted class the
+  // panel's own CSS keys off) — sent every time real nav items are seen,
+  // not just once, so a panel that (re)loads after this listener already
+  // has a cached signature still gets confirmed instead of relying on the
+  // dedupe below to have fired at least once historically.
+  if(nav && Array.isArray(nav.items) && nav.items.length && e.source){
+    try{ e.source.postMessage({type:'vera:panel:nav_hosted'}, '*'); }catch(err){}
+  }
   const prevSig = JSON.stringify(_panelNavCache[d.panel_id] || null);
   if(JSON.stringify(nav) === prevSig) return;   // no real change → no re-render
   _panelNavCache[d.panel_id] = nav;

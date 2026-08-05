@@ -107,6 +107,15 @@ body{padding-left:158px}
 #nav.rail .btn:hover{background:var(--bg2);color:var(--text)}
 #nav.rail .btn.on{background:var(--bg3);color:var(--acc);border:none}
 #nav.rail .btn .ic{width:15px;text-align:center;font-size:12px}
+/* When the host shell confirms it's rendering these same sections as
+   injected sub-menu items (VeraPanelBridge's registerNav() + the
+   vpb-nav-hosted class it applies — see vera-panel-bridge.js), this rail
+   is redundant duplication next to the outer menu, not extra info — hide
+   it and reclaim the space. Standalone (no host, e.g. opened directly) or
+   mounted somewhere that hasn't adopted nav injection keeps it exactly as
+   before, since that class is confirmation-driven, never assumed. */
+html.vpb-nav-hosted #nav.rail{display:none}
+html.vpb-nav-hosted body{padding-left:0}
 /* ── dynamic workflow diagram (Bun-style) ── */
 .wf{display:flex;align-items:stretch;gap:0;overflow-x:auto;padding:6px 2px}
 .wf-node{flex:1;min-width:130px;display:flex;flex-direction:column;background:var(--bg2);border:1px solid var(--border);border-radius:7px;padding:8px 10px;opacity:.5;transition:all .25s}

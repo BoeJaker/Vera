@@ -54,9 +54,19 @@
  *   Published state gains `nav:{items,active}`. Selecting an injected item
  *   dispatches the generic `nav_select` action ({id}) — with no further
  *   panel code, it clicks whatever element carries a matching data-sec/
- *   -section/-view/-tab/-nav attribute (the pattern most of this codebase's
+ *   -section/-view/-tab/-nav/-pane attribute (the patterns this codebase's
  *   hand-rolled section switchers already use); pass a second argument to
  *   registerNav() only if a panel's switcher doesn't use one of those.
+ *
+ *   Once a host confirms it's actually rendering the injected menu, it
+ *   sends back `{type:'vera:panel:nav_hosted'}`, which the shim turns into
+ *   a `vpb-nav-hosted` class on <html> — a panel's OWN stylesheet uses that
+ *   to hide its now-redundant internal rail, e.g.:
+ *     html.vpb-nav-hosted #secNav{display:none}
+ *   This is confirmation-driven, never assumed from "am I in an iframe" —
+ *   a panel opened standalone, or mounted somewhere that hasn't adopted nav
+ *   injection (today: the chat side-rail), never gets this class and keeps
+ *   its own rail exactly as before.
  * ============================================================
  */
 (function(){
@@ -337,9 +347,11 @@
   // Select a section by the id the panel gave registerNav(). Prefers the
   // panel's own select callback when it registered one; otherwise falls back
   // to clicking whatever element carries a matching data-sec/-section/-view/
-  // -tab/-nav attribute — the exact pattern most of this codebase's existing
-  // hand-rolled section switchers already use (data-sec="test" etc.), so most
-  // panels need zero extra code beyond the registerNav(items) call itself.
+  // -tab/-nav/-pane attribute — the exact patterns this codebase's existing
+  // hand-rolled section switchers already use (data-sec="test", or
+  // data-pane="workers" as workers_ollama_panel.html/
+  // agents_skills_ontologies_panel.html both use), so most panels need zero
+  // extra code beyond the registerNav(items) call itself.
   function _navSelect(p){
     var id = (p || {}).id;
     if(id == null) return {ok: false, error: 'nav_select requires {id}'};
@@ -351,7 +363,7 @@
     }
     var el = document.querySelector(
       '[data-sec="' + id + '"], [data-section="' + id + '"], [data-view="' + id + '"], ' +
-      '[data-tab="' + id + '"], [data-nav="' + id + '"]');
+      '[data-tab="' + id + '"], [data-nav="' + id + '"], [data-pane="' + id + '"]');
     if(!el){ var found = _findNamed(id); el = found && found.el; }
     if(!el) return {ok: false, error: 'no nav target for id: ' + id};
     el.click();
@@ -512,7 +524,29 @@
     var t = d.type || '';
     if(t === 'vera:panel:init'){
       _panelId = d.panel_id || _panelId; _sessionId = d.session_id || _sessionId;
+      // Force the next publish through even if the state BODY hasn't
+      // changed since the last one. Panels that call registerNav()/
+      // registerStateProvider() at script-parse time (before this init
+      // ever arrives, since init only fires on the host's iframe 'load'
+      // event, well after inline scripts already ran) publish once with
+      // panel_id still '' — a host that key its cache by panel_id (as the
+      // main-shell nav-injection listener does) correctly ignores that
+      // unaddressed copy. publishState()'s own dedupe then sees the SAME
+      // state body on this next call and silently drops it too, so the
+      // correctly-tagged copy — the only one any panel_id-keyed listener
+      // can actually use — never goes out at all without this reset.
+      _lastState = null;
       setTimeout(publishState, 50);
+    } else if(t === 'vera:panel:nav_hosted'){
+      // The host confirms it received our registerNav() items and is
+      // rendering them itself (only sent back once it actually saw a
+      // non-empty `nav` in our published state — see capability_
+      // orchestration.html's _lhmNavSync wiring) — i.e. its own outer menu
+      // now covers what this panel's internal rail was for. A panel opened
+      // standalone (or in a host that hasn't adopted nav injection, like
+      // today's chat side-rail) never receives this, so its own rail stays
+      // visible there — this is never assumed, only confirmed by the host.
+      document.documentElement.classList.add('vpb-nav-hosted');
     } else if(t === 'vera:panel:query'){
       // Explicit freshness ping — bypass the changed-state dedupe. Without
       // this, an idle panel whose state hasn't changed republishes NOTHING,
