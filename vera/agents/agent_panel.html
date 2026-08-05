@@ -227,6 +227,22 @@ input[type=range]{padding:0;accent-color:var(--acc3);cursor:pointer}
             <div><div style="font-size:9.5px;color:var(--dim2);margin-bottom:3px">Stop sequences</div>
               <input id="f-stop" placeholder="\n\n, ### (comma-separated)"></div>
           </div>
+
+          <div class="sec">Task Routing <span style="font-weight:400;color:var(--dim2);font-size:9.5px">— auto-classify each message to a job type</span></div>
+          <div class="hint">The FIRST row whose pattern is found in the incoming message decides that turn's job type instead of the plain "chat" default — which then routes through the existing <b>Model Routing → Job-type routing</b> table (Workers &amp; Ollama tab), so pin/model/GPU rules there apply automatically. No match keeps ordinary chat routing.</div>
+          <div id="rt-rows" style="display:flex;flex-direction:column;gap:4px;margin:6px 0"></div>
+          <div class="row" style="gap:6px;flex-wrap:wrap">
+            <input id="rt-match" placeholder="match text, e.g. &quot;write code&quot;" style="flex:1;min-width:160px">
+            <input id="rt-jobtype" placeholder="job type, e.g. code" style="width:130px">
+            <label style="font-size:9px;color:var(--dim2);display:flex;align-items:center;gap:3px;white-space:nowrap">
+              <input type="checkbox" id="rt-regex"> regex</label>
+            <button class="btn xs" onclick="AP.addRoutingRow()">＋ Add</button>
+          </div>
+          <div class="row" style="margin-top:8px">
+            <span style="flex:1"></span>
+            <button class="btn xs" onclick="AP.saveRouting()">💾 Save routing table</button>
+            <span class="status" id="rt-status"></span>
+          </div>
         </div>
 
         <!-- PERSONALITY -->
@@ -496,6 +512,7 @@ const AP = (() => {
   let agents=[],allCaps={},selCaps=new Set();
   let selSk=new Set(),selOnt=new Set(),allSk=[],allOnt=[];
   let activeId=null,instances={},testHist=[],activeGroup='';
+  let routingTable=[];   // [{match,job_type,regex,label}] — see renderRoutingRows/saveRouting
 
   async function load(){
     const r=await api('/agents/list');
@@ -587,6 +604,9 @@ const AP = (() => {
     document.getElementById('f-quick_opener').checked=!!a.quick_opener;
     document.getElementById('f-quick_opener_threshold').value=a.quick_opener_threshold??1500;
     document.getElementById('f-quick_opener_model').value=a.quick_opener_model||'';
+    routingTable=(a.routing_table||[]).slice();
+    renderRoutingRows();
+    document.getElementById('rt-status').textContent='';
     const notesEl=document.getElementById('agent-notes-el');
     if(notesEl){ if(a.name) notesEl.setAttribute('ref-id',a.name); else notesEl.removeAttribute('ref-id'); }
     document.getElementById('test-name').textContent=a.name||'assistant';
@@ -606,7 +626,7 @@ const AP = (() => {
       memory_enabled:true,memory_inject:false,memory_inject_limit:5,memory_tags:'',
       notes_inject:true,cap_ontology_inject:false,
       quick_opener:false,quick_opener_threshold:1500,quick_opener_model:'',
-      skill_ids:[],ontology_ids:[]});
+      skill_ids:[],ontology_ids:[],routing_table:[]});
     showEd();tab('identity',document.querySelector('.mtab'));
   }
 
@@ -689,6 +709,43 @@ const AP = (() => {
       ${info.latency_ms!=null?`Latency: <span style="color:var(--acc)">${info.latency_ms}ms</span><br>`:''}
       ${info.num_ctx?`Max ctx: <span style="color:var(--acc)">${(info.num_ctx).toLocaleString()}</span><br>`:''}
       ${info.models?.length?`Models: ${info.models.slice(0,4).map(m=>esc(m)).join(', ')}${info.models.length>4?'&hellip;':''}`:''}`; 
+  }
+
+  // TASK ROUTING — an ordered list of {match, job_type, regex} rows, edited
+  // here but saved via the DEDICATED agent.routing.set capability (not the
+  // main Save button/agent.update) — mirrors how knowledge/RAG sources work
+  // server-side. Rows are numbered so the FIRST match wins is visible.
+  function renderRoutingRows(){
+    const box=document.getElementById('rt-rows');if(!box)return;
+    if(!routingTable.length){box.innerHTML='<div class="hint" style="margin:0">No routing rules yet — this agent uses plain chat routing for every message.</div>';return;}
+    box.innerHTML=routingTable.map((r,i)=>`
+      <div style="display:flex;gap:6px;align-items:center;background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:10px">
+        <span style="color:var(--dim2);font-family:var(--mono);width:14px">${i+1}</span>
+        <span style="flex:1;font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.match)}">${r.regex?'/'+esc(r.match)+'/':esc(r.match)}</span>
+        <span style="color:var(--acc);font-family:var(--mono)">&rarr; ${esc(r.job_type||'chat')}</span>
+        <button class="btn xs" title="remove" onclick="AP.removeRoutingRow(${i})">&times;</button>
+      </div>`).join('');
+  }
+  function addRoutingRow(){
+    const match=fv('rt-match').trim();
+    if(!match){document.getElementById('rt-status').textContent='match text required';document.getElementById('rt-status').className='status err';return;}
+    routingTable.push({match, job_type:fv('rt-jobtype').trim(), regex:fc('rt-regex')});
+    document.getElementById('rt-match').value='';
+    document.getElementById('rt-jobtype').value='';
+    document.getElementById('rt-regex').checked=false;
+    renderRoutingRows();
+  }
+  function removeRoutingRow(i){ routingTable.splice(i,1); renderRoutingRows(); }
+  async function saveRouting(){
+    const st=document.getElementById('rt-status');
+    const name=fv('f-name').trim();
+    if(!fv('f-id')||!name){st.textContent='Save the agent first';st.className='status err';return;}
+    st.textContent='Saving…';st.className='status';
+    const res=await api('/agents/routing/set','POST',{agent:name, rules:JSON.stringify(routingTable)});
+    if(!res||res.error){st.textContent='Error: '+(res?.error||'failed');st.className='status err';return;}
+    routingTable=res.routing_table||routingTable;
+    renderRoutingRows();
+    st.textContent='Saved ✓';st.className='status ok';
   }
 
   // CAPS
@@ -1250,7 +1307,7 @@ const AP = (() => {
   });
 
   return{load,select,newAgent,cancel,save,del,updateAv,
-    loadModels,onInstChange,
+    loadModels,onInstChange,addRoutingRow,removeRoutingRow,saveRouting,
     loadCaps,filterCaps,setGroup,toggleCap,capTip,selectAllCaps,clearAllCaps,selectGroupCaps,
     loadSkills,toggleSk,skTip,selectAllSkills,clearAllSkills,
     loadOnts,toggleOnt,ontTip,selectAllOnts,clearAllOnts,previewCtx,

@@ -305,18 +305,77 @@ function allModels(){
     .map(([ref, nodes]) => ({ref, nodes:[...nodes]}))
     .sort((a,b)=>a.ref.localeCompare(b.ref));
 }
-// Model picker. Keeps any value already set even if that model is no longer
-// reported by a node (a rule pinned to a since-removed model should stay
-// visible and editable, not silently reset to "default").
-function modelSel(cls, val, id){
+// ── Pin <-> Model cross-filtering ────────────────────────────────────────────
+// Picking a node/vllm/provider PIN narrows the Model select to only what that
+// target actually serves; picking a Model narrows the Pin select's visible
+// options to only targets that actually carry it — so a rule can't be built
+// pinning a model to a host that doesn't have it (or vice versa).
+function _modelsFor(pinVal){
   const list = allModels();
+  if(!pinVal) return list;
+  if(pinVal==='vllm:*') return list.filter(m=>m.nodes.some(n=>n.startsWith('vllm:')));
+  return list.filter(m=>m.nodes.includes(pinVal));
+}
+function _pinsFor(modelVal){
+  if(!modelVal) return null;   // null = no restriction
+  const m = allModels().find(x=>x.ref===modelVal);
+  const set = new Set(m ? m.nodes : []);
+  if([...set].some(n=>n.startsWith('vllm:'))) set.add('vllm:*');
+  return set;
+}
+function _modelOptionsHtml(val, restrictPin, placeholder){
+  const list = _modelsFor(restrictPin);
   const known = list.some(m=>m.ref===val);
-  const opts = ['<option value="">(cluster default)</option>'];
-  if(val && !known) opts.push(`<option value="${esc(val)}" selected>${esc(val)} (not on any node)</option>`);
+  const ph = placeholder || '(cluster default)';
+  const opts = [`<option value="">${esc(ph)}</option>`];
+  if(val && !known) opts.push(`<option value="${esc(val)}" selected>${esc(val)} (not on selected host)</option>`);
   list.forEach(m=>opts.push(
     `<option value="${esc(m.ref)}"${val===m.ref?' selected':''}>${esc(m.ref)}${
       m.nodes.length?' · '+esc(m.nodes.join(', ')):''}</option>`));
-  return `<select class="${cls}"${id?` id="${esc(id)}"`:''}>${opts.join('')}</select>`;
+  return opts.join('');
+}
+// Model picker. Keeps any value already set even if that model is no longer
+// reported by a node (a rule pinned to a since-removed model should stay
+// visible and editable, not silently reset to "default"). `restrictPin`
+// narrows the list to models actually present on that pin target — see
+// wirePinModelCross() below, which keeps a (pin, model) select pair in sync
+// both directions as either one changes.
+function modelSel(cls, val, id, placeholder, restrictPin){
+  return `<select class="${cls}"${id?` id="${esc(id)}"`:''}>${_modelOptionsHtml(val, restrictPin, placeholder)}</select>`;
+}
+// Wires any (.f-pin, .f-model) or (#cr-pin, #cr-model) pair found together in
+// `container` (a single <tr> for dynamically rendered rows, or the whole
+// document for the standalone add-rule form). Rebuilds the model <select>'s
+// OPTIONS in place (never replaces the element — that would silently drop
+// the listener this function itself is attaching) on pin change; hides
+// (not removes — the currently selected value must stay visibly selected)
+// non-matching pin <option>s on model change.
+function wirePinModelCross(container){
+  const pin = container.querySelector('.f-pin, #cr-pin');
+  const model = container.querySelector('.f-model, #cr-model');
+  if(!pin || !model || model.tagName !== 'SELECT') return;
+  const placeholder = model.dataset.placeholder || '(cluster default)';
+  if(pin.dataset.pmWired){
+    // Static form re-invoked (e.g. fillCapRuleForm runs on every load) — the
+    // listeners are already attached to these same persistent elements, just
+    // re-apply the current restriction instead of adding a second listener.
+    if(pin.value) model.innerHTML = _modelOptionsHtml(model.value, pin.value, placeholder);
+    return;
+  }
+  pin.dataset.pmWired = '1';
+  const refreshModel = () => { model.innerHTML = _modelOptionsHtml(model.value, pin.value, placeholder); };
+  const refreshPin = () => {
+    const allow = _pinsFor(model.value);
+    Array.from(pin.options).forEach(o=>{
+      if(!o.value){ o.hidden=false; return; }
+      o.hidden = !!allow && !allow.has(o.value);
+    });
+  };
+  pin.addEventListener('change', refreshModel);
+  model.addEventListener('change', refreshPin);
+  // Initial pass so a pre-existing rule's pair starts correctly restricted.
+  if(pin.value) refreshModel();
+  if(model.value) refreshPin();
 }
 
 // Fill the standalone model <select>s once node/provider data is in. Called
@@ -328,7 +387,11 @@ function refreshModelSelects(){
     const el=$(id); if(!el) return;
     const keep=el.value;
     const placeholder = id==='v8-model' ? '(per-loop)' : '(cluster default)';
-    const list=allModels();
+    // cr-model additionally respects whatever cr-pin is currently set to —
+    // otherwise this periodic refresh (every ~15s, see the bottom setInterval)
+    // would silently undo wirePinModelCross()'s pin-based filtering.
+    const restrictPin = (id==='cr-model' && $('cr-pin')) ? $('cr-pin').value : '';
+    const list=_modelsFor(restrictPin);
     const opts=[`<option value="">${placeholder}</option>`];
     if(keep && !list.some(m=>m.ref===keep))
       opts.push(`<option value="${esc(keep)}">${esc(keep)} (not on any node)</option>`);
@@ -480,7 +543,7 @@ function renderRoleProfiles(){
         <td>${jtSel('f-jt', rule.job_type||'')}</td>
         <td>${gpuSel('f-gpu', gpuVal(rule))}</td>
         <td>${pinSel('f-pin', rule.pin||'')}</td>
-        <td><input type="text" class="f-model" value="${esc(rule.model||'')}" placeholder="(node default)"></td>
+        <td>${modelSel('f-model', rule.model||'', '', '(node default)')}</td>
         <td><input type="number" class="f-esc" value="${rule.escalate_chars||0}" title="escalate_chars">
             ${gpuSel('f-escgpu', gpuVal(escd))}</td>
         <td><span class="badge ${isUser?'user':'declared'}">${isUser?'user':'declared'}</span></td>
@@ -508,6 +571,9 @@ function renderRoleProfiles(){
       </table></div>
     </div>`;
   }).join('');
+  // Pin/model select cross-filtering — one row at a time so a change in one
+  // role's pin never affects another role's model options.
+  document.querySelectorAll('#roleprofiles tr[data-prof]').forEach(tr=>wirePinModelCross(tr));
 }
 function _collectProfileRoles(name){
   const roles={};
@@ -602,14 +668,23 @@ function renderJtRules(){
   $('jt-body').innerHTML=jts.map(jt=>{
     const ov=overrides[jt];
     const rule=ov||defaults[jt]||{};
+    // Media job types (stt/tts/imagegen) pin to media inference nodes, not
+    // named LLM models — pin<->model cross-filtering doesn't apply there, so
+    // that column stays a free-text field same as before.
+    const isMedia = MEDIA_JTS.includes(jt);
     return `<tr data-jt="${esc(jt)}">
-      <td class="mono"><b>${esc(jt)}</b>${MEDIA_JTS.includes(jt)?' <span class="badge">media</span>':''}</td>
+      <td class="mono"><b>${esc(jt)}</b>${isMedia?' <span class="badge">media</span>':''}</td>
       <td>${gpuSel('f-gpu', gpuVal(rule))}</td>
-      <td>${pinSel('f-pin', rule.pin||'', MEDIA_JTS.includes(jt)?'media':'llm')}</td>
-      <td><input type="text" class="f-model" value="${esc(rule.model||'')}" placeholder="(caller's)"></td>
+      <td>${pinSel('f-pin', rule.pin||'', isMedia?'media':'llm')}</td>
+      <td>${isMedia
+            ? `<input type="text" class="f-model" value="${esc(rule.model||'')}" placeholder="(caller's)">`
+            : modelSel('f-model', rule.model||'', '', "(caller's)")}</td>
       <td><span class="badge ${ov?'user':'declared'}">${ov?'profile':'default'}</span></td>
     </tr>`;
   }).join('');
+  document.querySelectorAll('#jt-body tr[data-jt]').forEach(tr=>{
+    if(!MEDIA_JTS.includes(tr.dataset.jt)) wirePinModelCross(tr);
+  });
 }
 function _collectJtRules(){
   const rules={};
@@ -682,10 +757,13 @@ async function loadCapRules(){
 function fillCapRuleForm(){
   $('cr-jt').innerHTML='<option value="">job type: auto</option>'+JOB_TYPES.map(jt=>
     `<option value="${esc(jt)}">${esc(jt)}</option>`).join('');
+  const keepPin=$('cr-pin').value;
   const pins=Object.keys(NODES).slice();
   if(Object.keys(VLLM).length) pins.push('vllm:*', ...Object.keys(VLLM).map(v=>'vllm:'+v));
   $('cr-pin').innerHTML='<option value="">pin: none</option>'+pins.map(iid=>
     `<option value="${esc(iid)}">${esc(iid)}</option>`).join('');
+  if(pins.includes(keepPin)) $('cr-pin').value=keepPin;
+  wirePinModelCross(document);
 }
 async function saveCapRule(){
   const pattern=($('cr-pattern').value||'').trim();

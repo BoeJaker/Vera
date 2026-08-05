@@ -203,6 +203,16 @@ class AgentRecord:
     domain_caps:         List[str] = field(default_factory=list)
     domain_description:  str       = ""
     tool_mode:           str       = ""  # '' | 'none' | 'call' | 'plan'
+    # Task-based routing table: ordered list of {match, job_type, regex?,
+    # label?}. On each turn, the FIRST row whose `match` is found in the
+    # incoming message (plain case-insensitive substring, or a regex when
+    # regex=True) decides that turn's job_type — which then flows into the
+    # EXISTING Model Routing job-type table (pick_instance's job_type param)
+    # exactly like any other caller's job_type, so node/model selection isn't
+    # reimplemented here, just classified. Empty table / no match = "chat"
+    # (the long-standing hardcoded default), so this is purely additive.
+    # See _agent_classify_job_type() and AgentRunner.run()/.run_stream().
+    routing_table:       List[dict] = field(default_factory=list)
     think:               bool      = False    # prepend chain-of-thought instruction
     skill_ids:           List[str] = field(default_factory=list)
     ontology_ids:        List[str] = field(default_factory=list)
@@ -881,6 +891,7 @@ class AgentRegistry:
             rag_inject_limit   =_i('rag_inject_limit', 4),
             rag_refresh_hours  =_f('rag_refresh_hours', 24.0),
             rag_last_indexed   =_d('rag_last_indexed', ''),
+            routing_table      =_j('routing_table', []),
             created_at=_d('created_at',now_iso()),
             updated_at=_d('updated_at',now_iso()),
             archived=_b('archived',False), author=_d('author','user'),
@@ -1178,6 +1189,47 @@ async def cap_agent_knowledge_set(agent: str, sources: str = "", rag_enabled: Op
     if index_now and rec.knowledge_sources:
         out["indexed"] = await agent_rag_index(rec)
     return out
+
+
+@capability(
+    "agent.routing.set", memory="off",
+    http_method="POST", http_path="/agents/routing/set", http_tags=["agents"],
+    description="Set an agent's task-based routing table: an ordered list of "
+                "{match, job_type, regex?, label?} rows. On each turn, the "
+                "FIRST row whose `match` is found in the incoming message "
+                "(plain case-insensitive substring, or a regex when "
+                "regex=true) decides that turn's job_type, which then flows "
+                "into the existing Model Routing job-type table (pin / model "
+                "/ GPU rules) exactly like any other caller's job_type — no "
+                "match, or an empty table, falls back to 'chat'. Inputs: "
+                "agent (str! — name or id), rules (JSON list — replaces the "
+                "table; omit to just read the current one). "
+                "Output: {ok, agent, routing_table}.",
+)
+async def cap_agent_routing_set(agent: str, rules: str = "", trace_id=None):
+    rec = await AGENT_REGISTRY.get_by_name(agent) or await AGENT_REGISTRY.get(agent)
+    if not rec:
+        return {"error": f"unknown agent: {agent}"}
+    if rules:
+        try:
+            parsed = json.loads(rules) if isinstance(rules, str) else rules
+        except Exception:
+            return {"error": "rules must be a JSON list"}
+        if not isinstance(parsed, list):
+            return {"error": "rules must be a JSON list"}
+        clean = []
+        for row in parsed[:40]:
+            if not isinstance(row, dict):
+                continue
+            match = str(row.get("match") or "").strip()
+            if not match:
+                continue
+            clean.append({"match": match, "job_type": str(row.get("job_type") or "").strip(),
+                         "regex": bool(row.get("regex")), "label": str(row.get("label") or "")[:80]})
+        rec.routing_table = clean
+        rec.updated_at = now_iso()
+        await AGENT_REGISTRY.save(rec)
+    return {"ok": True, "agent": rec.name, "routing_table": rec.routing_table}
 
 
 # ── Streaming chat SSE endpoint ───────────────────────────────────────────────
@@ -1782,6 +1834,32 @@ def _now_context_line() -> str:
             f"against this, never against your training data.")
 
 
+def _agent_classify_job_type(agent: "AgentRecord", message: str) -> str:
+    """First matching row in the agent's routing_table decides this turn's
+    job_type — the classification is entirely LOCAL (no LLM call, no extra
+    latency); node/model selection itself still happens exactly where it
+    always did, inside pick_instance()'s existing job-type resolution.
+    Falls back to 'chat' (the long-standing hardcoded default) when the
+    agent has no table, or nothing in it matches — so an agent with no
+    routing_table behaves identically to before this existed."""
+    table = getattr(agent, "routing_table", None) or []
+    text = (message or "")
+    lower = text.lower()
+    for row in table:
+        if not isinstance(row, dict):
+            continue
+        pat = str(row.get("match") or "").strip()
+        if not pat:
+            continue
+        try:
+            hit = re.search(pat, text, re.IGNORECASE) if row.get("regex") else (pat.lower() in lower)
+        except Exception:
+            hit = False   # a bad regex in a saved rule must never break routing
+        if hit:
+            return str(row.get("job_type") or "").strip() or "chat"
+    return "chat"
+
+
 class AgentRunner:
     """Execute a single agent turn — text and/or voice."""
 
@@ -1871,13 +1949,16 @@ class AgentRunner:
         messages.append({"role": "user", "content": message})
 
         # Route to instance (needed before ctx-window detection). job_type
-        # "chat" makes interactive chat steerable from the Model Routing table
-        # (pin / allow / deny / avoid_embed) — without it no rule ever applied.
+        # defaults to "chat" (steerable from the Model Routing table — pin /
+        # allow / deny / avoid_embed) but an agent with a routing_table can
+        # classify THIS message to a different job_type first — e.g. route
+        # anything that looks like code to a "code" job_type pinned to a
+        # coding model/node, automatically, per-turn.
         chosen = pick_instance(
             prefer_gpu=agent.prefer_gpu,
             instance_id=agent.instance_id or None,
             model=model,
-            job_type="chat",
+            job_type=_agent_classify_job_type(agent, message),
         ) or "cpu-246"
         inst = OLLAMA_INSTANCES.get(chosen, {})
         url  = inst.get("url", "http://192.168.0.246:11435")
@@ -2036,7 +2117,10 @@ class AgentRunner:
             prefer_gpu=agent.prefer_gpu,
             instance_id=agent.instance_id or None,
             model=model,
-            job_type="chat",   # steerable via the Model Routing table
+            # steerable via the Model Routing table; an agent's own
+            # routing_table can classify this message to a different
+            # job_type first — see _agent_classify_job_type().
+            job_type=_agent_classify_job_type(agent, message),
         ) or "cpu-246"
         inst = OLLAMA_INSTANCES.get(chosen, {})
         url  = inst.get("url", "http://192.168.0.246:11435")
@@ -4181,6 +4265,9 @@ async def agent_update(
         rag_inject_limit=existing.rag_inject_limit,
         rag_refresh_hours=existing.rag_refresh_hours,
         rag_last_indexed=existing.rag_last_indexed,
+        # Same story for the routing table — managed via agent.routing.set,
+        # not a param here.
+        routing_table=existing.routing_table,
         author=existing.author,
     )
     saved = await AGENT_REGISTRY.save(rec)
@@ -4452,7 +4539,7 @@ register_ui(
     ui_caps=[
         'agent.create', 'agent.list', 'agent.get', 'agent.delete',
         'agent.chat', 'agent.chat_voice', 'agent.models',
-        'agent.call_with_tools',
+        'agent.call_with_tools', 'agent.routing.set',
         'skill.create', 'skill.list', 'skill.update', 'skill.delete',
         'skill.apply', 'skill.compose', 'skill.active_context',
         'ontology.create', 'ontology.list', 'ontology.update', 'ontology.delete',
