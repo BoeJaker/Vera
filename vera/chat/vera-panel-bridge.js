@@ -41,6 +41,22 @@
  * capability (action + payload → handler return value). The shim tags
  * each reply with the dispatcher's action_id so the chat routes it
  * back to the awaiting cap.
+ *
+ * • Top-level nav unification — a panel with its own internal top-level
+ *   menu of sections opts in with one call, so whichever page mounted it
+ *   (chat side-rail OR a main-shell top-level auto-tab) can inject those
+ *   sections as real sub-menu items in ITS OWN nav instead of the panel
+ *   drawing a second, redundant menu next to the outer one:
+ *
+ *     window.VeraPanelBridge.registerNav([{id:'test',label:'Test'}, …]);
+ *     window.VeraPanelBridge.setNavActive('test');   // call on every switch
+ *
+ *   Published state gains `nav:{items,active}`. Selecting an injected item
+ *   dispatches the generic `nav_select` action ({id}) — with no further
+ *   panel code, it clicks whatever element carries a matching data-sec/
+ *   -section/-view/-tab/-nav attribute (the pattern most of this codebase's
+ *   hand-rolled section switchers already use); pass a second argument to
+ *   registerNav() only if a panel's switcher doesn't use one of those.
  * ============================================================
  */
 (function(){
@@ -52,6 +68,10 @@
   var _sessionId = '';
   var _publishTimer = null;
   var _lastState = null;
+  // ── Internal top-level nav (opt-in) — see registerNav() below ──────────
+  var _navItems = null;      // [{id,label}] once a panel registers, else null
+  var _navActiveId = '';
+  var _navSelectFn = null;
 
   // ── DOM helpers ───────────────────────────────────────────────────────
   function _elById(id){ return id ? document.getElementById(id) : null; }
@@ -109,6 +129,13 @@
 
   function _safeDOMState(){
     var st = {url: location.href, title: document.title, hash: location.hash};
+    // Explicit opt-in only — see registerNav()'s own doc for why this isn't
+    // auto-derived from generic "active" class detection the way st.active
+    // above is: panels mark their current section with every class under the
+    // sun (.on, .active, .selected, .current...), so a guess would either
+    // miss real panels or misfire on unrelated "active" elements that have
+    // nothing to do with top-level section nav.
+    if(_navItems) st.nav = {items: _navItems, active: _navActiveId};
     try{
       var focused = document.activeElement;
       if(focused && focused !== document.body && focused.id) st.focused_id = focused.id;
@@ -307,8 +334,34 @@
     return applied;
   }
 
+  // Select a section by the id the panel gave registerNav(). Prefers the
+  // panel's own select callback when it registered one; otherwise falls back
+  // to clicking whatever element carries a matching data-sec/-section/-view/
+  // -tab/-nav attribute — the exact pattern most of this codebase's existing
+  // hand-rolled section switchers already use (data-sec="test" etc.), so most
+  // panels need zero extra code beyond the registerNav(items) call itself.
+  function _navSelect(p){
+    var id = (p || {}).id;
+    if(id == null) return {ok: false, error: 'nav_select requires {id}'};
+    id = String(id);
+    if(_navSelectFn){
+      try{ _navSelectFn(id); }catch(e){ return {ok: false, error: String(e)}; }
+      _navActiveId = id; publishStateDebounced();
+      return {ok: true};
+    }
+    var el = document.querySelector(
+      '[data-sec="' + id + '"], [data-section="' + id + '"], [data-view="' + id + '"], ' +
+      '[data-tab="' + id + '"], [data-nav="' + id + '"]');
+    if(!el){ var found = _findNamed(id); el = found && found.el; }
+    if(!el) return {ok: false, error: 'no nav target for id: ' + id};
+    el.click();
+    _navActiveId = id; publishStateDebounced();
+    return {ok: true};
+  }
+
   var _builtins = {
     click: _click, set_field: _setField, set_fields: _setFields, submit: _submit,
+    nav_select: _navSelect,
   };
 
   // ── Live cap-activity feed ────────────────────────────────────────────
@@ -519,6 +572,32 @@
     publishState: publishState, publishStateDebounced: publishStateDebounced,
     publishEvent: publishEvent, publishActionResult: publishActionResult,
     panelId: function(){ return _panelId; }, sessionId: function(){ return _sessionId; },
+
+    // ── Top-level nav unification ──────────────────────────────────────
+    // A panel that has its own internal top-level menu of sections (a "Test
+    // / Improve / Watch / ..." style row, whatever the panel's own idiom is)
+    // opts in with ONE call:
+    //   VeraPanelBridge.registerNav([{id:'test',label:'Test'}, ...]);
+    // The outer shell (whichever page mounted this panel — the chat side-
+    // rail or a top-level auto-tab) can then inject these as real sub-menu
+    // items in ITS OWN top-level menu instead of the panel drawing a second,
+    // redundant nav next to the outer one. Selecting an injected item posts
+    // the generic 'nav_select' action back here (see _navSelect above),
+    // which — with no further panel code — clicks whatever element carries
+    // a matching data-sec/-section/-view/-tab/-nav attribute. Pass a second
+    // `selectFn` argument only if a panel's switcher doesn't use one of
+    // those attributes; call setNavActive(id) whenever the panel's OWN UI
+    // changes section on its own (a direct click, a hash change, ...) so the
+    // outer shell's injected menu highlights the right item even when the
+    // switch didn't originate from an injected click.
+    registerNav: function(items, selectFn){
+      _navItems = (items || []).map(function(it){
+        return {id: String(it.id), label: String(it.label || it.id)};
+      });
+      if(typeof selectFn === 'function') _navSelectFn = selectFn;
+      publishStateDebounced();
+    },
+    setNavActive: function(id){ _navActiveId = String(id || ''); publishStateDebounced(); },
   };
 
   if(document.readyState === 'complete' || document.readyState === 'interactive'){ setTimeout(publishStateDebounced, 100); }

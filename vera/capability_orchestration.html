@@ -202,6 +202,13 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .lhm-nav .tab.open::after{content:'';position:absolute;top:50%;right:5px;transform:translateY(-50%);width:5px;height:5px;border-radius:50%;background:var(--acc2);opacity:.7}
 .lhm-nav .tab-close{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;margin-left:4px;border-radius:2px;font-size:12px;line-height:1;color:var(--dim);cursor:pointer;transition:all .1s;vertical-align:middle}
 .lhm-nav .tab-close:hover{color:var(--err)}
+/* Injected sub-menu — a mounted panel's own internal top-level sections
+   (VeraPanelBridge.registerNav), unified into this same outer menu instead
+   of the panel drawing a second nav next to it. Only rendered under the
+   currently active top-level tab. */
+.lhm-nav .subitem{display:block;padding:5px 10px 5px 20px;font-family:var(--mono);font-size:9px;font-weight:600;letter-spacing:.3px;color:var(--dim2);white-space:normal;word-break:break-word;user-select:none;cursor:pointer;border-right:2px solid transparent;transition:all .12s}
+.lhm-nav .subitem:hover{color:var(--text);background:rgba(255,255,255,.02)}
+.lhm-nav .subitem.on{color:var(--acc2);border-right-color:var(--acc2)}
 /* LHM auto-hide (keep for compat) */
 .body-wrap.lhm .tabs.autohide{position:absolute;top:0;left:0;bottom:0;right:auto;transform:translateX(-100%)}
 .body-wrap.lhm .tabs.autohide.show{transform:translateX(0)}
@@ -1732,6 +1739,38 @@ function _tabApplyLhm(){
   _tabRender();
 }
 
+// ── Top-level nav unification ──────────────────────────────────────────────
+// A mounted panel (iframe) with its own internal top-level menu of sections
+// can opt in via VeraPanelBridge.registerNav() (vera-panel-bridge.js) so its
+// sections show up as real sub-menu items in THIS outer LHM instead of the
+// panel drawing a second, redundant nav next to it — the "auto-inject inner
+// top-level menus as sub menus" ask. Reuses the same postMessage protocol
+// chat_panel.html already uses to drive/observe panels; this is just the
+// first consumer of it outside the chat side-rail. panelId -> {items,active}
+// or undefined if that panel hasn't (or doesn't) register one.
+const _panelNavCache = {};
+window.addEventListener('message', e => {
+  const d = e.data;
+  if(!d || typeof d!=='object' || d.type!=='vera:panel:state' || !d.panel_id) return;
+  const nav = (d.state && d.state.nav) || null;
+  const prevSig = JSON.stringify(_panelNavCache[d.panel_id] || null);
+  if(JSON.stringify(nav) === prevSig) return;   // no real change → no re-render
+  _panelNavCache[d.panel_id] = nav;
+  _lhmNavSync();
+});
+// Reach the iframe for a given top-level panel id, so an injected sub-item
+// click can postMessage nav_select straight into it.
+function _panelFrame(pid){
+  const el = document.getElementById('panel-' + pid);
+  return el ? el.querySelector('iframe') : null;
+}
+function _lhmNavSelect(pid, itemId){
+  const f = _panelFrame(pid);
+  const aid = (crypto.randomUUID ? crypto.randomUUID() : 'nav-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+  if(f && f.contentWindow) f.contentWindow.postMessage(
+    {type:'vera:panel:action', action:'nav_select', action_id:aid, payload:{id:itemId}}, '*');
+}
+
 // Sync the LHM nav tab list from the top tabBar
 function _lhmNavSync(){
   const host = document.getElementById('lhmNavTabs'); if(!host) return;
@@ -1766,6 +1805,29 @@ function _lhmNavSync(){
       div.appendChild(cb);
     }
     host.appendChild(div);
+
+    // Injected sub-menu: only for the currently active tab, and only if that
+    // panel actually registered nav items — most panels haven't opted in
+    // (registerNav is new), so this is silently absent for them, not blank.
+    const isActive = isOpen && (isFirst || _openTabs.size===1);
+    const nav = isActive ? _panelNavCache[pid] : null;
+    if(nav && Array.isArray(nav.items) && nav.items.length){
+      nav.items.forEach(it=>{
+        const sub = document.createElement('div');
+        sub.className = 'subitem' + (it.id===nav.active ? ' on' : '');
+        sub.textContent = it.label || it.id;
+        sub.addEventListener('click', ev=>{
+          ev.stopPropagation();
+          _lhmNavSelect(pid, it.id);
+          // Optimistic highlight — the panel's own state publish (triggered
+          // by the click it just received) will confirm/correct shortly via
+          // the message listener above.
+          _panelNavCache[pid] = Object.assign({}, nav, {active: it.id});
+          _lhmNavSync();
+        });
+        host.appendChild(sub);
+      });
+    }
   });
 }
 
@@ -3690,10 +3752,18 @@ function _ensurePanelLoaded(panelEl) {
     if (poll) clearInterval(poll);
     if (ov) _showPanelLoadError(panelEl, ov);
   };
+  const pid = _panelIdFromEl(panelEl);
   frames.forEach(f => {
     const src = f.getAttribute('data-lazy-src');
     f.removeAttribute('data-lazy-src');
-    f.addEventListener('load', () => { if (--pending <= 0) done(); }, { once: true });
+    f.addEventListener('load', () => {
+      if (--pending <= 0) done();
+      // Nudge any vera-panel-bridge.js in this frame to publish immediately
+      // (see _lhmNavSync's nav injection) instead of waiting for its own 30s
+      // tick or the visitor's first click. A harmless no-op for panels that
+      // don't include the bridge script.
+      try { f.contentWindow.postMessage({type:'vera:panel:init', panel_id: pid, session_id:''}, '*'); } catch(e){}
+    }, { once: true });
     // A cross-origin/blocked frame fires 'error'; same-origin route errors just
     // render an error page (which still fires 'load'), so the timeout below is
     // the real backstop for "took too long / no response".

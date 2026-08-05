@@ -138,6 +138,11 @@ body{padding-left:158px}
 .err-card .em{color:var(--dim2);font-size:9px;margin-top:3px;line-height:1.4}
 .err-card .ea{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap}
 .err-src{background:var(--bg3);border-radius:3px;padding:0 5px;font-size:8.5px;color:var(--dim2)}
+/* a card only ever gets this on the exact real poll/WS refresh where it
+   genuinely just landed in this lane (see loadErrors()'s id-diff) — never
+   a decorative replay, never re-applied on an unrelated redraw. */
+@keyframes errEnter{from{opacity:0;transform:translateY(5px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+.err-card.enter{animation:errEnter .38s ease-out both}
 </style>
 </head>
 <body>
@@ -147,6 +152,7 @@ body{padding-left:158px}
   <span style="flex:1"></span>
   <span class="pill" id="safe-pill" title="Where tests run — sandbox-first keeps them off real Vera" style="cursor:pointer" onclick="nav('sandbox')">🛡 —</span>
   <span class="hint" id="cfg-line">—</span>
+  <vera-error-radar id="err-radar"></vera-error-radar>
   <button class="btn sm" onclick="selftest()" title="Pre-flight: is anything actually going to run?">✓ Self-test</button>
   <button class="btn sm" onclick="loadAll()">&#8635;</button>
 </div>
@@ -177,6 +183,50 @@ body{padding-left:158px}
 
 <!-- ── TEST (home): compose a run → watch the workflow ── -->
 <div class="sec" id="sec-test">
+  <!-- active-run header — replaces the old tiny wf-status hint with a real,
+       always-visible strip: what's running, its goal, its branch, and
+       whether the sandbox it's routed to is healthy. Fixes "the name of
+       the running test is not displayed" by surfacing it prominently
+       instead of only in a small hint span buried in the workflow card. -->
+  <div class="card" id="active-run-card" style="display:none">
+    <div class="card-h" style="gap:10px">
+      <span id="arh-dot" style="width:8px;height:8px;border-radius:50%;background:var(--ok);flex-shrink:0"></span>
+      <span class="card-t" id="arh-task">—</span>
+      <span class="pill" id="arh-profile" style="display:none" title="The loop profile actually executing this run — engine + bound specialist agent, if any"></span>
+      <span class="hint" id="arh-trigger" title=""></span>
+      <span class="hint" id="arh-branch"></span>
+      <span class="pill" id="arh-sbx" style="display:none;cursor:pointer" onclick="nav('sandbox')" title="Sandbox this run is routed to">🛡 sandbox</span>
+      <span style="flex:1"></span>
+      <span class="hint" id="arh-elapsed"></span>
+    </div>
+    <div class="hint" id="arh-goal" style="padding:0 12px 8px;white-space:normal"></div>
+    <!-- Sandbox Lifecycle Strip (G): only shown when this run is sandboxed —
+         a real countdown toward the idle-pause threshold, snapshot
+         freshness, and routing-drift status, all from evolve.sandbox.status. -->
+    <div id="sbx-strip" style="display:none;padding:6px 12px 10px;border-top:1px dotted var(--border);font-size:9.5px;color:var(--dim2);align-items:center;gap:10px">
+      <span id="sbx-ring" style="width:22px;height:22px;border-radius:50%;flex-shrink:0;
+        background:conic-gradient(var(--acc) 0deg,var(--bg3) 0deg)"></span>
+      <span id="sbx-txt">—</span>
+      <span style="flex:1"></span>
+      <span id="sbx-drift" style="display:none;color:var(--warn)">⚠ routing drift</span>
+      <button class="btn sm" onclick="post('/evolve/sandbox/pause',{}).then(()=>refreshActiveRun())">⏸ pause now</button>
+    </div>
+  </div>
+  <div class="card" id="ollama-map-card" style="display:none">
+    <div class="card-h"><span class="card-t">Ollama routing</span>
+      <span class="hint">which real node the active run's LLM calls land on</span></div>
+    <vera-ollama-map id="ollama-map"></vera-ollama-map>
+  </div>
+  <div class="card" id="test-pipeline-card" style="display:none">
+    <div class="card-h"><span class="card-t">Pipeline</span>
+      <span class="hint">this run's branch → sandbox test → gate → promote lifecycle</span></div>
+    <vera-branch-pipeline id="test-pipeline" mode="detail"></vera-branch-pipeline>
+  </div>
+  <div class="card" id="test-author-card" style="display:none">
+    <div class="card-h"><span class="card-t">🗺 Who's changing this branch</span>
+      <span class="hint">real commits on this run's branch, tagged Claude Code / Vera agent / direct</span></div>
+    <vera-author-map id="test-author-map" hours="72"></vera-author-map>
+  </div>
   <div class="card">
     <div class="card-h"><span class="card-t">Run a test</span>
       <span class="hint">pick what to improve, run it, watch every stage &amp; tool live — no timeouts</span>
@@ -249,6 +299,16 @@ body{padding-left:158px}
     <div id="test-suite-log" style="max-height:220px;overflow:auto"><div class="empty">Per-task results stream here as the suite runs.</div></div>
   </div>
   <div class="card">
+    <div class="card-h"><span class="card-t">▦ Test activity</span>
+      <span class="hint">hourly run history · replay · stall/error overlay</span></div>
+    <vera-test-activity-timeline id="test-activity" hours="48"></vera-test-activity-timeline>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">⛨ Regression guard</span>
+      <span class="hint">every task × its own recent runs — a persistent, live-updating matrix</span></div>
+    <vera-task-matrix id="task-matrix" cols="8"></vera-task-matrix>
+  </div>
+  <div class="card">
     <div class="card-h"><span class="card-t">Recent runs</span><span style="flex:1"></span><button class="btn sm" onclick="loadRuns()">&#8635;</button></div>
     <div id="test-runs"></div>
   </div>
@@ -276,6 +336,16 @@ body{padding-left:158px}
   <div class="card">
     <div class="card-h"><span class="card-t">🏁 race to green</span><span class="hint">each task's score across recent suites — watch it converge</span></div>
     <div id="ov-board"><div class="empty">—</div></div>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">⚖ Compare</span>
+      <span class="hint">task outcomes A vs B by variant id, plus real model throughput</span>
+      <span style="flex:1"></span>
+      <input id="bc-a" placeholder="group A variant id" style="width:150px">
+      <input id="bc-b" placeholder="group B variant id (blank = baseline)" style="width:190px">
+      <button class="btn sm" onclick="$('bench-compare').setGroups($('bc-a').value.trim(),$('bc-b').value.trim())">Compare</button>
+    </div>
+    <vera-bench-compare id="bench-compare"></vera-bench-compare>
   </div>
   <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:12px">
     <div class="card">
@@ -445,6 +515,16 @@ body{padding-left:158px}
       <button class="btn" onclick="loadPipelines()">&#8635;</button>
     </div>
     <div id="pipes-body"><div class="empty">No pipelines yet. Promote a variant through CI from the Variants tab, or run a code pipeline from a session's code suggestion.</div></div>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">⎇ Branch race lanes</span>
+      <span class="hint">every branch with a real Loop Lab pipeline — click a run to open it</span></div>
+    <vera-branch-pipeline id="pipe-lanes" mode="lanes"></vera-branch-pipeline>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">🗺 Authorship map</span>
+      <span class="hint">real commits, tagged with who/what actually produced them — Claude Code, a Vera agent run, or direct</span></div>
+    <vera-author-map id="author-map" hours="72"></vera-author-map>
   </div>
   <div class="card">
     <div class="card-h"><span class="card-t">git log · loop-lab</span><span class="hint">every change, promote, merge-to-source &amp; rollback</span></div>
@@ -624,6 +704,14 @@ body{padding-left:158px}
 <div class="modal-bg" id="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" id="modal"></div></div>
 
 <script src="/ui/elements/agent_loop_output.js"></script>
+<script src="/ui/elements/error_radar.js"></script>
+<script src="/ui/elements/branch_pipeline.js"></script>
+<script src="/ui/elements/task_matrix.js"></script>
+<script src="/ui/elements/bench_compare.js"></script>
+<script src="/ui/elements/ollama_map.js"></script>
+<script src="/ui/elements/test_activity_timeline.js"></script>
+<script src="/ui/elements/author_map.js"></script>
+<script src="/ui/vera-panel-bridge.js"></script>
 <script>
 const $=id=>document.getElementById(id);
 let _providers=[],_profiles=[],_cfg={};
@@ -643,7 +731,24 @@ function nav(sec){
   const f={test:loadTest,tasks:loadTasks,runs:loadRuns,improve:loadSessions,watch:loadWatch,pipelines:()=>{loadGit();loadPipelines()},
     sources:loadSources,sandbox:loadSandbox,activity:loadAudit,variants:loadVariants,settings:fillSettings,overview:loadOverview,errors:loadErrors}[sec];
   if(f)f();
+  // Keep the outer shell's injected top-level sub-menu in sync when this
+  // panel changes section on its own (a direct click here, not one relayed
+  // from an injected item) — see registerNav() below.
+  if(window.VeraPanelBridge) VeraPanelBridge.setNavActive(sec);
 }
+// Pilot for the outer shell's nav-unification: expose this panel's own
+// section row so whichever page mounted it (main-shell top-level auto-tab
+// or the chat side-rail) can inject these as real sub-menu items instead of
+// this panel drawing its own nav next to the outer one. No selectFn needed
+// — every button above already carries data-sec, which VeraPanelBridge's
+// generic nav_select fallback matches directly.
+if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
+  {id:'test', label:'Test'}, {id:'improve', label:'Improve'}, {id:'watch', label:'Watch'},
+  {id:'overview', label:'Suite'}, {id:'errors', label:'Errors'}, {id:'variants', label:'Variants'},
+  {id:'activity', label:'Activity'},
+  {id:'pipelines', label:'CI / CD'}, {id:'sources', label:'Sources'}, {id:'sandbox', label:'Sandbox'},
+  {id:'tasks', label:'Tasks'}, {id:'runs', label:'Runs'}, {id:'settings', label:'Settings'},
+]);
 
 /* ═══ TARGET SELECTOR (categorised: what am I improving?) ═══ */
 let _targets=null;
@@ -1424,21 +1529,46 @@ function _curSec(){const b=document.querySelector('#nav .btn.on');return b?b.dat
   }catch(e){}
 })();
 
-/* ═══ ERRORS WORK-QUEUE (errors → suggested edit → approve → commit) ═══ */
+/* ═══ ERRORS WORK-QUEUE (errors → suggested edit → approve → commit) ═══
+   loadErrors() already re-fires live on every real evolve.errors.* WS event
+   (see the dispatcher above: `if(t.startsWith('evolve.errors.'))...`) — the
+   DATA was always live. What wasn't honest was the rendering: every refresh
+   used to be a flat instant redraw, and the flow diagram's particles ran
+   on SMIL repeatCount="indefinite" — looping forever regardless of whether
+   anything was actually happening. Both are fixed below: cards only ever
+   get a one-shot enter animation when a real item newly lands in a lane
+   (diffed by id against the previous real render, never on a no-op poll),
+   and the flow particles fire repeatCount="1" ONLY on the specific real
+   stage transition that just happened — idle-but-nonempty queues now sit
+   perfectly still, exactly like every other component in this suite. */
 const ERR_LANES=[['new','⚠ new','var(--err)'],['suggested','✎ suggested','var(--warn)'],['approved','⎇ approved','var(--acc2)'],['applied','✓ committed','var(--ok)']];
+let _errPrevLanes=null,_errFirstLoad=true;
 async function loadErrors(){
   if($('err-autosync'))$('err-autosync').checked=!!(_cfg&&_cfg.errors_autosync);
   const r=await api('/evolve/errors?limit=200');const items=(r&&r.items)||[];const counts=(r&&r.counts)||{};
   const bySource={};items.forEach(i=>{if(i.state!=='dismissed'){bySource[i.source]=(bySource[i.source]||0)+1}});
-  $('err-flow').innerHTML=svgErrorFlow(counts,bySource);
+  const curLanes={};ERR_LANES.forEach(([st])=>{curLanes[st]=new Set(items.filter(i=>i.state===st).map(i=>i.id))});
+  const justEntered=new Set();const transitions={};
+  if(!_errFirstLoad&&_errPrevLanes){
+    ERR_LANES.forEach(([st])=>{
+      curLanes[st].forEach(id=>{if(!_errPrevLanes[st]||!_errPrevLanes[st].has(id))justEntered.add(id)});
+    });
+    if([...curLanes['new']].some(id=>justEntered.has(id)))transitions.in=true;
+    if([...curLanes['approved']].some(id=>justEntered.has(id)))transitions.fix=true;
+    if([...curLanes['applied']].some(id=>justEntered.has(id)))transitions.commit=true;
+  }
+  _errPrevLanes=curLanes;
+  $('err-flow').innerHTML=svgErrorFlow(counts,bySource,transitions);
   const board=$('err-board');
+  let staggerN=0;
   board.innerHTML=ERR_LANES.map(([st,lbl,col])=>{
     const lane=items.filter(i=>i.state===st);
     return '<div class="err-lane"><div class="err-lane-h"><span style="color:'+col+'">'+esc(lbl)+'</span><span class="n">'+lane.length+'</span></div>'
-      +(lane.length?lane.map(errCard).join(''):'<div class="empty" style="font-size:9px">—</div>')+'</div>';
+      +(lane.length?lane.map(it=>errCard(it,!_errFirstLoad&&justEntered.has(it.id),staggerN++)).join(''):'<div class="empty" style="font-size:9px">—</div>')+'</div>';
   }).join('');
+  _errFirstLoad=false;
 }
-function errCard(it){
+function errCard(it,isEnter,staggerIdx){
   const sug=it.suggestion||{};
   const sev=(it.meta&&it.meta.severity)||'';
   const isRem=!!(sug.remediation_id||(it.meta&&it.meta.remediation_id));
@@ -1451,7 +1581,7 @@ function errCard(it){
   else if(it.state==='applied'&&it.remediation_result)acts='<span class="hint">'+esc(String(it.remediation_result).slice(0,120))+'</span>';
   const sevChip=sev?('<span class="err-src" style="color:'+(sev==='crit'?'var(--err)':'var(--warn)')+'">'+esc(sev)+'</span>'):'';
   const runChip=(it.meta&&it.meta.run_id)?'<span class="err-src clk" style="color:var(--acc)" onclick="openRun(\''+esc(it.meta.run_id)+'\')" title="open the test run this error came from">run '+esc(String(it.meta.run_id).slice(0,8))+'</span>':'';
-  return '<div class="err-card s-'+esc(it.state)+'">'
+  return '<div class="err-card s-'+esc(it.state)+(isEnter?' enter':'')+'"'+(isEnter?' style="animation-delay:'+(Math.min(staggerIdx||0,10)*70)+'ms"':'')+'>'
     +'<div class="et">'+esc((it.title||'').slice(0,180))+'</div>'
     +'<div class="ea">'+sevChip+'<span class="err-src">'+esc(it.source)+'</span>'+(it.count>1?'<span class="err-src">×'+it.count+'</span>':'')+(isRem?'<span class="err-src" style="color:var(--ok)">safe fix</span>':'')+runChip+'</div>'
     +(sug.suggestion?'<div class="em"><b>fix:</b> '+esc(sug.suggestion.slice(0,240))+'</div>':'')
@@ -1459,7 +1589,8 @@ function errCard(it){
 }
 /* Bun-style flow: error SOURCES fan into a queue → fixer worker → commits.
    (à la the article's "errors being sent to workers and flowing to commits") */
-function svgErrorFlow(counts,bySource){
+function svgErrorFlow(counts,bySource,transitions){
+  transitions=transitions||{};
   const totalIn=(counts.new||0)+(counts.suggested||0)+(counts.approved||0)+(counts.applied||0);
   const srcs=Object.entries(bySource||{}).filter(([,v])=>v>0);
   const W=620,H=150;
@@ -1468,26 +1599,33 @@ function svgErrorFlow(counts,bySource){
                 ['fixer',counts.approved||0,'var(--acc2)',470],
                 ['commits',counts.applied||0,'var(--ok)',560]];
   let s='';
-  // left: source inputs feeding in
+  // left: source inputs feeding in. The particle on the source→queue edge
+  // used to loop forever (repeatCount="indefinite") regardless of whether
+  // anything was actually happening — not truthful. It now fires ONCE,
+  // and only on the exact refresh where a real new error genuinely landed
+  // (transitions.in, computed in loadErrors() from a real id-diff).
   const sy=srcs.length?(H-2*20)/(srcs.length):0;
   (srcs.length?srcs:[['—',0]]).forEach(([name,v],i)=>{
     const y=20+sy*i+sy/2;
     s+='<rect x="8" y="'+(y-12)+'" width="120" height="24" rx="6" fill="var(--bg2)" stroke="var(--err)" opacity=".9"/>'
       +'<text x="16" y="'+(y+4)+'" font-size="10" fill="var(--text,#ccc)">⚠ '+esc(String(name).slice(0,10))+'</text>'
       +'<text x="118" y="'+(y+4)+'" font-size="10" text-anchor="end" font-weight="700" fill="var(--err)">'+v+'</text>'
-      // flowing particle from source → queue
-      +(v>0?'<circle r="2.5" fill="var(--err)"><animateMotion dur="'+(2+i*0.4)+'s" repeatCount="indefinite" path="M128 '+y+' Q 250 '+y+' 360 '+(H/2)+'"/></circle>':'')
+      +(transitions.in?'<circle r="2.5" fill="var(--err)"><animateMotion dur="0.9s" repeatCount="1" fill="freeze" path="M128 '+y+' Q 250 '+y+' 360 '+(H/2)+'"/><animate attributeName="opacity" values="1;1;0" dur="0.9s" repeatCount="1" fill="freeze"/></circle>':'')
       +'<path d="M128 '+y+' Q 250 '+y+' 360 '+(H/2)+'" fill="none" stroke="var(--border)" stroke-width="1" opacity=".5"/>';
   });
-  // stage nodes
+  // stage nodes — same fix: the connecting-edge particle only ever plays
+  // once, gated on the specific real stage transition it represents.
   stages.forEach((st,i)=>{
     const cx=st[3],cy=H/2;
     s+='<circle cx="'+cx+'" cy="'+cy+'" r="26" fill="'+st[2]+'" opacity=".16" stroke="'+st[2]+'" stroke-width="1.5"/>'
       +'<text x="'+cx+'" y="'+(cy-1)+'" text-anchor="middle" font-size="14" font-weight="700" fill="'+st[2]+'">'+st[1]+'</text>'
       +'<text x="'+cx+'" y="'+(cy+12)+'" text-anchor="middle" font-size="8" fill="var(--dim2)">'+esc(st[0])+'</text>';
-    if(i<stages.length-1){const ax=cx+26,axe=stages[i+1][3]-26;
+    if(i<stages.length-1){
+      const ax=cx+26,axe=stages[i+1][3]-26;
+      const edgeFired=(i===0&&transitions.fix)||(i===1&&transitions.commit);
       s+='<line x1="'+ax+'" y1="'+cy+'" x2="'+axe+'" y2="'+cy+'" stroke="var(--dim2)" stroke-width="1.5" marker-end="url(#efa)"/>'
-        +(st[1]>0?'<circle r="3" fill="'+st[2]+'"><animateMotion dur="1.5s" repeatCount="indefinite" path="M'+ax+' '+cy+' L'+axe+' '+cy+'"/></circle>':'');}
+        +(edgeFired?'<circle r="3" fill="'+st[2]+'"><animateMotion dur="0.6s" repeatCount="1" fill="freeze" path="M'+ax+' '+cy+' L'+axe+' '+cy+'"/><animate attributeName="opacity" values="1;1;0" dur="0.6s" repeatCount="1" fill="freeze"/></circle>':'');
+    }
   });
   s+='<text x="360" y="26" text-anchor="middle" font-size="8.5" fill="var(--dim2)">'+totalIn+' in queue → suggest → approve → commit</text>';
   return '<svg viewBox="0 0 '+W+' '+H+'" width="100%" height="'+H+'"><defs><marker id="efa" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="var(--dim2)"/></marker></defs>'+s+'</svg>';
@@ -2287,6 +2425,93 @@ async function saveConfig(){
   if(r&&r.ok){_cfg=r.config;toast('Saved');$('cfg-line').textContent='critic: '+_cfg.critic_provider+' · editor: '+_cfg.editor_provider+' · target '+_cfg.target_score;
     if($('editq-model-lbl'))$('editq-model-lbl').textContent=_cfg.editq_model;if($('im-editq-lbl'))$('im-editq-lbl').textContent=_cfg.editq_model}else toast('failed')
 }
+
+/* ═══ ACTIVE-RUN HEADER + SANDBOX LIFECYCLE STRIP (infographics suite) ═══
+   Fixes "the name of the running test is not displayed" by surfacing task/
+   goal/branch/sandbox-health prominently instead of only in the tiny
+   wf-status hint. Self-polling (doesn't need to be threaded into every
+   existing _testRunId assignment site) — cheap GETs, diff-free renders. */
+async function refreshActiveRun(){
+  const card=$('active-run-card');
+  if(!card)return;
+  if(!_testRunId){
+    card.style.display='none';
+    if($('ollama-map-card'))$('ollama-map-card').style.display='none';
+    if($('test-pipeline-card'))$('test-pipeline-card').style.display='none';
+    return;
+  }
+  card.style.display='';
+  $('arh-task').textContent=(_testRunKind||'run')+(_testRunLabel?' · '+_testRunLabel:'');
+  $('arh-goal').textContent=_testRunGoal||'';
+  const st=await api('/evolve/run/status?run_id='+encodeURIComponent(_testRunId));
+  const cur=(st&&st.current)||{};
+  const running=!!(st&&st.live);
+  $('arh-dot').style.background=running?'var(--ok)':'var(--dim)';
+  $('arh-elapsed').textContent=(running&&cur.started_at)?
+    (Math.max(0,Math.floor((Date.now()-Date.parse(cur.started_at))/1000))+'s'):'';
+  const TRIG_ICON={claude_code:'🧑‍💻',autonomous:'⚙',user:'👤'};
+  const TRIG_LBL={claude_code:'triggered by Claude Code',autonomous:'triggered autonomously',user:'triggered by user'};
+  const trigEl=$('arh-trigger');
+  if(trigEl){trigEl.textContent=TRIG_ICON[cur.triggered_by]||'';trigEl.title=TRIG_LBL[cur.triggered_by]||''}
+  const profEl=$('arh-profile');
+  if(profEl){
+    if(cur.profile){
+      profEl.style.display='';
+      profEl.textContent=(cur.profile==='planning'?'⚙ generic: planning':'⚡ specialist: '+cur.profile);
+      profEl.style.color=cur.profile==='planning'?'var(--dim2,var(--t3))':'var(--acc,var(--ac))';
+    } else profEl.style.display='none';
+  }
+  if($('ollama-map-card'))$('ollama-map-card').style.display=running?'':'none';
+  const sandboxed=cur.where==='sandbox';
+  $('arh-sbx').style.display=sandboxed?'':'none';
+  if(sandboxed){
+    const sb=await api('/evolve/sandbox/status');
+    const branch=(sb&&sb.sandbox&&sb.sandbox.branch)||'';
+    $('arh-branch').textContent=branch;
+    if($('sbx-strip'))$('sbx-strip').style.display='flex';
+    renderSbxStrip(sb);
+    const tpCard=$('test-pipeline-card'),tp=$('test-pipeline');
+    const taCard=$('test-author-card'),ta=$('test-author-map');
+    if(branch&&tp){tpCard.style.display='';if(tp.setBranch)tp.setBranch(branch)}
+    else if(tpCard)tpCard.style.display='none';
+    if(branch&&ta){taCard.style.display='';if(ta.setBranch)ta.setBranch(branch)}
+    else if(taCard)taCard.style.display='none';
+  }else{
+    $('arh-branch').textContent='';
+    if($('sbx-strip'))$('sbx-strip').style.display='none';
+    if($('test-pipeline-card'))$('test-pipeline-card').style.display='none';
+    if($('test-author-card'))$('test-author-card').style.display='none';
+  }
+}
+function renderSbxStrip(sb){
+  const ring=$('sbx-ring'),txt=$('sbx-txt'),drift=$('sbx-drift');
+  if(!ring||!txt)return;
+  if(!sb||!sb.sandbox||!sb.sandbox.branch){txt.textContent='no sandbox up';ring.style.background='var(--bg3)';if(drift)drift.style.display='none';return}
+  const idlePauseS=sb.idle_pause_s||1800;
+  const last=sb.sandbox.last_activity||sb.sandbox.created_at;
+  const idleS=last?Math.max(0,(Date.now()-Date.parse(last))/1000):0;
+  const remain=Math.max(0,idlePauseS-idleS);
+  const pct=sb.paused?100:Math.min(100,(idleS/idlePauseS)*100);
+  ring.style.background='conic-gradient(var(--acc) '+(pct*3.6).toFixed(0)+'deg,var(--bg3) 0deg)';
+  const snap=sb.sandbox.snapshotted_at;
+  const snapTxt=snap?(Math.floor((Date.now()-Date.parse(snap))/60000)+'m ago'):'never';
+  txt.textContent=(sb.paused?'paused':(sb.up?('idle '+Math.floor(idleS)+'s · pauses in '+Math.floor(remain)+'s'):'down'))+' · snapshot '+snapTxt;
+  if(drift)drift.style.display=(sb.routing_drift&&sb.routing_drift.checked&&(sb.routing_drift.mismatches||[]).length)?'':'none';
+}
+setInterval(refreshActiveRun,4000);
+refreshActiveRun();
+
+/* Branch race lanes (Pipelines tab) → click a run block to open its real
+   detail pipeline in a modal, reusing the existing openModal/closeModal. */
+(function(){
+  const pl=$('pipe-lanes');
+  if(pl)pl.addEventListener('branchpipe:openpipeline',e=>{
+    const id=(e.detail&&e.detail.id)||'';
+    if(!id)return;
+    openModal('<div class="card-h"><span class="card-t">Pipeline '+esc(id)+'</span><span style="flex:1"></span><button class="btn sm" onclick="closeModal()">✕ close</button></div>'+
+      '<vera-branch-pipeline mode="detail" pipeline-id="'+esc(id)+'"></vera-branch-pipeline>');
+  });
+})();
 
 loadAll();
 </script>
