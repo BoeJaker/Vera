@@ -705,7 +705,14 @@ select option{background:var(--bg2)}
                 <div class="sm-kpi"><div class="sm-kpi-val" id="hProxmoxNodes">—</div><div class="sm-kpi-sub">nodes</div></div>
               </div>
               <div id="pmxRows" class="sm-list" style="min-height:36px"></div>
-              <div id="pmxCores" class="sm-list" style="font-size:8.5px;color:var(--dim2);min-height:50px"></div>
+              <!-- Unlike the other .sm-list rows here, this one is genuinely
+                   unbounded (every physical core + every logical CPU thread,
+                   across every PVE host) — a big multi-socket cluster can push
+                   this to dozens of wrapped chip rows, which (same root cause
+                   as the Host Temps widget) would otherwise inflate this
+                   widget's content-driven height and drag the whole shared
+                   grid row-track up with it. Capped + internally scrollable. -->
+              <div id="pmxCores" class="sm-list" style="font-size:8.5px;color:var(--dim2);min-height:50px;max-height:90px"></div>
               <div id="pmxGuests" class="sm-list" style="min-height:50px"></div>
               <div class="sm-sparkrow">
                 <div title="Running guests, last ~10min"><vera-sparkline id="sparkProxmox"></vera-sparkline></div>
@@ -795,7 +802,20 @@ select option{background:var(--bg2)}
                 <button class="w-iconbtn" onclick="dashHideWidget('host-temps')">×</button>
               </span>
             </div>
-            <div class="w-body" style="display:flex;flex-direction:column;gap:8px">
+            <!-- Unlike the sysmon cards (Proxmox/Docker/Ollama/Host Resources), this
+                 widget's content is genuinely UNBOUNDED — "every sensor" can be any
+                 number of rows. A previous round removed this max-height on the
+                 (correct) theory that .sm-list's flex:1 should just fill whatever
+                 height the widget gets — but with no cap ANYWHERE in the chain, the
+                 widget's own height became purely content-driven (CSS grid's
+                 grid-auto-rows:minmax(58px,auto) sizes each row-track to its TALLEST
+                 occupant), so a host with many sensors made this one widget huge —
+                 and because a grid row-track's height is shared by every item
+                 overlapping it, that dragged every OTHER widget in the same row up
+                 to match. A fixed max-height + the existing internal overflow-y:auto
+                 on #hostTempsList is what actually delivers "fixed height, scrolling
+                 overflow" here — restored. -->
+            <div class="w-body" style="display:flex;flex-direction:column;gap:8px;max-height:290px">
               <div id="hostTempsList" style="display:flex;flex-direction:column;gap:6px;font-size:10.5px;flex:1;min-height:0;overflow-y:auto"></div>
               <div style="height:44px;flex-shrink:0" title="Worst reading across all sensors, last ~10min"><vera-sparkline id="sparkTemps" unit="°C"></vera-sparkline></div>
             </div>

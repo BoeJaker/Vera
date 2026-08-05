@@ -402,18 +402,62 @@
         return near;
       }
       var targetW = cw, targetH = ch;
-      function mv(ev) {
-        var pxW = Math.max(140, startRect.width + (ev.clientX - sx));
-        var pxH = Math.max(70, startRect.height + (ev.clientY - sy));
+      var scrolled = 0;   // cumulative auto-scroll so far — see autoScrollTick()
+      function applySize(clientX, clientY) {
+        // Effective drag distance = raw viewport mouse delta PLUS however much
+        // the page has auto-scrolled so far. Without the scrolled term, once
+        // the cursor is pinned at the viewport edge (where it stays, visually,
+        // while the page scrolls under it) the target height would plateau
+        // right there and never grow further even as the page kept scrolling —
+        // the whole point of auto-scrolling during a resize.
+        var pxW = Math.max(140, startRect.width + (clientX - sx));
+        var pxH = Math.max(70, startRect.height + (clientY - sy) + scrolled);
         ghost.style.width = pxW + 'px';
         ghost.style.height = pxH + 'px';
         targetW = snap(Math.round((pxW + gapX) / colPitch), 2, 12, allowed);
         targetH = snap(Math.round((pxH + gapY) / rowPitch), 1, 6, null);
         label.textContent = targetW + ' × ' + targetH;
       }
+      // Resizing taller/shorter than the visible viewport needs the page to
+      // scroll to follow, the same way dragging a file to a list's edge
+      // auto-scrolls it — otherwise the target size (below/above the fold)
+      // is simply unreachable by mouse. A plain mousemove listener alone
+      // can't do this: it only fires while the mouse is actually moving, but
+      // the user holds the cursor STILL at the viewport edge and expects the
+      // page to keep scrolling — so a rAF loop re-checks the last known
+      // cursor position every frame, independent of new mousemove events.
+      var EDGE = 56, MAX_SPEED = 16;
+      var lastX = sx, lastY = sy, rafId = null;
+      function autoScrollTick() {
+        var vh = window.innerHeight;
+        var d = 0;
+        if (lastY < EDGE) d = -MAX_SPEED * (1 - lastY / EDGE);
+        else if (lastY > vh - EDGE) d = MAX_SPEED * (1 - (vh - lastY) / EDGE);
+        if (d) {
+          var before = window.pageYOffset;
+          window.scrollBy(0, d);
+          var actual = window.pageYOffset - before;   // 0 at document start/end
+          if (actual) {
+            // The ghost is position:fixed (viewport-relative) and its left/top
+            // were computed from a rect taken ONCE at drag start — scrolling
+            // the page after that moves the widget's real position without
+            // moving the ghost, so compensate by the same amount to keep it
+            // visually anchored over the widget as the page scrolls beneath it.
+            scrolled += actual;
+            ghost.style.top = (startRect.top - scrolled) + 'px';
+            applySize(lastX, lastY);   // re-derive target size at the new ghost height
+          }
+        }
+        rafId = requestAnimationFrame(autoScrollTick);
+      }
+      function mv(ev) {
+        lastX = ev.clientX; lastY = ev.clientY;
+        applySize(ev.clientX, ev.clientY);
+      }
       function up() {
         document.removeEventListener('mousemove', mv);
         document.removeEventListener('mouseup', up);
+        if (rafId) cancelAnimationFrame(rafId);
         _dragGuardOff();
         ghost.remove();
         allowed.forEach(function (n) { w.classList.remove('w-w' + n); });
@@ -422,8 +466,9 @@
         state.sizes[w.dataset.wid] = { w: targetW, h: targetH };
         save();
       }
-      mv({ clientX: sx, clientY: sy });   // seed the label before any movement
+      applySize(sx, sy);   // seed the label before any movement
       _dragGuardOn('nwse-resize');
+      rafId = requestAnimationFrame(autoScrollTick);
       document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
     }
 
