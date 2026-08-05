@@ -304,6 +304,22 @@ async def _proxmox_cluster_summary(c: Dict) -> Dict:
     nodes = st.get("nodes", []) or []
     mem_used = sum(n.get("mem", 0) for n in nodes)
     mem_total = sum(n.get("maxmem", 0) for n in nodes)
+    # Per-guest breakdown — same "busiest first" idea as docker.stats.top's
+    # container list, so the Proxmox dash tile can show real per-VM/CT rows
+    # instead of just cluster-wide counts. No history here (unlike Docker's
+    # deque-backed trend): each sample is a snapshot of proxmox.status, which
+    # runs on the sysmon sampler cadence, not its own tracked-over-time cache
+    # — showing a fabricated trend line off a single point would be worse
+    # than showing none.
+    guests_raw = st.get("guests", []) or []
+    top_guests = sorted((
+        {"vmid": g.get("vmid"), "name": g.get("name") or f"#{g.get('vmid')}",
+         "type": g.get("type"), "node": g.get("node", ""), "status": g.get("status", ""),
+         "cpu_pct": round((g.get("cpu") or 0) * 100, 1) if g.get("status") == "running" else None,
+         "mem_mb": round(g.get("mem", 0) / 1e6, 1) if g.get("mem") else None,
+         "mem_pct": round(100 * g["mem"] / g["maxmem"], 1) if g.get("mem") and g.get("maxmem") else None}
+        for g in guests_raw if not g.get("template")
+    ), key=lambda g: (g["cpu_pct"] is None, -(g["cpu_pct"] or 0)))[:12]
     return {
         "id":      cid,
         "label":   cluster.get("name") or c.get("label", cid),
@@ -315,6 +331,11 @@ async def _proxmox_cluster_summary(c: Dict) -> Dict:
         "quorate": cluster.get("quorate"),
         "mem_used_gb":  round(mem_used / 1e9, 2),
         "mem_total_gb": round(mem_total / 1e9, 2),
+        "top_guests": top_guests,
+        # Hostnames of this cluster's PVE hosts (not guests) — used to match
+        # against obs.node_temps' host labels, since the temp probe has no
+        # direct Proxmox-cluster-membership field of its own to key on.
+        "host_names": [n.get("node", "") for n in nodes if n.get("node")],
     }
 
 
@@ -328,6 +349,10 @@ async def _proxmox_summary() -> Dict:
         *[_proxmox_cluster_summary(c) for c in clusters_in])) if clusters_in else []
     mem_used = sum(c.get("mem_used_gb", 0) for c in clusters)
     mem_total = sum(c.get("mem_total_gb", 0) for c in clusters)
+    top_guests = sorted(
+        (g for c in clusters for g in c.get("top_guests", [])),
+        key=lambda g: (g["cpu_pct"] is None, -(g["cpu_pct"] or 0)))[:12]
+    host_names = [n for c in clusters for n in c.get("host_names", [])]
     return {
         "ok":         any(c["ok"] for c in clusters),
         "error":      "",
@@ -339,6 +364,8 @@ async def _proxmox_summary() -> Dict:
         "mem_used_gb":  round(mem_used, 2),
         "mem_total_gb": round(mem_total, 2),
         "mem_pct":    round(100 * mem_used / mem_total, 1) if mem_total else None,
+        "top_guests": top_guests,
+        "host_names": host_names,
     }
 
 
@@ -346,12 +373,28 @@ async def _proxmox_summary() -> Dict:
 #  Full snapshot + sampler
 # ─────────────────────────────────────────────────────────────────────────────
 async def _build_full() -> Dict:
-    proxmox, docker, ollama, temps = await asyncio.gather(
+    proxmox, docker, ollama, temps, nodes_list = await asyncio.gather(
         _proxmox_summary(), _docker_summary(), _ollama_summary(),
-        _call("obs.node_temps"))
+        _call("obs.node_temps"), _call("nodes.list"))
+    # Proxmox-specific peak temp: a PVE host's obs.node_temps entry is keyed
+    # by ssh_host_id, and a guest/cluster's own "node" field is the PVE-
+    # internal hostname (e.g. "corp") — NEITHER of those is the SSH-registry
+    # *label* (e.g. "PVE01"), so the only real cross-reference is each
+    # unified-estate machine's own proxmox.node field, which is nodes.list's
+    # job to know. Without this hop, host_names (PVE hostnames) would get
+    # matched straight against temp host labels and silently match nothing.
+    machines = (nodes_list or {}).get("nodes") or []
+    pve_node_to_host_id = {m["proxmox"]["node"]: m.get("ssh_host_id")
+                            for m in machines if m.get("proxmox") and m["proxmox"].get("node")}
+    pmx_host_ids = {pve_node_to_host_id[n] for n in (proxmox.get("host_names") or [])
+                     if n in pve_node_to_host_id}
+    temp_hosts_all = (temps or {}).get("hosts") or []
+    pmx_temp_vals = [h.get("max_c") for h in temp_hosts_all
+                       if h.get("max_c") is not None and h.get("host_id") in pmx_host_ids]
     return {"ts": now_iso(), "t": time.time(), "resources": _resources(),
             "top_processes": _top_processes(),
-            "proxmox": proxmox, "docker": docker, "ollama": ollama, "temps": temps}
+            "proxmox": proxmox, "docker": docker, "ollama": ollama, "temps": temps,
+            "pmx_temp_max": max(pmx_temp_vals) if pmx_temp_vals else None}
 
 
 def _compact(full: Dict, qlen: Optional[int], workers: int) -> Dict:
@@ -376,6 +419,7 @@ def _compact(full: Dict, qlen: Optional[int], workers: int) -> Dict:
         "oll_total":    o.get("total", 0),
         "oll_inuse":    o.get("in_use", 0),
         "temp_max":     max(temp_vals) if temp_vals else None,
+        "pmx_temp_max": full.get("pmx_temp_max"),
         "caps":         len(CAPABILITY_REGISTRY),
         "workers":      workers,
         "queue":        qlen if qlen is not None else 0,
@@ -415,7 +459,8 @@ schedule(_sample_once, SAMPLE_SEC, "sysmon_sampler")
                 "once per SYSMON_SAMPLE_SEC, not per request); pass fresh=true "
                 "to force a live rebuild. Output: {ts, t, cached, age_s, "
                 "resources:{cpu,mem,proc_mb,...}, top_processes:[{pid,name,"
-                "user,mem_mb,cpu_pct}], proxmox:{...}, docker:{...}, "
+                "user,mem_mb,cpu_pct}], proxmox:{...,top_guests:[{vmid,name,"
+                "type,node,status,cpu_pct,mem_mb,mem_pct}]}, docker:{...}, "
                 "ollama:{...}, temps:{hosts:[...]}}.",
 )
 async def cap_sysmon_status(fresh: bool = False, trace_id=None) -> Dict:
@@ -437,7 +482,7 @@ async def cap_sysmon_status(fresh: bool = False, trace_id=None) -> Dict:
     description="Time-series ring buffer behind the monitor graphs. Each sample: "
                 "{t, cpu, mem, proc_mb, proc_cpu, pmx_running, pmx_guests, "
                 "pmx_mem_pct, dkr_running, dkr_containers, oll_online, oll_inuse, "
-                "temp_max, queue, workers, caps}. Input: limit (int, default 240). "
+                "temp_max, pmx_temp_max, queue, workers, caps}. Input: limit (int, default 240). "
                 "Output: {samples:[...], count, interval_s, psutil}.",
 )
 async def cap_sysmon_history(limit: int = 240, trace_id=None) -> Dict:

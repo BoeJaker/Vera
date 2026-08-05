@@ -649,9 +649,11 @@ select option{background:var(--bg2)}
               </div>
               <div id="pmxRows" style="max-height:60px;overflow-y:auto;flex-shrink:0"></div>
               <div id="pmxCores" style="font-size:8.5px;color:var(--dim2);flex-shrink:0;max-height:120px;overflow-y:auto"></div>
+              <div id="pmxGuests" style="max-height:110px;overflow-y:auto;flex-shrink:0"></div>
               <div style="display:flex;gap:6px;flex-shrink:0">
                 <div style="flex:1;height:50px" title="Running guests, last ~10min"><vera-sparkline id="sparkProxmox"></vera-sparkline></div>
                 <div style="flex:1;height:50px" title="Cluster RAM %, last ~10min"><vera-sparkline id="sparkProxmoxMem"></vera-sparkline></div>
+                <div style="flex:1;height:50px" title="Peak host sensor temp, last ~10min"><vera-sparkline id="sparkProxmoxTemp"></vera-sparkline></div>
               </div>
             </div>
             <span class="w-resize" data-resize></span>
@@ -2716,6 +2718,26 @@ async function loadSysmonSplit(){
       return `<div class="sm-row"><span class="nm" title="${esc(c.label)}">${esc(c.label)}</span><span class="meta">${meta}</span>${tag}</div>`;
     }).join('');
   }
+  const pmxGuestsEl = document.getElementById('pmxGuests');
+  if(pmxGuestsEl){
+    const guests = pmx.top_guests||[];
+    if(!guests.length) pmxGuestsEl.innerHTML = pmx.configured ? '<span style="color:var(--dim2);font-size:9.5px">no guest stats yet</span>' : '';
+    else {
+      const cpuColor = v => v==null?'var(--dim2)':(v<60?'var(--ok)':(v<90?'var(--warn)':'var(--err)'));
+      pmxGuestsEl.innerHTML = `<div style="font-size:8.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px">Guests — busiest first</div>` +
+        guests.map(g=>{
+          const running = g.status==='running';
+          const tag = running ? '<span class="sm-tag ok">run</span>' : `<span class="sm-tag dim">${esc(g.status||'?')}</span>`;
+          return `<div class="sm-row" style="padding:3px 0;gap:8px">
+            <span class="nm" title="${esc(g.node||'')} · ${esc(g.type||'')} #${g.vmid}">${esc(g.name||('#'+g.vmid))}</span>
+            <span class="sm-tag dim">${esc(g.type||'')}</span>
+            <span class="meta">${g.mem_mb!=null?Math.round(g.mem_mb)+'MB':''}${g.mem_pct!=null?' ('+g.mem_pct+'%)':''}</span>
+            <span style="width:34px;text-align:right;color:${cpuColor(g.cpu_pct)};font-family:var(--mono)">${g.cpu_pct!=null?g.cpu_pct+'%':'—'}</span>
+            ${tag}
+          </div>`;
+        }).join('');
+    }
+  }
 
   // ── Docker ──
   const dkr = s.docker||{};
@@ -2952,6 +2974,7 @@ async function loadSparklines(){
   // the count line would be squashed flat next to the percentage line.
   single('sparkProxmox',    'pmx_running',  'guests running', '');
   single('sparkProxmoxMem', 'pmx_mem_pct',  'cluster ram',    '%');
+  single('sparkProxmoxTemp', 'pmx_temp_max', 'peak host temp', '°C');
   single('sparkDocker',  'dkr_running', 'containers running', '');
   multi('sparkOllama', [
     { field:'oll_online', label:'online', color:'acc' },

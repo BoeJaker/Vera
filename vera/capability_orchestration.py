@@ -5496,7 +5496,7 @@ async def _gather_subsystem_snapshot() -> Dict:
     the other's gather logic. `nodes`/`cluster` are only consumed by the
     topology map today, but there's no reason for it to run a second parallel
     gather just for two more cheap (cache-backed, no live SSH) calls."""
-    sysmon, mesh, loop_lab, sandboxes, mimic, nodes, cluster, temps, memstats, redis_info = await asyncio.gather(
+    sysmon, mesh, loop_lab, sandboxes, mimic, nodes, cluster, temps, memstats, redis_info, docker_stats = await asyncio.gather(
         _cap_call("sysmon.status"),
         _cap_call("mesh.nodes"),
         _cap_call("evolve.sandbox.status"),
@@ -5507,10 +5507,12 @@ async def _gather_subsystem_snapshot() -> Dict:
         _cap_call("obs.node_temps"),
         _cap_call("memory.stats"),
         _cap_call("obs.redis"),
+        _cap_call("docker.stats.top"),
     )
     return {"sysmon": sysmon, "mesh": mesh, "loop_lab": loop_lab,
             "sandboxes": sandboxes, "mimic": mimic, "nodes": nodes,
-            "cluster": cluster, "temps": temps, "memstats": memstats, "redis": redis_info}
+            "cluster": cluster, "temps": temps, "memstats": memstats, "redis": redis_info,
+            "docker_stats": docker_stats}
 
 
 def _dot_state(ok: bool, exists: bool, warn: bool = False) -> str:
@@ -5616,20 +5618,39 @@ def _node_leaf_status(backends: List[str], temp_entry: Optional[Dict]) -> str:
             description="Live node/edge snapshot of the whole Vera stack for the "
                         "main-dashboard SVG topology map: one hub node, one "
                         "category node per subsystem (Nodes/Workers/Ollama/Mesh/"
-                        "Fabric), a standalone Redis service node, and one leaf "
-                        "per actual machine/worker/instance/mesh device/storage "
-                        "backend with an ok/warn/err/unknown status (host leaves "
-                        "fold in obs.node_temps where available, and a real SSH/"
-                        "auth error from the temp probe — as opposed to merely "
-                        "'no sensors installed' — demotes a node to err instead "
-                        "of leaving it looking falsely healthy). Reuses "
-                        "_gather_subsystem_snapshot() — the same fan-out "
+                        "Fabric/Docker/Sandboxes), a standalone Redis service "
+                        "node, three subsystem-source service nodes (Dream/Chat/"
+                        "DAG — animation endpoints only, always 'ok' since "
+                        "they're code paths not machines), and one leaf per "
+                        "actual machine/worker/instance/mesh device/Proxmox "
+                        "guest/Docker container/session sandbox with an "
+                        "ok/warn/err/unknown status (host leaves fold in "
+                        "obs.node_temps where available, and a real SSH/auth "
+                        "error from the temp probe — as opposed to merely 'no "
+                        "sensors installed' — demotes a node to err instead of "
+                        "leaving it looking falsely healthy; Proxmox guest "
+                        "leaves have no sensor of their own so they INHERIT "
+                        "their physical host's max_c by hostname match). "
+                        "Reuses _gather_subsystem_snapshot() — the same fan-out "
                         "dash.health.summary uses — rather than a second gather. "
-                        "The frontend <vera-topology-map> element separately "
-                        "subscribes to live vera:events (worker.start/.done, "
-                        "ollama.request/.done/.error) to animate real routing "
-                        "between polls of this endpoint. Output: {nodes:[{id,"
-                        "label,kind,status,detail}], edges:[{from,to}], ts}.")
+                        "The host page's handleLiveEvent() feeds this same "
+                        "element live vera:events directly: worker.start/.done, "
+                        "ollama.request/.done/.error (routed through the "
+                        "caller's inferred origin — Fabric/Dream/Chat/DAG — then "
+                        "the Ollama category, then the exact instance, instead "
+                        "of a flat category→leaf hop), and cap.call/cap.ok (the "
+                        "universal per-capability activity event every non-"
+                        "silent capability already emits — see "
+                        "_mirror_cap_activity — mapped by the cap's group prefix "
+                        "onto whichever node represents that subsystem: dream/"
+                        "chat/agent_loop_v*/dag* -> the matching service node, "
+                        "docker -> the Docker category, sandbox/evolve -> the "
+                        "Sandboxes category). Location/network/data layers "
+                        "aren't implemented: Vera doesn't collect rack/physical "
+                        "placement or flow-level network data today, and this "
+                        "map doesn't fake a layer off data that doesn't exist. "
+                        "Output: {nodes:[{id,label,kind,status,detail,temp_c}], "
+                        "edges:[{from,to}], ts}.")
 async def topology_snapshot(trace_id=None) -> Dict:
     snap = await _gather_subsystem_snapshot()
     nodes_out: List[Dict] = [{"id": "hub", "label": "Vera", "kind": "hub", "status": "ok", "detail": ""}]
@@ -5671,7 +5692,42 @@ async def topology_snapshot(trace_id=None) -> Dict:
                 bits.append(str(t["error"])[:60])
             nid = f"node:{m.get('id', '')}"
             nodes_out.append({"id": nid, "label": m.get("label") or m.get("id"), "kind": "node",
-                               "status": st, "detail": " · ".join(bits)})
+                               "status": st, "detail": " · ".join(bits),
+                               "temp_c": t.get("max_c") if t else None})
+            edges_out.append({"from": "cat:nodes", "to": nid})
+
+    # ── Proxmox guests: individual VMs/CTs, as leaves under the same "Nodes"
+    #    category. A guest has no sensor of its own — it INHERITS the max_c of
+    #    the physical PVE host it runs on, which is what "the nodes representing
+    #    their hardware" means for something virtual. The cross-reference is
+    #    each machine's own proxmox.node (the PVE-internal hostname, e.g.
+    #    "corp" — NOT the same as the machine's Vera label, e.g. "PVE01": a
+    #    guest's `node` field in proxmox.status is that internal hostname, so
+    #    matching on the SSH-registry *label* would silently match nothing).
+    #    Capped to the busiest ones (same top_guests already computed for the
+    #    dashboard's Proxmox tile) rather than every guest, or a cluster with
+    #    40+ guests turns this ring into noise. ──
+    sysmon_pmx = ((snap["sysmon"] or {}).get("proxmox") or {}) if isinstance(snap.get("sysmon"), dict) else {}
+    top_guests = sysmon_pmx.get("top_guests") or []
+    pve_node_to_host_id = {m["proxmox"]["node"]: m.get("ssh_host_id")
+                            for m in machines if m.get("proxmox") and m["proxmox"].get("node")}
+    if top_guests:
+        def _guest_status(g):
+            if g.get("status") != "running":
+                return "unknown"
+            return "ok"
+        leaf_states = [_guest_status(g) for g in top_guests]
+        for g, st in zip(top_guests, leaf_states):
+            host_temp = temp_by_host.get(pve_node_to_host_id.get(g.get("node")))
+            bits = [g.get("type", ""), g.get("status", "")]
+            if g.get("cpu_pct") is not None:
+                bits.append(f"{g['cpu_pct']}% cpu")
+            if host_temp and host_temp.get("max_c") is not None:
+                bits.append(f"{host_temp['max_c']}°C (host)")
+            nid = f"guest:{g.get('vmid')}"
+            nodes_out.append({"id": nid, "label": g.get("name") or f"#{g.get('vmid')}", "kind": "node",
+                               "status": st, "detail": " · ".join(b for b in bits if b),
+                               "temp_c": host_temp.get("max_c") if host_temp else None})
             edges_out.append({"from": "cat:nodes", "to": nid})
 
     # ── Workers: obs.cluster's live worker registry ──
@@ -5749,6 +5805,65 @@ async def topology_snapshot(trace_id=None) -> Dict:
         nodes_out.append({"id": "svc:redis", "label": "Redis", "kind": "service",
                            "status": "ok" if redis_ok else "err", "detail": detail})
         edges_out.append({"from": "hub", "to": "svc:redis"})
+
+    # ── Docker: individual containers, not just the host summary the sysmon
+    #    tile already covers — reuses docker.stats.top's already-capped
+    #    busiest-per-host list (querying every container here too would be
+    #    the same "hundreds of containers" problem that capability's own doc
+    #    already solved once). ──
+    dstats = snap.get("docker_stats") if isinstance(snap.get("docker_stats"), dict) else {}
+    dhosts = dstats.get("hosts") or {}
+    all_containers = [c for h in dhosts.values() for c in (h.get("containers") or [])]
+    if all_containers:
+        all_containers.sort(key=lambda c: -(c.get("cpu_pct") or 0))
+        leaf_states = ["ok"] * len(all_containers[:14])
+        _cat("cat:docker", "Docker", "ok")
+        for c in all_containers[:14]:
+            nid = f"docker:{c.get('id', '')}"
+            bits = []
+            if c.get("cpu_pct") is not None:
+                bits.append(f"{c['cpu_pct']}% cpu")
+            if c.get("mem_mb") is not None:
+                bits.append(f"{round(c['mem_mb'])}MB")
+            nodes_out.append({"id": nid, "label": c.get("name") or c.get("id"), "kind": "node",
+                               "status": "ok", "detail": " · ".join(bits)})
+            edges_out.append({"from": "cat:docker", "to": nid})
+
+    # ── Sandboxes: session sandboxes (chat/agent-loop scratch containers) +
+    #    the Loop Lab dev sandbox — this subsystem had zero topology presence
+    #    before; only active/up ones are shown as leaves (most session
+    #    sandboxes in the list are "absent"/"exited" history, not live). ──
+    sbx = snap["sandboxes"] if isinstance(snap["sandboxes"], dict) else {}
+    active_sbx = [s for s in (sbx.get("sandboxes") or []) if s.get("active")]
+    lab = snap["loop_lab"] if isinstance(snap["loop_lab"], dict) else {}
+    have_lab = bool(lab.get("sandbox"))
+    if active_sbx or have_lab:
+        cat_states = (["ok"] * len(active_sbx)) + (["ok" if (lab.get("up") and not lab.get("paused")) else "warn"] if have_lab else [])
+        _cat("cat:sandboxes", "Sandboxes", _worst(cat_states) if cat_states else "unknown")
+        for s in active_sbx[:14]:
+            nid = f"sandbox:{s.get('session_id', '')}"
+            nodes_out.append({"id": nid, "label": s.get("label") or s.get("session_id"), "kind": "node",
+                               "status": "ok", "detail": f"{s.get('source', '')} · {s.get('state', '')}"})
+            edges_out.append({"from": "cat:sandboxes", "to": nid})
+        if have_lab:
+            lab_ok = lab.get("up") and not lab.get("paused")
+            probe = lab.get("probe") or {}
+            detail = "paused (idle)" if lab.get("paused") else (probe.get("error") or "up" if lab_ok else "down")
+            nodes_out.append({"id": "sandbox:looplab", "label": "Loop Lab", "kind": "node",
+                               "status": "ok" if lab_ok else "warn", "detail": detail})
+            edges_out.append({"from": "cat:sandboxes", "to": "sandbox:looplab"})
+
+    # ── Subsystem sources: Dream / Chat / DAG (agent loops) don't have a
+    #    machine inventory of their own — they're code paths, always "up" if
+    #    Vera itself is up — but they're the actual origin of most live
+    #    activity on this map (see the frontend's applyEvent(), which routes
+    #    cap.call events whose group matches one of these onto the matching
+    #    node). Included purely as animation endpoints so "where did this
+    #    request come from" has somewhere real to point at instead of
+    #    everything flying out of the Ollama category regardless of origin. ──
+    for sid, label in (("svc:dream", "Dream"), ("svc:chat", "Chat"), ("svc:dag", "DAG / Loops")):
+        nodes_out.append({"id": sid, "label": label, "kind": "service", "status": "ok", "detail": ""})
+        edges_out.append({"from": "hub", "to": sid})
 
     return {"nodes": nodes_out, "edges": edges_out, "ts": now_iso()}
 
@@ -6995,6 +7110,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "fabric/memory_hooks.py"),
         os.path.join(_here, "fabric/data_fabric_collectors.py"),
         os.path.join(_here, "fabric/data_fabric.py"),
+        os.path.join(_here, "fabric/curation_capabilities.py"),
         os.path.join(_here, "fabric/embed_provider_capabilities.py"),
         os.path.join(_here, "fabric/fabric_web_acquisition.py"),
         os.path.join(_here, "fabric/memory_second_order.py"),

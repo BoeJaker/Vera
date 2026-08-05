@@ -3,8 +3,10 @@
  * ============================================================================
  * A live SVG map of the whole Vera stack for the main dashboard: a "Vera" hub
  * in the middle, one category node per subsystem (Nodes / Workers / Ollama /
- * Mesh), and one leaf per actual machine/worker/instance/mesh device, colored
- * by status (ok/warn/err/unknown). Styled after the existing
+ * Mesh / Fabric / Docker / Sandboxes), three subsystem-source nodes (Dream /
+ * Chat / DAG — animation endpoints, not machines), and one leaf per actual
+ * machine/worker/instance/mesh device/Proxmox guest/container/sandbox,
+ * colored by status (ok/warn/err/unknown). Styled after the existing
  * <vera-loop-graph> (loop_graph_element.js) — true SVG via
  * document.createElementNS, pan = drag, zoom = wheel, theming via the
  * standard Vera CSS variables — but with a fixed radial hub→category→leaf
@@ -12,9 +14,19 @@
  * polled snapshots (topology.snapshot), not a live event stream.
  *
  * Public API:
- *   el.applySnapshot({nodes:[{id,label,kind,status,detail}], edges:[{from,to}]})
+ *   el.applySnapshot({nodes:[{id,label,kind,status,detail,temp_c}], edges:[{from,to}]})
  *   el.applyEvent(ev)   — feed one live vera:events event (see below)
  *   el.fit()            — recenter/rescale to fit everything in view
+ *   el.setColorMode('status'|'temp') — also user-driven via the on-map
+ *     status/temp buttons (top-left). "status" is the ok/warn/err/unknown
+ *     dot colour already described above; "temp" recolours every node by its
+ *     temp_c field (same <70/70-85/>85°C thresholds used on the Host Temps
+ *     tile), unknown where no reading exists. Requested as one of several
+ *     "layers" (temperature/location/network/data/jobs) — temp is the one
+ *     shipped because it's the one backed by real collected data
+ *     (obs.node_temps); location/network/data aren't wired up because Vera
+ *     doesn't collect rack/physical placement or flow-level network data
+ *     today, and this map doesn't fake a layer off nothing.
  *
  * Truthful animation, two layers:
  *   1. Status-change pulses: a snapshot poll that changes an id's status from
@@ -31,12 +43,24 @@
  *      independent WebSocket of its own — see <vera-ollama-map>/
  *      ollama_routing_map_element.js for that pattern, appropriate there
  *      since it's embedded inside a different document). Drives a "flying
- *      chip" from a category to the exact leaf real work just landed on,
- *      fired ONLY by real worker.start/worker.done/ollama.request(.done/
- *      .error) events — never a decorative interval. This is what makes
- *      "what's routed where" visible without waiting for the next poll, and
- *      is the main answer to "static/boring" — the poll loop alone can't
- *      show anything between two snapshots.
+ *      chip" hopping from node to node toward wherever real work just landed,
+ *      fired ONLY by real events — never a decorative interval:
+ *        - worker.start/.done/.cancelled -> the worker leaf.
+ *        - ollama.request(.done/.error) -> the exact instance leaf, routed
+ *          through its inferred origin first when the caller is recognized
+ *          (Fabric/Dream/Chat/DAG, via CALLER_SOURCE keyed on caller_file)
+ *          then the Ollama category, so an embedding call visibly flies
+ *          Fabric -> Ollama -> node instead of a flat, misleading
+ *          category -> node hop that made everything look Ollama-sourced.
+ *        - cap.call/cap.ok/cap.error -> whichever node's GROUP_NODE entry
+ *          matches the cap's `group` (its name's dot-prefix). This is the
+ *          existing universal per-capability activity event every non-silent
+ *          capability already emits (_mirror_cap_activity et al) — it's what
+ *          lights up Dream/Chat/DAG/Docker/Sandboxes, not a bespoke event
+ *          added just for this map.
+ *      This is what makes "what's routed where" visible without waiting for
+ *      the next poll, and is the main answer to "static/boring" — the poll
+ *      loop alone can't show anything between two snapshots.
  */
 (function () {
   'use strict';
@@ -47,11 +71,53 @@
   };
   const KIND_R = { hub: 16, category: 11, node: 7, worker: 6, ollama: 7, mesh: 6, service: 10 };
 
+  // ── Where an ollama.request actually came from, so the chip can fly
+  // Fabric -> Ollama -> the exact node instead of a flat Ollama-category ->
+  // node hop that makes every request look like it originated in Ollama
+  // itself. Keyed on caller_file exactly as _ollama_caller_info() in
+  // capability_orchestration.py sets it (basename with .py). Best-effort:
+  // an unrecognized caller (or one whose whole call stack lives inside
+  // capability_orchestration.py, which the caller-walk deliberately skips)
+  // just falls back to the old single-hop behaviour below — never guessed. ──
+  const CALLER_SOURCE = {
+    'memory.py': 'cat:fabric', 'memory_retrieval.py': 'cat:fabric',
+    'memory_second_order.py': 'cat:fabric', 'memory_hooks.py': 'cat:fabric',
+    'data_fabric.py': 'cat:fabric', 'data_fabric_collectors.py': 'cat:fabric',
+    'context.py': 'cat:fabric', 'knowledgebase.py': 'cat:fabric',
+    'discovery.py': 'cat:fabric', 'curation_core.py': 'cat:fabric',
+    'curation_capabilities.py': 'cat:fabric', 'session_notes.py': 'cat:fabric',
+    'fabric_web_acquisition.py': 'cat:fabric',
+    'embed_provider_capabilities.py': 'cat:fabric', 'fastembed_provider.py': 'cat:fabric',
+    'dream_capabilities.py': 'svc:dream', 'project_capabilities.py': 'svc:dream',
+    'chat_panels_capabilities.py': 'svc:chat',
+    'dag_workshop_capabilities.py': 'svc:dag', 'dag_store.py': 'svc:dag',
+    'loop_orchestrator.py': 'svc:dag', 'loop_profiles.py': 'svc:dag',
+  };
+  // Every non-silent capability call emits cap.call/cap.ok/cap.error with a
+  // `group` (the cap name's dot-prefix — see _mirror_cap_activity's use of
+  // the same field server-side). Mapping group -> a node already on this map
+  // is what makes Dream/Chat/DAG/Docker/Sandboxes activity visible at all,
+  // independent of whether that call ever touches Ollama.
+  const GROUP_NODE = {
+    dream: 'svc:dream',
+    chat: 'svc:chat', chat_panels: 'svc:chat',
+    dag: 'svc:dag', dag_workshop: 'svc:dag',
+    agent_loop_v5: 'svc:dag', agent_loop_v6: 'svc:dag',
+    agent_loop_v7: 'svc:dag', agent_loop_v8: 'svc:dag',
+    docker: 'cat:docker',
+    sandbox: 'cat:sandboxes', evolve: 'cat:sandboxes',
+  };
+
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"]/g, c =>
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   }
   function short(s, n) { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+  // trace_id is the one field every cap.call/cap.ok/cap.error emission
+  // carries and pairs on (set once per call in begin_stream_activity/the
+  // @capability wrapper); fall back to name+session for the rare emitter
+  // that omits it rather than dropping the pairing entirely.
+  function _capKey(ev) { return 'cap:' + (ev.trace_id || (ev.name + ':' + (ev.session_id || ''))); }
 
   const NS = 'http://www.w3.org/2000/svg';
   function svgEl(tag, attrs) {
@@ -71,6 +137,7 @@
       this._activeDispatch = new Map(); // task_id/instance_id -> node id currently marked "dispatching"
       this._view = { x: 0, y: 0, k: 1 };
       this._drag = null;
+      this._colorMode = 'status'; // 'status' | 'temp' — see setColorMode()
       this._build();
     }
 
@@ -105,9 +172,21 @@
         // couple of times on the SAME key, which is harmless (it only resets
         // the glow + safety timeout, doesn't double-animate the chip flight
         // since the class is already applied).
-        this._dispatch('oll:' + ev.instance_id, 'ollama:' + ev.instance_id, 'acc');
+        const nid = 'ollama:' + ev.instance_id;
+        const parent = this._parentOf(nid) || 'hub';
+        const src = CALLER_SOURCE[ev.caller_file] || null;
+        const path = (src && src !== parent) ? [src, parent, nid] : [parent, nid];
+        this._dispatchVia('oll:' + ev.instance_id, path, 'acc');
       } else if ((t === 'ollama.request_done' || t === 'ollama.request_error') && ev.instance_id) {
         this._settle('oll:' + ev.instance_id, t === 'ollama.request_done' ? 'ok' : 'err');
+      } else if (t === 'cap.call' && ev.name) {
+        const nid = GROUP_NODE[ev.group || String(ev.name).split('.')[0]];
+        if (nid && this._nodes.has(nid)) this._dispatch(_capKey(ev), nid, 'acc');
+        else matched = false;
+      } else if ((t === 'cap.ok' || t === 'cap.error') && ev.name) {
+        const nid = GROUP_NODE[ev.group || String(ev.name).split('.')[0]];
+        if (nid && this._nodes.has(nid)) this._settle(_capKey(ev), t === 'cap.ok' ? 'ok' : 'err');
+        else matched = false;
       } else {
         matched = false;
       }
@@ -141,8 +220,19 @@
     // it "dispatching" until the matching settle() call (or a 20s safety
     // timeout, in case a done/error event is ever dropped).
     _dispatch(key, nodeId, color) {
-      const parent = this._parentOf(nodeId) || 'hub';
-      this._flyChip(parent, nodeId, STATUS_COL[color] || STATUS_COL.ok);
+      this._dispatchVia(key, [this._parentOf(nodeId) || 'hub', nodeId], color);
+    }
+    // Same, but the chip visibly hops through every id in `path` in order
+    // (e.g. [Fabric, Ollama-category, the-exact-instance]) rather than one
+    // flat parent->leaf jump — this is the actual fix for "it always looks
+    // like it came from Ollama": a single-hop chip has no way to show who
+    // really originated the request.
+    _dispatchVia(key, path, color) {
+      const col = STATUS_COL[color] || STATUS_COL.ok;
+      const nodeId = path[path.length - 1];
+      for (let i = 0; i < path.length - 1; i++) {
+        setTimeout(() => this._flyChip(path[i], path[i + 1], col), i * 380);
+      }
       const el = this._nodeEls.get(nodeId);
       if (el) el.classList.add('dispatching');
       this._activeDispatch.set(key, nodeId);
@@ -207,11 +297,21 @@
           .activity .adot{width:6px;height:6px;border-radius:50%;background:var(--dim,#4a5568);
                           transition:background .15s}
           .activity .adot.hot{background:var(--acc,#5b8cff);box-shadow:0 0 5px var(--acc,#5b8cff)}
+          .layers{position:absolute;left:8px;top:8px;display:flex;gap:3px;font-family:var(--mono,monospace)}
+          .layers button{font:inherit;font-size:9px;background:var(--bg0,#0b0f17);
+                         border:1px solid var(--border,#2a3140);color:var(--dim2,#7e8ba0);
+                         border-radius:3px;padding:2px 6px;cursor:pointer}
+          .layers button.on{color:var(--ink,#d9e1ed);border-color:var(--acc,#5b8cff);
+                            background:color-mix(in srgb, var(--acc,#5b8cff) 15%, var(--bg0,#0b0f17))}
         </style>
         <div class="wrap">
           <svg><g class="cam"><g class="edges"></g><g class="nodes"></g><g class="chips"></g></g></svg>
           <div class="empty" data-part="empty">Waiting for topology.snapshot…</div>
           <div class="tip" data-part="tip"></div>
+          <div class="layers" data-part="layers" title="Colour nodes by status, or by their hottest known sensor reading">
+            <button type="button" data-layer="status" class="on">status</button>
+            <button type="button" data-layer="temp">temp</button>
+          </div>
           <div class="activity" data-part="activity" title="Live vera:events reaching this map — proof the WS feed is actually connected, independent of whether you catch a chip flight">
             <span class="adot"></span><span data-part="activity-text">no live activity yet</span>
           </div>
@@ -228,6 +328,11 @@
       this._eventCount = 0;
       this._lastActivityAt = 0;
       setInterval(() => this._tickActivity(), 1000);
+
+      this._sr.querySelector('[data-part="layers"]').addEventListener('click', e => {
+        const btn = e.target.closest('button[data-layer]');
+        if (btn) this.setColorMode(btn.dataset.layer);
+      });
 
       this._svg.addEventListener('mousedown', e => {
         if (e.target.closest('.node-g')) return;
@@ -293,6 +398,32 @@
       });
     }
 
+    // ── layers: colour-by, not a separate graph. Only real collected data
+    // backs a layer — location/network/data/jobs aren't wired up yet because
+    // Vera doesn't collect rack/physical location or flow-level network data
+    // today, and faking a gradient off nothing would violate the same
+    // truthful-animation rule this map already follows for motion. Temp is
+    // real (obs.node_temps, already flowing into topology.snapshot's node
+    // leaves as temp_c) so it's the one layer implemented so far. ─────────────
+    setColorMode(mode) {
+      mode = (mode === 'temp') ? 'temp' : 'status';
+      if (mode === this._colorMode) return;
+      this._colorMode = mode;
+      this._sr.querySelectorAll('[data-part="layers"] button').forEach(b => {
+        b.classList.toggle('on', b.dataset.layer === mode);
+      });
+      this._render(new Set()); // re-colour in place, no fake pulses
+    }
+    _tempColor(n) {
+      if (n.temp_c == null) return STATUS_COL.unknown;
+      if (n.temp_c < 70) return STATUS_COL.ok;
+      if (n.temp_c < 85) return STATUS_COL.warn;
+      return STATUS_COL.err;
+    }
+    _nodeColor(n) {
+      return this._colorMode === 'temp' ? this._tempColor(n) : (STATUS_COL[n.status] || STATUS_COL.unknown);
+    }
+
     // ── public API ───────────────────────────────────────────────────────────
     applySnapshot(data) {
       const nodes = (data && data.nodes) || [];
@@ -334,7 +465,7 @@
         const g = svgEl('g', { class: 'node-g', transform: `translate(${n.x},${n.y})` });
         const r = KIND_R[n.kind] || 6;
         g.dataset.r = String(r);
-        const col = STATUS_COL[n.status] || STATUS_COL.unknown;
+        const col = this._nodeColor(n);
         const dot = svgEl('circle', { class: 'dot', r, fill: col, stroke: col, 'fill-opacity': n.kind === 'hub' ? 0.25 : 0.35 });
         g.appendChild(dot);
         if (changed.has(n.id)) this._pulseEl(g, col);
@@ -355,7 +486,8 @@
     }
 
     _showTip(n) {
-      this._tip.textContent = esc(n.label || n.id) + (n.detail ? ' — ' + esc(n.detail) : '') + ' [' + n.status + ']';
+      const temp = n.temp_c != null ? ` · ${n.temp_c.toFixed(0)}°C` : '';
+      this._tip.textContent = esc(n.label || n.id) + (n.detail ? ' — ' + esc(n.detail) : '') + ' [' + n.status + ']' + temp;
       this._tip.style.opacity = 1;
     }
   }
